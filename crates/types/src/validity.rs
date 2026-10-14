@@ -43,6 +43,13 @@ impl ValidityMask {
         }
     }
 
+    /// Builds a mask from raw words (bit set = valid).
+    pub fn from_words(words: Vec<u64>) -> Self {
+        Self {
+            words: Some(Arc::new(words)),
+        }
+    }
+
     /// Raw words, if any row is NULL.
     pub fn words(&self) -> Option<&[u64]> {
         self.words.as_deref().map(Vec::as_slice)

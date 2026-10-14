@@ -205,6 +205,27 @@ impl Value {
         }
     }
 
+    /// A value of integral type `ty` holding `value` (wrapping like a C cast), as produced
+    /// by sequence vectors.
+    pub(crate) fn from_i64_as(ty: &LogicalType, value: i64) -> Self {
+        let payload = match ty.physical_type() {
+            PhysicalType::Int8 => Payload::I8(value as i8),
+            PhysicalType::Int16 => Payload::I16(value as i16),
+            PhysicalType::Int32 => Payload::I32(value as i32),
+            PhysicalType::UInt8 => Payload::U8(value as u8),
+            PhysicalType::UInt16 => Payload::U16(value as u16),
+            PhysicalType::UInt32 => Payload::U32(value as u32),
+            PhysicalType::UInt64 => Payload::U64(value as u64),
+            PhysicalType::Int128 => Payload::I128(value.into()),
+            PhysicalType::UInt128 => Payload::U128(value as u128),
+            _ => Payload::I64(value),
+        };
+        Self {
+            ty: ty.clone(),
+            payload,
+        }
+    }
+
     pub(crate) fn from_vector_slot(vector: &Vector, slot: usize) -> Self {
         let ty = vector.logical_type().clone();
         let payload = match ty.physical_type() {
@@ -221,7 +242,10 @@ impl Value {
             PhysicalType::UInt128 => Payload::U128(vector.values::<u128>()[slot]),
             PhysicalType::Float => Payload::F32(vector.values::<f32>()[slot]),
             PhysicalType::Double => Payload::F64(vector.values::<f64>()[slot]),
-            PhysicalType::Varchar => Payload::Bytes(Arc::from(vector.string_bytes(slot))),
+            PhysicalType::Varchar => {
+                let value = &vector.values::<StringT>()[slot];
+                Payload::Bytes(Arc::from(vector.string_value(value)))
+            }
             other => unreachable!("vectors of physical type {other:?} are not constructed yet"),
         };
         Self { ty, payload }
