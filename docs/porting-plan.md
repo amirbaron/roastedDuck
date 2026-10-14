@@ -91,13 +91,13 @@ same inputs instead of hand-porting the output:
 - `src/common/settings.json` → settings registry.
 - `extension/core_functions/**/functions.json` (20 files) → function registration stubs.
 - `src/common/enums/metric_type.json` → profiler metrics.
-- `extension/autocomplete/grammar/**/*.gram` (42 files) → parser (see M2).
+- Bison parse tables from `third_party/libpg_query` → Rust constants (see M2).
 
 ## Third-party replacement map
 
 | C/C++ dep | Rust replacement | Compatibility requirement |
 |---|---|---|
-| libpg_query (yacc, 58k) | own PEG parser from DuckDB's `.gram` files | AST identical via `json_serialize_sql` |
+| libpg_query (bison + flex) | Rust LALR driver over bison's extracted tables + hand-ported scanner | AST identical via `json_serialize_sql` |
 | jemalloc | own arenas + evaluated pure-Rust allocator (see Performance) | none |
 | re2 | `regex` | same linear-time model; check syntax-edge tests in `test/sql/function/string/regex*` |
 | utf8proc | `unicode-normalization`, `unicode-segmentation` | grapheme/NFC results match |
@@ -248,13 +248,26 @@ SQL path with `SELECT <expr>` (no `FROM`).
 kernels at or faster than C++ in `benchmark/micro` and `benchmark/cast`.
 
 ### M2 — Parser
-PEG grammar compiled at build time from the `.gram` files, plus the transformer
-(~11k lines C++) into the Rust AST. In 1.5.6 the PEG parser is opt-in upstream
-(`test/sql/peg_parser/enable_peg_parser.test`), so the yacc parser is the oracle.
-Where the PEG grammar disagrees, fix the grammar.
+A port of DuckDB's default parser, not the PEG one. DuckDB parses with a bison LALR(1)
+grammar (`third_party/libpg_query`, ~9.3k lines of `.y`) and a flex scanner, then
+converts Postgres parse nodes into its AST (`src/parser/transform`, ~7k lines). The PEG
+grammar in `extension/autocomplete` is opt-in upstream in 1.5.6 and only approximates
+that language, so matching it would mean chasing differences in accepted syntax, operator
+precedence and error positions statement by statement.
 
-**Gate:** for every statement in the corpus, Rust AST JSON == C++ `json_serialize_sql`;
-parse throughput faster than C++.
+- **Tables, not a generator.** Bison's generated parse tables (`yytable`, `yycheck`,
+  `yypact`, `yydefact`, `yypgoto`, ...) are extracted into Rust constants by a script,
+  and a Rust port of bison's LALR driver runs them. Identical tables give identical
+  parsing decisions and the same "syntax error at or near" token. Bison is only a
+  dev-time tool for regenerating tables when the grammar changes.
+- **Semantic actions** (the `yyparse` switch cases) are translated to Rust, building
+  Postgres parse nodes defined in Rust.
+- **Scanner:** a hand-written Rust port of `scan.l` (literal, operator, comment and
+  identifier rules, plus the lookahead token filter in `parser.cpp`).
+- **Transformer:** a 1:1 port of `src/parser/transform` producing the generated AST.
+
+**Gate:** for every statement in the corpus, Rust AST JSON == C++ `json_serialize_sql`,
+and every parse error has identical text; parse throughput faster than C++.
 
 ### M3 — Single-threaded in-memory slice
 In-memory catalog, binder for `SELECT`/`CREATE TABLE`/`INSERT`, expression executor,
