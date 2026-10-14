@@ -379,7 +379,7 @@ impl<W: WideInt> NumberState for WideIntState<W, W::Intermediate> {
             self.intermediate.mul_add(10, digit)
         };
         if let Some(next) = next {
-            self.intermediate = next
+            self.intermediate = next;
         } else {
             // The intermediate is full: flush it into the result first.
             if !self.flush() {

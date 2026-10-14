@@ -1,4 +1,5 @@
 //! Nested, ENUM, BLOB, BIT and UUID casts, with expectations taken from DuckDB 1.5.6.
+#![allow(clippy::unwrap_used)] // Test helpers unwrap like the tests themselves.
 
 use rustdb_function::cast::{CastFunctionSet, CastParameters, ValueCast};
 use rustdb_types::{LogicalType, Value};

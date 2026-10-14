@@ -1,4 +1,5 @@
 //! Nested casts over multi-row flat and dictionary vectors (expectations from DuckDB 1.5.6).
+#![allow(clippy::unwrap_used)] // Test helpers unwrap like the tests themselves.
 
 use rustdb_function::cast::{CastFunctionSet, CastParameters, cast_vector};
 use rustdb_types::{LogicalType, SelectionVector, Value, Vector};
