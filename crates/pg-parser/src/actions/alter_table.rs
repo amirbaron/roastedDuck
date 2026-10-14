@@ -22,9 +22,8 @@ pub(super) fn alter_table_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
                 cmds: rhs.list(4)?,
                 relkind: ObjectType::Table,
                 missing_ok: false,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER TABLE IF_P EXISTS relation_expr alter_table_cmds
         1 => {
@@ -33,9 +32,8 @@ pub(super) fn alter_table_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
                 cmds: rhs.list(6)?,
                 relkind: ObjectType::Table,
                 missing_ok: true,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER INDEX qualified_name alter_table_cmds
         2 => {
@@ -44,9 +42,8 @@ pub(super) fn alter_table_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
                 cmds: rhs.list(4)?,
                 relkind: ObjectType::Index,
                 missing_ok: false,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER INDEX IF_P EXISTS qualified_name alter_table_cmds
         3 => {
@@ -55,9 +52,8 @@ pub(super) fn alter_table_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
                 cmds: rhs.list(6)?,
                 relkind: ObjectType::Index,
                 missing_ok: true,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER SEQUENCE qualified_name alter_table_cmds
         4 => {
@@ -66,9 +62,8 @@ pub(super) fn alter_table_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
                 cmds: rhs.list(4)?,
                 relkind: ObjectType::Sequence,
                 missing_ok: false,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER SEQUENCE IF_P EXISTS qualified_name alter_table_cmds
         5 => {
@@ -77,9 +72,8 @@ pub(super) fn alter_table_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
                 cmds: rhs.list(6)?,
                 relkind: ObjectType::Sequence,
                 missing_ok: true,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER VIEW qualified_name alter_table_cmds
         6 => {
@@ -88,9 +82,8 @@ pub(super) fn alter_table_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
                 cmds: rhs.list(4)?,
                 relkind: ObjectType::View,
                 missing_ok: false,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER VIEW IF_P EXISTS qualified_name alter_table_cmds
         7 => {
@@ -99,9 +92,8 @@ pub(super) fn alter_table_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
                 cmds: rhs.list(6)?,
                 relkind: ObjectType::View,
                 missing_ok: true,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -118,14 +110,9 @@ pub(super) fn alter_identity_column_option_list<'a>(
 ) -> Result<SemValue<'a>> {
     match alt {
         // alter_identity_column_option
-        0 => Ok(SemValue::List(vec![Node::from(required(
-            rhs.ptr::<DefElem>(1)?,
-        )?)])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // alter_identity_column_option_list alter_identity_column_option
-        1 => Ok(SemValue::List(append(
-            rhs.list(1)?,
-            Node::from(required(rhs.ptr::<DefElem>(2)?)?),
-        ))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(2)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -137,8 +124,6 @@ pub(super) fn alter_identity_column_option_list<'a>(
 /// ```
 pub(super) fn alter_column_default<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // SET DEFAULT a_expr
-        0 => Ok(SemValue::Node(rhs.node(3)?)),
         // DROP DEFAULT
         1 => Ok(SemValue::Node(None)),
         _ => Err(rhs.bad_alternative()),
@@ -200,14 +185,9 @@ pub(super) fn alter_identity_column_option<'a>(
 pub(super) fn alter_generic_option_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // alter_generic_option_elem
-        0 => Ok(SemValue::List(vec![Node::from(required(
-            rhs.ptr::<DefElem>(1)?,
-        )?)])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // alter_generic_option_list ',' alter_generic_option_elem
-        1 => Ok(SemValue::List(append(
-            rhs.list(1)?,
-            Node::from(required(rhs.ptr::<DefElem>(3)?)?),
-        ))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -226,18 +206,6 @@ pub(super) fn qualify_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
             rhs.list(1)?,
             Node::Str(required(rhs.str(2)?)?),
         ))),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// qualify_el:
-///       '.' attr_name
-/// ```
-pub(super) fn qualify_el<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // '.' attr_name
-        0 => Ok(SemValue::Str(rhs.str(2)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -268,13 +236,8 @@ pub(super) fn qualified_column<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
 pub(super) fn qualified_column_def<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // qualified_column regularColumnDef
-        0 => {
-            let mut n = rhs.take::<ColumnDef>(2)?;
-            n.location = rhs.loc(1);
-            Ok(SemValue::List(vec![Node::List(rhs.list(1)?), n.into()]))
-        }
         // qualified_column generatedColumnDef
-        1 => {
+        0 | 1 => {
             let mut n = rhs.take::<ColumnDef>(2)?;
             n.location = rhs.loc(1);
             Ok(SemValue::List(vec![Node::List(rhs.list(1)?), n.into()]))
@@ -329,7 +292,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 missing_ok: false,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ADD_P IF_P NOT EXISTS qualifiedColumnDef
         1 => {
@@ -339,7 +302,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 missing_ok: true,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ADD_P COLUMN qualifiedColumnDef
         2 => {
@@ -349,7 +312,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 missing_ok: false,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ADD_P COLUMN IF_P NOT EXISTS qualifiedColumnDef
         3 => {
@@ -359,7 +322,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 missing_ok: true,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // SET PARTITIONED BY '(' expr_list_opt_comma ')'
         4 => {
@@ -368,7 +331,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 def_list: rhs.list(5)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // RESET PARTITIONED BY
         5 => {
@@ -377,7 +340,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 def_list: List::new(),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // SET SORTED BY '(' sortby_list ')'
         6 => {
@@ -386,7 +349,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 def_list: rhs.list(5)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // RESET SORTED BY
         7 => {
@@ -395,7 +358,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 def_list: List::new(),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER opt_column ColId alter_column_default
         8 => {
@@ -405,7 +368,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 def: rhs.node(4)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER opt_column ColId DROP NOT NULL_P
         9 => {
@@ -414,7 +377,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 name: rhs.str(3)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER opt_column ColId SET NOT NULL_P
         10 => {
@@ -423,7 +386,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 name: rhs.str(3)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER opt_column ColId SET STATISTICS SignedIconst
         11 => {
@@ -433,7 +396,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 def: Some(Node::Value(Value::Integer(i64::from(rhs.int(6)?)))),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER opt_column ColId SET reloptions
         12 => {
@@ -443,7 +406,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 def: Node::from_list(rhs.list(5)?),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER opt_column ColId RESET reloptions
         13 => {
@@ -453,17 +416,17 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 def: Node::from_list(rhs.list(5)?),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER opt_column ColId SET STORAGE ColId
         14 => {
             let n = AlterTableCmd {
                 subtype: AlterTableType::SetStorage,
                 name: rhs.str(3)?,
-                def: Some(Node::Value(Value::String(required(rhs.str(6)?)?.into()))),
+                def: Some(Node::Value(Value::String(required(rhs.str(6)?)?))),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER opt_column ColId ADD_P GENERATED generated_when AS IDENTITY_P OptParenthesizedSeqOptList
         15 => {
@@ -478,7 +441,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
             n.subtype = AlterTableType::AddIdentity;
             n.name = rhs.str(3)?;
             n.def = Some(c.into());
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER opt_column ColId alter_identity_column_option_list
         16 => {
@@ -488,7 +451,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 def: Node::from_list(rhs.list(4)?),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER opt_column ColId DROP IDENTITY_P
         17 => {
@@ -498,7 +461,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 missing_ok: false,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER opt_column ColId DROP IDENTITY_P IF_P EXISTS
         18 => {
@@ -508,7 +471,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 missing_ok: true,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // DROP opt_column IF_P EXISTS qualified_column opt_drop_behavior
         19 => {
@@ -519,7 +482,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 missing_ok: true,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // DROP opt_column qualified_column opt_drop_behavior
         20 => {
@@ -530,7 +493,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 missing_ok: false,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER opt_column ColId opt_set_data TYPE_P opt_Typename opt_collate_clause alter_using
         21 => {
@@ -557,7 +520,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 def: Node::from_list(rhs.list(4)?),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ADD_P TableConstraint
         23 => {
@@ -566,7 +529,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 def: rhs.node(2)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER CONSTRAINT name ConstraintAttributeSpec
         24 => {
@@ -600,7 +563,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 name: rhs.str(3)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // DROP CONSTRAINT IF_P EXISTS name opt_drop_behavior
         26 => {
@@ -611,7 +574,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 missing_ok: true,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // DROP CONSTRAINT name opt_drop_behavior
         27 => {
@@ -622,7 +585,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 missing_ok: false,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // SET LOGGED
         28 => {
@@ -630,7 +593,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 subtype: AlterTableType::SetLogged,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // SET UNLOGGED
         29 => {
@@ -638,7 +601,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 subtype: AlterTableType::SetUnLogged,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // SET reloptions
         30 => {
@@ -647,7 +610,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 options: rhs.list(2)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // RESET reloptions
         31 => {
@@ -656,7 +619,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 options: rhs.list(2)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // alter_generic_options
         32 => {
@@ -665,7 +628,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 def: Node::from_list(rhs.list(1)?),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -678,8 +641,6 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
 /// ```
 pub(super) fn alter_using<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // USING a_expr
-        0 => Ok(SemValue::Node(rhs.node(2)?)),
         // /* empty */
         1 => Ok(SemValue::Node(None)),
         _ => Err(rhs.bad_alternative()),
@@ -695,8 +656,6 @@ pub(super) fn alter_using<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
 /// ```
 pub(super) fn alter_generic_option_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // generic_option_elem
-        0 => Ok(SemValue::Node((rhs.ptr::<DefElem>(1)?).map(Node::from))),
         // SET generic_option_elem
         1 => {
             let mut alter_generic_option_elem = rhs.ptr::<DefElem>(2)?;
@@ -729,21 +688,9 @@ pub(super) fn alter_generic_option_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: us
 pub(super) fn alter_table_cmds<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // alter_table_cmd
-        0 => Ok(SemValue::List(vec![required(rhs.node(1)?)?])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // alter_table_cmds ',' alter_table_cmd
-        1 => Ok(SemValue::List(append(rhs.list(1)?, required(rhs.node(3)?)?))),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// alter_generic_options:
-///       OPTIONS '(' alter_generic_option_list ')'
-/// ```
-pub(super) fn alter_generic_options<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // OPTIONS '(' alter_generic_option_list ')'
-        0 => Ok(SemValue::List(rhs.list(3)?)),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -759,9 +706,8 @@ pub(super) fn opt_set_data<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
         // SET DATA_P
         0 => Ok(SemValue::Int(1)),
         // SET
-        1 => Ok(SemValue::Int(0)),
         // /* empty */
-        2 => Ok(SemValue::Int(0)),
+        1 | 2 => Ok(SemValue::Int(0)),
         _ => Err(rhs.bad_alternative()),
     }
 }

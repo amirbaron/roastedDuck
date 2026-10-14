@@ -21,9 +21,8 @@ pub(super) fn index_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<
                 options: rhs.list(12)?,
                 where_clause: rhs.node(13)?,
                 onconflict: OnCreateConflict::Error,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // CREATE_P opt_unique INDEX opt_concurrently IF_P NOT EXISTS index_name ON qualified_name access_method_clause '(' index_params ')' opt_reloptions where_clause
         1 => {
@@ -37,22 +36,9 @@ pub(super) fn index_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<
                 options: rhs.list(15)?,
                 where_clause: rhs.node(16)?,
                 onconflict: OnCreateConflict::Ignore,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// access_method:
-///       ColId
-/// ```
-pub(super) fn access_method<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // ColId
-        0 => Ok(SemValue::Str(rhs.str(1)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -64,8 +50,6 @@ pub(super) fn access_method<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
 /// ```
 pub(super) fn access_method_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // USING access_method
-        0 => Ok(SemValue::Str(rhs.str(2)?)),
         // /* empty */
         1 => Ok(SemValue::Str(Some("art".to_owned()))),
         _ => Err(rhs.bad_alternative()),
@@ -94,8 +78,6 @@ pub(super) fn opt_concurrently<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
 /// ```
 pub(super) fn opt_index_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // index_name
-        0 => Ok(SemValue::Str(rhs.str(1)?)),
         // /* empty */
         1 => Ok(SemValue::Str(None)),
         _ => Err(rhs.bad_alternative()),
@@ -109,8 +91,6 @@ pub(super) fn opt_index_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
 /// ```
 pub(super) fn opt_reloptions<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // WITH reloptions
-        0 => Ok(SemValue::List(rhs.list(2)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),

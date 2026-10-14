@@ -7,7 +7,7 @@ use crate::nodes::{
     Alias, ConstrType, CteMaterialize, DropBehavior, IgnoreNulls, InsertColumnOrder, JoinType, List,
     LoadInstallType, LockClauseStrength, LockWaitPolicy, MergeAction, Node, NodeStruct, ObjectType,
     OnCommitAction, OnConflictActionAlias, OnCreateConflict, OverridingKind, RelPersistence, SortByDir,
-    SortByNulls, SubLinkType, TransactionStmtType, Value, ViewCheckOption,
+    SortByNulls, SubLinkType, TransactionStmtType, Value, ViewCheckOption, drop_tree,
 };
 use crate::scanner::Scanner;
 
@@ -141,6 +141,17 @@ impl SemValue<'_> {
         SemValue::Node(Some(node.into()))
     }
 
+    /// Drops the value, tearing any node trees down without recursion.
+    pub(crate) fn drop_tree(self) {
+        match self {
+            SemValue::Node(Some(node)) => drop_tree(node),
+            SemValue::List(list) | SemValue::OptList(Some(list)) => list.into_iter().for_each(drop_tree),
+            SemValue::SelectLimit(limit) => limit.offset.into_iter().chain(limit.count).for_each(drop_tree),
+            SemValue::FuncAlias(alias) => alias.coldeflist.into_iter().for_each(drop_tree),
+            _ => {}
+        }
+    }
+
     fn kind(&self) -> &'static str {
         match self {
             SemValue::None => "None",
@@ -162,8 +173,11 @@ pub(crate) type Action = for<'s, 'a> fn(&mut Reduction<'s, 'a>, usize) -> Result
 /// What to do when reducing a rule.
 #[derive(Clone, Copy)]
 pub(crate) enum RuleAction {
-    /// No action in the grammar: `$$ = $1` (or no value for an empty rule).
+    /// Bison's default action `$$ = $1` (no value for an empty rule). Rules whose
+    /// action is empty also end up here: bison sets `$$ = $1` before any action.
     Default,
+    /// An action that just passes `$k` up: `$$ = $k`.
+    Forward(usize),
     /// Run the nonterminal's action function for the given alternative.
     Call(Action, usize),
 }

@@ -17,7 +17,7 @@ pub(super) fn insert_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
             insert_rest.returning_list = rhs.list(9)?;
             insert_rest.with_clause = rhs.ptr::<WithClause>(1)?;
             insert_rest.insert_column_order = rhs.insert_column_order(6)?;
-            Ok(SemValue::node(Node::from(insert_rest)))
+            Ok(SemValue::node(insert_rest))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -35,39 +35,49 @@ pub(super) fn insert_rest<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
     match alt {
         // SelectStmt
         0 => {
-            let mut insert_rest = InsertStmt::default();
-            insert_rest.cols = List::new();
-            insert_rest.select_stmt = rhs.node(1)?;
+            let insert_rest = InsertStmt {
+                cols: List::new(),
+                select_stmt: rhs.node(1)?,
+                ..Default::default()
+            };
             Ok(SemValue::node(insert_rest))
         }
         // OVERRIDING override_kind VALUE_P SelectStmt
         1 => {
-            let mut insert_rest = InsertStmt::default();
-            insert_rest.cols = List::new();
-            insert_rest.overriding = rhs.overriding_kind(2)?;
-            insert_rest.select_stmt = rhs.node(4)?;
+            let insert_rest = InsertStmt {
+                cols: List::new(),
+                overriding: rhs.overriding_kind(2)?,
+                select_stmt: rhs.node(4)?,
+                ..Default::default()
+            };
             Ok(SemValue::node(insert_rest))
         }
         // '(' insert_column_list ')' SelectStmt
         2 => {
-            let mut insert_rest = InsertStmt::default();
-            insert_rest.cols = rhs.list(2)?;
-            insert_rest.select_stmt = rhs.node(4)?;
+            let insert_rest = InsertStmt {
+                cols: rhs.list(2)?,
+                select_stmt: rhs.node(4)?,
+                ..Default::default()
+            };
             Ok(SemValue::node(insert_rest))
         }
         // '(' insert_column_list ')' OVERRIDING override_kind VALUE_P SelectStmt
         3 => {
-            let mut insert_rest = InsertStmt::default();
-            insert_rest.cols = rhs.list(2)?;
-            insert_rest.overriding = rhs.overriding_kind(5)?;
-            insert_rest.select_stmt = rhs.node(7)?;
+            let insert_rest = InsertStmt {
+                cols: rhs.list(2)?,
+                overriding: rhs.overriding_kind(5)?,
+                select_stmt: rhs.node(7)?,
+                ..Default::default()
+            };
             Ok(SemValue::node(insert_rest))
         }
         // DEFAULT VALUES
         4 => {
-            let mut insert_rest = InsertStmt::default();
-            insert_rest.cols = List::new();
-            insert_rest.select_stmt = None;
+            let insert_rest = InsertStmt {
+                cols: List::new(),
+                select_stmt: None,
+                ..Default::default()
+            };
             Ok(SemValue::node(insert_rest))
         }
         _ => Err(rhs.bad_alternative()),
@@ -81,8 +91,6 @@ pub(super) fn insert_rest<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
 /// ```
 pub(super) fn insert_target<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // qualified_name
-        0 => Ok(SemValue::Node((rhs.ptr::<RangeVar>(1)?).map(Node::from))),
         // qualified_name AS ColId
         1 => {
             let mut qualified_name = rhs.take::<RangeVar>(1)?;
@@ -104,9 +112,8 @@ pub(super) fn opt_by_name_or_position<'a>(rhs: &mut Reduction<'_, 'a>, alt: usiz
         // BY NAME_P
         0 => Ok(SemValue::InsertColumnOrder(InsertColumnOrder::ByName)),
         // BY POSITION
-        1 => Ok(SemValue::InsertColumnOrder(InsertColumnOrder::ByPosition)),
         // /* empty */
-        2 => Ok(SemValue::InsertColumnOrder(InsertColumnOrder::ByPosition)),
+        1 | 2 => Ok(SemValue::InsertColumnOrder(InsertColumnOrder::ByPosition)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -121,20 +128,22 @@ pub(super) fn opt_conf_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
     match alt {
         // '(' index_params ')' where_clause
         0 => {
-            let mut opt_conf_expr = InferClause::default();
-            opt_conf_expr.index_elems = rhs.list(2)?;
-            opt_conf_expr.where_clause = rhs.node(4)?;
-            opt_conf_expr.conname = None;
-            opt_conf_expr.location = rhs.loc(1);
+            let opt_conf_expr = InferClause {
+                index_elems: rhs.list(2)?,
+                where_clause: rhs.node(4)?,
+                conname: None,
+                location: rhs.loc(1),
+            };
             Ok(SemValue::node(opt_conf_expr))
         }
         // ON CONSTRAINT name
         1 => {
-            let mut opt_conf_expr = InferClause::default();
-            opt_conf_expr.index_elems = List::new();
-            opt_conf_expr.where_clause = None;
-            opt_conf_expr.conname = rhs.str(3)?;
-            opt_conf_expr.location = rhs.loc(1);
+            let opt_conf_expr = InferClause {
+                index_elems: List::new(),
+                where_clause: None,
+                conname: rhs.str(3)?,
+                location: rhs.loc(1),
+            };
             Ok(SemValue::node(opt_conf_expr))
         }
         // /* empty */
@@ -150,8 +159,6 @@ pub(super) fn opt_conf_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
 /// ```
 pub(super) fn opt_with_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // with_clause
-        0 => Ok(SemValue::Node((rhs.ptr::<WithClause>(1)?).map(Node::from))),
         // /* empty */
         1 => Ok(SemValue::Node(None)),
         _ => Err(rhs.bad_alternative()),
@@ -166,11 +173,12 @@ pub(super) fn insert_column_item<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
     match alt {
         // ColId opt_indirection
         0 => {
-            let mut insert_column_item = ResTarget::default();
-            insert_column_item.name = rhs.str(1)?;
-            insert_column_item.indirection = check_indirection(rhs.list(2)?, rhs.scanner())?;
-            insert_column_item.val = None;
-            insert_column_item.location = rhs.loc(1);
+            let insert_column_item = ResTarget {
+                name: rhs.str(1)?,
+                indirection: check_indirection(rhs.list(2)?, rhs.scanner())?,
+                val: None,
+                location: rhs.loc(1),
+            };
             Ok(SemValue::node(insert_column_item))
         }
         _ => Err(rhs.bad_alternative()),
@@ -243,22 +251,24 @@ pub(super) fn opt_on_conflict<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
     match alt {
         // ON CONFLICT opt_conf_expr DO UPDATE SET set_clause_list_opt_comma where_clause
         0 => {
-            let mut opt_on_conflict = OnConflictClause::default();
-            opt_on_conflict.action = OnConflictAction::Update;
-            opt_on_conflict.infer = rhs.ptr::<InferClause>(3)?;
-            opt_on_conflict.target_list = rhs.list(7)?;
-            opt_on_conflict.where_clause = rhs.node(8)?;
-            opt_on_conflict.location = rhs.loc(1);
+            let opt_on_conflict = OnConflictClause {
+                action: OnConflictAction::Update,
+                infer: rhs.ptr::<InferClause>(3)?,
+                target_list: rhs.list(7)?,
+                where_clause: rhs.node(8)?,
+                location: rhs.loc(1),
+            };
             Ok(SemValue::node(opt_on_conflict))
         }
         // ON CONFLICT opt_conf_expr DO NOTHING
         1 => {
-            let mut opt_on_conflict = OnConflictClause::default();
-            opt_on_conflict.action = OnConflictAction::Nothing;
-            opt_on_conflict.infer = rhs.ptr::<InferClause>(3)?;
-            opt_on_conflict.target_list = List::new();
-            opt_on_conflict.where_clause = None;
-            opt_on_conflict.location = rhs.loc(1);
+            let opt_on_conflict = OnConflictClause {
+                action: OnConflictAction::Nothing,
+                infer: rhs.ptr::<InferClause>(3)?,
+                target_list: List::new(),
+                where_clause: None,
+                location: rhs.loc(1),
+            };
             Ok(SemValue::node(opt_on_conflict))
         }
         // /* empty */
@@ -277,35 +287,38 @@ pub(super) fn index_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<
     match alt {
         // ColId opt_collate opt_class opt_asc_desc opt_nulls_order
         0 => {
-            let mut index_elem = IndexElem::default();
-            index_elem.name = rhs.str(1)?;
-            index_elem.expr = None;
-            index_elem.collation = rhs.list(2)?;
-            index_elem.opclass = rhs.list(3)?;
-            index_elem.ordering = rhs.sort_by_dir(4)?;
-            index_elem.nulls_ordering = rhs.sort_by_nulls(5)?;
+            let index_elem = IndexElem {
+                name: rhs.str(1)?,
+                expr: None,
+                collation: rhs.list(2)?,
+                opclass: rhs.list(3)?,
+                ordering: rhs.sort_by_dir(4)?,
+                nulls_ordering: rhs.sort_by_nulls(5)?,
+            };
             Ok(SemValue::node(index_elem))
         }
         // func_expr_windowless opt_collate opt_class opt_asc_desc opt_nulls_order
         1 => {
-            let mut index_elem = IndexElem::default();
-            index_elem.name = None;
-            index_elem.expr = rhs.node(1)?;
-            index_elem.collation = rhs.list(2)?;
-            index_elem.opclass = rhs.list(3)?;
-            index_elem.ordering = rhs.sort_by_dir(4)?;
-            index_elem.nulls_ordering = rhs.sort_by_nulls(5)?;
+            let index_elem = IndexElem {
+                name: None,
+                expr: rhs.node(1)?,
+                collation: rhs.list(2)?,
+                opclass: rhs.list(3)?,
+                ordering: rhs.sort_by_dir(4)?,
+                nulls_ordering: rhs.sort_by_nulls(5)?,
+            };
             Ok(SemValue::node(index_elem))
         }
         // '(' a_expr ')' opt_collate opt_class opt_asc_desc opt_nulls_order
         2 => {
-            let mut index_elem = IndexElem::default();
-            index_elem.name = None;
-            index_elem.expr = rhs.node(2)?;
-            index_elem.collation = rhs.list(4)?;
-            index_elem.opclass = rhs.list(5)?;
-            index_elem.ordering = rhs.sort_by_dir(6)?;
-            index_elem.nulls_ordering = rhs.sort_by_nulls(7)?;
+            let index_elem = IndexElem {
+                name: None,
+                expr: rhs.node(2)?,
+                collation: rhs.list(4)?,
+                opclass: rhs.list(5)?,
+                ordering: rhs.sort_by_dir(6)?,
+                nulls_ordering: rhs.sort_by_nulls(7)?,
+            };
             Ok(SemValue::node(index_elem))
         }
         _ => Err(rhs.bad_alternative()),
@@ -319,8 +332,6 @@ pub(super) fn index_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<
 /// ```
 pub(super) fn returning_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // RETURNING target_list
-        0 => Ok(SemValue::List(rhs.list(2)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -350,14 +361,9 @@ pub(super) fn override_kind<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
 pub(super) fn set_target_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // set_target
-        0 => Ok(SemValue::List(vec![Node::from(required(
-            rhs.ptr::<ResTarget>(1)?,
-        )?)])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // set_target_list ',' set_target
-        1 => Ok(SemValue::List(append(
-            rhs.list(1)?,
-            Node::from(required(rhs.ptr::<ResTarget>(3)?)?),
-        ))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -369,8 +375,6 @@ pub(super) fn set_target_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
 /// ```
 pub(super) fn opt_collate<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // COLLATE any_name
-        0 => Ok(SemValue::List(rhs.list(2)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -384,8 +388,6 @@ pub(super) fn opt_collate<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
 /// ```
 pub(super) fn opt_class<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // any_name
-        0 => Ok(SemValue::List(rhs.list(1)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -400,14 +402,9 @@ pub(super) fn opt_class<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
 pub(super) fn insert_column_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // insert_column_item
-        0 => Ok(SemValue::List(vec![Node::from(required(
-            rhs.ptr::<ResTarget>(1)?,
-        )?)])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // insert_column_list ',' insert_column_item
-        1 => Ok(SemValue::List(append(
-            rhs.list(1)?,
-            Node::from(required(rhs.ptr::<ResTarget>(3)?)?),
-        ))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -419,25 +416,8 @@ pub(super) fn insert_column_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
 /// ```
 pub(super) fn set_clause_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // set_clause
-        0 => Ok(SemValue::List(rhs.list(1)?)),
         // set_clause_list ',' set_clause
         1 => Ok(SemValue::List(concat(rhs.list(1)?, rhs.list(3)?))),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// set_clause_list_opt_comma:
-///       set_clause_list
-///     | set_clause_list ','
-/// ```
-pub(super) fn set_clause_list_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // set_clause_list
-        0 => Ok(SemValue::List(rhs.list(1)?)),
-        // set_clause_list ','
-        1 => Ok(SemValue::List(rhs.list(1)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -450,14 +430,9 @@ pub(super) fn set_clause_list_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: us
 pub(super) fn index_params<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // index_elem
-        0 => Ok(SemValue::List(vec![Node::from(required(
-            rhs.ptr::<IndexElem>(1)?,
-        )?)])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // index_params ',' index_elem
-        1 => Ok(SemValue::List(append(
-            rhs.list(1)?,
-            Node::from(required(rhs.ptr::<IndexElem>(3)?)?),
-        ))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -470,11 +445,12 @@ pub(super) fn set_target<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<
     match alt {
         // ColId opt_indirection
         0 => {
-            let mut set_target = ResTarget::default();
-            set_target.name = rhs.str(1)?;
-            set_target.indirection = check_indirection(rhs.list(2)?, rhs.scanner())?;
-            set_target.val = None;
-            set_target.location = rhs.loc(1);
+            let set_target = ResTarget {
+                name: rhs.str(1)?,
+                indirection: check_indirection(rhs.list(2)?, rhs.scanner())?,
+                val: None,
+                location: rhs.loc(1),
+            };
             Ok(SemValue::node(set_target))
         }
         _ => Err(rhs.bad_alternative()),

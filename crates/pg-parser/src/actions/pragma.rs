@@ -17,7 +17,7 @@ pub(super) fn pragma_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 name: rhs.str(2)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // PRAGMA_P ColId '=' var_list
         1 => {
@@ -25,9 +25,8 @@ pub(super) fn pragma_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 kind: PragmaKind::Assignment,
                 name: rhs.str(2)?,
                 args: rhs.list(4)?,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // PRAGMA_P ColId '(' func_arg_list ')'
         2 => {
@@ -35,9 +34,8 @@ pub(super) fn pragma_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 kind: PragmaKind::Call,
                 name: rhs.str(2)?,
                 args: rhs.list(4)?,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }

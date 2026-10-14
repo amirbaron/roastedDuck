@@ -17,4 +17,8 @@ fn main() {
         start.elapsed().as_secs_f64() * 1e6 / n as f64
     );
     println!("size_of Node = {}", std::mem::size_of::<rustdb_pg_parser::Node>());
+    println!(
+        "size_of Value = {}",
+        std::mem::size_of::<rustdb_pg_parser::nodes::Value>()
+    );
 }

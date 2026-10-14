@@ -16,31 +16,31 @@ pub(super) fn variable_set_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> 
         0 => {
             let mut n = rhs.take::<VariableSetStmt>(2)?;
             n.scope = VariableSetScope::Default;
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // SET LOCAL set_rest
         1 => {
             let mut n = rhs.take::<VariableSetStmt>(3)?;
             n.scope = VariableSetScope::Local;
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // SET SESSION set_rest
         2 => {
             let mut n = rhs.take::<VariableSetStmt>(3)?;
             n.scope = VariableSetScope::Session;
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // SET GLOBAL set_rest
         3 => {
             let mut n = rhs.take::<VariableSetStmt>(3)?;
             n.scope = VariableSetScope::Global;
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // SET VARIABLE_P set_rest
         4 => {
             let mut n = rhs.take::<VariableSetStmt>(3)?;
             n.scope = VariableSetScope::Variable;
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -55,8 +55,6 @@ pub(super) fn variable_set_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> 
 /// ```
 pub(super) fn set_rest<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // generic_set
-        0 => Ok(SemValue::Node((rhs.ptr::<VariableSetStmt>(1)?).map(Node::from))),
         // var_name FROM CURRENT_P
         1 => {
             let n = VariableSetStmt {
@@ -103,17 +101,8 @@ pub(super) fn set_rest<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<Se
 pub(super) fn generic_set<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // var_name TO var_list
-        0 => {
-            let n = VariableSetStmt {
-                kind: VariableSetKind::Value,
-                name: rhs.str(1)?,
-                args: rhs.list(3)?,
-                ..Default::default()
-            };
-            Ok(SemValue::node(n))
-        }
         // var_name '=' var_list
-        1 => {
+        0 | 1 => {
             let n = VariableSetStmt {
                 kind: VariableSetKind::Value,
                 name: rhs.str(1)?,
@@ -122,18 +111,6 @@ pub(super) fn generic_set<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
             };
             Ok(SemValue::node(n))
         }
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// var_value:
-///       a_expr
-/// ```
-pub(super) fn var_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // a_expr
-        0 => Ok(SemValue::Node(rhs.node(1)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -151,12 +128,8 @@ pub(super) fn var_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
 pub(super) fn zone_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // Sconst
-        0 => Ok(SemValue::node(make_string_const(
-            required(rhs.str(1)?)?,
-            rhs.loc(1),
-        ))),
         // IDENT
-        1 => Ok(SemValue::node(make_string_const(
+        0 | 1 => Ok(SemValue::node(make_string_const(
             required(rhs.str(1)?)?,
             rhs.loc(1),
         ))),
@@ -198,9 +171,8 @@ pub(super) fn zone_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<
         // NumericOnly
         4 => Ok(SemValue::node(make_a_const(required(rhs.value(1)?)?, rhs.loc(1)))),
         // DEFAULT
-        5 => Ok(SemValue::Node(None)),
         // LOCAL
-        6 => Ok(SemValue::Node(None)),
+        5 | 6 => Ok(SemValue::Node(None)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -213,9 +185,9 @@ pub(super) fn zone_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<
 pub(super) fn var_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // var_value
-        0 => Ok(SemValue::List(vec![required(rhs.node(1)?)?])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // var_list ',' var_value
-        1 => Ok(SemValue::List(append(rhs.list(1)?, required(rhs.node(3)?)?))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }

@@ -19,9 +19,8 @@ pub(super) fn load_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
                 repo_is_alias: false,
                 version: None,
                 load_type: LoadInstallType::Load,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // opt_force INSTALL file_name opt_ext_version
         1 => {
@@ -31,9 +30,8 @@ pub(super) fn load_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
                 repo_is_alias: false,
                 version: rhs.str(4)?,
                 load_type: rhs.load_install_type(1)?,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // opt_force INSTALL file_name FROM ColId opt_ext_version
         2 => {
@@ -43,9 +41,8 @@ pub(super) fn load_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
                 filename: rhs.str(3)?,
                 version: rhs.str(6)?,
                 load_type: rhs.load_install_type(1)?,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // opt_force INSTALL file_name FROM Sconst opt_ext_version
         3 => {
@@ -55,9 +52,8 @@ pub(super) fn load_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
                 repo_is_alias: false,
                 version: rhs.str(6)?,
                 load_type: rhs.load_install_type(1)?,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -79,21 +75,6 @@ pub(super) fn opt_force<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
 }
 
 /// ```text
-/// file_name:
-///       Sconst
-///     | ColId
-/// ```
-pub(super) fn file_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // Sconst
-        0 => Ok(SemValue::Str(rhs.str(1)?)),
-        // ColId
-        1 => Ok(SemValue::Str(rhs.str(1)?)),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
 /// opt_ext_version:
 ///       /* empty */
 ///     | VERSION_P Sconst
@@ -103,10 +84,6 @@ pub(super) fn opt_ext_version<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
     match alt {
         // /* empty */
         0 => Ok(SemValue::Str(None)),
-        // VERSION_P Sconst
-        1 => Ok(SemValue::Str(rhs.str(2)?)),
-        // VERSION_P ColId
-        2 => Ok(SemValue::Str(rhs.str(2)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }

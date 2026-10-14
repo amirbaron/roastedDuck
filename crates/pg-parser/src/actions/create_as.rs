@@ -63,11 +63,10 @@ pub(super) fn create_as_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
 pub(super) fn opt_with_data<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // WITH DATA_P
-        0 => Ok(SemValue::Bool(true)),
+        // /* empty */
+        0 | 2 => Ok(SemValue::Bool(true)),
         // WITH NO DATA_P
         1 => Ok(SemValue::Bool(false)),
-        // /* empty */
-        2 => Ok(SemValue::Bool(true)),
         _ => Err(rhs.bad_alternative()),
     }
 }

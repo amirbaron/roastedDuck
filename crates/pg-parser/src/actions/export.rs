@@ -16,12 +16,11 @@ pub(super) fn export_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 database: None,
                 filename: rhs.str(3)?,
                 options: List::new(),
-                ..Default::default()
             };
             if !copy_options.is_empty() {
                 n.options = concat(n.options, copy_options);
             }
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // EXPORT_P DATABASE ColId TO Sconst copy_options
         1 => {
@@ -30,12 +29,11 @@ pub(super) fn export_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 database: rhs.str(3)?,
                 filename: rhs.str(5)?,
                 options: List::new(),
-                ..Default::default()
             };
             if !copy_options.is_empty() {
                 n.options = concat(n.options, copy_options);
             }
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -51,9 +49,8 @@ pub(super) fn import_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
         0 => {
             let n = ImportStmt {
                 filename: rhs.str(3)?,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }

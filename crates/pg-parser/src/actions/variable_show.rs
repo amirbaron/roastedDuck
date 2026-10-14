@@ -22,9 +22,8 @@ pub(super) fn variable_show_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
                 stmt: rhs.node(2)?,
                 name: Some("select".to_owned()),
                 is_summary: 0,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // SUMMARIZE SelectStmt
         1 => {
@@ -32,9 +31,8 @@ pub(super) fn variable_show_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
                 stmt: rhs.node(2)?,
                 name: Some("select".to_owned()),
                 is_summary: 1,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // SUMMARIZE qualified_name
         2 => {
@@ -43,7 +41,7 @@ pub(super) fn variable_show_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
                 is_summary: 1,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // show_or_describe TABLES FROM qualified_name
         3 => {
@@ -51,9 +49,8 @@ pub(super) fn variable_show_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
                 relation: rhs.ptr::<RangeVar>(4)?,
                 set: Some("__show_tables_from_database".to_owned()),
                 is_summary: 0,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // show_or_describe qualified_name
         4 => {
@@ -62,7 +59,7 @@ pub(super) fn variable_show_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
                 is_summary: 0,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // show_or_describe TIME ZONE
         5 => {
@@ -71,7 +68,7 @@ pub(super) fn variable_show_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
                 is_summary: 0,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // show_or_describe TRANSACTION ISOLATION LEVEL
         6 => {
@@ -80,25 +77,17 @@ pub(super) fn variable_show_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
                 is_summary: 0,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // show_or_describe ALL opt_tables
-        7 => {
-            let n = VariableShowStmt {
-                set: Some("__show_tables_expanded".to_owned()),
-                is_summary: 0,
-                ..Default::default()
-            };
-            Ok(SemValue::node(Node::from(n)))
-        }
         // show_or_describe
-        8 => {
+        7 | 8 => {
             let n = VariableShowStmt {
                 set: Some("__show_tables_expanded".to_owned()),
                 is_summary: 0,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -111,8 +100,6 @@ pub(super) fn variable_show_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
 /// ```
 pub(super) fn var_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // ColId
-        0 => Ok(SemValue::Str(rhs.str(1)?)),
         // var_name '.' ColId
         1 => Ok(SemValue::Str(Some(format!(
             "{}.{}",

@@ -15,9 +15,8 @@ pub(super) fn alter_seq_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
                 sequence: rhs.ptr::<RangeVar>(3)?,
                 options: rhs.list(4)?,
                 missing_ok: false,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER SEQUENCE IF_P EXISTS qualified_name SeqOptList
         1 => {
@@ -25,9 +24,8 @@ pub(super) fn alter_seq_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
                 sequence: rhs.ptr::<RangeVar>(5)?,
                 options: rhs.list(6)?,
                 missing_ok: true,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -41,32 +39,9 @@ pub(super) fn alter_seq_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
 pub(super) fn seq_opt_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // SeqOptElem
-        0 => Ok(SemValue::List(vec![Node::from(required(
-            rhs.ptr::<DefElem>(1)?,
-        )?)])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // SeqOptList SeqOptElem
-        1 => Ok(SemValue::List(append(
-            rhs.list(1)?,
-            Node::from(required(rhs.ptr::<DefElem>(2)?)?),
-        ))),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// opt_with:
-///       WITH
-///     | WITH_LA
-///     | /* empty */
-/// ```
-pub(super) fn opt_with<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // WITH
-        0 => Ok(SemValue::None),
-        // WITH_LA
-        1 => Ok(SemValue::None),
-        // /* empty */
-        2 => Ok(SemValue::None),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(2)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -81,12 +56,12 @@ pub(super) fn opt_with<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<Se
 pub(super) fn numeric_only<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // FCONST
-        0 => Ok(SemValue::node(Value::Float(required(rhs.str(1)?)?.into()))),
+        0 => Ok(SemValue::node(Value::Float(required(rhs.str(1)?)?))),
         // '+' FCONST
-        1 => Ok(SemValue::node(Value::Float(required(rhs.str(2)?)?.into()))),
+        1 => Ok(SemValue::node(Value::Float(required(rhs.str(2)?)?))),
         // '-' FCONST
         2 => {
-            let mut numeric_only = Value::Float(required(rhs.str(2)?)?.into());
+            let mut numeric_only = Value::Float(required(rhs.str(2)?)?);
             do_negate_float(&mut numeric_only);
             Ok(SemValue::node(numeric_only))
         }
@@ -192,21 +167,6 @@ pub(super) fn seq_opt_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
 }
 
 /// ```text
-/// opt_by:
-///       BY
-///     | /* empty */
-/// ```
-pub(super) fn opt_by<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // BY
-        0 => Ok(SemValue::None),
-        // /* empty */
-        1 => Ok(SemValue::None),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
 /// SignedIconst:
 ///       Iconst
 ///     | '+' Iconst
@@ -214,8 +174,6 @@ pub(super) fn opt_by<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
 /// ```
 pub(super) fn signed_iconst<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // Iconst
-        0 => Ok(SemValue::Int(rhs.int(1)?)),
         // '+' Iconst
         1 => Ok(SemValue::Int(rhs.int(2)?)),
         // '-' Iconst

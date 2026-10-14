@@ -14,8 +14,7 @@ use super::{
 };
 
 nodes! {
-    /// 'PGRawStmt': container for any one statement's raw parse tree Parse analysis converts a raw
-    /// parse tree headed by a PGRawStmt node into an analyzed statement headed by a PGQuery node.
+    /// `PGRawStmt`: one statement of the input with its position in the query text.
     RawStmt {
         /// Raw parse tree.
         stmt: Option<Node>,
@@ -24,13 +23,14 @@ nodes! {
         /// Length in bytes; 0 means "rest of string".
         stmt_len: i32,
     }
-    /// 'PGSelectStmt': The 'PGSelectStmt' node.
+    /// `PGSelectStmt`: a `SELECT`, `VALUES`, `PIVOT` or set operation (`UNION`, `INTERSECT`,
+    /// `EXCEPT`)
     SelectStmt {
         /// NULL, list of DISTINCT ON exprs, or lcons(NIL,NIL) for all (SELECT DISTINCT)
         distinct_clause: Option<List>,
         /// Target for SELECT INTO.
         into_clause: Option<Box<IntoClause>>,
-        /// The target list (of PGResTarget)
+        /// The target list (of `PGResTarget`)
         target_list: List,
         /// The FROM clause.
         from_clause: List,
@@ -40,7 +40,7 @@ nodes! {
         group_clause: List,
         /// HAVING conditional-expression.
         having_clause: Option<Node>,
-        /// WINDOW window_name AS (...), ...
+        /// WINDOW `window_name` AS (...), ...
         window_clause: List,
         /// QUALIFY conditional-expression.
         qualify_clause: Option<Node>,
@@ -48,7 +48,7 @@ nodes! {
         values_lists: List,
         /// PIVOT statement.
         pivot: Option<Box<PivotStmt>>,
-        /// Sort clause (a list of SortBy's)
+        /// Sort clause (a list of `SortBy`'s)
         sort_clause: List,
         /// # of result tuples to skip.
         limit_offset: Option<Node>,
@@ -56,7 +56,7 @@ nodes! {
         limit_count: Option<Node>,
         /// Sample options (if any)
         sample_options: Option<Node>,
-        /// FOR UPDATE (list of LockingClause's)
+        /// FOR UPDATE (list of `LockingClause`'s)
         locking_clause: List,
         /// WITH clause.
         with_clause: Option<Box<WithClause>>,
@@ -73,7 +73,7 @@ nodes! {
         /// Right child.
         rarg: Option<Node>,
     }
-    /// 'PGInsertStmt': Insert Statement The source expression is represented by PGSelectStmt for
+    /// `PGInsertStmt`: Insert Statement The source expression is represented by `PGSelectStmt` for
     /// both the SELECT and VALUES cases.
     InsertStmt {
         /// Relation to insert into.
@@ -82,7 +82,7 @@ nodes! {
         cols: List,
         /// The source SELECT/VALUES, or NULL.
         select_stmt: Option<Node>,
-        /// The (optional) shorthand provided for the onConflictClause.
+        /// The (optional) shorthand provided for the `onConflictClause`.
         on_conflict_alias: OnConflictActionAlias,
         /// ON CONFLICT clause.
         on_conflict_clause: Option<Box<OnConflictClause>>,
@@ -95,11 +95,11 @@ nodes! {
         /// INSERT BY NAME or INSERT BY POSITION.
         insert_column_order: InsertColumnOrder,
     }
-    /// 'PGUpdateStmt': Update Statement.
+    /// `PGUpdateStmt`: Update Statement.
     UpdateStmt {
         /// Relation to update.
         relation: Option<Box<RangeVar>>,
-        /// The target list (of PGResTarget)
+        /// The target list (of `PGResTarget`)
         target_list: List,
         /// Qualifications.
         where_clause: Option<Node>,
@@ -110,7 +110,7 @@ nodes! {
         /// WITH clause.
         with_clause: Option<Box<WithClause>>,
     }
-    /// 'PGDeleteStmt': Delete Statement.
+    /// `PGDeleteStmt`: Delete Statement.
     DeleteStmt {
         /// Relation to delete from.
         relation: Option<Box<RangeVar>>,
@@ -123,7 +123,7 @@ nodes! {
         /// WITH clause.
         with_clause: Option<Box<WithClause>>,
     }
-    /// 'PGMergeIntoStmt': Merge Into Statement.
+    /// `PGMergeIntoStmt`: Merge Into Statement.
     MergeIntoStmt {
         /// Relation to merge into.
         target_table: Option<Box<RangeVar>>,
@@ -137,10 +137,10 @@ nodes! {
         match_actions: List,
         /// WITH clause.
         with_clause: Option<Box<WithClause>>,
-        /// Return-values list (of PGTargetEntry)
+        /// Return-values list (of `PGTargetEntry`)
         returning_list: List,
     }
-    /// 'PGMatchAction': The 'PGMatchAction' node.
+    /// `PGMatchAction`: one `WHEN [NOT] MATCHED ... THEN` action of `MERGE INTO`.
     MatchAction {
         /// WHEN MATCHED or WHEN NOT MATCHED.
         when: MergeAction,
@@ -161,43 +161,43 @@ nodes! {
         /// DEFAULT VALUES.
         default_values: bool,
     }
-    /// 'PGCreateStmt': Create Table Statement NOTE: in the raw gram.y output, PGColumnDef and
-    /// PGConstraint nodes are intermixed in tableElts, and constraints is NIL.
+    /// `PGCreateStmt`: Create Table Statement NOTE: in the raw `gram.y` output, `PGColumnDef` and
+    /// `PGConstraint` nodes are intermixed in `tableElts`, and constraints is NIL.
     CreateStmt {
         /// Relation to create.
         relation: Option<Box<RangeVar>>,
-        /// Column definitions (list of PGColumnDef)
+        /// Column definitions (list of `PGColumnDef`)
         table_elts: List,
-        /// Relations to inherit from (list of inhRelation)
+        /// Relations to inherit from (list of `inhRelation`)
         inh_relations: List,
-        /// Constraints (list of PGConstraint nodes)
+        /// Constraints (list of `PGConstraint` nodes)
         constraints: List,
         /// Options from WITH clause.
         options: List,
-        /// E.g. expression list for partitioned by.
+        /// `e.g`. expression list for partitioned by.
         partition_list: List,
-        /// E.g. expression list for sort by.
+        /// `e.g`. expression list for sort by.
         sort_list: List,
         /// What do we do at COMMIT?
         oncommit: OnCommitAction,
         /// What to do on create conflict.
         onconflict: OnCreateConflict,
     }
-    /// 'PGCreateTableAsStmt': CREATE TABLE AS Statement (a/k/a SELECT INTO) A query written as
+    /// `PGCreateTableAsStmt`: CREATE TABLE AS Statement (a/k/a SELECT INTO) A query written as
     /// CREATE TABLE AS will produce this node type natively.
     CreateTableAsStmt {
         /// The query (see comments above)
         query: Option<Node>,
         /// Destination table.
         into: Option<Box<IntoClause>>,
-        /// PG_OBJECT_TABLE or PG_OBJECT_MATVIEW.
+        /// `PG_OBJECT_TABLE` or `PG_OBJECT_MATVIEW`.
         relkind: ObjectType,
         /// It was written as SELECT INTO.
         is_select_into: bool,
         /// What to do on create conflict.
         onconflict: OnCreateConflict,
     }
-    /// 'PGCreateSchemaStmt': Create Schema Statement NOTE: the schemaElts list contains raw
+    /// `PGCreateSchemaStmt`: Create Schema Statement NOTE: the `schemaElts` list contains raw
     /// parsetrees for component statements of the schema, such as CREATE TABLE, GRANT, etc.
     CreateSchemaStmt {
         /// The name of the catalog in which to create the schema.
@@ -209,43 +209,43 @@ nodes! {
         /// What to do on create conflict.
         onconflict: OnCreateConflict,
     }
-    /// 'PGCreateSeqStmt': {Create|Alter} SEQUENCE Statement.
+    /// `PGCreateSeqStmt`: {Create|Alter} SEQUENCE Statement.
     CreateSeqStmt {
         /// The sequence to create.
         sequence: Option<Box<RangeVar>>,
-        /// 'options'.
+        /// `options`.
         options: List,
         /// What to do on create conflict.
         onconflict: OnCreateConflict,
     }
-    /// 'PGAlterSeqStmt': The 'PGAlterSeqStmt' node.
+    /// `PGAlterSeqStmt`: `ALTER SEQUENCE`.
     AlterSeqStmt {
         /// The sequence to alter.
         sequence: Option<Box<RangeVar>>,
-        /// 'options'.
+        /// `options`.
         options: List,
         /// Skip error if a role is missing?
         missing_ok: bool,
     }
-    /// 'PGCreateFunctionStmt': The 'PGCreateFunctionStmt' node.
+    /// `PGCreateFunctionStmt`: `CREATE MACRO` / `CREATE FUNCTION` with one or more overloads.
     CreateFunctionStmt {
-        /// 'name'.
+        /// `name`.
         name: Option<Box<RangeVar>>,
-        /// 'functions'.
+        /// `functions`.
         functions: List,
-        /// 'onconflict'.
+        /// `onconflict`.
         onconflict: OnCreateConflict,
     }
-    /// 'PGFunctionDefinition': CREATE FUNCTION Statement.
+    /// `PGFunctionDefinition`: CREATE FUNCTION Statement.
     FunctionDefinition {
-        /// 'params'.
+        /// `params`.
         params: List,
-        /// 'function'.
+        /// `function`.
         function: Option<Node>,
-        /// 'query'.
+        /// `query`.
         query: Option<Node>,
     }
-    /// 'PGFunctionParameter': Function Parameter.
+    /// `PGFunctionParameter`: Function Parameter.
     FunctionParameter {
         /// Name of parameter.
         name: Option<String>,
@@ -254,9 +254,9 @@ nodes! {
         /// Default value of parameter (optional)
         default_value: Option<Node>,
     }
-    /// 'PGCreateTypeStmt': The 'PGCreateTypeStmt' node.
+    /// `PGCreateTypeStmt`: `CREATE TYPE` (an enum or an alias of another type)
     CreateTypeStmt {
-        /// 'kind'.
+        /// `kind`.
         kind: NewTypeKind,
         /// Qualified name (list of Value strings)
         type_name: Option<Box<RangeVar>>,
@@ -264,12 +264,12 @@ nodes! {
         vals: List,
         /// Original type of alias name.
         of_type: Option<Box<TypeName>>,
-        /// 'query'.
+        /// `query`.
         query: Option<Node>,
         /// What to do on create conflict.
         onconflict: OnCreateConflict,
     }
-    /// 'PGCreateSecretStmt': Create Secret Statement.
+    /// `PGCreateSecretStmt`: Create Secret Statement.
     CreateSecretStmt {
         /// The requested persist mode.
         persist_type: Option<String>,
@@ -284,18 +284,18 @@ nodes! {
         /// What to do on create conflict.
         onconflict: OnCreateConflict,
     }
-    /// 'PGDropSecretStmt': Drop Secret Statement.
+    /// `PGDropSecretStmt`: Drop Secret Statement.
     DropSecretStmt {
         /// The requested persist mode.
         persist_type: Option<String>,
         /// Name of the secret.
         secret_name: Option<String>,
-        /// 'secret_storage'.
+        /// `secret_storage`.
         secret_storage: Option<String>,
-        /// 'missing_ok'.
+        /// `missing_ok`.
         missing_ok: bool,
     }
-    /// 'PGViewStmt': The 'PGViewStmt' node.
+    /// `PGViewStmt`: `CREATE VIEW`.
     ViewStmt {
         /// The view to be created.
         view: Option<Box<RangeVar>>,
@@ -310,7 +310,7 @@ nodes! {
         /// WITH CHECK OPTION.
         with_check_option: ViewCheckOption,
     }
-    /// 'PGIndexStmt': Create PGIndex Statement This represents creation of an index and/or an
+    /// `PGIndexStmt`: Create `PGIndex` Statement This represents creation of an index and/or an
     /// associated constraint.
     IndexStmt {
         /// Name of new index, or NULL for default.
@@ -319,9 +319,9 @@ nodes! {
         relation: Option<Box<RangeVar>>,
         /// Name of access method (eg. btree)
         access_method: Option<String>,
-        /// Columns to index: a list of PGIndexElem.
+        /// Columns to index: a list of `PGIndexElem`.
         index_params: List,
-        /// WITH clause options: a list of PGDefElem.
+        /// WITH clause options: a list of `PGDefElem`.
         options: List,
         /// Qualification (partial-index predicate)
         where_clause: Option<Node>,
@@ -332,7 +332,7 @@ nodes! {
         /// What to do on create conflict.
         onconflict: OnCreateConflict,
     }
-    /// 'PGAlterTableStmt': Alter Table.
+    /// `PGAlterTableStmt`: Alter Table.
     AlterTableStmt {
         /// Table to work on.
         relation: Option<Box<RangeVar>>,
@@ -343,7 +343,7 @@ nodes! {
         /// Skip error if table missing.
         missing_ok: bool,
     }
-    /// 'PGAlterTableCmd': The 'PGAlterTableCmd' node.
+    /// `PGAlterTableCmd`: one subcommand of `ALTER TABLE`.
     AlterTableCmd {
         /// Type of table alteration to apply.
         subtype: AlterTableType,
@@ -351,18 +351,18 @@ nodes! {
         name: Option<String>,
         /// Definition of new column, index, * constraint, or parent table.
         def: Option<Node>,
-        /// E.g. expression list for partitioned by or sorted by.
+        /// `e.g`. expression list for partitioned by or sorted by.
         def_list: List,
-        /// Set table options e.g. SET ('foo'='bar'); RESET ('foo'='bar')
+        /// Set table options `e.g`. SET ('foo'='bar'); RESET ('foo'='bar')
         options: List,
         /// RESTRICT or CASCADE for DROP cases.
         behavior: DropBehavior,
         /// Skip error if missing?
         missing_ok: bool,
     }
-    /// 'PGAlterObjectSchemaStmt': ALTER object SET SCHEMA Statement.
+    /// `PGAlterObjectSchemaStmt`: ALTER object SET SCHEMA Statement.
     AlterObjectSchemaStmt {
-        /// PG_OBJECT_TABLE, PG_OBJECT_TYPE, etc.
+        /// `PG_OBJECT_TABLE`, `PG_OBJECT_TYPE`, etc.
         object_type: ObjectType,
         /// In case it's a table.
         relation: Option<Box<RangeVar>>,
@@ -371,20 +371,20 @@ nodes! {
         /// Skip error if missing?
         missing_ok: bool,
     }
-    /// 'PGAlterDatabaseStmt': The 'PGAlterDatabaseStmt' node.
+    /// `PGAlterDatabaseStmt`: `ALTER DATABASE`.
     AlterDatabaseStmt {
-        /// 'dbname'.
+        /// `dbname`.
         dbname: Option<String>,
-        /// 'new_name'.
+        /// `new_name`.
         new_name: Option<String>,
-        /// 'alter_type'.
+        /// `alter_type`.
         alter_type: AlterDatabaseType,
-        /// 'missing_ok'.
+        /// `missing_ok`.
         missing_ok: bool,
     }
-    /// 'PGRenameStmt': Alter Object Rename Statement.
+    /// `PGRenameStmt`: Alter Object Rename Statement.
     RenameStmt {
-        /// PG_OBJECT_TABLE, PG_OBJECT_COLUMN, etc.
+        /// `PG_OBJECT_TABLE`, `PG_OBJECT_COLUMN`, etc.
         rename_type: ObjectType,
         /// If column name, associated relation type.
         relation_type: ObjectType,
@@ -392,7 +392,7 @@ nodes! {
         relation: Option<Box<RangeVar>>,
         /// Name of contained object (column, rule, trigger, etc)
         subname: Option<String>,
-        /// Names of contained object (e.g. qualified column)
+        /// Names of contained object (`e.g`. qualified column)
         name_list: List,
         /// The new name.
         newname: Option<String>,
@@ -401,7 +401,7 @@ nodes! {
         /// Skip error if missing?
         missing_ok: bool,
     }
-    /// 'PGDropStmt': Drop Table|Sequence|View|Index|Type|Domain|Conversion|Schema Statement.
+    /// `PGDropStmt`: Drop Table|Sequence|View|Index|Type|Domain|Conversion|Schema Statement.
     DropStmt {
         /// List of names.
         objects: List,
@@ -412,7 +412,7 @@ nodes! {
         /// Skip error if object is missing?
         missing_ok: bool,
     }
-    /// 'PGCommentOnStmt': Comment On Statement.
+    /// `PGCommentOnStmt`: Comment On Statement.
     CommentOnStmt {
         /// Object type.
         object_type: ObjectType,
@@ -420,17 +420,17 @@ nodes! {
         name: Option<Box<RangeVar>>,
         /// The comment: a string or NULL.
         value: Option<Node>,
-        /// 'column_expr'.
+        /// `column_expr`.
         column_expr: Option<Node>,
     }
-    /// 'PGCopyStmt': Copy Statement We support "COPY relation FROM file", "COPY relation TO file",
+    /// `PGCopyStmt`: Copy Statement We support "COPY relation FROM file", "COPY relation TO file",
     /// and "COPY (query) TO file".
     CopyStmt {
         /// The relation to copy.
         relation: Option<Box<RangeVar>>,
         /// The query (SELECT or DML statement with RETURNING) to copy, as a raw parse tree.
         query: Option<Node>,
-        /// PGList of column names (as Strings), or NIL for all columns.
+        /// `PGList` of column names (as Strings), or NIL for all columns.
         attlist: List,
         /// TO or FROM.
         is_from: bool,
@@ -438,76 +438,76 @@ nodes! {
         is_program: bool,
         /// Filename.
         filename: Option<Node>,
-        /// PGList of PGDefElem nodes.
+        /// `PGList` of `PGDefElem` nodes.
         options: List,
     }
-    /// 'PGCopyDatabaseStmt': Copy Database Statement.
+    /// `PGCopyDatabaseStmt`: Copy Database Statement.
     CopyDatabaseStmt {
-        /// 'from_database'.
+        /// `from_database`.
         from_database: Option<String>,
-        /// 'to_database'.
+        /// `to_database`.
         to_database: Option<String>,
-        /// 'copy_database_flag'.
+        /// `copy_database_flag`.
         copy_database_flag: Option<String>,
     }
-    /// 'PGExplainStmt': Explain Statement The "query" field is initially a raw parse tree, and is
-    /// converted to a PGQuery node during parse analysis.
+    /// `PGExplainStmt`: Explain Statement The "query" field is initially a raw parse tree, and is
+    /// converted to a `PGQuery` node during parse analysis.
     ExplainStmt {
         /// The query (see comments above)
         query: Option<Node>,
-        /// List of PGDefElem nodes.
+        /// List of `PGDefElem` nodes.
         options: List,
     }
-    /// 'PGExportStmt': EXPORT/IMPORT Statements.
+    /// `PGExportStmt`: EXPORT/IMPORT Statements.
     ExportStmt {
         /// Database name.
         database: Option<String>,
         /// Filename.
         filename: Option<String>,
-        /// PGList of PGDefElem nodes.
+        /// `PGList` of `PGDefElem` nodes.
         options: List,
     }
-    /// 'PGImportStmt': The 'PGImportStmt' node.
+    /// `PGImportStmt`: `IMPORT DATABASE`.
     ImportStmt {
         /// Filename.
         filename: Option<String>,
     }
-    /// 'PGPrepareStmt': PREPARE Statement.
+    /// `PGPrepareStmt`: PREPARE Statement.
     PrepareStmt {
         /// Name of plan, arbitrary.
         name: Option<String>,
-        /// Types of parameters (PGList of PGTypeName)
+        /// Types of parameters (`PGList` of `PGTypeName`)
         argtypes: List,
         /// The query itself (as a raw parsetree)
         query: Option<Node>,
     }
-    /// 'PGExecuteStmt': EXECUTE Statement.
+    /// `PGExecuteStmt`: EXECUTE Statement.
     ExecuteStmt {
         /// The name of the plan to execute.
         name: Option<String>,
         /// Values to assign to parameters.
         params: List,
     }
-    /// 'PGDeallocateStmt': DEALLOCATE Statement.
+    /// `PGDeallocateStmt`: DEALLOCATE Statement.
     DeallocateStmt {
         /// The name of the plan to remove.
         name: Option<String>,
     }
-    /// 'PGCallStmt': CALL Statement.
+    /// `PGCallStmt`: CALL Statement.
     CallStmt {
-        /// 'func'.
+        /// `func`.
         func: Option<Node>,
     }
-    /// 'PGPragmaStmt': The 'PGPragmaStmt' node.
+    /// `PGPragmaStmt`: `PRAGMA name`, `PRAGMA name = value` or `PRAGMA name(args)`.
     PragmaStmt {
-        /// 'kind'.
+        /// `kind`.
         kind: PragmaKind,
         /// Variable to be set.
         name: Option<String>,
-        /// PGList of PGAConst nodes.
+        /// `PGList` of `PGAConst` nodes.
         args: List,
     }
-    /// 'PGTransactionStmt': The 'PGTransactionStmt' node.
+    /// `PGTransactionStmt`: `BEGIN`, `COMMIT`, `ROLLBACK` and friends.
     TransactionStmt {
         /// See above.
         kind: TransactionStmtKind,
@@ -516,45 +516,45 @@ nodes! {
         /// Read only or read write.
         transaction_type: TransactionStmtType,
     }
-    /// 'PGVariableSetStmt': The 'PGVariableSetStmt' node.
+    /// `PGVariableSetStmt`: `SET` and `RESET`.
     VariableSetStmt {
-        /// 'kind'.
+        /// `kind`.
         kind: VariableSetKind,
-        /// 'scope'.
+        /// `scope`.
         scope: VariableSetScope,
         /// Variable to be set.
         name: Option<String>,
-        /// PGList of PGAConst nodes.
+        /// `PGList` of `PGAConst` nodes.
         args: List,
     }
-    /// 'PGVariableShowStmt': Show Statement.
+    /// `PGVariableShowStmt`: Show Statement.
     VariableShowStmt {
         /// Relation to describe (if any)
         relation: Option<Box<RangeVar>>,
-        /// Set to describe (e.g. set when using SHOW ALL TABLES)
+        /// Set to describe (`e.g`. set when using SHOW ALL TABLES)
         set: Option<String>,
         /// Whether or not this is a DESCRIBE or a SUMMARIZE.
         is_summary: i32,
     }
-    /// 'PGVariableShowSelectStmt': Show Statement with Select Statement.
+    /// `PGVariableShowSelectStmt`: Show Statement with Select Statement.
     VariableShowSelectStmt {
-        /// 'stmt'.
+        /// `stmt`.
         stmt: Option<Node>,
-        /// 'name'.
+        /// `name`.
         name: Option<String>,
         /// Whether or not this is a DESCRIBE or a SUMMARIZE.
         is_summary: i32,
     }
-    /// 'PGVacuumStmt': The 'PGVacuumStmt' node.
+    /// `PGVacuumStmt`: `VACUUM` and `ANALYZE`.
     VacuumStmt {
-        /// OR of PGVacuumOption flags.
+        /// OR of `PGVacuumOption` flags.
         options: i32,
         /// Single table to process, or NULL.
         relation: Option<Box<RangeVar>>,
         /// List of column names, or NIL for all.
         va_cols: List,
     }
-    /// 'PGLoadStmt': The 'PGLoadStmt' node.
+    /// `PGLoadStmt`: `LOAD` and `INSTALL` of extensions.
     LoadStmt {
         /// File to load.
         filename: Option<String>,
@@ -564,47 +564,47 @@ nodes! {
         repo_is_alias: bool,
         /// Optionally, the version of the extension to be loaded.
         version: Option<String>,
-        /// 'load_type'.
+        /// `load_type`.
         load_type: LoadInstallType,
     }
-    /// 'PGUpdateExtensionsStmt': Update Extensions Statement.
+    /// `PGUpdateExtensionsStmt`: Update Extensions Statement.
     UpdateExtensionsStmt {
-        /// 'extensions'.
+        /// `extensions`.
         extensions: List,
     }
-    /// 'PGAttachStmt': Attach Statement.
+    /// `PGAttachStmt`: Attach Statement.
     AttachStmt {
         /// The file path of the to-be-attached database.
         path: Option<String>,
         /// The name of the attached database.
         name: Option<String>,
-        /// PGList of PGDefElem nodes.
+        /// `PGList` of `PGDefElem` nodes.
         options: List,
-        /// 'query'.
+        /// `query`.
         query: Option<Node>,
         /// What to do on attach conflict.
         onconflict: OnCreateConflict,
     }
-    /// 'PGDetachStmt': Dettach Statement.
+    /// `PGDetachStmt`: Dettach Statement.
     DetachStmt {
         /// List of names of attached databases.
         db_name: Option<String>,
-        /// 'missing_ok'.
+        /// `missing_ok`.
         missing_ok: bool,
     }
-    /// 'PGUseStmt': Use Statement.
+    /// `PGUseStmt`: Use Statement.
     UseStmt {
         /// Variable to be set.
         name: Option<Box<RangeVar>>,
     }
-    /// 'PGCheckPointStmt': Checkpoint Statement.
+    /// `PGCheckPointStmt`: Checkpoint Statement.
     CheckPointStmt {
-        /// 'force'.
+        /// `force`.
         force: bool,
-        /// 'name'.
+        /// `name`.
         name: Option<String>,
     }
-    /// 'PGPivotStmt': The 'PGPivotStmt' node.
+    /// `PGPivotStmt`: a `PIVOT`/`UNPIVOT` statement.
     PivotStmt {
         /// The source to pivot.
         source: Option<Node>,
@@ -619,7 +619,7 @@ nodes! {
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGAlias': specifies an alias for a range variable; the alias might also specify renaming of
+    /// `PGAlias`: specifies an alias for a range variable; the alias might also specify renaming of
     /// columns within the table.
     Alias {
         /// Aliased rel name (never qualified)
@@ -627,7 +627,7 @@ nodes! {
         /// Optional list of column aliases.
         colnames: List,
     }
-    /// 'PGRangeVar': range variable, used in FROM clauses Also used to represent table names in
+    /// `PGRangeVar`: range variable, used in FROM clauses Also used to represent table names in
     /// utility statements; there, the alias field is not used, and inh tells whether to apply the
     /// operation recursively to child tables.
     RangeVar {
@@ -639,7 +639,7 @@ nodes! {
         relname: Option<String>,
         /// Expand rel by inheritance? recursively act on children?
         inh: bool,
-        /// See RELPERSISTENCE_* in pg_class.h.
+        /// See `RELPERSISTENCE_`* in `pg_class.h`.
         relpersistence: RelPersistence,
         /// Version of the table to read.
         at_clause: Option<Node>,
@@ -650,7 +650,7 @@ nodes! {
         /// Sample, if any.
         sample: Option<Node>,
     }
-    /// 'PGRangeSubselect': subquery appearing in a FROM clause.
+    /// `PGRangeSubselect`: subquery appearing in a FROM clause.
     RangeSubselect {
         /// Does it have LATERAL prefix?
         lateral: bool,
@@ -661,30 +661,30 @@ nodes! {
         /// Sample options (if any)
         sample: Option<Node>,
     }
-    /// 'PGRangeFunction': function call appearing in a FROM clause functions is a PGList because we
-    /// use this to represent the construct ROWS FROM(func1(...), func2(...), ...)
+    /// `PGRangeFunction`: function call appearing in a FROM clause functions is a `PGList` because
+    /// we use this to represent the construct ROWS FROM(func1(...), func2(...), ...)
     RangeFunction {
         /// Does it have LATERAL prefix?
         lateral: bool,
         /// Does it have WITH ORDINALITY suffix?
         ordinality: bool,
-        /// Is result of ROWS FROM() syntax?
+        /// Is result of ROWS `FROM()` syntax?
         is_rowsfrom: bool,
         /// Per-function information, see above.
         functions: List,
         /// Table alias & optional column aliases.
         alias: Option<Box<Alias>>,
-        /// List of PGColumnDef nodes to describe result of function returning RECORD.
+        /// List of `PGColumnDef` nodes to describe result of function returning RECORD.
         coldeflist: List,
         /// Sample options (if any)
         sample: Option<Node>,
     }
-    /// 'PGJoinExpr': for SQL JOIN expressions joinreftype, usingClause, and quals are
+    /// `PGJoinExpr`: for SQL JOIN expressions joinreftype, `usingClause`, and quals are
     /// interdependent.
     JoinExpr {
         /// Type of join.
         jointype: JoinType,
-        /// Regular/Natural/AsOf join? Will need to shape table.
+        /// Regular/Natural/`AsOf` join? Will need to shape table.
         joinreftype: JoinRefType,
         /// Left subtree.
         larg: Option<Node>,
@@ -699,17 +699,17 @@ nodes! {
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGWithClause': representation of WITH clause Note: PGWithClause does not propagate into the
-    /// PGQuery representation; but PGCommonTableExpr does.
+    /// `PGWithClause`: representation of WITH clause Note: `PGWithClause` does not propagate into
+    /// the `PGQuery` representation; but `PGCommonTableExpr` does.
     WithClause {
-        /// List of CommonTableExprs.
+        /// List of `CommonTableExprs`.
         ctes: List,
         /// True = WITH RECURSIVE.
         recursive: bool,
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGCommonTableExpr': The 'PGCommonTableExpr' node.
+    /// `PGCommonTableExpr`: one common table expression of a `WITH` clause.
     CommonTableExpr {
         /// Query name (never qualified)
         ctename: Option<String>,
@@ -723,20 +723,20 @@ nodes! {
         location: i32,
         /// Is this CTE actually recursive?
         cterecursive: bool,
-        /// 'recursive_keys'.
+        /// `recursive_keys`.
         recursive_keys: List,
         /// List of output column names.
         ctecolnames: List,
-        /// OID list of output column type OIDs.
+        /// OID list of output column type `OIDs`.
         ctecoltypes: List,
         /// Integer list of output column typmods.
         ctecoltypmods: List,
-        /// OID list of column collation OIDs.
+        /// OID list of column collation `OIDs`.
         ctecolcollations: List,
     }
-    /// 'PGIntoClause': target information for SELECT INTO, CREATE TABLE AS, and CREATE MATERIALIZED
-    /// VIEW For CREATE MATERIALIZED VIEW, viewQuery is the parsed-but-not-rewritten SELECT PGQuery
-    /// for the view; otherwise it's NULL.
+    /// `PGIntoClause`: target information for SELECT INTO, CREATE TABLE AS, and CREATE MATERIALIZED
+    /// VIEW For CREATE MATERIALIZED VIEW, `viewQuery` is the parsed-but-not-rewritten SELECT
+    /// `PGQuery` for the view; otherwise it's NULL.
     IntoClause {
         /// Target relation name.
         rel: Option<Box<RangeVar>>,
@@ -744,42 +744,42 @@ nodes! {
         col_names: List,
         /// Options from WITH clause.
         options: List,
-        /// E.g. expression list for partitioned by.
+        /// `e.g`. expression list for partitioned by.
         partition_list: List,
-        /// E.g. expression list for sort by.
+        /// `e.g`. expression list for sort by.
         sort_list: List,
         /// What do we do at COMMIT?
         on_commit: OnCommitAction,
         /// True for WITH NO DATA.
         skip_data: bool,
     }
-    /// 'PGOnConflictClause': representation of ON CONFLICT clause Note: PGOnConflictClause does not
-    /// propagate into the PGQuery representation.
+    /// `PGOnConflictClause`: representation of ON CONFLICT clause Note: `PGOnConflictClause` does
+    /// not propagate into the `PGQuery` representation.
     OnConflictClause {
         /// DO NOTHING or UPDATE?
         action: OnConflictAction,
         /// Optional index inference clause.
         infer: Option<Box<InferClause>>,
-        /// The target list (of PGResTarget)
+        /// The target list (of `PGResTarget`)
         target_list: List,
         /// Qualifications.
         where_clause: Option<Node>,
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGInferClause': ON CONFLICT unique index inference clause Note: PGInferClause does not
-    /// propagate into the PGQuery representation.
+    /// `PGInferClause`: ON CONFLICT unique index inference clause Note: `PGInferClause` does not
+    /// propagate into the `PGQuery` representation.
     InferClause {
-        /// IndexElems to infer unique index.
+        /// `IndexElems` to infer unique index.
         index_elems: List,
         /// Qualification (partial-index predicate)
         where_clause: Option<Node>,
-        /// PGConstraint name, or NULL if unnamed.
+        /// `PGConstraint` name, or NULL if unnamed.
         conname: Option<String>,
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGIndexElem': index parameters (used in CREATE INDEX, and in ON CONFLICT) For a plain index
+    /// `PGIndexElem`: index parameters (used in CREATE INDEX, and in ON CONFLICT) For a plain index
     /// attribute, 'name' is the name of the table column to index, and 'expr' is NULL.
     IndexElem {
         /// Name of attribute to index, or NULL.
@@ -795,17 +795,17 @@ nodes! {
         /// FIRST/LAST/default.
         nulls_ordering: SortByNulls,
     }
-    /// 'PGLockingClause': raw representation of FOR [NO KEY] UPDATE/[KEY] SHARE options Note:
-    /// lockedRels == NIL means "all relations in query".
+    /// `PGLockingClause`: raw representation of FOR [NO KEY] UPDATE/[KEY] SHARE options Note:
+    /// `lockedRels` == NIL means "all relations in query".
     LockingClause {
         /// FOR [KEY] UPDATE/SHARE relations.
         locked_rels: List,
-        /// 'strength'.
+        /// `strength`.
         strength: LockClauseStrength,
         /// NOWAIT and SKIP LOCKED.
         wait_policy: LockWaitPolicy,
     }
-    /// 'PGSortBy': for ORDER BY clause.
+    /// `PGSortBy`: for ORDER BY clause.
     SortBy {
         /// Expression to sort on.
         node: Option<Node>,
@@ -813,12 +813,12 @@ nodes! {
         sortby_dir: SortByDir,
         /// NULLS FIRST/LAST.
         sortby_nulls: SortByNulls,
-        /// Name of op to use, if SORTBY_USING.
+        /// Name of op to use, if `SORTBY_USING`.
         use_op: List,
         /// Operator location, or -1 if none/unknown.
         location: i32,
     }
-    /// 'PGWindowDef': raw representation of WINDOW and OVER clauses For entries in a WINDOW list,
+    /// `PGWindowDef`: raw representation of WINDOW and OVER clauses For entries in a WINDOW list,
     /// "name" is the window name being defined.
     WindowDef {
         /// Window's own name.
@@ -827,9 +827,9 @@ nodes! {
         refname: Option<String>,
         /// PARTITION BY expression list.
         partition_clause: List,
-        /// ORDER BY (list of PGSortBy)
+        /// ORDER BY (list of `PGSortBy`)
         order_clause: List,
-        /// Frame_clause options, see below.
+        /// `frame_clause` options, see below.
         frame_options: i32,
         /// Expression for starting bound, if any.
         start_offset: Option<Node>,
@@ -838,23 +838,23 @@ nodes! {
         /// Parse location, or -1 if none/unknown.
         location: i32,
     }
-    /// 'PGGroupingSet': The 'PGGroupingSet' node.
+    /// `PGGroupingSet`: a grouping set of `GROUP BY` (`ROLLUP`, `CUBE`, `GROUPING SETS`, `ALL`)
     GroupingSet {
-        /// 'kind'.
+        /// `kind`.
         kind: GroupingSetKind,
-        /// 'content'.
+        /// `content`.
         content: List,
-        /// 'location'.
+        /// `location`.
         location: i32,
     }
-    /// 'PGSampleSize': Sample Options.
+    /// `PGSampleSize`: Sample Options.
     SampleSize {
         /// Whether or not the sample size is expressed in row numbers or a percentage.
         is_percentage: bool,
         /// Sample size.
         sample_size: Option<Node>,
     }
-    /// 'PGSampleOptions': The 'PGSampleOptions' node.
+    /// `PGSampleOptions`: the options of `TABLESAMPLE` / `USING SAMPLE`.
     SampleOptions {
         /// The size of the sample to take.
         sample_size: Option<Node>,
@@ -867,19 +867,19 @@ nodes! {
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGLimitPercent': Limit Percentage.
+    /// `PGLimitPercent`: Limit Percentage.
     LimitPercent {
         /// Limit percent.
         limit_percent: Option<Node>,
     }
-    /// 'PGAtClause': AT clause in FROM tables - e.g.
+    /// `PGAtClause`: AT clause in FROM tables - `e.g`.
     AtClause {
-        /// The unit (e.g. TIMESTAMP/VERSION)
+        /// The unit (`e.g`. TIMESTAMP/VERSION)
         unit: Option<String>,
         /// The expression.
         expr: Option<Node>,
     }
-    /// 'PGPivot': Pivot Expression.
+    /// `PGPivot`: Pivot Expression.
     Pivot {
         /// The column names to pivot on.
         pivot_columns: List,
@@ -892,7 +892,7 @@ nodes! {
         /// The enum to fetch the unique values from.
         pivot_enum: Option<String>,
     }
-    /// 'PGPivotExpr': The 'PGPivotExpr' node.
+    /// `PGPivotExpr`: a `PIVOT`/`UNPIVOT` table reference.
     PivotExpr {
         /// The source subtree.
         source: Option<Node>,
@@ -911,8 +911,8 @@ nodes! {
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGResTarget': result target (used in target list of pre-transformed parse trees) In a
-    /// SELECT target list, 'name' is the column label from an 'AS ColumnLabel' clause, or NULL if
+    /// `PGResTarget`: result target (used in target list of pre-transformed parse trees) In a
+    /// SELECT target list, 'name' is the column label from an 'AS `ColumnLabel`' clause, or NULL if
     /// there was none, and 'val' is the value expression itself.
     ResTarget {
         /// Column name or NULL.
@@ -924,9 +924,9 @@ nodes! {
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGMultiAssignRef': element of a row source expression for UPDATE In an UPDATE target list,
-    /// when we have SET (a,b,c) = row-valued-expression, we generate separate PGResTarget items for
-    /// each of a,b,c.
+    /// `PGMultiAssignRef`: element of a row source expression for UPDATE In an UPDATE target list,
+    /// when we have SET (a,b,c) = row-valued-expression, we generate separate `PGResTarget` items
+    /// for each of a,b,c.
     MultiAssignRef {
         /// The row-valued expression.
         source: Option<Node>,
@@ -935,23 +935,23 @@ nodes! {
         /// Number of targets in the construct.
         ncolumns: i32,
     }
-    /// 'PGDefElem': The 'PGDefElem' node.
+    /// `PGDefElem`: a generic `name = value` option.
     DefElem {
         /// NULL if unqualified name.
         defnamespace: Option<String>,
-        /// 'defname'.
+        /// `defname`.
         defname: Option<String>,
-        /// A (PGValue *) or a (PGTypeName *)
+        /// A (`PGValue` *) or a (`PGTypeName` *)
         arg: Option<Node>,
         /// Unspecified action, or SET/ADD/DROP.
         defaction: DefElemAction,
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGColumnDef': column definition (used in various creates) If the column has a default
+    /// `PGColumnDef`: column definition (used in various creates) If the column has a default
     /// value, we may have the value expression in either "raw" form (an untransformed parse tree)
     /// or "cooked" form (a post-parse-analysis, executable expression tree), depending on how this
-    /// PGColumnDef node was created (by parsing, or by inheritance from an existing relation)
+    /// `PGColumnDef` node was created (by parsing, or by inheritance from an existing relation)
     ColumnDef {
         /// Name of column.
         colname: Option<String>,
@@ -968,11 +968,11 @@ nodes! {
         /// Category of the column.
         category: ColumnCategory,
     }
-    /// 'PGConstraint': The 'PGConstraint' node.
+    /// `PGConstraint`: a column or table constraint.
     Constraint {
         /// See above.
         contype: ConstrType,
-        /// PGConstraint name, or NULL if unnamed.
+        /// `PGConstraint` name, or NULL if unnamed.
         conname: Option<String>,
         /// DEFERRABLE?
         deferrable: bool,
@@ -984,7 +984,7 @@ nodes! {
         is_no_inherit: bool,
         /// Expr, as untransformed parse tree.
         raw_expr: Option<Node>,
-        /// 'generated_when'.
+        /// `generated_when`.
         generated_when: u8,
         /// String nodes naming referenced column(s)
         keys: List,
@@ -1013,7 +1013,7 @@ nodes! {
         /// Existing index to use; otherwise NULL.
         compression_name: Option<String>,
     }
-    /// 'PGCollateClause': a COLLATE expression.
+    /// `PGCollateClause`: a COLLATE expression.
     CollateClause {
         /// Input expression.
         arg: Option<Node>,
@@ -1022,17 +1022,17 @@ nodes! {
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGTableLikeClause': CREATE TABLE ( ..
+    /// `PGTableLikeClause`: CREATE TABLE ( ..
     TableLikeClause {
-        /// 'relation'.
+        /// `relation`.
         relation: Option<Box<RangeVar>>,
-        /// OR of PGTableLikeOption flags.
+        /// OR of `PGTableLikeOption` flags.
         options: u32,
     }
-    /// 'PGTypeName': specifies a type in definitions For PGTypeName structures generated
+    /// `PGTypeName`: specifies a type in definitions For `PGTypeName` structures generated
     /// internally, it is often easier to specify the type by OID than by name.
     TypeName {
-        /// Qualified name (list of PGValue strings)
+        /// Qualified name (list of `PGValue` strings)
         names: List,
         /// Is a set?
         setof: bool,
@@ -1045,7 +1045,7 @@ nodes! {
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGAExpr': The 'PGAExpr' node.
+    /// `PGAExpr`: an operator expression.
     AExpr {
         /// See above.
         kind: AExprKind,
@@ -1058,15 +1058,15 @@ nodes! {
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGColumnRef': specifies a reference to a column, or possibly a whole tuple The "fields"
+    /// `PGColumnRef`: specifies a reference to a column, or possibly a whole tuple The "fields"
     /// list must be nonempty.
     ColumnRef {
-        /// Field names (PGValue strings) or PGAStar.
+        /// Field names (`PGValue` strings) or `PGAStar`.
         fields: List,
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGParamRef': specifies a $n parameter reference.
+    /// `PGParamRef`: specifies a $n parameter reference.
     ParamRef {
         /// The number of the parameter.
         number: i32,
@@ -1075,52 +1075,52 @@ nodes! {
         /// Optional name of the parameter.
         name: Option<String>,
     }
-    /// 'PGAConst': a literal constant.
+    /// `PGAConst`: a literal constant.
     AConst {
-        /// Value (includes type info, see value.h)
+        /// Value (includes type info, see `value.h`)
         val: Value,
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGIntervalConstant': Interval Constant.
+    /// `PGIntervalConstant`: Interval Constant.
     IntervalConstant {
-        /// Interval constant type, either duckdb_libpgquery::T_PGString,
-        /// duckdb_libpgquery::T_PGInteger or duckdb_libpgquery::T_PGAExpr.
+        /// Interval constant type, either `duckdb_libpgquery`::`T_PGString`,
+        /// `duckdb_libpgquery`::`T_PGInteger` or `duckdb_libpgquery`::`T_PGAExpr`.
         val_type: i32,
-        /// Duckdb_libpgquery::T_PGString.
+        /// `duckdb_libpgquery`::`T_PGString`.
         sval: Option<String>,
-        /// Duckdb_libpgquery::T_PGString.
+        /// `duckdb_libpgquery`::`T_PGString`.
         ival: i32,
-        /// Duckdb_libpgquery::T_PGAExpr.
+        /// `duckdb_libpgquery`::`T_PGAExpr`.
         eval: Option<Node>,
         /// How to interpret the interval constant (year, month, day, etc)
         typmods: List,
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGTypeCast': a CAST expression.
+    /// `PGTypeCast`: a CAST expression.
     TypeCast {
         /// The expression being casted.
         arg: Option<Node>,
         /// The target type.
         type_name: Option<Box<TypeName>>,
-        /// TRY_CAST or CAST.
+        /// `TRY_CAST` or CAST.
         try_cast: i32,
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGFuncCall': a function or aggregate invocation agg_order (if not NIL) indicates we saw
+    /// `PGFuncCall`: a function or aggregate invocation `agg_order` (if not NIL) indicates we saw
     /// 'foo(..
     FuncCall {
         /// Qualified name of function.
         funcname: List,
         /// The arguments (list of exprs)
         args: List,
-        /// ORDER BY (list of PGSortBy)
+        /// ORDER BY (list of `PGSortBy`)
         agg_order: List,
         /// FILTER clause, if any.
         agg_filter: Option<Node>,
-        /// EXPORT_STATE clause, if any.
+        /// `EXPORT_STATE` clause, if any.
         export_state: bool,
         /// ORDER BY appeared in WITHIN GROUP.
         agg_within_group: bool,
@@ -1137,8 +1137,8 @@ nodes! {
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGAStar': '*' representing all columns of a table or compound field This can appear within
-    /// ColumnRef.fields, AIndirection.indirection, and ResTarget.indirection lists.
+    /// `PGAStar`: '*' representing all columns of a table or compound field This can appear within
+    /// `ColumnRef.fields`, `AIndirection.indirection`, and `ResTarget.indirection` lists.
     AStar {
         /// Relation name (optional)
         relation: Option<String>,
@@ -1152,13 +1152,13 @@ nodes! {
         rename_list: List,
         /// Whether or not this is a columns list.
         columns: bool,
-        /// 'location'.
+        /// `location`.
         location: i32,
     }
-    /// 'PGAIndices': array subscript or slice bounds ([idx] or [lidx:uidx]) In slice case, either
+    /// `PGAIndices`: array subscript or slice bounds ([idx] or [lidx:uidx]) In slice case, either
     /// or both of lidx and uidx can be NULL (omitted)
     AIndices {
-        /// True if slice (i.e., colon present)
+        /// True if slice (`i.e`., colon present)
         is_slice: bool,
         /// Slice lower bound, if any.
         lidx: Option<Node>,
@@ -1167,26 +1167,26 @@ nodes! {
         /// Slice step, if any.
         step: Option<Node>,
     }
-    /// 'PGAIndirection': select a field and/or array element from an expression The indirection
-    /// list can contain PGAIndices nodes (representing subscripting), string PGValue nodes
+    /// `PGAIndirection`: select a field and/or array element from an expression The indirection
+    /// list can contain `PGAIndices` nodes (representing subscripting), string `PGValue` nodes
     /// (representing field selection --- the string value is the name of the field to select), and
-    /// PGAStar nodes (representing selection of all fields of a composite type)
+    /// `PGAStar` nodes (representing selection of all fields of a composite type)
     AIndirection {
         /// The thing being selected from.
         arg: Option<Node>,
         /// Subscripts and/or field names and/or *.
         indirection: List,
     }
-    /// 'PGBoolExpr': The 'PGBoolExpr' node.
+    /// `PGBoolExpr`: an `AND`, `OR` or `NOT` expression.
     BoolExpr {
-        /// 'boolop'.
+        /// `boolop`.
         boolop: BoolExprType,
         /// Arguments to this expression.
         args: List,
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGSubLink': The 'PGSubLink' node.
+    /// `PGSubLink`: a subquery used in an expression (`EXISTS`, `IN`, `ANY`, scalar, `ARRAY`)
     SubLink {
         /// See above.
         sub_link_type: SubLinkType,
@@ -1194,12 +1194,12 @@ nodes! {
         testexpr: Option<Node>,
         /// Originally specified operator name.
         oper_name: List,
-        /// Subselect as PGQuery* or raw parsetree.
+        /// Subselect as `PGQuery`* or raw parsetree.
         subselect: Option<Node>,
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGCaseExpr': a CASE expression We support two distinct forms of CASE expression: CASE WHEN
+    /// `PGCaseExpr`: a CASE expression We support two distinct forms of CASE expression: CASE WHEN
     /// boolexpr THEN expr [ WHEN boolexpr THEN expr ..
     CaseExpr {
         /// Implicit equality comparison argument.
@@ -1211,7 +1211,7 @@ nodes! {
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGCaseWhen': one arm of a CASE expression.
+    /// `PGCaseWhen`: one arm of a CASE expression.
     CaseWhen {
         /// Condition expression.
         expr: Option<Node>,
@@ -1220,14 +1220,14 @@ nodes! {
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGCoalesceExpr': a COALESCE expression.
+    /// `PGCoalesceExpr`: a COALESCE expression.
     CoalesceExpr {
         /// The arguments.
         args: List,
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGNullTest': The 'PGNullTest' node.
+    /// `PGNullTest`: `IS [NOT] NULL`.
     NullTest {
         /// Input expression.
         arg: Option<Node>,
@@ -1238,7 +1238,7 @@ nodes! {
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGBooleanTest': The 'PGBooleanTest' node.
+    /// `PGBooleanTest`: `IS [NOT] TRUE|FALSE|UNKNOWN`.
     BooleanTest {
         /// Input expression.
         arg: Option<Node>,
@@ -1247,15 +1247,15 @@ nodes! {
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGSetToDefault': Placeholder node for a DEFAULT marker in an INSERT or UPDATE command.
+    /// `PGSetToDefault`: Placeholder node for a DEFAULT marker in an INSERT or UPDATE command.
     SetToDefault {
         /// Collation for the substituted value.
         collation: u32,
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGNamedArgExpr': a named argument of a function This node type can only appear in the args
-    /// list of a PGFuncCall or PGFuncExpr node.
+    /// `PGNamedArgExpr`: a named argument of a function This node type can only appear in the args
+    /// list of a `PGFuncCall` or `PGFuncExpr` node.
     NamedArgExpr {
         /// The argument expression.
         arg: Option<Node>,
@@ -1266,8 +1266,8 @@ nodes! {
         /// Argument name location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGGroupingFunc': A PGGroupingFunc is a GROUPING(...) expression, which behaves in many ways
-    /// like an aggregate function (e.g.
+    /// `PGGroupingFunc`: A `PGGroupingFunc` is a GROUPING(...) expression, which behaves in many
+    /// ways like an aggregate function (`e.g`.
     GroupingFunc {
         /// Arguments, not evaluated but kept for benefit of EXPLAIN etc.
         args: List,
@@ -1276,7 +1276,7 @@ nodes! {
         /// Token location.
         location: i32,
     }
-    /// 'PGLambdaFunction': Lambda Function.
+    /// `PGLambdaFunction`: Lambda Function.
     LambdaFunction {
         /// Parameter list.
         lhs: List,
@@ -1285,18 +1285,18 @@ nodes! {
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGSingleArrowFunction': Single Arrow Function.
+    /// `PGSingleArrowFunction`: Single Arrow Function.
     SingleArrowFunction {
-        /// 'lhs'.
+        /// `lhs`.
         lhs: Option<Node>,
-        /// 'rhs'.
+        /// `rhs`.
         rhs: Option<Node>,
         /// Token location, or -1 if unknown.
         location: i32,
     }
-    /// 'PGPositionalReference': Positional Reference.
+    /// `PGPositionalReference`: Positional Reference.
     PositionalReference {
-        /// 'position'.
+        /// `position`.
         position: i32,
         /// Token location, or -1 if unknown.
         location: i32,

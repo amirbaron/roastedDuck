@@ -19,7 +19,7 @@ pub(super) fn attach_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 onconflict: OnCreateConflict::Error,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ATTACH IF_P NOT EXISTS opt_database Sconst opt_database_alias opt_attach_options
         1 => {
@@ -30,7 +30,7 @@ pub(super) fn attach_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 onconflict: OnCreateConflict::Ignore,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ATTACH OR REPLACE opt_database Sconst opt_database_alias opt_attach_options
         2 => {
@@ -41,7 +41,7 @@ pub(super) fn attach_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 onconflict: OnCreateConflict::Replace,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -60,43 +60,25 @@ pub(super) fn detach_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
             let n = DetachStmt {
                 missing_ok: false,
                 db_name: rhs.str(2)?,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // DETACH DATABASE ColLabel
         1 => {
             let n = DetachStmt {
                 missing_ok: false,
                 db_name: rhs.str(3)?,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // DETACH DATABASE IF_P EXISTS ColLabel
         2 => {
             let n = DetachStmt {
                 missing_ok: true,
                 db_name: rhs.str(5)?,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// opt_database:
-///       DATABASE
-///     | /* empty */
-/// ```
-pub(super) fn opt_database<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // DATABASE
-        0 => Ok(SemValue::None),
-        // /* empty */
-        1 => Ok(SemValue::None),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -108,8 +90,6 @@ pub(super) fn opt_database<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
 /// ```
 pub(super) fn opt_database_alias<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // AS ColId
-        0 => Ok(SemValue::Str(rhs.str(2)?)),
         // /* empty */
         1 => Ok(SemValue::Str(None)),
         _ => Err(rhs.bad_alternative()),
@@ -123,8 +103,6 @@ pub(super) fn opt_database_alias<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
 /// ```
 pub(super) fn generic_opt_arg<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // a_expr
-        0 => Ok(SemValue::Node(rhs.node(1)?)),
         // /* empty */
         1 => Ok(SemValue::Node(None)),
         _ => Err(rhs.bad_alternative()),
@@ -155,14 +133,9 @@ pub(super) fn generic_opt_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
 pub(super) fn generic_opt_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // generic_opt_elem
-        0 => Ok(SemValue::List(vec![Node::from(required(
-            rhs.ptr::<DefElem>(1)?,
-        )?)])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // generic_opt_list ',' generic_opt_elem
-        1 => Ok(SemValue::List(append(
-            rhs.list(1)?,
-            Node::from(required(rhs.ptr::<DefElem>(3)?)?),
-        ))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -174,8 +147,6 @@ pub(super) fn generic_opt_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
 /// ```
 pub(super) fn opt_attach_options<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // '(' generic_opt_list ')'
-        0 => Ok(SemValue::List(rhs.list(2)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),

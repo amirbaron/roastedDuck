@@ -17,7 +17,7 @@ pub(super) fn comment_on_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 value: rhs.node(6)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // COMMENT ON COLUMN a_expr IS comment_value
         1 => {
@@ -27,7 +27,7 @@ pub(super) fn comment_on_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 value: rhs.node(6)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -71,9 +71,8 @@ pub(super) fn comment_on_type_any_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usi
         // SEQUENCE
         1 => Ok(SemValue::ObjectType(ObjectType::Sequence)),
         // FUNCTION
-        2 => Ok(SemValue::ObjectType(ObjectType::Function)),
         // MACRO
-        3 => Ok(SemValue::ObjectType(ObjectType::Function)),
+        2 | 3 => Ok(SemValue::ObjectType(ObjectType::Function)),
         // MACRO TABLE
         4 => Ok(SemValue::ObjectType(ObjectType::TableMacro)),
         // VIEW

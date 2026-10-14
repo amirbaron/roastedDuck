@@ -3,24 +3,6 @@
 use super::prelude::*;
 
 /// ```text
-/// select_with_parens:
-///       '(' select_no_parens ')'
-///     | '(' select_with_parens ')'
-///     | '(' VariableShowStmt ')'
-/// ```
-pub(super) fn select_with_parens<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // '(' select_no_parens ')'
-        0 => Ok(SemValue::Node(rhs.node(2)?)),
-        // '(' select_with_parens ')'
-        1 => Ok(SemValue::Node(rhs.node(2)?)),
-        // '(' VariableShowStmt ')'
-        2 => Ok(SemValue::Node(rhs.node(2)?)),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
 /// select_no_parens:
 ///       simple_select
 ///     | select_clause sort_clause
@@ -33,8 +15,6 @@ pub(super) fn select_with_parens<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
 /// ```
 pub(super) fn select_no_parens<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // simple_select
-        0 => Ok(SemValue::Node(rhs.node(1)?)),
         // select_clause sort_clause
         1 => {
             let mut select = rhs.required_node(1)?;
@@ -120,29 +100,12 @@ pub(super) fn select_no_parens<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
 }
 
 /// ```text
-/// select_clause:
-///       simple_select
-///     | select_with_parens
-/// ```
-pub(super) fn select_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // simple_select
-        0 => Ok(SemValue::Node(rhs.node(1)?)),
-        // select_with_parens
-        1 => Ok(SemValue::Node(rhs.node(1)?)),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
 /// opt_select:
 ///       SELECT opt_all_clause opt_target_list_opt_comma
 ///     | /* empty */
 /// ```
 pub(super) fn opt_select<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // SELECT opt_all_clause opt_target_list_opt_comma
-        0 => Ok(SemValue::List(rhs.list(3)?)),
         // /* empty */
         1 => {
             let star = AStar { ..Default::default() };
@@ -190,7 +153,7 @@ pub(super) fn simple_select<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
                 sample_options: rhs.node(11)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // SELECT distinct_clause target_list_opt_comma into_clause from_clause where_clause group_clause having_clause window_clause qualify_clause sample_clause
         1 => Ok(SemValue::node(SelectStmt {
@@ -221,7 +184,7 @@ pub(super) fn simple_select<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
                 from_first: true,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // FROM from_list SELECT distinct_clause target_list_opt_comma into_clause where_clause group_clause having_clause window_clause qualify_clause sample_clause
         3 => Ok(SemValue::node(SelectStmt {
@@ -238,8 +201,6 @@ pub(super) fn simple_select<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
             from_first: true,
             ..Default::default()
         })),
-        // values_clause_opt_comma
-        4 => Ok(SemValue::Node(rhs.node(1)?)),
         // TABLE relation_expr
         5 => {
             let mut cr = ColumnRef { ..Default::default() };
@@ -252,8 +213,8 @@ pub(super) fn simple_select<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
             rt.val = Some(cr.into());
             rt.location = -1;
             n.target_list = vec![rt.into()];
-            n.from_clause = vec![Node::from(required(rhs.ptr::<RangeVar>(2)?)?)];
-            Ok(SemValue::node(Node::from(n)))
+            n.from_clause = vec![rhs.required_node(2)?];
+            Ok(SemValue::node(n))
         }
         // select_clause UNION all_or_distinct by_name select_clause
         6 => Ok(SemValue::node(make_set_op(
@@ -293,7 +254,7 @@ pub(super) fn simple_select<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
                 ..Default::default()
             };
             res.pivot = Some(Box::new(n));
-            Ok(SemValue::node(Node::from(res)))
+            Ok(SemValue::node(res))
         }
         // pivot_keyword table_ref USING target_list_opt_comma GROUP_P BY name_list_opt_comma_opt_bracket
         11 => {
@@ -306,7 +267,7 @@ pub(super) fn simple_select<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
                 ..Default::default()
             };
             res.pivot = Some(Box::new(n));
-            Ok(SemValue::node(Node::from(res)))
+            Ok(SemValue::node(res))
         }
         // pivot_keyword table_ref GROUP_P BY name_list_opt_comma_opt_bracket
         12 => {
@@ -318,7 +279,7 @@ pub(super) fn simple_select<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
                 ..Default::default()
             };
             res.pivot = Some(Box::new(n));
-            Ok(SemValue::node(Node::from(res)))
+            Ok(SemValue::node(res))
         }
         // pivot_keyword table_ref ON pivot_column_list
         13 => {
@@ -329,7 +290,7 @@ pub(super) fn simple_select<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
                 ..Default::default()
             };
             res.pivot = Some(Box::new(n));
-            Ok(SemValue::node(Node::from(res)))
+            Ok(SemValue::node(res))
         }
         // pivot_keyword table_ref ON pivot_column_list GROUP_P BY name_list_opt_comma_opt_bracket
         14 => {
@@ -342,7 +303,7 @@ pub(super) fn simple_select<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
                 ..Default::default()
             };
             res.pivot = Some(Box::new(n));
-            Ok(SemValue::node(Node::from(res)))
+            Ok(SemValue::node(res))
         }
         // pivot_keyword table_ref ON pivot_column_list USING target_list_opt_comma
         15 => {
@@ -355,7 +316,7 @@ pub(super) fn simple_select<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
                 ..Default::default()
             };
             res.pivot = Some(Box::new(n));
-            Ok(SemValue::node(Node::from(res)))
+            Ok(SemValue::node(res))
         }
         // pivot_keyword table_ref ON pivot_column_list USING target_list_opt_comma GROUP_P BY name_list_opt_comma_opt_bracket
         16 => {
@@ -369,7 +330,7 @@ pub(super) fn simple_select<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
                 ..Default::default()
             };
             res.pivot = Some(Box::new(n));
-            Ok(SemValue::node(Node::from(res)))
+            Ok(SemValue::node(res))
         }
         // unpivot_keyword table_ref ON target_list_opt_comma INTO NAME_P name value_or_values name_list_opt_comma_opt_bracket
         17 => {
@@ -381,31 +342,31 @@ pub(super) fn simple_select<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
                 ..Default::default()
             };
             let piv = Pivot {
-                unpivot_columns: vec![Node::Value(Value::String(required(rhs.str(7)?)?.into()))],
+                unpivot_columns: vec![Node::Value(Value::String(required(rhs.str(7)?)?))],
                 pivot_value: rhs.list(4)?,
                 ..Default::default()
             };
             n.columns = vec![piv.into()];
             res.pivot = Some(Box::new(n));
-            Ok(SemValue::node(Node::from(res)))
+            Ok(SemValue::node(res))
         }
         // unpivot_keyword table_ref ON target_list_opt_comma
         18 => {
             let mut res = SelectStmt { ..Default::default() };
             let mut n = PivotStmt {
                 source: rhs.node(2)?,
-                unpivots: vec![Node::Value(Value::String("value".into()))],
+                unpivots: vec![Node::Value(Value::String("value".to_owned()))],
                 location: rhs.loc(1),
                 ..Default::default()
             };
             let piv = Pivot {
-                unpivot_columns: vec![Node::Value(Value::String("name".into()))],
+                unpivot_columns: vec![Node::Value(Value::String("name".to_owned()))],
                 pivot_value: rhs.list(4)?,
                 ..Default::default()
             };
             n.columns = vec![piv.into()];
             res.pivot = Some(Box::new(n));
-            Ok(SemValue::node(Node::from(res)))
+            Ok(SemValue::node(res))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -422,22 +383,20 @@ pub(super) fn pivot_column_entry<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
         // b_expr
         0 => {
             let n = Pivot {
-                pivot_columns: vec![required(rhs.node(1)?)?],
+                pivot_columns: vec![rhs.required_node(1)?],
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // b_expr IN_P '(' select_no_parens ')'
         1 => {
             let n = Pivot {
-                pivot_columns: vec![required(rhs.node(1)?)?],
+                pivot_columns: vec![rhs.required_node(1)?],
                 subquery: rhs.node(4)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
-        // single_pivot_value
-        2 => Ok(SemValue::Node(rhs.node(1)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -453,24 +412,9 @@ pub(super) fn pivot_column_list_internal<'a>(
 ) -> Result<SemValue<'a>> {
     match alt {
         // pivot_column_entry
-        0 => Ok(SemValue::List(vec![required(rhs.node(1)?)?])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // pivot_column_list_internal ',' pivot_column_entry
-        1 => Ok(SemValue::List(append(rhs.list(1)?, required(rhs.node(3)?)?))),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// pivot_column_list:
-///       pivot_column_list_internal
-///     | pivot_column_list_internal ','
-/// ```
-pub(super) fn pivot_column_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // pivot_column_list_internal
-        0 => Ok(SemValue::List(rhs.list(1)?)),
-        // pivot_column_list_internal ','
-        1 => Ok(SemValue::List(rhs.list(1)?)),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -484,27 +428,22 @@ pub(super) fn pivot_column_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> 
 pub(super) fn with_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // WITH cte_list
-        0 => {
-            let mut with_clause = WithClause::default();
-            with_clause.ctes = rhs.list(2)?;
-            with_clause.recursive = false;
-            with_clause.location = rhs.loc(1);
-            Ok(SemValue::node(with_clause))
-        }
         // WITH_LA cte_list
-        1 => {
-            let mut with_clause = WithClause::default();
-            with_clause.ctes = rhs.list(2)?;
-            with_clause.recursive = false;
-            with_clause.location = rhs.loc(1);
+        0 | 1 => {
+            let with_clause = WithClause {
+                ctes: rhs.list(2)?,
+                recursive: false,
+                location: rhs.loc(1),
+            };
             Ok(SemValue::node(with_clause))
         }
         // WITH RECURSIVE cte_list
         2 => {
-            let mut with_clause = WithClause::default();
-            with_clause.ctes = rhs.list(3)?;
-            with_clause.recursive = true;
-            with_clause.location = rhs.loc(1);
+            let with_clause = WithClause {
+                ctes: rhs.list(3)?,
+                recursive: true,
+                location: rhs.loc(1),
+            };
             Ok(SemValue::node(with_clause))
         }
         _ => Err(rhs.bad_alternative()),
@@ -519,9 +458,9 @@ pub(super) fn with_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
 pub(super) fn cte_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // common_table_expr
-        0 => Ok(SemValue::List(vec![required(rhs.node(1)?)?])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // cte_list ',' common_table_expr
-        1 => Ok(SemValue::List(append(rhs.list(1)?, required(rhs.node(3)?)?))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -543,7 +482,7 @@ pub(super) fn common_table_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> 
                 location: rhs.loc(1),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -556,25 +495,8 @@ pub(super) fn common_table_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> 
 /// ```
 pub(super) fn opt_on_key<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // USING KEY '(' column_ref_list_opt_comma ')'
-        0 => Ok(SemValue::List(rhs.list(4)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// column_ref_list_opt_comma:
-///       column_ref_list
-///     | column_ref_list ','
-/// ```
-pub(super) fn column_ref_list_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // column_ref_list
-        0 => Ok(SemValue::List(rhs.list(1)?)),
-        // column_ref_list ','
-        1 => Ok(SemValue::List(rhs.list(1)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -587,9 +509,9 @@ pub(super) fn column_ref_list_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: us
 pub(super) fn column_ref_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // columnref
-        0 => Ok(SemValue::List(vec![required(rhs.node(1)?)?])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // column_ref_list ',' columnref
-        1 => Ok(SemValue::List(append(rhs.list(1)?, required(rhs.node(3)?)?))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -621,12 +543,14 @@ pub(super) fn into_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
     match alt {
         // INTO OptTempTableName
         0 => {
-            let mut into_clause = IntoClause::default();
-            into_clause.rel = rhs.ptr::<RangeVar>(2)?;
-            into_clause.col_names = List::new();
-            into_clause.options = List::new();
-            into_clause.on_commit = OnCommitAction::Noop;
-            into_clause.skip_data = false;
+            let into_clause = IntoClause {
+                rel: rhs.ptr::<RangeVar>(2)?,
+                col_names: List::new(),
+                options: List::new(),
+                on_commit: OnCommitAction::Noop,
+                skip_data: false,
+                ..Default::default()
+            };
             Ok(SemValue::node(into_clause))
         }
         // /* empty */
@@ -650,37 +574,22 @@ pub(super) fn into_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
 pub(super) fn opt_temp_table_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // TEMPORARY opt_table qualified_name
-        0 => {
-            let mut opt_temp_table_name = rhs.ptr::<RangeVar>(3)?;
-            required_mut(&mut opt_temp_table_name)?.relpersistence = RelPersistence::Temp;
-            Ok(SemValue::Node(opt_temp_table_name.map(Node::from)))
-        }
         // TEMP opt_table qualified_name
-        1 => {
+        0 | 1 => {
             let mut opt_temp_table_name = rhs.ptr::<RangeVar>(3)?;
             required_mut(&mut opt_temp_table_name)?.relpersistence = RelPersistence::Temp;
             Ok(SemValue::Node(opt_temp_table_name.map(Node::from)))
         }
         // LOCAL TEMPORARY opt_table qualified_name
-        2 => {
-            let mut opt_temp_table_name = rhs.ptr::<RangeVar>(4)?;
-            required_mut(&mut opt_temp_table_name)?.relpersistence = RelPersistence::Temp;
-            Ok(SemValue::Node(opt_temp_table_name.map(Node::from)))
-        }
         // LOCAL TEMP opt_table qualified_name
-        3 => {
+        2 | 3 => {
             let mut opt_temp_table_name = rhs.ptr::<RangeVar>(4)?;
             required_mut(&mut opt_temp_table_name)?.relpersistence = RelPersistence::Temp;
             Ok(SemValue::Node(opt_temp_table_name.map(Node::from)))
         }
         // GLOBAL TEMPORARY opt_table qualified_name
-        4 => {
-            return Err(rhs.error_at("GLOBAL is deprecated in temporary table creation", rhs.loc(1)));
-        }
         // GLOBAL TEMP opt_table qualified_name
-        5 => {
-            return Err(rhs.error_at("GLOBAL is deprecated in temporary table creation", rhs.loc(1)));
-        }
+        4 | 5 => Err(rhs.error_at("GLOBAL is deprecated in temporary table creation", rhs.loc(1))),
         // UNLOGGED opt_table qualified_name
         6 => {
             let mut opt_temp_table_name = rhs.ptr::<RangeVar>(3)?;
@@ -704,21 +613,6 @@ pub(super) fn opt_temp_table_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
 }
 
 /// ```text
-/// opt_table:
-///       TABLE
-///     | /* empty */
-/// ```
-pub(super) fn opt_table<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // TABLE
-        0 => Ok(SemValue::None),
-        // /* empty */
-        1 => Ok(SemValue::None),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
 /// all_or_distinct:
 ///       ALL
 ///     | DISTINCT
@@ -729,21 +623,8 @@ pub(super) fn all_or_distinct<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
         // ALL
         0 => Ok(SemValue::Bool(true)),
         // DISTINCT
-        1 => Ok(SemValue::Bool(false)),
         // /* empty */
-        2 => Ok(SemValue::Bool(false)),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// by_name:
-///       BY NAME_P
-/// ```
-pub(super) fn by_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // BY NAME_P
-        0 => Ok(SemValue::None),
+        1 | 2 => Ok(SemValue::Bool(false)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -771,9 +652,8 @@ pub(super) fn distinct_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
 pub(super) fn opt_all_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // ALL
-        0 => Ok(SemValue::List(List::new())),
         // /* empty */
-        1 => Ok(SemValue::List(List::new())),
+        0 | 1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -803,8 +683,6 @@ pub(super) fn opt_ignore_nulls<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
 /// ```
 pub(super) fn opt_sort_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // sort_clause
-        0 => Ok(SemValue::List(rhs.list(1)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -818,8 +696,6 @@ pub(super) fn opt_sort_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
 /// ```
 pub(super) fn sort_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // ORDER BY sortby_list
-        0 => Ok(SemValue::List(rhs.list(3)?)),
         // ORDER BY ALL opt_asc_desc opt_nulls_order
         1 => {
             let mut sort = SortBy { ..Default::default() };
@@ -847,12 +723,9 @@ pub(super) fn sort_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
 pub(super) fn sortby_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // sortby
-        0 => Ok(SemValue::List(vec![Node::from(required(rhs.ptr::<SortBy>(1)?)?)])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // sortby_list ',' sortby
-        1 => Ok(SemValue::List(append(
-            rhs.list(1)?,
-            Node::from(required(rhs.ptr::<SortBy>(3)?)?),
-        ))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -866,22 +739,24 @@ pub(super) fn sortby<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
     match alt {
         // a_expr USING qual_all_Op opt_nulls_order
         0 => {
-            let mut sortby = SortBy::default();
-            sortby.node = rhs.node(1)?;
-            sortby.sortby_dir = SortByDir::Using;
-            sortby.sortby_nulls = rhs.sort_by_nulls(4)?;
-            sortby.use_op = rhs.list(3)?;
-            sortby.location = rhs.loc(3);
+            let sortby = SortBy {
+                node: rhs.node(1)?,
+                sortby_dir: SortByDir::Using,
+                sortby_nulls: rhs.sort_by_nulls(4)?,
+                use_op: rhs.list(3)?,
+                location: rhs.loc(3),
+            };
             Ok(SemValue::node(sortby))
         }
         // a_expr opt_asc_desc opt_nulls_order
         1 => {
-            let mut sortby = SortBy::default();
-            sortby.node = rhs.node(1)?;
-            sortby.sortby_dir = rhs.sort_by_dir(2)?;
-            sortby.sortby_nulls = rhs.sort_by_nulls(3)?;
-            sortby.use_op = List::new();
-            sortby.location = -1;
+            let sortby = SortBy {
+                node: rhs.node(1)?,
+                sortby_dir: rhs.sort_by_dir(2)?,
+                sortby_nulls: rhs.sort_by_nulls(3)?,
+                use_op: List::new(),
+                location: -1,
+            };
             Ok(SemValue::node(sortby))
         }
         _ => Err(rhs.bad_alternative()),
@@ -985,31 +860,10 @@ pub(super) fn opt_select_limit<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
 /// ```
 pub(super) fn limit_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // LIMIT select_limit_value
-        0 => Ok(SemValue::Node(rhs.node(2)?)),
         // LIMIT select_limit_value ',' select_offset_value
-        1 => {
-            return Err(rhs.unimplemented("errhint"));
-        }
-        // FETCH first_or_next select_fetch_first_value row_or_rows ONLY
-        2 => Ok(SemValue::Node(rhs.node(3)?)),
+        1 => Err(rhs.unimplemented("errhint")),
         // FETCH first_or_next row_or_rows ONLY
         3 => Ok(SemValue::node(make_int_const(1, -1))),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// offset_clause:
-///       OFFSET select_offset_value
-///     | OFFSET select_fetch_first_value row_or_rows
-/// ```
-pub(super) fn offset_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // OFFSET select_offset_value
-        0 => Ok(SemValue::Node(rhs.node(2)?)),
-        // OFFSET select_fetch_first_value row_or_rows
-        1 => Ok(SemValue::Node(rhs.node(2)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -1043,13 +897,11 @@ pub(super) fn sample_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
 pub(super) fn sample_count<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // sample_value '%'
-        0 => Ok(SemValue::node(make_sample_size(rhs.node(1)?, true))),
         // sample_value PERCENT
-        1 => Ok(SemValue::node(make_sample_size(rhs.node(1)?, true))),
+        0 | 1 => Ok(SemValue::node(make_sample_size(rhs.node(1)?, true))),
         // sample_value
-        2 => Ok(SemValue::node(make_sample_size(rhs.node(1)?, false))),
         // sample_value ROWS
-        3 => Ok(SemValue::node(make_sample_size(rhs.node(1)?, false))),
+        2 | 3 => Ok(SemValue::node(make_sample_size(rhs.node(1)?, false))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -1061,8 +913,6 @@ pub(super) fn sample_count<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
 /// ```
 pub(super) fn sample_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // USING SAMPLE tablesample_entry
-        0 => Ok(SemValue::Node(rhs.node(3)?)),
         // /* empty */
         1 => Ok(SemValue::Node(None)),
         _ => Err(rhs.bad_alternative()),
@@ -1076,8 +926,6 @@ pub(super) fn sample_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
 /// ```
 pub(super) fn opt_sample_func<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // ColId
-        0 => Ok(SemValue::Str(rhs.str(1)?)),
         // /* empty */
         1 => Ok(SemValue::Str(None)),
         _ => Err(rhs.bad_alternative()),
@@ -1126,26 +974,12 @@ pub(super) fn tablesample_entry<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> 
 }
 
 /// ```text
-/// tablesample_clause:
-///       TABLESAMPLE tablesample_entry
-/// ```
-pub(super) fn tablesample_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // TABLESAMPLE tablesample_entry
-        0 => Ok(SemValue::Node(rhs.node(2)?)),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
 /// opt_tablesample_clause:
 ///       tablesample_clause
 ///     | /* empty */
 /// ```
 pub(super) fn opt_tablesample_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // tablesample_clause
-        0 => Ok(SemValue::Node(rhs.node(1)?)),
         // /* empty */
         1 => Ok(SemValue::Node(None)),
         _ => Err(rhs.bad_alternative()),
@@ -1159,8 +993,6 @@ pub(super) fn opt_tablesample_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize
 /// ```
 pub(super) fn opt_repeatable_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // REPEATABLE '(' ICONST ')'
-        0 => Ok(SemValue::Int(rhs.int(3)?)),
         // /* empty */
         1 => Ok(SemValue::Int(-1)),
         _ => Err(rhs.bad_alternative()),
@@ -1193,9 +1025,8 @@ pub(super) fn at_specifier<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
             let n = AtClause {
                 unit: rhs.str(1)?,
                 expr: rhs.node(3)?,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -1208,8 +1039,6 @@ pub(super) fn at_specifier<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
 /// ```
 pub(super) fn opt_at_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // AT '(' at_specifier ')'
-        0 => Ok(SemValue::Node(rhs.node(3)?)),
         // /* empty */
         1 => Ok(SemValue::Node(None)),
         _ => Err(rhs.bad_alternative()),
@@ -1226,8 +1055,6 @@ pub(super) fn opt_at_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
 /// ```
 pub(super) fn select_limit_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // a_expr
-        0 => Ok(SemValue::Node(rhs.node(1)?)),
         // ALL
         1 => Ok(SemValue::node(make_null_a_const(rhs.loc(1)))),
         // a_expr '%'
@@ -1247,18 +1074,6 @@ pub(super) fn select_limit_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
 }
 
 /// ```text
-/// select_offset_value:
-///       a_expr
-/// ```
-pub(super) fn select_offset_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // a_expr
-        0 => Ok(SemValue::Node(rhs.node(1)?)),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
 /// select_fetch_first_value:
 ///       c_expr
 ///     | '+' I_or_F_const
@@ -1266,16 +1081,14 @@ pub(super) fn select_offset_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
 /// ```
 pub(super) fn select_fetch_first_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // c_expr
-        0 => Ok(SemValue::Node(rhs.node(1)?)),
         // '+' I_or_F_const
-        1 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        1 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "+",
             None,
             rhs.node(2)?,
             rhs.loc(1),
-        )))),
+        ))),
         // '-' I_or_F_const
         2 => Ok(SemValue::node(do_negate(rhs.node(2)?, rhs.loc(1)))),
         _ => Err(rhs.bad_alternative()),
@@ -1308,9 +1121,8 @@ pub(super) fn i_or_f_const<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
 pub(super) fn row_or_rows<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // ROW
-        0 => Ok(SemValue::Int(0)),
         // ROWS
-        1 => Ok(SemValue::Int(0)),
+        0 | 1 => Ok(SemValue::Int(0)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -1323,9 +1135,8 @@ pub(super) fn row_or_rows<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
 pub(super) fn first_or_next<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // FIRST_P
-        0 => Ok(SemValue::Int(0)),
         // NEXT
-        1 => Ok(SemValue::Int(0)),
+        0 | 1 => Ok(SemValue::Int(0)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -1338,8 +1149,6 @@ pub(super) fn first_or_next<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
 /// ```
 pub(super) fn group_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // GROUP_P BY group_by_list_opt_comma
-        0 => Ok(SemValue::List(rhs.list(3)?)),
         // GROUP_P BY ALL
         1 => {
             let node = Some(make_grouping_set(GroupingSetKind::All, List::new(), rhs.loc(3)).into());
@@ -1359,48 +1168,9 @@ pub(super) fn group_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
 pub(super) fn group_by_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // group_by_item
-        0 => Ok(SemValue::List(vec![required(rhs.node(1)?)?])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // group_by_list ',' group_by_item
-        1 => Ok(SemValue::List(append(rhs.list(1)?, required(rhs.node(3)?)?))),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// group_by_list_opt_comma:
-///       group_by_list
-///     | group_by_list ','
-/// ```
-pub(super) fn group_by_list_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // group_by_list
-        0 => Ok(SemValue::List(rhs.list(1)?)),
-        // group_by_list ','
-        1 => Ok(SemValue::List(rhs.list(1)?)),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// group_by_item:
-///       a_expr
-///     | empty_grouping_set
-///     | cube_clause
-///     | rollup_clause
-///     | grouping_sets_clause
-/// ```
-pub(super) fn group_by_item<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // a_expr
-        0 => Ok(SemValue::Node(rhs.node(1)?)),
-        // empty_grouping_set
-        1 => Ok(SemValue::Node(rhs.node(1)?)),
-        // cube_clause
-        2 => Ok(SemValue::Node(rhs.node(1)?)),
-        // rollup_clause
-        3 => Ok(SemValue::Node(rhs.node(1)?)),
-        // grouping_sets_clause
-        4 => Ok(SemValue::Node(rhs.node(1)?)),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -1412,11 +1182,11 @@ pub(super) fn group_by_item<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
 pub(super) fn empty_grouping_set<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // '(' ')'
-        0 => Ok(SemValue::node(Node::from(make_grouping_set(
+        0 => Ok(SemValue::node(make_grouping_set(
             GroupingSetKind::Empty,
             List::new(),
             rhs.loc(1),
-        )))),
+        ))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -1428,11 +1198,11 @@ pub(super) fn empty_grouping_set<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
 pub(super) fn rollup_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // ROLLUP '(' expr_list_opt_comma ')'
-        0 => Ok(SemValue::node(Node::from(make_grouping_set(
+        0 => Ok(SemValue::node(make_grouping_set(
             GroupingSetKind::Rollup,
             rhs.list(3)?,
             rhs.loc(1),
-        )))),
+        ))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -1444,11 +1214,11 @@ pub(super) fn rollup_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
 pub(super) fn cube_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // CUBE '(' expr_list_opt_comma ')'
-        0 => Ok(SemValue::node(Node::from(make_grouping_set(
+        0 => Ok(SemValue::node(make_grouping_set(
             GroupingSetKind::Cube,
             rhs.list(3)?,
             rhs.loc(1),
-        )))),
+        ))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -1460,11 +1230,11 @@ pub(super) fn cube_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
 pub(super) fn grouping_sets_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // GROUPING SETS '(' group_by_list_opt_comma ')'
-        0 => Ok(SemValue::node(Node::from(make_grouping_set(
+        0 => Ok(SemValue::node(make_grouping_set(
             GroupingSetKind::Sets,
             rhs.list(4)?,
             rhs.loc(1),
-        )))),
+        ))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -1477,9 +1247,8 @@ pub(super) fn grouping_sets_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) 
 pub(super) fn grouping_or_grouping_id<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // GROUPING
-        0 => Ok(SemValue::Node(None)),
         // GROUPING_ID
-        1 => Ok(SemValue::Node(None)),
+        0 | 1 => Ok(SemValue::Node(None)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -1491,8 +1260,6 @@ pub(super) fn grouping_or_grouping_id<'a>(rhs: &mut Reduction<'_, 'a>, alt: usiz
 /// ```
 pub(super) fn having_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // HAVING a_expr
-        0 => Ok(SemValue::Node(rhs.node(2)?)),
         // /* empty */
         1 => Ok(SemValue::Node(None)),
         _ => Err(rhs.bad_alternative()),
@@ -1506,8 +1273,6 @@ pub(super) fn having_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
 /// ```
 pub(super) fn qualify_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // QUALIFY a_expr
-        0 => Ok(SemValue::Node(rhs.node(2)?)),
         // /* empty */
         1 => Ok(SemValue::Node(None)),
         _ => Err(rhs.bad_alternative()),
@@ -1521,8 +1286,6 @@ pub(super) fn qualify_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
 /// ```
 pub(super) fn for_locking_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // for_locking_items
-        0 => Ok(SemValue::List(rhs.list(1)?)),
         // FOR READ_P ONLY
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -1536,8 +1299,6 @@ pub(super) fn for_locking_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
 /// ```
 pub(super) fn opt_for_locking_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // for_locking_clause
-        0 => Ok(SemValue::List(rhs.list(1)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -1552,9 +1313,9 @@ pub(super) fn opt_for_locking_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize
 pub(super) fn for_locking_items<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // for_locking_item
-        0 => Ok(SemValue::List(vec![required(rhs.node(1)?)?])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // for_locking_items for_locking_item
-        1 => Ok(SemValue::List(append(rhs.list(1)?, required(rhs.node(2)?)?))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(2)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -1571,9 +1332,8 @@ pub(super) fn for_locking_item<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
                 locked_rels: rhs.list(2)?,
                 strength: rhs.lock_clause_strength(1)?,
                 wait_policy: rhs.lock_wait_policy(3)?,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -1607,8 +1367,6 @@ pub(super) fn for_locking_strength<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) 
 /// ```
 pub(super) fn locked_rels_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // OF qualified_name_list
-        0 => Ok(SemValue::List(rhs.list(2)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -1646,29 +1404,14 @@ pub(super) fn values_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
                 values_lists: vec![Node::List(rhs.list(3)?)],
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // values_clause ',' '(' expr_list_opt_comma ')'
         1 => {
             let mut n = rhs.take::<SelectStmt>(1)?;
             n.values_lists = append(n.values_lists, Node::List(rhs.list(4)?));
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// values_clause_opt_comma:
-///       values_clause
-///     | values_clause ','
-/// ```
-pub(super) fn values_clause_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // values_clause
-        0 => Ok(SemValue::Node(rhs.node(1)?)),
-        // values_clause ','
-        1 => Ok(SemValue::Node(rhs.node(1)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -1680,8 +1423,6 @@ pub(super) fn values_clause_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: usiz
 /// ```
 pub(super) fn from_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // FROM from_list_opt_comma
-        0 => Ok(SemValue::List(rhs.list(2)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -1696,24 +1437,9 @@ pub(super) fn from_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
 pub(super) fn from_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // table_ref
-        0 => Ok(SemValue::List(vec![required(rhs.node(1)?)?])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // from_list ',' table_ref
-        1 => Ok(SemValue::List(append(rhs.list(1)?, required(rhs.node(3)?)?))),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// from_list_opt_comma:
-///       from_list
-///     | from_list ','
-/// ```
-pub(super) fn from_list_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // from_list
-        0 => Ok(SemValue::List(rhs.list(1)?)),
-        // from_list ','
-        1 => Ok(SemValue::List(rhs.list(1)?)),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -1726,8 +1452,10 @@ pub(super) fn alias_prefix_colon_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: us
     match alt {
         // ColIdOrString SINGLE_COLON
         0 => {
-            let mut alias_prefix_colon_clause = Alias::default();
-            alias_prefix_colon_clause.aliasname = rhs.str(1)?;
+            let alias_prefix_colon_clause = Alias {
+                aliasname: rhs.str(1)?,
+                ..Default::default()
+            };
             Ok(SemValue::node(alias_prefix_colon_clause))
         }
         _ => Err(rhs.bad_alternative()),
@@ -1759,7 +1487,7 @@ pub(super) fn table_ref<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
             relation_expr.at_clause = rhs.node(3)?;
             relation_expr.alias = rhs.ptr::<Alias>(2)?;
             relation_expr.sample = rhs.node(4)?;
-            Ok(SemValue::node(Node::from(relation_expr)))
+            Ok(SemValue::node(relation_expr))
         }
         // alias_prefix_colon_clause relation_expr opt_at_clause opt_tablesample_clause
         1 => {
@@ -1767,7 +1495,7 @@ pub(super) fn table_ref<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
             relation_expr.at_clause = rhs.node(3)?;
             relation_expr.alias = rhs.ptr::<Alias>(1)?;
             relation_expr.sample = rhs.node(4)?;
-            Ok(SemValue::node(Node::from(relation_expr)))
+            Ok(SemValue::node(relation_expr))
         }
         // func_table func_alias_clause opt_tablesample_clause
         2 => {
@@ -1783,18 +1511,18 @@ pub(super) fn table_ref<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
             let mut n = rhs.take::<RangeFunction>(2)?;
             n.alias = rhs.ptr::<Alias>(1)?;
             n.sample = rhs.node(3)?;
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // values_clause_opt_comma alias_clause opt_tablesample_clause
-        4 => {
+        // select_with_parens opt_alias_clause opt_tablesample_clause
+        4 | 6 => {
             let n = RangeSubselect {
                 lateral: false,
                 subquery: rhs.node(1)?,
                 alias: rhs.ptr::<Alias>(2)?,
                 sample: rhs.node(3)?,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // LATERAL_P func_table func_alias_clause
         5 => {
@@ -1805,17 +1533,6 @@ pub(super) fn table_ref<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
             function.coldeflist = coldeflist;
             Ok(SemValue::node(function))
         }
-        // select_with_parens opt_alias_clause opt_tablesample_clause
-        6 => {
-            let n = RangeSubselect {
-                lateral: false,
-                subquery: rhs.node(1)?,
-                alias: rhs.ptr::<Alias>(2)?,
-                sample: rhs.node(3)?,
-                ..Default::default()
-            };
-            Ok(SemValue::node(Node::from(n)))
-        }
         // alias_prefix_colon_clause select_with_parens opt_tablesample_clause
         7 => {
             let n = RangeSubselect {
@@ -1823,9 +1540,8 @@ pub(super) fn table_ref<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
                 subquery: rhs.node(2)?,
                 alias: rhs.ptr::<Alias>(1)?,
                 sample: rhs.node(3)?,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // LATERAL_P select_with_parens opt_alias_clause
         8 => {
@@ -1834,23 +1550,20 @@ pub(super) fn table_ref<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
                 subquery: rhs.node(2)?,
                 alias: rhs.ptr::<Alias>(3)?,
                 sample: None,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
-        // joined_table
-        9 => Ok(SemValue::Node(rhs.ptr::<JoinExpr>(1)?.map(Node::from))),
         // '(' joined_table ')' alias_clause
         10 => {
             let mut joined_table = rhs.take::<JoinExpr>(2)?;
             joined_table.alias = rhs.ptr::<Alias>(4)?;
-            Ok(SemValue::node(Node::from(joined_table)))
+            Ok(SemValue::node(joined_table))
         }
         // alias_prefix_colon_clause '(' joined_table ')'
         11 => {
             let mut joined_table = rhs.take::<JoinExpr>(3)?;
             joined_table.alias = rhs.ptr::<Alias>(1)?;
-            Ok(SemValue::node(Node::from(joined_table)))
+            Ok(SemValue::node(joined_table))
         }
         // table_ref PIVOT '(' target_list_opt_comma FOR pivot_value_list opt_pivot_group_by ')' opt_alias_clause
         12 => {
@@ -1863,7 +1576,7 @@ pub(super) fn table_ref<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
                 location: rhs.loc(2),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // table_ref UNPIVOT opt_include_nulls '(' unpivot_header FOR unpivot_value_list ')' opt_alias_clause
         13 => {
@@ -1876,7 +1589,7 @@ pub(super) fn table_ref<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
                 location: rhs.loc(2),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -1889,8 +1602,6 @@ pub(super) fn table_ref<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
 /// ```
 pub(super) fn opt_pivot_group_by<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // GROUP_P BY name_list_opt_comma
-        0 => Ok(SemValue::List(rhs.list(3)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -1908,9 +1619,8 @@ pub(super) fn opt_include_nulls<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> 
         // INCLUDE_P NULLS_P
         0 => Ok(SemValue::Bool(true)),
         // EXCLUDE NULLS_P
-        1 => Ok(SemValue::Bool(false)),
         // /* empty */
-        2 => Ok(SemValue::Bool(false)),
+        1 | 2 => Ok(SemValue::Bool(false)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -1925,20 +1635,20 @@ pub(super) fn single_pivot_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
         // b_expr IN_P '(' target_list_opt_comma ')'
         0 => {
             let n = Pivot {
-                pivot_columns: vec![required(rhs.node(1)?)?],
+                pivot_columns: vec![rhs.required_node(1)?],
                 pivot_value: rhs.list(4)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // b_expr IN_P ColIdOrString
         1 => {
             let n = Pivot {
-                pivot_columns: vec![required(rhs.node(1)?)?],
+                pivot_columns: vec![rhs.required_node(1)?],
                 pivot_enum: rhs.str(3)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -1953,11 +1663,8 @@ pub(super) fn single_pivot_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
 pub(super) fn pivot_header<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // d_expr
-        0 => Ok(SemValue::List(vec![required(rhs.node(1)?)?])),
         // indirection_expr
-        1 => Ok(SemValue::List(vec![required(rhs.node(1)?)?])),
-        // '(' c_expr_list_opt_comma ')'
-        2 => Ok(SemValue::List(rhs.list(2)?)),
+        0 | 1 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -1976,7 +1683,7 @@ pub(super) fn pivot_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 pivot_value: rhs.list(4)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // pivot_header IN_P ColIdOrString
         1 => {
@@ -1985,7 +1692,7 @@ pub(super) fn pivot_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 pivot_enum: rhs.str(3)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -1999,9 +1706,9 @@ pub(super) fn pivot_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
 pub(super) fn pivot_value_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // pivot_value
-        0 => Ok(SemValue::List(vec![required(rhs.node(1)?)?])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // pivot_value_list pivot_value
-        1 => Ok(SemValue::List(append(rhs.list(1)?, required(rhs.node(2)?)?))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(2)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -2014,11 +1721,9 @@ pub(super) fn pivot_value_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
 pub(super) fn unpivot_header<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // ColIdOrString
-        0 => Ok(SemValue::List(vec![Node::Value(Value::String(
-            required(rhs.str(1)?)?.into(),
-        ))])),
-        // '(' name_list_opt_comma ')'
-        1 => Ok(SemValue::List(rhs.list(2)?)),
+        0 => Ok(SemValue::List(vec![Node::Value(Value::String(required(
+            rhs.str(1)?,
+        )?))])),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -2036,7 +1741,7 @@ pub(super) fn unpivot_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
                 pivot_value: rhs.list(4)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -2050,9 +1755,9 @@ pub(super) fn unpivot_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
 pub(super) fn unpivot_value_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // unpivot_value
-        0 => Ok(SemValue::List(vec![required(rhs.node(1)?)?])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // unpivot_value_list unpivot_value
-        1 => Ok(SemValue::List(append(rhs.list(1)?, required(rhs.node(2)?)?))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(2)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -2073,8 +1778,6 @@ pub(super) fn unpivot_value_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
 /// ```
 pub(super) fn joined_table<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // '(' joined_table ')'
-        0 => Ok(SemValue::Node((rhs.ptr::<JoinExpr>(2)?).map(Node::from))),
         // table_ref CROSS JOIN table_ref
         1 => {
             let n = JoinExpr {
@@ -2255,28 +1958,34 @@ pub(super) fn alias_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
     match alt {
         // AS ColIdOrString '(' name_list_opt_comma ')'
         0 => {
-            let mut alias_clause = Alias::default();
-            alias_clause.aliasname = rhs.str(2)?;
-            alias_clause.colnames = rhs.list(4)?;
+            let alias_clause = Alias {
+                aliasname: rhs.str(2)?,
+                colnames: rhs.list(4)?,
+            };
             Ok(SemValue::node(alias_clause))
         }
         // AS ColIdOrString
         1 => {
-            let mut alias_clause = Alias::default();
-            alias_clause.aliasname = rhs.str(2)?;
+            let alias_clause = Alias {
+                aliasname: rhs.str(2)?,
+                ..Default::default()
+            };
             Ok(SemValue::node(alias_clause))
         }
         // ColId '(' name_list_opt_comma ')'
         2 => {
-            let mut alias_clause = Alias::default();
-            alias_clause.aliasname = rhs.str(1)?;
-            alias_clause.colnames = rhs.list(3)?;
+            let alias_clause = Alias {
+                aliasname: rhs.str(1)?,
+                colnames: rhs.list(3)?,
+            };
             Ok(SemValue::node(alias_clause))
         }
         // ColId
         3 => {
-            let mut alias_clause = Alias::default();
-            alias_clause.aliasname = rhs.str(1)?;
+            let alias_clause = Alias {
+                aliasname: rhs.str(1)?,
+                ..Default::default()
+            };
             Ok(SemValue::node(alias_clause))
         }
         _ => Err(rhs.bad_alternative()),
@@ -2290,8 +1999,6 @@ pub(super) fn alias_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
 /// ```
 pub(super) fn opt_alias_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // alias_clause
-        0 => Ok(SemValue::Node((rhs.ptr::<Alias>(1)?).map(Node::from))),
         // /* empty */
         1 => Ok(SemValue::Node(None)),
         _ => Err(rhs.bad_alternative()),
@@ -2381,9 +2088,8 @@ pub(super) fn join_type<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
 pub(super) fn join_outer<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // OUTER_P
-        0 => Ok(SemValue::Node(None)),
         // /* empty */
-        1 => Ok(SemValue::Node(None)),
+        0 | 1 => Ok(SemValue::Node(None)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -2397,8 +2103,6 @@ pub(super) fn join_qual<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
     match alt {
         // USING '(' name_list_opt_comma ')'
         0 => Ok(SemValue::Node(Node::from_list(rhs.list(3)?))),
-        // ON a_expr
-        1 => Ok(SemValue::Node(rhs.node(2)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -2413,14 +2117,8 @@ pub(super) fn join_qual<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
 pub(super) fn relation_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // qualified_name
-        0 => {
-            let mut relation_expr = rhs.ptr::<RangeVar>(1)?;
-            required_mut(&mut relation_expr)?.inh = true;
-            required_mut(&mut relation_expr)?.alias = None;
-            Ok(SemValue::Node(relation_expr.map(Node::from)))
-        }
         // qualified_name '*'
-        1 => {
+        0 | 1 => {
             let mut relation_expr = rhs.ptr::<RangeVar>(1)?;
             required_mut(&mut relation_expr)?.inh = true;
             required_mut(&mut relation_expr)?.alias = None;
@@ -2474,7 +2172,7 @@ pub(super) fn func_table<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<
                 sample: None,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -2488,7 +2186,7 @@ pub(super) fn rowsfrom_item<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
     match alt {
         // func_expr_windowless opt_col_def_list
         0 => Ok(SemValue::List(vec![
-            required(rhs.node(1)?)?,
+            rhs.required_node(1)?,
             Node::List(rhs.list(2)?),
         ])),
         _ => Err(rhs.bad_alternative()),
@@ -2517,8 +2215,6 @@ pub(super) fn rowsfrom_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
 /// ```
 pub(super) fn opt_col_def_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // AS '(' TableFuncElementList ')'
-        0 => Ok(SemValue::List(rhs.list(3)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -2547,8 +2243,6 @@ pub(super) fn opt_ordinality<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
 /// ```
 pub(super) fn where_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // WHERE a_expr
-        0 => Ok(SemValue::Node(rhs.node(2)?)),
         // /* empty */
         1 => Ok(SemValue::Node(None)),
         _ => Err(rhs.bad_alternative()),
@@ -2563,9 +2257,9 @@ pub(super) fn where_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
 pub(super) fn table_func_element_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // TableFuncElement
-        0 => Ok(SemValue::List(vec![required(rhs.node(1)?)?])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // TableFuncElementList ',' TableFuncElement
-        1 => Ok(SemValue::List(append(rhs.list(1)?, required(rhs.node(3)?)?))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -2587,7 +2281,7 @@ pub(super) fn table_func_element<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
                 location: rhs.loc(1),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -2606,9 +2300,8 @@ pub(super) fn opt_collate_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
                 arg: None,
                 collname: rhs.list(2)?,
                 location: rhs.loc(1),
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // /* empty */
         1 => Ok(SemValue::Node(None)),
@@ -2625,15 +2318,15 @@ pub(super) fn colid_type_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
     match alt {
         // ColId Typename
         0 => Ok(SemValue::List(vec![Node::List(vec![
-            Node::Value(Value::String(required(rhs.str(1)?)?.into())),
-            Node::from(required(rhs.ptr::<TypeName>(2)?)?),
+            Node::Value(Value::String(required(rhs.str(1)?)?)),
+            rhs.required_node(2)?,
         ])])),
         // colid_type_list ',' ColId Typename
         1 => Ok(SemValue::List(append(
             rhs.list(1)?,
             Node::List(vec![
-                Node::Value(Value::String(required(rhs.str(3)?)?.into())),
-                Node::from(required(rhs.ptr::<TypeName>(4)?)?),
+                Node::Value(Value::String(required(rhs.str(3)?)?)),
+                rhs.required_node(4)?,
             ]),
         ))),
         _ => Err(rhs.bad_alternative()),
@@ -2647,8 +2340,6 @@ pub(super) fn colid_type_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
 /// ```
 pub(super) fn opt_typename<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // Typename
-        0 => Ok(SemValue::Node((rhs.ptr::<TypeName>(1)?).map(Node::from))),
         // /* empty */
         1 => Ok(SemValue::Node(None)),
         _ => Err(rhs.bad_alternative()),
@@ -2784,13 +2475,13 @@ pub(super) fn qualified_typename<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
     match alt {
         // IDENT '.' IDENT
         0 => Ok(SemValue::List(vec![
-            Node::Value(Value::String(required(rhs.str(1)?)?.into())),
-            Node::Value(Value::String(required(rhs.str(3)?)?.into())),
+            Node::Value(Value::String(required(rhs.str(1)?)?)),
+            Node::Value(Value::String(required(rhs.str(3)?)?)),
         ])),
         // qualified_typename '.' IDENT
         1 => Ok(SemValue::List(append(
             rhs.list(1)?,
-            Node::Value(Value::String(required(rhs.str(3)?)?.into())),
+            Node::Value(Value::String(required(rhs.str(3)?)?)),
         ))),
         _ => Err(rhs.bad_alternative()),
     }
@@ -2832,16 +2523,6 @@ pub(super) fn opt_array_bounds<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
 /// ```
 pub(super) fn simple_typename<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // GenericType
-        0 => Ok(SemValue::Node((rhs.ptr::<TypeName>(1)?).map(Node::from))),
-        // Numeric
-        1 => Ok(SemValue::Node((rhs.ptr::<TypeName>(1)?).map(Node::from))),
-        // Bit
-        2 => Ok(SemValue::Node((rhs.ptr::<TypeName>(1)?).map(Node::from))),
-        // Character
-        3 => Ok(SemValue::Node((rhs.ptr::<TypeName>(1)?).map(Node::from))),
-        // ConstDatetime
-        4 => Ok(SemValue::Node((rhs.ptr::<TypeName>(1)?).map(Node::from))),
         // ConstInterval opt_interval
         5 => {
             let mut simple_typename = rhs.ptr::<TypeName>(1)?;
@@ -2857,27 +2538,6 @@ pub(super) fn simple_typename<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
             ];
             Ok(SemValue::Node(simple_typename.map(Node::from)))
         }
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// ConstTypename:
-///       Numeric
-///     | ConstBit
-///     | ConstCharacter
-///     | ConstDatetime
-/// ```
-pub(super) fn const_typename<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // Numeric
-        0 => Ok(SemValue::Node((rhs.ptr::<TypeName>(1)?).map(Node::from))),
-        // ConstBit
-        1 => Ok(SemValue::Node((rhs.ptr::<TypeName>(1)?).map(Node::from))),
-        // ConstCharacter
-        2 => Ok(SemValue::Node((rhs.ptr::<TypeName>(1)?).map(Node::from))),
-        // ConstDatetime
-        3 => Ok(SemValue::Node((rhs.ptr::<TypeName>(1)?).map(Node::from))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -2906,8 +2566,6 @@ pub(super) fn generic_type<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
 /// ```
 pub(super) fn opt_type_modifiers<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // '(' opt_expr_list_opt_comma ')'
-        0 => Ok(SemValue::List(rhs.list(2)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -2931,13 +2589,8 @@ pub(super) fn opt_type_modifiers<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
 pub(super) fn numeric<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // INT_P
-        0 => {
-            let mut numeric = system_type_name("int4");
-            numeric.location = rhs.loc(1);
-            Ok(SemValue::node(numeric))
-        }
         // INTEGER
-        1 => {
+        0 | 1 => {
             let mut numeric = system_type_name("int4");
             numeric.location = rhs.loc(1);
             Ok(SemValue::node(numeric))
@@ -2973,14 +2626,8 @@ pub(super) fn numeric<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<Sem
             Ok(SemValue::node(numeric))
         }
         // DECIMAL_P opt_type_modifiers
-        7 => {
-            let mut numeric = system_type_name("numeric");
-            numeric.typmods = rhs.list(2)?;
-            numeric.location = rhs.loc(1);
-            Ok(SemValue::node(numeric))
-        }
         // DEC opt_type_modifiers
-        8 => {
+        7 | 8 => {
             let mut numeric = system_type_name("numeric");
             numeric.typmods = rhs.list(2)?;
             numeric.location = rhs.loc(1);
@@ -3032,29 +2679,12 @@ pub(super) fn opt_float<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
 }
 
 /// ```text
-/// Bit:
-///       BitWithLength
-///     | BitWithoutLength
-/// ```
-pub(super) fn bit<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // BitWithLength
-        0 => Ok(SemValue::Node((rhs.ptr::<TypeName>(1)?).map(Node::from))),
-        // BitWithoutLength
-        1 => Ok(SemValue::Node((rhs.ptr::<TypeName>(1)?).map(Node::from))),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
 /// ConstBit:
 ///       BitWithLength
 ///     | BitWithoutLength
 /// ```
 pub(super) fn const_bit<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // BitWithLength
-        0 => Ok(SemValue::Node((rhs.ptr::<TypeName>(1)?).map(Node::from))),
         // BitWithoutLength
         1 => {
             let mut const_bit = rhs.ptr::<TypeName>(1)?;
@@ -3106,29 +2736,12 @@ pub(super) fn bit_without_length<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
 }
 
 /// ```text
-/// Character:
-///       CharacterWithLength
-///     | CharacterWithoutLength
-/// ```
-pub(super) fn character_type<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // CharacterWithLength
-        0 => Ok(SemValue::Node((rhs.ptr::<TypeName>(1)?).map(Node::from))),
-        // CharacterWithoutLength
-        1 => Ok(SemValue::Node((rhs.ptr::<TypeName>(1)?).map(Node::from))),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
 /// ConstCharacter:
 ///       CharacterWithLength
 ///     | CharacterWithoutLength
 /// ```
 pub(super) fn const_character<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // CharacterWithLength
-        0 => Ok(SemValue::Node((rhs.ptr::<TypeName>(1)?).map(Node::from))),
         // CharacterWithoutLength
         1 => {
             let mut const_character = rhs.ptr::<TypeName>(1)?;
@@ -3188,13 +2801,9 @@ pub(super) fn character_without_length<'a>(rhs: &mut Reduction<'_, 'a>, alt: usi
 pub(super) fn character<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // CHARACTER opt_varying
-        0 => Ok(SemValue::ConstStr(if rhs.bool(2)? {
-            Some("varchar")
-        } else {
-            Some("bpchar")
-        })),
         // CHAR_P opt_varying
-        1 => Ok(SemValue::ConstStr(if rhs.bool(2)? {
+        // NCHAR opt_varying
+        0 | 1 | 5 => Ok(SemValue::ConstStr(if rhs.bool(2)? {
             Some("varchar")
         } else {
             Some("bpchar")
@@ -3202,19 +2811,8 @@ pub(super) fn character<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
         // VARCHAR
         2 => Ok(SemValue::ConstStr(Some("varchar"))),
         // NATIONAL CHARACTER opt_varying
-        3 => Ok(SemValue::ConstStr(if rhs.bool(3)? {
-            Some("varchar")
-        } else {
-            Some("bpchar")
-        })),
         // NATIONAL CHAR_P opt_varying
-        4 => Ok(SemValue::ConstStr(if rhs.bool(3)? {
-            Some("varchar")
-        } else {
-            Some("bpchar")
-        })),
-        // NCHAR opt_varying
-        5 => Ok(SemValue::ConstStr(if rhs.bool(2)? {
+        3 | 4 => Ok(SemValue::ConstStr(if rhs.bool(3)? {
             Some("varchar")
         } else {
             Some("bpchar")
@@ -3324,9 +2922,8 @@ pub(super) fn opt_timezone<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
         // WITH_LA TIME ZONE
         0 => Ok(SemValue::Bool(true)),
         // WITHOUT TIME ZONE
-        1 => Ok(SemValue::Bool(false)),
         // /* empty */
-        2 => Ok(SemValue::Bool(false)),
+        1 | 2 => Ok(SemValue::Bool(false)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -3545,8 +3142,6 @@ pub(super) fn opt_interval<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
 /// ```
 pub(super) fn a_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // c_expr
-        0 => Ok(SemValue::Node(rhs.node(1)?)),
         // a_expr TYPECAST Typename
         1 => Ok(SemValue::node(make_type_cast(
             rhs.node(1)?,
@@ -3560,162 +3155,161 @@ pub(super) fn a_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
                 arg: rhs.node(1)?,
                 collname: rhs.list(3)?,
                 location: rhs.loc(2),
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // a_expr AT TIME ZONE a_expr
-        3 => Ok(SemValue::node(Node::from(make_func_call(
+        3 => Ok(SemValue::node(make_func_call(
             system_func_name("timezone"),
-            vec![required(rhs.node(5)?)?, required(rhs.node(1)?)?],
+            vec![rhs.required_node(5)?, rhs.required_node(1)?],
             rhs.loc(2),
-        )))),
+        ))),
         // '+' a_expr
-        4 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        4 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "+",
             None,
             rhs.node(2)?,
             rhs.loc(1),
-        )))),
+        ))),
         // '-' a_expr
         5 => Ok(SemValue::node(do_negate(rhs.node(2)?, rhs.loc(1)))),
         // a_expr '+' a_expr
-        6 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        6 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "+",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr '-' a_expr
-        7 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        7 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "-",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr '*' a_expr
-        8 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        8 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "*",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr '/' a_expr
-        9 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        9 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "/",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr INTEGER_DIVISION a_expr
-        10 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        10 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "//",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr '%' a_expr
-        11 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        11 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "%",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr '^' a_expr
-        12 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        12 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "^",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr POWER_OF a_expr
-        13 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        13 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "**",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr '<' a_expr
-        14 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        14 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "<",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr '>' a_expr
-        15 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        15 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             ">",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr '=' a_expr
-        16 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        16 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "=",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr LESS_EQUALS a_expr
-        17 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        17 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "<=",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr GREATER_EQUALS a_expr
-        18 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        18 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             ">=",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr NOT_EQUALS a_expr
-        19 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        19 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "<>",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr qual_Op a_expr
-        20 => Ok(SemValue::node(Node::from(make_a_expr(
+        20 => Ok(SemValue::node(make_a_expr(
             AExprKind::Op,
             rhs.list(2)?,
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // qual_Op a_expr
-        21 => Ok(SemValue::node(Node::from(make_a_expr(
+        21 => Ok(SemValue::node(make_a_expr(
             AExprKind::Op,
             rhs.list(1)?,
             None,
             rhs.node(2)?,
             rhs.loc(1),
-        )))),
+        ))),
         // a_expr qual_Op
-        22 => Ok(SemValue::node(Node::from(make_a_expr(
+        22 => Ok(SemValue::node(make_a_expr(
             AExprKind::Op,
             rhs.list(2)?,
             rhs.node(1)?,
             None,
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr AND a_expr
         23 => Ok(SemValue::node(make_and_expr(
             rhs.node(1)?,
@@ -3729,96 +3323,95 @@ pub(super) fn a_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
             rhs.loc(2),
         )?)),
         // NOT a_expr
-        25 => Ok(SemValue::node(make_not_expr(rhs.node(2)?, rhs.loc(1))?)),
         // NOT_LA a_expr
-        26 => Ok(SemValue::node(make_not_expr(rhs.node(2)?, rhs.loc(1))?)),
+        25 | 26 => Ok(SemValue::node(make_not_expr(rhs.node(2)?, rhs.loc(1))?)),
         // a_expr GLOB a_expr
-        27 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        27 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Glob,
             "~~~",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr LIKE a_expr
-        28 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        28 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Like,
             "~~",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr LIKE a_expr ESCAPE a_expr
         29 => {
             let n = Some(Box::new(make_func_call(
                 system_func_name("like_escape"),
                 vec![
-                    required(rhs.node(1)?)?,
-                    required(rhs.node(3)?)?,
-                    required(rhs.node(5)?)?,
+                    rhs.required_node(1)?,
+                    rhs.required_node(3)?,
+                    rhs.required_node(5)?,
                 ],
                 rhs.loc(2),
             )));
             Ok(SemValue::Node(n.map(Node::from)))
         }
         // a_expr NOT_LA LIKE a_expr
-        30 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        30 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Like,
             "!~~",
             rhs.node(1)?,
             rhs.node(4)?,
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr NOT_LA LIKE a_expr ESCAPE a_expr
         31 => {
             let n = Some(Box::new(make_func_call(
                 system_func_name("not_like_escape"),
                 vec![
-                    required(rhs.node(1)?)?,
-                    required(rhs.node(4)?)?,
-                    required(rhs.node(6)?)?,
+                    rhs.required_node(1)?,
+                    rhs.required_node(4)?,
+                    rhs.required_node(6)?,
                 ],
                 rhs.loc(2),
             )));
             Ok(SemValue::Node(n.map(Node::from)))
         }
         // a_expr ILIKE a_expr
-        32 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        32 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Ilike,
             "~~*",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr ILIKE a_expr ESCAPE a_expr
         33 => {
             let n = Some(Box::new(make_func_call(
                 system_func_name("ilike_escape"),
                 vec![
-                    required(rhs.node(1)?)?,
-                    required(rhs.node(3)?)?,
-                    required(rhs.node(5)?)?,
+                    rhs.required_node(1)?,
+                    rhs.required_node(3)?,
+                    rhs.required_node(5)?,
                 ],
                 rhs.loc(2),
             )));
             Ok(SemValue::Node(n.map(Node::from)))
         }
         // a_expr NOT_LA ILIKE a_expr
-        34 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        34 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Ilike,
             "!~~*",
             rhs.node(1)?,
             rhs.node(4)?,
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr NOT_LA ILIKE a_expr ESCAPE a_expr
         35 => {
             let n = Some(Box::new(make_func_call(
                 system_func_name("not_ilike_escape"),
                 vec![
-                    required(rhs.node(1)?)?,
-                    required(rhs.node(4)?)?,
-                    required(rhs.node(6)?)?,
+                    rhs.required_node(1)?,
+                    rhs.required_node(4)?,
+                    rhs.required_node(6)?,
                 ],
                 rhs.loc(2),
             )));
@@ -3828,111 +3421,84 @@ pub(super) fn a_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
         36 => {
             let n = Some(Box::new(make_func_call(
                 system_func_name("similar_escape"),
-                vec![required(rhs.node(4)?)?, make_null_a_const(-1)],
+                vec![rhs.required_node(4)?, make_null_a_const(-1)],
                 rhs.loc(2),
             )));
-            Ok(SemValue::node(Node::from(make_simple_a_expr(
+            Ok(SemValue::node(make_simple_a_expr(
                 AExprKind::Similar,
                 "~",
                 rhs.node(1)?,
                 n.map(Node::from),
                 rhs.loc(2),
-            ))))
+            )))
         }
         // a_expr SIMILAR TO a_expr ESCAPE a_expr
         37 => {
             let n = Some(Box::new(make_func_call(
                 system_func_name("similar_escape"),
-                vec![required(rhs.node(4)?)?, required(rhs.node(6)?)?],
+                vec![rhs.required_node(4)?, rhs.required_node(6)?],
                 rhs.loc(2),
             )));
-            Ok(SemValue::node(Node::from(make_simple_a_expr(
+            Ok(SemValue::node(make_simple_a_expr(
                 AExprKind::Similar,
                 "~",
                 rhs.node(1)?,
                 n.map(Node::from),
                 rhs.loc(2),
-            ))))
+            )))
         }
         // a_expr NOT_LA SIMILAR TO a_expr
         38 => {
             let n = Some(Box::new(make_func_call(
                 system_func_name("similar_escape"),
-                vec![required(rhs.node(5)?)?, make_null_a_const(-1)],
+                vec![rhs.required_node(5)?, make_null_a_const(-1)],
                 rhs.loc(2),
             )));
-            Ok(SemValue::node(Node::from(make_simple_a_expr(
+            Ok(SemValue::node(make_simple_a_expr(
                 AExprKind::Similar,
                 "!~",
                 rhs.node(1)?,
                 n.map(Node::from),
                 rhs.loc(2),
-            ))))
+            )))
         }
         // a_expr NOT_LA SIMILAR TO a_expr ESCAPE a_expr
         39 => {
             let n = Some(Box::new(make_func_call(
                 system_func_name("similar_escape"),
-                vec![required(rhs.node(5)?)?, required(rhs.node(7)?)?],
+                vec![rhs.required_node(5)?, rhs.required_node(7)?],
                 rhs.loc(2),
             )));
-            Ok(SemValue::node(Node::from(make_simple_a_expr(
+            Ok(SemValue::node(make_simple_a_expr(
                 AExprKind::Similar,
                 "!~",
                 rhs.node(1)?,
                 n.map(Node::from),
                 rhs.loc(2),
-            ))))
+            )))
         }
         // a_expr IS NULL_P
-        40 => {
-            let n = NullTest {
-                arg: rhs.node(1)?,
-                nulltesttype: NullTestType::Null,
-                location: rhs.loc(2),
-                ..Default::default()
-            };
-            Ok(SemValue::node(Node::from(n)))
-        }
         // a_expr ISNULL
-        41 => {
+        40 | 41 => {
             let n = NullTest {
                 arg: rhs.node(1)?,
                 nulltesttype: NullTestType::Null,
                 location: rhs.loc(2),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // a_expr IS NOT NULL_P
-        42 => {
-            let n = NullTest {
-                arg: rhs.node(1)?,
-                nulltesttype: NullTestType::NotNull,
-                location: rhs.loc(2),
-                ..Default::default()
-            };
-            Ok(SemValue::node(Node::from(n)))
-        }
         // a_expr NOT NULL_P
-        43 => {
-            let n = NullTest {
-                arg: rhs.node(1)?,
-                nulltesttype: NullTestType::NotNull,
-                location: rhs.loc(2),
-                ..Default::default()
-            };
-            Ok(SemValue::node(Node::from(n)))
-        }
         // a_expr NOTNULL
-        44 => {
+        42..=44 => {
             let n = NullTest {
                 arg: rhs.node(1)?,
                 nulltesttype: NullTestType::NotNull,
                 location: rhs.loc(2),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // LAMBDA name_list SINGLE_COLON a_expr
         45 => {
@@ -3940,9 +3506,8 @@ pub(super) fn a_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
                 lhs: rhs.list(2)?,
                 rhs: rhs.node(4)?,
                 location: rhs.loc(2),
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // a_expr SINGLE_ARROW a_expr
         46 => {
@@ -3950,18 +3515,17 @@ pub(super) fn a_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
                 lhs: rhs.node(1)?,
                 rhs: rhs.node(3)?,
                 location: rhs.loc(2),
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // a_expr DOUBLE_ARROW a_expr
-        47 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        47 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "->>",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // row OVERLAPS row
         48 => {
             let row1 = rhs.list(1)?;
@@ -3978,11 +3542,11 @@ pub(super) fn a_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
                     rhs.loc(3),
                 ));
             }
-            Ok(SemValue::node(Node::from(make_func_call(
+            Ok(SemValue::node(make_func_call(
                 system_func_name("overlaps"),
                 concat(row1, row3),
                 rhs.loc(2),
-            ))))
+            )))
         }
         // a_expr IS TRUE_P
         49 => {
@@ -3990,9 +3554,8 @@ pub(super) fn a_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
                 arg: rhs.node(1)?,
                 booltesttype: BoolTestType::True,
                 location: rhs.loc(2),
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(b)))
+            Ok(SemValue::node(b))
         }
         // a_expr IS NOT TRUE_P
         50 => {
@@ -4000,9 +3563,8 @@ pub(super) fn a_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
                 arg: rhs.node(1)?,
                 booltesttype: BoolTestType::NotTrue,
                 location: rhs.loc(2),
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(b)))
+            Ok(SemValue::node(b))
         }
         // a_expr IS FALSE_P
         51 => {
@@ -4010,9 +3572,8 @@ pub(super) fn a_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
                 arg: rhs.node(1)?,
                 booltesttype: BoolTestType::False,
                 location: rhs.loc(2),
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(b)))
+            Ok(SemValue::node(b))
         }
         // a_expr IS NOT FALSE_P
         52 => {
@@ -4020,9 +3581,8 @@ pub(super) fn a_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
                 arg: rhs.node(1)?,
                 booltesttype: BoolTestType::NotFalse,
                 location: rhs.loc(2),
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(b)))
+            Ok(SemValue::node(b))
         }
         // a_expr IS UNKNOWN
         53 => {
@@ -4030,9 +3590,8 @@ pub(super) fn a_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
                 arg: rhs.node(1)?,
                 booltesttype: BoolTestType::Unknown,
                 location: rhs.loc(2),
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(b)))
+            Ok(SemValue::node(b))
         }
         // a_expr IS NOT UNKNOWN
         54 => {
@@ -4040,74 +3599,73 @@ pub(super) fn a_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
                 arg: rhs.node(1)?,
                 booltesttype: BoolTestType::NotUnknown,
                 location: rhs.loc(2),
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(b)))
+            Ok(SemValue::node(b))
         }
         // a_expr IS DISTINCT FROM a_expr
-        55 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        55 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Distinct,
             "=",
             rhs.node(1)?,
             rhs.node(5)?,
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr IS NOT DISTINCT FROM a_expr
-        56 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        56 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::NotDistinct,
             "=",
             rhs.node(1)?,
             rhs.node(6)?,
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr IS OF '(' type_list ')'
-        57 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        57 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Of,
             "=",
             rhs.node(1)?,
             Node::from_list(rhs.list(5)?),
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr IS NOT OF '(' type_list ')'
-        58 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        58 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Of,
             "<>",
             rhs.node(1)?,
             Node::from_list(rhs.list(6)?),
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr BETWEEN opt_asymmetric b_expr AND a_expr
-        59 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        59 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Between,
             "BETWEEN",
             rhs.node(1)?,
-            Node::from_list(vec![required(rhs.node(4)?)?, required(rhs.node(6)?)?]),
+            Node::from_list(vec![rhs.required_node(4)?, rhs.required_node(6)?]),
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr NOT_LA BETWEEN opt_asymmetric b_expr AND a_expr
-        60 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        60 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::NotBetween,
             "NOT BETWEEN",
             rhs.node(1)?,
-            Node::from_list(vec![required(rhs.node(5)?)?, required(rhs.node(7)?)?]),
+            Node::from_list(vec![rhs.required_node(5)?, rhs.required_node(7)?]),
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr BETWEEN SYMMETRIC b_expr AND a_expr
-        61 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        61 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::BetweenSym,
             "BETWEEN SYMMETRIC",
             rhs.node(1)?,
-            Node::from_list(vec![required(rhs.node(4)?)?, required(rhs.node(6)?)?]),
+            Node::from_list(vec![rhs.required_node(4)?, rhs.required_node(6)?]),
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr NOT_LA BETWEEN SYMMETRIC b_expr AND a_expr
-        62 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        62 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::NotBetweenSym,
             "NOT BETWEEN SYMMETRIC",
             rhs.node(1)?,
-            Node::from_list(vec![required(rhs.node(5)?)?, required(rhs.node(7)?)?]),
+            Node::from_list(vec![rhs.required_node(5)?, rhs.required_node(7)?]),
             rhs.loc(2),
-        )))),
+        ))),
         // a_expr IN_P in_expr
         63 => {
             // in_expr returns a SubLink or a list of a_exprs
@@ -4151,9 +3709,8 @@ pub(super) fn a_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
                 oper_name: rhs.list(2)?,
                 subselect: rhs.node(4)?,
                 location: rhs.loc(2),
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // a_expr subquery_Op sub_type '(' a_expr ')'
         66 => {
@@ -4186,7 +3743,7 @@ pub(super) fn a_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
                 location: rhs.loc(1),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // COLUMNS '(' a_expr ')'
         68 => {
@@ -4196,13 +3753,13 @@ pub(super) fn a_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
                 location: rhs.loc(1),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(star)))
+            Ok(SemValue::node(star))
         }
         // UNPACK '(' a_expr ')'
         69 => {
             let n = Some(Box::new(make_func_call(
                 system_func_name("unpack"),
-                vec![required(rhs.node(3)?)?],
+                vec![rhs.required_node(3)?],
                 rhs.loc(1),
             )));
             Ok(SemValue::Node(n.map(Node::from)))
@@ -4231,7 +3788,7 @@ pub(super) fn a_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
                 location: rhs.loc(1),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(star)))
+            Ok(SemValue::node(star))
         }
         // ColId '.' '*' opt_except_list opt_replace_list opt_rename_list
         72 => {
@@ -4243,7 +3800,7 @@ pub(super) fn a_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
                 location: rhs.loc(1),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(star)))
+            Ok(SemValue::node(star))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -4279,8 +3836,6 @@ pub(super) fn a_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
 /// ```
 pub(super) fn b_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // c_expr
-        0 => Ok(SemValue::Node(rhs.node(1)?)),
         // b_expr TYPECAST Typename
         1 => Ok(SemValue::node(make_type_cast(
             rhs.node(1)?,
@@ -4289,183 +3844,183 @@ pub(super) fn b_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
             rhs.loc(2),
         ))),
         // '+' b_expr
-        2 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        2 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "+",
             None,
             rhs.node(2)?,
             rhs.loc(1),
-        )))),
+        ))),
         // '-' b_expr
         3 => Ok(SemValue::node(do_negate(rhs.node(2)?, rhs.loc(1)))),
         // b_expr '+' b_expr
-        4 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        4 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "+",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // b_expr '-' b_expr
-        5 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        5 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "-",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // b_expr '*' b_expr
-        6 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        6 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "*",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // b_expr '/' b_expr
-        7 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        7 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "/",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // b_expr INTEGER_DIVISION b_expr
-        8 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        8 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "//",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // b_expr '%' b_expr
-        9 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        9 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "%",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // b_expr '^' b_expr
-        10 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        10 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "^",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // b_expr POWER_OF b_expr
-        11 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        11 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "**",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // b_expr '<' b_expr
-        12 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        12 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "<",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // b_expr '>' b_expr
-        13 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        13 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             ">",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // b_expr '=' b_expr
-        14 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        14 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "=",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // b_expr LESS_EQUALS b_expr
-        15 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        15 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "<=",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // b_expr GREATER_EQUALS b_expr
-        16 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        16 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             ">=",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // b_expr NOT_EQUALS b_expr
-        17 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        17 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Op,
             "<>",
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // b_expr qual_Op b_expr
-        18 => Ok(SemValue::node(Node::from(make_a_expr(
+        18 => Ok(SemValue::node(make_a_expr(
             AExprKind::Op,
             rhs.list(2)?,
             rhs.node(1)?,
             rhs.node(3)?,
             rhs.loc(2),
-        )))),
+        ))),
         // qual_Op b_expr
-        19 => Ok(SemValue::node(Node::from(make_a_expr(
+        19 => Ok(SemValue::node(make_a_expr(
             AExprKind::Op,
             rhs.list(1)?,
             None,
             rhs.node(2)?,
             rhs.loc(1),
-        )))),
+        ))),
         // b_expr qual_Op
-        20 => Ok(SemValue::node(Node::from(make_a_expr(
+        20 => Ok(SemValue::node(make_a_expr(
             AExprKind::Op,
             rhs.list(2)?,
             rhs.node(1)?,
             None,
             rhs.loc(2),
-        )))),
+        ))),
         // b_expr IS DISTINCT FROM b_expr
-        21 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        21 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Distinct,
             "=",
             rhs.node(1)?,
             rhs.node(5)?,
             rhs.loc(2),
-        )))),
+        ))),
         // b_expr IS NOT DISTINCT FROM b_expr
-        22 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        22 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::NotDistinct,
             "=",
             rhs.node(1)?,
             rhs.node(6)?,
             rhs.loc(2),
-        )))),
+        ))),
         // b_expr IS OF '(' type_list ')'
-        23 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        23 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Of,
             "=",
             rhs.node(1)?,
             Node::from_list(rhs.list(5)?),
             rhs.loc(2),
-        )))),
+        ))),
         // b_expr IS NOT OF '(' type_list ')'
-        24 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        24 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Of,
             "<>",
             rhs.node(1)?,
             Node::from_list(rhs.list(6)?),
             rhs.loc(2),
-        )))),
+        ))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -4504,10 +4059,6 @@ pub(super) fn c_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
 /// ```
 pub(super) fn d_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // columnref_opt_indirection
-        0 => Ok(SemValue::Node(rhs.node(1)?)),
-        // AexprConst
-        1 => Ok(SemValue::Node(rhs.node(1)?)),
         // select_with_parens
         2 => {
             let n = SubLink {
@@ -4516,9 +4067,8 @@ pub(super) fn d_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
                 oper_name: List::new(),
                 subselect: rhs.node(1)?,
                 location: rhs.loc(1),
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // select_with_parens indirection
         3 => {
@@ -4531,7 +4081,7 @@ pub(super) fn d_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
             n.location = rhs.loc(1);
             a.arg = Some(n.into());
             a.indirection = check_indirection(rhs.list(2)?, rhs.scanner())?;
-            Ok(SemValue::node(Node::from(a)))
+            Ok(SemValue::node(a))
         }
         // EXISTS select_with_parens
         4 => {
@@ -4541,9 +4091,8 @@ pub(super) fn d_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
                 oper_name: List::new(),
                 subselect: rhs.node(2)?,
                 location: rhs.loc(1),
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // grouping_or_grouping_id '(' expr_list_opt_comma ')'
         5 => {
@@ -4552,7 +4101,7 @@ pub(super) fn d_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
                 location: rhs.loc(1),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(g)))
+            Ok(SemValue::node(g))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -4569,10 +4118,6 @@ pub(super) fn indirection_expr_or_a_expr<'a>(
     alt: usize,
 ) -> Result<SemValue<'a>> {
     match alt {
-        // '(' a_expr ')'
-        0 => Ok(SemValue::Node(rhs.node(2)?)),
-        // indirection_expr
-        1 => Ok(SemValue::Node(rhs.node(1)?)),
         // row
         2 => {
             let n = Some(Box::new(make_func_call(
@@ -4603,7 +4148,7 @@ pub(super) fn param_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<
                 location: rhs.loc(1),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(p)))
+            Ok(SemValue::node(p))
         }
         // '$' ColLabel
         2 => Ok(SemValue::node(make_named_param_ref(
@@ -4637,13 +4182,12 @@ pub(super) fn indirection_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
                 oper_name: List::new(),
                 subselect: rhs.node(2)?,
                 location: rhs.loc(2),
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ARRAY '[' opt_expr_list_opt_comma ']'
         8 => {
-            let func_name = vec![Node::Value(Value::String("construct_array".into()))];
+            let func_name = vec![Node::Value(Value::String("construct_array".to_owned()))];
             let n = Some(Box::new(make_func_call(func_name, rhs.list(3)?, rhs.loc(1))));
             Ok(SemValue::Node(n.map(Node::from)))
         }
@@ -4652,9 +4196,8 @@ pub(super) fn indirection_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
             let n = PositionalReference {
                 position: rhs.int(2)?,
                 location: rhs.loc(1),
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -4748,11 +4291,11 @@ pub(super) fn map_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<Se
 pub(super) fn func_application<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // func_name '(' ')'
-        0 => Ok(SemValue::node(Node::from(make_func_call(
+        0 => Ok(SemValue::node(make_func_call(
             rhs.list(1)?,
             List::new(),
             rhs.loc(1),
-        )))),
+        ))),
         // func_name '(' sort_clause opt_ignore_nulls ')'
         1 => {
             let mut n = Some(Box::new(make_func_call(rhs.list(1)?, List::new(), rhs.loc(1))));
@@ -4771,7 +4314,7 @@ pub(super) fn func_application<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
         3 => {
             let mut n = Some(Box::new(make_func_call(
                 rhs.list(1)?,
-                vec![required(rhs.node(4)?)?],
+                vec![rhs.required_node(4)?],
                 rhs.loc(1),
             )));
             required_mut(&mut n)?.func_variadic = true;
@@ -4783,7 +4326,7 @@ pub(super) fn func_application<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
         4 => {
             let mut n = Some(Box::new(make_func_call(
                 rhs.list(1)?,
-                append(rhs.list(3)?, required(rhs.node(6)?)?),
+                append(rhs.list(3)?, rhs.required_node(6)?),
                 rhs.loc(1),
             )));
             required_mut(&mut n)?.func_variadic = true;
@@ -4840,25 +4383,8 @@ pub(super) fn func_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
             n.agg_filter = rhs.node(3)?;
             n.export_state = rhs.bool(4)?;
             n.over = rhs.ptr::<WindowDef>(5)?;
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
-        // func_expr_common_subexpr
-        1 => Ok(SemValue::Node(rhs.node(1)?)),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// func_expr_windowless:
-///       func_application
-///     | func_expr_common_subexpr
-/// ```
-pub(super) fn func_expr_windowless<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // func_application
-        0 => Ok(SemValue::Node(rhs.node(1)?)),
-        // func_expr_common_subexpr
-        1 => Ok(SemValue::Node(rhs.node(1)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -4883,11 +4409,11 @@ pub(super) fn func_expr_windowless<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) 
 pub(super) fn func_expr_common_subexpr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // COLLATION FOR '(' a_expr ')'
-        0 => Ok(SemValue::node(Node::from(make_func_call(
+        0 => Ok(SemValue::node(make_func_call(
             system_func_name("pg_collation_for"),
-            vec![required(rhs.node(4)?)?],
+            vec![rhs.required_node(4)?],
             rhs.loc(1),
-        )))),
+        ))),
         // CAST '(' a_expr AS Typename ')'
         1 => Ok(SemValue::node(make_type_cast(
             rhs.node(3)?,
@@ -4903,29 +4429,29 @@ pub(super) fn func_expr_common_subexpr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usi
             rhs.loc(1),
         ))),
         // EXTRACT '(' extract_list ')'
-        3 => Ok(SemValue::node(Node::from(make_func_call(
+        3 => Ok(SemValue::node(make_func_call(
             system_func_name("date_part"),
             rhs.list(3)?,
             rhs.loc(1),
-        )))),
+        ))),
         // OVERLAY '(' overlay_list ')'
-        4 => Ok(SemValue::node(Node::from(make_func_call(
+        4 => Ok(SemValue::node(make_func_call(
             system_func_name("overlay"),
             rhs.list(3)?,
             rhs.loc(1),
-        )))),
+        ))),
         // POSITION '(' position_list ')'
-        5 => Ok(SemValue::node(Node::from(make_func_call(
+        5 => Ok(SemValue::node(make_func_call(
             system_func_name("__internal_position_operator"),
             rhs.list(3)?,
             rhs.loc(1),
-        )))),
+        ))),
         // SUBSTRING '(' substr_list ')'
-        6 => Ok(SemValue::node(Node::from(make_func_call(
+        6 => Ok(SemValue::node(make_func_call(
             system_func_name("substring"),
             rhs.list(3)?,
             rhs.loc(1),
-        )))),
+        ))),
         // TREAT '(' a_expr AS Typename ')'
         7 => {
             // TREAT(expr AS type) calls the function named like the type
@@ -4935,45 +4461,44 @@ pub(super) fn func_expr_common_subexpr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usi
             Ok(SemValue::node(call))
         }
         // TRIM '(' BOTH trim_list ')'
-        8 => Ok(SemValue::node(Node::from(make_func_call(
+        8 => Ok(SemValue::node(make_func_call(
             system_func_name("trim"),
             rhs.list(4)?,
             rhs.loc(1),
-        )))),
+        ))),
         // TRIM '(' LEADING trim_list ')'
-        9 => Ok(SemValue::node(Node::from(make_func_call(
+        9 => Ok(SemValue::node(make_func_call(
             system_func_name("ltrim"),
             rhs.list(4)?,
             rhs.loc(1),
-        )))),
+        ))),
         // TRIM '(' TRAILING trim_list ')'
-        10 => Ok(SemValue::node(Node::from(make_func_call(
+        10 => Ok(SemValue::node(make_func_call(
             system_func_name("rtrim"),
             rhs.list(4)?,
             rhs.loc(1),
-        )))),
+        ))),
         // TRIM '(' trim_list ')'
-        11 => Ok(SemValue::node(Node::from(make_func_call(
+        11 => Ok(SemValue::node(make_func_call(
             system_func_name("trim"),
             rhs.list(3)?,
             rhs.loc(1),
-        )))),
+        ))),
         // NULLIF '(' a_expr ',' a_expr ')'
-        12 => Ok(SemValue::node(Node::from(make_simple_a_expr(
+        12 => Ok(SemValue::node(make_simple_a_expr(
             AExprKind::Nullif,
             "=",
             rhs.node(3)?,
             rhs.node(5)?,
             rhs.loc(1),
-        )))),
+        ))),
         // COALESCE '(' expr_list_opt_comma ')'
         13 => {
             let c = CoalesceExpr {
                 args: rhs.list(3)?,
                 location: rhs.loc(1),
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(c)))
+            Ok(SemValue::node(c))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -4992,11 +4517,10 @@ pub(super) fn list_comprehension<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
                 lhs: rhs.list(4)?,
                 rhs: rhs.node(2)?,
                 location: rhs.loc(1),
-                ..Default::default()
             };
             let n = Some(Box::new(make_func_call(
                 system_func_name("list_apply"),
-                vec![required(rhs.node(6)?)?, lambda.into()],
+                vec![rhs.required_node(6)?, lambda.into()],
                 rhs.loc(1),
             )));
             Ok(SemValue::Node(n.map(Node::from)))
@@ -5083,8 +4607,6 @@ pub(super) fn list_comprehension<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
 /// ```
 pub(super) fn within_group_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // WITHIN GROUP_P '(' sort_clause ')'
-        0 => Ok(SemValue::List(rhs.list(4)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -5099,10 +4621,6 @@ pub(super) fn within_group_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
 /// ```
 pub(super) fn filter_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // FILTER '(' WHERE a_expr ')'
-        0 => Ok(SemValue::Node(rhs.node(4)?)),
-        // FILTER '(' a_expr ')'
-        1 => Ok(SemValue::Node(rhs.node(3)?)),
         // /* empty */
         2 => Ok(SemValue::Node(None)),
         _ => Err(rhs.bad_alternative()),
@@ -5131,8 +4649,6 @@ pub(super) fn export_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
 /// ```
 pub(super) fn window_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // WINDOW window_definition_list
-        0 => Ok(SemValue::List(rhs.list(2)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -5147,14 +4663,9 @@ pub(super) fn window_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
 pub(super) fn window_definition_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // window_definition
-        0 => Ok(SemValue::List(vec![Node::from(required(
-            rhs.ptr::<WindowDef>(1)?,
-        )?)])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // window_definition_list ',' window_definition
-        1 => Ok(SemValue::List(append(
-            rhs.list(1)?,
-            Node::from(required(rhs.ptr::<WindowDef>(3)?)?),
-        ))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -5183,8 +4694,6 @@ pub(super) fn window_definition<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> 
 /// ```
 pub(super) fn over_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // OVER window_specification
-        0 => Ok(SemValue::Node((rhs.ptr::<WindowDef>(2)?).map(Node::from))),
         // OVER ColId
         1 => {
             let n = WindowDef {
@@ -5196,7 +4705,6 @@ pub(super) fn over_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 start_offset: None,
                 end_offset: None,
                 location: rhs.loc(2),
-                ..Default::default()
             };
             Ok(SemValue::node(n))
         }
@@ -5224,7 +4732,6 @@ pub(super) fn window_specification<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) 
                 start_offset: opt_frame_clause.start_offset,
                 end_offset: opt_frame_clause.end_offset,
                 location: rhs.loc(1),
-                ..Default::default()
             };
             Ok(SemValue::node(n))
         }
@@ -5239,8 +4746,6 @@ pub(super) fn window_specification<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) 
 /// ```
 pub(super) fn opt_existing_window_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // ColId
-        0 => Ok(SemValue::Str(rhs.str(1)?)),
         // /* empty */
         1 => Ok(SemValue::Str(None)),
         _ => Err(rhs.bad_alternative()),
@@ -5254,8 +4759,6 @@ pub(super) fn opt_existing_window_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usi
 /// ```
 pub(super) fn opt_partition_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // PARTITION BY expr_list
-        0 => Ok(SemValue::List(rhs.list(3)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -5449,9 +4952,8 @@ pub(super) fn opt_window_exclusion_clause<'a>(
         // EXCLUDE TIES
         2 => Ok(SemValue::Int(frame_option::EXCLUDE_TIES)),
         // EXCLUDE NO OTHERS
-        3 => Ok(SemValue::Int(0)),
         // /* empty */
-        4 => Ok(SemValue::Int(0)),
+        3 | 4 => Ok(SemValue::Int(0)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -5463,8 +4965,6 @@ pub(super) fn opt_window_exclusion_clause<'a>(
 /// ```
 pub(super) fn qualified_row<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // ROW '(' expr_list_opt_comma ')'
-        0 => Ok(SemValue::List(rhs.list(3)?)),
         // ROW '(' ')'
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -5478,10 +4978,8 @@ pub(super) fn qualified_row<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
 /// ```
 pub(super) fn row<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // qualified_row
-        0 => Ok(SemValue::List(rhs.list(1)?)),
         // '(' expr_list ',' a_expr ')'
-        1 => Ok(SemValue::List(append(rhs.list(2)?, required(rhs.node(4)?)?))),
+        1 => Ok(SemValue::List(append(rhs.list(2)?, rhs.required_node(4)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -5499,9 +4997,8 @@ pub(super) fn dict_arg<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<Se
                 arg: rhs.node(3)?,
                 argnumber: -1,
                 location: rhs.loc(1),
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(na)))
+            Ok(SemValue::node(na))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -5515,24 +5012,9 @@ pub(super) fn dict_arg<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<Se
 pub(super) fn dict_arguments<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // dict_arg
-        0 => Ok(SemValue::List(vec![required(rhs.node(1)?)?])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // dict_arguments ',' dict_arg
-        1 => Ok(SemValue::List(append(rhs.list(1)?, required(rhs.node(3)?)?))),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// dict_arguments_opt_comma:
-///       dict_arguments
-///     | dict_arguments ','
-/// ```
-pub(super) fn dict_arguments_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // dict_arguments
-        0 => Ok(SemValue::List(rhs.list(1)?)),
-        // dict_arguments ','
-        1 => Ok(SemValue::List(rhs.list(1)?)),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -5544,10 +5026,7 @@ pub(super) fn dict_arguments_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: usi
 pub(super) fn map_arg<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // a_expr SINGLE_COLON a_expr
-        0 => Ok(SemValue::List(vec![
-            required(rhs.node(1)?)?,
-            required(rhs.node(3)?)?,
-        ])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?, rhs.required_node(3)?])),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -5568,21 +5047,6 @@ pub(super) fn map_arguments<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
 }
 
 /// ```text
-/// map_arguments_opt_comma:
-///       map_arguments
-///     | map_arguments ','
-/// ```
-pub(super) fn map_arguments_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // map_arguments
-        0 => Ok(SemValue::List(rhs.list(1)?)),
-        // map_arguments ','
-        1 => Ok(SemValue::List(rhs.list(1)?)),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
 /// opt_map_arguments_opt_comma:
 ///       map_arguments_opt_comma
 ///     | /* empty */
@@ -5592,8 +5056,6 @@ pub(super) fn opt_map_arguments_opt_comma<'a>(
     alt: usize,
 ) -> Result<SemValue<'a>> {
     match alt {
-        // map_arguments_opt_comma
-        0 => Ok(SemValue::List(rhs.list(1)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -5609,9 +5071,8 @@ pub(super) fn opt_map_arguments_opt_comma<'a>(
 pub(super) fn sub_type<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // ANY
-        0 => Ok(SemValue::SubLinkType(SubLinkType::Any)),
         // SOME
-        1 => Ok(SemValue::SubLinkType(SubLinkType::Any)),
+        0 | 1 => Ok(SemValue::SubLinkType(SubLinkType::Any)),
         // ALL
         2 => Ok(SemValue::SubLinkType(SubLinkType::All)),
         _ => Err(rhs.bad_alternative()),
@@ -5625,8 +5086,6 @@ pub(super) fn sub_type<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<Se
 /// ```
 pub(super) fn all_op<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // Op
-        0 => Ok(SemValue::Str(rhs.str(1)?)),
         // MathOp
         1 => Ok(SemValue::Str(rhs.const_str(1)?.map(str::to_owned))),
         _ => Err(rhs.bad_alternative()),
@@ -5692,11 +5151,9 @@ pub(super) fn math_op<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<Sem
 pub(super) fn qual_op<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // Op
-        0 => Ok(SemValue::List(vec![Node::Value(Value::String(
-            required(rhs.str(1)?)?.into(),
-        ))])),
-        // OPERATOR '(' any_operator ')'
-        1 => Ok(SemValue::List(rhs.list(3)?)),
+        0 => Ok(SemValue::List(vec![Node::Value(Value::String(required(
+            rhs.str(1)?,
+        )?))])),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -5709,11 +5166,9 @@ pub(super) fn qual_op<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<Sem
 pub(super) fn qual_all_op<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // all_Op
-        0 => Ok(SemValue::List(vec![Node::Value(Value::String(
-            required(rhs.str(1)?)?.into(),
-        ))])),
-        // OPERATOR '(' any_operator ')'
-        1 => Ok(SemValue::List(rhs.list(3)?)),
+        0 => Ok(SemValue::List(vec![Node::Value(Value::String(required(
+            rhs.str(1)?,
+        )?))])),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -5732,23 +5187,25 @@ pub(super) fn qual_all_op<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
 pub(super) fn subquery_op<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // all_Op
-        0 => Ok(SemValue::List(vec![Node::Value(Value::String(
-            required(rhs.str(1)?)?.into(),
-        ))])),
-        // OPERATOR '(' any_operator ')'
-        1 => Ok(SemValue::List(rhs.list(3)?)),
+        0 => Ok(SemValue::List(vec![Node::Value(Value::String(required(
+            rhs.str(1)?,
+        )?))])),
         // LIKE
-        2 => Ok(SemValue::List(vec![Node::Value(Value::String("~~".into()))])),
+        2 => Ok(SemValue::List(vec![Node::Value(Value::String("~~".to_owned()))])),
         // NOT_LA LIKE
-        3 => Ok(SemValue::List(vec![Node::Value(Value::String("!~~".into()))])),
+        3 => Ok(SemValue::List(vec![Node::Value(Value::String("!~~".to_owned()))])),
         // GLOB
-        4 => Ok(SemValue::List(vec![Node::Value(Value::String("~~~".into()))])),
+        4 => Ok(SemValue::List(vec![Node::Value(Value::String("~~~".to_owned()))])),
         // NOT_LA GLOB
-        5 => Ok(SemValue::List(vec![Node::Value(Value::String("!~~~".into()))])),
+        5 => Ok(SemValue::List(vec![Node::Value(Value::String(
+            "!~~~".to_owned(),
+        ))])),
         // ILIKE
-        6 => Ok(SemValue::List(vec![Node::Value(Value::String("~~*".into()))])),
+        6 => Ok(SemValue::List(vec![Node::Value(Value::String("~~*".to_owned()))])),
         // NOT_LA ILIKE
-        7 => Ok(SemValue::List(vec![Node::Value(Value::String("!~~*".into()))])),
+        7 => Ok(SemValue::List(vec![Node::Value(Value::String(
+            "!~~*".to_owned(),
+        ))])),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -5761,12 +5218,12 @@ pub(super) fn subquery_op<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
 pub(super) fn any_operator<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // all_Op
-        0 => Ok(SemValue::List(vec![Node::Value(Value::String(
-            required(rhs.str(1)?)?.into(),
-        ))])),
+        0 => Ok(SemValue::List(vec![Node::Value(Value::String(required(
+            rhs.str(1)?,
+        )?))])),
         // ColId '.' any_operator
         1 => Ok(SemValue::List(prepend(
-            Node::Value(Value::String(required(rhs.str(1)?)?.into())),
+            Node::Value(Value::String(required(rhs.str(1)?)?)),
             rhs.list(3)?,
         ))),
         _ => Err(rhs.bad_alternative()),
@@ -5781,24 +5238,9 @@ pub(super) fn any_operator<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
 pub(super) fn c_expr_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // c_expr
-        0 => Ok(SemValue::List(vec![required(rhs.node(1)?)?])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // c_expr_list ',' c_expr
-        1 => Ok(SemValue::List(append(rhs.list(1)?, required(rhs.node(3)?)?))),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// c_expr_list_opt_comma:
-///       c_expr_list
-///     | c_expr_list ','
-/// ```
-pub(super) fn c_expr_list_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // c_expr_list
-        0 => Ok(SemValue::List(rhs.list(1)?)),
-        // c_expr_list ','
-        1 => Ok(SemValue::List(rhs.list(1)?)),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -5811,24 +5253,9 @@ pub(super) fn c_expr_list_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize)
 pub(super) fn expr_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // a_expr
-        0 => Ok(SemValue::List(vec![required(rhs.node(1)?)?])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // expr_list ',' a_expr
-        1 => Ok(SemValue::List(append(rhs.list(1)?, required(rhs.node(3)?)?))),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// expr_list_opt_comma:
-///       expr_list
-///     | expr_list ','
-/// ```
-pub(super) fn expr_list_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // expr_list
-        0 => Ok(SemValue::List(rhs.list(1)?)),
-        // expr_list ','
-        1 => Ok(SemValue::List(rhs.list(1)?)),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -5840,8 +5267,6 @@ pub(super) fn expr_list_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
 /// ```
 pub(super) fn opt_expr_list_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // expr_list_opt_comma
-        0 => Ok(SemValue::List(rhs.list(1)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -5856,9 +5281,9 @@ pub(super) fn opt_expr_list_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: usiz
 pub(super) fn func_arg_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // func_arg_expr
-        0 => Ok(SemValue::List(vec![required(rhs.node(1)?)?])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // func_arg_list ',' func_arg_expr
-        1 => Ok(SemValue::List(append(rhs.list(1)?, required(rhs.node(3)?)?))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -5871,29 +5296,16 @@ pub(super) fn func_arg_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
 /// ```
 pub(super) fn func_arg_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // a_expr
-        0 => Ok(SemValue::Node(rhs.node(1)?)),
         // param_name COLON_EQUALS a_expr
-        1 => {
-            let na = NamedArgExpr {
-                name: rhs.str(1)?,
-                arg: rhs.node(3)?,
-                argnumber: -1,
-                location: rhs.loc(1),
-                ..Default::default()
-            };
-            Ok(SemValue::node(Node::from(na)))
-        }
         // param_name EQUALS_GREATER a_expr
-        2 => {
+        1 | 2 => {
             let na = NamedArgExpr {
                 name: rhs.str(1)?,
                 arg: rhs.node(3)?,
                 argnumber: -1,
                 location: rhs.loc(1),
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(na)))
+            Ok(SemValue::node(na))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -5907,14 +5319,9 @@ pub(super) fn func_arg_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
 pub(super) fn type_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // Typename
-        0 => Ok(SemValue::List(vec![Node::from(required(
-            rhs.ptr::<TypeName>(1)?,
-        )?)])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // type_list ',' Typename
-        1 => Ok(SemValue::List(append(
-            rhs.list(1)?,
-            Node::from(required(rhs.ptr::<TypeName>(3)?)?),
-        ))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -5929,7 +5336,7 @@ pub(super) fn extract_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
         // extract_arg FROM a_expr
         0 => Ok(SemValue::List(vec![
             make_string_const(required(rhs.str(1)?)?, rhs.loc(1)),
-            required(rhs.node(3)?)?,
+            rhs.required_node(3)?,
         ])),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
@@ -5957,8 +5364,6 @@ pub(super) fn extract_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
 /// ```
 pub(super) fn extract_arg<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // IDENT
-        0 => Ok(SemValue::Str(rhs.str(1)?)),
         // year_keyword
         1 => Ok(SemValue::Str(Some("year".to_owned()))),
         // month_keyword
@@ -5985,8 +5390,6 @@ pub(super) fn extract_arg<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
         12 => Ok(SemValue::Str(Some("century".to_owned()))),
         // millennium_keyword
         13 => Ok(SemValue::Str(Some("millennium".to_owned()))),
-        // Sconst
-        14 => Ok(SemValue::Str(rhs.str(1)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -6000,29 +5403,17 @@ pub(super) fn overlay_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
     match alt {
         // a_expr overlay_placing substr_from substr_for
         0 => Ok(SemValue::List(vec![
-            required(rhs.node(1)?)?,
-            required(rhs.node(2)?)?,
-            required(rhs.node(3)?)?,
-            required(rhs.node(4)?)?,
+            rhs.required_node(1)?,
+            rhs.required_node(2)?,
+            rhs.required_node(3)?,
+            rhs.required_node(4)?,
         ])),
         // a_expr overlay_placing substr_from
         1 => Ok(SemValue::List(vec![
-            required(rhs.node(1)?)?,
-            required(rhs.node(2)?)?,
-            required(rhs.node(3)?)?,
+            rhs.required_node(1)?,
+            rhs.required_node(2)?,
+            rhs.required_node(3)?,
         ])),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// overlay_placing:
-///       PLACING a_expr
-/// ```
-pub(super) fn overlay_placing<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // PLACING a_expr
-        0 => Ok(SemValue::Node(rhs.node(2)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -6035,10 +5426,7 @@ pub(super) fn overlay_placing<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
 pub(super) fn position_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // b_expr IN_P b_expr
-        0 => Ok(SemValue::List(vec![
-            required(rhs.node(1)?)?,
-            required(rhs.node(3)?)?,
-        ])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?, rhs.required_node(3)?])),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -6058,55 +5446,26 @@ pub(super) fn substr_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
     match alt {
         // a_expr substr_from substr_for
         0 => Ok(SemValue::List(vec![
-            required(rhs.node(1)?)?,
-            required(rhs.node(2)?)?,
-            required(rhs.node(3)?)?,
+            rhs.required_node(1)?,
+            rhs.required_node(2)?,
+            rhs.required_node(3)?,
         ])),
         // a_expr substr_for substr_from
         1 => Ok(SemValue::List(vec![
-            required(rhs.node(1)?)?,
-            required(rhs.node(3)?)?,
-            required(rhs.node(2)?)?,
+            rhs.required_node(1)?,
+            rhs.required_node(3)?,
+            rhs.required_node(2)?,
         ])),
         // a_expr substr_from
-        2 => Ok(SemValue::List(vec![
-            required(rhs.node(1)?)?,
-            required(rhs.node(2)?)?,
-        ])),
+        2 => Ok(SemValue::List(vec![rhs.required_node(1)?, rhs.required_node(2)?])),
         // a_expr substr_for
         3 => Ok(SemValue::List(vec![
-            required(rhs.node(1)?)?,
+            rhs.required_node(1)?,
             make_int_const(1, -1),
             make_type_cast(rhs.node(2)?, Some(Box::new(system_type_name("int4"))), 0, -1),
         ])),
-        // expr_list
-        4 => Ok(SemValue::List(rhs.list(1)?)),
         // /* empty */
         5 => Ok(SemValue::List(List::new())),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// substr_from:
-///       FROM a_expr
-/// ```
-pub(super) fn substr_from<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // FROM a_expr
-        0 => Ok(SemValue::Node(rhs.node(2)?)),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// substr_for:
-///       FOR a_expr
-/// ```
-pub(super) fn substr_for<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // FOR a_expr
-        0 => Ok(SemValue::Node(rhs.node(2)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -6120,11 +5479,7 @@ pub(super) fn substr_for<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<
 pub(super) fn trim_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // a_expr FROM expr_list_opt_comma
-        0 => Ok(SemValue::List(append(rhs.list(3)?, required(rhs.node(1)?)?))),
-        // FROM expr_list_opt_comma
-        1 => Ok(SemValue::List(rhs.list(2)?)),
-        // expr_list_opt_comma
-        2 => Ok(SemValue::List(rhs.list(1)?)),
+        0 => Ok(SemValue::List(append(rhs.list(3)?, rhs.required_node(1)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -6144,12 +5499,10 @@ pub(super) fn in_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<Sem
                 subselect: rhs.node(1)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // '(' expr_list_opt_comma ')'
         1 => Ok(SemValue::Node(Node::from_list(rhs.list(2)?))),
-        // indirection_expr
-        3 => Ok(SemValue::Node(rhs.node(1)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -6167,9 +5520,8 @@ pub(super) fn case_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
                 args: rhs.list(3)?,
                 defresult: rhs.node(4)?,
                 location: rhs.loc(1),
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(c)))
+            Ok(SemValue::node(c))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -6183,9 +5535,9 @@ pub(super) fn case_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
 pub(super) fn when_clause_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // when_clause
-        0 => Ok(SemValue::List(vec![required(rhs.node(1)?)?])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // when_clause_list when_clause
-        1 => Ok(SemValue::List(append(rhs.list(1)?, required(rhs.node(2)?)?))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(2)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -6202,9 +5554,8 @@ pub(super) fn when_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 expr: rhs.node(2)?,
                 result: rhs.node(4)?,
                 location: rhs.loc(1),
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(w)))
+            Ok(SemValue::node(w))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -6217,8 +5568,6 @@ pub(super) fn when_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
 /// ```
 pub(super) fn case_default<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // ELSE a_expr
-        0 => Ok(SemValue::Node(rhs.node(2)?)),
         // /* empty */
         1 => Ok(SemValue::Node(None)),
         _ => Err(rhs.bad_alternative()),
@@ -6232,8 +5581,6 @@ pub(super) fn case_default<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
 /// ```
 pub(super) fn case_arg<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // a_expr
-        0 => Ok(SemValue::Node(rhs.node(1)?)),
         // /* empty */
         1 => Ok(SemValue::Node(None)),
         _ => Err(rhs.bad_alternative()),
@@ -6289,8 +5636,6 @@ pub(super) fn columnref_opt_indirection<'a>(rhs: &mut Reduction<'_, 'a>, alt: us
 /// ```
 pub(super) fn opt_slice_bound<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // a_expr
-        0 => Ok(SemValue::Node(rhs.node(1)?)),
         // /* empty */
         1 => Ok(SemValue::Node(None)),
         _ => Err(rhs.bad_alternative()),
@@ -6307,7 +5652,7 @@ pub(super) fn opt_indirection<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
         // /* empty */
         0 => Ok(SemValue::List(List::new())),
         // opt_indirection indirection_el
-        1 => Ok(SemValue::List(append(rhs.list(1)?, required(rhs.node(2)?)?))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(2)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -6357,7 +5702,7 @@ pub(super) fn extended_indirection_el<'a>(rhs: &mut Reduction<'_, 'a>, alt: usiz
                 uidx: rhs.node(2)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(ai)))
+            Ok(SemValue::node(ai))
         }
         // '[' opt_slice_bound SINGLE_COLON opt_slice_bound ']'
         2 => {
@@ -6367,7 +5712,7 @@ pub(super) fn extended_indirection_el<'a>(rhs: &mut Reduction<'_, 'a>, alt: usiz
                 uidx: rhs.node(4)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(ai)))
+            Ok(SemValue::node(ai))
         }
         // '[' opt_slice_bound SINGLE_COLON opt_slice_bound SINGLE_COLON opt_slice_bound ']'
         3 => {
@@ -6376,9 +5721,8 @@ pub(super) fn extended_indirection_el<'a>(rhs: &mut Reduction<'_, 'a>, alt: usiz
                 lidx: rhs.node(2)?,
                 uidx: rhs.node(4)?,
                 step: rhs.node(6)?,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(ai)))
+            Ok(SemValue::node(ai))
         }
         // '[' opt_slice_bound SINGLE_COLON '-' SINGLE_COLON opt_slice_bound ']'
         4 => {
@@ -6388,7 +5732,7 @@ pub(super) fn extended_indirection_el<'a>(rhs: &mut Reduction<'_, 'a>, alt: usiz
                 step: rhs.node(6)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(ai)))
+            Ok(SemValue::node(ai))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -6404,7 +5748,7 @@ pub(super) fn opt_extended_indirection<'a>(rhs: &mut Reduction<'_, 'a>, alt: usi
         // /* empty */
         0 => Ok(SemValue::List(List::new())),
         // opt_extended_indirection extended_indirection_el
-        1 => Ok(SemValue::List(append(rhs.list(1)?, required(rhs.node(2)?)?))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(2)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -6416,8 +5760,6 @@ pub(super) fn opt_extended_indirection<'a>(rhs: &mut Reduction<'_, 'a>, alt: usi
 /// ```
 pub(super) fn opt_target_list_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // target_list_opt_comma
-        0 => Ok(SemValue::List(rhs.list(1)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -6432,29 +5774,9 @@ pub(super) fn opt_target_list_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: us
 pub(super) fn target_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // target_el
-        0 => Ok(SemValue::List(vec![Node::from(required(
-            rhs.ptr::<ResTarget>(1)?,
-        )?)])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // target_list ',' target_el
-        1 => Ok(SemValue::List(append(
-            rhs.list(1)?,
-            Node::from(required(rhs.ptr::<ResTarget>(3)?)?),
-        ))),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// target_list_opt_comma:
-///       target_list
-///     | target_list ','
-/// ```
-pub(super) fn target_list_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // target_list
-        0 => Ok(SemValue::List(rhs.list(1)?)),
-        // target_list ','
-        1 => Ok(SemValue::List(rhs.list(1)?)),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -6470,38 +5792,42 @@ pub(super) fn target_el<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
     match alt {
         // a_expr AS ColLabelOrString
         0 => {
-            let mut target_el = ResTarget::default();
-            target_el.name = rhs.str(3)?;
-            target_el.indirection = List::new();
-            target_el.val = rhs.node(1)?;
-            target_el.location = rhs.loc(1);
+            let target_el = ResTarget {
+                name: rhs.str(3)?,
+                indirection: List::new(),
+                val: rhs.node(1)?,
+                location: rhs.loc(1),
+            };
             Ok(SemValue::node(target_el))
         }
         // a_expr IDENT
         1 => {
-            let mut target_el = ResTarget::default();
-            target_el.name = rhs.str(2)?;
-            target_el.indirection = List::new();
-            target_el.val = rhs.node(1)?;
-            target_el.location = rhs.loc(1);
+            let target_el = ResTarget {
+                name: rhs.str(2)?,
+                indirection: List::new(),
+                val: rhs.node(1)?,
+                location: rhs.loc(1),
+            };
             Ok(SemValue::node(target_el))
         }
         // a_expr
         2 => {
-            let mut target_el = ResTarget::default();
-            target_el.name = None;
-            target_el.indirection = List::new();
-            target_el.val = rhs.node(1)?;
-            target_el.location = rhs.loc(1);
+            let target_el = ResTarget {
+                name: None,
+                indirection: List::new(),
+                val: rhs.node(1)?,
+                location: rhs.loc(1),
+            };
             Ok(SemValue::node(target_el))
         }
         // ColId SINGLE_COLON a_expr
         3 => {
-            let mut target_el = ResTarget::default();
-            target_el.name = rhs.str(1)?;
-            target_el.indirection = List::new();
-            target_el.val = rhs.node(3)?;
-            target_el.location = rhs.loc(1);
+            let target_el = ResTarget {
+                name: rhs.str(1)?,
+                indirection: List::new(),
+                val: rhs.node(3)?,
+                location: rhs.loc(1),
+            };
             Ok(SemValue::node(target_el))
         }
         _ => Err(rhs.bad_alternative()),
@@ -6515,8 +5841,6 @@ pub(super) fn target_el<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
 /// ```
 pub(super) fn except_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // EXCLUDE '(' except_name_list_opt_comma ')'
-        0 => Ok(SemValue::List(rhs.list(3)?)),
         // EXCLUDE except_name
         1 => Ok(SemValue::List(vec![Node::List(rhs.list(2)?)])),
         _ => Err(rhs.bad_alternative()),
@@ -6557,32 +5881,12 @@ pub(super) fn except_name_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
 }
 
 /// ```text
-/// except_name_list_opt_comma:
-///       except_name_list
-///     | except_name_list ','
-/// ```
-pub(super) fn except_name_list_opt_comma<'a>(
-    rhs: &mut Reduction<'_, 'a>,
-    alt: usize,
-) -> Result<SemValue<'a>> {
-    match alt {
-        // except_name_list
-        0 => Ok(SemValue::List(rhs.list(1)?)),
-        // except_name_list ','
-        1 => Ok(SemValue::List(rhs.list(1)?)),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
 /// opt_except_list:
 ///       except_list
 ///     | /* empty */
 /// ```
 pub(super) fn opt_except_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // except_list
-        0 => Ok(SemValue::List(rhs.list(1)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -6597,8 +5901,8 @@ pub(super) fn replace_list_el<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
     match alt {
         // a_expr AS ColId
         0 => Ok(SemValue::List(vec![
-            required(rhs.node(1)?)?,
-            Node::Value(Value::String(required(rhs.str(3)?)?.into())),
+            rhs.required_node(1)?,
+            Node::Value(Value::String(required(rhs.str(3)?)?)),
         ])),
         _ => Err(rhs.bad_alternative()),
     }
@@ -6620,21 +5924,6 @@ pub(super) fn replace_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
 }
 
 /// ```text
-/// replace_list_opt_comma:
-///       replace_list
-///     | replace_list ','
-/// ```
-pub(super) fn replace_list_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // replace_list
-        0 => Ok(SemValue::List(rhs.list(1)?)),
-        // replace_list ','
-        1 => Ok(SemValue::List(rhs.list(1)?)),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
 /// opt_replace_list:
 ///       REPLACE '(' replace_list_opt_comma ')'
 ///     | REPLACE replace_list_el
@@ -6642,8 +5931,6 @@ pub(super) fn replace_list_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize
 /// ```
 pub(super) fn opt_replace_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // REPLACE '(' replace_list_opt_comma ')'
-        0 => Ok(SemValue::List(rhs.list(3)?)),
         // REPLACE replace_list_el
         1 => Ok(SemValue::List(vec![Node::List(rhs.list(2)?)])),
         // /* empty */
@@ -6683,21 +5970,6 @@ pub(super) fn rename_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
 }
 
 /// ```text
-/// rename_list_opt_comma:
-///       rename_list
-///     | rename_list ','
-/// ```
-pub(super) fn rename_list_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // rename_list
-        0 => Ok(SemValue::List(rhs.list(1)?)),
-        // rename_list ','
-        1 => Ok(SemValue::List(rhs.list(1)?)),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
 /// opt_rename_list:
 ///       RENAME '(' rename_list_opt_comma ')'
 ///     | RENAME rename_list_el
@@ -6705,8 +5977,6 @@ pub(super) fn rename_list_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize)
 /// ```
 pub(super) fn opt_rename_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // RENAME '(' rename_list_opt_comma ')'
-        0 => Ok(SemValue::List(rhs.list(3)?)),
         // RENAME rename_list_el
         1 => Ok(SemValue::List(vec![Node::List(rhs.list(2)?)])),
         // /* empty */
@@ -6723,14 +5993,9 @@ pub(super) fn opt_rename_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
 pub(super) fn qualified_name_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // qualified_name
-        0 => Ok(SemValue::List(vec![Node::from(required(
-            rhs.ptr::<RangeVar>(1)?,
-        )?)])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // qualified_name_list ',' qualified_name
-        1 => Ok(SemValue::List(append(
-            rhs.list(1)?,
-            Node::from(required(rhs.ptr::<RangeVar>(3)?)?),
-        ))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -6743,59 +6008,14 @@ pub(super) fn qualified_name_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
 pub(super) fn name_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // name
-        0 => Ok(SemValue::List(vec![Node::Value(Value::String(
-            required(rhs.str(1)?)?.into(),
-        ))])),
+        0 => Ok(SemValue::List(vec![Node::Value(Value::String(required(
+            rhs.str(1)?,
+        )?))])),
         // name_list ',' name
         1 => Ok(SemValue::List(append(
             rhs.list(1)?,
-            Node::Value(Value::String(required(rhs.str(3)?)?.into())),
+            Node::Value(Value::String(required(rhs.str(3)?)?)),
         ))),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// name_list_opt_comma:
-///       name_list
-///     | name_list ','
-/// ```
-pub(super) fn name_list_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // name_list
-        0 => Ok(SemValue::List(rhs.list(1)?)),
-        // name_list ','
-        1 => Ok(SemValue::List(rhs.list(1)?)),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// name_list_opt_comma_opt_bracket:
-///       name_list_opt_comma
-///     | '(' name_list_opt_comma ')'
-/// ```
-pub(super) fn name_list_opt_comma_opt_bracket<'a>(
-    rhs: &mut Reduction<'_, 'a>,
-    alt: usize,
-) -> Result<SemValue<'a>> {
-    match alt {
-        // name_list_opt_comma
-        0 => Ok(SemValue::List(rhs.list(1)?)),
-        // '(' name_list_opt_comma ')'
-        1 => Ok(SemValue::List(rhs.list(2)?)),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// name:
-///       ColIdOrString
-/// ```
-pub(super) fn name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // ColIdOrString
-        0 => Ok(SemValue::Str(rhs.str(1)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -6808,15 +6028,12 @@ pub(super) fn name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemVal
 pub(super) fn func_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // function_name_token
-        0 => Ok(SemValue::List(vec![Node::Value(Value::String(
-            required(rhs.str(1)?)?.into(),
-        ))])),
+        0 => Ok(SemValue::List(vec![Node::Value(Value::String(required(
+            rhs.str(1)?,
+        )?))])),
         // ColId indirection
         1 => Ok(SemValue::List(check_func_name(
-            prepend(
-                Node::Value(Value::String(required(rhs.str(1)?)?.into())),
-                rhs.list(2)?,
-            ),
+            prepend(Node::Value(Value::String(required(rhs.str(1)?)?)), rhs.list(2)?),
             rhs.scanner(),
         )?)),
         _ => Err(rhs.bad_alternative()),
@@ -6858,7 +6075,6 @@ pub(super) fn aexpr_const<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 let n = AIndirection {
                     arg: Some(make_string_const(required(sconst)?, rhs.loc(1))),
                     indirection: check_indirection(opt_indirection, rhs.scanner())?,
-                    ..Default::default()
                 };
                 aexpr_const = Node::from(n);
             } else {
@@ -6867,12 +6083,8 @@ pub(super) fn aexpr_const<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
             Ok(SemValue::node(aexpr_const))
         }
         // BCONST
-        3 => Ok(SemValue::node(make_bit_string_const(
-            required(rhs.str(1)?)?,
-            rhs.loc(1),
-        ))),
         // XCONST
-        4 => Ok(SemValue::node(make_bit_string_const(
+        3 | 4 => Ok(SemValue::node(make_bit_string_const(
             required(rhs.str(1)?)?,
             rhs.loc(1),
         ))),
@@ -6947,18 +6159,6 @@ pub(super) fn aexpr_const<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
 }
 
 /// ```text
-/// Iconst:
-///       ICONST
-/// ```
-pub(super) fn iconst<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // ICONST
-        0 => Ok(SemValue::Int(rhs.int(1)?)),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
 /// type_function_name:
 ///       IDENT
 ///     | unreserved_keyword
@@ -6966,12 +6166,9 @@ pub(super) fn iconst<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
 /// ```
 pub(super) fn type_function_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // IDENT
-        0 => Ok(SemValue::Str(rhs.str(1)?)),
         // unreserved_keyword
-        1 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
         // type_func_name_keyword
-        2 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
+        1 | 2 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -6984,12 +6181,9 @@ pub(super) fn type_function_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
 /// ```
 pub(super) fn function_name_token<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // IDENT
-        0 => Ok(SemValue::Str(rhs.str(1)?)),
         // unreserved_keyword
-        1 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
         // func_name_keyword
-        2 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
+        1 | 2 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -7002,12 +6196,9 @@ pub(super) fn function_name_token<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
 /// ```
 pub(super) fn type_name_token<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // IDENT
-        0 => Ok(SemValue::Str(rhs.str(1)?)),
         // unreserved_keyword
-        1 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
         // type_name_keyword
-        2 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
+        1 | 2 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -7020,12 +6211,12 @@ pub(super) fn type_name_token<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
 pub(super) fn any_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // ColId
-        0 => Ok(SemValue::List(vec![Node::Value(Value::String(
-            required(rhs.str(1)?)?.into(),
-        ))])),
+        0 => Ok(SemValue::List(vec![Node::Value(Value::String(required(
+            rhs.str(1)?,
+        )?))])),
         // ColId attrs
         1 => Ok(SemValue::List(prepend(
-            Node::Value(Value::String(required(rhs.str(1)?)?.into())),
+            Node::Value(Value::String(required(rhs.str(1)?)?)),
             rhs.list(2)?,
         ))),
         _ => Err(rhs.bad_alternative()),
@@ -7040,13 +6231,13 @@ pub(super) fn any_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<Se
 pub(super) fn attrs<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // '.' attr_name
-        0 => Ok(SemValue::List(vec![Node::Value(Value::String(
-            required(rhs.str(2)?)?.into(),
-        ))])),
+        0 => Ok(SemValue::List(vec![Node::Value(Value::String(required(
+            rhs.str(2)?,
+        )?))])),
         // attrs '.' attr_name
         1 => Ok(SemValue::List(append(
             rhs.list(1)?,
-            Node::Value(Value::String(required(rhs.str(3)?)?.into())),
+            Node::Value(Value::String(required(rhs.str(3)?)?)),
         ))),
         _ => Err(rhs.bad_alternative()),
     }
@@ -7059,25 +6250,8 @@ pub(super) fn attrs<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemVa
 /// ```
 pub(super) fn opt_name_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // '(' name_list_opt_comma ')'
-        0 => Ok(SemValue::List(rhs.list(2)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// ColLabelOrString:
-///       ColLabel
-///     | SCONST
-/// ```
-pub(super) fn col_label_or_string<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // ColLabel
-        0 => Ok(SemValue::Str(rhs.str(1)?)),
-        // SCONST
-        1 => Ok(SemValue::Str(rhs.str(1)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }

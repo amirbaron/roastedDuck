@@ -11,6 +11,7 @@ output is checked in and maintained by hand.
 from __future__ import annotations
 
 import pathlib
+import re
 import sys
 import textwrap
 
@@ -49,7 +50,7 @@ def doc_lines(text: str, indent: str) -> list[str]:
     text = text.strip()
     if not text:
         return []
-    text = text.replace("`", "'")
+    text = codify(text)
     if text[0].islower():
         text = text[0].upper() + text[1:]
     if not text.endswith((".", "?", "!", ")")):
@@ -57,7 +58,58 @@ def doc_lines(text: str, indent: str) -> list[str]:
     return [f"{indent}/// {ln}" for ln in textwrap.wrap(text, 96 - len(indent))]
 
 
+def codify(text: str) -> str:
+    """Wraps C identifiers (`snake_case`, `CamelCase`, `PGFoo`) in backticks."""
+    parts = text.split("`")
+    for i in range(0, len(parts), 2):  # outside existing code spans
+        parts[i] = re.sub(
+            r"(?<![\w.])([A-Za-z_][\w.]*\w(?:\(\))?|[A-Za-z_]\w*)",
+            lambda m: f"`{m.group(1)}`" if looks_like_code(m.group(1)) else m.group(1),
+            parts[i],
+        )
+    return "`".join(parts)
+
+
+def looks_like_code(word: str) -> bool:
+    return ("_" in word or "." in word.strip(".") or word.endswith("()")
+            or re.search(r"[a-z][A-Z]", word) is not None or re.match(r"[A-Z]{2,}[a-z]", word) is not None)
+
+
+# One-line descriptions for structs whose header comment is missing or unhelpful.
+STRUCT_DOCS = {
+    "PGRawStmt": "one statement of the input with its position in the query text",
+    "PGSelectStmt": "a `SELECT`, `VALUES`, `PIVOT` or set operation (`UNION`, `INTERSECT`, `EXCEPT`)",
+    "PGMatchAction": "one `WHEN [NOT] MATCHED ... THEN` action of `MERGE INTO`",
+    "PGAlterSeqStmt": "`ALTER SEQUENCE`",
+    "PGCreateFunctionStmt": "`CREATE MACRO` / `CREATE FUNCTION` with one or more overloads",
+    "PGCreateTypeStmt": "`CREATE TYPE` (an enum or an alias of another type)",
+    "PGViewStmt": "`CREATE VIEW`",
+    "PGAlterTableCmd": "one subcommand of `ALTER TABLE`",
+    "PGAlterDatabaseStmt": "`ALTER DATABASE`",
+    "PGImportStmt": "`IMPORT DATABASE`",
+    "PGPragmaStmt": "`PRAGMA name`, `PRAGMA name = value` or `PRAGMA name(args)`",
+    "PGTransactionStmt": "`BEGIN`, `COMMIT`, `ROLLBACK` and friends",
+    "PGVariableSetStmt": "`SET` and `RESET`",
+    "PGVacuumStmt": "`VACUUM` and `ANALYZE`",
+    "PGLoadStmt": "`LOAD` and `INSTALL` of extensions",
+    "PGPivotStmt": "a `PIVOT`/`UNPIVOT` statement",
+    "PGCommonTableExpr": "one common table expression of a `WITH` clause",
+    "PGGroupingSet": "a grouping set of `GROUP BY` (`ROLLUP`, `CUBE`, `GROUPING SETS`, `ALL`)",
+    "PGSampleOptions": "the options of `TABLESAMPLE` / `USING SAMPLE`",
+    "PGPivotExpr": "a `PIVOT`/`UNPIVOT` table reference",
+    "PGDefElem": "a generic `name = value` option",
+    "PGConstraint": "a column or table constraint",
+    "PGAExpr": "an operator expression",
+    "PGBoolExpr": "an `AND`, `OR` or `NOT` expression",
+    "PGSubLink": "a subquery used in an expression (`EXISTS`, `IN`, `ANY`, scalar, `ARRAY`)",
+    "PGNullTest": "`IS [NOT] NULL`",
+    "PGBooleanTest": "`IS [NOT] TRUE|FALSE|UNKNOWN`",
+}
+
+
 def struct_doc(m: M.Model, cname: str) -> str:
+    if cname in STRUCT_DOCS:
+        return STRUCT_DOCS[cname]
     c = m.structs[cname].comment
     rust = M.struct_rust_name(cname)
     # header comments typically start with "PGFoo - description"
@@ -121,7 +173,7 @@ def gen_enums(m: M.Model) -> str:
         out.append("#[repr(i32)]")
         out.append(f"pub enum {rname} {{")
         for i, (citem, variant, value, comment) in enumerate(m.enum_variants(cenum)):
-            out += doc_lines(comment or f"`{citem}`", "    ")
+            out += doc_lines(f"{comment} (`{citem}`)" if comment else f"`{citem}`", "    ")
             if i == 0:
                 out.append("    #[default]")
             out.append(f"    {variant} = {value},")

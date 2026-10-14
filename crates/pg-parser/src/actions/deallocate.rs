@@ -13,35 +13,19 @@ pub(super) fn deallocate_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
     match alt {
         // DEALLOCATE name
         0 => {
-            let n = DeallocateStmt {
-                name: rhs.str(2)?,
-                ..Default::default()
-            };
-            Ok(SemValue::node(Node::from(n)))
+            let n = DeallocateStmt { name: rhs.str(2)? };
+            Ok(SemValue::node(n))
         }
         // DEALLOCATE PREPARE name
         1 => {
-            let n = DeallocateStmt {
-                name: rhs.str(3)?,
-                ..Default::default()
-            };
-            Ok(SemValue::node(Node::from(n)))
+            let n = DeallocateStmt { name: rhs.str(3)? };
+            Ok(SemValue::node(n))
         }
         // DEALLOCATE ALL
-        2 => {
-            let n = DeallocateStmt {
-                name: None,
-                ..Default::default()
-            };
-            Ok(SemValue::node(Node::from(n)))
-        }
         // DEALLOCATE PREPARE ALL
-        3 => {
-            let n = DeallocateStmt {
-                name: None,
-                ..Default::default()
-            };
-            Ok(SemValue::node(Node::from(n)))
+        2 | 3 => {
+            let n = DeallocateStmt { name: None };
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }

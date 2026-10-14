@@ -45,39 +45,9 @@ pub(super) fn qualified_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
 /// ```
 pub(super) fn col_id<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // IDENT
-        0 => Ok(SemValue::Str(rhs.str(1)?)),
         // unreserved_keyword
-        1 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
         // col_name_keyword
-        2 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// ColIdOrString:
-///       ColId
-///     | SCONST
-/// ```
-pub(super) fn col_id_or_string<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // ColId
-        0 => Ok(SemValue::Str(rhs.str(1)?)),
-        // SCONST
-        1 => Ok(SemValue::Str(rhs.str(1)?)),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// Sconst:
-///       SCONST
-/// ```
-pub(super) fn sconst<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // SCONST
-        0 => Ok(SemValue::Str(rhs.str(1)?)),
+        1 | 2 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -90,9 +60,9 @@ pub(super) fn sconst<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
 pub(super) fn indirection<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // indirection_el
-        0 => Ok(SemValue::List(vec![required(rhs.node(1)?)?])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // indirection indirection_el
-        1 => Ok(SemValue::List(append(rhs.list(1)?, required(rhs.node(2)?)?))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(2)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -108,9 +78,7 @@ pub(super) fn indirection<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
 pub(super) fn indirection_el<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // '.' attr_name
-        0 => Ok(SemValue::node(Node::Value(Value::String(
-            required(rhs.str(2)?)?.into(),
-        )))),
+        0 => Ok(SemValue::node(Node::Value(Value::String(required(rhs.str(2)?)?)))),
         // '[' a_expr ']'
         1 => {
             let ai = AIndices {
@@ -119,7 +87,7 @@ pub(super) fn indirection_el<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
                 uidx: rhs.node(2)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(ai)))
+            Ok(SemValue::node(ai))
         }
         // '[' opt_slice_bound SINGLE_COLON opt_slice_bound ']'
         2 => {
@@ -129,7 +97,7 @@ pub(super) fn indirection_el<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
                 uidx: rhs.node(4)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(ai)))
+            Ok(SemValue::node(ai))
         }
         // '[' opt_slice_bound SINGLE_COLON opt_slice_bound SINGLE_COLON opt_slice_bound ']'
         3 => {
@@ -138,9 +106,8 @@ pub(super) fn indirection_el<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
                 lidx: rhs.node(2)?,
                 uidx: rhs.node(4)?,
                 step: rhs.node(6)?,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(ai)))
+            Ok(SemValue::node(ai))
         }
         // '[' opt_slice_bound SINGLE_COLON '-' SINGLE_COLON opt_slice_bound ']'
         4 => {
@@ -150,20 +117,8 @@ pub(super) fn indirection_el<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
                 step: rhs.node(6)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(ai)))
+            Ok(SemValue::node(ai))
         }
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// attr_name:
-///       ColLabel
-/// ```
-pub(super) fn attr_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // ColLabel
-        0 => Ok(SemValue::Str(rhs.str(1)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -177,14 +132,10 @@ pub(super) fn attr_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
 /// ```
 pub(super) fn col_label<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // IDENT
-        0 => Ok(SemValue::Str(rhs.str(1)?)),
         // other_keyword
-        1 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
         // unreserved_keyword
-        2 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
         // reserved_keyword
-        3 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
+        1..=3 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
         _ => Err(rhs.bad_alternative()),
     }
 }

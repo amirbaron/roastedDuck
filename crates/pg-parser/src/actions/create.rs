@@ -106,20 +106,15 @@ pub(super) fn constraint_attribute_spec<'a>(rhs: &mut Reduction<'_, 'a>, alt: us
 /// ```
 pub(super) fn def_arg<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // func_type
-        0 => Ok(SemValue::Node(rhs.ptr::<TypeName>(1)?.map(Node::from))),
         // reserved_keyword
-        1 => Ok(SemValue::node(Node::Value(Value::String(rhs.keyword(1)?.into())))),
+        // NONE
+        1 | 5 => Ok(SemValue::node(Node::Value(Value::String(
+            rhs.keyword(1)?.to_owned(),
+        )))),
         // qual_all_Op
         2 => Ok(SemValue::Node(Node::from_list(rhs.list(1)?))),
-        // NumericOnly
-        3 => Ok(SemValue::Node(rhs.value(1)?.map(Node::Value))),
         // Sconst
-        4 => Ok(SemValue::node(Node::Value(Value::String(
-            required(rhs.str(1)?)?.into(),
-        )))),
-        // NONE
-        5 => Ok(SemValue::node(Node::Value(Value::String(rhs.keyword(1)?.into())))),
+        4 => Ok(SemValue::node(Node::Value(Value::String(required(rhs.str(1)?)?)))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -134,8 +129,6 @@ pub(super) fn opt_parenthesized_seq_opt_list<'a>(
     alt: usize,
 ) -> Result<SemValue<'a>> {
     match alt {
-        // '(' SeqOptList ')'
-        0 => Ok(SemValue::List(rhs.list(2)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -149,9 +142,7 @@ pub(super) fn opt_parenthesized_seq_opt_list<'a>(
 pub(super) fn generic_option_arg<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // Sconst
-        0 => Ok(SemValue::node(Node::Value(Value::String(
-            required(rhs.str(1)?)?.into(),
-        )))),
+        0 => Ok(SemValue::node(Node::Value(Value::String(required(rhs.str(1)?)?)))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -194,21 +185,16 @@ pub(super) fn col_constraint<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
             let mut n = rhs.take::<Constraint>(3)?;
             n.conname = rhs.str(2)?;
             n.location = rhs.loc(1);
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
-        // ColConstraintElem
-        1 => Ok(SemValue::Node(rhs.node(1)?)),
-        // ConstraintAttr
-        2 => Ok(SemValue::Node(rhs.node(1)?)),
         // COLLATE any_name
         3 => {
             let n = CollateClause {
                 arg: None,
                 collname: rhs.list(2)?,
                 location: rhs.loc(1),
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -234,7 +220,7 @@ pub(super) fn col_constraint_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
                 location: rhs.loc(1),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // NULL_P
         1 => {
@@ -243,7 +229,7 @@ pub(super) fn col_constraint_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
                 location: rhs.loc(1),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // UNIQUE opt_definition
         2 => {
@@ -255,7 +241,7 @@ pub(super) fn col_constraint_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
                 indexname: None,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // PRIMARY KEY opt_definition
         3 => {
@@ -267,7 +253,7 @@ pub(super) fn col_constraint_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
                 indexname: None,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // CHECK_P '(' a_expr ')' opt_no_inherit
         4 => {
@@ -280,7 +266,7 @@ pub(super) fn col_constraint_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
                 initially_valid: true,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // USING COMPRESSION name
         5 => {
@@ -290,7 +276,7 @@ pub(super) fn col_constraint_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
                 compression_name: rhs.str(3)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // DEFAULT b_expr
         6 => {
@@ -300,7 +286,7 @@ pub(super) fn col_constraint_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
                 raw_expr: rhs.node(2)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // REFERENCES qualified_name opt_column_list key_match key_actions
         7 => {
@@ -318,7 +304,7 @@ pub(super) fn col_constraint_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
                 initially_valid: true,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -346,8 +332,6 @@ pub(super) fn generated_column_type<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize)
 /// ```
 pub(super) fn opt_generated_column_type<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // GeneratedColumnType
-        0 => Ok(SemValue::ConstrType(rhs.constr_type(1)?)),
         // /* empty */
         1 => Ok(SemValue::ConstrType(ConstrType::GeneratedVirtual)),
         _ => Err(rhs.bad_alternative()),
@@ -371,7 +355,7 @@ pub(super) fn generated_constraint_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: us
                 location: rhs.loc(1),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // GENERATED generated_when AS '(' a_expr ')' opt_GeneratedColumnType
         1 => {
@@ -389,7 +373,7 @@ pub(super) fn generated_constraint_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: us
                     rhs.loc(2),
                 ));
             }
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // AS '(' a_expr ')' opt_GeneratedColumnType
         2 => {
@@ -400,7 +384,7 @@ pub(super) fn generated_constraint_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: us
                 location: rhs.loc(1),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -418,18 +402,6 @@ pub(super) fn generic_option_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
             rhs.node(2)?,
             rhs.loc(1),
         ))),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// key_update:
-///       ON UPDATE key_action
-/// ```
-pub(super) fn key_update<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // ON UPDATE key_action
-        0 => Ok(SemValue::Int(rhs.int(3)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -486,18 +458,6 @@ pub(super) fn on_commit_option<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
 }
 
 /// ```text
-/// reloptions:
-///       '(' reloption_list ')'
-/// ```
-pub(super) fn reloptions<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // '(' reloption_list ')'
-        0 => Ok(SemValue::List(rhs.list(2)?)),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
 /// opt_no_inherit:
 ///       NO INHERIT
 ///     | /* empty */
@@ -524,10 +484,8 @@ pub(super) fn table_constraint<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
             let mut n = rhs.take::<Constraint>(3)?;
             n.conname = rhs.str(2)?;
             n.location = rhs.loc(1);
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
-        // ConstraintElem
-        1 => Ok(SemValue::Node(rhs.node(1)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -573,26 +531,9 @@ pub(super) fn table_like_option<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> 
 pub(super) fn reloption_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // reloption_elem
-        0 => Ok(SemValue::List(vec![Node::from(required(
-            rhs.ptr::<DefElem>(1)?,
-        )?)])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // reloption_list ',' reloption_elem
-        1 => Ok(SemValue::List(append(
-            rhs.list(1)?,
-            Node::from(required(rhs.ptr::<DefElem>(3)?)?),
-        ))),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// ExistingIndex:
-///       USING INDEX index_name
-/// ```
-pub(super) fn existing_index<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // USING INDEX index_name
-        0 => Ok(SemValue::Str(rhs.str(3)?)),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -613,7 +554,7 @@ pub(super) fn constraint_attr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 location: rhs.loc(1),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // NOT DEFERRABLE
         1 => {
@@ -622,7 +563,7 @@ pub(super) fn constraint_attr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 location: rhs.loc(1),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // INITIALLY DEFERRED
         2 => {
@@ -631,7 +572,7 @@ pub(super) fn constraint_attr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 location: rhs.loc(1),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // INITIALLY IMMEDIATE
         3 => {
@@ -640,7 +581,7 @@ pub(super) fn constraint_attr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 location: rhs.loc(1),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -657,10 +598,7 @@ pub(super) fn opt_partition_sorted_options<'a>(
 ) -> Result<SemValue<'a>> {
     match alt {
         // OptPartitionSortedOptions OptPartitionSortedOption
-        0 => Ok(SemValue::List(append(
-            rhs.list(1)?,
-            Node::from(required(rhs.ptr::<DefElem>(2)?)?),
-        ))),
+        0 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(2)?))),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -702,8 +640,6 @@ pub(super) fn opt_partition_sorted_option<'a>(
 /// ```
 pub(super) fn opt_with<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // WITH reloptions
-        0 => Ok(SemValue::List(rhs.list(2)?)),
         // WITH OIDS
         1 => Ok(SemValue::List(vec![
             make_def_elem(
@@ -729,18 +665,6 @@ pub(super) fn opt_with<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<Se
 }
 
 /// ```text
-/// definition:
-///       '(' def_list ')'
-/// ```
-pub(super) fn definition<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // '(' def_list ')'
-        0 => Ok(SemValue::List(rhs.list(2)?)),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
 /// TableLikeOptionList:
 ///       TableLikeOptionList INCLUDING TableLikeOption
 ///     | TableLikeOptionList EXCLUDING TableLikeOption
@@ -754,18 +678,6 @@ pub(super) fn table_like_option_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize
         1 => Ok(SemValue::Int(rhs.int(1)? & (!rhs.int(3)?))),
         // /* empty */
         2 => Ok(SemValue::Int(0)),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// generic_option_name:
-///       ColLabel
-/// ```
-pub(super) fn generic_option_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // ColLabel
-        0 => Ok(SemValue::Str(rhs.str(1)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -850,18 +762,12 @@ pub(super) fn generated_column_def<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) 
 pub(super) fn column_def<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // ColId regularColumnDef
-        0 => {
-            let mut n = rhs.take::<ColumnDef>(2)?;
-            n.colname = rhs.str(1)?;
-            n.location = rhs.loc(1);
-            Ok(SemValue::node(Node::from(n)))
-        }
         // ColId generatedColumnDef
-        1 => {
+        0 | 1 => {
             let mut n = rhs.take::<ColumnDef>(2)?;
             n.colname = rhs.str(1)?;
             n.location = rhs.loc(1);
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -875,44 +781,9 @@ pub(super) fn column_def<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<
 pub(super) fn def_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // def_elem
-        0 => Ok(SemValue::List(vec![Node::from(required(
-            rhs.ptr::<DefElem>(1)?,
-        )?)])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // def_list ',' def_elem
-        1 => Ok(SemValue::List(append(
-            rhs.list(1)?,
-            Node::from(required(rhs.ptr::<DefElem>(3)?)?),
-        ))),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// index_name:
-///       ColId
-/// ```
-pub(super) fn index_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // ColId
-        0 => Ok(SemValue::Str(rhs.str(1)?)),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// TableElement:
-///       columnDef
-///     | TableLikeClause
-///     | TableConstraint
-/// ```
-pub(super) fn table_element<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // columnDef
-        0 => Ok(SemValue::Node(rhs.node(1)?)),
-        // TableLikeClause
-        1 => Ok(SemValue::Node(rhs.node(1)?)),
-        // TableConstraint
-        2 => Ok(SemValue::Node(rhs.node(1)?)),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -947,8 +818,6 @@ pub(super) fn def_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<Se
 /// ```
 pub(super) fn opt_definition<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // WITH definition
-        0 => Ok(SemValue::List(rhs.list(2)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -963,10 +832,6 @@ pub(super) fn opt_definition<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
 /// ```
 pub(super) fn opt_table_element_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // TableElementList
-        0 => Ok(SemValue::List(rhs.list(1)?)),
-        // TableElementList ','
-        1 => Ok(SemValue::List(rhs.list(1)?)),
         // /* empty */
         2 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -980,9 +845,7 @@ pub(super) fn opt_table_element_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize
 pub(super) fn column_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // ColId
-        0 => Ok(SemValue::node(Node::Value(Value::String(
-            required(rhs.str(1)?)?.into(),
-        )))),
+        0 => Ok(SemValue::node(Node::Value(Value::String(required(rhs.str(1)?)?)))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -994,8 +857,6 @@ pub(super) fn column_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
 /// ```
 pub(super) fn opt_column_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // '(' columnList ')'
-        0 => Ok(SemValue::List(rhs.list(2)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -1010,21 +871,9 @@ pub(super) fn opt_column_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
 pub(super) fn col_qual_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // ColQualList ColConstraint
-        0 => Ok(SemValue::List(append(rhs.list(1)?, required(rhs.node(2)?)?))),
+        0 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(2)?))),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// key_delete:
-///       ON DELETE_P key_action
-/// ```
-pub(super) fn key_delete<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // ON DELETE_P key_action
-        0 => Ok(SemValue::Int(rhs.int(3)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -1041,13 +890,15 @@ pub(super) fn key_delete<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<
 pub(super) fn reloption_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // ColLabel '=' a_expr
-        0 => Ok(SemValue::node(make_def_elem(
+        // Sconst '=' a_expr
+        0 | 4 => Ok(SemValue::node(make_def_elem(
             required(rhs.str(1)?)?,
             rhs.node(3)?,
             rhs.loc(1),
         ))),
         // ColLabel
-        1 => Ok(SemValue::node(make_def_elem(
+        // Sconst
+        1 | 5 => Ok(SemValue::node(make_def_elem(
             required(rhs.str(1)?)?,
             None,
             rhs.loc(1),
@@ -1068,18 +919,6 @@ pub(super) fn reloption_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
             DefElemAction::Unspec,
             rhs.loc(1),
         ))),
-        // Sconst '=' a_expr
-        4 => Ok(SemValue::node(make_def_elem(
-            required(rhs.str(1)?)?,
-            rhs.node(3)?,
-            rhs.loc(1),
-        ))),
-        // Sconst
-        5 => Ok(SemValue::node(make_def_elem(
-            required(rhs.str(1)?)?,
-            None,
-            rhs.loc(1),
-        ))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -1092,24 +931,9 @@ pub(super) fn reloption_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
 pub(super) fn column_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // columnElem
-        0 => Ok(SemValue::List(vec![required(rhs.node(1)?)?])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // columnList ',' columnElem
-        1 => Ok(SemValue::List(append(rhs.list(1)?, required(rhs.node(3)?)?))),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// columnList_opt_comma:
-///       columnList
-///     | columnList ','
-/// ```
-pub(super) fn column_list_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // columnList
-        0 => Ok(SemValue::List(rhs.list(1)?)),
-        // columnList ','
-        1 => Ok(SemValue::List(rhs.list(1)?)),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -1122,12 +946,10 @@ pub(super) fn column_list_opt_comma<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize)
 /// ```
 pub(super) fn func_type<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // Typename
-        0 => Ok(SemValue::Node((rhs.ptr::<TypeName>(1)?).map(Node::from))),
         // type_function_name attrs '%' TYPE_P
         1 => {
             let mut func_type = make_type_name_from_name_list(prepend(
-                Node::Value(Value::String(required(rhs.str(1)?)?.into())),
+                Node::Value(Value::String(required(rhs.str(1)?)?)),
                 rhs.list(2)?,
             ));
             func_type.pct_type = true;
@@ -1137,7 +959,7 @@ pub(super) fn func_type<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
         // SETOF type_function_name attrs '%' TYPE_P
         2 => {
             let mut func_type = make_type_name_from_name_list(prepend(
-                Node::Value(Value::String(required(rhs.str(2)?)?.into())),
+                Node::Value(Value::String(required(rhs.str(2)?)?)),
                 rhs.list(3)?,
             ));
             func_type.pct_type = true;
@@ -1280,9 +1102,9 @@ pub(super) fn constraint_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
 pub(super) fn table_element_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // TableElement
-        0 => Ok(SemValue::List(vec![required(rhs.node(1)?)?])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // TableElementList ',' TableElement
-        1 => Ok(SemValue::List(append(rhs.list(1)?, required(rhs.node(3)?)?))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -1299,13 +1121,10 @@ pub(super) fn key_match<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
         // MATCH FULL
         0 => Ok(SemValue::Int(i32::from(foreign_key::MATCH_FULL))),
         // MATCH PARTIAL
-        1 => {
-            return Err(rhs.error_at("MATCH PARTIAL not yet implemented", rhs.loc(1)));
-        }
+        1 => Err(rhs.error_at("MATCH PARTIAL not yet implemented", rhs.loc(1))),
         // MATCH SIMPLE
-        2 => Ok(SemValue::Int(i32::from(foreign_key::MATCH_SIMPLE))),
         // /* empty */
-        3 => Ok(SemValue::Int(i32::from(foreign_key::MATCH_SIMPLE))),
+        2 | 3 => Ok(SemValue::Int(i32::from(foreign_key::MATCH_SIMPLE))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -1321,9 +1140,8 @@ pub(super) fn table_like_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> 
             let n = TableLikeClause {
                 relation: rhs.ptr::<RangeVar>(2)?,
                 options: rhs.int(3)? as u32,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -1343,21 +1161,13 @@ pub(super) fn table_like_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> 
 pub(super) fn opt_temp<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // TEMPORARY
-        0 => Ok(SemValue::RelPersistence(RelPersistence::Temp)),
         // TEMP
-        1 => Ok(SemValue::RelPersistence(RelPersistence::Temp)),
         // LOCAL TEMPORARY
-        2 => Ok(SemValue::RelPersistence(RelPersistence::Temp)),
         // LOCAL TEMP
-        3 => Ok(SemValue::RelPersistence(RelPersistence::Temp)),
+        0..=3 => Ok(SemValue::RelPersistence(RelPersistence::Temp)),
         // GLOBAL TEMPORARY
-        4 => {
-            return Err(rhs.error_at("GLOBAL is deprecated in temporary table creation", rhs.loc(1)));
-        }
         // GLOBAL TEMP
-        5 => {
-            return Err(rhs.error_at("GLOBAL is deprecated in temporary table creation", rhs.loc(1)));
-        }
+        4 | 5 => Err(rhs.error_at("GLOBAL is deprecated in temporary table creation", rhs.loc(1))),
         // UNLOGGED
         6 => Ok(SemValue::RelPersistence(RelPersistence::Unlogged)),
         // /* empty */

@@ -41,7 +41,7 @@ pub(super) fn copy_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
             if !copy_options.is_empty() {
                 n.options = concat(n.options, copy_options);
             }
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // COPY '(' SelectStmt ')' TO opt_program copy_file_name opt_with copy_options
         1 => {
@@ -53,12 +53,11 @@ pub(super) fn copy_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
                 is_program: rhs.bool(6)?,
                 filename: rhs.node(7)?,
                 options: rhs.list(9)?,
-                ..Default::default()
             };
             if n.is_program && n.filename.is_none() {
                 return Err(rhs.error_at("STDIN/STDOUT not allowed with PROGRAM", rhs.loc(5)));
             }
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // COPY FROM DATABASE ColId TO ColId copy_database_flag
         2 => {
@@ -66,9 +65,8 @@ pub(super) fn copy_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
                 from_database: rhs.str(4)?,
                 to_database: rhs.str(6)?,
                 copy_database_flag: rhs.const_str(7)?.map(str::to_owned),
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -117,41 +115,11 @@ pub(super) fn copy_delimiter<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
         // opt_using DELIMITERS Sconst
         0 => Ok(SemValue::node(make_def_elem(
             "delimiter",
-            Some(Node::Value(Value::String(required(rhs.str(3)?)?.into()))),
+            Some(Node::Value(Value::String(required(rhs.str(3)?)?))),
             rhs.loc(2),
         ))),
         // /* empty */
         1 => Ok(SemValue::Node(None)),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// opt_using:
-///       USING
-///     | /* empty */
-/// ```
-pub(super) fn opt_using<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // USING
-        0 => Ok(SemValue::None),
-        // /* empty */
-        1 => Ok(SemValue::None),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// opt_as:
-///       AS
-///     | /* empty */
-/// ```
-pub(super) fn opt_as<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // AS
-        0 => Ok(SemValue::None),
-        // /* empty */
-        1 => Ok(SemValue::None),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -167,21 +135,6 @@ pub(super) fn opt_program<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
         0 => Ok(SemValue::Bool(true)),
         // /* empty */
         1 => Ok(SemValue::Bool(false)),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// copy_options:
-///       copy_opt_list
-///     | '(' generic_opt_list ')'
-/// ```
-pub(super) fn copy_options<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // copy_opt_list
-        0 => Ok(SemValue::List(rhs.list(1)?)),
-        // '(' generic_opt_list ')'
-        1 => Ok(SemValue::List(rhs.list(2)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -209,10 +162,7 @@ pub(super) fn opt_oids<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<Se
 pub(super) fn copy_opt_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // copy_opt_list copy_opt_item
-        0 => Ok(SemValue::List(append(
-            rhs.list(1)?,
-            Node::from(required(rhs.ptr::<DefElem>(2)?)?),
-        ))),
+        0 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(2)?))),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -360,7 +310,8 @@ pub(super) fn copy_opt_item<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
 pub(super) fn copy_file_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // Sconst
-        0 => Ok(SemValue::node(make_string_const(
+        // IDENT
+        0 | 4 => Ok(SemValue::node(make_string_const(
             required(rhs.str(1)?)?,
             rhs.loc(1),
         ))),
@@ -373,15 +324,6 @@ pub(super) fn copy_file_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
             format!("{}.{}", c_str(&rhs.str(1)?), c_str(&rhs.str(3)?)),
             rhs.loc(1),
         ))),
-        // IDENT
-        4 => Ok(SemValue::node(make_string_const(
-            required(rhs.str(1)?)?,
-            rhs.loc(1),
-        ))),
-        // '(' a_expr ')'
-        5 => Ok(SemValue::Node(rhs.node(2)?)),
-        // param_expr
-        6 => Ok(SemValue::Node(rhs.node(1)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }

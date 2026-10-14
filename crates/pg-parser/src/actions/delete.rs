@@ -17,9 +17,8 @@ pub(super) fn delete_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 where_clause: rhs.node(6)?,
                 returning_list: rhs.list(7)?,
                 with_clause: rhs.ptr::<WithClause>(1)?,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // TRUNCATE opt_table relation_expr_opt_alias
         1 => {
@@ -29,9 +28,8 @@ pub(super) fn delete_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 where_clause: None,
                 returning_list: List::new(),
                 with_clause: None,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -45,8 +43,6 @@ pub(super) fn delete_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
 /// ```
 pub(super) fn relation_expr_opt_alias<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // relation_expr
-        0 => Ok(SemValue::Node((rhs.ptr::<RangeVar>(1)?).map(Node::from))),
         // relation_expr ColId
         1 => {
             let mut relation_expr = rhs.take::<RangeVar>(1)?;
@@ -78,8 +74,6 @@ pub(super) fn relation_expr_opt_alias<'a>(rhs: &mut Reduction<'_, 'a>, alt: usiz
 /// ```
 pub(super) fn where_or_current_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // WHERE a_expr
-        0 => Ok(SemValue::Node(rhs.node(2)?)),
         // /* empty */
         1 => Ok(SemValue::Node(None)),
         _ => Err(rhs.bad_alternative()),
@@ -93,8 +87,6 @@ pub(super) fn where_or_current_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usiz
 /// ```
 pub(super) fn using_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // USING from_list_opt_comma
-        0 => Ok(SemValue::List(rhs.list(2)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),

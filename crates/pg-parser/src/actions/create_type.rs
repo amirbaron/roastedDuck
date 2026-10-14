@@ -17,7 +17,7 @@ pub(super) fn create_type_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
             qualified_name.relpersistence = rhs.rel_persistence(2)?;
             n.type_name = Some(qualified_name);
             n.onconflict = OnCreateConflict::Error;
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // CREATE_P OptTemp TYPE_P IF_P NOT EXISTS qualified_name AS create_type_value
         1 => {
@@ -26,7 +26,7 @@ pub(super) fn create_type_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
             qualified_name.relpersistence = rhs.rel_persistence(2)?;
             n.type_name = Some(qualified_name);
             n.onconflict = OnCreateConflict::Ignore;
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // CREATE_P OR REPLACE OptTemp TYPE_P qualified_name AS create_type_value
         2 => {
@@ -35,7 +35,7 @@ pub(super) fn create_type_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
             qualified_name.relpersistence = rhs.rel_persistence(4)?;
             n.type_name = Some(qualified_name);
             n.onconflict = OnCreateConflict::Replace;
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -57,7 +57,7 @@ pub(super) fn create_type_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> 
                 vals: List::new(),
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ENUM_P '(' opt_enum_val_list ')'
         1 => {
@@ -67,7 +67,7 @@ pub(super) fn create_type_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> 
                 query: None,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // Typename
         2 => {
@@ -98,8 +98,6 @@ pub(super) fn create_type_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> 
 /// ```
 pub(super) fn opt_enum_val_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // enum_val_list
-        0 => Ok(SemValue::List(rhs.list(1)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),

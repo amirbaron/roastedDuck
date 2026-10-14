@@ -23,9 +23,8 @@ pub(super) fn alter_database_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
                 new_name: rhs.str(7)?,
                 alter_type: AlterDatabaseType::Rename,
                 missing_ok: false,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER DATABASE IF_P EXISTS ColId SET IDENT TO ColId
         1 => {
@@ -41,9 +40,8 @@ pub(super) fn alter_database_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
                 new_name: rhs.str(9)?,
                 alter_type: AlterDatabaseType::Rename,
                 missing_ok: true,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }

@@ -24,7 +24,7 @@ pub(super) fn merge_into_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
             n.match_actions = rhs.list(8)?;
             n.with_clause = rhs.ptr::<WithClause>(1)?;
             n.returning_list = rhs.list(9)?;
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -37,8 +37,6 @@ pub(super) fn merge_into_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
 /// ```
 pub(super) fn opt_and_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // AND a_expr
-        0 => Ok(SemValue::Node(rhs.node(2)?)),
         // /* empty */
         1 => Ok(SemValue::Node(None)),
         _ => Err(rhs.bad_alternative()),
@@ -52,8 +50,6 @@ pub(super) fn opt_and_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
 /// ```
 pub(super) fn opt_insert_column_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // '(' insert_column_list ')'
-        0 => Ok(SemValue::List(rhs.list(2)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),
@@ -82,7 +78,7 @@ pub(super) fn matched_clause_action<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize)
                 update_targets: rhs.list(3)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // UPDATE SET '*'
         1 => {
@@ -91,7 +87,7 @@ pub(super) fn matched_clause_action<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize)
                 insert_column_order: InsertColumnOrder::ByPosition,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // UPDATE opt_by_name_or_position
         2 => {
@@ -100,7 +96,7 @@ pub(super) fn matched_clause_action<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize)
                 insert_column_order: rhs.insert_column_order(2)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // DELETE_P
         3 => {
@@ -108,7 +104,7 @@ pub(super) fn matched_clause_action<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize)
                 action_type: MergeActionType::Delete,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // INSERT opt_insert_column_list VALUES '(' expr_list_opt_comma ')'
         4 => {
@@ -119,7 +115,7 @@ pub(super) fn matched_clause_action<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize)
                 insert_values: rhs.list(5)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // INSERT opt_by_name_or_position opt_star_expr
         5 => {
@@ -128,7 +124,7 @@ pub(super) fn matched_clause_action<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize)
                 insert_column_order: rhs.insert_column_order(2)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // INSERT DEFAULT VALUES
         6 => {
@@ -138,7 +134,7 @@ pub(super) fn matched_clause_action<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize)
                 default_values: true,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // DO NOTHING
         7 => {
@@ -146,7 +142,7 @@ pub(super) fn matched_clause_action<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize)
                 action_type: MergeActionType::DoNothing,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ERROR_P opt_error_message
         8 => {
@@ -155,7 +151,7 @@ pub(super) fn matched_clause_action<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize)
                 error_message: rhs.node(2)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -168,8 +164,6 @@ pub(super) fn matched_clause_action<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize)
 /// ```
 pub(super) fn opt_error_message<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // a_expr
-        0 => Ok(SemValue::Node(rhs.node(1)?)),
         // /* empty */
         1 => Ok(SemValue::Node(None)),
         _ => Err(rhs.bad_alternative()),
@@ -187,7 +181,7 @@ pub(super) fn matched_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
             let mut n = rhs.take::<MatchAction>(5)?;
             n.when = MergeAction::Matched;
             n.and_clause = rhs.node(3)?;
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -204,9 +198,8 @@ pub(super) fn opt_source_or_target<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) 
         // BY SOURCE_P
         0 => Ok(SemValue::MergeAction(MergeAction::NotMatchedBySource)),
         // BY TARGET_P
-        1 => Ok(SemValue::MergeAction(MergeAction::NotMatchedByTarget)),
         // /* empty */
-        2 => Ok(SemValue::MergeAction(MergeAction::NotMatchedByTarget)),
+        1 | 2 => Ok(SemValue::MergeAction(MergeAction::NotMatchedByTarget)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -222,7 +215,7 @@ pub(super) fn not_matched_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
             let mut n = rhs.take::<MatchAction>(7)?;
             n.when = rhs.merge_action(4)?;
             n.and_clause = rhs.node(5)?;
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -236,12 +229,9 @@ pub(super) fn not_matched_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
 pub(super) fn merge_match_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // matched_or_not_matched_clause
-        0 => Ok(SemValue::List(vec![required(rhs.node(1)?)?])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // matched_or_not_matched_clause merge_match_list
-        1 => Ok(SemValue::List(concat(
-            vec![required(rhs.node(1)?)?],
-            rhs.list(2)?,
-        ))),
+        1 => Ok(SemValue::List(concat(vec![rhs.required_node(1)?], rhs.list(2)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }

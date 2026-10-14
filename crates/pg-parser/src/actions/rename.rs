@@ -29,7 +29,7 @@ pub(super) fn rename_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 missing_ok: false,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER TABLE relation_expr RENAME TO name
         1 => {
@@ -41,7 +41,7 @@ pub(super) fn rename_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 missing_ok: false,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER TABLE IF_P EXISTS relation_expr RENAME TO name
         2 => {
@@ -53,7 +53,7 @@ pub(super) fn rename_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 missing_ok: true,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER SEQUENCE qualified_name RENAME TO name
         3 => {
@@ -65,7 +65,7 @@ pub(super) fn rename_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 missing_ok: false,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER SEQUENCE IF_P EXISTS qualified_name RENAME TO name
         4 => {
@@ -77,7 +77,7 @@ pub(super) fn rename_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 missing_ok: true,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER VIEW qualified_name RENAME TO name
         5 => {
@@ -89,7 +89,7 @@ pub(super) fn rename_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 missing_ok: false,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER VIEW IF_P EXISTS qualified_name RENAME TO name
         6 => {
@@ -101,7 +101,7 @@ pub(super) fn rename_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 missing_ok: true,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER INDEX qualified_name RENAME TO name
         7 => {
@@ -113,7 +113,7 @@ pub(super) fn rename_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 missing_ok: false,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER INDEX IF_P EXISTS qualified_name RENAME TO name
         8 => {
@@ -125,7 +125,7 @@ pub(super) fn rename_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 missing_ok: true,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER TABLE relation_expr RENAME opt_column qualified_column TO name
         9 => {
@@ -138,7 +138,7 @@ pub(super) fn rename_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 missing_ok: false,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER TABLE IF_P EXISTS relation_expr RENAME opt_column qualified_column TO name
         10 => {
@@ -151,7 +151,7 @@ pub(super) fn rename_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 missing_ok: true,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER TABLE relation_expr RENAME CONSTRAINT name TO name
         11 => {
@@ -163,7 +163,7 @@ pub(super) fn rename_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 missing_ok: false,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // ALTER TABLE IF_P EXISTS relation_expr RENAME CONSTRAINT name TO name
         12 => {
@@ -175,7 +175,7 @@ pub(super) fn rename_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 missing_ok: true,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }

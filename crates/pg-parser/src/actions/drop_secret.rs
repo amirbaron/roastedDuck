@@ -16,9 +16,8 @@ pub(super) fn drop_secret_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
                 secret_name: rhs.str(4)?,
                 secret_storage: rhs.str(5)?,
                 missing_ok: false,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // DROP opt_persist SECRET IF_P EXISTS ColId opt_storage_drop_specifier
         1 => {
@@ -27,9 +26,8 @@ pub(super) fn drop_secret_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
                 secret_name: rhs.str(6)?,
                 secret_storage: rhs.str(7)?,
                 missing_ok: true,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -46,9 +44,7 @@ pub(super) fn opt_storage_drop_specifier<'a>(
 ) -> Result<SemValue<'a>> {
     match alt {
         // /* empty */
-        0 => Ok(SemValue::Str(Some("".to_owned()))),
-        // FROM IDENT
-        1 => Ok(SemValue::Str(rhs.str(2)?)),
+        0 => Ok(SemValue::Str(Some(String::new()))),
         _ => Err(rhs.bad_alternative()),
     }
 }

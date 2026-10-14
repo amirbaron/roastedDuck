@@ -14,14 +14,14 @@ use super::prelude::*;
 pub(super) fn transaction_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // ABORT_P opt_transaction
-        0 => {
+        // ROLLBACK opt_transaction
+        0 | 5 => {
             let n = TransactionStmt {
                 kind: TransactionStmtKind::Rollback,
                 options: List::new(),
                 transaction_type: TransactionStmtType::Default,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // BEGIN_P opt_transaction opt_transaction_type
         1 => {
@@ -30,7 +30,7 @@ pub(super) fn transaction_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
                 transaction_type: rhs.transaction_stmt_type(3)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // START opt_transaction opt_transaction_type
         2 => {
@@ -39,56 +39,18 @@ pub(super) fn transaction_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
                 transaction_type: rhs.transaction_stmt_type(3)?,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // COMMIT opt_transaction
-        3 => {
-            let n = TransactionStmt {
-                kind: TransactionStmtKind::Commit,
-                options: List::new(),
-                transaction_type: TransactionStmtType::Default,
-                ..Default::default()
-            };
-            Ok(SemValue::node(Node::from(n)))
-        }
         // END_P opt_transaction
-        4 => {
+        3 | 4 => {
             let n = TransactionStmt {
                 kind: TransactionStmtKind::Commit,
                 options: List::new(),
                 transaction_type: TransactionStmtType::Default,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
-        // ROLLBACK opt_transaction
-        5 => {
-            let n = TransactionStmt {
-                kind: TransactionStmtKind::Rollback,
-                options: List::new(),
-                transaction_type: TransactionStmtType::Default,
-                ..Default::default()
-            };
-            Ok(SemValue::node(Node::from(n)))
-        }
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// opt_transaction:
-///       WORK
-///     | TRANSACTION
-///     | /* empty */
-/// ```
-pub(super) fn opt_transaction<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // WORK
-        0 => Ok(SemValue::None),
-        // TRANSACTION
-        1 => Ok(SemValue::None),
-        // /* empty */
-        2 => Ok(SemValue::None),
         _ => Err(rhs.bad_alternative()),
     }
 }

@@ -20,7 +20,7 @@ pub(super) fn create_secret_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
                 onconflict: OnCreateConflict::Error,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // CREATE_P opt_persist SECRET IF_P NOT EXISTS opt_secret_name opt_storage_specifier '(' create_secret_generic_opt_list ')'
         1 => {
@@ -32,7 +32,7 @@ pub(super) fn create_secret_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
                 onconflict: OnCreateConflict::Ignore,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // CREATE_P OR REPLACE opt_persist SECRET opt_secret_name opt_storage_specifier '(' create_secret_generic_opt_list ')'
         2 => {
@@ -44,7 +44,7 @@ pub(super) fn create_secret_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
                 onconflict: OnCreateConflict::Replace,
                 ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -59,8 +59,6 @@ pub(super) fn opt_secret_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
     match alt {
         // /* empty */
         0 => Ok(SemValue::Str(None)),
-        // ColId
-        1 => Ok(SemValue::Str(rhs.str(1)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -91,24 +89,7 @@ pub(super) fn opt_persist<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
 pub(super) fn opt_storage_specifier<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // /* empty */
-        0 => Ok(SemValue::Str(Some("".to_owned()))),
-        // IN_P IDENT
-        1 => Ok(SemValue::Str(rhs.str(2)?)),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// create_secret_generic_opt_arg:
-///       a_expr
-/// ```
-pub(super) fn create_secret_generic_opt_arg<'a>(
-    rhs: &mut Reduction<'_, 'a>,
-    alt: usize,
-) -> Result<SemValue<'a>> {
-    match alt {
-        // a_expr
-        0 => Ok(SemValue::Node(rhs.node(1)?)),
+        0 => Ok(SemValue::Str(Some(String::new()))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -143,14 +124,9 @@ pub(super) fn create_secret_generic_opt_list<'a>(
 ) -> Result<SemValue<'a>> {
     match alt {
         // create_secret_generic_opt_elem
-        0 => Ok(SemValue::List(vec![Node::from(required(
-            rhs.ptr::<DefElem>(1)?,
-        )?)])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // create_secret_generic_opt_list ',' create_secret_generic_opt_elem
-        1 => Ok(SemValue::List(append(
-            rhs.list(1)?,
-            Node::from(required(rhs.ptr::<DefElem>(3)?)?),
-        ))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }

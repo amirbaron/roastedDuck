@@ -16,31 +16,31 @@ pub(super) fn variable_reset_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
         0 => {
             let mut reset_rest = rhs.take::<VariableSetStmt>(2)?;
             reset_rest.scope = VariableSetScope::Default;
-            Ok(SemValue::node(Node::from(reset_rest)))
+            Ok(SemValue::node(reset_rest))
         }
         // RESET LOCAL reset_rest
         1 => {
             let mut reset_rest = rhs.take::<VariableSetStmt>(3)?;
             reset_rest.scope = VariableSetScope::Local;
-            Ok(SemValue::node(Node::from(reset_rest)))
+            Ok(SemValue::node(reset_rest))
         }
         // RESET SESSION reset_rest
         2 => {
             let mut reset_rest = rhs.take::<VariableSetStmt>(3)?;
             reset_rest.scope = VariableSetScope::Session;
-            Ok(SemValue::node(Node::from(reset_rest)))
+            Ok(SemValue::node(reset_rest))
         }
         // RESET GLOBAL reset_rest
         3 => {
             let mut reset_rest = rhs.take::<VariableSetStmt>(3)?;
             reset_rest.scope = VariableSetScope::Global;
-            Ok(SemValue::node(Node::from(reset_rest)))
+            Ok(SemValue::node(reset_rest))
         }
         // RESET VARIABLE_P reset_rest
         4 => {
             let mut reset_rest = rhs.take::<VariableSetStmt>(3)?;
             reset_rest.scope = VariableSetScope::Variable;
-            Ok(SemValue::node(Node::from(reset_rest)))
+            Ok(SemValue::node(reset_rest))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -82,8 +82,6 @@ pub(super) fn generic_reset<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
 /// ```
 pub(super) fn reset_rest<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // generic_reset
-        0 => Ok(SemValue::Node((rhs.ptr::<VariableSetStmt>(1)?).map(Node::from))),
         // TIME ZONE
         1 => {
             let n = VariableSetStmt {

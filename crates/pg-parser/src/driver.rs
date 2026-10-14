@@ -8,13 +8,18 @@ use rustdb_common::Result;
 
 use crate::actions::RULE_ACTIONS;
 use crate::error::internal;
-use crate::nodes::{List, Node};
+use crate::nodes::{List, Node, RawStmt};
 use crate::scanner::Scanner;
 use crate::semantic::{Reduction, RuleAction, SemValue};
 use crate::tables::{
-    YYCHECK, YYDEFACT, YYDEFGOTO, YYFINAL, YYINITDEPTH, YYLAST, YYMAXDEPTH, YYMAXUTOK, YYNTOKENS, YYPACT,
-    YYPACT_NINF, YYPGOTO, YYR1, YYR2, YYTABLE, YYTABLE_NINF, YYTRANSLATE, YYUNDEFTOK,
+    YYCHECK, YYDEFACT, YYDEFGOTO, YYFINAL, YYLAST, YYMAXDEPTH, YYMAXUTOK, YYNTOKENS, YYPACT, YYPACT_NINF,
+    YYPGOTO, YYR1, YYR2, YYTABLE, YYTABLE_NINF, YYTRANSLATE, YYUNDEFTOK,
 };
+
+/// Initial capacity of the parser stacks. Bison starts with `YYINITDEPTH` (1000)
+/// entries on the C stack; heap stacks that grow on demand are cheaper here,
+/// since typical statements stay shallow.
+const INITIAL_STACK_CAPACITY: usize = 64;
 
 /// `YYTRANSLATE`: maps a token code to a grammar symbol number.
 fn translate(code: u16) -> usize {
@@ -26,132 +31,150 @@ fn translate(code: u16) -> usize {
     }
 }
 
-/// Looks up `table[index]` in the packed action/goto table if `check` confirms the
-/// entry belongs to `expected`.
-fn packed(index: i64, expected: usize) -> Option<i16> {
-    let i = usize::try_from(index).ok().filter(|&i| i <= YYLAST)?;
-    (usize::try_from(YYCHECK[i]).ok() == Some(expected)).then(|| YYTABLE[i])
+/// Looks up `yytable[base + key]` if `yycheck` confirms the entry belongs to `key`.
+fn packed(base: i32, key: usize) -> Option<i16> {
+    let index = usize::try_from(i64::from(base) + key as i64)
+        .ok()
+        .filter(|&i| i <= YYLAST)?;
+    (usize::try_from(YYCHECK[index]).ok() == Some(key)).then(|| YYTABLE[index])
 }
 
-/// The lookahead token (`yychar`, `yylval`, `yylloc`).
-struct Lookahead<'a> {
-    symbol: usize,
-    value: SemValue<'a>,
-    loc: i32,
+/// What the action table says to do in a state for the lookahead symbol.
+enum Step {
+    Shift(usize),
+    Reduce(usize),
+    Accept,
+    Error,
+}
+
+/// The parser stacks: states, semantic values and locations, kept the same height.
+///
+/// Values left on the stack when a parse fails are torn down without recursion,
+/// since they may hold arbitrarily deep expression trees.
+struct Stack<'a> {
+    states: Vec<usize>,
+    values: Vec<SemValue<'a>>,
+    locations: Vec<i32>,
+}
+
+impl<'a> Stack<'a> {
+    fn new() -> Self {
+        let mut stack = Self {
+            states: Vec::with_capacity(INITIAL_STACK_CAPACITY),
+            values: Vec::with_capacity(INITIAL_STACK_CAPACITY),
+            locations: Vec::with_capacity(INITIAL_STACK_CAPACITY),
+        };
+        // The bottom value/location slots are never read (bison "wastes" them).
+        stack.push(0, SemValue::None, 0);
+        stack
+    }
+
+    fn top(&self) -> usize {
+        self.states.last().copied().unwrap_or(0)
+    }
+
+    fn push(&mut self, state: usize, value: SemValue<'a>, location: i32) {
+        self.states.push(state);
+        self.values.push(value);
+        self.locations.push(location);
+    }
+}
+
+impl Drop for Stack<'_> {
+    fn drop(&mut self) {
+        self.values.drain(..).for_each(SemValue::drop_tree);
+    }
 }
 
 /// Runs the parser over the whole input and returns the statement list (the value
 /// of `stmtblock`).
-pub(crate) fn parse<'a>(scanner: &mut Scanner<'a>) -> Result<List> {
-    let mut states: Vec<usize> = Vec::with_capacity(YYINITDEPTH);
-    let mut values: Vec<SemValue<'a>> = Vec::with_capacity(YYINITDEPTH);
-    let mut locations: Vec<i32> = Vec::with_capacity(YYINITDEPTH);
-    // The bottom value/location slots are never read (bison "wastes" them).
-    states.push(0);
-    values.push(SemValue::None);
-    locations.push(0);
-    let mut lookahead: Option<Lookahead<'a>> = None;
-    let mut eof = false;
+pub(crate) fn parse(scanner: &mut Scanner<'_>) -> Result<List> {
+    let mut stack = Stack::new();
+    // The lookahead token: symbol, value and location (`yychar`, `yylval`, `yylloc`).
+    let mut lookahead: Option<(usize, SemValue<'_>, i32)> = None;
 
     loop {
-        let state = states.last().copied().unwrap_or(0);
-        if states.len() >= YYMAXDEPTH {
+        if stack.states.len() >= YYMAXDEPTH {
             return Err(scanner.syntax_error("memory exhausted"));
         }
+        let state = stack.top();
 
-        // yybackup: decide between shift, reduce and error.
+        // yybackup: consult the action table if the state needs a lookahead.
         let pact = YYPACT[state];
-        let mut rule = None;
-        if pact != YYPACT_NINF {
-            if lookahead.is_none() {
-                let tok = scanner.next_token()?;
-                let symbol = if tok.code == 0 { 0 } else { translate(tok.code) };
-                eof = tok.code == 0;
-                let loc = i32::try_from(tok.loc).map_err(|_| internal("query too long"))?;
-                lookahead = Some(Lookahead {
-                    symbol,
-                    value: tok.value,
-                    loc,
-                });
-            }
-            let symbol = lookahead.as_ref().map_or(0, |la| la.symbol);
-            match packed(i64::from(pact) + symbol as i64, symbol) {
-                None => {}
-                Some(action) if action <= 0 => {
-                    if action == 0 || i32::from(action) == YYTABLE_NINF {
-                        return Err(scanner.syntax_error("syntax error"));
-                    }
-                    rule = Some(usize::from(action.unsigned_abs()));
+        let step = if pact == YYPACT_NINF {
+            None
+        } else {
+            let symbol = match &lookahead {
+                Some((symbol, _, _)) => *symbol,
+                None => {
+                    let token = scanner.next_token()?;
+                    let symbol = if token.code == 0 { 0 } else { translate(token.code) };
+                    let location = i32::try_from(token.loc).map_err(|_| internal("query too long"))?;
+                    lookahead = Some((symbol, token.value, location));
+                    symbol
                 }
-                Some(action) => {
-                    let target = usize::from(action.unsigned_abs());
-                    if target == YYFINAL {
-                        break;
-                    }
-                    // Shift the lookahead (end of input is never consumed).
-                    let la = if eof {
-                        Lookahead {
-                            symbol: 0,
-                            value: SemValue::None,
-                            loc: lookahead.as_ref().map_or(0, |l| l.loc),
-                        }
-                    } else {
-                        lookahead.take().ok_or_else(|| internal("missing lookahead"))?
-                    };
-                    states.push(target);
-                    values.push(la.value);
-                    locations.push(la.loc);
-                    continue;
-                }
-            }
-        }
+            };
+            packed(pact, symbol).map(|action| match action {
+                0 => Step::Error,
+                a if i32::from(a) == YYTABLE_NINF => Step::Error,
+                a if a < 0 => Step::Reduce(usize::from(a.unsigned_abs())),
+                a if usize::from(a.unsigned_abs()) == YYFINAL => Step::Accept,
+                a => Step::Shift(usize::from(a.unsigned_abs())),
+            })
+        };
 
-        // yydefault: the state's default reduction.
-        let rule = match rule {
-            Some(rule) => rule,
+        // yydefault: without an explicit action, take the state's default reduction.
+        let rule = match step {
+            Some(Step::Shift(target)) => {
+                let (_, value, location) = lookahead
+                    .take()
+                    .ok_or_else(|| internal("shift without lookahead"))?;
+                stack.push(target, value, location);
+                continue;
+            }
+            Some(Step::Accept) => break,
+            Some(Step::Reduce(rule)) => rule,
+            Some(Step::Error) => return Err(scanner.syntax_error("syntax error")),
             None => match usize::from(YYDEFACT[state]) {
                 0 => return Err(scanner.syntax_error("syntax error")),
                 rule => rule,
             },
         };
 
-        // yyreduce
-        let len = usize::from(YYR2[rule]);
-        let base = states.len() - len;
+        // yyreduce: run the rule's action on the top `len` entries.
+        let base = stack.states.len() - usize::from(YYR2[rule]);
         let (value, location) = {
-            let mut reduction = Reduction::new(&mut values[base..], &locations[base..], scanner, rule);
+            let mut rhs = Reduction::new(&mut stack.values[base..], &stack.locations[base..], scanner, rule);
             let value = match RULE_ACTIONS[rule] {
-                RuleAction::Default => reduction.take_raw(1),
-                RuleAction::Call(action, alt) => action(&mut reduction, alt)?,
+                RuleAction::Default => rhs.take_raw(1),
+                RuleAction::Forward(k) => rhs.take_raw(k),
+                RuleAction::Call(action, alt) => action(&mut rhs, alt)?,
             };
-            (value, reduction.location)
+            (value, rhs.location)
         };
-        states.truncate(base);
-        values.truncate(base);
-        locations.truncate(base);
-        values.push(value);
-        locations.push(location);
+        stack.states.truncate(base);
+        stack.values.truncate(base);
+        stack.locations.truncate(base);
 
         // Goto the state for the reduced nonterminal.
         let lhs = usize::from(YYR1[rule]) - YYNTOKENS;
-        let top = states.last().copied().unwrap_or(0);
-        let next = match packed(i64::from(YYPGOTO[lhs]) + top as i64, top) {
+        let top = stack.top();
+        let next = match packed(YYPGOTO[lhs], top) {
             Some(target) => usize::from(target.unsigned_abs()),
             None => usize::try_from(YYDEFGOTO[lhs]).map_err(|_| internal("bad goto"))?,
         };
-        states.push(next);
+        stack.push(next, value, location);
     }
 
-    // Accepted: the value of `stmtblock` sits above the bottom slot.
-    match values.pop() {
+    // Accepted: the value of `stmtblock` is on top of the stack.
+    match stack.values.pop() {
         Some(SemValue::List(list)) => Ok(list),
-        Some(SemValue::None) => Ok(List::new()),
         _ => Err(internal("parser accepted without a statement list")),
     }
 }
 
 /// Unwraps the raw statements built by `stmtmulti`.
-pub(crate) fn into_raw_statements(list: List) -> Result<Vec<crate::RawStmt>> {
+pub(crate) fn into_raw_statements(list: List) -> Result<Vec<RawStmt>> {
     list.into_iter()
         .map(|node| match node {
             Node::RawStmt(stmt) => Ok(*stmt),

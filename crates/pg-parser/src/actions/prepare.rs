@@ -14,9 +14,8 @@ pub(super) fn prepare_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
                 name: rhs.str(2)?,
                 argtypes: rhs.list(3)?,
                 query: rhs.node(5)?,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -29,8 +28,6 @@ pub(super) fn prepare_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
 /// ```
 pub(super) fn prep_type_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // '(' type_list ')'
-        0 => Ok(SemValue::List(rhs.list(2)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),

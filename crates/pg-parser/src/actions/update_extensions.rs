@@ -12,7 +12,6 @@ pub(super) fn update_extensions_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize
         0 => {
             let n = UpdateExtensionsStmt {
                 extensions: rhs.list(4)?,
-                ..Default::default()
             };
             if rhs.ptr::<WithClause>(1)?.is_some() {
                 return Err(rhs.error_at(
@@ -20,7 +19,7 @@ pub(super) fn update_extensions_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize
                     rhs.loc(1),
                 ));
             }
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }

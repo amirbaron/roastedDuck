@@ -24,7 +24,7 @@ pub(super) fn view_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
             n.onconflict = OnCreateConflict::Error;
             n.options = rhs.list(6)?;
             n.with_check_option = rhs.view_check_option(9)?;
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // CREATE_P OptTemp VIEW IF_P NOT EXISTS qualified_name opt_column_list opt_reloptions AS SelectStmt opt_check_option
         1 => {
@@ -38,7 +38,7 @@ pub(super) fn view_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
             n.onconflict = OnCreateConflict::Ignore;
             n.options = rhs.list(9)?;
             n.with_check_option = rhs.view_check_option(12)?;
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // CREATE_P OR REPLACE OptTemp VIEW qualified_name opt_column_list opt_reloptions AS SelectStmt opt_check_option
         2 => {
@@ -52,7 +52,7 @@ pub(super) fn view_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
             n.onconflict = OnCreateConflict::Replace;
             n.options = rhs.list(8)?;
             n.with_check_option = rhs.view_check_option(11)?;
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // CREATE_P OptTemp RECURSIVE VIEW qualified_name '(' columnList ')' opt_reloptions AS SelectStmt opt_check_option
         3 => {
@@ -109,9 +109,8 @@ pub(super) fn view_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
 pub(super) fn opt_check_option<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // WITH CHECK_P OPTION
-        0 => Ok(SemValue::ViewCheckOption(ViewCheckOption::Cascaded)),
         // WITH CASCADED CHECK_P OPTION
-        1 => Ok(SemValue::ViewCheckOption(ViewCheckOption::Cascaded)),
+        0 | 1 => Ok(SemValue::ViewCheckOption(ViewCheckOption::Cascaded)),
         // WITH LOCAL CHECK_P OPTION
         2 => Ok(SemValue::ViewCheckOption(ViewCheckOption::Local)),
         // /* empty */

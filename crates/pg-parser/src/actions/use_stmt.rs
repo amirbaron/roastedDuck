@@ -12,9 +12,8 @@ pub(super) fn use_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<Se
         0 => {
             let n = UseStmt {
                 name: rhs.ptr::<RangeVar>(2)?,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }

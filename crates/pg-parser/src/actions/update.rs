@@ -17,9 +17,8 @@ pub(super) fn update_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
                 where_clause: rhs.node(7)?,
                 returning_list: rhs.list(8)?,
                 with_clause: rhs.ptr::<WithClause>(1)?,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }

@@ -14,48 +14,26 @@ use super::prelude::*;
 pub(super) fn drop_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // DROP drop_type_any_name IF_P EXISTS any_name_list opt_drop_behavior
-        0 => {
+        // DROP drop_type_name IF_P EXISTS name_list opt_drop_behavior
+        0 | 2 => {
             let n = DropStmt {
                 remove_type: rhs.object_type(2)?,
                 missing_ok: true,
                 objects: rhs.list(5)?,
                 behavior: rhs.drop_behavior(6)?,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // DROP drop_type_any_name any_name_list opt_drop_behavior
-        1 => {
-            let n = DropStmt {
-                remove_type: rhs.object_type(2)?,
-                missing_ok: false,
-                objects: rhs.list(3)?,
-                behavior: rhs.drop_behavior(4)?,
-                ..Default::default()
-            };
-            Ok(SemValue::node(Node::from(n)))
-        }
-        // DROP drop_type_name IF_P EXISTS name_list opt_drop_behavior
-        2 => {
-            let n = DropStmt {
-                remove_type: rhs.object_type(2)?,
-                missing_ok: true,
-                objects: rhs.list(5)?,
-                behavior: rhs.drop_behavior(6)?,
-                ..Default::default()
-            };
-            Ok(SemValue::node(Node::from(n)))
-        }
         // DROP drop_type_name name_list opt_drop_behavior
-        3 => {
+        1 | 3 => {
             let n = DropStmt {
                 remove_type: rhs.object_type(2)?,
                 missing_ok: false,
                 objects: rhs.list(3)?,
                 behavior: rhs.drop_behavior(4)?,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // DROP drop_type_name_on_any_name name ON any_name opt_drop_behavior
         4 => {
@@ -63,13 +41,12 @@ pub(super) fn drop_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
                 remove_type: rhs.object_type(2)?,
                 objects: vec![Node::List(append(
                     rhs.list(5)?,
-                    Node::Value(Value::String(required(rhs.str(3)?)?.into())),
+                    Node::Value(Value::String(required(rhs.str(3)?)?)),
                 ))],
                 behavior: rhs.drop_behavior(6)?,
                 missing_ok: false,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // DROP drop_type_name_on_any_name IF_P EXISTS name ON any_name opt_drop_behavior
         5 => {
@@ -77,13 +54,12 @@ pub(super) fn drop_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
                 remove_type: rhs.object_type(2)?,
                 objects: vec![Node::List(append(
                     rhs.list(7)?,
-                    Node::Value(Value::String(required(rhs.str(5)?)?.into())),
+                    Node::Value(Value::String(required(rhs.str(5)?)?)),
                 ))],
                 behavior: rhs.drop_behavior(8)?,
                 missing_ok: true,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -117,9 +93,8 @@ pub(super) fn drop_type_any_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
         // SEQUENCE
         1 => Ok(SemValue::ObjectType(ObjectType::Sequence)),
         // FUNCTION
-        2 => Ok(SemValue::ObjectType(ObjectType::Function)),
         // MACRO
-        3 => Ok(SemValue::ObjectType(ObjectType::Function)),
+        2 | 3 => Ok(SemValue::ObjectType(ObjectType::Function)),
         // MACRO TABLE
         4 => Ok(SemValue::ObjectType(ObjectType::TableMacro)),
         // VIEW
@@ -205,9 +180,8 @@ pub(super) fn opt_drop_behavior<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> 
         // CASCADE
         0 => Ok(SemValue::DropBehavior(DropBehavior::Cascade)),
         // RESTRICT
-        1 => Ok(SemValue::DropBehavior(DropBehavior::Restrict)),
         // /* empty */
-        2 => Ok(SemValue::DropBehavior(DropBehavior::Restrict)),
+        1 | 2 => Ok(SemValue::DropBehavior(DropBehavior::Restrict)),
         _ => Err(rhs.bad_alternative()),
     }
 }

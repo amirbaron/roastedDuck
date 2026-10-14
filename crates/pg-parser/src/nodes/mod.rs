@@ -15,10 +15,12 @@
 
 mod enums;
 mod json;
+mod teardown;
 
 pub use enums::*;
 pub use json::to_json;
 pub use structs::*;
+pub use teardown::drop_tree;
 
 /// A list of nodes (`PGList *`). `NIL` is the empty list.
 pub type List = Vec<Node>;
@@ -60,6 +62,9 @@ pub trait NodeStruct: Sized + Into<Node> {
 
     /// Borrows the struct from a node of the matching variant.
     fn from_node_ref(node: &Node) -> Option<&Self>;
+
+    /// Wraps a boxed struct in its [`Node`] variant.
+    fn into_node(node: Box<Self>) -> Node;
 }
 
 /// Declares the node structs together with the [`Node`] enum that wraps them.
@@ -105,6 +110,10 @@ macro_rules! nodes {
                         _ => None,
                     }
                 }
+
+                fn into_node(node: Box<Self>) -> Node {
+                    Node::$name(node)
+                }
             }
 
             impl $crate::nodes::json::WriteJson for $name {
@@ -112,6 +121,12 @@ macro_rules! nodes {
                     out.begin_node(stringify!($name));
                     $( out.field(stringify!($field), &self.$field); )*
                     out.end_node();
+                }
+            }
+
+            impl $crate::nodes::teardown::TakeChildren for $name {
+                fn take_children(&mut self, out: &mut dyn FnMut(Node)) {
+                    $( $crate::nodes::teardown::TakeChildren::take_children(&mut self.$field, out); )*
                 }
             }
         )*
@@ -151,6 +166,16 @@ macro_rules! nodes {
                     Node::List(list) => list.write_json(out),
                     Node::Str(s) => out.string(s),
                     $( Node::$name(inner) => inner.write_json(out), )*
+                }
+            }
+
+            /// Moves every child node out of `self`, passing each to `out`.
+            pub(crate) fn take_children(&mut self, out: &mut dyn FnMut(Node)) {
+                use $crate::nodes::teardown::TakeChildren;
+                match self {
+                    Node::Value(_) | Node::Str(_) => {}
+                    Node::List(list) => list.take_children(out),
+                    $( Node::$name(inner) => inner.take_children(out), )*
                 }
             }
         }

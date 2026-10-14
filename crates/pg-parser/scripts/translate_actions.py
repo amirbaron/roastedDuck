@@ -762,21 +762,24 @@ class Action:
             if len(params) != len(args) and not (fname in ("makeColumnRef", "check_func_name", "check_indirection")):
                 raise Untranslatable(f"arity {fname}")
             codes = []
+            arg_tys = []
             for p, a in zip(params, args):
                 if p.kind == "scanner":
                     codes.append("rhs.scanner()")
                     continue
                 x = self.expr(a, p)
+                arg_tys.append(x.ty)
                 codes.append(self.coerce(x, p, fname))
             if rust is None:  # pstrdup
                 return E(codes[0], Ty("into", nullable=False))
             call = f"{rust}({', '.join(codes)})"
             if fallible:
                 call += "?"
+            owned = arg_tys and arg_tys[0].kind == "str"
             if fname == "makeString":
-                call = f"Value::String({codes[0]}.into())"
+                call = f"Value::String({codes[0]})" if owned else f"Value::String({codes[0]}.to_owned())"
             elif fname == "makeFloat":
-                call = f"Value::Float({codes[0]}.into())"
+                call = f"Value::Float({codes[0]})" if owned else f"Value::Float({codes[0]}.to_owned())"
             elif fname == "makeInteger":
                 call = f"Value::Integer({codes[0]})"
             return E(call, ret if ret.kind != "value" else Ty("value", nullable=False))
@@ -785,6 +788,9 @@ class Action:
     def list_item(self, x: E) -> str:
         if x.ty.kind == "null":
             raise Untranslatable("NULL list element")
+        m = re.fullmatch(r"rhs\.(?:node|ptr::<\w+>)\((\d+)\)\?", x.code)
+        if m and x.ty.nullable:
+            return f"rhs.required_node({m.group(1)})?"
         if x.ty.kind == "str":
             return self.coerce(x, Ty("str", nullable=False)).join(["Node::Str(", ")"])
         if x.ty.kind == "node" and x.ty.nullable:
@@ -871,9 +877,53 @@ class Action:
             self.emit("}")
             return 0
         if kind == "expr":
-            self.expr_stmt(st[1])
+            e = st[1]
+            if (e[0] == "assign" and e[2][0] == "sv" and e[2][1] == "$" and e[3][0] == "call"
+                    and e[3][1] == "makeNode" and self.result is None):
+                return self.result_literal(e, rest)
+            self.expr_stmt(e)
             return 0
         raise Untranslatable(f"statement {kind}")
+
+    def result_literal(self, e, rest) -> int:
+        """`$$.m = makeNode(T)` followed by `$$.m->field = value;` statements."""
+        sname = M.struct_rust_name(e[3][2][0][1])
+        fields = []
+        consumed = 0
+        for nxt in rest:
+            if nxt[0] == "expr" and nxt[1][0] == "assign" and nxt[1][1] == "=" \
+                    and nxt[1][2][0] == "member" and nxt[1][2][3] \
+                    and nxt[1][2][1][0] == "sv" and nxt[1][2][1][1] == "$":
+                if self.mentions_result(nxt[1][3]):
+                    break
+                fname = nxt[1][2][2]
+                if fname in gen_nodes.DROPPED_FIELDS.get("PG" + sname, ()):
+                    consumed += 1
+                    continue
+                _, rf, fty, _ = self.model.field("PG" + sname, fname)
+                if any(f[0] == rf for f in fields):
+                    break
+                val = self.expr(nxt[1][3], fty)
+                fields.append((rf, self.coerce(val, fty, f"{sname}.{fname}")))
+                consumed += 1
+            elif nxt[0] == "empty":
+                consumed += 1
+            else:
+                break
+        rust = self.result_name()
+        self.result = Local(rust, Ty("struct", sname, nullable=False))
+        self.result.literal = True
+        self.result.decl_index = self.emit_struct_literal(rust, sname, fields)
+        return consumed
+
+    def mentions_result(self, e) -> bool:
+        if isinstance(e, tuple):
+            if e[0] == "sv" and e[1] == "$":
+                return True
+            return any(self.mentions_result(x) for x in e[1:])
+        if isinstance(e, list):
+            return any(self.mentions_result(x) for x in e)
+        return False
 
     def decl(self, st, rest) -> int:
         _, ctype, name, init = st
@@ -974,7 +1024,8 @@ class Action:
         self.indent += 1
         for rf, code in fields:
             self.emit(f"{rf}: {code},")
-        self.emit("..Default::default()")
+        if len(fields) < len(gen_nodes.kept_fields(self.model, "PG" + sname)):
+            self.emit("..Default::default()")
         self.indent -= 1
         self.emit("};")
         return idx
@@ -1087,6 +1138,7 @@ class Action:
                     code = self.coerce(val, mty)
                 self.result = Local(rust, ty)
                 self.result.pending = code
+                self.result.pending_raw = val.raw if code == val.code else None
                 self.result.decl_index = self.emit(f"let {rust} = {code};")
                 return
             if getattr(self.result, "deferred", False):
@@ -1257,7 +1309,7 @@ class Action:
                 and not getattr(r, "literal", False)):
             code = r.pending
             self.lines.pop()
-            ret = self.wrap_result(E(code, r.ty, atomic=False), member)
+            ret = self.wrap_result(E(code, r.ty, atomic=False, raw=getattr(r, "pending_raw", None)), member)
         self.emit(f"Ok({ret})")
 
     def wrap_result(self, val: E, member: str) -> str:
@@ -1323,6 +1375,23 @@ class Translator:
     def lhs_member(self, lhs: str) -> str:
         return self.sym_member(lhs) or "none"
 
+    def forward_index(self, r) -> int | None:
+        """k if the rule's action just moves `$k` into `$$` (1 for an empty action)."""
+        code = r["action"][1].strip()
+        if code == "":
+            return 1
+        if r["n"] in self.manual:
+            return None
+        m = re.fullmatch(r"\$\$\.(\w+) = (?:\(PGNode \*\) ?)?\$(\d+)\.(\w+);", code)
+        if not m:
+            return None
+        k = int(m.group(2))
+        nodeish = {"node", "value"} | set(POINTER_MEMBERS)
+        cls = lambda member: "node" if member in nodeish else member
+        lhs = self.sym_member(r["lhs"])
+        src = self.sym_member(r["rhs"][k - 1])
+        return k if lhs is not None and src is not None and cls(lhs) == cls(src) else None
+
     def run(self):
         by_lhs = defaultdict(list)
         for r in self.rules:
@@ -1331,9 +1400,10 @@ class Translator:
         rule_entry = {}
         failures = []
         for lhs, rules in by_lhs.items():
-            if not any(r["action"] for r in rules):
+            forwards = {r["n"]: self.forward_index(r) for r in rules if r["action"]}
+            if all(not r["action"] or forwards[r["n"]] is not None for r in rules):
                 for r in rules:
-                    rule_entry[r["n"]] = None
+                    rule_entry[r["n"]] = ("forward", forwards.get(r["n"], 1))
                 continue
             src = next(r["action"][0] for r in rules if r["action"])
             module = module_name(src)
@@ -1341,7 +1411,10 @@ class Translator:
             arms = []
             for alt, r in enumerate(rules):
                 if not r["action"]:
-                    rule_entry[r["n"]] = None
+                    rule_entry[r["n"]] = ("forward", 1)
+                    continue
+                if forwards[r["n"]] is not None:
+                    rule_entry[r["n"]] = ("forward", forwards[r["n"]])
                     continue
                 rule_entry[r["n"]] = (module, fn, alt)
                 code = r["action"][1]
@@ -1385,13 +1458,25 @@ class Translator:
                 lines.append("/// ```")
                 lines.append(f"pub(super) fn {fn}<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {{")
                 lines.append("    match alt {")
+                groups = []
                 for alt, r, body in arms:
-                    prod = " ".join(r["rhs"]) or "/* empty */"
-                    lines.append(f"        // {prod}")
-                    if len(body) == 1 and body[0].startswith("Ok(") and not body[0].startswith("//"):
-                        lines.append(f"        {alt} => {body[0]},")
+                    for g in groups:
+                        if g[2] == body:
+                            g[0].append(alt)
+                            g[1].append(r)
+                            break
                     else:
-                        lines.append(f"        {alt} => {{")
+                        groups.append(([alt], [r], body))
+                for alts, rs, body in groups:
+                    for r in rs:
+                        prod = " ".join(r["rhs"]) or "/* empty */"
+                        lines.append(f"        // {prod}")
+                    pattern = alt_pattern(alts)
+                    body = tidy_body(body)
+                    if len(body) == 1 and body[0].startswith(("Ok(", "Err(")):
+                        lines.append(f"        {pattern} => {body[0]},")
+                    else:
+                        lines.append(f"        {pattern} => {{")
                         for b in body:
                             lines.append("            " + b if b else "")
                         lines.append("        }")
@@ -1417,13 +1502,52 @@ class Translator:
         tab.append("    RuleAction::Default,")
         for r in self.rules:
             ent = rule_entry.get(r["n"])
-            if ent is None:
+            if ent is None or ent == ("forward", 1):
                 tab.append("    RuleAction::Default,")
+            elif ent[0] == "forward":
+                tab.append(f"    RuleAction::Forward({ent[1]}),")
             else:
                 module, fn, alt = ent
                 tab.append(f"    RuleAction::Call({module}::{fn} as Action, {alt}),")
         tab.append("];")
+        tab += ["", "/// The production each entry of [`RULE_ACTIONS`] was written for; the",
+                "/// `rule_actions_match_grammar` test compares it with the parse tables.",
+                "#[cfg(test)]",
+                f"pub(crate) static RULE_PRODUCTIONS: [&str; {len(self.rules) + 1}] = ["]
+        tab.append('    "$accept: stmtblock $end",')
+        for r in self.rules:
+            prod = (r["lhs"] + ": " + " ".join(r["rhs"])).rstrip()
+            tab.append("    " + json.dumps(prod) + ",")
+        tab.append("];")
         (out_dir / "mod.rs").write_text("\n".join(tab) + "\n")
+
+
+def alt_pattern(alts: list[int]) -> str:
+    """`0 | 1 | 2 | 5` as `0..=2 | 5`."""
+    runs = []
+    for a in alts:
+        if runs and runs[-1][1] == a - 1:
+            runs[-1][1] = a
+        else:
+            runs.append([a, a])
+    parts = []
+    for lo, hi in runs:
+        if hi - lo >= 2:
+            parts.append(f"{lo}..={hi}")
+        else:
+            parts.extend(str(x) for x in range(lo, hi + 1))
+    return " | ".join(parts)
+
+
+def tidy_body(body: list[str]) -> list[str]:
+    """Small clean-ups of generated arm bodies."""
+    body = [ln.replace('Some("".to_owned())', "Some(String::new())") for ln in body]
+    # a trailing `return Err(..);` is the arm's value
+    if body and body[-1].startswith("return Err(") and body[-1].endswith(");"):
+        body = body[:-1] + [body[-1][len("return "):-1]]
+    if len(body) == 1 and body[0].startswith("Err("):
+        body = [body[0]]
+    return body
 
 
 SOURCE_MODULE = {}

@@ -15,9 +15,8 @@ pub(super) fn execute_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
             let n = ExecuteStmt {
                 name: rhs.str(2)?,
                 params: rhs.list(3)?,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // CREATE_P OptTemp TABLE create_as_target AS EXECUTE name execute_param_clause opt_with_data
         1 => {
@@ -65,8 +64,6 @@ pub(super) fn execute_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
 /// ```
 pub(super) fn execute_param_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // a_expr
-        0 => Ok(SemValue::Node(rhs.node(1)?)),
         // param_name COLON_EQUALS a_expr
         1 => {
             let na = NamedArgExpr {
@@ -74,9 +71,8 @@ pub(super) fn execute_param_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
                 arg: rhs.node(3)?,
                 argnumber: -1,
                 location: rhs.loc(1),
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(na)))
+            Ok(SemValue::node(na))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -90,9 +86,9 @@ pub(super) fn execute_param_expr<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
 pub(super) fn execute_param_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // execute_param_expr
-        0 => Ok(SemValue::List(vec![required(rhs.node(1)?)?])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // execute_param_list ',' execute_param_expr
-        1 => Ok(SemValue::List(append(rhs.list(1)?, required(rhs.node(3)?)?))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -104,8 +100,6 @@ pub(super) fn execute_param_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
 /// ```
 pub(super) fn execute_param_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // '(' execute_param_list ')'
-        0 => Ok(SemValue::List(rhs.list(2)?)),
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
         _ => Err(rhs.bad_alternative()),

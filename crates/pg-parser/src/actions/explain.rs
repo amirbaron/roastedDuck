@@ -16,39 +16,35 @@ pub(super) fn explain_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
             let n = ExplainStmt {
                 query: rhs.node(2)?,
                 options: List::new(),
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // EXPLAIN analyze_keyword opt_verbose ExplainableStmt
         1 => {
             let mut n = ExplainStmt {
                 query: rhs.node(4)?,
                 options: vec![make_def_elem("analyze", None, rhs.loc(2)).into()],
-                ..Default::default()
             };
             if rhs.bool(3)? {
                 n.options = append(n.options, make_def_elem("verbose", None, rhs.loc(3)).into());
             }
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // EXPLAIN VERBOSE ExplainableStmt
         2 => {
             let n = ExplainStmt {
                 query: rhs.node(3)?,
                 options: vec![make_def_elem("verbose", None, rhs.loc(2)).into()],
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // EXPLAIN '(' explain_option_list ')' ExplainableStmt
         3 => {
             let n = ExplainStmt {
                 query: rhs.node(5)?,
                 options: rhs.list(3)?,
-                ..Default::default()
             };
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -78,11 +74,7 @@ pub(super) fn opt_verbose<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
 pub(super) fn explain_option_arg<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // opt_boolean_or_string
-        0 => Ok(SemValue::node(Node::Value(Value::String(
-            required(rhs.str(1)?)?.into(),
-        )))),
-        // NumericOnly
-        1 => Ok(SemValue::Node(rhs.value(1)?.map(Node::Value))),
+        0 => Ok(SemValue::node(Node::Value(Value::String(required(rhs.str(1)?)?)))),
         // /* empty */
         2 => Ok(SemValue::Node(None)),
         _ => Err(rhs.bad_alternative()),
@@ -97,30 +89,9 @@ pub(super) fn explain_option_arg<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
 /// ```
 pub(super) fn non_reserved_word<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // IDENT
-        0 => Ok(SemValue::Str(rhs.str(1)?)),
         // unreserved_keyword
-        1 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
         // other_keyword
-        2 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// NonReservedWord_or_Sconst:
-///       NonReservedWord
-///     | Sconst
-/// ```
-pub(super) fn non_reserved_word_or_sconst<'a>(
-    rhs: &mut Reduction<'_, 'a>,
-    alt: usize,
-) -> Result<SemValue<'a>> {
-    match alt {
-        // NonReservedWord
-        0 => Ok(SemValue::Str(rhs.str(1)?)),
-        // Sconst
-        1 => Ok(SemValue::Str(rhs.str(1)?)),
+        1 | 2 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -133,29 +104,9 @@ pub(super) fn non_reserved_word_or_sconst<'a>(
 pub(super) fn explain_option_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // explain_option_elem
-        0 => Ok(SemValue::List(vec![Node::from(required(
-            rhs.ptr::<DefElem>(1)?,
-        )?)])),
+        0 => Ok(SemValue::List(vec![rhs.required_node(1)?])),
         // explain_option_list ',' explain_option_elem
-        1 => Ok(SemValue::List(append(
-            rhs.list(1)?,
-            Node::from(required(rhs.ptr::<DefElem>(3)?)?),
-        ))),
-        _ => Err(rhs.bad_alternative()),
-    }
-}
-
-/// ```text
-/// analyze_keyword:
-///       ANALYZE
-///     | ANALYSE
-/// ```
-pub(super) fn analyze_keyword<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
-    match alt {
-        // ANALYZE
-        0 => Ok(SemValue::None),
-        // ANALYSE
-        1 => Ok(SemValue::None),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(3)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -175,8 +126,6 @@ pub(super) fn opt_boolean_or_string<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize)
         1 => Ok(SemValue::Str(Some("false".to_owned()))),
         // ON
         2 => Ok(SemValue::Str(Some("on".to_owned()))),
-        // NonReservedWord_or_Sconst
-        3 => Ok(SemValue::Str(rhs.str(1)?)),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -204,8 +153,6 @@ pub(super) fn explain_option_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
 /// ```
 pub(super) fn explain_option_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
-        // NonReservedWord
-        0 => Ok(SemValue::Str(rhs.str(1)?)),
         // analyze_keyword
         1 => Ok(SemValue::Str(Some("analyze".to_owned()))),
         _ => Err(rhs.bad_alternative()),

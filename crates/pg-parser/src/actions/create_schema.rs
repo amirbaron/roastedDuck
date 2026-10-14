@@ -28,7 +28,7 @@ pub(super) fn create_schema_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
             }
             n.schema_elts = rhs.list(4)?;
             n.onconflict = OnCreateConflict::Error;
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // CREATE_P SCHEMA IF_P NOT EXISTS qualified_name OptSchemaEltList
         1 => {
@@ -55,7 +55,7 @@ pub(super) fn create_schema_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
             }
             n.schema_elts = opt_schema_elt_list;
             n.onconflict = OnCreateConflict::Ignore;
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         // CREATE_P OR REPLACE SCHEMA qualified_name OptSchemaEltList
         2 => {
@@ -75,7 +75,7 @@ pub(super) fn create_schema_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
             }
             n.schema_elts = rhs.list(6)?;
             n.onconflict = OnCreateConflict::Replace;
-            Ok(SemValue::node(Node::from(n)))
+            Ok(SemValue::node(n))
         }
         _ => Err(rhs.bad_alternative()),
     }
@@ -93,7 +93,7 @@ pub(super) fn opt_schema_elt_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
             if rhs.location < 0 {
                 rhs.location = rhs.loc(2);
             }
-            Ok(SemValue::List(append(rhs.list(1)?, required(rhs.node(2)?)?)))
+            Ok(SemValue::List(append(rhs.list(1)?, rhs.required_node(2)?)))
         }
         // /* empty */
         1 => Ok(SemValue::List(List::new())),
