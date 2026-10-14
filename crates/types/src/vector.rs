@@ -709,7 +709,7 @@ impl Vector {
                             source.add(slot * width),
                             target.add(row * width),
                             width,
-                        )
+                        );
                     };
                 }
             }
