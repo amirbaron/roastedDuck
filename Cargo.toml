@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = ["crates/*", "tools/codegen"]
 
 [workspace.package]
 version = "1.5.6"
@@ -12,6 +12,7 @@ rust-version = "1.99"
 rustdb-common = { path = "crates/common" }
 rustdb-types = { path = "crates/types" }
 rustdb-serde = { path = "crates/serde" }
+rustdb-ast = { path = "crates/ast" }
 rustdb-parser = { path = "crates/parser" }
 rustdb-planner = { path = "crates/planner" }
 rustdb-execution = { path = "crates/execution" }
