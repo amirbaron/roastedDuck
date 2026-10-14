@@ -3,7 +3,11 @@
 
 use rustdb_serde::{DeserializeObject, Deserializer, Error, Result, SerializeObject, Serializer, required};
 
-use crate::{CommonTableExpressionMap, CteMaterialize, QueryNode, QueryNodeKind, SetOperationType};
+use crate::visit::{VisitorMut, walk_table_ref};
+use crate::{
+    CommonTableExpressionMap, CteMaterialize, QueryNode, QueryNodeKind, SetOperationType, TableRef,
+    TableRefKind,
+};
 
 /// The serialization version that writes all children of a set operation in one list.
 const CHILD_LIST_VERSION: u64 = 7;
@@ -20,12 +24,44 @@ pub struct SetOperationNode {
     pub children: Vec<QueryNode>,
 }
 
+/// The changes C++ `Copy()` makes to a tree: join, pivot and empty table refs come out
+/// without query location and sample (and, for empty ones, alias).
+///
+/// It matters because DuckDB writes old-version set operations from copies of their
+/// operands (`SerializeChildNode`), so those properties are missing from its output.
+struct CopyLikeDuckDb;
+
+impl VisitorMut for CopyLikeDuckDb {
+    fn visit_table_ref(&mut self, table_ref: &mut TableRef) {
+        match table_ref.kind {
+            TableRefKind::Join(_) | TableRefKind::Pivot(_) => {
+                table_ref.query_location = None;
+                table_ref.sample = None;
+            }
+            TableRefKind::Empty => {
+                table_ref.alias.clear();
+                table_ref.query_location = None;
+                table_ref.sample = None;
+            }
+            _ => {}
+        }
+        walk_table_ref(self, table_ref);
+    }
+}
+
+/// A copy of `node` as C++ `QueryNode::Copy` makes it.
+fn duckdb_copy(node: &QueryNode) -> QueryNode {
+    let mut copy = node.clone();
+    CopyLikeDuckDb.visit_query_node(&mut copy);
+    copy
+}
+
 impl SetOperationNode {
     /// The operands after the first as one node, for readers that only know binary set
     /// operations (DuckDB's `SerializeChildNode(serializer, 1)`): a balanced tree of set
-    /// operations of this kind.
+    /// operations of this kind over copies of the operands.
     fn folded_right_operand(&self) -> Option<QueryNode> {
-        let mut nodes: Vec<QueryNode> = self.children.iter().skip(1).cloned().collect();
+        let mut nodes: Vec<QueryNode> = self.children.iter().skip(1).map(duckdb_copy).collect();
         while nodes.len() > 1 {
             let mut merged = Vec::with_capacity(nodes.len().div_ceil(2));
             let mut pending = nodes.into_iter();
@@ -58,18 +94,15 @@ impl SerializeObject for SetOperationNode {
             serializer.write_property_with_default(201, "left", &none)?;
             serializer.write_property_with_default(202, "right", &none)?;
         } else {
-            let (Some(left), Some(second)) = (self.children.first(), self.children.get(1)) else {
+            let Some(left) = self.children.first().filter(|_| self.children.len() >= 2) else {
                 return Err(Error::serialization(
                     "SetOperationNode must have at least two children",
                 ));
             };
-            serializer.write_optional(201, "left", false, left)?;
-            if self.children.len() == 2 {
-                serializer.write_optional(202, "right", false, second)?;
-            } else {
-                let right = self.folded_right_operand();
-                serializer.write_property_with_default(202, "right", &right)?;
-            }
+            let left = Some(Box::new(duckdb_copy(left)));
+            serializer.write_property_with_default(201, "left", &left)?;
+            let right = self.folded_right_operand().map(Box::new);
+            serializer.write_property_with_default(202, "right", &right)?;
         }
         serializer.write_property_with_explicit_default(203, "setop_all", &self.setop_all, &true)?;
         if child_list {

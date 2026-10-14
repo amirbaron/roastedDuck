@@ -1038,6 +1038,152 @@ impl Deserialize for DeprecatedIndexType {
     }
 }
 
+/// DuckDB's `ExplainFormat` (`duckdb/common/enums/explain_format.hpp`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum ExplainFormat {
+    Default = 0,
+    Text = 1,
+    Json = 2,
+    Html = 3,
+    Graphviz = 4,
+    Yaml = 5,
+    Mermaid = 6,
+}
+
+impl ExplainFormat {
+    /// Every member, in declaration order.
+    pub const ALL: [Self; 7] = [
+        Self::Default,
+        Self::Text,
+        Self::Json,
+        Self::Html,
+        Self::Graphviz,
+        Self::Yaml,
+        Self::Mermaid,
+    ];
+
+    /// The name `EnumUtil::ToChars` prints.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Default => "DEFAULT",
+            Self::Text => "TEXT",
+            Self::Json => "JSON",
+            Self::Html => "HTML",
+            Self::Graphviz => "GRAPHVIZ",
+            Self::Yaml => "YAML",
+            Self::Mermaid => "MERMAID",
+        }
+    }
+
+    /// Parses any name `EnumUtil::FromString` accepts (ASCII case-insensitive).
+    pub fn from_name(name: &str) -> Option<Self> {
+        const NAMES: &[(&str, ExplainFormat)] = &[
+            ("DEFAULT", ExplainFormat::Default),
+            ("TEXT", ExplainFormat::Text),
+            ("JSON", ExplainFormat::Json),
+            ("HTML", ExplainFormat::Html),
+            ("GRAPHVIZ", ExplainFormat::Graphviz),
+            ("YAML", ExplainFormat::Yaml),
+            ("MERMAID", ExplainFormat::Mermaid),
+        ];
+        NAMES
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| *v)
+    }
+
+    /// The member with this numeric value.
+    pub const fn from_repr(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Default),
+            1 => Some(Self::Text),
+            2 => Some(Self::Json),
+            3 => Some(Self::Html),
+            4 => Some(Self::Graphviz),
+            5 => Some(Self::Yaml),
+            6 => Some(Self::Mermaid),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for ExplainFormat {
+    fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        write_enum(serializer, self.name(), |serializer| {
+            serializer.write_u8(*self as u8);
+        });
+        Ok(())
+    }
+}
+
+impl Deserialize for ExplainFormat {
+    fn deserialize(deserializer: &mut dyn Deserializer) -> Result<Self> {
+        read_enum(deserializer, "ExplainFormat", Self::from_name, |deserializer| {
+            Ok(Self::from_repr(deserializer.read_u8()?))
+        })
+    }
+}
+
+/// DuckDB's `ExplainType` (`duckdb/parser/statement/explain_statement.hpp`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum ExplainType {
+    ExplainStandard = 0,
+    ExplainAnalyze = 1,
+}
+
+impl ExplainType {
+    /// Every member, in declaration order.
+    pub const ALL: [Self; 2] = [Self::ExplainStandard, Self::ExplainAnalyze];
+
+    /// The name `EnumUtil::ToChars` prints.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::ExplainStandard => "EXPLAIN_STANDARD",
+            Self::ExplainAnalyze => "EXPLAIN_ANALYZE",
+        }
+    }
+
+    /// Parses any name `EnumUtil::FromString` accepts (ASCII case-insensitive).
+    pub fn from_name(name: &str) -> Option<Self> {
+        const NAMES: &[(&str, ExplainType)] = &[
+            ("EXPLAIN_STANDARD", ExplainType::ExplainStandard),
+            ("EXPLAIN_ANALYZE", ExplainType::ExplainAnalyze),
+        ];
+        NAMES
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| *v)
+    }
+
+    /// The member with this numeric value.
+    pub const fn from_repr(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::ExplainStandard),
+            1 => Some(Self::ExplainAnalyze),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for ExplainType {
+    fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        write_enum(serializer, self.name(), |serializer| {
+            serializer.write_u8(*self as u8);
+        });
+        Ok(())
+    }
+}
+
+impl Deserialize for ExplainType {
+    fn deserialize(deserializer: &mut dyn Deserializer) -> Result<Self> {
+        read_enum(deserializer, "ExplainType", Self::from_name, |deserializer| {
+            Ok(Self::from_repr(deserializer.read_u8()?))
+        })
+    }
+}
+
 /// DuckDB's `ExpressionClass` (`duckdb/common/enums/expression_type.hpp`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
@@ -1945,6 +2091,68 @@ impl Deserialize for IndexConstraintType {
     }
 }
 
+/// DuckDB's `InsertColumnOrder` (`duckdb/parser/statement/insert_statement.hpp`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum InsertColumnOrder {
+    InsertByPosition = 0,
+    InsertByName = 1,
+}
+
+impl InsertColumnOrder {
+    /// Every member, in declaration order.
+    pub const ALL: [Self; 2] = [Self::InsertByPosition, Self::InsertByName];
+
+    /// The name `EnumUtil::ToChars` prints.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::InsertByPosition => "INSERT_BY_POSITION",
+            Self::InsertByName => "INSERT_BY_NAME",
+        }
+    }
+
+    /// Parses any name `EnumUtil::FromString` accepts (ASCII case-insensitive).
+    pub fn from_name(name: &str) -> Option<Self> {
+        const NAMES: &[(&str, InsertColumnOrder)] = &[
+            ("INSERT_BY_POSITION", InsertColumnOrder::InsertByPosition),
+            ("INSERT_BY_NAME", InsertColumnOrder::InsertByName),
+        ];
+        NAMES
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| *v)
+    }
+
+    /// The member with this numeric value.
+    pub const fn from_repr(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::InsertByPosition),
+            1 => Some(Self::InsertByName),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for InsertColumnOrder {
+    fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        write_enum(serializer, self.name(), |serializer| {
+            serializer.write_u8(*self as u8);
+        });
+        Ok(())
+    }
+}
+
+impl Deserialize for InsertColumnOrder {
+    fn deserialize(deserializer: &mut dyn Deserializer) -> Result<Self> {
+        read_enum(
+            deserializer,
+            "InsertColumnOrder",
+            Self::from_name,
+            |deserializer| Ok(Self::from_repr(deserializer.read_u8()?)),
+        )
+    }
+}
+
 /// DuckDB's `JoinRefType` (`duckdb/common/enums/joinref_type.hpp`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
@@ -2340,6 +2548,230 @@ impl Deserialize for MacroType {
         read_enum(deserializer, "MacroType", Self::from_name, |deserializer| {
             Ok(Self::from_repr(deserializer.read_u8()?))
         })
+    }
+}
+
+/// DuckDB's `MergeActionCondition` (`duckdb/common/enums/merge_action_type.hpp`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum MergeActionCondition {
+    WhenMatched = 0,
+    WhenNotMatchedBySource = 1,
+    WhenNotMatchedByTarget = 2,
+}
+
+impl MergeActionCondition {
+    /// Every member, in declaration order.
+    pub const ALL: [Self; 3] = [
+        Self::WhenMatched,
+        Self::WhenNotMatchedBySource,
+        Self::WhenNotMatchedByTarget,
+    ];
+
+    /// The name `EnumUtil::ToChars` prints.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::WhenMatched => "WHEN_MATCHED",
+            Self::WhenNotMatchedBySource => "WHEN_NOT_MATCHED_BY_SOURCE",
+            Self::WhenNotMatchedByTarget => "WHEN_NOT_MATCHED_BY_TARGET",
+        }
+    }
+
+    /// Parses any name `EnumUtil::FromString` accepts (ASCII case-insensitive).
+    pub fn from_name(name: &str) -> Option<Self> {
+        const NAMES: &[(&str, MergeActionCondition)] = &[
+            ("WHEN_MATCHED", MergeActionCondition::WhenMatched),
+            (
+                "WHEN_NOT_MATCHED_BY_SOURCE",
+                MergeActionCondition::WhenNotMatchedBySource,
+            ),
+            (
+                "WHEN_NOT_MATCHED_BY_TARGET",
+                MergeActionCondition::WhenNotMatchedByTarget,
+            ),
+        ];
+        NAMES
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| *v)
+    }
+
+    /// The member with this numeric value.
+    pub const fn from_repr(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::WhenMatched),
+            1 => Some(Self::WhenNotMatchedBySource),
+            2 => Some(Self::WhenNotMatchedByTarget),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for MergeActionCondition {
+    fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        write_enum(serializer, self.name(), |serializer| {
+            serializer.write_u8(*self as u8);
+        });
+        Ok(())
+    }
+}
+
+impl Deserialize for MergeActionCondition {
+    fn deserialize(deserializer: &mut dyn Deserializer) -> Result<Self> {
+        read_enum(
+            deserializer,
+            "MergeActionCondition",
+            Self::from_name,
+            |deserializer| Ok(Self::from_repr(deserializer.read_u8()?)),
+        )
+    }
+}
+
+/// DuckDB's `MergeActionType` (`duckdb/common/enums/merge_action_type.hpp`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum MergeActionType {
+    MergeUpdate = 0,
+    MergeDelete = 1,
+    MergeInsert = 2,
+    MergeDoNothing = 3,
+    MergeError = 4,
+}
+
+impl MergeActionType {
+    /// Every member, in declaration order.
+    pub const ALL: [Self; 5] = [
+        Self::MergeUpdate,
+        Self::MergeDelete,
+        Self::MergeInsert,
+        Self::MergeDoNothing,
+        Self::MergeError,
+    ];
+
+    /// The name `EnumUtil::ToChars` prints.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::MergeUpdate => "MERGE_UPDATE",
+            Self::MergeDelete => "MERGE_DELETE",
+            Self::MergeInsert => "MERGE_INSERT",
+            Self::MergeDoNothing => "MERGE_DO_NOTHING",
+            Self::MergeError => "MERGE_ERROR",
+        }
+    }
+
+    /// Parses any name `EnumUtil::FromString` accepts (ASCII case-insensitive).
+    pub fn from_name(name: &str) -> Option<Self> {
+        const NAMES: &[(&str, MergeActionType)] = &[
+            ("MERGE_UPDATE", MergeActionType::MergeUpdate),
+            ("MERGE_DELETE", MergeActionType::MergeDelete),
+            ("MERGE_INSERT", MergeActionType::MergeInsert),
+            ("MERGE_DO_NOTHING", MergeActionType::MergeDoNothing),
+            ("MERGE_ERROR", MergeActionType::MergeError),
+        ];
+        NAMES
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| *v)
+    }
+
+    /// The member with this numeric value.
+    pub const fn from_repr(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::MergeUpdate),
+            1 => Some(Self::MergeDelete),
+            2 => Some(Self::MergeInsert),
+            3 => Some(Self::MergeDoNothing),
+            4 => Some(Self::MergeError),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for MergeActionType {
+    fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        write_enum(serializer, self.name(), |serializer| {
+            serializer.write_u8(*self as u8);
+        });
+        Ok(())
+    }
+}
+
+impl Deserialize for MergeActionType {
+    fn deserialize(deserializer: &mut dyn Deserializer) -> Result<Self> {
+        read_enum(deserializer, "MergeActionType", Self::from_name, |deserializer| {
+            Ok(Self::from_repr(deserializer.read_u8()?))
+        })
+    }
+}
+
+/// DuckDB's `OnConflictAction` (`duckdb/parser/statement/insert_statement.hpp`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum OnConflictAction {
+    Throw = 0,
+    Nothing = 1,
+    Update = 2,
+    /// Only used in transform/bind step, changed to UPDATE later
+    Replace = 3,
+}
+
+impl OnConflictAction {
+    /// Every member, in declaration order.
+    pub const ALL: [Self; 4] = [Self::Throw, Self::Nothing, Self::Update, Self::Replace];
+
+    /// The name `EnumUtil::ToChars` prints.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Throw => "THROW",
+            Self::Nothing => "NOTHING",
+            Self::Update => "UPDATE",
+            Self::Replace => "REPLACE",
+        }
+    }
+
+    /// Parses any name `EnumUtil::FromString` accepts (ASCII case-insensitive).
+    pub fn from_name(name: &str) -> Option<Self> {
+        const NAMES: &[(&str, OnConflictAction)] = &[
+            ("THROW", OnConflictAction::Throw),
+            ("NOTHING", OnConflictAction::Nothing),
+            ("UPDATE", OnConflictAction::Update),
+            ("REPLACE", OnConflictAction::Replace),
+        ];
+        NAMES
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| *v)
+    }
+
+    /// The member with this numeric value.
+    pub const fn from_repr(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Throw),
+            1 => Some(Self::Nothing),
+            2 => Some(Self::Update),
+            3 => Some(Self::Replace),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for OnConflictAction {
+    fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        write_enum(serializer, self.name(), |serializer| {
+            serializer.write_u8(*self as u8);
+        });
+        Ok(())
+    }
+}
+
+impl Deserialize for OnConflictAction {
+    fn deserialize(deserializer: &mut dyn Deserializer) -> Result<Self> {
+        read_enum(
+            deserializer,
+            "OnConflictAction",
+            Self::from_name,
+            |deserializer| Ok(Self::from_repr(deserializer.read_u8()?)),
+        )
     }
 }
 
@@ -3202,6 +3634,140 @@ impl Deserialize for SetOperationType {
     }
 }
 
+/// DuckDB's `SetScope` (`duckdb/common/enums/set_scope.hpp`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum SetScope {
+    Automatic = 0,
+    /// unused
+    Local = 1,
+    Session = 2,
+    Global = 3,
+    Variable = 4,
+}
+
+impl SetScope {
+    /// Every member, in declaration order.
+    pub const ALL: [Self; 5] = [
+        Self::Automatic,
+        Self::Local,
+        Self::Session,
+        Self::Global,
+        Self::Variable,
+    ];
+
+    /// The name `EnumUtil::ToChars` prints.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Automatic => "AUTOMATIC",
+            Self::Local => "LOCAL",
+            Self::Session => "SESSION",
+            Self::Global => "GLOBAL",
+            Self::Variable => "VARIABLE",
+        }
+    }
+
+    /// Parses any name `EnumUtil::FromString` accepts (ASCII case-insensitive).
+    pub fn from_name(name: &str) -> Option<Self> {
+        const NAMES: &[(&str, SetScope)] = &[
+            ("AUTOMATIC", SetScope::Automatic),
+            ("LOCAL", SetScope::Local),
+            ("SESSION", SetScope::Session),
+            ("GLOBAL", SetScope::Global),
+            ("VARIABLE", SetScope::Variable),
+        ];
+        NAMES
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| *v)
+    }
+
+    /// The member with this numeric value.
+    pub const fn from_repr(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Automatic),
+            1 => Some(Self::Local),
+            2 => Some(Self::Session),
+            3 => Some(Self::Global),
+            4 => Some(Self::Variable),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for SetScope {
+    fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        write_enum(serializer, self.name(), |serializer| {
+            serializer.write_u8(*self as u8);
+        });
+        Ok(())
+    }
+}
+
+impl Deserialize for SetScope {
+    fn deserialize(deserializer: &mut dyn Deserializer) -> Result<Self> {
+        read_enum(deserializer, "SetScope", Self::from_name, |deserializer| {
+            Ok(Self::from_repr(deserializer.read_u8()?))
+        })
+    }
+}
+
+/// DuckDB's `SetType` (`duckdb/common/enums/set_type.hpp`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum SetType {
+    Set = 0,
+    Reset = 1,
+}
+
+impl SetType {
+    /// Every member, in declaration order.
+    pub const ALL: [Self; 2] = [Self::Set, Self::Reset];
+
+    /// The name `EnumUtil::ToChars` prints.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Set => "SET",
+            Self::Reset => "RESET",
+        }
+    }
+
+    /// Parses any name `EnumUtil::FromString` accepts (ASCII case-insensitive).
+    pub fn from_name(name: &str) -> Option<Self> {
+        const NAMES: &[(&str, SetType)] = &[("SET", SetType::Set), ("RESET", SetType::Reset)];
+        NAMES
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| *v)
+    }
+
+    /// The member with this numeric value.
+    pub const fn from_repr(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Set),
+            1 => Some(Self::Reset),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for SetType {
+    fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        write_enum(serializer, self.name(), |serializer| {
+            serializer.write_u8(*self as u8);
+        });
+        Ok(())
+    }
+}
+
+impl Deserialize for SetType {
+    fn deserialize(deserializer: &mut dyn Deserializer) -> Result<Self> {
+        read_enum(deserializer, "SetType", Self::from_name, |deserializer| {
+            Ok(Self::from_repr(deserializer.read_u8()?))
+        })
+    }
+}
+
 /// DuckDB's `ShowType` (`duckdb/parser/tableref/showref.hpp`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
@@ -3269,6 +3835,238 @@ impl Serialize for ShowType {
 impl Deserialize for ShowType {
     fn deserialize(deserializer: &mut dyn Deserializer) -> Result<Self> {
         read_enum(deserializer, "ShowType", Self::from_name, |deserializer| {
+            Ok(Self::from_repr(deserializer.read_u8()?))
+        })
+    }
+}
+
+/// DuckDB's `StatementType` (`duckdb/common/enums/statement_type.hpp`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum StatementType {
+    /// invalid statement type
+    InvalidStatement = 0,
+    /// select statement type
+    SelectStatement = 1,
+    /// insert statement type
+    InsertStatement = 2,
+    /// update statement type
+    UpdateStatement = 3,
+    /// create statement type
+    CreateStatement = 4,
+    /// delete statement type
+    DeleteStatement = 5,
+    /// prepare statement type
+    PrepareStatement = 6,
+    /// execute statement type
+    ExecuteStatement = 7,
+    /// alter statement type
+    AlterStatement = 8,
+    /// transaction statement type,
+    TransactionStatement = 9,
+    /// copy type
+    CopyStatement = 10,
+    /// analyze type
+    AnalyzeStatement = 11,
+    /// variable set statement type
+    VariableSetStatement = 12,
+    /// create func statement type
+    CreateFuncStatement = 13,
+    /// explain statement type
+    ExplainStatement = 14,
+    /// DROP statement type
+    DropStatement = 15,
+    /// EXPORT statement type
+    ExportStatement = 16,
+    /// PRAGMA statement type
+    PragmaStatement = 17,
+    /// VACUUM statement type
+    VacuumStatement = 18,
+    /// CALL statement type
+    CallStatement = 19,
+    /// SET statement type
+    SetStatement = 20,
+    /// LOAD statement type
+    LoadStatement = 21,
+    RelationStatement = 22,
+    ExtensionStatement = 23,
+    LogicalPlanStatement = 24,
+    AttachStatement = 25,
+    DetachStatement = 26,
+    MultiStatement = 27,
+    CopyDatabaseStatement = 28,
+    UpdateExtensionsStatement = 29,
+    MergeIntoStatement = 30,
+}
+
+impl StatementType {
+    /// Every member, in declaration order.
+    pub const ALL: [Self; 31] = [
+        Self::InvalidStatement,
+        Self::SelectStatement,
+        Self::InsertStatement,
+        Self::UpdateStatement,
+        Self::CreateStatement,
+        Self::DeleteStatement,
+        Self::PrepareStatement,
+        Self::ExecuteStatement,
+        Self::AlterStatement,
+        Self::TransactionStatement,
+        Self::CopyStatement,
+        Self::AnalyzeStatement,
+        Self::VariableSetStatement,
+        Self::CreateFuncStatement,
+        Self::ExplainStatement,
+        Self::DropStatement,
+        Self::ExportStatement,
+        Self::PragmaStatement,
+        Self::VacuumStatement,
+        Self::CallStatement,
+        Self::SetStatement,
+        Self::LoadStatement,
+        Self::RelationStatement,
+        Self::ExtensionStatement,
+        Self::LogicalPlanStatement,
+        Self::AttachStatement,
+        Self::DetachStatement,
+        Self::MultiStatement,
+        Self::CopyDatabaseStatement,
+        Self::UpdateExtensionsStatement,
+        Self::MergeIntoStatement,
+    ];
+
+    /// The name `EnumUtil::ToChars` prints.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::InvalidStatement => "INVALID_STATEMENT",
+            Self::SelectStatement => "SELECT_STATEMENT",
+            Self::InsertStatement => "INSERT_STATEMENT",
+            Self::UpdateStatement => "UPDATE_STATEMENT",
+            Self::CreateStatement => "CREATE_STATEMENT",
+            Self::DeleteStatement => "DELETE_STATEMENT",
+            Self::PrepareStatement => "PREPARE_STATEMENT",
+            Self::ExecuteStatement => "EXECUTE_STATEMENT",
+            Self::AlterStatement => "ALTER_STATEMENT",
+            Self::TransactionStatement => "TRANSACTION_STATEMENT",
+            Self::CopyStatement => "COPY_STATEMENT",
+            Self::AnalyzeStatement => "ANALYZE_STATEMENT",
+            Self::VariableSetStatement => "VARIABLE_SET_STATEMENT",
+            Self::CreateFuncStatement => "CREATE_FUNC_STATEMENT",
+            Self::ExplainStatement => "EXPLAIN_STATEMENT",
+            Self::DropStatement => "DROP_STATEMENT",
+            Self::ExportStatement => "EXPORT_STATEMENT",
+            Self::PragmaStatement => "PRAGMA_STATEMENT",
+            Self::VacuumStatement => "VACUUM_STATEMENT",
+            Self::CallStatement => "CALL_STATEMENT",
+            Self::SetStatement => "SET_STATEMENT",
+            Self::LoadStatement => "LOAD_STATEMENT",
+            Self::RelationStatement => "RELATION_STATEMENT",
+            Self::ExtensionStatement => "EXTENSION_STATEMENT",
+            Self::LogicalPlanStatement => "LOGICAL_PLAN_STATEMENT",
+            Self::AttachStatement => "ATTACH_STATEMENT",
+            Self::DetachStatement => "DETACH_STATEMENT",
+            Self::MultiStatement => "MULTI_STATEMENT",
+            Self::CopyDatabaseStatement => "COPY_DATABASE_STATEMENT",
+            Self::UpdateExtensionsStatement => "UPDATE_EXTENSIONS_STATEMENT",
+            Self::MergeIntoStatement => "MERGE_INTO_STATEMENT",
+        }
+    }
+
+    /// Parses any name `EnumUtil::FromString` accepts (ASCII case-insensitive).
+    pub fn from_name(name: &str) -> Option<Self> {
+        const NAMES: &[(&str, StatementType)] = &[
+            ("INVALID_STATEMENT", StatementType::InvalidStatement),
+            ("SELECT_STATEMENT", StatementType::SelectStatement),
+            ("INSERT_STATEMENT", StatementType::InsertStatement),
+            ("UPDATE_STATEMENT", StatementType::UpdateStatement),
+            ("CREATE_STATEMENT", StatementType::CreateStatement),
+            ("DELETE_STATEMENT", StatementType::DeleteStatement),
+            ("PREPARE_STATEMENT", StatementType::PrepareStatement),
+            ("EXECUTE_STATEMENT", StatementType::ExecuteStatement),
+            ("ALTER_STATEMENT", StatementType::AlterStatement),
+            ("TRANSACTION_STATEMENT", StatementType::TransactionStatement),
+            ("COPY_STATEMENT", StatementType::CopyStatement),
+            ("ANALYZE_STATEMENT", StatementType::AnalyzeStatement),
+            ("VARIABLE_SET_STATEMENT", StatementType::VariableSetStatement),
+            ("CREATE_FUNC_STATEMENT", StatementType::CreateFuncStatement),
+            ("EXPLAIN_STATEMENT", StatementType::ExplainStatement),
+            ("DROP_STATEMENT", StatementType::DropStatement),
+            ("EXPORT_STATEMENT", StatementType::ExportStatement),
+            ("PRAGMA_STATEMENT", StatementType::PragmaStatement),
+            ("VACUUM_STATEMENT", StatementType::VacuumStatement),
+            ("CALL_STATEMENT", StatementType::CallStatement),
+            ("SET_STATEMENT", StatementType::SetStatement),
+            ("LOAD_STATEMENT", StatementType::LoadStatement),
+            ("RELATION_STATEMENT", StatementType::RelationStatement),
+            ("EXTENSION_STATEMENT", StatementType::ExtensionStatement),
+            ("LOGICAL_PLAN_STATEMENT", StatementType::LogicalPlanStatement),
+            ("ATTACH_STATEMENT", StatementType::AttachStatement),
+            ("DETACH_STATEMENT", StatementType::DetachStatement),
+            ("MULTI_STATEMENT", StatementType::MultiStatement),
+            ("COPY_DATABASE_STATEMENT", StatementType::CopyDatabaseStatement),
+            (
+                "UPDATE_EXTENSIONS_STATEMENT",
+                StatementType::UpdateExtensionsStatement,
+            ),
+            ("MERGE_INTO_STATEMENT", StatementType::MergeIntoStatement),
+        ];
+        NAMES
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| *v)
+    }
+
+    /// The member with this numeric value.
+    pub const fn from_repr(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::InvalidStatement),
+            1 => Some(Self::SelectStatement),
+            2 => Some(Self::InsertStatement),
+            3 => Some(Self::UpdateStatement),
+            4 => Some(Self::CreateStatement),
+            5 => Some(Self::DeleteStatement),
+            6 => Some(Self::PrepareStatement),
+            7 => Some(Self::ExecuteStatement),
+            8 => Some(Self::AlterStatement),
+            9 => Some(Self::TransactionStatement),
+            10 => Some(Self::CopyStatement),
+            11 => Some(Self::AnalyzeStatement),
+            12 => Some(Self::VariableSetStatement),
+            13 => Some(Self::CreateFuncStatement),
+            14 => Some(Self::ExplainStatement),
+            15 => Some(Self::DropStatement),
+            16 => Some(Self::ExportStatement),
+            17 => Some(Self::PragmaStatement),
+            18 => Some(Self::VacuumStatement),
+            19 => Some(Self::CallStatement),
+            20 => Some(Self::SetStatement),
+            21 => Some(Self::LoadStatement),
+            22 => Some(Self::RelationStatement),
+            23 => Some(Self::ExtensionStatement),
+            24 => Some(Self::LogicalPlanStatement),
+            25 => Some(Self::AttachStatement),
+            26 => Some(Self::DetachStatement),
+            27 => Some(Self::MultiStatement),
+            28 => Some(Self::CopyDatabaseStatement),
+            29 => Some(Self::UpdateExtensionsStatement),
+            30 => Some(Self::MergeIntoStatement),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for StatementType {
+    fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        write_enum(serializer, self.name(), |serializer| {
+            serializer.write_u8(*self as u8);
+        });
+        Ok(())
+    }
+}
+
+impl Deserialize for StatementType {
+    fn deserialize(deserializer: &mut dyn Deserializer) -> Result<Self> {
+        read_enum(deserializer, "StatementType", Self::from_name, |deserializer| {
             Ok(Self::from_repr(deserializer.read_u8()?))
         })
     }

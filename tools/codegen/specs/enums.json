@@ -758,6 +758,61 @@
       }
     ]
   },
+  "ExplainFormat": {
+    "header": "duckdb/common/enums/explain_format.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "DEFAULT",
+        "value": 0,
+        "strings": [
+          "DEFAULT"
+        ]
+      },
+      {
+        "name": "TEXT",
+        "value": 1,
+        "strings": [
+          "TEXT"
+        ]
+      },
+      {
+        "name": "JSON",
+        "value": 2,
+        "strings": [
+          "JSON"
+        ]
+      },
+      {
+        "name": "HTML",
+        "value": 3,
+        "strings": [
+          "HTML"
+        ]
+      },
+      {
+        "name": "GRAPHVIZ",
+        "value": 4,
+        "strings": [
+          "GRAPHVIZ"
+        ]
+      },
+      {
+        "name": "YAML",
+        "value": 5,
+        "strings": [
+          "YAML"
+        ]
+      },
+      {
+        "name": "MERMAID",
+        "value": 6,
+        "strings": [
+          "MERMAID"
+        ]
+      }
+    ]
+  },
   "ExplainType": {
     "header": "duckdb/parser/statement/explain_statement.hpp",
     "underlying": "uint8_t",
@@ -2098,6 +2153,26 @@
           "FOREIGN"
         ],
         "doc": "index is an index built to enforce a FOREIGN KEY constraint"
+      }
+    ]
+  },
+  "InsertColumnOrder": {
+    "header": "duckdb/parser/statement/insert_statement.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "INSERT_BY_POSITION",
+        "value": 0,
+        "strings": [
+          "INSERT_BY_POSITION"
+        ]
+      },
+      {
+        "name": "INSERT_BY_NAME",
+        "value": 1,
+        "strings": [
+          "INSERT_BY_NAME"
+        ]
       }
     ]
   },
@@ -3863,6 +3938,26 @@
       }
     ]
   },
+  "SetType": {
+    "header": "duckdb/common/enums/set_type.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "SET",
+        "value": 0,
+        "strings": [
+          "SET"
+        ]
+      },
+      {
+        "name": "RESET",
+        "value": 1,
+        "strings": [
+          "RESET"
+        ]
+      }
+    ]
+  },
   "ShowType": {
     "header": "duckdb/parser/tableref/showref.hpp",
     "underlying": "uint8_t",
@@ -3893,6 +3988,251 @@
         "value": 3,
         "strings": [
           "SHOW_UNQUALIFIED"
+        ]
+      }
+    ]
+  },
+  "StatementType": {
+    "header": "duckdb/common/enums/statement_type.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "INVALID_STATEMENT",
+        "value": 0,
+        "strings": [
+          "INVALID_STATEMENT"
+        ],
+        "doc": "invalid statement type"
+      },
+      {
+        "name": "SELECT_STATEMENT",
+        "value": 1,
+        "strings": [
+          "SELECT_STATEMENT"
+        ],
+        "doc": "select statement type"
+      },
+      {
+        "name": "INSERT_STATEMENT",
+        "value": 2,
+        "strings": [
+          "INSERT_STATEMENT"
+        ],
+        "doc": "insert statement type"
+      },
+      {
+        "name": "UPDATE_STATEMENT",
+        "value": 3,
+        "strings": [
+          "UPDATE_STATEMENT"
+        ],
+        "doc": "update statement type"
+      },
+      {
+        "name": "CREATE_STATEMENT",
+        "value": 4,
+        "strings": [
+          "CREATE_STATEMENT"
+        ],
+        "doc": "create statement type"
+      },
+      {
+        "name": "DELETE_STATEMENT",
+        "value": 5,
+        "strings": [
+          "DELETE_STATEMENT"
+        ],
+        "doc": "delete statement type"
+      },
+      {
+        "name": "PREPARE_STATEMENT",
+        "value": 6,
+        "strings": [
+          "PREPARE_STATEMENT"
+        ],
+        "doc": "prepare statement type"
+      },
+      {
+        "name": "EXECUTE_STATEMENT",
+        "value": 7,
+        "strings": [
+          "EXECUTE_STATEMENT"
+        ],
+        "doc": "execute statement type"
+      },
+      {
+        "name": "ALTER_STATEMENT",
+        "value": 8,
+        "strings": [
+          "ALTER_STATEMENT"
+        ],
+        "doc": "alter statement type"
+      },
+      {
+        "name": "TRANSACTION_STATEMENT",
+        "value": 9,
+        "strings": [
+          "TRANSACTION_STATEMENT"
+        ],
+        "doc": "transaction statement type,"
+      },
+      {
+        "name": "COPY_STATEMENT",
+        "value": 10,
+        "strings": [
+          "COPY_STATEMENT"
+        ],
+        "doc": "copy type"
+      },
+      {
+        "name": "ANALYZE_STATEMENT",
+        "value": 11,
+        "strings": [
+          "ANALYZE_STATEMENT"
+        ],
+        "doc": "analyze type"
+      },
+      {
+        "name": "VARIABLE_SET_STATEMENT",
+        "value": 12,
+        "strings": [
+          "VARIABLE_SET_STATEMENT"
+        ],
+        "doc": "variable set statement type"
+      },
+      {
+        "name": "CREATE_FUNC_STATEMENT",
+        "value": 13,
+        "strings": [
+          "CREATE_FUNC_STATEMENT"
+        ],
+        "doc": "create func statement type"
+      },
+      {
+        "name": "EXPLAIN_STATEMENT",
+        "value": 14,
+        "strings": [
+          "EXPLAIN_STATEMENT"
+        ],
+        "doc": "explain statement type"
+      },
+      {
+        "name": "DROP_STATEMENT",
+        "value": 15,
+        "strings": [
+          "DROP_STATEMENT"
+        ],
+        "doc": "DROP statement type"
+      },
+      {
+        "name": "EXPORT_STATEMENT",
+        "value": 16,
+        "strings": [
+          "EXPORT_STATEMENT"
+        ],
+        "doc": "EXPORT statement type"
+      },
+      {
+        "name": "PRAGMA_STATEMENT",
+        "value": 17,
+        "strings": [
+          "PRAGMA_STATEMENT"
+        ],
+        "doc": "PRAGMA statement type"
+      },
+      {
+        "name": "VACUUM_STATEMENT",
+        "value": 18,
+        "strings": [
+          "VACUUM_STATEMENT"
+        ],
+        "doc": "VACUUM statement type"
+      },
+      {
+        "name": "CALL_STATEMENT",
+        "value": 19,
+        "strings": [
+          "CALL_STATEMENT"
+        ],
+        "doc": "CALL statement type"
+      },
+      {
+        "name": "SET_STATEMENT",
+        "value": 20,
+        "strings": [
+          "SET_STATEMENT"
+        ],
+        "doc": "SET statement type"
+      },
+      {
+        "name": "LOAD_STATEMENT",
+        "value": 21,
+        "strings": [
+          "LOAD_STATEMENT"
+        ],
+        "doc": "LOAD statement type"
+      },
+      {
+        "name": "RELATION_STATEMENT",
+        "value": 22,
+        "strings": [
+          "RELATION_STATEMENT"
+        ]
+      },
+      {
+        "name": "EXTENSION_STATEMENT",
+        "value": 23,
+        "strings": [
+          "EXTENSION_STATEMENT"
+        ]
+      },
+      {
+        "name": "LOGICAL_PLAN_STATEMENT",
+        "value": 24,
+        "strings": [
+          "LOGICAL_PLAN_STATEMENT"
+        ]
+      },
+      {
+        "name": "ATTACH_STATEMENT",
+        "value": 25,
+        "strings": [
+          "ATTACH_STATEMENT"
+        ]
+      },
+      {
+        "name": "DETACH_STATEMENT",
+        "value": 26,
+        "strings": [
+          "DETACH_STATEMENT"
+        ]
+      },
+      {
+        "name": "MULTI_STATEMENT",
+        "value": 27,
+        "strings": [
+          "MULTI_STATEMENT"
+        ]
+      },
+      {
+        "name": "COPY_DATABASE_STATEMENT",
+        "value": 28,
+        "strings": [
+          "COPY_DATABASE_STATEMENT"
+        ]
+      },
+      {
+        "name": "UPDATE_EXTENSIONS_STATEMENT",
+        "value": 29,
+        "strings": [
+          "UPDATE_EXTENSIONS_STATEMENT"
+        ]
+      },
+      {
+        "name": "MERGE_INTO_STATEMENT",
+        "value": 30,
+        "strings": [
+          "MERGE_INTO_STATEMENT"
         ]
       }
     ]

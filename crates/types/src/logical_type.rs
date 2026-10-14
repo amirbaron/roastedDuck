@@ -95,6 +95,49 @@ impl LogicalType {
         )
     }
 
+    /// `UNION(name type, ...)`: a struct whose first, unnamed field is the member tag.
+    pub fn union_type(members: Vec<(String, Self)>) -> Self {
+        let mut children = Vec::with_capacity(members.len() + 1);
+        children.push((String::new(), Self::UTINYINT));
+        children.extend(members);
+        Self::with_info(
+            LogicalTypeId::Union,
+            TypeInfo::Struct(StructTypeInfo {
+                child_types: children,
+            }),
+        )
+    }
+
+    /// `VARIANT`: stored as keys, a children index, values and the data blob.
+    pub fn variant() -> Self {
+        let entries = |fields: [(&str, Self); 2]| {
+            Self::list(Self::struct_type(
+                fields
+                    .into_iter()
+                    .map(|(name, ty)| (name.to_owned(), ty))
+                    .collect(),
+            ))
+        };
+        let children = vec![
+            ("keys".to_owned(), Self::list(Self::VARCHAR)),
+            (
+                "children".to_owned(),
+                entries([("keys_index", Self::UINTEGER), ("values_index", Self::UINTEGER)]),
+            ),
+            (
+                "values".to_owned(),
+                entries([("type_id", Self::UTINYINT), ("byte_offset", Self::UINTEGER)]),
+            ),
+            ("data".to_owned(), Self::BLOB),
+        ];
+        Self::with_info(
+            LogicalTypeId::Variant,
+            TypeInfo::Struct(StructTypeInfo {
+                child_types: children,
+            }),
+        )
+    }
+
     /// `INTEGER_LITERAL`: the literal value is kept so binding can pick the narrowest type.
     pub fn integer_literal(constant: Value) -> Self {
         Self::with_info(

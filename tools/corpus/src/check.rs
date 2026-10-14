@@ -23,6 +23,9 @@ pub struct Report {
     pub exact: usize,
     /// Failures by check and node type, with sample ids.
     pub mismatches: BTreeMap<String, Vec<u64>>,
+    /// Statements DuckDB only fails to serialize for the default version (a tree the old
+    /// format cannot express): `(total, rustdb fails too, with the same message)`.
+    pub version_errors: (usize, usize, usize),
 }
 
 impl Report {
@@ -53,8 +56,33 @@ impl Report {
         for (category, ids) in &self.mismatches {
             let _ = writeln!(out, "  {category}: {} (e.g. id {})", ids.len(), ids[0]);
         }
+        let (total, failed, same_message) = self.version_errors;
+        let _ = writeln!(
+            out,
+            "version-only DuckDB errors: {total} (rustdb fails too: {failed}, same message: {same_message})"
+        );
         out
     }
+}
+
+/// For a statement DuckDB fails to serialize for the default version only: whether rustdb
+/// fails too when writing the latest-version tree for the default version, and whether
+/// its message is DuckDB's.
+fn check_version_error(row: &SerializedSql) -> Option<(bool, bool)> {
+    let error: Json = serde_json::from_str(&row.json).ok()?;
+    if error.get("error_type").and_then(Json::as_str) != Some("serialization")
+        || row.json_latest.starts_with(r#"{"error":true"#)
+    {
+        return None;
+    }
+    let message = error.get("error_message").and_then(Json::as_str)?;
+    let statements = deserialize_statements(&row.json_latest).ok()?;
+    Some(
+        match serialize_statements(&statements, &JsonSerializeOptions::default()) {
+            Ok(_) => (false, false),
+            Err(actual) => (true, actual.raw_message() == message),
+        },
+    )
 }
 
 /// Where two JSON documents first differ, and the node type around it (the `class` or
@@ -179,6 +207,33 @@ fn check_one(row: &SerializedSql) -> Option<(String, String, String)> {
         Ok(actual) => return Some(("json skip read".to_owned(), row.json.clone(), actual)),
         Err(error) => return Some(("json skip read".to_owned(), row.json.clone(), error.to_string())),
     }
+    // The latest format holds the tree as the parser built it: it must round-trip, and
+    // writing it for the default version must give what DuckDB wrote for that version
+    // (binding builtin types, folding set operations into binary trees, ...).
+    let latest = JsonSerializeOptions {
+        compatibility: SerializationCompatibility::latest(),
+        ..JsonSerializeOptions::default()
+    };
+    let parsed = match deserialize_statements(&row.json_latest) {
+        Ok(statements) => statements,
+        Err(error) => {
+            return Some((
+                "json latest deserialize".to_owned(),
+                row.json_latest.clone(),
+                error.to_string(),
+            ));
+        }
+    };
+    for (name, options, expected) in [
+        ("json latest", &latest, &row.json_latest),
+        ("json latest to default", &default, &row.json),
+    ] {
+        match serialize_statements(&parsed, options) {
+            Ok(actual) if actual == *expected => {}
+            Ok(actual) => return Some((name.to_owned(), expected.clone(), actual)),
+            Err(error) => return Some((format!("{name} serialize"), expected.clone(), error.to_string())),
+        }
+    }
     for (name, compatibility) in [
         ("binary", SerializationCompatibility::default()),
         ("binary latest", SerializationCompatibility::latest()),
@@ -216,6 +271,14 @@ pub fn check_serialization(rows: &[SerializedSql], sql_by_id: &BTreeMap<u64, &st
                 .and_then(|json| json.get("error_type").and_then(Json::as_str).map(str::to_owned))
                 .unwrap_or_else(|| "unknown".to_owned());
             *report.duckdb_errors.entry(kind).or_default() += 1;
+            if let Some((failed, same_message)) = check_version_error(row) {
+                report.version_errors.0 += 1;
+                report.version_errors.1 += usize::from(failed);
+                report.version_errors.2 += usize::from(same_message);
+                if !failed {
+                    report.fail("version-only error not reproduced".to_owned(), row.id);
+                }
+            }
             continue;
         }
         match check_one(row) {

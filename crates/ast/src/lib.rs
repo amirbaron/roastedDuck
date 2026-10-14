@@ -14,13 +14,19 @@
 //! Almost all types and their (de)serialization are generated from DuckDB's
 //! serialization specs by `tools/codegen` (`src/generated/`); classes whose in-memory
 //! form differs from their serialized form are written by hand next to it.
+//!
+//! [`SqlStatement`] wraps any statement with its location in the query text (DuckDB
+//! does not serialize statements other than `SELECT`, so neither does this crate), and
+//! [`visit`] walks a tree mutably.
 
 mod expression;
 mod generated;
 pub mod json;
 mod parsed_data;
 mod query_node;
+mod sql_statement;
 mod tableref;
+pub mod visit;
 
 pub use expression::StarExpression;
 pub use generated::constraint::*;
@@ -38,6 +44,11 @@ pub use generated::statement::*;
 pub use generated::tableref::*;
 pub use parsed_data::{CreateMacroInfo, CreateViewInfo, MacroFunction, MacroFunctionKind, SampleOptions};
 pub use query_node::SetOperationNode;
+pub use sql_statement::{
+    CallStatement, CopyDatabaseStatement, CopyDatabaseType, DeleteStatement, ExecuteStatement,
+    ExplainStatement, ExportStatement, InsertStatement, MergeIntoAction, MergeIntoStatement, OnConflictInfo,
+    PrepareStatement, SetStatement, SqlStatement, SqlStatementKind, UpdateSetInfo, UpdateStatement,
+};
 
 #[cfg(test)]
 mod tests;

@@ -14,6 +14,7 @@ mod native;
 mod physical_type;
 mod string_t;
 mod type_info;
+mod unbound;
 mod validity;
 mod value;
 mod vector;
@@ -30,10 +31,8 @@ pub use logical_type::LogicalType;
 pub use native::NativeType;
 pub use physical_type::PhysicalType;
 pub use string_t::StringT;
-pub use type_info::{
-    CoordinateReferenceSystem, EnumTypeInfo, TypeParameter, TypeParameterValue, UnboundTypeInfo,
-    expression_ids,
-};
+pub use type_info::{CoordinateReferenceSystem, EnumTypeInfo};
+pub use unbound::{TypeParameter, TypeParameterValue, UnboundTypeInfo, expression_ids};
 pub use validity::ValidityMask;
 pub use value::Value;
 pub use vector::{StringHeap, Vector, VectorKind};

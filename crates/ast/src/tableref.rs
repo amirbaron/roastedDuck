@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use rustdb_common::{Error, Result};
 use rustdb_serde::Serializer;
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use rustdb_types::{LogicalType, LogicalTypeId, TypeInfo, Value};
 
 use crate::{ParsedExpression, ParsedExpressionKind, PivotColumn, PivotColumnEntry};
 
@@ -118,14 +118,53 @@ fn fold_constant(expr: &ParsedExpression) -> Result<Option<Value>> {
             _ => Ok(None),
         },
         ParsedExpressionKind::Cast(cast) => {
-            if fold_constant(&cast.child)?.is_none() {
+            let Some(value) = fold_constant(&cast.child)? else {
+                return Ok(None);
+            };
+            let target = match cast.cast_type.info() {
+                Some(TypeInfo::Unbound(unbound)) => match unbound.default_bind() {
+                    Ok(target) => target,
+                    Err(_) => return Ok(None),
+                },
+                _ => cast.cast_type.clone(),
+            };
+            if matches!(target.id(), LogicalTypeId::Invalid | LogicalTypeId::Unbound) {
                 return Ok(None);
             }
-            Err(Error::not_implemented(
-                "Folding casts in PIVOT entries for older storage versions",
-            ))
+            cast_constant(value, &target)
         }
         _ => Ok(None),
+    }
+}
+
+/// `Value::DefaultTryCastAs` for the casts the parser puts in constant lists (`true` and
+/// `false` are `'t'::BOOLEAN` and `'f'::BOOLEAN`); `None` when the cast fails. Other casts
+/// need the cast functions, which are not ported yet.
+fn cast_constant(value: Value, target: &LogicalType) -> Result<Option<Value>> {
+    if value.logical_type() == target {
+        return Ok(Some(value));
+    }
+    if value.is_null() {
+        return Ok(Some(Value::null(target.clone())));
+    }
+    match (value.logical_type().id(), target.id()) {
+        (LogicalTypeId::Varchar, LogicalTypeId::Boolean) => {
+            Ok(value.as_bytes().and_then(parse_boolean).map(Value::boolean))
+        }
+        _ => Err(Error::not_implemented(format!(
+            "Folding a cast from {} to {target} in PIVOT entries for older storage versions",
+            value.logical_type()
+        ))),
+    }
+}
+
+/// DuckDB's lenient string-to-boolean cast (`TryCastStringBool` without `strict`).
+fn parse_boolean(text: &[u8]) -> Option<bool> {
+    let lower = text.to_ascii_lowercase();
+    match lower.as_slice() {
+        b"t" | b"y" | b"1" | b"yes" | b"true" => Some(true),
+        b"f" | b"n" | b"0" | b"no" | b"false" => Some(false),
+        _ => None,
     }
 }
 

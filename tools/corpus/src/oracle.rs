@@ -21,6 +21,9 @@ pub struct SerializedSql {
     pub json_skip_defaults: String,
     /// `format := true`.
     pub json_pretty: String,
+    /// Default options with `storage_compatibility_version = 'latest'`: the parse tree as
+    /// the parser built it (unbound types, n-ary set operations, ...).
+    pub json_latest: String,
 }
 
 #[derive(Serialize)]
@@ -49,21 +52,26 @@ fn run_batch(
         text.push(b'\n');
     }
     std::fs::write(&input, text).ok()?;
-    let query = format!(
-        "COPY (SELECT id, \
+    let load = format!(
+        "CREATE TEMP TABLE input AS SELECT * FROM read_json({}, format = 'newline_delimited', \
+         columns = {{id: 'UBIGINT', sql: 'VARCHAR'}})",
+        sql_literal(&input)
+    );
+    let default_versions = "CREATE TEMP TABLE serialized AS SELECT id, \
            json_serialize_sql(sql)::VARCHAR AS json, \
            json_serialize_sql(sql, skip_null := true, skip_empty := true, skip_default := true)::VARCHAR AS json_skip, \
            json_serialize_sql(sql, skip_null := true, skip_default := true)::VARCHAR AS json_skip_defaults, \
            json_serialize_sql(sql, format := true)::VARCHAR AS json_pretty \
-         FROM read_json({}, format = 'newline_delimited', columns = {{id: 'UBIGINT', sql: 'VARCHAR'}}) \
-         ORDER BY id) TO {} (FORMAT json);",
-        sql_literal(&input),
+         FROM input";
+    let write = format!(
+        "COPY (SELECT serialized.*, json_serialize_sql(input.sql)::VARCHAR AS json_latest \
+         FROM serialized JOIN input USING (id) ORDER BY id) TO {} (FORMAT json)",
         sql_literal(&output)
     );
     let status = Command::new(duckdb)
         .arg(":memory:")
-        .arg("-c")
-        .arg(query)
+        .args(["-c", &load, "-c", default_versions])
+        .args(["-c", "SET storage_compatibility_version = 'latest'", "-c", &write])
         .output()
         .ok()?;
     let _ = std::fs::remove_file(&input);
