@@ -908,11 +908,15 @@ pub(super) fn parse_bool(input: &[u8], strict: bool) -> Option<bool> {
 }
 
 /// Floating point types parsed from text.
-pub(super) trait ParseFloat: Sized + std::str::FromStr {
+pub(super) trait ParseFloat: Sized + std::str::FromStr + std::ops::Neg<Output = Self> {
     const INFINITY: Self;
     const NEG_INFINITY: Self;
     const NAN: Self;
     const NEG_NAN: Self;
+
+    /// Clinger's fast path (as in `fast_float`): `mantissa * 10^exp10` with a single
+    /// rounding when both the mantissa and the power of ten are exact in `Self`.
+    fn exact(mantissa: u64, exp10: i64) -> Option<Self>;
 }
 
 impl ParseFloat for f32 {
@@ -920,6 +924,16 @@ impl ParseFloat for f32 {
     const NEG_INFINITY: Self = f32::NEG_INFINITY;
     const NAN: Self = f32::NAN;
     const NEG_NAN: Self = -f32::NAN;
+
+    fn exact(mantissa: u64, exp10: i64) -> Option<Self> {
+        const POWERS: [f32; 11] = [1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10];
+        if mantissa > 1 << 24 {
+            return None;
+        }
+        let power = *POWERS.get(exp10.unsigned_abs() as usize)?;
+        let value = mantissa as f32;
+        Some(if exp10 < 0 { value / power } else { value * power })
+    }
 }
 
 impl ParseFloat for f64 {
@@ -927,6 +941,19 @@ impl ParseFloat for f64 {
     const NEG_INFINITY: Self = f64::NEG_INFINITY;
     const NAN: Self = f64::NAN;
     const NEG_NAN: Self = -f64::NAN;
+
+    fn exact(mantissa: u64, exp10: i64) -> Option<Self> {
+        const POWERS: [f64; 23] = [
+            1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17,
+            1e18, 1e19, 1e20, 1e21, 1e22,
+        ];
+        if mantissa > 1 << 53 {
+            return None;
+        }
+        let power = *POWERS.get(exp10.unsigned_abs() as usize)?;
+        let value = mantissa as f64;
+        Some(if exp10 < 0 { value / power } else { value * power })
+    }
 }
 
 /// A stack buffer for the canonical text handed to the standard float parser, spilling to
@@ -998,26 +1025,91 @@ pub(super) fn parse_float<T: ParseFloat>(input: &[u8], strict: bool) -> Option<T
 /// Consumes digits starting at `pos`, allowing single underscores between digits unless
 /// `strict`; returns the number of digits, or `None` for a misplaced underscore.
 fn float_digits(buf: &[u8], pos: &mut usize, strict: bool, mut sink: impl FnMut(u8)) -> Option<usize> {
-    let mut count = 0;
-    while *pos < buf.len() && buf[*pos].is_ascii_digit() {
-        sink(buf[*pos]);
-        count += 1;
-        *pos += 1;
-        if *pos < buf.len() && buf[*pos] == b'_' {
+    let start = *pos;
+    let mut underscores = 0;
+    loop {
+        while let Some(&byte) = buf.get(*pos) {
+            if !byte.is_ascii_digit() {
+                break;
+            }
+            sink(byte);
+            *pos += 1;
+        }
+        // One underscore may separate digits.
+        if *pos > start && buf.get(*pos) == Some(&b'_') {
             if strict {
                 return None;
             }
             *pos += 1;
-            if *pos == buf.len() || !buf[*pos].is_ascii_digit() {
+            underscores += 1;
+            if !buf.get(*pos).is_some_and(u8::is_ascii_digit) {
                 return None;
             }
+            continue;
         }
+        return Some(*pos - start - underscores);
     }
-    Some(count)
 }
 
 /// `fast_float`'s `parse_number_string`: the value and the number of bytes consumed.
+///
+/// Numbers with at most 19 digits whose value is exact after one multiplication or
+/// division by a power of ten (most real-world input) take Clinger's fast path; the
+/// others are handed to the standard library's correctly rounded parser.
 fn scan_float_number<T: ParseFloat>(buf: &[u8], strict: bool) -> Option<(T, usize)> {
+    let mut pos = 0;
+    let negative = buf.first() == Some(&b'-');
+    if negative {
+        pos += 1;
+        if pos == buf.len() || !(buf[pos].is_ascii_digit() || buf[pos] == b'.') {
+            return None;
+        }
+    }
+    let mut mantissa: u64 = 0;
+    let accumulate = |digit: u8| mantissa = mantissa.wrapping_mul(10).wrapping_add(u64::from(digit - b'0'));
+    let mut accumulate = accumulate;
+    let mut digit_count = float_digits(buf, &mut pos, strict, &mut accumulate)?;
+    let mut fraction_digits = 0;
+    if buf.get(pos) == Some(&b'.') {
+        pos += 1;
+        fraction_digits = float_digits(buf, &mut pos, strict, &mut accumulate)?;
+        digit_count += fraction_digits;
+    }
+    if digit_count == 0 {
+        return None;
+    }
+    let mut exp10 = -(fraction_digits as i64);
+    let mut end = pos;
+    if matches!(buf.get(pos), Some(b'e' | b'E')) {
+        let mut exp_pos = pos + 1;
+        let exp_negative = buf.get(exp_pos) == Some(&b'-');
+        if exp_negative || buf.get(exp_pos) == Some(&b'+') {
+            exp_pos += 1;
+        }
+        // Without digits the `e` is not part of the number.
+        if buf.get(exp_pos).is_some_and(u8::is_ascii_digit) {
+            let mut exponent: i64 = 0;
+            float_digits(buf, &mut exp_pos, strict, |d| {
+                // `fast_float` stops accumulating once the exponent exceeds 0x10000.
+                if exponent < 0x10000 {
+                    exponent = exponent * 10 + i64::from(d - b'0');
+                }
+            })?;
+            exp10 += if exp_negative { -exponent } else { exponent };
+            end = exp_pos;
+        }
+    }
+    if digit_count <= 19
+        && let Some(value) = T::exact(mantissa, exp10)
+    {
+        return Some((if negative { -value } else { value }, end));
+    }
+    parse_float_text(buf, strict)
+}
+
+/// The slow path of [`scan_float_number`]: rebuilds the number as canonical text for the
+/// standard library's parser.
+fn parse_float_text<T: ParseFloat>(buf: &[u8], strict: bool) -> Option<(T, usize)> {
     let mut text = FloatText::new();
     let mut pos = 0;
     if buf.first() == Some(&b'-') {

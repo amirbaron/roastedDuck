@@ -3,16 +3,23 @@
 
 use rustdb_types::bit::{self, BitNumeric};
 use rustdb_types::format;
-use rustdb_types::{LogicalType, LogicalTypeId, NativeType, PhysicalType};
+use rustdb_types::{LogicalType, LogicalTypeId, NativeType, PhysicalType, StringHeap, StringT};
 
 use super::BoundCastInfo;
 use super::decimal::{ToDecimal, to_decimal_kernel};
-use super::executor::{RowError, try_map_values, values_to_string};
+use super::executor::{RowError, addressable, cast_rows, try_map_values, values_to_string};
 
 /// A numeric value that takes part in casts.
 pub(super) trait CastNumber: NativeType + Copy {
     /// Appends the VARCHAR text of the value (DuckDB's `StringCast`).
     fn write_text(self, out: &mut Vec<u8>);
+
+    /// The kernel rendering values of this type as VARCHAR.
+    fn varchar_kernel() -> BoundCastInfo {
+        BoundCastInfo::new(|source, result, count, params| {
+            values_to_string::<Self>(source, result, count, params, Self::write_text)
+        })
+    }
 
     /// The text used in error messages (DuckDB's `ConvertToString`).
     fn to_text(self) -> String {
@@ -36,18 +43,63 @@ macro_rules! cast_number {
 
 cast_number! {
     bool => |v, out| out.extend_from_slice(if v { b"true" } else { b"false" }),
-    i8 => |v, out| format::write_i64(v.into(), out),
-    i16 => |v, out| format::write_i64(v.into(), out),
-    i32 => |v, out| format::write_i64(v.into(), out),
-    i64 => format::write_i64,
     i128 => format::write_i128,
-    u8 => |v, out| format::write_u64(v.into(), out),
-    u16 => |v, out| format::write_u64(v.into(), out),
-    u32 => |v, out| format::write_u64(v.into(), out),
-    u64 => format::write_u64,
     u128 => format::write_u128,
     f32 => format::write_f32,
     f64 => format::write_f64,
+}
+
+/// Integers of at most 64 bits render straight into the result strings (most fit inline).
+macro_rules! small_integer_number {
+    ($($ty:ty),*) => {$(
+        impl CastNumber for $ty {
+            #[inline]
+            #[allow(unused_comparisons)]
+            fn write_text(self, out: &mut Vec<u8>) {
+                let mut buf = [0u8; 21];
+                out.extend_from_slice(format::integer_text(self < 0, i64::from(self).unsigned_abs(), &mut buf));
+            }
+
+            fn varchar_kernel() -> BoundCastInfo {
+                BoundCastInfo::new(|source, result, count, params| {
+                    let source = addressable(source, count);
+                    let values = source.values::<$ty>();
+                    let mut heap = StringHeap::default();
+                    let converted = cast_rows::<StringT>(&source, result, count, params, |slot| {
+                        let mut buf = [0u8; 21];
+                        let value = values[slot];
+                        #[allow(unused_comparisons)]
+                        let text = format::integer_text(value < 0, i64::from(value).unsigned_abs(), &mut buf);
+                        Ok(heap.add(text))
+                    })?;
+                    result.add_heap(heap);
+                    Ok(converted)
+                })
+            }
+        }
+    )*};
+}
+small_integer_number!(i8, i16, i32, i64, u8, u16, u32);
+
+impl CastNumber for u64 {
+    #[inline]
+    fn write_text(self, out: &mut Vec<u8>) {
+        format::write_u64(self, out);
+    }
+
+    fn varchar_kernel() -> BoundCastInfo {
+        BoundCastInfo::new(|source, result, count, params| {
+            let source = addressable(source, count);
+            let values = source.values::<u64>();
+            let mut heap = StringHeap::default();
+            let converted = cast_rows::<StringT>(&source, result, count, params, |slot| {
+                let mut buf = [0u8; 21];
+                Ok(heap.add(format::integer_text(false, values[slot], &mut buf)))
+            })?;
+            result.add_heap(heap);
+            Ok(converted)
+        })
+    }
 }
 
 /// A checked numeric conversion (DuckDB's `TryCastWithOverflowCheck`).
@@ -385,9 +437,7 @@ fn switch_from<S: NumericSource>(target: &LogicalType) -> Option<BoundCastInfo> 
         L::Float => numeric_kernel::<S, f32>(),
         L::Double => numeric_kernel::<S, f64>(),
         L::Decimal => to_decimal_kernel::<S>(target)?,
-        L::Varchar => BoundCastInfo::new(|source, result, count, params| {
-            values_to_string::<S>(source, result, count, params, S::write_text)
-        }),
+        L::Varchar => S::varchar_kernel(),
         L::Bit => BoundCastInfo::new(|source, result, count, params| {
             values_to_string::<S>(source, result, count, params, |value, out| {
                 bit::from_numeric(value, out);

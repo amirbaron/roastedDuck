@@ -235,8 +235,28 @@ impl Vector {
         }
     }
 
-    /// Replaces `self` with a fresh flat vector of the same type, reusing nothing.
+    /// Turns `self` into an all-valid flat vector with room for `capacity` rows whose slot
+    /// contents are unspecified, to be overwritten by a kernel.
+    ///
+    /// The data buffer is reused when this vector owns a large enough flat buffer of a
+    /// non-nested type, so kernels writing chunk after chunk into the same result do not
+    /// allocate. Reused string slots are zeroed, so no slot ever points into a released
+    /// string heap.
     pub fn reset_flat(&mut self, capacity: usize) {
+        if let Repr::Flat(flat) = &mut self.repr
+            && flat.capacity >= capacity
+            && matches!(flat.aux, Aux::None | Aux::Strings(_))
+            && let Some(data) = Arc::get_mut(&mut flat.data)
+        {
+            if let Aux::Strings(heaps) = &mut flat.aux {
+                // SAFETY: the buffer is uniquely owned (`get_mut`) and `len` bytes long; all
+                // zero bytes is the empty inline string.
+                unsafe { std::ptr::write_bytes(data.as_mut_ptr(), 0, data.len()) };
+                heaps.clear();
+            }
+            flat.validity = ValidityMask::all_valid();
+            return;
+        }
         *self = Self::flat(self.ty.clone(), capacity);
     }
 

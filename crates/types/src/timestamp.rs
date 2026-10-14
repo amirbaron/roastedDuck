@@ -25,6 +25,41 @@ unsafe impl NativeType for Timestamp {
     const PHYSICAL: PhysicalType = PhysicalType::Int64;
 }
 
+/// Writes `YYYY-MM-DD HH:MM:SS[.ffffff]` for a year in `1..=9999` in one go (the hot path
+/// of TIMESTAMP -> VARCHAR); the layout equals the general path's output.
+fn write_common_timestamp([year, month, day]: [i32; 3], micros_of_day: i64, out: &mut Vec<u8>) {
+    let two = |value: i64| {
+        let index = (value % 100) as usize * 2;
+        [
+            crate::format::DIGIT_PAIRS[index],
+            crate::format::DIGIT_PAIRS[index + 1],
+        ]
+    };
+    let micros_of_day = micros_of_day.max(0);
+    let seconds = micros_of_day / MICROS_PER_SEC;
+    let fraction = micros_of_day % MICROS_PER_SEC;
+    let mut buf = *b"0000-00-00 00:00:00.000000";
+    buf[0..2].copy_from_slice(&two(i64::from(year) / 100));
+    buf[2..4].copy_from_slice(&two(i64::from(year)));
+    buf[5..7].copy_from_slice(&two(i64::from(month)));
+    buf[8..10].copy_from_slice(&two(i64::from(day)));
+    buf[11..13].copy_from_slice(&two(seconds / 3600));
+    buf[14..16].copy_from_slice(&two(seconds / 60 % 60));
+    buf[17..19].copy_from_slice(&two(seconds % 60));
+    let mut len = 19;
+    if fraction != 0 {
+        buf[20..22].copy_from_slice(&two(fraction / 10_000));
+        buf[22..24].copy_from_slice(&two(fraction / 100));
+        buf[24..26].copy_from_slice(&two(fraction));
+        len = 26;
+        // Trailing zeros of the fraction are dropped.
+        while buf[len - 1] == b'0' {
+            len -= 1;
+        }
+    }
+    out.extend_from_slice(&buf[..len]);
+}
+
 /// Why a string could not be parsed as a TIMESTAMP (DuckDB's `TimestampCastResult`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TimestampParseError {
@@ -306,9 +341,14 @@ impl Timestamp {
         let (date, time) = self
             .to_datetime()
             .ok_or_else(|| Error::conversion("Date out of range in timestamp conversion"))?;
-        date.write_ymd(out);
-        out.push(b' ');
-        time.write_to(out);
+        let (year, month, day) = date.to_ymd();
+        if (1..=9999).contains(&year) {
+            write_common_timestamp([year, month, day], time.0, out);
+        } else {
+            date.write_ymd(out);
+            out.push(b' ');
+            time.write_to(out);
+        }
         Ok(())
     }
 

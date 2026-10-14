@@ -451,6 +451,15 @@ pub(crate) fn digit_at(input: &[u8], pos: usize) -> Option<i32> {
 
 /// Appends `value` in decimal, left-padded with zeros to at least `width` digits.
 pub(crate) fn push_padded(out: &mut Vec<u8>, mut value: u64, width: usize) {
+    // Fast paths for the fields of dates and times.
+    match (width, value) {
+        (2, 0..=99) => return out.extend_from_slice(&two_digits(value)),
+        (4, 0..=9999) => {
+            out.extend_from_slice(&two_digits(value / 100));
+            return out.extend_from_slice(&two_digits(value % 100));
+        }
+        _ => {}
+    }
     // `u64::MAX` has 20 digits; pre-filling with zeros provides the padding.
     let mut buf = [b'0'; 20];
     let mut start = buf.len();
@@ -466,18 +475,37 @@ pub(crate) fn push_padded(out: &mut Vec<u8>, mut value: u64, width: usize) {
     out.extend_from_slice(&buf[start..]);
 }
 
+/// The two ASCII digits of `value < 100`.
+fn two_digits(value: u64) -> [u8; 2] {
+    let index = (value % 100) as usize * 2;
+    [
+        crate::format::DIGIT_PAIRS[index],
+        crate::format::DIGIT_PAIRS[index + 1],
+    ]
+}
+
 /// Appends a fraction of a second: `.` plus `value` zero-padded to `digits` digits with
 /// trailing zeros removed; nothing at all if `value` is zero (`TimeToStringCast::FormatMicros`).
-pub(crate) fn push_fraction(out: &mut Vec<u8>, mut value: u64, mut digits: usize) {
+pub(crate) fn push_fraction(out: &mut Vec<u8>, mut value: u64, digits: usize) {
     if value == 0 {
         return;
     }
-    while value.is_multiple_of(10) {
-        value /= 10;
-        digits = digits.saturating_sub(1);
+    // Write all `digits` digits (at most 9 here) right-aligned, then drop trailing zeros.
+    let mut buf = [b'0'; 20];
+    let mut pos = buf.len();
+    while value > 0 && pos > 0 {
+        let pair = two_digits(value % 100);
+        value /= 100;
+        pos = pos.saturating_sub(2);
+        buf[pos..pos + 2].copy_from_slice(&pair);
+    }
+    let start = buf.len().saturating_sub(digits.max(1));
+    let mut end = buf.len();
+    while end > start + 1 && buf[end - 1] == b'0' {
+        end -= 1;
     }
     out.push(b'.');
-    push_padded(out, value, digits);
+    out.extend_from_slice(&buf[start..end]);
 }
 
 /// Appends `HH:MM:SS[.fraction]` for a non-negative time of day expressed in units of

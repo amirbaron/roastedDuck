@@ -12,39 +12,47 @@ pub const fn is_space(byte: u8) -> bool {
     matches!(byte, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')
 }
 
-const DIGIT_PAIRS: &[u8; 200] = b"0001020304050607080910111213141516171819\
+pub(crate) const DIGIT_PAIRS: &[u8; 200] = b"0001020304050607080910111213141516171819\
 2021222324252627282930313233343536373839\
 4041424344454647484950515253545556575859\
 6061626364656667686970717273747576777879\
 8081828384858687888990919293949596979899";
 
 /// Appends the decimal digits of `value`.
-pub fn write_u64(mut value: u64, out: &mut Vec<u8>) {
-    let mut buf = [0u8; 20];
-    let mut pos = buf.len();
-    while value >= 100 {
-        let pair = (value % 100) as usize * 2;
-        value /= 100;
-        pos -= 2;
-        buf[pos..pos + 2].copy_from_slice(&DIGIT_PAIRS[pair..pair + 2]);
-    }
-    if value >= 10 {
-        let pair = value as usize * 2;
-        pos -= 2;
-        buf[pos..pos + 2].copy_from_slice(&DIGIT_PAIRS[pair..pair + 2]);
-    } else {
-        pos -= 1;
-        buf[pos] = b'0' + value as u8;
-    }
-    out.extend_from_slice(&buf[pos..]);
+pub fn write_u64(value: u64, out: &mut Vec<u8>) {
+    let mut buf = [0u8; 21];
+    out.extend_from_slice(integer_text(false, value, &mut buf));
 }
 
 /// Appends the decimal digits of `value`, with a leading `-` if negative.
 pub fn write_i64(value: i64, out: &mut Vec<u8>) {
-    if value < 0 {
-        out.push(b'-');
+    let mut buf = [0u8; 21];
+    out.extend_from_slice(integer_text(value < 0, value.unsigned_abs(), &mut buf));
+}
+
+/// Writes the decimal text of `±magnitude` at the end of `buf` (two digits at a time,
+/// like DuckDB's `NumericHelper::FormatUnsigned`) and returns it.
+pub fn integer_text(negative: bool, mut magnitude: u64, buf: &mut [u8; 21]) -> &[u8] {
+    let mut pos = buf.len();
+    while magnitude >= 100 {
+        let pair = (magnitude % 100) as usize * 2;
+        magnitude /= 100;
+        pos -= 2;
+        buf[pos..pos + 2].copy_from_slice(&DIGIT_PAIRS[pair..pair + 2]);
     }
-    write_u64(value.unsigned_abs(), out);
+    if magnitude >= 10 {
+        let pair = magnitude as usize * 2;
+        pos -= 2;
+        buf[pos..pos + 2].copy_from_slice(&DIGIT_PAIRS[pair..pair + 2]);
+    } else {
+        pos -= 1;
+        buf[pos] = b'0' + magnitude as u8;
+    }
+    if negative {
+        pos -= 1;
+        buf[pos] = b'-';
+    }
+    &buf[pos..]
 }
 
 /// Appends the decimal digits of a 128-bit unsigned value.
