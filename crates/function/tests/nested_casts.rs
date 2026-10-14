@@ -180,7 +180,7 @@ fn struct_and_map_casts() {
         (String::new(), LogicalType::INTEGER),
         (String::new(), LogicalType::VARCHAR),
     ]);
-    let unnamed = Value::struct_with_type(unnamed_type, vec![Value::integer(1), text("x")]);
+    let unnamed = Value::from_children(unnamed_type, vec![Value::integer(1), text("x")]);
     let named = LogicalType::struct_type(vec![
         ("a".to_owned(), LogicalType::BIGINT),
         ("b".to_owned(), LogicalType::VARCHAR),
@@ -192,7 +192,7 @@ fn struct_and_map_casts() {
     ]);
     let map = LogicalType::map(LogicalType::VARCHAR, LogicalType::BIGINT);
     assert_eq!(cast(&numbers, &map, false), "{a=1, b=2}");
-    let unnamed_numbers = Value::struct_with_type(
+    let unnamed_numbers = Value::from_children(
         LogicalType::struct_type(vec![
             (String::new(), LogicalType::INTEGER),
             (String::new(), LogicalType::INTEGER),

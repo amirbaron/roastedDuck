@@ -99,7 +99,7 @@ pub(super) fn list_to_list(
 ) -> Result<bool> {
     let input = NestedInput::new(source, count);
     let target = result.logical_type().clone();
-    let child_type = target.list_child().ok_or_else(|| missing_child(&target))?;
+    let child_type = target.child_type().ok_or_else(|| missing_child(&target))?;
     let (child, size) = input.vector.list_child().ok_or_else(|| missing_child(&target))?;
     let (new_child, converted) = cast_child(child_cast, child, child_type, size, params)?;
     let mut out = Vector::flat(target.clone(), input.rows);
@@ -126,7 +126,7 @@ fn list_to_varchar(
 ) -> Result<bool> {
     let quoting = source
         .logical_type()
-        .list_child()
+        .child_type()
         .map_or(Some(NestedQuoting::Value), child_quoting);
     let mut text = Vector::flat(LogicalType::list(LogicalType::VARCHAR), count);
     list_to_list(child_cast, source, &mut text, count, params)?;
@@ -202,12 +202,12 @@ fn from_list(
     source: &LogicalType,
     target: &LogicalType,
 ) -> Result<Option<BoundCastInfo>> {
-    let source_child = source.list_child().ok_or_else(|| missing_child(source))?;
+    let source_child = source.child_type().ok_or_else(|| missing_child(source))?;
     Ok(Some(match target.id() {
         LogicalTypeId::List => {
             let child_cast = set.get_cast_function(
                 source_child,
-                target.list_child().ok_or_else(|| missing_child(target))?,
+                target.child_type().ok_or_else(|| missing_child(target))?,
             )?;
             BoundCastInfo::new(move |source, result, count, params| {
                 list_to_list(&child_cast, source, result, count, params)
@@ -287,7 +287,7 @@ fn array_to_list(
         .array_child()
         .map_or(0, |(_, size)| size as usize);
     let child = source.array_child().ok_or_else(|| missing_child(&target))?;
-    let child_type = target.list_child().ok_or_else(|| missing_child(&target))?;
+    let child_type = target.child_type().ok_or_else(|| missing_child(&target))?;
     let (new_child, converted) = cast_child(child_cast, child, child_type, count * size, params)?;
     let mut out = Vector::flat(target.clone(), count);
     for (row, entry) in out.values_mut::<ListEntry>().iter_mut().enumerate().take(count) {
@@ -355,7 +355,7 @@ fn from_array(
         LogicalTypeId::List => {
             let child_cast = set.get_cast_function(
                 source_child,
-                target.list_child().ok_or_else(|| missing_child(target))?,
+                target.child_type().ok_or_else(|| missing_child(target))?,
             )?;
             BoundCastInfo::new(move |source, result, count, params| {
                 array_to_list(&child_cast, source, result, count, params)
@@ -416,10 +416,10 @@ fn from_map(
     source: &LogicalType,
     target: &LogicalType,
 ) -> Result<Option<BoundCastInfo>> {
-    let source_entry = source.list_child().ok_or_else(|| missing_child(source))?;
+    let source_entry = source.child_type().ok_or_else(|| missing_child(source))?;
     Ok(Some(match target.id() {
         LogicalTypeId::Map => {
-            let target_entry = target.list_child().ok_or_else(|| missing_child(target))?;
+            let target_entry = target.child_type().ok_or_else(|| missing_child(target))?;
             let entry_cast = set.get_cast_function(source_entry, target_entry)?;
             BoundCastInfo::new(move |source, result, count, params| {
                 list_to_list(&entry_cast, source, result, count, params)
@@ -427,7 +427,7 @@ fn from_map(
         }
         LogicalTypeId::Varchar => {
             let text_type = LogicalType::map(LogicalType::VARCHAR, LogicalType::VARCHAR);
-            let text_entry = text_type.list_child().ok_or_else(|| missing_child(&text_type))?;
+            let text_entry = text_type.child_type().ok_or_else(|| missing_child(&text_type))?;
             let entry_cast = set.get_cast_function(source_entry, text_entry)?;
             BoundCastInfo::new(move |source, result, count, params| {
                 map_to_varchar(&entry_cast, source, result, count, params)

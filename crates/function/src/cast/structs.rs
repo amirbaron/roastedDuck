@@ -211,7 +211,7 @@ fn struct_to_map(
     }
     let values = concat_vectors(&converted_fields, input.rows, value_type)?.select_rows(&value_rows);
 
-    let entry_type = target.list_child().ok_or_else(|| missing_child(&target))?.clone();
+    let entry_type = target.child_type().ok_or_else(|| missing_child(&target))?.clone();
     let mut entries = Vector::flat(entry_type, total);
     if let Some([key_slot, value_slot]) = entries.struct_children_mut() {
         *key_slot = keys;

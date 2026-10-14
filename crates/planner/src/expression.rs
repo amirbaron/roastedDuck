@@ -1,7 +1,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use rustdb_function::{FunctionData, ScalarFunction};
+use rustdb_function::{AggregateFunction, FunctionData, ScalarFunction};
 use rustdb_types::{LogicalType, Value};
 
 /// Identifies a column produced by a logical operator: `(table index, column index)`
@@ -58,6 +58,17 @@ pub struct BoundFunction {
     pub is_operator: bool,
 }
 
+/// An aggregate call (DuckDB's `BoundAggregateExpression`).
+#[derive(Clone, Debug)]
+pub struct BoundAggregate {
+    pub function: AggregateFunction,
+    pub children: Vec<Expression>,
+    pub bind_data: Option<Arc<dyn FunctionData>>,
+    pub distinct: bool,
+    /// `FILTER (WHERE ..)`: only rows where this is true are aggregated.
+    pub filter: Option<Box<Expression>>,
+}
+
 /// A cast between two types.
 #[derive(Clone, Debug)]
 pub struct BoundCast {
@@ -82,6 +93,7 @@ pub enum Expression {
         depth: usize,
     },
     Function(BoundFunction),
+    Aggregate(BoundAggregate),
     Cast(BoundCast),
     Comparison {
         op: ComparisonOp,
@@ -121,6 +133,7 @@ impl Expression {
             | Self::Operator { ty, .. }
             | Self::Case { ty, .. } => ty.clone(),
             Self::Function(function) => function.function.return_type.clone(),
+            Self::Aggregate(aggregate) => aggregate.function.return_type.clone(),
             Self::Cast(cast) => cast.target.clone(),
             Self::Comparison { .. } | Self::Conjunction { .. } | Self::Between { .. } => LogicalType::BOOLEAN,
         }
@@ -130,7 +143,7 @@ impl Expression {
     pub fn is_foldable(&self) -> bool {
         match self {
             Self::Constant(_) => true,
-            Self::Reference { .. } | Self::ColumnRef { .. } => false,
+            Self::Reference { .. } | Self::ColumnRef { .. } | Self::Aggregate(_) => false,
             Self::Function(function) => {
                 function.function.stability == rustdb_function::Stability::Consistent
                     && function.children.iter().all(Self::is_foldable)
@@ -146,6 +159,9 @@ impl Expression {
                 Box::new(std::iter::empty())
             }
             Self::Function(function) => Box::new(function.children.iter()),
+            Self::Aggregate(aggregate) => {
+                Box::new(aggregate.children.iter().chain(aggregate.filter.as_deref()))
+            }
             Self::Cast(cast) => Box::new(std::iter::once(cast.child.as_ref())),
             Self::Comparison { left, right, .. } => Box::new([left.as_ref(), right.as_ref()].into_iter()),
             Self::Conjunction { children, .. } | Self::Operator { children, .. } => Box::new(children.iter()),

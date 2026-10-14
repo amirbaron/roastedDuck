@@ -85,3 +85,208 @@ fn errors_propagate_out_of_the_pipeline() {
         "Out of Range Error: Overflow in addition of INT32 (2147483647 + 1)!"
     );
 }
+
+fn function(name: &str, ty: &LogicalType, children: Vec<Expression>) -> Expression {
+    let set = rustdb_functions::builtin_scalar_functions()
+        .into_iter()
+        .find(|set| &*set.name == name)
+        .unwrap();
+    let function = set.functions.into_iter().find(|f| &f.arguments[0] == ty).unwrap();
+    Expression::Function(BoundFunction {
+        function,
+        children,
+        bind_data: None,
+        is_operator: true,
+    })
+}
+
+/// A one-column INTEGER table.
+fn ints(values: &[Option<i32>]) -> LogicalOperator {
+    use rustdb_types::{DataChunk, Vector};
+    let mut vector = Vector::flat(LogicalType::INTEGER, values.len());
+    for (row, value) in values.iter().enumerate() {
+        vector
+            .set_value(
+                row,
+                &value.map_or(Value::null(LogicalType::INTEGER), Value::integer),
+            )
+            .unwrap();
+    }
+    let chunk = DataChunk::new(vec![vector], values.len());
+    LogicalOperator::new(
+        LogicalKind::ColumnDataGet {
+            table_index: 0,
+            types: vec![LogicalType::INTEGER],
+            chunks: Arc::from(vec![chunk]),
+        },
+        vec![],
+        vec![],
+    )
+}
+
+fn column() -> Expression {
+    Expression::Reference {
+        index: 0,
+        ty: LogicalType::INTEGER,
+    }
+}
+
+fn int(value: i32) -> Expression {
+    Expression::Constant(Value::integer(value))
+}
+
+fn cmp(op: rustdb_planner::ComparisonOp, left: Expression, right: Expression) -> Expression {
+    Expression::Comparison {
+        op,
+        left: Box::new(left),
+        right: Box::new(right),
+    }
+}
+
+#[test]
+fn filters_drop_null_and_false_rows() {
+    use rustdb_planner::ComparisonOp::GreaterThan;
+    let filter = LogicalOperator::new(
+        LogicalKind::Filter,
+        vec![ints(&[Some(1), None, Some(5), Some(3)])],
+        vec![cmp(GreaterThan, column(), int(2))],
+    );
+    let rows = run(filter).unwrap();
+    assert_eq!(rows, vec![vec![Value::integer(5)], vec![Value::integer(3)]]);
+}
+
+#[test]
+fn and_filters_only_evaluate_surviving_rows() {
+    use rustdb_planner::ComparisonOp::{GreaterThan, LessThan};
+    // x * 1000 overflows for x = 2^30, but that row fails the first conjunct.
+    let big = 1 << 30;
+    let filter = LogicalOperator::new(
+        LogicalKind::Filter,
+        vec![ints(&[Some(1), Some(big), Some(7)])],
+        vec![
+            cmp(LessThan, column(), int(100)),
+            cmp(
+                GreaterThan,
+                function("*", &LogicalType::INTEGER, vec![column(), int(1000)]),
+                int(5000),
+            ),
+        ],
+    );
+    assert_eq!(run(filter).unwrap(), vec![vec![Value::integer(7)]]);
+}
+
+#[test]
+fn case_evaluates_branches_only_on_their_rows() {
+    use rustdb_planner::ComparisonOp::LessThan;
+    let big = 1 << 30;
+    let case = Expression::Case {
+        checks: vec![(
+            cmp(LessThan, column(), int(100)),
+            function("*", &LogicalType::INTEGER, vec![column(), int(1000)]),
+        )],
+        otherwise: Box::new(int(-1)),
+        ty: LogicalType::INTEGER,
+    };
+    let projection = LogicalOperator::new(
+        LogicalKind::Projection { table_index: 1 },
+        vec![ints(&[Some(2), Some(big), None])],
+        vec![case],
+    );
+    assert_eq!(
+        run(projection).unwrap(),
+        vec![
+            vec![Value::integer(2000)],
+            vec![Value::integer(-1)],
+            vec![Value::integer(-1)]
+        ]
+    );
+}
+
+/// `sum(INTEGER) -> BIGINT`, enough to exercise the aggregate operators.
+struct TestSum;
+
+impl rustdb_function::UnaryAggregate for TestSum {
+    type Input = i32;
+    type State = Option<i64>;
+    type Output = i64;
+
+    fn update(state: &mut Option<i64>, value: i32) -> rustdb_common::Result<()> {
+        *state = Some(state.unwrap_or(0) + i64::from(value));
+        Ok(())
+    }
+
+    fn combine(source: &Option<i64>, target: &mut Option<i64>) -> rustdb_common::Result<()> {
+        if let Some(value) = source {
+            *target = Some(target.unwrap_or(0) + value);
+        }
+        Ok(())
+    }
+
+    fn finalize(state: &Option<i64>) -> rustdb_common::Result<Option<i64>> {
+        Ok(*state)
+    }
+}
+
+fn sum(filter: Option<Expression>) -> Expression {
+    let function = rustdb_function::AggregateFunction::new(
+        "sum",
+        vec![LogicalType::INTEGER],
+        LogicalType::BIGINT,
+        rustdb_function::aggregate::Unary::<TestSum>::default(),
+    );
+    Expression::Aggregate(rustdb_planner::BoundAggregate {
+        function,
+        children: vec![column()],
+        bind_data: None,
+        distinct: false,
+        filter: filter.map(Box::new),
+    })
+}
+
+#[test]
+fn ungrouped_aggregates_with_filters() {
+    use rustdb_planner::ComparisonOp::GreaterThan;
+    let aggregate = LogicalOperator::new(
+        LogicalKind::Aggregate {
+            group_index: 1,
+            aggregate_index: 2,
+            groupings_index: 3,
+            groups: vec![],
+        },
+        vec![ints(&[Some(1), None, Some(5), Some(3)])],
+        vec![sum(None), sum(Some(cmp(GreaterThan, column(), int(2))))],
+    );
+    assert_eq!(
+        run(aggregate).unwrap(),
+        vec![vec![Value::bigint(9), Value::bigint(8)]]
+    );
+
+    let empty = LogicalOperator::new(
+        LogicalKind::Aggregate {
+            group_index: 1,
+            aggregate_index: 2,
+            groupings_index: 3,
+            groups: vec![],
+        },
+        vec![ints(&[None])],
+        vec![sum(None)],
+    );
+    assert_eq!(run(empty).unwrap(), vec![vec![Value::null(LogicalType::BIGINT)]]);
+}
+
+#[test]
+fn limit_and_offset() {
+    use rustdb_planner::BoundLimit;
+    let limit = LogicalOperator::new(
+        LogicalKind::Limit {
+            limit: BoundLimit::Constant(2),
+            offset: BoundLimit::Constant(1),
+        },
+        vec![ints(&[Some(1), Some(2), Some(3), Some(4)])],
+        vec![],
+    );
+    assert_eq!(
+        run(limit).unwrap(),
+        vec![vec![Value::integer(2)], vec![Value::integer(3)]]
+    );
+}

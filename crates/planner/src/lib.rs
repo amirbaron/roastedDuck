@@ -4,6 +4,7 @@ mod expression;
 mod logical;
 
 pub use expression::{
-    BoundCast, BoundFunction, ColumnBinding, ComparisonOp, ConjunctionOp, Expression, OperatorOp,
+    BoundAggregate, BoundCast, BoundFunction, ColumnBinding, ComparisonOp, ConjunctionOp, Expression,
+    OperatorOp,
 };
-pub use logical::{LogicalKind, LogicalOperator};
+pub use logical::{BoundLimit, LogicalKind, LogicalOperator};

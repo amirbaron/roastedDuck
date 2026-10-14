@@ -3,7 +3,7 @@
 //! These rules only look at types, so they live next to [`LogicalType`]; the binder uses
 //! them for overload resolution and to find the common type of expressions.
 
-use crate::{LogicalType, LogicalTypeId};
+use crate::{LogicalType, LogicalTypeId, Value};
 
 /// The preference of a target type when several implicit casts are possible
 /// (DuckDB's `TargetTypeCost`). Lower is preferred.
@@ -122,8 +122,12 @@ fn implicit_targets(from: LogicalTypeId) -> &'static [LogicalTypeId] {
 }
 
 /// Whether an `INTEGER_LITERAL` fits into `target` (DuckDB's `IntegerLiteral::FitsInType`).
-fn integer_literal_fits(value: i128, target: &LogicalType) -> bool {
+fn integer_literal_fits(constant: &Value, target: &LogicalType) -> bool {
     use LogicalTypeId as L;
+    let Some(value) = constant.as_i128() else {
+        // Only a UHUGEINT constant does not fit an i128.
+        return matches!(target.id(), L::Float | L::Double | L::UHugeInt);
+    };
     match target.id() {
         L::Float | L::Double | L::HugeInt => true,
         L::TinyInt => i8::try_from(value).is_ok(),
@@ -143,7 +147,7 @@ fn contains_template(ty: &LogicalType) -> bool {
     if ty.id() == LogicalTypeId::Template {
         return true;
     }
-    ty.list_child().is_some_and(contains_template)
+    ty.child_type().is_some_and(contains_template)
         || ty
             .array_child()
             .is_some_and(|(child, _)| contains_template(child))
@@ -189,11 +193,11 @@ pub fn implicit_cast_cost(from: &LogicalType, to: &LogicalType) -> i64 {
             // Prefer BIGINT, INTEGER, ... to avoid ties.
             return target_type_cost(to) - 90;
         }
-        return implicit_cast_cost(&literal_type, to);
+        return implicit_cast_cost(literal_type, to);
     }
     match (from.id(), to.id()) {
         (L::List, L::List) => {
-            let (Some(from_child), Some(to_child)) = (from.list_child(), to.list_child()) else {
+            let (Some(from_child), Some(to_child)) = (from.child_type(), to.child_type()) else {
                 return -1;
             };
             let cost = implicit_cast_cost(from_child, to_child);
@@ -213,7 +217,7 @@ pub fn implicit_cast_cost(from: &LogicalType, to: &LogicalType) -> i64 {
             return if cost >= 100 { cost - 1 } else { cost };
         }
         (L::Array, L::List) => {
-            let (Some((from_child, _)), Some(to_child)) = (from.array_child(), to.list_child()) else {
+            let (Some((from_child, _)), Some(to_child)) = (from.array_child(), to.child_type()) else {
                 return -1;
             };
             let cost = implicit_cast_cost(from_child, to_child);
@@ -221,7 +225,7 @@ pub fn implicit_cast_cost(from: &LogicalType, to: &LogicalType) -> i64 {
             return if cost < 0 { -1 } else { cost + 1 };
         }
         (L::List, L::Array) if to.array_child().is_some_and(|(_, size)| size != 0) => {
-            let (Some(from_child), Some((to_child, _))) = (from.list_child(), to.array_child()) else {
+            let (Some(from_child), Some((to_child, _))) = (from.child_type(), to.array_child()) else {
                 return -1;
             };
             return implicit_cast_cost(from_child, to_child);
@@ -381,7 +385,7 @@ fn combine_numeric_types(left: &LogicalType, right: &LogicalType) -> Option<Logi
 fn normalize(ty: &LogicalType) -> LogicalType {
     match ty.id() {
         LogicalTypeId::StringLiteral => LogicalType::VARCHAR,
-        LogicalTypeId::IntegerLiteral => ty.integer_literal_type().unwrap_or(LogicalType::BIGINT),
+        LogicalTypeId::IntegerLiteral => ty.integer_literal_type().cloned().unwrap_or(LogicalType::BIGINT),
         _ => ty.clone(),
     }
 }
@@ -522,8 +526,8 @@ fn combine_equal(left: &LogicalType, right: &LogicalType, mode: Unify) -> Option
             Some(LogicalType::decimal(width, scale))
         }
         L::List => Some(LogicalType::list(unify_child(
-            left.list_child()?,
-            right.list_child()?,
+            left.child_type()?,
+            right.child_type()?,
             mode,
         )?)),
         L::Array => {
@@ -535,10 +539,10 @@ fn combine_equal(left: &LogicalType, right: &LogicalType, mode: Unify) -> Option
             ))
         }
         L::Map => {
-            let entry = unify_child(left.list_child()?, right.list_child()?, mode)?;
+            let entry = unify_child(left.child_type()?, right.child_type()?, mode)?;
             Some(LogicalType::with_info(
                 L::Map,
-                crate::TypeInfo::List { child: entry },
+                crate::TypeInfo::List(crate::ListTypeInfo { child_type: entry }),
             ))
         }
         L::Struct => combine_structs(left, right, mode),
@@ -663,11 +667,11 @@ mod tests {
             20
         );
         assert_eq!(implicit_cast_cost(&LogicalType::SQLNULL, &LogicalType::DATE), 110);
-        let literal = LogicalType::integer_literal(5);
+        let literal = LogicalType::integer_literal(Value::integer(5));
         assert_eq!(implicit_cast_cost(&literal, &LogicalType::INTEGER), 0);
         assert_eq!(implicit_cast_cost(&literal, &LogicalType::TINYINT), 20);
         assert_eq!(implicit_cast_cost(&literal, &LogicalType::BIGINT), 11);
-        let big = LogicalType::integer_literal(1000);
+        let big = LogicalType::integer_literal(Value::integer(1000));
         assert_eq!(implicit_cast_cost(&big, &LogicalType::TINYINT), -1);
         assert_eq!(
             implicit_cast_cost(

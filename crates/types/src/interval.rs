@@ -6,29 +6,23 @@ use std::fmt;
 use rustdb_common::Error;
 
 use crate::date::{push_fraction, push_padded};
-use crate::{NativeType, PhysicalType, Time};
+use crate::{Interval, NativeType, PhysicalType, Time};
 
-/// A duration in months, days and microseconds; the parts are independent.
-///
-/// The derived `PartialEq`/`Eq`/`Hash` compare the three fields bitwise, so
-/// `1 month != 30 days` for them. DuckDB compares intervals after normalising them
-/// (carrying 24 hours into a day and 30 days into a month): use [`Interval::normalized_eq`]
-/// for SQL equality. The [`Ord`] implementation follows DuckDB's normalised ordering, so
-/// `cmp` may report `Equal` for bitwise-different values.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-#[repr(C)]
-pub struct Interval {
-    /// Whole months (a year is 12).
-    pub months: i32,
-    /// Whole days.
-    pub days: i32,
-    /// Microseconds; may exceed a day.
-    pub micros: i64,
-}
+// `Interval` itself (DuckDB's `interval_t`: months, days and microseconds) is generated
+// from DuckDB's serialization specs; this module adds its parsing, formatting and
+// DuckDB's normalised comparison.
+//
+// The derived `PartialEq`/`Eq`/`Hash` compare the three fields bitwise, so
+// `1 month != 30 days` for them. DuckDB compares intervals after normalising them
+// (carrying 24 hours into a day and 30 days into a month): use `Interval::normalized_eq`
+// for SQL equality. The `Ord` implementation follows DuckDB's normalised ordering, so `cmp`
+// may report `Equal` for bitwise-different values.
 
+// Three plain integer fields of 16 bytes in total: no padding, whatever the field order.
 const _: () = assert!(size_of::<Interval>() == 16);
 
-// SAFETY: `repr(C)` of two `i32`s and an `i64` without padding; every bit pattern is valid.
+// SAFETY: `Interval` consists of two `i32`s and an `i64` with no padding (checked above),
+// so every bit pattern of its 16 bytes is a valid value and it has no drop glue.
 unsafe impl NativeType for Interval {
     const PHYSICAL: PhysicalType = PhysicalType::Interval;
 }

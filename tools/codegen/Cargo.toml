@@ -1,0 +1,15 @@
+[package]
+name = "codegen"
+description = "Generates rustdb's (de)serialization code from DuckDB's serialization specs."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[lints]
+workspace = true

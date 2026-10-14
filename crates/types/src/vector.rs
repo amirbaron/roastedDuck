@@ -185,19 +185,20 @@ impl Vector {
         let width = slot_width(&ty);
         let aux = match (ty.physical_type(), ty.info()) {
             (PhysicalType::Varchar, _) => Aux::Strings(Vec::new()),
-            (PhysicalType::List, Some(TypeInfo::List { child })) => Aux::List {
-                child: Box::new(Self::flat(child.clone(), capacity)),
+            (PhysicalType::List, Some(TypeInfo::List(info))) => Aux::List {
+                child: Box::new(Self::flat(info.child_type.clone(), capacity)),
                 size: 0,
             },
-            (PhysicalType::Struct, Some(TypeInfo::Struct { children })) => Aux::Struct(
-                children
+            (PhysicalType::Struct, Some(TypeInfo::Struct(info))) => Aux::Struct(
+                info.child_types
                     .iter()
                     .map(|(_, ty)| Self::flat(ty.clone(), capacity))
                     .collect(),
             ),
-            (PhysicalType::Array, Some(TypeInfo::Array { child, size })) => {
-                Aux::Array(Box::new(Self::flat(child.clone(), capacity * *size as usize)))
-            }
+            (PhysicalType::Array, Some(TypeInfo::Array(info))) => Aux::Array(Box::new(Self::flat(
+                info.child_type.clone(),
+                capacity * info.size as usize,
+            ))),
             _ => Aux::None,
         };
         let flat = Flat {
@@ -588,18 +589,18 @@ impl Vector {
             Aux::List { child, .. } => {
                 let entry = self.values::<ListEntry>()[slot];
                 let items = entry.range().map(|i| child.get_value(i)).collect();
-                Value::list_with_type(self.ty.clone(), items)
+                Value::from_children(self.ty.clone(), items)
             }
             Aux::Struct(children) => {
                 let fields = children.iter().map(|child| child.get_value(slot)).collect();
-                Value::struct_with_type(self.ty.clone(), fields)
+                Value::from_children(self.ty.clone(), fields)
             }
             Aux::Array(child) => {
                 let size = array_size(&self.ty);
                 let items = (slot * size..(slot + 1) * size)
                     .map(|i| child.get_value(i))
                     .collect();
-                Value::list_with_type(self.ty.clone(), items)
+                Value::from_children(self.ty.clone(), items)
             }
             Aux::None | Aux::Strings(_) => Value::from_vector_slot(self, slot),
         }
@@ -638,7 +639,7 @@ impl Vector {
         storage.validity.set_valid(slot);
         match &mut storage.aux {
             Aux::List { child, size } => {
-                let items = value.list_children().unwrap_or_default();
+                let items = value.children().unwrap_or_default();
                 let offset = *size;
                 let needed = offset + items.len();
                 if needed > child.capacity() {
@@ -652,14 +653,14 @@ impl Vector {
                 Ok(())
             }
             Aux::Struct(children) => {
-                let fields = value.struct_children().unwrap_or_default();
+                let fields = value.children().unwrap_or_default();
                 for (child, field) in children.iter_mut().zip(fields) {
                     child.set_value(slot, field)?;
                 }
                 Ok(())
             }
             Aux::Array(child) => {
-                let items = value.list_children().unwrap_or_default();
+                let items = value.children().unwrap_or_default();
                 if items.len() != array_size {
                     return Err(Error::internal(format!(
                         "Cannot write an array of {} elements into {}",

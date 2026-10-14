@@ -1,6 +1,20 @@
-use rustdb_types::LogicalType;
+use std::sync::Arc;
+
+use rustdb_types::{DataChunk, LogicalType};
 
 use crate::{ColumnBinding, Expression};
+
+/// The LIMIT or OFFSET of a query (DuckDB's `BoundLimitNode`).
+#[derive(Clone, Debug, Default)]
+pub enum BoundLimit {
+    #[default]
+    Unset,
+    Constant(u64),
+    /// `LIMIT 10%`
+    Percentage(f64),
+    Expression(Box<Expression>),
+    ExpressionPercentage(Box<Expression>),
+}
 
 /// Operator-specific data of a logical operator (DuckDB's `LogicalOperatorType` + subclass
 /// fields). Shared fields live on [`LogicalOperator`].
@@ -12,6 +26,22 @@ pub enum LogicalKind {
     Projection { table_index: u64 },
     /// Keeps rows where all `expressions` are true.
     Filter,
+    /// Grouped or ungrouped aggregation; `expressions` holds the aggregates. Outputs the
+    /// groups (bound at `group_index`) followed by the aggregates (at `aggregate_index`).
+    Aggregate {
+        group_index: u64,
+        aggregate_index: u64,
+        groupings_index: u64,
+        groups: Vec<Expression>,
+    },
+    /// LIMIT/OFFSET.
+    Limit { limit: BoundLimit, offset: BoundLimit },
+    /// Scans materialised data (DuckDB's `LogicalColumnDataGet`).
+    ColumnDataGet {
+        table_index: u64,
+        types: Vec<LogicalType>,
+        chunks: Arc<[DataChunk]>,
+    },
 }
 
 /// A node of a logical plan.
@@ -43,20 +73,27 @@ impl LogicalOperator {
 
     /// The bindings of the columns this operator outputs.
     pub fn column_bindings(&self) -> Vec<ColumnBinding> {
+        let table = |table_index: u64, count: usize| {
+            (0..count as u64).map(move |column_index| ColumnBinding {
+                table_index,
+                column_index,
+            })
+        };
         match &self.kind {
-            LogicalKind::DummyScan { table_index } => {
-                vec![ColumnBinding {
-                    table_index: *table_index,
-                    column_index: 0,
-                }]
-            }
-            LogicalKind::Projection { table_index } => (0..self.expressions.len())
-                .map(|i| ColumnBinding {
-                    table_index: *table_index,
-                    column_index: i as u64,
-                })
+            LogicalKind::DummyScan { table_index } => table(*table_index, 1).collect(),
+            LogicalKind::Projection { table_index } => table(*table_index, self.expressions.len()).collect(),
+            LogicalKind::ColumnDataGet {
+                table_index, types, ..
+            } => table(*table_index, types.len()).collect(),
+            LogicalKind::Aggregate {
+                group_index,
+                aggregate_index,
+                groups,
+                ..
+            } => table(*group_index, groups.len())
+                .chain(table(*aggregate_index, self.expressions.len()))
                 .collect(),
-            LogicalKind::Filter => self
+            LogicalKind::Filter | LogicalKind::Limit { .. } => self
                 .children
                 .first()
                 .map(Self::column_bindings)
@@ -70,6 +107,13 @@ impl LogicalOperator {
             LogicalKind::DummyScan { .. } => vec![LogicalType::INTEGER],
             LogicalKind::Projection { .. } => self.expressions.iter().map(Expression::return_type).collect(),
             LogicalKind::Filter => self.children.first().map(|c| c.types.clone()).unwrap_or_default(),
+            LogicalKind::ColumnDataGet { types, .. } => types.clone(),
+            LogicalKind::Aggregate { groups, .. } => groups
+                .iter()
+                .chain(&self.expressions)
+                .map(Expression::return_type)
+                .collect(),
+            LogicalKind::Limit { .. } => self.children.first().map(|c| c.types.clone()).unwrap_or_default(),
         };
     }
 }

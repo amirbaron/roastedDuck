@@ -1,4 +1,7 @@
+mod serialization;
+
 use std::cmp::Ordering;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use rustdb_common::{Error, Result};
@@ -9,8 +12,8 @@ use crate::{
     Vector,
 };
 
-/// The storage of a value, keyed by physical representation.
-#[derive(Clone, Debug, PartialEq)]
+/// The storage of a non-NULL value, keyed by physical representation.
+#[derive(Clone, Debug)]
 enum Payload {
     Null,
     Bool(bool),
@@ -29,21 +32,89 @@ enum Payload {
     Interval(Interval),
     /// VARCHAR, BLOB, BIT, ... bytes.
     Bytes(Arc<[u8]>),
-    /// LIST, MAP (`STRUCT(key, value)` entries) and ARRAY elements.
-    List(Arc<[Value]>),
-    /// STRUCT fields, or a UNION's tag followed by one value per member.
-    Struct(Arc<[Value]>),
+    /// The elements of a LIST, MAP or ARRAY, or the fields of a STRUCT or UNION.
+    Nested(Arc<[Value]>),
+    /// A value of type `TYPE`.
+    Type(LogicalType),
+}
+
+impl Payload {
+    /// Floats compare by bit pattern so that equality is reflexive (`NaN == NaN`), which
+    /// makes values usable as map keys; SQL comparison semantics live in the executor.
+    fn eq_bits(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::F32(a), Self::F32(b)) => a.to_bits() == b.to_bits(),
+            (Self::F64(a), Self::F64(b)) => a.to_bits() == b.to_bits(),
+            (Self::Null, Self::Null) => true,
+            (Self::Bool(a), Self::Bool(b)) => a == b,
+            (Self::I8(a), Self::I8(b)) => a == b,
+            (Self::I16(a), Self::I16(b)) => a == b,
+            (Self::I32(a), Self::I32(b)) => a == b,
+            (Self::I64(a), Self::I64(b)) => a == b,
+            (Self::I128(a), Self::I128(b)) => a == b,
+            (Self::U8(a), Self::U8(b)) => a == b,
+            (Self::U16(a), Self::U16(b)) => a == b,
+            (Self::U32(a), Self::U32(b)) => a == b,
+            (Self::U64(a), Self::U64(b)) => a == b,
+            (Self::U128(a), Self::U128(b)) => a == b,
+            (Self::Interval(a), Self::Interval(b)) => a == b,
+            (Self::Bytes(a), Self::Bytes(b)) => a == b,
+            (Self::Nested(a), Self::Nested(b)) => a == b,
+            (Self::Type(a), Self::Type(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq for Payload {
+    fn eq(&self, other: &Self) -> bool {
+        self.eq_bits(other)
+    }
+}
+
+impl Eq for Payload {}
+
+impl Hash for Payload {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Self::Null => {}
+            Self::Bool(v) => v.hash(state),
+            Self::I8(v) => v.hash(state),
+            Self::I16(v) => v.hash(state),
+            Self::I32(v) => v.hash(state),
+            Self::I64(v) => v.hash(state),
+            Self::I128(v) => v.hash(state),
+            Self::U8(v) => v.hash(state),
+            Self::U16(v) => v.hash(state),
+            Self::U32(v) => v.hash(state),
+            Self::U64(v) => v.hash(state),
+            Self::U128(v) => v.hash(state),
+            Self::F32(v) => v.to_bits().hash(state),
+            Self::F64(v) => v.to_bits().hash(state),
+            Self::Interval(v) => v.hash(state),
+            Self::Bytes(v) => v.hash(state),
+            Self::Nested(v) => v.hash(state),
+            Self::Type(v) => v.hash(state),
+        }
+    }
 }
 
 /// A single typed SQL value (DuckDB's `Value`).
 ///
-/// Equality (`==`) is structural: same type and same stored representation, with floats
-/// compared bitwise-by-value like `f64::eq`. SQL comparison semantics live in the cast and
-/// comparison layers.
-#[derive(Clone, Debug, PartialEq)]
+/// Equality and hashing are structural (type and payload, floats by bit pattern), not
+/// SQL comparison: see [`Value::compare_not_distinct`] and the cast layer's comparisons.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Value {
     ty: LogicalType,
     payload: Payload,
+}
+
+impl Default for Value {
+    /// A NULL of type `"NULL"`, like DuckDB's default-constructed `Value`.
+    fn default() -> Self {
+        Self::null(LogicalType::SQLNULL)
+    }
 }
 
 macro_rules! scalar_constructors {
@@ -187,22 +258,32 @@ impl Value {
         Self { ty, payload }
     }
 
-    /// A LIST of `child_type` values.
-    pub fn list(child_type: LogicalType, items: Vec<Value>) -> Self {
-        Self::list_with_type(LogicalType::list(child_type), items)
+    /// A LIST of `child_type` holding `values` (DuckDB's `Value::LIST`).
+    pub fn list(child_type: LogicalType, values: Vec<Self>) -> Self {
+        Self::from_children(LogicalType::list(child_type), values)
     }
 
-    /// An ARRAY of `child_type` values (its size is the number of items).
-    pub fn array(child_type: LogicalType, items: Vec<Value>) -> Self {
-        let size = items.len() as u32;
-        Self::list_with_type(LogicalType::array(child_type, size), items)
+    /// An ARRAY of `child_type` values (its size is the number of values).
+    pub fn array(child_type: LogicalType, values: Vec<Self>) -> Self {
+        let size = values.len() as u32;
+        Self::from_children(LogicalType::array(child_type, size), values)
     }
 
-    /// A LIST, MAP or ARRAY value of type `ty` (MAP items are `STRUCT(key, value)` values).
-    pub fn list_with_type(ty: LogicalType, items: Vec<Value>) -> Self {
+    /// A LIST/MAP/ARRAY/STRUCT/UNION value of type `ty` from its elements or fields (MAP
+    /// elements are `STRUCT(key, value)` values, UNION fields start with the tag); the
+    /// children must match `ty`.
+    pub fn from_children(ty: LogicalType, children: Vec<Self>) -> Self {
         Self {
             ty,
-            payload: Payload::List(items.into()),
+            payload: Payload::Nested(children.into()),
+        }
+    }
+
+    /// A value of type `TYPE` (DuckDB's `Value::TYPE`).
+    pub fn type_value(ty: LogicalType) -> Self {
+        Self {
+            ty: LogicalType::simple(LogicalTypeId::Type),
+            payload: Payload::Type(ty),
         }
     }
 
@@ -214,26 +295,18 @@ impl Value {
                 .map(|(name, value)| (name.clone(), value.ty.clone()))
                 .collect(),
         );
-        Self::struct_with_type(ty, fields.into_iter().map(|(_, value)| value).collect())
-    }
-
-    /// A STRUCT (or UNION: tag first) value of type `ty` with one value per field.
-    pub fn struct_with_type(ty: LogicalType, fields: Vec<Value>) -> Self {
-        Self {
-            ty,
-            payload: Payload::Struct(fields.into()),
-        }
+        Self::from_children(ty, fields.into_iter().map(|(_, value)| value).collect())
     }
 
     /// A MAP value from key/value pairs.
     pub fn map(key_type: LogicalType, value_type: LogicalType, entries: Vec<(Value, Value)>) -> Self {
         let ty = LogicalType::map(key_type, value_type);
-        let entry_type = ty.list_child().cloned().unwrap_or(LogicalType::INVALID);
+        let entry_type = ty.child_type().cloned().unwrap_or(LogicalType::INVALID);
         let items = entries
             .into_iter()
-            .map(|(key, value)| Self::struct_with_type(entry_type.clone(), vec![key, value]))
+            .map(|(key, value)| Self::from_children(entry_type.clone(), vec![key, value]))
             .collect();
-        Self::list_with_type(ty, items)
+        Self::from_children(ty, items)
     }
 
     /// A UNION value of type `ty` whose member `tag` holds `value`.
@@ -246,7 +319,7 @@ impl Value {
             let member = (index == usize::from(tag)).then(|| value.take()).flatten();
             fields.push(member.unwrap_or_else(|| Self::null(member_type.clone())));
         }
-        Self::struct_with_type(ty, fields)
+        Self::from_children(ty, fields)
     }
 
     pub fn logical_type(&self) -> &LogicalType {
@@ -345,25 +418,26 @@ impl Value {
         std::str::from_utf8(self.as_bytes()?).ok()
     }
 
-    /// The elements of a LIST or ARRAY, or the `STRUCT(key, value)` entries of a MAP.
-    pub fn list_children(&self) -> Option<&[Value]> {
+    /// The elements of a LIST/MAP/ARRAY value (MAP elements are `STRUCT(key, value)`
+    /// values) or the fields of a STRUCT/UNION value (UNION fields start with the tag).
+    pub fn children(&self) -> Option<&[Self]> {
         match &self.payload {
-            Payload::List(items) => Some(items),
+            Payload::Nested(children) => Some(children),
             _ => None,
         }
     }
 
-    /// The fields of a STRUCT, or the tag followed by the members of a UNION.
-    pub fn struct_children(&self) -> Option<&[Value]> {
+    /// The type held by a `TYPE` value.
+    pub fn as_type(&self) -> Option<&LogicalType> {
         match &self.payload {
-            Payload::Struct(fields) => Some(fields),
+            Payload::Type(ty) => Some(ty),
             _ => None,
         }
     }
 
     /// The tag and the active member value of a UNION.
-    pub fn union_tag_and_value(&self) -> Option<(u8, &Value)> {
-        let fields = self.struct_children()?;
+    pub fn union_tag_and_value(&self) -> Option<(u8, &Self)> {
+        let fields = self.children()?;
         let tag = fields.first()?.as_u8()?;
         Some((tag, fields.get(usize::from(tag) + 1)?))
     }
@@ -450,8 +524,14 @@ impl Value {
                 let string: StringT = vector.add_string(bytes);
                 vector.values_mut::<StringT>()[slot] = string;
             }
-            Payload::List(_) | Payload::Struct(_) => {
+            Payload::Nested(_) => {
                 return Err(Error::internal("nested values are written by Vector::set_value"));
+            }
+            Payload::Type(_) => {
+                return Err(Error::not_implemented(format!(
+                    "Writing {} values into vectors",
+                    self.ty
+                )));
             }
         }
         Ok(())
@@ -509,7 +589,8 @@ impl Value {
             (Payload::Bytes(bytes), L::Blob) => crate::blob::write_text(bytes, out),
             (Payload::Bytes(bytes), L::Bit) => crate::bit::write_text(bytes, out),
             (Payload::I128(v), L::Uuid) => Uuid(*v).write_to(out),
-            (Payload::List(items), L::List | L::Array) => {
+            (Payload::Type(ty), L::Type) => out.extend_from_slice(ty.to_string().as_bytes()),
+            (Payload::Nested(items), L::List | L::Array) => {
                 let quoting = Self::child_quoting(self.list_element_type());
                 let raw_array = self.ty.id() == L::Array;
                 out.push(b'[');
@@ -522,9 +603,9 @@ impl Value {
                 }
                 out.push(b']');
             }
-            (Payload::List(entries), L::Map) => self.write_map(entries, out)?,
-            (Payload::Struct(fields), L::Struct) => self.write_struct(fields, out)?,
-            (Payload::Struct(_), L::Union) => match self.union_tag_and_value() {
+            (Payload::Nested(entries), L::Map) => self.write_map(entries, out)?,
+            (Payload::Nested(fields), L::Struct) => self.write_struct(fields, out)?,
+            (Payload::Nested(_), L::Union) => match self.union_tag_and_value() {
                 Some((_, member)) if !member.is_null() => member.write_text(out)?,
                 _ => out.extend_from_slice(b"NULL"),
             },
@@ -539,9 +620,7 @@ impl Value {
     }
 
     fn list_element_type(&self) -> Option<&LogicalType> {
-        self.ty
-            .list_child()
-            .or_else(|| self.ty.array_child().map(|(child, _)| child))
+        self.ty.child_type()
     }
 
     /// How children of type `child` are embedded: nested children are written verbatim.
@@ -601,7 +680,7 @@ impl Value {
             if i > 0 {
                 out.extend_from_slice(b", ");
             }
-            match entry.struct_children() {
+            match entry.children() {
                 Some([key, value]) if !entry.is_null() => {
                     if key.is_null() {
                         out.extend_from_slice(b"invalid");
@@ -663,9 +742,8 @@ impl Value {
             (Payload::F64(l), Payload::F64(r)) => floats(*l, *r, l.is_nan(), r.is_nan()),
             (Payload::Interval(l), Payload::Interval(r)) => l.cmp(r),
             (Payload::Bytes(l), Payload::Bytes(r)) => l.cmp(r),
-            (Payload::List(l), Payload::List(r)) | (Payload::Struct(l), Payload::Struct(r)) => {
-                sequences(l, r)?
-            }
+            (Payload::Nested(l), Payload::Nested(r)) => sequences(l, r)?,
+            (Payload::Type(l), Payload::Type(r)) => l.to_string().cmp(&r.to_string()),
             _ => return None,
         })
     }
@@ -713,7 +791,7 @@ mod tests {
             ("b".to_owned(), Value::null(LogicalType::INTEGER)),
         ]);
         assert_eq!(row.to_varchar().unwrap(), "{'k y': 'v,w', 'b': NULL}");
-        let unnamed = Value::struct_with_type(
+        let unnamed = Value::from_children(
             LogicalType::struct_type(vec![
                 (String::new(), LogicalType::INTEGER),
                 (String::new(), LogicalType::VARCHAR),

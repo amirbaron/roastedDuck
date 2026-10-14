@@ -64,7 +64,7 @@ fn string_to_list(
 ) -> Result<bool> {
     let input = TextInput::new(source, count);
     let target = result.logical_type().clone();
-    let child_type = target.list_child().ok_or_else(|| missing_child(&target))?;
+    let child_type = target.child_type().ok_or_else(|| missing_child(&target))?;
     let mut parts = StringColumn::new();
     let mut scratch = Vec::new();
     let mut entries = Vec::with_capacity(input.rows);
@@ -268,7 +268,7 @@ fn string_to_map(
         }
     }
     verify_map_keys(&keys, &entries, &validity)?;
-    let entry_type = target.list_child().ok_or_else(|| missing_child(&target))?.clone();
+    let entry_type = target.child_type().ok_or_else(|| missing_child(&target))?.clone();
     let mut entry_vector = Vector::flat(entry_type, total);
     if let Some([key_slot, value_slot]) = entry_vector.struct_children_mut() {
         *key_slot = keys;
@@ -308,7 +308,7 @@ pub(super) fn cast_switch(set: &CastFunctionSet, target: &LogicalType) -> Result
     use rustdb_types::LogicalTypeId as L;
     Ok(Some(match target.id() {
         L::List => {
-            let child = target.list_child().ok_or_else(|| missing_child(target))?;
+            let child = target.child_type().ok_or_else(|| missing_child(target))?;
             let child_cast = set.get_cast_function(&LogicalType::VARCHAR, child)?;
             BoundCastInfo::new(move |source, result, count, params| {
                 string_to_list(&child_cast, source, result, count, params)

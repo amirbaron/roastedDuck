@@ -224,7 +224,7 @@ fn type_pattern_matches(pattern: &LogicalType, ty: &LogicalType) -> bool {
     match pattern.id() {
         LogicalTypeId::Decimal | LogicalTypeId::Enum => pattern.info().is_none(),
         LogicalTypeId::List => pattern
-            .list_child()
+            .child_type()
             .is_some_and(|child| child.id() == LogicalTypeId::Any),
         LogicalTypeId::Array => pattern
             .array_child()
