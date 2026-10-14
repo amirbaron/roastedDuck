@@ -112,8 +112,11 @@ struct RunArgs {
     /// Keep every worker's output in this directory.
     #[arg(long)]
     log_dir: Option<PathBuf>,
+    /// Read more test files or directories from this file, one per line.
+    #[arg(long)]
+    files_from: Option<PathBuf>,
     /// Test files or directories, relative to the current directory or to the root.
-    #[arg(required = true)]
+    #[arg(required_unless_present = "files_from")]
     paths: Vec<PathBuf>,
 }
 
@@ -203,7 +206,17 @@ fn run(args: &RunArgs) -> Result<ExitCode, String> {
             }
         }
     };
-    let files = harness::collect_test_files(&root, &args.paths).map_err(|error| error.to_string())?;
+    let mut paths = args.paths.clone();
+    if let Some(list) = &args.files_from {
+        let text = std::fs::read_to_string(list).map_err(|error| format!("{}: {error}", list.display()))?;
+        paths.extend(
+            text.lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(PathBuf::from),
+        );
+    }
+    let files = harness::collect_test_files(&root, &paths).map_err(|error| error.to_string())?;
     let jobs = args
         .jobs
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, std::num::NonZeroUsize::get));

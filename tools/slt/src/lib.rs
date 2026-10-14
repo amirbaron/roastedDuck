@@ -7,6 +7,19 @@
 //! - [`compare`]: result comparison helpers, including DuckDB's numeric semantics for Rust.
 //! - [`backend`]: the [`backend::Engine`] trait with the Rust and C++ implementations.
 //! - [`harness`]: parallel, crash-isolated runs; [`report`] and [`ratchet`] consume the results.
+//!
+//! Typical use (`$DUCKDB_REF` is the DuckDB 1.5.6 source tree with a release build):
+//!
+//! ```text
+//! tools/oracle-shim/build.sh $DUCKDB_REF                  # target/oracle-shim/libslt_oracle.*
+//! slt run --engine cpp  --out cpp.jsonl  $DUCKDB_REF/test # C++ oracle
+//! slt run --engine rust --out rust.jsonl $DUCKDB_REF/test # rustdb
+//! slt run --engine unittest --out ref.jsonl $DUCKDB_REF/test   # DuckDB's own runner
+//! slt diff ref.jsonl cpp.jsonl                            # harness validation
+//! slt compare cpp.jsonl rust.jsonl --out dashboard.md
+//! slt ratchet check rust.jsonl                            # conformance/passing.txt
+//! slt exec --engine cpp test/sql/select/test_select.test  # one file, in-process
+//! ```
 
 pub mod backend;
 pub mod commands;

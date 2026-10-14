@@ -105,7 +105,13 @@ pub fn run_files(
     thread::scope(|scope| {
         for _ in 0..options.jobs.max(1) {
             scope.spawn(|| {
-                while let Some(file) = queue.lock().unwrap_or_else(PoisonError::into_inner).pop_front() {
+                loop {
+                    // Take the next file in its own statement so the queue lock is released
+                    // before the (long) run.
+                    let next = queue.lock().unwrap_or_else(PoisonError::into_inner).pop_front();
+                    let Some(file) = next else {
+                        break;
+                    };
                     let result = run_one(options, &scratch, &file);
                     on_result(&result);
                     results
