@@ -11,6 +11,7 @@
 //! [`CastFunctionSet::get_cast_function`].
 
 mod binary;
+mod compare;
 mod decimal;
 mod enums;
 mod executor;
@@ -30,6 +31,9 @@ use std::sync::Arc;
 use rustdb_common::{Error, Result};
 use rustdb_types::{LogicalType, LogicalTypeId, Vector};
 
+pub use compare::{
+    values_are_equal, values_distinct_greater_than, values_equal, values_greater_than, values_not_distinct,
+};
 pub use rustdb_types::implicit_cast_cost;
 pub use value::{ValueCast, cast_vector};
 

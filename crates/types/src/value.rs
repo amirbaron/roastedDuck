@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::sync::Arc;
 
 use rustdb_common::{Error, Result};
@@ -615,6 +616,58 @@ impl Value {
         }
         out.push(b'}');
         Ok(())
+    }
+
+    /// DuckDB's ordering of two values of the same physical type, as used by
+    /// `ValueOperations` (`NotDistinctFrom` for equality, `DistinctGreaterThan` for order):
+    /// NULLs sort after every other value, NaN is the largest float and equal to itself,
+    /// `-0.0` equals `0.0`, intervals compare normalised, strings bytewise and nested
+    /// values lexicographically (a shorter list that is a prefix sorts first).
+    ///
+    /// Returns `None` if the two values are stored differently (different physical
+    /// types); callers unify the types first.
+    pub fn compare_not_distinct(&self, other: &Self) -> Option<Ordering> {
+        fn floats<F: PartialOrd + Copy>(left: F, right: F, left_nan: bool, right_nan: bool) -> Ordering {
+            match (left_nan, right_nan) {
+                (true, true) => Ordering::Equal,
+                (true, false) => Ordering::Greater,
+                (false, true) => Ordering::Less,
+                (false, false) => left.partial_cmp(&right).unwrap_or(Ordering::Equal),
+            }
+        }
+        fn sequences(left: &[Value], right: &[Value]) -> Option<Ordering> {
+            for (l, r) in left.iter().zip(right) {
+                match l.compare_not_distinct(r)? {
+                    Ordering::Equal => {}
+                    unequal => return Some(unequal),
+                }
+            }
+            Some(left.len().cmp(&right.len()))
+        }
+        Some(match (&self.payload, &other.payload) {
+            (Payload::Null, Payload::Null) => Ordering::Equal,
+            (Payload::Null, _) => Ordering::Greater,
+            (_, Payload::Null) => Ordering::Less,
+            (Payload::Bool(l), Payload::Bool(r)) => l.cmp(r),
+            (Payload::I8(l), Payload::I8(r)) => l.cmp(r),
+            (Payload::I16(l), Payload::I16(r)) => l.cmp(r),
+            (Payload::I32(l), Payload::I32(r)) => l.cmp(r),
+            (Payload::I64(l), Payload::I64(r)) => l.cmp(r),
+            (Payload::I128(l), Payload::I128(r)) => l.cmp(r),
+            (Payload::U8(l), Payload::U8(r)) => l.cmp(r),
+            (Payload::U16(l), Payload::U16(r)) => l.cmp(r),
+            (Payload::U32(l), Payload::U32(r)) => l.cmp(r),
+            (Payload::U64(l), Payload::U64(r)) => l.cmp(r),
+            (Payload::U128(l), Payload::U128(r)) => l.cmp(r),
+            (Payload::F32(l), Payload::F32(r)) => floats(*l, *r, l.is_nan(), r.is_nan()),
+            (Payload::F64(l), Payload::F64(r)) => floats(*l, *r, l.is_nan(), r.is_nan()),
+            (Payload::Interval(l), Payload::Interval(r)) => l.cmp(r),
+            (Payload::Bytes(l), Payload::Bytes(r)) => l.cmp(r),
+            (Payload::List(l), Payload::List(r)) | (Payload::Struct(l), Payload::Struct(r)) => {
+                sequences(l, r)?
+            }
+            _ => return None,
+        })
     }
 }
 
