@@ -27,6 +27,20 @@ pub struct ListEntry {
     pub length: u64,
 }
 
+impl ListEntry {
+    pub const fn new(offset: usize, length: usize) -> Self {
+        Self {
+            offset: offset as u64,
+            length: length as u64,
+        }
+    }
+
+    /// The child rows of this list.
+    pub const fn range(self) -> std::ops::Range<usize> {
+        self.offset as usize..(self.offset + self.length) as usize
+    }
+}
+
 // SAFETY: two `u64`s, POD.
 unsafe impl NativeType for ListEntry {
     const PHYSICAL: PhysicalType = PhysicalType::List;
@@ -71,6 +85,11 @@ impl StringHeap {
         // only freed when the heap is dropped. Vectors keep the heap alive while referenced.
         unsafe { StringT::from_raw(target) }
     }
+
+    /// Whether no string has been stored out of line.
+    pub fn is_empty(&self) -> bool {
+        self.chunks.is_empty()
+    }
 }
 
 /// Type-specific auxiliary data of a flat/constant vector.
@@ -83,9 +102,9 @@ enum Aux {
     Strings(Vec<Arc<StringHeap>>),
     /// LIST/MAP: the child vector holding all list elements, and how many are in use.
     List { child: Box<Vector>, size: usize },
-    /// STRUCT/UNION: one child per field.
+    /// STRUCT/UNION: one child per field, indexed by the parent's slots.
     Struct(Vec<Vector>),
-    /// ARRAY: child holding `size * array_size` elements.
+    /// ARRAY: child holding `array_size` elements per parent slot.
     Array(Box<Vector>),
 }
 
@@ -95,6 +114,8 @@ struct Flat {
     data: SharedBuffer,
     validity: ValidityMask,
     aux: Aux,
+    /// Number of slots (the data buffer may be empty for STRUCT/ARRAY parents).
+    capacity: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -148,10 +169,20 @@ impl<T: Copy> Unified<'_, T> {
     }
 }
 
+/// The physical width in bytes of one slot of `ty` (0 for STRUCT/ARRAY parents).
+fn slot_width(ty: &LogicalType) -> usize {
+    ty.physical_type().size()
+}
+
+/// The ARRAY size of `ty`, if it is an ARRAY.
+fn array_size(ty: &LogicalType) -> usize {
+    ty.array_child().map_or(0, |(_, size)| size as usize)
+}
+
 impl Vector {
     /// A flat vector with room for `capacity` rows, all zero/valid.
     pub fn flat(ty: LogicalType, capacity: usize) -> Self {
-        let width = ty.physical_type().size();
+        let width = slot_width(&ty);
         let aux = match (ty.physical_type(), ty.info()) {
             (PhysicalType::Varchar, _) => Aux::Strings(Vec::new()),
             (PhysicalType::List, Some(TypeInfo::List(info))) => Aux::List {
@@ -174,6 +205,7 @@ impl Vector {
             data: Arc::new(RawBuffer::zeroed(width * capacity)),
             validity: ValidityMask::all_valid(),
             aux,
+            capacity,
         };
         Self {
             ty,
@@ -185,10 +217,16 @@ impl Vector {
     pub fn constant(value: &Value) -> Result<Self> {
         let mut vector = Self::flat(value.logical_type().clone(), 1);
         vector.set_value(0, value)?;
-        if let Repr::Flat(flat) = vector.repr {
-            vector.repr = Repr::Constant(flat);
-        }
+        vector.make_constant();
         Ok(vector)
+    }
+
+    /// A constant vector that is NULL for every row.
+    pub fn constant_null(ty: LogicalType) -> Self {
+        let mut vector = Self::flat(ty, 1);
+        vector.validity_mut().set_invalid(0, 1);
+        vector.make_constant();
+        vector
     }
 
     /// Turns a flat vector into a constant vector whose value is slot 0.
@@ -198,8 +236,28 @@ impl Vector {
         }
     }
 
-    /// Replaces `self` with a fresh flat vector of the same type, reusing nothing.
+    /// Turns `self` into an all-valid flat vector with room for `capacity` rows whose slot
+    /// contents are unspecified, to be overwritten by a kernel.
+    ///
+    /// The data buffer is reused when this vector owns a large enough flat buffer of a
+    /// non-nested type, so kernels writing chunk after chunk into the same result do not
+    /// allocate. Reused string slots are zeroed, so no slot ever points into a released
+    /// string heap.
     pub fn reset_flat(&mut self, capacity: usize) {
+        if let Repr::Flat(flat) = &mut self.repr
+            && flat.capacity >= capacity
+            && matches!(flat.aux, Aux::None | Aux::Strings(_))
+            && let Some(data) = Arc::get_mut(&mut flat.data)
+        {
+            if let Aux::Strings(heaps) = &mut flat.aux {
+                // SAFETY: the buffer is uniquely owned (`get_mut`) and `len` bytes long; all
+                // zero bytes is the empty inline string.
+                unsafe { std::ptr::write_bytes(data.as_mut_ptr(), 0, data.len()) };
+                heaps.clear();
+            }
+            flat.validity = ValidityMask::all_valid();
+            return;
+        }
         *self = Self::flat(self.ty.clone(), capacity);
     }
 
@@ -209,6 +267,21 @@ impl Vector {
             ty,
             repr: Repr::Sequence { start, increment },
         }
+    }
+
+    /// The same data seen as type `ty`, which must have the same physical layout
+    /// (DuckDB's `Vector::Reinterpret`).
+    pub fn reinterpret(&self, ty: LogicalType) -> Result<Self> {
+        if ty.physical_type() != self.ty.physical_type() {
+            return Err(Error::internal(format!(
+                "Cannot reinterpret a vector of type {} as {ty}",
+                self.ty
+            )));
+        }
+        Ok(Self {
+            ty,
+            repr: self.repr.clone(),
+        })
     }
 
     /// A vector whose row `i` is row `sel[i]` of `self`, without copying data.
@@ -249,6 +322,11 @@ impl Vector {
         }
     }
 
+    /// Whether this is a constant vector.
+    pub fn is_constant(&self) -> bool {
+        matches!(self.repr, Repr::Constant(_))
+    }
+
     fn storage(&self) -> &Flat {
         match &self.repr {
             Repr::Flat(flat) | Repr::Constant(flat) => flat,
@@ -281,10 +359,37 @@ impl Vector {
         &mut self.storage_mut().validity
     }
 
-    /// Number of slots in the data buffer.
+    /// Replaces the slot validity of a flat or constant vector.
+    pub fn set_validity(&mut self, validity: ValidityMask) {
+        self.storage_mut().validity = validity;
+    }
+
+    /// Number of slots in the storage.
     pub fn capacity(&self) -> usize {
-        let width = self.ty.physical_type().size();
-        self.storage().data.len().checked_div(width).unwrap_or(0)
+        self.storage().capacity
+    }
+
+    /// Grows the storage of a flat or constant vector to at least `capacity` slots,
+    /// keeping its contents (DuckDB's `Vector::Resize`).
+    pub fn resize(&mut self, capacity: usize) {
+        let array_size = array_size(&self.ty);
+        let width = slot_width(&self.ty);
+        let storage = self.storage_mut();
+        if capacity <= storage.capacity {
+            return;
+        }
+        let mut data = RawBuffer::zeroed(width * capacity);
+        let used = width * storage.capacity;
+        // SAFETY: the old buffer holds `used` bytes, the new one at least as many, and the
+        // two allocations are distinct.
+        unsafe { std::ptr::copy_nonoverlapping(storage.data.as_ptr(), data.as_mut_ptr(), used) };
+        storage.data = Arc::new(data);
+        storage.capacity = capacity;
+        match &mut storage.aux {
+            Aux::Struct(children) => children.iter_mut().for_each(|child| child.resize(capacity)),
+            Aux::Array(child) => child.resize(capacity * array_size),
+            Aux::None | Aux::Strings(_) | Aux::List { .. } => {}
+        }
     }
 
     /// Row-to-slot mapping for `values`/`validity` of a flat, constant or dictionary vector.
@@ -374,9 +479,26 @@ impl Vector {
         value
     }
 
+    /// Keeps `heap` alive as long as this string vector, so `StringT`s pointing into it
+    /// can be stored in the vector (DuckDB's `StringVector::AddBuffer`).
+    pub fn add_heap(&mut self, heap: StringHeap) {
+        if heap.is_empty() {
+            return;
+        }
+        if let Aux::Strings(heaps) = &mut self.storage_mut().aux {
+            // Keep our own appendable heap last.
+            let own = heaps.pop();
+            heaps.push(Arc::new(heap));
+            heaps.extend(own);
+        }
+    }
+
     /// Keeps the string heaps of `other` alive in `self`, so `StringT`s copied from `other`
     /// stay valid (DuckDB's `StringVector::AddHeapReference`).
     pub fn add_heap_references(&mut self, other: &Vector) {
+        if matches!(other.repr, Repr::Sequence { .. }) {
+            return;
+        }
         let Aux::Strings(source) = &other.storage().aux else {
             return;
         };
@@ -397,7 +519,23 @@ impl Vector {
         }
     }
 
-    /// The element vector of an ARRAY vector (`size * array_size` rows).
+    /// Mutable access to the child vector of a LIST/MAP vector.
+    pub fn list_child_mut(&mut self) -> Option<&mut Vector> {
+        match &mut self.storage_mut().aux {
+            Aux::List { child, .. } => Some(child),
+            _ => None,
+        }
+    }
+
+    /// Replaces the child of a LIST/MAP vector; its first `size` rows are in use.
+    pub fn set_list_child(&mut self, new_child: Vector, new_size: usize) {
+        if let Aux::List { child, size } = &mut self.storage_mut().aux {
+            **child = new_child;
+            *size = new_size;
+        }
+    }
+
+    /// The element vector of an ARRAY vector (`array_size` rows per slot).
     pub fn array_child(&self) -> Option<&Vector> {
         match &self.storage().aux {
             Aux::Array(child) => Some(child),
@@ -405,9 +543,32 @@ impl Vector {
         }
     }
 
-    /// The field vectors of a STRUCT vector.
+    /// Mutable access to the element vector of an ARRAY vector.
+    pub fn array_child_mut(&mut self) -> Option<&mut Vector> {
+        match &mut self.storage_mut().aux {
+            Aux::Array(child) => Some(child),
+            _ => None,
+        }
+    }
+
+    /// Replaces the element vector of an ARRAY vector.
+    pub fn set_array_child(&mut self, new_child: Vector) {
+        if let Aux::Array(child) = &mut self.storage_mut().aux {
+            **child = new_child;
+        }
+    }
+
+    /// The field vectors of a STRUCT (or UNION) vector, indexed by this vector's slots.
     pub fn struct_children(&self) -> Option<&[Vector]> {
         match &self.storage().aux {
+            Aux::Struct(children) => Some(children),
+            _ => None,
+        }
+    }
+
+    /// Mutable access to the field vectors of a STRUCT (or UNION) vector.
+    pub fn struct_children_mut(&mut self) -> Option<&mut [Vector]> {
+        match &mut self.storage_mut().aux {
             Aux::Struct(children) => Some(children),
             _ => None,
         }
@@ -420,40 +581,224 @@ impl Vector {
             return Value::from_i64_as(&self.ty, value);
         }
         let slot = self.sel().slot(row);
-        if !self.storage().validity.is_valid(slot) {
+        let storage = self.storage();
+        if !storage.validity.is_valid(slot) {
             return Value::null(self.ty.clone());
         }
-        Value::from_vector_slot(self, slot)
+        match &storage.aux {
+            Aux::List { child, .. } => {
+                let entry = self.values::<ListEntry>()[slot];
+                let items = entry.range().map(|i| child.get_value(i)).collect();
+                Value::from_children(self.ty.clone(), items)
+            }
+            Aux::Struct(children) => {
+                let fields = children.iter().map(|child| child.get_value(slot)).collect();
+                Value::from_children(self.ty.clone(), fields)
+            }
+            Aux::Array(child) => {
+                let size = array_size(&self.ty);
+                let items = (slot * size..(slot + 1) * size)
+                    .map(|i| child.get_value(i))
+                    .collect();
+                Value::from_children(self.ty.clone(), items)
+            }
+            Aux::None | Aux::Strings(_) => Value::from_vector_slot(self, slot),
+        }
     }
 
     /// Writes `value` into row `row` (the vector is flattened first if needed).
+    ///
+    /// LIST values are appended to the end of the child vector.
     pub fn set_value(&mut self, row: usize, value: &Value) -> Result<()> {
-        let capacity = self.capacity();
         let slot = match self.repr {
             Repr::Constant(_) => 0,
             _ => row,
         };
+        let array_size = array_size(&self.ty);
         let storage = self.storage_mut();
+        let capacity = storage.capacity;
         if value.is_null() {
             storage.validity.set_invalid(slot, capacity.max(slot + 1));
+            match &mut storage.aux {
+                // NULL structs/arrays also have NULL children, like DuckDB.
+                Aux::Struct(children) => {
+                    for child in children {
+                        child.set_value(slot, &Value::null(child.ty.clone()))?;
+                    }
+                }
+                Aux::Array(child) => {
+                    let null = Value::null(child.ty.clone());
+                    for i in slot * array_size..(slot + 1) * array_size {
+                        child.set_value(i, &null)?;
+                    }
+                }
+                Aux::None | Aux::Strings(_) | Aux::List { .. } => {}
+            }
             return Ok(());
         }
         storage.validity.set_valid(slot);
-        value.write_to_vector(self, slot)
+        match &mut storage.aux {
+            Aux::List { child, size } => {
+                let items = value.children().unwrap_or_default();
+                let offset = *size;
+                let needed = offset + items.len();
+                if needed > child.capacity() {
+                    child.resize(needed.max(child.capacity() * 2));
+                }
+                for (i, item) in items.iter().enumerate() {
+                    child.set_value(offset + i, item)?;
+                }
+                *size = needed;
+                self.values_mut::<ListEntry>()[slot] = ListEntry::new(offset, items.len());
+                Ok(())
+            }
+            Aux::Struct(children) => {
+                let fields = value.children().unwrap_or_default();
+                for (child, field) in children.iter_mut().zip(fields) {
+                    child.set_value(slot, field)?;
+                }
+                Ok(())
+            }
+            Aux::Array(child) => {
+                let items = value.children().unwrap_or_default();
+                if items.len() != array_size {
+                    return Err(Error::internal(format!(
+                        "Cannot write an array of {} elements into {}",
+                        items.len(),
+                        self.ty
+                    )));
+                }
+                for (i, item) in items.iter().enumerate() {
+                    child.set_value(slot * array_size + i, item)?;
+                }
+                Ok(())
+            }
+            Aux::None | Aux::Strings(_) => value.write_to_vector(self, slot),
+        }
     }
 
     /// Converts the vector into a flat vector of `count` rows.
     pub fn flatten(&mut self, count: usize) {
-        if matches!(self.repr, Repr::Flat(_)) {
-            return;
+        match &self.repr {
+            Repr::Flat(_) => {}
+            Repr::Constant(_) => {
+                let sel = SelectionVector::new(vec![0; count]);
+                *self = self.gather(&sel);
+            }
+            Repr::Dictionary { sel, child } => {
+                let sel = sel.clone();
+                *self = child.gather(&sel);
+            }
+            Repr::Sequence { start, increment } => {
+                let (start, increment) = (*start, *increment);
+                let mut flat = Self::flat(self.ty.clone(), count.max(1));
+                for row in 0..count {
+                    let value = start.wrapping_add(increment.wrapping_mul(row as i64));
+                    // Writing a value of the vector's own type cannot fail.
+                    let _ = flat.set_value(row, &Value::from_i64_as(&self.ty, value));
+                }
+                *self = flat;
+            }
         }
-        let mut flat = Self::flat(self.ty.clone(), count.max(1));
-        for row in 0..count {
-            let value = self.get_value(row);
-            // Writing a value of the vector's own type into a fresh flat vector cannot fail.
-            let _ = flat.set_value(row, &value);
+    }
+
+    /// A flat copy of the first `count` rows (DuckDB's `Vector::Flatten` on a copy).
+    #[must_use]
+    pub fn flattened(&self, count: usize) -> Self {
+        let mut copy = self.clone();
+        copy.flatten(count);
+        copy
+    }
+
+    /// A flat vector whose row `i` is slot `sel[i]` of this flat or constant vector's
+    /// storage. Strings share heaps, lists share their child, nested children are gathered.
+    fn gather(&self, sel: &SelectionVector) -> Self {
+        let storage = self.storage();
+        let count = sel.len();
+        let width = slot_width(&self.ty);
+        let mut data = RawBuffer::zeroed(width * count);
+        if width > 0 {
+            let source = storage.data.as_ptr();
+            let target = data.as_mut_ptr();
+            for (row, &slot) in sel.as_slice().iter().enumerate() {
+                let slot = slot as usize;
+                if slot < storage.capacity {
+                    // SAFETY: `slot < capacity` keeps the read in bounds of the source buffer,
+                    // `row < count` keeps the write in bounds of the new buffer.
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(
+                            source.add(slot * width),
+                            target.add(row * width),
+                            width,
+                        );
+                    };
+                }
+            }
         }
-        *self = flat;
+        let mut validity = ValidityMask::all_valid();
+        if !storage.validity.is_all_valid() {
+            for (row, &slot) in sel.as_slice().iter().enumerate() {
+                if !storage.validity.is_valid(slot as usize) {
+                    validity.set_invalid(row, count);
+                }
+            }
+        }
+        let aux = match &storage.aux {
+            Aux::None => Aux::None,
+            Aux::Strings(heaps) => Aux::Strings(heaps.clone()),
+            Aux::List { child, size } => Aux::List {
+                child: child.clone(),
+                size: *size,
+            },
+            Aux::Struct(children) => {
+                Aux::Struct(children.iter().map(|child| child.gather_rows(sel)).collect())
+            }
+            Aux::Array(child) => {
+                let size = array_size(&self.ty);
+                let expanded: Vec<u32> = sel
+                    .as_slice()
+                    .iter()
+                    .flat_map(|&slot| (0..size as u32).map(move |i| slot * size as u32 + i))
+                    .collect();
+                Aux::Array(Box::new(child.gather_rows(&SelectionVector::new(expanded))))
+            }
+        };
+        Self {
+            ty: self.ty.clone(),
+            repr: Repr::Flat(Flat {
+                data: Arc::new(data),
+                validity,
+                aux,
+                capacity: count,
+            }),
+        }
+    }
+
+    /// A flat vector whose row `i` is logical row `rows[i]` of `self`, or NULL where
+    /// `rows[i]` is `None` (a copying `slice` that can introduce NULLs).
+    #[must_use]
+    pub fn select_rows(&self, rows: &[Option<u32>]) -> Self {
+        let sel = SelectionVector::new(rows.iter().map(|row| row.unwrap_or(0)).collect::<Vec<_>>());
+        let mut selected = self.gather_rows(&sel);
+        if let Repr::Flat(flat) = &mut selected.repr {
+            for (row, _) in rows.iter().enumerate().filter(|(_, row)| row.is_none()) {
+                flat.validity.set_invalid(row, rows.len());
+            }
+        }
+        selected
+    }
+
+    /// Like `gather`, but `sel` selects logical rows of any representation.
+    fn gather_rows(&self, sel: &SelectionVector) -> Self {
+        match &self.repr {
+            Repr::Flat(_) => self.gather(sel),
+            Repr::Constant(_) => self.gather(&SelectionVector::new(vec![0; sel.len()])),
+            Repr::Dictionary { sel: inner, child } => child.gather(&sel.compose(inner)),
+            Repr::Sequence { .. } => {
+                let max = sel.as_slice().iter().map(|&i| i as usize + 1).max().unwrap_or(0);
+                self.flattened(max).gather(sel)
+            }
+        }
     }
 
     /// Checks that the vector's physical type is `expected`.
@@ -487,6 +832,11 @@ mod tests {
         let unified = once.unified::<i32>();
         assert_eq!(unified.get(0), Some(40));
         assert_eq!(unified.get(1), None);
+        let flat = once.flattened(3);
+        assert_eq!(flat.kind(), VectorKind::Flat);
+        assert_eq!(flat.values::<i32>()[0], 40);
+        assert_eq!(flat.values::<i32>()[2], 20);
+        assert!(flat.is_null(1));
     }
 
     #[test]
@@ -500,5 +850,38 @@ mod tests {
         constant.flatten(3);
         assert_eq!(constant.kind(), VectorKind::Flat);
         assert_eq!(constant.string_bytes(2), b"a long string value here");
+    }
+
+    #[test]
+    fn nested_values_round_trip() {
+        let list = Value::list(
+            LogicalType::INTEGER,
+            vec![
+                Value::integer(1),
+                Value::null(LogicalType::INTEGER),
+                Value::integer(3),
+            ],
+        );
+        let row = Value::struct_value(vec![
+            ("a".to_owned(), list.clone()),
+            ("b".to_owned(), Value::varchar("a string longer than twelve")),
+        ]);
+        let mut vector = Vector::flat(row.logical_type().clone(), 2);
+        vector.set_value(0, &row).unwrap();
+        vector
+            .set_value(1, &Value::null(row.logical_type().clone()))
+            .unwrap();
+        assert_eq!(vector.get_value(0), row);
+        assert!(vector.get_value(1).is_null());
+        let constant = Vector::constant(&row).unwrap();
+        let flat = constant.flattened(3);
+        assert_eq!(flat.get_value(2), row);
+        let mut lists = Vector::flat(list.logical_type().clone(), 1);
+        for row in 0..40 {
+            lists.resize(row + 1);
+            lists.set_value(row, &list).unwrap();
+        }
+        assert_eq!(lists.get_value(39), list);
+        assert_eq!(lists.list_child().map(|(_, size)| size), Some(120));
     }
 }

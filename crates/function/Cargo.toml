@@ -12,3 +12,7 @@ rustdb-types.workspace = true
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "casts"
+harness = false
