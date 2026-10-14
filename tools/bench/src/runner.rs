@@ -193,6 +193,7 @@ impl Harness {
         record.setup_peak_rss_bytes = outcome.setup_peak_rss_bytes;
         record.result_rows = outcome.result_rows;
         record.result_fingerprint = outcome.result_fingerprint;
+        record.result_types = outcome.result_types;
         record.notes.extend(outcome.notes);
         record.peak_rss_bytes = Some(measured.peak_rss_bytes);
         record.process_ms = Some(measured.wall.as_secs_f64() * 1000.0);

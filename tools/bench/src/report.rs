@@ -1,7 +1,7 @@
 //! `bench compare`: a markdown report of rustdb against C++ DuckDB, with per-benchmark
 //! speedups and memory ratios, per-suite geometric means and the plan's final gates.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use crate::measure::geomean;
@@ -148,8 +148,13 @@ fn write_runs(out: &mut String, cpp: &Results, rust: &Results, cpp_label: &str, 
             }
         );
     }
-    let threads = |r: &Results| r.machine.iter().map(|m| m.threads).collect::<Vec<_>>();
-    let hosts = |r: &Results| r.machine.iter().map(|m| m.hostname.clone()).collect::<Vec<_>>();
+    let threads = |r: &Results| r.machine.iter().map(|m| m.threads).collect::<BTreeSet<_>>();
+    let hosts = |r: &Results| {
+        r.machine
+            .iter()
+            .map(|m| m.hostname.clone())
+            .collect::<BTreeSet<_>>()
+    };
     if !rust.machine.is_empty() && (threads(cpp) != threads(rust) || hosts(cpp) != hosts(rust)) {
         out.push_str(
             "\n> **Warning:** the two runs used different machines or thread counts; ratios are not meaningful.\n",

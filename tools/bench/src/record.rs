@@ -134,6 +134,8 @@ pub struct BenchmarkRecord {
     /// FNV-1a fingerprint of the last timed result (when small enough), used to cross
     /// check engines on benchmarks without an expected result.
     pub result_fingerprint: Option<String>,
+    /// Column types of the fingerprinted result.
+    pub result_types: Vec<String>,
     /// Anything that makes this measurement differ from DuckDB's runner.
     pub notes: Vec<String>,
 }

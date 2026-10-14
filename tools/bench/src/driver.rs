@@ -22,7 +22,7 @@ use crate::format::{
 };
 use crate::measure::self_peak_rss_bytes;
 use crate::record::{ResultCheck, Status};
-use crate::verify::{ResultTable, verify};
+use crate::verify::verify;
 
 /// Extensions DuckDB's runner always loads (`AddExtension` in `Initialize`); missing
 /// ones are not an error.
@@ -80,6 +80,7 @@ pub struct Outcome {
     pub result_check: ResultCheck,
     pub result_rows: Option<u64>,
     pub result_fingerprint: Option<String>,
+    pub result_types: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -512,8 +513,10 @@ impl<'a, E: Engine> BenchmarkRun<'a, E> {
         }
         let cells = rows.saturating_mul(result.column_count() as u64);
         if cells <= self.job.settings.fingerprint_max_cells {
-            let fingerprint = ResultTable::fingerprint(&result.to_table()?);
-            lock(self.progress).result_fingerprint = Some(format!("{fingerprint:016x}"));
+            let table = result.to_table()?;
+            let mut progress = lock(self.progress);
+            progress.result_fingerprint = Some(format!("{:016x}", table.fingerprint()));
+            progress.result_types = table.columns.into_iter().map(|c| c.type_name).collect();
         }
         Ok(())
     }
@@ -538,7 +541,7 @@ mod tests {
 
     use super::*;
     use crate::format::{Cache, Queries, Storage};
-    use crate::verify::{ResultColumn, ValueKind};
+    use crate::verify::{ResultColumn, ResultTable, ValueKind};
 
     /// An engine that logs calls and answers every query with one integer cell.
     #[derive(Default)]

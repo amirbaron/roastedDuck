@@ -1,6 +1,7 @@
 //! C++ DuckDB, loaded at run time from the reference build's `libduckdb` through its
 //! stable C API (`duckdb.h`). Nothing C++ is compiled or linked into this crate.
 
+use std::cell::Cell;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::path::Path;
 use std::ptr;
@@ -17,6 +18,7 @@ type State = u32;
 const SUCCESS: State = 0;
 
 /// `struct duckdb_result` (`duckdb.h`).
+#[derive(Clone, Copy)]
 #[repr(C)]
 struct RawResult {
     deprecated_column_count: Idx,
@@ -121,6 +123,14 @@ c_api! {
     destroy_logical_type: fn(*mut Handle);
     value_is_null: fn(*mut RawResult, Idx, Idx) -> bool;
     value_varchar: fn(*mut RawResult, Idx, Idx) -> *mut c_char;
+    result_chunk_count: fn(RawResult) -> Idx;
+    result_get_chunk: fn(RawResult, Idx) -> Handle;
+    destroy_data_chunk: fn(*mut Handle);
+    appender_create_query: fn(Handle, *const c_char, Idx, *mut Handle, *const c_char, *const *const c_char, *mut Handle) -> State;
+    append_data_chunk: fn(Handle, Handle) -> State;
+    appender_flush: fn(Handle) -> State;
+    appender_error: fn(Handle) -> *const c_char;
+    appender_destroy: fn(*mut Handle) -> State;
     free: fn(*mut c_void);
 }
 
@@ -242,11 +252,64 @@ impl CApi {
     }
 }
 
+/// Scratch table used to render results to text (see [`CppResult::render`]).
+const RENDER_TABLE: &str = "__bench_render";
+
+/// The loaded library and the current connection, shared by the engine and its results
+/// (results need the connection to render themselves).
+struct Session {
+    api: CApi,
+    /// The open connection, or null.
+    connection: Cell<Handle>,
+}
+
+impl Session {
+    /// `duckdb_query` on the current connection.
+    fn query(self: &Rc<Self>, sql: &str) -> Result<CppResult, EngineError> {
+        let connection = self.connection.get();
+        if connection.is_null() {
+            return Err(EngineError::failed("no open database"));
+        }
+        let sql = c_string(sql)?;
+        let mut result = CppResult {
+            raw: RawResult::empty(),
+            session: Rc::clone(self),
+        };
+        // SAFETY: a live connection, NUL-terminated SQL and a valid out-pointer. The
+        // result is destroyed by `CppResult::drop` even on error, as the C API requires.
+        let state = unsafe { (self.api.query)(connection, sql.as_ptr(), &raw mut result.raw) };
+        if state == SUCCESS {
+            return Ok(result);
+        }
+        // SAFETY: the failed result stays live until `result` drops.
+        let (message, kind) = unsafe {
+            (
+                copy_c_string((self.api.result_error)(&raw mut result.raw)),
+                (self.api.result_error_type)(&raw mut result.raw),
+            )
+        };
+        Err(if kind == ERROR_NOT_IMPLEMENTED {
+            EngineError::unsupported(message)
+        } else {
+            EngineError::failed(message)
+        })
+    }
+
+    /// The appender's last error.
+    ///
+    /// # Safety
+    /// `appender` must be a live appender.
+    unsafe fn appender_error(&self, appender: Handle, what: &str) -> EngineError {
+        // SAFETY: per the caller's contract; the message is owned by the appender.
+        let message = unsafe { copy_c_string((self.api.appender_error)(appender)) };
+        EngineError::failed(format!("{what}: {message}"))
+    }
+}
+
 /// C++ DuckDB through `libduckdb`, with at most one open database and connection.
 pub struct CppEngine {
-    api: Rc<CApi>,
+    session: Rc<Session>,
     database: Handle,
-    connection: Handle,
 }
 
 impl std::fmt::Debug for CppEngine {
@@ -274,24 +337,31 @@ impl CppEngine {
         }
         let api = CApi::load(handle).map_err(EngineError::failed)?;
         Ok(Self {
-            api: Rc::new(api),
+            session: Rc::new(Session {
+                api,
+                connection: Cell::new(ptr::null_mut()),
+            }),
             database: ptr::null_mut(),
-            connection: ptr::null_mut(),
         })
     }
 
+    fn api(&self) -> &CApi {
+        &self.session.api
+    }
+
     fn create_config(&self, config: &DbConfig) -> Result<Handle, EngineError> {
+        let api = self.api();
         let mut handle: Handle = ptr::null_mut();
         // SAFETY: `handle` is a valid out-pointer.
-        if unsafe { (self.api.create_config)(&raw mut handle) } != SUCCESS {
+        if unsafe { (api.create_config)(&raw mut handle) } != SUCCESS {
             return Err(EngineError::failed("duckdb_create_config failed"));
         }
         for (name, value) in config.options() {
             let (c_name, c_value) = (c_string(name)?, c_string(&value)?);
             // SAFETY: `handle` is a live config; both strings are NUL-terminated.
-            if unsafe { (self.api.set_config)(handle, c_name.as_ptr(), c_value.as_ptr()) } != SUCCESS {
+            if unsafe { (api.set_config)(handle, c_name.as_ptr(), c_value.as_ptr()) } != SUCCESS {
                 // SAFETY: `handle` is a live config, destroyed exactly once.
-                unsafe { (self.api.destroy_config)(&raw mut handle) };
+                unsafe { (api.destroy_config)(&raw mut handle) };
                 return Err(EngineError::failed(format!("invalid setting {name}={value}")));
             }
         }
@@ -308,7 +378,7 @@ impl Drop for CppEngine {
 /// A `duckdb_result`, destroyed on drop.
 pub struct CppResult {
     raw: RawResult,
-    api: Rc<CApi>,
+    session: Rc<Session>,
 }
 
 impl std::fmt::Debug for CppResult {
@@ -323,31 +393,124 @@ impl CppResult {
     fn raw(&self) -> *mut RawResult {
         (&raw const self.raw).cast_mut()
     }
+
+    /// Renders every value to text with `CAST(... AS VARCHAR)` (DuckDB's
+    /// `Value::ToString`), returning a result of VARCHAR columns with the same rows.
+    ///
+    /// The C API's value accessors only cover primitive types, so the result's data
+    /// chunks are fed through an appender into a scratch table and cast in SQL. This
+    /// happens outside the timed region.
+    fn render(&self) -> Result<CppResult, EngineError> {
+        let session = &self.session;
+        let api = &session.api;
+        let columns = self.column_count() as Idx;
+        let definitions: Vec<String> = (1..=columns).map(|i| format!("c{i} VARCHAR")).collect();
+        session.query(&format!(
+            "CREATE OR REPLACE TEMP TABLE {RENDER_TABLE}({})",
+            definitions.join(", ")
+        ))?;
+        let casts: Vec<String> = (1..=columns)
+            .map(|i| format!("CAST(col{i} AS VARCHAR)"))
+            .collect();
+        let insert = c_string(&format!(
+            "INSERT INTO {RENDER_TABLE} SELECT {} FROM appended_data",
+            casts.join(", ")
+        ))?;
+        // SAFETY: a live, successful result; every column index is in range. The types
+        // are owned by us and destroyed below.
+        let mut types: Vec<Handle> = (0..columns)
+            .map(|c| unsafe { (api.column_logical_type)(self.raw(), c) })
+            .collect();
+        let mut appender: Handle = ptr::null_mut();
+        // SAFETY: a live connection (the query above succeeded), NUL-terminated SQL,
+        // `columns` live types, default table/column names and a valid out-pointer.
+        let state = unsafe {
+            (api.appender_create_query)(
+                session.connection.get(),
+                insert.as_ptr(),
+                columns,
+                types.as_mut_ptr(),
+                ptr::null(),
+                ptr::null(),
+                &raw mut appender,
+            )
+        };
+        for ty in &mut types {
+            // SAFETY: each type is owned by us and destroyed once.
+            unsafe { (api.destroy_logical_type)(ty) };
+        }
+        if appender.is_null() {
+            return Err(EngineError::failed("duckdb_appender_create_query failed"));
+        }
+        let appended = if state == SUCCESS {
+            self.append_chunks(appender)
+        } else {
+            // SAFETY: `appender` is live.
+            Err(unsafe { session.appender_error(appender, "duckdb_appender_create_query failed") })
+        };
+        // SAFETY: `appender` is live and destroyed once (this also flushes).
+        unsafe { (api.appender_destroy)(&raw mut appender) };
+        appended?;
+        let rendered = session.query(&format!("SELECT * FROM {RENDER_TABLE}"))?;
+        session.query(&format!("DROP TABLE {RENDER_TABLE}"))?;
+        Ok(rendered)
+    }
+
+    /// Appends every data chunk of the result to `appender` and flushes it.
+    fn append_chunks(&self, appender: Handle) -> Result<(), EngineError> {
+        let session = &self.session;
+        let api = &session.api;
+        // SAFETY: a live, successful result, passed by value as the C API requires.
+        let chunks = unsafe { (api.result_chunk_count)(self.raw) };
+        for index in 0..chunks {
+            // SAFETY: `index` is in range; the chunk is owned by us.
+            let mut chunk = unsafe { (api.result_get_chunk)(self.raw, index) };
+            if chunk.is_null() {
+                return Err(EngineError::failed("duckdb_result_get_chunk failed"));
+            }
+            // SAFETY: a live appender and chunk; the chunk is destroyed once.
+            let state = unsafe {
+                let state = (api.append_data_chunk)(appender, chunk);
+                (api.destroy_data_chunk)(&raw mut chunk);
+                state
+            };
+            if state != SUCCESS {
+                // SAFETY: `appender` is live.
+                return Err(unsafe { session.appender_error(appender, "appending a result chunk failed") });
+            }
+        }
+        // SAFETY: a live appender.
+        if unsafe { (api.appender_flush)(appender) } != SUCCESS {
+            // SAFETY: `appender` is live.
+            return Err(unsafe { session.appender_error(appender, "flushing the appender failed") });
+        }
+        Ok(())
+    }
 }
 
 impl Drop for CppResult {
     fn drop(&mut self) {
         // SAFETY: the result was filled by `duckdb_query` and is destroyed exactly once.
         // DuckDB results own their data, so this is valid even after the database closed.
-        unsafe { (self.api.destroy_result)(&raw mut self.raw) };
+        unsafe { (self.session.api.destroy_result)(&raw mut self.raw) };
     }
 }
 
 impl QueryResult for CppResult {
     fn row_count(&self) -> usize {
         // SAFETY: a live, successful result.
-        unsafe { (self.api.row_count)(self.raw()) as usize }
+        unsafe { (self.session.api.row_count)(self.raw()) as usize }
     }
 
     fn column_count(&self) -> usize {
         // SAFETY: a live, successful result.
-        unsafe { (self.api.column_count)(self.raw()) as usize }
+        unsafe { (self.session.api.column_count)(self.raw()) as usize }
     }
 
     fn to_table(&self) -> Result<ResultTable, EngineError> {
-        let (api, raw) = (&*self.api, self.raw());
-        // SAFETY: a live, successful result.
-        let (column_count, row_count) = unsafe { ((api.column_count)(raw), (api.row_count)(raw)) };
+        let api = &self.session.api;
+        let raw = self.raw();
+        let column_count = self.column_count() as Idx;
         let columns: Vec<ResultColumn> = (0..column_count)
             .map(|c| {
                 // SAFETY: `c` is in range; the name is owned by the result.
@@ -361,17 +524,25 @@ impl QueryResult for CppResult {
                 }
             })
             .collect();
-        let rows = (0..row_count)
+        if column_count == 0 {
+            return Ok(ResultTable {
+                columns,
+                rows: vec![Vec::new(); self.row_count()],
+            });
+        }
+        let rendered = self.render()?;
+        let text = rendered.raw();
+        let rows = (0..rendered.row_count() as Idx)
             .map(|r| {
                 (0..column_count)
                     .map(|c| {
-                        // SAFETY: `c` and `r` are in range of a live result; the string
-                        // returned by `value_varchar` is ours to free.
+                        // SAFETY: `c` and `r` are in range of a live all-VARCHAR result;
+                        // the string returned by `value_varchar` is ours to free.
                         unsafe {
-                            if (api.value_is_null)(raw, c, r) {
+                            if (api.value_is_null)(text, c, r) {
                                 None
                             } else {
-                                Some(take_c_string(api, (api.value_varchar)(raw, c, r)))
+                                Some(take_c_string(api, (api.value_varchar)(text, c, r)))
                             }
                         }
                     })
@@ -387,7 +558,7 @@ impl Engine for CppEngine {
 
     fn version(&self) -> String {
         // SAFETY: returns a static NUL-terminated string.
-        let version = unsafe { copy_c_string((self.api.library_version)()) };
+        let version = unsafe { copy_c_string((self.api().library_version)()) };
         format!("DuckDB {version} (libduckdb C API)")
     }
 
@@ -395,64 +566,44 @@ impl Engine for CppEngine {
         self.close();
         let path = c_string(&path.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default())?;
         let mut db_config = self.create_config(config)?;
+        let api = &self.session.api;
         let mut error: *mut c_char = ptr::null_mut();
         // SAFETY: valid out-pointers, a live config and a NUL-terminated path.
         let state =
-            unsafe { (self.api.open_ext)(path.as_ptr(), &raw mut self.database, db_config, &raw mut error) };
+            unsafe { (api.open_ext)(path.as_ptr(), &raw mut self.database, db_config, &raw mut error) };
         // SAFETY: the config is no longer needed once the database is opened.
-        unsafe { (self.api.destroy_config)(&raw mut db_config) };
+        unsafe { (api.destroy_config)(&raw mut db_config) };
         if state != SUCCESS {
             // SAFETY: `error` is null or a message allocated by DuckDB.
-            let message = unsafe { take_c_string(&self.api, error) };
+            let message = unsafe { take_c_string(api, error) };
             self.database = ptr::null_mut();
             return Err(EngineError::failed(message));
         }
+        let mut connection: Handle = ptr::null_mut();
         // SAFETY: `database` is open; valid out-pointer.
-        if unsafe { (self.api.connect)(self.database, &raw mut self.connection) } != SUCCESS {
+        if unsafe { (api.connect)(self.database, &raw mut connection) } != SUCCESS {
             self.close();
             return Err(EngineError::failed("duckdb_connect failed"));
         }
+        self.session.connection.set(connection);
         Ok(())
     }
 
     fn close(&mut self) {
-        if !self.connection.is_null() {
-            // SAFETY: a live connection, disconnected once (the call nulls the handle).
-            unsafe { (self.api.disconnect)(&raw mut self.connection) };
+        let api = &self.session.api;
+        let mut connection = self.session.connection.replace(ptr::null_mut());
+        if !connection.is_null() {
+            // SAFETY: a live connection, disconnected once.
+            unsafe { (api.disconnect)(&raw mut connection) };
         }
         if !self.database.is_null() {
             // SAFETY: a live database, closed once (the call nulls the handle).
-            unsafe { (self.api.close)(&raw mut self.database) };
+            unsafe { (api.close)(&raw mut self.database) };
         }
     }
 
     fn query(&mut self, sql: &str) -> Result<CppResult, EngineError> {
-        if self.connection.is_null() {
-            return Err(EngineError::failed("no open database"));
-        }
-        let sql = c_string(sql)?;
-        let mut result = CppResult {
-            raw: RawResult::empty(),
-            api: Rc::clone(&self.api),
-        };
-        // SAFETY: a live connection, NUL-terminated SQL and a valid out-pointer. The
-        // result is destroyed by `CppResult::drop` even on error, as the C API requires.
-        let state = unsafe { (self.api.query)(self.connection, sql.as_ptr(), &raw mut result.raw) };
-        if state == SUCCESS {
-            return Ok(result);
-        }
-        // SAFETY: the failed result stays live until `result` drops.
-        let (message, kind) = unsafe {
-            (
-                copy_c_string((self.api.result_error)(&raw mut result.raw)),
-                (self.api.result_error_type)(&raw mut result.raw),
-            )
-        };
-        Err(if kind == ERROR_NOT_IMPLEMENTED {
-            EngineError::unsupported(message)
-        } else {
-            EngineError::failed(message)
-        })
+        self.session.query(sql)
     }
 
     fn load_extension(&mut self, name: &str) -> Result<ExtensionStatus, EngineError> {
