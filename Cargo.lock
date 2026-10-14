@@ -149,6 +149,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustdb-pg-parser"
+version = "1.5.6"
+dependencies = [
+ "rustdb-common",
+]
+
+[[package]]
 name = "rustdb-planner"
 version = "1.5.6"
 dependencies = [

@@ -111,6 +111,9 @@ impl ErrorKind {
 pub struct Error {
     kind: ErrorKind,
     message: Cow<'static, str>,
+    /// Character offset into the query the error refers to (DuckDB's `position`
+    /// extra info), used to render the `LINE 1: ...` context.
+    query_location: Option<usize>,
 }
 
 /// Engine-wide result alias.
@@ -125,7 +128,20 @@ impl Error {
         Self {
             kind,
             message: message.into(),
+            query_location: None,
         }
+    }
+
+    /// Attaches the character offset in the query that the error refers to.
+    #[must_use]
+    pub fn with_query_location(mut self, location: usize) -> Self {
+        self.query_location = Some(location);
+        self
+    }
+
+    /// The character offset in the query that the error refers to, if known.
+    pub const fn query_location(&self) -> Option<usize> {
+        self.query_location
     }
 
     pub const fn kind(&self) -> ErrorKind {
