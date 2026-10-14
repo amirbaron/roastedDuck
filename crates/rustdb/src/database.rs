@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
+use rustdb_catalog::{Catalog, TransactionManager};
 use rustdb_common::{Error, Result};
 
+use crate::transaction::TransactionContext;
 use crate::{Config, MaterializedResult};
 
 /// Outcome of loading an extension by name.
@@ -14,10 +16,17 @@ pub enum ExtensionLoad {
     Unknown,
 }
 
+/// Shared state of one database (DuckDB's `DatabaseInstance`).
 #[derive(Debug)]
-struct DatabaseInstance {
+pub(crate) struct DatabaseInstance {
     path: String,
     config: Config,
+    pub(crate) transactions: Arc<TransactionManager>,
+    /// Builtin functions and system objects (`system.main`); read by the binder.
+    #[allow(dead_code)]
+    pub(crate) system_catalog: Arc<Catalog>,
+    /// The database's own catalog (`memory` for in-memory databases).
+    pub(crate) catalog: Arc<Catalog>,
 }
 
 /// A database instance (DuckDB's `DuckDB`). Cheap to clone; clones share the instance.
@@ -39,11 +48,19 @@ impl Database {
                 "persistent databases are not supported yet",
             ));
         }
+        let system_catalog = Catalog::new("system")?;
+        for set in rustdb_functions::builtin_scalar_functions() {
+            system_catalog.register_scalar_functions(set)?;
+        }
+        let instance = DatabaseInstance {
+            path,
+            config: config.clone(),
+            transactions: Arc::default(),
+            system_catalog: Arc::new(system_catalog),
+            catalog: Arc::new(Catalog::new("memory")?),
+        };
         Ok(Self {
-            instance: Arc::new(DatabaseInstance {
-                path,
-                config: config.clone(),
-            }),
+            instance: Arc::new(instance),
         })
     }
 
@@ -61,8 +78,10 @@ impl Database {
     }
 
     pub fn connect(&self) -> Result<Connection> {
+        let transactions = TransactionContext::new(Arc::clone(&self.instance.transactions));
         Ok(Connection {
             database: self.clone(),
+            transactions,
         })
     }
 
@@ -76,6 +95,10 @@ impl Database {
             _ => ExtensionLoad::Unknown,
         }
     }
+
+    pub(crate) fn instance(&self) -> &DatabaseInstance {
+        &self.instance
+    }
 }
 
 /// A connection to a database (DuckDB's `Connection`). Each connection is used by one
@@ -83,6 +106,7 @@ impl Database {
 #[derive(Debug)]
 pub struct Connection {
     database: Database,
+    transactions: TransactionContext,
 }
 
 impl Connection {
@@ -92,7 +116,11 @@ impl Connection {
 
     /// Runs every statement in `sql` and returns the result of the last one.
     pub fn query(&mut self, sql: &str) -> Result<MaterializedResult> {
-        let _ = sql;
-        Err(Error::not_implemented("query execution is not implemented yet"))
+        let _ = (sql, self.database.instance().catalog.name());
+        // The statement lifecycle runs inside a transaction even before parsing is wired.
+        let _transaction = self.transactions.active()?;
+        let outcome = Err(Error::not_implemented("query execution is not implemented yet"));
+        self.transactions.end_statement(outcome.is_ok())?;
+        outcome
     }
 }
