@@ -171,6 +171,10 @@ fn execute(
         Expression::ColumnRef { binding, .. } => Err(Error::internal(format!(
             "unresolved column reference {binding} reached the executor"
         ))),
+        Expression::Aggregate(aggregate) => Err(Error::internal(format!(
+            "aggregate {} must be computed by an aggregate operator",
+            aggregate.function.name
+        ))),
     }
 }
 

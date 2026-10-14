@@ -201,3 +201,92 @@ fn case_evaluates_branches_only_on_their_rows() {
         ]
     );
 }
+
+/// `sum(INTEGER) -> BIGINT`, enough to exercise the aggregate operators.
+struct TestSum;
+
+impl rustdb_function::UnaryAggregate for TestSum {
+    type Input = i32;
+    type State = Option<i64>;
+    type Output = i64;
+
+    fn update(state: &mut Option<i64>, value: i32) -> rustdb_common::Result<()> {
+        *state = Some(state.unwrap_or(0) + i64::from(value));
+        Ok(())
+    }
+
+    fn combine(source: &Option<i64>, target: &mut Option<i64>) -> rustdb_common::Result<()> {
+        if let Some(value) = source {
+            *target = Some(target.unwrap_or(0) + value);
+        }
+        Ok(())
+    }
+
+    fn finalize(state: &Option<i64>) -> rustdb_common::Result<Option<i64>> {
+        Ok(*state)
+    }
+}
+
+fn sum(filter: Option<Expression>) -> Expression {
+    let function = rustdb_function::AggregateFunction::new(
+        "sum",
+        vec![LogicalType::INTEGER],
+        LogicalType::BIGINT,
+        rustdb_function::aggregate::Unary::<TestSum>::default(),
+    );
+    Expression::Aggregate(rustdb_planner::BoundAggregate {
+        function,
+        children: vec![column()],
+        bind_data: None,
+        distinct: false,
+        filter: filter.map(Box::new),
+    })
+}
+
+#[test]
+fn ungrouped_aggregates_with_filters() {
+    use rustdb_planner::ComparisonOp::GreaterThan;
+    let aggregate = LogicalOperator::new(
+        LogicalKind::Aggregate {
+            group_index: 1,
+            aggregate_index: 2,
+            groupings_index: 3,
+            groups: vec![],
+        },
+        vec![ints(&[Some(1), None, Some(5), Some(3)])],
+        vec![sum(None), sum(Some(cmp(GreaterThan, column(), int(2))))],
+    );
+    assert_eq!(
+        run(aggregate).unwrap(),
+        vec![vec![Value::bigint(9), Value::bigint(8)]]
+    );
+
+    let empty = LogicalOperator::new(
+        LogicalKind::Aggregate {
+            group_index: 1,
+            aggregate_index: 2,
+            groupings_index: 3,
+            groups: vec![],
+        },
+        vec![ints(&[None])],
+        vec![sum(None)],
+    );
+    assert_eq!(run(empty).unwrap(), vec![vec![Value::null(LogicalType::BIGINT)]]);
+}
+
+#[test]
+fn limit_and_offset() {
+    use rustdb_planner::BoundLimit;
+    let limit = LogicalOperator::new(
+        LogicalKind::Limit {
+            limit: BoundLimit::Constant(2),
+            offset: BoundLimit::Constant(1),
+        },
+        vec![ints(&[Some(1), Some(2), Some(3), Some(4)])],
+        vec![],
+    );
+    assert_eq!(
+        run(limit).unwrap(),
+        vec![vec![Value::integer(2)], vec![Value::integer(3)]]
+    );
+}
