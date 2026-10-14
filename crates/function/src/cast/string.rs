@@ -71,6 +71,16 @@ pub(super) fn cast_switch(
         L::Bit => string_kernel(bit::parse_text),
         L::Varchar => BoundCastInfo::reinterpret(),
         L::Enum => return Ok(super::enums::string_to_enum(target)),
+        L::Date
+        | L::Time
+        | L::TimeNs
+        | L::TimeTz
+        | L::Timestamp
+        | L::TimestampTz
+        | L::TimestampNs
+        | L::TimestampMs
+        | L::TimestampSec
+        | L::Interval => return Ok(super::temporal::from_string(target)),
         L::List | L::Array | L::Struct | L::Map => return super::string_nested::cast_switch(set, target),
         _ => return Ok(None),
     }))

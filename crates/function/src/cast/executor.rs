@@ -20,6 +20,9 @@ pub(super) enum RowError {
     Fatal(Error),
     /// The row becomes NULL without counting as a failed conversion.
     Null,
+    /// Like [`RowError::Invalid`], but `CAST` raises this exact error (DuckDB throws some
+    /// conversion failures with other error kinds).
+    Error(Error),
 }
 
 impl From<Error> for RowError {
@@ -70,6 +73,15 @@ pub(super) fn cast_rows<O: NativeType>(
                 }
                 RowError::Fatal(error) => Err(error),
                 RowError::Null => {
+                    null_rows.push(row);
+                    Ok(())
+                }
+                RowError::Error(error) => {
+                    if !params.is_try_cast() {
+                        return Err(error);
+                    }
+                    params.assign_error(error.raw_message().to_owned())?;
+                    all_converted = false;
                     null_rows.push(row);
                     Ok(())
                 }
@@ -154,6 +166,21 @@ pub(super) fn values_to_string<I: NativeType>(
     cast_rows_to_string(&source, result, count, params, |slot, out| {
         write(values[slot], out);
         Ok(())
+    })
+}
+
+/// Renders the values of a fixed-width vector as text with a fallible function.
+pub(super) fn try_values_to_string<I: NativeType>(
+    source: &Vector,
+    result: &mut Vector,
+    count: usize,
+    params: &mut CastParameters,
+    write: impl Fn(I, &mut Vec<u8>) -> RowResult<()>,
+) -> Result<bool> {
+    let source = addressable(source, count);
+    let values = source.values::<I>();
+    cast_rows_to_string(&source, result, count, params, |slot, out| {
+        write(values[slot], out)
     })
 }
 

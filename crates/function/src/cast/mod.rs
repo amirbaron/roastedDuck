@@ -21,6 +21,7 @@ mod split;
 mod string;
 mod string_nested;
 mod structs;
+mod temporal;
 mod value;
 
 use std::fmt;
@@ -341,6 +342,16 @@ impl CastFunctionSet {
             L::Decimal => decimal::cast_switch(source, target),
             L::Varchar => string::cast_switch(self, source, target)?,
             L::Blob | L::Bit | L::Uuid => binary::cast_switch(source, target),
+            L::Date
+            | L::Time
+            | L::TimeNs
+            | L::TimeTz
+            | L::Timestamp
+            | L::TimestampTz
+            | L::TimestampNs
+            | L::TimestampMs
+            | L::TimestampSec
+            | L::Interval => temporal::cast_switch(source, target),
             L::Enum => enums::cast_switch(self, source, target)?,
             L::List | L::Array | L::Map => nested::cast_switch(self, source, target)?,
             L::Struct | L::Union => structs::cast_switch(self, source, target)?,
