@@ -1,0 +1,27 @@
+[package]
+name = "slt"
+description = "DuckDB-dialect sqllogictest runner driving rustdb and the C++ DuckDB oracle."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "slt"
+path = "src/main.rs"
+
+[dependencies]
+rustdb.workspace = true
+clap = { version = "4", features = ["derive", "env"] }
+flate2 = "1"
+libc = "0.2"
+libloading = "0.8"
+md-5 = "0.10"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+
+[lints]
+workspace = true
