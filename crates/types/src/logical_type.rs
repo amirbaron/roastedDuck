@@ -2,6 +2,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::PhysicalType;
+use crate::identifier::{sql_identifier, write_quoted};
 
 /// SQL type identifiers, numbered exactly like DuckDB's `LogicalTypeId`.
 ///
@@ -84,6 +85,10 @@ pub enum TypeInfo {
     IntegerLiteral {
         value: i128,
     },
+    /// ENUM: the dictionary, in declaration order (the stored value is the index).
+    Enum {
+        values: Vec<String>,
+    },
 }
 
 /// A SQL type: an id plus optional parameters, cheap to clone.
@@ -117,6 +122,21 @@ impl LogicalType {
     pub const STRING_LITERAL: Self = Self::simple(LogicalTypeId::StringLiteral);
     pub const UNKNOWN: Self = Self::simple(LogicalTypeId::Unknown);
     pub const INVALID: Self = Self::simple(LogicalTypeId::Invalid);
+    pub const ANY: Self = Self::simple(LogicalTypeId::Any);
+    pub const CHAR: Self = Self::simple(LogicalTypeId::Char);
+    pub const TIME_NS: Self = Self::simple(LogicalTypeId::TimeNs);
+    pub const TIME_TZ: Self = Self::simple(LogicalTypeId::TimeTz);
+    pub const TIMESTAMP_S: Self = Self::simple(LogicalTypeId::TimestampSec);
+    pub const TIMESTAMP_MS: Self = Self::simple(LogicalTypeId::TimestampMs);
+    pub const TIMESTAMP_NS: Self = Self::simple(LogicalTypeId::TimestampNs);
+    pub const TIMESTAMP_TZ: Self = Self::simple(LogicalTypeId::TimestampTz);
+    pub const UUID: Self = Self::simple(LogicalTypeId::Uuid);
+    pub const BIT: Self = Self::simple(LogicalTypeId::Bit);
+    pub const BIGNUM: Self = Self::simple(LogicalTypeId::Bignum);
+    pub const POINTER: Self = Self::simple(LogicalTypeId::Pointer);
+
+    /// DuckDB's maximum DECIMAL width.
+    pub const MAX_DECIMAL_WIDTH: u8 = 38;
 
     /// A type without parameters.
     pub const fn simple(id: LogicalTypeId) -> Self {
@@ -133,6 +153,36 @@ impl LogicalType {
 
     pub fn integer_literal(value: i128) -> Self {
         Self::with_info(LogicalTypeId::IntegerLiteral, TypeInfo::IntegerLiteral { value })
+    }
+
+    /// `STRUCT(name type, ...)`; unnamed structs have empty names.
+    pub fn struct_type(children: Vec<(String, LogicalType)>) -> Self {
+        Self::with_info(LogicalTypeId::Struct, TypeInfo::Struct { children })
+    }
+
+    /// `child[size]`; a size of 0 means "any size" (`child[ANY]`).
+    pub fn array(child: LogicalType, size: u32) -> Self {
+        Self::with_info(LogicalTypeId::Array, TypeInfo::Array { child, size })
+    }
+
+    /// `MAP(key, value)`, stored like DuckDB as `LIST(STRUCT(key, value))`.
+    pub fn map(key: LogicalType, value: LogicalType) -> Self {
+        let entry = Self::struct_type(vec![("key".to_owned(), key), ("value".to_owned(), value)]);
+        Self::with_info(LogicalTypeId::Map, TypeInfo::List { child: entry })
+    }
+
+    /// `UNION(name type, ...)`, stored like DuckDB as a STRUCT whose first child is the
+    /// `UTINYINT` tag.
+    pub fn union_type(members: Vec<(String, LogicalType)>) -> Self {
+        let mut children = Vec::with_capacity(members.len() + 1);
+        children.push((String::new(), Self::UTINYINT));
+        children.extend(members);
+        Self::with_info(LogicalTypeId::Union, TypeInfo::Struct { children })
+    }
+
+    /// `ENUM('a', 'b', ...)`.
+    pub fn enum_type(values: Vec<String>) -> Self {
+        Self::with_info(LogicalTypeId::Enum, TypeInfo::Enum { values })
     }
 
     pub fn with_info(id: LogicalTypeId, info: TypeInfo) -> Self {
@@ -155,6 +205,135 @@ impl LogicalType {
         match self.info() {
             Some(TypeInfo::Decimal { width, scale }) => Some((*width, *scale)),
             _ => None,
+        }
+    }
+
+    /// `(width, scale)` of the DECIMAL that holds every value of a numeric type
+    /// (DuckDB's `GetDecimalProperties`).
+    pub fn numeric_decimal_properties(&self) -> Option<(u8, u8)> {
+        use LogicalTypeId as L;
+        let width = match self.id {
+            L::Boolean => 1,
+            L::TinyInt | L::UTinyInt => 3,
+            L::SmallInt | L::USmallInt => 5,
+            L::Integer | L::UInteger => 10,
+            L::BigInt => 19,
+            L::UBigInt => 20,
+            L::HugeInt | L::UHugeInt => 38,
+            L::Decimal => return self.decimal_properties(),
+            L::IntegerLiteral => return self.integer_literal_type()?.numeric_decimal_properties(),
+            _ => return None,
+        };
+        Some((width, 0))
+    }
+
+    /// The element type of a LIST (or the `STRUCT(key, value)` entry type of a MAP).
+    pub fn list_child(&self) -> Option<&LogicalType> {
+        match self.info() {
+            Some(TypeInfo::List { child }) => Some(child),
+            _ => None,
+        }
+    }
+
+    /// `(element type, size)` of an ARRAY; a size of 0 means "any size".
+    pub fn array_child(&self) -> Option<(&LogicalType, u32)> {
+        match self.info() {
+            Some(TypeInfo::Array { child, size }) => Some((child, *size)),
+            _ => None,
+        }
+    }
+
+    /// The fields of a STRUCT, or of a UNION including its leading tag field.
+    pub fn struct_children(&self) -> Option<&[(String, LogicalType)]> {
+        match self.info() {
+            Some(TypeInfo::Struct { children }) => Some(children),
+            _ => None,
+        }
+    }
+
+    /// Whether this is a STRUCT whose fields have no names (`ROW(1, 2)`).
+    pub fn is_unnamed_struct(&self) -> bool {
+        self.struct_children()
+            .and_then(<[_]>::first)
+            .is_some_and(|(name, _)| name.is_empty())
+    }
+
+    /// The members of a UNION (without the tag field).
+    pub fn union_members(&self) -> Option<&[(String, LogicalType)]> {
+        match (self.id, self.info()) {
+            (LogicalTypeId::Union, Some(TypeInfo::Struct { children })) => children.get(1..),
+            _ => None,
+        }
+    }
+
+    /// `(key type, value type)` of a MAP.
+    pub fn map_key_value(&self) -> Option<(&LogicalType, &LogicalType)> {
+        if self.id != LogicalTypeId::Map {
+            return None;
+        }
+        match self.list_child()?.struct_children()? {
+            [(_, key), (_, value)] => Some((key, value)),
+            _ => None,
+        }
+    }
+
+    /// The dictionary of an ENUM type.
+    pub fn enum_values(&self) -> Option<&[String]> {
+        match self.info() {
+            Some(TypeInfo::Enum { values }) => Some(values),
+            _ => None,
+        }
+    }
+
+    /// The value of an `INTEGER_LITERAL` type.
+    pub fn integer_literal_value(&self) -> Option<i128> {
+        match self.info() {
+            Some(TypeInfo::IntegerLiteral { value }) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// The type an `INTEGER_LITERAL` has when used as-is (DuckDB's `IntegerLiteral::GetType`):
+    /// the narrowest of INTEGER, BIGINT and HUGEINT holding the literal.
+    pub fn integer_literal_type(&self) -> Option<LogicalType> {
+        let value = self.integer_literal_value()?;
+        Some(if i32::try_from(value).is_ok() {
+            Self::INTEGER
+        } else if i64::try_from(value).is_ok() {
+            Self::BIGINT
+        } else {
+            Self::HUGEINT
+        })
+    }
+
+    /// Whether the type has child types (STRUCT, LIST, MAP, ARRAY, UNION, VARIANT).
+    pub fn is_nested(&self) -> bool {
+        use LogicalTypeId as L;
+        matches!(
+            self.id,
+            L::Struct | L::List | L::Map | L::Array | L::Union | L::Variant
+        )
+    }
+
+    /// Whether the type is fully specified (DuckDB's `LogicalTypeIsValid`): no `ANY`,
+    /// `UNKNOWN` or `INVALID` anywhere, and parameterised types carry their parameters.
+    pub fn is_valid(&self) -> bool {
+        use LogicalTypeId as L;
+        if matches!(
+            self.id,
+            L::Struct | L::Union | L::Variant | L::List | L::Map | L::Array | L::Decimal
+        ) && self.info.is_none()
+        {
+            return false;
+        }
+        match self.id {
+            L::Any | L::Invalid | L::Unknown => false,
+            L::Struct | L::Union => self
+                .struct_children()
+                .is_none_or(|children| children.iter().all(|(_, ty)| ty.is_valid())),
+            L::List | L::Map => self.list_child().is_none_or(Self::is_valid),
+            L::Array => self.array_child().is_none_or(|(child, _)| child.is_valid()),
+            _ => true,
         }
     }
 
@@ -198,14 +377,18 @@ impl LogicalType {
             L::List | L::Map => PhysicalType::List,
             L::Array => PhysicalType::Array,
             L::Validity => PhysicalType::Bit,
-            // ENUM's physical type depends on its dictionary size, which is not modelled yet.
+            // DuckDB's `EnumTypeInfo::DictType`.
+            L::Enum => match self.enum_values().map_or(0, <[_]>::len) {
+                n if u8::try_from(n).is_ok() => PhysicalType::UInt8,
+                n if u16::try_from(n).is_ok() => PhysicalType::UInt16,
+                _ => PhysicalType::UInt32,
+            },
             L::Table
             | L::Lambda
             | L::Any
             | L::Invalid
             | L::Unknown
             | L::StringLiteral
-            | L::Enum
             | L::IntegerLiteral
             | L::AggregateState
             | L::Unbound
@@ -261,17 +444,44 @@ impl fmt::Display for LogicalType {
     /// DuckDB's `LogicalType::ToString`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use LogicalTypeId as L;
+        let write_fields = |f: &mut fmt::Formatter<'_>, fields: &[(String, LogicalType)], named: bool| {
+            for (i, (name, ty)) in fields.iter().enumerate() {
+                if i > 0 {
+                    f.write_str(", ")?;
+                }
+                if named {
+                    write!(f, "{} ", sql_identifier(name))?;
+                }
+                write!(f, "{ty}")?;
+            }
+            f.write_str(")")
+        };
         match (self.id, self.info()) {
-            (L::Decimal, Some(TypeInfo::Decimal { width, scale })) => write!(f, "DECIMAL({width},{scale})"),
+            (L::Decimal, Some(TypeInfo::Decimal { width, scale })) if *width > 0 => {
+                write!(f, "DECIMAL({width},{scale})")
+            }
             (L::List, Some(TypeInfo::List { child })) => write!(f, "{child}[]"),
+            (L::Map, Some(_)) => match self.map_key_value() {
+                Some((key, value)) => write!(f, "MAP({key}, {value})"),
+                None => f.write_str("MAP"),
+            },
+            (L::Array, Some(TypeInfo::Array { child, size: 0 })) => write!(f, "{child}[ANY]"),
             (L::Array, Some(TypeInfo::Array { child, size })) => write!(f, "{child}[{size}]"),
             (L::Struct, Some(TypeInfo::Struct { children })) => {
                 f.write_str("STRUCT(")?;
-                for (i, (name, ty)) in children.iter().enumerate() {
+                write_fields(f, children, !self.is_unnamed_struct())
+            }
+            (L::Union, Some(TypeInfo::Struct { children })) => {
+                f.write_str("UNION(")?;
+                write_fields(f, children.get(1..).unwrap_or_default(), true)
+            }
+            (L::Enum, Some(TypeInfo::Enum { values })) => {
+                f.write_str("ENUM(")?;
+                for (i, value) in values.iter().enumerate() {
                     if i > 0 {
                         f.write_str(", ")?;
                     }
-                    write!(f, "{name} {ty}")?;
+                    f.write_str(&write_quoted(value, '\''))?;
                 }
                 f.write_str(")")
             }

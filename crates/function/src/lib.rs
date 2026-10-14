@@ -3,6 +3,7 @@
 //! A function couples a signature with a vectorised kernel. The binder picks an overload
 //! from a [`ScalarFunctionSet`]; the executor calls the kernel once per chunk.
 
+pub mod cast;
 mod scalar;
 
 pub use scalar::{
