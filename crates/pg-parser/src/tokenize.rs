@@ -1,5 +1,5 @@
 //! Coarse token classification for syntax highlighting and statement splitting
-//! (DuckDB's `Parser::Tokenize` / libpg_query's `tokenize`).
+//! (DuckDB's `Parser::Tokenize` / `libpg_query`'s `tokenize`).
 
 use crate::scanner::{ScanOptions, Scanner};
 use crate::tables::token;

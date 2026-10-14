@@ -6,8 +6,8 @@ use crate::error::internal;
 use crate::nodes::{
     Alias, ConstrType, CteMaterialize, DropBehavior, IgnoreNulls, InsertColumnOrder, JoinType, List,
     LoadInstallType, LockClauseStrength, LockWaitPolicy, MergeAction, Node, NodeStruct, ObjectType,
-    OnCommitAction, OnConflictActionAlias, OnCreateConflict, OverridingKind, RelPersistence, SortByDir,
-    SortByNulls, SubLinkType, TransactionStmtType, Value, ViewCheckOption, drop_tree,
+    OnCommitAction, OnConflictActionAlias, OverridingKind, RelPersistence, SortByDir, SortByNulls,
+    SubLinkType, TransactionStmtType, Value, ViewCheckOption, drop_tree,
 };
 use crate::scanner::Scanner;
 
@@ -99,8 +99,6 @@ semantic_value! {
     DropBehavior(DropBehavior) => drop_behavior,
     /// `oncommit`.
     OnCommitAction(OnCommitAction) => on_commit_action,
-    /// `oncreateconflict`.
-    OnCreateConflict(OnCreateConflict) => on_create_conflict,
     /// `objtype`.
     ObjectType(ObjectType) => object_type,
     /// `ctematerialize`.
@@ -307,17 +305,5 @@ impl<'s, 'a> Reduction<'s, 'a> {
     /// `ereport(ERROR, errmsg(...), parser_errposition(location))`.
     pub(crate) fn error_at(&self, message: impl Into<String>, location: i32) -> Error {
         self.scanner.error_at(message.into(), location)
-    }
-
-    /// `ereport(ERROR, errmsg(...))` without a position.
-    pub(crate) fn error(&self, message: impl Into<String>) -> Error {
-        self.scanner.error_at(message.into(), -1)
-    }
-
-    /// The error libpg_query raises when an action calls one of the C helpers it
-    /// leaves unimplemented (`errhint`, `exprLocation`, ...): the message is
-    /// `"<name> NOT IMPLEMENTED"` and carries no position.
-    pub(crate) fn unimplemented(&self, function: &str) -> Error {
-        crate::error::unimplemented(function)
     }
 }

@@ -1,5 +1,5 @@
 //! Node constructors and checks used by the semantic actions: the Rust form of
-//! libpg_query's `makefuncs.cpp` and of the helper functions at the end of
+//! `libpg_query`'s `makefuncs.cpp` and of the helper functions at the end of
 //! `gram.y` (`makeColumnRef`, `doNegate`, `insertSelectOptions`, ...).
 
 use rustdb_common::{Error, Result};
@@ -87,8 +87,8 @@ pub(crate) fn str_val(node: &Node) -> Result<String> {
 }
 
 /// `printf("%s", s)` of a possibly-NULL C string.
-pub(crate) fn c_str(s: &Option<String>) -> &str {
-    s.as_deref().unwrap_or("(null)")
+pub(crate) fn c_str(s: Option<&str>) -> &str {
+    s.unwrap_or("(null)")
 }
 
 // ---------------------------------------------------------------------------------------
@@ -214,7 +214,7 @@ pub(crate) fn make_grouping_set(kind: GroupingSetKind, content: List, location: 
 }
 
 // ---------------------------------------------------------------------------------------
-// gram.y helpers
+// `gram.y` helpers
 // ---------------------------------------------------------------------------------------
 
 /// `makeRawStmt`.
@@ -243,8 +243,7 @@ pub(crate) fn make_column_ref(
     scanner: &Scanner<'_>,
 ) -> Result<Node> {
     let colname = Node::string(colname);
-    let mut nfields = 0;
-    for (i, item) in indirection.iter().enumerate() {
+    for (nfields, item) in indirection.iter().enumerate() {
         match item {
             Node::AIndices(_) => {
                 let mut indirection = indirection;
@@ -262,12 +261,11 @@ pub(crate) fn make_column_ref(
                 }
                 .into());
             }
-            Node::AStar(_) if i + 1 < indirection.len() => {
+            Node::AStar(_) if nfields + 1 < indirection.len() => {
                 return Err(scanner.syntax_error("improper use of \"*\""));
             }
             _ => {}
         }
-        nfields += 1;
     }
     Ok(ColumnRef {
         fields: prepend(colname, indirection),
@@ -324,8 +322,8 @@ pub(crate) enum IntervalValue {
 /// `makeIntervalNode`.
 pub(crate) fn make_interval_node(value: IntervalValue, location: i32, typmods: List) -> Node {
     let mut node = IntervalConstant {
-        location,
         typmods,
+        location,
         ..IntervalConstant::default()
     };
     match value {
@@ -662,7 +660,7 @@ pub(crate) fn split_col_qual_list(
                 }
                 collate = Some(clause);
             }
-            // elog() is unimplemented in libpg_query
+            // elog() is unimplemented in `libpg_query`
             _ => return Err(unimplemented("elog")),
         }
     }
@@ -692,7 +690,7 @@ pub(crate) fn process_cas_bits(
         mut deferrable,
         mut initdeferred,
         mut not_valid,
-        mut no_inherit,
+        no_inherit,
     } = targets;
     for flag in [&mut deferrable, &mut initdeferred, &mut not_valid] {
         if let Some(flag) = flag.as_deref_mut() {

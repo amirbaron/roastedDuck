@@ -28,19 +28,9 @@ pub(super) fn copy_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
             if n.is_program && n.filename.is_none() {
                 return Err(rhs.error_at("STDIN/STDOUT not allowed with PROGRAM", rhs.loc(8)));
             }
-            n.options = List::new();
-            if opt_binary.is_some() {
-                n.options = append(n.options, Node::from(required(opt_binary)?));
-            }
-            if opt_oids.is_some() {
-                n.options = append(n.options, Node::from(required(opt_oids)?));
-            }
-            if copy_delimiter.is_some() {
-                n.options = append(n.options, Node::from(required(copy_delimiter)?));
-            }
-            if !copy_options.is_empty() {
-                n.options = concat(n.options, copy_options);
-            }
+            // concatenate user-supplied flags
+            let flags = [opt_binary, opt_oids, copy_delimiter].into_iter().flatten();
+            n.options = flags.map(Node::from).chain(copy_options).collect();
             Ok(SemValue::node(n))
         }
         // COPY '(' SelectStmt ')' TO opt_program copy_file_name opt_with copy_options
@@ -115,7 +105,7 @@ pub(super) fn copy_delimiter<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
         // opt_using DELIMITERS Sconst
         0 => Ok(SemValue::node(make_def_elem(
             "delimiter",
-            Some(Node::Value(Value::String(required(rhs.str(3)?)?))),
+            Some(Node::string(rhs.string(3)?)),
             rhs.loc(2),
         ))),
         // /* empty */
@@ -222,13 +212,13 @@ pub(super) fn copy_opt_item<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
         // DELIMITER opt_as Sconst
         3 => Ok(SemValue::node(make_def_elem(
             "delimiter",
-            Some(make_string_const(required(rhs.str(3)?)?, rhs.loc(3))),
+            Some(make_string_const(rhs.string(3)?, rhs.loc(3))),
             rhs.loc(1),
         ))),
         // NULL_P opt_as Sconst
         4 => Ok(SemValue::node(make_def_elem(
             "null",
-            Some(make_string_const(required(rhs.str(3)?)?, rhs.loc(3))),
+            Some(make_string_const(rhs.string(3)?, rhs.loc(3))),
             rhs.loc(1),
         ))),
         // CSV
@@ -242,13 +232,13 @@ pub(super) fn copy_opt_item<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
         // QUOTE opt_as Sconst
         7 => Ok(SemValue::node(make_def_elem(
             "quote",
-            Some(make_string_const(required(rhs.str(3)?)?, rhs.loc(3))),
+            Some(make_string_const(rhs.string(3)?, rhs.loc(3))),
             rhs.loc(1),
         ))),
         // ESCAPE opt_as Sconst
         8 => Ok(SemValue::node(make_def_elem(
             "escape",
-            Some(make_string_const(required(rhs.str(3)?)?, rhs.loc(3))),
+            Some(make_string_const(rhs.string(3)?, rhs.loc(3))),
             rhs.loc(1),
         ))),
         // FORCE QUOTE columnList
@@ -290,7 +280,7 @@ pub(super) fn copy_opt_item<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
         // ENCODING Sconst
         15 => Ok(SemValue::node(make_def_elem(
             "encoding",
-            Some(make_string_const(required(rhs.str(2)?)?, rhs.loc(2))),
+            Some(make_string_const(rhs.string(2)?, rhs.loc(2))),
             rhs.loc(1),
         ))),
         _ => Err(rhs.bad_alternative()),
@@ -311,17 +301,18 @@ pub(super) fn copy_file_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
     match alt {
         // Sconst
         // IDENT
-        0 | 4 => Ok(SemValue::node(make_string_const(
-            required(rhs.str(1)?)?,
-            rhs.loc(1),
-        ))),
+        0 | 4 => Ok(SemValue::node(make_string_const(rhs.string(1)?, rhs.loc(1)))),
         // STDIN
         1 => Ok(SemValue::node(make_string_const("/dev/stdin", rhs.loc(1)))),
         // STDOUT
         2 => Ok(SemValue::node(make_string_const("/dev/stdout", rhs.loc(1)))),
         // IDENT '.' ColId
         3 => Ok(SemValue::node(make_string_const(
-            format!("{}.{}", c_str(&rhs.str(1)?), c_str(&rhs.str(3)?)),
+            format!(
+                "{}.{}",
+                c_str(rhs.str(1)?.as_deref()),
+                c_str(rhs.str(3)?.as_deref())
+            ),
             rhs.loc(1),
         ))),
         _ => Err(rhs.bad_alternative()),

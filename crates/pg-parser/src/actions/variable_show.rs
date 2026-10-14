@@ -103,8 +103,8 @@ pub(super) fn var_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<Se
         // var_name '.' ColId
         1 => Ok(SemValue::Str(Some(format!(
             "{}.{}",
-            c_str(&rhs.str(1)?),
-            c_str(&rhs.str(3)?)
+            c_str(rhs.str(1)?.as_deref()),
+            c_str(rhs.str(3)?.as_deref())
         )))),
         _ => Err(rhs.bad_alternative()),
     }

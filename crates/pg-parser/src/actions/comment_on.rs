@@ -41,10 +41,7 @@ pub(super) fn comment_on_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
 pub(super) fn comment_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // Sconst
-        0 => Ok(SemValue::node(make_string_const(
-            required(rhs.str(1)?)?,
-            rhs.loc(1),
-        ))),
+        0 => Ok(SemValue::node(make_string_const(rhs.string(1)?, rhs.loc(1)))),
         // NULL_P
         1 => Ok(SemValue::node(make_null_a_const(rhs.loc(1)))),
         _ => Err(rhs.bad_alternative()),

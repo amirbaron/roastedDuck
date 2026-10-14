@@ -2,7 +2,7 @@
 //! `xui`/`xuiend` states of `scan.l`.
 //!
 //! DuckDB runs the scanner with `standard_conforming_strings` on, so `'...'` takes no
-//! backslash escapes. Several escape paths end in libpg_query helpers that DuckDB
+//! backslash escapes. Several escape paths end in `libpg_query` helpers that DuckDB
 //! stubs out (`unicode_to_utf8`, `pg_verifymbstr`); those raise the same
 //! `"... NOT IMPLEMENTED"` errors here.
 
@@ -108,19 +108,18 @@ impl<'a> Scanner<'a> {
                 };
                 return Err(self.yyerror(message, start, self.buf.len()));
             }
-            match self.quote_continues(i) {
-                Some(next) => i = next,
-                None => {
-                    self.pos = i + 1;
-                    let text = self.take_literal()?;
-                    let code = if marker == b'b' {
-                        token::BCONST
-                    } else {
-                        token::XCONST
-                    };
-                    return Ok(self.token(code, SemValue::Str(Some(text)), start));
-                }
+            if let Some(next) = self.quote_continues(i) {
+                i = next;
+                continue;
             }
+            self.pos = i + 1;
+            let text = self.take_literal()?;
+            let code = if marker == b'b' {
+                token::BCONST
+            } else {
+                token::XCONST
+            };
+            return Ok(self.token(code, SemValue::Str(Some(text)), start));
         }
     }
 
@@ -165,7 +164,7 @@ impl<'a> Scanner<'a> {
                                 .take_while(|b| b.is_ascii_hexdigit())
                                 .count();
                             if digits < want {
-                                // {xeunicodefail}: errhint() is unimplemented in libpg_query
+                                // {xeunicodefail}: errhint() is unimplemented in `libpg_query`
                                 return Err(unimplemented("errhint"));
                             }
                             return Err(self.unicode_escape(start, i, want));
@@ -430,7 +429,6 @@ impl<'a> Scanner<'a> {
                     if !is_utf16_surrogate_second(code) {
                         return self.yyerror("invalid Unicode surrogate pair", at(i), flex_end);
                     }
-                    pair_first = false;
                 } else if is_utf16_surrogate_second(code) {
                     return self.yyerror("invalid Unicode surrogate pair", start, flex_end);
                 } else if is_utf16_surrogate_first(code) {

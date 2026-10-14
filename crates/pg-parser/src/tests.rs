@@ -241,8 +241,8 @@ fn statement_splitting() {
     let stmts = statements("SELECT 1; SELECT 2;;");
     let spans: Vec<_> = stmts.iter().map(|s| (s.stmt_location, s.stmt_len)).collect();
     assert_eq!(spans, [(0, 8), (9, 9)]);
-    assert!(statements("").is_empty());
-    assert!(statements(" ; -- nothing\n").is_empty());
+    assert_eq!(statements("").len(), 0);
+    assert_eq!(statements(" ; -- nothing\n").len(), 0);
     // a statement without a trailing semicolon runs to the end (length 0)
     assert_eq!(
         statements("SELECT 1; SELECT 2")

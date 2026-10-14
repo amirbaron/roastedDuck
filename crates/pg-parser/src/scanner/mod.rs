@@ -1,4 +1,4 @@
-//! The SQL scanner: a hand-written port of libpg_query's flex scanner (`scan.l`)
+//! The SQL scanner: a hand-written port of `libpg_query`'s flex scanner (`scan.l`)
 //! plus the one-token lookahead filter of `base_yylex` (`parser.cpp`).
 //!
 //! Flex picks the longest match among all rules and breaks ties by rule order; each
@@ -128,11 +128,6 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    /// The scanned text (the query up to its first NUL).
-    pub(crate) fn text(&self) -> &'a str {
-        self.text
-    }
-
     fn peek(&self, offset: usize) -> u8 {
         self.buf.get(self.pos + offset).copied().unwrap_or(0)
     }
@@ -178,7 +173,7 @@ impl<'a> Scanner<'a> {
     }
 
     // ---------------------------------------------------------------------------------
-    // The base_yylex filter
+    // The `base_yylex` filter
     // ---------------------------------------------------------------------------------
 
     /// Returns the next token, replacing `NOT`, `NULLS` and `WITH` by their `_LA`
@@ -248,12 +243,12 @@ impl<'a> Scanner<'a> {
                 b'"' => return self.scan_quoted_identifier(start),
                 b'$' => return self.scan_dollar(start),
                 b'?' if self.peek(1).is_ascii_digit() => return Ok(self.scan_param(start)),
-                b'0'..=b'9' => return self.scan_number(start),
+                b'0'..=b'9' => return Ok(self.scan_number(start)),
                 b'.' => {
                     return Ok(if self.peek(1) == b'.' {
                         self.punct(token::DOT_DOT, start, 2)
                     } else if self.peek(1).is_ascii_digit() {
-                        return self.scan_number(start);
+                        return Ok(self.scan_number(start));
                     } else {
                         self.punct(u16::from(b'.'), start, 1)
                     });
@@ -385,7 +380,7 @@ impl<'a> Scanner<'a> {
     }
 
     /// `{integer}`, `{decimal}`, `{real}` and their `fail` variants.
-    fn scan_number(&mut self, start: usize) -> Result<Token<'a>> {
+    fn scan_number(&mut self, start: usize) -> Token<'a> {
         let int_end = self.integer_end(start);
         let mut end = int_end;
         let mut is_float = false;
@@ -393,7 +388,7 @@ impl<'a> Scanner<'a> {
             if self.at(end + 1) == b'.' && end > start {
                 // {decimalfail}: "1..": the integer, then DOT_DOT.
                 self.pos = end;
-                return Ok(self.integer_token(start));
+                return self.integer_token(start);
             }
             end += 1;
             if self.at(end).is_ascii_digit() {
@@ -419,9 +414,9 @@ impl<'a> Scanner<'a> {
         self.pos = end;
         if is_float {
             let text = self.text[start..end].to_owned();
-            return Ok(self.token(token::FCONST, SemValue::Str(Some(text)), start));
+            return self.token(token::FCONST, SemValue::Str(Some(text)), start);
         }
-        Ok(self.integer_token(start))
+        self.integer_token(start)
     }
 
     /// `process_integer_literal`: an `ICONST`, or an `FCONST` if it overflows `int`.

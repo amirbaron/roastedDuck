@@ -56,12 +56,12 @@ pub(super) fn seq_opt_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
 pub(super) fn numeric_only<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // FCONST
-        0 => Ok(SemValue::node(Value::Float(required(rhs.str(1)?)?))),
+        0 => Ok(SemValue::node(Value::Float(rhs.string(1)?))),
         // '+' FCONST
-        1 => Ok(SemValue::node(Value::Float(required(rhs.str(2)?)?))),
+        1 => Ok(SemValue::node(Value::Float(rhs.string(2)?))),
         // '-' FCONST
         2 => {
-            let mut numeric_only = Value::Float(required(rhs.str(2)?)?);
+            let mut numeric_only = Value::Float(rhs.string(2)?);
             do_negate_float(&mut numeric_only);
             Ok(SemValue::node(numeric_only))
         }

@@ -1,6 +1,6 @@
-//! Error construction matching libpg_query's `ereport` plumbing.
+//! Error construction matching `libpg_query`'s `ereport` plumbing.
 //!
-//! libpg_query formats messages with `vsnprintf` into a `BUFSIZ` buffer and reports
+//! `libpg_query` formats messages with `vsnprintf` into a `BUFSIZ` buffer and reports
 //! positions as 1-based character offsets, which DuckDB turns into a 0-based
 //! `position`. Messages are therefore truncated to `BUFSIZ - 1` bytes, and the
 //! position is the number of characters before the offending byte offset.
@@ -19,7 +19,7 @@ pub(crate) fn parser_error(message: String, text: &[u8], location: Option<usize>
     }
 }
 
-/// The error thrown by libpg_query's stubbed C helpers (`errhint`, `exprLocation`,
+/// The error thrown by `libpg_query`'s stubbed C helpers (`errhint`, `exprLocation`,
 /// `pg_verifymbstr`, ...): `"<name> NOT IMPLEMENTED"`, without a position.
 pub(crate) fn unimplemented(function: &str) -> Error {
     Error::parser(format!("{function} NOT IMPLEMENTED"))
@@ -44,7 +44,7 @@ fn truncate_message(mut message: String) -> String {
 }
 
 /// `pg_mbstrlen_with_len(scanbuf, location)`: the number of UTF-8 characters that
-/// start before byte offset `location`, counted the way libpg_query does (by lead
+/// start before byte offset `location`, counted the way `libpg_query` does (by lead
 /// byte, stopping at a NUL).
 fn char_position(text: &[u8], location: usize) -> usize {
     let mut remaining = location as isize;
@@ -91,6 +91,6 @@ mod tests {
         assert_eq!(truncate_message(long).len(), BUFSIZ - 1);
         let accents = "é".repeat(600);
         let cut = truncate_message(accents);
-        assert!(cut.len() <= BUFSIZ - 1 && cut.is_char_boundary(cut.len()));
+        assert!(cut.len() < BUFSIZ && cut.is_char_boundary(cut.len()));
     }
 }

@@ -108,13 +108,11 @@ pub(super) fn def_arg<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<Sem
     match alt {
         // reserved_keyword
         // NONE
-        1 | 5 => Ok(SemValue::node(Node::Value(Value::String(
-            rhs.keyword(1)?.to_owned(),
-        )))),
+        1 | 5 => Ok(SemValue::node(Node::string(rhs.keyword(1)?))),
         // qual_all_Op
         2 => Ok(SemValue::Node(Node::from_list(rhs.list(1)?))),
         // Sconst
-        4 => Ok(SemValue::node(Node::Value(Value::String(required(rhs.str(1)?)?)))),
+        4 => Ok(SemValue::node(Node::string(rhs.string(1)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -142,7 +140,7 @@ pub(super) fn opt_parenthesized_seq_opt_list<'a>(
 pub(super) fn generic_option_arg<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // Sconst
-        0 => Ok(SemValue::node(Node::Value(Value::String(required(rhs.str(1)?)?)))),
+        0 => Ok(SemValue::node(Node::string(rhs.string(1)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -398,7 +396,7 @@ pub(super) fn generic_option_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
     match alt {
         // generic_option_name generic_option_arg
         0 => Ok(SemValue::node(make_def_elem(
-            required(rhs.str(1)?)?,
+            rhs.string(1)?,
             rhs.node(2)?,
             rhs.loc(1),
         ))),
@@ -797,16 +795,12 @@ pub(super) fn def_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<Se
     match alt {
         // ColLabel '=' def_arg
         0 => Ok(SemValue::node(make_def_elem(
-            required(rhs.str(1)?)?,
+            rhs.string(1)?,
             rhs.node(3)?,
             rhs.loc(1),
         ))),
         // ColLabel
-        1 => Ok(SemValue::node(make_def_elem(
-            required(rhs.str(1)?)?,
-            None,
-            rhs.loc(1),
-        ))),
+        1 => Ok(SemValue::node(make_def_elem(rhs.string(1)?, None, rhs.loc(1)))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -845,7 +839,7 @@ pub(super) fn opt_table_element_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize
 pub(super) fn column_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // ColId
-        0 => Ok(SemValue::node(Node::Value(Value::String(required(rhs.str(1)?)?)))),
+        0 => Ok(SemValue::node(Node::string(rhs.string(1)?))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -892,21 +886,17 @@ pub(super) fn reloption_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
         // ColLabel '=' a_expr
         // Sconst '=' a_expr
         0 | 4 => Ok(SemValue::node(make_def_elem(
-            required(rhs.str(1)?)?,
+            rhs.string(1)?,
             rhs.node(3)?,
             rhs.loc(1),
         ))),
         // ColLabel
         // Sconst
-        1 | 5 => Ok(SemValue::node(make_def_elem(
-            required(rhs.str(1)?)?,
-            None,
-            rhs.loc(1),
-        ))),
+        1 | 5 => Ok(SemValue::node(make_def_elem(rhs.string(1)?, None, rhs.loc(1)))),
         // ColLabel '.' ColLabel '=' def_arg
         2 => Ok(SemValue::node(make_def_elem_extended(
             rhs.str(1)?,
-            required(rhs.str(3)?)?,
+            rhs.string(3)?,
             rhs.node(5)?,
             DefElemAction::Unspec,
             rhs.loc(1),
@@ -914,7 +904,7 @@ pub(super) fn reloption_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
         // ColLabel '.' ColLabel
         3 => Ok(SemValue::node(make_def_elem_extended(
             rhs.str(1)?,
-            required(rhs.str(3)?)?,
+            rhs.string(3)?,
             None,
             DefElemAction::Unspec,
             rhs.loc(1),
@@ -948,20 +938,16 @@ pub(super) fn func_type<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
     match alt {
         // type_function_name attrs '%' TYPE_P
         1 => {
-            let mut func_type = make_type_name_from_name_list(prepend(
-                Node::Value(Value::String(required(rhs.str(1)?)?)),
-                rhs.list(2)?,
-            ));
+            let mut func_type =
+                make_type_name_from_name_list(prepend(Node::string(rhs.string(1)?), rhs.list(2)?));
             func_type.pct_type = true;
             func_type.location = rhs.loc(1);
             Ok(SemValue::node(func_type))
         }
         // SETOF type_function_name attrs '%' TYPE_P
         2 => {
-            let mut func_type = make_type_name_from_name_list(prepend(
-                Node::Value(Value::String(required(rhs.str(2)?)?)),
-                rhs.list(3)?,
-            ));
+            let mut func_type =
+                make_type_name_from_name_list(prepend(Node::string(rhs.string(2)?), rhs.list(3)?));
             func_type.pct_type = true;
             func_type.setof = true;
             func_type.location = rhs.loc(2);

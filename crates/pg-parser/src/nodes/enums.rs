@@ -1,4 +1,4 @@
-//! Enumerations used by parse-tree nodes, mirroring libpg_query's C enums.
+//! Enumerations used by parse-tree nodes, mirroring `libpg_query`'s C enums.
 //!
 //! Discriminants equal the C values, so `as i32` gives the number DuckDB's
 //! transformer sees.

@@ -16,7 +16,8 @@ pub(super) fn merge_into_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
                 source: rhs.node(6)?,
                 ..Default::default()
             };
-            if true && matches!(join_qual, Some(Node::List(_))) {
+            // join_qual is a list for USING (...) and an expression for ON
+            if matches!(join_qual, Some(Node::List(_))) {
                 n.using_clause = into_list(join_qual)?;
             } else {
                 n.join_condition = join_qual;

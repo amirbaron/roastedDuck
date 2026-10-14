@@ -1,6 +1,6 @@
 //! The node structs of the Postgres parse tree.
 //!
-//! Field names follow libpg_query's C structs (`targetList` becomes `target_list`).
+//! Field names follow `libpg_query`'s C structs (`targetList` becomes `target_list`).
 //! Pointers become `Option`, lists become [`List`], C strings become `Option<String>`.
 
 use super::{

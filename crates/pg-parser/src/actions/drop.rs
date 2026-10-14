@@ -39,10 +39,7 @@ pub(super) fn drop_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
         4 => {
             let n = DropStmt {
                 remove_type: rhs.object_type(2)?,
-                objects: vec![Node::List(append(
-                    rhs.list(5)?,
-                    Node::Value(Value::String(required(rhs.str(3)?)?)),
-                ))],
+                objects: vec![Node::List(append(rhs.list(5)?, Node::string(rhs.string(3)?)))],
                 behavior: rhs.drop_behavior(6)?,
                 missing_ok: false,
             };
@@ -52,10 +49,7 @@ pub(super) fn drop_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
         5 => {
             let n = DropStmt {
                 remove_type: rhs.object_type(2)?,
-                objects: vec![Node::List(append(
-                    rhs.list(7)?,
-                    Node::Value(Value::String(required(rhs.str(5)?)?)),
-                ))],
+                objects: vec![Node::List(append(rhs.list(7)?, Node::string(rhs.string(5)?)))],
                 behavior: rhs.drop_behavior(8)?,
                 missing_ok: true,
             };

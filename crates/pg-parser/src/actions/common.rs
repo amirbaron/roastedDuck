@@ -29,7 +29,7 @@ pub(super) fn qualified_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
                 }
                 // "improper qualified name (too many dotted names)" is formatted with the
                 // unimplemented NameListToString()
-                _ => return Err(rhs.unimplemented("NameListToString")),
+                _ => return Err(unimplemented("NameListToString")),
             }
             Ok(SemValue::node(range))
         }
@@ -78,7 +78,7 @@ pub(super) fn indirection<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
 pub(super) fn indirection_el<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // '.' attr_name
-        0 => Ok(SemValue::node(Node::Value(Value::String(required(rhs.str(2)?)?)))),
+        0 => Ok(SemValue::node(Node::string(rhs.string(2)?))),
         // '[' a_expr ']'
         1 => {
             let ai = AIndices {

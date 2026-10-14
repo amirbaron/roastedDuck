@@ -74,7 +74,7 @@ pub(super) fn opt_verbose<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
 pub(super) fn explain_option_arg<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // opt_boolean_or_string
-        0 => Ok(SemValue::node(Node::Value(Value::String(required(rhs.str(1)?)?)))),
+        0 => Ok(SemValue::node(Node::string(rhs.string(1)?))),
         // /* empty */
         2 => Ok(SemValue::Node(None)),
         _ => Err(rhs.bad_alternative()),
@@ -138,7 +138,7 @@ pub(super) fn explain_option_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
     match alt {
         // explain_option_name explain_option_arg
         0 => Ok(SemValue::node(make_def_elem(
-            required(rhs.str(1)?)?,
+            rhs.string(1)?,
             rhs.node(2)?,
             rhs.loc(1),
         ))),

@@ -160,7 +160,7 @@ pub(super) fn alter_identity_column_option<'a>(
                 return Err(rhs.error_at(
                     format!(
                         "sequence option \"{}\" not supported here",
-                        c_str(&seq_opt_elem.defname)
+                        c_str(seq_opt_elem.defname.as_deref())
                     ),
                     rhs.loc(2),
                 ));
@@ -200,12 +200,9 @@ pub(super) fn alter_generic_option_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: us
 pub(super) fn qualify_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // qualify_el
-        0 => Ok(SemValue::List(vec![Node::Str(required(rhs.str(1)?)?)])),
+        0 => Ok(SemValue::List(vec![Node::Str(rhs.string(1)?)])),
         // qualify_list qualify_el
-        1 => Ok(SemValue::List(append(
-            rhs.list(1)?,
-            Node::Str(required(rhs.str(2)?)?),
-        ))),
+        1 => Ok(SemValue::List(append(rhs.list(1)?, Node::Str(rhs.string(2)?)))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -218,10 +215,10 @@ pub(super) fn qualify_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
 pub(super) fn qualified_column<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // ColId
-        0 => Ok(SemValue::List(vec![Node::Str(required(rhs.str(1)?)?)])),
+        0 => Ok(SemValue::List(vec![Node::Str(rhs.string(1)?)])),
         // ColId qualify_list
         1 => Ok(SemValue::List(concat(
-            vec![Node::Str(required(rhs.str(1)?)?)],
+            vec![Node::Str(rhs.string(1)?)],
             rhs.list(2)?,
         ))),
         _ => Err(rhs.bad_alternative()),
@@ -423,7 +420,7 @@ pub(super) fn alter_table_cmd<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
             let n = AlterTableCmd {
                 subtype: AlterTableType::SetStorage,
                 name: rhs.str(3)?,
-                def: Some(Node::Value(Value::String(required(rhs.str(6)?)?))),
+                def: Some(Node::string(rhs.string(6)?)),
                 ..Default::default()
             };
             Ok(SemValue::node(n))
@@ -671,7 +668,7 @@ pub(super) fn alter_generic_option_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: us
         // DROP generic_option_name
         3 => Ok(SemValue::node(make_def_elem_extended(
             None,
-            required(rhs.str(2)?)?,
+            rhs.string(2)?,
             None,
             DefElemAction::Drop,
             rhs.loc(2),

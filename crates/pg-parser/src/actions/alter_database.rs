@@ -14,7 +14,7 @@ pub(super) fn alter_database_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
             let ident = rhs.str(5)?;
             if !ident.as_deref().unwrap_or_default().eq_ignore_ascii_case("alias") {
                 return Err(rhs.error_at(
-                    format!("expected SET ALIAS TO, got SET {} TO", c_str(&ident)),
+                    format!("expected SET ALIAS TO, got SET {} TO", c_str(ident.as_deref())),
                     rhs.loc(5),
                 ));
             }
@@ -31,7 +31,7 @@ pub(super) fn alter_database_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
             let ident = rhs.str(7)?;
             if !ident.as_deref().unwrap_or_default().eq_ignore_ascii_case("alias") {
                 return Err(rhs.error_at(
-                    format!("expected SET ALIAS TO, got SET {} TO", c_str(&ident)),
+                    format!("expected SET ALIAS TO, got SET {} TO", c_str(ident.as_deref())),
                     rhs.loc(7),
                 ));
             }

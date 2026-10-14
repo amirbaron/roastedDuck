@@ -104,15 +104,14 @@ pub(crate) fn parse(scanner: &mut Scanner<'_>) -> Result<List> {
         let step = if pact == YYPACT_NINF {
             None
         } else {
-            let symbol = match &lookahead {
-                Some((symbol, _, _)) => *symbol,
-                None => {
-                    let token = scanner.next_token()?;
-                    let symbol = if token.code == 0 { 0 } else { translate(token.code) };
-                    let location = i32::try_from(token.loc).map_err(|_| internal("query too long"))?;
-                    lookahead = Some((symbol, token.value, location));
-                    symbol
-                }
+            let symbol = if let Some((symbol, _, _)) = &lookahead {
+                *symbol
+            } else {
+                let token = scanner.next_token()?;
+                let symbol = if token.code == 0 { 0 } else { translate(token.code) };
+                let location = i32::try_from(token.loc).map_err(|_| internal("query too long"))?;
+                lookahead = Some((symbol, token.value, location));
+                symbol
             };
             packed(pact, symbol).map(|action| match action {
                 0 => Step::Error,

@@ -72,10 +72,9 @@ pub(super) fn set_rest<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<Se
                 name: Some("timezone".to_owned()),
                 ..Default::default()
             };
-            if zone_value.is_some() {
-                n.args = vec![required(zone_value)?];
-            } else {
-                n.kind = VariableSetKind::Default;
+            match zone_value {
+                Some(zone) => n.args = vec![zone],
+                None => n.kind = VariableSetKind::Default,
             }
             Ok(SemValue::node(n))
         }
@@ -84,7 +83,7 @@ pub(super) fn set_rest<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<Se
             let n = VariableSetStmt {
                 kind: VariableSetKind::Value,
                 name: Some("search_path".to_owned()),
-                args: vec![make_string_const(required(rhs.str(2)?)?, rhs.loc(2))],
+                args: vec![make_string_const(rhs.string(2)?, rhs.loc(2))],
                 ..Default::default()
             };
             Ok(SemValue::node(n))
@@ -129,10 +128,7 @@ pub(super) fn zone_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<
     match alt {
         // Sconst
         // IDENT
-        0 | 1 => Ok(SemValue::node(make_string_const(
-            required(rhs.str(1)?)?,
-            rhs.loc(1),
-        ))),
+        0 | 1 => Ok(SemValue::node(make_string_const(rhs.string(1)?, rhs.loc(1)))),
         // ConstInterval Sconst opt_interval
         2 => {
             let mut type_name = rhs.take::<TypeName>(1)?;
@@ -163,7 +159,7 @@ pub(super) fn zone_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<
                 make_int_const(rhs.int(3)?, rhs.loc(3)),
             ];
             Ok(SemValue::node(make_string_const_cast(
-                required(rhs.str(5)?)?,
+                rhs.string(5)?,
                 rhs.loc(5),
                 Some(t),
             )))

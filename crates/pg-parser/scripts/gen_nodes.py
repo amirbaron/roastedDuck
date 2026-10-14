@@ -127,7 +127,7 @@ def gen_structs(m: M.Model) -> str:
     out = [
         "//! The node structs of the Postgres parse tree.",
         "//!",
-        "//! Field names follow libpg_query's C structs (`targetList` becomes `target_list`).",
+        "//! Field names follow `libpg_query`'s C structs (`targetList` becomes `target_list`).",
         "//! Pointers become `Option`, lists become [`List`], C strings become `Option<String>`.",
         "",
         "use super::{",
@@ -156,7 +156,7 @@ def gen_structs(m: M.Model) -> str:
 
 def gen_enums(m: M.Model) -> str:
     out = [
-        "//! Enumerations used by parse-tree nodes, mirroring libpg_query's C enums.",
+        "//! Enumerations used by parse-tree nodes, mirroring `libpg_query`'s C enums.",
         "//!",
         "//! Discriminants equal the C values, so `as i32` gives the number DuckDB's",
         "//! transformer sees.",

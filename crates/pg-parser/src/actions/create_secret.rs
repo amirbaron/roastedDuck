@@ -105,7 +105,7 @@ pub(super) fn create_secret_generic_opt_elem<'a>(
     match alt {
         // ColLabel create_secret_generic_opt_arg
         0 => Ok(SemValue::node(make_def_elem(
-            required(rhs.str(1)?)?,
+            rhs.string(1)?,
             rhs.node(2)?,
             rhs.loc(1),
         ))),

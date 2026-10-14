@@ -117,7 +117,7 @@ pub(super) fn generic_opt_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
     match alt {
         // ColLabel generic_opt_arg
         0 => Ok(SemValue::node(make_def_elem(
-            required(rhs.str(1)?)?,
+            rhs.string(1)?,
             rhs.node(2)?,
             rhs.loc(1),
         ))),

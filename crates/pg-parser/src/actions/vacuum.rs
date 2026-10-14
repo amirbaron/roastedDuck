@@ -110,17 +110,11 @@ pub(super) fn vacuum_option_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
         3 => Ok(SemValue::Int(vacuum_option::FULL)),
         // IDENT
         4 => {
-            let ident = rhs.str(1)?;
-            let vacuum_option_elem: i32;
-            if ident.as_deref() == Some("disable_page_skipping") {
-                vacuum_option_elem = vacuum_option::DISABLE_PAGE_SKIPPING;
-            } else {
-                return Err(rhs.error_at(
-                    format!("unrecognized VACUUM option \"{}\"", c_str(&ident)),
-                    rhs.loc(1),
-                ));
+            let ident = rhs.string(1)?;
+            if ident != "disable_page_skipping" {
+                return Err(rhs.error_at(format!("unrecognized VACUUM option \"{ident}\""), rhs.loc(1)));
             }
-            Ok(SemValue::Int(vacuum_option_elem))
+            Ok(SemValue::Int(vacuum_option::DISABLE_PAGE_SKIPPING))
         }
         _ => Err(rhs.bad_alternative()),
     }

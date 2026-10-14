@@ -7,14 +7,11 @@ fn unicode_space_len(bytes: &[u8]) -> Option<usize> {
     match *bytes {
         // U+00A0
         [0xC2, 0xA0, ..] => Some(2),
-        // U+2000..U+200B, U+202F
-        [0xE2, 0x80, 0x80..=0x8B | 0xAF, ..] => Some(3),
-        // U+205F, U+2060
-        [0xE2, 0x81, 0x9F | 0xA0, ..] => Some(3),
-        // U+3000
-        [0xE3, 0x80, 0x80, ..] => Some(3),
-        // U+FEFF
-        [0xEF, 0xBB, 0xBF, ..] => Some(3),
+        // U+2000..U+200B, U+202F, U+205F, U+2060, U+3000, U+FEFF
+        [0xE2, 0x80, 0x80..=0x8B | 0xAF, ..]
+        | [0xE2, 0x81, 0x9F | 0xA0, ..]
+        | [0xE3, 0x80, 0x80, ..]
+        | [0xEF, 0xBB, 0xBF, ..] => Some(3),
         _ => None,
     }
 }

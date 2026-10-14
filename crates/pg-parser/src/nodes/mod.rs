@@ -54,7 +54,7 @@ impl Value {
 
 /// Implemented by every node struct: conversion to and from [`Node`].
 pub trait NodeStruct: Sized + Into<Node> {
-    /// The struct name without libpg_query's `PG` prefix.
+    /// The struct name without `libpg_query`'s `PG` prefix.
     const NAME: &'static str;
 
     /// Extracts the struct from a node of the matching variant.

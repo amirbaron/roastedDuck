@@ -94,7 +94,7 @@ pub(super) fn insert_target<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
         // qualified_name AS ColId
         1 => {
             let mut qualified_name = rhs.take::<RangeVar>(1)?;
-            qualified_name.alias = Some(Box::new(make_alias(required(rhs.str(3)?)?, List::new())));
+            qualified_name.alias = Some(Box::new(make_alias(rhs.string(3)?, List::new())));
             Ok(SemValue::node(qualified_name))
         }
         _ => Err(rhs.bad_alternative()),

@@ -113,13 +113,13 @@ pub(super) fn enum_val_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resu
     match alt {
         // Sconst
         0 => Ok(SemValue::List(vec![make_string_const(
-            required(rhs.str(1)?)?,
+            rhs.string(1)?,
             rhs.loc(1),
         )])),
         // enum_val_list ',' Sconst
         1 => Ok(SemValue::List(append(
             rhs.list(1)?,
-            make_string_const(required(rhs.str(3)?)?, rhs.loc(3)),
+            make_string_const(rhs.string(3)?, rhs.loc(3)),
         ))),
         _ => Err(rhs.bad_alternative()),
     }
