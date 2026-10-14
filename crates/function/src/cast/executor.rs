@@ -18,6 +18,8 @@ pub(super) enum RowError {
     Invalid(String),
     /// An error raised even under `TRY_CAST` (DuckDB throws these directly).
     Fatal(Error),
+    /// The row becomes NULL without counting as a failed conversion.
+    Null,
 }
 
 impl From<Error> for RowError {
@@ -67,6 +69,10 @@ pub(super) fn cast_rows<O: NativeType>(
                     Ok(())
                 }
                 RowError::Fatal(error) => Err(error),
+                RowError::Null => {
+                    null_rows.push(row);
+                    Ok(())
+                }
             }
         };
         if validity.is_all_valid() && matches!(sel, Sel::Identity) {
@@ -177,4 +183,61 @@ pub(super) fn try_map_strings_to_string(
     cast_rows_to_string(source, result, count, params, |slot, out| {
         convert(source.string_value(&strings[slot]), out)
     })
+}
+
+/// Builds a flat VARCHAR vector row by row (child vectors of nested casts).
+pub(super) struct StringColumn {
+    heap: StringHeap,
+    values: Vec<StringT>,
+    valid: Vec<bool>,
+}
+
+impl StringColumn {
+    /// A column of `rows` NULLs, to be filled with [`StringColumn::set`].
+    pub(super) fn nulls(rows: usize) -> Self {
+        Self {
+            heap: StringHeap::default(),
+            values: vec![StringT::default(); rows],
+            valid: vec![false; rows],
+        }
+    }
+
+    /// An empty column, to be filled with [`StringColumn::push`].
+    pub(super) fn new() -> Self {
+        Self::nulls(0)
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    /// Appends a value (`None` is NULL).
+    pub(super) fn push(&mut self, value: Option<&[u8]>) {
+        self.values
+            .push(value.map_or_else(StringT::default, |bytes| self.heap.add(bytes)));
+        self.valid.push(value.is_some());
+    }
+
+    /// Overwrites row `row` (`None` is NULL).
+    pub(super) fn set(&mut self, row: usize, value: Option<&[u8]>) {
+        if let (Some(slot), Some(valid)) = (self.values.get_mut(row), self.valid.get_mut(row)) {
+            *slot = value.map_or_else(StringT::default, |bytes| self.heap.add(bytes));
+            *valid = value.is_some();
+        }
+    }
+
+    /// The finished flat VARCHAR vector.
+    pub(super) fn finish(self) -> Vector {
+        let rows = self.values.len();
+        let mut vector = Vector::flat(rustdb_types::LogicalType::VARCHAR, rows);
+        vector.values_mut::<StringT>()[..rows].copy_from_slice(&self.values);
+        if self.valid.iter().any(|valid| !valid) {
+            let mask = vector.validity_mut();
+            for (row, _) in self.valid.iter().enumerate().filter(|(_, valid)| !**valid) {
+                mask.set_invalid(row, rows);
+            }
+        }
+        vector.add_heap(self.heap);
+        vector
+    }
 }

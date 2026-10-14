@@ -445,7 +445,10 @@ mod tests {
             Some(1_000_000_000_000_000_019_884_624_838_656)
         );
         assert_eq!(TryCastTo::<i128>::try_cast_to(-2.5f64), Some(-2));
-        assert_eq!(TryCastTo::<i128>::try_cast_to(1.701_411_834_604_692_3e38_f64), None);
+        assert_eq!(
+            TryCastTo::<i128>::try_cast_to(1.701_411_834_604_692_3e38_f64),
+            None
+        );
         assert_eq!(TryCastTo::<u128>::try_cast_to(-1.0f64), None);
     }
 

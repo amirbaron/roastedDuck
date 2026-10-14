@@ -10,12 +10,17 @@
 //! `CastRules::ImplicitCast` plus registered casts) and binds casts with
 //! [`CastFunctionSet::get_cast_function`].
 
+mod binary;
 mod decimal;
+mod enums;
 mod executor;
+mod nested;
 mod numeric;
 mod parse;
 mod split;
 mod string;
+mod string_nested;
+mod structs;
 mod value;
 
 use std::fmt;
@@ -316,6 +321,9 @@ impl CastFunctionSet {
     /// DuckDB's `DefaultCasts::GetDefaultCastFunction`: dispatch on the source type.
     fn default_cast(&self, source: &LogicalType, target: &LogicalType) -> Result<Option<BoundCastInfo>> {
         use LogicalTypeId as L;
+        if target.id() == L::Union && !matches!(source.id(), L::Union | L::SqlNull | L::Variant) {
+            return structs::to_union(self, source, target).map(Some);
+        }
         Ok(match source.id() {
             L::Boolean
             | L::TinyInt
@@ -332,6 +340,10 @@ impl CastFunctionSet {
             | L::Double => numeric::cast_switch(source, target),
             L::Decimal => decimal::cast_switch(source, target),
             L::Varchar => string::cast_switch(self, source, target)?,
+            L::Blob | L::Bit | L::Uuid => binary::cast_switch(source, target),
+            L::Enum => enums::cast_switch(self, source, target)?,
+            L::List | L::Array | L::Map => nested::cast_switch(self, source, target)?,
+            L::Struct | L::Union => structs::cast_switch(self, source, target)?,
             L::SqlNull => Some(BoundCastInfo::null_source()),
             _ => None,
         })

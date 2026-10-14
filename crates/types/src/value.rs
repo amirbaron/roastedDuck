@@ -495,6 +495,9 @@ impl Value {
             (Payload::F32(v), L::Float) => format::write_f32(*v, out),
             (Payload::F64(v), L::Double) => format::write_f64(*v, out),
             (Payload::Bytes(bytes), L::Varchar | L::Char) => out.extend_from_slice(bytes),
+            (Payload::Bytes(bytes), L::Blob) => crate::blob::write_text(bytes, out),
+            (Payload::Bytes(bytes), L::Bit) => crate::bit::write_text(bytes, out),
+            (Payload::I128(v), L::Uuid) => Uuid(*v).write_to(out),
             (Payload::List(items), L::List | L::Array) => {
                 let quoting = Self::child_quoting(self.list_element_type());
                 let raw_array = self.ty.id() == L::Array;

@@ -46,7 +46,7 @@ fn string_kernel(convert: fn(&[u8], &mut Vec<u8>) -> std::result::Result<(), Str
 
 /// DuckDB's `StringCastSwitch`: casts from VARCHAR.
 pub(super) fn cast_switch(
-    _set: &CastFunctionSet,
+    set: &CastFunctionSet,
     _source: &LogicalType,
     target: &LogicalType,
 ) -> Result<Option<BoundCastInfo>> {
@@ -70,6 +70,8 @@ pub(super) fn cast_switch(
         L::Blob => string_kernel(blob::parse_text),
         L::Bit => string_kernel(bit::parse_text),
         L::Varchar => BoundCastInfo::reinterpret(),
+        L::Enum => return Ok(super::enums::string_to_enum(target)),
+        L::List | L::Array | L::Struct | L::Map => return super::string_nested::cast_switch(set, target),
         _ => return Ok(None),
     }))
 }

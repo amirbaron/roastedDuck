@@ -753,6 +753,20 @@ impl Vector {
         }
     }
 
+    /// A flat vector whose row `i` is logical row `rows[i]` of `self`, or NULL where
+    /// `rows[i]` is `None` (a copying `slice` that can introduce NULLs).
+    #[must_use]
+    pub fn select_rows(&self, rows: &[Option<u32>]) -> Self {
+        let sel = SelectionVector::new(rows.iter().map(|row| row.unwrap_or(0)).collect::<Vec<_>>());
+        let mut selected = self.gather_rows(&sel);
+        if let Repr::Flat(flat) = &mut selected.repr {
+            for (row, _) in rows.iter().enumerate().filter(|(_, row)| row.is_none()) {
+                flat.validity.set_invalid(row, rows.len());
+            }
+        }
+        selected
+    }
+
     /// Like `gather`, but `sel` selects logical rows of any representation.
     fn gather_rows(&self, sel: &SelectionVector) -> Self {
         match &self.repr {
