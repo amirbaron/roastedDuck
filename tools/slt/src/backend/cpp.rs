@@ -109,6 +109,15 @@ impl Api {
     }
 }
 
+/// Like [`borrowed_str`], but a null pointer is `None`.
+///
+/// # Safety
+/// `text` must be null or point to a NUL-terminated string that outlives the call.
+unsafe fn borrowed_optional_str(text: *const c_char) -> Option<String> {
+    // SAFETY: guaranteed by the caller.
+    (!text.is_null()).then(|| unsafe { borrowed_str(text) })
+}
+
 /// Copies a NUL-terminated string owned by a live shim handle.
 ///
 /// # Safety
@@ -148,7 +157,6 @@ macro_rules! handle {
 
 handle!(CppConfig, RawConfig, config_free);
 handle!(CppDatabase, RawDb, db_free);
-handle!(CppResult, RawResult, result_free);
 handle!(CppSession, RawSession, session_free);
 
 /// A connection plus a lock that serializes the casts other threads run in its client context.
@@ -183,19 +191,36 @@ impl std::fmt::Debug for Api {
     }
 }
 
+/// A shim result (freed with `slt_result_free`) with its error message decoded once; DuckDB error
+/// messages may quote invalid UTF-8 from the data, which is replaced like everywhere else.
+#[derive(Debug)]
+pub struct CppResult {
+    raw: NonNull<RawResult>,
+    api: Arc<Api>,
+    error: Option<String>,
+}
+
+impl CppResult {
+    fn new(raw: NonNull<RawResult>, api: Arc<Api>) -> Self {
+        // SAFETY: the error string (if any) is owned by the live result and NUL-terminated.
+        let error = unsafe { borrowed_optional_str((api.result_error)(raw.as_ptr())) };
+        Self { raw, api, error }
+    }
+}
+
+impl Drop for CppResult {
+    fn drop(&mut self) {
+        // SAFETY: `raw` was created by the shim and is freed exactly once, here.
+        unsafe { (self.api.result_free)(self.raw.as_ptr()) };
+    }
+}
+
+// SAFETY: a materialized result is a plain heap object without thread affinity.
+unsafe impl Send for CppResult {}
+
 impl QueryResult for CppResult {
     fn error(&self) -> Option<&str> {
-        // SAFETY: the error string is owned by the live result and NUL-terminated.
-        let error = unsafe { (self.api.result_error)(self.raw.as_ptr()) };
-        if error.is_null() {
-            return None;
-        }
-        // SAFETY: as above; the borrow is tied to `self`.
-        Some(
-            unsafe { CStr::from_ptr(error) }
-                .to_str()
-                .unwrap_or("<invalid UTF-8 error message>"),
-        )
+        self.error.as_deref()
     }
 
     fn column_count(&self) -> usize {
@@ -426,10 +451,7 @@ impl Engine for CppEngine {
         let raw = unsafe { (self.api.query)(connection.raw.as_ptr(), sql.as_ptr().cast(), sql.len()) };
         // The shim reports query errors inside the result; NULL only means it ran out of memory.
         let raw = NonNull::new(raw).unwrap_or_else(|| std::process::abort());
-        CppResult {
-            raw,
-            api: Arc::clone(&self.api),
-        }
+        CppResult::new(raw, Arc::clone(&self.api))
     }
 
     fn render(
@@ -505,10 +527,7 @@ impl Engine for CppEngine {
             }
         };
         let raw = NonNull::new(raw).unwrap_or_else(|| std::process::abort());
-        let result = CppResult {
-            raw,
-            api: Arc::clone(&self.api),
-        };
+        let result = CppResult::new(raw, Arc::clone(&self.api));
         let loaded = match result.error() {
             Some(error) => Err(error.to_owned()),
             None => Ok((result.values(), result.column_count())),

@@ -1,8 +1,9 @@
 //! Pure result-comparison helpers from `test/sqlite/result_helper.cpp`: sorting, hashing, regex
-//! matching and the boolean comparison. The numeric comparison of the Rust backend lives in
-//! [`numeric`].
+//! matching (RE2 semantics, see `re2.rs`) and the boolean comparison. The numeric comparison of
+//! the Rust backend lives in [`numeric`].
 
 pub mod numeric;
+mod re2;
 
 use std::fmt::Write as _;
 
@@ -78,7 +79,7 @@ pub fn is_regex(text: &str) -> bool {
 pub fn matches_regex(actual: &str, pattern: &str) -> bool {
     let want_match = pattern.starts_with("<REGEX>:");
     let body = pattern.replace("<REGEX>:", "").replace("<!REGEX>:", "");
-    let regex = RegexBuilder::new(&format!(r"\A(?:{body})\z"))
+    let regex = RegexBuilder::new(&format!(r"\A(?:{})\z", re2::translate(&body)))
         .dot_matches_new_line(true)
         .size_limit(1 << 26)
         .build();

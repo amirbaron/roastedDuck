@@ -53,7 +53,8 @@ pub fn run_file<E: Engine>(engine: &E, environment: &TestEnvironment, file: &str
 /// Mutable flow information for one pass over a file.
 #[derive(Debug, Default)]
 struct FileState {
-    /// `mode skip` nesting; like DuckDB's unsigned counter, `unskip` below zero wraps around.
+    /// `mode skip` nesting. Like DuckDB's unsigned counter it wraps around: an `unskip` without a
+    /// `skip` skips everything until the next `skip`.
     skip_level: usize,
     test_expr_executed: bool,
     tags_seen: bool,
@@ -469,7 +470,7 @@ impl<'a, E: Engine> Runner<'a, E> {
                     return Err(parser.fail("mode requires one parameter"));
                 }
                 match params[0].as_str() {
-                    "skip" => state.skip_level += 1,
+                    "skip" => state.skip_level = state.skip_level.wrapping_add(1),
                     "unskip" => state.skip_level = state.skip_level.wrapping_sub(1),
                     other => self.execute_command(Command::bare(CommandKind::Mode(other.to_owned())))?,
                 }
@@ -595,7 +596,7 @@ impl<'a, E: Engine> Runner<'a, E> {
             }
             "debug_skip" => {
                 self.modes.result = true;
-                state.skip_level += 1;
+                state.skip_level = state.skip_level.wrapping_add(1);
                 ExpectedResult::DontCare
             }
             _ => return Err(parser.fail("statement argument should be 'ok' or 'error")),
