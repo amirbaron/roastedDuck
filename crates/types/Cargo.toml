@@ -1,0 +1,13 @@
+[package]
+name = "rustdb-types"
+description = "Logical/physical types, values, vectors and data chunks."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rustdb-common.workspace = true
+
+[lints]
+workspace = true
