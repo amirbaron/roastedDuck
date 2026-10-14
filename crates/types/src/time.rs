@@ -1,4 +1,4 @@
-//! TIME, TIME_NS and TIME WITH TIME ZONE values (DuckDB's `dtime_t`, `dtime_ns_t`,
+//! `TIME`, `TIME_NS` and `TIME WITH TIME ZONE` values (DuckDB's `dtime_t`, `dtime_ns_t`,
 //! `dtime_tz_t` and `Time`).
 
 use crate::{NativeType, PhysicalType};
