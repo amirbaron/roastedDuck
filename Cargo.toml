@@ -11,6 +11,7 @@ rust-version = "1.99"
 [workspace.dependencies]
 rustdb-common = { path = "crates/common" }
 rustdb-types = { path = "crates/types" }
+rustdb-serde = { path = "crates/serde" }
 rustdb-parser = { path = "crates/parser" }
 rustdb-planner = { path = "crates/planner" }
 rustdb-execution = { path = "crates/execution" }

@@ -165,6 +165,11 @@ impl Error {
         Self::new(ErrorKind::Internal, message)
     }
 
+    /// DuckDB's `SerializationException`.
+    pub fn serialization(message: impl Into<Cow<'static, str>>) -> Self {
+        Self::new(ErrorKind::Serialization, message)
+    }
+
     /// A feature that the reference engine supports but this port does not (yet).
     pub fn not_implemented(message: impl Into<Cow<'static, str>>) -> Self {
         Self::new(ErrorKind::NotImplemented, message)

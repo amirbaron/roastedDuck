@@ -15,6 +15,13 @@ name = "rustdb-common"
 version = "1.5.6"
 
 [[package]]
+name = "rustdb-serde"
+version = "1.5.6"
+dependencies = [
+ "rustdb-common",
+]
+
+[[package]]
 name = "rustdb-types"
 version = "1.5.6"
 dependencies = [
