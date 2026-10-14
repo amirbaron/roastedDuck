@@ -31,6 +31,17 @@ impl DataChunk {
         self.len == 0
     }
 
+    /// Empties the chunk, keeping its column types.
+    pub fn reset(&mut self) {
+        self.len = 0;
+    }
+
+    /// Replaces all columns at once.
+    pub fn set_columns(&mut self, columns: Vec<Vector>, len: usize) {
+        self.columns = columns;
+        self.len = len;
+    }
+
     pub fn set_len(&mut self, len: usize) {
         self.len = len;
     }

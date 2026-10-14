@@ -211,6 +211,7 @@ impl Vector {
     }
 
     /// A vector whose row `i` is row `sel[i]` of `self`, without copying data.
+    #[must_use]
     pub fn slice(&self, sel: &SelectionVector) -> Self {
         let repr = match &self.repr {
             Repr::Constant(_) => return self.clone(),

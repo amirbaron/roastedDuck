@@ -26,6 +26,33 @@ pub enum PhysicalType {
 }
 
 impl PhysicalType {
+    /// DuckDB's `TypeIdToString`, used in error messages (e.g. overflow errors).
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Bool => "BOOL",
+            Self::UInt8 => "UINT8",
+            Self::Int8 => "INT8",
+            Self::UInt16 => "UINT16",
+            Self::Int16 => "INT16",
+            Self::UInt32 => "UINT32",
+            Self::Int32 => "INT32",
+            Self::UInt64 => "UINT64",
+            Self::Int64 => "INT64",
+            Self::Float => "FLOAT",
+            Self::Double => "DOUBLE",
+            Self::Interval => "INTERVAL",
+            Self::List => "LIST",
+            Self::Struct => "STRUCT",
+            Self::Array => "ARRAY",
+            Self::Varchar => "VARCHAR",
+            Self::UInt128 => "UINT128",
+            Self::Int128 => "INT128",
+            Self::Unknown => "UNKNOWN",
+            Self::Bit => "BIT",
+            Self::Invalid => "INVALID",
+        }
+    }
+
     /// Width in bytes of one value in a flat vector (DuckDB's `GetTypeIdSize`).
     pub const fn size(self) -> usize {
         match self {

@@ -15,6 +15,43 @@ name = "rustdb-common"
 version = "1.5.6"
 
 [[package]]
+name = "rustdb-execution"
+version = "1.5.6"
+dependencies = [
+ "rustdb-common",
+ "rustdb-function",
+ "rustdb-functions",
+ "rustdb-planner",
+ "rustdb-types",
+]
+
+[[package]]
+name = "rustdb-function"
+version = "1.5.6"
+dependencies = [
+ "rustdb-common",
+ "rustdb-types",
+]
+
+[[package]]
+name = "rustdb-functions"
+version = "1.5.6"
+dependencies = [
+ "rustdb-common",
+ "rustdb-function",
+ "rustdb-types",
+]
+
+[[package]]
+name = "rustdb-planner"
+version = "1.5.6"
+dependencies = [
+ "rustdb-common",
+ "rustdb-function",
+ "rustdb-types",
+]
+
+[[package]]
 name = "rustdb-types"
 version = "1.5.6"
 dependencies = [

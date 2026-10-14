@@ -39,6 +39,7 @@ impl SelectionVector {
     }
 
     /// The selection `self ∘ inner`: row `i` maps to `inner[self[i]]`.
+    #[must_use]
     pub fn compose(&self, inner: &SelectionVector) -> Self {
         Self::new(
             self.indices
