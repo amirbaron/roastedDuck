@@ -111,6 +111,9 @@ impl ErrorKind {
 pub struct Error {
     kind: ErrorKind,
     message: Cow<'static, str>,
+    /// Byte offset in the query the error refers to (DuckDB's `position` extra info);
+    /// rendered as `LINE n:` context once the query text is attached.
+    position: Option<u64>,
 }
 
 /// Engine-wide result alias.
@@ -125,7 +128,31 @@ impl Error {
         Self {
             kind,
             message: message.into(),
+            position: None,
         }
+    }
+
+    /// Attaches a query position, unless one is already set.
+    #[must_use]
+    pub fn with_position(mut self, position: Option<u64>) -> Self {
+        if self.position.is_none() {
+            self.position = position;
+        }
+        self
+    }
+
+    pub const fn position(&self) -> Option<u64> {
+        self.position
+    }
+
+    /// Renders the position as `LINE n: ...` context within `query`
+    /// (DuckDB's `ErrorData::AddErrorLocation`).
+    #[must_use]
+    pub fn with_query_context(mut self, query: &str) -> Self {
+        if let Some(position) = self.position.take() {
+            self.message = crate::query_context::format(query, &self.message, position).into();
+        }
+        self
     }
 
     pub const fn kind(&self) -> ErrorKind {

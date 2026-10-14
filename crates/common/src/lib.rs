@@ -7,6 +7,7 @@ pub mod blob;
 pub mod collections;
 mod error;
 mod index;
+mod query_context;
 
 pub use collections::{CaseInsensitiveMap, CaseInsensitiveSet, OrderedMap};
 pub use error::{Error, ErrorKind, Result};
