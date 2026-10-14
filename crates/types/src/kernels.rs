@@ -163,6 +163,54 @@ where
     Ok(())
 }
 
+/// Writes row `i` of `source` (for `i < positions.len()`) into row `positions[i]` of
+/// `target`, a flat vector of the same type (DuckDB's `FillSwitch`).
+pub fn scatter(source: &Vector, target: &mut Vector, positions: &[u32]) -> Result<()> {
+    fn typed<T: NativeType>(source: &Vector, target: &mut Vector, positions: &[u32]) {
+        let src = source.unified::<T>();
+        let mut nulls = Vec::new();
+        let data = target.values_mut::<T>();
+        for (row, &position) in positions.iter().enumerate() {
+            match src.get(row) {
+                Some(value) => data[position as usize] = value,
+                None => nulls.push(position as usize),
+            }
+        }
+        let capacity = data.len();
+        let validity = target.validity_mut();
+        for row in nulls {
+            validity.set_invalid(row, capacity);
+        }
+    }
+    use crate::PhysicalType as P;
+    match source.logical_type().physical_type() {
+        P::Bool => typed::<bool>(source, target, positions),
+        P::Int8 => typed::<i8>(source, target, positions),
+        P::Int16 => typed::<i16>(source, target, positions),
+        P::Int32 => typed::<i32>(source, target, positions),
+        P::Int64 => typed::<i64>(source, target, positions),
+        P::Int128 => typed::<i128>(source, target, positions),
+        P::UInt8 => typed::<u8>(source, target, positions),
+        P::UInt16 => typed::<u16>(source, target, positions),
+        P::UInt32 => typed::<u32>(source, target, positions),
+        P::UInt64 => typed::<u64>(source, target, positions),
+        P::UInt128 => typed::<u128>(source, target, positions),
+        P::Float => typed::<f32>(source, target, positions),
+        P::Double => typed::<f64>(source, target, positions),
+        P::Varchar => {
+            typed::<crate::StringT>(source, target, positions);
+            target.add_heap_references(source);
+        }
+        _ => {
+            // Nested and other types: value-wise copy until specialised paths exist.
+            for (row, &position) in positions.iter().enumerate() {
+                target.set_value(position as usize, &source.get_value(row))?;
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

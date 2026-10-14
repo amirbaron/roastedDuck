@@ -1,4 +1,6 @@
-use rustdb_types::LogicalType;
+use std::sync::Arc;
+
+use rustdb_types::{DataChunk, LogicalType};
 
 use crate::{ColumnBinding, Expression};
 
@@ -12,6 +14,12 @@ pub enum LogicalKind {
     Projection { table_index: u64 },
     /// Keeps rows where all `expressions` are true.
     Filter,
+    /// Scans materialised data (DuckDB's `LogicalColumnDataGet`).
+    ColumnDataGet {
+        table_index: u64,
+        types: Vec<LogicalType>,
+        chunks: Arc<[DataChunk]>,
+    },
 }
 
 /// A node of a logical plan.
@@ -61,6 +69,14 @@ impl LogicalOperator {
                 .first()
                 .map(Self::column_bindings)
                 .unwrap_or_default(),
+            LogicalKind::ColumnDataGet {
+                table_index, types, ..
+            } => (0..types.len())
+                .map(|i| ColumnBinding {
+                    table_index: *table_index,
+                    column_index: i as u64,
+                })
+                .collect(),
         }
     }
 
@@ -70,6 +86,7 @@ impl LogicalOperator {
             LogicalKind::DummyScan { .. } => vec![LogicalType::INTEGER],
             LogicalKind::Projection { .. } => self.expressions.iter().map(Expression::return_type).collect(),
             LogicalKind::Filter => self.children.first().map(|c| c.types.clone()).unwrap_or_default(),
+            LogicalKind::ColumnDataGet { types, .. } => types.clone(),
         };
     }
 }

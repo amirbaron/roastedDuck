@@ -5,6 +5,7 @@
 
 mod buffer;
 mod chunk;
+pub mod compare;
 pub mod kernels;
 mod logical_type;
 mod native;
