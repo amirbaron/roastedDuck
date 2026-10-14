@@ -30,7 +30,7 @@ pub(crate) fn format(query: &str, message: &str, position: u64) -> String {
         return message.to_owned();
     }
     let bytes = query.as_bytes();
-    let mut start_pos = 0;
+    let mut line_start = 0;
     let mut line_number = 1;
     for i in 0..error_location {
         let is_newline = match bytes[i] {
@@ -40,7 +40,7 @@ pub(crate) fn format(query: &str, message: &str, position: u64) -> String {
         };
         if is_newline {
             line_number += 1;
-            start_pos = i + 1;
+            line_start = i + 1;
         }
     }
     let end_pos = bytes[error_location..]
@@ -49,7 +49,7 @@ pub(crate) fn format(query: &str, message: &str, position: u64) -> String {
         .map_or(query.len(), |offset| error_location + offset);
 
     // Grapheme clusters of the line with their byte offsets and render widths.
-    let line = query.get(start_pos..end_pos).unwrap_or_default();
+    let line = query.get(line_start..end_pos).unwrap_or_default();
     let (positions, widths, natural_break): (Vec<usize>, Vec<usize>, Vec<bool>) = {
         let mut positions = Vec::new();
         let mut widths = Vec::new();
@@ -63,10 +63,10 @@ pub(crate) fn format(query: &str, message: &str, position: u64) -> String {
         (positions, widths, breaks)
     };
 
-    let target = error_location - start_pos;
+    let target = error_location - line_start;
     let epos = positions.iter().position(|&p| p >= target).unwrap_or(0);
-    let error_line_start = start_pos;
-    let mut start_pos = start_pos;
+    let error_line_start = line_start;
+    let mut start_pos = line_start;
     let mut end_pos = end_pos;
     let mut truncate_beginning = false;
     let mut truncate_end = false;
