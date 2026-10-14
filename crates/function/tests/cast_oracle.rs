@@ -72,36 +72,7 @@ const ICU_TYPE: &str = "TIMESTAMPTZ";
 /// Known bugs in implemented casts: `(source, target, source literal)`, where a pattern
 /// ending in `*` matches by prefix and a `None` literal is a NULL source. Remove entries
 /// once their cases match DuckDB (a fully matching entry fails the tests).
-const KNOWN_MISMATCHES: &[(&str, &str, Option<&str>)] = &[
-    // FLOAT/DOUBLE: a NaN with the sign bit set renders as '-nan' in DuckDB.
-    ("VARCHAR", "FLOAT", Some("-nan")),
-    ("VARCHAR", "DOUBLE", Some("-nan")),
-    ("BIT", "FLOAT", Some("11111111111111111111111111111111")),
-    (
-        "BIT",
-        "DOUBLE",
-        Some("1111111111111111111111111111111111111111111111111111111111111111"),
-    ),
-    // DOUBLE -> VARCHAR: ties of the 17-digit shortest form round to even in DuckDB
-    // ('-128.60000610351562', exact value -128.600006103515625).
-    ("FLOAT", "DOUBLE", Some("-128.6")),
-    // DOUBLE -> DECIMAL error text: DuckDB's `%f` of huge doubles is not the exact decimal
-    // expansion ('179769313486231570801464840769767761230468750000...').
-    ("DOUBLE", "DECIMAL*", Some("1.7976931348623157e308")),
-    ("DOUBLE", "DECIMAL*", Some("-1.7976931348623157e308")),
-    // VARCHAR -> DECIMAL with a large exponent: wraps (width <= 18) or panics with an
-    // overflow (width 38) instead of failing to convert.
-    ("VARCHAR", "DECIMAL(18,*", Some("9.223372036854776e18")),
-    ("VARCHAR", "DECIMAL(18,*", Some("1.8446744073709552e19")),
-    ("VARCHAR", "DECIMAL(38,*", Some("1.7014118346046923e38")),
-    ("VARCHAR", "DECIMAL(38,*", Some("3.4028235e38")),
-    ("VARCHAR", "DECIMAL(38,*", Some("-3.4028235e38")),
-    ("VARCHAR", "DECIMAL(38,*", Some("3.4028236e38")),
-    ("VARCHAR", "DECIMAL(38,*", Some("3.402823669209385e38")),
-    ("VARCHAR", "DECIMAL(38,*", Some("3.5e38")),
-    ("VARCHAR", "DECIMAL(38,*", Some("1.7976931348623157e308")),
-    ("VARCHAR", "DECIMAL(38,*", Some("-1.7976931348623157e308")),
-];
+const KNOWN_MISMATCHES: &[(&str, &str, Option<&str>)] = &[];
 
 fn category(source: &GridType, target: &GridType) -> Category {
     if PENDING_SOURCES.contains(&source.sql) || PENDING_TARGETS.contains(&target.sql) {

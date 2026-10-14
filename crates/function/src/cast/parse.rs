@@ -532,15 +532,17 @@ pub(super) struct DecimalState {
     excessive_decimals: u8,
     exponent_kind: ExponentKind,
     limit: i128,
+    /// The largest value of the physical storage (INT16 .. INT128).
+    store_max: i128,
 }
 
 impl DecimalState {
     pub(super) fn new(width: u8, scale: u8) -> Self {
-        let max_digits = match width {
-            0..=4 => 4,
-            5..=9 => 9,
-            10..=18 => 18,
-            _ => 38,
+        let (max_digits, store_max) = match width {
+            0..=4 => (4, i128::from(i16::MAX)),
+            5..=9 => (9, i128::from(i32::MAX)),
+            10..=18 => (18, i128::from(i64::MAX)),
+            _ => (38, i128::MAX),
         };
         Self {
             result: 0,
@@ -554,6 +556,7 @@ impl DecimalState {
             excessive_decimals: 0,
             exponent_kind: ExponentKind::None,
             limit: 10i128.pow(u32::from(width)),
+            store_max,
         }
     }
 
@@ -583,6 +586,11 @@ impl NumberState for DecimalState {
             return true;
         }
         if self.digit_count == self.width - self.scale {
+            return false;
+        }
+        // The storage type must not overflow (it can once an exponent appends zeros).
+        let store_min = -self.store_max - 1;
+        if (NEG && self.result < store_min / 10) || (!NEG && self.result > self.store_max / 10) {
             return false;
         }
         self.digit_count += 1;

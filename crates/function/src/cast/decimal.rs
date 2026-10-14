@@ -76,15 +76,11 @@ macro_rules! with_storage {
     };
 }
 
-/// C's `printf("%f")` of a double, as used in DuckDB's decimal error messages.
+/// `printf("%f")` of a double as DuckDB formats it in decimal error messages.
 fn printf_f(value: f64) -> String {
-    if value.is_nan() {
-        return if value.is_sign_negative() { "-nan" } else { "nan" }.to_owned();
-    }
-    if value.is_infinite() {
-        return if value < 0.0 { "-inf" } else { "inf" }.to_owned();
-    }
-    format!("{value:.6}")
+    let mut out = Vec::new();
+    format::write_printf_fixed(value, &mut out);
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn could_not_cast(value: &str, width: u8, scale: u8) -> RowError {

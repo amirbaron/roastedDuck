@@ -9,6 +9,7 @@ mod buffer;
 pub mod cast_rules;
 mod chunk;
 pub mod date;
+mod fmt_float;
 pub mod format;
 pub mod identifier;
 pub mod interval;

@@ -4,7 +4,7 @@
 //!
 //! Every writer appends to a `Vec<u8>` so that kernels can reuse one scratch buffer.
 
-use std::io::Write as _;
+use crate::fmt_float::{DigitBuffer as _, ShortDigits, format_fixed, format_shortest};
 
 /// DuckDB's `StringUtil::CharacterIsSpace`: space, `\t`, `\n`, `\v`, `\f` and `\r`.
 #[inline]
@@ -70,88 +70,63 @@ pub fn write_i128(value: i128, out: &mut Vec<u8>) {
     write_u128(value.unsigned_abs(), out);
 }
 
-/// Appends an `f64` exactly like `duckdb_fmt::format("{}", v)` (fmt 6.1.2): the shortest
-/// round-trip digits in fmt's "general" presentation.
+/// Appends an `f64` exactly like `duckdb_fmt::format("{}", v)` (fmt 6.1.2): fmt's shortest
+/// digits in its "general" presentation (`1.0`, `0.001`, `1e+16`, `-nan`, `inf`).
 pub fn write_f64(value: f64, out: &mut Vec<u8>) {
-    if value.is_nan() {
-        out.extend_from_slice(b"nan");
-    } else if value.is_infinite() {
-        out.extend_from_slice(if value < 0.0 { b"-inf" } else { b"inf" });
-    } else {
-        let mut scientific = [0u8; 32];
-        let len = scientific_into(&mut scientific, format_args!("{value:e}"));
-        prettify_general(&scientific[..len], out);
-    }
+    write_general(value, false, out);
 }
 
 /// Appends an `f32` exactly like `duckdb_fmt::format("{}", v)` (fmt 6.1.2).
 pub fn write_f32(value: f32, out: &mut Vec<u8>) {
-    if value.is_nan() {
-        out.extend_from_slice(b"nan");
-    } else if value.is_infinite() {
-        out.extend_from_slice(if value < 0.0 { b"-inf" } else { b"inf" });
-    } else {
-        let mut scientific = [0u8; 32];
-        let len = scientific_into(&mut scientific, format_args!("{value:e}"));
-        prettify_general(&scientific[..len], out);
-    }
+    write_general(f64::from(value), true, out);
 }
 
-/// Formats into a stack buffer, returning the number of bytes written.
-fn scientific_into(buf: &mut [u8; 32], args: std::fmt::Arguments<'_>) -> usize {
-    let capacity = buf.len();
-    let mut cursor = &mut buf[..];
-    // Rust's shortest `{:e}` output of a finite float is at most 25 bytes.
-    let _ = cursor.write_fmt(args);
-    capacity - cursor.len()
-}
-
-/// Re-renders Rust's shortest round-trip `{:e}` output (`-d.ddde[-]x`) using fmt's
-/// `general` presentation with `trailing_zeros` set, as fmt does for an empty format spec.
-fn prettify_general(scientific: &[u8], out: &mut Vec<u8>) {
-    let (negative, body) = match scientific.split_first() {
-        Some((b'-', rest)) => (true, rest),
-        _ => (false, scientific),
-    };
-    let e_pos = body.iter().position(|&b| b == b'e').unwrap_or(body.len());
-    let (mantissa, exponent) = body.split_at(e_pos);
-    let exponent = parse_exponent(exponent.get(1..).unwrap_or_default());
-    let mut digits = [0u8; 24];
-    let mut num_digits = 0;
-    for &b in mantissa.iter().filter(|b| b.is_ascii_digit()) {
-        digits[num_digits] = b;
-        num_digits += 1;
-    }
-    let digits = &digits[..num_digits];
-    let num_digits = num_digits as i32;
-
-    if negative {
+/// Writes the sign (fmt uses the sign bit, so `-0.0` and negative NaNs keep it) and
+/// returns the magnitude, or `None` after writing `nan`/`inf`.
+fn write_sign(value: f64, out: &mut Vec<u8>) -> Option<f64> {
+    if value.is_sign_negative() {
         out.push(b'-');
     }
-    if !(-4..16).contains(&exponent) {
+    if value.is_nan() {
+        out.extend_from_slice(b"nan");
+        return None;
+    }
+    if value.is_infinite() {
+        out.extend_from_slice(b"inf");
+        return None;
+    }
+    Some(value.abs())
+}
+
+/// fmt's `{}` presentation: shortest digits, fixed notation for decimal exponents in
+/// `[-4, 16)`, otherwise exponent notation; whole numbers keep a `.0`.
+fn write_general(value: f64, binary32: bool, out: &mut Vec<u8>) {
+    let Some(magnitude) = write_sign(value, out) else {
+        return;
+    };
+    let mut digits = ShortDigits::new();
+    let exp = format_shortest(magnitude, binary32, &mut digits);
+    let digits = digits.digits();
+    let num_digits = digits.len() as i32;
+    // The value is `0.d1d2... * 10^full_exp`.
+    let full_exp = num_digits + exp;
+    if !(-4..16).contains(&(full_exp - 1)) {
         out.push(digits[0]);
         if num_digits > 1 {
             out.push(b'.');
             out.extend_from_slice(&digits[1..]);
         }
         out.push(b'e');
-        out.push(if exponent < 0 { b'-' } else { b'+' });
-        let magnitude = exponent.unsigned_abs();
-        if magnitude < 10 {
-            out.push(b'0');
-        }
-        write_u64(u64::from(magnitude), out);
-        return;
-    }
-    let full_exp = exponent + 1;
-    if num_digits <= full_exp {
+        write_exponent(full_exp - 1, out);
+    } else if num_digits <= full_exp {
         out.extend_from_slice(digits);
         out.extend(std::iter::repeat_n(b'0', (full_exp - num_digits) as usize));
         out.extend_from_slice(b".0");
     } else if full_exp > 0 {
-        out.extend_from_slice(&digits[..full_exp as usize]);
+        let (integral, fraction) = digits.split_at(full_exp as usize);
+        out.extend_from_slice(integral);
         out.push(b'.');
-        out.extend_from_slice(&digits[full_exp as usize..]);
+        out.extend_from_slice(fraction);
     } else {
         out.extend_from_slice(b"0.");
         out.extend(std::iter::repeat_n(b'0', (-full_exp) as usize));
@@ -159,15 +134,52 @@ fn prettify_general(scientific: &[u8], out: &mut Vec<u8>) {
     }
 }
 
-fn parse_exponent(text: &[u8]) -> i32 {
-    let (negative, digits) = match text.split_first() {
-        Some((b'-', rest)) => (true, rest),
-        _ => (false, text),
+/// fmt's `write_exponent`: a sign and at least two digits.
+fn write_exponent(exp: i32, out: &mut Vec<u8>) {
+    out.push(if exp < 0 { b'-' } else { b'+' });
+    let magnitude = exp.unsigned_abs();
+    if magnitude < 10 {
+        out.push(b'0');
+    }
+    write_u64(u64::from(magnitude), out);
+}
+
+/// Appends a double like C's `printf("%f")` as implemented by `duckdb_fmt::sprintf`, used in
+/// DuckDB's error messages: six decimals, with Grisu's digits for very large values.
+pub fn write_printf_fixed(value: f64, out: &mut Vec<u8>) {
+    const PRECISION: i32 = 6;
+    let Some(magnitude) = write_sign(value, out) else {
+        return;
     };
-    let magnitude = digits
-        .iter()
-        .fold(0i32, |acc, &d| acc * 10 + i32::from(d.wrapping_sub(b'0')));
-    if negative { -magnitude } else { magnitude }
+    let mut digits = Vec::with_capacity(32);
+    let exp = format_fixed(magnitude, PRECISION, &mut digits);
+    let num_digits = digits.len() as i32;
+    let full_exp = num_digits + exp;
+    if num_digits <= full_exp {
+        out.extend_from_slice(&digits);
+        out.extend(std::iter::repeat_n(b'0', (full_exp - num_digits) as usize));
+        out.push(b'.');
+        out.extend(std::iter::repeat_n(b'0', (PRECISION - full_exp).max(0) as usize));
+    } else if full_exp > 0 {
+        let (integral, fraction) = digits.split_at(full_exp as usize);
+        out.extend_from_slice(integral);
+        out.push(b'.');
+        out.extend_from_slice(fraction);
+        if PRECISION > num_digits {
+            out.extend(std::iter::repeat_n(b'0', (PRECISION - num_digits) as usize));
+        }
+    } else {
+        out.push(b'0');
+        let mut zeros = -full_exp;
+        if num_digits == 0 && PRECISION < zeros {
+            zeros = PRECISION;
+        }
+        if zeros != 0 || num_digits != 0 {
+            out.push(b'.');
+            out.extend(std::iter::repeat_n(b'0', zeros as usize));
+            out.extend_from_slice(&digits);
+        }
+    }
 }
 
 /// Appends an unscaled DECIMAL(`width`, `scale`) value like DuckDB's `DecimalToString`:
