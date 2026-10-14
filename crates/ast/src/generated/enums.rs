@@ -6,8 +6,11 @@ use rustdb_serde::{Deserialize, Deserializer, Result, Serialize, Serializer, rea
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum AggregateHandling {
+    /// standard handling as in the SELECT clause
     StandardHandling = 0,
+    /// no aggregates allowed: any aggregates in this node will result in an error
     NoAggregatesAllowed = 1,
+    /// force aggregates: any non-aggregate select list entry will become a GROUP
     ForceAggregates = 2,
 }
 
@@ -502,8 +505,11 @@ impl Deserialize for AlterViewType {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum CteMaterialize {
+    /// no option specified
     CteMaterializeDefault = 1,
+    /// MATERIALIZED
     CteMaterializeAlways = 2,
+    /// NOT MATERIALIZED
     CteMaterializeNever = 3,
 }
 
@@ -580,6 +586,7 @@ pub enum CatalogType {
     TypeEntry = 8,
     DatabaseEntry = 9,
     CoordinateSystemEntry = 10,
+    /// functions
     TableFunctionEntry = 25,
     ScalarFunctionEntry = 26,
     AggregateFunctionEntry = 27,
@@ -587,11 +594,14 @@ pub enum CatalogType {
     CopyFunctionEntry = 29,
     MacroEntry = 30,
     TableMacroEntry = 31,
+    /// version info
     DeletedEntry = 51,
     RenamedEntry = 52,
+    /// secrets
     SecretEntry = 71,
     SecretTypeEntry = 72,
     SecretFunctionEntry = 73,
+    /// dependency info
     DependencyEntry = 100,
 }
 
@@ -743,6 +753,7 @@ impl Deserialize for CatalogType {
 pub enum CompressionType {
     CompressionAuto = 0,
     CompressionUncompressed = 1,
+    /// internal only
     CompressionConstant = 2,
     CompressionRle = 3,
     CompressionDictionary = 4,
@@ -755,8 +766,10 @@ pub enum CompressionType {
     CompressionAlprd = 11,
     CompressionZstd = 12,
     CompressionRoaring = 13,
+    /// internal only
     CompressionEmpty = 14,
     CompressionDictFsst = 15,
+    /// This has to stay the last entry of the type!
     CompressionCount = 16,
 }
 
@@ -878,10 +891,15 @@ impl Deserialize for CompressionType {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum ConstraintType {
+    /// invalid constraint type
     Invalid = 0,
+    /// NOT NULL constraint
     NotNull = 1,
+    /// CHECK constraint
     Check = 2,
+    /// UNIQUE constraint
     Unique = 3,
+    /// FOREIGN KEY constraint
     ForeignKey = 4,
 }
 
@@ -955,8 +973,11 @@ impl Deserialize for ConstraintType {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum DeprecatedIndexType {
+    /// invalid index type
     Invalid = 0,
+    /// Adaptive Radix Tree
     Art = 1,
+    /// Extension index
     Extension = 100,
 }
 
@@ -1279,22 +1300,37 @@ impl Deserialize for ExpressionClass {
 #[repr(u8)]
 pub enum ExpressionType {
     Invalid = 0,
+    /// explicitly cast left as right (right is integer in `ValueType` enum)
     OperatorCast = 12,
+    /// logical not operator
     OperatorNot = 13,
+    /// is null operator
     OperatorIsNull = 14,
+    /// is not null operator
     OperatorIsNotNull = 15,
+    /// unpack operator
     OperatorUnpack = 16,
+    /// equal operator between left and right
     CompareEqual = 25,
+    /// inequal operator between left and right
     CompareNotequal = 26,
+    /// less than operator between left and right
     CompareLessthan = 27,
+    /// greater than operator between left and right
     CompareGreaterthan = 28,
+    /// less than equal operator between left and right
     CompareLessthanorequalto = 29,
+    /// greater than equal operator between left and right
     CompareGreaterthanorequalto = 30,
+    /// IN operator \[left IN (right1, right2, ...)\]
     CompareIn = 35,
+    /// NOT IN operator \[left NOT IN (right1, right2, ...)\]
     CompareNotIn = 36,
+    /// IS DISTINCT FROM operator
     CompareDistinctFrom = 37,
     CompareBetween = 38,
     CompareNotBetween = 39,
+    /// IS NOT DISTINCT FROM operator
     CompareNotDistinctFrom = 40,
     ConjunctionAnd = 50,
     ConjunctionOr = 51,
@@ -1766,8 +1802,11 @@ impl Deserialize for ExtraDropInfoType {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum ForeignKeyType {
+    /// main table
     FkTypePrimaryKeyTable = 0,
+    /// referencing table
     FkTypeForeignKeyTable = 1,
+    /// self refrencing table
     FkTypeSelfReferenceTable = 2,
 }
 
@@ -1836,9 +1875,13 @@ impl Deserialize for ForeignKeyType {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum IndexConstraintType {
+    /// index is an index don't built to any constraint
     None = 0,
+    /// index is an index built to enforce a UNIQUE constraint
     Unique = 1,
+    /// index is an index built to enforce a PRIMARY KEY constraint
     Primary = 2,
+    /// index is an index built to enforce a FOREIGN KEY constraint
     Foreign = 3,
 }
 
@@ -1906,11 +1949,17 @@ impl Deserialize for IndexConstraintType {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum JoinRefType {
+    /// Explicit conditions
     Regular = 0,
+    /// Implied conditions
     Natural = 1,
+    /// No condition
     Cross = 2,
+    /// Positional condition
     Positional = 3,
+    /// `AsOf` conditions
     Asof = 4,
+    /// Dependent join conditions
     Dependent = 5,
 }
 
@@ -1988,16 +2037,27 @@ impl Deserialize for JoinRefType {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum JoinType {
+    /// invalid join type
     Invalid = 0,
+    /// left
     Left = 1,
+    /// right
     Right = 2,
+    /// inner
     Inner = 3,
+    /// outer
     Outer = 4,
+    /// LEFT SEMI join returns left side row ONLY if it has a join partner, no duplicates.
     Semi = 5,
+    /// LEFT ANTI join returns left side row ONLY if it has NO join partner, no duplicates
     Anti = 6,
+    /// MARK join returns marker indicating whether or not there is a join partner (true), there is no join
     Mark = 7,
+    /// partner (false) SINGLE join is like LEFT OUTER JOIN, BUT returns at most one join partner per entry on the LEFT side
     Single = 8,
+    /// (and NULL if no partner is found) RIGHT SEMI join is created by the optimizer when the children of a semi join need to be switched
     RightSemi = 9,
+    /// so that the build side can be the smaller table RIGHT ANTI join is created by the optimizer when the children of an anti join need to be
     RightAnti = 10,
 }
 
@@ -2287,9 +2347,13 @@ impl Deserialize for MacroType {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum OnCreateConflict {
+    /// Standard: throw error
     ErrorOnConflict = 0,
+    /// CREATE IF NOT EXISTS, silently do nothing on conflict
     IgnoreOnConflict = 1,
+    /// CREATE OR REPLACE
     ReplaceOnConflict = 2,
+    /// Update on conflict - only support for functions. Add a function overload if the function already exists.
     AlterOnConflict = 3,
 }
 
@@ -3215,9 +3279,13 @@ impl Deserialize for ShowType {
 #[repr(u8)]
 pub enum SubqueryType {
     Invalid = 0,
+    /// Regular scalar subquery
     Scalar = 1,
+    /// EXISTS (SELECT...)
     Exists = 2,
+    /// NOT EXISTS(SELECT...)
     NotExists = 3,
+    /// x = ANY(SELECT...) OR x IN (SELECT...)
     Any = 4,
 }
 
@@ -3350,18 +3418,31 @@ impl Deserialize for TableColumnType {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum TableReferenceType {
+    /// invalid table reference type
     Invalid = 0,
+    /// base table reference
     BaseTable = 1,
+    /// output of a subquery
     Subquery = 2,
+    /// output of join
     Join = 3,
+    /// table producing function
     TableFunction = 5,
+    /// expression list
     ExpressionList = 6,
+    /// Recursive CTE
     Cte = 7,
+    /// placeholder for empty FROM
     EmptyFrom = 8,
+    /// pivot statement
     Pivot = 9,
+    /// SHOW statement
     ShowRef = 10,
+    /// column data collection
     ColumnData = 11,
+    /// Delim get ref
     DelimGet = 12,
+    /// Bound table ref
     BoundTableRef = 13,
 }
 

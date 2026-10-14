@@ -15,7 +15,9 @@ use crate::{
 pub struct SampleOptions {
     /// A row count or a percentage.
     pub sample_size: Value,
+    /// Whether `sample_size` is a percentage rather than a row count.
     pub is_percentage: bool,
+    /// The sampling method (`reservoir`, `system`, `bernoulli`).
     pub method: SampleMethod,
     /// `REPEATABLE (seed)`; `None` for a random sample.
     pub seed: Option<u64>,
@@ -65,6 +67,7 @@ pub struct MacroFunction {
     pub default_parameters: CaseInsensitiveMap<ParsedExpression>,
     /// Parameter types (`UNKNOWN` when untyped), one per parameter.
     pub types: Vec<LogicalType>,
+    /// The body.
     pub kind: MacroFunctionKind,
 }
 
@@ -184,6 +187,7 @@ rustdb_serde::impl_pointee_serde!(MacroFunction);
 /// `CREATE MACRO` with one or more overloads (DuckDB's `CreateMacroInfo`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreateMacroInfo {
+    /// The macro name.
     pub name: String,
     /// The overloads; never empty.
     pub macros: Vec<MacroFunction>,
@@ -220,11 +224,13 @@ const COMMENT_MAP_VERSION: u64 = 7;
 /// `CREATE VIEW` (DuckDB's `CreateViewInfo`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreateViewInfo {
+    /// The view name.
     pub view_name: String,
     /// Column names given in `CREATE VIEW v(a, b)`.
     pub aliases: Vec<String>,
     /// Column types, once bound.
     pub types: Vec<LogicalType>,
+    /// The view's query.
     pub query: Box<SelectStatement>,
     /// Column names, once bound.
     pub names: Vec<String>,

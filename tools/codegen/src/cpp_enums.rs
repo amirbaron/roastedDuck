@@ -26,6 +26,9 @@ pub struct EnumMember {
     pub name: String,
     pub value: i64,
     pub strings: Vec<String>,
+    /// The member's comment in the header, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doc: Option<String>,
 }
 
 /// Extracts the string tables of `enum_util.cpp`: enum name → `[(member, string)]`.
@@ -69,6 +72,49 @@ struct HeaderEnum {
     header: String,
     underlying: String,
     members: Vec<(String, Option<String>)>,
+    /// Member comments, by member name.
+    docs: BTreeMap<String, String>,
+}
+
+/// Whether a comment line only separates sections (`// -----`, `//===---===//`).
+fn is_separator(comment: &str) -> bool {
+    !comment.is_empty() && comment.chars().all(|c| matches!(c, '-' | '=' | '/' | '*' | ' '))
+}
+
+/// The comments documenting enum members in a raw enum body: the comment lines right
+/// above a member (section headings between separators excluded) and the comment after
+/// it on the same line.
+fn member_docs(raw_body: &str) -> BTreeMap<String, String> {
+    let mut docs = BTreeMap::new();
+    let mut pending: Vec<&str> = Vec::new();
+    for line in raw_body.lines() {
+        let (code, comment) = match (line.find("//"), line.find("/*")) {
+            (Some(i), _) => (&line[..i], Some(line[i + 2..].trim())),
+            (None, Some(i)) => (
+                &line[..i],
+                Some(line[i + 2..].trim().trim_end_matches("*/").trim()),
+            ),
+            (None, None) => (line, None),
+        };
+        let code = code.trim();
+        if code.is_empty() {
+            match comment {
+                Some(text) if is_separator(text) => pending.clear(),
+                Some("") | None => pending.clear(),
+                Some(text) => pending.push(text),
+            }
+            continue;
+        }
+        let member = code.split([',', '=']).next().unwrap_or("").trim();
+        let mut text: Vec<&str> = std::mem::take(&mut pending);
+        if let Some(trailing) = comment.filter(|c| !c.is_empty() && !is_separator(c)) {
+            text.push(trailing);
+        }
+        if !member.is_empty() && !text.is_empty() {
+            docs.insert(member.to_owned(), text.join(" "));
+        }
+    }
+    docs
 }
 
 fn strip_comments(text: &str) -> String {
@@ -99,8 +145,23 @@ fn strip_comments(text: &str) -> String {
     out
 }
 
-fn parse_header_enums(header: &str, text: &str, out: &mut BTreeMap<String, Vec<HeaderEnum>>) {
-    let text = strip_comments(text);
+/// The raw body (between the braces) of `enum class <name>` in `text`.
+fn raw_body<'a>(text: &'a str, name: &str) -> Option<&'a str> {
+    let mut rest = text;
+    while let Some(pos) = rest.find("enum class ") {
+        rest = &rest[pos + "enum class ".len()..];
+        let head_end = rest.find(['{', ';'])?;
+        let head = &rest[..head_end];
+        if head.split(':').next().map(str::trim) == Some(name) && rest[head_end..].starts_with('{') {
+            let body = &rest[head_end + 1..];
+            return body.find('}').map(|close| &body[..close]);
+        }
+    }
+    None
+}
+
+fn parse_header_enums(header: &str, raw: &str, out: &mut BTreeMap<String, Vec<HeaderEnum>>) {
+    let text = strip_comments(raw);
     let mut rest = text.as_str();
     while let Some(pos) = rest.find("enum class ") {
         rest = &rest[pos + "enum class ".len()..];
@@ -132,6 +193,7 @@ fn parse_header_enums(header: &str, text: &str, out: &mut BTreeMap<String, Vec<H
             header: header.to_owned(),
             underlying: underlying.to_owned(),
             members,
+            docs: raw_body(raw, name).map(member_docs).unwrap_or_default(),
         });
         rest = &rest[brace + close..];
     }
@@ -242,6 +304,7 @@ pub fn import(duckdb: &Path, wanted: &BTreeSet<String>) -> Result<BTreeMap<Strin
                 name: member.clone(),
                 value,
                 strings: vec![string.clone()],
+                doc: def.docs.get(member).cloned(),
             });
         }
         result.insert(
@@ -285,5 +348,17 @@ const StringUtil::EnumStringLiteral *GetOrderTypeValues() {
         assert_eq!(values["C"], 1);
         assert_eq!(values["D"], 16);
         assert_eq!(values["E"], 120);
+        assert_eq!(headers["Foo"][0].docs["A"], "c");
+    }
+
+    #[test]
+    fn extracts_member_comments() {
+        let body = "\n\t// -----\n\t// Section\n\t// -----\n\t// first line\n\t// second line\n\tA = 1,\n\
+                    \tB = 2, // trailing\n\n\t// orphan\n\n\tC, /* block */\n\tD\n";
+        let docs = member_docs(body);
+        assert_eq!(docs["A"], "first line second line");
+        assert_eq!(docs["B"], "trailing");
+        assert_eq!(docs["C"], "block");
+        assert!(!docs.contains_key("D"));
     }
 }

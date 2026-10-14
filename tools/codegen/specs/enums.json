@@ -8,21 +8,24 @@
         "value": 0,
         "strings": [
           "STANDARD_HANDLING"
-        ]
+        ],
+        "doc": "standard handling as in the SELECT clause"
       },
       {
         "name": "NO_AGGREGATES_ALLOWED",
         "value": 1,
         "strings": [
           "NO_AGGREGATES_ALLOWED"
-        ]
+        ],
+        "doc": "no aggregates allowed: any aggregates in this node will result in an error"
       },
       {
         "name": "FORCE_AGGREGATES",
         "value": 2,
         "strings": [
           "FORCE_AGGREGATES"
-        ]
+        ],
+        "doc": "force aggregates: any non-aggregate select list entry will become a GROUP"
       }
     ]
   },
@@ -303,21 +306,24 @@
         "value": 1,
         "strings": [
           "CTE_MATERIALIZE_DEFAULT"
-        ]
+        ],
+        "doc": "no option specified"
       },
       {
         "name": "CTE_MATERIALIZE_ALWAYS",
         "value": 2,
         "strings": [
           "CTE_MATERIALIZE_ALWAYS"
-        ]
+        ],
+        "doc": "MATERIALIZED"
       },
       {
         "name": "CTE_MATERIALIZE_NEVER",
         "value": 3,
         "strings": [
           "CTE_MATERIALIZE_NEVER"
-        ]
+        ],
+        "doc": "NOT MATERIALIZED"
       }
     ]
   },
@@ -407,7 +413,8 @@
         "value": 25,
         "strings": [
           "TABLE_FUNCTION_ENTRY"
-        ]
+        ],
+        "doc": "functions"
       },
       {
         "name": "SCALAR_FUNCTION_ENTRY",
@@ -456,7 +463,8 @@
         "value": 51,
         "strings": [
           "DELETED_ENTRY"
-        ]
+        ],
+        "doc": "version info"
       },
       {
         "name": "RENAMED_ENTRY",
@@ -470,7 +478,8 @@
         "value": 71,
         "strings": [
           "SECRET_ENTRY"
-        ]
+        ],
+        "doc": "secrets"
       },
       {
         "name": "SECRET_TYPE_ENTRY",
@@ -491,7 +500,8 @@
         "value": 100,
         "strings": [
           "DEPENDENCY_ENTRY"
-        ]
+        ],
+        "doc": "dependency info"
       }
     ]
   },
@@ -511,14 +521,16 @@
         "value": 1,
         "strings": [
           "FULL_READ"
-        ]
+        ],
+        "doc": "! Regular column index, refers to a column in its entirety"
       },
       {
         "name": "PUSHDOWN_EXTRACT",
         "value": 2,
         "strings": [
           "PUSHDOWN_EXTRACT"
-        ]
+        ],
+        "doc": "! This index references a struct/variant field that MUST be extracted by the scan and emitted directly"
       }
     ]
   },
@@ -545,7 +557,8 @@
         "value": 2,
         "strings": [
           "CONSTANT"
-        ]
+        ],
+        "doc": "internal only"
       },
       {
         "name": "COMPRESSION_RLE",
@@ -629,7 +642,8 @@
         "value": 14,
         "strings": [
           "EMPTY"
-        ]
+        ],
+        "doc": "internal only"
       },
       {
         "name": "COMPRESSION_DICT_FSST",
@@ -643,7 +657,8 @@
         "value": 16,
         "strings": [
           "COMPRESSION_COUNT"
-        ]
+        ],
+        "doc": "This has to stay the last entry of the type!"
       }
     ]
   },
@@ -656,35 +671,40 @@
         "value": 0,
         "strings": [
           "INVALID"
-        ]
+        ],
+        "doc": "invalid constraint type"
       },
       {
         "name": "NOT_NULL",
         "value": 1,
         "strings": [
           "NOT_NULL"
-        ]
+        ],
+        "doc": "NOT NULL constraint"
       },
       {
         "name": "CHECK",
         "value": 2,
         "strings": [
           "CHECK"
-        ]
+        ],
+        "doc": "CHECK constraint"
       },
       {
         "name": "UNIQUE",
         "value": 3,
         "strings": [
           "UNIQUE"
-        ]
+        ],
+        "doc": "UNIQUE constraint"
       },
       {
         "name": "FOREIGN_KEY",
         "value": 4,
         "strings": [
           "FOREIGN_KEY"
-        ]
+        ],
+        "doc": "FOREIGN KEY constraint"
       }
     ]
   },
@@ -697,21 +717,24 @@
         "value": 0,
         "strings": [
           "INVALID"
-        ]
+        ],
+        "doc": "invalid index type"
       },
       {
         "name": "ART",
         "value": 1,
         "strings": [
           "ART"
-        ]
+        ],
+        "doc": "Adaptive Radix Tree"
       },
       {
         "name": "EXTENSION",
         "value": 100,
         "strings": [
           "EXTENSION"
-        ]
+        ],
+        "doc": "Extension index"
       }
     ]
   },
@@ -1064,98 +1087,112 @@
         "value": 12,
         "strings": [
           "OPERATOR_CAST"
-        ]
+        ],
+        "doc": "explicitly cast left as right (right is integer in ValueType enum)"
       },
       {
         "name": "OPERATOR_NOT",
         "value": 13,
         "strings": [
           "OPERATOR_NOT"
-        ]
+        ],
+        "doc": "logical not operator"
       },
       {
         "name": "OPERATOR_IS_NULL",
         "value": 14,
         "strings": [
           "OPERATOR_IS_NULL"
-        ]
+        ],
+        "doc": "is null operator"
       },
       {
         "name": "OPERATOR_IS_NOT_NULL",
         "value": 15,
         "strings": [
           "OPERATOR_IS_NOT_NULL"
-        ]
+        ],
+        "doc": "is not null operator"
       },
       {
         "name": "OPERATOR_UNPACK",
         "value": 16,
         "strings": [
           "OPERATOR_UNPACK"
-        ]
+        ],
+        "doc": "unpack operator"
       },
       {
         "name": "COMPARE_EQUAL",
         "value": 25,
         "strings": [
           "COMPARE_EQUAL"
-        ]
+        ],
+        "doc": "equal operator between left and right"
       },
       {
         "name": "COMPARE_NOTEQUAL",
         "value": 26,
         "strings": [
           "COMPARE_NOTEQUAL"
-        ]
+        ],
+        "doc": "inequal operator between left and right"
       },
       {
         "name": "COMPARE_LESSTHAN",
         "value": 27,
         "strings": [
           "COMPARE_LESSTHAN"
-        ]
+        ],
+        "doc": "less than operator between left and right"
       },
       {
         "name": "COMPARE_GREATERTHAN",
         "value": 28,
         "strings": [
           "COMPARE_GREATERTHAN"
-        ]
+        ],
+        "doc": "greater than operator between left and right"
       },
       {
         "name": "COMPARE_LESSTHANOREQUALTO",
         "value": 29,
         "strings": [
           "COMPARE_LESSTHANOREQUALTO"
-        ]
+        ],
+        "doc": "less than equal operator between left and right"
       },
       {
         "name": "COMPARE_GREATERTHANOREQUALTO",
         "value": 30,
         "strings": [
           "COMPARE_GREATERTHANOREQUALTO"
-        ]
+        ],
+        "doc": "greater than equal operator between left and right"
       },
       {
         "name": "COMPARE_IN",
         "value": 35,
         "strings": [
           "COMPARE_IN"
-        ]
+        ],
+        "doc": "IN operator [left IN (right1, right2, ...)]"
       },
       {
         "name": "COMPARE_NOT_IN",
         "value": 36,
         "strings": [
           "COMPARE_NOT_IN"
-        ]
+        ],
+        "doc": "NOT IN operator [left NOT IN (right1, right2, ...)]"
       },
       {
         "name": "COMPARE_DISTINCT_FROM",
         "value": 37,
         "strings": [
           "COMPARE_DISTINCT_FROM"
-        ]
+        ],
+        "doc": "IS DISTINCT FROM operator"
       },
       {
         "name": "COMPARE_BETWEEN",
@@ -1176,7 +1213,8 @@
         "value": 40,
         "strings": [
           "COMPARE_NOT_DISTINCT_FROM"
-        ]
+        ],
+        "doc": "IS NOT DISTINCT FROM operator"
       },
       {
         "name": "CONJUNCTION_AND",
@@ -1574,35 +1612,40 @@
         "value": 0,
         "strings": [
           "UNKNOWN"
-        ]
+        ],
+        "doc": "Fallback for when install info is missing"
       },
       {
         "name": "REPOSITORY",
         "value": 1,
         "strings": [
           "REPOSITORY"
-        ]
+        ],
+        "doc": "! Extension was installed using a url deduced from a repository base url"
       },
       {
         "name": "CUSTOM_PATH",
         "value": 2,
         "strings": [
           "CUSTOM_PATH"
-        ]
+        ],
+        "doc": "! Extension was install from a custom path, this could be either local or remote"
       },
       {
         "name": "STATICALLY_LINKED",
         "value": 3,
         "strings": [
           "STATICALLY_LINKED"
-        ]
+        ],
+        "doc": "! Extension was statically linked"
       },
       {
         "name": "NOT_INSTALLED",
         "value": 4,
         "strings": [
           "NOT_INSTALLED"
-        ]
+        ],
+        "doc": "! Extension is not installed, for example the extension might be directly loaded without installing"
       }
     ]
   },
@@ -1807,21 +1850,24 @@
         "value": 0,
         "strings": [
           "FK_TYPE_PRIMARY_KEY_TABLE"
-        ]
+        ],
+        "doc": "main table"
       },
       {
         "name": "FK_TYPE_FOREIGN_KEY_TABLE",
         "value": 1,
         "strings": [
           "FK_TYPE_FOREIGN_KEY_TABLE"
-        ]
+        ],
+        "doc": "referencing table"
       },
       {
         "name": "FK_TYPE_SELF_REFERENCE_TABLE",
         "value": 2,
         "strings": [
           "FK_TYPE_SELF_REFERENCE_TABLE"
-        ]
+        ],
+        "doc": "self refrencing table"
       }
     ]
   },
@@ -1848,7 +1894,8 @@
         "value": 17,
         "strings": [
           "POINT_XY"
-        ]
+        ],
+        "doc": "Base: 16"
       },
       {
         "name": "LINESTRING_XY",
@@ -1890,7 +1937,8 @@
         "value": 33,
         "strings": [
           "POINT_XYZ"
-        ]
+        ],
+        "doc": "Base: 32"
       },
       {
         "name": "LINESTRING_XYZ",
@@ -1932,7 +1980,8 @@
         "value": 65,
         "strings": [
           "POINT_XYM"
-        ]
+        ],
+        "doc": "Base: 64"
       },
       {
         "name": "LINESTRING_XYM",
@@ -1974,7 +2023,8 @@
         "value": 97,
         "strings": [
           "POINT_XYZM"
-        ]
+        ],
+        "doc": "Base: 96"
       },
       {
         "name": "LINESTRING_XYZM",
@@ -2022,28 +2072,32 @@
         "value": 0,
         "strings": [
           "NONE"
-        ]
+        ],
+        "doc": "index is an index don't built to any constraint"
       },
       {
         "name": "UNIQUE",
         "value": 1,
         "strings": [
           "UNIQUE"
-        ]
+        ],
+        "doc": "index is an index built to enforce a UNIQUE constraint"
       },
       {
         "name": "PRIMARY",
         "value": 2,
         "strings": [
           "PRIMARY"
-        ]
+        ],
+        "doc": "index is an index built to enforce a PRIMARY KEY constraint"
       },
       {
         "name": "FOREIGN",
         "value": 3,
         "strings": [
           "FOREIGN"
-        ]
+        ],
+        "doc": "index is an index built to enforce a FOREIGN KEY constraint"
       }
     ]
   },
@@ -2056,42 +2110,48 @@
         "value": 0,
         "strings": [
           "REGULAR"
-        ]
+        ],
+        "doc": "Explicit conditions"
       },
       {
         "name": "NATURAL",
         "value": 1,
         "strings": [
           "NATURAL"
-        ]
+        ],
+        "doc": "Implied conditions"
       },
       {
         "name": "CROSS",
         "value": 2,
         "strings": [
           "CROSS"
-        ]
+        ],
+        "doc": "No condition"
       },
       {
         "name": "POSITIONAL",
         "value": 3,
         "strings": [
           "POSITIONAL"
-        ]
+        ],
+        "doc": "Positional condition"
       },
       {
         "name": "ASOF",
         "value": 4,
         "strings": [
           "ASOF"
-        ]
+        ],
+        "doc": "AsOf conditions"
       },
       {
         "name": "DEPENDENT",
         "value": 5,
         "strings": [
           "DEPENDENT"
-        ]
+        ],
+        "doc": "Dependent join conditions"
       }
     ]
   },
@@ -2104,77 +2164,88 @@
         "value": 0,
         "strings": [
           "INVALID"
-        ]
+        ],
+        "doc": "invalid join type"
       },
       {
         "name": "LEFT",
         "value": 1,
         "strings": [
           "LEFT"
-        ]
+        ],
+        "doc": "left"
       },
       {
         "name": "RIGHT",
         "value": 2,
         "strings": [
           "RIGHT"
-        ]
+        ],
+        "doc": "right"
       },
       {
         "name": "INNER",
         "value": 3,
         "strings": [
           "INNER"
-        ]
+        ],
+        "doc": "inner"
       },
       {
         "name": "OUTER",
         "value": 4,
         "strings": [
           "FULL"
-        ]
+        ],
+        "doc": "outer"
       },
       {
         "name": "SEMI",
         "value": 5,
         "strings": [
           "SEMI"
-        ]
+        ],
+        "doc": "LEFT SEMI join returns left side row ONLY if it has a join partner, no duplicates."
       },
       {
         "name": "ANTI",
         "value": 6,
         "strings": [
           "ANTI"
-        ]
+        ],
+        "doc": "LEFT ANTI join returns left side row ONLY if it has NO join partner, no duplicates"
       },
       {
         "name": "MARK",
         "value": 7,
         "strings": [
           "MARK"
-        ]
+        ],
+        "doc": "MARK join returns marker indicating whether or not there is a join partner (true), there is no join"
       },
       {
         "name": "SINGLE",
         "value": 8,
         "strings": [
           "SINGLE"
-        ]
+        ],
+        "doc": "partner (false) SINGLE join is like LEFT OUTER JOIN, BUT returns at most one join partner per entry on the LEFT side"
       },
       {
         "name": "RIGHT_SEMI",
         "value": 9,
         "strings": [
           "RIGHT_SEMI"
-        ]
+        ],
+        "doc": "(and NULL if no partner is found) RIGHT SEMI join is created by the optimizer when the children of a semi join need to be switched"
       },
       {
         "name": "RIGHT_ANTI",
         "value": 10,
         "strings": [
           "RIGHT_ANTI"
-        ]
+        ],
+        "doc": "so that the build side can be the smaller table RIGHT ANTI join is created by the optimizer when the children of an anti join need to be"
       }
     ]
   },
@@ -2729,42 +2800,48 @@
         "value": 1,
         "strings": [
           "NULL"
-        ]
+        ],
+        "doc": "NULL type, used for constant NULL"
       },
       {
         "name": "UNKNOWN",
         "value": 2,
         "strings": [
           "UNKNOWN"
-        ]
+        ],
+        "doc": "unknown type, used for parameter expressions"
       },
       {
         "name": "ANY",
         "value": 3,
         "strings": [
           "ANY"
-        ]
+        ],
+        "doc": "ANY type, used for functions that accept any type as parameter"
       },
       {
         "name": "UNBOUND",
         "value": 4,
         "strings": [
           "UNBOUND"
-        ]
+        ],
+        "doc": "A parsed but unbound type, used during query planning"
       },
       {
         "name": "TEMPLATE",
         "value": 5,
         "strings": [
           "TEMPLATE"
-        ]
+        ],
+        "doc": "A \"template\" type functions as a \"placeholder\" type for function arguments and return types. Templates only exist during the binding phase, in the scope of a function, and are replaced with concrete types before execution. When defining a template, you provide a name to distinguish between different template types, specifying to the binder that they dont need to resolve to the same concrete type. Two templates with the same name are always resolved to the same concrete type."
       },
       {
         "name": "TYPE",
         "value": 6,
         "strings": [
           "TYPE"
-        ]
+        ],
+        "doc": "Type type, used for type parameters"
       },
       {
         "name": "BOOLEAN",
@@ -2834,7 +2911,8 @@
         "value": 19,
         "strings": [
           "TIMESTAMP"
-        ]
+        ],
+        "doc": "! us"
       },
       {
         "name": "TIMESTAMP_NS",
@@ -2953,14 +3031,16 @@
         "value": 37,
         "strings": [
           "STRING_LITERAL"
-        ]
+        ],
+        "doc": "string literals, used for constant strings - only exists while binding"
       },
       {
         "name": "INTEGER_LITERAL",
         "value": 38,
         "strings": [
           "INTEGER_LITERAL"
-        ]
+        ],
+        "doc": "integer literals, used for constant integers - only exists while binding"
       },
       {
         "name": "BIGNUM",
@@ -3208,7 +3288,8 @@
         "value": 3,
         "strings": [
           "REPLACE"
-        ]
+        ],
+        "doc": "Only used in transform/bind step, changed to UPDATE later"
       }
     ]
   },
@@ -3221,28 +3302,32 @@
         "value": 0,
         "strings": [
           "ERROR_ON_CONFLICT"
-        ]
+        ],
+        "doc": "Standard: throw error"
       },
       {
         "name": "IGNORE_ON_CONFLICT",
         "value": 1,
         "strings": [
           "IGNORE_ON_CONFLICT"
-        ]
+        ],
+        "doc": "CREATE IF NOT EXISTS, silently do nothing on conflict"
       },
       {
         "name": "REPLACE_ON_CONFLICT",
         "value": 2,
         "strings": [
           "REPLACE_ON_CONFLICT"
-        ]
+        ],
+        "doc": "CREATE OR REPLACE"
       },
       {
         "name": "ALTER_ON_CONFLICT",
         "value": 3,
         "strings": [
           "ALTER_ON_CONFLICT"
-        ]
+        ],
+        "doc": "Update on conflict - only support for functions. Add a function overload if the function already exists."
       }
     ]
   },
@@ -3752,7 +3837,8 @@
         "value": 1,
         "strings": [
           "LOCAL"
-        ]
+        ],
+        "doc": "unused"
       },
       {
         "name": "SESSION",
@@ -3847,28 +3933,32 @@
         "value": 1,
         "strings": [
           "SCALAR"
-        ]
+        ],
+        "doc": "Regular scalar subquery"
       },
       {
         "name": "EXISTS",
         "value": 2,
         "strings": [
           "EXISTS"
-        ]
+        ],
+        "doc": "EXISTS (SELECT...)"
       },
       {
         "name": "NOT_EXISTS",
         "value": 3,
         "strings": [
           "NOT_EXISTS"
-        ]
+        ],
+        "doc": "NOT EXISTS(SELECT...)"
       },
       {
         "name": "ANY",
         "value": 4,
         "strings": [
           "ANY"
-        ]
+        ],
+        "doc": "x = ANY(SELECT...) OR x IN (SELECT...)"
       }
     ]
   },
@@ -3901,77 +3991,88 @@
         "value": 0,
         "strings": [
           "CONSTANT_COMPARISON"
-        ]
+        ],
+        "doc": "constant comparison (e.g. =C, >C, >=C, <C, <=C)"
       },
       {
         "name": "IS_NULL",
         "value": 1,
         "strings": [
           "IS_NULL"
-        ]
+        ],
+        "doc": "C IS NULL"
       },
       {
         "name": "IS_NOT_NULL",
         "value": 2,
         "strings": [
           "IS_NOT_NULL"
-        ]
+        ],
+        "doc": "C IS NOT NULL"
       },
       {
         "name": "CONJUNCTION_OR",
         "value": 3,
         "strings": [
           "CONJUNCTION_OR"
-        ]
+        ],
+        "doc": "OR of different filters"
       },
       {
         "name": "CONJUNCTION_AND",
         "value": 4,
         "strings": [
           "CONJUNCTION_AND"
-        ]
+        ],
+        "doc": "AND of different filters"
       },
       {
         "name": "STRUCT_EXTRACT",
         "value": 5,
         "strings": [
           "STRUCT_EXTRACT"
-        ]
+        ],
+        "doc": "filter applies to child-column of struct"
       },
       {
         "name": "OPTIONAL_FILTER",
         "value": 6,
         "strings": [
           "OPTIONAL_FILTER"
-        ]
+        ],
+        "doc": "executing filter is not required for query correctness"
       },
       {
         "name": "IN_FILTER",
         "value": 7,
         "strings": [
           "IN_FILTER"
-        ]
+        ],
+        "doc": "col IN (C1, C2, C3, ...)"
       },
       {
         "name": "DYNAMIC_FILTER",
         "value": 8,
         "strings": [
           "DYNAMIC_FILTER"
-        ]
+        ],
+        "doc": "dynamic filters can be updated at run-time"
       },
       {
         "name": "EXPRESSION_FILTER",
         "value": 9,
         "strings": [
           "EXPRESSION_FILTER"
-        ]
+        ],
+        "doc": "an arbitrary expression"
       },
       {
         "name": "BLOOM_FILTER",
         "value": 10,
         "strings": [
           "BLOOM_FILTER"
-        ]
+        ],
+        "doc": "a probabilistic filter that can test whether a value is in a set of other value"
       }
     ]
   },
@@ -3984,91 +4085,104 @@
         "value": 0,
         "strings": [
           "INVALID"
-        ]
+        ],
+        "doc": "invalid table reference type"
       },
       {
         "name": "BASE_TABLE",
         "value": 1,
         "strings": [
           "BASE_TABLE"
-        ]
+        ],
+        "doc": "base table reference"
       },
       {
         "name": "SUBQUERY",
         "value": 2,
         "strings": [
           "SUBQUERY"
-        ]
+        ],
+        "doc": "output of a subquery"
       },
       {
         "name": "JOIN",
         "value": 3,
         "strings": [
           "JOIN"
-        ]
+        ],
+        "doc": "output of join"
       },
       {
         "name": "TABLE_FUNCTION",
         "value": 5,
         "strings": [
           "TABLE_FUNCTION"
-        ]
+        ],
+        "doc": "table producing function"
       },
       {
         "name": "EXPRESSION_LIST",
         "value": 6,
         "strings": [
           "EXPRESSION_LIST"
-        ]
+        ],
+        "doc": "expression list"
       },
       {
         "name": "CTE",
         "value": 7,
         "strings": [
           "CTE"
-        ]
+        ],
+        "doc": "Recursive CTE"
       },
       {
         "name": "EMPTY_FROM",
         "value": 8,
         "strings": [
           "EMPTY"
-        ]
+        ],
+        "doc": "placeholder for empty FROM"
       },
       {
         "name": "PIVOT",
         "value": 9,
         "strings": [
           "PIVOT"
-        ]
+        ],
+        "doc": "pivot statement"
       },
       {
         "name": "SHOW_REF",
         "value": 10,
         "strings": [
           "SHOW_REF"
-        ]
+        ],
+        "doc": "SHOW statement"
       },
       {
         "name": "COLUMN_DATA",
         "value": 11,
         "strings": [
           "COLUMN_DATA"
-        ]
+        ],
+        "doc": "column data collection"
       },
       {
         "name": "DELIM_GET",
         "value": 12,
         "strings": [
           "DELIM_GET"
-        ]
+        ],
+        "doc": "Delim get ref"
       },
       {
         "name": "BOUND_TABLE_REF",
         "value": 13,
         "strings": [
           "BOUND_TABLE_REF"
-        ]
+        ],
+        "doc": "Bound table ref"
       }
     ]
   },

@@ -11,40 +11,64 @@ use crate::{DefaultValue, FieldId, SerializationOptions};
 /// format implements. The trait is object safe so that generated code is compiled once
 /// and shared by every format.
 pub trait Serializer {
+    /// The options in effect; enum and default-value handling depend on them.
     fn options(&self) -> &SerializationOptions;
 
+    /// Starts a property that is always written.
     fn on_property_begin(&mut self, field_id: FieldId, tag: &'static str);
+    /// Ends a property started by `on_property_begin`.
     fn on_property_end(&mut self) {}
+    /// Starts a property that is left out when not `present` (it holds its default).
     fn on_optional_property_begin(&mut self, field_id: FieldId, tag: &'static str, present: bool);
+    /// Ends a property started by `on_optional_property_begin`.
     fn on_optional_property_end(&mut self, _present: bool) {}
+    /// Starts a nested object.
     fn on_object_begin(&mut self);
+    /// Ends a nested object.
     fn on_object_end(&mut self);
+    /// Starts a list of `count` elements.
     fn on_list_begin(&mut self, count: usize);
+    /// Ends a list.
     fn on_list_end(&mut self) {}
+    /// Starts a value that may be NULL (a C++ pointer); a present value follows.
     fn on_nullable_begin(&mut self, present: bool);
+    /// Ends a nullable value.
     fn on_nullable_end(&mut self) {}
 
+    /// Writes an explicit NULL.
     fn write_null(&mut self);
+    /// Writes a `bool`.
     fn write_bool(&mut self, value: bool);
+    /// Writes a `uint8_t`.
     fn write_u8(&mut self, value: u8);
+    /// Writes an `int8_t`.
     fn write_i8(&mut self, value: i8);
+    /// Writes a `uint16_t`.
     fn write_u16(&mut self, value: u16);
+    /// Writes an `int16_t`.
     fn write_i16(&mut self, value: i16);
+    /// Writes a `uint32_t`.
     fn write_u32(&mut self, value: u32);
+    /// Writes an `int32_t`.
     fn write_i32(&mut self, value: i32);
+    /// Writes a `uint64_t` / `idx_t`.
     fn write_u64(&mut self, value: u64);
+    /// Writes an `int64_t`.
     fn write_i64(&mut self, value: i64);
-    /// A `hugeint_t`.
+    /// Writes a `hugeint_t`.
     fn write_i128(&mut self, value: i128);
-    /// A `uhugeint_t`.
+    /// Writes a `uhugeint_t`.
     fn write_u128(&mut self, value: u128);
+    /// Writes a `float`.
     fn write_f32(&mut self, value: f32);
+    /// Writes a `double`.
     fn write_f64(&mut self, value: f64);
-    /// A string whose bytes need not be valid UTF-8 (DuckDB strings are byte strings).
+    /// Writes a string whose bytes need not be valid UTF-8 (DuckDB strings are byte strings).
     fn write_string_bytes(&mut self, value: &[u8]);
-    /// Raw bytes (DuckDB's `WriteDataPtr`).
+    /// Writes raw bytes (DuckDB's `WriteDataPtr`).
     fn write_data(&mut self, value: &[u8]);
 
+    /// Writes a string.
     fn write_str(&mut self, value: &str) {
         self.write_string_bytes(value.as_bytes());
     }
@@ -52,6 +76,7 @@ pub trait Serializer {
 
 /// A value that can be written (DuckDB's `Serializer::WriteValue` overloads).
 pub trait Serialize {
+    /// Writes this value at the serializer's current position.
     fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()>;
 }
 
@@ -61,6 +86,7 @@ pub trait Serialize {
 /// caller's job (`write_object` on `dyn Serializer`), exactly as in DuckDB where
 /// `WriteValue` brackets `Serialize` with `OnObjectBegin/End`.
 pub trait SerializeObject {
+    /// Writes the properties of this object.
     fn serialize_fields(&self, serializer: &mut dyn Serializer) -> Result<()>;
 }
 
@@ -117,7 +143,7 @@ impl dyn Serializer + '_ {
         })
     }
 
-    /// Like [`write_optional`](Self::write_optional), with the value written by `write`.
+    /// Like `write_optional`, with the value written by `write`.
     pub fn write_optional_with(
         &mut self,
         field_id: FieldId,

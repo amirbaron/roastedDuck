@@ -5,7 +5,9 @@
 /// (and duplicates), since the serialized text must be reproduced byte for byte.
 #[derive(Clone, Debug, PartialEq)]
 pub enum JsonValue {
+    /// `null`.
     Null,
+    /// `true` / `false`.
     Bool(bool),
     /// A non-negative integer literal.
     UInt(u64),
@@ -15,8 +17,11 @@ pub enum JsonValue {
     Real(f64),
     /// An integer too large for 64 bits, kept verbatim (yyjson's `BIGNUM_AS_RAW`).
     Raw(String),
+    /// A string.
     Str(String),
+    /// An array.
     Array(Vec<JsonValue>),
+    /// An object, with keys in document order.
     Object(Vec<(String, JsonValue)>),
 }
 
@@ -45,10 +50,12 @@ impl JsonValue {
         }
     }
 
+    /// Whether this is an object.
     pub const fn is_object(&self) -> bool {
         matches!(self, Self::Object(_))
     }
 
+    /// Whether this is an array.
     pub const fn is_array(&self) -> bool {
         matches!(self, Self::Array(_))
     }

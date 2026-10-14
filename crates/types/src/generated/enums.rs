@@ -7,11 +7,17 @@ use rustdb_serde::{Deserialize, Deserializer, Result, Serialize, Serializer, rea
 #[repr(u8)]
 pub enum LogicalTypeId {
     Invalid = 0,
+    /// NULL type, used for constant NULL
     SqlNull = 1,
+    /// unknown type, used for parameter expressions
     Unknown = 2,
+    /// ANY type, used for functions that accept any type as parameter
     Any = 3,
+    /// A parsed but unbound type, used during query planning
     Unbound = 4,
+    /// A "template" type functions as a "placeholder" type for function arguments and return types. Templates only exist during the binding phase, in the scope of a function, and are replaced with concrete types before execution. When defining a template, you provide a name to distinguish between different template types, specifying to the binder that they dont need to resolve to the same concrete type. Two templates with the same name are always resolved to the same concrete type.
     Template = 5,
+    /// Type type, used for type parameters
     Type = 6,
     Boolean = 10,
     TinyInt = 11,
@@ -22,6 +28,7 @@ pub enum LogicalTypeId {
     Time = 16,
     TimestampSec = 17,
     TimestampMs = 18,
+    /// ! us
     Timestamp = 19,
     TimestampNs = 20,
     Decimal = 21,
@@ -39,7 +46,9 @@ pub enum LogicalTypeId {
     TimeTz = 34,
     TimeNs = 35,
     Bit = 36,
+    /// string literals, used for constant strings - only exists while binding
     StringLiteral = 37,
+    /// integer literals, used for constant integers - only exists while binding
     IntegerLiteral = 38,
     Bignum = 39,
     UHugeInt = 49,
@@ -451,24 +460,28 @@ impl Deserialize for ExtraTypeInfoType {
 pub enum GeometryStorageType {
     Spatial = 0,
     Wkb = 1,
+    /// Base: 16
     PointXy = 17,
     LinestringXy = 18,
     PolygonXy = 19,
     MultipointXy = 20,
     MultilinestringXy = 21,
     MultipolygonXy = 22,
+    /// Base: 32
     PointXyz = 33,
     LinestringXyz = 34,
     PolygonXyz = 35,
     MultipointXyz = 36,
     MultilinestringXyz = 37,
     MultipolygonXyz = 38,
+    /// Base: 64
     PointXym = 65,
     LinestringXym = 66,
     PolygonXym = 67,
     MultipointXym = 68,
     MultilinestringXym = 69,
     MultipolygonXym = 70,
+    /// Base: 96
     PointXyzm = 97,
     LinestringXyzm = 98,
     PolygonXyzm = 99,

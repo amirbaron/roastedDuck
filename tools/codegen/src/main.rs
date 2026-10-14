@@ -232,7 +232,11 @@ mod tests {
     fn generated_code_is_up_to_date() {
         for (path, contents) in super::generate().unwrap() {
             let on_disk = std::fs::read_to_string(&path).unwrap_or_default();
-            assert!(on_disk == contents, "{} is stale; run `cargo run -p codegen`", path.display());
+            assert!(
+                on_disk == contents,
+                "{} is stale; run `cargo run -p codegen`",
+                path.display()
+            );
         }
     }
 }

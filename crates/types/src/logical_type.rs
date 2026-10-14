@@ -18,6 +18,7 @@ pub struct LogicalType {
 }
 
 impl LogicalType {
+    // Parameterless types, named like DuckDB's `LogicalType::INTEGER` etc.
     pub const INVALID: Self = Self::simple(LogicalTypeId::Invalid);
     pub const SQLNULL: Self = Self::simple(LogicalTypeId::SqlNull);
     pub const UNKNOWN: Self = Self::simple(LogicalTypeId::Unknown);
@@ -48,6 +49,7 @@ impl LogicalType {
         Self { id, info: None }
     }
 
+    /// `DECIMAL(width, scale)`.
     pub fn decimal(width: u8, scale: u8) -> Self {
         Self::with_info(
             LogicalTypeId::Decimal,
@@ -55,6 +57,7 @@ impl LogicalType {
         )
     }
 
+    /// `child[]`.
     pub fn list(child: Self) -> Self {
         Self::with_info(
             LogicalTypeId::List,
@@ -73,6 +76,7 @@ impl LogicalType {
         )
     }
 
+    /// `STRUCT(name type, ...)`.
     pub fn struct_type(children: Vec<(String, Self)>) -> Self {
         Self::with_info(
             LogicalTypeId::Struct,
@@ -136,6 +140,7 @@ impl LogicalType {
         Self::from_parts(self.id, Some(info))
     }
 
+    /// The type id.
     pub const fn id(&self) -> LogicalTypeId {
         self.id
     }
@@ -240,6 +245,7 @@ impl LogicalType {
         }
     }
 
+    /// Whether this is an integer, floating-point or decimal type.
     pub fn is_numeric(&self) -> bool {
         use LogicalTypeId as L;
         matches!(
@@ -260,6 +266,7 @@ impl LogicalType {
         )
     }
 
+    /// Whether this is a signed or unsigned integer type.
     pub fn is_integral(&self) -> bool {
         use LogicalTypeId as L;
         matches!(

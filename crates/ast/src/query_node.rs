@@ -12,6 +12,7 @@ const CHILD_LIST_VERSION: u64 = 7;
 /// (DuckDB's `SetOperationNode`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SetOperationNode {
+    /// `UNION`, `UNION BY NAME`, `EXCEPT` or `INTERSECT`.
     pub setop_type: SetOperationType,
     /// `ALL` (keep duplicates).
     pub setop_all: bool,

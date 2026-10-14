@@ -13,6 +13,7 @@ pub struct BinaryDeserializer<'a> {
 }
 
 impl<'a> BinaryDeserializer<'a> {
+    /// A deserializer reading `data` from the start.
     pub const fn new(data: &'a [u8]) -> Self {
         Self {
             data,

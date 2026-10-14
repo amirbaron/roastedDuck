@@ -45,6 +45,7 @@ impl BinarySerializer {
         &self.buffer
     }
 
+    /// The bytes written.
     pub fn into_bytes(self) -> Vec<u8> {
         self.buffer
     }

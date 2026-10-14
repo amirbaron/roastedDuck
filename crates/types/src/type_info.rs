@@ -11,6 +11,7 @@ use crate::{ExtraTypeInfo, LogicalType, LogicalTypeId, PhysicalType, Value};
 /// The members of an ENUM type, in definition order (DuckDB's `EnumTypeInfo`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct EnumTypeInfo {
+    /// The member names; a member's position is its stored value.
     pub values: Vec<String>,
 }
 
@@ -81,9 +82,13 @@ rustdb_serde::impl_object_serde!(CoordinateReferenceSystem);
 /// `TypeExpression`): `catalog.schema.name(parameters)`, bound later by the binder.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct UnboundTypeInfo {
+    /// The catalog qualifier, or empty.
     pub catalog: String,
+    /// The schema qualifier, or empty.
     pub schema: String,
+    /// The type name as written (normalized for builtin types).
     pub name: String,
+    /// The type modifiers in parentheses.
     pub parameters: Vec<TypeParameter>,
     /// Position of the type name in the query text.
     pub query_location: Option<u64>,
@@ -95,22 +100,29 @@ pub struct TypeParameter {
     /// The parameter name (the field name of a STRUCT member), or empty.
     pub name: String,
     pub value: TypeParameterValue,
+    /// Position of the parameter in the query text.
     pub query_location: Option<u64>,
 }
 
 /// The value of a [`TypeParameter`]: the transformer only produces types and constants.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TypeParameterValue {
+    /// A nested type, as in `STRUCT(a INTEGER)` or `MAP(VARCHAR, INTEGER)`.
     Type(UnboundTypeInfo),
+    /// A constant, as in `DECIMAL(18, 3)`.
     Constant(Value),
 }
 
 /// `ExpressionClass` / `ExpressionType` members of the two parsed-expression kinds an
 /// unbound type is made of. The parse-tree crate checks these against its generated enums.
 pub mod expression_ids {
+    /// `ExpressionClass::CONSTANT`.
     pub const CLASS_CONSTANT: (&str, u8) = ("CONSTANT", 7);
+    /// `ExpressionClass::TYPE`.
     pub const CLASS_TYPE: (&str, u8) = ("TYPE", 21);
+    /// `ExpressionType::VALUE_CONSTANT`.
     pub const TYPE_VALUE_CONSTANT: (&str, u8) = ("VALUE_CONSTANT", 75);
+    /// `ExpressionType::TYPE`.
     pub const TYPE_TYPE: (&str, u8) = ("TYPE", 207);
 }
 

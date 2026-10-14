@@ -9,6 +9,7 @@ use crate::SelectStatement;
 /// Options of `json_serialize_sql(sql, skip_null := .., skip_empty := .., skip_default := .., format := ..)`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct JsonSerializeOptions {
+    /// `skip_null`, `skip_empty`, `skip_default`.
     pub json: JsonOptions,
     /// Pretty-print (`format := true`).
     pub format: bool,

@@ -114,6 +114,7 @@ impl Default for Value {
 }
 
 impl Value {
+    /// A NULL of type `ty`.
     pub fn null(ty: LogicalType) -> Self {
         Self {
             ty,
@@ -121,6 +122,7 @@ impl Value {
         }
     }
 
+    /// A BOOLEAN.
     pub fn boolean(value: bool) -> Self {
         Self {
             ty: LogicalType::BOOLEAN,
@@ -128,6 +130,7 @@ impl Value {
         }
     }
 
+    /// A TINYINT.
     pub fn tinyint(value: i8) -> Self {
         Self {
             ty: LogicalType::TINYINT,
@@ -135,6 +138,7 @@ impl Value {
         }
     }
 
+    /// A SMALLINT.
     pub fn smallint(value: i16) -> Self {
         Self {
             ty: LogicalType::SMALLINT,
@@ -142,6 +146,7 @@ impl Value {
         }
     }
 
+    /// An INTEGER.
     pub fn integer(value: i32) -> Self {
         Self {
             ty: LogicalType::INTEGER,
@@ -149,6 +154,7 @@ impl Value {
         }
     }
 
+    /// A BIGINT.
     pub fn bigint(value: i64) -> Self {
         Self {
             ty: LogicalType::BIGINT,
@@ -156,6 +162,7 @@ impl Value {
         }
     }
 
+    /// A HUGEINT.
     pub fn hugeint(value: i128) -> Self {
         Self {
             ty: LogicalType::HUGEINT,
@@ -163,6 +170,7 @@ impl Value {
         }
     }
 
+    /// A UTINYINT.
     pub fn utinyint(value: u8) -> Self {
         Self {
             ty: LogicalType::UTINYINT,
@@ -170,6 +178,7 @@ impl Value {
         }
     }
 
+    /// A USMALLINT.
     pub fn usmallint(value: u16) -> Self {
         Self {
             ty: LogicalType::USMALLINT,
@@ -177,6 +186,7 @@ impl Value {
         }
     }
 
+    /// A UINTEGER.
     pub fn uinteger(value: u32) -> Self {
         Self {
             ty: LogicalType::UINTEGER,
@@ -184,6 +194,7 @@ impl Value {
         }
     }
 
+    /// A UBIGINT.
     pub fn ubigint(value: u64) -> Self {
         Self {
             ty: LogicalType::UBIGINT,
@@ -191,6 +202,7 @@ impl Value {
         }
     }
 
+    /// A UHUGEINT.
     pub fn uhugeint(value: u128) -> Self {
         Self {
             ty: LogicalType::UHUGEINT,
@@ -198,6 +210,7 @@ impl Value {
         }
     }
 
+    /// A FLOAT.
     pub fn float(value: f32) -> Self {
         Self {
             ty: LogicalType::FLOAT,
@@ -205,6 +218,7 @@ impl Value {
         }
     }
 
+    /// A DOUBLE.
     pub fn double(value: f64) -> Self {
         Self {
             ty: LogicalType::DOUBLE,
@@ -212,6 +226,7 @@ impl Value {
         }
     }
 
+    /// A VARCHAR.
     pub fn varchar(value: impl AsRef<str>) -> Self {
         Self {
             ty: LogicalType::VARCHAR,
@@ -219,6 +234,7 @@ impl Value {
         }
     }
 
+    /// A BLOB.
     pub fn blob(value: &[u8]) -> Self {
         Self {
             ty: LogicalType::BLOB,
@@ -238,6 +254,7 @@ impl Value {
         Self { ty, payload }
     }
 
+    /// An INTERVAL.
     pub fn interval(value: Interval) -> Self {
         Self {
             ty: LogicalType::INTERVAL,
@@ -283,6 +300,7 @@ impl Value {
         }
     }
 
+    /// The value's type.
     pub fn logical_type(&self) -> &LogicalType {
         &self.ty
     }
@@ -295,6 +313,7 @@ impl Value {
         }
     }
 
+    /// The value of an INTERVAL.
     pub fn as_interval(&self) -> Option<Interval> {
         match self.payload {
             Payload::Interval(v) => Some(v),
@@ -310,6 +329,7 @@ impl Value {
         }
     }
 
+    /// Whether this is a NULL.
     pub fn is_null(&self) -> bool {
         matches!(self.payload, Payload::Null)
     }
@@ -331,6 +351,7 @@ impl Value {
         }
     }
 
+    /// The value of a BOOLEAN.
     pub fn as_bool(&self) -> Option<bool> {
         match self.payload {
             Payload::Bool(v) => Some(v),
@@ -338,6 +359,7 @@ impl Value {
         }
     }
 
+    /// The value of a FLOAT or DOUBLE.
     pub fn as_f64(&self) -> Option<f64> {
         match self.payload {
             Payload::F32(v) => Some(v.into()),

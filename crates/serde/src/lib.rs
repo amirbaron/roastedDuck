@@ -16,19 +16,22 @@
 //! `tools/codegen`.
 
 pub mod binary;
+mod default_value;
 mod deserializer;
+mod enums;
 mod generated;
 mod impls;
 pub mod json;
 mod options;
+mod pointee;
 mod serializer;
 
+pub use default_value::DefaultValue;
 pub use deserializer::{Deserialize, DeserializeObject, Deserializer};
-pub use impls::{
-    DefaultValue, OptionalIdx, Pointee, deserialize_present, read_enum, required, serialize_present,
-    write_enum,
-};
+pub use enums::{read_enum, write_enum};
+pub use impls::OptionalIdx;
 pub use options::{SerializationCompatibility, SerializationOptions};
+pub use pointee::{Pointee, deserialize_present, required, serialize_present};
 pub use rustdb_common::{Error, Result};
 pub use serializer::{Serialize, SerializeObject, Serializer};
 
