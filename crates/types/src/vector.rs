@@ -154,19 +154,20 @@ impl Vector {
         let width = ty.physical_type().size();
         let aux = match (ty.physical_type(), ty.info()) {
             (PhysicalType::Varchar, _) => Aux::Strings(Vec::new()),
-            (PhysicalType::List, Some(TypeInfo::List { child })) => Aux::List {
-                child: Box::new(Self::flat(child.clone(), capacity)),
+            (PhysicalType::List, Some(TypeInfo::List(info))) => Aux::List {
+                child: Box::new(Self::flat(info.child_type.clone(), capacity)),
                 size: 0,
             },
-            (PhysicalType::Struct, Some(TypeInfo::Struct { children })) => Aux::Struct(
-                children
+            (PhysicalType::Struct, Some(TypeInfo::Struct(info))) => Aux::Struct(
+                info.child_types
                     .iter()
                     .map(|(_, ty)| Self::flat(ty.clone(), capacity))
                     .collect(),
             ),
-            (PhysicalType::Array, Some(TypeInfo::Array { child, size })) => {
-                Aux::Array(Box::new(Self::flat(child.clone(), capacity * *size as usize)))
-            }
+            (PhysicalType::Array, Some(TypeInfo::Array(info))) => Aux::Array(Box::new(Self::flat(
+                info.child_type.clone(),
+                capacity * info.size as usize,
+            ))),
             _ => Aux::None,
         };
         let flat = Flat {

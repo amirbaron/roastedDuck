@@ -1,100 +1,27 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::PhysicalType;
-
-/// SQL type identifiers, numbered exactly like DuckDB's `LogicalTypeId`.
-///
-/// The numbering is part of the storage format and the C API.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[repr(u8)]
-pub enum LogicalTypeId {
-    Invalid = 0,
-    SqlNull = 1,
-    Unknown = 2,
-    Any = 3,
-    Unbound = 4,
-    Template = 5,
-    Type = 6,
-    Boolean = 10,
-    TinyInt = 11,
-    SmallInt = 12,
-    Integer = 13,
-    BigInt = 14,
-    Date = 15,
-    Time = 16,
-    TimestampSec = 17,
-    TimestampMs = 18,
-    Timestamp = 19,
-    TimestampNs = 20,
-    Decimal = 21,
-    Float = 22,
-    Double = 23,
-    Char = 24,
-    Varchar = 25,
-    Blob = 26,
-    Interval = 27,
-    UTinyInt = 28,
-    USmallInt = 29,
-    UInteger = 30,
-    UBigInt = 31,
-    TimestampTz = 32,
-    TimeTz = 34,
-    TimeNs = 35,
-    Bit = 36,
-    StringLiteral = 37,
-    IntegerLiteral = 38,
-    Bignum = 39,
-    UHugeInt = 49,
-    HugeInt = 50,
-    Pointer = 51,
-    Validity = 53,
-    Uuid = 54,
-    Geometry = 60,
-    Struct = 100,
-    List = 101,
-    Map = 102,
-    Table = 103,
-    Enum = 104,
-    AggregateState = 105,
-    Lambda = 106,
-    Union = 107,
-    Array = 108,
-    Variant = 109,
-}
-
-/// Extra information carried by parameterised types.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum TypeInfo {
-    Decimal {
-        width: u8,
-        scale: u8,
-    },
-    List {
-        child: LogicalType,
-    },
-    Array {
-        child: LogicalType,
-        size: u32,
-    },
-    Struct {
-        children: Vec<(String, LogicalType)>,
-    },
-    /// `INTEGER_LITERAL`: the literal value is kept so binding can pick the narrowest type.
-    IntegerLiteral {
-        value: i128,
-    },
-}
+use crate::{
+    ArrayTypeInfo, DecimalTypeInfo, ExtraTypeInfo, IntegerLiteralTypeInfo, ListTypeInfo, LogicalTypeId,
+    PhysicalType, StructTypeInfo, TypeInfo, Value,
+};
 
 /// A SQL type: an id plus optional parameters, cheap to clone.
+///
+/// The parameters are DuckDB's `ExtraTypeInfo`: the subclass-specific data in
+/// [`TypeInfo`] plus the members every info carries (an alias such as `JSON` on a
+/// `VARCHAR`, and extension metadata).
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct LogicalType {
     id: LogicalTypeId,
-    info: Option<Arc<TypeInfo>>,
+    info: Option<Arc<ExtraTypeInfo>>,
 }
 
 impl LogicalType {
+    // Parameterless types, named like DuckDB's `LogicalType::INTEGER` etc.
+    pub const INVALID: Self = Self::simple(LogicalTypeId::Invalid);
     pub const SQLNULL: Self = Self::simple(LogicalTypeId::SqlNull);
+    pub const UNKNOWN: Self = Self::simple(LogicalTypeId::Unknown);
     pub const BOOLEAN: Self = Self::simple(LogicalTypeId::Boolean);
     pub const TINYINT: Self = Self::simple(LogicalTypeId::TinyInt);
     pub const SMALLINT: Self = Self::simple(LogicalTypeId::SmallInt);
@@ -114,46 +41,192 @@ impl LogicalType {
     pub const TIME: Self = Self::simple(LogicalTypeId::Time);
     pub const TIMESTAMP: Self = Self::simple(LogicalTypeId::Timestamp);
     pub const INTERVAL: Self = Self::simple(LogicalTypeId::Interval);
+    pub const GEOMETRY: Self = Self::simple(LogicalTypeId::Geometry);
     pub const STRING_LITERAL: Self = Self::simple(LogicalTypeId::StringLiteral);
-    pub const UNKNOWN: Self = Self::simple(LogicalTypeId::Unknown);
-    pub const INVALID: Self = Self::simple(LogicalTypeId::Invalid);
 
     /// A type without parameters.
     pub const fn simple(id: LogicalTypeId) -> Self {
         Self { id, info: None }
     }
 
+    /// `DECIMAL(width, scale)`.
     pub fn decimal(width: u8, scale: u8) -> Self {
-        Self::with_info(LogicalTypeId::Decimal, TypeInfo::Decimal { width, scale })
+        Self::with_info(
+            LogicalTypeId::Decimal,
+            TypeInfo::Decimal(DecimalTypeInfo { width, scale }),
+        )
     }
 
-    pub fn list(child: LogicalType) -> Self {
-        Self::with_info(LogicalTypeId::List, TypeInfo::List { child })
+    /// `child[]`.
+    pub fn list(child: Self) -> Self {
+        Self::with_info(
+            LogicalTypeId::List,
+            TypeInfo::List(ListTypeInfo { child_type: child }),
+        )
     }
 
-    pub fn integer_literal(value: i128) -> Self {
-        Self::with_info(LogicalTypeId::IntegerLiteral, TypeInfo::IntegerLiteral { value })
+    /// `child[size]`.
+    pub fn array(child: Self, size: u32) -> Self {
+        Self::with_info(
+            LogicalTypeId::Array,
+            TypeInfo::Array(ArrayTypeInfo {
+                child_type: child,
+                size,
+            }),
+        )
     }
 
+    /// `STRUCT(name type, ...)`.
+    pub fn struct_type(children: Vec<(String, Self)>) -> Self {
+        Self::with_info(
+            LogicalTypeId::Struct,
+            TypeInfo::Struct(StructTypeInfo {
+                child_types: children,
+            }),
+        )
+    }
+
+    /// `MAP(key, value)`: a list of `{key, value}` structs.
+    pub fn map(key: Self, value: Self) -> Self {
+        let entry = Self::struct_type(vec![("key".to_owned(), key), ("value".to_owned(), value)]);
+        Self::with_info(
+            LogicalTypeId::Map,
+            TypeInfo::List(ListTypeInfo { child_type: entry }),
+        )
+    }
+
+    /// `UNION(name type, ...)`: a struct whose first, unnamed field is the member tag.
+    pub fn union_type(members: Vec<(String, Self)>) -> Self {
+        let mut children = Vec::with_capacity(members.len() + 1);
+        children.push((String::new(), Self::UTINYINT));
+        children.extend(members);
+        Self::with_info(
+            LogicalTypeId::Union,
+            TypeInfo::Struct(StructTypeInfo {
+                child_types: children,
+            }),
+        )
+    }
+
+    /// `VARIANT`: stored as keys, a children index, values and the data blob.
+    pub fn variant() -> Self {
+        let entries = |fields: [(&str, Self); 2]| {
+            Self::list(Self::struct_type(
+                fields
+                    .into_iter()
+                    .map(|(name, ty)| (name.to_owned(), ty))
+                    .collect(),
+            ))
+        };
+        let children = vec![
+            ("keys".to_owned(), Self::list(Self::VARCHAR)),
+            (
+                "children".to_owned(),
+                entries([("keys_index", Self::UINTEGER), ("values_index", Self::UINTEGER)]),
+            ),
+            (
+                "values".to_owned(),
+                entries([("type_id", Self::UTINYINT), ("byte_offset", Self::UINTEGER)]),
+            ),
+            ("data".to_owned(), Self::BLOB),
+        ];
+        Self::with_info(
+            LogicalTypeId::Variant,
+            TypeInfo::Struct(StructTypeInfo {
+                child_types: children,
+            }),
+        )
+    }
+
+    /// `INTEGER_LITERAL`: the literal value is kept so binding can pick the narrowest type.
+    pub fn integer_literal(constant: Value) -> Self {
+        Self::with_info(
+            LogicalTypeId::IntegerLiteral,
+            TypeInfo::IntegerLiteral(IntegerLiteralTypeInfo {
+                constant_value: constant,
+            }),
+        )
+    }
+
+    /// A type with parameters (and no alias or extension metadata).
     pub fn with_info(id: LogicalTypeId, info: TypeInfo) -> Self {
+        Self::from_parts(
+            id,
+            Some(ExtraTypeInfo {
+                alias: String::new(),
+                extension_info: None,
+                kind: info,
+            }),
+        )
+    }
+
+    /// A type from an id and DuckDB's complete `ExtraTypeInfo`.
+    pub fn from_parts(id: LogicalTypeId, info: Option<ExtraTypeInfo>) -> Self {
         Self {
             id,
-            info: Some(Arc::new(info)),
+            info: info.map(Arc::new),
         }
     }
 
+    /// This type under an alias (`JSON` is `VARCHAR` aliased as `JSON`).
+    #[must_use]
+    pub fn with_alias(self, alias: impl Into<String>) -> Self {
+        let mut info = self.info.map_or_else(
+            || ExtraTypeInfo {
+                alias: String::new(),
+                extension_info: None,
+                kind: TypeInfo::Generic,
+            },
+            Arc::unwrap_or_clone,
+        );
+        info.alias = alias.into();
+        Self::from_parts(self.id, Some(info))
+    }
+
+    /// The type id.
     pub const fn id(&self) -> LogicalTypeId {
         self.id
     }
 
+    /// The subclass-specific parameters, if any.
     pub fn info(&self) -> Option<&TypeInfo> {
+        self.info.as_deref().map(|info| &info.kind)
+    }
+
+    /// DuckDB's complete `ExtraTypeInfo`, including alias and extension metadata.
+    pub fn extra_info(&self) -> Option<&ExtraTypeInfo> {
         self.info.as_deref()
+    }
+
+    /// The alias, if one is set.
+    pub fn alias(&self) -> Option<&str> {
+        self.info
+            .as_deref()
+            .map(|info| info.alias.as_str())
+            .filter(|alias| !alias.is_empty())
     }
 
     /// `(width, scale)` of a DECIMAL type.
     pub fn decimal_properties(&self) -> Option<(u8, u8)> {
         match self.info() {
-            Some(TypeInfo::Decimal { width, scale }) => Some((*width, *scale)),
+            Some(TypeInfo::Decimal(info)) => Some((info.width, info.scale)),
+            _ => None,
+        }
+    }
+
+    /// The element type of a LIST, MAP or ARRAY.
+    pub fn child_type(&self) -> Option<&Self> {
+        match self.info() {
+            Some(TypeInfo::List(info)) => Some(&info.child_type),
+            Some(TypeInfo::Array(info)) => Some(&info.child_type),
+            _ => None,
+        }
+    }
+
+    /// The `(name, type)` fields of a STRUCT or UNION (for UNION, the tag comes first).
+    pub fn struct_children(&self) -> Option<&[(String, Self)]> {
+        match self.info() {
+            Some(TypeInfo::Struct(info)) => Some(&info.child_types),
             _ => None,
         }
     }
@@ -198,14 +271,16 @@ impl LogicalType {
             L::List | L::Map => PhysicalType::List,
             L::Array => PhysicalType::Array,
             L::Validity => PhysicalType::Bit,
-            // ENUM's physical type depends on its dictionary size, which is not modelled yet.
+            L::Enum => match self.info() {
+                Some(TypeInfo::Enum(info)) => info.dictionary_type(),
+                _ => PhysicalType::Invalid,
+            },
             L::Table
             | L::Lambda
             | L::Any
             | L::Invalid
             | L::Unknown
             | L::StringLiteral
-            | L::Enum
             | L::IntegerLiteral
             | L::AggregateState
             | L::Unbound
@@ -213,6 +288,7 @@ impl LogicalType {
         }
     }
 
+    /// Whether this is an integer, floating-point or decimal type.
     pub fn is_numeric(&self) -> bool {
         use LogicalTypeId as L;
         matches!(
@@ -233,6 +309,7 @@ impl LogicalType {
         )
     }
 
+    /// Whether this is a signed or unsigned integer type.
     pub fn is_integral(&self) -> bool {
         use LogicalTypeId as L;
         matches!(
@@ -249,6 +326,22 @@ impl LogicalType {
                 | L::UHugeInt
         )
     }
+
+    /// Whether this is a LIST, MAP, STRUCT, UNION, ARRAY or VARIANT.
+    pub const fn is_nested(&self) -> bool {
+        use LogicalTypeId as L;
+        matches!(
+            self.id,
+            L::List | L::Map | L::Struct | L::Union | L::Array | L::Variant
+        )
+    }
+}
+
+impl Default for LogicalType {
+    /// `INVALID`, like DuckDB's default-constructed `LogicalType`.
+    fn default() -> Self {
+        Self::INVALID
+    }
 }
 
 impl fmt::Debug for LogicalType {
@@ -260,14 +353,20 @@ impl fmt::Debug for LogicalType {
 impl fmt::Display for LogicalType {
     /// DuckDB's `LogicalType::ToString`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use LogicalTypeId as L;
+        if let Some(alias) = self.alias() {
+            return f.write_str(alias);
+        }
         match (self.id, self.info()) {
-            (L::Decimal, Some(TypeInfo::Decimal { width, scale })) => write!(f, "DECIMAL({width},{scale})"),
-            (L::List, Some(TypeInfo::List { child })) => write!(f, "{child}[]"),
-            (L::Array, Some(TypeInfo::Array { child, size })) => write!(f, "{child}[{size}]"),
-            (L::Struct, Some(TypeInfo::Struct { children })) => {
+            (LogicalTypeId::Decimal, Some(TypeInfo::Decimal(info))) => {
+                write!(f, "DECIMAL({},{})", info.width, info.scale)
+            }
+            (LogicalTypeId::List, Some(TypeInfo::List(info))) => write!(f, "{}[]", info.child_type),
+            (LogicalTypeId::Array, Some(TypeInfo::Array(info))) => {
+                write!(f, "{}[{}]", info.child_type, info.size)
+            }
+            (LogicalTypeId::Struct, Some(TypeInfo::Struct(info))) => {
                 f.write_str("STRUCT(")?;
-                for (i, (name, ty)) in children.iter().enumerate() {
+                for (i, (name, ty)) in info.child_types.iter().enumerate() {
                     if i > 0 {
                         f.write_str(", ")?;
                     }
@@ -282,59 +381,8 @@ impl fmt::Display for LogicalType {
 
 /// DuckDB's `EnumUtil::ToString(LogicalTypeId)` as used by `LogicalType::ToString`.
 pub(crate) const fn type_id_name(id: LogicalTypeId) -> &'static str {
-    use LogicalTypeId as L;
     match id {
-        L::Invalid => "INVALID",
-        L::SqlNull => "\"NULL\"",
-        L::Unknown => "UNKNOWN",
-        L::Any => "ANY",
-        L::Unbound => "UNBOUND",
-        L::Template => "TEMPLATE",
-        L::Type => "TYPE",
-        L::Boolean => "BOOLEAN",
-        L::TinyInt => "TINYINT",
-        L::SmallInt => "SMALLINT",
-        L::Integer => "INTEGER",
-        L::BigInt => "BIGINT",
-        L::Date => "DATE",
-        L::Time => "TIME",
-        L::TimestampSec => "TIMESTAMP_S",
-        L::TimestampMs => "TIMESTAMP_MS",
-        L::Timestamp => "TIMESTAMP",
-        L::TimestampNs => "TIMESTAMP_NS",
-        L::Decimal => "DECIMAL",
-        L::Float => "FLOAT",
-        L::Double => "DOUBLE",
-        L::Char => "CHAR",
-        L::Varchar => "VARCHAR",
-        L::Blob => "BLOB",
-        L::Interval => "INTERVAL",
-        L::UTinyInt => "UTINYINT",
-        L::USmallInt => "USMALLINT",
-        L::UInteger => "UINTEGER",
-        L::UBigInt => "UBIGINT",
-        L::TimestampTz => "TIMESTAMP WITH TIME ZONE",
-        L::TimeTz => "TIME WITH TIME ZONE",
-        L::TimeNs => "TIME_NS",
-        L::Bit => "BIT",
-        L::StringLiteral => "STRING_LITERAL",
-        L::IntegerLiteral => "INTEGER_LITERAL",
-        L::Bignum => "BIGNUM",
-        L::UHugeInt => "UHUGEINT",
-        L::HugeInt => "HUGEINT",
-        L::Pointer => "POINTER",
-        L::Validity => "VALIDITY",
-        L::Uuid => "UUID",
-        L::Geometry => "GEOMETRY",
-        L::Struct => "STRUCT",
-        L::List => "LIST",
-        L::Map => "MAP",
-        L::Table => "TABLE",
-        L::Enum => "ENUM",
-        L::AggregateState => "AGGREGATE_STATE",
-        L::Lambda => "LAMBDA",
-        L::Union => "UNION",
-        L::Array => "ARRAY",
-        L::Variant => "VARIANT",
+        LogicalTypeId::SqlNull => "\"NULL\"",
+        other => other.name(),
     }
 }

@@ -1,0 +1,4754 @@
+{
+  "AggregateHandling": {
+    "header": "duckdb/common/enums/aggregate_handling.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "STANDARD_HANDLING",
+        "value": 0,
+        "strings": [
+          "STANDARD_HANDLING"
+        ],
+        "doc": "standard handling as in the SELECT clause"
+      },
+      {
+        "name": "NO_AGGREGATES_ALLOWED",
+        "value": 1,
+        "strings": [
+          "NO_AGGREGATES_ALLOWED"
+        ],
+        "doc": "no aggregates allowed: any aggregates in this node will result in an error"
+      },
+      {
+        "name": "FORCE_AGGREGATES",
+        "value": 2,
+        "strings": [
+          "FORCE_AGGREGATES"
+        ],
+        "doc": "force aggregates: any non-aggregate select list entry will become a GROUP"
+      }
+    ]
+  },
+  "AlterDatabaseType": {
+    "header": "duckdb/parser/parsed_data/alter_database_info.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "RENAME_DATABASE",
+        "value": 0,
+        "strings": [
+          "RENAME_DATABASE"
+        ]
+      }
+    ]
+  },
+  "AlterForeignKeyType": {
+    "header": "duckdb/parser/parsed_data/alter_table_info.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "AFT_ADD",
+        "value": 0,
+        "strings": [
+          "AFT_ADD"
+        ]
+      },
+      {
+        "name": "AFT_DELETE",
+        "value": 1,
+        "strings": [
+          "AFT_DELETE"
+        ]
+      }
+    ]
+  },
+  "AlterTableType": {
+    "header": "duckdb/parser/parsed_data/alter_table_info.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "INVALID",
+        "value": 0,
+        "strings": [
+          "INVALID"
+        ]
+      },
+      {
+        "name": "RENAME_COLUMN",
+        "value": 1,
+        "strings": [
+          "RENAME_COLUMN"
+        ]
+      },
+      {
+        "name": "RENAME_TABLE",
+        "value": 2,
+        "strings": [
+          "RENAME_TABLE"
+        ]
+      },
+      {
+        "name": "ADD_COLUMN",
+        "value": 3,
+        "strings": [
+          "ADD_COLUMN"
+        ]
+      },
+      {
+        "name": "REMOVE_COLUMN",
+        "value": 4,
+        "strings": [
+          "REMOVE_COLUMN"
+        ]
+      },
+      {
+        "name": "ALTER_COLUMN_TYPE",
+        "value": 5,
+        "strings": [
+          "ALTER_COLUMN_TYPE"
+        ]
+      },
+      {
+        "name": "SET_DEFAULT",
+        "value": 6,
+        "strings": [
+          "SET_DEFAULT"
+        ]
+      },
+      {
+        "name": "FOREIGN_KEY_CONSTRAINT",
+        "value": 7,
+        "strings": [
+          "FOREIGN_KEY_CONSTRAINT"
+        ]
+      },
+      {
+        "name": "SET_NOT_NULL",
+        "value": 8,
+        "strings": [
+          "SET_NOT_NULL"
+        ]
+      },
+      {
+        "name": "DROP_NOT_NULL",
+        "value": 9,
+        "strings": [
+          "DROP_NOT_NULL"
+        ]
+      },
+      {
+        "name": "SET_COLUMN_COMMENT",
+        "value": 10,
+        "strings": [
+          "SET_COLUMN_COMMENT"
+        ]
+      },
+      {
+        "name": "ADD_CONSTRAINT",
+        "value": 11,
+        "strings": [
+          "ADD_CONSTRAINT"
+        ]
+      },
+      {
+        "name": "SET_PARTITIONED_BY",
+        "value": 12,
+        "strings": [
+          "SET_PARTITIONED_BY"
+        ]
+      },
+      {
+        "name": "SET_SORTED_BY",
+        "value": 13,
+        "strings": [
+          "SET_SORTED_BY"
+        ]
+      },
+      {
+        "name": "ADD_FIELD",
+        "value": 14,
+        "strings": [
+          "ADD_FIELD"
+        ]
+      },
+      {
+        "name": "REMOVE_FIELD",
+        "value": 15,
+        "strings": [
+          "REMOVE_FIELD"
+        ]
+      },
+      {
+        "name": "RENAME_FIELD",
+        "value": 16,
+        "strings": [
+          "RENAME_FIELD"
+        ]
+      },
+      {
+        "name": "SET_TABLE_OPTIONS",
+        "value": 17,
+        "strings": [
+          "SET_TABLE_OPTIONS"
+        ]
+      },
+      {
+        "name": "RESET_TABLE_OPTIONS",
+        "value": 18,
+        "strings": [
+          "RESET_TABLE_OPTIONS"
+        ]
+      }
+    ]
+  },
+  "AlterType": {
+    "header": "duckdb/parser/parsed_data/alter_info.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "INVALID",
+        "value": 0,
+        "strings": [
+          "INVALID"
+        ]
+      },
+      {
+        "name": "ALTER_TABLE",
+        "value": 1,
+        "strings": [
+          "ALTER_TABLE"
+        ]
+      },
+      {
+        "name": "ALTER_VIEW",
+        "value": 2,
+        "strings": [
+          "ALTER_VIEW"
+        ]
+      },
+      {
+        "name": "ALTER_SEQUENCE",
+        "value": 3,
+        "strings": [
+          "ALTER_SEQUENCE"
+        ]
+      },
+      {
+        "name": "CHANGE_OWNERSHIP",
+        "value": 4,
+        "strings": [
+          "CHANGE_OWNERSHIP"
+        ]
+      },
+      {
+        "name": "ALTER_SCALAR_FUNCTION",
+        "value": 5,
+        "strings": [
+          "ALTER_SCALAR_FUNCTION"
+        ]
+      },
+      {
+        "name": "ALTER_TABLE_FUNCTION",
+        "value": 6,
+        "strings": [
+          "ALTER_TABLE_FUNCTION"
+        ]
+      },
+      {
+        "name": "SET_COMMENT",
+        "value": 7,
+        "strings": [
+          "SET_COMMENT"
+        ]
+      },
+      {
+        "name": "SET_COLUMN_COMMENT",
+        "value": 8,
+        "strings": [
+          "SET_COLUMN_COMMENT"
+        ]
+      },
+      {
+        "name": "ALTER_DATABASE",
+        "value": 9,
+        "strings": [
+          "ALTER_DATABASE"
+        ]
+      }
+    ]
+  },
+  "AlterViewType": {
+    "header": "duckdb/parser/parsed_data/alter_table_info.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "INVALID",
+        "value": 0,
+        "strings": [
+          "INVALID"
+        ]
+      },
+      {
+        "name": "RENAME_VIEW",
+        "value": 1,
+        "strings": [
+          "RENAME_VIEW"
+        ]
+      }
+    ]
+  },
+  "CTEMaterialize": {
+    "header": "duckdb/common/enums/cte_materialize.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "CTE_MATERIALIZE_DEFAULT",
+        "value": 1,
+        "strings": [
+          "CTE_MATERIALIZE_DEFAULT"
+        ],
+        "doc": "no option specified"
+      },
+      {
+        "name": "CTE_MATERIALIZE_ALWAYS",
+        "value": 2,
+        "strings": [
+          "CTE_MATERIALIZE_ALWAYS"
+        ],
+        "doc": "MATERIALIZED"
+      },
+      {
+        "name": "CTE_MATERIALIZE_NEVER",
+        "value": 3,
+        "strings": [
+          "CTE_MATERIALIZE_NEVER"
+        ],
+        "doc": "NOT MATERIALIZED"
+      }
+    ]
+  },
+  "CatalogType": {
+    "header": "duckdb/common/enums/catalog_type.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "INVALID",
+        "value": 0,
+        "strings": [
+          "INVALID"
+        ]
+      },
+      {
+        "name": "TABLE_ENTRY",
+        "value": 1,
+        "strings": [
+          "TABLE_ENTRY"
+        ]
+      },
+      {
+        "name": "SCHEMA_ENTRY",
+        "value": 2,
+        "strings": [
+          "SCHEMA_ENTRY"
+        ]
+      },
+      {
+        "name": "VIEW_ENTRY",
+        "value": 3,
+        "strings": [
+          "VIEW_ENTRY"
+        ]
+      },
+      {
+        "name": "INDEX_ENTRY",
+        "value": 4,
+        "strings": [
+          "INDEX_ENTRY"
+        ]
+      },
+      {
+        "name": "PREPARED_STATEMENT",
+        "value": 5,
+        "strings": [
+          "PREPARED_STATEMENT"
+        ]
+      },
+      {
+        "name": "SEQUENCE_ENTRY",
+        "value": 6,
+        "strings": [
+          "SEQUENCE_ENTRY"
+        ]
+      },
+      {
+        "name": "COLLATION_ENTRY",
+        "value": 7,
+        "strings": [
+          "COLLATION_ENTRY"
+        ]
+      },
+      {
+        "name": "TYPE_ENTRY",
+        "value": 8,
+        "strings": [
+          "TYPE_ENTRY"
+        ]
+      },
+      {
+        "name": "DATABASE_ENTRY",
+        "value": 9,
+        "strings": [
+          "DATABASE_ENTRY"
+        ]
+      },
+      {
+        "name": "COORDINATE_SYSTEM_ENTRY",
+        "value": 10,
+        "strings": [
+          "COORDINATE_SYSTEM_ENTRY"
+        ]
+      },
+      {
+        "name": "TABLE_FUNCTION_ENTRY",
+        "value": 25,
+        "strings": [
+          "TABLE_FUNCTION_ENTRY"
+        ],
+        "doc": "functions"
+      },
+      {
+        "name": "SCALAR_FUNCTION_ENTRY",
+        "value": 26,
+        "strings": [
+          "SCALAR_FUNCTION_ENTRY"
+        ]
+      },
+      {
+        "name": "AGGREGATE_FUNCTION_ENTRY",
+        "value": 27,
+        "strings": [
+          "AGGREGATE_FUNCTION_ENTRY"
+        ]
+      },
+      {
+        "name": "PRAGMA_FUNCTION_ENTRY",
+        "value": 28,
+        "strings": [
+          "PRAGMA_FUNCTION_ENTRY"
+        ]
+      },
+      {
+        "name": "COPY_FUNCTION_ENTRY",
+        "value": 29,
+        "strings": [
+          "COPY_FUNCTION_ENTRY"
+        ]
+      },
+      {
+        "name": "MACRO_ENTRY",
+        "value": 30,
+        "strings": [
+          "MACRO_ENTRY"
+        ]
+      },
+      {
+        "name": "TABLE_MACRO_ENTRY",
+        "value": 31,
+        "strings": [
+          "TABLE_MACRO_ENTRY"
+        ]
+      },
+      {
+        "name": "DELETED_ENTRY",
+        "value": 51,
+        "strings": [
+          "DELETED_ENTRY"
+        ],
+        "doc": "version info"
+      },
+      {
+        "name": "RENAMED_ENTRY",
+        "value": 52,
+        "strings": [
+          "RENAMED_ENTRY"
+        ]
+      },
+      {
+        "name": "SECRET_ENTRY",
+        "value": 71,
+        "strings": [
+          "SECRET_ENTRY"
+        ],
+        "doc": "secrets"
+      },
+      {
+        "name": "SECRET_TYPE_ENTRY",
+        "value": 72,
+        "strings": [
+          "SECRET_TYPE_ENTRY"
+        ]
+      },
+      {
+        "name": "SECRET_FUNCTION_ENTRY",
+        "value": 73,
+        "strings": [
+          "SECRET_FUNCTION_ENTRY"
+        ]
+      },
+      {
+        "name": "DEPENDENCY_ENTRY",
+        "value": 100,
+        "strings": [
+          "DEPENDENCY_ENTRY"
+        ],
+        "doc": "dependency info"
+      }
+    ]
+  },
+  "ColumnIndexType": {
+    "header": "duckdb/common/column_index.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "INVALID",
+        "value": 0,
+        "strings": [
+          "INVALID"
+        ]
+      },
+      {
+        "name": "FULL_READ",
+        "value": 1,
+        "strings": [
+          "FULL_READ"
+        ],
+        "doc": "! Regular column index, refers to a column in its entirety"
+      },
+      {
+        "name": "PUSHDOWN_EXTRACT",
+        "value": 2,
+        "strings": [
+          "PUSHDOWN_EXTRACT"
+        ],
+        "doc": "! This index references a struct/variant field that MUST be extracted by the scan and emitted directly"
+      }
+    ]
+  },
+  "CompressionType": {
+    "header": "duckdb/common/enums/compression_type.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "COMPRESSION_AUTO",
+        "value": 0,
+        "strings": [
+          "AUTO"
+        ]
+      },
+      {
+        "name": "COMPRESSION_UNCOMPRESSED",
+        "value": 1,
+        "strings": [
+          "UNCOMPRESSED"
+        ]
+      },
+      {
+        "name": "COMPRESSION_CONSTANT",
+        "value": 2,
+        "strings": [
+          "CONSTANT"
+        ],
+        "doc": "internal only"
+      },
+      {
+        "name": "COMPRESSION_RLE",
+        "value": 3,
+        "strings": [
+          "RLE"
+        ]
+      },
+      {
+        "name": "COMPRESSION_DICTIONARY",
+        "value": 4,
+        "strings": [
+          "DICTIONARY"
+        ]
+      },
+      {
+        "name": "COMPRESSION_PFOR_DELTA",
+        "value": 5,
+        "strings": [
+          "PFOR"
+        ]
+      },
+      {
+        "name": "COMPRESSION_BITPACKING",
+        "value": 6,
+        "strings": [
+          "BITPACKING"
+        ]
+      },
+      {
+        "name": "COMPRESSION_FSST",
+        "value": 7,
+        "strings": [
+          "FSST"
+        ]
+      },
+      {
+        "name": "COMPRESSION_CHIMP",
+        "value": 8,
+        "strings": [
+          "CHIMP"
+        ]
+      },
+      {
+        "name": "COMPRESSION_PATAS",
+        "value": 9,
+        "strings": [
+          "PATAS"
+        ]
+      },
+      {
+        "name": "COMPRESSION_ALP",
+        "value": 10,
+        "strings": [
+          "ALP"
+        ]
+      },
+      {
+        "name": "COMPRESSION_ALPRD",
+        "value": 11,
+        "strings": [
+          "ALPRD"
+        ]
+      },
+      {
+        "name": "COMPRESSION_ZSTD",
+        "value": 12,
+        "strings": [
+          "ZSTD"
+        ]
+      },
+      {
+        "name": "COMPRESSION_ROARING",
+        "value": 13,
+        "strings": [
+          "ROARING"
+        ]
+      },
+      {
+        "name": "COMPRESSION_EMPTY",
+        "value": 14,
+        "strings": [
+          "EMPTY"
+        ],
+        "doc": "internal only"
+      },
+      {
+        "name": "COMPRESSION_DICT_FSST",
+        "value": 15,
+        "strings": [
+          "DICT_FSST"
+        ]
+      },
+      {
+        "name": "COMPRESSION_COUNT",
+        "value": 16,
+        "strings": [
+          "COMPRESSION_COUNT"
+        ],
+        "doc": "This has to stay the last entry of the type!"
+      }
+    ]
+  },
+  "ConstraintType": {
+    "header": "duckdb/parser/constraint.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "INVALID",
+        "value": 0,
+        "strings": [
+          "INVALID"
+        ],
+        "doc": "invalid constraint type"
+      },
+      {
+        "name": "NOT_NULL",
+        "value": 1,
+        "strings": [
+          "NOT_NULL"
+        ],
+        "doc": "NOT NULL constraint"
+      },
+      {
+        "name": "CHECK",
+        "value": 2,
+        "strings": [
+          "CHECK"
+        ],
+        "doc": "CHECK constraint"
+      },
+      {
+        "name": "UNIQUE",
+        "value": 3,
+        "strings": [
+          "UNIQUE"
+        ],
+        "doc": "UNIQUE constraint"
+      },
+      {
+        "name": "FOREIGN_KEY",
+        "value": 4,
+        "strings": [
+          "FOREIGN_KEY"
+        ],
+        "doc": "FOREIGN KEY constraint"
+      }
+    ]
+  },
+  "DeprecatedIndexType": {
+    "header": "duckdb/common/enums/index_constraint_type.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "INVALID",
+        "value": 0,
+        "strings": [
+          "INVALID"
+        ],
+        "doc": "invalid index type"
+      },
+      {
+        "name": "ART",
+        "value": 1,
+        "strings": [
+          "ART"
+        ],
+        "doc": "Adaptive Radix Tree"
+      },
+      {
+        "name": "EXTENSION",
+        "value": 100,
+        "strings": [
+          "EXTENSION"
+        ],
+        "doc": "Extension index"
+      }
+    ]
+  },
+  "DistinctType": {
+    "header": "duckdb/planner/bound_result_modifier.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "DISTINCT",
+        "value": 0,
+        "strings": [
+          "DISTINCT"
+        ]
+      },
+      {
+        "name": "DISTINCT_ON",
+        "value": 1,
+        "strings": [
+          "DISTINCT_ON"
+        ]
+      }
+    ]
+  },
+  "ExplainFormat": {
+    "header": "duckdb/common/enums/explain_format.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "DEFAULT",
+        "value": 0,
+        "strings": [
+          "DEFAULT"
+        ]
+      },
+      {
+        "name": "TEXT",
+        "value": 1,
+        "strings": [
+          "TEXT"
+        ]
+      },
+      {
+        "name": "JSON",
+        "value": 2,
+        "strings": [
+          "JSON"
+        ]
+      },
+      {
+        "name": "HTML",
+        "value": 3,
+        "strings": [
+          "HTML"
+        ]
+      },
+      {
+        "name": "GRAPHVIZ",
+        "value": 4,
+        "strings": [
+          "GRAPHVIZ"
+        ]
+      },
+      {
+        "name": "YAML",
+        "value": 5,
+        "strings": [
+          "YAML"
+        ]
+      },
+      {
+        "name": "MERMAID",
+        "value": 6,
+        "strings": [
+          "MERMAID"
+        ]
+      }
+    ]
+  },
+  "ExplainType": {
+    "header": "duckdb/parser/statement/explain_statement.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "EXPLAIN_STANDARD",
+        "value": 0,
+        "strings": [
+          "EXPLAIN_STANDARD"
+        ]
+      },
+      {
+        "name": "EXPLAIN_ANALYZE",
+        "value": 1,
+        "strings": [
+          "EXPLAIN_ANALYZE"
+        ]
+      }
+    ]
+  },
+  "ExpressionClass": {
+    "header": "duckdb/common/enums/expression_type.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "INVALID",
+        "value": 0,
+        "strings": [
+          "INVALID"
+        ]
+      },
+      {
+        "name": "AGGREGATE",
+        "value": 1,
+        "strings": [
+          "AGGREGATE"
+        ]
+      },
+      {
+        "name": "CASE",
+        "value": 2,
+        "strings": [
+          "CASE"
+        ]
+      },
+      {
+        "name": "CAST",
+        "value": 3,
+        "strings": [
+          "CAST"
+        ]
+      },
+      {
+        "name": "COLUMN_REF",
+        "value": 4,
+        "strings": [
+          "COLUMN_REF"
+        ]
+      },
+      {
+        "name": "COMPARISON",
+        "value": 5,
+        "strings": [
+          "COMPARISON"
+        ]
+      },
+      {
+        "name": "CONJUNCTION",
+        "value": 6,
+        "strings": [
+          "CONJUNCTION"
+        ]
+      },
+      {
+        "name": "CONSTANT",
+        "value": 7,
+        "strings": [
+          "CONSTANT"
+        ]
+      },
+      {
+        "name": "DEFAULT",
+        "value": 8,
+        "strings": [
+          "DEFAULT"
+        ]
+      },
+      {
+        "name": "FUNCTION",
+        "value": 9,
+        "strings": [
+          "FUNCTION"
+        ]
+      },
+      {
+        "name": "OPERATOR",
+        "value": 10,
+        "strings": [
+          "OPERATOR"
+        ]
+      },
+      {
+        "name": "STAR",
+        "value": 11,
+        "strings": [
+          "STAR"
+        ]
+      },
+      {
+        "name": "SUBQUERY",
+        "value": 13,
+        "strings": [
+          "SUBQUERY"
+        ]
+      },
+      {
+        "name": "WINDOW",
+        "value": 14,
+        "strings": [
+          "WINDOW"
+        ]
+      },
+      {
+        "name": "PARAMETER",
+        "value": 15,
+        "strings": [
+          "PARAMETER"
+        ]
+      },
+      {
+        "name": "COLLATE",
+        "value": 16,
+        "strings": [
+          "COLLATE"
+        ]
+      },
+      {
+        "name": "LAMBDA",
+        "value": 17,
+        "strings": [
+          "LAMBDA"
+        ]
+      },
+      {
+        "name": "POSITIONAL_REFERENCE",
+        "value": 18,
+        "strings": [
+          "POSITIONAL_REFERENCE"
+        ]
+      },
+      {
+        "name": "BETWEEN",
+        "value": 19,
+        "strings": [
+          "BETWEEN"
+        ]
+      },
+      {
+        "name": "LAMBDA_REF",
+        "value": 20,
+        "strings": [
+          "LAMBDA_REF"
+        ]
+      },
+      {
+        "name": "TYPE",
+        "value": 21,
+        "strings": [
+          "TYPE"
+        ]
+      },
+      {
+        "name": "BOUND_AGGREGATE",
+        "value": 25,
+        "strings": [
+          "BOUND_AGGREGATE"
+        ]
+      },
+      {
+        "name": "BOUND_CASE",
+        "value": 26,
+        "strings": [
+          "BOUND_CASE"
+        ]
+      },
+      {
+        "name": "BOUND_CAST",
+        "value": 27,
+        "strings": [
+          "BOUND_CAST"
+        ]
+      },
+      {
+        "name": "BOUND_COLUMN_REF",
+        "value": 28,
+        "strings": [
+          "BOUND_COLUMN_REF"
+        ]
+      },
+      {
+        "name": "BOUND_COMPARISON",
+        "value": 29,
+        "strings": [
+          "BOUND_COMPARISON"
+        ]
+      },
+      {
+        "name": "BOUND_CONJUNCTION",
+        "value": 30,
+        "strings": [
+          "BOUND_CONJUNCTION"
+        ]
+      },
+      {
+        "name": "BOUND_CONSTANT",
+        "value": 31,
+        "strings": [
+          "BOUND_CONSTANT"
+        ]
+      },
+      {
+        "name": "BOUND_DEFAULT",
+        "value": 32,
+        "strings": [
+          "BOUND_DEFAULT"
+        ]
+      },
+      {
+        "name": "BOUND_FUNCTION",
+        "value": 33,
+        "strings": [
+          "BOUND_FUNCTION"
+        ]
+      },
+      {
+        "name": "BOUND_OPERATOR",
+        "value": 34,
+        "strings": [
+          "BOUND_OPERATOR"
+        ]
+      },
+      {
+        "name": "BOUND_PARAMETER",
+        "value": 35,
+        "strings": [
+          "BOUND_PARAMETER"
+        ]
+      },
+      {
+        "name": "BOUND_REF",
+        "value": 36,
+        "strings": [
+          "BOUND_REF"
+        ]
+      },
+      {
+        "name": "BOUND_SUBQUERY",
+        "value": 37,
+        "strings": [
+          "BOUND_SUBQUERY"
+        ]
+      },
+      {
+        "name": "BOUND_WINDOW",
+        "value": 38,
+        "strings": [
+          "BOUND_WINDOW"
+        ]
+      },
+      {
+        "name": "BOUND_BETWEEN",
+        "value": 39,
+        "strings": [
+          "BOUND_BETWEEN"
+        ]
+      },
+      {
+        "name": "BOUND_UNNEST",
+        "value": 40,
+        "strings": [
+          "BOUND_UNNEST"
+        ]
+      },
+      {
+        "name": "BOUND_LAMBDA",
+        "value": 41,
+        "strings": [
+          "BOUND_LAMBDA"
+        ]
+      },
+      {
+        "name": "BOUND_LAMBDA_REF",
+        "value": 42,
+        "strings": [
+          "BOUND_LAMBDA_REF"
+        ]
+      },
+      {
+        "name": "BOUND_EXPRESSION",
+        "value": 50,
+        "strings": [
+          "BOUND_EXPRESSION"
+        ]
+      },
+      {
+        "name": "BOUND_EXPANDED",
+        "value": 51,
+        "strings": [
+          "BOUND_EXPANDED"
+        ]
+      }
+    ]
+  },
+  "ExpressionType": {
+    "header": "duckdb/common/enums/expression_type.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "INVALID",
+        "value": 0,
+        "strings": [
+          "INVALID"
+        ]
+      },
+      {
+        "name": "OPERATOR_CAST",
+        "value": 12,
+        "strings": [
+          "OPERATOR_CAST"
+        ],
+        "doc": "explicitly cast left as right (right is integer in ValueType enum)"
+      },
+      {
+        "name": "OPERATOR_NOT",
+        "value": 13,
+        "strings": [
+          "OPERATOR_NOT"
+        ],
+        "doc": "logical not operator"
+      },
+      {
+        "name": "OPERATOR_IS_NULL",
+        "value": 14,
+        "strings": [
+          "OPERATOR_IS_NULL"
+        ],
+        "doc": "is null operator"
+      },
+      {
+        "name": "OPERATOR_IS_NOT_NULL",
+        "value": 15,
+        "strings": [
+          "OPERATOR_IS_NOT_NULL"
+        ],
+        "doc": "is not null operator"
+      },
+      {
+        "name": "OPERATOR_UNPACK",
+        "value": 16,
+        "strings": [
+          "OPERATOR_UNPACK"
+        ],
+        "doc": "unpack operator"
+      },
+      {
+        "name": "COMPARE_EQUAL",
+        "value": 25,
+        "strings": [
+          "COMPARE_EQUAL"
+        ],
+        "doc": "equal operator between left and right"
+      },
+      {
+        "name": "COMPARE_NOTEQUAL",
+        "value": 26,
+        "strings": [
+          "COMPARE_NOTEQUAL"
+        ],
+        "doc": "inequal operator between left and right"
+      },
+      {
+        "name": "COMPARE_LESSTHAN",
+        "value": 27,
+        "strings": [
+          "COMPARE_LESSTHAN"
+        ],
+        "doc": "less than operator between left and right"
+      },
+      {
+        "name": "COMPARE_GREATERTHAN",
+        "value": 28,
+        "strings": [
+          "COMPARE_GREATERTHAN"
+        ],
+        "doc": "greater than operator between left and right"
+      },
+      {
+        "name": "COMPARE_LESSTHANOREQUALTO",
+        "value": 29,
+        "strings": [
+          "COMPARE_LESSTHANOREQUALTO"
+        ],
+        "doc": "less than equal operator between left and right"
+      },
+      {
+        "name": "COMPARE_GREATERTHANOREQUALTO",
+        "value": 30,
+        "strings": [
+          "COMPARE_GREATERTHANOREQUALTO"
+        ],
+        "doc": "greater than equal operator between left and right"
+      },
+      {
+        "name": "COMPARE_IN",
+        "value": 35,
+        "strings": [
+          "COMPARE_IN"
+        ],
+        "doc": "IN operator [left IN (right1, right2, ...)]"
+      },
+      {
+        "name": "COMPARE_NOT_IN",
+        "value": 36,
+        "strings": [
+          "COMPARE_NOT_IN"
+        ],
+        "doc": "NOT IN operator [left NOT IN (right1, right2, ...)]"
+      },
+      {
+        "name": "COMPARE_DISTINCT_FROM",
+        "value": 37,
+        "strings": [
+          "COMPARE_DISTINCT_FROM"
+        ],
+        "doc": "IS DISTINCT FROM operator"
+      },
+      {
+        "name": "COMPARE_BETWEEN",
+        "value": 38,
+        "strings": [
+          "COMPARE_BETWEEN"
+        ]
+      },
+      {
+        "name": "COMPARE_NOT_BETWEEN",
+        "value": 39,
+        "strings": [
+          "COMPARE_NOT_BETWEEN"
+        ]
+      },
+      {
+        "name": "COMPARE_NOT_DISTINCT_FROM",
+        "value": 40,
+        "strings": [
+          "COMPARE_NOT_DISTINCT_FROM"
+        ],
+        "doc": "IS NOT DISTINCT FROM operator"
+      },
+      {
+        "name": "CONJUNCTION_AND",
+        "value": 50,
+        "strings": [
+          "CONJUNCTION_AND"
+        ]
+      },
+      {
+        "name": "CONJUNCTION_OR",
+        "value": 51,
+        "strings": [
+          "CONJUNCTION_OR"
+        ]
+      },
+      {
+        "name": "VALUE_CONSTANT",
+        "value": 75,
+        "strings": [
+          "VALUE_CONSTANT"
+        ]
+      },
+      {
+        "name": "VALUE_PARAMETER",
+        "value": 76,
+        "strings": [
+          "VALUE_PARAMETER"
+        ]
+      },
+      {
+        "name": "VALUE_TUPLE",
+        "value": 77,
+        "strings": [
+          "VALUE_TUPLE"
+        ]
+      },
+      {
+        "name": "VALUE_TUPLE_ADDRESS",
+        "value": 78,
+        "strings": [
+          "VALUE_TUPLE_ADDRESS"
+        ]
+      },
+      {
+        "name": "VALUE_NULL",
+        "value": 79,
+        "strings": [
+          "VALUE_NULL"
+        ]
+      },
+      {
+        "name": "VALUE_VECTOR",
+        "value": 80,
+        "strings": [
+          "VALUE_VECTOR"
+        ]
+      },
+      {
+        "name": "VALUE_SCALAR",
+        "value": 81,
+        "strings": [
+          "VALUE_SCALAR"
+        ]
+      },
+      {
+        "name": "VALUE_DEFAULT",
+        "value": 82,
+        "strings": [
+          "VALUE_DEFAULT"
+        ]
+      },
+      {
+        "name": "AGGREGATE",
+        "value": 100,
+        "strings": [
+          "AGGREGATE"
+        ]
+      },
+      {
+        "name": "BOUND_AGGREGATE",
+        "value": 101,
+        "strings": [
+          "BOUND_AGGREGATE"
+        ]
+      },
+      {
+        "name": "GROUPING_FUNCTION",
+        "value": 102,
+        "strings": [
+          "GROUPING_FUNCTION"
+        ]
+      },
+      {
+        "name": "WINDOW_AGGREGATE",
+        "value": 110,
+        "strings": [
+          "WINDOW_AGGREGATE"
+        ]
+      },
+      {
+        "name": "WINDOW_RANK",
+        "value": 120,
+        "strings": [
+          "WINDOW_RANK"
+        ]
+      },
+      {
+        "name": "WINDOW_RANK_DENSE",
+        "value": 121,
+        "strings": [
+          "WINDOW_RANK_DENSE"
+        ]
+      },
+      {
+        "name": "WINDOW_NTILE",
+        "value": 122,
+        "strings": [
+          "WINDOW_NTILE"
+        ]
+      },
+      {
+        "name": "WINDOW_PERCENT_RANK",
+        "value": 123,
+        "strings": [
+          "WINDOW_PERCENT_RANK"
+        ]
+      },
+      {
+        "name": "WINDOW_CUME_DIST",
+        "value": 124,
+        "strings": [
+          "WINDOW_CUME_DIST"
+        ]
+      },
+      {
+        "name": "WINDOW_ROW_NUMBER",
+        "value": 125,
+        "strings": [
+          "WINDOW_ROW_NUMBER"
+        ]
+      },
+      {
+        "name": "WINDOW_FIRST_VALUE",
+        "value": 130,
+        "strings": [
+          "WINDOW_FIRST_VALUE"
+        ]
+      },
+      {
+        "name": "WINDOW_LAST_VALUE",
+        "value": 131,
+        "strings": [
+          "WINDOW_LAST_VALUE"
+        ]
+      },
+      {
+        "name": "WINDOW_LEAD",
+        "value": 132,
+        "strings": [
+          "WINDOW_LEAD"
+        ]
+      },
+      {
+        "name": "WINDOW_LAG",
+        "value": 133,
+        "strings": [
+          "WINDOW_LAG"
+        ]
+      },
+      {
+        "name": "WINDOW_NTH_VALUE",
+        "value": 134,
+        "strings": [
+          "WINDOW_NTH_VALUE"
+        ]
+      },
+      {
+        "name": "WINDOW_FILL",
+        "value": 135,
+        "strings": [
+          "WINDOW_FILL"
+        ]
+      },
+      {
+        "name": "FUNCTION",
+        "value": 140,
+        "strings": [
+          "FUNCTION"
+        ]
+      },
+      {
+        "name": "BOUND_FUNCTION",
+        "value": 141,
+        "strings": [
+          "BOUND_FUNCTION"
+        ]
+      },
+      {
+        "name": "CASE_EXPR",
+        "value": 150,
+        "strings": [
+          "CASE_EXPR"
+        ]
+      },
+      {
+        "name": "OPERATOR_NULLIF",
+        "value": 151,
+        "strings": [
+          "OPERATOR_NULLIF"
+        ]
+      },
+      {
+        "name": "OPERATOR_COALESCE",
+        "value": 152,
+        "strings": [
+          "OPERATOR_COALESCE"
+        ]
+      },
+      {
+        "name": "ARRAY_EXTRACT",
+        "value": 153,
+        "strings": [
+          "ARRAY_EXTRACT"
+        ]
+      },
+      {
+        "name": "ARRAY_SLICE",
+        "value": 154,
+        "strings": [
+          "ARRAY_SLICE"
+        ]
+      },
+      {
+        "name": "STRUCT_EXTRACT",
+        "value": 155,
+        "strings": [
+          "STRUCT_EXTRACT"
+        ]
+      },
+      {
+        "name": "ARRAY_CONSTRUCTOR",
+        "value": 156,
+        "strings": [
+          "ARRAY_CONSTRUCTOR"
+        ]
+      },
+      {
+        "name": "ARROW",
+        "value": 157,
+        "strings": [
+          "ARROW"
+        ]
+      },
+      {
+        "name": "OPERATOR_TRY",
+        "value": 158,
+        "strings": [
+          "OPERATOR_TRY"
+        ]
+      },
+      {
+        "name": "SUBQUERY",
+        "value": 175,
+        "strings": [
+          "SUBQUERY"
+        ]
+      },
+      {
+        "name": "STAR",
+        "value": 200,
+        "strings": [
+          "STAR"
+        ]
+      },
+      {
+        "name": "TABLE_STAR",
+        "value": 201,
+        "strings": [
+          "TABLE_STAR"
+        ]
+      },
+      {
+        "name": "PLACEHOLDER",
+        "value": 202,
+        "strings": [
+          "PLACEHOLDER"
+        ]
+      },
+      {
+        "name": "COLUMN_REF",
+        "value": 203,
+        "strings": [
+          "COLUMN_REF"
+        ]
+      },
+      {
+        "name": "FUNCTION_REF",
+        "value": 204,
+        "strings": [
+          "FUNCTION_REF"
+        ]
+      },
+      {
+        "name": "TABLE_REF",
+        "value": 205,
+        "strings": [
+          "TABLE_REF"
+        ]
+      },
+      {
+        "name": "LAMBDA_REF",
+        "value": 206,
+        "strings": [
+          "LAMBDA_REF"
+        ]
+      },
+      {
+        "name": "TYPE",
+        "value": 207,
+        "strings": [
+          "TYPE"
+        ]
+      },
+      {
+        "name": "CAST",
+        "value": 225,
+        "strings": [
+          "CAST"
+        ]
+      },
+      {
+        "name": "BOUND_REF",
+        "value": 227,
+        "strings": [
+          "BOUND_REF"
+        ]
+      },
+      {
+        "name": "BOUND_COLUMN_REF",
+        "value": 228,
+        "strings": [
+          "BOUND_COLUMN_REF"
+        ]
+      },
+      {
+        "name": "BOUND_UNNEST",
+        "value": 229,
+        "strings": [
+          "BOUND_UNNEST"
+        ]
+      },
+      {
+        "name": "COLLATE",
+        "value": 230,
+        "strings": [
+          "COLLATE"
+        ]
+      },
+      {
+        "name": "LAMBDA",
+        "value": 231,
+        "strings": [
+          "LAMBDA"
+        ]
+      },
+      {
+        "name": "POSITIONAL_REFERENCE",
+        "value": 232,
+        "strings": [
+          "POSITIONAL_REFERENCE"
+        ]
+      },
+      {
+        "name": "BOUND_LAMBDA_REF",
+        "value": 233,
+        "strings": [
+          "BOUND_LAMBDA_REF"
+        ]
+      },
+      {
+        "name": "BOUND_EXPANDED",
+        "value": 234,
+        "strings": [
+          "BOUND_EXPANDED"
+        ]
+      }
+    ]
+  },
+  "ExtensionInstallMode": {
+    "header": "duckdb/main/extension_install_info.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "UNKNOWN",
+        "value": 0,
+        "strings": [
+          "UNKNOWN"
+        ],
+        "doc": "Fallback for when install info is missing"
+      },
+      {
+        "name": "REPOSITORY",
+        "value": 1,
+        "strings": [
+          "REPOSITORY"
+        ],
+        "doc": "! Extension was installed using a url deduced from a repository base url"
+      },
+      {
+        "name": "CUSTOM_PATH",
+        "value": 2,
+        "strings": [
+          "CUSTOM_PATH"
+        ],
+        "doc": "! Extension was install from a custom path, this could be either local or remote"
+      },
+      {
+        "name": "STATICALLY_LINKED",
+        "value": 3,
+        "strings": [
+          "STATICALLY_LINKED"
+        ],
+        "doc": "! Extension was statically linked"
+      },
+      {
+        "name": "NOT_INSTALLED",
+        "value": 4,
+        "strings": [
+          "NOT_INSTALLED"
+        ],
+        "doc": "! Extension is not installed, for example the extension might be directly loaded without installing"
+      }
+    ]
+  },
+  "ExtraDropInfoType": {
+    "header": "duckdb/parser/parsed_data/extra_drop_info.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "INVALID",
+        "value": 0,
+        "strings": [
+          "INVALID"
+        ]
+      },
+      {
+        "name": "SECRET_INFO",
+        "value": 1,
+        "strings": [
+          "SECRET_INFO"
+        ]
+      }
+    ]
+  },
+  "ExtraTypeInfoType": {
+    "header": "duckdb/common/extra_type_info.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "INVALID_TYPE_INFO",
+        "value": 0,
+        "strings": [
+          "INVALID_TYPE_INFO"
+        ]
+      },
+      {
+        "name": "GENERIC_TYPE_INFO",
+        "value": 1,
+        "strings": [
+          "GENERIC_TYPE_INFO"
+        ]
+      },
+      {
+        "name": "DECIMAL_TYPE_INFO",
+        "value": 2,
+        "strings": [
+          "DECIMAL_TYPE_INFO"
+        ]
+      },
+      {
+        "name": "STRING_TYPE_INFO",
+        "value": 3,
+        "strings": [
+          "STRING_TYPE_INFO"
+        ]
+      },
+      {
+        "name": "LIST_TYPE_INFO",
+        "value": 4,
+        "strings": [
+          "LIST_TYPE_INFO"
+        ]
+      },
+      {
+        "name": "STRUCT_TYPE_INFO",
+        "value": 5,
+        "strings": [
+          "STRUCT_TYPE_INFO"
+        ]
+      },
+      {
+        "name": "ENUM_TYPE_INFO",
+        "value": 6,
+        "strings": [
+          "ENUM_TYPE_INFO"
+        ]
+      },
+      {
+        "name": "UNBOUND_TYPE_INFO",
+        "value": 7,
+        "strings": [
+          "UNBOUND_TYPE_INFO"
+        ]
+      },
+      {
+        "name": "AGGREGATE_STATE_TYPE_INFO",
+        "value": 8,
+        "strings": [
+          "AGGREGATE_STATE_TYPE_INFO"
+        ]
+      },
+      {
+        "name": "ARRAY_TYPE_INFO",
+        "value": 9,
+        "strings": [
+          "ARRAY_TYPE_INFO"
+        ]
+      },
+      {
+        "name": "ANY_TYPE_INFO",
+        "value": 10,
+        "strings": [
+          "ANY_TYPE_INFO"
+        ]
+      },
+      {
+        "name": "INTEGER_LITERAL_TYPE_INFO",
+        "value": 11,
+        "strings": [
+          "INTEGER_LITERAL_TYPE_INFO"
+        ]
+      },
+      {
+        "name": "TEMPLATE_TYPE_INFO",
+        "value": 12,
+        "strings": [
+          "TEMPLATE_TYPE_INFO"
+        ]
+      },
+      {
+        "name": "GEO_TYPE_INFO",
+        "value": 13,
+        "strings": [
+          "GEO_TYPE_INFO"
+        ]
+      }
+    ]
+  },
+  "FileCompressionType": {
+    "header": "duckdb/common/enums/file_compression_type.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "AUTO_DETECT",
+        "value": 0,
+        "strings": [
+          "AUTO_DETECT"
+        ]
+      },
+      {
+        "name": "UNCOMPRESSED",
+        "value": 1,
+        "strings": [
+          "UNCOMPRESSED"
+        ]
+      },
+      {
+        "name": "GZIP",
+        "value": 2,
+        "strings": [
+          "GZIP"
+        ]
+      },
+      {
+        "name": "ZSTD",
+        "value": 3,
+        "strings": [
+          "ZSTD"
+        ]
+      }
+    ]
+  },
+  "FileNameSegmentType": {
+    "header": "duckdb/common/filename_pattern.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "LITERAL",
+        "value": 0,
+        "strings": [
+          "LITERAL"
+        ]
+      },
+      {
+        "name": "UUID_V4",
+        "value": 1,
+        "strings": [
+          "UUID_V4"
+        ]
+      },
+      {
+        "name": "UUID_V7",
+        "value": 2,
+        "strings": [
+          "UUID_V7"
+        ]
+      },
+      {
+        "name": "OFFSET",
+        "value": 3,
+        "strings": [
+          "OFFSET"
+        ]
+      }
+    ]
+  },
+  "ForeignKeyType": {
+    "header": "duckdb/parser/constraint.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "FK_TYPE_PRIMARY_KEY_TABLE",
+        "value": 0,
+        "strings": [
+          "FK_TYPE_PRIMARY_KEY_TABLE"
+        ],
+        "doc": "main table"
+      },
+      {
+        "name": "FK_TYPE_FOREIGN_KEY_TABLE",
+        "value": 1,
+        "strings": [
+          "FK_TYPE_FOREIGN_KEY_TABLE"
+        ],
+        "doc": "referencing table"
+      },
+      {
+        "name": "FK_TYPE_SELF_REFERENCE_TABLE",
+        "value": 2,
+        "strings": [
+          "FK_TYPE_SELF_REFERENCE_TABLE"
+        ],
+        "doc": "self refrencing table"
+      }
+    ]
+  },
+  "GeometryStorageType": {
+    "header": "duckdb/common/types/geometry.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "SPATIAL",
+        "value": 0,
+        "strings": [
+          "SPATIAL"
+        ]
+      },
+      {
+        "name": "WKB",
+        "value": 1,
+        "strings": [
+          "WKB"
+        ]
+      },
+      {
+        "name": "POINT_XY",
+        "value": 17,
+        "strings": [
+          "POINT_XY"
+        ],
+        "doc": "Base: 16"
+      },
+      {
+        "name": "LINESTRING_XY",
+        "value": 18,
+        "strings": [
+          "LINESTRING_XY"
+        ]
+      },
+      {
+        "name": "POLYGON_XY",
+        "value": 19,
+        "strings": [
+          "POLYGON_XY"
+        ]
+      },
+      {
+        "name": "MULTIPOINT_XY",
+        "value": 20,
+        "strings": [
+          "MULTIPOINT_XY"
+        ]
+      },
+      {
+        "name": "MULTILINESTRING_XY",
+        "value": 21,
+        "strings": [
+          "MULTILINESTRING_XY"
+        ]
+      },
+      {
+        "name": "MULTIPOLYGON_XY",
+        "value": 22,
+        "strings": [
+          "MULTIPOLYGON_XY"
+        ]
+      },
+      {
+        "name": "POINT_XYZ",
+        "value": 33,
+        "strings": [
+          "POINT_XYZ"
+        ],
+        "doc": "Base: 32"
+      },
+      {
+        "name": "LINESTRING_XYZ",
+        "value": 34,
+        "strings": [
+          "LINESTRING_XYZ"
+        ]
+      },
+      {
+        "name": "POLYGON_XYZ",
+        "value": 35,
+        "strings": [
+          "POLYGON_XYZ"
+        ]
+      },
+      {
+        "name": "MULTIPOINT_XYZ",
+        "value": 36,
+        "strings": [
+          "MULTIPOINT_XYZ"
+        ]
+      },
+      {
+        "name": "MULTILINESTRING_XYZ",
+        "value": 37,
+        "strings": [
+          "MULTILINESTRING_XYZ"
+        ]
+      },
+      {
+        "name": "MULTIPOLYGON_XYZ",
+        "value": 38,
+        "strings": [
+          "MULTIPOLYGON_XYZ"
+        ]
+      },
+      {
+        "name": "POINT_XYM",
+        "value": 65,
+        "strings": [
+          "POINT_XYM"
+        ],
+        "doc": "Base: 64"
+      },
+      {
+        "name": "LINESTRING_XYM",
+        "value": 66,
+        "strings": [
+          "LINESTRING_XYM"
+        ]
+      },
+      {
+        "name": "POLYGON_XYM",
+        "value": 67,
+        "strings": [
+          "POLYGON_XYM"
+        ]
+      },
+      {
+        "name": "MULTIPOINT_XYM",
+        "value": 68,
+        "strings": [
+          "MULTIPOINT_XYM"
+        ]
+      },
+      {
+        "name": "MULTILINESTRING_XYM",
+        "value": 69,
+        "strings": [
+          "MULTILINESTRING_XYM"
+        ]
+      },
+      {
+        "name": "MULTIPOLYGON_XYM",
+        "value": 70,
+        "strings": [
+          "MULTIPOLYGON_XYM"
+        ]
+      },
+      {
+        "name": "POINT_XYZM",
+        "value": 97,
+        "strings": [
+          "POINT_XYZM"
+        ],
+        "doc": "Base: 96"
+      },
+      {
+        "name": "LINESTRING_XYZM",
+        "value": 98,
+        "strings": [
+          "LINESTRING_XYZM"
+        ]
+      },
+      {
+        "name": "POLYGON_XYZM",
+        "value": 99,
+        "strings": [
+          "POLYGON_XYZM"
+        ]
+      },
+      {
+        "name": "MULTIPOINT_XYZM",
+        "value": 100,
+        "strings": [
+          "MULTIPOINT_XYZM"
+        ]
+      },
+      {
+        "name": "MULTILINESTRING_XYZM",
+        "value": 101,
+        "strings": [
+          "MULTILINESTRING_XYZM"
+        ]
+      },
+      {
+        "name": "MULTIPOLYGON_XYZM",
+        "value": 102,
+        "strings": [
+          "MULTIPOLYGON_XYZM"
+        ]
+      }
+    ]
+  },
+  "IndexConstraintType": {
+    "header": "duckdb/common/enums/index_constraint_type.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "NONE",
+        "value": 0,
+        "strings": [
+          "NONE"
+        ],
+        "doc": "index is an index don't built to any constraint"
+      },
+      {
+        "name": "UNIQUE",
+        "value": 1,
+        "strings": [
+          "UNIQUE"
+        ],
+        "doc": "index is an index built to enforce a UNIQUE constraint"
+      },
+      {
+        "name": "PRIMARY",
+        "value": 2,
+        "strings": [
+          "PRIMARY"
+        ],
+        "doc": "index is an index built to enforce a PRIMARY KEY constraint"
+      },
+      {
+        "name": "FOREIGN",
+        "value": 3,
+        "strings": [
+          "FOREIGN"
+        ],
+        "doc": "index is an index built to enforce a FOREIGN KEY constraint"
+      }
+    ]
+  },
+  "InsertColumnOrder": {
+    "header": "duckdb/parser/statement/insert_statement.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "INSERT_BY_POSITION",
+        "value": 0,
+        "strings": [
+          "INSERT_BY_POSITION"
+        ]
+      },
+      {
+        "name": "INSERT_BY_NAME",
+        "value": 1,
+        "strings": [
+          "INSERT_BY_NAME"
+        ]
+      }
+    ]
+  },
+  "JoinRefType": {
+    "header": "duckdb/common/enums/joinref_type.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "REGULAR",
+        "value": 0,
+        "strings": [
+          "REGULAR"
+        ],
+        "doc": "Explicit conditions"
+      },
+      {
+        "name": "NATURAL",
+        "value": 1,
+        "strings": [
+          "NATURAL"
+        ],
+        "doc": "Implied conditions"
+      },
+      {
+        "name": "CROSS",
+        "value": 2,
+        "strings": [
+          "CROSS"
+        ],
+        "doc": "No condition"
+      },
+      {
+        "name": "POSITIONAL",
+        "value": 3,
+        "strings": [
+          "POSITIONAL"
+        ],
+        "doc": "Positional condition"
+      },
+      {
+        "name": "ASOF",
+        "value": 4,
+        "strings": [
+          "ASOF"
+        ],
+        "doc": "AsOf conditions"
+      },
+      {
+        "name": "DEPENDENT",
+        "value": 5,
+        "strings": [
+          "DEPENDENT"
+        ],
+        "doc": "Dependent join conditions"
+      }
+    ]
+  },
+  "JoinType": {
+    "header": "duckdb/common/enums/join_type.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "INVALID",
+        "value": 0,
+        "strings": [
+          "INVALID"
+        ],
+        "doc": "invalid join type"
+      },
+      {
+        "name": "LEFT",
+        "value": 1,
+        "strings": [
+          "LEFT"
+        ],
+        "doc": "left"
+      },
+      {
+        "name": "RIGHT",
+        "value": 2,
+        "strings": [
+          "RIGHT"
+        ],
+        "doc": "right"
+      },
+      {
+        "name": "INNER",
+        "value": 3,
+        "strings": [
+          "INNER"
+        ],
+        "doc": "inner"
+      },
+      {
+        "name": "OUTER",
+        "value": 4,
+        "strings": [
+          "FULL"
+        ],
+        "doc": "outer"
+      },
+      {
+        "name": "SEMI",
+        "value": 5,
+        "strings": [
+          "SEMI"
+        ],
+        "doc": "LEFT SEMI join returns left side row ONLY if it has a join partner, no duplicates."
+      },
+      {
+        "name": "ANTI",
+        "value": 6,
+        "strings": [
+          "ANTI"
+        ],
+        "doc": "LEFT ANTI join returns left side row ONLY if it has NO join partner, no duplicates"
+      },
+      {
+        "name": "MARK",
+        "value": 7,
+        "strings": [
+          "MARK"
+        ],
+        "doc": "MARK join returns marker indicating whether or not there is a join partner (true), there is no join"
+      },
+      {
+        "name": "SINGLE",
+        "value": 8,
+        "strings": [
+          "SINGLE"
+        ],
+        "doc": "partner (false) SINGLE join is like LEFT OUTER JOIN, BUT returns at most one join partner per entry on the LEFT side"
+      },
+      {
+        "name": "RIGHT_SEMI",
+        "value": 9,
+        "strings": [
+          "RIGHT_SEMI"
+        ],
+        "doc": "(and NULL if no partner is found) RIGHT SEMI join is created by the optimizer when the children of a semi join need to be switched"
+      },
+      {
+        "name": "RIGHT_ANTI",
+        "value": 10,
+        "strings": [
+          "RIGHT_ANTI"
+        ],
+        "doc": "so that the build side can be the smaller table RIGHT ANTI join is created by the optimizer when the children of an anti join need to be"
+      }
+    ]
+  },
+  "LambdaSyntaxType": {
+    "header": "duckdb/parser/expression/lambda_expression.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "SINGLE_ARROW_STORAGE",
+        "value": 0,
+        "strings": [
+          "SINGLE_ARROW_STORAGE"
+        ]
+      },
+      {
+        "name": "SINGLE_ARROW",
+        "value": 1,
+        "strings": [
+          "SINGLE_ARROW"
+        ]
+      },
+      {
+        "name": "LAMBDA_KEYWORD",
+        "value": 2,
+        "strings": [
+          "LAMBDA_KEYWORD"
+        ]
+      }
+    ]
+  },
+  "LimitNodeType": {
+    "header": "duckdb/planner/bound_result_modifier.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "UNSET",
+        "value": 0,
+        "strings": [
+          "UNSET"
+        ]
+      },
+      {
+        "name": "CONSTANT_VALUE",
+        "value": 1,
+        "strings": [
+          "CONSTANT_VALUE"
+        ]
+      },
+      {
+        "name": "CONSTANT_PERCENTAGE",
+        "value": 2,
+        "strings": [
+          "CONSTANT_PERCENTAGE"
+        ]
+      },
+      {
+        "name": "EXPRESSION_VALUE",
+        "value": 3,
+        "strings": [
+          "EXPRESSION_VALUE"
+        ]
+      },
+      {
+        "name": "EXPRESSION_PERCENTAGE",
+        "value": 4,
+        "strings": [
+          "EXPRESSION_PERCENTAGE"
+        ]
+      }
+    ]
+  },
+  "LoadType": {
+    "header": "duckdb/parser/parsed_data/load_info.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "LOAD",
+        "value": 0,
+        "strings": [
+          "LOAD"
+        ]
+      },
+      {
+        "name": "INSTALL",
+        "value": 1,
+        "strings": [
+          "INSTALL"
+        ]
+      },
+      {
+        "name": "FORCE_INSTALL",
+        "value": 2,
+        "strings": [
+          "FORCE_INSTALL"
+        ]
+      }
+    ]
+  },
+  "LogicalOperatorType": {
+    "header": "duckdb/common/enums/logical_operator_type.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "LOGICAL_INVALID",
+        "value": 0,
+        "strings": [
+          "LOGICAL_INVALID"
+        ]
+      },
+      {
+        "name": "LOGICAL_PROJECTION",
+        "value": 1,
+        "strings": [
+          "LOGICAL_PROJECTION"
+        ]
+      },
+      {
+        "name": "LOGICAL_FILTER",
+        "value": 2,
+        "strings": [
+          "LOGICAL_FILTER"
+        ]
+      },
+      {
+        "name": "LOGICAL_AGGREGATE_AND_GROUP_BY",
+        "value": 3,
+        "strings": [
+          "LOGICAL_AGGREGATE_AND_GROUP_BY"
+        ]
+      },
+      {
+        "name": "LOGICAL_WINDOW",
+        "value": 4,
+        "strings": [
+          "LOGICAL_WINDOW"
+        ]
+      },
+      {
+        "name": "LOGICAL_UNNEST",
+        "value": 5,
+        "strings": [
+          "LOGICAL_UNNEST"
+        ]
+      },
+      {
+        "name": "LOGICAL_LIMIT",
+        "value": 6,
+        "strings": [
+          "LOGICAL_LIMIT"
+        ]
+      },
+      {
+        "name": "LOGICAL_ORDER_BY",
+        "value": 7,
+        "strings": [
+          "LOGICAL_ORDER_BY"
+        ]
+      },
+      {
+        "name": "LOGICAL_TOP_N",
+        "value": 8,
+        "strings": [
+          "LOGICAL_TOP_N"
+        ]
+      },
+      {
+        "name": "LOGICAL_COPY_TO_FILE",
+        "value": 10,
+        "strings": [
+          "LOGICAL_COPY_TO_FILE"
+        ]
+      },
+      {
+        "name": "LOGICAL_DISTINCT",
+        "value": 11,
+        "strings": [
+          "LOGICAL_DISTINCT"
+        ]
+      },
+      {
+        "name": "LOGICAL_SAMPLE",
+        "value": 12,
+        "strings": [
+          "LOGICAL_SAMPLE"
+        ]
+      },
+      {
+        "name": "LOGICAL_PIVOT",
+        "value": 14,
+        "strings": [
+          "LOGICAL_PIVOT"
+        ]
+      },
+      {
+        "name": "LOGICAL_COPY_DATABASE",
+        "value": 15,
+        "strings": [
+          "LOGICAL_COPY_DATABASE"
+        ]
+      },
+      {
+        "name": "LOGICAL_GET",
+        "value": 25,
+        "strings": [
+          "LOGICAL_GET"
+        ]
+      },
+      {
+        "name": "LOGICAL_CHUNK_GET",
+        "value": 26,
+        "strings": [
+          "LOGICAL_CHUNK_GET"
+        ]
+      },
+      {
+        "name": "LOGICAL_DELIM_GET",
+        "value": 27,
+        "strings": [
+          "LOGICAL_DELIM_GET"
+        ]
+      },
+      {
+        "name": "LOGICAL_EXPRESSION_GET",
+        "value": 28,
+        "strings": [
+          "LOGICAL_EXPRESSION_GET"
+        ]
+      },
+      {
+        "name": "LOGICAL_DUMMY_SCAN",
+        "value": 29,
+        "strings": [
+          "LOGICAL_DUMMY_SCAN"
+        ]
+      },
+      {
+        "name": "LOGICAL_EMPTY_RESULT",
+        "value": 30,
+        "strings": [
+          "LOGICAL_EMPTY_RESULT"
+        ]
+      },
+      {
+        "name": "LOGICAL_CTE_REF",
+        "value": 31,
+        "strings": [
+          "LOGICAL_CTE_REF"
+        ]
+      },
+      {
+        "name": "LOGICAL_JOIN",
+        "value": 50,
+        "strings": [
+          "LOGICAL_JOIN"
+        ]
+      },
+      {
+        "name": "LOGICAL_DELIM_JOIN",
+        "value": 51,
+        "strings": [
+          "LOGICAL_DELIM_JOIN"
+        ]
+      },
+      {
+        "name": "LOGICAL_COMPARISON_JOIN",
+        "value": 52,
+        "strings": [
+          "LOGICAL_COMPARISON_JOIN"
+        ]
+      },
+      {
+        "name": "LOGICAL_ANY_JOIN",
+        "value": 53,
+        "strings": [
+          "LOGICAL_ANY_JOIN"
+        ]
+      },
+      {
+        "name": "LOGICAL_CROSS_PRODUCT",
+        "value": 54,
+        "strings": [
+          "LOGICAL_CROSS_PRODUCT"
+        ]
+      },
+      {
+        "name": "LOGICAL_POSITIONAL_JOIN",
+        "value": 55,
+        "strings": [
+          "LOGICAL_POSITIONAL_JOIN"
+        ]
+      },
+      {
+        "name": "LOGICAL_ASOF_JOIN",
+        "value": 56,
+        "strings": [
+          "LOGICAL_ASOF_JOIN"
+        ]
+      },
+      {
+        "name": "LOGICAL_DEPENDENT_JOIN",
+        "value": 57,
+        "strings": [
+          "LOGICAL_DEPENDENT_JOIN"
+        ]
+      },
+      {
+        "name": "LOGICAL_UNION",
+        "value": 75,
+        "strings": [
+          "LOGICAL_UNION"
+        ]
+      },
+      {
+        "name": "LOGICAL_EXCEPT",
+        "value": 76,
+        "strings": [
+          "LOGICAL_EXCEPT"
+        ]
+      },
+      {
+        "name": "LOGICAL_INTERSECT",
+        "value": 77,
+        "strings": [
+          "LOGICAL_INTERSECT"
+        ]
+      },
+      {
+        "name": "LOGICAL_RECURSIVE_CTE",
+        "value": 78,
+        "strings": [
+          "LOGICAL_RECURSIVE_CTE"
+        ]
+      },
+      {
+        "name": "LOGICAL_MATERIALIZED_CTE",
+        "value": 79,
+        "strings": [
+          "LOGICAL_MATERIALIZED_CTE"
+        ]
+      },
+      {
+        "name": "LOGICAL_INSERT",
+        "value": 100,
+        "strings": [
+          "LOGICAL_INSERT"
+        ]
+      },
+      {
+        "name": "LOGICAL_DELETE",
+        "value": 101,
+        "strings": [
+          "LOGICAL_DELETE"
+        ]
+      },
+      {
+        "name": "LOGICAL_UPDATE",
+        "value": 102,
+        "strings": [
+          "LOGICAL_UPDATE"
+        ]
+      },
+      {
+        "name": "LOGICAL_MERGE_INTO",
+        "value": 103,
+        "strings": [
+          "LOGICAL_MERGE_INTO"
+        ]
+      },
+      {
+        "name": "LOGICAL_ALTER",
+        "value": 125,
+        "strings": [
+          "LOGICAL_ALTER"
+        ]
+      },
+      {
+        "name": "LOGICAL_CREATE_TABLE",
+        "value": 126,
+        "strings": [
+          "LOGICAL_CREATE_TABLE"
+        ]
+      },
+      {
+        "name": "LOGICAL_CREATE_INDEX",
+        "value": 127,
+        "strings": [
+          "LOGICAL_CREATE_INDEX"
+        ]
+      },
+      {
+        "name": "LOGICAL_CREATE_SEQUENCE",
+        "value": 128,
+        "strings": [
+          "LOGICAL_CREATE_SEQUENCE"
+        ]
+      },
+      {
+        "name": "LOGICAL_CREATE_VIEW",
+        "value": 129,
+        "strings": [
+          "LOGICAL_CREATE_VIEW"
+        ]
+      },
+      {
+        "name": "LOGICAL_CREATE_SCHEMA",
+        "value": 130,
+        "strings": [
+          "LOGICAL_CREATE_SCHEMA"
+        ]
+      },
+      {
+        "name": "LOGICAL_CREATE_MACRO",
+        "value": 131,
+        "strings": [
+          "LOGICAL_CREATE_MACRO"
+        ]
+      },
+      {
+        "name": "LOGICAL_DROP",
+        "value": 132,
+        "strings": [
+          "LOGICAL_DROP"
+        ]
+      },
+      {
+        "name": "LOGICAL_PRAGMA",
+        "value": 133,
+        "strings": [
+          "LOGICAL_PRAGMA"
+        ]
+      },
+      {
+        "name": "LOGICAL_TRANSACTION",
+        "value": 134,
+        "strings": [
+          "LOGICAL_TRANSACTION"
+        ]
+      },
+      {
+        "name": "LOGICAL_CREATE_TYPE",
+        "value": 135,
+        "strings": [
+          "LOGICAL_CREATE_TYPE"
+        ]
+      },
+      {
+        "name": "LOGICAL_ATTACH",
+        "value": 136,
+        "strings": [
+          "LOGICAL_ATTACH"
+        ]
+      },
+      {
+        "name": "LOGICAL_DETACH",
+        "value": 137,
+        "strings": [
+          "LOGICAL_DETACH"
+        ]
+      },
+      {
+        "name": "LOGICAL_EXPLAIN",
+        "value": 150,
+        "strings": [
+          "LOGICAL_EXPLAIN"
+        ]
+      },
+      {
+        "name": "LOGICAL_PREPARE",
+        "value": 175,
+        "strings": [
+          "LOGICAL_PREPARE"
+        ]
+      },
+      {
+        "name": "LOGICAL_EXECUTE",
+        "value": 176,
+        "strings": [
+          "LOGICAL_EXECUTE"
+        ]
+      },
+      {
+        "name": "LOGICAL_EXPORT",
+        "value": 177,
+        "strings": [
+          "LOGICAL_EXPORT"
+        ]
+      },
+      {
+        "name": "LOGICAL_VACUUM",
+        "value": 178,
+        "strings": [
+          "LOGICAL_VACUUM"
+        ]
+      },
+      {
+        "name": "LOGICAL_SET",
+        "value": 179,
+        "strings": [
+          "LOGICAL_SET"
+        ]
+      },
+      {
+        "name": "LOGICAL_LOAD",
+        "value": 180,
+        "strings": [
+          "LOGICAL_LOAD"
+        ]
+      },
+      {
+        "name": "LOGICAL_RESET",
+        "value": 181,
+        "strings": [
+          "LOGICAL_RESET"
+        ]
+      },
+      {
+        "name": "LOGICAL_UPDATE_EXTENSIONS",
+        "value": 182,
+        "strings": [
+          "LOGICAL_UPDATE_EXTENSIONS"
+        ]
+      },
+      {
+        "name": "LOGICAL_CREATE_SECRET",
+        "value": 190,
+        "strings": [
+          "LOGICAL_CREATE_SECRET"
+        ]
+      },
+      {
+        "name": "LOGICAL_EXTENSION_OPERATOR",
+        "value": 255,
+        "strings": [
+          "LOGICAL_EXTENSION_OPERATOR"
+        ]
+      }
+    ]
+  },
+  "LogicalTypeId": {
+    "header": "duckdb/common/types.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "INVALID",
+        "value": 0,
+        "strings": [
+          "INVALID"
+        ]
+      },
+      {
+        "name": "SQLNULL",
+        "value": 1,
+        "strings": [
+          "NULL"
+        ],
+        "doc": "NULL type, used for constant NULL"
+      },
+      {
+        "name": "UNKNOWN",
+        "value": 2,
+        "strings": [
+          "UNKNOWN"
+        ],
+        "doc": "unknown type, used for parameter expressions"
+      },
+      {
+        "name": "ANY",
+        "value": 3,
+        "strings": [
+          "ANY"
+        ],
+        "doc": "ANY type, used for functions that accept any type as parameter"
+      },
+      {
+        "name": "UNBOUND",
+        "value": 4,
+        "strings": [
+          "UNBOUND"
+        ],
+        "doc": "A parsed but unbound type, used during query planning"
+      },
+      {
+        "name": "TEMPLATE",
+        "value": 5,
+        "strings": [
+          "TEMPLATE"
+        ],
+        "doc": "A \"template\" type functions as a \"placeholder\" type for function arguments and return types. Templates only exist during the binding phase, in the scope of a function, and are replaced with concrete types before execution. When defining a template, you provide a name to distinguish between different template types, specifying to the binder that they dont need to resolve to the same concrete type. Two templates with the same name are always resolved to the same concrete type."
+      },
+      {
+        "name": "TYPE",
+        "value": 6,
+        "strings": [
+          "TYPE"
+        ],
+        "doc": "Type type, used for type parameters"
+      },
+      {
+        "name": "BOOLEAN",
+        "value": 10,
+        "strings": [
+          "BOOLEAN"
+        ]
+      },
+      {
+        "name": "TINYINT",
+        "value": 11,
+        "strings": [
+          "TINYINT"
+        ]
+      },
+      {
+        "name": "SMALLINT",
+        "value": 12,
+        "strings": [
+          "SMALLINT"
+        ]
+      },
+      {
+        "name": "INTEGER",
+        "value": 13,
+        "strings": [
+          "INTEGER"
+        ]
+      },
+      {
+        "name": "BIGINT",
+        "value": 14,
+        "strings": [
+          "BIGINT"
+        ]
+      },
+      {
+        "name": "DATE",
+        "value": 15,
+        "strings": [
+          "DATE"
+        ]
+      },
+      {
+        "name": "TIME",
+        "value": 16,
+        "strings": [
+          "TIME"
+        ]
+      },
+      {
+        "name": "TIMESTAMP_SEC",
+        "value": 17,
+        "strings": [
+          "TIMESTAMP_S"
+        ]
+      },
+      {
+        "name": "TIMESTAMP_MS",
+        "value": 18,
+        "strings": [
+          "TIMESTAMP_MS"
+        ]
+      },
+      {
+        "name": "TIMESTAMP",
+        "value": 19,
+        "strings": [
+          "TIMESTAMP"
+        ],
+        "doc": "! us"
+      },
+      {
+        "name": "TIMESTAMP_NS",
+        "value": 20,
+        "strings": [
+          "TIMESTAMP_NS"
+        ]
+      },
+      {
+        "name": "DECIMAL",
+        "value": 21,
+        "strings": [
+          "DECIMAL"
+        ]
+      },
+      {
+        "name": "FLOAT",
+        "value": 22,
+        "strings": [
+          "FLOAT"
+        ]
+      },
+      {
+        "name": "DOUBLE",
+        "value": 23,
+        "strings": [
+          "DOUBLE"
+        ]
+      },
+      {
+        "name": "CHAR",
+        "value": 24,
+        "strings": [
+          "CHAR"
+        ]
+      },
+      {
+        "name": "VARCHAR",
+        "value": 25,
+        "strings": [
+          "VARCHAR"
+        ]
+      },
+      {
+        "name": "BLOB",
+        "value": 26,
+        "strings": [
+          "BLOB"
+        ]
+      },
+      {
+        "name": "INTERVAL",
+        "value": 27,
+        "strings": [
+          "INTERVAL"
+        ]
+      },
+      {
+        "name": "UTINYINT",
+        "value": 28,
+        "strings": [
+          "UTINYINT"
+        ]
+      },
+      {
+        "name": "USMALLINT",
+        "value": 29,
+        "strings": [
+          "USMALLINT"
+        ]
+      },
+      {
+        "name": "UINTEGER",
+        "value": 30,
+        "strings": [
+          "UINTEGER"
+        ]
+      },
+      {
+        "name": "UBIGINT",
+        "value": 31,
+        "strings": [
+          "UBIGINT"
+        ]
+      },
+      {
+        "name": "TIMESTAMP_TZ",
+        "value": 32,
+        "strings": [
+          "TIMESTAMP WITH TIME ZONE"
+        ]
+      },
+      {
+        "name": "TIME_TZ",
+        "value": 34,
+        "strings": [
+          "TIME WITH TIME ZONE"
+        ]
+      },
+      {
+        "name": "TIME_NS",
+        "value": 35,
+        "strings": [
+          "TIME_NS"
+        ]
+      },
+      {
+        "name": "BIT",
+        "value": 36,
+        "strings": [
+          "BIT"
+        ]
+      },
+      {
+        "name": "STRING_LITERAL",
+        "value": 37,
+        "strings": [
+          "STRING_LITERAL"
+        ],
+        "doc": "string literals, used for constant strings - only exists while binding"
+      },
+      {
+        "name": "INTEGER_LITERAL",
+        "value": 38,
+        "strings": [
+          "INTEGER_LITERAL"
+        ],
+        "doc": "integer literals, used for constant integers - only exists while binding"
+      },
+      {
+        "name": "BIGNUM",
+        "value": 39,
+        "strings": [
+          "BIGNUM"
+        ]
+      },
+      {
+        "name": "UHUGEINT",
+        "value": 49,
+        "strings": [
+          "UHUGEINT"
+        ]
+      },
+      {
+        "name": "HUGEINT",
+        "value": 50,
+        "strings": [
+          "HUGEINT"
+        ]
+      },
+      {
+        "name": "POINTER",
+        "value": 51,
+        "strings": [
+          "POINTER"
+        ]
+      },
+      {
+        "name": "VALIDITY",
+        "value": 53,
+        "strings": [
+          "VALIDITY"
+        ]
+      },
+      {
+        "name": "UUID",
+        "value": 54,
+        "strings": [
+          "UUID"
+        ]
+      },
+      {
+        "name": "GEOMETRY",
+        "value": 60,
+        "strings": [
+          "GEOMETRY"
+        ]
+      },
+      {
+        "name": "STRUCT",
+        "value": 100,
+        "strings": [
+          "STRUCT"
+        ]
+      },
+      {
+        "name": "LIST",
+        "value": 101,
+        "strings": [
+          "LIST"
+        ]
+      },
+      {
+        "name": "MAP",
+        "value": 102,
+        "strings": [
+          "MAP"
+        ]
+      },
+      {
+        "name": "TABLE",
+        "value": 103,
+        "strings": [
+          "TABLE"
+        ]
+      },
+      {
+        "name": "ENUM",
+        "value": 104,
+        "strings": [
+          "ENUM"
+        ]
+      },
+      {
+        "name": "AGGREGATE_STATE",
+        "value": 105,
+        "strings": [
+          "AGGREGATE_STATE"
+        ]
+      },
+      {
+        "name": "LAMBDA",
+        "value": 106,
+        "strings": [
+          "LAMBDA"
+        ]
+      },
+      {
+        "name": "UNION",
+        "value": 107,
+        "strings": [
+          "UNION"
+        ]
+      },
+      {
+        "name": "ARRAY",
+        "value": 108,
+        "strings": [
+          "ARRAY"
+        ]
+      },
+      {
+        "name": "VARIANT",
+        "value": 109,
+        "strings": [
+          "VARIANT"
+        ]
+      }
+    ]
+  },
+  "MacroType": {
+    "header": "duckdb/function/macro_function.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "VOID_MACRO",
+        "value": 0,
+        "strings": [
+          "VOID_MACRO"
+        ]
+      },
+      {
+        "name": "TABLE_MACRO",
+        "value": 1,
+        "strings": [
+          "TABLE_MACRO"
+        ]
+      },
+      {
+        "name": "SCALAR_MACRO",
+        "value": 2,
+        "strings": [
+          "SCALAR_MACRO"
+        ]
+      }
+    ]
+  },
+  "MergeActionCondition": {
+    "header": "duckdb/common/enums/merge_action_type.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "WHEN_MATCHED",
+        "value": 0,
+        "strings": [
+          "WHEN_MATCHED"
+        ]
+      },
+      {
+        "name": "WHEN_NOT_MATCHED_BY_SOURCE",
+        "value": 1,
+        "strings": [
+          "WHEN_NOT_MATCHED_BY_SOURCE"
+        ]
+      },
+      {
+        "name": "WHEN_NOT_MATCHED_BY_TARGET",
+        "value": 2,
+        "strings": [
+          "WHEN_NOT_MATCHED_BY_TARGET"
+        ]
+      }
+    ]
+  },
+  "MergeActionType": {
+    "header": "duckdb/common/enums/merge_action_type.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "MERGE_UPDATE",
+        "value": 0,
+        "strings": [
+          "MERGE_UPDATE"
+        ]
+      },
+      {
+        "name": "MERGE_DELETE",
+        "value": 1,
+        "strings": [
+          "MERGE_DELETE"
+        ]
+      },
+      {
+        "name": "MERGE_INSERT",
+        "value": 2,
+        "strings": [
+          "MERGE_INSERT"
+        ]
+      },
+      {
+        "name": "MERGE_DO_NOTHING",
+        "value": 3,
+        "strings": [
+          "MERGE_DO_NOTHING"
+        ]
+      },
+      {
+        "name": "MERGE_ERROR",
+        "value": 4,
+        "strings": [
+          "MERGE_ERROR"
+        ]
+      }
+    ]
+  },
+  "OnConflictAction": {
+    "header": "duckdb/parser/statement/insert_statement.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "THROW",
+        "value": 0,
+        "strings": [
+          "THROW"
+        ]
+      },
+      {
+        "name": "NOTHING",
+        "value": 1,
+        "strings": [
+          "NOTHING"
+        ]
+      },
+      {
+        "name": "UPDATE",
+        "value": 2,
+        "strings": [
+          "UPDATE"
+        ]
+      },
+      {
+        "name": "REPLACE",
+        "value": 3,
+        "strings": [
+          "REPLACE"
+        ],
+        "doc": "Only used in transform/bind step, changed to UPDATE later"
+      }
+    ]
+  },
+  "OnCreateConflict": {
+    "header": "duckdb/common/enums/on_create_conflict.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "ERROR_ON_CONFLICT",
+        "value": 0,
+        "strings": [
+          "ERROR_ON_CONFLICT"
+        ],
+        "doc": "Standard: throw error"
+      },
+      {
+        "name": "IGNORE_ON_CONFLICT",
+        "value": 1,
+        "strings": [
+          "IGNORE_ON_CONFLICT"
+        ],
+        "doc": "CREATE IF NOT EXISTS, silently do nothing on conflict"
+      },
+      {
+        "name": "REPLACE_ON_CONFLICT",
+        "value": 2,
+        "strings": [
+          "REPLACE_ON_CONFLICT"
+        ],
+        "doc": "CREATE OR REPLACE"
+      },
+      {
+        "name": "ALTER_ON_CONFLICT",
+        "value": 3,
+        "strings": [
+          "ALTER_ON_CONFLICT"
+        ],
+        "doc": "Update on conflict - only support for functions. Add a function overload if the function already exists."
+      }
+    ]
+  },
+  "OnEntryNotFound": {
+    "header": "duckdb/common/enums/on_entry_not_found.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "THROW_EXCEPTION",
+        "value": 0,
+        "strings": [
+          "THROW_EXCEPTION"
+        ]
+      },
+      {
+        "name": "RETURN_NULL",
+        "value": 1,
+        "strings": [
+          "RETURN_NULL"
+        ]
+      }
+    ]
+  },
+  "OrderByColumnType": {
+    "header": "duckdb/storage/table/row_group_reorderer.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "NUMERIC",
+        "value": 0,
+        "strings": [
+          "NUMERIC"
+        ]
+      },
+      {
+        "name": "STRING",
+        "value": 1,
+        "strings": [
+          "STRING"
+        ]
+      }
+    ]
+  },
+  "OrderByNullType": {
+    "header": "duckdb/common/enums/order_type.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "INVALID",
+        "value": 0,
+        "strings": [
+          "INVALID"
+        ]
+      },
+      {
+        "name": "ORDER_DEFAULT",
+        "value": 1,
+        "strings": [
+          "ORDER_DEFAULT",
+          "DEFAULT"
+        ]
+      },
+      {
+        "name": "NULLS_FIRST",
+        "value": 2,
+        "strings": [
+          "NULLS FIRST",
+          "NULLS_FIRST"
+        ]
+      },
+      {
+        "name": "NULLS_LAST",
+        "value": 3,
+        "strings": [
+          "NULLS LAST",
+          "NULLS_LAST"
+        ]
+      }
+    ]
+  },
+  "OrderByStatistics": {
+    "header": "duckdb/storage/table/row_group_reorderer.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "MIN",
+        "value": 0,
+        "strings": [
+          "MIN"
+        ]
+      },
+      {
+        "name": "MAX",
+        "value": 1,
+        "strings": [
+          "MAX"
+        ]
+      }
+    ]
+  },
+  "OrderType": {
+    "header": "duckdb/common/enums/order_type.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "INVALID",
+        "value": 0,
+        "strings": [
+          "INVALID"
+        ]
+      },
+      {
+        "name": "ORDER_DEFAULT",
+        "value": 1,
+        "strings": [
+          "ORDER_DEFAULT",
+          "DEFAULT"
+        ]
+      },
+      {
+        "name": "ASCENDING",
+        "value": 2,
+        "strings": [
+          "ASCENDING",
+          "ASC"
+        ]
+      },
+      {
+        "name": "DESCENDING",
+        "value": 3,
+        "strings": [
+          "DESCENDING",
+          "DESC"
+        ]
+      }
+    ]
+  },
+  "OrdinalityType": {
+    "header": "duckdb/common/enums/ordinality_request_type.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "WITHOUT_ORDINALITY",
+        "value": 0,
+        "strings": [
+          "WITHOUT_ORDINALITY"
+        ]
+      },
+      {
+        "name": "WITH_ORDINALITY",
+        "value": 1,
+        "strings": [
+          "WITH_ORDINALITY"
+        ]
+      }
+    ]
+  },
+  "ParseInfoType": {
+    "header": "duckdb/parser/parsed_data/parse_info.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "ALTER_INFO",
+        "value": 0,
+        "strings": [
+          "ALTER_INFO"
+        ]
+      },
+      {
+        "name": "ATTACH_INFO",
+        "value": 1,
+        "strings": [
+          "ATTACH_INFO"
+        ]
+      },
+      {
+        "name": "COPY_INFO",
+        "value": 2,
+        "strings": [
+          "COPY_INFO"
+        ]
+      },
+      {
+        "name": "CREATE_INFO",
+        "value": 3,
+        "strings": [
+          "CREATE_INFO"
+        ]
+      },
+      {
+        "name": "CREATE_SECRET_INFO",
+        "value": 4,
+        "strings": [
+          "CREATE_SECRET_INFO"
+        ]
+      },
+      {
+        "name": "DETACH_INFO",
+        "value": 5,
+        "strings": [
+          "DETACH_INFO"
+        ]
+      },
+      {
+        "name": "DROP_INFO",
+        "value": 6,
+        "strings": [
+          "DROP_INFO"
+        ]
+      },
+      {
+        "name": "BOUND_EXPORT_DATA",
+        "value": 7,
+        "strings": [
+          "BOUND_EXPORT_DATA"
+        ]
+      },
+      {
+        "name": "LOAD_INFO",
+        "value": 8,
+        "strings": [
+          "LOAD_INFO"
+        ]
+      },
+      {
+        "name": "PRAGMA_INFO",
+        "value": 9,
+        "strings": [
+          "PRAGMA_INFO"
+        ]
+      },
+      {
+        "name": "SHOW_SELECT_INFO",
+        "value": 10,
+        "strings": [
+          "SHOW_SELECT_INFO"
+        ]
+      },
+      {
+        "name": "TRANSACTION_INFO",
+        "value": 11,
+        "strings": [
+          "TRANSACTION_INFO"
+        ]
+      },
+      {
+        "name": "VACUUM_INFO",
+        "value": 12,
+        "strings": [
+          "VACUUM_INFO"
+        ]
+      },
+      {
+        "name": "COMMENT_ON_INFO",
+        "value": 13,
+        "strings": [
+          "COMMENT_ON_INFO"
+        ]
+      },
+      {
+        "name": "COMMENT_ON_COLUMN_INFO",
+        "value": 14,
+        "strings": [
+          "COMMENT_ON_COLUMN_INFO"
+        ]
+      },
+      {
+        "name": "COPY_DATABASE_INFO",
+        "value": 15,
+        "strings": [
+          "COPY_DATABASE_INFO"
+        ]
+      },
+      {
+        "name": "UPDATE_EXTENSIONS_INFO",
+        "value": 16,
+        "strings": [
+          "UPDATE_EXTENSIONS_INFO"
+        ]
+      }
+    ]
+  },
+  "QueryNodeType": {
+    "header": "duckdb/parser/query_node.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "SELECT_NODE",
+        "value": 1,
+        "strings": [
+          "SELECT_NODE"
+        ]
+      },
+      {
+        "name": "SET_OPERATION_NODE",
+        "value": 2,
+        "strings": [
+          "SET_OPERATION_NODE"
+        ]
+      },
+      {
+        "name": "BOUND_SUBQUERY_NODE",
+        "value": 3,
+        "strings": [
+          "BOUND_SUBQUERY_NODE"
+        ]
+      },
+      {
+        "name": "RECURSIVE_CTE_NODE",
+        "value": 4,
+        "strings": [
+          "RECURSIVE_CTE_NODE"
+        ]
+      },
+      {
+        "name": "CTE_NODE",
+        "value": 5,
+        "strings": [
+          "CTE_NODE"
+        ]
+      },
+      {
+        "name": "STATEMENT_NODE",
+        "value": 6,
+        "strings": [
+          "STATEMENT_NODE"
+        ]
+      }
+    ]
+  },
+  "ResultModifierType": {
+    "header": "duckdb/parser/result_modifier.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "LIMIT_MODIFIER",
+        "value": 1,
+        "strings": [
+          "LIMIT_MODIFIER"
+        ]
+      },
+      {
+        "name": "ORDER_MODIFIER",
+        "value": 2,
+        "strings": [
+          "ORDER_MODIFIER"
+        ]
+      },
+      {
+        "name": "DISTINCT_MODIFIER",
+        "value": 3,
+        "strings": [
+          "DISTINCT_MODIFIER"
+        ]
+      },
+      {
+        "name": "LIMIT_PERCENT_MODIFIER",
+        "value": 4,
+        "strings": [
+          "LIMIT_PERCENT_MODIFIER"
+        ]
+      }
+    ]
+  },
+  "SampleMethod": {
+    "header": "duckdb/parser/parsed_data/sample_options.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "SYSTEM_SAMPLE",
+        "value": 0,
+        "strings": [
+          "System"
+        ]
+      },
+      {
+        "name": "BERNOULLI_SAMPLE",
+        "value": 1,
+        "strings": [
+          "Bernoulli"
+        ]
+      },
+      {
+        "name": "RESERVOIR_SAMPLE",
+        "value": 2,
+        "strings": [
+          "Reservoir"
+        ]
+      },
+      {
+        "name": "INVALID",
+        "value": 255,
+        "strings": [
+          "INVALID"
+        ]
+      }
+    ]
+  },
+  "SampleType": {
+    "header": "duckdb/execution/reservoir_sample.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "BLOCKING_SAMPLE",
+        "value": 0,
+        "strings": [
+          "BLOCKING_SAMPLE"
+        ]
+      },
+      {
+        "name": "RESERVOIR_SAMPLE",
+        "value": 1,
+        "strings": [
+          "RESERVOIR_SAMPLE"
+        ]
+      },
+      {
+        "name": "RESERVOIR_PERCENTAGE_SAMPLE",
+        "value": 2,
+        "strings": [
+          "RESERVOIR_PERCENTAGE_SAMPLE"
+        ]
+      }
+    ]
+  },
+  "SecretPersistType": {
+    "header": "duckdb/main/secret/secret.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "DEFAULT",
+        "value": 0,
+        "strings": [
+          "DEFAULT"
+        ]
+      },
+      {
+        "name": "TEMPORARY",
+        "value": 1,
+        "strings": [
+          "TEMPORARY"
+        ]
+      },
+      {
+        "name": "PERSISTENT",
+        "value": 2,
+        "strings": [
+          "PERSISTENT"
+        ]
+      }
+    ]
+  },
+  "SetOperationType": {
+    "header": "duckdb/common/enums/set_operation_type.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "NONE",
+        "value": 0,
+        "strings": [
+          "NONE"
+        ]
+      },
+      {
+        "name": "UNION",
+        "value": 1,
+        "strings": [
+          "UNION"
+        ]
+      },
+      {
+        "name": "EXCEPT",
+        "value": 2,
+        "strings": [
+          "EXCEPT"
+        ]
+      },
+      {
+        "name": "INTERSECT",
+        "value": 3,
+        "strings": [
+          "INTERSECT"
+        ]
+      },
+      {
+        "name": "UNION_BY_NAME",
+        "value": 4,
+        "strings": [
+          "UNION_BY_NAME"
+        ]
+      }
+    ]
+  },
+  "SetScope": {
+    "header": "duckdb/common/enums/set_scope.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "AUTOMATIC",
+        "value": 0,
+        "strings": [
+          "AUTOMATIC"
+        ]
+      },
+      {
+        "name": "LOCAL",
+        "value": 1,
+        "strings": [
+          "LOCAL"
+        ],
+        "doc": "unused"
+      },
+      {
+        "name": "SESSION",
+        "value": 2,
+        "strings": [
+          "SESSION"
+        ]
+      },
+      {
+        "name": "GLOBAL",
+        "value": 3,
+        "strings": [
+          "GLOBAL"
+        ]
+      },
+      {
+        "name": "VARIABLE",
+        "value": 4,
+        "strings": [
+          "VARIABLE"
+        ]
+      }
+    ]
+  },
+  "SetType": {
+    "header": "duckdb/common/enums/set_type.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "SET",
+        "value": 0,
+        "strings": [
+          "SET"
+        ]
+      },
+      {
+        "name": "RESET",
+        "value": 1,
+        "strings": [
+          "RESET"
+        ]
+      }
+    ]
+  },
+  "ShowType": {
+    "header": "duckdb/parser/tableref/showref.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "SUMMARY",
+        "value": 0,
+        "strings": [
+          "SUMMARY"
+        ]
+      },
+      {
+        "name": "DESCRIBE",
+        "value": 1,
+        "strings": [
+          "DESCRIBE"
+        ]
+      },
+      {
+        "name": "SHOW_FROM",
+        "value": 2,
+        "strings": [
+          "SHOW_FROM"
+        ]
+      },
+      {
+        "name": "SHOW_UNQUALIFIED",
+        "value": 3,
+        "strings": [
+          "SHOW_UNQUALIFIED"
+        ]
+      }
+    ]
+  },
+  "StatementType": {
+    "header": "duckdb/common/enums/statement_type.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "INVALID_STATEMENT",
+        "value": 0,
+        "strings": [
+          "INVALID_STATEMENT"
+        ],
+        "doc": "invalid statement type"
+      },
+      {
+        "name": "SELECT_STATEMENT",
+        "value": 1,
+        "strings": [
+          "SELECT_STATEMENT"
+        ],
+        "doc": "select statement type"
+      },
+      {
+        "name": "INSERT_STATEMENT",
+        "value": 2,
+        "strings": [
+          "INSERT_STATEMENT"
+        ],
+        "doc": "insert statement type"
+      },
+      {
+        "name": "UPDATE_STATEMENT",
+        "value": 3,
+        "strings": [
+          "UPDATE_STATEMENT"
+        ],
+        "doc": "update statement type"
+      },
+      {
+        "name": "CREATE_STATEMENT",
+        "value": 4,
+        "strings": [
+          "CREATE_STATEMENT"
+        ],
+        "doc": "create statement type"
+      },
+      {
+        "name": "DELETE_STATEMENT",
+        "value": 5,
+        "strings": [
+          "DELETE_STATEMENT"
+        ],
+        "doc": "delete statement type"
+      },
+      {
+        "name": "PREPARE_STATEMENT",
+        "value": 6,
+        "strings": [
+          "PREPARE_STATEMENT"
+        ],
+        "doc": "prepare statement type"
+      },
+      {
+        "name": "EXECUTE_STATEMENT",
+        "value": 7,
+        "strings": [
+          "EXECUTE_STATEMENT"
+        ],
+        "doc": "execute statement type"
+      },
+      {
+        "name": "ALTER_STATEMENT",
+        "value": 8,
+        "strings": [
+          "ALTER_STATEMENT"
+        ],
+        "doc": "alter statement type"
+      },
+      {
+        "name": "TRANSACTION_STATEMENT",
+        "value": 9,
+        "strings": [
+          "TRANSACTION_STATEMENT"
+        ],
+        "doc": "transaction statement type,"
+      },
+      {
+        "name": "COPY_STATEMENT",
+        "value": 10,
+        "strings": [
+          "COPY_STATEMENT"
+        ],
+        "doc": "copy type"
+      },
+      {
+        "name": "ANALYZE_STATEMENT",
+        "value": 11,
+        "strings": [
+          "ANALYZE_STATEMENT"
+        ],
+        "doc": "analyze type"
+      },
+      {
+        "name": "VARIABLE_SET_STATEMENT",
+        "value": 12,
+        "strings": [
+          "VARIABLE_SET_STATEMENT"
+        ],
+        "doc": "variable set statement type"
+      },
+      {
+        "name": "CREATE_FUNC_STATEMENT",
+        "value": 13,
+        "strings": [
+          "CREATE_FUNC_STATEMENT"
+        ],
+        "doc": "create func statement type"
+      },
+      {
+        "name": "EXPLAIN_STATEMENT",
+        "value": 14,
+        "strings": [
+          "EXPLAIN_STATEMENT"
+        ],
+        "doc": "explain statement type"
+      },
+      {
+        "name": "DROP_STATEMENT",
+        "value": 15,
+        "strings": [
+          "DROP_STATEMENT"
+        ],
+        "doc": "DROP statement type"
+      },
+      {
+        "name": "EXPORT_STATEMENT",
+        "value": 16,
+        "strings": [
+          "EXPORT_STATEMENT"
+        ],
+        "doc": "EXPORT statement type"
+      },
+      {
+        "name": "PRAGMA_STATEMENT",
+        "value": 17,
+        "strings": [
+          "PRAGMA_STATEMENT"
+        ],
+        "doc": "PRAGMA statement type"
+      },
+      {
+        "name": "VACUUM_STATEMENT",
+        "value": 18,
+        "strings": [
+          "VACUUM_STATEMENT"
+        ],
+        "doc": "VACUUM statement type"
+      },
+      {
+        "name": "CALL_STATEMENT",
+        "value": 19,
+        "strings": [
+          "CALL_STATEMENT"
+        ],
+        "doc": "CALL statement type"
+      },
+      {
+        "name": "SET_STATEMENT",
+        "value": 20,
+        "strings": [
+          "SET_STATEMENT"
+        ],
+        "doc": "SET statement type"
+      },
+      {
+        "name": "LOAD_STATEMENT",
+        "value": 21,
+        "strings": [
+          "LOAD_STATEMENT"
+        ],
+        "doc": "LOAD statement type"
+      },
+      {
+        "name": "RELATION_STATEMENT",
+        "value": 22,
+        "strings": [
+          "RELATION_STATEMENT"
+        ]
+      },
+      {
+        "name": "EXTENSION_STATEMENT",
+        "value": 23,
+        "strings": [
+          "EXTENSION_STATEMENT"
+        ]
+      },
+      {
+        "name": "LOGICAL_PLAN_STATEMENT",
+        "value": 24,
+        "strings": [
+          "LOGICAL_PLAN_STATEMENT"
+        ]
+      },
+      {
+        "name": "ATTACH_STATEMENT",
+        "value": 25,
+        "strings": [
+          "ATTACH_STATEMENT"
+        ]
+      },
+      {
+        "name": "DETACH_STATEMENT",
+        "value": 26,
+        "strings": [
+          "DETACH_STATEMENT"
+        ]
+      },
+      {
+        "name": "MULTI_STATEMENT",
+        "value": 27,
+        "strings": [
+          "MULTI_STATEMENT"
+        ]
+      },
+      {
+        "name": "COPY_DATABASE_STATEMENT",
+        "value": 28,
+        "strings": [
+          "COPY_DATABASE_STATEMENT"
+        ]
+      },
+      {
+        "name": "UPDATE_EXTENSIONS_STATEMENT",
+        "value": 29,
+        "strings": [
+          "UPDATE_EXTENSIONS_STATEMENT"
+        ]
+      },
+      {
+        "name": "MERGE_INTO_STATEMENT",
+        "value": 30,
+        "strings": [
+          "MERGE_INTO_STATEMENT"
+        ]
+      }
+    ]
+  },
+  "StorageIndexType": {
+    "header": "duckdb/storage/storage_index.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "FULL_READ",
+        "value": 0,
+        "strings": [
+          "FULL_READ"
+        ]
+      },
+      {
+        "name": "PUSHDOWN_EXTRACT",
+        "value": 1,
+        "strings": [
+          "PUSHDOWN_EXTRACT"
+        ]
+      }
+    ]
+  },
+  "SubqueryType": {
+    "header": "duckdb/common/enums/subquery_type.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "INVALID",
+        "value": 0,
+        "strings": [
+          "INVALID"
+        ]
+      },
+      {
+        "name": "SCALAR",
+        "value": 1,
+        "strings": [
+          "SCALAR"
+        ],
+        "doc": "Regular scalar subquery"
+      },
+      {
+        "name": "EXISTS",
+        "value": 2,
+        "strings": [
+          "EXISTS"
+        ],
+        "doc": "EXISTS (SELECT...)"
+      },
+      {
+        "name": "NOT_EXISTS",
+        "value": 3,
+        "strings": [
+          "NOT_EXISTS"
+        ],
+        "doc": "NOT EXISTS(SELECT...)"
+      },
+      {
+        "name": "ANY",
+        "value": 4,
+        "strings": [
+          "ANY"
+        ],
+        "doc": "x = ANY(SELECT...) OR x IN (SELECT...)"
+      }
+    ]
+  },
+  "TableColumnType": {
+    "header": "duckdb/catalog/catalog_entry/table_column_type.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "STANDARD",
+        "value": 0,
+        "strings": [
+          "STANDARD"
+        ]
+      },
+      {
+        "name": "GENERATED",
+        "value": 1,
+        "strings": [
+          "GENERATED"
+        ]
+      }
+    ]
+  },
+  "TableFilterType": {
+    "header": "duckdb/planner/table_filter.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "CONSTANT_COMPARISON",
+        "value": 0,
+        "strings": [
+          "CONSTANT_COMPARISON"
+        ],
+        "doc": "constant comparison (e.g. =C, >C, >=C, <C, <=C)"
+      },
+      {
+        "name": "IS_NULL",
+        "value": 1,
+        "strings": [
+          "IS_NULL"
+        ],
+        "doc": "C IS NULL"
+      },
+      {
+        "name": "IS_NOT_NULL",
+        "value": 2,
+        "strings": [
+          "IS_NOT_NULL"
+        ],
+        "doc": "C IS NOT NULL"
+      },
+      {
+        "name": "CONJUNCTION_OR",
+        "value": 3,
+        "strings": [
+          "CONJUNCTION_OR"
+        ],
+        "doc": "OR of different filters"
+      },
+      {
+        "name": "CONJUNCTION_AND",
+        "value": 4,
+        "strings": [
+          "CONJUNCTION_AND"
+        ],
+        "doc": "AND of different filters"
+      },
+      {
+        "name": "STRUCT_EXTRACT",
+        "value": 5,
+        "strings": [
+          "STRUCT_EXTRACT"
+        ],
+        "doc": "filter applies to child-column of struct"
+      },
+      {
+        "name": "OPTIONAL_FILTER",
+        "value": 6,
+        "strings": [
+          "OPTIONAL_FILTER"
+        ],
+        "doc": "executing filter is not required for query correctness"
+      },
+      {
+        "name": "IN_FILTER",
+        "value": 7,
+        "strings": [
+          "IN_FILTER"
+        ],
+        "doc": "col IN (C1, C2, C3, ...)"
+      },
+      {
+        "name": "DYNAMIC_FILTER",
+        "value": 8,
+        "strings": [
+          "DYNAMIC_FILTER"
+        ],
+        "doc": "dynamic filters can be updated at run-time"
+      },
+      {
+        "name": "EXPRESSION_FILTER",
+        "value": 9,
+        "strings": [
+          "EXPRESSION_FILTER"
+        ],
+        "doc": "an arbitrary expression"
+      },
+      {
+        "name": "BLOOM_FILTER",
+        "value": 10,
+        "strings": [
+          "BLOOM_FILTER"
+        ],
+        "doc": "a probabilistic filter that can test whether a value is in a set of other value"
+      }
+    ]
+  },
+  "TableReferenceType": {
+    "header": "duckdb/common/enums/tableref_type.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "INVALID",
+        "value": 0,
+        "strings": [
+          "INVALID"
+        ],
+        "doc": "invalid table reference type"
+      },
+      {
+        "name": "BASE_TABLE",
+        "value": 1,
+        "strings": [
+          "BASE_TABLE"
+        ],
+        "doc": "base table reference"
+      },
+      {
+        "name": "SUBQUERY",
+        "value": 2,
+        "strings": [
+          "SUBQUERY"
+        ],
+        "doc": "output of a subquery"
+      },
+      {
+        "name": "JOIN",
+        "value": 3,
+        "strings": [
+          "JOIN"
+        ],
+        "doc": "output of join"
+      },
+      {
+        "name": "TABLE_FUNCTION",
+        "value": 5,
+        "strings": [
+          "TABLE_FUNCTION"
+        ],
+        "doc": "table producing function"
+      },
+      {
+        "name": "EXPRESSION_LIST",
+        "value": 6,
+        "strings": [
+          "EXPRESSION_LIST"
+        ],
+        "doc": "expression list"
+      },
+      {
+        "name": "CTE",
+        "value": 7,
+        "strings": [
+          "CTE"
+        ],
+        "doc": "Recursive CTE"
+      },
+      {
+        "name": "EMPTY_FROM",
+        "value": 8,
+        "strings": [
+          "EMPTY"
+        ],
+        "doc": "placeholder for empty FROM"
+      },
+      {
+        "name": "PIVOT",
+        "value": 9,
+        "strings": [
+          "PIVOT"
+        ],
+        "doc": "pivot statement"
+      },
+      {
+        "name": "SHOW_REF",
+        "value": 10,
+        "strings": [
+          "SHOW_REF"
+        ],
+        "doc": "SHOW statement"
+      },
+      {
+        "name": "COLUMN_DATA",
+        "value": 11,
+        "strings": [
+          "COLUMN_DATA"
+        ],
+        "doc": "column data collection"
+      },
+      {
+        "name": "DELIM_GET",
+        "value": 12,
+        "strings": [
+          "DELIM_GET"
+        ],
+        "doc": "Delim get ref"
+      },
+      {
+        "name": "BOUND_TABLE_REF",
+        "value": 13,
+        "strings": [
+          "BOUND_TABLE_REF"
+        ],
+        "doc": "Bound table ref"
+      }
+    ]
+  },
+  "TransactionInvalidationPolicy": {
+    "header": "duckdb/parser/parsed_data/transaction_info.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "STANDARD_POLICY",
+        "value": 0,
+        "strings": [
+          "STANDARD_POLICY"
+        ]
+      },
+      {
+        "name": "ALL_ERRORS_INVALIDATE_TRANSACTION",
+        "value": 1,
+        "strings": [
+          "ALL_ERRORS_INVALIDATE_TRANSACTION"
+        ]
+      }
+    ]
+  },
+  "TransactionModifierType": {
+    "header": "duckdb/parser/parsed_data/transaction_info.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "TRANSACTION_DEFAULT_MODIFIER",
+        "value": 0,
+        "strings": [
+          "TRANSACTION_DEFAULT_MODIFIER"
+        ]
+      },
+      {
+        "name": "TRANSACTION_READ_ONLY",
+        "value": 1,
+        "strings": [
+          "TRANSACTION_READ_ONLY"
+        ]
+      },
+      {
+        "name": "TRANSACTION_READ_WRITE",
+        "value": 2,
+        "strings": [
+          "TRANSACTION_READ_WRITE"
+        ]
+      }
+    ]
+  },
+  "TransactionType": {
+    "header": "duckdb/parser/parsed_data/transaction_info.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "INVALID",
+        "value": 0,
+        "strings": [
+          "INVALID"
+        ]
+      },
+      {
+        "name": "BEGIN_TRANSACTION",
+        "value": 1,
+        "strings": [
+          "BEGIN_TRANSACTION"
+        ]
+      },
+      {
+        "name": "COMMIT",
+        "value": 2,
+        "strings": [
+          "COMMIT"
+        ]
+      },
+      {
+        "name": "ROLLBACK",
+        "value": 3,
+        "strings": [
+          "ROLLBACK"
+        ]
+      }
+    ]
+  },
+  "TupleDataValidityType": {
+    "header": "duckdb/common/enums/tuple_data_layout_enums.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "CAN_HAVE_NULL_VALUES",
+        "value": 0,
+        "strings": [
+          "CAN_HAVE_NULL_VALUES"
+        ]
+      },
+      {
+        "name": "CANNOT_HAVE_NULL_VALUES",
+        "value": 1,
+        "strings": [
+          "CANNOT_HAVE_NULL_VALUES"
+        ]
+      }
+    ]
+  },
+  "WindowBoundary": {
+    "header": "duckdb/parser/expression/window_expression.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "INVALID",
+        "value": 0,
+        "strings": [
+          "INVALID"
+        ]
+      },
+      {
+        "name": "UNBOUNDED_PRECEDING",
+        "value": 1,
+        "strings": [
+          "UNBOUNDED_PRECEDING"
+        ]
+      },
+      {
+        "name": "UNBOUNDED_FOLLOWING",
+        "value": 2,
+        "strings": [
+          "UNBOUNDED_FOLLOWING"
+        ]
+      },
+      {
+        "name": "CURRENT_ROW_RANGE",
+        "value": 3,
+        "strings": [
+          "CURRENT_ROW_RANGE"
+        ]
+      },
+      {
+        "name": "CURRENT_ROW_ROWS",
+        "value": 4,
+        "strings": [
+          "CURRENT_ROW_ROWS"
+        ]
+      },
+      {
+        "name": "EXPR_PRECEDING_ROWS",
+        "value": 5,
+        "strings": [
+          "EXPR_PRECEDING_ROWS"
+        ]
+      },
+      {
+        "name": "EXPR_FOLLOWING_ROWS",
+        "value": 6,
+        "strings": [
+          "EXPR_FOLLOWING_ROWS"
+        ]
+      },
+      {
+        "name": "EXPR_PRECEDING_RANGE",
+        "value": 7,
+        "strings": [
+          "EXPR_PRECEDING_RANGE"
+        ]
+      },
+      {
+        "name": "EXPR_FOLLOWING_RANGE",
+        "value": 8,
+        "strings": [
+          "EXPR_FOLLOWING_RANGE"
+        ]
+      },
+      {
+        "name": "CURRENT_ROW_GROUPS",
+        "value": 9,
+        "strings": [
+          "CURRENT_ROW_GROUPS"
+        ]
+      },
+      {
+        "name": "EXPR_PRECEDING_GROUPS",
+        "value": 10,
+        "strings": [
+          "EXPR_PRECEDING_GROUPS"
+        ]
+      },
+      {
+        "name": "EXPR_FOLLOWING_GROUPS",
+        "value": 11,
+        "strings": [
+          "EXPR_FOLLOWING_GROUPS"
+        ]
+      }
+    ]
+  },
+  "WindowExcludeMode": {
+    "header": "duckdb/parser/expression/window_expression.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "NO_OTHER",
+        "value": 0,
+        "strings": [
+          "NO_OTHER"
+        ]
+      },
+      {
+        "name": "CURRENT_ROW",
+        "value": 1,
+        "strings": [
+          "CURRENT_ROW"
+        ]
+      },
+      {
+        "name": "GROUP",
+        "value": 2,
+        "strings": [
+          "GROUP"
+        ]
+      },
+      {
+        "name": "TIES",
+        "value": 3,
+        "strings": [
+          "TIES"
+        ]
+      }
+    ]
+  }
+}

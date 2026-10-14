@@ -1,12 +1,15 @@
+mod serialization;
+
 use std::fmt::Write as _;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use rustdb_common::{Error, Result};
 
-use crate::{LogicalType, LogicalTypeId, PhysicalType, StringT, Vector};
+use crate::{Interval, LogicalType, LogicalTypeId, PhysicalType, StringT, Vector};
 
 /// The storage of a non-NULL value, keyed by physical representation.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 enum Payload {
     Null,
     Bool(bool),
@@ -22,17 +25,96 @@ enum Payload {
     U128(u128),
     F32(f32),
     F64(f64),
+    Interval(Interval),
+    /// Strings, blobs and other byte-string types.
     Bytes(Arc<[u8]>),
+    /// The elements of a LIST, MAP or ARRAY, or the fields of a STRUCT or UNION.
+    Nested(Arc<[Value]>),
+    /// A value of type `TYPE`.
+    Type(LogicalType),
+}
+
+impl Payload {
+    /// Floats compare by bit pattern so that equality is reflexive (`NaN == NaN`), which
+    /// makes values usable as map keys; SQL comparison semantics live in the executor.
+    fn eq_bits(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::F32(a), Self::F32(b)) => a.to_bits() == b.to_bits(),
+            (Self::F64(a), Self::F64(b)) => a.to_bits() == b.to_bits(),
+            (Self::Null, Self::Null) => true,
+            (Self::Bool(a), Self::Bool(b)) => a == b,
+            (Self::I8(a), Self::I8(b)) => a == b,
+            (Self::I16(a), Self::I16(b)) => a == b,
+            (Self::I32(a), Self::I32(b)) => a == b,
+            (Self::I64(a), Self::I64(b)) => a == b,
+            (Self::I128(a), Self::I128(b)) => a == b,
+            (Self::U8(a), Self::U8(b)) => a == b,
+            (Self::U16(a), Self::U16(b)) => a == b,
+            (Self::U32(a), Self::U32(b)) => a == b,
+            (Self::U64(a), Self::U64(b)) => a == b,
+            (Self::U128(a), Self::U128(b)) => a == b,
+            (Self::Interval(a), Self::Interval(b)) => a == b,
+            (Self::Bytes(a), Self::Bytes(b)) => a == b,
+            (Self::Nested(a), Self::Nested(b)) => a == b,
+            (Self::Type(a), Self::Type(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq for Payload {
+    fn eq(&self, other: &Self) -> bool {
+        self.eq_bits(other)
+    }
+}
+
+impl Eq for Payload {}
+
+impl Hash for Payload {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Self::Null => {}
+            Self::Bool(v) => v.hash(state),
+            Self::I8(v) => v.hash(state),
+            Self::I16(v) => v.hash(state),
+            Self::I32(v) => v.hash(state),
+            Self::I64(v) => v.hash(state),
+            Self::I128(v) => v.hash(state),
+            Self::U8(v) => v.hash(state),
+            Self::U16(v) => v.hash(state),
+            Self::U32(v) => v.hash(state),
+            Self::U64(v) => v.hash(state),
+            Self::U128(v) => v.hash(state),
+            Self::F32(v) => v.to_bits().hash(state),
+            Self::F64(v) => v.to_bits().hash(state),
+            Self::Interval(v) => v.hash(state),
+            Self::Bytes(v) => v.hash(state),
+            Self::Nested(v) => v.hash(state),
+            Self::Type(v) => v.hash(state),
+        }
+    }
 }
 
 /// A single typed SQL value (DuckDB's `Value`).
-#[derive(Clone, Debug, PartialEq)]
+///
+/// Equality and hashing are structural (type and payload, floats by bit pattern), not
+/// SQL comparison.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Value {
     ty: LogicalType,
     payload: Payload,
 }
 
+impl Default for Value {
+    /// A NULL of type `"NULL"`, like DuckDB's default-constructed `Value`.
+    fn default() -> Self {
+        Self::null(LogicalType::SQLNULL)
+    }
+}
+
 impl Value {
+    /// A NULL of type `ty`.
     pub fn null(ty: LogicalType) -> Self {
         Self {
             ty,
@@ -40,6 +122,7 @@ impl Value {
         }
     }
 
+    /// A BOOLEAN.
     pub fn boolean(value: bool) -> Self {
         Self {
             ty: LogicalType::BOOLEAN,
@@ -47,6 +130,7 @@ impl Value {
         }
     }
 
+    /// A TINYINT.
     pub fn tinyint(value: i8) -> Self {
         Self {
             ty: LogicalType::TINYINT,
@@ -54,6 +138,7 @@ impl Value {
         }
     }
 
+    /// A SMALLINT.
     pub fn smallint(value: i16) -> Self {
         Self {
             ty: LogicalType::SMALLINT,
@@ -61,6 +146,7 @@ impl Value {
         }
     }
 
+    /// An INTEGER.
     pub fn integer(value: i32) -> Self {
         Self {
             ty: LogicalType::INTEGER,
@@ -68,6 +154,7 @@ impl Value {
         }
     }
 
+    /// A BIGINT.
     pub fn bigint(value: i64) -> Self {
         Self {
             ty: LogicalType::BIGINT,
@@ -75,6 +162,7 @@ impl Value {
         }
     }
 
+    /// A HUGEINT.
     pub fn hugeint(value: i128) -> Self {
         Self {
             ty: LogicalType::HUGEINT,
@@ -82,6 +170,7 @@ impl Value {
         }
     }
 
+    /// A UTINYINT.
     pub fn utinyint(value: u8) -> Self {
         Self {
             ty: LogicalType::UTINYINT,
@@ -89,6 +178,7 @@ impl Value {
         }
     }
 
+    /// A USMALLINT.
     pub fn usmallint(value: u16) -> Self {
         Self {
             ty: LogicalType::USMALLINT,
@@ -96,6 +186,7 @@ impl Value {
         }
     }
 
+    /// A UINTEGER.
     pub fn uinteger(value: u32) -> Self {
         Self {
             ty: LogicalType::UINTEGER,
@@ -103,6 +194,7 @@ impl Value {
         }
     }
 
+    /// A UBIGINT.
     pub fn ubigint(value: u64) -> Self {
         Self {
             ty: LogicalType::UBIGINT,
@@ -110,6 +202,7 @@ impl Value {
         }
     }
 
+    /// A UHUGEINT.
     pub fn uhugeint(value: u128) -> Self {
         Self {
             ty: LogicalType::UHUGEINT,
@@ -117,6 +210,7 @@ impl Value {
         }
     }
 
+    /// A FLOAT.
     pub fn float(value: f32) -> Self {
         Self {
             ty: LogicalType::FLOAT,
@@ -124,6 +218,7 @@ impl Value {
         }
     }
 
+    /// A DOUBLE.
     pub fn double(value: f64) -> Self {
         Self {
             ty: LogicalType::DOUBLE,
@@ -131,6 +226,7 @@ impl Value {
         }
     }
 
+    /// A VARCHAR.
     pub fn varchar(value: impl AsRef<str>) -> Self {
         Self {
             ty: LogicalType::VARCHAR,
@@ -138,6 +234,7 @@ impl Value {
         }
     }
 
+    /// A BLOB.
     pub fn blob(value: &[u8]) -> Self {
         Self {
             ty: LogicalType::BLOB,
@@ -157,10 +254,82 @@ impl Value {
         Self { ty, payload }
     }
 
+    /// An INTERVAL.
+    pub fn interval(value: Interval) -> Self {
+        Self {
+            ty: LogicalType::INTERVAL,
+            payload: Payload::Interval(value),
+        }
+    }
+
+    /// A LIST of `child_type` holding `values` (DuckDB's `Value::LIST`).
+    pub fn list(child_type: LogicalType, values: Vec<Self>) -> Self {
+        Self {
+            ty: LogicalType::list(child_type),
+            payload: Payload::Nested(values.into()),
+        }
+    }
+
+    /// A STRUCT with the given fields (DuckDB's `Value::STRUCT`).
+    pub fn struct_value(fields: Vec<(String, Self)>) -> Self {
+        let (names, values): (Vec<String>, Vec<Self>) = fields.into_iter().unzip();
+        let children = names
+            .into_iter()
+            .zip(values.iter().map(|v| v.ty.clone()))
+            .collect();
+        Self {
+            ty: LogicalType::struct_type(children),
+            payload: Payload::Nested(values.into()),
+        }
+    }
+
+    /// A value of type `TYPE` (DuckDB's `Value::TYPE`).
+    pub fn type_value(ty: LogicalType) -> Self {
+        Self {
+            ty: LogicalType::simple(LogicalTypeId::Type),
+            payload: Payload::Type(ty),
+        }
+    }
+
+    /// A LIST/MAP/ARRAY/STRUCT/UNION value of type `ty` from its elements or fields; the
+    /// children must match `ty`.
+    pub fn from_children(ty: LogicalType, children: Vec<Self>) -> Self {
+        Self {
+            ty,
+            payload: Payload::Nested(children.into()),
+        }
+    }
+
+    /// The value's type.
     pub fn logical_type(&self) -> &LogicalType {
         &self.ty
     }
 
+    /// The elements of a LIST/MAP/ARRAY value or the fields of a STRUCT/UNION value.
+    pub fn children(&self) -> Option<&[Self]> {
+        match &self.payload {
+            Payload::Nested(children) => Some(children),
+            _ => None,
+        }
+    }
+
+    /// The value of an INTERVAL.
+    pub fn as_interval(&self) -> Option<Interval> {
+        match self.payload {
+            Payload::Interval(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// The type held by a `TYPE` value.
+    pub fn as_type(&self) -> Option<&LogicalType> {
+        match &self.payload {
+            Payload::Type(ty) => Some(ty),
+            _ => None,
+        }
+    }
+
+    /// Whether this is a NULL.
     pub fn is_null(&self) -> bool {
         matches!(self.payload, Payload::Null)
     }
@@ -182,6 +351,7 @@ impl Value {
         }
     }
 
+    /// The value of a BOOLEAN.
     pub fn as_bool(&self) -> Option<bool> {
         match self.payload {
             Payload::Bool(v) => Some(v),
@@ -189,6 +359,7 @@ impl Value {
         }
     }
 
+    /// The value of a FLOAT or DOUBLE.
     pub fn as_f64(&self) -> Option<f64> {
         match self.payload {
             Payload::F32(v) => Some(v.into()),
@@ -277,6 +448,12 @@ impl Value {
             Payload::Bytes(bytes) => {
                 let string: StringT = vector.add_string(bytes);
                 vector.values_mut::<StringT>()[slot] = string;
+            }
+            Payload::Interval(_) | Payload::Nested(_) | Payload::Type(_) => {
+                return Err(Error::not_implemented(format!(
+                    "Writing {} values into vectors",
+                    self.ty
+                )));
             }
         }
         Ok(())
