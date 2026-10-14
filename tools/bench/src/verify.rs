@@ -19,6 +19,11 @@ pub enum ValueKind {
         scale: u8,
     },
     Varchar,
+    /// `TIMESTAMP`, `TIMESTAMP_S/MS/NS`, `TIMESTAMP WITH TIME ZONE`: a date alone means
+    /// midnight, trailing fractional zeros do not matter.
+    Timestamp,
+    /// `TIME`, `TIME_NS`, `TIME WITH TIME ZONE`.
+    Time,
     /// Everything else: compared by rendered text.
     Other,
 }
@@ -173,6 +178,10 @@ fn value_matches(expected: &str, actual: Option<&str>, kind: ValueKind) -> bool 
             (Some(e), Some(a)) => e == a,
             _ => false,
         },
+        ValueKind::Timestamp => {
+            normalize_timestamp(expected).is_some_and(|e| Some(e) == normalize_timestamp(actual))
+        }
+        ValueKind::Time => normalize_time(expected).is_some_and(|e| Some(e) == normalize_time(actual)),
         ValueKind::Other => expected.trim() == actual.trim(),
     }
 }
@@ -276,6 +285,64 @@ fn parse_decimal(s: &str, scale: u8) -> Option<i128> {
     Some(if negative { -value } else { value })
 }
 
+/// Canonical `YYYY-MM-DD HH:MM:SS[.fff][+HH:MM]` for a VARCHAR -> TIMESTAMP cast.
+fn normalize_timestamp(s: &str) -> Option<String> {
+    let s = s.trim();
+    let (date, time) = match s.find([' ', 'T']) {
+        Some(i) => (&s[..i], &s[i + 1..]),
+        None => (s, "00:00:00"),
+    };
+    if date.is_empty() || !date.bytes().all(|b| b.is_ascii_digit() || b == b'-') {
+        return None;
+    }
+    Some(format!("{date} {}", normalize_time(time)?))
+}
+
+/// Canonical `HH:MM:SS[.fff][+HH:MM]` for a VARCHAR -> TIME cast.
+fn normalize_time(s: &str) -> Option<String> {
+    let s = s.trim();
+    let (clock, zone) = match s.find(['+', '-', 'Z']) {
+        Some(i) => (&s[..i], &s[i..]),
+        None => (s, ""),
+    };
+    let (whole, fraction) = clock.split_once('.').unwrap_or((clock, ""));
+    let mut parts = whole.split(':');
+    let (hours, minutes) = (parts.next()?, parts.next()?);
+    let seconds = parts.next().unwrap_or("00");
+    if parts.next().is_some() || ![hours, minutes, seconds].iter().all(|p| p.parse::<u32>().is_ok()) {
+        return None;
+    }
+    let fraction = fraction.trim_end_matches('0');
+    let mut out = format!("{hours:0>2}:{minutes:0>2}:{seconds:0>2}");
+    if !fraction.is_empty() {
+        out.push('.');
+        out.push_str(fraction);
+    }
+    out.push_str(&normalize_zone(zone)?);
+    Some(out)
+}
+
+/// `+HH`, `+HHMM`, `+HH:MM`, `Z` -> `+HH:MM`; no zone -> empty.
+fn normalize_zone(zone: &str) -> Option<String> {
+    if zone.is_empty() {
+        return Some(String::new());
+    }
+    if zone == "Z" {
+        return Some("+00:00".to_owned());
+    }
+    let (sign, digits) = zone.split_at(1);
+    let digits = digits.replace(':', "");
+    if !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let (hours, minutes) = match digits.len() {
+        1 | 2 => (digits.as_str(), "00"),
+        3 | 4 => digits.split_at(digits.len() - 2),
+        _ => return None,
+    };
+    Some(format!("{sign}{hours:0>2}:{minutes}"))
+}
+
 fn parse_bool(s: &str) -> Option<bool> {
     match s.trim().to_ascii_lowercase().as_str() {
         "true" | "t" | "1" | "y" | "yes" => Some(true),
@@ -360,6 +427,33 @@ mod tests {
         ));
         assert!(value_matches("true", Some("t"), ValueKind::Boolean));
         assert!(!value_matches("1992-01-01", Some("1992-01-02"), ValueKind::Other));
+        assert!(value_matches(
+            "1992-01-01",
+            Some("1992-01-01 00:00:00"),
+            ValueKind::Timestamp
+        ));
+        assert!(value_matches(
+            "1992-01-01T10:00:00.500",
+            Some("1992-01-01 10:00:00.5"),
+            ValueKind::Timestamp
+        ));
+        assert!(value_matches(
+            "2020-01-01 00:00:00Z",
+            Some("2020-01-01 00:00:00+00"),
+            ValueKind::Timestamp
+        ));
+        assert!(!value_matches(
+            "1992-01-01",
+            Some("1992-01-01 00:00:01"),
+            ValueKind::Timestamp
+        ));
+        assert!(value_matches("1:02:03", Some("01:02:03"), ValueKind::Time));
+        assert!(value_matches(
+            "10:00:00+0530",
+            Some("10:00:00+05:30"),
+            ValueKind::Time
+        ));
+        assert!(!value_matches("garbage", Some("garbage "), ValueKind::Time));
     }
 
     #[test]

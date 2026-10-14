@@ -137,6 +137,10 @@ fn value_kind(ty: &LogicalType) -> ValueKind {
             scale: ty.decimal_properties().map_or(0, |(_, scale)| scale),
         },
         L::Varchar | L::Char => ValueKind::Varchar,
+        L::Timestamp | L::TimestampSec | L::TimestampMs | L::TimestampNs | L::TimestampTz => {
+            ValueKind::Timestamp
+        }
+        L::Time | L::TimeTz | L::TimeNs => ValueKind::Time,
         _ => ValueKind::Other,
     }
 }

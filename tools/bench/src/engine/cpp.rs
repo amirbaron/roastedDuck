@@ -52,7 +52,14 @@ const TYPE_UBIGINT: u32 = 9;
 const TYPE_FLOAT: u32 = 10;
 const TYPE_DOUBLE: u32 = 11;
 const TYPE_HUGEINT: u32 = 16;
+const TYPE_TIMESTAMP: u32 = 12;
+const TYPE_TIME: u32 = 14;
 const TYPE_VARCHAR: u32 = 17;
+const TYPE_TIMESTAMP_S: u32 = 20;
+const TYPE_TIMESTAMP_NS: u32 = 22;
+const TYPE_TIME_TZ: u32 = 30;
+const TYPE_TIMESTAMP_TZ: u32 = 31;
+const TYPE_TIME_NS: u32 = 39;
 const TYPE_DECIMAL: u32 = 19;
 const TYPE_LIST: u32 = 24;
 const TYPE_STRUCT: u32 = 25;
@@ -245,6 +252,8 @@ impl CApi {
             TYPE_DOUBLE => ValueKind::Double,
             TYPE_DECIMAL => ValueKind::Decimal { scale },
             TYPE_VARCHAR => ValueKind::Varchar,
+            TYPE_TIMESTAMP | TYPE_TIMESTAMP_S..=TYPE_TIMESTAMP_NS | TYPE_TIMESTAMP_TZ => ValueKind::Timestamp,
+            TYPE_TIME | TYPE_TIME_TZ | TYPE_TIME_NS => ValueKind::Time,
             _ => ValueKind::Other,
         };
         // SAFETY: `ty` is live and owned by us; `type_name` consumes it.
