@@ -63,6 +63,24 @@ pub struct SchemaEntry {
     pub indexes: Arc<CatalogSet>,
 }
 
+impl SchemaEntry {
+    /// The empty schema `schema` of catalog `catalog`.
+    pub fn new(catalog: &str, schema: &str) -> Self {
+        let set = || Arc::new(CatalogSet::new(catalog, schema));
+        Self {
+            tables: set(),
+            functions: set(),
+            table_functions: set(),
+            pragma_functions: set(),
+            copy_functions: set(),
+            sequences: set(),
+            types: set(),
+            collations: set(),
+            indexes: set(),
+        }
+    }
+}
+
 /// One column of a table (DuckDB's `ColumnDefinition`, catalog part).
 #[derive(Clone, Debug)]
 pub struct TableColumn {
@@ -266,6 +284,21 @@ impl SequenceEntry {
         data.last_value = result;
         data.usage_count += 1;
         Ok(result)
+    }
+
+    /// Restores the state logged in the WAL, unless the sequence is further along
+    /// already (`SequenceCatalogEntry::ReplayValue`).
+    pub fn replay_value(&self, usage_count: u64, counter: i64) {
+        let mut data = self.lock();
+        if usage_count > data.usage_count {
+            data.usage_count = usage_count;
+            data.counter = counter;
+        }
+    }
+
+    /// An identity shared by every version of the sequence while it exists.
+    pub fn key(&self) -> usize {
+        Arc::as_ptr(&self.data) as usize
     }
 
     /// `SequenceCatalogEntry::CurrentValue`.

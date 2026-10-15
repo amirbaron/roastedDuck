@@ -32,6 +32,7 @@ pub mod storage_manager;
 pub mod table;
 pub mod table_filter;
 pub mod transaction;
+pub mod wal;
 
 mod data_table;
 

@@ -40,6 +40,11 @@ impl TransactionContext {
         transaction_error("Current transaction is aborted (please ROLLBACK)")
     }
 
+    /// Whether a transaction is open (explicit, or an auto-commit one mid-statement).
+    pub fn has_current(&self) -> bool {
+        self.current.is_some()
+    }
+
     /// Whether a failed statement aborted the explicit transaction.
     pub fn is_invalidated(&self) -> bool {
         self.invalidated

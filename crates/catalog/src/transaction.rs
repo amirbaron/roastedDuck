@@ -4,11 +4,14 @@
 
 use std::sync::Arc;
 
+use rustdb_common::Result;
 use rustdb_storage::CatalogUndo;
 pub use rustdb_storage::transaction::{
     MAX_TRANSACTION_ID, TRANSACTION_ID_START, Transaction, TransactionManager,
 };
+use rustdb_storage::wal::WalBatch;
 
+use crate::WalRecord;
 use crate::catalog_set::{CatalogSet, Version};
 
 /// What a catalog change does to storage when it commits or rolls back.
@@ -37,6 +40,7 @@ struct CatalogChange {
     name: String,
     version: Arc<Version>,
     hook: StorageHook,
+    wal: WalRecord,
 }
 
 impl CatalogUndo for CatalogChange {
@@ -66,6 +70,26 @@ impl CatalogUndo for CatalogChange {
     fn is_drop(&self) -> bool {
         self.version.is_tombstone()
     }
+
+    fn write_to_wal(&self, batch: &mut WalBatch) -> Result<()> {
+        let catalog = self.set.catalog_name();
+        let schema = self.set.schema_name();
+        match &self.wal {
+            WalRecord::Create => match self.version.entry() {
+                Some(entry) => crate::wal::write_create(batch, catalog, schema, entry),
+                None => Ok(()),
+            },
+            WalRecord::Drop(entry) => crate::wal::write_drop(batch, schema, entry),
+            WalRecord::Alter(info) => {
+                let temporary = self.version.entry().is_some_and(|entry| entry.temporary);
+                if temporary {
+                    return Ok(());
+                }
+                crate::wal::write_alter(batch, info)
+            }
+            WalRecord::None => Ok(()),
+        }
+    }
 }
 
 /// Registers catalog changes in a transaction's undo log.
@@ -76,6 +100,7 @@ pub(crate) trait TransactionExt {
         name: String,
         version: Arc<Version>,
         hook: StorageHook,
+        wal: WalRecord,
     );
 }
 
@@ -86,12 +111,14 @@ impl TransactionExt for Transaction {
         name: String,
         version: Arc<Version>,
         hook: StorageHook,
+        wal: WalRecord,
     ) {
         self.push_catalog_undo(Box::new(CatalogChange {
             set,
             name,
             version,
             hook,
+            wal,
         }));
     }
 }

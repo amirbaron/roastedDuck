@@ -514,6 +514,66 @@ impl DataTable {
         Ok(())
     }
 
+    /// Calls `function` with the rows `row_start..row_start + count` of the base table,
+    /// regardless of their versions, in chunks of at most one vector
+    /// (`ScanTableSegment`); the WAL logs committed appends with it.
+    pub fn scan_table_segment(
+        &self,
+        transaction: TransactionData,
+        row_start: u64,
+        count: u64,
+        mut function: impl FnMut(&DataChunk) -> Result<()>,
+    ) -> Result<()> {
+        if count == 0 {
+            return Ok(());
+        }
+        let end = row_start + count;
+        let column_ids: Vec<StorageIndex> = (0..self.columns.len()).map(StorageIndex::from).collect();
+        let types = self.types();
+        let mut filters = crate::table::ScanFilterInfo::new(None, &column_ids);
+        let mut state = CollectionScanState::default();
+        self.row_groups
+            .initialize_scan_with_offset(&mut state, &column_ids, &mut filters, row_start, end)?;
+        let mut current_row = state.row_group.as_ref().map_or(row_start, |(_, node)| {
+            node.row_start + state.vector_index as u64 * crate::VECTOR_SIZE
+        });
+        let mut chunk = DataChunk::with_types(&types, STANDARD_VECTOR_SIZE);
+        while current_row < end {
+            chunk.reset();
+            if !self.row_groups.scan_all(
+                crate::table::TableScanType::AllRows,
+                transaction,
+                &mut state,
+                &column_ids,
+                &mut filters,
+                &mut chunk,
+            )? || chunk.is_empty()
+            {
+                break;
+            }
+            let end_row = current_row + chunk.len() as u64;
+            let chunk_start = current_row.max(row_start);
+            let chunk_end = end_row.min(end);
+            let chunk_count = (chunk_end - chunk_start) as usize;
+            if chunk_count == chunk.len() {
+                function(&chunk)?;
+            } else {
+                let offset = (chunk_start - current_row) as u32;
+                let sel = rustdb_types::SelectionVector::new(
+                    (offset..offset + chunk_count as u32).collect::<Vec<_>>(),
+                );
+                let columns = chunk
+                    .columns()
+                    .iter()
+                    .map(|column| column.slice(&sel).flattened(chunk_count))
+                    .collect();
+                function(&DataChunk::new(columns, chunk_count))?;
+            }
+            current_row = end_row;
+        }
+        Ok(())
+    }
+
     /// Statistics of column `column` (`GetStatistics`).
     pub fn column_statistics(&self, column: usize) -> Option<BaseStatistics> {
         self.row_groups.column_statistics(column)
@@ -747,6 +807,34 @@ impl DataTable {
                 .update(transaction.data(), &ids, column_ids, &chunk)?;
             transaction.push_updates(self, records);
         }
+        Ok(())
+    }
+
+    /// Updates the sub-column at `column_path` of the rows `row_ids` to `values`
+    /// without verifying constraints (`DataTable::UpdateColumn`, used by WAL replay).
+    pub fn update_column(
+        self: &Arc<Self>,
+        transaction: &Transaction,
+        row_ids: &[i64],
+        column_path: &[usize],
+        values: &Vector,
+    ) -> Result<()> {
+        if row_ids.is_empty() {
+            return Ok(());
+        }
+        self.check_main_table("update")?;
+        if row_ids
+            .iter()
+            .any(|&id| id < 0 || id as u64 >= self.row_groups.total_rows())
+        {
+            return Err(Error::internal(
+                "Corrupt WAL: update of a row that does not exist",
+            ));
+        }
+        let records = self
+            .row_groups
+            .update_column(transaction.data(), row_ids, column_path, values)?;
+        transaction.push_updates(self, records);
         Ok(())
     }
 

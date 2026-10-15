@@ -521,6 +521,7 @@ impl PlanGenerator {
                         entry: alter.entry,
                         action: alter.action,
                         dependents_allowed: alter.dependents_allowed,
+                        info: alter.info,
                     }),
                 )?
             }

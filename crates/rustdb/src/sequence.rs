@@ -2,7 +2,7 @@
 //! sequence is looked up when the call is bound, through the binder's client context.
 
 use std::any::Any;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use rustdb_catalog::{CatalogType, EntryKind, SequenceEntry};
 use rustdb_common::{Error, Result};
@@ -14,7 +14,10 @@ use rustdb_types::{DataChunk, LogicalType, Vector};
 #[derive(Debug)]
 struct SequenceBindData {
     name: String,
+    schema: String,
     sequence: SequenceEntry,
+    /// The transaction the call runs in; it logs the sequence's state at commit.
+    transaction: Weak<rustdb_storage::Transaction>,
 }
 
 impl FunctionData for SequenceBindData {
@@ -103,7 +106,9 @@ fn bind_sequence(input: &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>>
     };
     Ok(Some(Arc::new(SequenceBindData {
         name: found.entry.name().to_owned(),
+        schema: found.schema,
         sequence: sequence.clone(),
+        transaction: Arc::downgrade(&context.transaction),
     })))
 }
 
@@ -113,6 +118,7 @@ fn sequence_kernel(
     count: usize,
     result: &mut Vector,
     next: fn(&SequenceBindData) -> Result<i64>,
+    logged: bool,
 ) -> Result<()> {
     let Some(data) = state
         .bind_data
@@ -129,19 +135,33 @@ fn sequence_kernel(
             *slot = next(data)?;
         }
     }
+    if logged
+        && count > 0
+        && let Some(transaction) = data.transaction.upgrade()
+    {
+        // `DuckTransaction::PushSequenceUsage`.
+        let state = data.sequence.data();
+        transaction.push_sequence_usage(
+            data.sequence.key(),
+            &data.schema,
+            &data.name,
+            state.usage_count,
+            state.counter,
+        );
+    }
     *result = values;
     Ok(())
 }
 
 /// `nextval` and `currval`.
 pub(crate) fn sequence_functions() -> Vec<ScalarFunctionSet> {
-    let make = |name: &'static str, next: fn(&SequenceBindData) -> Result<i64>| {
+    let make = |name: &'static str, next: fn(&SequenceBindData) -> Result<i64>, logged: bool| {
         let mut function = ScalarFunction::new(
             name,
             vec![LogicalType::VARCHAR],
             LogicalType::BIGINT,
             move |args: &DataChunk, state: &mut FunctionState, result: &mut Vector| {
-                sequence_kernel(state, args.len(), result, next)
+                sequence_kernel(state, args.len(), result, next, logged)
             },
         )
         .with_bind(|_, input| bind_sequence(input));
@@ -152,8 +172,8 @@ pub(crate) fn sequence_functions() -> Vec<ScalarFunctionSet> {
         set
     };
     vec![
-        make("nextval", |data| data.sequence.next_value(&data.name)),
-        make("currval", |data| data.sequence.current_value()),
+        make("nextval", |data| data.sequence.next_value(&data.name), true),
+        make("currval", |data| data.sequence.current_value(), false),
     ]
 }
 

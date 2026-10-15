@@ -514,6 +514,8 @@ pub struct LogicalAlter {
     /// Whether the alter is allowed while other entries (indexes) depend on the table
     /// (`DependencyManager::AlterObject`: ADD COLUMN and SET DEFAULT).
     pub dependents_allowed: bool,
+    /// The statement with the entry's catalog and schema filled in, as the WAL logs it.
+    pub info: Option<Box<rustdb_ast::AlterInfo>>,
 }
 
 /// What an `ALTER` does. `definition` is the table's new definition (without storage).

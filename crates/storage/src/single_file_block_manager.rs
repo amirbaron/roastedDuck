@@ -16,9 +16,9 @@ use rustdb_common::{Error, ErrorKind, Result};
 
 use crate::metadata::{MetaBlockPointer, MetadataManager, MetadataReader, MetadataWriter};
 use crate::storage_info::{
-    BLOCK_START, DEFAULT_BLOCK_HEADER_SIZE, DEPRECATED_VERSION_NUMBER, DatabaseHeader, FILE_HEADER_SIZE,
-    INVALID_BLOCK_INDEX, MAGIC_BYTE_OFFSET, MAGIC_BYTES, MainHeader, STANDARD_VECTOR_SIZE, VERSION_NUMBER,
-    checksum, unsupported_version_error,
+    BLOCK_START, DB_IDENTIFIER_LEN, DEFAULT_BLOCK_HEADER_SIZE, DEPRECATED_VERSION_NUMBER, DatabaseHeader,
+    FILE_HEADER_SIZE, INVALID_BLOCK_INDEX, MAGIC_BYTE_OFFSET, MAGIC_BYTES, MainHeader, STANDARD_VECTOR_SIZE,
+    VERSION_NUMBER, checksum, unsupported_version_error,
 };
 
 fn io_error(message: impl Into<std::borrow::Cow<'static, str>>) -> Error {
@@ -162,6 +162,8 @@ pub struct SingleFileBlockManager {
     read_only: bool,
     version_number: u64,
     storage_version: u64,
+    /// The random identity of the file, matched by its WAL (`MainHeader::db_identifier`).
+    db_identifier: [u8; DB_IDENTIFIER_LEN],
     registry: BlockRegistry,
     state: Mutex<BlockState>,
 }
@@ -211,6 +213,10 @@ impl SingleFileBlockManager {
             ))
             .unwrap_or(VERSION_NUMBER)
         };
+        let mut main_header = MainHeader::new(version_number);
+        if version_number >= 67 {
+            main_header.db_identifier = random_identifier();
+        }
         let manager = Self {
             handle: FileHandle {
                 file,
@@ -220,6 +226,7 @@ impl SingleFileBlockManager {
             read_only: false,
             version_number,
             storage_version,
+            db_identifier: main_header.db_identifier,
             registry: BlockRegistry::default(),
             state: Mutex::new(BlockState {
                 active_header: 1,
@@ -228,10 +235,6 @@ impl SingleFileBlockManager {
                 ..BlockState::default()
             }),
         };
-        let mut main_header = MainHeader::new(version_number);
-        if version_number >= 67 {
-            main_header.db_identifier = random_identifier();
-        }
         let mut content = Vec::with_capacity(FILE_HEADER_SIZE);
         main_header.write(&mut content);
         manager.write_header_block(&content, 0)?;
@@ -295,6 +298,7 @@ impl SingleFileBlockManager {
             read_only: options.read_only,
             version_number: VERSION_NUMBER,
             storage_version: 1,
+            db_identifier: [0; DB_IDENTIFIER_LEN],
             registry: BlockRegistry::default(),
             state: Mutex::new(BlockState::default()),
         };
@@ -306,6 +310,7 @@ impl SingleFileBlockManager {
             )));
         }
         manager.version_number = main_header.version_number;
+        manager.db_identifier = main_header.db_identifier;
         let h1 = DatabaseHeader::read(&main_header, &manager.read_header_block(FILE_HEADER_SIZE as u64)?)?;
         let h2 = DatabaseHeader::read(
             &main_header,
@@ -373,6 +378,16 @@ impl SingleFileBlockManager {
     /// The serialization version (`StorageManager::GetStorageVersion`).
     pub fn storage_version(&self) -> u64 {
         self.storage_version
+    }
+
+    /// The identity of the file (`GetDBIdentifier`).
+    pub fn db_identifier(&self) -> [u8; DB_IDENTIFIER_LEN] {
+        self.db_identifier
+    }
+
+    /// The iteration of the active database header (`GetCheckpointIteration`).
+    pub fn checkpoint_iteration(&self) -> u64 {
+        self.lock().iteration_count
     }
 
     /// The metadata pointer of the catalog (`GetMetaBlock`).

@@ -48,6 +48,7 @@ pub fn bind_alter(scope: &mut BindScope<'_>, info: &mut AlterInfo) -> Result<Bou
             entry: None,
             action: AlterAction::Nothing,
             dependents_allowed: true,
+            info: None,
         },
         Some(found) => {
             if found.catalog.eq_ignore_ascii_case("system") {
@@ -72,12 +73,16 @@ pub fn bind_alter(scope: &mut BindScope<'_>, info: &mut AlterInfo) -> Result<Bou
                 &info.kind,
                 AlterInfoKind::AlterTable(AlterTableInfo::AddColumn(_) | AlterTableInfo::SetDefault(_))
             );
+            let mut logged = info.clone();
+            logged.catalog.clone_from(&found.catalog);
+            logged.schema.clone_from(&found.schema);
             LogicalAlter {
                 catalog: found.catalog,
                 schema: found.schema,
                 entry: Some(Arc::clone(&found.entry)),
                 action,
                 dependents_allowed,
+                info: Some(Box::new(logged)),
             }
         }
     };

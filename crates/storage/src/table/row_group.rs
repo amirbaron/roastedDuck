@@ -598,6 +598,33 @@ impl RowGroup {
         Ok((deleted, records))
     }
 
+    /// Updates the sub-column at `column_path` (top-level column first) of rows `ids` (all
+    /// in one vector) to `update` (`RowGroup::UpdateColumn`).
+    pub fn update_column(
+        &self,
+        transaction: TransactionData,
+        update: &Vector,
+        ids: &[i64],
+        column_path: &[usize],
+        row_group_start: u64,
+    ) -> Result<Vec<UpdateRecord>> {
+        let (&column_index, rest) = column_path
+            .split_first()
+            .ok_or_else(|| Error::internal("empty column path"))?;
+        let column = self.column(column_index)?;
+        let registrations = column.update_column(transaction, rest, update, ids, row_group_start)?;
+        if let Some(stats) = column.update_statistics() {
+            column.merge_statistics(&stats)?;
+        }
+        Ok(registrations
+            .into_iter()
+            .map(|registration| UpdateRecord {
+                column_index,
+                registration,
+            })
+            .collect())
+    }
+
     /// Updates `count` rows starting at `offset` of `ids`/`updates` (all in one vector)
     /// (`RowGroup::Update`).
     pub fn update(

@@ -46,6 +46,17 @@ pub(crate) struct DatabaseInstance {
     pub(crate) storage: Option<Arc<rustdb_storage::storage_manager::StorageManager>>,
     /// Set by `PRAGMA disable_checkpoint_on_shutdown`.
     pub(crate) shutdown_checkpoint_disabled: std::sync::atomic::AtomicBool,
+    /// A commit that grows the WAL beyond this many bytes checkpoints
+    /// (`checkpoint_threshold`, DuckDB's `checkpoint_wal_size`).
+    pub(crate) checkpoint_wal_size: std::sync::atomic::AtomicU64,
+}
+
+/// The default of `checkpoint_threshold` (16 MiB).
+const DEFAULT_CHECKPOINT_WAL_SIZE: u64 = 16 * 1024 * 1024;
+
+/// Whether `name` is `checkpoint_threshold` or its alias `wal_autocheckpoint`.
+fn is_checkpoint_threshold(name: &str) -> bool {
+    name.eq_ignore_ascii_case("checkpoint_threshold") || name.eq_ignore_ascii_case("wal_autocheckpoint")
 }
 
 impl Drop for DatabaseInstance {
@@ -62,6 +73,34 @@ impl Drop for DatabaseInstance {
 }
 
 impl DatabaseInstance {
+    /// `SET checkpoint_threshold` (`CheckpointThresholdSetting::SetGlobal`).
+    fn set_checkpoint_threshold(&self, value: &rustdb_types::Value) -> Result<()> {
+        let limit = rustdb_buffer::parse_memory_limit(&value.to_varchar()?)?;
+        self.checkpoint_wal_size
+            .store(limit, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Checkpoints after a commit grew the WAL beyond `checkpoint_threshold`, unless
+    /// other transactions are running (`DuckTransactionManager::CanCheckpoint`).
+    fn auto_checkpoint(&self) -> Result<()> {
+        let Some(storage) = &self.storage else {
+            return Ok(());
+        };
+        let Some(wal) = storage.wal() else {
+            return Ok(());
+        };
+        if wal.size()
+            <= self
+                .checkpoint_wal_size
+                .load(std::sync::atomic::Ordering::Relaxed)
+            || self.transactions.active_count() > 0
+        {
+            return Ok(());
+        }
+        crate::storage::create_checkpoint(&self.catalog, storage, false)
+    }
+
     /// Whether `checkpoint_on_shutdown` is on (`PRAGMA disable_checkpoint_on_shutdown`).
     fn checkpoint_on_shutdown(&self) -> bool {
         !self.config.options.iter().any(|(name, value)| {
@@ -129,10 +168,18 @@ impl Database {
             io,
             storage,
             shutdown_checkpoint_disabled: std::sync::atomic::AtomicBool::new(false),
+            checkpoint_wal_size: std::sync::atomic::AtomicU64::new(DEFAULT_CHECKPOINT_WAL_SIZE),
         };
-        Ok(Self {
+        for (name, value) in &config.options {
+            if is_checkpoint_threshold(name) {
+                instance.set_checkpoint_threshold(value)?;
+            }
+        }
+        let database = Self {
             instance: Arc::new(instance),
-        })
+        };
+        crate::wal::replay(&database)?;
+        Ok(database)
     }
 
     pub fn open_in_memory() -> Result<Self> {
@@ -221,7 +268,13 @@ impl Connection {
             .as_ref()
             .is_err_and(|error| invalidates_transaction(error.kind()));
         let ended = self.transactions.end_statement(outcome.is_ok(), invalidates);
-        let result = outcome.and_then(|result| ended.map(|()| result));
+        let mut result = outcome.and_then(|result| ended.map(|()| result));
+        if result.is_ok()
+            && !self.transactions.has_current()
+            && let Err(error) = self.database.instance().auto_checkpoint()
+        {
+            result = Err(error);
+        }
         result.map_err(|error| error.with_query_context(query))
     }
 
@@ -242,6 +295,11 @@ impl Connection {
         outcome
             .and_then(|plan| ended.map(|()| plan))
             .map_err(|error| error.with_query_context(query))
+    }
+
+    /// The transaction the next statement runs in, started if needed.
+    pub(crate) fn current_transaction(&mut self) -> Arc<Transaction> {
+        self.transactions.current()
     }
 
     /// The planner's view of this connection, in `transaction`.
@@ -336,10 +394,19 @@ impl Connection {
             }
             LogicalKind::Set { name, value, .. } => {
                 self.settings.set(name, value)?;
+                if is_checkpoint_threshold(name) {
+                    self.database.instance().set_checkpoint_threshold(value)?;
+                }
                 return Ok(nothing());
             }
             LogicalKind::Reset { name, .. } => {
                 self.settings.reset(name)?;
+                if is_checkpoint_threshold(name) {
+                    self.database
+                        .instance()
+                        .checkpoint_wal_size
+                        .store(DEFAULT_CHECKPOINT_WAL_SIZE, std::sync::atomic::Ordering::Relaxed);
+                }
                 return Ok(nothing());
             }
             LogicalKind::Prepare { name, prepared } => {

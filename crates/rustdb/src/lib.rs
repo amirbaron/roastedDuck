@@ -17,6 +17,7 @@ mod sequence;
 mod settings;
 mod storage;
 mod transaction;
+mod wal;
 
 pub use config::{AccessMode, Config};
 pub use database::{Connection, Database, ExtensionLoad};

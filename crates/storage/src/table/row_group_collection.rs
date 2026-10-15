@@ -109,6 +109,9 @@ pub struct RowGroupCollection {
     append_mode: Mutex<RowGroupAppendMode>,
 }
 
+/// Applies an update to the rows of one vector of a row group.
+type VectorUpdate<'a> = dyn Fn(&SegmentNode<RowGroup>, &DataChunk, &[i64]) -> Result<Vec<UpdateRecord>> + 'a;
+
 impl RowGroupCollection {
     /// An empty collection whose first row id is `base_row_id`.
     pub fn new(io: Arc<TableIoManager>, types: Vec<LogicalType>, base_row_id: u64) -> Self {
@@ -659,6 +662,43 @@ impl RowGroupCollection {
         column_ids: &[usize],
         updates: &DataChunk,
     ) -> Result<Vec<UpdateRecord>> {
+        self.update_vectors(ids, updates, column_ids, &|node, slice, slice_ids| {
+            node.node
+                .update(transaction, slice, slice_ids, column_ids, node.row_start)
+        })
+    }
+
+    /// Updates the sub-column at `column_path` of rows `ids` to `update`
+    /// (`UpdateColumn`, used by WAL replay).
+    pub fn update_column(
+        &self,
+        transaction: TransactionData,
+        ids: &[i64],
+        column_path: &[usize],
+        update: &Vector,
+    ) -> Result<Vec<UpdateRecord>> {
+        let updates = DataChunk::new(vec![update.clone()], ids.len());
+        let top = column_path.first().copied().into_iter().collect::<Vec<_>>();
+        self.update_vectors(ids, &updates, &top, &|node, slice, slice_ids| {
+            node.node.update_column(
+                transaction,
+                slice.column(0),
+                slice_ids,
+                column_path,
+                node.row_start,
+            )
+        })
+    }
+
+    /// Splits an update into one call of `apply` per vector of rows and merges the
+    /// statistics of `column_ids` afterwards.
+    fn update_vectors(
+        &self,
+        ids: &[i64],
+        updates: &DataChunk,
+        column_ids: &[usize],
+        apply: &VectorUpdate<'_>,
+    ) -> Result<Vec<UpdateRecord>> {
         let row_groups = self.row_groups();
         let mut records = Vec::new();
         let mut position = 0;
@@ -688,13 +728,7 @@ impl RowGroupCollection {
                     position - start,
                 )
             };
-            records.extend(node.node.update(
-                transaction,
-                &slice,
-                &ids[start..position],
-                column_ids,
-                node.row_start,
-            )?);
+            records.extend(apply(&node, &slice, &ids[start..position])?);
             let mut stats = self.stats();
             for &column in column_ids {
                 if let (Some(target), Ok(column_stats)) =

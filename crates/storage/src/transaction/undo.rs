@@ -1,6 +1,7 @@
 //! The undo log of a transaction (DuckDB's `UndoBuffer` with its `CommitState`,
 //! `RollbackState` and `CleanupState`).
 
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
@@ -9,7 +10,8 @@ use rustdb_common::Result;
 use crate::data_table::DataTable;
 use crate::index::IndexRemovalType;
 use crate::table::{DeleteRecord, UpdateRegistration};
-use crate::transaction::NOT_DELETED_ID;
+use crate::transaction::{NOT_DELETED_ID, TransactionData};
+use crate::wal::WalBatch;
 
 /// A catalog change in the undo log; implemented by the catalog for its version records
 /// (DuckDB's `CATALOG_ENTRY` undo entries).
@@ -32,6 +34,21 @@ pub trait CatalogUndo: Send + Sync + fmt::Debug {
     fn is_drop(&self) -> bool {
         false
     }
+
+    /// Logs the change (`WALWriteState::WriteCatalogEntry`).
+    fn write_to_wal(&self, batch: &mut WalBatch) -> Result<()> {
+        let _ = batch;
+        Ok(())
+    }
+}
+
+/// The state of a sequence after a transaction used it (DuckDB's `SequenceValue`).
+#[derive(Debug)]
+pub(crate) struct SequenceValue {
+    pub schema: String,
+    pub name: String,
+    pub usage_count: u64,
+    pub counter: i64,
 }
 
 /// One entry of the undo log (DuckDB's `UndoFlags` + payload).
@@ -50,8 +67,12 @@ pub(crate) enum UndoEntry {
     },
     Update {
         table: Arc<DataTable>,
+        /// The updated top-level column.
+        column_index: usize,
         registration: UpdateRegistration,
     },
+    /// The last values a sequence handed out in the transaction; logged, never undone.
+    Sequence(SequenceValue),
 }
 
 /// What the undo log contains, for commit decisions (DuckDB's `UndoBufferProperties`).
@@ -68,11 +89,75 @@ pub struct UndoProperties {
 #[derive(Debug, Default)]
 pub(crate) struct UndoBuffer {
     entries: Vec<UndoEntry>,
+    /// The entry of each sequence the transaction used, by sequence identity
+    /// (`DuckTransaction::sequence_usage`).
+    sequences: HashMap<usize, usize>,
 }
 
 impl UndoBuffer {
     pub fn push(&mut self, entry: UndoEntry) {
         self.entries.push(entry);
+    }
+
+    /// Records the state of the sequence identified by `key` after the transaction took
+    /// a value from it (`PushSequenceUsage`): one entry per sequence, holding the last
+    /// state.
+    pub fn push_sequence_value(&mut self, key: usize, value: SequenceValue) {
+        if let Some(&index) = self.sequences.get(&key)
+            && let Some(UndoEntry::Sequence(existing)) = self.entries.get_mut(index)
+        {
+            existing.usage_count = value.usage_count;
+            existing.counter = value.counter;
+            return;
+        }
+        self.sequences.insert(key, self.entries.len());
+        self.entries.push(UndoEntry::Sequence(value));
+    }
+
+    /// Logs every change in order (`UndoBuffer::WriteToWAL`): catalog changes, appended
+    /// rows, deletes, the current values of updated rows and sequence states.
+    pub fn write_to_wal(&self, batch: &mut WalBatch, transaction: TransactionData) -> Result<()> {
+        for entry in &self.entries {
+            match entry {
+                UndoEntry::Catalog(change) => change.write_to_wal(batch)?,
+                UndoEntry::Append {
+                    table,
+                    start_row,
+                    count,
+                } => {
+                    // `DataTable::WriteToLog` always names the table.
+                    batch.use_table(table.info())?;
+                    table.scan_table_segment(transaction, *start_row, *count, |chunk| batch.insert(chunk))?;
+                }
+                UndoEntry::Delete { table, record } => {
+                    batch.switch_table(table.info())?;
+                    batch.delete(&record.row_ids())?;
+                }
+                UndoEntry::Update {
+                    table,
+                    column_index,
+                    registration,
+                } => {
+                    let Some(chunk) = registration.segment.wal_update(
+                        registration.vector_index,
+                        &registration.version,
+                        registration.row_group_start,
+                    ) else {
+                        continue;
+                    };
+                    batch.switch_table(table.info())?;
+                    let path: Vec<u64> = std::iter::once(*column_index)
+                        .chain(registration.column_path.iter().copied())
+                        .map(|index| index as u64)
+                        .collect();
+                    batch.update(&path, &chunk)?;
+                }
+                UndoEntry::Sequence(value) => {
+                    batch.sequence_value(&value.schema, &value.name, value.usage_count, value.counter)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -89,7 +174,7 @@ impl UndoBuffer {
                 }
                 UndoEntry::Delete { .. } => properties.has_deletes = true,
                 UndoEntry::Update { .. } => properties.has_updates = true,
-                UndoEntry::Append { .. } => {}
+                UndoEntry::Append { .. } | UndoEntry::Sequence(_) => {}
             }
         }
         properties
@@ -149,6 +234,7 @@ impl UndoBuffer {
                 table.check_main_table_for_commit()?;
                 registration.version.set(commit_id);
             }
+            UndoEntry::Sequence(_) => {}
         }
         Ok(())
     }
@@ -167,6 +253,7 @@ impl UndoBuffer {
                 table.remove_from_indexes(&record.row_ids(), removal)?;
             }
             UndoEntry::Update { registration, .. } => registration.version.set(transaction_id),
+            UndoEntry::Sequence(_) => {}
         }
         Ok(())
     }
@@ -191,6 +278,7 @@ impl UndoBuffer {
                         .segment
                         .rollback_update(registration.vector_index, &registration.version);
                 }
+                UndoEntry::Sequence(_) => {}
             }
         }
         Ok(())
@@ -216,6 +304,7 @@ impl UndoBuffer {
                     // only leave stale entries in the side index, which scans tolerate.
                     let _ = table.remove_from_indexes(&record.row_ids(), IndexRemovalType::DeletedRowsInUse);
                 }
+                UndoEntry::Sequence(_) => {}
             }
         }
     }

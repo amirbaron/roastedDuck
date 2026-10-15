@@ -20,11 +20,15 @@ pub struct Catalog {
 impl Catalog {
     /// A catalog containing the empty `main` schema.
     pub fn new(name: impl Into<String>) -> Result<Self> {
+        let name = name.into();
         let catalog = Self {
-            name: name.into(),
-            schemas: Arc::default(),
+            schemas: Arc::new(CatalogSet::new(name.clone(), "")),
+            name,
         };
-        let mut main = CatalogEntry::new(DEFAULT_SCHEMA, EntryKind::Schema(SchemaEntry::default()));
+        let mut main = CatalogEntry::new(
+            DEFAULT_SCHEMA,
+            EntryKind::Schema(SchemaEntry::new(&catalog.name, DEFAULT_SCHEMA)),
+        );
         main.internal = true;
         catalog.schemas.create_committed(main)?;
         Ok(catalog)
@@ -133,8 +137,10 @@ impl Catalog {
         if self.schema(&Transaction::system(), name).is_some() {
             return Ok(());
         }
-        self.schemas
-            .create_committed(CatalogEntry::new(name, EntryKind::Schema(SchemaEntry::default())))
+        self.schemas.create_committed(CatalogEntry::new(
+            name,
+            EntryKind::Schema(SchemaEntry::new(&self.name, name)),
+        ))
     }
 
     /// Adds an entry read from a checkpoint or replayed from the WAL to `schema`, visible
@@ -152,7 +158,7 @@ impl Catalog {
         name: &str,
         on_conflict: OnCreateConflict,
     ) -> Result<()> {
-        let entry = CatalogEntry::new(name, EntryKind::Schema(SchemaEntry::default()));
+        let entry = CatalogEntry::new(name, EntryKind::Schema(SchemaEntry::new(&self.name, name)));
         if self.schemas.create(transaction, entry)? {
             return Ok(());
         }
@@ -226,8 +232,10 @@ impl Catalog {
         Ok(())
     }
 
-    /// Replaces the entry `name` of type `ty` in `schema` by `entry` after an ALTER that
-    /// changed storage as described by `hook`, which a rollback undoes.
+    /// Replaces the entry `name` of type `ty` in `schema` by `entry` after the ALTER
+    /// `info` (which is logged) changed storage as described by `hook`, which a rollback
+    /// undoes.
+    #[allow(clippy::too_many_arguments, reason = "mirrors CatalogSet::AlterEntry")]
     pub fn alter_entry(
         &self,
         transaction: &Transaction,
@@ -236,11 +244,12 @@ impl Catalog {
         name: &str,
         entry: CatalogEntry,
         hook: StorageHook,
+        info: Option<rustdb_ast::AlterInfo>,
     ) -> Result<()> {
         let schema_entry = self.schema_entry(transaction, schema)?;
         let schema_entry = schema_entry.as_schema().ok_or_else(missing_main)?;
         let set = Self::set_for(schema_entry, ty);
-        if !set.alter_with_hook(transaction, name, entry, hook)? {
+        if !set.alter_with_hook(transaction, name, entry, hook, info)? {
             return Err(Error::catalog(format!(
                 "{} with name {name} does not exist!",
                 ty.display_name()
@@ -250,7 +259,8 @@ impl Catalog {
     }
 
     /// Renames the entry `name` of type `ty` in `schema`; `entry` is the renamed entry
-    /// (`CatalogSet::AlterEntry` with `RENAME`).
+    /// (`CatalogSet::AlterEntry` with `RENAME`), `info` the logged ALTER.
+    #[allow(clippy::too_many_arguments, reason = "mirrors CatalogSet::AlterEntry")]
     pub fn rename_entry(
         &self,
         transaction: &Transaction,
@@ -259,6 +269,7 @@ impl Catalog {
         name: &str,
         entry: CatalogEntry,
         hook: StorageHook,
+        info: Option<rustdb_ast::AlterInfo>,
     ) -> Result<()> {
         let schema_entry = self.schema_entry(transaction, schema)?;
         let schema_entry = schema_entry.as_schema().ok_or_else(missing_main)?;
@@ -269,7 +280,7 @@ impl Catalog {
                 entry.name()
             )));
         }
-        if !set.rename(transaction, name, entry, hook)? {
+        if !set.rename(transaction, name, entry, hook, info)? {
             return Err(Error::catalog(format!(
                 "{} with name {name} does not exist!",
                 ty.display_name()
@@ -336,9 +347,15 @@ impl Catalog {
                 ty.display_name()
             )));
         }
-        set.drop_entry(transaction, name, false)?;
+        if existing.internal {
+            return Err(Error::catalog(format!(
+                "Cannot drop entry \"{}\" because it is an internal system entry",
+                existing.name()
+            )));
+        }
         if ty == CatalogType::Table {
-            // The table's indexes depend on it automatically and go with it.
+            // The table's indexes depend on it automatically and are dropped first
+            // (`DependencyManager::DropObject`), so the WAL drops them before the table.
             for index in schema_entry.indexes.scan(transaction) {
                 if let EntryKind::Index(info) = &index.kind
                     && info.info.table.eq_ignore_ascii_case(name)
@@ -347,6 +364,7 @@ impl Catalog {
                 }
             }
         }
+        set.drop_entry(transaction, name, false)?;
         Ok(())
     }
 

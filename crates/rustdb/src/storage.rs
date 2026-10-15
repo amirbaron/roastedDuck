@@ -103,12 +103,38 @@ pub(crate) fn checkpoint(
             "Cannot CHECKPOINT: the current transaction has transaction local changes",
         ));
     }
-    write_checkpoint(catalog, storage, &Transaction::system())
+    create_checkpoint(catalog, storage, false)
 }
 
 /// The checkpoint written when a database is closed (`AttachedDatabase::Close`).
 pub(crate) fn checkpoint_on_close(catalog: &Catalog, storage: &StorageManager) -> Result<()> {
-    write_checkpoint(catalog, storage, &Transaction::system())
+    create_checkpoint(catalog, storage, false)
+}
+
+/// Writes a checkpoint if the WAL has entries, or `always`
+/// (`SingleFileStorageManager::CreateCheckpoint`). The WAL lock is held throughout, so
+/// commits wait; the WAL records the checkpoint's root before anything is written and is
+/// removed once the new header is in place.
+pub(crate) fn create_checkpoint(catalog: &Catalog, storage: &StorageManager, always: bool) -> Result<()> {
+    if storage.is_read_only() {
+        return Ok(());
+    }
+    let mut guard = storage.wal().map(|wal| wal.lock());
+    let wal_size = guard.as_ref().map_or(0, rustdb_storage::wal::WalGuard::size);
+    if wal_size == 0 && !always {
+        return Ok(());
+    }
+    let mut has_wal = false;
+    write_checkpoint(catalog, storage, &Transaction::system(), &mut |meta_block| {
+        if let Some(guard) = guard.as_mut() {
+            has_wal = guard.start_checkpoint(meta_block)?;
+        }
+        Ok(())
+    })?;
+    if has_wal && let Some(guard) = guard.as_mut() {
+        guard.finish_checkpoint()?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -10,9 +10,10 @@ use std::any::Any;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use rustdb_common::{Error, ErrorKind, Result};
+use rustdb_common::{Error, ErrorKind, Result, STANDARD_VECTOR_SIZE};
 use rustdb_types::{
-    Interval, LogicalType, LogicalTypeId, NativeType, PhysicalType, StringHeap, StringT, ValidityMask, Vector,
+    DataChunk, Interval, LogicalType, LogicalTypeId, NativeType, PhysicalType, SelectionVector, StringHeap,
+    StringT, ValidityMask, Vector,
 };
 
 use crate::VECTOR_SIZE;
@@ -887,6 +888,38 @@ impl UpdateSegment {
         if let Some(Some(updates)) = vectors.get_mut(vector_index) {
             updates.chain.retain(|node| !Arc::ptr_eq(&node.version, version));
         }
+    }
+
+    /// The current values and the row ids of the tuples of vector `vector_index` that
+    /// the transaction owning `version` updated, as the WAL logs them
+    /// (`WALWriteState::WriteUpdate`): validity updates are logged as BOOLEAN vectors
+    /// whose validity mask is the update.
+    pub fn wal_update(
+        &self,
+        vector_index: usize,
+        version: &Arc<UpdateVersion>,
+        row_group_start: u64,
+    ) -> Option<DataChunk> {
+        let tuples = self.updated_tuples(vector_index, version);
+        if tuples.is_empty() {
+            return None;
+        }
+        let ty = if self.physical() == PhysicalType::Bit {
+            LogicalType::BOOLEAN
+        } else {
+            self.ty.clone()
+        };
+        let mut values = Vector::flat(ty, STANDARD_VECTOR_SIZE);
+        self.fetch_committed(vector_index, &mut values);
+        let count = tuples.len();
+        let sel = SelectionVector::new(tuples.iter().map(|&tuple| u32::from(tuple)).collect::<Vec<_>>());
+        let values = values.slice(&sel).flattened(count);
+        let start = row_group_start + vector_index as u64 * VECTOR_SIZE;
+        let mut row_ids = Vector::flat(LogicalType::BIGINT, count);
+        for (slot, &tuple) in row_ids.values_mut::<i64>().iter_mut().zip(&tuples) {
+            *slot = (start + u64::from(tuple)) as i64;
+        }
+        Some(DataChunk::new(vec![values, row_ids], count))
     }
 
     /// The tuples (within the vector) updated by the transaction owning `version`; the WAL

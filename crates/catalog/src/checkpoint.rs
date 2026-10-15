@@ -40,7 +40,7 @@ pub trait IndexExpressionLoader {
     fn load_expression_index(&self, table: &Arc<DataTable>, info: &CreateIndexInfo) -> Result<()>;
 }
 
-fn base_info(catalog: &str, schema: &str, temporary: bool, kind: CreateInfoKind) -> CreateInfo {
+pub(crate) fn base_info(catalog: &str, schema: &str, temporary: bool, kind: CreateInfoKind) -> CreateInfo {
     CreateInfo {
         catalog: catalog.to_owned(),
         schema: schema.to_owned(),
@@ -55,8 +55,18 @@ fn base_info(catalog: &str, schema: &str, temporary: bool, kind: CreateInfoKind)
     }
 }
 
+/// The `CreateInfo` of schema `schema` (`SchemaCatalogEntry::GetInfo`).
+pub fn schema_create_info(catalog: &str, schema: &str) -> CreateInfo {
+    base_info(catalog, schema, false, CreateInfoKind::Schema)
+}
+
 /// `TableCatalogEntry::GetInfo`.
-fn table_create_info(catalog: &str, schema: &str, entry: &CatalogEntry, table: &TableEntry) -> CreateInfo {
+pub(crate) fn table_create_info(
+    catalog: &str,
+    schema: &str,
+    entry: &CatalogEntry,
+    table: &TableEntry,
+) -> CreateInfo {
     let columns = table
         .columns
         .iter()
@@ -93,7 +103,12 @@ fn table_create_info(catalog: &str, schema: &str, entry: &CatalogEntry, table: &
 }
 
 /// `ViewCatalogEntry::GetInfo`.
-fn view_create_info(catalog: &str, schema: &str, entry: &CatalogEntry, view: &ViewEntry) -> CreateInfo {
+pub(crate) fn view_create_info(
+    catalog: &str,
+    schema: &str,
+    entry: &CatalogEntry,
+    view: &ViewEntry,
+) -> CreateInfo {
     base_info(
         catalog,
         schema,
@@ -110,7 +125,7 @@ fn view_create_info(catalog: &str, schema: &str, entry: &CatalogEntry, view: &Vi
 }
 
 /// `SequenceCatalogEntry::GetInfo`: the counter is stored as the start value.
-fn sequence_create_info(
+pub(crate) fn sequence_create_info(
     catalog: &str,
     schema: &str,
     entry: &CatalogEntry,
@@ -133,9 +148,14 @@ fn sequence_create_info(
     )
 }
 
-/// Writes `info` as a nullable object (`WriteProperty(100, tag, entry pointer)`).
-fn write_create_info(serializer: &mut dyn Serializer, tag: &'static str, info: &CreateInfo) -> Result<()> {
-    serializer.on_property_begin(100, tag);
+/// Writes `info` as a nullable object property (`WriteProperty(field, tag, entry pointer)`).
+pub(crate) fn write_create_info(
+    serializer: &mut dyn Serializer,
+    field: rustdb_serde::FieldId,
+    tag: &'static str,
+    info: &CreateInfo,
+) -> Result<()> {
+    serializer.on_property_begin(field, tag);
     serializer.on_nullable_begin(true);
     serializer.write_object(info)?;
     serializer.on_nullable_end();
@@ -179,10 +199,14 @@ fn reorder_tables(tables: Vec<Arc<CatalogEntry>>) -> Vec<Arc<CatalogEntry>> {
 
 /// Writes a checkpoint: the catalog visible to `transaction` and all table data
 /// (`SingleFileCheckpointWriter::CreateCheckpoint`).
+///
+/// `on_start` is called with the root the checkpoint will have before anything is
+/// written; the WAL records it (`WALStartCheckpoint`).
 pub fn write_checkpoint(
     catalog: &Catalog,
     storage: &StorageManager,
     transaction: &Transaction,
+    on_start: &mut dyn FnMut(MetaBlockPointer) -> Result<()>,
 ) -> Result<()> {
     if storage.is_read_only() {
         return Ok(());
@@ -192,6 +216,7 @@ pub fn write_checkpoint(
     let mut writer = MetadataWriter::new(metadata);
     let mut table_writer = MetadataWriter::new(metadata);
     let meta_block = writer.meta_block_pointer()?;
+    on_start(meta_block)?;
     let mut blocks = BlockWriter::new(Arc::clone(storage.block_manager()));
     let catalog_name = catalog.name().to_owned();
 
@@ -243,12 +268,13 @@ pub fn write_checkpoint(
                 EntryKind::Schema(_) => {
                     serializer.write_property(99, "catalog_type", &AstCatalogType::SchemaEntry)?;
                     let info = base_info(&catalog_name, entry.name(), false, CreateInfoKind::Schema);
-                    write_create_info(serializer, "schema", &info)?;
+                    write_create_info(serializer, 100, "schema", &info)?;
                 }
                 EntryKind::Sequence(sequence) => {
                     serializer.write_property(99, "catalog_type", &AstCatalogType::SequenceEntry)?;
                     write_create_info(
                         serializer,
+                        100,
                         "sequence",
                         &sequence_create_info(&catalog_name, schema, entry, sequence),
                     )?;
@@ -257,6 +283,7 @@ pub fn write_checkpoint(
                     serializer.write_property(99, "catalog_type", &AstCatalogType::TableEntry)?;
                     write_create_info(
                         serializer,
+                        100,
                         "table",
                         &table_create_info(&catalog_name, schema, entry, table),
                     )?;
@@ -290,6 +317,7 @@ pub fn write_checkpoint(
                     serializer.write_property(99, "catalog_type", &AstCatalogType::ViewEntry)?;
                     write_create_info(
                         serializer,
+                        100,
                         "view",
                         &view_create_info(&catalog_name, schema, entry, view),
                     )?;
@@ -302,7 +330,7 @@ pub fn write_checkpoint(
                         entry.temporary,
                         CreateInfoKind::Index(Box::new(index.info.clone())),
                     );
-                    write_create_info(serializer, "index", &info)?;
+                    write_create_info(serializer, 100, "index", &info)?;
                 }
                 _ => {}
             }
@@ -356,7 +384,17 @@ fn read_create_info(
     expected: AstCatalogType,
     tag: &'static str,
 ) -> Result<CreateInfo> {
-    deserializer.on_property_begin(100, tag)?;
+    read_create_info_property(deserializer, 100, expected, tag)
+}
+
+/// Reads the `unique_ptr<CreateInfo>` property `field` of an entry of type `expected`.
+pub fn read_create_info_property(
+    deserializer: &mut dyn Deserializer,
+    field: rustdb_serde::FieldId,
+    expected: AstCatalogType,
+    tag: &'static str,
+) -> Result<CreateInfo> {
+    deserializer.on_property_begin(field, tag)?;
     if !deserializer.on_nullable_begin()? {
         return Err(Error::new(
             rustdb_common::ErrorKind::Io,
@@ -428,11 +466,15 @@ pub fn load_checkpoint(
                     ));
                 }
                 if d.on_optional_property_begin(104, "index_storage_infos")? {
+                    // The indexes are rebuilt from the table below; their stored data
+                    // only keeps its blocks in use until the next checkpoint.
                     let stored = d.on_list_begin()?;
-                    if stored > 0 {
-                        return Err(Error::not_implemented(
-                            "reading serialized ART indexes from a database file",
-                        ));
+                    for _ in 0..stored {
+                        d.on_object_begin()?;
+                        let info =
+                            rustdb_storage::checkpoint::pointers::IndexStorageInfo::deserialize_fields(d)?;
+                        d.on_object_end()?;
+                        data_blocks.extend(info.block_ids());
                     }
                     d.on_list_end()?;
                     d.on_optional_property_end(true)?;
@@ -564,6 +606,18 @@ fn load_index(
     info: &CreateInfo,
     index_loader: &dyn IndexExpressionLoader,
 ) -> Result<()> {
+    let (entry, _) = build_index_entry(catalog, transaction, info, index_loader)?;
+    catalog.create_entry_committed(&info.schema, entry)
+}
+
+/// Builds the ART of the index `info` from its table's rows, adds it to the table and
+/// returns the index's catalog entry and the table.
+fn build_index_entry(
+    catalog: &Catalog,
+    transaction: &Transaction,
+    info: &CreateInfo,
+    index_loader: &dyn IndexExpressionLoader,
+) -> Result<(CatalogEntry, Arc<DataTable>)> {
     let CreateInfoKind::Index(index) = &info.kind else {
         return Err(Error::internal("expected an index"));
     };
@@ -617,5 +671,29 @@ fn load_index(
         }),
     );
     entry.temporary = info.temporary;
-    catalog.create_entry_committed(&info.schema, entry)
+    Ok((entry, storage))
+}
+
+/// Recreates an index of a WAL in `transaction` (`ReplayCreateIndex`): the index is
+/// rebuilt from its table.
+pub fn replay_create_index(
+    catalog: &Catalog,
+    transaction: &Transaction,
+    info: &CreateInfo,
+    index_loader: &dyn IndexExpressionLoader,
+) -> Result<()> {
+    let (entry, storage) = build_index_entry(catalog, transaction, info, index_loader)?;
+    let name = entry.name().to_owned();
+    match catalog.create_entry(
+        transaction,
+        &info.schema,
+        entry,
+        OnCreateConflict::ErrorOnConflict,
+    ) {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            storage.indexes().remove(&name);
+            Err(error)
+        }
+    }
 }

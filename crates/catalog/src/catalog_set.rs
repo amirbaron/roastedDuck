@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rustdb_common::{Error, ErrorKind, Result};
 
-use crate::CatalogEntry;
 use crate::transaction::{StorageHook, TRANSACTION_ID_START, Transaction, TransactionExt};
+use crate::{CatalogEntry, WalRecord};
 
 /// One version in an entry chain.
 #[derive(Debug)]
@@ -37,6 +37,11 @@ impl Version {
     pub(crate) fn is_tombstone(&self) -> bool {
         self.entry.is_none()
     }
+
+    /// The entry of this version (`None` for a tombstone).
+    pub(crate) fn entry(&self) -> Option<&Arc<CatalogEntry>> {
+        self.entry.as_ref()
+    }
 }
 
 /// Outcome of a detailed lookup (DuckDB's `EntryLookup::FailureReason`).
@@ -57,6 +62,10 @@ pub enum Lookup {
 #[derive(Debug, Default)]
 pub struct CatalogSet {
     chains: Mutex<BTreeMap<String, Vec<Arc<Version>>>>,
+    /// The catalog the set belongs to.
+    catalog: String,
+    /// The schema the set belongs to (empty for the set of schemas).
+    schema: String,
 }
 
 fn key(name: &str) -> String {
@@ -76,6 +85,25 @@ fn conflicts(transaction: &Transaction, timestamp: u64) -> bool {
 }
 
 impl CatalogSet {
+    /// An empty set of schema `schema` of catalog `catalog`.
+    pub fn new(catalog: impl Into<String>, schema: impl Into<String>) -> Self {
+        Self {
+            chains: Mutex::default(),
+            catalog: catalog.into(),
+            schema: schema.into(),
+        }
+    }
+
+    /// The catalog the set belongs to.
+    pub fn catalog_name(&self) -> &str {
+        &self.catalog
+    }
+
+    /// The schema the set belongs to (empty for the set of schemas).
+    pub fn schema_name(&self) -> &str {
+        &self.schema
+    }
+
     fn lock(&self) -> MutexGuard<'_, BTreeMap<String, Vec<Arc<Version>>>> {
         self.chains.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -97,6 +125,16 @@ impl CatalogSet {
     /// Creates `entry` in `transaction`. Returns `false` if a visible entry with that name
     /// already exists (callers turn this into the appropriate "already exists" error).
     pub fn create(self: &Arc<Self>, transaction: &Transaction, entry: CatalogEntry) -> Result<bool> {
+        self.create_logged(transaction, entry, WalRecord::Create)
+    }
+
+    /// [`CatalogSet::create`], logged as `wal`.
+    fn create_logged(
+        self: &Arc<Self>,
+        transaction: &Transaction,
+        entry: CatalogEntry,
+        wal: WalRecord,
+    ) -> Result<bool> {
         let name = key(entry.name());
         let hook = match &entry.kind {
             crate::EntryKind::Index(index) => index.storage.as_ref().map_or(StorageHook::None, |info| {
@@ -131,19 +169,19 @@ impl CatalogSet {
                 }
             }
         }
-        transaction.push_catalog_change(Arc::clone(self), name, version, hook);
+        transaction.push_catalog_change(Arc::clone(self), name, version, hook, wal);
         Ok(true)
     }
 
-    /// Replaces the visible entry called `name` by `entry` (DuckDB's `AlterEntry`).
-    /// Returns `false` if no visible entry exists.
+    /// Replaces the visible entry called `name` by `entry` (DuckDB's `AlterEntry`)
+    /// without logging the change. Returns `false` if no visible entry exists.
     pub fn alter(
         self: &Arc<Self>,
         transaction: &Transaction,
         name: &str,
         entry: CatalogEntry,
     ) -> Result<bool> {
-        self.alter_with_hook(transaction, name, entry, StorageHook::None)
+        self.alter_with_hook(transaction, name, entry, StorageHook::None, None)
     }
 
     /// Renames the visible entry called `name` to the name of `entry`, which replaces it
@@ -154,6 +192,7 @@ impl CatalogSet {
         name: &str,
         entry: CatalogEntry,
         hook: StorageHook,
+        info: Option<rustdb_ast::AlterInfo>,
     ) -> Result<bool> {
         let old = key(name);
         let tombstone = Version::new(transaction.transaction_id, None);
@@ -177,20 +216,23 @@ impl CatalogSet {
             }
             chain.insert(0, Arc::clone(&tombstone));
         }
-        transaction.push_catalog_change(Arc::clone(self), old, tombstone, hook);
-        if !self.create(transaction, entry)? {
+        transaction.push_catalog_change(Arc::clone(self), old, tombstone, hook, WalRecord::None);
+        let wal = info.map_or(WalRecord::None, |info| WalRecord::Alter(Box::new(info)));
+        if !self.create_logged(transaction, entry, wal)? {
             return Err(Error::internal("rename target exists"));
         }
         Ok(true)
     }
 
-    /// [`CatalogSet::alter`] with the storage change of the alter, undone on rollback.
+    /// [`CatalogSet::alter`] with the storage change of the alter, undone on rollback,
+    /// logged as `info`.
     pub fn alter_with_hook(
         self: &Arc<Self>,
         transaction: &Transaction,
         name: &str,
         entry: CatalogEntry,
         hook: StorageHook,
+        info: Option<rustdb_ast::AlterInfo>,
     ) -> Result<bool> {
         let name = key(name);
         let version = Version::new(transaction.transaction_id, Some(Arc::new(entry)));
@@ -214,7 +256,8 @@ impl CatalogSet {
             }
             chain.insert(0, Arc::clone(&version));
         }
-        transaction.push_catalog_change(Arc::clone(self), name, version, hook);
+        let wal = info.map_or(WalRecord::None, |info| WalRecord::Alter(Box::new(info)));
+        transaction.push_catalog_change(Arc::clone(self), name, version, hook, wal);
         Ok(true)
     }
 
@@ -228,6 +271,7 @@ impl CatalogSet {
         let name = key(name);
         let version = Version::new(transaction.transaction_id, None);
         let mut hook = StorageHook::None;
+        let dropped;
         {
             let mut chains = self.lock();
             let Some(chain) = chains.get_mut(&name) else {
@@ -246,6 +290,7 @@ impl CatalogSet {
             let Some(entry) = &head.entry else {
                 return Ok(false);
             };
+            dropped = Arc::clone(entry);
             if entry.internal && !allow_internal {
                 return Err(Error::catalog(format!(
                     "Cannot drop entry \"{}\" because it is an internal system entry",
@@ -270,7 +315,7 @@ impl CatalogSet {
             }
             chain.insert(0, Arc::clone(&version));
         }
-        transaction.push_catalog_change(Arc::clone(self), name, version, hook);
+        transaction.push_catalog_change(Arc::clone(self), name, version, hook, WalRecord::Drop(dropped));
         Ok(true)
     }
 

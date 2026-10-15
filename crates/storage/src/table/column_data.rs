@@ -79,6 +79,23 @@ pub struct UpdateRegistration {
     pub segment: Arc<UpdateSegment>,
     pub vector_index: usize,
     pub version: Arc<UpdateVersion>,
+    /// The path from the updated top-level column to the column owning `segment`: child
+    /// indexes where validity is child 0 and struct fields follow (the WAL's
+    /// `column_indexes` without the top-level index).
+    pub column_path: Vec<usize>,
+    /// The first row of the row group.
+    pub row_group_start: u64,
+}
+
+/// Prefixes the column paths of `registrations` with `child`.
+fn under_child(
+    child: usize,
+    registrations: Vec<UpdateRegistration>,
+) -> impl Iterator<Item = UpdateRegistration> {
+    registrations.into_iter().map(move |mut registration| {
+        registration.column_path.insert(0, child);
+        registration
+    })
 }
 
 /// The state of a scan of one column (DuckDB's `ColumnScanState`).
@@ -1354,6 +1371,35 @@ impl ColumnData {
         Ok(vector)
     }
 
+    /// Updates the sub-column at `column_path` (validity is child 0, struct fields
+    /// follow) like [`ColumnData::update`] (`UpdateColumn`); the WAL logs updates per
+    /// sub-column.
+    pub fn update_column(
+        &self,
+        transaction: TransactionData,
+        column_path: &[usize],
+        update: &Vector,
+        row_ids: &[i64],
+        row_group_start: u64,
+    ) -> Result<Vec<UpdateRegistration>> {
+        let Some((&first, rest)) = column_path.split_first() else {
+            return self.update(transaction, update, row_ids, row_group_start);
+        };
+        let child = match (&self.kind, first) {
+            (ColumnKind::Standard { validity } | ColumnKind::Struct { validity, .. }, 0) => validity,
+            (ColumnKind::Struct { fields, .. }, index) => fields
+                .get(index - 1)
+                .ok_or_else(|| Error::internal("Corrupt WAL: column index for update out of bounds"))?,
+            _ => {
+                return Err(Error::internal(
+                    "Corrupt WAL: column index for update out of bounds",
+                ));
+            }
+        };
+        let registrations = child.update_column(transaction, rest, update, row_ids, row_group_start)?;
+        Ok(under_child(first, registrations).collect())
+    }
+
     /// Updates rows `row_ids` (all in one vector of the row group starting at
     /// `row_group_start`) to the values of `update` (`Update`).
     ///
@@ -1391,32 +1437,37 @@ impl ColumnData {
                     &mut registrations,
                 )?;
                 if let ColumnKind::Standard { validity } = &self.kind {
+                    let mut validity_registrations = Vec::new();
                     validity.update_internal(
                         transaction,
                         update,
                         row_ids,
                         &base,
                         row_group_start,
-                        &mut registrations,
+                        &mut validity_registrations,
                     )?;
+                    registrations.extend(under_child(0, validity_registrations));
                 }
             }
             ColumnKind::Struct { validity, fields } => {
                 let base = self.fetch_vector(first_row)?;
+                let mut validity_registrations = Vec::new();
                 validity.update_internal(
                     transaction,
                     update,
                     row_ids,
                     &base,
                     row_group_start,
-                    &mut registrations,
+                    &mut validity_registrations,
                 )?;
+                registrations.extend(under_child(0, validity_registrations));
                 let flat_update = update.flattened(row_ids.len());
                 let children = flat_update
                     .struct_children()
                     .ok_or_else(|| Error::internal("struct update with a non-struct vector"))?;
-                for (field, child) in fields.iter().zip(children) {
-                    registrations.extend(field.update(transaction, child, row_ids, row_group_start)?);
+                for (index, (field, child)) in fields.iter().zip(children).enumerate() {
+                    let field_registrations = field.update(transaction, child, row_ids, row_group_start)?;
+                    registrations.extend(under_child(index + 1, field_registrations));
                 }
             }
             ColumnKind::List { .. } => return Err(Error::not_implemented("List Update is not supported.")),
@@ -1445,6 +1496,8 @@ impl ColumnData {
                 segment,
                 vector_index,
                 version,
+                column_path: Vec::new(),
+                row_group_start,
             });
         }
         Ok(())

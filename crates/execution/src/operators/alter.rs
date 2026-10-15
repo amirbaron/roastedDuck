@@ -24,6 +24,8 @@ pub struct AlterEntryAction {
     pub entry: Option<Arc<CatalogEntry>>,
     pub action: AlterAction,
     pub dependents_allowed: bool,
+    /// The statement the WAL logs.
+    pub info: Option<Box<rustdb_ast::AlterInfo>>,
 }
 
 /// Evaluates `expression` over `input` into a single vector.
@@ -80,6 +82,7 @@ impl AlterEntryAction {
             entry.name(),
             new_entry,
             hook,
+            self.info.as_deref().cloned(),
         )
     }
 
@@ -141,6 +144,7 @@ impl DdlAction for AlterEntryAction {
                     entry.name(),
                     renamed,
                     hook,
+                    self.info.as_deref().cloned(),
                 )?;
                 if let Some(storage) = &storage {
                     storage.info().set_table_name(new_name.clone());

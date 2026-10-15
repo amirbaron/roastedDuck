@@ -428,3 +428,78 @@ impl RowGroupPointer {
         })
     }
 }
+
+/// One allocator of a stored index (DuckDB's `FixedSizeAllocatorInfo`), as far as rustdb
+/// reads it: where its buffers are and how large they are.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AllocatorInfo {
+    pub block_pointers: Vec<BlockPointer>,
+    /// The size of each buffer; WAL entries carry the buffers inline.
+    pub allocation_sizes: Vec<u64>,
+}
+
+/// The storage of an index (DuckDB's `IndexStorageInfo`). rustdb rebuilds indexes from
+/// their tables, so the index data itself is only accounted for, not read.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct IndexStorageInfo {
+    pub name: String,
+    pub root: u64,
+    pub allocators: Vec<AllocatorInfo>,
+}
+
+impl IndexStorageInfo {
+    /// `IndexStorageInfo::Deserialize` (the object's fields).
+    pub fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
+        let name: String = deserializer.read_optional(100, "name")?.unwrap_or_default();
+        let root: u64 = deserializer.read_optional(101, "root")?.unwrap_or(0);
+        let mut allocators = Vec::new();
+        if deserializer.on_optional_property_begin(102, "allocator_infos")? {
+            let count = deserializer.on_list_begin()?;
+            for _ in 0..count {
+                deserializer.on_object_begin()?;
+                let _segment_size: Option<u64> = deserializer.read_optional(100, "segment_size")?;
+                let _buffer_ids: Option<Vec<u64>> = deserializer.read_optional(101, "buffer_ids")?;
+                let mut block_pointers = Vec::new();
+                if deserializer.on_optional_property_begin(102, "block_pointers")? {
+                    let pointers = deserializer.on_list_begin()?;
+                    for _ in 0..pointers {
+                        deserializer.on_object_begin()?;
+                        block_pointers.push(BlockPointer::deserialize_fields(deserializer)?);
+                        deserializer.on_object_end()?;
+                    }
+                    deserializer.on_list_end()?;
+                    deserializer.on_optional_property_end(true)?;
+                }
+                let _segment_counts: Option<Vec<u64>> = deserializer.read_optional(103, "segment_counts")?;
+                let allocation_sizes: Vec<u64> = deserializer
+                    .read_optional(104, "allocation_sizes")?
+                    .unwrap_or_default();
+                let _free_space: Option<Vec<u64>> =
+                    deserializer.read_optional(105, "buffers_with_free_space")?;
+                deserializer.on_object_end()?;
+                allocators.push(AllocatorInfo {
+                    block_pointers,
+                    allocation_sizes,
+                });
+            }
+            deserializer.on_list_end()?;
+            deserializer.on_optional_property_end(true)?;
+        }
+        let _options: Option<rustdb_common::CaseInsensitiveMap<rustdb_types::Value>> =
+            deserializer.read_optional(103, "options")?;
+        Ok(Self {
+            name,
+            root,
+            allocators,
+        })
+    }
+
+    /// The blocks holding the index data.
+    pub fn block_ids(&self) -> impl Iterator<Item = BlockId> + '_ {
+        self.allocators
+            .iter()
+            .flat_map(|allocator| allocator.block_pointers.iter())
+            .filter(|pointer| pointer.is_valid())
+            .map(|pointer| pointer.block_id)
+    }
+}

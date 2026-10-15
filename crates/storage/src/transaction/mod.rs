@@ -15,16 +15,17 @@ mod undo;
 
 pub use local_storage::{LocalStorage, LocalTableStorage};
 pub use undo::{CatalogUndo, UndoProperties};
-pub(crate) use undo::{UndoBuffer, UndoEntry};
+pub(crate) use undo::{SequenceValue, UndoBuffer, UndoEntry};
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use rustdb_common::{Error, Result};
 
 use crate::data_table::DataTable;
 use crate::table::{DeleteRecord, UpdateRecord};
+use crate::wal::WriteAheadLog;
 
 /// Transaction ids start here; anything below is a timestamp (`TRANSACTION_ID_START`).
 pub const TRANSACTION_ID_START: u64 = 4_611_686_018_427_388_000;
@@ -131,9 +132,25 @@ impl Transaction {
         for record in records {
             undo.push(UndoEntry::Update {
                 table: Arc::clone(table),
+                column_index: record.column_index,
                 registration: record.registration,
             });
         }
+    }
+
+    /// Records that the transaction took a value from the sequence identified by `key`
+    /// (any address unique to the sequence while it exists); the sequence's state after
+    /// the transaction is logged at commit (`DuckTransaction::PushSequenceUsage`).
+    pub fn push_sequence_usage(&self, key: usize, schema: &str, name: &str, usage_count: u64, counter: i64) {
+        self.undo().push_sequence_value(
+            key,
+            SequenceValue {
+                schema: schema.to_owned(),
+                name: name.to_owned(),
+                usage_count,
+                counter,
+            },
+        );
     }
 
     /// The transaction-local storage (DuckDB's `LocalStorage`).
@@ -183,6 +200,8 @@ pub struct TransactionManager {
     lowest_active_start: AtomicU64,
     lowest_active_id: AtomicU64,
     last_commit: AtomicU64,
+    /// The WAL commits are logged to (database files only).
+    wal: OnceLock<Arc<WriteAheadLog>>,
 }
 
 impl Default for TransactionManager {
@@ -197,6 +216,7 @@ impl Default for TransactionManager {
             lowest_active_start: AtomicU64::new(MAX_TRANSACTION_ID),
             lowest_active_id: AtomicU64::new(TRANSACTION_ID_START),
             last_commit: AtomicU64::new(0),
+            wal: OnceLock::new(),
         }
     }
 }
@@ -204,6 +224,39 @@ impl Default for TransactionManager {
 impl TransactionManager {
     fn lock(&self) -> MutexGuard<'_, ManagerState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Logs every following commit to `wal`; set once, after the WAL was replayed.
+    pub fn set_wal(&self, wal: Arc<WriteAheadLog>) -> Result<()> {
+        self.wal
+            .set(wal)
+            .map_err(|_| Error::internal("the WAL of a database is set once"))
+    }
+
+    /// The WAL commits are logged to.
+    pub fn wal(&self) -> Option<&Arc<WriteAheadLog>> {
+        self.wal.get()
+    }
+
+    /// Logs the undo log of `transaction` and stamps it with `commit_id`, holding the
+    /// WAL lock so that a checkpoint sees either both or neither
+    /// (`DuckTransaction::WriteToWAL` + `UndoBuffer::Commit`). If stamping fails, the
+    /// logged entries are cut off again (`RevertCommit`).
+    fn log_and_commit(&self, transaction: &Transaction, commit_id: u64, others_active: bool) -> Result<()> {
+        let undo = transaction.undo();
+        let Some(wal) = self.wal.get().filter(|_| !undo.is_empty()) else {
+            return undo.commit(commit_id, transaction.transaction_id, others_active);
+        };
+        let mut guard = wal.lock();
+        let initial_size = guard.size();
+        let mut batch = wal.batch();
+        undo.write_to_wal(&mut batch, transaction.data())?;
+        guard.commit(batch)?;
+        let result = undo.commit(commit_id, transaction.transaction_id, others_active);
+        if result.is_err() {
+            let _ = guard.truncate(initial_size);
+        }
+        result
     }
 
     /// Starts a transaction (`StartTransaction`).
@@ -250,11 +303,10 @@ impl TransactionManager {
         transaction.commit_id.store(commit_id, Ordering::Release);
         // Deleted rows stay in a side index while other transactions may still see them.
         let others_active = state.active.len() > 1;
-        let result = transaction.local_storage.commit(transaction).and_then(|()| {
-            transaction
-                .undo()
-                .commit(commit_id, transaction.transaction_id, others_active)
-        });
+        let result = transaction
+            .local_storage
+            .commit(transaction)
+            .and_then(|()| self.log_and_commit(transaction, commit_id, others_active));
         let undo = std::mem::take(&mut *transaction.undo());
         let outcome = match result {
             Ok(()) => {

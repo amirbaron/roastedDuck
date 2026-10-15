@@ -9,6 +9,7 @@ mod catalog_set;
 pub mod checkpoint;
 mod entry;
 mod transaction;
+mod wal;
 
 pub use catalog::{Catalog, DEFAULT_SCHEMA};
 pub use catalog_set::{CatalogSet, Lookup};
@@ -19,3 +20,4 @@ pub use entry::{
 pub use transaction::{
     MAX_TRANSACTION_ID, StorageHook, TRANSACTION_ID_START, Transaction, TransactionManager,
 };
+pub use wal::WalRecord;

@@ -1,7 +1,7 @@
 //! The storage of an attached database file (DuckDB's `SingleFileStorageManager`): the
 //! block manager, the metadata manager and the I/O manager of its tables.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use rustdb_buffer::{BlockManager, BufferManager};
 use rustdb_common::Result;
@@ -11,6 +11,7 @@ use crate::data_table::TableIoManager;
 use crate::metadata::{MetaBlockPointer, MetadataManager};
 use crate::single_file_block_manager::{BlockManagerOptions, SingleFileBlockManager};
 use crate::storage_info::DEFAULT_BLOCK_ALLOC_SIZE;
+use crate::wal::{WriteAheadLog, wal_path};
 
 /// How a database file is opened (DuckDB's `StorageManagerOptions`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,6 +43,8 @@ pub struct StorageManager {
     io: Arc<TableIoManager>,
     /// Whether the file was created by this open.
     created: bool,
+    /// The WAL, set up once the existing one was replayed.
+    wal: OnceLock<Arc<WriteAheadLog>>,
 }
 
 impl StorageManager {
@@ -55,6 +58,19 @@ impl StorageManager {
         };
         let exists = std::path::Path::new(path).exists();
         let created = !exists && !options.read_only;
+        if created {
+            // A WAL without its database file belongs to nothing.
+            match std::fs::remove_file(wal_path(path)) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(rustdb_common::Error::new(
+                        rustdb_common::ErrorKind::Io,
+                        format!("Could not remove file \"{}\": {error}", wal_path(path)),
+                    ));
+                }
+            }
+        }
         let block_manager = Arc::new(if created {
             SingleFileBlockManager::create_new(path, block_options)?
         } else {
@@ -76,7 +92,34 @@ impl StorageManager {
             metadata,
             io,
             created,
+            wal: OnceLock::new(),
         })
+    }
+
+    /// The path of the WAL (`GetWALPath`).
+    pub fn wal_path(&self) -> String {
+        wal_path(&self.path)
+    }
+
+    /// Sets up the WAL after replay: `size` bytes of it are kept; with
+    /// `requires_truncate` anything after them is cut off before the next write.
+    pub fn init_wal(&self, size: u64, requires_truncate: bool) -> Result<Arc<WriteAheadLog>> {
+        let wal = Arc::new(WriteAheadLog::new(
+            self.wal_path(),
+            Arc::clone(&self.block_manager),
+            self.serialization_options(),
+            size,
+            requires_truncate,
+        ));
+        self.wal
+            .set(Arc::clone(&wal))
+            .map_err(|_| rustdb_common::Error::internal("the WAL is set up once"))?;
+        Ok(wal)
+    }
+
+    /// The WAL, once set up.
+    pub fn wal(&self) -> Option<&Arc<WriteAheadLog>> {
+        self.wal.get()
     }
 
     pub fn path(&self) -> &str {
