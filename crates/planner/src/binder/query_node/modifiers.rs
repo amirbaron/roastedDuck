@@ -288,7 +288,7 @@ fn create_order_expression(
 /// Turns a position constant into a column reference (DuckDB's
 /// `FinalizeBindOrderExpression`); `None` for ORDER BY ALL.
 fn finalize_order_expression(
-    expr: Expression,
+    expr: &Expression,
     table_index: u64,
     names: &[String],
     types: &[LogicalType],
@@ -300,13 +300,13 @@ fn finalize_order_expression(
     match value.logical_type().id() {
         LogicalTypeId::UBigInt => {
             let index = value.as_i128().unwrap_or_default() as usize;
-            create_order_expression(&expr, names, types, table_index, bind_state.final_index(index)).map(Some)
+            create_order_expression(expr, names, types, table_index, bind_state.final_index(index)).map(Some)
         }
         LogicalTypeId::Varchar => Ok(None),
         LogicalTypeId::Struct => {
             let children = value.children().unwrap_or_default();
             let index = children.first().and_then(Value::as_i128).unwrap_or_default() as usize;
-            let mut result = create_order_expression(&expr, names, types, table_index, index)?;
+            let mut result = create_order_expression(expr, names, types, table_index, index)?;
             if let Some(collation) = children.get(1) {
                 let collation = collation.to_varchar()?;
                 if !collation.is_empty() {
@@ -339,7 +339,7 @@ pub fn bind_modifiers(
             BoundResultModifier::Distinct { targets, .. } => {
                 let mut finalized = Vec::with_capacity(targets.len());
                 for target in targets.drain(..) {
-                    let target = finalize_order_expression(target, table_index, names, types, bind_state)?
+                    let target = finalize_order_expression(&target, table_index, names, types, bind_state)?
                         .ok_or_else(|| Error::internal("DISTINCT ON ORDER BY ALL not supported"))?;
                     let ty = target.return_type.clone();
                     finalized.push(push_collation(target, &ty)?);
@@ -350,15 +350,11 @@ pub fn bind_modifiers(
                 for node in [limit, offset] {
                     if let Some(expr) = node.expression_mut() {
                         if expr.expression_type == ExpressionType::ValueConstant
-                            && let Some(finalized) = finalize_order_expression(
-                                expr.clone(),
-                                table_index,
-                                names,
-                                types,
-                                bind_state,
-                            )? {
-                                *expr = finalized;
-                            }
+                            && let Some(finalized) =
+                                finalize_order_expression(expr, table_index, names, types, bind_state)?
+                        {
+                            *expr = finalized;
+                        }
                         if let ExpressionKind::ColumnRef(column) = &expr.kind
                             && let Some(ty) = types.get(column.binding.column_index as usize)
                         {
@@ -371,7 +367,11 @@ pub fn bind_modifiers(
                 let mut order_by_all = false;
                 let mut finalized = Vec::with_capacity(order.orders.len());
                 for node in order.orders.drain(..) {
-                    if let Some(expression) = finalize_order_expression(node.expression, table_index, names, types, bind_state)? { finalized.push(BoundOrderByNode { expression, ..node }) } else {
+                    if let Some(expression) =
+                        finalize_order_expression(&node.expression, table_index, names, types, bind_state)?
+                    {
+                        finalized.push(BoundOrderByNode { expression, ..node });
+                    } else {
                         order_by_all = true;
                         finalized.push(BoundOrderByNode {
                             expression: Expression::constant(Value::null(LogicalType::SQLNULL)),

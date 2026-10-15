@@ -3,6 +3,8 @@
 //! `json_serialize_plan`, it shows whether the binder built the same plan where rustdb
 //! cannot execute it yet.
 
+use std::fmt::Write as _;
+
 use rustdb_planner::operator::LogicalKind;
 use rustdb_planner::{Expression, LogicalOperator};
 use rustdb_serde::json::{JsonValue, parse_json};
@@ -32,21 +34,18 @@ pub fn rust_shape(op: &LogicalOperator) -> String {
         let rows = expressions
             .iter()
             .map(|row| format!("({})", join(row.iter().map(rust_expression))));
-        text.push_str(&format!("[{}]", join(rows)));
+        let _ = write!(text, "[{}]", join(rows));
     }
     if !op.expressions.is_empty() {
-        text.push_str(&format!("[{}]", join(op.expressions.iter().map(rust_expression))));
+        let _ = write!(text, "[{}]", join(op.expressions.iter().map(rust_expression)));
     }
     if let LogicalKind::Aggregate(aggregate) = &op.kind
         && !aggregate.groups.is_empty()
     {
-        text.push_str(&format!(
-            "g[{}]",
-            join(aggregate.groups.iter().map(rust_expression))
-        ));
+        let _ = write!(text, "g[{}]", join(aggregate.groups.iter().map(rust_expression)));
     }
     if !op.children.is_empty() {
-        text.push_str(&format!("({})", join(op.children.iter().map(rust_shape))));
+        let _ = write!(text, "({})", join(op.children.iter().map(rust_shape)));
     }
     text
 }
@@ -115,15 +114,15 @@ fn json_operator(op: &JsonValue) -> String {
             JsonValue::Array(row) => format!("({})", join(row.iter().map(json_expression))),
             _ => json_expression(item),
         };
-        text.push_str(&format!("[{}]", join(expressions.into_iter().map(shape))));
+        let _ = write!(text, "[{}]", join(expressions.into_iter().map(shape)));
     }
     let groups = list("groups");
     if !groups.is_empty() {
-        text.push_str(&format!("g[{}]", join(groups.into_iter().map(json_expression))));
+        let _ = write!(text, "g[{}]", join(groups.into_iter().map(json_expression)));
     }
     let children = list("children");
     if !children.is_empty() {
-        text.push_str(&format!("({})", join(children.into_iter().map(json_operator))));
+        let _ = write!(text, "({})", join(children.into_iter().map(json_operator)));
     }
     text
 }

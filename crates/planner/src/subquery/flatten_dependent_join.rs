@@ -178,7 +178,8 @@ fn first_aggregate(binder: &Binder, child: Expression) -> Result<Expression> {
         return Err(Error::internal("first is not an aggregate function"));
     };
     let function_binder = FunctionBinder::new(context);
-    let function = function_binder.bind_aggregate_overload(functions, std::slice::from_ref(&child.return_type))??;
+    let function =
+        function_binder.bind_aggregate_overload(functions, std::slice::from_ref(&child.return_type))??;
     function_binder.bind_aggregate_function(function, vec![child], None, AggregateType::NonDistinct, None)
 }
 
@@ -281,7 +282,7 @@ impl<'a> FlattenDependentJoins<'a> {
         let result = self.flatten_right_side(
             &mut plan,
             &mut flatten,
-            join,
+            &join,
             parent_propagate_null_values,
             propagate_null_values,
             lateral_depth,
@@ -295,7 +296,7 @@ impl<'a> FlattenDependentJoins<'a> {
         &mut self,
         plan: &mut LogicalOperator,
         flatten: &mut FlattenDependentJoins<'_>,
-        join: LogicalDependentJoin,
+        join: &LogicalDependentJoin,
         parent_propagate_null_values: bool,
         propagate_null_values: bool,
         lateral_depth: u64,

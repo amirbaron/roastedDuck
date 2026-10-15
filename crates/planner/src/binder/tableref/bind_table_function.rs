@@ -2,6 +2,8 @@
 //! `bind_named_parameters.cpp`): constant arguments are bound and evaluated, the
 //! overload is chosen, and the function's bind callback decides the output columns.
 
+use std::fmt::Write as _;
+
 use rustdb_ast::{
     ExpressionType, FunctionExpression, OrdinalityType, ParsedExpression, ParsedExpressionKind,
     TableFunctionRef,
@@ -74,7 +76,7 @@ fn bind_parameters(
                 && let ParsedExpressionKind::ColumnRef(column) = &comparison.left.kind
                 && column.column_names.len() == 1
             {
-                parameter_name = column.column_names[0].clone();
+                parameter_name.clone_from(&column.column_names[0]);
                 let right = std::mem::replace(
                     &mut *comparison.right,
                     ParsedExpression::constant(Value::default()),
@@ -82,7 +84,7 @@ fn bind_parameters(
                 *child = right;
             }
         } else if !child.alias.is_empty() {
-            parameter_name = child.alias.clone();
+            parameter_name.clone_from(&child.alias);
         }
         let bound = {
             let (inner, outer) = scope.split();
@@ -132,10 +134,10 @@ fn bind_named_parameters(
         else {
             let mut ordered: Vec<&(String, LogicalType)> = declared.iter().collect();
             ordered.sort_by(|a, b| a.0.cmp(&b.0));
-            let named: String = ordered
-                .iter()
-                .map(|(name, ty)| format!("    {name} {ty}\n"))
-                .collect();
+            let named = ordered.iter().fold(String::new(), |mut named, (name, ty)| {
+                let _ = writeln!(named, "    {name} {ty}");
+                named
+            });
             let message = if named.is_empty() {
                 "Function does not accept any named parameters.".to_owned()
             } else {
@@ -153,6 +155,14 @@ fn bind_named_parameters(
     Ok(())
 }
 
+/// The input row of an in-out table function (DuckDB's `input_table_types` and
+/// `input_table_names`); empty for other table functions.
+#[derive(Default)]
+struct InputTable {
+    types: Vec<LogicalType>,
+    names: Vec<String>,
+}
+
 /// Calls the bind callback and builds the scan (DuckDB's `BindTableFunctionInternal`).
 fn bind_table_function_internal(
     scope: &mut BindScope<'_>,
@@ -161,9 +171,12 @@ fn bind_table_function_internal(
     column_name_alias: &[String],
     parameters: Vec<Value>,
     named_parameters: Vec<(String, Value)>,
-    input_table_types: Vec<LogicalType>,
-    input_table_names: Vec<String>,
+    input_table: InputTable,
 ) -> Result<BoundStatement> {
+    let InputTable {
+        types: input_table_types,
+        names: input_table_names,
+    } = input_table;
     let bind_index = scope.binder.generate_table_index();
     let Some(bind) = function.bind.clone() else {
         return Err(Error::invalid_input(format!(
@@ -294,16 +307,16 @@ pub fn bind_table_function(
         location,
         &table_function.name,
     )?;
-    let (input_table_types, input_table_names) = if table_function.in_out {
+    let input_table = if table_function.in_out {
         // The constant arguments are the input row (typed before the casts below).
         let types: Vec<LogicalType> = parameters
             .iter()
             .map(|value| value.logical_type().clone())
             .collect();
         let names = vec![String::new(); types.len()];
-        (types, names)
+        InputTable { types, names }
     } else {
-        (Vec::new(), Vec::new())
+        InputTable::default()
     };
     // Cast the arguments to the overload's types.
     for (i, parameter) in parameters.iter_mut().enumerate() {
@@ -337,8 +350,7 @@ pub fn bind_table_function(
         &function_ref.column_name_alias,
         parameters,
         named.0,
-        input_table_types,
-        input_table_names,
+        input_table,
     )
     .map_err(|error| error.with_position(location))
 }

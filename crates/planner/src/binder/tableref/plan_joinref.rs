@@ -60,8 +60,9 @@ impl JoinSide {
         }
     }
 
-    /// The sides `expression` references (DuckDB's `JoinSide::GetJoinSide`).
-    pub fn of_expression(expression: &Expression, left: &HashSet<u64>, right: &HashSet<u64>) -> Result<Self> {
+    /// The sides `expression` references (DuckDB's `JoinSide::GetJoinSide`); any table
+    /// not in `left` is on the right.
+    pub fn of_expression(expression: &Expression, left: &HashSet<u64>) -> Result<Self> {
         if let Some(column) = expression.as_column_ref() {
             if column.depth > 0 {
                 return Err(Error::not_implemented(
@@ -73,7 +74,7 @@ impl JoinSide {
         if let ExpressionKind::Subquery(subquery) = &expression.kind {
             let mut side = Self::None;
             for child in &subquery.children {
-                side = side.combine(Self::of_expression(child, left, right)?);
+                side = side.combine(Self::of_expression(child, left)?);
             }
             for column in &subquery.binder.correlated_columns {
                 if column.depth > 1 {
@@ -86,7 +87,7 @@ impl JoinSide {
         }
         let mut side = Self::None;
         for child in expression.children() {
-            side = Self::of_expression(child, left, right)?.combine(side);
+            side = Self::of_expression(child, left)?.combine(side);
         }
         Ok(side)
     }
@@ -202,15 +203,14 @@ const fn is_comparison(expression_type: ExpressionType) -> bool {
 fn create_join_condition(
     expression: Expression,
     left: &HashSet<u64>,
-    right: &HashSet<u64>,
     conditions: &mut Vec<JoinCondition>,
 ) -> Result<Option<Expression>> {
     let expression_type = expression.expression_type;
     let ExpressionKind::Comparison(comparison) = &expression.kind else {
         return Ok(Some(expression));
     };
-    let left_side = JoinSide::of_expression(&comparison.left, left, right)?;
-    let right_side = JoinSide::of_expression(&comparison.right, left, right)?;
+    let left_side = JoinSide::of_expression(&comparison.left, left)?;
+    let right_side = JoinSide::of_expression(&comparison.right, left)?;
     if left_side == JoinSide::Both || right_side == JoinSide::Both {
         return Ok(Some(expression));
     }
@@ -244,9 +244,8 @@ pub fn extract_join_conditions(
     arbitrary_expressions: &mut Vec<Expression>,
 ) -> Result<()> {
     let left = table_references(left_child);
-    let right = table_references(right_child);
     for expression in expressions {
-        let side = JoinSide::of_expression(&expression, &left, &right)?;
+        let side = JoinSide::of_expression(&expression, &left)?;
         let remaining = match side {
             JoinSide::None if can_eliminate(context, join_type, &expression) => None,
             JoinSide::Left if can_push_to_left_child(join_type) => {
@@ -261,7 +260,7 @@ pub fn extract_join_conditions(
                 if is_comparison(expression.expression_type)
                     && is_join_type_condition(ref_type, expression.expression_type) =>
             {
-                create_join_condition(expression, &left, &right, conditions)?
+                create_join_condition(expression, &left, conditions)?
             }
             _ => Some(expression),
         };

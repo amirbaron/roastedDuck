@@ -211,7 +211,7 @@ impl ClientContext {
                 let score = similarity_rating(&entry.name().to_lowercase(), name);
                 if score > entry_score {
                     entry_score = score;
-                    entry_name = entry.name().to_owned();
+                    entry.name().clone_into(&mut entry_name);
                 }
             }
             if entry_name.is_empty() {

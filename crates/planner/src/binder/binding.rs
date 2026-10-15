@@ -228,14 +228,16 @@ impl Binding {
                 .map(|(_, _, ty)| ty.clone()),
             _ => None,
         };
-        let (logical_type, name) = if let Some(ty) = virtual_type { (
-            ty,
-            if alias.is_empty() {
-                column_name.to_owned()
-            } else {
-                alias.to_owned()
-            },
-        ) } else {
+        let (logical_type, name) = if let Some(ty) = virtual_type {
+            (
+                ty,
+                if alias.is_empty() {
+                    column_name.to_owned()
+                } else {
+                    alias.to_owned()
+                },
+            )
+        } else {
             let index = column_index as usize;
             let ty = self.types.get(index).cloned().unwrap_or_default();
             let name = if alias.is_empty() {
@@ -277,7 +279,7 @@ impl Binding {
             .get(index as usize)
             .cloned()
             .ok_or_else(|| Error::internal(format!("Column {column_name} not found in macro")))?;
-        argument.alias = alias.to_owned();
+        alias.clone_into(&mut argument.alias);
         Ok(argument)
     }
 

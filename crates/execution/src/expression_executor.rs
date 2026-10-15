@@ -275,10 +275,8 @@ fn execute_case(
     let mut current: Option<Vec<u32>> = sel.map(<[u32]>::to_vec);
     let mut current_count = count;
     let (check_states, else_state) = state.children.split_at_mut(case.case_checks.len() * 2);
-    for (check, pair) in case.case_checks.iter().zip(check_states.chunks_exact_mut(2)) {
-        let [when_state, then_state] = pair else {
-            return Err(Error::internal("case check state must have two children"));
-        };
+    let (check_pairs, _) = check_states.as_chunks_mut::<2>();
+    for (check, [when_state, then_state]) in case.case_checks.iter().zip(check_pairs) {
         let mut true_sel = Vec::new();
         let mut false_sel = Vec::new();
         let true_count = select(
@@ -353,7 +351,7 @@ fn execute_operator(
                 };
             }
             if expression.expression_type == ExpressionType::CompareNotIn {
-                return not(&intermediate, count);
+                return Ok(not(&intermediate, count));
             }
             Ok(intermediate)
         }
@@ -363,7 +361,7 @@ fn execute_operator(
         ExpressionType::OperatorTry => execute_try(children, state, input, sel, count),
         ExpressionType::OperatorNot => {
             let value = execute_only_child(children, state, input, sel, count)?;
-            not(&value, count)
+            Ok(not(&value, count))
         }
         ExpressionType::OperatorIsNull | ExpressionType::OperatorIsNotNull => {
             let value = execute_only_child(children, state, input, sel, count)?;
@@ -397,10 +395,10 @@ fn execute_only_child(
     execute(child, child_state, input, sel, count)
 }
 
-fn not(value: &Vector, count: usize) -> Result<Vector> {
+fn not(value: &Vector, count: usize) -> Vector {
     let mut out = Vector::flat(LogicalType::BOOLEAN, 0);
     unary::<bool, bool>(value, count, &mut out, |value| !value);
-    Ok(out)
+    out
 }
 
 /// DuckDB's `COALESCE` execution: each argument is evaluated only on the rows for which

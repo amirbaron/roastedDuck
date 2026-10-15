@@ -22,9 +22,6 @@ fn find_base_table_column(
     binding: ColumnBinding,
 ) -> Option<(Arc<rustdb_catalog::CatalogEntry>, usize)> {
     match &op.kind {
-        // Scans do not carry their catalog table yet, so table columns are described
-        // like computed ones.
-        LogicalKind::Get(_) => None,
         LogicalKind::Projection { table_index } => {
             if binding.table_index != *table_index {
                 return None;
@@ -45,6 +42,8 @@ fn find_base_table_column(
             .children
             .iter()
             .find_map(|child| find_base_table_column(child, binding)),
+        // Scans (`LogicalKind::Get`) do not carry their catalog table yet, so table
+        // columns are described like computed ones.
         _ => None,
     }
 }
@@ -176,7 +175,7 @@ fn bind_show_table(scope: &mut BindScope<'_>, show: &ShowRef) -> Result<BoundSta
             }
             if !schema.is_empty() {
                 if catalog.is_empty() {
-                    catalog = scope.context.default_catalog().to_owned();
+                    scope.context.default_catalog().clone_into(&mut catalog);
                 }
                 let exists = scope
                     .context

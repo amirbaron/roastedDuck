@@ -166,7 +166,8 @@ impl LogicalGet {
     /// Takes over the columns bound through the table binding so far.
     pub fn sync_column_ids(&mut self) {
         if let Some(shared) = &self.shared_column_ids {
-            self.column_ids = shared.lock().unwrap_or_else(PoisonError::into_inner).clone();
+            self.column_ids
+                .clone_from(&shared.lock().unwrap_or_else(PoisonError::into_inner));
         }
     }
 
@@ -257,6 +258,8 @@ impl LogicalDependentJoin {
 
 /// A dependent (correlated) join to be decorrelated (DuckDB's `LogicalDependentJoin`,
 /// which extends `LogicalComparisonJoin`: `join` holds the members it inherits).
+// Mirrors DuckDB's `LogicalDependentJoin` field for field, flags included.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Debug)]
 pub struct LogicalDependentJoin {
     pub join: LogicalComparisonJoin,
@@ -789,7 +792,7 @@ impl LogicalOperator {
 
     /// Computes `types` from the children's types and the expressions (DuckDB's
     /// `ResolveTypes`).
-    fn resolve_types(&mut self) -> Result<()> {
+    fn resolve_types(&mut self) {
         if let LogicalKind::Get(get) = &mut self.kind {
             get.sync_column_ids();
             get.shared_column_ids = None;
@@ -890,13 +893,13 @@ impl LogicalOperator {
             }
             LogicalKind::Explain { .. } => vec![LogicalType::VARCHAR, LogicalType::VARCHAR],
             LogicalKind::Execute { prepared } => prepared.types.clone(),
-            LogicalKind::Prepare { .. } | LogicalKind::Deallocate { .. } => vec![LogicalType::BOOLEAN],
-            LogicalKind::Set { .. }
+            LogicalKind::Prepare { .. }
+            | LogicalKind::Deallocate { .. }
+            | LogicalKind::Set { .. }
             | LogicalKind::Reset { .. }
             | LogicalKind::Transaction { .. }
             | LogicalKind::Pragma { .. } => vec![LogicalType::BOOLEAN],
         };
-        Ok(())
     }
 
     /// Resolves the output types of the whole tree, children first (DuckDB's
@@ -905,7 +908,7 @@ impl LogicalOperator {
         for child in &mut self.children {
             child.resolve_operator_types()?;
         }
-        self.resolve_types()?;
+        self.resolve_types();
         if self.types.len() != self.column_bindings().len() {
             return Err(Error::internal(format!(
                 "{} has {} types but {} column bindings",

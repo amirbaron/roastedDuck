@@ -24,6 +24,8 @@ pub enum StatementReturnType {
 }
 
 /// Properties of a bound statement (DuckDB's `StatementProperties`).
+// Mirrors DuckDB's `StatementProperties` field for field, flags included.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Debug)]
 pub struct StatementProperties {
     /// Whether the statement must run inside a valid (not aborted) transaction.
@@ -119,7 +121,9 @@ impl BoundParameterMap {
     /// (DuckDB's `BindParameterExpression`).
     pub fn bind_parameter_expression(&mut self, identifier: &str, alias: &str) -> Expression {
         let identifier_type = self.return_type(identifier);
-        let data = if let Some(data) = self.parameters.get(identifier) { Arc::clone(data) } else {
+        let data = if let Some(data) = self.parameters.get(identifier) {
+            Arc::clone(data)
+        } else {
             let data = Arc::new(Mutex::new(BoundParameterData {
                 value: Value::default(),
                 return_type: identifier_type.clone(),
@@ -143,7 +147,7 @@ impl BoundParameterMap {
                 parameter_data: data,
             }),
         );
-        expression.alias = alias.to_owned();
+        alias.clone_into(&mut expression.alias);
         expression
     }
 }

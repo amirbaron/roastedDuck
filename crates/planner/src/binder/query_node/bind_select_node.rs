@@ -1,5 +1,7 @@
 //! SELECT nodes (DuckDB's `bind_select_node.cpp` and `plan_select_node.cpp`).
 
+use std::fmt::Write as _;
+
 use rustdb_ast::{
     AggregateHandling, ExpressionType, ParsedExpression, ParsedExpressionKind, QueryNode, QueryNodeKind,
     SelectNode,
@@ -173,7 +175,7 @@ pub fn bind_select_node(
         }
         result.groups.group_expressions = bound_groups;
     }
-    result.groups.grouping_sets = statement.group_sets.clone();
+    result.groups.grouping_sets.clone_from(&statement.group_sets);
 
     // HAVING
     if let Some(mut having) = statement.having.take() {
@@ -220,7 +222,7 @@ pub fn bind_select_node(
                     "Cannot mix aggregates with non-aggregated columns!",
                 ));
             }
-            bound_qualify_columns = qualify_binder.state_ref().bound_columns.clone();
+            bound_qualify_columns.clone_from(&qualify_binder.state_ref().bound_columns);
         }
         drop(qualify_binder);
         result.qualify = Some(bound);
@@ -301,7 +303,7 @@ pub fn bind_select_node(
             }
         }
         if select_binder.has_bound_columns() {
-            select_bound_columns = select_binder.state_ref().bound_columns.clone();
+            select_bound_columns.clone_from(&select_binder.state_ref().bound_columns);
         }
     }
     result.select_list = select_columns;
@@ -350,10 +352,11 @@ pub fn bind_select_node(
                      this entry explicitly.",
                 );
             } else {
-                message.push_str(&format!(
+                let _ = write!(
+                    message,
                     "\nEither add it to the GROUP BY list, or use \"ANY_VALUE({name})\" if the exact value of \"{name}\" \
                      is not important."
-                ));
+                );
             }
             return Err(Error::binder(message).with_position(column.query_location));
         }

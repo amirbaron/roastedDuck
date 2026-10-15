@@ -6,6 +6,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use rustdb::{Database, MaterializedResult};
 use rustdb_ast::{SqlStatement, SqlStatementKind};
+use rustdb_common::CaseInsensitiveMap;
 
 use crate::oracle::{OracleResult, Table};
 use crate::plan_shape::{duckdb_shape, rust_shape};
@@ -44,7 +45,7 @@ pub fn run_rustdb(sql: &str, json: &str) -> RustOutcome {
             location: 0,
             length: sql.len() as u64,
             query: sql.to_owned(),
-            named_param_map: Default::default(),
+            named_param_map: CaseInsensitiveMap::default(),
             kind: SqlStatementKind::Select(statements.remove(0)),
         })
     };

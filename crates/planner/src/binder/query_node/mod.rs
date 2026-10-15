@@ -132,7 +132,7 @@ fn bind_node_with_ctes(
         };
         bind_node_with_ctes(&mut child_scope, node, rest)?
     };
-    finish_cte(scope, cte, child, child_result)
+    Ok(finish_cte(scope, cte, child, child_result))
 }
 
 /// DuckDB's `Binder::PrepareCTE`: the CTE is bound lazily, on first reference.
@@ -157,7 +157,7 @@ fn finish_cte(
     cte: BoundCteData,
     mut child_binder: super::Binder,
     child: BoundStatement,
-) -> Result<BoundStatement> {
+) -> BoundStatement {
     let (bound, query_binder) = {
         let mut state = cte
             .bind_state
@@ -168,7 +168,7 @@ fn finish_cte(
     let (Some(bound), Some(mut query_binder)) = (bound, query_binder) else {
         // Never referenced: the CTE is not bound at all.
         scope.binder.move_correlated_expressions(&mut child_binder);
-        return Ok(child);
+        return child;
     };
     child_binder.merge_correlated_columns(&query_binder.correlated_columns.clone());
     scope.binder.move_correlated_expressions(&mut child_binder);
@@ -185,7 +185,7 @@ fn finish_cte(
     scope.binder.has_unplanned_dependent_joins = scope.binder.has_unplanned_dependent_joins
         || child_binder.has_unplanned_dependent_joins
         || query_binder.has_unplanned_dependent_joins;
-    Ok(BoundStatement::new(plan, child.names, child.types))
+    BoundStatement::new(plan, child.names, child.types)
 }
 
 /// Binds the node itself (DuckDB's `BindNode` switch).

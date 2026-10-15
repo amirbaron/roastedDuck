@@ -520,6 +520,8 @@ fn qualify_many_dots<Q: ColumnQualifier + ?Sized>(
         }
     }
     let many = names.len() > 3;
+    // One arm per branch of DuckDB's ordered if-chain, kept in its order.
+    #[allow(clippy::match_same_arms)]
     let error = match (table_pos, catalog_pos, schema_pos) {
         (Some(1), Some(_), _) => catalog_table_error,
         (Some(1), None, _) => schema_table_error,

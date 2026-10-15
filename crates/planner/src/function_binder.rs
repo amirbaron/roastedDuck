@@ -3,6 +3,7 @@
 //! (`BoundCastExpression::AddCastToType`), comparison types
 //! (`BoundComparisonExpression::TryBindComparison`) and type unification.
 
+use std::fmt::Write as _;
 use std::sync::{Arc, PoisonError};
 
 use rustdb_ast::ExpressionType;
@@ -384,10 +385,10 @@ impl<'a> FunctionBinder<'a> {
         }
         let Some(best) = best else {
             let call = call_to_string(name, arguments, None);
-            let list: String = functions
-                .iter()
-                .map(|f| format!("\t{}\n", f.signature()))
-                .collect();
+            let list = functions.iter().fold(String::new(), |mut list, f| {
+                let _ = writeln!(list, "\t{}", f.signature());
+                list
+            });
             return Ok(Err(Error::binder(format!(
                 "No function matches the given name and argument types '{call}'. You might need to add \
                  explicit type casts.\n\tCandidate functions:\n{list}"
@@ -402,10 +403,10 @@ impl<'a> FunctionBinder<'a> {
                 return Err(parameter_not_resolved());
             }
             let call = call_to_string(name, arguments, None);
-            let list: String = candidates
-                .iter()
-                .map(|&index| format!("\t{}\n", functions[index].signature()))
-                .collect();
+            let list = candidates.iter().fold(String::new(), |mut list, &index| {
+                let _ = writeln!(list, "\t{}", functions[index].signature());
+                list
+            });
             return Ok(Err(Error::binder(format!(
                 "Could not choose a best candidate function for the function call \"{call}\". In order to select \
                  one, please add explicit type casts.\n\tCandidate functions:\n{list}"
@@ -514,7 +515,7 @@ impl<'a> FunctionBinder<'a> {
             &mut function.varargs,
             &mut function.return_type,
             &children,
-        )?;
+        );
         let mut bind_info: Option<Arc<dyn FunctionData>> = None;
         if let Some(bind) = function.bind.clone() {
             let (argument_types, constants) = self.bind_input(&children);
@@ -554,7 +555,7 @@ impl<'a> FunctionBinder<'a> {
             &mut function.varargs,
             &mut function.return_type,
             &children,
-        )?;
+        );
         let mut bind_info = None;
         let mut children = children;
         if let Some(bind) = function.bind.clone() {
@@ -720,12 +721,12 @@ fn resolve_template_types(
     varargs: &mut Option<LogicalType>,
     return_type: &mut LogicalType,
     children: &[Expression],
-) -> Result<()> {
+) {
     let templated = arguments.iter().any(is_templated)
         || varargs.as_ref().is_some_and(is_templated)
         || is_templated(return_type);
     if !templated {
-        return Ok(());
+        return;
     }
     let mut bindings = CaseInsensitiveMap::default();
     for (argument, child) in arguments.iter().zip(children) {
@@ -745,7 +746,6 @@ fn resolve_template_types(
         *varargs = substitute_template(varargs, &bindings);
     }
     *return_type = substitute_template(return_type, &bindings);
-    Ok(())
 }
 
 /// DuckDB's `FunctionBinder::CheckTemplateTypesResolved`.

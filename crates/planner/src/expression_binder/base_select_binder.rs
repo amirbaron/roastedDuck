@@ -511,7 +511,10 @@ impl<'a> SelectBinder<'a> {
             .node
             .aggregates
             .iter()
-            .position(|existing| existing.equals(&aggregate)) { index } else {
+            .position(|existing| existing.equals(&aggregate))
+        {
+            index
+        } else {
             self.node.aggregates.push(aggregate);
             self.node.aggregates.len() - 1
         };
@@ -855,6 +858,8 @@ impl SelectBinder<'_> {
     /// DuckDB's `BaseSelectBinder::BindWindow`.
     #[allow(clippy::too_many_lines)]
     fn bind_select_window(&mut self, expr: &mut ParsedExpression, depth: u64) -> Result<BindResult> {
+        use rustdb_ast::WindowBoundary as B;
+
         let location = expr.query_location;
         let window_type = expr.expression_type;
         let name = expr.alias.clone();
@@ -883,7 +888,6 @@ impl SelectBinder<'_> {
                 Error::binder("correlated columns in window functions not supported").with_position(location),
             );
         }
-        use rustdb_ast::WindowBoundary as B;
         let is_range = matches!(window.start, B::ExprPrecedingRange | B::ExprFollowingRange)
             || matches!(window.end, B::ExprPrecedingRange | B::ExprFollowingRange);
         if is_range && window.orders.len() != 1 {

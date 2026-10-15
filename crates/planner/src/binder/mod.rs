@@ -186,6 +186,15 @@ impl<'a> IntoIterator for &'a CorrelatedColumns {
     }
 }
 
+impl<'a> IntoIterator for &'a mut CorrelatedColumns {
+    type Item = &'a mut CorrelatedColumnInfo;
+    type IntoIter = std::slice::IterMut<'a, CorrelatedColumnInfo>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.columns.iter_mut()
+    }
+}
+
 /// Whether a binder resolves a query or a view's definition (DuckDB's `BinderType`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum BinderType {

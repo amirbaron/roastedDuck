@@ -112,8 +112,11 @@ pub fn top_n_strings(mut scores: Vec<(String, f64)>, n: usize, threshold: f64) -
         return Vec::new();
     }
     scores.sort_by(|a, b| {
-        if a.1 != b.1 {
-            return b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal);
+        match b.1.partial_cmp(&a.1) {
+            Some(Ordering::Equal) => {}
+            Some(order) => return order,
+            // NaN scores compare unequal to everything and sort as ties.
+            None => return Ordering::Equal,
         }
         if ci_less_than(&a.0, &b.0) {
             Ordering::Less

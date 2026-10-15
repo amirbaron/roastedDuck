@@ -108,6 +108,7 @@ impl BindError {
     /// Merges two "column not found" errors about the same column into one with the best
     /// candidates of both (DuckDB's `CombineMissingColumns`); otherwise the new error wins
     /// (DuckDB's `CombineErrors`).
+    #[must_use]
     pub fn combine(self, new: Self) -> Self {
         let (Some(current), Some(other)) = (&self.missing_column, &new.missing_column) else {
             return new;

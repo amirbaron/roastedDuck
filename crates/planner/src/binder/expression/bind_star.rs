@@ -178,6 +178,19 @@ fn replace_columns_alias(alias: &str, column_name: &str, regex: Option<&regex::R
 /// Rewrites `* LIKE 'pattern'` into `COLUMNS(list_filter(*, x -> x LIKE 'pattern'))`
 /// (DuckDB's `TryTransformStarLike`).
 fn try_transform_star_like(root: &mut ParsedExpression) -> Result<()> {
+    const SUPPORTED: [&str; 11] = [
+        "~~",
+        "!~~",
+        "~~~",
+        "!~~~",
+        "~~*",
+        "!~~*",
+        "regexp_full_match",
+        "not_like_escape",
+        "ilike_escape",
+        "not_ilike_escape",
+        "like_escape",
+    ];
     let inverse = root.expression_type == ExpressionType::OperatorNot;
     let location = root.query_location;
     let target: &mut ParsedExpression = if inverse {
@@ -203,19 +216,6 @@ fn try_transform_star_like(root: &mut ParsedExpression) -> Result<()> {
     if star.columns {
         return Ok(());
     }
-    const SUPPORTED: [&str; 11] = [
-        "~~",
-        "!~~",
-        "~~~",
-        "!~~~",
-        "~~*",
-        "!~~*",
-        "regexp_full_match",
-        "not_like_escape",
-        "ilike_escape",
-        "not_ilike_escape",
-        "like_escape",
-    ];
     if !SUPPORTED.contains(&function.function_name.as_str()) {
         return Err(Error::binder(format!(
             "Function \"{}\" cannot be applied to a star expression",
@@ -252,17 +252,10 @@ fn try_transform_star_like(root: &mut ParsedExpression) -> Result<()> {
     let child_expr = if regex_shortcut {
         function_child(root, inverse)?.children.remove(1)
     } else {
-        let body = if inverse {
-            std::mem::replace(
-                root,
-                ParsedExpression::constant(Value::null(LogicalType::SQLNULL)),
-            )
-        } else {
-            std::mem::replace(
-                root,
-                ParsedExpression::constant(Value::null(LogicalType::SQLNULL)),
-            )
-        };
+        let body = std::mem::replace(
+            root,
+            ParsedExpression::constant(Value::null(LogicalType::SQLNULL)),
+        );
         let lambda = ParsedExpression::new(
             ExpressionType::Lambda,
             ParsedExpressionKind::Lambda(LambdaExpression {
