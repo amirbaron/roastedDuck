@@ -14,9 +14,11 @@ rustdb-planner = { path = "../planner" }
 rustdb-ast = { path = "../ast" }
 rustdb-buffer = { path = "../buffer" }
 rustdb-row = { path = "../row" }
+rustdb-storage = { path = "../storage" }
 
 [lints]
 workspace = true
 
 [dev-dependencies]
 rustdb-functions = { path = "../functions" }
+rustdb-buffer = { path = "../buffer" }

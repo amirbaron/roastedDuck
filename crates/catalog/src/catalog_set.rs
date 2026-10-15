@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use rustdb_common::{Error, ErrorKind, Result};
 
 use crate::CatalogEntry;
-use crate::transaction::{TRANSACTION_ID_START, Transaction};
+use crate::transaction::{TRANSACTION_ID_START, Transaction, TransactionExt};
 
 /// One version in an entry chain.
 #[derive(Debug)]
@@ -31,6 +31,11 @@ impl Version {
 
     pub(crate) fn commit(&self, commit_id: u64) {
         self.timestamp.store(commit_id, Ordering::Release);
+    }
+
+    /// Whether this version is a drop (no entry).
+    pub(crate) fn is_tombstone(&self) -> bool {
+        self.entry.is_none()
     }
 }
 

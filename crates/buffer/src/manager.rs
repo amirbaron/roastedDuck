@@ -722,6 +722,16 @@ impl BufferManager {
         Ok(())
     }
 
+    /// Charges `size` bytes to `tag` for memory owned outside the buffer pool (such as the
+    /// buffers of an index's fixed-size allocators), evicting if needed. The charge is
+    /// released when the returned reservation is dropped.
+    pub fn reserve_tagged(&self, tag: MemoryTag, size: u64) -> Result<MemoryReservation> {
+        let (reservation, _) = self.shared.evict_or_throw(tag, size, false, || {
+            format!("failed to allocate data of size {}", format_bytes(size))
+        })?;
+        Ok(reservation)
+    }
+
     /// Releases memory charged with [`BufferManager::reserve_memory`].
     pub fn free_reserved_memory(&self, size: u64) {
         if size != 0 {

@@ -480,6 +480,7 @@ dependencies = [
  "rustdb-ast",
  "rustdb-common",
  "rustdb-function",
+ "rustdb-storage",
  "rustdb-types",
 ]
 
@@ -502,6 +503,7 @@ dependencies = [
  "rustdb-functions",
  "rustdb-planner",
  "rustdb-row",
+ "rustdb-storage",
  "rustdb-types",
 ]
 
@@ -578,6 +580,15 @@ name = "rustdb-shell"
 version = "1.5.6"
 dependencies = [
  "rustdb",
+]
+
+[[package]]
+name = "rustdb-storage"
+version = "1.5.6"
+dependencies = [
+ "rustdb-buffer",
+ "rustdb-common",
+ "rustdb-types",
 ]
 
 [[package]]
