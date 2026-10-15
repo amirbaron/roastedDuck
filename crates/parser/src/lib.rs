@@ -23,6 +23,10 @@
 //! `ParsedExpression::Equals` (used to deduplicate GROUP BY expressions), and
 //! `candidates` the "Candidates: ..." hints of unrecognized enum values.
 //!
+//! Two files are generated: `transformer/node_tag.rs` (node tag numbers and names for
+//! error messages) by `scripts/gen_node_tag.py <duckdb checkout>`, and the libc++
+//! iteration orders `hash_order_fixture.txt` by `scripts/hash_order_fixture.cpp`.
+//!
 //! # Map ordering
 //!
 //! Some containers DuckDB serializes are `std::unordered_map`s (the named-parameter map,
