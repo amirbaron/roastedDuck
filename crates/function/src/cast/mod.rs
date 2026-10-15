@@ -16,7 +16,7 @@ mod decimal;
 mod enums;
 mod executor;
 mod nested;
-mod numeric;
+pub mod numeric;
 mod parse;
 mod split;
 mod string;

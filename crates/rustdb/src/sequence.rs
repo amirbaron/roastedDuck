@@ -88,7 +88,7 @@ fn bind_sequence(input: &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>>
         return Ok(None);
     }
     let context = input
-        .client
+        .binder
         .and_then(|client| client.downcast_ref::<ClientContext>())
         .ok_or_else(|| Error::internal("nextval bound without a client context"))?;
     let (mut catalog, mut schema, name) = parse_qualified_name(&name.to_varchar()?)?;

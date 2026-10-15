@@ -67,6 +67,9 @@ impl Database {
         for set in rustdb_functions::builtin_scalar_functions() {
             system_catalog.register_scalar_functions(set)?;
         }
+        for set in rustdb_functions::builtin_aggregate_functions()? {
+            system_catalog.register_aggregate_functions(set)?;
+        }
         for set in rustdb_functions::builtin_table_functions() {
             system_catalog.register_table_functions(set)?;
         }
@@ -120,6 +123,7 @@ impl Database {
             transactions,
             settings,
             prepared_statements: CaseInsensitiveMap::default(),
+            function_client: Arc::default(),
         })
     }
 
@@ -148,6 +152,8 @@ pub struct Connection {
     transactions: TransactionContext,
     settings: Settings,
     prepared_statements: CaseInsensitiveMap<Arc<PreparedStatementData>>,
+    /// Connection state functions use (DuckDB keeps it in the `ClientContext`).
+    function_client: Arc<rustdb_function::FunctionClient>,
 }
 
 impl Connection {
@@ -218,6 +224,7 @@ impl Connection {
             evaluator: Arc::new(ScalarEvaluator),
             config: self.settings.planner.clone(),
             prepared_statements: self.prepared_statements.clone(),
+            function_client: Arc::clone(&self.function_client),
         })
     }
 

@@ -5,6 +5,8 @@ use std::sync::Arc;
 use rustdb_common::Result;
 use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
+use crate::FunctionClient;
+
 /// How a function treats NULL inputs (DuckDB's `FunctionNullHandling`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum NullHandling {
@@ -48,9 +50,14 @@ pub struct BindInput<'a> {
     pub argument_types: &'a [LogicalType],
     /// The value of each argument that is a foldable constant, `None` otherwise.
     pub constants: &'a [Option<Value>],
+    /// The alias of each argument expression (`a := x` names, or the column name of a
+    /// column reference).
+    pub aliases: &'a [String],
+    /// The calling connection's state (DuckDB's `ClientContext`).
+    pub client: &'a Arc<FunctionClient>,
     /// The binder's client context (`ScalarFunctionBindInput::binder`), for functions
     /// that look up catalog entries; the database crate downcasts it.
-    pub client: Option<&'a dyn Any>,
+    pub binder: Option<&'a dyn Any>,
 }
 
 /// Specialises a chosen overload for a call (DuckDB's `bind_scalar_function_t`).

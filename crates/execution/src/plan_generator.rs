@@ -5,10 +5,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use rustdb_ast::JoinType;
+use rustdb_ast::{JoinType, OrderByNullType, OrderType};
 use rustdb_catalog::{Catalog, CatalogEntry, EntryKind, Transaction};
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_planner::expression::BoundConjunctionExpression;
+use rustdb_functions::aggregate::sorted::{
+    self, NullOrder, OrderModifiers, OrderType as SortOrderType, SortedOrder,
+};
+use rustdb_planner::expression::{BoundAggregateExpression, BoundConjunctionExpression, BoundOrderByNode};
 use rustdb_planner::operator::{
     COLUMN_IDENTIFIER_ROW_ID, JoinCondition, LogicalAggregate, LogicalComparisonJoin, LogicalDelete,
     LogicalGet, LogicalInsert, LogicalUpdate,
@@ -592,7 +595,7 @@ impl PlanGenerator {
                     let aggregates = expressions
                         .into_iter()
                         .map(|expression| match expression.kind {
-                            ExpressionKind::Aggregate(aggregate) => Ok(*aggregate),
+                            ExpressionKind::Aggregate(aggregate) => bind_sorted_aggregate(*aggregate),
                             _ => Err(Error::internal(format!(
                                 "non-aggregate {expression} in an aggregate operator"
                             ))),
@@ -616,7 +619,7 @@ impl PlanGenerator {
                 let aggregates = expressions
                     .into_iter()
                     .map(|expression| match expression.kind {
-                        ExpressionKind::Aggregate(aggregate) => Ok(*aggregate),
+                        ExpressionKind::Aggregate(aggregate) => bind_sorted_aggregate(*aggregate),
                         _ => Err(Error::internal(format!(
                             "non-aggregate {expression} in an aggregate operator"
                         ))),
@@ -803,6 +806,68 @@ fn distinct_on_all_columns(types: Vec<LogicalType>, child: PhysicalRef) -> Resul
         Vec::new(),
         child,
     )?))
+}
+
+/// Replaces an aggregate with `ORDER BY` arguments by its sorted wrapper (DuckDB's
+/// `FunctionBinder::BindSortedAggregate`, called from `ExtractAggregateExpressions`).
+fn bind_sorted_aggregate(mut aggregate: BoundAggregateExpression) -> Result<BoundAggregateExpression> {
+    let Some(order_bys) = aggregate.order_bys.take() else {
+        return Ok(aggregate);
+    };
+    if aggregate.children.is_empty() {
+        return Ok(aggregate);
+    }
+    // `BoundOrderModifier::Simplify`: each ordering is only needed once.
+    let mut orders: Vec<BoundOrderByNode> = Vec::with_capacity(order_bys.orders.len());
+    for order in order_bys.orders {
+        if !orders
+            .iter()
+            .any(|seen| seen.expression.equals(&order.expression))
+        {
+            orders.push(order);
+        }
+    }
+    let sorted_orders: Vec<SortedOrder> = orders
+        .iter()
+        .map(|order| SortedOrder {
+            ty: order.expression.return_type.clone(),
+            modifiers: OrderModifiers::new(
+                if order.order_type == OrderType::Descending {
+                    SortOrderType::Descending
+                } else {
+                    SortOrderType::Ascending
+                },
+                if order.null_order == OrderByNullType::NullsLast {
+                    NullOrder::NullsLast
+                } else {
+                    NullOrder::NullsFirst
+                },
+            ),
+            argument: aggregate
+                .children
+                .iter()
+                .position(|child| child.equals(&order.expression)),
+        })
+        .collect();
+    let argument_types: Vec<_> = aggregate
+        .children
+        .iter()
+        .map(|child| child.return_type.clone())
+        .collect();
+    let binding = sorted::bind_sorted_aggregate(
+        aggregate.function,
+        aggregate.bind_info.take(),
+        &argument_types,
+        &sorted_orders,
+    )?;
+    if binding.append_orders {
+        aggregate
+            .children
+            .extend(orders.into_iter().map(|order| order.expression));
+    }
+    aggregate.function = binding.function;
+    aggregate.bind_info = Some(binding.bind_data);
+    Ok(aggregate)
 }
 
 fn not_implemented(operator_type: LogicalOperatorType) -> Error {

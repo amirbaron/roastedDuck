@@ -507,7 +507,7 @@ impl<'a> FunctionBinder<'a> {
     pub fn bind_scalar_overload(
         &self,
         mut function: ScalarFunction,
-        children: Vec<Expression>,
+        mut children: Vec<Expression>,
         is_operator: bool,
     ) -> Result<Expression> {
         resolve_template_types(
@@ -519,14 +519,21 @@ impl<'a> FunctionBinder<'a> {
         let mut bind_info: Option<Arc<dyn FunctionData>> = None;
         if let Some(bind) = function.bind.clone() {
             let (argument_types, constants) = self.bind_input(&children);
+            let aliases: Vec<String> = children.iter().map(|child| child.alias.clone()).collect();
             bind_info = bind(
                 &mut function,
                 &BindInput {
                     argument_types: &argument_types,
                     constants: &constants,
-                    client: Some(self.context as &dyn std::any::Any),
+                    aliases: &aliases,
+                    client: &self.context.function_client,
+                    binder: Some(self.context as &dyn std::any::Any),
                 },
             )?;
+            // The bind may have dropped trailing arguments (DuckDB's `EraseArgument`).
+            if function.varargs.is_none() {
+                children.truncate(function.arguments.len());
+            }
         }
         check_template_types_resolved(
             &function.name,
@@ -561,12 +568,15 @@ impl<'a> FunctionBinder<'a> {
         let mut children = children;
         if let Some(bind) = function.bind.clone() {
             let (argument_types, constants) = self.bind_input(&children);
+            let aliases: Vec<String> = children.iter().map(|child| child.alias.clone()).collect();
             bind_info = bind(
                 &mut function,
                 &BindInput {
                     argument_types: &argument_types,
                     constants: &constants,
-                    client: Some(self.context as &dyn std::any::Any),
+                    aliases: &aliases,
+                    client: &self.context.function_client,
+                    binder: Some(self.context as &dyn std::any::Any),
                 },
             )?;
             // The bind may have dropped arguments.

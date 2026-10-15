@@ -21,7 +21,7 @@ fn plus(left: Expression, right: Expression) -> Expression {
     let function = set
         .functions
         .into_iter()
-        .find(|f| f.arguments[0] == LogicalType::INTEGER)
+        .find(|f| f.arguments == [LogicalType::INTEGER, LogicalType::INTEGER])
         .unwrap();
     Expression::function(function, vec![left, right], None, true)
 }
