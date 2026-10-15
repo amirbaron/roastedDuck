@@ -145,6 +145,19 @@ impl RowGroupCollection {
     }
 
     /// The current row groups.
+    /// Every segment of every column (DuckDB's `RowGroupCollection::GetColumnSegmentInfo`).
+    pub fn column_segment_info(&self) -> Result<Vec<crate::table::column_data::ColumnSegmentInfo>> {
+        let mut result = Vec::new();
+        for (index, node) in self.row_groups().tree().nodes().iter().enumerate() {
+            for column_index in 0..node.node.column_count() {
+                let column = node.node.column(column_index)?;
+                let mut path = vec![column_index as u64];
+                column.column_segment_info(index as u64, &mut path, &mut result);
+            }
+        }
+        Ok(result)
+    }
+
     pub fn row_groups(&self) -> Arc<RowGroupSegmentTree> {
         Arc::clone(&self.row_groups.read().unwrap_or_else(PoisonError::into_inner))
     }

@@ -989,10 +989,104 @@ fn database_size_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
     Ok(rows)
 }
 
+fn bigint_list() -> LogicalType {
+    LogicalType::list(LogicalType::BIGINT)
+}
+
+const STORAGE_INFO_COLUMNS: Columns = &[
+    ("row_group_id", bigint),
+    ("column_name", varchar),
+    ("column_id", bigint),
+    ("column_path", varchar),
+    ("segment_id", bigint),
+    ("segment_type", varchar),
+    ("start", bigint),
+    ("count", bigint),
+    ("compression", varchar),
+    ("stats", varchar),
+    ("has_updates", boolean),
+    ("persistent", boolean),
+    ("block_id", bigint),
+    ("block_offset", bigint),
+    ("segment_info", varchar),
+    ("additional_block_ids", bigint_list),
+];
+
+/// `pragma_storage_info(name)` (`PragmaStorageInfoFunction`): every segment of a table.
+fn storage_info_rows(context: &ClientContext, name: &str) -> Result<Vec<Vec<Value>>> {
+    let (catalog, schema, table) = crate::sequence::parse_qualified_name(name)?;
+    let found = context
+        .get_entry(
+            &catalog,
+            &schema,
+            rustdb_catalog::CatalogType::Table,
+            &table,
+            false,
+        )?
+        .ok_or_else(|| Error::catalog(format!("Table with name {table} does not exist!")))?;
+    let EntryKind::Table(entry) = &found.entry.kind else {
+        return Err(Error::catalog(format!(
+            "Existing object {} is of type View, trying to replace with type Table",
+            found.entry.name()
+        )));
+    };
+    let Some(storage) = &entry.storage else {
+        return Ok(Vec::new());
+    };
+    let big = |value: u64| Value::bigint(i64::try_from(value).unwrap_or(i64::MAX));
+    let mut rows = Vec::new();
+    for info in storage.row_groups().column_segment_info()? {
+        let column_name = entry
+            .physical_to_logical(usize::try_from(info.column_id).unwrap_or(usize::MAX))
+            .and_then(|logical| entry.columns.get(logical))
+            .map(|column| column.name.clone())
+            .unwrap_or_default();
+        let (block_id, block_offset, additional) = if info.persistent {
+            (
+                Value::bigint(info.block_id),
+                big(info.block_offset),
+                Value::list(
+                    LogicalType::BIGINT,
+                    info.additional_blocks
+                        .iter()
+                        .map(|&block| Value::bigint(block))
+                        .collect(),
+                ),
+            )
+        } else {
+            (
+                Value::null(LogicalType::BIGINT),
+                Value::null(LogicalType::BIGINT),
+                Value::null(bigint_list()),
+            )
+        };
+        rows.push(vec![
+            big(info.row_group_index),
+            text(column_name),
+            big(info.column_id),
+            text(info.column_path),
+            big(info.segment_idx),
+            text(info.segment_type),
+            big(info.segment_start),
+            big(info.segment_count),
+            text(info.compression_type),
+            text(info.segment_stats),
+            Value::boolean(info.has_updates),
+            Value::boolean(info.persistent),
+            block_id,
+            block_offset,
+            text(info.segment_info),
+            additional,
+        ]);
+    }
+    Ok(rows)
+}
+
 /// The `pragma_*` table functions.
 pub(crate) fn pragma_table_functions() -> Vec<TableFunctionSet> {
     vec![
         rows_function_with_name("pragma_table_info", TABLE_INFO_COLUMNS, table_info_rows),
+        rows_function_with_name("pragma_storage_info", STORAGE_INFO_COLUMNS, storage_info_rows),
         rows_function("pragma_database_size", DATABASE_SIZE_COLUMNS, database_size_rows),
     ]
 }

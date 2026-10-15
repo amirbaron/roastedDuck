@@ -10,6 +10,8 @@ pub use numeric::{NumericStats, NumericValue, StatsNative, maximum_value, minimu
 pub use serialize::{deserialize_table_statistics, serialize_table_statistics};
 pub use string::{MAX_STRING_MINMAX_SIZE, StringStats};
 
+use std::fmt;
+
 use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, Value};
 
 /// What a filter evaluates to on a set of values, judged from statistics
@@ -129,6 +131,78 @@ fn construct(ty: &LogicalType, init: Init) -> StatsData {
                 .collect(),
         ),
         StatisticsType::Base | StatisticsType::Variant => StatsData::Base,
+    }
+}
+
+/// A value of the statistics as DuckDB prints it (`Value::ToString`).
+fn value_text(value: Option<Value>) -> String {
+    match value {
+        Some(value) if !value.is_null() => value.to_varchar().unwrap_or_default(),
+        _ => "NULL".to_owned(),
+    }
+}
+
+/// The bytes of a string statistics bound up to the first zero (`Blob::ToString` of
+/// `GetValidMinMaxSubstring`).
+fn bound_text(bytes: &[u8]) -> String {
+    let len = bytes.iter().position(|&byte| byte == 0).unwrap_or(bytes.len());
+    let mut result = String::new();
+    for &byte in &bytes[..len] {
+        if (32..=126).contains(&byte) && !matches!(byte, b'\\' | b'\'' | b'"') {
+            result.push(char::from(byte));
+        } else {
+            let _ = fmt::Write::write_fmt(&mut result, format_args!("\\x{byte:02X}"));
+        }
+    }
+    result
+}
+
+impl fmt::Display for BaseStatistics {
+    /// DuckDB's `BaseStatistics::ToString`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.data {
+            StatsData::Base => {}
+            StatsData::Numeric(numeric) => write!(
+                f,
+                "[Min: {}, Max: {}]",
+                value_text(numeric.min.map(|min| min.to_value(&self.ty))),
+                value_text(numeric.max.map(|max| max.to_value(&self.ty)))
+            )?,
+            StatsData::String(string) => write!(
+                f,
+                "[Min: {}, Max: {}, Has Unicode: {}, Max String Length: {}]",
+                bound_text(&string.min),
+                bound_text(&string.max),
+                string.has_unicode,
+                if string.has_max_string_length {
+                    string.max_string_length.to_string()
+                } else {
+                    "?".to_owned()
+                }
+            )?,
+            StatsData::List(child) | StatsData::Array(child) => write!(f, "[{child}]")?,
+            StatsData::Struct(children) => {
+                f.write_str(" {")?;
+                let names = self.ty.struct_children().unwrap_or_default();
+                for (index, child) in children.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(", ")?;
+                    }
+                    let name = names.get(index).map_or("", |(name, _)| name.as_str());
+                    write!(f, "{name}: {child}")?;
+                }
+                f.write_str("}")?;
+            }
+        }
+        write!(
+            f,
+            "[Has Null: {}, Has No Null: {}]",
+            self.has_null, self.has_no_null
+        )?;
+        if self.distinct_count > 0 {
+            write!(f, "[Approx Unique: {}]", self.distinct_count)?;
+        }
+        Ok(())
     }
 }
 

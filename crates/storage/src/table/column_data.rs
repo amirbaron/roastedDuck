@@ -166,6 +166,31 @@ pub struct ColumnAppendState {
     child_appends: Vec<ColumnAppendState>,
 }
 
+/// One segment of a column as `pragma_storage_info` shows it (DuckDB's
+/// `ColumnSegmentInfo`).
+#[derive(Clone, Debug, Default)]
+pub struct ColumnSegmentInfo {
+    pub row_group_index: u64,
+    /// The top-level (physical) column.
+    pub column_id: u64,
+    /// The path to the (child) column, e.g. `[2, 1, 0]`.
+    pub column_path: String,
+    pub segment_idx: u64,
+    pub segment_type: String,
+    /// The first row of the segment, relative to its row group.
+    pub segment_start: u64,
+    pub segment_count: u64,
+    pub compression_type: String,
+    pub segment_stats: String,
+    pub has_updates: bool,
+    pub persistent: bool,
+    pub block_id: i64,
+    pub block_offset: u64,
+    /// Codec-specific details (overflow string blocks).
+    pub segment_info: String,
+    pub additional_blocks: Vec<i64>,
+}
+
 /// The data of one column of a row group.
 #[derive(Debug)]
 pub struct ColumnData {
@@ -353,6 +378,91 @@ impl ColumnData {
 
     fn update_segment(&self) -> Option<Arc<UpdateSegment>> {
         self.updates().clone()
+    }
+
+    /// Lists the segments of this column and its children (DuckDB's
+    /// `ColumnData::GetColumnSegmentInfo` and its overrides): struct and array columns
+    /// have no segments of their own.
+    pub fn column_segment_info(
+        &self,
+        row_group_index: u64,
+        col_path: &mut Vec<u64>,
+        out: &mut Vec<ColumnSegmentInfo>,
+    ) {
+        if !matches!(self.kind, ColumnKind::Struct { .. } | ColumnKind::Array { .. }) {
+            self.own_segment_info(row_group_index, col_path, out);
+        }
+        match &self.kind {
+            ColumnKind::Validity => {}
+            ColumnKind::Standard { validity } => {
+                col_path.push(0);
+                validity.column_segment_info(row_group_index, col_path, out);
+                col_path.pop();
+            }
+            ColumnKind::List { validity, child } | ColumnKind::Array { validity, child } => {
+                col_path.push(0);
+                validity.column_segment_info(row_group_index, col_path, out);
+                if let Some(last) = col_path.last_mut() {
+                    *last = 1;
+                }
+                child.column_segment_info(row_group_index, col_path, out);
+                col_path.pop();
+            }
+            ColumnKind::Struct { validity, fields } => {
+                col_path.push(0);
+                validity.column_segment_info(row_group_index, col_path, out);
+                for (index, field) in fields.iter().enumerate() {
+                    if let Some(last) = col_path.last_mut() {
+                        *last = index as u64 + 1;
+                    }
+                    field.column_segment_info(row_group_index, col_path, out);
+                }
+                col_path.pop();
+            }
+        }
+    }
+
+    /// The segments of this column itself.
+    fn own_segment_info(&self, row_group_index: u64, col_path: &[u64], out: &mut Vec<ColumnSegmentInfo>) {
+        let path = format!(
+            "[{}]",
+            col_path.iter().map(u64::to_string).collect::<Vec<_>>().join(", ")
+        );
+        let has_updates = self.has_updates();
+        for (segment_idx, node) in self.segments.nodes().iter().enumerate() {
+            let segment = &node.node;
+            let persistent = segment.segment_type() == crate::table::column_segment::SegmentType::Persistent;
+            let overflow: Vec<i64> = segment.overflow_blocks().to_vec();
+            let segment_info = if overflow.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "Overflow String Block Ids: {}",
+                    overflow.iter().map(i64::to_string).collect::<Vec<_>>().join(", ")
+                )
+            };
+            out.push(ColumnSegmentInfo {
+                row_group_index,
+                column_id: col_path.first().copied().unwrap_or_default(),
+                column_path: path.clone(),
+                segment_idx: segment_idx as u64,
+                segment_type: self.ty.to_string(),
+                segment_start: node.row_start,
+                segment_count: segment.count(),
+                compression_type: segment.compression().name().to_owned(),
+                segment_stats: segment.statistics().to_string(),
+                has_updates,
+                persistent,
+                block_id: if persistent { segment.block_id() } else { -1 },
+                block_offset: if persistent {
+                    segment.block_offset() as u64
+                } else {
+                    0
+                },
+                segment_info,
+                additional_blocks: overflow,
+            });
+        }
     }
 
     /// Whether this column (not its children) has updates.

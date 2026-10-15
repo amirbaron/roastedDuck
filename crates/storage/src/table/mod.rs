@@ -15,7 +15,8 @@ pub use chunk_info::{
     ChunkVectorInfo, DeletedRows, DeletedScanType, InsertedScanType, ScanOptions, UpdateScanType,
 };
 pub use column_data::{
-    ColumnAppendState, ColumnData, ColumnDataType, ColumnKind, ColumnScanState, UpdateRegistration,
+    ColumnAppendState, ColumnData, ColumnDataType, ColumnKind, ColumnScanState, ColumnSegmentInfo,
+    UpdateRegistration,
 };
 pub use column_segment::{ColumnSegment, SegmentScanState, SegmentType};
 pub use row_group::{DeleteRecord, RowGroup, RowGroupAppendState, TableScanType, UpdateRecord};
