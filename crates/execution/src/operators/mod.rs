@@ -24,6 +24,7 @@ mod streaming_window;
 mod table_scan;
 mod ungrouped_aggregate;
 mod union;
+mod unnest;
 mod update;
 mod window;
 
@@ -58,6 +59,7 @@ pub use streaming_window::{PhysicalStreamingWindow, StreamingWindowGlobalState, 
 pub use table_scan::{PhysicalTableScan, TableScanGlobal};
 pub use ungrouped_aggregate::{AggregateStates, PhysicalUngroupedAggregate, UngroupedGlobal, UngroupedLocal};
 pub use union::PhysicalUnion;
+pub use unnest::{PhysicalUnnest, UnnestState};
 pub use update::{PhysicalUpdate, UpdateGlobal};
 pub use window::{
     PhysicalWindow, WindowGlobalSinkState, WindowGlobalSourceState, WindowLocalSinkState,

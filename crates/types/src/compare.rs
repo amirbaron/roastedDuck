@@ -120,6 +120,33 @@ fn compare_strings(op: CompareOp, left: &Vector, right: &Vector, count: usize, r
     });
 }
 
+/// LIST/STRUCT/ARRAY comparisons: NULL at the top level gives NULL; inside, values
+/// compare element-wise with NULLs last and a shorter list before a longer one sharing
+/// its prefix (DuckDB's nested `PositionComparator`). Row by row through `Value`s.
+fn compare_nested(op: CompareOp, left: &Vector, right: &Vector, count: usize, result: &mut Vector) -> Result<()> {
+    let mut out = Vector::flat(LogicalType::BOOLEAN, count);
+    for row in 0..count {
+        if left.is_null(row) || right.is_null(row) {
+            out.validity_mut().set_invalid(row, count);
+            continue;
+        }
+        let ordering = left
+            .get_value(row)
+            .compare_not_distinct(&right.get_value(row))
+            .ok_or_else(|| Error::internal("comparison of differently stored nested values"))?;
+        out.values_mut::<bool>()[row] = match op {
+            CompareOp::Equal => ordering.is_eq(),
+            CompareOp::NotEqual => ordering.is_ne(),
+            CompareOp::LessThan => ordering.is_lt(),
+            CompareOp::LessThanOrEqual => ordering.is_le(),
+            CompareOp::GreaterThan => ordering.is_gt(),
+            CompareOp::GreaterThanOrEqual => ordering.is_ge(),
+        };
+    }
+    *result = out;
+    Ok(())
+}
+
 /// Computes `left <op> right` into a BOOLEAN vector; NULL inputs give NULL.
 pub fn compare(
     op: CompareOp,
@@ -151,6 +178,9 @@ pub fn compare(
         PhysicalType::Float => compare_native::<f32>(op, left, right, count, result),
         PhysicalType::Double => compare_native::<f64>(op, left, right, count, result),
         PhysicalType::Varchar => compare_strings(op, left, right, count, result),
+        PhysicalType::List | PhysicalType::Struct | PhysicalType::Array => {
+            compare_nested(op, left, right, count, result)?;
+        }
         other => {
             return Err(Error::not_implemented(format!(
                 "comparison of physical type {}",
