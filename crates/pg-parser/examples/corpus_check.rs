@@ -21,7 +21,7 @@ use std::fmt::Write as _;
 use std::time::Instant;
 
 use rustdb_common::ErrorKind;
-use rustdb_pg_parser::{nodes, parse, strip_unicode_spaces};
+use rustdb_pg_parser::{nodes, parse, strip_unicode_spaces, tokenize};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -125,7 +125,7 @@ fn compare(corpus: &[String], oracle_path: &str) -> Result<()> {
 }
 
 #[allow(clippy::cast_precision_loss)]
-fn bench(corpus: &[String], iterations: usize) {
+fn bench(corpus: &[String], iterations: usize, tokens_only: bool) {
     let queries: Vec<String> = corpus
         .iter()
         .map(|sql| strip_unicode_spaces(sql).unwrap_or_else(|| sql.clone()))
@@ -135,7 +135,11 @@ fn bench(corpus: &[String], iterations: usize) {
     let mut ok = 0;
     for _ in 0..iterations {
         for sql in &queries {
-            ok += usize::from(parse(sql).is_ok());
+            ok += if tokens_only {
+                usize::from(!tokenize(sql).is_empty())
+            } else {
+                usize::from(parse(sql).is_ok())
+            };
         }
     }
     let elapsed = start.elapsed().as_secs_f64();
@@ -156,7 +160,11 @@ fn main() -> Result<()> {
             .ok_or("usage: corpus_check <corpus> (<oracle.jsonl> | --bench N)")?,
     )?;
     match args.get(1).map(String::as_str) {
-        Some("--bench") => bench(&corpus, args.get(2).and_then(|n| n.parse().ok()).unwrap_or(10)),
+        Some(mode @ ("--bench" | "--bench-scanner")) => bench(
+            &corpus,
+            args.get(2).and_then(|n| n.parse().ok()).unwrap_or(10),
+            mode == "--bench-scanner",
+        ),
         Some(oracle) => compare(&corpus, oracle)?,
         None => return Err("missing oracle output or --bench".into()),
     }

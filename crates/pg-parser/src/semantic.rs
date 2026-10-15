@@ -88,9 +88,9 @@ semantic_value! {
     /// A list that distinguishes "absent" from "empty" (C: a list holding `NULL`).
     OptList(Option<List>) => opt_list,
     /// `select_limit`.
-    SelectLimit(SelectLimit) => select_limit,
+    SelectLimit(Box<SelectLimit>) => select_limit,
     /// `func_alias_clause`.
-    FuncAlias(FuncAlias) => func_alias,
+    FuncAlias(Box<FuncAlias>) => func_alias,
     /// `OptTemp`.
     RelPersistence(RelPersistence) => rel_persistence,
     /// `jtype`.
@@ -180,10 +180,17 @@ pub(crate) enum RuleAction {
     Call(Action, usize),
 }
 
+/// One entry of the parser stack: a state, plus the value and location of the
+/// symbol whose shift or reduction entered it (bison keeps three parallel stacks).
+pub(crate) struct StackEntry<'a> {
+    pub(crate) state: usize,
+    pub(crate) location: i32,
+    pub(crate) value: SemValue<'a>,
+}
+
 /// The right-hand side of the rule being reduced: `$1..$n`, `@1..@n` and `@$`.
 pub(crate) struct Reduction<'s, 'a> {
-    values: &'s mut [SemValue<'a>],
-    locations: &'s [i32],
+    rhs: &'s mut [StackEntry<'a>],
     /// `@$`, initialised to `@1` (or -1 for an empty rule) like `YYLLOC_DEFAULT`.
     pub(crate) location: i32,
     scanner: &'s Scanner<'a>,
@@ -191,16 +198,10 @@ pub(crate) struct Reduction<'s, 'a> {
 }
 
 impl<'s, 'a> Reduction<'s, 'a> {
-    pub(crate) fn new(
-        values: &'s mut [SemValue<'a>],
-        locations: &'s [i32],
-        scanner: &'s Scanner<'a>,
-        rule: usize,
-    ) -> Self {
-        let location = locations.first().copied().unwrap_or(-1);
+    pub(crate) fn new(rhs: &'s mut [StackEntry<'a>], scanner: &'s Scanner<'a>, rule: usize) -> Self {
+        let location = rhs.first().map_or(-1, |entry| entry.location);
         Self {
-            values,
-            locations,
+            rhs,
             location,
             scanner,
             rule,
@@ -209,7 +210,7 @@ impl<'s, 'a> Reduction<'s, 'a> {
 
     /// `@k`: the location of the k-th right-hand-side symbol.
     pub(crate) fn loc(&self, k: usize) -> i32 {
-        self.locations.get(k - 1).copied().unwrap_or(-1)
+        self.rhs.get(k - 1).map_or(-1, |entry| entry.location)
     }
 
     /// The scanner, for helpers that report errors at the current token.
@@ -218,7 +219,10 @@ impl<'s, 'a> Reduction<'s, 'a> {
     }
 
     fn take_value(&mut self, k: usize) -> SemValue<'a> {
-        self.values.get_mut(k - 1).map(std::mem::take).unwrap_or_default()
+        self.rhs
+            .get_mut(k - 1)
+            .map(|entry| std::mem::take(&mut entry.value))
+            .unwrap_or_default()
     }
 
     /// Takes `$k` as-is (bison's default action `$$ = $1`).

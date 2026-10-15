@@ -28,7 +28,7 @@ pub(super) fn select_no_parens<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
                 &mut select,
                 rhs.list(2)?,
                 rhs.list(3)?,
-                rhs.select_limit(4)?,
+                *rhs.select_limit(4)?,
                 None,
             )?;
             Ok(SemValue::node(select))
@@ -40,7 +40,7 @@ pub(super) fn select_no_parens<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
                 &mut select,
                 rhs.list(2)?,
                 rhs.list(4)?,
-                rhs.select_limit(3)?,
+                *rhs.select_limit(3)?,
                 None,
             )?;
             Ok(SemValue::node(select))
@@ -77,7 +77,7 @@ pub(super) fn select_no_parens<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
                 &mut select,
                 rhs.list(3)?,
                 rhs.list(4)?,
-                rhs.select_limit(5)?,
+                *rhs.select_limit(5)?,
                 with,
             )?;
             Ok(SemValue::node(select))
@@ -90,7 +90,7 @@ pub(super) fn select_no_parens<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
                 &mut select,
                 rhs.list(3)?,
                 rhs.list(5)?,
-                rhs.select_limit(4)?,
+                *rhs.select_limit(4)?,
                 with,
             )?;
             Ok(SemValue::node(select))
@@ -809,29 +809,29 @@ pub(super) fn opt_nulls_order<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
 pub(super) fn select_limit<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // limit_clause offset_clause
-        0 => Ok(SemValue::SelectLimit(SelectLimit {
+        0 => Ok(SemValue::SelectLimit(Box::new(SelectLimit {
             offset: rhs.node(2)?,
             count: rhs.node(1)?,
             offset_first: false,
-        })),
+        }))),
         // offset_clause limit_clause
-        1 => Ok(SemValue::SelectLimit(SelectLimit {
+        1 => Ok(SemValue::SelectLimit(Box::new(SelectLimit {
             offset: rhs.node(1)?,
             count: rhs.node(2)?,
             offset_first: true,
-        })),
+        }))),
         // limit_clause
-        2 => Ok(SemValue::SelectLimit(SelectLimit {
+        2 => Ok(SemValue::SelectLimit(Box::new(SelectLimit {
             offset: None,
             count: rhs.node(1)?,
             offset_first: true,
-        })),
+        }))),
         // offset_clause
-        3 => Ok(SemValue::SelectLimit(SelectLimit {
+        3 => Ok(SemValue::SelectLimit(Box::new(SelectLimit {
             offset: rhs.node(1)?,
             count: None,
             offset_first: true,
-        })),
+        }))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -846,7 +846,7 @@ pub(super) fn opt_select_limit<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
         // select_limit
         0 => Ok(SemValue::SelectLimit(rhs.select_limit(1)?)),
         // /* empty */
-        1 => Ok(SemValue::SelectLimit(SelectLimit::none())),
+        1 => Ok(SemValue::SelectLimit(Box::new(SelectLimit::none()))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -1494,7 +1494,7 @@ pub(super) fn table_ref<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
         // func_table func_alias_clause opt_tablesample_clause
         2 => {
             let mut function = rhs.take::<RangeFunction>(1)?;
-            let FuncAlias { alias, coldeflist } = rhs.func_alias(2)?;
+            let FuncAlias { alias, coldeflist } = *rhs.func_alias(2)?;
             function.alias = alias;
             function.coldeflist = coldeflist;
             function.sample = rhs.node(3)?;
@@ -1521,7 +1521,7 @@ pub(super) fn table_ref<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
         // LATERAL_P func_table func_alias_clause
         5 => {
             let mut function = rhs.take::<RangeFunction>(2)?;
-            let FuncAlias { alias, coldeflist } = rhs.func_alias(3)?;
+            let FuncAlias { alias, coldeflist } = *rhs.func_alias(3)?;
             function.lateral = true;
             function.alias = alias;
             function.coldeflist = coldeflist;
@@ -2008,25 +2008,25 @@ pub(super) fn opt_alias_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> R
 pub(super) fn func_alias_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // alias_clause
-        0 => Ok(SemValue::FuncAlias(FuncAlias {
+        0 => Ok(SemValue::FuncAlias(Box::new(FuncAlias {
             alias: rhs.ptr::<Alias>(1)?,
             coldeflist: List::new(),
-        })),
+        }))),
         // AS '(' TableFuncElementList ')'
-        1 => Ok(SemValue::FuncAlias(FuncAlias {
+        1 => Ok(SemValue::FuncAlias(Box::new(FuncAlias {
             alias: None,
             coldeflist: rhs.list(3)?,
-        })),
+        }))),
         // AS ColIdOrString '(' TableFuncElementList ')'
         2 => {
             let alias = Alias {
                 aliasname: rhs.str(2)?,
                 ..Default::default()
             };
-            Ok(SemValue::FuncAlias(FuncAlias {
+            Ok(SemValue::FuncAlias(Box::new(FuncAlias {
                 alias: Some(Box::new(alias)),
                 coldeflist: rhs.list(4)?,
-            }))
+            })))
         }
         // ColId '(' TableFuncElementList ')'
         3 => {
@@ -2034,13 +2034,13 @@ pub(super) fn func_alias_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> 
                 aliasname: rhs.str(1)?,
                 ..Default::default()
             };
-            Ok(SemValue::FuncAlias(FuncAlias {
+            Ok(SemValue::FuncAlias(Box::new(FuncAlias {
                 alias: Some(Box::new(alias)),
                 coldeflist: rhs.list(3)?,
-            }))
+            })))
         }
         // /* empty */
-        4 => Ok(SemValue::FuncAlias(FuncAlias::default())),
+        4 => Ok(SemValue::FuncAlias(Box::default())),
         _ => Err(rhs.bad_alternative()),
     }
 }

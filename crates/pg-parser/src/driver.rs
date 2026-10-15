@@ -10,7 +10,7 @@ use crate::actions::RULE_ACTIONS;
 use crate::error::internal;
 use crate::nodes::{List, Node, RawStmt};
 use crate::scanner::Scanner;
-use crate::semantic::{Reduction, RuleAction, SemValue};
+use crate::semantic::{Reduction, RuleAction, SemValue, StackEntry};
 use crate::tables::{
     YYCHECK, YYDEFACT, YYDEFGOTO, YYFINAL, YYLAST, YYMAXDEPTH, YYMAXUTOK, YYNTOKENS, YYPACT, YYPACT_NINF,
     YYPGOTO, YYR1, YYR2, YYTABLE, YYTABLE_NINF, YYTRANSLATE, YYUNDEFTOK,
@@ -47,42 +47,39 @@ enum Step {
     Error,
 }
 
-/// The parser stacks: states, semantic values and locations, kept the same height.
-///
-/// Values left on the stack when a parse fails are torn down without recursion,
-/// since they may hold arbitrarily deep expression trees.
-struct Stack<'a> {
-    states: Vec<usize>,
-    values: Vec<SemValue<'a>>,
-    locations: Vec<i32>,
-}
+/// The parser stack. Values left on it when a parse fails are torn down without
+/// recursion, since they may hold arbitrarily deep expression trees.
+struct Stack<'a>(Vec<StackEntry<'a>>);
 
-impl<'a> Stack<'a> {
+impl Stack<'_> {
     fn new() -> Self {
-        let mut stack = Self {
-            states: Vec::with_capacity(INITIAL_STACK_CAPACITY),
-            values: Vec::with_capacity(INITIAL_STACK_CAPACITY),
-            locations: Vec::with_capacity(INITIAL_STACK_CAPACITY),
-        };
-        // The bottom value/location slots are never read (bison "wastes" them).
-        stack.push(0, SemValue::None, 0);
-        stack
+        let mut entries = Vec::with_capacity(INITIAL_STACK_CAPACITY);
+        // The bottom value/location slot is never read (bison "wastes" it).
+        entries.push(StackEntry {
+            state: 0,
+            location: 0,
+            value: SemValue::None,
+        });
+        Self(entries)
     }
 
     fn top(&self) -> usize {
-        self.states.last().copied().unwrap_or(0)
-    }
-
-    fn push(&mut self, state: usize, value: SemValue<'a>, location: i32) {
-        self.states.push(state);
-        self.values.push(value);
-        self.locations.push(location);
+        self.0.last().map_or(0, |entry| entry.state)
     }
 }
 
 impl Drop for Stack<'_> {
     fn drop(&mut self) {
-        self.values.drain(..).for_each(SemValue::drop_tree);
+        self.0.drain(..).for_each(|entry| entry.value.drop_tree());
+    }
+}
+
+/// `yygoto`: the state after reducing to nonterminal `symbol` on top of `state`.
+fn goto(symbol: usize, state: usize) -> Result<usize> {
+    let lhs = symbol - YYNTOKENS;
+    match packed(YYPGOTO[lhs], state) {
+        Some(target) => Ok(usize::from(target.unsigned_abs())),
+        None => usize::try_from(YYDEFGOTO[lhs]).map_err(|_| internal("bad goto")),
     }
 }
 
@@ -94,7 +91,7 @@ pub(crate) fn parse(scanner: &mut Scanner<'_>) -> Result<List> {
     let mut lookahead: Option<(usize, SemValue<'_>, i32)> = None;
 
     loop {
-        if stack.states.len() >= YYMAXDEPTH {
+        if stack.0.len() >= YYMAXDEPTH {
             return Err(scanner.syntax_error("memory exhausted"));
         }
         let state = stack.top();
@@ -128,7 +125,11 @@ pub(crate) fn parse(scanner: &mut Scanner<'_>) -> Result<List> {
                 let (_, value, location) = lookahead
                     .take()
                     .ok_or_else(|| internal("shift without lookahead"))?;
-                stack.push(target, value, location);
+                stack.0.push(StackEntry {
+                    state: target,
+                    location,
+                    value,
+                });
                 continue;
             }
             Some(Step::Accept) => break,
@@ -141,32 +142,34 @@ pub(crate) fn parse(scanner: &mut Scanner<'_>) -> Result<List> {
         };
 
         // yyreduce: run the rule's action on the top `len` entries.
-        let base = stack.states.len() - usize::from(YYR2[rule]);
-        let (value, location) = {
-            let mut rhs = Reduction::new(&mut stack.values[base..], &stack.locations[base..], scanner, rule);
-            let value = match RULE_ACTIONS[rule] {
-                RuleAction::Default => rhs.take_raw(1),
-                RuleAction::Forward(k) => rhs.take_raw(k),
-                RuleAction::Call(action, alt) => action(&mut rhs, alt)?,
-            };
-            (value, rhs.location)
+        let len = usize::from(YYR2[rule]);
+        let base = stack.0.len() - len;
+        let lhs = usize::from(YYR1[rule]);
+        let action = RULE_ACTIONS[rule];
+        if len == 1 && matches!(action, RuleAction::Default) {
+            // `$$ = $1` and `@$ = @1`: the value and location stay where they are.
+            let below = stack.0[base - 1].state;
+            stack.0[base].state = goto(lhs, below)?;
+            continue;
+        }
+        let mut rhs = Reduction::new(&mut stack.0[base..], scanner, rule);
+        let value = match action {
+            RuleAction::Default => rhs.take_raw(1),
+            RuleAction::Forward(k) => rhs.take_raw(k),
+            RuleAction::Call(action, alt) => action(&mut rhs, alt)?,
         };
-        stack.states.truncate(base);
-        stack.values.truncate(base);
-        stack.locations.truncate(base);
-
-        // Goto the state for the reduced nonterminal.
-        let lhs = usize::from(YYR1[rule]) - YYNTOKENS;
-        let top = stack.top();
-        let next = match packed(YYPGOTO[lhs], top) {
-            Some(target) => usize::from(target.unsigned_abs()),
-            None => usize::try_from(YYDEFGOTO[lhs]).map_err(|_| internal("bad goto"))?,
-        };
-        stack.push(next, value, location);
+        let location = rhs.location;
+        stack.0.truncate(base);
+        let state = goto(lhs, stack.top())?;
+        stack.0.push(StackEntry {
+            state,
+            location,
+            value,
+        });
     }
 
     // Accepted: the value of `stmtblock` is on top of the stack.
-    match stack.values.pop() {
+    match stack.0.pop().map(|entry| entry.value) {
         Some(SemValue::List(list)) => Ok(list),
         _ => Err(internal("parser accepted without a statement list")),
     }
