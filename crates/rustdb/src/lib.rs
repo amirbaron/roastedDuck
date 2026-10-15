@@ -12,6 +12,7 @@
 mod config;
 mod database;
 mod result;
+mod settings;
 mod transaction;
 
 pub use config::{AccessMode, Config};

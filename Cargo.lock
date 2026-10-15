@@ -412,9 +412,11 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "rustdb"
 version = "1.5.6"
 dependencies = [
+ "rustdb-ast",
  "rustdb-catalog",
  "rustdb-common",
  "rustdb-execution",
+ "rustdb-function",
  "rustdb-functions",
  "rustdb-planner",
  "rustdb-types",
