@@ -25,6 +25,15 @@ pub(crate) fn template(name: &str) -> LogicalType {
     )
 }
 
+/// The concrete type of a literal type (DuckDB's `LogicalType::NormalizeType`).
+pub(crate) fn normalize_type(ty: &LogicalType) -> LogicalType {
+    match ty.id() {
+        LogicalTypeId::StringLiteral => LogicalType::VARCHAR,
+        LogicalTypeId::IntegerLiteral => ty.integer_literal_type().cloned().unwrap_or(LogicalType::INTEGER),
+        _ => ty.clone(),
+    }
+}
+
 /// A type id without type parameters (`DECIMAL`, `LIST`, ... as in `LogicalTypeId::DECIMAL`
 /// signatures), matched by any concrete type with that id.
 pub(crate) fn type_id(id: LogicalTypeId) -> LogicalType {

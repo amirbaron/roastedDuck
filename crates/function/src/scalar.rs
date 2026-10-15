@@ -48,6 +48,9 @@ pub struct BindInput<'a> {
     pub argument_types: &'a [LogicalType],
     /// The value of each argument that is a foldable constant, `None` otherwise.
     pub constants: &'a [Option<Value>],
+    /// The alias of each argument expression (`a := x` names, or the column name of a
+    /// column reference).
+    pub aliases: &'a [String],
 }
 
 /// Specialises a chosen overload for a call (DuckDB's `bind_scalar_function_t`).

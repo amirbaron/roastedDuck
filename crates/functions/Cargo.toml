@@ -12,6 +12,8 @@ rustdb-types.workspace = true
 rustdb-function = { path = "../function" }
 rustdb-row = { path = "../row" }
 rustdb-buffer = { path = "../buffer" }
+unicode-segmentation = "1"
+unicode-normalization = "0.1"
 
 [lints]
 workspace = true
