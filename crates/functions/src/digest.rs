@@ -11,13 +11,10 @@ pub(crate) fn md5(input: &[u8]) -> [u8; 16] {
 /// Pads `input` into 64-byte blocks with the big-endian bit length (shared by SHA-1 and
 /// SHA-256) and feeds each block to `compress`.
 fn for_each_block(input: &[u8], mut compress: impl FnMut(&[u8; 64])) {
-    let mut chunks = input.chunks_exact(64);
-    for block in &mut chunks {
-        let mut buffer = [0u8; 64];
-        buffer.copy_from_slice(block);
-        compress(&buffer);
+    let (blocks, remainder) = input.as_chunks::<64>();
+    for block in blocks {
+        compress(block);
     }
-    let remainder = chunks.remainder();
     let bit_length = (input.len() as u64).wrapping_mul(8);
     let mut tail = [0u8; 128];
     tail[..remainder.len()].copy_from_slice(remainder);
@@ -25,19 +22,21 @@ fn for_each_block(input: &[u8], mut compress: impl FnMut(&[u8; 64])) {
     let blocks = if remainder.len() + 1 + 8 > 64 { 2 } else { 1 };
     let end = blocks * 64;
     tail[end - 8..end].copy_from_slice(&bit_length.to_be_bytes());
-    for block in tail[..end].chunks_exact(64) {
-        let mut buffer = [0u8; 64];
-        buffer.copy_from_slice(block);
-        compress(&buffer);
+    for block in tail[..end].as_chunks::<64>().0 {
+        compress(block);
     }
 }
 
 /// The SHA-1 digest of `input`.
+#[allow(
+    clippy::many_single_char_names,
+    reason = "the working variables of FIPS 180-4"
+)]
 pub(crate) fn sha1(input: &[u8]) -> [u8; 20] {
     let mut state: [u32; 5] = [0x6745_2301, 0xEFCD_AB89, 0x98BA_DCFE, 0x1032_5476, 0xC3D2_E1F0];
     for_each_block(input, |block| {
         let mut w = [0u32; 80];
-        for (i, word) in block.chunks_exact(4).enumerate() {
+        for (i, word) in block.as_chunks::<4>().0.iter().enumerate() {
             w[i] = u32::from_be_bytes([word[0], word[1], word[2], word[3]]);
         }
         for i in 16..80 {
@@ -68,7 +67,7 @@ pub(crate) fn sha1(input: &[u8]) -> [u8; 20] {
         }
     });
     let mut digest = [0u8; 20];
-    for (chunk, value) in digest.chunks_exact_mut(4).zip(state) {
+    for (chunk, value) in digest.as_chunks_mut::<4>().0.iter_mut().zip(state) {
         chunk.copy_from_slice(&value.to_be_bytes());
     }
     digest
@@ -142,6 +141,10 @@ const SHA256_K: [u32; 64] = [
 ];
 
 /// The SHA-256 digest of `input`.
+#[allow(
+    clippy::many_single_char_names,
+    reason = "the working variables of FIPS 180-4"
+)]
 pub(crate) fn sha256(input: &[u8]) -> [u8; 32] {
     let mut state: [u32; 8] = [
         0x6a09_e667,
@@ -155,7 +158,7 @@ pub(crate) fn sha256(input: &[u8]) -> [u8; 32] {
     ];
     for_each_block(input, |block| {
         let mut w = [0u32; 64];
-        for (i, word) in block.chunks_exact(4).enumerate() {
+        for (i, word) in block.as_chunks::<4>().0.iter().enumerate() {
             w[i] = u32::from_be_bytes([word[0], word[1], word[2], word[3]]);
         }
         for i in 16..64 {
@@ -189,7 +192,7 @@ pub(crate) fn sha256(input: &[u8]) -> [u8; 32] {
         }
     });
     let mut digest = [0u8; 32];
-    for (chunk, value) in digest.chunks_exact_mut(4).zip(state) {
+    for (chunk, value) in digest.as_chunks_mut::<4>().0.iter_mut().zip(state) {
         chunk.copy_from_slice(&value.to_be_bytes());
     }
     digest

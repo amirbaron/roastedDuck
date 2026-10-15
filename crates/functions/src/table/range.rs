@@ -9,7 +9,9 @@ use rustdb_function::{
     FunctionData, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet,
     TableScanState,
 };
-use rustdb_types::{DataChunk, LogicalType, Value, Vector};
+use rustdb_types::{DataChunk, Interval, LogicalType, Timestamp, Value, Vector};
+
+use crate::temporal::timestamp_add_interval;
 
 /// The constant arguments of one call (the input row of DuckDB's in-out function).
 #[derive(Debug)]
@@ -142,19 +144,138 @@ fn integer_overload(name: &'static str, arguments: usize, generate_series: bool)
     function
 }
 
-/// One timestamp overload (`range(TIMESTAMP, TIMESTAMP, INTERVAL)`); its rows are not
-/// produced yet.
-fn timestamp_overload(name: &'static str, timestamp: LogicalType) -> TableFunction {
-    let return_type = timestamp.clone();
+/// The timestamp range of one call (DuckDB's `RangeDateTimeLocalState`), or `None` for
+/// an empty range.
+#[derive(Debug)]
+struct TimestampRange {
+    start: Timestamp,
+    end: Timestamp,
+    increment: Interval,
+    /// Whether the range ascends (DuckDB's `greater_than_check`).
+    ascending: bool,
+    inclusive: bool,
+}
+
+impl TimestampRange {
+    /// DuckDB's `RangeDateTimeLocalState::Finished`.
+    fn finished(&self, current: Timestamp) -> bool {
+        match (self.ascending, self.inclusive) {
+            (true, true) => current > self.end,
+            (true, false) => current >= self.end,
+            (false, true) => current < self.end,
+            (false, false) => current <= self.end,
+        }
+    }
+}
+
+/// DuckDB's `GenerateRangeDateTimeParameters`.
+fn timestamp_range(inputs: &[Value], inclusive: bool) -> Result<Option<TimestampRange>> {
+    if inputs.iter().any(Value::is_null) {
+        return Ok(None);
+    }
+    let bound = |value: &Value| {
+        value
+            .as_timestamp()
+            .ok_or_else(|| Error::internal("range bound is not a timestamp"))
+    };
+    let (start, end) = (bound(&inputs[0])?, bound(&inputs[1])?);
+    let increment = inputs[2]
+        .as_interval()
+        .ok_or_else(|| Error::internal("range step is not an interval"))?;
+    if !start.is_finite() || !end.is_finite() {
+        return Err(Error::binder("RANGE with infinite bounds is not supported"));
+    }
+    if increment.months == 0 && increment.days == 0 && increment.micros == 0 {
+        return Err(Error::binder("interval cannot be 0!"));
+    }
+    let ascending = increment.months > 0 || increment.days > 0 || increment.micros > 0;
+    if ascending && (increment.months < 0 || increment.days < 0 || increment.micros < 0) {
+        return Err(Error::binder(
+            "RANGE with composite interval that has mixed signs is not supported",
+        ));
+    }
+    let empty = if ascending { start > end } else { start < end };
+    Ok((!empty).then_some(TimestampRange {
+        start,
+        end,
+        increment,
+        ascending,
+        inclusive,
+    }))
+}
+
+/// DuckDB's `RangeDateTimeFunction`: up to `STANDARD_VECTOR_SIZE` timestamps per call;
+/// the scan state keeps the next timestamp.
+fn timestamp_range_scan(
+    bind_data: Option<&dyn FunctionData>,
+    _: &[u64],
+    state: &mut TableScanState,
+    chunk: &mut DataChunk,
+) -> Result<bool> {
+    let bind_data = bind_data
+        .and_then(|data| data.as_any().downcast_ref::<RangeBindData>())
+        .ok_or_else(|| Error::internal("range scan without bind data"))?;
+    let mut output = Vector::flat(LogicalType::TIMESTAMP, STANDARD_VECTOR_SIZE);
+    let Some(range) = timestamp_range(&bind_data.inputs, bind_data.generate_series)? else {
+        chunk.set_columns(vec![output], 0);
+        return Ok(false);
+    };
+    let mut current = match state
+        .local
+        .as_ref()
+        .and_then(|local| local.downcast_ref::<Timestamp>())
+    {
+        Some(&next) => next,
+        None => range.start,
+    };
+    let mut count = 0;
+    {
+        let values = output.values_mut::<Timestamp>();
+        while count < STANDARD_VECTOR_SIZE && !range.finished(current) {
+            values[count] = current;
+            count += 1;
+            current = timestamp_add_interval(current, range.increment)?;
+        }
+    }
+    state.local = Some(Box::new(current));
+    state.position += count as u64;
+    chunk.set_columns(vec![output], count);
+    Ok(count == STANDARD_VECTOR_SIZE)
+}
+
+/// One timestamp overload (`range(TIMESTAMP, TIMESTAMP, INTERVAL)`).
+fn timestamp_overload(name: &'static str, generate_series: bool) -> TableFunction {
+    let timestamp = LogicalType::TIMESTAMP;
+    let mut function = TableFunction::new(name, vec![timestamp.clone(), timestamp, LogicalType::INTERVAL])
+        .with_bind(move |input: &TableFunctionBindInput<'_>| {
+            let bind_data: Arc<dyn FunctionData> = Arc::new(RangeBindData {
+                inputs: input.inputs.to_vec(),
+                generate_series,
+            });
+            Ok(TableFunctionBindOutput {
+                return_types: vec![LogicalType::TIMESTAMP],
+                names: vec![name.to_owned()],
+                bind_data: Some(bind_data),
+            })
+        })
+        .with_scan(timestamp_range_scan);
+    function.in_out = true;
+    function
+}
+
+/// The ICU `TIMESTAMP WITH TIME ZONE` overload; its rows are not produced (ICU is not
+/// ported).
+fn timestamp_tz_overload(name: &'static str) -> TableFunction {
+    let timestamp = LogicalType::TIMESTAMP_TZ;
     let mut function = TableFunction::new(name, vec![timestamp.clone(), timestamp, LogicalType::INTERVAL])
         .with_bind(move |_: &TableFunctionBindInput<'_>| {
             Ok(TableFunctionBindOutput {
-                return_types: vec![return_type.clone()],
+                return_types: vec![LogicalType::TIMESTAMP_TZ],
                 names: vec![name.to_owned()],
                 bind_data: None,
             })
         })
-        .with_scan(|_, _, _, _| Err(Error::not_implemented("timestamp ranges")));
+        .with_scan(|_, _, _, _| Err(Error::not_implemented("TIMESTAMP WITH TIME ZONE ranges (ICU)")));
     function.in_out = true;
     function
 }
@@ -165,8 +286,8 @@ fn range_set(name: &'static str, generate_series: bool) -> TableFunctionSet {
     for arguments in 1..=3 {
         set.add(integer_overload(name, arguments, generate_series));
     }
-    set.add(timestamp_overload(name, LogicalType::TIMESTAMP));
-    set.add(timestamp_overload(name, LogicalType::TIMESTAMP_TZ));
+    set.add(timestamp_overload(name, generate_series));
+    set.add(timestamp_tz_overload(name));
     set
 }
 

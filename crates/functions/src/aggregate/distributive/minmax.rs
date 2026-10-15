@@ -119,23 +119,22 @@ impl<K: StoredKind, const GREATER: bool> Aggregate for StoredMinMax<K, GREATER> 
         result: &mut Vector,
         row: usize,
     ) -> Result<()> {
-        match state {
-            Some(value) => K::write(value, result, row),
-            None => {
-                let capacity = result.capacity();
-                result.validity_mut().set_invalid(row, capacity);
-                Ok(())
-            }
+        if let Some(value) = state {
+            K::write(value, result, row)
+        } else {
+            let capacity = result.capacity();
+            result.validity_mut().set_invalid(row, capacity);
+            Ok(())
         }
     }
 }
 
 /// The `min` (or `max`) aggregate over `ty` (DuckDB's `GetMinMaxOperator`).
 pub fn min_max_function<const MAX: bool>(ty: &LogicalType) -> AggregateFunction {
+    use rustdb_types::PhysicalType as P;
     let name = if MAX { "max" } else { "min" };
     let args = vec![ty.clone()];
     let ret = ty.clone();
-    use rustdb_types::PhysicalType as P;
     let function = match ty.physical_type() {
         P::Varchar => AggregateFunction::new(name, args, ret, Typed(StoredMinMax::<Bytes, MAX>(PhantomData))),
         P::Interval => AggregateFunction::new(
@@ -347,6 +346,7 @@ fn bind_min_max_n<const MAX: bool>(
     function: &mut AggregateFunction,
     input: &BindInput<'_>,
 ) -> Result<Option<Arc<dyn FunctionData>>> {
+    use rustdb_types::PhysicalType as P;
     if input
         .argument_types
         .iter()
@@ -355,7 +355,6 @@ fn bind_min_max_n<const MAX: bool>(
         return Err(crate::parameter_not_resolved());
     }
     let ty = input.argument_types[0].clone();
-    use rustdb_types::PhysicalType as P;
     let ops: Arc<dyn AggregateOps> = match ty.physical_type() {
         P::Varchar => Arc::new(Typed(MinMaxN::<Bytes, MAX>(PhantomData))),
         P::Int32 => Arc::new(Typed(MinMaxN::<Fixed<i32>, MAX>(PhantomData))),

@@ -310,8 +310,13 @@ impl<'a> TableFunctionBinder<'a> {
                 .iter()
                 .rposition(|binding| binding.has_matching_binding(&names[0]))
             {
-                let binding = &mut self.base.state.lambda_bindings[index];
-                return Ok(binding.bind(&names[0], "", depth)?.into());
+                return Ok(crate::binder::expression::bind_lambda_parameter(
+                    &mut self.base.state.lambda_bindings,
+                    index as u64,
+                    &names[0],
+                    depth,
+                )?
+                .into());
             }
             if macro_parameter {
                 return Err(parameter_not_resolved());

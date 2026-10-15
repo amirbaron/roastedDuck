@@ -293,11 +293,23 @@ impl FunctionSignature for TableFunction {
 #[derive(Debug)]
 pub struct FunctionBinder<'a> {
     context: &'a ClientContext,
+    /// The lambda argument of the call being bound, for lambda functions.
+    lambda: Option<rustdb_function::LambdaInput>,
 }
 
 impl<'a> FunctionBinder<'a> {
     pub fn new(context: &'a ClientContext) -> Self {
-        Self { context }
+        Self {
+            context,
+            lambda: None,
+        }
+    }
+
+    /// A binder for a lambda function call whose lambda argument is `lambda`.
+    #[must_use]
+    pub fn with_lambda(mut self, lambda: rustdb_function::LambdaInput) -> Self {
+        self.lambda = Some(lambda);
+        self
     }
 
     fn implicit_cast_cost(&self, from: &LogicalType, to: &LogicalType) -> i64 {
@@ -483,7 +495,8 @@ impl<'a> FunctionBinder<'a> {
         };
         let function = functions.functions[index].clone();
         if function.null_handling == NullHandling::Default {
-            let null_type = if function.return_type.is_valid() {
+            // DuckDB's `IsComplete`: templates count as incomplete too.
+            let null_type = if function.return_type.is_valid() && !is_templated(&function.return_type) {
                 function.return_type.clone()
             } else {
                 LogicalType::SQLNULL
@@ -520,14 +533,18 @@ impl<'a> FunctionBinder<'a> {
         if let Some(bind) = function.bind.clone() {
             let (argument_types, constants) = self.bind_input(&children);
             let aliases: Vec<String> = children.iter().map(|child| child.alias.clone()).collect();
+            let names: Vec<String> = children.iter().map(expression_name).collect();
             bind_info = bind(
                 &mut function,
                 &BindInput {
                     argument_types: &argument_types,
                     constants: &constants,
                     aliases: &aliases,
+                    names: &names,
                     client: &self.context.function_client,
                     binder: Some(self.context as &dyn std::any::Any),
+                    aggregates: Some(self.context as &dyn rustdb_function::AggregateResolver),
+                    lambda: self.lambda.as_ref(),
                 },
             )?;
             // The bind may have dropped trailing arguments (DuckDB's `EraseArgument`).
@@ -569,14 +586,18 @@ impl<'a> FunctionBinder<'a> {
         if let Some(bind) = function.bind.clone() {
             let (argument_types, constants) = self.bind_input(&children);
             let aliases: Vec<String> = children.iter().map(|child| child.alias.clone()).collect();
+            let names: Vec<String> = children.iter().map(expression_name).collect();
             bind_info = bind(
                 &mut function,
                 &BindInput {
                     argument_types: &argument_types,
                     constants: &constants,
                     aliases: &aliases,
+                    names: &names,
                     client: &self.context.function_client,
                     binder: Some(self.context as &dyn std::any::Any),
+                    aggregates: Some(self.context as &dyn rustdb_function::AggregateResolver),
+                    lambda: self.lambda.as_ref(),
                 },
             )?;
             // The bind may have dropped arguments.
@@ -679,7 +700,38 @@ fn template_name(ty: &LogicalType) -> Option<&str> {
 }
 
 fn is_templated(ty: &LogicalType) -> bool {
-    ty.id() == LogicalTypeId::Template || ty.child_type().is_some_and(is_templated)
+    ty.id() == LogicalTypeId::Template
+        || ty.child_type().is_some_and(is_templated)
+        || ty.array_child().is_some_and(|(child, _)| is_templated(child))
+        || ty
+            .struct_children()
+            .is_some_and(|children| children.iter().any(|(_, child)| is_templated(child)))
+}
+
+/// Binds every unbound template inside `source` to `actual` (DuckDB's handling of
+/// UNKNOWN/SQLNULL arguments in `InferTemplateType`).
+fn bind_remaining_templates(
+    source: &LogicalType,
+    actual: &LogicalType,
+    bindings: &mut CaseInsensitiveMap<LogicalType>,
+) {
+    if let Some(name) = template_name(source) {
+        if bindings.get(name).is_none() {
+            bindings.insert(name.to_owned(), LogicalType::simple(actual.id()));
+        }
+        return;
+    }
+    if let Some(child) = source.child_type() {
+        bind_remaining_templates(child, actual, bindings);
+    }
+    if let Some((child, _)) = source.array_child() {
+        bind_remaining_templates(child, actual, bindings);
+    }
+    if let Some(children) = source.struct_children() {
+        for (_, child) in children {
+            bind_remaining_templates(child, actual, bindings);
+        }
+    }
 }
 
 /// Infers template bindings from an argument (DuckDB's `InferTemplateType`, for top-level
@@ -689,6 +741,10 @@ fn infer_template(
     actual: &LogicalType,
     bindings: &mut CaseInsensitiveMap<LogicalType>,
 ) {
+    if matches!(actual.id(), LogicalTypeId::Unknown | LogicalTypeId::SqlNull) {
+        bind_remaining_templates(source, actual, bindings);
+        return;
+    }
     if let Some(name) = template_name(source) {
         let new = match bindings.get(name) {
             None => actual.clone(),
@@ -704,6 +760,26 @@ fn infer_template(
         && let (Some(source_child), Some(actual_child)) = (source.child_type(), actual.child_type())
     {
         infer_template(source_child, actual_child, bindings);
+        return;
+    }
+    if source.id() == LogicalTypeId::Map && actual.id() == LogicalTypeId::Map {
+        if let (Some((source_key, source_value)), Some((actual_key, actual_value))) =
+            (source.map_key_value(), actual.map_key_value())
+        {
+            infer_template(source_key, actual_key, bindings);
+            infer_template(source_value, actual_value, bindings);
+        }
+        return;
+    }
+    if source.id() == LogicalTypeId::Struct
+        && actual.id() == LogicalTypeId::Struct
+        && let (Some(source_children), Some(actual_children)) =
+            (source.struct_children(), actual.struct_children())
+        && source_children.iter().all(|(name, _)| name.is_empty())
+    {
+        for ((_, source_child), (_, actual_child)) in source_children.iter().zip(actual_children) {
+            infer_template(source_child, actual_child, bindings);
+        }
     }
 }
 
@@ -721,6 +797,22 @@ fn substitute_template(ty: &LogicalType, bindings: &CaseInsensitiveMap<LogicalTy
         ),
         LogicalTypeId::Array => match ty.array_child() {
             Some((child, size)) => LogicalType::array(substitute_template(child, bindings), size),
+            None => ty.clone(),
+        },
+        LogicalTypeId::Map => match ty.map_key_value() {
+            Some((key, value)) => LogicalType::map(
+                substitute_template(key, bindings),
+                substitute_template(value, bindings),
+            ),
+            None => ty.clone(),
+        },
+        LogicalTypeId::Struct => match ty.struct_children() {
+            Some(children) => LogicalType::struct_type(
+                children
+                    .iter()
+                    .map(|(name, child)| (name.clone(), substitute_template(child, bindings)))
+                    .collect(),
+            ),
             None => ty.clone(),
         },
         _ => ty.clone(),
@@ -786,4 +878,64 @@ fn unresolved_template(ty: &LogicalType) -> Option<String> {
     template_name(ty)
         .map(ToOwned::to_owned)
         .or_else(|| ty.child_type().and_then(unresolved_template))
+        .or_else(|| ty.array_child().and_then(|(child, _)| unresolved_template(child)))
+        .or_else(|| {
+            ty.struct_children()
+                .and_then(|children| children.iter().find_map(|(_, child)| unresolved_template(child)))
+        })
+}
+
+/// DuckDB's `Expression::GetName`: the alias, or the expression's SQL text.
+fn expression_name(expression: &Expression) -> String {
+    if expression.alias.is_empty() {
+        expression.to_string()
+    } else {
+        expression.alias.clone()
+    }
+}
+
+/// Aggregate resolution for scalar functions that run an aggregate (`list_aggregate`):
+/// DuckDB's `Catalog::GetSystemCatalog(context).GetEntry<AggregateFunctionCatalogEntry>`,
+/// `FunctionBinder::BindFunction` and `FunctionBinder::BindAggregateFunction`.
+impl rustdb_function::AggregateResolver for ClientContext {
+    fn bind_aggregate(
+        &self,
+        name: &str,
+        arguments: &[(LogicalType, Option<Value>)],
+    ) -> Result<rustdb_function::BoundAggregateFunction> {
+        let lookup = self
+            .get_entry(
+                "system",
+                "main",
+                rustdb_catalog::CatalogType::AggregateFunction,
+                name,
+                false,
+            )?
+            .ok_or_else(|| Error::internal("aggregate lookup returned nothing"))?;
+        let rustdb_catalog::EntryKind::AggregateFunction(functions) = &lookup.entry.kind else {
+            return Err(Error::catalog(format!("{name} is not an aggregate function")));
+        };
+        let binder = FunctionBinder::new(self);
+        let types: Vec<LogicalType> = arguments.iter().map(|(ty, _)| ty.clone()).collect();
+        let function = binder
+            .bind_aggregate_overload(functions, &types)?
+            .map_err(|error| Error::binder(format!("No matching aggregate function\n{error}")))?;
+        let children = arguments
+            .iter()
+            .map(|(ty, value)| Expression::constant(value.clone().unwrap_or_else(|| Value::null(ty.clone()))))
+            .collect();
+        let bound =
+            binder.bind_aggregate_function(function, children, None, AggregateType::NonDistinct, None)?;
+        let display = bound.to_string();
+        let ExpressionKind::Aggregate(aggregate) = bound.kind else {
+            return Err(Error::internal("aggregate binding did not produce an aggregate"));
+        };
+        let aggregate = *aggregate;
+        Ok(rustdb_function::BoundAggregateFunction {
+            argument_count: aggregate.children.len(),
+            display,
+            function: aggregate.function,
+            bind_data: aggregate.bind_info,
+        })
+    }
 }

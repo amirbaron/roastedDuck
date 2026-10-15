@@ -76,12 +76,11 @@ struct BitStringAgg {
 
 impl BitStringAgg {
     fn offer(&self, state: &mut Option<Vec<u8>>, value: &[u8]) -> Result<()> {
-        match state {
-            Some(current) => bitwise_in_place(self.op, current, value),
-            None => {
-                *state = Some(value.to_vec());
-                Ok(())
-            }
+        if let Some(current) = state {
+            bitwise_in_place(self.op, current, value)
+        } else {
+            *state = Some(value.to_vec());
+            Ok(())
         }
     }
 }
@@ -130,15 +129,12 @@ impl Aggregate for BitStringAgg {
         result: &mut Vector,
         row: usize,
     ) -> Result<()> {
-        match state {
-            Some(value) => {
-                let string = result.add_string(value);
-                result.values_mut::<StringT>()[row] = string;
-            }
-            None => {
-                let capacity = result.capacity();
-                result.validity_mut().set_invalid(row, capacity);
-            }
+        if let Some(value) = state {
+            let string = result.add_string(value);
+            result.values_mut::<StringT>()[row] = string;
+        } else {
+            let capacity = result.capacity();
+            result.validity_mut().set_invalid(row, capacity);
         }
         Ok(())
     }

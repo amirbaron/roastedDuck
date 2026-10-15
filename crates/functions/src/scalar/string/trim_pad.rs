@@ -171,7 +171,7 @@ fn is_space_separator(code: i64) -> bool {
 }
 
 /// Trims leading and/or trailing code points for which `trimmed` holds.
-fn trim<'a>(input: &'a [u8], left: bool, right: bool, trimmed: impl Fn(i64) -> bool) -> &'a [u8] {
+fn trim(input: &[u8], left: bool, right: bool, trimmed: impl Fn(i64) -> bool) -> &[u8] {
     let mut begin = 0;
     if left {
         for (code, bytes) in code_points(input) {

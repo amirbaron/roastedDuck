@@ -3,7 +3,7 @@
 //! These rules only look at types, so they live next to [`LogicalType`]; the binder uses
 //! them for overload resolution and to find the common type of expressions.
 
-use crate::{LogicalType, LogicalTypeId, Value};
+use crate::{LogicalType, LogicalTypeId, TypeInfo, Value};
 
 /// The preference of a target type when several implicit casts are possible
 /// (DuckDB's `TargetTypeCost`). Lower is preferred.
@@ -23,8 +23,11 @@ fn target_type_cost(ty: &LogicalType) -> i64 {
         L::TimestampTz => 123,
         L::Varchar => 149,
         L::Struct | L::Map | L::List | L::Union | L::Array => 160,
-        // `ANY` without a custom cast score.
-        L::Any => 5,
+        // `AnyType::GetCastScore`: 5 unless the type carries a custom score.
+        L::Any => match ty.info() {
+            Some(TypeInfo::Any(info)) => i64::try_from(info.cast_score).unwrap_or(i64::MAX),
+            _ => 5,
+        },
         // Anything can be cast to a template type, but anything else is preferred.
         L::Template => 1_000_000,
         _ => 110,

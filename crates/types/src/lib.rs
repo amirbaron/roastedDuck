@@ -9,6 +9,7 @@
 //! The temporal, UUID, BLOB and BIT modules hold the scalar logic of those types (parsing,
 //! text rendering, conversions) shared by `Value::to_varchar` and the vectorised casts.
 
+pub mod bignum;
 pub mod bit;
 pub mod blob;
 mod buffer;

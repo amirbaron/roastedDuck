@@ -443,6 +443,75 @@ impl AggregateFunctionSet {
     }
 }
 
+/// Aggregate states in one allocation owned by the caller of a scalar function (e.g.
+/// `list_aggregate`): initialised on creation, destroyed and freed on drop.
+pub struct OwnedStates {
+    ops: Arc<dyn AggregateOps>,
+    memory: NonNull<u8>,
+    layout: std::alloc::Layout,
+    stride: usize,
+    count: usize,
+}
+
+impl OwnedStates {
+    /// `count` initialised states of `ops`.
+    pub fn new(ops: Arc<dyn AggregateOps>, count: usize) -> Self {
+        let state = ops.state_layout();
+        let stride = state.size().max(1).next_multiple_of(state.align());
+        let layout = Layout::from_size_align(stride * count.max(1), state.align())
+            .unwrap_or_else(|_| Layout::new::<u128>());
+        // SAFETY: the layout has a non-zero size.
+        let memory = NonNull::new(unsafe { std::alloc::alloc_zeroed(layout) })
+            .unwrap_or_else(|| std::alloc::handle_alloc_error(layout));
+        let states = Self {
+            ops,
+            memory,
+            layout,
+            stride,
+            count,
+        };
+        for state in states.pointers() {
+            // SAFETY: `state` points to uninitialised memory of the state layout.
+            unsafe { states.ops.initialize(state) };
+        }
+        states
+    }
+
+    /// Pointers to the states, in order.
+    pub fn pointers(&self) -> Vec<StatePtr> {
+        (0..self.count)
+            .map(|index| {
+                // SAFETY: the allocation holds `count` states of `stride` bytes each,
+                // aligned to the state alignment.
+                unsafe { StatePtr::new(self.memory.add(index * self.stride)) }
+            })
+            .collect()
+    }
+}
+
+impl fmt::Debug for OwnedStates {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OwnedStates")
+            .field("count", &self.count)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Drop for OwnedStates {
+    fn drop(&mut self) {
+        if self.ops.needs_destructor() {
+            // SAFETY: the states were initialised in `new` and are not used afterwards.
+            unsafe { self.ops.destroy(&self.pointers()) };
+        }
+        // SAFETY: `memory` was allocated with `layout` in `new`.
+        unsafe { std::alloc::dealloc(self.memory.as_ptr(), self.layout) };
+    }
+}
+
+// SAFETY: the states are plain memory owned by this value; the aggregate ops are
+// `Send + Sync`.
+unsafe impl Send for OwnedStates {}
+
 /// # Safety
 /// `state` must point to an initialised `S` that no one else is accessing.
 pub(crate) unsafe fn state_mut<'a, S>(state: StatePtr) -> &'a mut S {

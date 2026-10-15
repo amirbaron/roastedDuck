@@ -54,6 +54,11 @@ pub(crate) fn addressable(vector: &Vector, count: usize) -> Cow<'_, Vector> {
     }
 }
 
+/// The bytes of row `row` of a (non-sequence) VARCHAR/BLOB/BIT vector, `None` if NULL.
+pub(crate) fn str_at(vector: &Vector, row: usize) -> Option<&[u8]> {
+    Input::<Str>::new(vector).get(row)
+}
+
 /// An argument prepared for row access.
 struct Input<'a, A: ScalarArg> {
     vector: &'a Vector,
@@ -252,39 +257,6 @@ pub(crate) fn ternary<A: ScalarArg, B: ScalarArg, C: ScalarArg, O: ScalarOutput>
             _ => Ok(false),
         }
     })?;
-    finish(result, constant);
-    Ok(())
-}
-
-/// Like [`unary`], but `f` also sees NULL inputs (as `None`), for functions with special
-/// NULL handling.
-pub(crate) fn unary_nullable<A: ScalarArg, O: ScalarOutput>(
-    args: &DataChunk,
-    result: &mut Vector,
-    mut f: impl FnMut(Option<A::Item<'_>>, &mut O::Value) -> Result<bool>,
-) -> Result<()> {
-    let count = args.len();
-    let a = addressable(args.column(0), count);
-    let (rows, constant) = result_shape(&[&a], count);
-    let a = Input::<A>::new(&a);
-    O::write(result, rows, |row, out| f(a.get(row), out))?;
-    finish(result, constant);
-    Ok(())
-}
-
-/// Like [`binary`], but `f` also sees NULL inputs.
-pub(crate) fn binary_nullable<A: ScalarArg, B: ScalarArg, O: ScalarOutput>(
-    args: &DataChunk,
-    result: &mut Vector,
-    mut f: impl FnMut(Option<A::Item<'_>>, Option<B::Item<'_>>, &mut O::Value) -> Result<bool>,
-) -> Result<()> {
-    let count = args.len();
-    let a = addressable(args.column(0), count);
-    let b = addressable(args.column(1), count);
-    let (rows, constant) = result_shape(&[&a, &b], count);
-    let a = Input::<A>::new(&a);
-    let b = Input::<B>::new(&b);
-    O::write(result, rows, |row, out| f(a.get(row), b.get(row), out))?;
     finish(result, constant);
     Ok(())
 }

@@ -90,6 +90,7 @@ pub(crate) fn append_list(
 }
 
 /// DuckDB's `ListBindFunction`.
+#[allow(clippy::unnecessary_wraps, reason = "the signature of a bind callback")]
 fn bind_list(
     function: &mut AggregateFunction,
     input: &BindInput<'_>,

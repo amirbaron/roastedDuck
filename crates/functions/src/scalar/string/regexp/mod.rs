@@ -545,15 +545,12 @@ fn varchar_lists(lists: &[Option<Vec<Option<Vec<u8>>>>], constant: bool) -> Resu
     let mut items = Vec::new();
     let mut nulls = Vec::new();
     for (row, list) in lists.iter().enumerate() {
-        match list {
-            Some(list) => {
-                entries.push(ListEntry::new(items.len(), list.len()));
-                items.extend(list.iter().cloned());
-            }
-            None => {
-                entries.push(ListEntry::new(items.len(), 0));
-                nulls.push(row);
-            }
+        if let Some(list) = list {
+            entries.push(ListEntry::new(items.len(), list.len()));
+            items.extend(list.iter().cloned());
+        } else {
+            entries.push(ListEntry::new(items.len(), 0));
+            nulls.push(row);
         }
     }
     let child = varchar_vector(&items)?;
@@ -784,10 +781,10 @@ fn escape_set() -> ScalarFunctionSet {
 
 /// DuckDB's `StringSplitter::Split`; `find` returns the next delimiter's offset and size
 /// within the remaining input.
-fn split<'a>(
-    mut input: &'a [u8],
+fn split(
+    mut input: &[u8],
     mut find: impl FnMut(&[u8]) -> Result<Option<(usize, usize)>>,
-) -> Result<Vec<&'a [u8]>> {
+) -> Result<Vec<&[u8]>> {
     let mut parts = Vec::new();
     while !input.is_empty() {
         let Some((mut position, size)) = find(input)? else {

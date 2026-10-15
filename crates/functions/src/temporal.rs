@@ -5,8 +5,6 @@
 use rustdb_common::{Error, Result};
 use rustdb_types::{Date, Interval, Time, TimeTz, Timestamp};
 
-use crate::operator::checked_multiply;
-
 /// Microseconds in a day.
 pub(crate) const MICROS_PER_DAY: i64 = Interval::MICROS_PER_DAY;
 
@@ -268,9 +266,4 @@ pub(crate) fn interval_multiply_double_checked(interval: Interval, factor: f64) 
 /// `interval * factor` for a BIGINT factor.
 pub(crate) fn interval_multiply_bigint(interval: Interval, factor: i64) -> Result<Interval> {
     crate::operator::interval_multiply(interval, factor)
-}
-
-/// The microseconds of a TIMESTAMP day (`date.days * MICROS_PER_DAY`), with DuckDB's error.
-pub(crate) fn day_micros(days: i32) -> Result<i64> {
-    checked_multiply(i64::from(days), MICROS_PER_DAY)
 }

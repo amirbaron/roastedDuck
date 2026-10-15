@@ -114,6 +114,7 @@ impl Expression {
                 scalar_functions_equal(&l.function, &r.function)
                     && list_equals(&l.children, &r.children)
                     && bind_data_equal(l.bind_info.as_ref(), r.bind_info.as_ref())
+                    && option_equals(l.lambda.as_deref(), r.lambda.as_deref())
             }
             (ExpressionKind::Lambda(l), ExpressionKind::Lambda(r)) => {
                 l.parameter_count == r.parameter_count

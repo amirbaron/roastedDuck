@@ -79,15 +79,12 @@ impl Aggregate for StringAgg {
         result: &mut Vector,
         row: usize,
     ) -> Result<()> {
-        match state {
-            Some(value) => {
-                let string = result.add_string(value);
-                result.values_mut::<StringT>()[row] = string;
-            }
-            None => {
-                let capacity = result.capacity();
-                result.validity_mut().set_invalid(row, capacity);
-            }
+        if let Some(value) = state {
+            let string = result.add_string(value);
+            result.values_mut::<StringT>()[row] = string;
+        } else {
+            let capacity = result.capacity();
+            result.validity_mut().set_invalid(row, capacity);
         }
         Ok(())
     }

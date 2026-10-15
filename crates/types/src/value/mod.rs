@@ -588,6 +588,9 @@ impl Value {
             (Payload::Interval(v), L::Interval) => v.write_to(out),
             (Payload::Bytes(bytes), L::Blob) => crate::blob::write_text(bytes, out),
             (Payload::Bytes(bytes), L::Bit) => crate::bit::write_text(bytes, out),
+            (Payload::Bytes(bytes), L::Bignum) => {
+                crate::bignum::write_text(bytes, out).map_err(Error::invalid_input)?;
+            }
             (Payload::I128(v), L::Uuid) => Uuid(*v).write_to(out),
             (Payload::Type(ty), L::Type) => out.extend_from_slice(ty.to_string().as_bytes()),
             (Payload::Nested(items), L::List | L::Array) => {

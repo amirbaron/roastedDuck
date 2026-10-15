@@ -305,10 +305,10 @@ impl CorrState {
         };
         let std_x = std(&self.dev_pop_x, "STDDEV_POP for X")?;
         let std_y = std(&self.dev_pop_y, "STDDEV_POP for Y")?;
-        Ok(Some(if std_x * std_y != 0.0 {
-            cov / (std_x * std_y)
-        } else {
+        Ok(Some(if std_x * std_y == 0.0 {
             f64::NAN
+        } else {
+            cov / (std_x * std_y)
         }))
     }
 }

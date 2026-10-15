@@ -142,13 +142,12 @@ impl<K: StoredKind, const ENTROPY: bool> Aggregate for Frequencies<K, ENTROPY> {
             result.values_mut::<f64>()[row] = state.entropy();
             return Ok(());
         }
-        match state.mode() {
-            Some(value) => K::write(value, result, row),
-            None => {
-                let capacity = result.capacity();
-                result.validity_mut().set_invalid(row, capacity);
-                Ok(())
-            }
+        if let Some(value) = state.mode() {
+            K::write(value, result, row)
+        } else {
+            let capacity = result.capacity();
+            result.validity_mut().set_invalid(row, capacity);
+            Ok(())
         }
     }
 }
@@ -196,6 +195,7 @@ fn entropy_ops(ty: &LogicalType) -> Arc<dyn AggregateOps> {
     }
 }
 
+#[allow(clippy::unnecessary_wraps, reason = "the signature of a bind callback")]
 fn bind_mode(
     function: &mut AggregateFunction,
     input: &BindInput<'_>,
@@ -207,6 +207,7 @@ fn bind_mode(
     Ok(None)
 }
 
+#[allow(clippy::unnecessary_wraps, reason = "the signature of a bind callback")]
 fn bind_entropy(
     function: &mut AggregateFunction,
     input: &BindInput<'_>,

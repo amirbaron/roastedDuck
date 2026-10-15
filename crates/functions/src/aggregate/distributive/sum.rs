@@ -242,9 +242,10 @@ fn bind_decimal_sum(
     Ok(None)
 }
 
-fn decimal_overload(
-    bind: fn(&mut AggregateFunction, &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>>,
-) -> AggregateFunction {
+/// A plain bind callback.
+type BindFn = fn(&mut AggregateFunction, &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>>;
+
+fn decimal_overload(bind: BindFn) -> AggregateFunction {
     AggregateFunction::unbound(
         vec![LogicalType::simple(LogicalTypeId::Decimal)],
         LogicalType::simple(LogicalTypeId::Decimal),
@@ -266,6 +267,12 @@ pub fn sum_functions() -> Result<AggregateFunctionSet> {
         vec![LogicalType::DOUBLE],
         LogicalType::DOUBLE,
         Unary::<DoubleSum>::default(),
+    ));
+    set.add(AggregateFunction::new(
+        "sum",
+        vec![LogicalType::BIGNUM],
+        LogicalType::BIGNUM,
+        rustdb_function::aggregate::Typed(BignumSum),
     ));
     Ok(set.renamed("sum"))
 }
@@ -330,4 +337,69 @@ pub fn kahan_sum_functions() -> AggregateFunctionSet {
             Unary::<KahanSum>::default(),
         ),
     )
+}
+
+/// `sum(BIGNUM)` (DuckDB's `BignumOperation`): exact addition of variable-size integers.
+#[derive(Debug, Clone, Copy)]
+struct BignumSum;
+
+impl rustdb_function::aggregate::Aggregate for BignumSum {
+    type State = Option<rustdb_function::bignum::Intermediate>;
+
+    fn initialize(&self) -> Self::State {
+        None
+    }
+
+    fn update(
+        &self,
+        inputs: &[rustdb_types::Vector],
+        _: rustdb_function::aggregate::AggregateInput<'_>,
+        states: &mut rustdb_function::aggregate::States<'_, Self::State>,
+        count: usize,
+    ) -> Result<()> {
+        use rustdb_function::bignum::Intermediate;
+        let vector = &inputs[0];
+        let values = vector.unified::<rustdb_types::StringT>();
+        for row in 0..count {
+            if let Some(value) = values.get(row) {
+                let input = Intermediate::from_bignum(vector.string_value(&value));
+                states
+                    .get(row)
+                    .get_or_insert_with(Intermediate::zero)
+                    .add_in_place(&input)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn combine(
+        &self,
+        source: &Self::State,
+        target: &mut Self::State,
+        _: rustdb_function::aggregate::AggregateInput<'_>,
+    ) -> Result<()> {
+        if let Some(source) = source {
+            target
+                .get_or_insert_with(rustdb_function::bignum::Intermediate::zero)
+                .add_in_place(source)?;
+        }
+        Ok(())
+    }
+
+    fn finalize(
+        &self,
+        state: &mut Self::State,
+        _: rustdb_function::aggregate::AggregateInput<'_>,
+        result: &mut rustdb_types::Vector,
+        row: usize,
+    ) -> Result<()> {
+        if let Some(value) = state {
+            let string = result.add_string(&value.to_bignum());
+            result.values_mut::<rustdb_types::StringT>()[row] = string;
+        } else {
+            let capacity = result.capacity();
+            result.validity_mut().set_invalid(row, capacity);
+        }
+        Ok(())
+    }
 }

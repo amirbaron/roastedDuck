@@ -92,7 +92,7 @@ fn repeat_list(args: &DataChunk, result: &mut Vector) -> Result<()> {
         } else {
             copies as u64
         };
-        let length = (list.length as u64).checked_mul(copies).ok_or_else(|| {
+        let length = list.length.checked_mul(copies).ok_or_else(|| {
             Error::out_of_range(format!(
                 "Cannot create a list of size: '{}' * '{copies}', the result is too large",
                 list.length
