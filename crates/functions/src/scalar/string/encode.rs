@@ -45,6 +45,7 @@ fn set_of(name: &str, functions: Vec<Vec<ScalarFunction>>) -> ScalarFunctionSet 
 
 const HEX_TABLE: &[u8; 16] = b"0123456789ABCDEF";
 
+#[allow(clippy::unnecessary_wraps, reason = "the signature of a fallible kernel")]
 fn hex_bytes(input: &[u8], out: &mut Vec<u8>) -> Result<()> {
     for &byte in input {
         out.push(HEX_TABLE[usize::from(byte >> 4)]);
@@ -53,6 +54,7 @@ fn hex_bytes(input: &[u8], out: &mut Vec<u8>) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::unnecessary_wraps, reason = "the signature of a fallible kernel")]
 fn binary_bytes(input: &[u8], out: &mut Vec<u8>) -> Result<()> {
     for &byte in input {
         for bit in (0..8).rev() {
@@ -156,7 +158,7 @@ fn unhex(input: &[u8], out: &mut Vec<u8>) -> Result<()> {
     for &digit in head {
         out.push(hex_value(digit)?);
     }
-    for pair in rest.chunks_exact(2) {
+    for pair in rest.as_chunks::<2>().0 {
         out.push((hex_value(pair[0])? << 4) | hex_value(pair[1])?);
     }
     Ok(())
@@ -174,7 +176,7 @@ fn unbin(input: &[u8], out: &mut Vec<u8>) -> Result<()> {
         let value = byte(head)?;
         out.push(value);
     }
-    for chunk in rest.chunks_exact(8) {
+    for chunk in rest.as_chunks::<8>().0 {
         let value = byte(chunk)?;
         out.push(value);
     }
@@ -282,6 +284,7 @@ pub fn to_base_functions() -> ScalarFunctionSet {
 }
 
 /// `StringUtil::URLEncode` (slashes encoded).
+#[allow(clippy::unnecessary_wraps, reason = "the signature of a fallible kernel")]
 fn url_encode(input: &[u8], out: &mut Vec<u8>) -> Result<()> {
     for &c in input {
         if c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-' | b'~' | b'.') {

@@ -177,6 +177,9 @@ pub struct BoundFunctionExpression {
     pub bind_info: Option<Arc<dyn FunctionData>>,
     /// Whether this came from an operator (`a + b`) rather than a call (`add(a, b)`).
     pub is_operator: bool,
+    /// The bound lambda body of a lambda function call (DuckDB keeps it in the
+    /// `ListLambdaBindData`); its inputs are references into the lambda's input chunk.
+    pub lambda: Option<Box<Expression>>,
 }
 
 /// A lambda passed to a list function (DuckDB's `BoundLambdaExpression`).
@@ -428,6 +431,7 @@ impl Expression {
                 children,
                 bind_info,
                 is_operator,
+                lambda: None,
             })),
         )
     }

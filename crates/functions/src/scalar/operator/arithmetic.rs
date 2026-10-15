@@ -16,7 +16,7 @@ use rustdb_types::{
 use crate::operator::{
     CheckedInt, checked_add, checked_multiply, checked_subtract, interval_add, interval_subtract,
 };
-use crate::scalar::executor::{binary, unary};
+use crate::scalar::executor::{Str, StrOut, binary, unary};
 use crate::signature::numeric_types;
 use crate::temporal;
 
@@ -73,16 +73,12 @@ fn unsupported_kernel(physical: PhysicalType) -> Kernel {
 trait DecimalStorage: CheckedInt + Into<i128> {
     /// `10^width - 1` for the widest DECIMAL stored in this type.
     const MAX: Self;
-    fn neg(self) -> Self;
 }
 
 macro_rules! decimal_storage {
     ($($ty:ty => $max:expr),*) => {$(
         impl DecimalStorage for $ty {
             const MAX: Self = $max;
-            fn neg(self) -> Self {
-                self.wrapping_neg()
-            }
         }
     )*};
 }
@@ -396,16 +392,16 @@ impl Arith {
     }
 }
 
+/// A DECIMAL bind callback.
+type DecimalBind =
+    dyn Fn(&mut ScalarFunction, &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>> + Send + Sync;
+
 /// `left op right` for two values of the same numeric type.
 fn numeric_binary(op: Arith, ty: &LogicalType) -> ScalarFunction {
     let name = op.symbol();
     let args = vec![ty.clone(), ty.clone()];
     if ty.id() == LogicalTypeId::Decimal {
-        let bind: Box<
-            dyn Fn(&mut ScalarFunction, &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>>
-                + Send
-                + Sync,
-        > = match op {
+        let bind: Box<DecimalBind> = match op {
             Arith::Add => Box::new(bind_decimal_add_subtract(DecimalOp::Add)),
             Arith::Subtract => Box::new(bind_decimal_add_subtract(DecimalOp::Subtract)),
             Arith::Multiply => Box::new(bind_decimal_multiply),
@@ -556,7 +552,52 @@ pub fn add_functions() -> ScalarFunctionSet {
         T::TIMESTAMP_TZ,
         temporal::date_add_time_tz,
     ));
+    // Lists concatenate (DuckDB adds `ListConcatFun` to the set).
+    for mut function in crate::scalar::string::concat::list_concat_functions().functions {
+        function.name = Arc::from("+");
+        set.add(function);
+    }
+    set.add(bignum_binary("+", false));
     set
+}
+
+/// BIGNUM `+`/`-` (DuckDB's `BignumAdd` / `BignumSubtract`).
+fn bignum_binary(name: &str, subtract: bool) -> ScalarFunction {
+    use rustdb_function::bignum::Intermediate;
+    let mut function = ScalarFunction::new(
+        name,
+        vec![LogicalType::BIGNUM, LogicalType::BIGNUM],
+        LogicalType::BIGNUM,
+        move |args, _, result| {
+            binary::<Str, Str, StrOut>(args, result, |left, right, out| {
+                let left = Intermediate::from_bignum(left);
+                let mut right = Intermediate::from_bignum(right);
+                if subtract {
+                    right.negate_in_place();
+                }
+                out.extend_from_slice(&Intermediate::add(&left, &right)?);
+                Ok(true)
+            })
+        },
+    );
+    function.null_handling = rustdb_function::NullHandling::Default;
+    function
+}
+
+/// BIGNUM negation (DuckDB's `BignumNegate`).
+fn bignum_negate() -> ScalarFunction {
+    use rustdb_function::bignum::Intermediate;
+    ScalarFunction::new(
+        "-",
+        vec![LogicalType::BIGNUM],
+        LogicalType::BIGNUM,
+        |args, _, result| {
+            unary::<Str, StrOut>(args, result, |value, out| {
+                out.extend_from_slice(&Intermediate::from_bignum(value).negate());
+                Ok(true)
+            })
+        },
+    )
 }
 
 /// The `-` set (DuckDB's `OperatorSubtractFun`).
@@ -567,6 +608,8 @@ pub fn subtract_functions() -> ScalarFunctionSet {
         set.add(unary_minus(&ty));
         set.add(numeric_binary(Arith::Subtract, &ty));
     }
+    set.add(bignum_negate());
+    set.add(bignum_binary("-", true));
     set.add(typed("-", T::DATE, T::DATE, T::BIGINT, |l: Date, r: Date| {
         Ok(i64::from(l.0) - i64::from(r.0))
     }));
@@ -825,9 +868,7 @@ fn bind_decimal_modulo(
 ) -> Result<Option<Arc<dyn FunctionData>>> {
     let data = bind_decimal_arithmetic(function, input, true)?;
     if data.check_overflow {
-        for argument in &mut function.arguments {
-            *argument = LogicalType::DOUBLE;
-        }
+        function.arguments.fill(LogicalType::DOUBLE);
         function.return_type = LogicalType::DOUBLE;
         set_kernel(function, zero_is_null_float::<f64>(true));
     } else {

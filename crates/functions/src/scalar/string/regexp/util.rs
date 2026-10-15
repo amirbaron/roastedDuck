@@ -102,9 +102,8 @@ pub(crate) fn constant_pattern(constant: Option<&Option<Value>>) -> Option<Strin
 /// The RE2 error message for a pattern `regex-syntax` rejects (best effort): `pattern`
 /// is the user's pattern, `translated` its `regex` form that is parsed.
 fn re2_error(pattern: &str, translated: &str) -> Option<String> {
-    let error = match regex_syntax::ast::parse::Parser::new().parse(translated) {
-        Ok(_) => return None,
-        Err(error) => error,
+    let Err(error) = regex_syntax::ast::parse::Parser::new().parse(translated) else {
+        return None;
     };
     let span = error.span();
     let snippet = translated
@@ -221,7 +220,7 @@ fn translate(pattern: &str) -> String {
                 }
             }
             '[' => out.push_str("\\["),
-            ']' if in_class && i - 1 >= class_start => {
+            ']' if in_class && i > class_start => {
                 in_class = false;
                 out.push(']');
             }

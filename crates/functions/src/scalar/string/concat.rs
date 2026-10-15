@@ -274,9 +274,7 @@ pub fn concat_ws_functions() -> ScalarFunctionSet {
         },
     )
     .with_bind(|function, _| {
-        for argument in &mut function.arguments {
-            *argument = LogicalType::VARCHAR;
-        }
+        function.arguments.fill(LogicalType::VARCHAR);
         function.varargs = Some(LogicalType::VARCHAR);
         Ok(None)
     });

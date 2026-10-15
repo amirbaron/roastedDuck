@@ -100,7 +100,7 @@ impl<T: FixedOrd> StoredKind for Fixed<T> {
     }
 
     #[inline]
-    fn get<'a>(input: &'a Unified<'_, T>, row: usize) -> Option<T> {
+    fn get(input: &Unified<'_, T>, row: usize) -> Option<T> {
         input.get(row)
     }
 

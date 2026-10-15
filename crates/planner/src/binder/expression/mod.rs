@@ -203,11 +203,20 @@ fn bind_lambda_ref<B: ExpressionBinder + ?Sized>(
     };
     let index = lambda.lambda_idx;
     let name = lambda.column_name.clone();
-    let bindings = &mut binder.state().lambda_bindings;
-    let Some(binding) = bindings.get_mut(index as usize) else {
+    Ok(bind_lambda_parameter(&mut binder.state().lambda_bindings, index, &name, depth)?.into())
+}
+
+/// A lambda parameter as a `BOUND_LAMBDA_REF` (the binding of `lambda_bindings[index]`).
+pub fn bind_lambda_parameter(
+    lambda_bindings: &mut [crate::binder::Binding],
+    index: u64,
+    name: &str,
+    depth: u64,
+) -> Result<Expression> {
+    let Some(binding) = lambda_bindings.get_mut(index as usize) else {
         return Err(Error::internal("lambda reference out of range"));
     };
-    let bound = binding.bind(&name, "", depth)?;
+    let bound = binding.bind(name, "", depth)?;
     let column = bound
         .as_column_ref()
         .copied()
@@ -221,8 +230,7 @@ fn bind_lambda_ref<B: ExpressionBinder + ?Sized>(
             depth,
         }),
     )
-    .with_alias(name)
-    .into())
+    .with_alias(name))
 }
 
 /// DuckDB's `BindExpression(ComparisonExpression &)`.

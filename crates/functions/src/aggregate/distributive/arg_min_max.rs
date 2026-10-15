@@ -22,6 +22,7 @@ use crate::signature::type_id;
 
 /// Which NULLs take part (DuckDB's `ArgMinMaxNullHandling`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names, reason = "DuckDB's variant names")]
 pub(crate) enum NullHandling {
     /// `arg_min`: rows with a NULL argument or key are ignored.
     IgnoreAnyNull,
@@ -31,7 +32,7 @@ pub(crate) enum NullHandling {
     HandleAnyNull,
 }
 
-/// Bind data of every arg_min/arg_max overload (DuckDB's `ArgMinMaxFunctionData`).
+/// Bind data of every `arg_min/arg_max` overload (DuckDB's `ArgMinMaxFunctionData`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ArgMinMaxData {
     null_handling: NullHandling,
@@ -241,8 +242,7 @@ fn bind_decimal<const MAX: bool>(
             // DuckDB keeps the last implicitly castable key type.
             if let Some(ty) = by_types()
                 .into_iter()
-                .filter(|ty| rustdb_types::implicit_cast_cost(&by_type, ty) >= 0)
-                .last()
+                .rfind(|ty| rustdb_types::implicit_cast_cost(&by_type, ty) >= 0)
             {
                 by_type = ty;
             }
@@ -316,9 +316,11 @@ fn add_arg_min_max<const MAX: bool>(set: &mut AggregateFunctionSet, null_handlin
 }
 
 /// The state of the top-N form: the best `(key, argument)` pairs as sort keys.
+type KeyArgument = (Option<Vec<u8>>, Option<Vec<u8>>);
+
 #[derive(Default)]
 struct ArgTopNState {
-    heap: Option<TopN<(Option<Vec<u8>>, Option<Vec<u8>>)>>,
+    heap: Option<TopN<KeyArgument>>,
 }
 
 /// `arg_min(x, by, n)` (DuckDB's `ArgMinMaxNState`): keys and arguments are kept as sort
@@ -430,19 +432,16 @@ impl<const MAX: bool> Aggregate for ArgMinMaxN<MAX> {
             row,
             |child, offset| {
                 for (index, (_, arg)) in sorted.iter().enumerate() {
-                    match arg {
-                        Some(arg) => {
-                            decode_sort_key(
-                                arg,
-                                std::slice::from_mut(child),
-                                offset + index,
-                                &[ASC_NULLS_LAST],
-                            )?;
-                        }
-                        None => {
-                            let capacity = child.capacity();
-                            child.validity_mut().set_invalid(offset + index, capacity);
-                        }
+                    if let Some(arg) = arg {
+                        decode_sort_key(
+                            arg,
+                            std::slice::from_mut(child),
+                            offset + index,
+                            &[ASC_NULLS_LAST],
+                        )?;
+                    } else {
+                        let capacity = child.capacity();
+                        child.validity_mut().set_invalid(offset + index, capacity);
                     }
                 }
                 Ok(())

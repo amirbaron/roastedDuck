@@ -40,7 +40,7 @@ fn list_length(args: &DataChunk, result: &mut Vector) -> Result<()> {
 }
 
 /// `length(array)`: the fixed size, NULL for NULL arrays (DuckDB's `ArrayLengthFunction`).
-fn array_length(args: &DataChunk, result: &mut Vector, size: i64) -> Result<()> {
+fn array_length(args: &DataChunk, result: &mut Vector, size: i64) {
     let count = args.len();
     let input = addressable(args.column(0), count);
     let constant = input.is_constant();
@@ -55,7 +55,6 @@ fn array_length(args: &DataChunk, result: &mut Vector, size: i64) -> Result<()> 
     if constant {
         result.make_constant();
     }
-    Ok(())
 }
 
 fn unresolved(ty: &LogicalType) -> bool {
@@ -71,7 +70,10 @@ fn bind_length(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindResu
     match ty.id() {
         LogicalTypeId::Array => {
             let size = ty.array_child().map_or(0, |(_, size)| size) as i64;
-            function.kernel = Arc::new(move |args, _, result| array_length(args, result, size));
+            function.kernel = Arc::new(move |args, _, result| {
+                array_length(args, result, size);
+                Ok(())
+            });
         }
         LogicalTypeId::List => function.kernel = Arc::new(|args, _, result| list_length(args, result)),
         _ => return Err(Error::binder("length can only be used on arrays or lists")),

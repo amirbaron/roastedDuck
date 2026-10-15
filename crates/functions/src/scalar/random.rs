@@ -98,7 +98,7 @@ pub fn random_functions() -> ScalarFunctionSet {
 /// without flipping the top bit).
 fn uuid_v4(engine: &mut RandomEngine) -> Uuid {
     let mut bytes = [0u8; 16];
-    for chunk in bytes.chunks_exact_mut(4) {
+    for chunk in bytes.as_chunks_mut::<4>().0 {
         chunk.copy_from_slice(&engine.next_random_integer().to_le_bytes());
     }
     bytes[8] = (bytes[8] & 0xBF) | 0x80;

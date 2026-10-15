@@ -1,4 +1,4 @@
-//! `approx_count_distinct` and DuckDB's HyperLogLog sketch (`approx_count.cpp`,
+//! `approx_count_distinct` and DuckDB's `HyperLogLog` sketch (`approx_count.cpp`,
 //! `common/types/hyperloglog.cpp`), bit-exact: 64 registers indexed by the low 6 bits of
 //! DuckDB's hash, estimated with Ertl's improved estimator.
 
@@ -72,6 +72,7 @@ impl HyperLogLog {
 }
 
 /// DuckDB's `HLLSigma`.
+#[allow(clippy::float_cmp, reason = "iterates to an exact fixed point like DuckDB")]
 fn sigma(mut x: f64) -> f64 {
     if x == 1.0 {
         return f64::INFINITY;
@@ -90,6 +91,7 @@ fn sigma(mut x: f64) -> f64 {
 }
 
 /// DuckDB's `HLLTau`.
+#[allow(clippy::float_cmp, reason = "iterates to an exact fixed point like DuckDB")]
 fn tau(mut x: f64) -> f64 {
     if x == 0.0 || x == 1.0 {
         return 0.0;

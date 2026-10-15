@@ -4,6 +4,7 @@
 pub mod approx_count;
 pub mod arg_min_max;
 pub mod bitagg;
+pub mod bitstring_agg;
 pub mod bool;
 pub mod count;
 pub mod first_last_any;

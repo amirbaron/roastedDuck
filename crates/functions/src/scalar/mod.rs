@@ -2,16 +2,24 @@
 //! `extension/core_functions/scalar`.
 
 pub mod array;
+pub mod binning;
+pub mod bit;
+pub mod blob;
+pub mod compressed_materialization;
 pub mod date;
+pub mod enums;
 pub(crate) mod executor;
 pub mod generic;
 pub mod list;
+pub mod map;
 pub mod math;
 pub(crate) mod nested;
 pub mod operator;
 pub mod random;
 pub mod string;
 pub mod structs;
+pub mod system;
+pub mod union;
 
 use rustdb_function::ScalarFunctionSet;
 
@@ -52,6 +60,15 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
         structs::struct_update_functions(),
         structs::struct_keys_functions(),
         structs::struct_values_functions(),
+        union::union_extract_functions(),
+        union::union_tag_functions(),
+        union::union_value_functions(),
+        binning::equi_width_bins_functions(),
+        enums::enum_first_functions(),
+        enums::enum_last_functions(),
+        enums::enum_code_functions(),
+        enums::enum_range_functions(),
+        enums::enum_range_boundary_functions(),
         list::list_extract::array_extract_functions(),
         array::array_value::array_value_functions(),
         operator::bitwise::bitwise_and_functions(),
@@ -93,7 +110,34 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
     with_aliases(&mut sets, string::substring::substring_functions(), &["substr"]);
     sets.push(string::substring::substring_grapheme_functions());
     sets.extend(generic::generic_functions());
+    sets.extend(system::system_functions());
+    sets.extend(compressed_materialization::compressed_materialization_functions());
     sets.extend(date::to_interval::to_interval_functions());
+    for (set, aliases) in date::date_part::named_part_functions() {
+        with_aliases(&mut sets, set, aliases);
+    }
+    with_aliases(
+        &mut sets,
+        date::date_trunc::date_trunc_functions(),
+        &["datetrunc"],
+    );
+    with_aliases(&mut sets, date::date_diff::date_diff_functions(), &["datediff"]);
+    with_aliases(&mut sets, date::date_diff::date_sub_functions(), &["datesub"]);
+    sets.push(date::date_diff::age_functions());
+    sets.push(date::time_bucket::time_bucket_functions());
+    sets.push(date::strftime::strftime_functions());
+    with_aliases(
+        &mut sets,
+        date::current::current_timestamp_functions(),
+        &["now", "transaction_timestamp"],
+    );
+    sets.extend(date::strftime::strptime_functions());
+    sets.push(date::make_date::make_date_functions());
+    sets.push(date::make_date::make_time_functions());
+    sets.push(date::make_date::make_timestamp_functions());
+    sets.push(date::make_date::make_timestamp_ns_functions());
+    sets.push(date::make_date::to_timestamp_functions());
+    sets.extend(date::make_date::interval_helper_functions());
     for (set, aliases) in math::numeric::numeric_functions() {
         with_aliases(&mut sets, set, aliases);
     }
@@ -103,7 +147,9 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
 /// The string functions (DuckDB's `function/scalar/string` and
 /// `core_functions/scalar/string`).
 fn string_functions(sets: &mut Vec<ScalarFunctionSet>) {
-    use string::{caseconvert, character, concat, contains, hash, length, normalize, replace, reverse};
+    use string::{
+        caseconvert, character, concat, contains, encode, hash, length, normalize, replace, reverse, trim_pad,
+    };
     with_aliases(sets, caseconvert::upper_functions(), &["ucase"]);
     with_aliases(sets, caseconvert::lower_functions(), &["lcase"]);
     sets.push(concat::concat_ws_functions());
@@ -116,8 +162,64 @@ fn string_functions(sets: &mut Vec<ScalarFunctionSet>) {
     sets.push(concat::concat_operator_functions());
     sets.push(contains::prefix_functions());
     with_aliases(sets, contains::suffix_functions(), &["ends_with"]);
-    let struct_contains = structs::struct_contains_functions().functions;
-    sets.push(contains::contains_functions(struct_contains));
+    let mut nested_contains = vec![
+        list::contains_or_position::list_contains_function("contains"),
+        list::contains_or_position::map_contains_function("contains"),
+    ];
+    nested_contains.extend(structs::struct_contains_functions().functions);
+    sets.push(contains::contains_functions(nested_contains));
+    with_aliases(
+        sets,
+        list::contains_or_position::list_contains_functions(),
+        &["array_contains", "list_has", "array_has"],
+    );
+    with_aliases(
+        sets,
+        list::contains_or_position::list_position_functions(),
+        &["list_indexof", "array_position", "array_indexof"],
+    );
+    sets.push(list::contains_or_position::map_contains_functions());
+    for (set, aliases) in list::list_sort::list_sort_functions()
+        .into_iter()
+        .chain(list::list_aggregates::list_distinct_functions())
+    {
+        with_aliases(sets, set, aliases);
+    }
+    sets.extend(list::range::range_functions());
+    with_aliases(
+        sets,
+        list::list_aggregates::list_aggregate_functions(),
+        &["array_aggregate", "list_aggr", "array_aggr", "aggregate"],
+    );
+    with_aliases(sets, list::slice::list_slice_functions(), &["array_slice"]);
+    sets.push(list::slice::flatten_functions());
+    for (set, aliases) in list::list_ops::list_select_functions() {
+        with_aliases(sets, set, aliases);
+    }
+    with_aliases(sets, list::list_ops::list_resize_functions(), &["array_resize"]);
+    with_aliases(sets, list::list_ops::list_zip_functions(), &["array_zip"]);
+    with_aliases(
+        sets,
+        list::list_ops::list_intersect_functions(),
+        &["array_intersect"],
+    );
+    for (set, aliases) in list::lambda::lambda_functions() {
+        with_aliases(sets, set, aliases);
+    }
+    for (set, aliases) in list::has_any_or_all::has_any_or_all_functions()
+        .into_iter()
+        .chain(array::array_functions::distance_functions())
+    {
+        with_aliases(sets, set, aliases);
+    }
+    sets.push(map::map_functions());
+    sets.push(map::cardinality_functions());
+    sets.extend(map::map_unpack_functions());
+    let (map_extract, map_extract_value) = map::map_extract_functions();
+    with_aliases(sets, map_extract, &["element_at"]);
+    sets.push(map_extract_value);
+    sets.push(map::map_from_entries_functions());
+    sets.push(map::map_concat_functions());
     with_aliases(sets, contains::starts_with_functions(), &["starts_with"]);
     sets.push(normalize::strip_accents_functions());
     sets.push(normalize::nfc_normalize_functions());
@@ -148,7 +250,6 @@ fn string_functions(sets: &mut Vec<ScalarFunctionSet>) {
     for (set, aliases) in string::similarity::similarity_functions() {
         with_aliases(sets, set, aliases);
     }
-    use string::{encode, trim_pad};
     sets.extend(trim_pad::left_right_functions());
     sets.extend(trim_pad::pad_functions());
     sets.extend(trim_pad::trim_functions());
@@ -166,4 +267,15 @@ fn string_functions(sets: &mut Vec<ScalarFunctionSet>) {
     sets.push(decimal_size);
     sets.push(encode::parse_formatted_bytes_functions());
     sets.push(encode::bar_functions());
+    sets.extend(string::parse_path::parse_path_functions());
+    sets.push(string::printf::printf_functions());
+    sets.push(string::printf::format_functions());
+    with_aliases(sets, blob::base64::to_base64_functions(), &["base64"]);
+    sets.push(blob::base64::from_base64_functions());
+    sets.push(blob::encode::encode_functions());
+    sets.push(blob::encode::decode_functions());
+    sets.push(bit::bitstring_functions());
+    sets.push(bit::get_bit_functions());
+    sets.push(bit::set_bit_functions());
+    sets.push(bit::bit_position_functions());
 }

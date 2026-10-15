@@ -51,15 +51,15 @@ pub fn contains_functions(nested: impl IntoIterator<Item = ScalarFunction>) -> S
 
 /// `prefix(string, prefix)` (DuckDB's `PrefixFun`).
 pub fn prefix_functions() -> ScalarFunctionSet {
-    predicate_set("prefix", |string, prefix| string.starts_with(prefix))
+    predicate_set("prefix", <[u8]>::starts_with)
 }
 
 /// `suffix(string, suffix)` (DuckDB's `SuffixFun`).
 pub fn suffix_functions() -> ScalarFunctionSet {
-    predicate_set("suffix", |string, suffix| string.ends_with(suffix))
+    predicate_set("suffix", <[u8]>::ends_with)
 }
 
 /// `^@`/`starts_with` (DuckDB's `StartsWithOperatorFun`).
 pub fn starts_with_functions() -> ScalarFunctionSet {
-    predicate_set("^@", |string, prefix| string.starts_with(prefix))
+    predicate_set("^@", <[u8]>::starts_with)
 }
