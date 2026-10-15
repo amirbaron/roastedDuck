@@ -19,7 +19,7 @@ use distributive::{
     approx_count, arg_min_max, bitagg, bitstring_agg, bool, count, first_last_any, minmax, moments, product,
     string_agg, sum,
 };
-use holistic::{approx_top_k, mode, quantile};
+use holistic::{approx_quantile, approx_top_k, mode, quantile, reservoir_quantile};
 use nested::{binned_histogram, list};
 
 /// Every builtin aggregate function set, aliases included.
@@ -97,6 +97,8 @@ pub fn aggregate_functions() -> Result<Vec<AggregateFunctionSet>> {
         mode::mode_functions(),
         mode::entropy_functions(),
         approx_top_k::approx_top_k_functions(),
+        approx_quantile::approx_quantile_functions()?,
+        reservoir_quantile::reservoir_quantile_functions()?,
         quantile_disc.clone().renamed("quantile"),
         quantile_disc,
         quantile::quantile_cont_functions(),
