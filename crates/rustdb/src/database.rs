@@ -38,6 +38,8 @@ pub(crate) struct DatabaseInstance {
     pub(crate) catalog: Arc<Catalog>,
     /// The cast functions (DuckDB's `DBConfig::GetCastFunctions`).
     pub(crate) casts: Arc<CastFunctionSet>,
+    /// Buffer manager and thread count used by every query.
+    pub(crate) env: Arc<rustdb_execution::ClientEnv>,
 }
 
 /// A database instance (DuckDB's `DuckDB`). Cheap to clone; clones share the instance.
@@ -73,6 +75,7 @@ impl Database {
             system_catalog: Arc::new(system_catalog),
             catalog: Arc::new(Catalog::new("memory")?),
             casts: Arc::new(CastFunctionSet::new()),
+            env: rustdb_execution::ClientEnv::standalone()?,
         };
         Ok(Self {
             instance: Arc::new(instance),
@@ -290,7 +293,7 @@ impl Connection {
         ColumnBindingResolver::resolve(&mut plan)?;
         let physical = create_physical_plan(plan)?;
         let root: PhysicalRef = Arc::new(PhysicalResultCollector::new(physical));
-        let state = Executor::execute(&root)?;
+        let state = Executor::execute(&root, Arc::clone(&self.database.instance().env))?;
         let collected = state
             .downcast_ref::<Mutex<CollectedResult>>()
             .ok_or_else(|| Error::internal("result collector state has an unexpected type"))?;

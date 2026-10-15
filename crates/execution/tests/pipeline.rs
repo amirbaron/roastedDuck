@@ -30,7 +30,7 @@ fn run(mut plan: LogicalOperator) -> rustdb_common::Result<Vec<Vec<Value>>> {
     plan.resolve_operator_types()?;
     let physical = create_physical_plan(plan)?;
     let root: PhysicalRef = Arc::new(PhysicalResultCollector::new(physical));
-    let state = Executor::execute(&root)?;
+    let state = Executor::execute(&root, rustdb_execution::ClientEnv::standalone()?)?;
     let collected = state
         .downcast_ref::<Mutex<CollectedResult>>()
         .unwrap()

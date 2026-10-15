@@ -12,7 +12,7 @@ pub mod operators;
 mod pipeline;
 mod plan_generator;
 
-pub use context::ExecutionContext;
+pub use context::{ClientEnv, ExecutionContext};
 pub use executor::Executor;
 pub use expression_executor::{ExpressionExecutor, ScalarEvaluator};
 pub use operator::{

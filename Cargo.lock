@@ -495,10 +495,13 @@ dependencies = [
 name = "rustdb-execution"
 version = "1.5.6"
 dependencies = [
+ "rustdb-ast",
+ "rustdb-buffer",
  "rustdb-common",
  "rustdb-function",
  "rustdb-functions",
  "rustdb-planner",
+ "rustdb-row",
  "rustdb-types",
 ]
 

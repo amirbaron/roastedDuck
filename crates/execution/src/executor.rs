@@ -5,11 +5,12 @@ use rustdb_common::{Error, Result};
 
 use crate::operator::{PhysicalRef, SinkState};
 use crate::pipeline::{Pipeline, PipelineExecutor, PipelineStates};
-use crate::{ExecutionContext, SinkFinalize};
+use crate::{ClientEnv, ExecutionContext, SinkFinalize};
 
 /// Splits a physical plan into pipelines and runs them (DuckDB's `Executor`).
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Executor {
+    env: Arc<ClientEnv>,
     pipelines: Vec<Pipeline>,
     /// Finalized sink states, keyed by operator address.
     sink_states: HashMap<usize, SinkState>,
@@ -22,8 +23,12 @@ fn key(op: &PhysicalRef) -> usize {
 impl Executor {
     /// Runs the plan rooted at `root` (a sink, e.g. a result collector) to completion and
     /// returns the root's finalized sink state.
-    pub fn execute(root: &PhysicalRef) -> Result<SinkState> {
-        let mut executor = Self::default();
+    pub fn execute(root: &PhysicalRef, env: Arc<ClientEnv>) -> Result<SinkState> {
+        let mut executor = Self {
+            env,
+            pipelines: Vec::new(),
+            sink_states: HashMap::new(),
+        };
         let root_pipeline = executor.add_pipeline(Pipeline::new(Arc::clone(root)));
         let input = root
             .children()
@@ -79,7 +84,7 @@ impl Executor {
     }
 
     fn run_pipeline(&mut self, index: usize) -> Result<()> {
-        let ctx = ExecutionContext::default();
+        let ctx = ExecutionContext::new(Arc::clone(&self.env));
         let pipeline = &self.pipelines[index];
         let source_op = pipeline
             .source

@@ -15,8 +15,8 @@ use rustdb_types::{DataChunk, LogicalType};
 use crate::expression_executor::ExpressionExecutor;
 use crate::operator::PhysicalRef;
 use crate::operators::{
-    PhysicalColumnDataScan, PhysicalDummyScan, PhysicalFilter, PhysicalProjection, PhysicalStreamingLimit,
-    PhysicalTableScan, PhysicalUngroupedAggregate,
+    PhysicalColumnDataScan, PhysicalDummyScan, PhysicalFilter, PhysicalOrder, PhysicalProjection,
+    PhysicalStreamingLimit, PhysicalTableScan, PhysicalUngroupedAggregate,
 };
 
 /// Converts a logical plan whose column references are resolved into a physical plan.
@@ -117,6 +117,18 @@ pub fn create_physical_plan(op: LogicalOperator) -> Result<PhysicalRef> {
                 constant(&limit, u64::MAX)?,
                 constant(&offset, 0)?,
                 child,
+            ))
+        }
+        LogicalKind::Order {
+            orders,
+            projection_map,
+        } => {
+            let projections = projection_map.iter().map(|&index| index as usize).collect();
+            Arc::new(PhysicalOrder::new(
+                types,
+                orders,
+                projections,
+                next_child("order")?,
             ))
         }
         _ => return Err(not_implemented(operator_type)),
