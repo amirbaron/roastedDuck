@@ -17,8 +17,8 @@ use rustdb_catalog::checkpoint::{IndexExpressionLoader, read_create_info_propert
 use rustdb_catalog::{Catalog, CatalogType, EntryKind, Transaction};
 use rustdb_common::{Error, ErrorKind, Result};
 use rustdb_execution::operators::{
-    CatalogTableCreator, CreateSchemaAction, CreateSequenceAction, CreateViewAction, DdlAction, DropAction,
-    TableCreator,
+    CatalogTableCreator, CreateEntryAction, CreateSchemaAction, CreateSequenceAction, CreateViewAction,
+    DdlAction, DropAction, TableCreator,
 };
 use rustdb_serde::Deserializer;
 use rustdb_serde::binary::BinaryDeserializer;
@@ -461,9 +461,18 @@ impl Replayer {
                 return Err(Error::not_implemented("replaying ROW_GROUP_DATA WAL entries"));
             }
             WalType::CreateMacro | WalType::CreateTableMacro | WalType::CreateType => {
-                return Err(Error::not_implemented(format!(
-                    "replaying {wal_type:?} WAL entries"
-                )));
+                // `ReplayCreateMacro`, `ReplayCreateTableMacro` and `ReplayCreateType`.
+                let (expected, tag) = match wal_type {
+                    WalType::CreateMacro => (AstCatalogType::MacroEntry, "macro"),
+                    WalType::CreateTableMacro => (AstCatalogType::TableMacroEntry, "table"),
+                    _ => (AstCatalogType::TypeEntry, "type"),
+                };
+                let info = self.read_create_info(d, expected, tag)?;
+                CreateEntryAction {
+                    catalog: Arc::clone(&self.catalog),
+                    info,
+                }
+                .execute(&transaction)?;
             }
             WalType::WalVersion | WalType::WalFlush => {
                 return Err(Error::internal("Invalid WAL entry type!"));

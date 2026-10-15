@@ -31,12 +31,12 @@ mod window;
 
 use crate::expression_executor::ExpressionExecutor;
 use crate::operator::{PhysicalRef, SinkData};
-use crate::operators::PhysicalCrossProduct;
 use crate::operators::{
     AlterEntryAction, CatalogTableCreator, CreateIndexAction, CreateSchemaAction, CreateSequenceAction,
     CreateViewAction, DdlAction, DropAction, InsertTarget, PhysicalCreateTable, PhysicalDdl, PhysicalDelete,
     PhysicalInsert, PhysicalSeqScan, PhysicalUpdate,
 };
+use crate::operators::{CreateEntryAction, PhysicalCreateType, PhysicalCrossProduct};
 use crate::operators::{CteData, PhysicalCte, PhysicalCteScan, PhysicalRecursiveCte};
 use crate::operators::{
     DelimShared, PhysicalDelimJoin, PhysicalDelimScan, PhysicalNestedLoopJoin, PhysicalUnion,
@@ -526,6 +526,24 @@ impl PlanGenerator {
                         "CREATE_SEQUENCE",
                         types,
                         Arc::new(CreateSequenceAction { catalog, info }),
+                    )?,
+                    LogicalOperatorType::LogicalCreateType => match children.next() {
+                        Some(query) => Arc::new(PhysicalCreateType::new(
+                            catalog,
+                            info,
+                            query,
+                            Arc::clone(&self.context()?.transaction),
+                        )),
+                        None => self.ddl(
+                            "CREATE_TYPE",
+                            types,
+                            Arc::new(CreateEntryAction { catalog, info }),
+                        )?,
+                    },
+                    LogicalOperatorType::LogicalCreateMacro => self.ddl(
+                        "CREATE_MACRO",
+                        types,
+                        Arc::new(CreateEntryAction { catalog, info }),
                     )?,
                     other => return Err(not_implemented(other)),
                 }

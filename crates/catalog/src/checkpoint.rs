@@ -10,9 +10,9 @@ use std::sync::Arc;
 
 use rustdb_ast::{
     CatalogType as AstCatalogType, ColumnDefinition, ColumnList, CompressionType, Constraint,
-    CreateIndexInfo, CreateInfo, CreateInfoKind, CreateSequenceInfo, CreateTableInfo, CreateViewInfo,
-    ForeignKeyType, IndexConstraintType as AstIndexConstraintType, LogicalDependencyList, OnCreateConflict,
-    ParsedExpressionKind, TableColumnType,
+    CreateIndexInfo, CreateInfo, CreateInfoKind, CreateMacroInfo, CreateSequenceInfo, CreateTableInfo,
+    CreateTypeInfo, CreateViewInfo, ForeignKeyType, IndexConstraintType as AstIndexConstraintType,
+    LogicalDependencyList, OnCreateConflict, ParsedExpressionKind, TableColumnType,
 };
 use rustdb_buffer::BlockId;
 use rustdb_common::{CaseInsensitiveMap, Error, OrderedMap, Result};
@@ -30,8 +30,8 @@ use rustdb_storage::{ColumnDefinition as StorageColumn, DataTable};
 use rustdb_types::{LogicalType, Value};
 
 use crate::{
-    Catalog, CatalogEntry, CatalogType, EntryKind, IndexEntry, SequenceEntry, TableEntry, Transaction,
-    ViewEntry,
+    Catalog, CatalogEntry, CatalogType, EntryKind, IndexEntry, MacroEntry, SequenceEntry, TableEntry,
+    Transaction, TypeEntry, ViewEntry,
 };
 
 /// Builds the ART of an index whose keys are expressions (they need the binder).
@@ -148,6 +148,73 @@ pub(crate) fn sequence_create_info(
     )
 }
 
+/// `TypeCatalogEntry::GetInfo`.
+pub(crate) fn type_create_info(
+    catalog: &str,
+    schema: &str,
+    entry: &CatalogEntry,
+    ty: &TypeEntry,
+) -> CreateInfo {
+    base_info(
+        catalog,
+        schema,
+        entry.temporary,
+        CreateInfoKind::Type(CreateTypeInfo {
+            name: entry.name().to_owned(),
+            logical_type: ty.user_type.clone(),
+            query: None,
+        }),
+    )
+}
+
+/// `MacroCatalogEntry::GetInfo` (the entry's temporary flag is not part of it).
+pub(crate) fn macro_create_info(catalog: &str, schema: &str, entry: &CatalogEntry) -> Option<CreateInfo> {
+    let (macros, table) = match &entry.kind {
+        EntryKind::Macro(function) => (function, false),
+        EntryKind::TableMacro(function) => (function, true),
+        _ => return None,
+    };
+    let info = CreateMacroInfo {
+        name: entry.name().to_owned(),
+        macros: macros.macros.clone(),
+    };
+    let kind = if table {
+        CreateInfoKind::TableMacro(info)
+    } else {
+        CreateInfoKind::Macro(info)
+    };
+    Some(base_info(catalog, schema, false, kind))
+}
+
+/// The catalog entry a `CREATE TYPE` or `CREATE MACRO` info describes (DuckDB's
+/// `TypeCatalogEntry` / `MacroCatalogEntry` constructors).
+pub fn entry_from_create_info(info: &CreateInfo) -> Result<CatalogEntry> {
+    let mut entry = match &info.kind {
+        CreateInfoKind::Type(ty) => CatalogEntry::new(
+            ty.name.clone(),
+            EntryKind::Type(TypeEntry {
+                user_type: ty.logical_type.clone(),
+            }),
+        ),
+        CreateInfoKind::Macro(function) => CatalogEntry::new(
+            function.name.clone(),
+            EntryKind::Macro(MacroEntry {
+                macros: function.macros.clone(),
+            }),
+        ),
+        CreateInfoKind::TableMacro(function) => CatalogEntry::new(
+            function.name.clone(),
+            EntryKind::TableMacro(MacroEntry {
+                macros: function.macros.clone(),
+            }),
+        ),
+        _ => return Err(Error::internal("expected a type or macro")),
+    };
+    entry.temporary = info.temporary;
+    entry.internal = info.internal;
+    Ok(entry)
+}
+
 /// Writes `info` as a nullable object property (`WriteProperty(field, tag, entry pointer)`).
 pub(crate) fn write_create_info(
     serializer: &mut dyn Serializer,
@@ -228,6 +295,11 @@ pub fn write_checkpoint(
         };
         let schema_name = schema.name().to_owned();
         entries.push((schema_name.clone(), Arc::clone(&schema)));
+        for ty in schema_entry.types.scan(transaction) {
+            if !ty.internal {
+                entries.push((schema_name.clone(), ty));
+            }
+        }
         for sequence in schema_entry.sequences.scan(transaction) {
             if !sequence.internal {
                 entries.push((schema_name.clone(), sequence));
@@ -251,6 +323,16 @@ pub fn write_checkpoint(
         for view in views {
             entries.push((schema_name.clone(), view));
         }
+        for function in schema_entry.functions.scan(transaction) {
+            if !function.internal && matches!(function.kind, EntryKind::Macro(_)) {
+                entries.push((schema_name.clone(), function));
+            }
+        }
+        for function in schema_entry.table_functions.scan(transaction) {
+            if !function.internal && matches!(function.kind, EntryKind::TableMacro(_)) {
+                entries.push((schema_name.clone(), function));
+            }
+        }
         for index in schema_entry.indexes.scan(transaction) {
             entries.push((schema_name.clone(), index));
         }
@@ -269,6 +351,26 @@ pub fn write_checkpoint(
                     serializer.write_property(99, "catalog_type", &AstCatalogType::SchemaEntry)?;
                     let info = base_info(&catalog_name, entry.name(), false, CreateInfoKind::Schema);
                     write_create_info(serializer, 100, "schema", &info)?;
+                }
+                EntryKind::Type(ty) => {
+                    serializer.write_property(99, "catalog_type", &AstCatalogType::TypeEntry)?;
+                    write_create_info(
+                        serializer,
+                        100,
+                        "type",
+                        &type_create_info(&catalog_name, schema, entry, ty),
+                    )?;
+                }
+                EntryKind::Macro(_) | EntryKind::TableMacro(_) => {
+                    let info = macro_create_info(&catalog_name, schema, entry)
+                        .ok_or_else(|| Error::internal("expected a macro"))?;
+                    let (ty, tag) = if matches!(entry.kind, EntryKind::Macro(_)) {
+                        (AstCatalogType::MacroEntry, "macro")
+                    } else {
+                        (AstCatalogType::TableMacroEntry, "table_macro")
+                    };
+                    serializer.write_property(99, "catalog_type", &ty)?;
+                    write_create_info(serializer, 100, tag, &info)?;
                 }
                 EntryKind::Sequence(sequence) => {
                     serializer.write_property(99, "catalog_type", &AstCatalogType::SequenceEntry)?;
@@ -486,6 +588,15 @@ pub fn load_checkpoint(
             AstCatalogType::SchemaEntry => {
                 let info = read_create_info(d, ty, "schema")?;
                 catalog.create_schema_committed(&info.schema)?;
+            }
+            AstCatalogType::TypeEntry | AstCatalogType::MacroEntry | AstCatalogType::TableMacroEntry => {
+                let tag = match ty {
+                    AstCatalogType::TypeEntry => "type",
+                    AstCatalogType::MacroEntry => "macro",
+                    _ => "table_macro",
+                };
+                let info = read_create_info(d, ty, tag)?;
+                catalog.create_entry_committed(&info.schema, entry_from_create_info(&info)?)?;
             }
             AstCatalogType::SequenceEntry => {
                 let info = read_create_info(d, ty, "sequence")?;

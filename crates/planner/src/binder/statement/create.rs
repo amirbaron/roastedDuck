@@ -9,7 +9,7 @@ use rustdb_catalog::{CatalogType, EntryKind, TableEntry};
 use rustdb_common::{Error, LogicalIndex, PhysicalIndex, Result};
 use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
-use super::super::expression::bind_logical_type;
+use super::super::expression::{bind_logical_type, bind_logical_type_in_schema};
 use super::super::query_node::bind_node;
 use super::super::{BindScope, BoundStatement, Scope};
 use super::table::{bind_default_value, bind_schema_or_catalog, table_of};
@@ -59,7 +59,8 @@ pub fn bind_create(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Result<B
             }
             plan
         }
-        _ => {
+        CreateInfoKind::Type(_) => bind_create_type(scope, info)?,
+        CreateInfoKind::Macro(_) | CreateInfoKind::TableMacro(_) | CreateInfoKind::Secret(_) => {
             return Err(Error::not_implemented(format!(
                 "CREATE {}",
                 info.kind.catalog_type().name()
@@ -68,6 +69,59 @@ pub fn bind_create(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Result<B
     };
     scope.with_properties(|properties| properties.return_type = return_type);
     Ok(count_result(plan))
+}
+
+/// `CREATE TYPE` (the `TYPE_ENTRY` case of DuckDB's `Binder::Bind(CreateStatement &)`):
+/// binds the aliased type, or plans the query of `AS ENUM (SELECT ...)` whose distinct
+/// values become the enum's members.
+fn bind_create_type(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Result<LogicalOperator> {
+    bind_create_schema(scope, info)?;
+    let CreateInfoKind::Type(create_type) = &mut info.kind else {
+        return Err(Error::internal("expected a type"));
+    };
+    let query = if let Some(mut query) = create_type.query.take() {
+        let mut child = scope.binder.child()?;
+        let bound = {
+            let mut child_scope = BindScope {
+                binder: &mut child,
+                outer: Some(scope as &mut dyn Scope),
+            };
+            bind_node(&mut child_scope, &mut query.node)?
+        };
+        let [sql_type] = bound.types.as_slice() else {
+            return Err(Error::binder("The query must return a single column"));
+        };
+        let mut plan = bound.plan;
+        if sql_type.id() != LogicalTypeId::Varchar {
+            // Cast the values to VARCHAR in a projection.
+            let binding = plan
+                .column_bindings()
+                .first()
+                .copied()
+                .ok_or_else(|| Error::internal("query without columns"))?;
+            let reference =
+                crate::expression::Expression::column_ref(String::new(), sql_type.clone(), binding, 0);
+            let cast = crate::function_binder::add_cast_to_type(
+                &scope.context,
+                reference,
+                &LogicalType::VARCHAR,
+                false,
+            )?;
+            plan = LogicalOperator::projection(scope.binder.generate_table_index(), vec![cast], plan);
+        }
+        Some(plan)
+    } else {
+        create_type.logical_type = bind_logical_type(&scope.context, &create_type.logical_type)?;
+        None
+    };
+    let mut plan = LogicalOperator::new(LogicalKind::Create {
+        operator_type: LogicalOperatorType::LogicalCreateType,
+        info: Box::new(info.clone()),
+    });
+    if let Some(query) = query {
+        plan.add_child(query);
+    }
+    Ok(plan)
 }
 
 /// The catalog a schema is created in (`Binder::BindCatalog`).
@@ -191,14 +245,15 @@ pub fn bind_create_table_info(
         }
         let mut columns = Vec::with_capacity(target.len());
         for (name, ty) in target.into_iter().zip(&bound.types) {
-            push_deduplicated(&mut columns, column(name, bind_logical_type(ty)?));
+            push_deduplicated(&mut columns, column(name, bind_logical_type(&scope.context, ty)?));
         }
         table.columns.columns = columns;
         query_plan = Some(bound.plan);
     } else {
         for column in &mut table.columns.columns {
             if column.logical_type.id() != rustdb_types::LogicalTypeId::Any {
-                column.logical_type = bind_logical_type(&column.logical_type)?;
+                column.logical_type =
+                    bind_logical_type_in_schema(&scope.context, &column.logical_type, &catalog, &schema)?;
             }
         }
         bind_generated_columns(scope, &table.table, &mut table.columns.columns)?;
@@ -740,9 +795,30 @@ pub fn bind_drop(scope: &mut BindScope<'_>, drop: &mut DropInfo) -> Result<Bound
     if let Some(ty) = ty {
         let (catalog, schema) = bind_schema_or_catalog(scope, &drop.catalog, &drop.schema);
         let if_exists = drop.if_not_found == OnEntryNotFound::ReturnNull;
-        let found = scope
-            .context
-            .get_entry(&catalog, &schema, ty, &drop.name, if_exists)?;
+        if ty == CatalogType::Type
+            && (schema.is_empty() || schema.eq_ignore_ascii_case(rustdb_catalog::DEFAULT_SCHEMA))
+            && rustdb_types::builtin_type_id(&drop.name).is_some()
+        {
+            return Err(Error::catalog(format!(
+                "Cannot drop internal catalog entry \"{}\"!",
+                drop.name
+            )));
+        }
+        let mut found = scope.context.get_entry(&catalog, &schema, ty, &drop.name, true)?;
+        if found.is_none() && ty == CatalogType::Macro {
+            // `DROP MACRO` also drops table macros.
+            found = scope
+                .context
+                .get_entry(&catalog, &schema, CatalogType::TableMacro, &drop.name, true)?;
+            if found.is_some() {
+                drop.catalog_type = AstCatalogType::TableMacroEntry;
+            }
+        }
+        if found.is_none() && !if_exists {
+            found = scope
+                .context
+                .get_entry(&catalog, &schema, ty, &drop.name, false)?;
+        }
         if let Some(found) = found {
             if found.entry.internal {
                 return Err(Error::catalog(format!(

@@ -13,7 +13,7 @@ use rustdb_catalog::{CatalogType, EntryKind, TableColumn, TableEntry};
 use rustdb_common::{Error, LogicalIndex, Result};
 use rustdb_types::{LogicalType, LogicalTypeId};
 
-use super::super::expression::bind_logical_type;
+use super::super::expression::bind_logical_type_in_schema;
 use super::super::{BindScope, BoundStatement};
 use super::table::{
     bind_constraints, bind_default_value, bind_schema_or_catalog, check_columns, missing_column_error,
@@ -65,7 +65,13 @@ pub fn bind_alter(scope: &mut BindScope<'_>, info: &mut AlterInfo) -> Result<Bou
                     let EntryKind::Table(table) = &found.entry.kind else {
                         return Err(Error::catalog("Can only modify view with ALTER VIEW statement"));
                     };
-                    bind_alter_table(scope, found.entry.name(), table, alter)?
+                    bind_alter_table(
+                        scope,
+                        (&found.catalog, &found.schema),
+                        found.entry.name(),
+                        table,
+                        alter,
+                    )?
                 }
                 _ => return Err(Error::internal("unexpected ALTER")),
             };
@@ -135,6 +141,7 @@ fn foreign_key_columns(fk: &rustdb_ast::ForeignKeyConstraint) -> Vec<String> {
 /// `DuckTableEntry::AlterEntry` for `ALTER TABLE`.
 fn bind_alter_table(
     scope: &mut BindScope<'_>,
+    table_schema: (&str, &str),
     table_name: &str,
     table: &TableEntry,
     alter: &AlterTableInfo,
@@ -144,7 +151,13 @@ fn bind_alter_table(
             rename_column(table, table_name, &rename.old_name, &rename.new_name)
         }
         AlterTableInfo::RenameTable(rename) => Ok(AlterAction::Rename(rename.new_table_name.clone())),
-        AlterTableInfo::AddColumn(add) => add_column(scope, table, &add.new_column, add.if_column_not_exists),
+        AlterTableInfo::AddColumn(add) => add_column(
+            scope,
+            table_schema,
+            table,
+            &add.new_column,
+            add.if_column_not_exists,
+        ),
         AlterTableInfo::RemoveColumn(remove) => remove_column(scope, table, table_name, remove),
         AlterTableInfo::SetDefault(set) => {
             let index = column_index(table, table_name, &set.column_name)?;
@@ -203,6 +216,7 @@ fn bind_alter_table(
         }
         AlterTableInfo::AlterColumnType(change) => alter_column_type(
             scope,
+            table_schema,
             table,
             table_name,
             &change.column_name,
@@ -347,6 +361,7 @@ fn rename_column(table: &TableEntry, table_name: &str, old: &str, new: &str) -> 
 /// `DuckTableEntry::AddColumn`.
 fn add_column(
     scope: &mut BindScope<'_>,
+    (catalog, schema): (&str, &str),
     table: &TableEntry,
     column: &rustdb_ast::ColumnDefinition,
     if_not_exists: bool,
@@ -365,7 +380,7 @@ fn add_column(
             "Adding generated columns after table creation is not supported yet",
         ));
     }
-    let logical_type = bind_logical_type(&column.logical_type)?;
+    let logical_type = bind_logical_type_in_schema(&scope.context, &column.logical_type, catalog, schema)?;
     let default_value = column.expression.as_deref().cloned();
     let default = bind_default_value(scope, default_value.as_ref(), &logical_type)?;
     let mut columns = table.columns.clone();
@@ -509,6 +524,7 @@ fn remove_column(
 /// `DuckTableEntry::ChangeColumnType`.
 fn alter_column_type(
     scope: &mut BindScope<'_>,
+    (catalog, schema): (&str, &str),
     table: &TableEntry,
     table_name: &str,
     column_name: &str,
@@ -518,7 +534,12 @@ fn alter_column_type(
     let mut target = if target_type.id() == LogicalTypeId::Unknown {
         None
     } else {
-        Some(bind_logical_type(target_type)?)
+        Some(bind_logical_type_in_schema(
+            &scope.context,
+            target_type,
+            catalog,
+            schema,
+        )?)
     };
     let index = column_index(table, table_name, column_name)?;
     let mut expression = expression

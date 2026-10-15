@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use rustdb_ast::{ParsedExpression, SelectStatement};
+use rustdb_ast::{MacroFunction, ParsedExpression, SelectStatement};
 use rustdb_function::{AggregateFunctionSet, ScalarFunctionSet, TableFunctionSet};
 use rustdb_types::LogicalType;
 
@@ -328,6 +328,21 @@ pub struct ViewEntry {
     pub names: Vec<String>,
 }
 
+/// A user-defined type (DuckDB's `TypeCatalogEntry`): `CREATE TYPE name AS ...`.
+#[derive(Clone, Debug)]
+pub struct TypeEntry {
+    /// The type the name stands for, fully bound.
+    pub user_type: LogicalType,
+}
+
+/// A macro (DuckDB's `MacroCatalogEntry`, the base of `ScalarMacroCatalogEntry` and
+/// `TableMacroCatalogEntry`): its overloads.
+#[derive(Clone, Debug)]
+pub struct MacroEntry {
+    /// The overloads, in definition order; never empty.
+    pub macros: Vec<MacroFunction>,
+}
+
 /// Type-specific contents of a catalog entry.
 #[derive(Debug)]
 pub enum EntryKind {
@@ -339,6 +354,12 @@ pub enum EntryKind {
     View(ViewEntry),
     Index(IndexEntry),
     Sequence(SequenceEntry),
+    /// `CREATE TYPE`.
+    Type(TypeEntry),
+    /// `CREATE MACRO ... AS expr` (`ScalarMacroCatalogEntry`).
+    Macro(MacroEntry),
+    /// `CREATE MACRO ... AS TABLE ...` (`TableMacroCatalogEntry`).
+    TableMacro(MacroEntry),
 }
 
 /// The next object id handed out (DuckDB's `DatabaseManager::NextOid`; ids below
@@ -390,6 +411,9 @@ impl CatalogEntry {
             EntryKind::View(_) => CatalogType::View,
             EntryKind::Index(_) => CatalogType::Index,
             EntryKind::Sequence(_) => CatalogType::Sequence,
+            EntryKind::Type(_) => CatalogType::Type,
+            EntryKind::Macro(_) => CatalogType::Macro,
+            EntryKind::TableMacro(_) => CatalogType::TableMacro,
         }
     }
 

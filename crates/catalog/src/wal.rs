@@ -13,7 +13,8 @@ use rustdb_storage::wal::{WalBatch, WalType};
 use rustdb_types::Value;
 
 use crate::checkpoint::{
-    base_info, sequence_create_info, table_create_info, view_create_info, write_create_info,
+    base_info, macro_create_info, sequence_create_info, table_create_info, type_create_info,
+    view_create_info, write_create_info,
 };
 use crate::{CatalogEntry, EntryKind};
 
@@ -110,6 +111,20 @@ pub(crate) fn write_create(
                 write_create_info(s, 101, "sequence", &info)
             })
         }
+        EntryKind::Type(ty) => {
+            let info = type_create_info(catalog, schema, entry, ty);
+            batch.entry(WalType::CreateType, |s| write_create_info(s, 101, "type", &info))
+        }
+        EntryKind::Macro(_) | EntryKind::TableMacro(_) => {
+            let info = macro_create_info(catalog, schema, entry)
+                .ok_or_else(|| rustdb_common::Error::internal("expected a macro"))?;
+            let (wal_type, tag) = if matches!(entry.kind, EntryKind::Macro(_)) {
+                (WalType::CreateMacro, "macro")
+            } else {
+                (WalType::CreateTableMacro, "table")
+            };
+            batch.entry(wal_type, |s| write_create_info(s, 101, tag, &info))
+        }
         EntryKind::Index(index) => {
             let info = base_info(
                 catalog,
@@ -142,6 +157,9 @@ pub(crate) fn write_drop(batch: &mut WalBatch, schema: &str, entry: &CatalogEntr
         EntryKind::View(_) => WalType::DropView,
         EntryKind::Sequence(_) => WalType::DropSequence,
         EntryKind::Index(_) => WalType::DropIndex,
+        EntryKind::Type(_) => WalType::DropType,
+        EntryKind::Macro(_) => WalType::DropMacro,
+        EntryKind::TableMacro(_) => WalType::DropTableMacro,
         _ => return Ok(()),
     };
     batch.entry(wal_type, |s| {

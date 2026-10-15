@@ -253,15 +253,16 @@ impl ClientContext {
         Err(self.missing_entry_error(&path, ty, name))
     }
 
-    /// The best similar entry name in each schema (DuckDB's `SimilarEntriesInSchemas`).
+    /// The best similar entry name in each schema, with the catalog and schema it is in
+    /// (DuckDB's `SimilarEntriesInSchemas`).
     fn similar_entries(
         &self,
         schemas: &[(String, String)],
         ty: CatalogType,
         name: &str,
-    ) -> (f64, Vec<String>) {
+    ) -> (f64, Vec<(String, String, String)>) {
         let mut best = 0.0;
-        let mut results: Vec<String> = Vec::new();
+        let mut results: Vec<(String, String, String)> = Vec::new();
         for (catalog_name, schema_name) in schemas {
             let Some(catalog) = self.catalog(catalog_name) else {
                 continue;
@@ -285,12 +286,21 @@ impl ClientContext {
             };
             let mut entry_score = 0.0;
             let mut entry_name = String::new();
-            for entry in set.scan(&self.transaction) {
-                let score = similarity_rating(&entry.name().to_lowercase(), name);
+            let mut consider = |candidate: &str| {
+                let score = similarity_rating(&candidate.to_lowercase(), name);
                 if score > entry_score {
                     entry_score = score;
-                    entry.name().clone_into(&mut entry_name);
+                    candidate.clone_into(&mut entry_name);
                 }
+            };
+            if ty == CatalogType::Type && schema_name.eq_ignore_ascii_case(DEFAULT_SCHEMA) {
+                // The builtin types of every `main` schema (`DefaultTypeGenerator`).
+                for builtin in rustdb_types::builtin_type_names() {
+                    consider(builtin);
+                }
+            }
+            for entry in set.scan(&self.transaction) {
+                consider(entry.name());
             }
             if entry_name.is_empty() {
                 continue;
@@ -300,10 +310,27 @@ impl ClientContext {
                     results.clear();
                 }
                 best = entry_score;
-                results.push(entry_name);
+                results.push((catalog.name().to_owned(), schema_name.clone(), entry_name));
             }
         }
         (best, results)
+    }
+
+    /// `name` in `catalog.schema`, qualified only as far as the search path requires
+    /// (DuckDB's `FindMinimalQualification` with `SimilarCatalogEntry::GetQualifiedName`).
+    fn minimally_qualified(&self, catalog: &str, schema: &str, name: &str) -> String {
+        let reaches = |paths: Vec<(String, String)>| {
+            paths
+                .iter()
+                .any(|(c, s)| c.eq_ignore_ascii_case(catalog) && s.eq_ignore_ascii_case(schema))
+        };
+        if reaches(self.search_path("", schema)) {
+            format!("{schema}.{name}")
+        } else if reaches(self.search_path(catalog, "")) {
+            format!("{catalog}.{name}")
+        } else {
+            format!("{catalog}.{schema}.{name}")
+        }
     }
 
     /// DuckDB's `Catalog::CreateMissingEntryException`.
@@ -326,9 +353,12 @@ impl ClientContext {
         let (unseen_score, unseen) = self.similar_entries(&unseen_schemas, ty, name);
         let mut suggestions = BTreeSet::new();
         if !unseen.is_empty() && (unseen_score >= 1.0 || unseen_score - UNSEEN_PENALTY > seen_score) {
-            suggestions.extend(unseen);
+            // Entries outside the search path need (minimal) qualification.
+            for (catalog, schema, entry) in unseen {
+                suggestions.insert(self.minimally_qualified(&catalog, &schema, &entry));
+            }
         } else {
-            suggestions.extend(seen);
+            suggestions.extend(seen.into_iter().map(|(_, _, entry)| entry));
         }
         let mut suggestions: Vec<String> = suggestions.into_iter().collect();
         let did_you_mean = if suggestions.len() > 2 {
