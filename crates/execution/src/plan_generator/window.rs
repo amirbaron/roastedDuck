@@ -171,3 +171,39 @@ pub(crate) fn plan_window(
     Ok(plan)
 }
 
+/// `child` with a `ROW_NUMBER() OVER (PARTITION BY <all columns>)` column appended, which
+/// numbers duplicate rows (DuckDB's `CreatePartitionedRowNumExpression`, used by
+/// `EXCEPT ALL` / `INTERSECT ALL`).
+pub(crate) fn partitioned_row_number(child: PhysicalRef) -> Result<PhysicalRef> {
+    let input_types = child.types().to_vec();
+    let partitions = input_types
+        .iter()
+        .enumerate()
+        .map(|(index, ty)| Expression::reference("", ty.clone(), index as u64))
+        .collect();
+    let row_number = Expression::new(
+        rustdb_planner::ExpressionType::WindowRowNumber,
+        LogicalType::BIGINT,
+        ExpressionKind::Window(Box::new(rustdb_planner::expression::BoundWindowExpression {
+            aggregate: None,
+            bind_info: None,
+            children: Vec::new(),
+            partitions,
+            orders: Vec::new(),
+            filter_expr: None,
+            ignore_nulls: false,
+            distinct: false,
+            start: rustdb_ast::WindowBoundary::UnboundedPreceding,
+            end: rustdb_ast::WindowBoundary::UnboundedFollowing,
+            exclude_clause: rustdb_ast::WindowExcludeMode::NoOther,
+            start_expr: None,
+            end_expr: None,
+            offset_expr: None,
+            default_expr: None,
+            arg_orders: Vec::new(),
+        })),
+    );
+    let mut types = input_types;
+    types.push(LogicalType::BIGINT);
+    Ok(Arc::new(PhysicalWindow::new(types, vec![row_number], 0, child)?))
+}
