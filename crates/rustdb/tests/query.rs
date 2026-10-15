@@ -35,7 +35,10 @@ fn constants_values_filters_and_limits() {
     let mut con = connect();
     assert_eq!(rows(&mut con, "SELECT 1 + 2 AS x, 'a'"), vec![vec!["3", "a"]]);
     assert_eq!(
-        rows(&mut con, "SELECT b, a FROM (VALUES (1, 'x'), (2, 'y'), (3, 'z')) t(a, b) WHERE a >= 2 LIMIT 1"),
+        rows(
+            &mut con,
+            "SELECT b, a FROM (VALUES (1, 'x'), (2, 'y'), (3, 'z')) t(a, b) WHERE a >= 2 LIMIT 1"
+        ),
         vec![vec!["y", "2"]]
     );
     assert_eq!(
