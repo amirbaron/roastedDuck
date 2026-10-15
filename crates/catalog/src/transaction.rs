@@ -85,7 +85,7 @@ impl CatalogUndo for CatalogChange {
                 if temporary {
                     return Ok(());
                 }
-                crate::wal::write_alter(batch, info)
+                crate::wal::write_alter(batch, info, self.version.entry().map(AsRef::as_ref))
             }
             WalRecord::None => Ok(()),
         }

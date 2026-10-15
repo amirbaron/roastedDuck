@@ -17,6 +17,8 @@ impl FunctionClient {
     pub fn random_engine(&self) -> MutexGuard<'_, RandomEngine> {
         // A poisoned lock only means another thread panicked mid-draw; the engine state
         // is still a valid generator state.
-        self.random.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.random
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }

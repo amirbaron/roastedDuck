@@ -303,15 +303,26 @@ pub fn write_checkpoint(
                         serialize_meta_block_pointer(s, data.table_pointer)
                     })?;
                     serializer.write_property(102, "total_rows", &data.total_rows)?;
-                    // No index data: indexes are rebuilt from the table when loaded.
+                    let index_infos = serialize_indexes(storage_table, storage, &options, &mut blocks)?;
+                    // Empty block pointers for forwards compatibility.
                     serializer.on_property_begin(103, "index_pointers");
                     serializer.on_list_begin(0);
                     serializer.on_list_end();
                     serializer.on_property_end();
-                    serializer.on_property_begin(104, "index_storage_infos");
-                    serializer.on_list_begin(0);
-                    serializer.on_list_end();
-                    serializer.on_property_end();
+                    serializer.write_list_property(
+                        104,
+                        "index_storage_infos",
+                        index_infos.len(),
+                        |s, index| {
+                            s.on_object_begin();
+                            rustdb_storage::checkpoint::pointers::serialize_index_storage_info(
+                                s,
+                                &index_infos[index],
+                            )?;
+                            s.on_object_end();
+                            Ok(())
+                        },
+                    )?;
                 }
                 EntryKind::View(view) => {
                     serializer.write_property(99, "catalog_type", &AstCatalogType::ViewEntry)?;
@@ -356,6 +367,41 @@ pub fn write_checkpoint(
     };
     block_manager.write_header(metadata, header, &blocks.used_blocks)?;
     block_manager.truncate()
+}
+
+/// Writes the data of every index of `table` (`TableIndexList::SerializeToDisk`). Each
+/// index fills its own partial blocks.
+fn serialize_indexes(
+    table: &DataTable,
+    storage: &StorageManager,
+    options: &rustdb_serde::SerializationOptions,
+    blocks: &mut BlockWriter,
+) -> Result<Vec<rustdb_storage::index::art::ArtStorageInfo>> {
+    let mut index_options = CaseInsensitiveMap::default();
+    if options.compatibility.serialization_version >= 3 {
+        index_options.insert("v1_0_0_storage", Value::boolean(false));
+    }
+    let storage_version = storage.block_manager().storage_version();
+    let mut infos = Vec::new();
+    for entry in table.info().indexes().entries() {
+        let mut index_blocks = BlockWriter::new(Arc::clone(storage.block_manager()));
+        let mut state = entry.lock();
+        let info = state
+            .index
+            .serialize_to_disk(&index_options, storage_version, &mut |bytes| {
+                let pointer = index_blocks.write_segment(bytes)?;
+                Ok(rustdb_storage::index::fixed_size_allocator::BufferPointer {
+                    block_id: pointer.block_id,
+                    offset: pointer.offset,
+                })
+            })?;
+        index_blocks.flush()?;
+        for (block, count) in index_blocks.used_blocks {
+            *blocks.used_blocks.entry(block).or_insert(0) += count;
+        }
+        infos.push(info);
+    }
+    Ok(infos)
 }
 
 /// The physical key columns of a UNIQUE constraint.

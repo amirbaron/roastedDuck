@@ -33,9 +33,12 @@ fn set(name: &str, functions: Vec<ScalarFunction>) -> ScalarFunctionSet {
 
 /// `typeof(x) -> VARCHAR`: the name of the argument's type.
 pub fn typeof_functions() -> ScalarFunctionSet {
-    let mut function = ScalarFunction::new("typeof", vec![LogicalType::ANY], LogicalType::VARCHAR, |args, _, result| {
-        constant(result, &Value::varchar(args.column(0).logical_type().to_string()))
-    });
+    let mut function = ScalarFunction::new(
+        "typeof",
+        vec![LogicalType::ANY],
+        LogicalType::VARCHAR,
+        |args, _, result| constant(result, &Value::varchar(args.column(0).logical_type().to_string())),
+    );
     function.null_handling = NullHandling::Special;
     set("typeof", vec![function])
 }
@@ -61,14 +64,19 @@ pub fn get_type_functions() -> ScalarFunctionSet {
 
 /// `alias(x) -> VARCHAR`: the name of the argument expression.
 pub fn alias_functions() -> ScalarFunctionSet {
-    let mut function = ScalarFunction::new("alias", vec![LogicalType::ANY], LogicalType::VARCHAR, |_, state, result| {
-        let name = state
-            .bind_data
-            .as_ref()
-            .and_then(|data| data.as_any().downcast_ref::<ConstantValue>())
-            .map_or_else(|| Value::varchar(""), |data| data.0.clone());
-        constant(result, &name)
-    })
+    let mut function = ScalarFunction::new(
+        "alias",
+        vec![LogicalType::ANY],
+        LogicalType::VARCHAR,
+        |_, state, result| {
+            let name = state
+                .bind_data
+                .as_ref()
+                .and_then(|data| data.as_any().downcast_ref::<ConstantValue>())
+                .map_or_else(|| Value::varchar(""), |data| data.0.clone());
+            constant(result, &name)
+        },
+    )
     .with_bind(|_, input| Ok(Some(Arc::new(ConstantValue(Value::varchar(&input.aliases[0]))))));
     function.null_handling = NullHandling::Special;
     set("alias", vec![function])
@@ -88,9 +96,12 @@ impl FunctionData for ConstantValue {
 pub fn version_functions() -> ScalarFunctionSet {
     set(
         "version",
-        vec![ScalarFunction::new("version", Vec::new(), LogicalType::VARCHAR, |_, _, result| {
-            constant(result, &Value::varchar("v1.5.6"))
-        })],
+        vec![ScalarFunction::new(
+            "version",
+            Vec::new(),
+            LogicalType::VARCHAR,
+            |_, _, result| constant(result, &Value::varchar("v1.5.6")),
+        )],
     )
 }
 
@@ -149,19 +160,24 @@ pub fn cast_to_type_functions() -> ScalarFunctionSet {
 
 /// `error(message)`: raises an Invalid Input Error with the message.
 pub fn error_functions() -> ScalarFunctionSet {
-    let mut function = ScalarFunction::new("error", vec![LogicalType::VARCHAR], LogicalType::SQLNULL, |args, _, result| {
-        let input = addressable(args.column(0), args.len());
-        let strings = input.unified::<StringT>();
-        for row in 0..args.len() {
-            if let Some(message) = strings.get(row) {
-                return Err(Error::invalid_input(
-                    String::from_utf8_lossy(input.string_value(&message)).into_owned(),
-                ));
+    let mut function = ScalarFunction::new(
+        "error",
+        vec![LogicalType::VARCHAR],
+        LogicalType::SQLNULL,
+        |args, _, result| {
+            let input = addressable(args.column(0), args.len());
+            let strings = input.unified::<StringT>();
+            for row in 0..args.len() {
+                if let Some(message) = strings.get(row) {
+                    return Err(Error::invalid_input(
+                        String::from_utf8_lossy(input.string_value(&message)).into_owned(),
+                    ));
+                }
             }
-        }
-        *result = Vector::constant_null(LogicalType::SQLNULL);
-        Ok(())
-    });
+            *result = Vector::constant_null(LogicalType::SQLNULL);
+            Ok(())
+        },
+    );
     function.stability = Stability::Volatile;
     set("error", vec![function])
 }
@@ -181,7 +197,10 @@ pub fn constant_or_null_functions() -> ScalarFunctionSet {
                 .ok_or_else(|| Error::internal("constant_or_null without bind data"))?;
             let count = args.len();
             let columns = &args.columns()[1..];
-            if columns.iter().any(|column| column.is_constant() && column.is_null(0)) {
+            if columns
+                .iter()
+                .any(|column| column.is_constant() && column.is_null(0))
+            {
                 *result = Vector::constant_null(value.0.logical_type().clone());
                 return Ok(());
             }
@@ -215,22 +234,27 @@ pub fn constant_or_null_functions() -> ScalarFunctionSet {
 
 /// `hash(x, ...) -> UBIGINT` (DuckDB's `DataChunk::Hash`).
 pub fn hash_functions() -> ScalarFunctionSet {
-    let mut function = ScalarFunction::new("hash", vec![LogicalType::ANY], LogicalType::UBIGINT, |args, _, result| {
-        let constant = all_constant(args.columns());
-        let rows = if constant { 1 } else { args.len() };
-        let columns: Vec<Vector> = args
-            .columns()
-            .iter()
-            .map(|column| addressable(column, rows).into_owned())
-            .collect();
-        let refs: Vec<&Vector> = columns.iter().collect();
-        let mut hashes = hash_columns(&refs, rows)?;
-        if constant {
-            hashes.make_constant();
-        }
-        *result = hashes;
-        Ok(())
-    });
+    let mut function = ScalarFunction::new(
+        "hash",
+        vec![LogicalType::ANY],
+        LogicalType::UBIGINT,
+        |args, _, result| {
+            let constant = all_constant(args.columns());
+            let rows = if constant { 1 } else { args.len() };
+            let columns: Vec<Vector> = args
+                .columns()
+                .iter()
+                .map(|column| addressable(column, rows).into_owned())
+                .collect();
+            let refs: Vec<&Vector> = columns.iter().collect();
+            let mut hashes = hash_columns(&refs, rows)?;
+            if constant {
+                hashes.make_constant();
+            }
+            *result = hashes;
+            Ok(())
+        },
+    );
     function.varargs = Some(LogicalType::ANY);
     function.null_handling = NullHandling::Special;
     set("hash", vec![function])
@@ -239,66 +263,76 @@ pub fn hash_functions() -> ScalarFunctionSet {
 /// `least`/`greatest`: the smallest/largest non-NULL argument (DuckDB's `least.cpp`), compared
 /// through sort keys whose NULL placement makes NULLs lose.
 fn least_greatest(name: &'static str, greatest: bool) -> ScalarFunctionSet {
-    let mut function = ScalarFunction::new(name, vec![LogicalType::ANY], LogicalType::ANY, move |args, _, result| {
-        if args.column_count() == 1 {
-            *result = args.column(0).clone();
-            return Ok(());
-        }
-        let constant = all_constant(args.columns());
-        let rows = if constant { 1 } else { args.len() };
-        // Ascending keys; NULLs last for `least` and first for `greatest`, so they never win.
-        let modifiers = OrderModifiers::new(
-            OrderType::Ascending,
-            if greatest {
-                NullOrder::NullsFirst
-            } else {
-                NullOrder::NullsLast
-            },
-        );
-        let columns: Vec<Vector> = args
-            .columns()
-            .iter()
-            .map(|column| addressable(column, rows).into_owned())
-            .collect();
-        let keys = columns
-            .iter()
-            .map(|column| create_sort_keys(&[column], &[modifiers], rows))
-            .collect::<Result<Vec<_>>>()?;
-        let mut out = Vector::flat(result.logical_type().clone(), rows.max(1));
-        for row in 0..rows {
-            let mut best: Option<usize> = None;
-            for (index, column) in columns.iter().enumerate() {
-                if column.is_null(row) {
-                    continue;
-                }
-                let better = best.is_none_or(|best| {
-                    let ordering = keys[index].key(row).cmp(keys[best].key(row));
-                    if greatest {
-                        ordering.is_gt()
-                    } else {
-                        ordering.is_lt()
+    let mut function = ScalarFunction::new(
+        name,
+        vec![LogicalType::ANY],
+        LogicalType::ANY,
+        move |args, _, result| {
+            if args.column_count() == 1 {
+                *result = args.column(0).clone();
+                return Ok(());
+            }
+            let constant = all_constant(args.columns());
+            let rows = if constant { 1 } else { args.len() };
+            // Ascending keys; NULLs last for `least` and first for `greatest`, so they never win.
+            let modifiers = OrderModifiers::new(
+                OrderType::Ascending,
+                if greatest {
+                    NullOrder::NullsFirst
+                } else {
+                    NullOrder::NullsLast
+                },
+            );
+            let columns: Vec<Vector> = args
+                .columns()
+                .iter()
+                .map(|column| addressable(column, rows).into_owned())
+                .collect();
+            let keys = columns
+                .iter()
+                .map(|column| create_sort_keys(&[column], &[modifiers], rows))
+                .collect::<Result<Vec<_>>>()?;
+            let mut out = Vector::flat(result.logical_type().clone(), rows.max(1));
+            for row in 0..rows {
+                let mut best: Option<usize> = None;
+                for (index, column) in columns.iter().enumerate() {
+                    if column.is_null(row) {
+                        continue;
                     }
-                });
-                if better {
-                    best = Some(index);
+                    let better = best.is_none_or(|best| {
+                        let ordering = keys[index].key(row).cmp(keys[best].key(row));
+                        if greatest {
+                            ordering.is_gt()
+                        } else {
+                            ordering.is_lt()
+                        }
+                    });
+                    if better {
+                        best = Some(index);
+                    }
+                }
+                match best {
+                    Some(index) => {
+                        decode_sort_key(
+                            keys[index].key(row),
+                            std::slice::from_mut(&mut out),
+                            row,
+                            &[modifiers],
+                        )?;
+                    }
+                    None => {
+                        let capacity = out.capacity();
+                        out.validity_mut().set_invalid(row, capacity);
+                    }
                 }
             }
-            match best {
-                Some(index) => {
-                    decode_sort_key(keys[index].key(row), std::slice::from_mut(&mut out), row, &[modifiers])?;
-                }
-                None => {
-                    let capacity = out.capacity();
-                    out.validity_mut().set_invalid(row, capacity);
-                }
+            if constant {
+                out.make_constant();
             }
-        }
-        if constant {
-            out.make_constant();
-        }
-        *result = out;
-        Ok(())
-    })
+            *result = out;
+            Ok(())
+        },
+    )
     .with_bind(|function, input| {
         let mut child_type = input.argument_types[0].clone();
         for ty in &input.argument_types[1..] {
@@ -343,7 +377,10 @@ impl FunctionData for SortKeyModifiers {
 }
 
 /// DuckDB's `CreateSortKeyBind`.
-fn bind_create_sort_key(function: &mut ScalarFunction, input: &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>> {
+fn bind_create_sort_key(
+    function: &mut ScalarFunction,
+    input: &BindInput<'_>,
+) -> Result<Option<Arc<dyn FunctionData>>> {
     if input.argument_types.len() % 2 != 0 {
         return Err(Error::binder(
             "Arguments to create_sort_key must be [key1, sort_specifier1, key2, sort_specifier2, ...]",
@@ -369,23 +406,28 @@ fn bind_create_sort_key(function: &mut ScalarFunction, input: &BindInput<'_>) ->
 
 /// `create_sort_key(key, 'ASC NULLS LAST', ...)`.
 pub fn create_sort_key_functions() -> ScalarFunctionSet {
-    let mut function = ScalarFunction::new("create_sort_key", vec![LogicalType::ANY], LogicalType::BLOB, |args, state, result| {
-        let modifiers = state
-            .bind_data
-            .as_ref()
-            .and_then(|data| data.as_any().downcast_ref::<SortKeyModifiers>())
-            .ok_or_else(|| Error::internal("create_sort_key without bind data"))?;
-        let count = args.len();
-        let columns: Vec<Vector> = args
-            .columns()
-            .iter()
-            .step_by(2)
-            .map(|column| addressable(column, count).into_owned())
-            .collect();
-        let refs: Vec<&Vector> = columns.iter().collect();
-        let keys = create_sort_keys(&refs, &modifiers.0, count)?;
-        rustdb_row::sort::encode::sort_keys_to_vector(&keys, result)
-    })
+    let mut function = ScalarFunction::new(
+        "create_sort_key",
+        vec![LogicalType::ANY],
+        LogicalType::BLOB,
+        |args, state, result| {
+            let modifiers = state
+                .bind_data
+                .as_ref()
+                .and_then(|data| data.as_any().downcast_ref::<SortKeyModifiers>())
+                .ok_or_else(|| Error::internal("create_sort_key without bind data"))?;
+            let count = args.len();
+            let columns: Vec<Vector> = args
+                .columns()
+                .iter()
+                .step_by(2)
+                .map(|column| addressable(column, count).into_owned())
+                .collect();
+            let refs: Vec<&Vector> = columns.iter().collect();
+            let keys = create_sort_keys(&refs, &modifiers.0, count)?;
+            rustdb_row::sort::encode::sort_keys_to_vector(&keys, result)
+        },
+    )
     .with_bind(bind_create_sort_key);
     function.varargs = Some(LogicalType::ANY);
     function.null_handling = NullHandling::Special;

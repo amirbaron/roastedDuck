@@ -39,7 +39,9 @@ fn string_predicate(name: &str, op: fn(&[u8], &[u8]) -> bool) -> ScalarFunction 
 /// `nested` (DuckDB's `ContainsFun`).
 pub fn contains_functions(nested: impl IntoIterator<Item = ScalarFunction>) -> ScalarFunctionSet {
     let mut set = ScalarFunctionSet::new("contains");
-    set.add(string_predicate("contains", |haystack, needle| find(haystack, needle).is_some()));
+    set.add(string_predicate("contains", |haystack, needle| {
+        find(haystack, needle).is_some()
+    }));
     for mut function in nested {
         function.name = set.name.clone();
         set.add(function);

@@ -64,8 +64,9 @@ fn damerau_levenshtein(source: &[u8], target: &[u8]) -> usize {
             };
             let transposition =
                 distance[at(source_match, target_match)] + (i - source_match) + 1 + (j - target_match);
-            distance[at(i + 2, j + 2)] = (distance[at(i + 1, j + 1)] + cost)
-                .min((distance[at(i + 2, j + 1)] + 1).min((distance[at(i + 1, j + 2)] + 1).min(transposition)));
+            distance[at(i + 2, j + 2)] = (distance[at(i + 1, j + 1)] + cost).min(
+                (distance[at(i + 2, j + 1)] + 1).min((distance[at(i + 1, j + 2)] + 1).min(transposition)),
+            );
         }
         last_source_match[usize::from(source[i])] = i + 1;
     }
@@ -74,10 +75,14 @@ fn damerau_levenshtein(source: &[u8], target: &[u8]) -> usize {
 
 fn hamming(left: &[u8], right: &[u8]) -> Result<i64> {
     if left.len() != right.len() {
-        return Err(Error::invalid_input("Mismatch Function: Strings must be of equal length!"));
+        return Err(Error::invalid_input(
+            "Mismatch Function: Strings must be of equal length!",
+        ));
     }
     if left.is_empty() {
-        return Err(Error::invalid_input("Mismatch Function: Strings must be of length > 0!"));
+        return Err(Error::invalid_input(
+            "Mismatch Function: Strings must be of length > 0!",
+        ));
     }
     Ok(left.iter().zip(right).filter(|(a, b)| a != b).count() as i64)
 }
@@ -159,7 +164,11 @@ fn jaro(pattern: &[u8], text: &[u8], score_cutoff: f64) -> f64 {
     similarity += common_f / t_len as f64;
     similarity += (common_f - transpositions) / common_f;
     let similarity = similarity / 3.0;
-    if similarity >= score_cutoff { similarity } else { 0.0 }
+    if similarity >= score_cutoff {
+        similarity
+    } else {
+        0.0
+    }
 }
 
 /// rapidfuzz's `jaro_winkler_similarity` with prefix weight 0.1.
@@ -186,7 +195,11 @@ fn jaro_winkler(pattern: &[u8], text: &[u8], score_cutoff: f64) -> f64 {
         // Clang contracts `Sim += prefix * weight * (1.0 - Sim)` into an FMA.
         similarity = (prefix * PREFIX_WEIGHT).mul_add(1.0 - similarity, similarity);
     }
-    if similarity >= score_cutoff { similarity } else { 0.0 }
+    if similarity >= score_cutoff {
+        similarity
+    } else {
+        0.0
+    }
 }
 
 type Similarity = fn(&[u8], &[u8], f64) -> f64;
@@ -225,7 +238,12 @@ fn jaro_set(name: &str, similarity: Similarity) -> ScalarFunctionSet {
         vec![LogicalType::VARCHAR, LogicalType::VARCHAR],
         vec![LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::DOUBLE],
     ] {
-        set.add(ScalarFunction::new(name, arguments, LogicalType::DOUBLE, jaro_kernel(similarity)));
+        set.add(ScalarFunction::new(
+            name,
+            arguments,
+            LogicalType::DOUBLE,
+            jaro_kernel(similarity),
+        ));
     }
     set
 }
@@ -261,8 +279,14 @@ pub fn similarity_functions() -> Vec<(ScalarFunctionSet, &'static [&'static str]
         },
     ));
     vec![
-        (distance_set("levenshtein", |a, b| Ok(levenshtein(a, b) as i64)), &["editdist3"]),
-        (distance_set("damerau_levenshtein", |a, b| Ok(damerau_levenshtein(a, b) as i64)), &[]),
+        (
+            distance_set("levenshtein", |a, b| Ok(levenshtein(a, b) as i64)),
+            &["editdist3"],
+        ),
+        (
+            distance_set("damerau_levenshtein", |a, b| Ok(damerau_levenshtein(a, b) as i64)),
+            &[],
+        ),
         (distance_set("hamming", hamming), &["mismatches"]),
         (jaccard_set, &[]),
         (jaro_set("jaro_similarity", jaro), &[]),

@@ -14,12 +14,17 @@ use crate::scalar::string::utf8::{char_count, grapheme_count};
 type BindResult = Result<Option<Arc<dyn FunctionData>>>;
 
 fn string_length_function(name: &str, argument: LogicalType, length: fn(&[u8]) -> i64) -> ScalarFunction {
-    ScalarFunction::new(name, vec![argument], LogicalType::BIGINT, move |args, _, result| {
-        unary::<Str, i64>(args, result, |input, out| {
-            *out = length(input);
-            Ok(true)
-        })
-    })
+    ScalarFunction::new(
+        name,
+        vec![argument],
+        LogicalType::BIGINT,
+        move |args, _, result| {
+            unary::<Str, i64>(args, result, |input, out| {
+                *out = length(input);
+                Ok(true)
+            })
+        },
+    )
 }
 
 fn bit_string_length(bits: &[u8]) -> i64 {
@@ -154,7 +159,9 @@ fn unbound(name: &str, arguments: Vec<LogicalType>) -> ScalarFunction {
 /// `length` (DuckDB's `LengthFun`).
 pub fn length_functions(name: &str) -> ScalarFunctionSet {
     let mut set = ScalarFunctionSet::new(name);
-    set.add(string_length_function(name, LogicalType::VARCHAR, |input| char_count(input) as i64));
+    set.add(string_length_function(name, LogicalType::VARCHAR, |input| {
+        char_count(input) as i64
+    }));
     set.add(string_length_function(name, LogicalType::BIT, bit_string_length));
     set.add(unbound(name, vec![any_list()]).with_bind(bind_length));
     set
@@ -163,9 +170,11 @@ pub fn length_functions(name: &str) -> ScalarFunctionSet {
 /// `length_grapheme` (DuckDB's `LengthGraphemeFun`).
 pub fn length_grapheme_functions() -> ScalarFunctionSet {
     let mut set = ScalarFunctionSet::new("length_grapheme");
-    set.add(string_length_function("length_grapheme", LogicalType::VARCHAR, |input| {
-        grapheme_count(input) as i64
-    }));
+    set.add(string_length_function(
+        "length_grapheme",
+        LogicalType::VARCHAR,
+        |input| grapheme_count(input) as i64,
+    ));
     set
 }
 
@@ -180,24 +189,36 @@ pub fn array_length_functions() -> ScalarFunctionSet {
 /// `strlen`: the size in bytes.
 pub fn strlen_functions() -> ScalarFunctionSet {
     let mut set = ScalarFunctionSet::new("strlen");
-    set.add(string_length_function("strlen", LogicalType::VARCHAR, |input| input.len() as i64));
+    set.add(string_length_function("strlen", LogicalType::VARCHAR, |input| {
+        input.len() as i64
+    }));
     set
 }
 
 /// `bit_length` (DuckDB's `BitLengthFun`).
 pub fn bit_length_functions() -> ScalarFunctionSet {
     let mut set = ScalarFunctionSet::new("bit_length");
-    set.add(string_length_function("bit_length", LogicalType::VARCHAR, |input| {
-        8 * input.len() as i64
-    }));
-    set.add(string_length_function("bit_length", LogicalType::BIT, bit_string_length));
+    set.add(string_length_function(
+        "bit_length",
+        LogicalType::VARCHAR,
+        |input| 8 * input.len() as i64,
+    ));
+    set.add(string_length_function(
+        "bit_length",
+        LogicalType::BIT,
+        bit_string_length,
+    ));
     set
 }
 
 /// `octet_length` (DuckDB's `OctetLengthFun`).
 pub fn octet_length_functions() -> ScalarFunctionSet {
     let mut set = ScalarFunctionSet::new("octet_length");
-    set.add(string_length_function("octet_length", LogicalType::BLOB, |input| input.len() as i64));
+    set.add(string_length_function(
+        "octet_length",
+        LogicalType::BLOB,
+        |input| input.len() as i64,
+    ));
     set.add(string_length_function("octet_length", LogicalType::BIT, |bits| {
         rustdb_types::bit::octet_length(bits) as i64
     }));

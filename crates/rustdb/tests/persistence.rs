@@ -226,3 +226,43 @@ fn checkpoint_empties_the_wal() {
     con.query("INSERT INTO t VALUES (2)").unwrap();
     assert!(wal_size(&path) > 0);
 }
+
+/// Writes indexed tables, checkpoints, and checks the indexes after reopening.
+fn check_indexes_survive(path: &str, config: &Config) {
+    {
+        let database = Database::open(path, config).unwrap();
+        let mut con = database.connect().unwrap();
+        con.query("CREATE TABLE t(i INTEGER PRIMARY KEY, g INTEGER, s VARCHAR)")
+            .unwrap();
+        con.query("INSERT INTO t SELECT range, range // 7, 'name' || range FROM range(20000)")
+            .unwrap();
+        con.query("CREATE INDEX idx_g ON t(g)").unwrap();
+        con.query("CREATE UNIQUE INDEX idx_s ON t(s)").unwrap();
+        con.query("CHECKPOINT").unwrap();
+        // The checkpointed indexes keep working in the same session.
+        assert!(con.query("INSERT INTO t VALUES (5, 0, 'x')").is_err());
+        con.query("INSERT INTO t VALUES (20000, 1, 'extra')").unwrap();
+        con.query("DELETE FROM t WHERE i = 7").unwrap();
+    }
+    let database = Database::open(path, config).unwrap();
+    let mut con = database.connect().unwrap();
+    assert_eq!(
+        rows(&mut con, "SELECT count(*) FROM t WHERE g = 1"),
+        vec![vec!["7"]]
+    );
+    assert_eq!(
+        rows(&mut con, "SELECT i FROM t WHERE s = 'name777'"),
+        vec![vec!["777"]]
+    );
+    assert!(con.query("INSERT INTO t VALUES (20000, 0, 'y')").is_err());
+    assert!(con.query("INSERT INTO t VALUES (30000, 0, 'name5')").is_err());
+    con.query("INSERT INTO t VALUES (7, 1, 'seven')").unwrap();
+}
+
+#[test]
+fn indexes_survive_a_restart() {
+    check_indexes_survive(&temp_path("indexes-v1"), &Config::default());
+    let config =
+        Config::default().with_option("storage_compatibility_version", rustdb::Value::varchar("v1.2.0"));
+    check_indexes_survive(&temp_path("indexes-v12"), &config);
+}

@@ -13,6 +13,7 @@ pub mod node;
 mod nodes;
 mod operator;
 mod prefix;
+mod storage;
 #[cfg(test)]
 mod tests;
 
@@ -29,6 +30,7 @@ pub use key::{
     ArtKey, ROW_ID_SIZE, create_key, decode_row_id, generate_keys, is_supported_key_type, row_id_key,
 };
 pub use node::{GateStatus, NType, Node, Slot};
+pub use storage::ArtStorageInfo;
 
 use self::node::{ALLOCATOR_COUNT, read_node, write_node};
 use super::conflict_manager::ConflictManager;

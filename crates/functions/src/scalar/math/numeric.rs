@@ -14,8 +14,12 @@ use std::sync::Arc;
 
 use rustdb_common::{Error, Result};
 use rustdb_function::cast::ValueCast;
-use rustdb_function::{BindInput, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet, ScalarKernel};
-use rustdb_types::{DataChunk, Date, LogicalType, LogicalTypeId, NativeType, PhysicalType, Timestamp, Value, Vector};
+use rustdb_function::{
+    BindInput, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet, ScalarKernel,
+};
+use rustdb_types::{
+    DataChunk, Date, LogicalType, LogicalTypeId, NativeType, PhysicalType, Timestamp, Value, Vector,
+};
 
 use crate::scalar::executor::{Str, binary, unary};
 use crate::signature::numeric_types;
@@ -30,25 +34,31 @@ type BindResult = Result<Option<Arc<dyn FunctionData>>>;
 // ---------------------------------------------------------------------------------------
 
 /// A kernel applying `op` to every row of a one-argument call.
-fn kernel<A: NativeType, R: NativeType>(op: impl Fn(A) -> Result<R> + Copy + Send + Sync + 'static) -> ScalarKernel {
-    Arc::new(move |args: &DataChunk, _: &mut FunctionState, result: &mut Vector| {
-        unary::<A, R>(args, result, |value, out| {
-            *out = op(value)?;
-            Ok(true)
-        })
-    })
+fn kernel<A: NativeType, R: NativeType>(
+    op: impl Fn(A) -> Result<R> + Copy + Send + Sync + 'static,
+) -> ScalarKernel {
+    Arc::new(
+        move |args: &DataChunk, _: &mut FunctionState, result: &mut Vector| {
+            unary::<A, R>(args, result, |value, out| {
+                *out = op(value)?;
+                Ok(true)
+            })
+        },
+    )
 }
 
 /// A kernel applying `op` to every row of a two-argument call.
 fn binary_kernel<A: NativeType, B: NativeType, R: NativeType>(
     op: impl Fn(A, B) -> Result<R> + Copy + Send + Sync + 'static,
 ) -> ScalarKernel {
-    Arc::new(move |args: &DataChunk, _: &mut FunctionState, result: &mut Vector| {
-        binary::<A, B, R>(args, result, |left, right, out| {
-            *out = op(left, right)?;
-            Ok(true)
-        })
-    })
+    Arc::new(
+        move |args: &DataChunk, _: &mut FunctionState, result: &mut Vector| {
+            binary::<A, B, R>(args, result, |left, right, out| {
+                *out = op(left, right)?;
+                Ok(true)
+            })
+        },
+    )
 }
 
 /// DuckDB's `ScalarFunction::NopFunction`: the result is the input.
@@ -66,14 +76,22 @@ fn unbound_kernel() -> ScalarKernel {
     })
 }
 
-fn function(name: &str, arguments: Vec<LogicalType>, return_type: LogicalType, kernel: ScalarKernel) -> ScalarFunction {
+fn function(
+    name: &str,
+    arguments: Vec<LogicalType>,
+    return_type: LogicalType,
+    kernel: ScalarKernel,
+) -> ScalarFunction {
     let mut function = ScalarFunction::new(name, arguments, return_type, |_, _, _| Ok(()));
     function.kernel = kernel;
     function
 }
 
 /// A set with the single overload `name(DOUBLE) -> DOUBLE`.
-fn double_function(name: &str, op: impl Fn(f64) -> Result<f64> + Copy + Send + Sync + 'static) -> ScalarFunctionSet {
+fn double_function(
+    name: &str,
+    op: impl Fn(f64) -> Result<f64> + Copy + Send + Sync + 'static,
+) -> ScalarFunctionSet {
     let mut set = ScalarFunctionSet::new(name);
     set.add(function(
         name,
@@ -223,13 +241,15 @@ pub fn abs_functions() -> ScalarFunctionSet {
         let kernel = match ty.id() {
             LogicalTypeId::Decimal => {
                 set.add(
-                    function(NAME, vec![ty.clone()], ty.clone(), unbound_kernel()).with_bind(|function, input| {
-                        let ty = input.argument_types[0].clone();
-                        function.kernel = decimal_abs_kernel(ty.physical_type());
-                        function.arguments[0] = ty.clone();
-                        function.return_type = ty;
-                        Ok(None)
-                    }),
+                    function(NAME, vec![ty.clone()], ty.clone(), unbound_kernel()).with_bind(
+                        |function, input| {
+                            let ty = input.argument_types[0].clone();
+                            function.kernel = decimal_abs_kernel(ty.physical_type());
+                            function.arguments[0] = ty.clone();
+                            function.return_type = ty;
+                            Ok(None)
+                        },
+                    ),
                 );
                 continue;
             }
@@ -399,7 +419,12 @@ impl Rounding {
 }
 
 /// A DECIMAL kernel dividing by `10^divide` and multiplying by `10^multiply`.
-fn decimal_rounding_kernel(physical: PhysicalType, rounding: Rounding, divide: u32, multiply: u32) -> ScalarKernel {
+fn decimal_rounding_kernel(
+    physical: PhysicalType,
+    rounding: Rounding,
+    divide: u32,
+    multiply: u32,
+) -> ScalarKernel {
     with_decimal_storage!(physical, T => {
         let divide = T::power_of_ten(divide);
         let multiply = T::power_of_ten(multiply);
@@ -408,7 +433,9 @@ fn decimal_rounding_kernel(physical: PhysicalType, rounding: Rounding, divide: u
 }
 
 /// DuckDB's `BindGenericRoundFunctionDecimal`: `DECIMAL(w, s) -> DECIMAL(w, 0)`.
-fn bind_decimal_rounding(rounding: Rounding) -> impl Fn(&mut ScalarFunction, &BindInput<'_>) -> BindResult + Send + Sync {
+fn bind_decimal_rounding(
+    rounding: Rounding,
+) -> impl Fn(&mut ScalarFunction, &BindInput<'_>) -> BindResult + Send + Sync {
     move |function, input| {
         let ty = input.argument_types[0].clone();
         let (width, scale) = decimal_properties(&ty)?;
@@ -425,7 +452,9 @@ fn bind_decimal_rounding(rounding: Rounding) -> impl Fn(&mut ScalarFunction, &Bi
 
 /// DuckDB's `BindDecimalRoundPrecision`: `round`/`trunc(DECIMAL, INTEGER)` with a constant
 /// precision.
-fn bind_decimal_precision(rounding: Rounding) -> impl Fn(&mut ScalarFunction, &BindInput<'_>) -> BindResult + Send + Sync {
+fn bind_decimal_precision(
+    rounding: Rounding,
+) -> impl Fn(&mut ScalarFunction, &BindInput<'_>) -> BindResult + Send + Sync {
     move |function, input| {
         let ty = input.argument_types[0].clone();
         if input.argument_types[1].id() == LogicalTypeId::Unknown {
@@ -599,19 +628,35 @@ round_precision!(i64, 19; i8, i16, i32, i64);
 round_precision!(i128, 39; i128);
 
 /// The overloads `name(T)` and `name(T, INTEGER)` of `round`/`trunc`.
-fn rounding_overloads(name: &str, ty: &LogicalType, unary: ScalarKernel, precision: ScalarKernel) -> [ScalarFunction; 2] {
+fn rounding_overloads(
+    name: &str,
+    ty: &LogicalType,
+    unary: ScalarKernel,
+    precision: ScalarKernel,
+) -> [ScalarFunction; 2] {
     [
         function(name, vec![ty.clone()], ty.clone(), unary),
-        function(name, vec![ty.clone(), LogicalType::INTEGER], ty.clone(), precision),
+        function(
+            name,
+            vec![ty.clone(), LogicalType::INTEGER],
+            ty.clone(),
+            precision,
+        ),
     ]
 }
 
 /// The DECIMAL overloads of `round`/`trunc`.
 fn decimal_rounding_overloads(name: &str, ty: &LogicalType, rounding: Rounding) -> [ScalarFunction; 2] {
     [
-        function(name, vec![ty.clone()], ty.clone(), unbound_kernel()).with_bind(bind_decimal_rounding(rounding)),
-        function(name, vec![ty.clone(), LogicalType::INTEGER], ty.clone(), unbound_kernel())
-            .with_bind(bind_decimal_precision(rounding)),
+        function(name, vec![ty.clone()], ty.clone(), unbound_kernel())
+            .with_bind(bind_decimal_rounding(rounding)),
+        function(
+            name,
+            vec![ty.clone(), LogicalType::INTEGER],
+            ty.clone(),
+            unbound_kernel(),
+        )
+        .with_bind(bind_decimal_precision(rounding)),
     ]
 }
 
@@ -718,7 +763,8 @@ fn ceil_floor_functions(name: &str, rounding: Rounding) -> ScalarFunctionSet {
     ));
     let decimal = crate::signature::type_id(LogicalTypeId::Decimal);
     set.add(
-        function(name, vec![decimal.clone()], decimal, unbound_kernel()).with_bind(bind_decimal_rounding(rounding)),
+        function(name, vec![decimal.clone()], decimal, unbound_kernel())
+            .with_bind(bind_decimal_rounding(rounding)),
     );
     set
 }
@@ -764,7 +810,9 @@ fn log_base(base: f64, input: f64) -> Result<f64> {
 
 fn sqrt(input: f64) -> Result<f64> {
     if input < 0.0 {
-        return Err(Error::out_of_range("cannot take square root of a negative number"));
+        return Err(Error::out_of_range(
+            "cannot take square root of a negative number",
+        ));
     }
     Ok(input.sqrt())
 }
@@ -894,7 +942,11 @@ fn factorial(input: i32) -> Result<i128> {
 
 /// Rounds away from zero to the next even integer (DuckDB's `EvenOperator`).
 fn even(input: f64) -> Result<f64> {
-    let mut value = if input >= 0.0 { input.ceil() } else { -(-input).ceil() };
+    let mut value = if input >= 0.0 {
+        input.ceil()
+    } else {
+        -(-input).ceil()
+    };
     if (value / 2.0).floor() * 2.0 != value {
         if input >= 0.0 {
             value += 1.0;
@@ -919,7 +971,11 @@ macro_rules! next_after {
                 return Ok(<$ty>::from_bits(1).copysign(y));
             }
             let bits = x.to_bits();
-            let bits = if (y > x) == (x > 0.0) { bits + 1 } else { bits - 1 };
+            let bits = if (y > x) == (x > 0.0) {
+                bits + 1
+            } else {
+                bits - 1
+            };
             Ok(<$ty>::from_bits(bits))
         }
     };
@@ -974,7 +1030,11 @@ fn finiteness(name: &str, finite: bool) -> ScalarFunctionSet {
 }
 
 /// A set of signed-integer overloads `name(BIGINT, BIGINT)` and `name(HUGEINT, HUGEINT)`.
-fn integer_binary(name: &str, i64_op: fn(i64, i64) -> Result<i64>, i128_op: fn(i128, i128) -> Result<i128>) -> ScalarFunctionSet {
+fn integer_binary(
+    name: &str,
+    i64_op: fn(i64, i64) -> Result<i64>,
+    i128_op: fn(i128, i128) -> Result<i128>,
+) -> ScalarFunctionSet {
     let mut set = ScalarFunctionSet::new(name);
     set.add(function(
         name,
@@ -995,10 +1055,15 @@ fn integer_binary(name: &str, i64_op: fn(i64, i64) -> Result<i64>, i128_op: fn(i
 /// `(set, aliases)`.
 pub fn numeric_functions() -> Vec<(ScalarFunctionSet, &'static [&'static str])> {
     let mut pi = ScalarFunctionSet::new("pi");
-    pi.add(ScalarFunction::new("pi", vec![], LogicalType::DOUBLE, |_, _, result| {
-        *result = Vector::constant(&Value::double(PI))?;
-        Ok(())
-    }));
+    pi.add(ScalarFunction::new(
+        "pi",
+        vec![],
+        LogicalType::DOUBLE,
+        |_, _, result| {
+            *result = Vector::constant(&Value::double(PI))?;
+            Ok(())
+        },
+    ));
     let mut factorial_set = ScalarFunctionSet::new("!__postfix");
     factorial_set.add(function(
         "!__postfix",
@@ -1015,7 +1080,10 @@ pub fn numeric_functions() -> Vec<(ScalarFunctionSet, &'static [&'static str])> 
     ));
     vec![
         (abs_functions(), &["abs"]),
-        (double_binary_function("**", |base, exponent| Ok(base.powf(exponent))), &["pow", "power", "^"]),
+        (
+            double_binary_function("**", |base, exponent| Ok(base.powf(exponent))),
+            &["pow", "power", "^"],
+        ),
         (factorial_set, &["factorial"]),
         (double_function("acos", acos), &[]),
         (double_function("asin", asin), &[]),
@@ -1072,7 +1140,10 @@ pub fn numeric_functions() -> Vec<(ScalarFunctionSet, &'static [&'static str])> 
         (double_function("radians", |x| Ok(x * (PI / 180.0))), &[]),
         (round_functions(), &[]),
         (sign_functions(), &[]),
-        (float_predicate("signbit", f32::is_sign_negative, f64::is_sign_negative), &[]),
+        (
+            float_predicate("signbit", f32::is_sign_negative, f64::is_sign_negative),
+            &[],
+        ),
         (double_function("sin", |x| no_infinite(x, |x| Ok(x.sin()))), &[]),
         (double_function("sqrt", sqrt), &[]),
         (double_function("tan", |x| no_infinite(x, |x| Ok(x.tan()))), &[]),

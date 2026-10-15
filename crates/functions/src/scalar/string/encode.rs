@@ -20,12 +20,17 @@ fn string_set<A: crate::scalar::executor::ScalarArg>(
     arguments
         .iter()
         .map(|argument| {
-            ScalarFunction::new(name, vec![argument.clone()], return_type.clone(), move |args, _, result| {
-                unary::<A, StrOut>(args, result, |input, out| {
-                    op(input, out)?;
-                    Ok(true)
-                })
-            })
+            ScalarFunction::new(
+                name,
+                vec![argument.clone()],
+                return_type.clone(),
+                move |args, _, result| {
+                    unary::<A, StrOut>(args, result, |input, out| {
+                        op(input, out)?;
+                        Ok(true)
+                    })
+                },
+            )
         })
         .collect()
 }
@@ -76,10 +81,15 @@ pub fn hex_functions() -> ScalarFunctionSet {
                 out.extend_from_slice(format!("{:X}", v as u128).as_bytes());
                 Ok(())
             }),
-            string_set::<u128>("hex", &[LogicalType::UHUGEINT], &LogicalType::VARCHAR, |v, out| {
-                out.extend_from_slice(format!("{v:X}").as_bytes());
-                Ok(())
-            }),
+            string_set::<u128>(
+                "hex",
+                &[LogicalType::UHUGEINT],
+                &LogicalType::VARCHAR,
+                |v, out| {
+                    out.extend_from_slice(format!("{v:X}").as_bytes());
+                    Ok(())
+                },
+            ),
         ],
     )
 }
@@ -103,10 +113,15 @@ pub fn bin_functions() -> ScalarFunctionSet {
                 out.extend_from_slice(format!("{:b}", v as u128).as_bytes());
                 Ok(())
             }),
-            string_set::<u128>("bin", &[LogicalType::UHUGEINT], &LogicalType::VARCHAR, |v, out| {
-                out.extend_from_slice(format!("{v:b}").as_bytes());
-                Ok(())
-            }),
+            string_set::<u128>(
+                "bin",
+                &[LogicalType::UHUGEINT],
+                &LogicalType::VARCHAR,
+                |v, out| {
+                    out.extend_from_slice(format!("{v:b}").as_bytes());
+                    Ok(())
+                },
+            ),
         ],
     )
 }
@@ -171,11 +186,21 @@ pub fn unhex_unbin_functions() -> (ScalarFunctionSet, ScalarFunctionSet) {
     (
         set_of(
             "unhex",
-            vec![string_set::<Str>("unhex", &[LogicalType::VARCHAR], &LogicalType::BLOB, unhex)],
+            vec![string_set::<Str>(
+                "unhex",
+                &[LogicalType::VARCHAR],
+                &LogicalType::BLOB,
+                unhex,
+            )],
         ),
         set_of(
             "unbin",
-            vec![string_set::<Str>("unbin", &[LogicalType::VARCHAR], &LogicalType::BLOB, unbin)],
+            vec![string_set::<Str>(
+                "unbin",
+                &[LogicalType::VARCHAR],
+                &LogicalType::BLOB,
+                unbin,
+            )],
         ),
     )
 }
@@ -188,61 +213,70 @@ pub fn to_base_functions() -> ScalarFunctionSet {
         vec![LogicalType::BIGINT, LogicalType::INTEGER],
         vec![LogicalType::BIGINT, LogicalType::INTEGER, LogicalType::INTEGER],
     ] {
-        set.add(ScalarFunction::new("to_base", arguments, LogicalType::VARCHAR, |args, _, result| {
-            // Columns are BIGINT, INTEGER[, INTEGER]: read them as i64 through the
-            // variadic executor on a widened copy.
-            let count = args.len();
-            let input = crate::scalar::executor::addressable(args.column(0), count);
-            let radix = crate::scalar::executor::addressable(args.column(1), count);
-            let min_length = args
-                .columns()
-                .get(2)
-                .map(|column| crate::scalar::executor::addressable(column, count));
-            let constant = args.columns().iter().all(rustdb_types::Vector::is_constant);
-            let rows = if constant { 1 } else { count };
-            let inputs = input.unified::<i64>();
-            let radixes = radix.unified::<i32>();
-            let lengths = min_length.as_ref().map(|column| column.unified::<i32>());
-            StrOut::write(result, rows, |row, out| {
-                let (Some(mut value), Some(radix)) = (inputs.get(row), radixes.get(row)) else {
-                    return Ok(false);
-                };
-                let min_length = match &lengths {
-                    Some(lengths) => match lengths.get(row) {
-                        Some(length) => length,
-                        None => return Ok(false),
-                    },
-                    None => 0,
-                };
-                if value < 0 {
-                    return Err(Error::invalid_input("'to_base' number must be greater than or equal to 0"));
-                }
-                if !(2..=36).contains(&radix) {
-                    return Err(Error::invalid_input("'to_base' radix must be between 2 and 36"));
-                }
-                if !(0..=64).contains(&min_length) {
-                    return Err(Error::invalid_input("'to_base' min_length must be between 0 and 64"));
-                }
-                let radix = i64::from(radix);
-                let mut digits = Vec::new();
-                loop {
-                    digits.push(ALPHABET[(value % radix) as usize]);
-                    value /= radix;
-                    if value == 0 {
-                        break;
+        set.add(ScalarFunction::new(
+            "to_base",
+            arguments,
+            LogicalType::VARCHAR,
+            |args, _, result| {
+                // Columns are BIGINT, INTEGER[, INTEGER]: read them as i64 through the
+                // variadic executor on a widened copy.
+                let count = args.len();
+                let input = crate::scalar::executor::addressable(args.column(0), count);
+                let radix = crate::scalar::executor::addressable(args.column(1), count);
+                let min_length = args
+                    .columns()
+                    .get(2)
+                    .map(|column| crate::scalar::executor::addressable(column, count));
+                let constant = args.columns().iter().all(rustdb_types::Vector::is_constant);
+                let rows = if constant { 1 } else { count };
+                let inputs = input.unified::<i64>();
+                let radixes = radix.unified::<i32>();
+                let lengths = min_length.as_ref().map(|column| column.unified::<i32>());
+                StrOut::write(result, rows, |row, out| {
+                    let (Some(mut value), Some(radix)) = (inputs.get(row), radixes.get(row)) else {
+                        return Ok(false);
+                    };
+                    let min_length = match &lengths {
+                        Some(lengths) => match lengths.get(row) {
+                            Some(length) => length,
+                            None => return Ok(false),
+                        },
+                        None => 0,
+                    };
+                    if value < 0 {
+                        return Err(Error::invalid_input(
+                            "'to_base' number must be greater than or equal to 0",
+                        ));
                     }
+                    if !(2..=36).contains(&radix) {
+                        return Err(Error::invalid_input("'to_base' radix must be between 2 and 36"));
+                    }
+                    if !(0..=64).contains(&min_length) {
+                        return Err(Error::invalid_input(
+                            "'to_base' min_length must be between 0 and 64",
+                        ));
+                    }
+                    let radix = i64::from(radix);
+                    let mut digits = Vec::new();
+                    loop {
+                        digits.push(ALPHABET[(value % radix) as usize]);
+                        value /= radix;
+                        if value == 0 {
+                            break;
+                        }
+                    }
+                    while digits.len() < min_length as usize {
+                        digits.push(b'0');
+                    }
+                    out.extend(digits.iter().rev());
+                    Ok(true)
+                })?;
+                if constant {
+                    result.make_constant();
                 }
-                while digits.len() < min_length as usize {
-                    digits.push(b'0');
-                }
-                out.extend(digits.iter().rev());
-                Ok(true)
-            })?;
-            if constant {
-                result.make_constant();
-            }
-            Ok(())
-        }));
+                Ok(())
+            },
+        ));
     }
     set
 }
@@ -267,7 +301,11 @@ fn url_decode(input: &[u8], out: &mut Vec<u8>) -> Result<()> {
     let mut i = 0;
     while i < input.len() {
         let c = input[i];
-        if c == b'%' && i + 2 < input.len() && input[i + 1].is_ascii_hexdigit() && input[i + 2].is_ascii_hexdigit() {
+        if c == b'%'
+            && i + 2 < input.len()
+            && input[i + 1].is_ascii_hexdigit()
+            && input[i + 2].is_ascii_hexdigit()
+        {
             out.push((hex_value(input[i + 1])? << 4) + hex_value(input[i + 2])?);
             i += 3;
         } else {
@@ -289,11 +327,21 @@ pub fn url_functions() -> Vec<ScalarFunctionSet> {
     vec![
         set_of(
             "url_encode",
-            vec![string_set::<Str>("url_encode", &[LogicalType::VARCHAR], &LogicalType::VARCHAR, url_encode)],
+            vec![string_set::<Str>(
+                "url_encode",
+                &[LogicalType::VARCHAR],
+                &LogicalType::VARCHAR,
+                url_encode,
+            )],
         ),
         set_of(
             "url_decode",
-            vec![string_set::<Str>("url_decode", &[LogicalType::VARCHAR], &LogicalType::VARCHAR, url_decode)],
+            vec![string_set::<Str>(
+                "url_decode",
+                &[LogicalType::VARCHAR],
+                &LogicalType::VARCHAR,
+                url_decode,
+            )],
         ),
     ]
 }
@@ -398,7 +446,9 @@ fn parse_formatted_bytes(input: &[u8]) -> Result<u64> {
     };
     let max_value = u64::MAX as f64;
     if limit > max_value / multiplier as f64 {
-        return Err(Error::invalid_input("Memory value out of range: value is too large"));
+        return Err(Error::invalid_input(
+            "Memory value out of range: value is too large",
+        ));
     }
     Ok((multiplier as f64 * limit) as u64)
 }
@@ -467,13 +517,18 @@ fn bar(x: f64, min: f64, max: f64, max_width: f64, out: &mut Vec<u8>) -> Result<
 pub fn bar_functions() -> ScalarFunctionSet {
     let mut set = ScalarFunctionSet::new("bar");
     for arguments in [vec![LogicalType::DOUBLE; 4], vec![LogicalType::DOUBLE; 3]] {
-        set.add(ScalarFunction::new("bar", arguments, LogicalType::VARCHAR, |args, _, result| {
-            variadic::<f64, StrOut>(args, result, false, |values, out| {
-                let value = |index: usize| values.get(index).copied().flatten().unwrap_or(80.0);
-                bar(value(0), value(1), value(2), value(3), out)?;
-                Ok(true)
-            })
-        }));
+        set.add(ScalarFunction::new(
+            "bar",
+            arguments,
+            LogicalType::VARCHAR,
+            |args, _, result| {
+                variadic::<f64, StrOut>(args, result, false, |values, out| {
+                    let value = |index: usize| values.get(index).copied().flatten().unwrap_or(80.0);
+                    bar(value(0), value(1), value(2), value(3), out)?;
+                    Ok(true)
+                })
+            },
+        ));
     }
     set
 }

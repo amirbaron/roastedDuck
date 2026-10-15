@@ -7,6 +7,8 @@ use std::sync::Arc;
 use rustdb_ast::{AlterInfo, AlterInfoKind, AlterTableInfo, Constraint, CreateInfoKind, ParseInfo};
 use rustdb_common::{CaseInsensitiveMap, Result};
 use rustdb_serde::Serializer;
+use rustdb_storage::checkpoint::pointers::serialize_index_storage_info;
+use rustdb_storage::index::art::ArtStorageInfo;
 use rustdb_storage::wal::{WalBatch, WalType};
 use rustdb_types::Value;
 
@@ -39,23 +41,43 @@ fn index_options(batch: &WalBatch) -> CaseInsensitiveMap<Value> {
     options
 }
 
-/// Writes the storage of index `name` (`index_storage_info` and `index_storage`).
-///
-/// Index data is not serialized yet: the index is written as an empty ART, and rustdb
-/// rebuilds it from the table when the WAL is replayed.
+/// The index `name` of `table`, serialized for the WAL (`SerializeIndex`): its
+/// description and the bytes of its buffers per allocator.
+fn serialize_index(
+    batch: &WalBatch,
+    table: Option<&Arc<rustdb_storage::DataTableInfo>>,
+    name: &str,
+) -> Result<(ArtStorageInfo, Vec<Vec<Vec<u8>>>)> {
+    let options = index_options(batch);
+    let Some(entry) = table.and_then(|table| table.indexes().find(name)) else {
+        // The index is already gone from storage: log it empty.
+        let info = ArtStorageInfo {
+            name: name.to_owned(),
+            options,
+            ..ArtStorageInfo::default()
+        };
+        return Ok((info, Vec::new()));
+    };
+    let storage_version = batch.options().compatibility.serialization_version;
+    let mut state = entry.lock();
+    state.index.serialize_to_wal(&options, storage_version)
+}
+
+/// Writes the storage of an index (`index_storage_info` and `index_storage`).
 fn write_index_storage(
     serializer: &mut dyn Serializer,
-    name: &str,
-    options: &CaseInsensitiveMap<Value>,
+    index: &(ArtStorageInfo, Vec<Vec<Vec<u8>>>),
 ) -> Result<()> {
+    let (info, buffers) = index;
     serializer.write_object_property(102, "index_storage_info", |s| {
-        s.write_property(100, "name", name)?;
-        if !options.is_empty() {
-            s.write_property(103, "options", options)?;
+        serialize_index_storage_info(s, info)
+    })?;
+    serializer.write_list_property(103, "index_storage", buffers.len(), |s, allocator| {
+        for buffer in &buffers[allocator] {
+            s.write_data(buffer);
         }
         Ok(())
-    })?;
-    serializer.write_list_property(103, "index_storage", 0, |_, _| Ok(()))
+    })
 }
 
 /// Logs the creation of `entry` in schema `schema` of catalog `catalog`.
@@ -95,10 +117,10 @@ pub(crate) fn write_create(
                 entry.temporary,
                 CreateInfoKind::Index(Box::new(index.info.clone())),
             );
-            let options = index_options(batch);
+            let storage = serialize_index(batch, index.storage.as_ref(), entry.name())?;
             batch.entry(WalType::CreateIndex, |s| {
                 write_create_info(s, 101, "index_catalog_entry", &info)?;
-                write_index_storage(s, entry.name(), &options)
+                write_index_storage(s, &storage)
             })
         }
         _ => Ok(()),
@@ -147,19 +169,32 @@ fn primary_key_index_name(info: &AlterInfo) -> Option<String> {
     Some(name)
 }
 
-/// Logs an `ALTER` (`WriteAlter`); `ADD PRIMARY KEY` also logs the new index.
-pub(crate) fn write_alter(batch: &mut WalBatch, info: &AlterInfo) -> Result<()> {
+/// Logs an `ALTER` (`WriteAlter`); `ADD PRIMARY KEY` also logs the new index of the
+/// altered entry `altered`.
+pub(crate) fn write_alter(
+    batch: &mut WalBatch,
+    info: &AlterInfo,
+    altered: Option<&CatalogEntry>,
+) -> Result<()> {
     let parse_info = ParseInfo::Alter(Box::new(info.clone()));
-    let index_name = primary_key_index_name(info);
-    let options = index_options(batch);
+    let index = match primary_key_index_name(info) {
+        Some(name) => {
+            let table = altered.and_then(|entry| match &entry.kind {
+                EntryKind::Table(table) => table.storage.as_ref().map(|storage| Arc::clone(storage.info())),
+                _ => None,
+            });
+            Some(serialize_index(batch, table.as_ref(), &name)?)
+        }
+        None => None,
+    };
     batch.entry(WalType::AlterInfo, |s| {
         s.on_property_begin(101, "info");
         s.on_nullable_begin(true);
         s.write_object(&parse_info)?;
         s.on_nullable_end();
         s.on_property_end();
-        match &index_name {
-            Some(name) => write_index_storage(s, name, &options),
+        match &index {
+            Some(index) => write_index_storage(s, index),
             None => Ok(()),
         }
     })

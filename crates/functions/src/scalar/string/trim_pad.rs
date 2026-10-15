@@ -54,7 +54,11 @@ fn right(input: &[u8], position: i64, counting: Counting) -> Result<&[u8]> {
     (counting.substring)(input, characters - length + 1, length)
 }
 
-fn left_right_set(name: &str, op: fn(&[u8], i64, Counting) -> Result<&[u8]>, counting: Counting) -> ScalarFunctionSet {
+fn left_right_set(
+    name: &str,
+    op: fn(&[u8], i64, Counting) -> Result<&[u8]>,
+    counting: Counting,
+) -> ScalarFunctionSet {
     let mut set = ScalarFunctionSet::new(name);
     set.add(ScalarFunction::new(
         name,
@@ -87,7 +91,8 @@ fn code_points(input: &[u8]) -> impl Iterator<Item = (i64, &[u8])> {
         if rest.is_empty() {
             return None;
         }
-        let (code, length) = decode_first(rest).map_or((-1, 1), |(c, length)| (i64::from(u32::from(c)), length));
+        let (code, length) =
+            decode_first(rest).map_or((-1, 1), |(c, length)| (i64::from(u32::from(c)), length));
         let (bytes, tail) = rest.split_at(length);
         rest = tail;
         Some((code, bytes))
@@ -159,7 +164,10 @@ pub fn pad_functions() -> Vec<ScalarFunctionSet> {
 
 /// Whether a code point is in Unicode category Zs (space separator).
 fn is_space_separator(code: i64) -> bool {
-    matches!(code, 0x20 | 0xA0 | 0x1680 | 0x2000..=0x200A | 0x202F | 0x205F | 0x3000)
+    matches!(
+        code,
+        0x20 | 0xA0 | 0x1680 | 0x2000..=0x200A | 0x202F | 0x205F | 0x3000
+    )
 }
 
 /// Trims leading and/or trailing code points for which `trimmed` holds.
@@ -235,7 +243,8 @@ pub fn instr_functions() -> ScalarFunctionSet {
         LogicalType::BIGINT,
         |args, _, result| {
             binary::<Str, Str, i64>(args, result, |haystack, needle, out| {
-                *out = find(haystack, needle).map_or(0, |location| char_count(&haystack[..location]) as i64 + 1);
+                *out =
+                    find(haystack, needle).map_or(0, |location| char_count(&haystack[..location]) as i64 + 1);
                 Ok(true)
             })
         },

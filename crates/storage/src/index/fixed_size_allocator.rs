@@ -326,8 +326,53 @@ impl FixedSizeAllocator {
         self.buffer_with_free_space = self.buffers_with_free_space.iter().next().copied();
     }
 
+    /// Writes every buffer with `write`, which returns where the bytes went, and records
+    /// the locations (`SerializeBuffers`). A checkpoint rewrites all index data, so
+    /// buffers persisted by an earlier checkpoint are written again.
+    pub(crate) fn serialize_buffers(
+        &mut self,
+        write: &mut dyn FnMut(&[u8]) -> Result<BufferPointer>,
+    ) -> Result<()> {
+        self.update_allocation_sizes();
+        let ids: Vec<u64> = self.buffers.keys().copied().collect();
+        for id in ids {
+            let pointer = {
+                let buffer = self
+                    .buffers
+                    .get(&id)
+                    .ok_or_else(|| Error::internal("index buffer disappeared"))?;
+                let bytes = buffer_bytes(
+                    buffer,
+                    self.loader.as_deref(),
+                    &self.buffer_manager,
+                    self.block_size,
+                )?;
+                write(&bytes[..buffer.allocation_size.min(bytes.len())])?
+            };
+            self.set_persisted(id, pointer);
+        }
+        Ok(())
+    }
+
+    /// The bytes of every buffer, in the order of [`FixedSizeAllocator::info`], for a
+    /// WAL entry (`InitSerializationToWAL`).
+    pub(crate) fn wal_buffers(&mut self) -> Result<Vec<Vec<u8>>> {
+        self.update_allocation_sizes();
+        self.buffers
+            .values()
+            .map(|buffer| {
+                let bytes = buffer_bytes(
+                    buffer,
+                    self.loader.as_deref(),
+                    &self.buffer_manager,
+                    self.block_size,
+                )?;
+                Ok(bytes[..buffer.allocation_size.min(bytes.len())].to_vec())
+            })
+            .collect()
+    }
+
     /// Recomputes the allocation size of every dirty buffer (`SetAllocationSize`).
-    #[allow(dead_code, reason = "used by checkpointing")]
     pub(crate) fn update_allocation_sizes(&mut self) {
         let available = self.available_segments_per_buffer;
         let segment_size = self.segment_size;
@@ -414,22 +459,7 @@ impl FixedSizeAllocator {
         Ok(())
     }
 
-    /// The bytes of every buffer that must be written, with its id (`SerializeBuffers`).
-    #[allow(dead_code, reason = "used by checkpointing")]
-    pub(crate) fn dirty_buffers(&self) -> Vec<(u64, &[u8], usize)> {
-        self.buffers
-            .iter()
-            .filter(|(_, b)| b.dirty || b.disk.is_none())
-            .filter_map(|(&id, b)| {
-                b.memory
-                    .get()
-                    .map(|m| (id, &m[..b.allocation_size.min(m.len())], b.allocation_size))
-            })
-            .collect()
-    }
-
     /// Records where a buffer was written.
-    #[allow(dead_code, reason = "used by checkpointing")]
     pub(crate) fn set_persisted(&mut self, id: u64, pointer: BufferPointer) {
         if let Some(buffer) = self.buffers.get_mut(&id) {
             buffer.disk = Some(pointer);

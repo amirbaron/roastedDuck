@@ -247,7 +247,9 @@ impl LikeMatcher {
 }
 
 /// DuckDB's `LikeBindFunction`: a constant pattern becomes a matcher.
-fn bind_like(invert: bool) -> impl Fn(&mut ScalarFunction, &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>> {
+fn bind_like(
+    invert: bool,
+) -> impl Fn(&mut ScalarFunction, &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>> {
     move |function, input| {
         let Some(Some(pattern)) = input.constants.get(1) else {
             return Ok(None);
@@ -325,7 +327,11 @@ pub fn like_functions() -> Vec<ScalarFunctionSet> {
     vec![
         single(binary_like("~~", like, false).with_bind(bind_like(false))),
         single(binary_like("!~~", like, true).with_bind(bind_like(true))),
-        single(binary_like("~~~", |string, pattern, _| Ok(glob(string, pattern)), false)),
+        single(binary_like(
+            "~~~",
+            |string, pattern, _| Ok(glob(string, pattern)),
+            false,
+        )),
         single(binary_like("~~*", ilike, false)),
         single(binary_like("!~~*", ilike, true)),
         escape_like("like_escape", like, false),

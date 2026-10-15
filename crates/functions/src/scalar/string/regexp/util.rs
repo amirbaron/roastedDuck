@@ -34,7 +34,11 @@ impl Default for RegexOptions {
 }
 
 /// DuckDB's `ParseRegexOptions`; `global` receives the `g` flag where it is allowed.
-pub(crate) fn parse_options(options: &[u8], target: &mut RegexOptions, mut global: Option<&mut bool>) -> Result<()> {
+pub(crate) fn parse_options(
+    options: &[u8],
+    target: &mut RegexOptions,
+    mut global: Option<&mut bool>,
+) -> Result<()> {
     for &option in options {
         match option {
             b'c' => target.case_sensitive = true,
@@ -103,12 +107,17 @@ fn re2_error(pattern: &str, translated: &str) -> Option<String> {
         Err(error) => error,
     };
     let span = error.span();
-    let snippet = translated.get(span.start.offset..span.end.offset).unwrap_or_default();
+    let snippet = translated
+        .get(span.start.offset..span.end.offset)
+        .unwrap_or_default();
     let message = match error.kind() {
         AstErrorKind::GroupUnclosed => format!("missing ): {pattern}"),
         AstErrorKind::GroupUnopened => format!("unexpected ): {pattern}"),
         AstErrorKind::ClassUnclosed => {
-            format!("missing ]: {}", translated.get(span.start.offset..).unwrap_or_default())
+            format!(
+                "missing ]: {}",
+                translated.get(span.start.offset..).unwrap_or_default()
+            )
         }
         AstErrorKind::EscapeUnexpectedEof => "trailing \\".to_owned(),
         AstErrorKind::EscapeUnrecognized | AstErrorKind::UnsupportedBackreference => {
@@ -123,7 +132,9 @@ fn re2_error(pattern: &str, translated: &str) -> Option<String> {
         | AstErrorKind::GroupNameEmpty
         | AstErrorKind::GroupNameUnexpectedEof
         | AstErrorKind::GroupNameDuplicate { .. } => format!("invalid named capture group: {snippet}"),
-        AstErrorKind::UnsupportedLookAround | AstErrorKind::FlagUnrecognized | AstErrorKind::FlagUnexpectedEof => {
+        AstErrorKind::UnsupportedLookAround
+        | AstErrorKind::FlagUnrecognized
+        | AstErrorKind::FlagUnexpectedEof => {
             format!("invalid perl operator: {snippet}")
         }
         _ => return Some(error.to_string()),
@@ -234,7 +245,10 @@ fn starts_repetition(rest: &[char]) -> bool {
     match rest.get(digits) {
         Some('}') => true,
         Some(',') => {
-            let more = rest[digits + 1..].iter().take_while(|c| c.is_ascii_digit()).count();
+            let more = rest[digits + 1..]
+                .iter()
+                .take_while(|c| c.is_ascii_digit())
+                .count();
             rest.get(digits + 1 + more) == Some(&'}')
         }
         _ => false,

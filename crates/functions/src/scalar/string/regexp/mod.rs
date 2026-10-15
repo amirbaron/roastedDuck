@@ -9,8 +9,8 @@ use std::any::Any;
 use std::sync::Arc;
 
 use regex::bytes::Regex;
-use rustdb_function::cast::ValueCast;
 use rustdb_common::{Error, Result};
+use rustdb_function::cast::ValueCast;
 use rustdb_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
 use rustdb_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Value, Vector};
 
@@ -106,7 +106,9 @@ fn bind_matches(full: bool) -> impl Fn(&mut ScalarFunction, &BindInput<'_>) -> B
     }
 }
 
-fn matches_kernel(full: bool) -> impl Fn(&DataChunk, &mut rustdb_function::FunctionState, &mut Vector) -> Result<()> {
+fn matches_kernel(
+    full: bool,
+) -> impl Fn(&DataChunk, &mut rustdb_function::FunctionState, &mut Vector) -> Result<()> {
     move |args, state, result| {
         let data = bind_data(state)?;
         if let Some(regex) = &data.constant {
@@ -153,7 +155,9 @@ fn replace(input: &[u8], regex: &Regex, replacement: &[u8], global: bool, out: &
             out.extend_from_slice(input);
             return Ok(());
         };
-        let whole = captures.get(0).ok_or_else(|| Error::internal("match without group 0"))?;
+        let whole = captures
+            .get(0)
+            .ok_or_else(|| Error::internal("match without group 0"))?;
         let mut rewritten = Vec::new();
         if !util::rewrite(&mut rewritten, replacement, &captures, needed + 1) {
             out.extend_from_slice(input);
@@ -172,7 +176,9 @@ fn replace(input: &[u8], regex: &Regex, replacement: &[u8], global: bool, out: &
         let Some(captures) = regex.captures_at(input, position) else {
             break;
         };
-        let whole = captures.get(0).ok_or_else(|| Error::internal("match without group 0"))?;
+        let whole = captures
+            .get(0)
+            .ok_or_else(|| Error::internal("match without group 0"))?;
         if position < whole.start() {
             out.extend_from_slice(&input[position..whole.start()]);
         }
@@ -218,7 +224,11 @@ fn bind_replace(_: &mut ScalarFunction, input: &BindInput<'_>) -> BindResult {
     })))
 }
 
-fn replace_kernel(args: &DataChunk, state: &mut rustdb_function::FunctionState, result: &mut Vector) -> Result<()> {
+fn replace_kernel(
+    args: &DataChunk,
+    state: &mut rustdb_function::FunctionState,
+    result: &mut Vector,
+) -> Result<()> {
     let data = bind_data(state)?;
     let global = data.global_replace;
     if let Some(regex) = &data.constant {
@@ -231,7 +241,13 @@ fn replace_kernel(args: &DataChunk, state: &mut rustdb_function::FunctionState, 
     let mut cache = PatternCache::default();
     let options = data.options;
     ternary::<Str, Str, Str, StrOut>(args, result, |input, pattern, replacement, out| {
-        replace(input, cache.get(pattern, options, false)?, replacement, global, out)?;
+        replace(
+            input,
+            cache.get(pattern, options, false)?,
+            replacement,
+            global,
+            out,
+        )?;
         Ok(true)
     })
 }
@@ -242,7 +258,10 @@ fn replace_set() -> ScalarFunctionSet {
         vec![varchar(), varchar(), varchar()],
         vec![varchar(), varchar(), varchar(), varchar()],
     ] {
-        set.add(ScalarFunction::new("regexp_replace", arguments, varchar(), replace_kernel).with_bind(bind_replace));
+        set.add(
+            ScalarFunction::new("regexp_replace", arguments, varchar(), replace_kernel)
+                .with_bind(bind_replace),
+        );
     }
     set
 }
@@ -279,7 +298,9 @@ fn parse_group_names(
         return Err(crate::parameter_not_resolved());
     }
     let Some(Some(value)) = constant else {
-        return Err(Error::invalid_input("Group specification field must be a constant list"));
+        return Err(Error::invalid_input(
+            "Group specification field must be a constant list",
+        ));
     };
     let children = (value.logical_type().id() == LogicalTypeId::List && !value.is_null())
         .then(|| value.children())
@@ -334,7 +355,9 @@ fn bind_extract(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindRes
             return Err(crate::parameter_not_resolved());
         }
         let Some(Some(value)) = input.constants.get(2) else {
-            return Err(Error::invalid_input("Group specification field must be a constant!"));
+            return Err(Error::invalid_input(
+                "Group specification field must be a constant!",
+            ));
         };
         if value.is_null() {
             group = None;
@@ -345,7 +368,12 @@ fn bind_extract(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindRes
                     function.name
                 )));
             }
-            names = parse_group_names(&function.name, &input.argument_types[2], input.constants.get(2), constant.as_ref())?;
+            names = parse_group_names(
+                &function.name,
+                &input.argument_types[2],
+                input.constants.get(2),
+                constant.as_ref(),
+            )?;
             function.return_type = struct_type(&names);
             function.kernel = Arc::new(extract_struct_kernel);
         } else {
@@ -368,7 +396,11 @@ fn bind_extract(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindRes
     })))
 }
 
-fn extract_kernel(args: &DataChunk, state: &mut rustdb_function::FunctionState, result: &mut Vector) -> Result<()> {
+fn extract_kernel(
+    args: &DataChunk,
+    state: &mut rustdb_function::FunctionState,
+    result: &mut Vector,
+) -> Result<()> {
     let data = bind_data(state)?;
     let group = data.group;
     if let Some(regex) = &data.constant {
@@ -413,10 +445,9 @@ fn extract_struct_kernel(
     result: &mut Vector,
 ) -> Result<()> {
     let data = bind_data(state)?;
-    let regex = data
-        .constant
-        .as_ref()
-        .ok_or_else(|| Error::internal("REGEXP_EXTRACT struct variant executed without constant pattern state"))?;
+    let regex = data.constant.as_ref().ok_or_else(|| {
+        Error::internal("REGEXP_EXTRACT struct variant executed without constant pattern state")
+    })?;
     let count = args.len();
     let strings = addressable(args.column(0), count);
     let constant = strings.is_constant();
@@ -442,7 +473,10 @@ fn extract_struct_kernel(
             field.push(Some(text.to_vec()));
         }
     }
-    let fields = fields.iter().map(|field| varchar_vector(field)).collect::<Result<Vec<_>>>()?;
+    let fields = fields
+        .iter()
+        .map(|field| varchar_vector(field))
+        .collect::<Result<Vec<_>>>()?;
     let mut output = build_struct(result.logical_type().clone(), fields, rows, false)?;
     let validity = output.validity_mut();
     for row in nulls {
@@ -465,7 +499,8 @@ fn extract_set() -> ScalarFunctionSet {
         vec![varchar(), varchar(), names.clone()],
         vec![varchar(), varchar(), names.clone(), varchar()],
     ] {
-        let mut function = ScalarFunction::new("regexp_extract", arguments, varchar(), extract_kernel).with_bind(bind_extract);
+        let mut function = ScalarFunction::new("regexp_extract", arguments, varchar(), extract_kernel)
+            .with_bind(bind_extract);
         function.null_handling = NullHandling::Special;
         set.add(function);
     }
@@ -488,7 +523,9 @@ fn for_each_match(
         let Some(captures) = regex.captures_at(input, start) else {
             return Ok(());
         };
-        let whole = captures.get(0).ok_or_else(|| Error::internal("match without group 0"))?;
+        let whole = captures
+            .get(0)
+            .ok_or_else(|| Error::internal("match without group 0"))?;
         let mut consumed = whole.end() - start;
         if consumed == 0 {
             consumed = util::advance_one_utf8(input, start)?;
@@ -555,7 +592,11 @@ fn extract_all_kernel(
 ) -> Result<()> {
     let data = bind_data(state)?;
     let count = args.len();
-    let columns: Vec<_> = args.columns().iter().map(|column| addressable(column, count)).collect();
+    let columns: Vec<_> = args
+        .columns()
+        .iter()
+        .map(|column| addressable(column, count))
+        .collect();
     let constant = columns.iter().all(|column| column.is_constant());
     let rows = if constant { 1 } else { count };
     let strings = columns[0].unified::<rustdb_types::StringT>();
@@ -610,11 +651,19 @@ fn extract_all_kernel(
 
 fn bind_extract_all_struct(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindResult {
     let Some(pattern) = constant_pattern(input.constants.get(1)) else {
-        return Err(Error::binder(format!("{} with LIST requires a constant pattern", function.name)));
+        return Err(Error::binder(format!(
+            "{} with LIST requires a constant pattern",
+            function.name
+        )));
     };
     let options = options_from(input, 3, None)?;
     let regex = compile(pattern.as_bytes(), options, false)?;
-    let names = parse_group_names(&function.name, &input.argument_types[2], input.constants.get(2), Some(&regex))?;
+    let names = parse_group_names(
+        &function.name,
+        &input.argument_types[2],
+        input.constants.get(2),
+        Some(&regex),
+    )?;
     function.return_type = LogicalType::list(struct_type(&names));
     Ok(Some(Arc::new(RegexpBindData {
         options,
@@ -663,7 +712,10 @@ fn extract_all_struct_kernel(
         entries.push(ListEntry::new(start, size - start));
     }
     let child_type = crate::scalar::nested::list_child_type(result.logical_type())?;
-    let field_vectors = fields.iter().map(|field| varchar_vector(field)).collect::<Result<Vec<_>>>()?;
+    let field_vectors = fields
+        .iter()
+        .map(|field| varchar_vector(field))
+        .collect::<Result<Vec<_>>>()?;
     let child = build_struct(child_type, field_vectors, size, false)?;
     let mut output = Vector::flat(result.logical_type().clone(), rows.max(1));
     output.values_mut::<ListEntry>()[..rows].copy_from_slice(&entries);
@@ -688,7 +740,8 @@ fn extract_all_set() -> ScalarFunctionSet {
         vec![varchar(), varchar(), LogicalType::INTEGER, varchar()],
     ] {
         let mut function =
-            ScalarFunction::new("regexp_extract_all", arguments, list.clone(), extract_all_kernel).with_bind(bind_extract_all);
+            ScalarFunction::new("regexp_extract_all", arguments, list.clone(), extract_all_kernel)
+                .with_bind(bind_extract_all);
         function.null_handling = NullHandling::Special;
         set.add(function);
     }
@@ -696,8 +749,13 @@ fn extract_all_set() -> ScalarFunctionSet {
         vec![varchar(), varchar(), list.clone()],
         vec![varchar(), varchar(), list.clone(), varchar()],
     ] {
-        let mut function = ScalarFunction::new("regexp_extract_all", arguments, list.clone(), extract_all_struct_kernel)
-            .with_bind(bind_extract_all_struct);
+        let mut function = ScalarFunction::new(
+            "regexp_extract_all",
+            arguments,
+            list.clone(),
+            extract_all_struct_kernel,
+        )
+        .with_bind(bind_extract_all_struct);
         function.null_handling = NullHandling::Special;
         set.add(function);
     }
@@ -710,12 +768,17 @@ fn extract_all_set() -> ScalarFunctionSet {
 
 fn escape_set() -> ScalarFunctionSet {
     let mut set = ScalarFunctionSet::new("regexp_escape");
-    set.add(ScalarFunction::new("regexp_escape", vec![varchar()], varchar(), |args, _, result| {
-        unary::<Str, StrOut>(args, result, |input, out| {
-            util::quote_meta(input, out);
-            Ok(true)
-        })
-    }));
+    set.add(ScalarFunction::new(
+        "regexp_escape",
+        vec![varchar()],
+        varchar(),
+        |args, _, result| {
+            unary::<Str, StrOut>(args, result, |input, out| {
+                util::quote_meta(input, out);
+                Ok(true)
+            })
+        },
+    ));
     set
 }
 
@@ -788,7 +851,8 @@ fn split_set() -> ScalarFunctionSet {
                     if delimiter.is_empty() {
                         return Ok(Some((0, 0)));
                     }
-                    Ok(crate::scalar::string::contains::find(rest, delimiter).map(|position| (position, delimiter.len())))
+                    Ok(crate::scalar::string::contains::find(rest, delimiter)
+                        .map(|position| (position, delimiter.len())))
                 })?;
                 Ok(parts.into_iter().map(<[u8]>::to_vec).collect())
             })

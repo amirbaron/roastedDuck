@@ -503,3 +503,69 @@ impl IndexStorageInfo {
             .map(|pointer| pointer.block_id)
     }
 }
+
+/// Writes `values` as list property `field` unless it is empty (`WritePropertyWithDefault`).
+fn write_u64_list(
+    serializer: &mut dyn Serializer,
+    field: u16,
+    tag: &'static str,
+    values: &[u64],
+) -> Result<()> {
+    if values.is_empty() {
+        return Ok(());
+    }
+    serializer.write_list_property(field, tag, values.len(), |s, index| {
+        s.write_u64(values[index]);
+        Ok(())
+    })
+}
+
+/// `IndexStorageInfo::Serialize` (the object's fields) of an ART.
+pub fn serialize_index_storage_info(
+    serializer: &mut dyn Serializer,
+    info: &crate::index::art::ArtStorageInfo,
+) -> Result<()> {
+    if !info.name.is_empty() {
+        serializer.write_property(100, "name", info.name.as_str())?;
+    }
+    if info.root != 0 {
+        serializer.write_property(101, "root", &info.root)?;
+    }
+    if !info.allocator_infos.is_empty() {
+        serializer.write_list_property(102, "allocator_infos", info.allocator_infos.len(), |s, index| {
+            let allocator = &info.allocator_infos[index];
+            s.on_object_begin();
+            if allocator.segment_size != 0 {
+                s.write_property(100, "segment_size", &allocator.segment_size)?;
+            }
+            write_u64_list(s, 101, "buffer_ids", &allocator.buffer_ids)?;
+            if !allocator.block_pointers.is_empty() {
+                s.write_list_property(102, "block_pointers", allocator.block_pointers.len(), |s, i| {
+                    let pointer = allocator.block_pointers[i];
+                    s.on_object_begin();
+                    BlockPointer {
+                        block_id: pointer.block_id,
+                        offset: pointer.offset,
+                    }
+                    .serialize_fields(s)?;
+                    s.on_object_end();
+                    Ok(())
+                })?;
+            }
+            write_u64_list(s, 103, "segment_counts", &allocator.segment_counts)?;
+            write_u64_list(s, 104, "allocation_sizes", &allocator.allocation_sizes)?;
+            write_u64_list(
+                s,
+                105,
+                "buffers_with_free_space",
+                &allocator.buffers_with_free_space,
+            )?;
+            s.on_object_end();
+            Ok(())
+        })?;
+    }
+    if !info.options.is_empty() {
+        serializer.write_property(103, "options", &info.options)?;
+    }
+    Ok(())
+}

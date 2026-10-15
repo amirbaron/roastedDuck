@@ -5,8 +5,8 @@ use std::fmt::Display;
 
 use rustdb_common::{Error, Result};
 use rustdb_function::{ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, LogicalType, NativeType, Vector};
 use rustdb_types::bit::bit_length;
+use rustdb_types::{DataChunk, LogicalType, NativeType, Vector};
 
 use crate::bitstring::{self, BitwiseOp};
 use crate::scalar::executor::{Str, StrOut, binary, unary};
@@ -74,7 +74,9 @@ bitwise_int!(i8, i16, i32, i64, i128, u8, u16, u32, u64, u128);
 fn shift_left<T: BitwiseInt>(input: T, shift: T) -> Result<T> {
     let max_shift = i128::from(T::BITS) + i128::from(!T::SIGNED);
     if input < T::ZERO {
-        return Err(Error::out_of_range(format!("Cannot left-shift negative number {input}")));
+        return Err(Error::out_of_range(format!(
+            "Cannot left-shift negative number {input}"
+        )));
     }
     let amount = shift.as_shift();
     if amount < 0 {
@@ -86,7 +88,9 @@ fn shift_left<T: BitwiseInt>(input: T, shift: T) -> Result<T> {
         if input == T::ZERO {
             return Ok(T::ZERO);
         }
-        return Err(Error::out_of_range(format!("Left-shift value {shift} is out of range")));
+        return Err(Error::out_of_range(format!(
+            "Left-shift value {shift} is out of range"
+        )));
     }
     if amount == 0 {
         return Ok(input);
@@ -240,7 +244,9 @@ fn bit_shift_right(bits: &[u8], shift: i32, out: &mut Vec<u8>) {
         return;
     }
     match usize::try_from(shift) {
-        Ok(amount) if amount < bit_length(bits) => out.extend_from_slice(&bitstring::right_shift(bits, amount)),
+        Ok(amount) if amount < bit_length(bits) => {
+            out.extend_from_slice(&bitstring::right_shift(bits, amount))
+        }
         _ => out.extend_from_slice(&bitstring::zeros(bit_length(bits))),
     }
 }

@@ -11,8 +11,8 @@ pub mod random;
 mod scalar;
 mod table;
 
-pub use client::FunctionClient;
 pub use aggregate::{AggregateFunction, AggregateFunctionSet, AggregateOps, StatePtr, UnaryAggregate};
+pub use client::FunctionClient;
 pub use scalar::{
     BindInput, FunctionData, FunctionState, NullHandling, ScalarBind, ScalarFunction, ScalarFunctionSet,
     ScalarKernel, Stability,
