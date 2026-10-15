@@ -67,6 +67,9 @@ pub struct ClassConfig {
     pub fields: &'static [FieldConfig],
     /// Additional derives.
     pub derives: &'static [&'static str],
+    /// Hierarchy roots: variants for C++ subclasses that have no serialization spec
+    /// because they never reach a serializer.
+    pub extra_variants: &'static [ExtraVariant],
 }
 
 impl ClassConfig {
@@ -83,7 +86,23 @@ impl ClassConfig {
         finalize_ported_in: None,
         fields: &[],
         derives: &[],
+        extra_variants: &[],
     };
+}
+
+/// A hand-written variant of a kind enum, for a C++ subclass without a serialization spec
+/// (such as the binder's in-place `BoundExpression`). Deserializing its discriminant keeps
+/// failing like any other unsupported value.
+#[derive(Debug)]
+pub struct ExtraVariant {
+    pub variant: &'static str,
+    /// The payload type, as a Rust path.
+    pub ty: &'static str,
+    /// The discriminant value (C++ enum member) of the subclass.
+    pub discriminant: &'static str,
+    pub doc: &'static str,
+    /// Rust expression returned by `serialize_fields` for this variant.
+    pub serialize: &'static str,
 }
 
 /// Overrides for one member.
@@ -413,6 +432,13 @@ pub const CLASSES: &[ClassConfig] = &[
     ClassConfig {
         class: "ParsedExpression",
         fields: &[rename("type", "expression_type")],
+        extra_variants: &[ExtraVariant {
+            variant: "Bound",
+            ty: "crate::BoundExpression",
+            discriminant: "BOUND_EXPRESSION",
+            doc: "A sub-tree already bound by the binder (`BoundExpression`); binding only.",
+            serialize: "Err(Error::serialization(\"Cannot serialize bound expression\"))",
+        }],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {

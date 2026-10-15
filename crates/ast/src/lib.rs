@@ -19,16 +19,21 @@
 //! does not serialize statements other than `SELECT`, so neither does this crate), and
 //! [`visit`] walks a tree mutably.
 
+mod display;
 mod expression;
 mod generated;
 pub mod json;
+pub mod keyword;
 mod parsed_data;
 mod query_node;
 mod sql_statement;
 mod tableref;
 pub mod visit;
 
-pub use expression::StarExpression;
+pub use display::{
+    expression_type_to_operator, expression_type_to_string, lambda_parameters, value_to_sql_string,
+};
+pub use expression::{BoundExpression, StarExpression};
 pub use generated::constraint::*;
 pub use generated::create_info::*;
 pub use generated::dependency::*;

@@ -1,5 +1,9 @@
 //! Hand-written parsed expressions: `StarExpression`, whose in-memory form differs from
-//! its serialized one.
+//! its serialized one, and `BoundExpression`, which only exists while binding.
+
+use std::any::Any;
+use std::fmt;
+use std::sync::Arc;
 
 use rustdb_common::{CaseInsensitiveMap, OrderedMap};
 use rustdb_serde::{DeserializeObject, Deserializer, Result, SerializeObject, Serializer};
@@ -44,6 +48,43 @@ impl ParsedExpression {
     pub fn with_alias(mut self, alias: impl Into<String>) -> Self {
         self.alias = alias.into();
         self
+    }
+}
+
+/// A sub-tree of a parsed expression that the binder has already bound (DuckDB's
+/// `BoundExpression`).
+///
+/// The binder replaces parsed nodes with their bound form in place, so that when binding
+/// fails in a subquery and is retried in an enclosing query, the parts that did bind keep
+/// their inner binding. The payload is the binder's own representation, which this crate
+/// cannot name; it is never serialized.
+#[derive(Clone)]
+pub struct BoundExpression {
+    /// The binder's bound expression.
+    pub payload: Arc<dyn Any + Send + Sync>,
+    /// How the bound expression prints (its `ToString`).
+    pub text: String,
+}
+
+impl BoundExpression {
+    pub fn new(payload: impl Any + Send + Sync, text: impl Into<String>) -> Self {
+        Self {
+            payload: Arc::new(payload),
+            text: text.into(),
+        }
+    }
+}
+
+impl fmt::Debug for BoundExpression {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "BoundExpression({})", self.text)
+    }
+}
+
+impl PartialEq for BoundExpression {
+    /// Bound sub-trees are only equal to themselves.
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.payload, &other.payload)
     }
 }
 

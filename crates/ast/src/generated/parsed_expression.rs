@@ -70,6 +70,8 @@ pub enum ParsedExpressionKind {
     Window(Box<WindowExpression>),
     /// `TypeExpression` (`ExpressionClass::TYPE`).
     Type(Box<TypeExpression>),
+    /// A sub-tree already bound by the binder (`BoundExpression`); binding only.
+    Bound(crate::BoundExpression),
 }
 
 impl ParsedExpressionKind {
@@ -95,6 +97,7 @@ impl ParsedExpressionKind {
             Self::Subquery(_) => ExpressionClass::Subquery,
             Self::Window(_) => ExpressionClass::Window,
             Self::Type(_) => ExpressionClass::Type,
+            Self::Bound(_) => ExpressionClass::BoundExpression,
         }
     }
 
@@ -119,6 +122,7 @@ impl ParsedExpressionKind {
             Self::Window(value) => value.serialize_fields(serializer),
             Self::Type(value) => value.serialize_fields(serializer),
             Self::Default => Ok(()),
+            Self::Bound(_) => Err(Error::serialization("Cannot serialize bound expression")),
         }
     }
 }

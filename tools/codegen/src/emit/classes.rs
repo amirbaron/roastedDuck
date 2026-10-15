@@ -184,6 +184,12 @@ impl<'m> Emitter<'m> {
                 arms.push(format!("Self::{}(_) => {value},", child.variant));
             }
         }
+        for extra in class.config.extra_variants {
+            let value = self.discriminant_value(class, extra.discriminant)?;
+            let _ = writeln!(self.body, "    /// {}", extra.doc);
+            let _ = writeln!(self.body, "    {}({}),", extra.variant, extra.ty);
+            arms.push(format!("Self::{}(_) => {value},", extra.variant));
+        }
         let _ = writeln!(self.body, "}}\n");
         let _ = writeln!(self.body, "impl {enum_name} {{");
         let _ = writeln!(
@@ -220,6 +226,9 @@ impl<'m> Emitter<'m> {
             .collect();
         if !units.is_empty() {
             arms.push(format!("{} => Ok(()),", units.join(" | ")));
+        }
+        for extra in class.config.extra_variants {
+            arms.push(format!("Self::{}(_) => {},", extra.variant, extra.serialize));
         }
         Ok(format!("match self {{\n{}\n}}", arms.join("\n")))
     }
