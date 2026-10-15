@@ -156,11 +156,17 @@ fn describe_and_subqueries() {
 fn materialized_and_recursive_ctes() {
     let mut con = connect();
     assert_eq!(
-        rows(&mut con, "WITH t AS (SELECT 1 x), u AS (SELECT x + 1 y FROM t) SELECT * FROM u, t"),
+        rows(
+            &mut con,
+            "WITH t AS (SELECT 1 x), u AS (SELECT x + 1 y FROM t) SELECT * FROM u, t"
+        ),
         vec![vec!["2", "1"]]
     );
     // An unreferenced CTE is still materialised.
-    assert_eq!(rows(&mut con, "WITH t AS MATERIALIZED (SELECT 1 x) SELECT 2"), vec![vec!["2"]]);
+    assert_eq!(
+        rows(&mut con, "WITH t AS MATERIALIZED (SELECT 1 x) SELECT 2"),
+        vec![vec!["2"]]
+    );
     assert_eq!(
         rows(
             &mut con,
@@ -182,5 +188,204 @@ fn materialized_and_recursive_ctes() {
             "WITH RECURSIVE r(n) AS (SELECT 1 UNION SELECT 3 - n FROM r) SELECT * FROM r ORDER BY n"
         ),
         vec![vec!["1"], vec!["2"]]
+    );
+}
+
+/// Asserts that `sql` returns `expected` (expected values produced by DuckDB 1.5.6).
+fn assert_rows(connection: &mut Connection, sql: &str, expected: &[&[&str]]) {
+    let expected: Vec<Vec<String>> = expected
+        .iter()
+        .map(|row| row.iter().map(|&value| value.to_owned()).collect())
+        .collect();
+    assert_eq!(rows(connection, sql), expected, "{sql}");
+}
+
+#[test]
+fn window_ranking_functions() {
+    let mut con = connect();
+    assert_rows(
+        &mut con,
+        "SELECT p, i, row_number() OVER w, rank() OVER w, dense_rank() OVER w, percent_rank() OVER w, \
+         cume_dist() OVER w, ntile(2) OVER w FROM (VALUES (1, 10), (1, 20), (1, 20), (2, 5), (1, 30), (2, 5)) \
+         t(p, i) WINDOW w AS (PARTITION BY p ORDER BY i) ORDER BY p, i",
+        &[
+            &["1", "10", "1", "1", "1", "0.0", "0.25", "1"],
+            &["1", "20", "2", "2", "2", "0.3333333333333333", "0.75", "1"],
+            &["1", "20", "3", "2", "2", "0.3333333333333333", "0.75", "2"],
+            &["1", "30", "4", "4", "3", "1.0", "1.0", "2"],
+            &["2", "5", "1", "1", "1", "0.0", "1.0", "1"],
+            &["2", "5", "2", "1", "1", "0.0", "1.0", "2"],
+        ],
+    );
+    // Without an outer ORDER BY, hash groups come out largest first, then by
+    // descending radix bin (DuckDB's single-threaded order).
+    assert_rows(
+        &mut con,
+        "SELECT p, row_number() OVER (PARTITION BY p) FROM range(7) a(p)",
+        &[
+            &["3", "1"],
+            &["6", "1"],
+            &["4", "1"],
+            &["1", "1"],
+            &["2", "1"],
+            &["5", "1"],
+            &["0", "1"],
+        ],
+    );
+    assert_eq!(
+        error(&mut con, "SELECT ntile(0) OVER (ORDER BY i) FROM range(3) t(i)"),
+        "Invalid Input Error: Argument for ntile must be greater than zero"
+    );
+}
+
+#[test]
+fn window_value_functions_and_frames() {
+    let mut con = connect();
+    assert_rows(
+        &mut con,
+        "SELECT i, lag(i) OVER (ORDER BY i), lead(i, 2, -1) OVER (ORDER BY i), first_value(i) OVER w, \
+         last_value(i) OVER w, nth_value(i, 2) OVER w FROM range(6) t(i) WINDOW w AS (ORDER BY i ROWS BETWEEN 1 \
+         PRECEDING AND 2 FOLLOWING EXCLUDE CURRENT ROW)",
+        &[
+            &["0", "NULL", "2", "1", "2", "2"],
+            &["1", "0", "3", "0", "3", "2"],
+            &["2", "1", "4", "1", "4", "3"],
+            &["3", "2", "5", "2", "5", "4"],
+            &["4", "3", "-1", "3", "5", "5"],
+            &["5", "4", "-1", "4", "4", "NULL"],
+        ],
+    );
+    assert_rows(
+        &mut con,
+        "SELECT i, j, first_value(i * 10 + j) OVER w, last_value(i * 10 + j) OVER w FROM (VALUES (0, 0), (0, 1), \
+         (1, 0), (1, 1), (2, 0), (3, 0)) t(i, j) WINDOW w AS (ORDER BY i GROUPS BETWEEN 1 PRECEDING AND CURRENT \
+         ROW EXCLUDE GROUP) ORDER BY i, j",
+        &[
+            &["0", "0", "NULL", "NULL"],
+            &["0", "1", "NULL", "NULL"],
+            &["1", "0", "0", "1"],
+            &["1", "1", "0", "1"],
+            &["2", "0", "10", "11"],
+            &["3", "0", "20", "20"],
+        ],
+    );
+    assert_rows(
+        &mut con,
+        "SELECT x, last_value(x) OVER (ORDER BY x RANGE BETWEEN 1.5 PRECEDING AND 0.5 FOLLOWING), first_value(x) \
+         OVER (ORDER BY x DESC RANGE BETWEEN 1 PRECEDING AND CURRENT ROW) FROM (VALUES (1.0), (2.0), (2.5), (4.0), \
+         (NULL)) t(x) ORDER BY x",
+        &[
+            &["1.0", "1.0", "2.0"],
+            &["2.0", "2.5", "2.5"],
+            &["2.5", "2.5", "2.5"],
+            &["4.0", "4.0", "4.0"],
+            &["NULL", "NULL", "NULL"],
+        ],
+    );
+    assert_rows(
+        &mut con,
+        "SELECT x, first_value(x IGNORE NULLS) OVER w, last_value(x IGNORE NULLS) OVER w, lag(x IGNORE NULLS) \
+         OVER (ORDER BY i), lead(x IGNORE NULLS) OVER (ORDER BY i) FROM (VALUES (1, NULL), (2, 5), (3, NULL), (4, \
+         7), (5, NULL)) t(i, x) WINDOW w AS (ORDER BY i ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) ORDER BY i",
+        &[
+            &["NULL", "5", "5", "NULL", "5"],
+            &["5", "5", "5", "NULL", "7"],
+            &["NULL", "5", "7", "5", "7"],
+            &["7", "7", "7", "5", "NULL"],
+            &["NULL", "7", "7", "7", "NULL"],
+        ],
+    );
+    assert_rows(
+        &mut con,
+        "SELECT i, x, fill(x) OVER (ORDER BY i) FROM (VALUES (1, NULL), (2, 10), (3, NULL), (4, NULL), (5, 40), \
+         (6, NULL)) t(i, x) ORDER BY i",
+        &[
+            &["1", "NULL", "0"],
+            &["2", "10", "10"],
+            &["3", "NULL", "20"],
+            &["4", "NULL", "30"],
+            &["5", "40", "40"],
+            &["6", "NULL", "50"],
+        ],
+    );
+    assert_eq!(
+        error(
+            &mut con,
+            "SELECT first_value(i) OVER (ORDER BY i RANGE BETWEEN -1 PRECEDING AND CURRENT ROW) FROM range(3) t(i)"
+        ),
+        "Out of Range Error: Invalid RANGE PRECEDING value"
+    );
+    assert_eq!(
+        error(
+            &mut con,
+            "SELECT first_value(i) OVER (ORDER BY i GROUPS BETWEEN CURRENT ROW AND -2 FOLLOWING) FROM range(3) t(i)"
+        ),
+        "Out of Range Error: Invalid GROUPS FOLLOWING value"
+    );
+    // Rows shifted in a run are not checked for overflow one by one.
+    assert_rows(
+        &mut con,
+        "SELECT i, lead(i, 9223372036854775807) OVER (ORDER BY i) FROM range(3) t(i)",
+        &[&["0", "NULL"], &["1", "NULL"], &["2", "NULL"]],
+    );
+}
+
+#[test]
+fn window_secondary_orders() {
+    let mut con = connect();
+    assert_rows(
+        &mut con,
+        "SELECT i, row_number(ORDER BY i DESC) OVER (), rank(ORDER BY 3 - i) OVER (ORDER BY i ROWS BETWEEN 1 \
+         PRECEDING AND 1 FOLLOWING), first_value(i ORDER BY i DESC) OVER (ORDER BY i ROWS BETWEEN 1 PRECEDING AND \
+         1 FOLLOWING), lead(i, 1, -1 ORDER BY i DESC) OVER (ORDER BY i ROWS BETWEEN UNBOUNDED PRECEDING AND \
+         UNBOUNDED FOLLOWING) FROM range(5) t(i) ORDER BY i",
+        &[
+            &["0", "5", "2", "1", "-1"],
+            &["1", "4", "2", "2", "0"],
+            &["2", "3", "2", "3", "1"],
+            &["3", "2", "2", "4", "2"],
+            &["4", "1", "1", "4", "3"],
+        ],
+    );
+}
+
+#[test]
+fn streaming_windows_cross_chunk_boundaries() {
+    let mut con = connect();
+    assert_rows(
+        &mut con,
+        "SELECT i, lead(i, 3) OVER (), lag(i, 2) OVER () FROM range(4100) t(i) LIMIT 4 OFFSET 2045",
+        &[
+            &["2045", "2048", "2043"],
+            &["2046", "2049", "2044"],
+            &["2047", "2050", "2045"],
+            &["2048", "2051", "2046"],
+        ],
+    );
+    assert_rows(
+        &mut con,
+        "SELECT i, row_number() OVER (), rank() OVER (), lead(i) OVER () FROM range(3) t(i)",
+        &[
+            &["0", "1", "1", "1"],
+            &["1", "2", "1", "2"],
+            &["2", "3", "1", "NULL"],
+        ],
+    );
+}
+
+#[test]
+fn except_all_and_intersect_all_keep_duplicates() {
+    let mut con = connect();
+    assert_rows(
+        &mut con,
+        "SELECT * FROM (VALUES (1), (1), (2), (3), (3), (3), (NULL), (NULL)) t(x) EXCEPT ALL SELECT * FROM \
+         (VALUES (1), (3), (NULL)) s(x) ORDER BY 1",
+        &[&["1"], &["2"], &["3"], &["3"], &["NULL"]],
+    );
+    assert_rows(
+        &mut con,
+        "SELECT * FROM (VALUES (1), (1), (2), (3), (3), (3)) t(x) INTERSECT ALL SELECT * FROM (VALUES (1), (3), \
+         (3), (4)) s(x) ORDER BY 1",
+        &[&["1"], &["3"], &["3"]],
     );
 }
