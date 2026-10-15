@@ -42,19 +42,29 @@
 //!     target/corpus/statements.jsonl target/corpus/serialized.jsonl
 //! ```
 //!
+//! Besides whole queries, [`parse_expression_list`] and its siblings parse SQL
+//! fragments, and [`highlight`] classifies the tokens of queries and error messages.
+//!
 //! `examples/parse_bench` and `scripts/parser_bench.cpp` time [`parse`] against
 //! DuckDB's `Parser::ParseQuery` on a corpus file.
 
 mod candidates;
 mod equality;
 mod hash_order;
+pub mod highlight;
 pub mod json;
+mod lists;
 mod transformer;
 
 use rustdb_ast::{CreateInfo, SqlStatement, SqlStatementKind};
 use rustdb_common::{Error, Result};
 
-pub use rustdb_pg_parser::{SimplifiedToken, SimplifiedTokenType, tokenize};
+pub use lists::{
+    GroupBy, parse_column_definition, parse_column_list, parse_expression_list, parse_group_by_list,
+    parse_order_list, parse_update_list, parse_values_list,
+};
+pub use rustdb_pg_parser::keywords::{Keyword, KeywordCategory, keyword_list};
+pub use rustdb_pg_parser::{SimplifiedToken, SimplifiedTokenType, keyword_category, tokenize};
 
 /// The `error_subtype` DuckDB attaches to errors of the grammar (`ParserException::SyntaxError`).
 pub const SYNTAX_ERROR: &str = "SYNTAX_ERROR";
