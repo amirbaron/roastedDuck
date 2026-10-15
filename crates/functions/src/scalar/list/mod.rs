@@ -3,6 +3,7 @@
 pub mod contains_or_position;
 pub mod list_aggregates;
 pub mod list_extract;
+pub mod list_ops;
 pub mod list_sort;
 pub mod range;
 pub mod slice;

@@ -164,6 +164,12 @@ fn string_functions(sets: &mut Vec<ScalarFunctionSet>) {
     sets.extend(list::range::range_functions());
     with_aliases(sets, list::slice::list_slice_functions(), &["array_slice"]);
     sets.push(list::slice::flatten_functions());
+    for (set, aliases) in list::list_ops::list_select_functions() {
+        with_aliases(sets, set, aliases);
+    }
+    with_aliases(sets, list::list_ops::list_resize_functions(), &["array_resize"]);
+    with_aliases(sets, list::list_ops::list_zip_functions(), &["array_zip"]);
+    with_aliases(sets, list::list_ops::list_intersect_functions(), &["array_intersect"]);
     sets.push(map::map_functions());
     sets.push(map::cardinality_functions());
     sets.extend(map::map_unpack_functions());
