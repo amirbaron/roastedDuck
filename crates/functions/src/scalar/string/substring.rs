@@ -89,9 +89,10 @@ pub(crate) fn substring_unicode<'a>(input: &'a [u8], offset: i64, length: i64) -
     if length == 0 {
         return Ok(&[]);
     }
+    let negative = offset < 0;
     let offset = offset - 1;
     let (start_pos, end_pos);
-    if offset < 0 {
+    if negative {
         let (start, end) = if length < 0 {
             (-offset - length, -offset)
         } else {
@@ -167,9 +168,15 @@ pub(crate) fn substring_grapheme(input: &[u8], offset: i64, length: i64) -> Resu
     let text = String::from_utf8_lossy(input);
     let clusters: Vec<usize> = text.grapheme_indices(true).map(|(index, _)| index).collect();
     if offset < 0 {
-        match start_end(clusters.len() as i64, offset, length) {
-            Some((s, e)) => (start, end) = (s, e),
-            None => return Ok(&[]),
+        // DuckDB ignores the result of this second `SubstringStartEnd` call: an
+        // empty range (`start == end`) still scans from `start` to the end.
+        let count = clusters.len() as i64;
+        start = (count + offset).max(0);
+        if length > 0 {
+            end = count.min(start + length);
+        } else {
+            end = start;
+            start = (start + length).max(0);
         }
     }
     let (Ok(start), Ok(end)) = (usize::try_from(start), usize::try_from(end)) else {
@@ -178,7 +185,11 @@ pub(crate) fn substring_grapheme(input: &[u8], offset: i64, length: i64) -> Resu
     let Some(&start_pos) = clusters.get(start) else {
         return Ok(&[]);
     };
-    let end_pos = clusters.get(end).copied().unwrap_or(input.len());
+    let end_pos = if end > start {
+        clusters.get(end).copied().unwrap_or(input.len())
+    } else {
+        input.len()
+    };
     Ok(input.get(start_pos..end_pos).unwrap_or_default())
 }
 

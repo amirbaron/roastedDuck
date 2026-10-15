@@ -1,6 +1,6 @@
 //! `array_value` (DuckDB's `array_value.cpp`).
 
-use rustdb_common::{Error, Result};
+use rustdb_common::Error;
 use rustdb_function::{NullHandling, ScalarFunction, ScalarFunctionSet};
 use rustdb_types::kernels::scatter;
 use rustdb_types::{LogicalType, LogicalTypeId, Vector};

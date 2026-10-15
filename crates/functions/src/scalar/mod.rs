@@ -2,7 +2,9 @@
 //! `extension/core_functions/scalar`.
 
 pub mod array;
+pub mod date;
 pub(crate) mod executor;
+pub mod generic;
 pub mod list;
 pub(crate) mod nested;
 pub mod operator;
@@ -74,5 +76,7 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
     );
     with_aliases(&mut sets, string::substring::substring_functions(), &["substr"]);
     sets.push(string::substring::substring_grapheme_functions());
+    sets.extend(generic::generic_functions());
+    sets.extend(date::to_interval::to_interval_functions());
     sets
 }

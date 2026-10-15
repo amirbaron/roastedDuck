@@ -25,3 +25,13 @@ pub(crate) fn as_bigint(value: &Value) -> Result<i64> {
         .as_i64()
         .ok_or_else(|| Error::internal("BIGINT cast did not produce a bigint"))
 }
+
+/// DuckDB's `CastExceptionText` for a numeric value that does not fit `target` (raised as
+/// an Invalid Input Error by `Cast::Operation`).
+pub(crate) fn cast_error<T: rustdb_function::cast::numeric::CastNumber>(value: T, target: &str) -> Error {
+    Error::invalid_input(format!(
+        "Type {} with value {} can't be cast because the value is out of range for the destination type {target}",
+        T::PHYSICAL.name(),
+        value.to_text()
+    ))
+}
