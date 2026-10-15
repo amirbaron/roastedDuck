@@ -122,6 +122,15 @@ const BUILTIN_TYPES: &[(&str, LogicalTypeId, Option<BindFunction>)] = &[
     ("type", LogicalTypeId::Type, None),
 ];
 
+/// The id of the builtin type called `name`, compared case-insensitively (DuckDB's
+/// `DefaultTypeGenerator::GetDefaultType`); `None` for user-defined names.
+pub fn builtin_type_id(name: &str) -> Option<LogicalTypeId> {
+    BUILTIN_TYPES
+        .iter()
+        .find(|(builtin, _, _)| builtin.eq_ignore_ascii_case(name))
+        .map(|&(_, id, _)| id)
+}
+
 impl UnboundTypeInfo {
     /// Binds this type, and the types among its parameters, where they name builtin types
     /// (DuckDB's `TryDefaultBindTypeExpression`). A name that is not builtin stays an
