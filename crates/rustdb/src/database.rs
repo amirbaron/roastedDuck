@@ -254,6 +254,12 @@ impl Database {
         for set in crate::system_functions::pragma_table_functions() {
             system_catalog.register_table_functions(set)?;
         }
+        for set in rustdb_csv::sniff_csv::sniff_csv_functions() {
+            system_catalog.register_table_functions(set)?;
+        }
+        for set in rustdb_csv::read_csv::read_csv_functions() {
+            system_catalog.register_table_functions(set)?;
+        }
         crate::system_functions::register_default_views(&system_catalog)?;
         let env = rustdb_execution::ClientEnv::standalone()?;
         let instance = DatabaseInstance {

@@ -9,6 +9,7 @@ mod limits;
 mod operator;
 pub mod scalar;
 mod signature;
+pub mod strtime;
 pub mod table;
 mod temporal;
 mod values;
