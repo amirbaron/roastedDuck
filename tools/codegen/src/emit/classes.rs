@@ -71,7 +71,11 @@ impl<'m> Emitter<'m> {
             let _ = writeln!(self.body, "{doc}    pub {}: {ty},", member.rust_name);
         }
         for extra in class.config.extra_fields {
-            let _ = writeln!(self.body, "    /// {}\n    pub {}: {},", extra.doc, extra.name, extra.ty);
+            let _ = writeln!(
+                self.body,
+                "    /// {}\n    pub {}: {},",
+                extra.doc, extra.name, extra.ty
+            );
         }
         Ok(())
     }
