@@ -10,13 +10,21 @@
 
 use std::marker::PhantomData;
 
-use rustdb_common::Result;
-use rustdb_types::{PhysicalType, Vector};
+use std::collections::HashMap;
 
-use super::alp::ALP_VECTOR_SIZE;
-use super::bitpacking_primitives::{required_size, unpack_buffer_u64};
-use super::primitive::{Primitive, corrupt, load, slice, write_values};
-use super::{CodecScan, SegmentScan, Sequential};
+use rustdb_common::Result;
+use rustdb_types::{LogicalType, PhysicalType, Vector};
+
+use super::alp::{
+    ALP_VECTOR_SIZE, COMPACT_BLOCK_THRESHOLD, must_skip_sampling, replace_nulls, sampling_parameters,
+};
+use super::bitpacking_primitives::{pack_buffer_u64, required_size, unpack_buffer_u64};
+use super::primitive::{
+    Primitive, align8, corrupt, load, slice, unified_values, update_numeric_stats, write_values,
+};
+use super::{Analyzer, CodecScan, CompressionInfo, CompressionType, Compressor, SegmentScan, Sequential};
+use crate::checkpoint::column_checkpointer::{FinishedSegment, SegmentSink};
+use crate::statistics::BaseStatistics;
 use crate::table::ColumnSegment;
 use crate::table::column_segment::PersistentData;
 
@@ -32,6 +40,7 @@ pub(crate) trait RdFloat: Primitive {
     /// Bits of the exact (integer) type.
     const BITS: u32;
     fn from_bits_u64(bits: u64) -> Self;
+    fn to_bits_u64(self) -> u64;
 }
 
 impl RdFloat for f32 {
@@ -40,6 +49,10 @@ impl RdFloat for f32 {
     fn from_bits_u64(bits: u64) -> Self {
         Self::from_bits(bits as u32)
     }
+    #[inline]
+    fn to_bits_u64(self) -> u64 {
+        u64::from(self.to_bits())
+    }
 }
 
 impl RdFloat for f64 {
@@ -47,6 +60,10 @@ impl RdFloat for f64 {
     #[inline]
     fn from_bits_u64(bits: u64) -> Self {
         Self::from_bits(bits)
+    }
+    #[inline]
+    fn to_bits_u64(self) -> u64 {
+        self.to_bits()
     }
 }
 
@@ -300,4 +317,360 @@ pub(crate) fn init_scan(
         PhysicalType::Double => Sequential::<AlpRdScanState<f64>>::boxed(segment),
         _ => return None,
     })
+}
+
+/// `AlpRDConstants::CUTTING_LIMIT`: the left part has at most 16 bits.
+const CUTTING_LIMIT: u32 = 16;
+
+/// The dictionary of left parts chosen for a column (`AlpRDCompressionData` from the
+/// analysis).
+#[derive(Clone, Debug, Default)]
+struct Dictionary {
+    right_bit_width: u8,
+    left_bit_width: u8,
+    entries: Vec<u16>,
+    /// Left part -> dictionary index (entries past the dictionary only mark exceptions).
+    map: HashMap<u16, u16>,
+}
+
+/// `BuildLeftPartsDictionary`: the estimated bits per value when cutting at
+/// `right_bit_width`, and the dictionary (left parts by descending frequency; DuckDB's
+/// unstable sort orders equal frequencies arbitrarily, here by ascending left part).
+fn build_left_parts_dictionary(values: &[u64], right_bit_width: u8, persist: Option<&mut Dictionary>) -> f64 {
+    let mut counts: HashMap<u64, i32> = HashMap::new();
+    for &value in values {
+        *counts.entry(value >> right_bit_width).or_insert(0) += 1;
+    }
+    let mut sorted: Vec<(i32, u64)> = counts.into_iter().map(|(left, count)| (count, left)).collect();
+    sorted.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    let exceptions: u32 = sorted
+        .iter()
+        .skip(MAX_DICTIONARY_SIZE)
+        .map(|(count, _)| *count as u32)
+        .sum();
+    let dictionary_size = sorted.len().min(MAX_DICTIONARY_SIZE);
+    let left_bit_width = 1u8.max((dictionary_size as f64).log2().ceil() as u8);
+    if let Some(dictionary) = persist {
+        dictionary.entries = sorted[..dictionary_size]
+            .iter()
+            .map(|(_, left)| *left as u16)
+            .collect();
+        dictionary.map.clear();
+        for (index, &left) in dictionary.entries.iter().enumerate() {
+            dictionary.map.entry(left).or_insert(index as u16);
+        }
+        for (index, (_, left)) in sorted.iter().enumerate().skip(dictionary_size + 1) {
+            dictionary.map.entry(*left as u16).or_insert(index as u16);
+        }
+        dictionary.left_bit_width = left_bit_width;
+        dictionary.right_bit_width = right_bit_width;
+    }
+    // `EstimateCompressionSize` (with the exception count narrowed to 16 bits).
+    let exceptions_size = f64::from(u32::from(exceptions as u16) * 32);
+    f64::from(right_bit_width) + f64::from(left_bit_width) + exceptions_size / values.len() as f64
+}
+
+/// `FindBestDictionary`: the cut with the smallest estimated size.
+fn find_best_dictionary(values: &[u64], bits: u32, dictionary: &mut Dictionary) -> f64 {
+    let mut right_bit_width = 0u8;
+    let mut best = f64::from(i32::MAX);
+    for i in 1..=CUTTING_LIMIT {
+        let candidate = (bits - i) as u8;
+        let estimated = build_left_parts_dictionary(values, candidate, None);
+        if estimated <= best {
+            right_bit_width = candidate;
+            best = estimated;
+        }
+    }
+    build_left_parts_dictionary(values, right_bit_width, Some(dictionary))
+}
+
+/// `AlpRDAnalyzeState`.
+#[derive(Debug)]
+struct AlpRdAnalyzer<T> {
+    ty: LogicalType,
+    info: CompressionInfo,
+    vectors_count: usize,
+    total_values: usize,
+    vectors_sampled: usize,
+    rowgroup_sample: Vec<u64>,
+    dictionary: Dictionary,
+    _marker: PhantomData<T>,
+}
+
+impl<T: RdFloat> Analyzer for AlpRdAnalyzer<T> {
+    /// `AlpRDAnalyze`.
+    fn analyze(&mut self, input: &Vector, count: usize) -> Result<bool> {
+        let skip = must_skip_sampling(self.vectors_count, self.vectors_sampled, count);
+        self.vectors_count += 1;
+        self.total_values += count;
+        if skip {
+            return Ok(true);
+        }
+        let (lookup, increments, sampled) = sampling_parameters(count);
+        let mut positions = vec![0u16; lookup];
+        let mut sample = Vec::with_capacity(sampled);
+        let mut nulls = 0;
+        for (value, valid) in unified_values::<T>(input, lookup).step_by(increments) {
+            positions[nulls] = sample.len() as u16;
+            nulls += usize::from(!valid);
+            sample.push(value.to_bits_u64());
+        }
+        replace_nulls(&mut sample, &positions, sampled, nulls);
+        self.rowgroup_sample.extend(sample);
+        self.vectors_sampled += 1;
+        Ok(true)
+    }
+
+    /// `AlpRDFinalAnalyze`.
+    fn final_analyze(&mut self) -> Result<Option<u64>> {
+        if self.total_values == 0 {
+            return Ok(None);
+        }
+        let samples = self.rowgroup_sample.len() as f64;
+        let factor_of_sampling = 1.0 / (samples / self.total_values as f64);
+        let bits_per_value = find_best_dictionary(&self.rowgroup_sample, T::BITS, &mut self.dictionary);
+        let compressed_bytes = bits_per_value * samples / 8.0;
+        let per_segment_overhead = (HEADER_SIZE + MAX_DICTIONARY_SIZE * 2) as f64;
+        let per_vector_overhead = (4 + 2) as f64;
+        let vectors = (self.total_values as f64 / ALP_VECTOR_SIZE as f64).ceil() as u32;
+        let estimated_size = compressed_bytes * factor_of_sampling + f64::from(vectors) * per_vector_overhead;
+        let blocks = (estimated_size / (self.info.block_size as f64 - per_segment_overhead)).ceil() as u32;
+        Ok(Some(
+            (estimated_size + f64::from(blocks) * per_segment_overhead) as u64,
+        ))
+    }
+
+    fn into_compressor(self: Box<Self>) -> Result<Box<dyn Compressor>> {
+        let physical = self.ty.physical_type();
+        let dictionary_bytes = self.dictionary.entries.len() * 2;
+        Ok(Box::new(AlpRdCompressor::<T> {
+            stats: BaseStatistics::create_empty(self.ty.clone()),
+            ty: self.ty,
+            physical,
+            info: self.info,
+            buffer: vec![0; self.info.block_size],
+            count: 0,
+            data_bytes_used: 0,
+            metadata_offset: self.info.block_size,
+            next_vector_start: (HEADER_SIZE + dictionary_bytes) as u32,
+            dictionary_bytes,
+            dictionary: self.dictionary,
+            input: Vec::with_capacity(ALP_VECTOR_SIZE),
+            null_positions: vec![0; ALP_VECTOR_SIZE],
+            nulls: 0,
+            _marker: PhantomData,
+        }))
+    }
+}
+
+/// `AlpRDCompressionState`.
+#[derive(Debug)]
+struct AlpRdCompressor<T> {
+    ty: LogicalType,
+    physical: PhysicalType,
+    info: CompressionInfo,
+    buffer: Vec<u8>,
+    count: u64,
+    stats: BaseStatistics,
+    data_bytes_used: usize,
+    metadata_offset: usize,
+    next_vector_start: u32,
+    dictionary_bytes: usize,
+    dictionary: Dictionary,
+    /// The vector's values as bits.
+    input: Vec<u64>,
+    null_positions: Vec<u16>,
+    nulls: usize,
+    _marker: PhantomData<T>,
+}
+
+impl<T: RdFloat> AlpRdCompressor<T> {
+    fn used_space(&self) -> usize {
+        HEADER_SIZE + self.dictionary_bytes + self.data_bytes_used
+    }
+
+    fn has_enough_space(&self, vector_size: usize) -> bool {
+        align8(self.used_space() + vector_size) < self.metadata_offset - 4
+    }
+
+    fn create_empty_segment(&mut self) {
+        self.buffer.fill(0);
+        self.count = 0;
+        self.stats = BaseStatistics::create_empty(self.ty.clone());
+        self.metadata_offset = self.info.block_size;
+        self.next_vector_start = (HEADER_SIZE + self.dictionary_bytes) as u32;
+    }
+
+    /// `CompressVector` with `AlpRDCompression::Compress`.
+    fn compress_vector(&mut self, sink: &mut SegmentSink<'_>) -> Result<()> {
+        let n = self.input.len();
+        replace_nulls(&mut self.input, &self.null_positions, n, self.nulls);
+        let dictionary = &self.dictionary;
+        let right_bit_width = u32::from(dictionary.right_bit_width);
+        let dictionary_size = dictionary.entries.len() as u16;
+        let mut rights = Vec::with_capacity(n);
+        let mut lefts = Vec::with_capacity(n);
+        let mut exceptions = Vec::new();
+        for (position, &bits) in self.input.iter().enumerate() {
+            rights.push(bits & ((1u64 << right_bit_width) - 1));
+            let left = (bits >> right_bit_width) as u16;
+            let index = dictionary.map.get(&left).copied().unwrap_or(dictionary_size);
+            lefts.push(u64::from(index));
+            if index >= dictionary_size {
+                exceptions.push((left, position as u16));
+            }
+        }
+        let left_size = required_size(n, dictionary.left_bit_width);
+        let right_size = required_size(n, dictionary.right_bit_width);
+        let compressed_size = left_size + right_size + exceptions.len() * 4 + 2;
+        let uncompressed_size = 2 + (T::BITS as usize / 8) * n;
+        let should_compress = compressed_size < uncompressed_size || self.info.storage_version < 7;
+        let vector_size = if should_compress {
+            compressed_size
+        } else {
+            uncompressed_size
+        };
+        if !self.has_enough_space(vector_size) {
+            self.flush_segment(sink)?;
+            self.create_empty_segment();
+        }
+        if self.nulls > 0 {
+            self.stats.set_has_null_fast();
+        }
+        if n != self.nulls {
+            self.stats.set_has_no_null_fast();
+            for &bits in &self.input {
+                update_numeric_stats(&mut self.stats, self.physical, T::from_bits_u64(bits));
+            }
+        }
+        self.count += n as u64;
+        let mut offset = self.used_space();
+        let value_size = T::BITS as usize / 8;
+        if should_compress {
+            self.buffer[offset..offset + 2].copy_from_slice(&(exceptions.len() as u16).to_le_bytes());
+            offset += 2;
+            pack_buffer_u64(
+                &lefts,
+                self.dictionary.left_bit_width,
+                &mut self.buffer[offset..offset + left_size],
+            );
+            offset += left_size;
+            pack_buffer_u64(
+                &rights,
+                self.dictionary.right_bit_width,
+                &mut self.buffer[offset..offset + right_size],
+            );
+            offset += right_size;
+            for (left, _) in &exceptions {
+                self.buffer[offset..offset + 2].copy_from_slice(&left.to_le_bytes());
+                offset += 2;
+            }
+            for (_, position) in &exceptions {
+                self.buffer[offset..offset + 2].copy_from_slice(&position.to_le_bytes());
+                offset += 2;
+            }
+        } else {
+            self.buffer[offset..offset + 2].copy_from_slice(&UNCOMPRESSED_MODE_SENTINEL.to_le_bytes());
+            offset += 2;
+            for &bits in &self.input {
+                self.buffer[offset..offset + value_size].copy_from_slice(&bits.to_le_bytes()[..value_size]);
+                offset += value_size;
+            }
+        }
+        self.data_bytes_used += vector_size;
+        self.metadata_offset -= 4;
+        self.buffer[self.metadata_offset..self.metadata_offset + 4]
+            .copy_from_slice(&self.next_vector_start.to_le_bytes());
+        self.next_vector_start = self.used_space() as u32;
+        self.input.clear();
+        self.nulls = 0;
+        Ok(())
+    }
+
+    /// `FlushSegment`: compacts the vector offsets when the block is less than 80% used and
+    /// writes the segment header with the dictionary.
+    fn flush_segment(&mut self, sink: &mut SegmentSink<'_>) -> Result<()> {
+        let block_size = self.info.block_size;
+        let metadata_start = align8(self.used_space());
+        let metadata_bytes = block_size - self.metadata_offset;
+        let mut total = block_size;
+        let used = f64::from((metadata_start + metadata_bytes) as f32 / block_size as f32);
+        if used < COMPACT_BLOCK_THRESHOLD {
+            self.buffer
+                .copy_within(self.metadata_offset..block_size, metadata_start);
+            total = metadata_start + metadata_bytes;
+        }
+        self.buffer[..4].copy_from_slice(&(total as u32).to_le_bytes());
+        self.buffer[4] = self.dictionary.right_bit_width;
+        self.buffer[5] = self.dictionary.left_bit_width;
+        self.buffer[6] = self.dictionary.entries.len() as u8;
+        for (index, entry) in self.dictionary.entries.iter().enumerate() {
+            self.buffer[HEADER_SIZE + 2 * index..HEADER_SIZE + 2 * index + 2]
+                .copy_from_slice(&entry.to_le_bytes());
+        }
+        let stats = std::mem::replace(&mut self.stats, BaseStatistics::create_empty(self.ty.clone()));
+        sink.flush(FinishedSegment {
+            data: self.buffer[..total].to_vec(),
+            count: self.count,
+            stats,
+            compression: CompressionType::AlpRd,
+            overflow_blocks: Vec::new(),
+        })?;
+        self.data_bytes_used = 0;
+        Ok(())
+    }
+}
+
+impl<T: RdFloat> Compressor for AlpRdCompressor<T> {
+    /// `AlpRDCompressionState::Append`.
+    fn compress(&mut self, sink: &mut SegmentSink<'_>, input: &Vector, count: usize) -> Result<()> {
+        for (value, valid) in unified_values::<T>(input, count) {
+            let index = self.input.len();
+            self.null_positions[self.nulls] = index as u16;
+            self.nulls += usize::from(!valid);
+            self.input.push(value.to_bits_u64());
+            if self.input.len() == ALP_VECTOR_SIZE {
+                self.compress_vector(sink)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// `AlpRDCompressionState::Finalize`.
+    fn finalize(&mut self, sink: &mut SegmentSink<'_>) -> Result<()> {
+        if !self.input.is_empty() {
+            self.compress_vector(sink)?;
+        }
+        self.flush_segment(sink)
+    }
+}
+
+fn analyzer<T: RdFloat>(ty: &LogicalType, info: &CompressionInfo) -> Box<dyn Analyzer> {
+    Box::new(AlpRdAnalyzer::<T> {
+        ty: ty.clone(),
+        info: *info,
+        vectors_count: 0,
+        total_values: 0,
+        vectors_sampled: 0,
+        rowgroup_sample: Vec::new(),
+        dictionary: Dictionary::default(),
+        _marker: PhantomData,
+    })
+}
+
+/// `AlpRDCompressionFun::GetFunction(type).init_analyze`.
+pub(crate) fn init_analyze(
+    ty: &LogicalType,
+    physical: PhysicalType,
+    info: &CompressionInfo,
+) -> Option<Box<dyn Analyzer>> {
+    if !super::alp::supports_block_size(info) {
+        return None;
+    }
+    match physical {
+        PhysicalType::Float => Some(analyzer::<f32>(ty, info)),
+        PhysicalType::Double => Some(analyzer::<f64>(ty, info)),
+        _ => None,
+    }
 }

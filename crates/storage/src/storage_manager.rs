@@ -130,6 +130,11 @@ impl StorageManager {
         &self.block_manager
     }
 
+    /// Sets how checkpoints of this database compress segments (`force_compression`).
+    pub fn set_compression_config(&self, config: crate::compression::CompressionConfig) {
+        self.block_manager.set_compression_config(config);
+    }
+
     pub fn metadata(&self) -> &MetadataManager {
         &self.metadata
     }

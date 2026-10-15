@@ -8,8 +8,6 @@
 //! (including its 8/4-bit split counters and its sampling hash), so the same input gives
 //! the same symbol table and the same compressed bytes as DuckDB.
 
-#![allow(dead_code, reason = "the encoder is used by the checkpoint writer")]
-
 use std::collections::HashMap;
 
 /// `FSST_VERSION` (`FSST_VERSION_20190218`).
@@ -693,6 +691,13 @@ impl FsstEncoder {
 
     /// `duckdb_fsst_compress`: compresses every string (`compressAuto` / `compressBulk`).
     pub(crate) fn compress(&self, strings: &[&[u8]]) -> Vec<Vec<u8>> {
+        self.compress_with_limit(strings, usize::MAX)
+    }
+
+    /// `duckdb_fsst_compress` into an output buffer of `size` bytes: compression stops at the
+    /// first string whose next 511-byte chunk may not fit (`2 * chunk + 7` bytes); only the
+    /// strings compressed completely are returned.
+    pub(crate) fn compress_with_limit(&self, strings: &[&[u8]], size: usize) -> Vec<Vec<u8>> {
         let st = &self.table;
         let mut no_suffix_opt = false;
         let mut avoid_branch = false;
@@ -707,24 +712,28 @@ impl FsstEncoder {
             avoid_branch = true;
         }
         let mut buf = [0u8; 512 + 8];
-        strings
-            .iter()
-            .map(|string| {
-                let mut out = Vec::with_capacity(string.len() * 2 + 7);
-                let mut offset = 0;
-                loop {
-                    let chunk = (string.len() - offset).min(511);
-                    buf[..chunk].copy_from_slice(&string[offset..offset + chunk]);
-                    buf[chunk] = st.terminator as u8;
-                    compress_chunk(st, &buf, chunk, no_suffix_opt, avoid_branch, &mut out);
-                    offset += chunk;
-                    if offset >= string.len() {
-                        break;
-                    }
+        let mut used = 0usize;
+        let mut result = Vec::with_capacity(strings.len());
+        'lines: for string in strings {
+            let mut out = Vec::with_capacity(string.len() * 2 + 7);
+            let mut offset = 0;
+            loop {
+                let chunk = (string.len() - offset).min(511);
+                if 2 * chunk + 7 > size.saturating_sub(used + out.len()) {
+                    break 'lines;
                 }
-                out
-            })
-            .collect()
+                buf[..chunk].copy_from_slice(&string[offset..offset + chunk]);
+                buf[chunk] = st.terminator as u8;
+                compress_chunk(st, &buf, chunk, no_suffix_opt, avoid_branch, &mut out);
+                offset += chunk;
+                if offset >= string.len() {
+                    break;
+                }
+            }
+            used += out.len();
+            result.push(out);
+        }
+        result
     }
 }
 
@@ -853,6 +862,7 @@ impl FsstDecoder {
     }
 
     /// Decompresses `input` into a fresh buffer.
+    #[cfg(test)]
     pub(crate) fn decompress(&self, input: &[u8]) -> Vec<u8> {
         let mut out = Vec::with_capacity(input.len() * 3);
         self.decompress_into(input, &mut out);

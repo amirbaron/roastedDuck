@@ -1,0 +1,360 @@
+//! Checkpointing the data of one column (DuckDB's `ColumnDataCheckpointer`,
+//! `ColumnCheckpointState::FlushSegmentInternal` and the `Checkpoint` methods of the column
+//! data classes).
+//!
+//! Every codec that supports the column's type analyzes all of its rows; the one with the
+//! smallest estimated size (or the one `force_compression` names) then compresses them
+//! into segments, which are written to blocks. A standard column is checkpointed together
+//! with its validity, so codecs that store NULLs themselves (`DICT_FSST`) can leave an
+//! empty validity segment. LIST columns checkpoint their offsets, validity and child;
+//! STRUCT and ARRAY columns only their validity and children.
+
+use std::sync::Arc;
+
+use rustdb_buffer::BlockId;
+use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, Vector};
+
+use super::pointers::{BlockPointer, DataPointer, PersistentColumnData};
+use super::table_writer::BlockWriter;
+use crate::compression::{
+    Analyzer, CompressionInfo, CompressionType, Compressor, candidate_functions, covers_validity,
+    init_analyze,
+};
+use crate::data_table::TableIoManager;
+use crate::statistics::BaseStatistics;
+use crate::table::column_data::{ColumnData, ColumnKind, ColumnScanState};
+
+/// A segment a codec finished: its bytes (the first `segment_size` bytes of its block),
+/// row count, statistics, encoding and extra blocks.
+#[derive(Debug)]
+pub(crate) struct FinishedSegment {
+    pub data: Vec<u8>,
+    pub count: u64,
+    pub stats: BaseStatistics,
+    pub compression: CompressionType,
+    /// Blocks the segment refers to besides its own (overflow strings, ZSTD pages).
+    pub overflow_blocks: Vec<BlockId>,
+}
+
+/// Where a codec's finished segments go (DuckDB's `ColumnCheckpointState` with the
+/// `PartialBlockManager`).
+#[derive(Debug)]
+pub(crate) struct SegmentSink<'a> {
+    pub(crate) writer: &'a mut BlockWriter,
+    /// The type of the segments (`Validity` for validity columns).
+    pub(crate) ty: &'a LogicalType,
+    pub(crate) info: CompressionInfo,
+    pointers: &'a mut Vec<DataPointer>,
+    /// The first row of the next segment, within the row group.
+    next_row: &'a mut u64,
+    row_group_start: u64,
+}
+
+impl SegmentSink<'_> {
+    /// `ColumnCheckpointState::FlushSegmentInternal`: constant segments need no block,
+    /// empty validity segments neither; the others are written to (partial) blocks.
+    pub(crate) fn flush(&mut self, segment: FinishedSegment) -> Result<()> {
+        if segment.data.len() > self.info.block_size {
+            return Err(Error::internal(
+                "segment size exceeds block size in ColumnCheckpointState::FlushSegmentInternal",
+            ));
+        }
+        if segment.count == 0 {
+            return Ok(());
+        }
+        let (block_pointer, compression) = if segment.stats.is_constant() {
+            (BlockPointer::invalid(), CompressionType::Constant)
+        } else if segment.data.is_empty() {
+            (BlockPointer::invalid(), segment.compression)
+        } else {
+            (self.writer.write_segment(&segment.data)?, segment.compression)
+        };
+        self.pointers.push(DataPointer {
+            row_start: *self.next_row + self.row_group_start,
+            tuple_count: segment.count,
+            block_pointer,
+            compression,
+            statistics: segment.stats,
+            overflow_blocks: segment.overflow_blocks,
+        });
+        *self.next_row += segment.count;
+        Ok(())
+    }
+}
+
+/// The state shared by the columns of a checkpoint.
+#[derive(Debug)]
+pub(crate) struct CheckpointContext<'a> {
+    pub writer: &'a mut BlockWriter,
+    pub io: &'a Arc<TableIoManager>,
+    pub info: CompressionInfo,
+}
+
+/// The physical type segments of `ty` store.
+fn segment_physical_type(ty: &LogicalType) -> PhysicalType {
+    if ty.id() == LogicalTypeId::Validity {
+        PhysicalType::Bit
+    } else {
+        ty.physical_type()
+    }
+}
+
+fn validity_type() -> LogicalType {
+    LogicalType::simple(LogicalTypeId::Validity)
+}
+
+/// Checkpoints rows `0..count` of `column` and its children (`ColumnData::Checkpoint` and
+/// the overrides of the nested column classes).
+pub(crate) fn checkpoint_column(
+    column: &ColumnData,
+    count: u64,
+    row_group_start: u64,
+    ctx: &mut CheckpointContext<'_>,
+) -> Result<PersistentColumnData> {
+    let ty = column.logical_type().clone();
+    let mut result = PersistentColumnData::new(ty.clone());
+    match column.kind() {
+        ColumnKind::Validity => {
+            let [pointers] =
+                checkpoint_segments(column, count, &[ty], &LogicalType::BOOLEAN, row_group_start, ctx)?;
+            result.pointers = pointers;
+        }
+        ColumnKind::Standard { .. } => {
+            // `StandardColumnData::Checkpoint`: data and validity in one checkpointer.
+            let [pointers, validity] = checkpoint_segments(
+                column,
+                count,
+                &[ty.clone(), validity_type()],
+                &ty,
+                row_group_start,
+                ctx,
+            )?;
+            result.pointers = pointers;
+            let mut validity_data = PersistentColumnData::new(validity_type());
+            validity_data.pointers = validity;
+            result.child_columns.push(validity_data);
+        }
+        ColumnKind::List { validity, child } => {
+            let [pointers] =
+                checkpoint_segments(column, count, &[ty], &LogicalType::UBIGINT, row_group_start, ctx)?;
+            result.pointers = pointers;
+            result
+                .child_columns
+                .push(checkpoint_column(validity, count, row_group_start, ctx)?);
+            result
+                .child_columns
+                .push(checkpoint_column(child, child.count(), row_group_start, ctx)?);
+        }
+        ColumnKind::Array { validity, child } => {
+            result
+                .child_columns
+                .push(checkpoint_column(validity, count, row_group_start, ctx)?);
+            result
+                .child_columns
+                .push(checkpoint_column(child, child.count(), row_group_start, ctx)?);
+        }
+        ColumnKind::Struct { validity, fields } => {
+            result
+                .child_columns
+                .push(checkpoint_column(validity, count, row_group_start, ctx)?);
+            for field in fields {
+                result
+                    .child_columns
+                    .push(checkpoint_column(field, count, row_group_start, ctx)?);
+            }
+        }
+    }
+    Ok(result)
+}
+
+/// Calls `callback` with every vector of rows `0..count` of `column`, scanned with
+/// committed updates as a vector of `vector_type` (`ColumnDataCheckpointer::ScanSegments`:
+/// vectors of up to 2048 rows that do not cross the column's segment boundaries).
+fn scan_segments(
+    column: &ColumnData,
+    count: u64,
+    vector_type: &LogicalType,
+    mut callback: impl FnMut(&Vector, usize) -> Result<()>,
+) -> Result<()> {
+    let mut state = ColumnScanState::for_type(column.logical_type());
+    column.initialize_scan(&mut state);
+    let mut vector = Vector::flat(vector_type.clone(), STANDARD_VECTOR_SIZE);
+    let mut row = 0u64;
+    for node in column.segments().nodes() {
+        let segment_end = row + node.node.count();
+        while row < segment_end.min(count) {
+            let rows = (segment_end.min(count) - row).min(STANDARD_VECTOR_SIZE as u64) as usize;
+            column.checkpoint_scan(&mut state, row, rows, &mut vector)?;
+            callback(&vector, rows)?;
+            row += rows as u64;
+        }
+    }
+    Ok(())
+}
+
+/// `ForceCompression`: when `forced` applies to the column, every other codec but
+/// `Uncompressed` is ruled out; returns the forced codec, or `Auto` when it does not apply.
+fn force_compression(functions: &mut [Option<CompressionType>], forced: CompressionType) -> CompressionType {
+    if forced == CompressionType::Auto || !functions.contains(&Some(forced)) {
+        return CompressionType::Auto;
+    }
+    for function in functions.iter_mut() {
+        if !matches!(*function, Some(CompressionType::Uncompressed)) && *function != Some(forced) {
+            *function = None;
+        }
+    }
+    forced
+}
+
+/// Runs the checkpointer for `N` targets that share their scan (`WriteToDisk`): detects the
+/// best codec of each and compresses the rows with it; returns the data pointers of each.
+fn checkpoint_segments<const N: usize>(
+    column: &ColumnData,
+    count: u64,
+    targets: &[LogicalType; N],
+    vector_type: &LogicalType,
+    row_group_start: u64,
+    ctx: &mut CheckpointContext<'_>,
+) -> Result<[Vec<DataPointer>; N]> {
+    let info = ctx.info;
+    let io = ctx.io;
+    // `DetectBestCompressionMethod`.
+    let mut functions: Vec<Vec<Option<CompressionType>>> = Vec::with_capacity(N);
+    let mut forced = Vec::with_capacity(N);
+    let mut states: Vec<Vec<Option<Box<dyn Analyzer>>>> = Vec::with_capacity(N);
+    for ty in targets {
+        let physical = segment_physical_type(ty);
+        let mut target_functions: Vec<Option<CompressionType>> =
+            candidate_functions(physical).into_iter().map(Some).collect();
+        forced.push(force_compression(
+            &mut target_functions,
+            info.config.force_compression,
+        ));
+        let mut target_states = Vec::with_capacity(target_functions.len());
+        for function in &target_functions {
+            target_states.push(match function {
+                Some(compression) => init_analyze(*compression, ty, physical, &info, io)?,
+                None => None,
+            });
+        }
+        functions.push(target_functions);
+        states.push(target_states);
+    }
+    scan_segments(column, count, vector_type, |vector, rows| {
+        for (target_functions, target_states) in functions.iter_mut().zip(states.iter_mut()) {
+            for (function, state) in target_functions.iter_mut().zip(target_states.iter_mut()) {
+                if let Some(analyzer) = state
+                    && !analyzer.analyze(vector, rows)?
+                {
+                    *state = None;
+                    *function = None;
+                }
+            }
+        }
+        Ok(())
+    })?;
+    let mut chosen: Vec<(CompressionType, Box<dyn Analyzer>)> = Vec::with_capacity(N);
+    for ((ty, target_functions), (target_states, forced)) in targets
+        .iter()
+        .zip(&functions)
+        .zip(states.into_iter().zip(&forced))
+    {
+        let mut best: Option<(CompressionType, Box<dyn Analyzer>)> = None;
+        let mut best_score = u64::MAX;
+        for (function, state) in target_functions.iter().zip(target_states) {
+            let (Some(function), Some(mut state)) = (*function, state) else {
+                continue;
+            };
+            let forced_found = function == *forced;
+            let Some(score) = state.final_analyze()? else {
+                continue;
+            };
+            if score < best_score || forced_found {
+                best_score = score;
+                best = Some((function, state));
+            }
+            if forced_found {
+                break;
+            }
+        }
+        chosen.push(best.ok_or_else(|| {
+            Error::new(
+                rustdb_common::ErrorKind::Fatal,
+                format!("No suitable compression/storage method found to store column of type {ty}"),
+            )
+        })?);
+    }
+    // `ValidityCoveredByBasedata`: the validity becomes a single empty segment.
+    let validity_covered = N == 2 && covers_validity(chosen[0].0);
+    let mut compressors: Vec<Box<dyn Compressor>> = Vec::with_capacity(N);
+    for (index, (_, analyzer)) in chosen.into_iter().enumerate() {
+        if validity_covered && index == 1 {
+            compressors.push(Box::new(
+                crate::compression::constant::EmptyValidityCompressor::default(),
+            ));
+        } else {
+            compressors.push(analyzer.into_compressor()?);
+        }
+    }
+    let mut pointers: [Vec<DataPointer>; N] = std::array::from_fn(|_| Vec::new());
+    let mut next_rows = [0u64; N];
+    scan_segments(column, count, vector_type, |vector, rows| {
+        for (index, compressor) in compressors.iter_mut().enumerate() {
+            let mut sink = SegmentSink {
+                writer: &mut *ctx.writer,
+                ty: &targets[index],
+                info,
+                pointers: &mut pointers[index],
+                next_row: &mut next_rows[index],
+                row_group_start,
+            };
+            compressor.compress(&mut sink, vector, rows)?;
+        }
+        Ok(())
+    })?;
+    for (index, compressor) in compressors.iter_mut().enumerate() {
+        let mut sink = SegmentSink {
+            writer: &mut *ctx.writer,
+            ty: &targets[index],
+            info,
+            pointers: &mut pointers[index],
+            next_row: &mut next_rows[index],
+            row_group_start,
+        };
+        compressor.finalize(&mut sink)?;
+    }
+    Ok(pointers)
+}
+
+/// Merges the statistics of the segments of `data` into `stats` the way loading the column
+/// does (`InitializeColumn`): validity segments only contribute NULL information, LIST /
+/// ARRAY children and STRUCT fields their own statistics.
+pub(crate) fn merge_persistent_statistics(data: &PersistentColumnData, stats: &mut BaseStatistics) {
+    for pointer in &data.pointers {
+        if data.logical_type.id() == LogicalTypeId::Validity {
+            stats.merge_validity(&pointer.statistics);
+        } else {
+            stats.merge(&pointer.statistics);
+        }
+    }
+    let Some((validity, children)) = data.child_columns.split_first() else {
+        return;
+    };
+    merge_persistent_statistics(validity, stats);
+    match data.logical_type.physical_type() {
+        PhysicalType::List | PhysicalType::Array => {
+            if let (Some(child), Some(target)) = (children.first(), stats.child_mut()) {
+                merge_persistent_statistics(child, target);
+            }
+        }
+        PhysicalType::Struct => {
+            if let Some(targets) = stats.struct_children_mut() {
+                for (child, target) in children.iter().zip(targets.iter_mut()) {
+                    merge_persistent_statistics(child, target);
+                }
+            }
+        }
+        _ => {}
+    }
+}

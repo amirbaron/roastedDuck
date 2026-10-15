@@ -14,6 +14,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use rustdb_buffer::{BlockId, BlockManager, BlockRegistry, FileBuffer};
 use rustdb_common::{Error, ErrorKind, Result};
 
+use crate::compression::CompressionConfig;
 use crate::metadata::{MetaBlockPointer, MetadataManager, MetadataReader, MetadataWriter};
 use crate::storage_info::{
     BLOCK_START, DB_IDENTIFIER_LEN, DEFAULT_BLOCK_HEADER_SIZE, DEPRECATED_VERSION_NUMBER, DatabaseHeader,
@@ -166,6 +167,8 @@ pub struct SingleFileBlockManager {
     db_identifier: [u8; DB_IDENTIFIER_LEN],
     registry: BlockRegistry,
     state: Mutex<BlockState>,
+    /// How checkpoints compress segments (`force_compression` and related settings).
+    compression: Mutex<CompressionConfig>,
 }
 
 impl SingleFileBlockManager {
@@ -228,6 +231,7 @@ impl SingleFileBlockManager {
             storage_version,
             db_identifier: main_header.db_identifier,
             registry: BlockRegistry::default(),
+            compression: Mutex::default(),
             state: Mutex::new(BlockState {
                 active_header: 1,
                 meta_block: INVALID_BLOCK_INDEX,
@@ -300,6 +304,7 @@ impl SingleFileBlockManager {
             storage_version: 1,
             db_identifier: [0; DB_IDENTIFIER_LEN],
             registry: BlockRegistry::default(),
+            compression: Mutex::default(),
             state: Mutex::new(BlockState::default()),
         };
         let main_bytes = manager.read_header_block(0)?;
@@ -378,6 +383,16 @@ impl SingleFileBlockManager {
     /// The serialization version (`StorageManager::GetStorageVersion`).
     pub fn storage_version(&self) -> u64 {
         self.storage_version
+    }
+
+    /// How checkpoints compress segments.
+    pub fn compression_config(&self) -> CompressionConfig {
+        *self.compression.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Sets how checkpoints compress segments (`force_compression`).
+    pub fn set_compression_config(&self, config: CompressionConfig) {
+        *self.compression.lock().unwrap_or_else(PoisonError::into_inner) = config;
     }
 
     /// The identity of the file (`GetDBIdentifier`).

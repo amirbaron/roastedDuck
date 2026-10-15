@@ -48,10 +48,49 @@ pub(crate) struct DatabaseInstance {
     /// A commit that grows the WAL beyond this many bytes checkpoints
     /// (`checkpoint_threshold`, DuckDB's `checkpoint_wal_size`).
     pub(crate) checkpoint_wal_size: std::sync::atomic::AtomicU64,
+    /// How checkpoints compress segments (`force_compression`, a global setting): applied
+    /// to the storage of every attached database.
+    compression: std::sync::Mutex<rustdb_storage::compression::CompressionConfig>,
 }
 
 /// The default of `checkpoint_threshold` (16 MiB).
 const DEFAULT_CHECKPOINT_WAL_SIZE: u64 = 16 * 1024 * 1024;
+
+/// Whether `name` is `force_compression`.
+fn is_force_compression(name: &str) -> bool {
+    name.eq_ignore_ascii_case("force_compression")
+}
+
+/// `ForceCompressionSetting::OnSet`: the codec named by `value` (`none` / `auto`: none).
+fn parse_force_compression(
+    value: &rustdb_types::Value,
+) -> Result<rustdb_storage::compression::CompressionType> {
+    use rustdb_storage::compression::CompressionType;
+    let name = value.to_varchar()?.to_lowercase();
+    if name == "none" || name == "auto" {
+        return Ok(CompressionType::Auto);
+    }
+    let compression = CompressionType::from_enum_name(&name).ok_or_else(|| {
+        let candidates: Vec<String> = CompressionType::ALL
+            .iter()
+            .map(|compression| compression.enum_name().to_owned())
+            .collect();
+        Error::not_implemented(format!(
+            "Enum value: unrecognized value \"{name}\" for enum \"CompressionType\"\n{}",
+            rustdb_common::string_util::candidates_error_message(&candidates, &name, "Candidates")
+        ))
+    })?;
+    match compression {
+        CompressionType::Constant | CompressionType::Empty => Err(Error::parser(
+            "auto / constant cannot be used for force_compression",
+        )),
+        // `CompressionTypeIsAvailable`: deprecated codecs can no longer be written.
+        CompressionType::Chimp | CompressionType::Patas => Err(Error::parser(format!(
+            "Attempted to force a deprecated compression type ({compression})"
+        ))),
+        other => Ok(other),
+    }
+}
 
 /// Whether `name` is `checkpoint_threshold` or its alias `wal_autocheckpoint`.
 fn is_checkpoint_threshold(name: &str) -> bool {
@@ -76,6 +115,37 @@ impl DatabaseInstance {
         self.checkpoint_wal_size
             .store(limit, std::sync::atomic::Ordering::Relaxed);
         Ok(())
+    }
+
+    /// `SET force_compression` / `RESET force_compression` (`None`): stores the setting and
+    /// hands it to the storage of every attached database.
+    fn set_force_compression(&self, value: Option<&rustdb_types::Value>) -> Result<()> {
+        let forced = match value {
+            Some(value) => parse_force_compression(value)?,
+            None => rustdb_storage::compression::CompressionType::Auto,
+        };
+        let config = {
+            let mut config = self
+                .compression
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            config.force_compression = forced;
+            *config
+        };
+        for database in self.databases.all() {
+            if let Some(storage) = &database.storage {
+                storage.set_compression_config(config);
+            }
+        }
+        Ok(())
+    }
+
+    /// The compression settings checkpoints use.
+    fn compression_config(&self) -> rustdb_storage::compression::CompressionConfig {
+        *self
+            .compression
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// The name of the database opened at start-up.
@@ -182,10 +252,14 @@ impl Database {
             env,
             shutdown_checkpoint_disabled: std::sync::atomic::AtomicBool::new(false),
             checkpoint_wal_size: std::sync::atomic::AtomicU64::new(DEFAULT_CHECKPOINT_WAL_SIZE),
+            compression: std::sync::Mutex::default(),
         };
         for (name, value) in &config.options {
             if is_checkpoint_threshold(name) {
                 instance.set_checkpoint_threshold(value)?;
+            }
+            if is_force_compression(name) {
+                instance.set_force_compression(Some(value))?;
             }
         }
         let database = Self {
@@ -218,6 +292,9 @@ impl Database {
         else {
             return Ok(None);
         };
+        if let Some(storage) = &attached.storage {
+            storage.set_compression_config(self.instance.compression_config());
+        }
         if let Err(error) = crate::wal::replay(self, &attached) {
             self.instance.databases.remove(&attached.name);
             return Err(error);
@@ -633,10 +710,16 @@ impl Connection {
                 if is_checkpoint_threshold(name) {
                     self.database.instance().set_checkpoint_threshold(value)?;
                 }
+                if is_force_compression(name) {
+                    self.database.instance().set_force_compression(Some(value))?;
+                }
                 return Ok(nothing());
             }
             LogicalKind::Reset { name, .. } => {
                 self.settings.reset(name)?;
+                if is_force_compression(name) {
+                    self.database.instance().set_force_compression(None)?;
+                }
                 if is_checkpoint_threshold(name) {
                     self.database
                         .instance()

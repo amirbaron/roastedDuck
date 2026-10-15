@@ -11,11 +11,13 @@ use std::io::Read;
 use std::sync::Arc;
 
 use rustdb_buffer::{BlockId, INVALID_BLOCK};
-use rustdb_common::Result;
-use rustdb_types::Vector;
+use rustdb_common::{Error, Result};
+use rustdb_types::{LogicalType, Vector};
 
-use super::SegmentScan;
-use super::primitive::{corrupt, load, write_string_ranges};
+use super::primitive::{corrupt, load, unified_strings, update_string_stats, write_string_ranges};
+use super::{Analyzer, CompressionInfo, CompressionType, Compressor, SegmentScan};
+use crate::checkpoint::column_checkpointer::{FinishedSegment, SegmentSink};
+use crate::statistics::BaseStatistics;
 use crate::table::ColumnSegment;
 use crate::table::column_segment::{PersistentData, SegmentBuffer};
 
@@ -24,7 +26,6 @@ pub(crate) const ZSTD_VECTOR_SIZE: usize = 2048;
 
 /// `GetVectorMetadataSize`: page ids (`i64`), page offsets (`u32`), uncompressed and
 /// compressed sizes (`u64`), each array aligned to its element size.
-#[allow(dead_code, reason = "used by the checkpoint writer")]
 pub(crate) fn vector_metadata_size(vector_count: usize) -> usize {
     let mut size = 8 * vector_count;
     size = size.next_multiple_of(4) + 4 * vector_count;
@@ -219,4 +220,371 @@ impl SegmentScan for ZstdScanState {
         }
         Ok(())
     }
+}
+
+/// `GetVectorCount`.
+fn vector_count(count: usize) -> usize {
+    count.div_ceil(ZSTD_VECTOR_SIZE)
+}
+
+/// `ZSTDAnalyzeState`: the string sizes and how the vectors split into segments.
+#[derive(Debug)]
+struct ZstdAnalyzer {
+    ty: LogicalType,
+    info: CompressionInfo,
+    total_size: usize,
+    count: usize,
+    vectors_per_segment: usize,
+    segment_count: usize,
+    vectors_in_segment: usize,
+    values_in_vector: usize,
+}
+
+impl Analyzer for ZstdAnalyzer {
+    /// `ZSTDStorage::StringAnalyze`.
+    fn analyze(&mut self, input: &Vector, count: usize) -> Result<bool> {
+        self.total_size += unified_strings(input, count)
+            .flatten()
+            .map(<[u8]>::len)
+            .sum::<usize>();
+        self.values_in_vector += count;
+        let writable = self.info.block_size - 8;
+        while self.values_in_vector >= ZSTD_VECTOR_SIZE {
+            if vector_metadata_size(self.vectors_in_segment + 1) > writable {
+                self.vectors_per_segment = self.vectors_in_segment;
+                self.segment_count += 1;
+                self.vectors_in_segment = 0;
+            } else {
+                self.vectors_in_segment += 1;
+            }
+            self.values_in_vector -= ZSTD_VECTOR_SIZE;
+        }
+        self.count += count;
+        Ok(true)
+    }
+
+    /// `ZSTDStorage::StringFinalAnalyze`: ZSTD is penalised below the minimum average string
+    /// length.
+    fn final_analyze(&mut self) -> Result<Option<u64>> {
+        if self.count == 0 {
+            return Ok(None);
+        }
+        if self.values_in_vector > 0 {
+            self.vectors_in_segment += 1;
+        }
+        if self.vectors_in_segment > 0 {
+            self.segment_count += 1;
+        }
+        let average_length = (self.total_size / self.count) as u64;
+        let penalty = if average_length >= self.info.config.zstd_min_string_length {
+            1.0
+        } else {
+            1000.0
+        };
+        let expected_compressed_size = self.total_size as f64 / 2.0;
+        let estimated = expected_compressed_size as u64
+            + (self.count * 4) as u64
+            + vector_metadata_size(vector_count(self.count)) as u64;
+        Ok(Some((estimated as f64 * penalty) as u64))
+    }
+
+    fn into_compressor(self: Box<Self>) -> Result<Box<dyn Compressor>> {
+        Ok(Box::new(ZstdCompressor {
+            stats: BaseStatistics::create_empty(self.ty.clone()),
+            ty: self.ty,
+            info: self.info,
+            total_count: self.count,
+            total_vector_count: vector_count(self.count),
+            total_segment_count: self.segment_count,
+            vectors_per_segment: self.vectors_per_segment,
+            vectors_written: 0,
+            segment_index: 0,
+            segment: None,
+            page: None,
+            rows: Vec::new(),
+            lengths: Vec::new(),
+            has_null: Vec::new(),
+        }))
+    }
+}
+
+/// The segment being written: its page and vector metadata.
+#[derive(Debug)]
+struct ZstdSegment {
+    buffer: Vec<u8>,
+    /// Used bytes of the segment's page.
+    offset: usize,
+    total_vectors: usize,
+    vectors: usize,
+    count: u64,
+    overflow_blocks: Vec<BlockId>,
+}
+
+/// An extra page being written and its block.
+#[derive(Debug)]
+struct ExtraPage {
+    block_id: BlockId,
+    buffer: Vec<u8>,
+    offset: usize,
+}
+
+/// `ZSTDCompressionState`: strings are compressed per vector of 2048 into one zstd frame
+/// (with the pure-Rust `ruzstd` encoder) that is laid out over the segment's page and extra
+/// pages exactly like DuckDB lays out its streaming output.
+#[derive(Debug)]
+struct ZstdCompressor {
+    ty: LogicalType,
+    info: CompressionInfo,
+    total_count: usize,
+    total_vector_count: usize,
+    total_segment_count: usize,
+    vectors_per_segment: usize,
+    vectors_written: usize,
+    segment_index: usize,
+    segment: Option<ZstdSegment>,
+    /// The current extra page (`None`: writing on the segment's page).
+    page: Option<ExtraPage>,
+    stats: BaseStatistics,
+    /// The bytes and lengths of the strings of the current vector, and which rows are NULL.
+    rows: Vec<u8>,
+    lengths: Vec<u32>,
+    has_null: Vec<bool>,
+}
+
+impl ZstdCompressor {
+    fn writable(&self) -> usize {
+        self.info.block_size - 8
+    }
+
+    /// The current page's bytes and used size.
+    fn current(&mut self) -> Result<(&mut Vec<u8>, &mut usize)> {
+        if let Some(page) = &mut self.page {
+            return Ok((&mut page.buffer, &mut page.offset));
+        }
+        let segment = self
+            .segment
+            .as_mut()
+            .ok_or_else(|| Error::internal("ZSTD compression without a segment"))?;
+        Ok((&mut segment.buffer, &mut segment.offset))
+    }
+
+    /// `NewSegment`.
+    fn new_segment(&mut self, sink: &mut SegmentSink<'_>) -> Result<()> {
+        if self.page.is_none() && self.segment.is_some() {
+            return Err(Error::internal(
+                "(ZSTDCompressionState::NewSegment) We are asking for a new segment, but somehow we're still writing \
+                 vector data onto the initial (segment) page",
+            ));
+        }
+        self.flush_segment(sink)?;
+        let vectors = if self.segment_index + 1 >= self.total_segment_count {
+            self.total_vector_count - self.segment_index * self.vectors_per_segment
+        } else {
+            self.vectors_per_segment
+        };
+        self.segment = Some(ZstdSegment {
+            buffer: vec![0; self.info.block_size],
+            offset: vector_metadata_size(vectors),
+            total_vectors: vectors,
+            vectors: 0,
+            count: 0,
+            overflow_blocks: Vec::new(),
+        });
+        self.page = None;
+        Ok(())
+    }
+
+    /// `NewPage`: continues on a fresh extra page whose id ends the current one.
+    fn new_page(&mut self, sink: &mut SegmentSink<'_>) -> Result<()> {
+        let new_id = sink.writer.new_block()?;
+        let (buffer, offset) = self.current()?;
+        buffer[*offset..*offset + 8].copy_from_slice(&new_id.to_le_bytes());
+        *offset += 8;
+        if let Some(segment) = &mut self.segment {
+            segment.overflow_blocks.push(new_id);
+        }
+        if let Some(page) = self.page.take() {
+            sink.writer.write_block(page.block_id, page.buffer)?;
+        }
+        self.page = Some(ExtraPage {
+            block_id: new_id,
+            buffer: vec![0; self.info.block_size],
+            offset: 0,
+        });
+        Ok(())
+    }
+
+    /// Writes the buffered vector (`InitializeVector`, `CompressString`, `FlushVector`).
+    fn write_vector(&mut self, sink: &mut SegmentSink<'_>) -> Result<()> {
+        let tuple_count = self.lengths.len();
+        if self.segment.is_none() {
+            // The first segment (created by DuckDB's constructor).
+            self.new_segment(sink)?;
+        }
+        // `AddNull` marks the segment before `InitializeVector` may start a new one.
+        if self.has_null.first() == Some(&true) {
+            self.stats.set_has_null_fast();
+        }
+        // `InitializeVector`.
+        {
+            let (_, offset) = self.current()?;
+            *offset = offset.next_multiple_of(4);
+        }
+        let segment_full = self
+            .segment
+            .as_ref()
+            .is_none_or(|segment| segment.vectors + 1 > segment.total_vectors);
+        if segment_full {
+            self.new_segment(sink)?;
+        }
+        let writable = self.writable();
+        let (_, offset) = self.current()?;
+        if *offset + tuple_count * 4 >= writable {
+            self.new_page(sink)?;
+        }
+        let starting_page = self.page.as_ref().map_or(INVALID_BLOCK, |page| page.block_id);
+        let lengths = std::mem::take(&mut self.lengths);
+        let rows = std::mem::take(&mut self.rows);
+        let starting_offset = {
+            let (buffer, offset) = self.current()?;
+            *offset = offset.next_multiple_of(4);
+            let start = *offset;
+            for (index, length) in lengths.iter().enumerate() {
+                buffer[start + index * 4..start + index * 4 + 4].copy_from_slice(&length.to_le_bytes());
+            }
+            *offset += tuple_count * 4;
+            start
+        };
+        // The stats of the vector's strings go to the current segment.
+        let mut position = 0;
+        for (row, (length, null)) in lengths.iter().zip(&self.has_null).enumerate() {
+            let end = position + *length as usize;
+            if *null {
+                // The first row's NULL was recorded before the vector started.
+                if row > 0 {
+                    self.stats.set_has_null_fast();
+                }
+            } else {
+                update_string_stats(&mut self.stats, &rows[position..end]);
+            }
+            position = end;
+        }
+        let compressed =
+            ruzstd::encoding::compress_to_vec(rows.as_slice(), ruzstd::encoding::CompressionLevel::Fastest);
+        let mut written = 0;
+        loop {
+            let (buffer, offset) = self.current()?;
+            let take = (writable - *offset).min(compressed.len() - written);
+            buffer[*offset..*offset + take].copy_from_slice(&compressed[written..written + take]);
+            *offset += take;
+            written += take;
+            if written == compressed.len() {
+                break;
+            }
+            self.new_page(sink)?;
+        }
+        // `FlushVector`: the vector metadata.
+        let segment = self
+            .segment
+            .as_mut()
+            .ok_or_else(|| Error::internal("ZSTD compression without a segment"))?;
+        let [page_ids, page_offsets, uncompressed_sizes, compressed_sizes] =
+            metadata_offsets(segment.total_vectors);
+        let index = segment.vectors;
+        segment.buffer[page_ids + 8 * index..page_ids + 8 * index + 8]
+            .copy_from_slice(&starting_page.to_le_bytes());
+        segment.buffer[page_offsets + 4 * index..page_offsets + 4 * index + 4]
+            .copy_from_slice(&(starting_offset as u32).to_le_bytes());
+        segment.buffer[uncompressed_sizes + 8 * index..uncompressed_sizes + 8 * index + 8]
+            .copy_from_slice(&(rows.len() as u64).to_le_bytes());
+        segment.buffer[compressed_sizes + 8 * index..compressed_sizes + 8 * index + 8]
+            .copy_from_slice(&(compressed.len() as u64).to_le_bytes());
+        segment.vectors += 1;
+        segment.count += tuple_count as u64;
+        self.vectors_written += 1;
+        self.rows = rows;
+        self.rows.clear();
+        self.lengths = lengths;
+        self.lengths.clear();
+        self.has_null.clear();
+        Ok(())
+    }
+
+    /// `FlushSegment`.
+    fn flush_segment(&mut self, sink: &mut SegmentSink<'_>) -> Result<()> {
+        let Some(segment) = self.segment.take() else {
+            return Ok(());
+        };
+        if segment.vectors != segment.total_vectors {
+            return Err(Error::internal(format!(
+                "(ZSTDCompressionState::FlushSegment) We haven't written all vectors that we were expecting to \
+                 write ({} instead of {})!",
+                segment.vectors, segment.total_vectors
+            )));
+        }
+        if let Some(page) = self.page.take()
+            && page.offset != 0
+        {
+            sink.writer.write_block(page.block_id, page.buffer)?;
+        }
+        let stats = std::mem::replace(&mut self.stats, BaseStatistics::create_empty(self.ty.clone()));
+        sink.flush(FinishedSegment {
+            data: segment.buffer[..segment.offset].to_vec(),
+            count: segment.count,
+            stats,
+            compression: CompressionType::Zstd,
+            overflow_blocks: segment.overflow_blocks,
+        })?;
+        self.segment_index += 1;
+        Ok(())
+    }
+
+    /// The number of values of the current vector (`InitializeVector`'s expected count).
+    fn expected_vector_size(&self) -> usize {
+        if self.vectors_written + 1 >= self.total_vector_count {
+            self.total_count - ZSTD_VECTOR_SIZE * self.vectors_written
+        } else {
+            ZSTD_VECTOR_SIZE
+        }
+    }
+}
+
+impl Compressor for ZstdCompressor {
+    /// `ZSTDStorage::Compress`: strings are buffered until their vector is complete.
+    fn compress(&mut self, sink: &mut SegmentSink<'_>, input: &Vector, count: usize) -> Result<()> {
+        for string in unified_strings(input, count) {
+            let bytes = string.unwrap_or_default();
+            self.rows.extend_from_slice(bytes);
+            self.lengths.push(bytes.len() as u32);
+            self.has_null.push(string.is_none());
+            if self.lengths.len() == self.expected_vector_size() {
+                self.write_vector(sink)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn finalize(&mut self, sink: &mut SegmentSink<'_>) -> Result<()> {
+        if !self.lengths.is_empty() {
+            self.write_vector(sink)?;
+        }
+        self.flush_segment(sink)
+    }
+}
+
+/// `ZSTDFun::GetFunction(type).init_analyze`: from storage version 4.
+pub(crate) fn init_analyze(ty: &LogicalType, info: &CompressionInfo) -> Option<Box<dyn Analyzer>> {
+    if info.storage_version < 4 {
+        return None;
+    }
+    Some(Box::new(ZstdAnalyzer {
+        ty: ty.clone(),
+        info: *info,
+        total_size: 0,
+        count: 0,
+        vectors_per_segment: 0,
+        segment_count: 0,
+        vectors_in_segment: 0,
+        values_in_vector: 0,
+    }))
 }

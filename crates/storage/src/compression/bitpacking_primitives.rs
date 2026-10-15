@@ -6,8 +6,6 @@
 //! stream of `32 * width / 8` bytes. Packing and unpacking therefore work on raw `u64` /
 //! `u128` bit patterns and do not need per-type kernels.
 
-#![allow(dead_code, reason = "packing is used by the checkpoint writer")]
-
 /// Values per packed group (`BITPACKING_ALGORITHM_GROUP_SIZE`).
 pub(crate) const GROUP_SIZE: usize = 32;
 /// The header of a bit-packed segment: the offset of its metadata (`BITPACKING_HEADER_SIZE`).
@@ -199,6 +197,16 @@ pub(crate) fn pack_buffer_u64(values: &[u64], width: u8, dst: &mut [u8]) {
         let mut group = [0u64; GROUP_SIZE];
         group[..chunk.len()].copy_from_slice(chunk);
         pack_group_u64(&group, width, &mut dst[index * group_bytes..]);
+    }
+}
+
+/// Packs `values` like [`pack_buffer_u64`] with values of up to 128 bits.
+pub(crate) fn pack_buffer_u128(values: &[u128], width: u8, dst: &mut [u8]) {
+    let group_bytes = GROUP_SIZE * width as usize / 8;
+    for (index, chunk) in values.chunks(GROUP_SIZE).enumerate() {
+        let mut group = [0u128; GROUP_SIZE];
+        group[..chunk.len()].copy_from_slice(chunk);
+        pack_group_u128(&group, width, &mut dst[index * group_bytes..]);
     }
 }
 

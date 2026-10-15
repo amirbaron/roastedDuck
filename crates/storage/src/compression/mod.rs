@@ -29,9 +29,13 @@ pub(crate) mod zstd;
 
 use std::fmt;
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{PhysicalType, Vector};
+use std::sync::Arc;
 
+use rustdb_common::{Error, Result};
+use rustdb_types::{LogicalType, PhysicalType, Vector};
+
+use crate::checkpoint::column_checkpointer::SegmentSink;
+use crate::data_table::TableIoManager;
 use crate::table::ColumnSegment;
 
 /// The encoding of a column segment (DuckDB's `CompressionType`; the discriminants are
@@ -238,4 +242,172 @@ pub(crate) fn fetch_row(
 ) -> Result<()> {
     let mut state = init_scan(segment)?;
     state.scan(segment, row, 1, result, result_index)
+}
+
+impl CompressionType {
+    /// The name `EnumUtil` uses (`force_compression` values, case-insensitive).
+    pub const fn enum_name(self) -> &'static str {
+        match self {
+            Self::Auto => "AUTO",
+            Self::Uncompressed => "UNCOMPRESSED",
+            Self::Constant => "CONSTANT",
+            Self::Rle => "RLE",
+            Self::Dictionary => "DICTIONARY",
+            Self::PforDelta => "PFOR",
+            Self::BitPacking => "BITPACKING",
+            Self::Fsst => "FSST",
+            Self::Chimp => "CHIMP",
+            Self::Patas => "PATAS",
+            Self::Alp => "ALP",
+            Self::AlpRd => "ALPRD",
+            Self::Zstd => "ZSTD",
+            Self::Roaring => "ROARING",
+            Self::Empty => "EMPTY",
+            Self::DictFsst => "DICT_FSST",
+        }
+    }
+
+    /// `EnumUtil::FromString<CompressionType>`.
+    pub fn from_enum_name(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|compression| compression.enum_name().eq_ignore_ascii_case(name))
+    }
+}
+
+/// How checkpoints compress segments: the database-wide settings DuckDB reads in
+/// `ColumnDataCheckpointer` and the codecs (`force_compression`,
+/// `zstd_min_string_length`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CompressionConfig {
+    /// `force_compression`: the codec to use where it applies (`Auto` lets every codec
+    /// compete).
+    pub force_compression: CompressionType,
+    /// `zstd_min_string_length`: below this average string length ZSTD is penalised.
+    pub zstd_min_string_length: u64,
+}
+
+impl Default for CompressionConfig {
+    fn default() -> Self {
+        Self {
+            force_compression: CompressionType::Auto,
+            zstd_min_string_length: 4096,
+        }
+    }
+}
+
+/// What a codec knows about the database it writes to (DuckDB's `CompressionInfo` plus the
+/// storage version and settings the codecs consult).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CompressionInfo {
+    /// The usable size of a block.
+    pub block_size: usize,
+    /// The serialization version written (`StorageManager::GetStorageVersion`).
+    pub storage_version: u64,
+    pub config: CompressionConfig,
+}
+
+impl CompressionInfo {
+    /// `GetCompactionFlushLimit`: segments filled beyond this are not compacted.
+    pub(crate) fn compaction_flush_limit(&self) -> usize {
+        self.block_size / 5 * 4
+    }
+}
+
+/// The analyze step of a codec (`init_analyze` / `analyze` / `final_analyze`).
+pub(crate) trait Analyzer {
+    /// Accounts for `count` rows of `input`; `false` rules the codec out.
+    fn analyze(&mut self, input: &Vector, count: usize) -> Result<bool>;
+    /// The estimated size of the compressed data (`None`: the codec cannot be used).
+    fn final_analyze(&mut self) -> Result<Option<u64>>;
+    /// `init_compression`: the compression state, built from the analysis.
+    fn into_compressor(self: Box<Self>) -> Result<Box<dyn Compressor>>;
+}
+
+/// The compression step of a codec (`compress` / `compress_finalize`).
+pub(crate) trait Compressor {
+    fn compress(&mut self, sink: &mut SegmentSink<'_>, input: &Vector, count: usize) -> Result<()>;
+    fn finalize(&mut self, sink: &mut SegmentSink<'_>) -> Result<()>;
+}
+
+/// `EmitCompressionFunction` + `TypeIsSupported`: the codecs that compete for a column of
+/// `physical` type, in DuckDB's registry order (ties go to the earlier one).
+pub(crate) fn candidate_functions(physical: PhysicalType) -> Vec<CompressionType> {
+    use CompressionType as C;
+    use PhysicalType as P;
+    let integer = matches!(
+        physical,
+        P::Bool
+            | P::Int8
+            | P::Int16
+            | P::Int32
+            | P::Int64
+            | P::Int128
+            | P::UInt8
+            | P::UInt16
+            | P::UInt32
+            | P::UInt64
+            | P::UInt128
+            | P::List
+    );
+    let float = matches!(physical, P::Float | P::Double);
+    let string = physical == P::Varchar;
+    let supported = |compression: C| match compression {
+        C::Uncompressed => integer || float || string || matches!(physical, P::Interval | P::Bit),
+        C::Rle => integer || float,
+        C::BitPacking => integer,
+        C::Dictionary | C::Fsst | C::Zstd | C::DictFsst => string,
+        C::Chimp | C::Patas | C::Alp | C::AlpRd => float,
+        C::Roaring => matches!(physical, P::Bit | P::Bool),
+        C::Auto | C::Constant | C::PforDelta | C::Empty => false,
+    };
+    [
+        C::Uncompressed,
+        C::Rle,
+        C::BitPacking,
+        C::Dictionary,
+        C::Chimp,
+        C::Patas,
+        C::Alp,
+        C::AlpRd,
+        C::Fsst,
+        C::Zstd,
+        C::Roaring,
+        C::DictFsst,
+    ]
+    .into_iter()
+    .filter(|&compression| supported(compression))
+    .collect()
+}
+
+/// Whether a codec stores the column's validity itself (`CompressionValidity::
+/// NO_VALIDITY_REQUIRED`), so the validity column is written as an empty segment.
+pub(crate) fn covers_validity(compression: CompressionType) -> bool {
+    compression == CompressionType::DictFsst
+}
+
+/// `init_analyze` of `compression` for a column of type `ty` (`physical`); `None` when the
+/// codec does not apply (unsupported type or storage version, deprecated codec).
+pub(crate) fn init_analyze(
+    compression: CompressionType,
+    ty: &LogicalType,
+    physical: PhysicalType,
+    info: &CompressionInfo,
+    io: &Arc<TableIoManager>,
+) -> Result<Option<Box<dyn Analyzer>>> {
+    Ok(match compression {
+        CompressionType::Uncompressed => Some(uncompressed::init_analyze(ty, info, io)?),
+        CompressionType::Rle => rle::init_analyze(ty, physical, info),
+        CompressionType::BitPacking => bitpacking::init_analyze(ty, physical, info),
+        CompressionType::Roaring => roaring::init_analyze(ty, physical, info),
+        CompressionType::Alp => alp::init_analyze(ty, physical, info),
+        CompressionType::AlpRd => alprd::init_analyze(ty, physical, info),
+        CompressionType::Dictionary if physical == PhysicalType::Varchar => {
+            dictionary::init_analyze(ty, info)
+        }
+        CompressionType::Fsst if physical == PhysicalType::Varchar => fsst::init_analyze(ty, info),
+        CompressionType::DictFsst if physical == PhysicalType::Varchar => dict_fsst::init_analyze(ty, info),
+        CompressionType::Zstd if physical == PhysicalType::Varchar => zstd::init_analyze(ty, info),
+        _ => None,
+    })
 }

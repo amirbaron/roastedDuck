@@ -4,10 +4,14 @@
 //! (`T`) and, at that (8-byte aligned) offset, one `u16` length per run.
 
 use rustdb_common::Result;
-use rustdb_types::{PhysicalType, Vector};
+use rustdb_types::{LogicalType, PhysicalType, Vector};
 
-use super::primitive::{Primitive, corrupt, fill_values, load};
-use super::{CodecScan, SegmentScan, Sequential};
+use super::primitive::{
+    Primitive, align8, align8_floor, corrupt, fill_values, load, unified_values, update_numeric_stats,
+};
+use super::{Analyzer, CodecScan, CompressionInfo, CompressionType, Compressor, SegmentScan, Sequential};
+use crate::checkpoint::column_checkpointer::{FinishedSegment, SegmentSink};
+use crate::statistics::BaseStatistics;
 use crate::table::ColumnSegment;
 use crate::table::column_segment::PersistentData;
 
@@ -162,6 +166,225 @@ pub(crate) fn init_scan(
         PhysicalType::UInt128 => Sequential::<RleScanState<u128>>::boxed(segment),
         PhysicalType::Float => Sequential::<RleScanState<f32>>::boxed(segment),
         PhysicalType::Double => Sequential::<RleScanState<f64>>::boxed(segment),
+        _ => return None,
+    })
+}
+
+/// The run being built (`RLEState`).
+#[derive(Debug)]
+struct RleState<T> {
+    seen_count: u64,
+    last_value: T,
+    last_seen_count: RleCount,
+    /// No valid value seen yet (never reset).
+    all_null: bool,
+}
+
+impl<T: Primitive> RleState<T> {
+    fn new() -> Self {
+        Self {
+            seen_count: 0,
+            last_value: T::NULL_VALUE,
+            last_seen_count: 0,
+            all_null: true,
+        }
+    }
+
+    /// `RLEState::Update`: `flush(value, count, is_null)` is called for every finished run.
+    fn update(
+        &mut self,
+        value: T,
+        valid: bool,
+        mut flush: impl FnMut(T, RleCount, bool) -> Result<()>,
+    ) -> Result<()> {
+        if valid {
+            if self.all_null {
+                // The first valid value; earlier NULLs belong to its run.
+                self.last_value = value;
+                self.seen_count += 1;
+                self.last_seen_count += 1;
+                self.all_null = false;
+            } else if self.last_value == value {
+                self.last_seen_count += 1;
+            } else {
+                if self.last_seen_count > 0 {
+                    flush(self.last_value, self.last_seen_count, self.all_null)?;
+                    self.seen_count += 1;
+                }
+                self.last_value = value;
+                self.last_seen_count = 1;
+            }
+        } else {
+            self.last_seen_count += 1;
+        }
+        if self.last_seen_count == RleCount::MAX {
+            flush(self.last_value, self.last_seen_count, self.all_null)?;
+            self.last_seen_count = 0;
+            self.seen_count += 1;
+        }
+        Ok(())
+    }
+}
+
+/// `RLEAnalyzeState`.
+#[derive(Debug)]
+struct RleAnalyzer<T> {
+    state: RleState<T>,
+    ty: LogicalType,
+    info: CompressionInfo,
+}
+
+impl<T: Primitive> Analyzer for RleAnalyzer<T> {
+    fn analyze(&mut self, input: &Vector, count: usize) -> Result<bool> {
+        for (value, valid) in unified_values::<T>(input, count) {
+            self.state.update(value, valid, |_, _, _| Ok(()))?;
+        }
+        Ok(true)
+    }
+
+    /// `RLEFinalAnalyze`.
+    fn final_analyze(&mut self) -> Result<Option<u64>> {
+        Ok(Some(
+            (size_of::<RleCount>() + T::SIZE) as u64 * self.state.seen_count,
+        ))
+    }
+
+    fn into_compressor(self: Box<Self>) -> Result<Box<dyn Compressor>> {
+        let entry_size = T::SIZE + size_of::<RleCount>();
+        let max_rle_count = align8_floor((self.info.block_size - RLE_HEADER_SIZE) / entry_size);
+        let physical = self.ty.physical_type();
+        Ok(Box::new(RleCompressor::<T> {
+            state: RleState::new(),
+            write_statistics: physical != PhysicalType::List,
+            physical,
+            stats: BaseStatistics::create_empty(self.ty.clone()),
+            ty: self.ty,
+            buffer: vec![0; self.info.block_size],
+            count: 0,
+            entry_count: 0,
+            max_rle_count,
+        }))
+    }
+}
+
+/// `RLECompressState`: runs are written to a block-sized buffer, the values from the
+/// header on and the counts from `max_rle_count` values further; a flush moves the counts
+/// next to the values.
+#[derive(Debug)]
+struct RleCompressor<T> {
+    state: RleState<T>,
+    ty: LogicalType,
+    physical: PhysicalType,
+    write_statistics: bool,
+    buffer: Vec<u8>,
+    count: u64,
+    stats: BaseStatistics,
+    entry_count: usize,
+    max_rle_count: usize,
+}
+
+impl<T: Primitive> RleCompressor<T> {
+    /// `WriteValue`.
+    fn write_value(
+        &mut self,
+        sink: &mut SegmentSink<'_>,
+        value: T,
+        count: RleCount,
+        is_null: bool,
+    ) -> Result<()> {
+        let value_offset = RLE_HEADER_SIZE + self.entry_count * T::SIZE;
+        value.store(&mut self.buffer[value_offset..]);
+        let count_offset =
+            RLE_HEADER_SIZE + self.max_rle_count * T::SIZE + self.entry_count * size_of::<RleCount>();
+        self.buffer[count_offset..count_offset + 2].copy_from_slice(&count.to_le_bytes());
+        self.entry_count += 1;
+        if self.write_statistics {
+            if is_null {
+                self.stats.set_has_null_fast();
+            } else {
+                self.stats.set_has_no_null_fast();
+                update_numeric_stats(&mut self.stats, self.physical, value);
+            }
+        }
+        self.count += u64::from(count);
+        if self.entry_count == self.max_rle_count {
+            self.flush_segment(sink)?;
+            self.entry_count = 0;
+        }
+        Ok(())
+    }
+
+    /// `FlushSegment`: compacts the counts next to the values and hands the segment over.
+    fn flush_segment(&mut self, sink: &mut SegmentSink<'_>) -> Result<()> {
+        let counts_size = size_of::<RleCount>() * self.entry_count;
+        let original_offset = RLE_HEADER_SIZE + self.max_rle_count * T::SIZE;
+        let minimal_offset = RLE_HEADER_SIZE + T::SIZE * self.entry_count;
+        let aligned_offset = align8(minimal_offset);
+        let total = aligned_offset + counts_size;
+        self.buffer[minimal_offset..aligned_offset].fill(0);
+        self.buffer
+            .copy_within(original_offset..original_offset + counts_size, aligned_offset);
+        self.buffer[..8].copy_from_slice(&(aligned_offset as u64).to_le_bytes());
+        let stats = std::mem::replace(&mut self.stats, BaseStatistics::create_empty(self.ty.clone()));
+        sink.flush(FinishedSegment {
+            data: self.buffer[..total].to_vec(),
+            count: std::mem::take(&mut self.count),
+            stats,
+            compression: CompressionType::Rle,
+            overflow_blocks: Vec::new(),
+        })
+    }
+}
+
+impl<T: Primitive> Compressor for RleCompressor<T> {
+    fn compress(&mut self, sink: &mut SegmentSink<'_>, input: &Vector, count: usize) -> Result<()> {
+        let mut state = std::mem::replace(&mut self.state, RleState::new());
+        let result = unified_values::<T>(input, count).try_for_each(|(value, valid)| {
+            state.update(value, valid, |v, c, n| self.write_value(sink, v, c, n))
+        });
+        self.state = state;
+        result
+    }
+
+    /// `RLECompressState::Finalize`.
+    fn finalize(&mut self, sink: &mut SegmentSink<'_>) -> Result<()> {
+        let (value, count, is_null) = (
+            self.state.last_value,
+            self.state.last_seen_count,
+            self.state.all_null,
+        );
+        self.write_value(sink, value, count, is_null)?;
+        self.flush_segment(sink)
+    }
+}
+
+fn analyzer<T: Primitive>(ty: &LogicalType, info: &CompressionInfo) -> Box<dyn Analyzer> {
+    Box::new(RleAnalyzer::<T> {
+        state: RleState::new(),
+        ty: ty.clone(),
+        info: *info,
+    })
+}
+
+/// `RLEFun::GetFunction(type).init_analyze`.
+pub(crate) fn init_analyze(
+    ty: &LogicalType,
+    physical: PhysicalType,
+    info: &CompressionInfo,
+) -> Option<Box<dyn Analyzer>> {
+    Some(match physical {
+        PhysicalType::Bool | PhysicalType::Int8 => analyzer::<i8>(ty, info),
+        PhysicalType::Int16 => analyzer::<i16>(ty, info),
+        PhysicalType::Int32 => analyzer::<i32>(ty, info),
+        PhysicalType::Int64 => analyzer::<i64>(ty, info),
+        PhysicalType::Int128 => analyzer::<i128>(ty, info),
+        PhysicalType::UInt8 => analyzer::<u8>(ty, info),
+        PhysicalType::UInt16 => analyzer::<u16>(ty, info),
+        PhysicalType::UInt32 => analyzer::<u32>(ty, info),
+        PhysicalType::UInt64 | PhysicalType::List => analyzer::<u64>(ty, info),
+        PhysicalType::UInt128 => analyzer::<u128>(ty, info),
+        PhysicalType::Float => analyzer::<f32>(ty, info),
+        PhysicalType::Double => analyzer::<f64>(ty, info),
         _ => return None,
     })
 }
