@@ -7,9 +7,12 @@
 //! singly linked list and every bucket points at the node *before* its first element.
 //! [`HashOrder`] replays that algorithm on hashes alone, so the parser can produce
 //! entries in exactly the order DuckDB writes them.
+//!
+//! Copy-assigning a map copies its node list as is (same order, same bucket count), so
+//! copies need no emulation.
 
 const NIL: usize = usize::MAX;
-/// Index of the list's before-begin anchor (`__p1_`).
+/// Index of the list's before-begin anchor (`__first_node_`).
 const ANCHOR: usize = 0;
 
 /// The node list and bucket array of a libc++ hash table, without the values.
@@ -77,24 +80,13 @@ impl HashOrder {
         Self::default()
     }
 
-    /// The bucket count (`bucket_count()`).
-    pub(crate) fn bucket_count(&self) -> usize {
-        self.buckets.len()
-    }
-
-    /// An empty table with `bucket_count` buckets, as left behind by `clear()` or by
-    /// the copy-assignment of a map into one that already had buckets.
-    pub(crate) fn with_bucket_count(bucket_count: usize) -> Self {
-        Self {
-            buckets: vec![NIL; bucket_count],
-            ..Self::default()
-        }
-    }
-
     /// `clear()`: removes all elements but keeps the buckets.
     pub(crate) fn clear(&mut self) {
         let bucket_count = self.buckets.len();
-        *self = Self::with_bucket_count(bucket_count);
+        *self = Self {
+            buckets: vec![NIL; bucket_count],
+            ..Self::default()
+        };
     }
 
     /// The node ids in iteration order.
@@ -131,30 +123,19 @@ impl HashOrder {
         None
     }
 
-    fn new_node(&mut self, hash: u64) -> usize {
-        self.hashes.push(hash);
-        self.next.push(NIL);
-        self.hashes.len() - 1
-    }
-
-    /// The bucket count requested when one more element does not fit.
-    fn grown_bucket_count(&self) -> Option<usize> {
-        let bucket_count = self.buckets.len();
-        if bucket_count != 0 && (self.size + 1) as f32 <= bucket_count as f32 {
-            return None;
-        }
-        Some((2 * bucket_count + usize::from(!is_hash_power2(bucket_count))).max(self.size + 1))
-    }
-
-    /// `__emplace_unique_key_args`: inserts unless an equal element exists. Returns the
-    /// new node id, or `Err` with the existing one.
+    /// `__emplace_unique`: inserts unless an equal element exists. Returns the new node
+    /// id, or `Err` with the existing one.
     pub(crate) fn insert_unique(&mut self, hash: u64, eq: impl FnMut(usize) -> bool) -> Result<usize, usize> {
         if let Some(existing) = self.find(hash, eq) {
             return Err(existing);
         }
-        let node = self.new_node(hash);
-        if let Some(count) = self.grown_bucket_count() {
-            self.rehash(count);
+        self.hashes.push(hash);
+        self.next.push(NIL);
+        let node = self.hashes.len() - 1;
+        let bucket_count = self.buckets.len();
+        if bucket_count == 0 || (self.size + 1) as f32 > bucket_count as f32 {
+            let wanted = (2 * bucket_count + usize::from(!is_hash_power2(bucket_count))).max(self.size + 1);
+            self.rehash(wanted);
         }
         let bucket_count = self.buckets.len();
         let chash = constrain(hash, bucket_count);
@@ -175,54 +156,14 @@ impl HashOrder {
         Ok(node)
     }
 
-    /// `__node_insert_multi`: inserts an element whose key is not yet present (as when
-    /// a map is copy-assigned), at the end of its bucket's group.
-    pub(crate) fn insert_multi(&mut self, hash: u64) -> usize {
-        let node = self.new_node(hash);
-        if let Some(count) = self.grown_bucket_count() {
-            self.rehash(count);
-        }
-        let bucket_count = self.buckets.len();
-        let chash = constrain(hash, bucket_count);
-        let mut before = self.buckets[chash];
-        if before != NIL {
-            // Keys are distinct, so the scan runs to the end of the bucket's group.
-            while self.next[before] != NIL && constrain(self.hashes[self.next[before]], bucket_count) == chash
-            {
-                before = self.next[before];
-            }
-        }
-        if before == NIL {
-            self.next[node] = self.next[ANCHOR];
-            self.next[ANCHOR] = node;
-            self.buckets[chash] = ANCHOR;
-            let following = self.next[node];
-            if following != NIL {
-                self.buckets[constrain(self.hashes[following], bucket_count)] = node;
-            }
-        } else {
-            self.next[node] = self.next[before];
-            self.next[before] = node;
-            let following = self.next[node];
-            if following != NIL {
-                let next_hash = constrain(self.hashes[following], bucket_count);
-                if next_hash != chash {
-                    self.buckets[next_hash] = node;
-                }
-            }
-        }
-        self.size += 1;
-        node
-    }
-
     /// `__rehash`: grows the bucket array to (the next prime above) `n`.
     fn rehash(&mut self, n: usize) {
         let n = if n == 1 {
             2
-        } else if n & (n - 1) != 0 {
-            next_prime(n)
-        } else {
+        } else if n.is_power_of_two() {
             n
+        } else {
+            next_prime(n)
         };
         if n > self.buckets.len() {
             self.do_rehash(n);
@@ -291,20 +232,8 @@ impl<V> CiHashMap<V> {
         }
     }
 
-    /// An empty map keeping `bucket_count` buckets (see [`HashOrder::with_bucket_count`]).
-    pub(crate) fn with_bucket_count(bucket_count: usize) -> Self {
-        Self {
-            order: HashOrder::with_bucket_count(bucket_count),
-            entries: Vec::new(),
-        }
-    }
-
     pub(crate) fn is_empty(&self) -> bool {
         self.entries.is_empty()
-    }
-
-    pub(crate) fn bucket_count(&self) -> usize {
-        self.order.bucket_count()
     }
 
     fn position(&self, key: &str) -> Option<usize> {
@@ -350,15 +279,10 @@ impl<V> CiHashMap<V> {
 
     /// The entries in iteration order.
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&str, &V)> {
-        self.order
-            .order()
-            .into_iter()
-            .map(|node| {
-                let (key, value) = &self.entries[node - 1];
-                (key.as_str(), value)
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
+        self.order.order().into_iter().map(|node| {
+            let (key, value) = &self.entries[node - 1];
+            (key.as_str(), value)
+        })
     }
 
     /// Consumes the map, yielding the entries in iteration order.
@@ -372,30 +296,12 @@ impl<V> CiHashMap<V> {
     }
 }
 
-impl<V: Clone> CiHashMap<V> {
-    /// The map a copy-assignment `target = self` produces in a target that already has
-    /// `target_buckets` buckets (0 for a fresh map): elements are re-inserted in
-    /// iteration order with `__node_insert_multi`.
-    pub(crate) fn copy_assigned(&self, target_buckets: usize) -> Self {
-        let mut result = Self::with_bucket_count(target_buckets);
-        for (key, value) in self.iter() {
-            result.order.insert_multi(ci_hash(key));
-            result.entries.push((key.to_owned(), value.clone()));
-        }
-        result
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn order_of(keys: &[&str]) -> Vec<String> {
-        let mut map = CiHashMap::new();
-        for key in keys {
-            map.set((*key).to_owned(), ());
-        }
-        map.iter().map(|(key, ())| key.to_owned()).collect()
+    fn names<V>(map: &CiHashMap<V>) -> Vec<String> {
+        map.iter().map(|(key, _)| key.to_owned()).collect()
     }
 
     #[test]
@@ -406,15 +312,36 @@ mod tests {
         assert_eq!(ci_hash("A"), ci_hash("a"));
     }
 
+    /// Iteration orders produced by libc++ (generated by a small C++ program): per case
+    /// the keys, the order after unique insertions, after copying the map into a fresh
+    /// one, after copying it again into that copy, and after `clear()` and inserting `zz`
+    /// and `a1`.
     #[test]
-    fn insertion_order_is_reproducible() {
-        // A key that hashes into an occupied bucket goes to the front of its group;
-        // otherwise new keys go to the front of the list.
-        let keys = ["a", "b", "c", "d", "e", "f", "g"];
-        let order = order_of(&keys);
-        assert_eq!(order.len(), keys.len());
-        let mut sorted = order.clone();
-        sorted.sort();
-        assert_eq!(sorted, keys);
+    fn matches_libcxx() {
+        let fixture = include_str!("hash_order_fixture.txt");
+        let lines: Vec<&str> = fixture.lines().collect();
+        assert_eq!(lines.len() % 5, 0);
+        for case in lines.chunks(5) {
+            let field = |line: &str, label: &str| -> Vec<String> {
+                let rest = line
+                    .strip_prefix(label)
+                    .unwrap_or_else(|| panic!("expected {label}: {line}"));
+                rest.split_whitespace().map(str::to_owned).collect()
+            };
+            let keys = field(case[0], "case");
+            let mut map = CiHashMap::new();
+            for key in &keys {
+                map.set(key.clone(), ());
+            }
+            let unique = field(case[1], "unique");
+            assert_eq!(names(&map), unique, "{}", case[0]);
+            // Copies keep the order.
+            assert_eq!(field(case[2], "copy"), unique, "{}", case[0]);
+            assert_eq!(field(case[3], "copy2"), unique, "{}", case[0]);
+            map.clear();
+            map.set("zz".to_owned(), ());
+            map.set("a1".to_owned(), ());
+            assert_eq!(names(&map), field(case[4], "cleared"), "{}", case[0]);
+        }
     }
 }

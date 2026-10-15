@@ -89,13 +89,6 @@ pub(crate) struct Transformer<'a> {
     may_pivot: bool,
 }
 
-/// The statement location and the bucket count of the named-parameter map assigned to
-/// it, which the next assignment of the same map starts from.
-struct Transformed {
-    statement: SqlStatement,
-    param_map_buckets: usize,
-}
-
 impl<'a> Transformer<'a> {
     pub(crate) fn new(options: ParserOptions, query: &str) -> Self {
         Self {
@@ -137,53 +130,34 @@ impl<'a> Transformer<'a> {
         self.named_params.clear();
     }
 
+    /// `TransformStatement` of a raw statement: the statement with its location.
     fn transform_raw_statement(&mut self, raw: &'a RawStmt) -> Result<SqlStatement> {
         let node = required(raw.stmt.as_ref(), "statement")?;
-        let inner = self.transform_statement_with_params(node)?;
-        let mut statement = inner.statement;
+        let mut statement = self.transform_statement(node)?;
         statement.location = u64::try_from(raw.stmt_location).unwrap_or(0);
         statement.length = u64::try_from(raw.stmt_len).unwrap_or(0);
-        let mut transformed = Transformed {
-            statement,
-            param_map_buckets: inner.param_map_buckets,
-        };
-        self.assign_param_map(&mut transformed);
-        Ok(transformed.statement)
+        Ok(statement)
     }
 
-    /// `TransformStatement`: the statement, plus the named-parameter map.
+    /// `TransformStatement`: the statement, with the named-parameter map.
     pub(crate) fn transform_statement(&mut self, node: &'a Node) -> Result<SqlStatement> {
-        self.transform_statement_with_params(node).map(|t| t.statement)
-    }
-
-    fn transform_statement_with_params(&mut self, node: &'a Node) -> Result<Transformed> {
         if let Node::RawStmt(raw) = node {
-            return Ok(Transformed {
-                statement: self.transform_raw_statement(raw)?,
-                param_map_buckets: 0,
-            });
+            return self.transform_raw_statement(raw);
         }
-        let mut transformed = Transformed {
-            statement: SqlStatement::new(self.transform_statement_internal(node)?),
-            param_map_buckets: 0,
-        };
-        self.assign_param_map(&mut transformed);
-        Ok(transformed)
-    }
-
-    /// `result->named_param_map = named_param_map`: a copy-assignment, which re-inserts
-    /// the entries and so can reorder them.
-    fn assign_param_map(&self, transformed: &mut Transformed) {
-        if self.named_params.is_empty() {
-            return;
+        let mut statement = SqlStatement::new(self.transform_statement_internal(node)?);
+        if !self.named_params.is_empty() {
+            // A copy-assignment of the map, which keeps its iteration order.
+            let map: CaseInsensitiveMap<u64> = self
+                .named_params
+                .iter()
+                .map(|(key, value)| (key, *value))
+                .collect();
+            if let SqlStatementKind::Select(select) = &mut statement.kind {
+                select.named_param_map = map.clone();
+            }
+            statement.named_param_map = map;
         }
-        let copy = self.named_params.copy_assigned(transformed.param_map_buckets);
-        transformed.param_map_buckets = copy.bucket_count();
-        let map: CaseInsensitiveMap<u64> = copy.into_ordered().into_iter().collect();
-        if let SqlStatementKind::Select(select) = &mut transformed.statement.kind {
-            select.named_param_map = map.clone();
-        }
-        transformed.statement.named_param_map = map;
+        Ok(statement)
     }
 
     /// `TransformStatementInternal`.
