@@ -162,7 +162,7 @@ impl ClientContext {
     /// Every `(catalog, schema)` searched for unqualified names, in order
     /// (`CatalogSearchPath::Get`): the set entries, the default database's `main`, then
     /// `system.main`.
-    fn full_search_path(&self) -> Vec<(String, String)> {
+    pub fn full_search_path(&self) -> Vec<(String, String)> {
         let mut paths = self.search_path.clone();
         paths.push((self.default_catalog().to_owned(), DEFAULT_SCHEMA.to_owned()));
         paths.push(("system".to_owned(), DEFAULT_SCHEMA.to_owned()));

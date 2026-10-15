@@ -19,6 +19,7 @@
 //! does not serialize statements other than `SELECT`, so neither does this crate), and
 //! [`visit`] walks a tree mutably.
 
+mod create_sql;
 mod display;
 mod expression;
 mod generated;
@@ -30,6 +31,7 @@ mod sql_statement;
 mod tableref;
 pub mod visit;
 
+pub use create_sql::{columns_to_sql, index_expressions_to_sql, qualifier_to_string, sequence_to_sql};
 pub use display::{
     expression_type_to_operator, expression_type_to_string, lambda_parameters, logical_type_to_string,
     value_to_sql_string,

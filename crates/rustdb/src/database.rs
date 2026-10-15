@@ -170,6 +170,16 @@ impl Database {
         for set in crate::checkpoint::checkpoint_functions() {
             system_catalog.register_table_functions(set)?;
         }
+        for set in crate::system_functions::catalog_table_functions() {
+            system_catalog.register_table_functions(set)?;
+        }
+        for set in crate::system_functions::context_scalar_functions() {
+            system_catalog.register_scalar_functions(set)?;
+        }
+        for set in crate::system_functions::pragma_table_functions() {
+            system_catalog.register_table_functions(set)?;
+        }
+        crate::system_functions::register_default_views(&system_catalog)?;
         let env = rustdb_execution::ClientEnv::standalone()?;
         let instance = DatabaseInstance {
             path: path.clone(),
@@ -373,6 +383,29 @@ impl Connection {
     }
 
     fn run_statement(&mut self, statement: SqlStatement) -> Result<MaterializedResult> {
+        // Pragmas that stand for a query run that query (DuckDB's `PragmaHandler`).
+        if let rustdb_ast::SqlStatementKind::Pragma(pragma) = &statement.kind {
+            let constants: Option<Vec<rustdb_types::Value>> = pragma
+                .parameters
+                .iter()
+                .map(|parameter| match &parameter.kind {
+                    rustdb_ast::ParsedExpressionKind::Constant(constant) => Some(constant.value.clone()),
+                    rustdb_ast::ParsedExpressionKind::ColumnRef(column) => {
+                        Some(rustdb_types::Value::varchar(column.column_names.join(".")))
+                    }
+                    _ => None,
+                })
+                .collect();
+            if let Some(constants) = constants
+                && let Some(query) = crate::system_functions::pragma_query(&pragma.name, &constants)?
+            {
+                let mut result = MaterializedResult::default();
+                for statement in rustdb_parser::parse(&query)? {
+                    result = self.run_statement(statement)?;
+                }
+                return Ok(result);
+            }
+        }
         // `CHECKPOINT` is `CALL checkpoint()`: the call is bound and run like any table
         // function, then the connection writes the checkpoint.
         let checkpoint = match &statement.kind {

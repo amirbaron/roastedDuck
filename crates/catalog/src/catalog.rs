@@ -19,6 +19,21 @@ pub struct Catalog {
     io: OnceLock<Arc<rustdb_storage::TableIoManager>>,
     /// The WAL changes to this database are logged to (database files only).
     wal: OnceLock<Arc<rustdb_storage::wal::WriteAheadLog>>,
+    /// The object id of the database (`AttachedDatabase::oid`; 0 for `system`).
+    oid: u64,
+    /// How the database is attached, for `duckdb_databases()`.
+    attach_info: OnceLock<AttachedInfo>,
+}
+
+/// How a database is attached (the parts of DuckDB's `AttachedDatabase` the catalog
+/// functions show).
+#[derive(Clone, Debug, Default)]
+pub struct AttachedInfo {
+    /// The database file, empty for an in-memory database.
+    pub path: String,
+    pub read_only: bool,
+    /// Left out of catalog listings (`HIDDEN`).
+    pub hidden: bool,
 }
 
 impl Catalog {
@@ -30,7 +45,13 @@ impl Catalog {
             name,
             io: OnceLock::new(),
             wal: OnceLock::new(),
+            oid: 0,
+            attach_info: OnceLock::new(),
         };
+        let mut catalog = catalog;
+        if !catalog.name.eq_ignore_ascii_case("system") {
+            catalog.oid = crate::next_oid();
+        }
         let mut main = CatalogEntry::new(
             DEFAULT_SCHEMA,
             EntryKind::Schema(SchemaEntry::new(&catalog.name, DEFAULT_SCHEMA)),
@@ -42,6 +63,21 @@ impl Catalog {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// The object id of the database.
+    pub fn oid(&self) -> u64 {
+        self.oid
+    }
+
+    /// Records how the database is attached (once).
+    pub fn set_attach_info(&self, info: AttachedInfo) {
+        let _ = self.attach_info.set(info);
+    }
+
+    /// How the database is attached; `None` for `system`.
+    pub fn attach_info(&self) -> Option<&AttachedInfo> {
+        self.attach_info.get()
     }
 
     /// Sets where the database's tables keep their data (once).
@@ -95,6 +131,11 @@ impl Catalog {
     pub fn register_table_functions(&self, set: TableFunctionSet) -> Result<()> {
         let name = set.name.to_string();
         self.register_builtin(name, EntryKind::TableFunction(set))
+    }
+
+    /// Registers a built-in view in `main` (DuckDB's `DefaultViewGenerator`).
+    pub fn register_view(&self, name: &str, view: crate::ViewEntry) -> Result<()> {
+        self.register_builtin(name.to_owned(), EntryKind::View(view))
     }
 
     /// Adds an internal entry to the set of `main` its kind belongs to.

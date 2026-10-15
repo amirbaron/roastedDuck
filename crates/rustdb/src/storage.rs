@@ -12,8 +12,8 @@ use rustdb_storage::DataTable;
 use rustdb_storage::storage_manager::{StorageManager, StorageOptions};
 use rustdb_types::Value;
 
-use crate::attached::AttachOptions;
 use crate::Config;
+use crate::attached::AttachOptions;
 
 /// The catalog name of a database file (`AttachedDatabase::ExtractDatabaseName`): the
 /// file name up to its first dot; reserved names get a `_db` suffix.

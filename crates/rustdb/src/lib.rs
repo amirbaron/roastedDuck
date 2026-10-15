@@ -17,6 +17,7 @@ mod result;
 mod sequence;
 mod settings;
 mod storage;
+mod system_functions;
 mod transaction;
 mod wal;
 

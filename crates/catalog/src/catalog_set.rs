@@ -235,7 +235,8 @@ impl CatalogSet {
         info: Option<rustdb_ast::AlterInfo>,
     ) -> Result<bool> {
         let name = key(name);
-        let version = Version::new(transaction.transaction_id, Some(Arc::new(entry)));
+        let mut entry = entry;
+        let version;
         {
             let mut chains = self.lock();
             let Some(chain) = chains.get_mut(&name) else {
@@ -251,9 +252,12 @@ impl CatalogSet {
                     ),
                 ));
             }
-            if head.entry.is_none() {
+            let Some(current) = &head.entry else {
                 return Ok(false);
-            }
+            };
+            // An altered entry keeps its identity.
+            entry.oid = current.oid;
+            version = Version::new(transaction.transaction_id, Some(Arc::new(entry)));
             chain.insert(0, Arc::clone(&version));
         }
         let wal = info.map_or(WalRecord::None, |info| WalRecord::Alter(Box::new(info)));

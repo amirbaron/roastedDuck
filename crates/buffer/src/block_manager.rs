@@ -46,6 +46,16 @@ pub trait BlockManager: Send + Sync + std::fmt::Debug {
     fn unregister_block(&self, block_id: BlockId) {
         self.registry().unregister(block_id);
     }
+
+    /// The number of blocks in the file (`TotalBlocks`); 0 without a file.
+    fn total_blocks(&self) -> u64 {
+        0
+    }
+
+    /// The number of free blocks in the file (`FreeBlocks`); 0 without a file.
+    fn free_blocks(&self) -> u64 {
+        0
+    }
 }
 
 /// Map from persistent block id to its live handle (DuckDB's `BlockManager::blocks`), so a

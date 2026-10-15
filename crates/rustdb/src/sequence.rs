@@ -57,7 +57,7 @@ fn parse_components(input: &str) -> Result<Vec<String>> {
 }
 
 /// `QualifiedName::Parse`: (catalog, schema, name).
-fn parse_qualified_name(input: &str) -> Result<(String, String, String)> {
+pub(crate) fn parse_qualified_name(input: &str) -> Result<(String, String, String)> {
     let mut parts = parse_components(input)?;
     Ok(match parts.len() {
         0 => (String::new(), String::new(), String::new()),

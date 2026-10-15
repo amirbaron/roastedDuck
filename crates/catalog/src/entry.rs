@@ -341,10 +341,24 @@ pub enum EntryKind {
     Sequence(SequenceEntry),
 }
 
+/// The next object id handed out (DuckDB's `DatabaseManager::NextOid`; ids below
+/// `FIRST_OID` belong to built-in entries).
+static NEXT_OID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(FIRST_OID);
+
+/// The first object id of entries created after start-up.
+const FIRST_OID: u64 = 20_000;
+
+/// A fresh object id (`DatabaseManager::NextOid`).
+pub fn next_oid() -> u64 {
+    NEXT_OID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 /// A named object in the catalog.
 #[derive(Debug)]
 pub struct CatalogEntry {
     name: String,
+    /// The object id (`CatalogEntry::oid`).
+    pub oid: u64,
     /// Built-in objects that users cannot drop.
     pub internal: bool,
     pub temporary: bool,
@@ -355,6 +369,7 @@ impl CatalogEntry {
     pub fn new(name: impl Into<String>, kind: EntryKind) -> Self {
         Self {
             name: name.into(),
+            oid: next_oid(),
             internal: false,
             temporary: false,
             kind,

@@ -742,6 +742,14 @@ impl BlockManager for SingleFileBlockManager {
         self.block_alloc_size
     }
 
+    fn total_blocks(&self) -> u64 {
+        Self::total_blocks(self)
+    }
+
+    fn free_blocks(&self) -> u64 {
+        Self::free_blocks(self)
+    }
+
     fn block_header_size(&self) -> usize {
         DEFAULT_BLOCK_HEADER_SIZE
     }

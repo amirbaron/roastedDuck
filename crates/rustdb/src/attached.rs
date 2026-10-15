@@ -22,8 +22,6 @@ pub(crate) struct AttachedDatabase {
     /// The database file, unless the database is in memory.
     pub storage: Option<Arc<StorageManager>>,
     pub read_only: bool,
-    /// Left out of catalog listings (`ATTACH ... (HIDDEN)`).
-    pub hidden: bool,
 }
 
 impl AttachedDatabase {
@@ -251,13 +249,17 @@ impl DatabaseManager {
             catalog.set_io(Arc::clone(storage.io()))?;
             Some(storage)
         };
+        catalog.set_attach_info(rustdb_catalog::AttachedInfo {
+            path: path.clone(),
+            read_only: options.read_only(),
+            hidden: options.hidden,
+        });
         let database = Arc::new(AttachedDatabase {
             name: name.clone(),
             path,
             catalog,
             storage,
             read_only: options.read_only(),
-            hidden: options.hidden,
         });
         let mut databases = self.write();
         if let Some(position) = databases
