@@ -129,6 +129,9 @@ impl Database {
         for set in rustdb_functions::builtin_scalar_functions() {
             system_catalog.register_scalar_functions(set)?;
         }
+        for set in rustdb_functions::builtin_aggregate_functions()? {
+            system_catalog.register_aggregate_functions(set)?;
+        }
         for set in rustdb_functions::builtin_table_functions() {
             system_catalog.register_table_functions(set)?;
         }
@@ -206,6 +209,7 @@ impl Database {
             transactions,
             settings,
             prepared_statements: CaseInsensitiveMap::default(),
+            function_client: Arc::default(),
         })
     }
 
@@ -234,11 +238,18 @@ pub struct Connection {
     transactions: TransactionContext,
     settings: Settings,
     prepared_statements: CaseInsensitiveMap<Arc<PreparedStatementData>>,
+    /// Connection state functions use (DuckDB keeps it in the `ClientContext`).
+    function_client: Arc<rustdb_function::FunctionClient>,
 }
 
 impl Connection {
     pub fn database(&self) -> &Database {
         &self.database
+    }
+
+    /// Parses `sql` into its statements (DuckDB's `ClientContext::ExtractStatements`).
+    pub fn extract_statements(&self, sql: &str) -> Result<Vec<SqlStatement>> {
+        rustdb_parser::parse(sql).map_err(|error| error.with_query_context(sql))
     }
 
     /// Runs every statement in `sql` and returns the result of the last one (DuckDB's
@@ -315,6 +326,7 @@ impl Connection {
             evaluator: Arc::new(ScalarEvaluator),
             config: self.settings.planner.clone(),
             prepared_statements: self.prepared_statements.clone(),
+            function_client: Arc::clone(&self.function_client),
         })
     }
 
@@ -366,7 +378,9 @@ impl Connection {
             Some(plan) if properties.bound_all_parameters => plan,
             _ => return Err(Error::invalid_input("Not all parameters were bound")),
         };
+        let return_type = properties.return_type;
         self.run_plan(plan, names, types)
+            .map(|result| result.with_return_type(return_type))
     }
 
     /// Runs a bound plan: statements that act on the connection are executed here

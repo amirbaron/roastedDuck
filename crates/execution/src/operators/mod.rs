@@ -3,6 +3,7 @@
 mod alter;
 mod column_data_scan;
 mod create_table;
+mod cross_product;
 mod cte;
 mod ddl;
 mod delete;
@@ -18,14 +19,17 @@ mod order;
 mod projection;
 mod result_collector;
 mod seq_scan;
+mod streaming_window;
 mod table_scan;
 mod ungrouped_aggregate;
 mod union;
 mod update;
+mod window;
 
 pub use alter::AlterEntryAction;
 pub use column_data_scan::PhysicalColumnDataScan;
 pub use create_table::PhysicalCreateTable;
+pub use cross_product::{CrossProductExecutor, CrossProductGlobal, PhysicalCrossProduct};
 pub use cte::{CteData, PhysicalCte, PhysicalCteScan, PhysicalRecursiveCte, RecursiveCteState};
 pub use ddl::{
     CatalogTableCreator, CreateIndexAction, CreateSchemaAction, CreateSequenceAction, CreateViewAction,
@@ -48,7 +52,12 @@ pub use order::{OrderGlobalState, OrderLocalState, OrderSourceState, PhysicalOrd
 pub use projection::PhysicalProjection;
 pub use result_collector::{CollectedResult, PhysicalResultCollector};
 pub use seq_scan::{PhysicalSeqScan, SeqScanLocal};
+pub use streaming_window::{PhysicalStreamingWindow, StreamingWindowGlobalState, StreamingWindowState};
 pub use table_scan::{PhysicalTableScan, TableScanGlobal};
-pub use ungrouped_aggregate::{AggregateStates, PhysicalUngroupedAggregate, UngroupedLocal};
+pub use ungrouped_aggregate::{AggregateStates, PhysicalUngroupedAggregate, UngroupedGlobal, UngroupedLocal};
 pub use union::PhysicalUnion;
 pub use update::{PhysicalUpdate, UpdateGlobal};
+pub use window::{
+    PhysicalWindow, WindowGlobalSinkState, WindowGlobalSourceState, WindowLocalSinkState,
+    WindowLocalSourceState,
+};

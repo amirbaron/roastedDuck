@@ -69,11 +69,17 @@ pub trait PhysicalOperator: Send + Sync + fmt::Debug + 'static {
     fn is_cte(&self) -> bool {
         false
     }
-    /// A sink outside this source's subtree whose pipeline must finish first (delim
-    /// scans read the data of their delim join).
-    fn source_dependency(&self) -> Option<PhysicalRef> {
-        None
+    /// Sinks outside this source's subtree whose pipelines must finish first (delim
+    /// scans read the data of their delim join, CTE scans that of their CTE).
+    fn source_dependencies(&self) -> Vec<PhysicalRef> {
+        Vec::new()
     }
+}
+
+/// Data materialised by a sink and read by scans elsewhere in the plan.
+pub trait SinkData: std::fmt::Debug + Send + Sync {
+    /// The sink producing the data, while the plan is alive.
+    fn sink(&self) -> Option<PhysicalRef>;
 }
 
 /// An operator that produces chunks at the start of a pipeline.
@@ -122,6 +128,25 @@ pub trait Operator: PhysicalOperator {
         global: &Self::Global,
         local: &mut Self::Local,
     ) -> Result<OperatorResult>;
+
+    /// Whether the operator holds back rows that [`Operator::final_execute`] must emit
+    /// once its input is exhausted (DuckDB's `RequiresFinalExecute`).
+    fn requires_final_execute(&self) -> bool {
+        false
+    }
+
+    /// Emits held-back rows after the last input chunk (DuckDB's `FinalExecute`).
+    /// Returns whether it must be called again for more output.
+    fn final_execute(
+        &self,
+        ctx: &ExecutionContext,
+        output: &mut DataChunk,
+        global: &Self::Global,
+        local: &mut Self::Local,
+    ) -> Result<bool> {
+        let _ = (ctx, output, global, local);
+        Ok(false)
+    }
 }
 
 /// An operator that consumes a pipeline's output (and may act as the source of a parent
@@ -244,6 +269,14 @@ pub trait ErasedOperator {
         global: &(dyn Any + Send + Sync),
         local: &mut (dyn Any + Send),
     ) -> Result<OperatorResult>;
+    fn requires_final_execute(&self) -> bool;
+    fn final_execute(
+        &self,
+        ctx: &ExecutionContext,
+        output: &mut DataChunk,
+        global: &(dyn Any + Send + Sync),
+        local: &mut (dyn Any + Send),
+    ) -> Result<bool>;
 }
 
 impl<T: Operator> ErasedOperator for T {
@@ -280,6 +313,25 @@ impl<T: Operator> ErasedOperator for T {
             self,
             ctx,
             input,
+            output,
+            downcast(global, name)?,
+            downcast_local(local, name)?,
+        )
+    }
+    fn requires_final_execute(&self) -> bool {
+        Operator::requires_final_execute(self)
+    }
+    fn final_execute(
+        &self,
+        ctx: &ExecutionContext,
+        output: &mut DataChunk,
+        global: &(dyn Any + Send + Sync),
+        local: &mut (dyn Any + Send),
+    ) -> Result<bool> {
+        let name = self.name();
+        Operator::final_execute(
+            self,
+            ctx,
             output,
             downcast(global, name)?,
             downcast_local(local, name)?,

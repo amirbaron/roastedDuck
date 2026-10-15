@@ -232,6 +232,22 @@ impl SortStrategy {
         source.take_sorted_run()
     }
 
+    /// Hash group `group` as columnar chunks in order (`MaterializeColumnData` +
+    /// `GetColumnData`). Hashed groups must be sorted first ([`Self::sort_hash_group`]).
+    /// The columns are the input columns, as passed to the strategy.
+    pub fn group_chunks(&self, global: &StrategyGlobalState, group: usize) -> Result<Vec<DataChunk>> {
+        let source = match global {
+            StrategyGlobalState::Hashed(global) => global.group_source(group),
+            StrategyGlobalState::Full(global) => lock(&global.source).take(),
+            StrategyGlobalState::Natural(global) => {
+                return lock(&global.rows)
+                    .take()
+                    .map_or_else(|| Ok(Vec::new()), |rows| rows.to_chunks());
+            }
+        };
+        source.map_or_else(|| Ok(Vec::new()), |source| source.collect())
+    }
+
     /// Hash group `group` materialized in order (`GetColumnData`).
     pub fn group_rows(
         &self,
