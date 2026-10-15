@@ -167,7 +167,7 @@ struct InputTable {
 fn bind_table_function_internal(
     scope: &mut BindScope<'_>,
     function: TableFunction,
-    function_name: String,
+    function_name: &str,
     reference: &TableFunctionRef,
     parameters: Vec<Value>,
     named_parameters: Vec<(String, Value)>,
@@ -265,7 +265,7 @@ fn bind_table_function_internal(
             entry: None,
             virtual_columns: Vec::new(),
         },
-        BindingAlias::new(function_name.clone()),
+        BindingAlias::new(function_name),
         return_types.clone(),
         names.clone(),
         bind_index,
@@ -285,7 +285,7 @@ fn bind_table_function_internal(
     return_types.push(LogicalType::BIGINT);
     scope.binder.bind_context.add_generic_binding(
         window_index,
-        &function_name,
+        function_name,
         vec![ordinality_alias],
         vec![LogicalType::BIGINT],
     )?;
@@ -383,7 +383,7 @@ pub fn bind_table_function(
     bind_table_function_internal(
         scope,
         table_function,
-        alias,
+        &alias,
         function_ref,
         parameters,
         named.0,
