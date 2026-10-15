@@ -5,10 +5,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use rustdb_ast::{AggregateHandling, ExpressionType, OrderType, ParsedExpression, ParsedExpressionKind};
+use rustdb_ast::{AggregateHandling, ExpressionType, OrderType, ParsedExpression, ParsedExpressionKind, expression_type_to_string};
 use rustdb_common::{CaseInsensitiveMap, Error, Result};
 use rustdb_function::AggregateFunctionSet;
-use rustdb_types::{LogicalType, Value};
+use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
 use super::base::{BinderBase, expression_binder_accessors, expression_binder_base};
 use super::column_alias_binder::ColumnAliasBinder;
@@ -18,9 +18,10 @@ use super::{BindError, BindResult, ExpressionBinder, is_potential_alias, peek_bo
 use crate::binder::expression::{bind_column_ref, bind_expression_base, push_collation};
 use crate::binder::query_node::BoundSelectNode;
 use crate::binder::{Binder, Scope};
+use crate::context::ClientContext;
 use crate::expression::{
-    AggregateType, BoundCaseCheck, BoundCaseExpression, BoundOrderByNode, BoundOrderModifier, Expression,
-    ExpressionKind,
+    AggregateType, BoundCaseCheck, BoundCaseExpression, BoundOrderByNode, BoundOrderModifier, BoundWindowExpression,
+    Expression, ExpressionKind,
 };
 use crate::function_binder::{FunctionBinder, add_cast_to_type};
 use crate::parsed_equality::ParsedExpressionMap;
@@ -625,11 +626,347 @@ impl ExpressionBinder for SelectBinder<'_> {
         self.bind_select_aggregate(expr, functions, depth)
     }
 
-    fn bind_window(&mut self, expr: &mut ParsedExpression, _depth: u64) -> Result<BindResult> {
+    fn bind_window(&mut self, expr: &mut ParsedExpression, depth: u64) -> Result<BindResult> {
         if matches!(self.role, SelectRole::Having { .. }) {
             return Err(unsupported(expr, "HAVING clause cannot contain window functions!").error);
         }
-        let _ = (self.inside_window, OrderType::Ascending);
-        Err(Error::not_implemented("window functions"))
+        self.bind_select_window(expr, depth)
+    }
+}
+
+/// The result type of a non-aggregate window function (DuckDB's
+/// `ResolveWindowExpressionType`).
+fn resolve_window_expression_type(window_type: ExpressionType, child_types: &[LogicalType]) -> Result<LogicalType> {
+    use ExpressionType as E;
+    let parameter_count = match window_type {
+        E::WindowRank | E::WindowRankDense | E::WindowRowNumber | E::WindowPercentRank | E::WindowCumeDist => 0,
+        E::WindowNtile | E::WindowFirstValue | E::WindowLastValue | E::WindowLead | E::WindowLag | E::WindowFill => 1,
+        E::WindowNthValue => 2,
+        _ => {
+            return Err(Error::internal(format!(
+                "Unrecognized window expression type {}",
+                expression_type_to_string(window_type)
+            )));
+        }
+    };
+    if child_types.len() != parameter_count {
+        return Err(Error::binder(format!(
+            "{} needs {parameter_count} parameter{}, got {}",
+            expression_type_to_string(window_type),
+            if parameter_count == 1 { "" } else { "s" },
+            child_types.len()
+        )));
+    }
+    if child_types.iter().any(|ty| ty.id() == LogicalTypeId::Unknown) {
+        return Err(super::parameter_not_resolved());
+    }
+    Ok(match window_type {
+        E::WindowPercentRank | E::WindowCumeDist => LogicalType::DOUBLE,
+        E::WindowRowNumber | E::WindowRank | E::WindowRankDense | E::WindowNtile => LogicalType::BIGINT,
+        _ => child_types[0].clone(),
+    })
+}
+
+/// DuckDB's `IsRangeType`.
+fn is_range_type(ty: &LogicalType) -> bool {
+    use rustdb_types::PhysicalType as P;
+    matches!(
+        ty.physical_type(),
+        P::Int8 | P::Int16 | P::Int32 | P::Int64 | P::UInt8 | P::UInt16 | P::UInt32 | P::UInt64 | P::Int128 | P::UInt128
+            | P::Float | P::Double | P::Interval
+    )
+}
+
+/// DuckDB's `IsFillType`.
+fn is_fill_type(ty: &LogicalType) -> bool {
+    use LogicalTypeId as L;
+    // DuckDB's `LogicalType::IsTemporal`.
+    let temporal = matches!(
+        ty.id(),
+        L::Date | L::Time | L::TimeNs | L::Timestamp | L::TimeTz | L::TimestampTz | L::TimestampSec | L::TimestampMs | L::TimestampNs
+    );
+    ty.is_numeric() || (temporal && ty.id() != L::TimeTz)
+}
+
+/// `order <op> bound` for a RANGE frame boundary (DuckDB's `BindRangeExpression`).
+fn bind_range_expression(context: &ClientContext, name: &str, bound: Expression, order: &Expression) -> Result<Expression> {
+    let location = bound.query_location;
+    if bound.return_type.id() == LogicalTypeId::SqlNull {
+        return Err(Error::binder("Window RANGE expressions cannot be NULL").with_position(location));
+    }
+    let entry = context
+        .get_entry("", "main", rustdb_catalog::CatalogType::ScalarFunction, name, false)?
+        .ok_or_else(|| Error::internal("function lookup returned nothing"))?;
+    let rustdb_catalog::EntryKind::ScalarFunction(functions) = &entry.entry.kind else {
+        return Err(Error::internal(format!("{name} is not a scalar function")));
+    };
+    let function = FunctionBinder::new(context)
+        .bind_scalar_function(functions, vec![order.clone(), bound], true)?
+        .map_err(|error| error.error)?;
+    if !is_range_type(&function.return_type) {
+        return Err(Error::binder("Invalid type for Window RANGE expression").with_position(location));
+    }
+    Ok(function)
+}
+
+impl SelectBinder<'_> {
+    /// DuckDB's `BaseSelectBinder::BindWindow`.
+    #[allow(clippy::too_many_lines)]
+    fn bind_select_window(&mut self, expr: &mut ParsedExpression, depth: u64) -> Result<BindResult> {
+        let location = expr.query_location;
+        let window_type = expr.expression_type;
+        let name = expr.alias.clone();
+        let ParsedExpressionKind::Window(window) = &mut expr.kind else {
+            return Err(Error::internal("expected a window function"));
+        };
+        let context = self.base.binder.context.clone();
+        let entry = if window_type == ExpressionType::WindowAggregate {
+            context
+                .get_entry(&window.catalog, &window.schema, rustdb_catalog::CatalogType::ScalarFunction, &window.function_name, true)
+                .map_err(|error| error.with_position(location))?
+        } else {
+            None
+        };
+        if self.inside_window {
+            return Err(Error::binder("window function calls cannot be nested").with_position(location));
+        }
+        if depth > 0 {
+            return Err(Error::binder("correlated columns in window functions not supported").with_position(location));
+        }
+        use rustdb_ast::WindowBoundary as B;
+        let is_range = matches!(window.start, B::ExprPrecedingRange | B::ExprFollowingRange)
+            || matches!(window.end, B::ExprPrecedingRange | B::ExprFollowingRange);
+        if is_range && window.orders.len() != 1 {
+            return Err(Error::binder("RANGE frames must have only one ORDER BY expression").with_position(location));
+        }
+        if window_type == ExpressionType::WindowFill
+            && (window.arg_orders.len() > 1 || (window.arg_orders.is_empty() && window.orders.len() != 1))
+        {
+            return Err(Error::binder("FILL functions must have only one ORDER BY expression").with_position(location));
+        }
+        // Bind the children; nested window functions are rejected meanwhile.
+        self.inside_window = true;
+        let mut error: Option<BindError> = None;
+        let bound = (|| -> Result<()> {
+            for child in &mut window.children {
+                self.bind_child(child, depth, &mut error)?;
+            }
+            for child in &mut window.partitions {
+                self.bind_child(child, depth, &mut error)?;
+            }
+            for order in &mut window.orders {
+                self.bind_child(&mut order.expression, depth, &mut error)?;
+                if is_range
+                    && error.is_none()
+                    && let Some(bound) = peek_bound(&order.expression)
+                    && matches!(bound.return_type.id(), LogicalTypeId::Time | LogicalTypeId::TimeTz)
+                {
+                    return Err(Error::not_implemented("RANGE frames over TIME"));
+                }
+            }
+            for child in [
+                &mut window.filter_expr,
+                &mut window.start_expr,
+                &mut window.end_expr,
+                &mut window.offset_expr,
+                &mut window.default_expr,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                self.bind_child(child, depth, &mut error)?;
+            }
+            for order in &mut window.arg_orders {
+                self.bind_child(&mut order.expression, depth, &mut error)?;
+            }
+            Ok(())
+        })();
+        self.inside_window = false;
+        bound?;
+        if let Some(error) = error {
+            return Ok(BindResult::Unbound(error));
+        }
+        // Collations of the orders and partitions.
+        let take = |expr: &mut ParsedExpression| -> Result<Expression> {
+            let bound = take_bound(expr)?;
+            let ty = bound.return_type.clone();
+            push_collation(bound, &ty)
+        };
+        let mut arg_orders = Vec::with_capacity(window.arg_orders.len());
+        for order in &mut window.arg_orders {
+            arg_orders.push(take(&mut order.expression)?);
+        }
+        let mut partitions = Vec::with_capacity(window.partitions.len());
+        for partition in &mut window.partitions {
+            partitions.push(take(partition)?);
+        }
+        let mut orders = Vec::with_capacity(window.orders.len());
+        for order in &mut window.orders {
+            orders.push(take(&mut order.expression)?);
+        }
+        let mut children = Vec::with_capacity(window.children.len());
+        for child in &mut window.children {
+            let mut bound = take_bound(child)?;
+            let position = children.len();
+            if (window_type == ExpressionType::WindowNtile && position == 0)
+                || (window_type == ExpressionType::WindowNthValue && position == 1)
+            {
+                bound = add_cast_to_type(&context, bound, &LogicalType::BIGINT, false)?;
+            }
+            children.push(bound);
+        }
+        let types = FunctionBinder::argument_types(&children);
+        let (aggregate, bind_info, return_type) = if window_type == ExpressionType::WindowAggregate {
+            let functions = match entry.as_ref().map(|entry| &entry.entry.kind) {
+                Some(rustdb_catalog::EntryKind::AggregateFunction(functions)) => functions.clone(),
+                Some(_) => {
+                    return Err(Error::catalog(format!("{} is not an aggregate function", window.function_name))
+                        .with_position(location));
+                }
+                None => {
+                    let error = context
+                        .get_entry(
+                            &window.catalog,
+                            &window.schema,
+                            rustdb_catalog::CatalogType::AggregateFunction,
+                            &window.function_name,
+                            false,
+                        )
+                        .err()
+                        .unwrap_or_else(|| Error::internal("aggregate lookup"));
+                    return Err(crate::context::position_missing_entry(error, location));
+                }
+            };
+            let function_binder = FunctionBinder::new(&context);
+            let overload = function_binder
+                .bind_aggregate_overload(&functions, &types)?
+                .map_err(|error| error.with_position(location))?;
+            let bound = function_binder.bind_aggregate_function(
+                overload,
+                std::mem::take(&mut children),
+                None,
+                AggregateType::NonDistinct,
+                None,
+            )?;
+            let return_type = bound.return_type.clone();
+            let ExpressionKind::Aggregate(aggregate) = bound.kind else {
+                return Err(Error::internal("expected a bound aggregate"));
+            };
+            let aggregate = *aggregate;
+            children = aggregate.children;
+            (Some(aggregate.function), aggregate.bind_info, return_type)
+        } else {
+            (None, None, resolve_window_expression_type(window_type, &types)?)
+        };
+        // RANGE boundaries become `order +/- offset`; for ORDER BY DESC the arithmetic is
+        // reversed.
+        let mut range_sense = None;
+        let mut start_type = LogicalType::BIGINT;
+        let mut end_type = LogicalType::BIGINT;
+        let mut start_expr = match &mut window.start_expr {
+            Some(expr) => Some(take_bound(expr)?),
+            None => None,
+        };
+        let mut end_expr = match &mut window.end_expr {
+            Some(expr) => Some(take_bound(expr)?),
+            None => None,
+        };
+        let order_sense = window.orders.first().map(|order| context.config.resolve_order(order.order_type));
+        let range_operator = |preceding: bool, sense: OrderType| {
+            if (sense == OrderType::Ascending) == preceding { "-" } else { "+" }
+        };
+        if matches!(window.start, B::ExprPrecedingRange | B::ExprFollowingRange)
+            && let (Some(sense), Some(bound)) = (order_sense, start_expr.take())
+        {
+            range_sense = Some(sense);
+            let op = range_operator(window.start == B::ExprPrecedingRange, sense);
+            let expression = bind_range_expression(&context, op, bound, &orders[0])?;
+            start_type = expression.return_type.clone();
+            start_expr = Some(expression);
+        }
+        if matches!(window.end, B::ExprPrecedingRange | B::ExprFollowingRange)
+            && let (Some(sense), Some(bound)) = (order_sense, end_expr.take())
+        {
+            range_sense = Some(sense);
+            let op = range_operator(window.end == B::ExprPrecedingRange, sense);
+            let expression = bind_range_expression(&context, op, bound, &orders[0])?;
+            end_type = expression.return_type.clone();
+            end_expr = Some(expression);
+        }
+        if range_sense.is_some() {
+            // The ORDER BY expression and the boundaries are compared at one type.
+            let mut order_type = orders[0].return_type.clone();
+            if start_expr.is_some() {
+                order_type = crate::function_binder::max_logical_type(&order_type, &start_type)?;
+            }
+            if end_expr.is_some() {
+                order_type = crate::function_binder::max_logical_type(&order_type, &end_type)?;
+            }
+            let order = std::mem::replace(&mut orders[0], Expression::constant(Value::default()));
+            orders[0] = add_cast_to_type(&context, order, &order_type, false)?;
+            start_type = order_type.clone();
+            end_type = order_type;
+        }
+        let mut bound_orders = Vec::with_capacity(orders.len());
+        for (order, expression) in window.orders.iter().zip(orders) {
+            let sense = context.config.resolve_order(order.order_type);
+            let null_order = context.config.resolve_null_order(sense, order.null_order);
+            bound_orders.push(BoundOrderByNode::new(sense, null_order, expression));
+        }
+        let mut bound_arg_orders = Vec::with_capacity(arg_orders.len());
+        for (order, expression) in window.arg_orders.iter().zip(arg_orders) {
+            let sense = context.config.resolve_order(order.order_type);
+            let null_order = context.config.resolve_null_order(sense, order.null_order);
+            bound_arg_orders.push(BoundOrderByNode::new(sense, null_order, expression));
+        }
+        if window_type == ExpressionType::WindowFill {
+            if !children.first().is_some_and(|child| is_fill_type(&child.return_type)) {
+                return Err(Error::binder("FILL argument must support subtraction").with_position(location));
+            }
+            let order_type = bound_arg_orders
+                .first()
+                .or(bound_orders.first())
+                .map(|order| order.expression.return_type.clone())
+                .unwrap_or_default();
+            if !is_fill_type(&order_type) {
+                return Err(Error::binder("FILL ordering must support subtraction").with_position(location));
+            }
+        }
+        let cast = |expr: Option<Expression>, ty: &LogicalType| -> Result<Option<Expression>> {
+            expr.map(|expr| add_cast_to_type(&context, expr, ty, false)).transpose()
+        };
+        let take_optional = |expr: &mut Option<Box<ParsedExpression>>| -> Result<Option<Expression>> {
+            expr.as_deref_mut().map(take_bound).transpose()
+        };
+        let filter_expr = cast(take_optional(&mut window.filter_expr)?, &LogicalType::BOOLEAN)?;
+        let start_expr = cast(start_expr, &start_type)?;
+        let end_expr = cast(end_expr, &end_type)?;
+        let offset_expr = cast(take_optional(&mut window.offset_expr)?, &LogicalType::BIGINT)?;
+        let default_expr = cast(take_optional(&mut window.default_expr)?, &return_type)?;
+        let result = Expression::new(
+            window_type,
+            return_type.clone(),
+            ExpressionKind::Window(Box::new(BoundWindowExpression {
+                aggregate,
+                bind_info,
+                children,
+                partitions,
+                orders: bound_orders,
+                filter_expr,
+                ignore_nulls: window.ignore_nulls,
+                distinct: window.distinct,
+                start: window.start,
+                end: window.end,
+                exclude_clause: window.exclude_clause,
+                start_expr,
+                end_expr,
+                offset_expr,
+                default_expr,
+                arg_orders: bound_arg_orders,
+            })),
+        );
+        let binding = ColumnBinding::new(self.node.window_index, self.node.windows.len() as u64);
+        self.node.windows.push(result);
+        Ok(Expression::column_ref(name, return_type, binding, depth).into())
     }
 }
