@@ -372,6 +372,15 @@ pub const TARGETS: &[Target] = &[
             },
         ],
     },
+    Target {
+        crate_dir: "crates/planner",
+        crate_name: "rustdb_planner",
+        derives: &["PartialEq"],
+        modules: &[Module {
+            name: "enums",
+            content: Content::Enums(&["LogicalOperatorType", "DistinctType"]),
+        }],
+    },
 ];
 
 /// Rust variant names for C++ enum members whose mechanical CamelCase is awkward.
