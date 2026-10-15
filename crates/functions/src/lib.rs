@@ -4,6 +4,7 @@ pub mod aggregate;
 mod bitstring;
 mod digest;
 mod dispatch;
+mod libcxx;
 mod limits;
 mod operator;
 pub mod scalar;

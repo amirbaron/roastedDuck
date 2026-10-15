@@ -155,6 +155,12 @@ fn string_functions(sets: &mut Vec<ScalarFunctionSet>) {
         &["list_indexof", "array_position", "array_indexof"],
     );
     sets.push(list::contains_or_position::map_contains_functions());
+    for (set, aliases) in list::list_sort::list_sort_functions()
+        .into_iter()
+        .chain(list::list_aggregates::list_distinct_functions())
+    {
+        with_aliases(sets, set, aliases);
+    }
     sets.push(map::map_functions());
     sets.push(map::cardinality_functions());
     sets.extend(map::map_unpack_functions());
