@@ -41,6 +41,13 @@ pub fn bind_create(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Result<B
                 info: Box::new(info.clone()),
             })
         }
+        CreateInfoKind::Sequence(_) => {
+            bind_create_schema(scope, info)?;
+            LogicalOperator::new(LogicalKind::Create {
+                operator_type: LogicalOperatorType::LogicalCreateSequence,
+                info: Box::new(info.clone()),
+            })
+        }
         CreateInfoKind::Index(_) => super::create_index::bind_create_index(scope, info)?,
         CreateInfoKind::Table(_) => {
             let (bound, query) = bind_create_table_info(scope, info.clone())?;

@@ -12,7 +12,8 @@ mod transaction;
 pub use catalog::{Catalog, DEFAULT_SCHEMA};
 pub use catalog_set::{CatalogSet, Lookup};
 pub use entry::{
-    CatalogEntry, CatalogType, EntryKind, IndexEntry, SchemaEntry, TableColumn, TableEntry, ViewEntry,
+    CatalogEntry, CatalogType, EntryKind, IndexEntry, SchemaEntry, SequenceData, SequenceEntry, TableColumn,
+    TableEntry, ViewEntry,
 };
 pub use transaction::{
     MAX_TRANSACTION_ID, StorageHook, TRANSACTION_ID_START, Transaction, TransactionManager,

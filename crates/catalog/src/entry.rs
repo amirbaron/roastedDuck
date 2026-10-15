@@ -181,6 +181,109 @@ pub struct IndexEntry {
     pub storage: Option<Arc<rustdb_storage::DataTableInfo>>,
 }
 
+/// The state of a sequence (DuckDB's `SequenceData`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SequenceData {
+    /// How many values were taken.
+    pub usage_count: u64,
+    /// The next value.
+    pub counter: i64,
+    /// The value `currval` returns.
+    pub last_value: i64,
+    pub increment: i64,
+    pub start_value: i64,
+    pub min_value: i64,
+    pub max_value: i64,
+    pub cycle: bool,
+}
+
+/// A sequence (DuckDB's `SequenceCatalogEntry`). Its state is shared by every version of
+/// the entry and is not transactional.
+#[derive(Clone, Debug)]
+pub struct SequenceEntry {
+    pub data: Arc<std::sync::Mutex<SequenceData>>,
+}
+
+impl SequenceEntry {
+    pub fn new(info: &rustdb_ast::CreateSequenceInfo) -> Self {
+        Self {
+            data: Arc::new(std::sync::Mutex::new(SequenceData {
+                usage_count: info.usage_count,
+                counter: info.start_value,
+                last_value: info.start_value,
+                increment: info.increment,
+                start_value: info.start_value,
+                min_value: info.min_value,
+                max_value: info.max_value,
+                cycle: info.cycle,
+            })),
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, SequenceData> {
+        self.data
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// A copy of the state.
+    pub fn data(&self) -> SequenceData {
+        *self.lock()
+    }
+
+    /// `SequenceCatalogEntry::NextValue` of the sequence called `name`.
+    pub fn next_value(&self, name: &str) -> rustdb_common::Result<i64> {
+        let mut data = self.lock();
+        let result = data.counter;
+        let (next, overflow) = data.counter.overflowing_add(data.increment);
+        data.counter = next;
+        if data.cycle {
+            if overflow {
+                data.counter = if data.increment < 0 {
+                    data.max_value
+                } else {
+                    data.min_value
+                };
+            } else if data.counter < data.min_value {
+                data.counter = data.max_value;
+            } else if data.counter > data.max_value {
+                data.counter = data.min_value;
+            }
+        } else {
+            if result < data.min_value || (overflow && data.increment < 0) {
+                return Err(sequence_error(format!(
+                    "nextval: reached minimum value of sequence \"{name}\" ({})",
+                    data.min_value
+                )));
+            }
+            if result > data.max_value || overflow {
+                return Err(sequence_error(format!(
+                    "nextval: reached maximum value of sequence \"{name}\" ({})",
+                    data.max_value
+                )));
+            }
+        }
+        data.last_value = result;
+        data.usage_count += 1;
+        Ok(result)
+    }
+
+    /// `SequenceCatalogEntry::CurrentValue`.
+    pub fn current_value(&self) -> rustdb_common::Result<i64> {
+        let data = self.lock();
+        if data.usage_count == 0 {
+            return Err(sequence_error(
+                "currval: sequence is not yet defined in this session".to_owned(),
+            ));
+        }
+        Ok(data.last_value)
+    }
+}
+
+fn sequence_error(message: String) -> rustdb_common::Error {
+    rustdb_common::Error::new(rustdb_common::ErrorKind::Sequence, message)
+}
+
 /// A view: a stored query (DuckDB's `ViewCatalogEntry`).
 #[derive(Clone, Debug)]
 pub struct ViewEntry {
@@ -202,6 +305,7 @@ pub enum EntryKind {
     Table(TableEntry),
     View(ViewEntry),
     Index(IndexEntry),
+    Sequence(SequenceEntry),
 }
 
 /// A named object in the catalog.
@@ -237,6 +341,7 @@ impl CatalogEntry {
             EntryKind::Table(_) => CatalogType::Table,
             EntryKind::View(_) => CatalogType::View,
             EntryKind::Index(_) => CatalogType::Index,
+            EntryKind::Sequence(_) => CatalogType::Sequence,
         }
     }
 

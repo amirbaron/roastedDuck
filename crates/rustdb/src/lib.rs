@@ -13,6 +13,7 @@ mod checkpoint;
 mod config;
 mod database;
 mod result;
+mod sequence;
 mod settings;
 mod transaction;
 

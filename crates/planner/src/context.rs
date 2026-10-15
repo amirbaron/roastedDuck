@@ -215,6 +215,12 @@ impl ClientContext {
             let set = match ty {
                 CatalogType::Table | CatalogType::View => &schema.tables,
                 CatalogType::TableFunction | CatalogType::TableMacro => &schema.table_functions,
+                CatalogType::Sequence => &schema.sequences,
+                CatalogType::Index => &schema.indexes,
+                CatalogType::Type => &schema.types,
+                CatalogType::Collation => &schema.collations,
+                CatalogType::PragmaFunction => &schema.pragma_functions,
+                CatalogType::CopyFunction => &schema.copy_functions,
                 _ => &schema.functions,
             };
             let mut entry_score = 0.0;

@@ -11,7 +11,9 @@ use rustdb_ast::{
     ForeignKeyConstraint, ForeignKeyType, IndexConstraintType as AstIndexConstraintType, OnCreateConflict,
     OnEntryNotFound, TableColumnType,
 };
-use rustdb_catalog::{Catalog, CatalogEntry, CatalogType, EntryKind, IndexEntry, TableEntry, ViewEntry};
+use rustdb_catalog::{
+    Catalog, CatalogEntry, CatalogType, EntryKind, IndexEntry, SequenceEntry, TableEntry, ViewEntry,
+};
 use rustdb_common::{Error, Result};
 use rustdb_planner::{Expression, ExpressionKind};
 use rustdb_storage::index::IndexConstraintType;
@@ -107,6 +109,29 @@ impl DdlAction for CreateSchemaAction {
     fn execute(&self, transaction: &Transaction) -> Result<()> {
         self.catalog
             .create_schema(transaction, &self.info.schema, self.info.on_conflict)
+    }
+}
+
+/// `CREATE SEQUENCE` (DuckDB's `DuckSchemaEntry::CreateSequence`).
+#[derive(Debug)]
+pub struct CreateSequenceAction {
+    pub catalog: Arc<Catalog>,
+    pub info: CreateInfo,
+}
+
+impl DdlAction for CreateSequenceAction {
+    fn execute(&self, transaction: &Transaction) -> Result<()> {
+        let CreateInfoKind::Sequence(sequence) = &self.info.kind else {
+            return Err(Error::internal("expected a sequence"));
+        };
+        let mut entry = CatalogEntry::new(
+            sequence.name.clone(),
+            EntryKind::Sequence(SequenceEntry::new(sequence)),
+        );
+        entry.temporary = self.info.temporary;
+        self.catalog
+            .create_entry(transaction, &self.info.schema, entry, self.info.on_conflict)?;
+        Ok(())
     }
 }
 

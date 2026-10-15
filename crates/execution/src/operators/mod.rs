@@ -28,8 +28,8 @@ pub use column_data_scan::PhysicalColumnDataScan;
 pub use create_table::PhysicalCreateTable;
 pub use cte::{CteData, PhysicalCte, PhysicalCteScan, PhysicalRecursiveCte, RecursiveCteState};
 pub use ddl::{
-    CatalogTableCreator, CreateIndexAction, CreateSchemaAction, CreateViewAction, DdlAction, DropAction,
-    PhysicalDdl,
+    CatalogTableCreator, CreateIndexAction, CreateSchemaAction, CreateSequenceAction, CreateViewAction,
+    DdlAction, DropAction, PhysicalDdl,
 };
 pub use delete::PhysicalDelete;
 pub use delim::{DelimData, DelimGlobal, DelimShared, PhysicalDelimJoin, PhysicalDelimScan};

@@ -70,6 +70,9 @@ impl Database {
         for set in rustdb_functions::builtin_table_functions() {
             system_catalog.register_table_functions(set)?;
         }
+        for set in crate::sequence::sequence_functions() {
+            system_catalog.register_scalar_functions(set)?;
+        }
         for set in crate::checkpoint::checkpoint_functions(&["memory".to_owned(), "system".to_owned()]) {
             system_catalog.register_table_functions(set)?;
         }

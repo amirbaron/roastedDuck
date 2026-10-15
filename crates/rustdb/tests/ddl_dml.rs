@@ -238,3 +238,43 @@ fn alter_table() {
         "Dependency Error: Cannot alter entry \"t\" because there are entries that depend on it."
     );
 }
+
+#[test]
+fn sequences() {
+    let mut con = connect();
+    con.query("CREATE SEQUENCE seq").unwrap();
+    assert_eq!(
+        error(&mut con, "SELECT currval('seq')"),
+        "Sequence Error: currval: sequence is not yet defined in this session"
+    );
+    assert_eq!(
+        rows(&mut con, "SELECT nextval('seq'), nextval('seq')"),
+        vec![vec!["1", "2"]]
+    );
+    assert_eq!(rows(&mut con, "SELECT currval('seq')"), vec![vec!["2"]]);
+    con.query("CREATE SEQUENCE down START 10 INCREMENT BY -5 MINVALUE 5 MAXVALUE 10")
+        .unwrap();
+    assert_eq!(rows(&mut con, "SELECT nextval('down')"), vec![vec!["10"]]);
+    assert_eq!(rows(&mut con, "SELECT nextval('down')"), vec![vec!["5"]]);
+    assert_eq!(
+        error(&mut con, "SELECT nextval('down')"),
+        "Sequence Error: nextval: reached minimum value of sequence \"down\" (5)"
+    );
+    con.query("CREATE TABLE t(id BIGINT DEFAULT nextval('seq'), v VARCHAR)")
+        .unwrap();
+    con.query("INSERT INTO t(v) VALUES ('a'), ('b')").unwrap();
+    assert_eq!(
+        rows(&mut con, "SELECT * FROM t"),
+        vec![vec!["3", "a"], vec!["4", "b"]]
+    );
+    // Sequence values are not transactional.
+    con.query("BEGIN").unwrap();
+    con.query("SELECT nextval('seq')").unwrap();
+    con.query("ROLLBACK").unwrap();
+    assert_eq!(rows(&mut con, "SELECT nextval('seq')"), vec![vec!["6"]]);
+    con.query("DROP SEQUENCE seq").unwrap();
+    assert!(
+        error(&mut con, "SELECT nextval('seq')")
+            .starts_with("Catalog Error: Sequence with name seq does not exist!")
+    );
+}
