@@ -11,6 +11,7 @@ rustdb-common.workspace = true
 rustdb-types.workspace = true
 rustdb-buffer = { path = "../buffer" }
 rustdb-serde = { path = "../serde" }
+ruzstd = "0.9"
 
 [lints]
 workspace = true

@@ -175,7 +175,10 @@ impl DataPointer {
         if deserializer.on_optional_property_begin(105, "segment_state")? {
             if deserializer.on_nullable_begin()? {
                 deserializer.on_object_begin()?;
-                if compression != CompressionType::Uncompressed || ty.physical_type() != PhysicalType::Varchar
+                // Uncompressed strings and ZSTD keep their extra blocks in a
+                // `SerializedStringSegmentState`; no other codec has a segment state.
+                if !matches!(compression, CompressionType::Uncompressed | CompressionType::Zstd)
+                    || ty.physical_type() != PhysicalType::Varchar
                 {
                     return Err(Error::not_implemented(format!(
                         "reading the segment state of {compression} segments"
