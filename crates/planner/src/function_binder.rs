@@ -677,7 +677,38 @@ fn template_name(ty: &LogicalType) -> Option<&str> {
 }
 
 fn is_templated(ty: &LogicalType) -> bool {
-    ty.id() == LogicalTypeId::Template || ty.child_type().is_some_and(is_templated)
+    ty.id() == LogicalTypeId::Template
+        || ty.child_type().is_some_and(is_templated)
+        || ty.array_child().is_some_and(|(child, _)| is_templated(child))
+        || ty
+            .struct_children()
+            .is_some_and(|children| children.iter().any(|(_, child)| is_templated(child)))
+}
+
+/// Binds every unbound template inside `source` to `actual` (DuckDB's handling of
+/// UNKNOWN/SQLNULL arguments in `InferTemplateType`).
+fn bind_remaining_templates(
+    source: &LogicalType,
+    actual: &LogicalType,
+    bindings: &mut CaseInsensitiveMap<LogicalType>,
+) {
+    if let Some(name) = template_name(source) {
+        if bindings.get(name).is_none() {
+            bindings.insert(name.to_owned(), LogicalType::simple(actual.id()));
+        }
+        return;
+    }
+    if let Some(child) = source.child_type() {
+        bind_remaining_templates(child, actual, bindings);
+    }
+    if let Some((child, _)) = source.array_child() {
+        bind_remaining_templates(child, actual, bindings);
+    }
+    if let Some(children) = source.struct_children() {
+        for (_, child) in children {
+            bind_remaining_templates(child, actual, bindings);
+        }
+    }
 }
 
 /// Infers template bindings from an argument (DuckDB's `InferTemplateType`, for top-level
@@ -687,6 +718,10 @@ fn infer_template(
     actual: &LogicalType,
     bindings: &mut CaseInsensitiveMap<LogicalType>,
 ) {
+    if matches!(actual.id(), LogicalTypeId::Unknown | LogicalTypeId::SqlNull) {
+        bind_remaining_templates(source, actual, bindings);
+        return;
+    }
     if let Some(name) = template_name(source) {
         let new = match bindings.get(name) {
             None => actual.clone(),
@@ -702,6 +737,25 @@ fn infer_template(
         && let (Some(source_child), Some(actual_child)) = (source.child_type(), actual.child_type())
     {
         infer_template(source_child, actual_child, bindings);
+        return;
+    }
+    if source.id() == LogicalTypeId::Map && actual.id() == LogicalTypeId::Map {
+        if let (Some((source_key, source_value)), Some((actual_key, actual_value))) =
+            (source.map_key_value(), actual.map_key_value())
+        {
+            infer_template(source_key, actual_key, bindings);
+            infer_template(source_value, actual_value, bindings);
+        }
+        return;
+    }
+    if source.id() == LogicalTypeId::Struct
+        && actual.id() == LogicalTypeId::Struct
+        && let (Some(source_children), Some(actual_children)) = (source.struct_children(), actual.struct_children())
+        && source_children.iter().all(|(name, _)| name.is_empty())
+    {
+        for ((_, source_child), (_, actual_child)) in source_children.iter().zip(actual_children) {
+            infer_template(source_child, actual_child, bindings);
+        }
     }
 }
 
@@ -719,6 +773,21 @@ fn substitute_template(ty: &LogicalType, bindings: &CaseInsensitiveMap<LogicalTy
         ),
         LogicalTypeId::Array => match ty.array_child() {
             Some((child, size)) => LogicalType::array(substitute_template(child, bindings), size),
+            None => ty.clone(),
+        },
+        LogicalTypeId::Map => match ty.map_key_value() {
+            Some((key, value)) => {
+                LogicalType::map(substitute_template(key, bindings), substitute_template(value, bindings))
+            }
+            None => ty.clone(),
+        },
+        LogicalTypeId::Struct => match ty.struct_children() {
+            Some(children) => LogicalType::struct_type(
+                children
+                    .iter()
+                    .map(|(name, child)| (name.clone(), substitute_template(child, bindings)))
+                    .collect(),
+            ),
             None => ty.clone(),
         },
         _ => ty.clone(),
@@ -784,4 +853,9 @@ fn unresolved_template(ty: &LogicalType) -> Option<String> {
     template_name(ty)
         .map(ToOwned::to_owned)
         .or_else(|| ty.child_type().and_then(unresolved_template))
+        .or_else(|| ty.array_child().and_then(|(child, _)| unresolved_template(child)))
+        .or_else(|| {
+            ty.struct_children()
+                .and_then(|children| children.iter().find_map(|(_, child)| unresolved_template(child)))
+        })
 }

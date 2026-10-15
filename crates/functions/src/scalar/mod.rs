@@ -4,6 +4,7 @@
 pub mod array;
 pub mod date;
 pub(crate) mod executor;
+pub mod map;
 pub mod generic;
 pub mod list;
 pub mod math;
@@ -137,8 +138,31 @@ fn string_functions(sets: &mut Vec<ScalarFunctionSet>) {
     sets.push(concat::concat_operator_functions());
     sets.push(contains::prefix_functions());
     with_aliases(sets, contains::suffix_functions(), &["ends_with"]);
-    let struct_contains = structs::struct_contains_functions().functions;
-    sets.push(contains::contains_functions(struct_contains));
+    let mut nested_contains = vec![
+        list::contains_or_position::list_contains_function("contains"),
+        list::contains_or_position::map_contains_function("contains"),
+    ];
+    nested_contains.extend(structs::struct_contains_functions().functions);
+    sets.push(contains::contains_functions(nested_contains));
+    with_aliases(
+        sets,
+        list::contains_or_position::list_contains_functions(),
+        &["array_contains", "list_has", "array_has"],
+    );
+    with_aliases(
+        sets,
+        list::contains_or_position::list_position_functions(),
+        &["list_indexof", "array_position", "array_indexof"],
+    );
+    sets.push(list::contains_or_position::map_contains_functions());
+    sets.push(map::map_functions());
+    sets.push(map::cardinality_functions());
+    sets.extend(map::map_unpack_functions());
+    let (map_extract, map_extract_value) = map::map_extract_functions();
+    with_aliases(sets, map_extract, &["element_at"]);
+    sets.push(map_extract_value);
+    sets.push(map::map_from_entries_functions());
+    sets.push(map::map_concat_functions());
     with_aliases(sets, contains::starts_with_functions(), &["starts_with"]);
     sets.push(normalize::strip_accents_functions());
     sets.push(normalize::nfc_normalize_functions());
