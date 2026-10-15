@@ -145,6 +145,9 @@ pub struct TableConstraints {
     pub verifier: Option<Arc<dyn ConstraintVerifier>>,
     /// Foreign keys in which the table takes part.
     pub foreign_keys: Vec<BoundForeignKey>,
+    /// The catalog names of the physical columns, for error messages (empty: the names
+    /// the storage was created with; columns can be renamed since).
+    pub column_names: Vec<String>,
 }
 
 /// Whether a table is still the current version (DuckDB's `DataTableVersion`).
@@ -523,22 +526,27 @@ impl DataTable {
     /// Verifies NOT NULL and CHECK constraints of rows about to be inserted
     /// (`VerifyAppendConstraints`).
     pub fn verify_append_constraints(&self, constraints: &TableConstraints, chunk: &DataChunk) -> Result<()> {
-        if let Some(verifier) = &constraints.verifier {
-            verifier.verify_append(chunk)?;
-        }
         for &column in &constraints.not_null {
             if has_null(chunk.column(column), chunk.len()) {
-                return Err(self.not_null_error(column));
+                return Err(self.not_null_error(column, &constraints.column_names));
             }
+        }
+        if let Some(verifier) = &constraints.verifier {
+            verifier.verify_append(chunk)?;
         }
         Ok(())
     }
 
-    fn not_null_error(&self, column: usize) -> Error {
-        let name = self
-            .columns
-            .get(column)
-            .map_or("", |definition| definition.name.as_str());
+    /// "NOT NULL constraint failed: t.c", naming the column by `names` if given.
+    fn not_null_error(&self, column: usize, names: &[String]) -> Error {
+        let name = names.get(column).map_or_else(
+            || {
+                self.columns
+                    .get(column)
+                    .map_or("", |definition| definition.name.as_str())
+            },
+            String::as_str,
+        );
         constraint_error(format!("NOT NULL constraint failed: {}.{name}", self.name()))
     }
 
@@ -737,7 +745,7 @@ impl DataTable {
             if let Some(position) = column_ids.iter().position(|&id| id == column)
                 && has_null(chunk.column(position), chunk.len())
             {
-                return Err(self.not_null_error(column));
+                return Err(self.not_null_error(column, &constraints.column_names));
             }
         }
         if let Some(verifier) = &constraints.verifier {
@@ -788,6 +796,21 @@ impl DataTable {
     /// removed_column)`).
     pub fn remove_column(self: &Arc<Self>, transaction: &Transaction, column: usize) -> Result<Arc<Self>> {
         let _lock = self.append_lock();
+        self.verify_remove_column(column)?;
+        let row_groups = Arc::new(self.row_groups.remove_column(column));
+        let mut columns = self.columns.clone();
+        columns.remove(column);
+        let table = Self::derived(self, columns, row_groups);
+        transaction
+            .local_storage()
+            .alter(self, &table, |collection| Ok(collection.remove_column(column)))?;
+        self.set_as_altered();
+        Ok(table)
+    }
+
+    /// Fails if physical column `column` cannot be dropped because an index reads it or
+    /// a column after it.
+    pub fn verify_remove_column(&self, column: usize) -> Result<()> {
         if column >= self.columns.len() {
             return Err(Error::internal("dropping a column that does not exist"));
         }
@@ -803,15 +826,23 @@ impl DataTable {
                 }
             }
         }
-        let row_groups = Arc::new(self.row_groups.remove_column(column));
-        let mut columns = self.columns.clone();
-        columns.remove(column);
-        let table = Self::derived(self, columns, row_groups);
-        transaction
-            .local_storage()
-            .alter(self, &table, |collection| Ok(collection.remove_column(column)))?;
-        self.set_as_altered();
-        Ok(table)
+        Ok(())
+    }
+
+    /// Fails if the type of physical column `column` cannot change because an index
+    /// reads it.
+    pub fn verify_alter_type(&self, column: usize) -> Result<()> {
+        if self
+            .indexes()
+            .entries()
+            .iter()
+            .any(|entry| entry.column_ids().contains(&column))
+        {
+            return Err(Error::catalog(
+                "Cannot change the type of this column: an index depends on it!",
+            ));
+        }
+        Ok(())
     }
 
     /// `ALTER TABLE ALTER COLUMN TYPE`: column `column` becomes `target`, computed by
@@ -825,16 +856,7 @@ impl DataTable {
         cast: &dyn Fn(&DataChunk) -> Result<Vector>,
     ) -> Result<Arc<Self>> {
         let _lock = self.append_lock();
-        if self
-            .indexes()
-            .entries()
-            .iter()
-            .any(|entry| entry.column_ids().contains(&column))
-        {
-            return Err(Error::catalog(
-                "Cannot change the type of this column: an index depends on it!",
-            ));
-        }
+        self.verify_alter_type(column)?;
         let row_groups =
             Arc::new(
                 self.row_groups
@@ -857,6 +879,17 @@ impl DataTable {
         transaction: &Transaction,
         column: usize,
     ) -> Result<Arc<Self>> {
+        self.add_not_null_constraint_named(transaction, column, &[])
+    }
+
+    /// [`DataTable::add_not_null_constraint`] with the catalog names of the columns for
+    /// the error message.
+    pub fn add_not_null_constraint_named(
+        self: &Arc<Self>,
+        transaction: &Transaction,
+        column: usize,
+        names: &[String],
+    ) -> Result<Arc<Self>> {
         let _lock = self.append_lock();
         let local = transaction.local_storage().storage(self);
         let local_has_null = match &local {
@@ -864,7 +897,7 @@ impl DataTable {
             None => false,
         };
         if local_has_null || self.row_groups.column_has_null(transaction.data(), column)? {
-            return Err(self.not_null_error(column));
+            return Err(self.not_null_error(column, names));
         }
         let table = Self::derived(self, self.columns.clone(), Arc::clone(&self.row_groups));
         transaction.local_storage().move_storage(self, &table);
@@ -874,7 +907,7 @@ impl DataTable {
 }
 
 /// Whether any of the first `count` rows of `vector` is NULL (`VectorOperations::HasNull`).
-fn has_null(vector: &Vector, count: usize) -> bool {
+pub(crate) fn has_null(vector: &Vector, count: usize) -> bool {
     if vector.kind() == rustdb_types::VectorKind::Sequence {
         return false;
     }

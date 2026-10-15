@@ -9,7 +9,7 @@ use std::sync::Arc;
 use rustdb_common::{Error, ErrorKind, Result, STANDARD_VECTOR_SIZE};
 use rustdb_types::{DataChunk, LogicalType, Vector};
 
-use super::{DataTable, TableConstraints, constraint_error};
+use super::{DataTable, TableConstraints, constraint_error, has_null};
 use crate::index::art::IndexScanPredicate;
 use crate::index::conflict_manager::ConflictManager;
 use crate::index::table_index_list::ForeignKeyType;
@@ -186,8 +186,17 @@ impl DataTable {
     /// Builds `index` over the table's rows and adds it (`PhysicalCreateIndex`). Rows the
     /// transaction inserted are added to the index when it commits.
     pub fn create_index(self: &Arc<Self>, transaction: &Transaction, mut index: Art) -> Result<()> {
+        self.build_index(transaction, &mut index, false)?;
+        self.check_main_table_for_index_creation()?;
+        self.indexes().add(index);
+        Ok(())
+    }
+
+    /// Fills `index` with the table's committed rows. With `reject_nulls` (ALTER TABLE
+    /// ADD PRIMARY KEY), a NULL key is an error naming the index.
+    pub fn build_index(&self, transaction: &Transaction, index: &mut Art, reject_nulls: bool) -> Result<()> {
         let _ = transaction;
-        let columns = Self::index_columns(&index);
+        let columns = Self::index_columns(index);
         let column_ids: Vec<StorageIndex> = columns
             .iter()
             .map(|&c| StorageIndex::from(c))
@@ -211,6 +220,12 @@ impl DataTable {
             let row_id_column = chunk.column(columns.len()).flattened(chunk.len());
             let row_ids = row_id_column.values::<i64>()[..chunk.len()].to_vec();
             let data = DataChunk::new(chunk.columns()[..columns.len()].to_vec(), chunk.len());
+            if reject_nulls && data.columns().iter().any(|column| has_null(column, data.len())) {
+                return Err(constraint_error(format!(
+                    "NOT NULL constraint failed: {}",
+                    index.name()
+                )));
+            }
             let table_chunk = self.index_table_chunk(&columns, &data);
             if let Err(error) = index.append(&table_chunk, &row_ids, &[], IndexAppendMode::Default) {
                 if error.kind() == ErrorKind::Constraint {
@@ -221,8 +236,6 @@ impl DataTable {
                 return Err(error);
             }
         }
-        self.check_main_table_for_index_creation()?;
-        self.indexes().add(index);
         Ok(())
     }
 

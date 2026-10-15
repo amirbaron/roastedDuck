@@ -48,6 +48,9 @@ pub struct BindInput<'a> {
     pub argument_types: &'a [LogicalType],
     /// The value of each argument that is a foldable constant, `None` otherwise.
     pub constants: &'a [Option<Value>],
+    /// The binder's client context (`ScalarFunctionBindInput::binder`), for functions
+    /// that look up catalog entries; the database crate downcasts it.
+    pub client: Option<&'a dyn Any>,
 }
 
 /// Specialises a chosen overload for a call (DuckDB's `bind_scalar_function_t`).

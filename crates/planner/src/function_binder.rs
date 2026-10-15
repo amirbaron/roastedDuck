@@ -524,6 +524,7 @@ impl<'a> FunctionBinder<'a> {
                 &BindInput {
                     argument_types: &argument_types,
                     constants: &constants,
+                    client: Some(self.context as &dyn std::any::Any),
                 },
             )?;
         }
@@ -565,6 +566,7 @@ impl<'a> FunctionBinder<'a> {
                 &BindInput {
                     argument_types: &argument_types,
                     constants: &constants,
+                    client: Some(self.context as &dyn std::any::Any),
                 },
             )?;
             // The bind may have dropped arguments.

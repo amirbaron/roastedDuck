@@ -178,6 +178,18 @@ impl ClientContext {
         if !catalog.is_empty() && self.catalog(catalog).is_none() {
             return Err(Error::binder(format!("Catalog \"{catalog}\" does not exist!")));
         }
+        // A table in a named schema that exists nowhere: the error is about the schema.
+        if ty == CatalogType::Table
+            && !schema.is_empty()
+            && !path.iter().any(|(catalog_name, schema_name)| {
+                self.catalog(catalog_name)
+                    .is_some_and(|catalog| catalog.schema(&self.transaction, schema_name).is_some())
+            })
+        {
+            return Err(Error::catalog(format!(
+                "Table with name \"{schema}.{name}\" does not exist because schema \"{schema}\" does not exist."
+            )));
+        }
         Err(self.missing_entry_error(&path, ty, name))
     }
 
@@ -203,6 +215,12 @@ impl ClientContext {
             let set = match ty {
                 CatalogType::Table | CatalogType::View => &schema.tables,
                 CatalogType::TableFunction | CatalogType::TableMacro => &schema.table_functions,
+                CatalogType::Sequence => &schema.sequences,
+                CatalogType::Index => &schema.indexes,
+                CatalogType::Type => &schema.types,
+                CatalogType::Collation => &schema.collations,
+                CatalogType::PragmaFunction => &schema.pragma_functions,
+                CatalogType::CopyFunction => &schema.copy_functions,
                 _ => &schema.functions,
             };
             let mut entry_score = 0.0;

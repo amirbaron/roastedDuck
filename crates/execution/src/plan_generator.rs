@@ -6,17 +6,28 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use rustdb_ast::JoinType;
+use rustdb_catalog::{Catalog, CatalogEntry, EntryKind, Transaction};
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_planner::expression::BoundConjunctionExpression;
-use rustdb_planner::operator::{JoinCondition, LogicalAggregate, LogicalComparisonJoin};
+use rustdb_planner::operator::{
+    COLUMN_IDENTIFIER_ROW_ID, JoinCondition, LogicalAggregate, LogicalComparisonJoin, LogicalDelete,
+    LogicalGet, LogicalInsert, LogicalUpdate,
+};
 use rustdb_planner::{
     BoundLimitNode, Expression, ExpressionKind, ExpressionType, LogicalKind, LogicalOperator,
     LogicalOperatorType,
 };
+use rustdb_storage::{DataTable, StorageIndex, TableConstraints, TableIoManager};
 use rustdb_types::{DataChunk, LogicalType};
 
+use crate::constraints::table_constraints;
 use crate::expression_executor::ExpressionExecutor;
 use crate::operator::{PhysicalRef, SinkData};
+use crate::operators::{
+    AlterEntryAction, CatalogTableCreator, CreateIndexAction, CreateSchemaAction, CreateSequenceAction,
+    CreateViewAction, DdlAction, DropAction, InsertTarget, PhysicalCreateTable, PhysicalDdl, PhysicalDelete,
+    PhysicalInsert, PhysicalSeqScan, PhysicalUpdate,
+};
 use crate::operators::{CteData, PhysicalCte, PhysicalCteScan, PhysicalRecursiveCte};
 use crate::operators::{
     DelimShared, PhysicalDelimJoin, PhysicalDelimScan, PhysicalNestedLoopJoin, PhysicalUnion,
@@ -27,8 +38,57 @@ use crate::operators::{
 };
 
 /// Converts a logical plan whose column references are resolved into a physical plan.
+/// Plans that read or change tables or the catalog need [`create_physical_plan_with`].
 pub fn create_physical_plan(op: LogicalOperator) -> Result<PhysicalRef> {
     PlanGenerator::default().plan(op)
+}
+
+/// Converts a logical plan into a physical plan running in `context`'s transaction.
+pub fn create_physical_plan_with(op: LogicalOperator, context: &PlanContext) -> Result<PhysicalRef> {
+    PlanGenerator {
+        context: Some(context.clone()),
+        ..PlanGenerator::default()
+    }
+    .plan(op)
+}
+
+/// What planning statements on tables and the catalog needs (DuckDB's `ClientContext`
+/// as seen by the physical planner).
+#[derive(Clone, Debug)]
+pub struct PlanContext {
+    /// The transaction the statement runs in.
+    pub transaction: Arc<Transaction>,
+    /// The attached catalogs, the default one first.
+    pub catalogs: Vec<Arc<Catalog>>,
+    /// Where new tables keep their data.
+    pub io: Arc<TableIoManager>,
+}
+
+impl PlanContext {
+    /// The catalog called `name`; `""` is the default catalog.
+    fn catalog(&self, name: &str) -> Result<Arc<Catalog>> {
+        let found = if name.is_empty() {
+            self.catalogs.first()
+        } else {
+            self.catalogs
+                .iter()
+                .find(|catalog| catalog.name().eq_ignore_ascii_case(name))
+        };
+        found
+            .cloned()
+            .ok_or_else(|| Error::catalog(format!("Catalog with name {name} does not exist!")))
+    }
+}
+
+/// The storage of a table entry (`DuckTableEntry::GetStorage`).
+fn table_storage(entry: &CatalogEntry) -> Result<Arc<DataTable>> {
+    match &entry.kind {
+        EntryKind::Table(table) => table
+            .storage
+            .clone()
+            .ok_or_else(|| Error::internal(format!("table {} has no storage", entry.name()))),
+        _ => Err(Error::internal(format!("{} is not a table", entry.name()))),
+    }
 }
 
 /// State carried through physical planning (DuckDB's `PhysicalPlanGenerator`).
@@ -46,6 +106,8 @@ struct PlanGenerator {
     /// Per recursive CTE being planned (outermost first), the data from outside it that
     /// its parts read.
     external: Vec<Vec<Arc<dyn SinkData>>>,
+    /// The transaction and catalogs for plans on tables.
+    context: Option<PlanContext>,
 }
 
 impl PlanGenerator {
@@ -59,6 +121,196 @@ impl PlanGenerator {
             level.push(Arc::clone(data));
         }
         !levels.is_empty()
+    }
+
+    fn context(&self) -> Result<&PlanContext> {
+        self.context
+            .as_ref()
+            .ok_or_else(|| Error::internal("planning a statement on tables requires a plan context"))
+    }
+
+    /// A base table scan (DuckDB's `CreatePlan(LogicalGet&)` with `TableScanFunction`):
+    /// logical column indexes become physical storage indexes.
+    fn plan_table_scan(
+        &self,
+        get: &LogicalGet,
+        entry: &CatalogEntry,
+        mut types: Vec<LogicalType>,
+    ) -> Result<PhysicalRef> {
+        let context = self.context()?;
+        let storage = table_storage(entry)?;
+        let EntryKind::Table(table) = &entry.kind else {
+            return Err(Error::internal("table scan of a non-table"));
+        };
+        let mut column_ids = get
+            .column_ids
+            .iter()
+            .map(|column| {
+                if column.index == COLUMN_IDENTIFIER_ROW_ID {
+                    return Ok(StorageIndex::row_id());
+                }
+                let physical = usize::try_from(column.index)
+                    .ok()
+                    .and_then(|logical| table.logical_to_physical(logical))
+                    .ok_or_else(|| Error::internal("scan of a generated column"))?;
+                Ok(StorageIndex::new(physical as u64))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        if column_ids.is_empty() {
+            // Nothing is read (e.g. `count(*)`): scan the row ids for the cardinality.
+            column_ids.push(StorageIndex::row_id());
+            types = vec![LogicalType::BIGINT];
+        }
+        let projection = get.projection_ids.iter().map(|&id| id as usize).collect();
+        Ok(Arc::new(PhysicalSeqScan::new(
+            types,
+            storage,
+            Arc::clone(&context.transaction),
+            column_ids,
+            None,
+            projection,
+        )))
+    }
+
+    /// `INSERT` (DuckDB's `CreatePlan(LogicalInsert&)`); the defaults of columns missing
+    /// from the input are computed by a projection (`PhysicalInsert::ResolveDefaults`).
+    fn plan_insert(&self, insert: &LogicalInsert, child: PhysicalRef) -> Result<PhysicalRef> {
+        let context = self.context()?;
+        let storage = table_storage(&insert.table)?;
+        let child = if insert.column_index_map.is_empty() {
+            child
+        } else {
+            let input_types = child.types().to_vec();
+            let expressions = insert
+                .column_index_map
+                .iter()
+                .enumerate()
+                .map(|(column, source)| match source {
+                    Some(source) => input_types
+                        .get(*source)
+                        .map(|ty| Expression::reference("", ty.clone(), *source as u64))
+                        .ok_or_else(|| Error::internal("insert column map out of range")),
+                    None => insert
+                        .bound_defaults
+                        .get(column)
+                        .cloned()
+                        .ok_or_else(|| Error::internal("insert without a default")),
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let types = expressions.iter().map(|e| e.return_type.clone()).collect();
+            Arc::new(PhysicalProjection::new(types, expressions, child))
+        };
+        let constraints = table_constraints(
+            &context.transaction,
+            &context.catalogs,
+            &insert.table,
+            &storage,
+            &insert.bound_constraints,
+        )?;
+        Ok(Arc::new(PhysicalInsert::new(
+            child,
+            InsertTarget::Table(storage),
+            Arc::clone(&context.transaction),
+            constraints,
+            insert.return_chunk,
+        )))
+    }
+
+    /// `DELETE`: the single expression references the row id column of the input.
+    fn plan_delete(
+        &self,
+        delete: &LogicalDelete,
+        expressions: &[Expression],
+        child: PhysicalRef,
+    ) -> Result<PhysicalRef> {
+        let context = self.context()?;
+        let storage = table_storage(&delete.table)?;
+        let row_id_index = match expressions.first().map(|expression| &expression.kind) {
+            Some(ExpressionKind::Reference(reference)) => reference.index as usize,
+            _ => return Err(Error::internal("DELETE without a row id reference")),
+        };
+        let constraints = table_constraints(
+            &context.transaction,
+            &context.catalogs,
+            &delete.table,
+            &storage,
+            &delete.bound_constraints,
+        )?;
+        Ok(Arc::new(
+            PhysicalDelete::new(
+                child,
+                storage,
+                Arc::clone(&context.transaction),
+                row_id_index,
+                delete.return_chunk,
+            )
+            .with_constraints(constraints),
+        ))
+    }
+
+    /// `UPDATE`: a projection computes the new values (`DEFAULT` becomes the column's
+    /// default) followed by the row id, the input's last column.
+    fn plan_update(
+        &self,
+        update: LogicalUpdate,
+        expressions: Vec<Expression>,
+        child: PhysicalRef,
+    ) -> Result<PhysicalRef> {
+        let context = self.context()?;
+        let storage = table_storage(&update.table)?;
+        let row_id = child
+            .types()
+            .len()
+            .checked_sub(1)
+            .ok_or_else(|| Error::internal("UPDATE input without a row id"))?;
+        let mut projections = Vec::with_capacity(expressions.len() + 1);
+        for (expression, &column) in expressions.into_iter().zip(&update.columns) {
+            if matches!(expression.kind, ExpressionKind::Default) {
+                let default = update
+                    .bound_defaults
+                    .get(column)
+                    .cloned()
+                    .ok_or_else(|| Error::internal("update without a default"))?;
+                projections.push(default);
+            } else {
+                projections.push(expression);
+            }
+        }
+        projections.push(Expression::reference("", LogicalType::BIGINT, row_id as u64));
+        let types = projections.iter().map(|e| e.return_type.clone()).collect();
+        let child: PhysicalRef = Arc::new(PhysicalProjection::new(types, projections, child));
+        let constraints = table_constraints(
+            &context.transaction,
+            &context.catalogs,
+            &update.table,
+            &storage,
+            &update.bound_constraints,
+        )?;
+        Ok(Arc::new(PhysicalUpdate::new(
+            child,
+            storage,
+            Arc::clone(&context.transaction),
+            update.columns,
+            constraints,
+            update.update_is_del_and_insert,
+            update.return_chunk,
+        )))
+    }
+
+    /// A catalog statement run by [`PhysicalDdl`].
+    fn ddl(
+        &self,
+        name: &'static str,
+        types: Vec<LogicalType>,
+        action: Arc<dyn DdlAction>,
+    ) -> Result<PhysicalRef> {
+        let context = self.context()?;
+        Ok(Arc::new(PhysicalDdl::new(
+            name,
+            types,
+            action,
+            Arc::clone(&context.transaction),
+        )))
     }
 
     /// A duplicate-eliminated join: the left input is buffered by a delim sink that also
@@ -216,6 +468,90 @@ impl PlanGenerator {
             LogicalKind::EmptyResult { .. } => Arc::new(PhysicalColumnDataScan::new(types, Arc::from([]))),
             LogicalKind::ChunkGet { collection, .. } => {
                 Arc::new(PhysicalColumnDataScan::new(types, collection))
+            }
+            LogicalKind::Get(get) if get.table.is_some() => {
+                let entry = get
+                    .table
+                    .clone()
+                    .ok_or_else(|| Error::internal("base table scan without a table"))?;
+                self.plan_table_scan(&get, &entry, types)?
+            }
+            LogicalKind::Insert(insert) => self.plan_insert(&insert, next_child("insert")?)?,
+            LogicalKind::Delete(delete) => self.plan_delete(&delete, &expressions, next_child("delete")?)?,
+            LogicalKind::Update(update) => self.plan_update(*update, expressions, next_child("update")?)?,
+            LogicalKind::CreateTable(info) => {
+                let context = self.context()?;
+                let info = *info;
+                let creator = Arc::new(CatalogTableCreator {
+                    catalog: context.catalog(&info.catalog)?,
+                    schema: info.schema,
+                    info: info.info,
+                    io: Arc::clone(&context.io),
+                });
+                let transaction = Arc::clone(&context.transaction);
+                match children.next() {
+                    Some(query) => Arc::new(PhysicalInsert::new(
+                        query,
+                        InsertTarget::Create(creator),
+                        transaction,
+                        TableConstraints::default(),
+                        false,
+                    )),
+                    None => Arc::new(PhysicalCreateTable::new(creator, transaction)),
+                }
+            }
+            LogicalKind::Create { operator_type, info } => {
+                let catalog = self.context()?.catalog(&info.catalog)?;
+                let info = *info;
+                match operator_type {
+                    LogicalOperatorType::LogicalCreateSchema => self.ddl(
+                        "CREATE_SCHEMA",
+                        types,
+                        Arc::new(CreateSchemaAction { catalog, info }),
+                    )?,
+                    LogicalOperatorType::LogicalCreateView => {
+                        self.ddl("CREATE_VIEW", types, Arc::new(CreateViewAction { catalog, info }))?
+                    }
+                    LogicalOperatorType::LogicalCreateSequence => self.ddl(
+                        "CREATE_SEQUENCE",
+                        types,
+                        Arc::new(CreateSequenceAction { catalog, info }),
+                    )?,
+                    other => return Err(not_implemented(other)),
+                }
+            }
+            LogicalKind::CreateIndex(create) => {
+                let create = *create;
+                let catalog = self.context()?.catalog(&create.info.catalog)?;
+                self.ddl(
+                    "CREATE_INDEX",
+                    types,
+                    Arc::new(CreateIndexAction {
+                        catalog,
+                        info: create.info,
+                        table: create.table,
+                        expressions: create.expressions,
+                    }),
+                )?
+            }
+            LogicalKind::Alter(alter) => {
+                let alter = *alter;
+                let catalog = self.context()?.catalog(&alter.catalog)?;
+                self.ddl(
+                    "ALTER",
+                    types,
+                    Arc::new(AlterEntryAction {
+                        catalog,
+                        schema: alter.schema,
+                        entry: alter.entry,
+                        action: alter.action,
+                        dependents_allowed: alter.dependents_allowed,
+                    }),
+                )?
+            }
+            LogicalKind::Drop(info) => {
+                let catalog = self.context()?.catalog(&info.catalog)?;
+                self.ddl("DROP", types, Arc::new(DropAction { catalog, info: *info }))?
             }
             LogicalKind::Get(get) if get.function.scan.is_some() && get.projection_ids.is_empty() => {
                 let column_ids = get.column_ids.iter().map(|column| column.index).collect();

@@ -1,6 +1,6 @@
 //! Statements (DuckDB's `planner/binder/statement`): SELECT, EXPLAIN, SET/RESET, PRAGMA,
-//! transaction statements, PREPARE/EXECUTE/DEALLOCATE. Statements that need storage or
-//! DDL are not ported yet and report `Not implemented`.
+//! transaction statements, PREPARE/EXECUTE/DEALLOCATE, CALL, CREATE/DROP and
+//! INSERT/UPDATE/DELETE. Other statements report `Not implemented`.
 
 use std::sync::Arc;
 
@@ -11,6 +11,12 @@ use rustdb_ast::{
 };
 use rustdb_common::{CaseInsensitiveMap, Error, Result};
 use rustdb_types::{LogicalType, LogicalTypeId};
+
+mod alter;
+mod create;
+mod create_index;
+mod modify;
+mod table;
 
 use super::query_node::bind_node;
 use super::{BindScope, Binder, BoundStatement};
@@ -40,11 +46,65 @@ pub fn bind_statement(scope: &mut BindScope<'_>, statement: &mut SqlStatement) -
             Ok(bind_deallocate(scope, drop))
         }
         SqlStatementKind::Pragma(pragma) => bind_pragma(scope, pragma),
+        SqlStatementKind::Create(info) => create::bind_create(scope, info),
+        SqlStatementKind::Drop(drop) => create::bind_drop(scope, drop),
+        SqlStatementKind::Insert(insert) => modify::bind_insert(scope, insert),
+        SqlStatementKind::Update(update) => modify::bind_update(scope, update),
+        SqlStatementKind::Delete(delete) => modify::bind_delete(scope, delete),
+        SqlStatementKind::Call(call) => bind_call(scope, call),
+        SqlStatementKind::Alter(info) => alter::bind_alter(scope, info),
         other => Err(Error::not_implemented(format!(
             "Unimplemented statement type \"{}\" for Bind",
             other.statement_type().name()
         ))),
     }
+}
+
+/// `CALL function(...)` (DuckDB's `Binder::Bind(CallStatement &)`): bound as
+/// `SELECT * FROM function(...)`.
+fn bind_call(scope: &mut BindScope<'_>, call: &mut rustdb_ast::CallStatement) -> Result<BoundStatement> {
+    use rustdb_ast::{
+        AggregateHandling, CommonTableExpressionMap, OrdinalityType, ParsedExpression, ParsedExpressionKind,
+        QueryNode, QueryNodeKind, SelectNode, StarExpression, TableFunctionRef, TableRef, TableRefKind,
+    };
+    let star = ParsedExpression::new(
+        ExpressionType::Star,
+        ParsedExpressionKind::Star(Box::new(StarExpression {
+            relation_name: String::new(),
+            exclude_list: Vec::new(),
+            replace_list: CaseInsensitiveMap::default(),
+            rename_list: rustdb_common::OrderedMap::default(),
+            columns: false,
+            expr: None,
+        })),
+    );
+    let from_table = TableRef {
+        alias: String::new(),
+        sample: None,
+        query_location: None,
+        kind: TableRefKind::TableFunction(TableFunctionRef {
+            function: call.function.clone(),
+            column_name_alias: Vec::new(),
+            with_ordinality: OrdinalityType::WithoutOrdinality,
+        }),
+    };
+    let mut node = QueryNode {
+        modifiers: Vec::new(),
+        cte_map: CommonTableExpressionMap::default(),
+        kind: QueryNodeKind::Select(Box::new(SelectNode {
+            select_list: vec![star],
+            from_table: Box::new(from_table),
+            where_clause: None,
+            group_expressions: Vec::new(),
+            group_sets: Vec::new(),
+            aggregate_handling: AggregateHandling::StandardHandling,
+            having: None,
+            sample: None,
+            qualify: None,
+        })),
+    };
+    scope.with_properties(|properties| properties.return_type = StatementReturnType::QueryResult);
+    bind_node(scope, &mut node)
 }
 
 /// `EXPLAIN statement` (DuckDB's `Binder::Bind(ExplainStatement &)`).

@@ -15,6 +15,7 @@ rustdb-ast = { path = "../ast" }
 rustdb-buffer = { path = "../buffer" }
 rustdb-row = { path = "../row" }
 rustdb-storage = { path = "../storage" }
+rustdb-catalog = { path = "../catalog" }
 
 [lints]
 workspace = true

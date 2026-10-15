@@ -92,7 +92,8 @@ impl TransactionContext {
         Ok(())
     }
 
-    /// `COMMIT`: an invalidated transaction is rolled back instead.
+    /// `COMMIT`: an invalidated transaction is rolled back instead, without an error
+    /// (`PhysicalTransaction` turns the COMMIT into a ROLLBACK).
     pub fn commit(&mut self) -> Result<()> {
         if self.auto_commit {
             return Err(transaction_error("cannot commit - no transaction is active"));
@@ -102,9 +103,7 @@ impl TransactionContext {
         match self.current.take() {
             Some(transaction) if invalidated => {
                 self.manager.rollback(&transaction);
-                Err(transaction_error(
-                    "Current transaction is aborted (please ROLLBACK)",
-                ))
+                Ok(())
             }
             Some(transaction) => self.manager.commit(&transaction),
             None => Ok(()),
