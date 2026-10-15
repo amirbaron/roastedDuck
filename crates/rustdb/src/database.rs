@@ -892,6 +892,7 @@ impl Connection {
             _ => {}
         }
         ColumnBindingResolver::resolve(&mut plan)?;
+        seed_samples(&mut plan, &self.function_client);
         let instance = self.database.instance();
         let context = PlanContext {
             transaction: self.transactions.current(),
@@ -905,6 +906,19 @@ impl Connection {
             .ok_or_else(|| Error::internal("result collector state has an unexpected type"))?;
         let chunks = std::mem::take(&mut collected.lock().unwrap_or_else(PoisonError::into_inner).chunks);
         Ok(MaterializedResult::new(names, types, chunks))
+    }
+}
+
+/// Gives every unseeded sample a seed from the connection's random engine, children
+/// first, as DuckDB's physical planner does (`CreatePlan(LogicalSample &)`).
+fn seed_samples(plan: &mut LogicalOperator, client: &rustdb_function::FunctionClient) {
+    for child in &mut plan.children {
+        seed_samples(child, client);
+    }
+    if let LogicalKind::Sample { sample_options } = &mut plan.kind
+        && sample_options.seed.is_none()
+    {
+        sample_options.seed = Some(u64::from(client.random_engine().next_random_integer()));
     }
 }
 

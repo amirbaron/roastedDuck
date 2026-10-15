@@ -47,7 +47,9 @@ use crate::operators::{
     PhysicalColumnDataScan, PhysicalDummyScan, PhysicalFilter, PhysicalHashAggregate, PhysicalLimitPercent,
     PhysicalOrder, PhysicalProjection, PhysicalStreamingLimit, PhysicalTableScan, PhysicalUngroupedAggregate,
 };
-use crate::operators::{PhysicalExpressionScan, PhysicalPivot, PhysicalUnnest};
+use crate::operators::{
+    PhysicalExpressionScan, PhysicalPivot, PhysicalReservoirSample, PhysicalStreamingSample, PhysicalUnnest,
+};
 
 /// Converts a logical plan whose column references are resolved into a physical plan.
 /// Plans that read or change tables or the catalog need [`create_physical_plan_with`].
@@ -894,6 +896,33 @@ impl PlanGenerator {
                 rows,
                 next_child("expression get")?,
             )),
+            LogicalKind::Sample { mut sample_options } => {
+                let child = next_child("sample")?;
+                if sample_options.seed.is_none() {
+                    // Planned without a client: an unseeded sample.
+                    let mut random = rustdb_function::random::RandomEngine::default();
+                    sample_options.seed = Some(u64::from(random.next_random_integer()));
+                }
+                match sample_options.method {
+                    rustdb_ast::SampleMethod::ReservoirSample => {
+                        Arc::new(PhysicalReservoirSample::new(types, *sample_options, child))
+                    }
+                    method => {
+                        if !sample_options.is_percentage {
+                            let name = if method == rustdb_ast::SampleMethod::SystemSample {
+                                "System"
+                            } else {
+                                "Bernoulli"
+                            };
+                            return Err(Error::parser(format!(
+                                "Sample method {name} cannot be used with a discrete sample count, either switch \
+                                 to reservoir sampling or use a sample_size"
+                            )));
+                        }
+                        Arc::new(PhysicalStreamingSample::new(types, &sample_options, child)?)
+                    }
+                }
+            }
             LogicalKind::Pivot { bound_pivot, .. } => {
                 Arc::new(PhysicalPivot::new(types, next_child("pivot")?, *bound_pivot)?)
             }

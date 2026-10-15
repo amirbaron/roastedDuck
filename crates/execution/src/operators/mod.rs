@@ -22,6 +22,7 @@ mod order;
 mod pivot;
 mod projection;
 mod result_collector;
+mod sample;
 mod seq_scan;
 mod streaming_window;
 mod table_scan;
@@ -60,6 +61,7 @@ pub use order::{OrderGlobalState, OrderLocalState, OrderSourceState, PhysicalOrd
 pub use pivot::PhysicalPivot;
 pub use projection::PhysicalProjection;
 pub use result_collector::{CollectedResult, PhysicalResultCollector};
+pub use sample::{BlockingSample, PhysicalReservoirSample, PhysicalStreamingSample};
 pub use seq_scan::{PhysicalSeqScan, SeqScanLocal};
 pub use streaming_window::{PhysicalStreamingWindow, StreamingWindowGlobalState, StreamingWindowState};
 pub use table_scan::{PhysicalTableScan, TableScanGlobal};
