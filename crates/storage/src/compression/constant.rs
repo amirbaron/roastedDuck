@@ -4,6 +4,9 @@
 use rustdb_common::{Error, Result};
 use rustdb_types::{LogicalTypeId, ValidityMask, Vector};
 
+use super::{CompressionType, Compressor};
+use crate::checkpoint::column_checkpointer::{FinishedSegment, SegmentSink};
+use crate::statistics::BaseStatistics;
 use crate::table::ColumnSegment;
 
 /// Writes `count` rows of the segment's constant into `result` at `result_offset`.
@@ -37,4 +40,40 @@ pub(crate) fn scan(
         result.set_value(row, &value)?;
     }
     Ok(())
+}
+
+/// The compression of a validity column whose NULLs the data codec stores
+/// (DuckDB's `EmptyValidityCompression`): one segment without data that only records
+/// whether the rows contain NULLs.
+#[derive(Debug, Default)]
+pub(crate) struct EmptyValidityCompressor {
+    count: u64,
+    non_nulls: u64,
+}
+
+impl Compressor for EmptyValidityCompressor {
+    fn compress(&mut self, _sink: &mut SegmentSink<'_>, input: &Vector, count: usize) -> Result<()> {
+        let validity = input.validity();
+        let sel = input.sel();
+        self.non_nulls += (0..count).filter(|&row| validity.is_valid(sel.slot(row))).count() as u64;
+        self.count += count as u64;
+        Ok(())
+    }
+
+    fn finalize(&mut self, sink: &mut SegmentSink<'_>) -> Result<()> {
+        let mut stats = BaseStatistics::create_empty(sink.ty.clone());
+        if self.non_nulls != self.count {
+            stats.set_has_null_fast();
+        }
+        if self.non_nulls != 0 {
+            stats.set_has_no_null_fast();
+        }
+        sink.flush(FinishedSegment {
+            data: Vec::new(),
+            count: self.count,
+            stats,
+            compression: CompressionType::Empty,
+            overflow_blocks: Vec::new(),
+        })
+    }
 }

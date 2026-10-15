@@ -3,11 +3,40 @@
 //! Every [`ColumnSegment`](crate::table::ColumnSegment) is encoded with one
 //! [`CompressionType`]. Transient (in-memory, appendable) segments are always
 //! uncompressed; checkpoints pick an encoding per segment.
+//!
+//! Reading a compressed segment goes through a [`SegmentScan`]: the codec's scan state
+//! (DuckDB's `SegmentScanState` subclass) created by [`init_scan`]. Codecs that can only be
+//! read front to back implement [`CodecScan`] and are wrapped in a [`Sequential`] adapter,
+//! which skips forward (or restarts) to the requested row the way DuckDB's
+//! `ColumnSegment::Skip` and `FetchRow` do.
 
+pub(crate) mod alp;
+pub(crate) mod alprd;
+pub(crate) mod bitpacking;
+pub(crate) mod bitpacking_primitives;
+pub(crate) mod chimp;
 pub(crate) mod constant;
+pub(crate) mod dict_fsst;
+pub(crate) mod dictionary;
+pub(crate) mod fsst;
+pub(crate) mod libfsst;
+pub(crate) mod patas;
+pub(crate) mod primitive;
+pub(crate) mod rle;
+pub(crate) mod roaring;
 pub(crate) mod uncompressed;
+pub(crate) mod zstd;
 
 use std::fmt;
+
+use std::sync::Arc;
+
+use rustdb_common::{Error, Result};
+use rustdb_types::{LogicalType, PhysicalType, Vector};
+
+use crate::checkpoint::column_checkpointer::SegmentSink;
+use crate::data_table::TableIoManager;
+use crate::table::ColumnSegment;
 
 /// The encoding of a column segment (DuckDB's `CompressionType`; the discriminants are
 /// stored on disk).
@@ -87,4 +116,298 @@ impl fmt::Display for CompressionType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.name())
     }
+}
+
+/// The scan state of a compressed segment (DuckDB's codec-specific `SegmentScanState`
+/// together with its `scan_partial` function).
+pub trait SegmentScan: fmt::Debug + Send + Sync {
+    /// Scans rows `start..start + count` of `segment` into rows
+    /// `result_offset..result_offset + count` of the flat vector `result`
+    /// (`ScanPartial` at `GetPositionInSegment() == start`).
+    fn scan(
+        &mut self,
+        segment: &ColumnSegment,
+        start: usize,
+        count: usize,
+        result: &mut Vector,
+        result_offset: usize,
+    ) -> Result<()>;
+}
+
+/// A codec whose scan state only moves forward (DuckDB's `InitScan`, `Skip` and
+/// `ScanPartial` of codecs that decode their data sequentially).
+pub(crate) trait CodecScan: fmt::Debug + Send + Sync + Sized {
+    /// `InitScan`: a state positioned at the first row of `segment`.
+    fn init(segment: &ColumnSegment) -> Result<Self>;
+    /// `Skip`: moves the state `count` rows forward.
+    fn skip(&mut self, segment: &ColumnSegment, count: usize) -> Result<()>;
+    /// `ScanPartial`: decodes the next `count` rows into `result` at `result_offset`.
+    fn scan_partial(
+        &mut self,
+        segment: &ColumnSegment,
+        count: usize,
+        result: &mut Vector,
+        result_offset: usize,
+    ) -> Result<()>;
+}
+
+/// Adapts a [`CodecScan`] to random positions: rows before the current position restart
+/// the scan, rows after it are skipped to.
+#[derive(Debug)]
+pub(crate) struct Sequential<S> {
+    state: S,
+    position: usize,
+}
+
+impl<S: CodecScan + 'static> Sequential<S> {
+    pub(crate) fn boxed(segment: &ColumnSegment) -> Result<Box<dyn SegmentScan>> {
+        Ok(Box::new(Self {
+            state: S::init(segment)?,
+            position: 0,
+        }))
+    }
+}
+
+impl<S: CodecScan> SegmentScan for Sequential<S> {
+    fn scan(
+        &mut self,
+        segment: &ColumnSegment,
+        start: usize,
+        count: usize,
+        result: &mut Vector,
+        result_offset: usize,
+    ) -> Result<()> {
+        if start < self.position {
+            self.state = S::init(segment)?;
+            self.position = 0;
+        }
+        if start > self.position {
+            self.state.skip(segment, start - self.position)?;
+        }
+        self.state.scan_partial(segment, count, result, result_offset)?;
+        self.position = start + count;
+        Ok(())
+    }
+}
+
+/// The physical type a segment of `segment`'s type stores (validity segments: `Bit`).
+fn physical_type(segment: &ColumnSegment) -> PhysicalType {
+    segment.logical_type().physical_type()
+}
+
+/// `CompressionFunction::init_scan` of a compressed (non-constant, non-uncompressed)
+/// segment.
+pub(crate) fn init_scan(segment: &ColumnSegment) -> Result<Box<dyn SegmentScan>> {
+    let physical = physical_type(segment);
+    let unsupported = || {
+        Error::internal(format!(
+            "unsupported physical type {} for {} segments",
+            physical.name(),
+            segment.compression()
+        ))
+    };
+    match segment.compression() {
+        CompressionType::Rle => rle::init_scan(segment, physical).ok_or_else(unsupported)?,
+        CompressionType::BitPacking => bitpacking::init_scan(segment, physical).ok_or_else(unsupported)?,
+        CompressionType::Alp => alp::init_scan(segment, physical).ok_or_else(unsupported)?,
+        CompressionType::AlpRd => alprd::init_scan(segment, physical).ok_or_else(unsupported)?,
+        CompressionType::Chimp => chimp::init_scan(segment, physical).ok_or_else(unsupported)?,
+        CompressionType::Patas => patas::init_scan(segment, physical).ok_or_else(unsupported)?,
+        CompressionType::Zstd if physical == PhysicalType::Varchar => {
+            Ok(Box::new(zstd::ZstdScanState::new(segment)?))
+        }
+        CompressionType::Roaring => roaring::init_scan(segment, physical).ok_or_else(unsupported)?,
+        CompressionType::Dictionary if physical == PhysicalType::Varchar => {
+            Ok(Box::new(dictionary::DictionaryScanState::new(segment)?))
+        }
+        CompressionType::Fsst if physical == PhysicalType::Varchar => {
+            Ok(Box::new(fsst::FsstScanState::new(segment)?))
+        }
+        CompressionType::DictFsst if physical == PhysicalType::Varchar => {
+            Ok(Box::new(dict_fsst::DictFsstScanState::new(segment)?))
+        }
+        other => Err(Error::not_implemented(format!(
+            "reading {other} compressed segments"
+        ))),
+    }
+}
+
+/// `CompressionFunction::fetch_row`: reads row `row` of a compressed segment into
+/// `result[result_index]`.
+pub(crate) fn fetch_row(
+    segment: &ColumnSegment,
+    row: usize,
+    result: &mut Vector,
+    result_index: usize,
+) -> Result<()> {
+    let mut state = init_scan(segment)?;
+    state.scan(segment, row, 1, result, result_index)
+}
+
+impl CompressionType {
+    /// The name `EnumUtil` uses (`force_compression` values, case-insensitive).
+    pub const fn enum_name(self) -> &'static str {
+        match self {
+            Self::Auto => "AUTO",
+            Self::Uncompressed => "UNCOMPRESSED",
+            Self::Constant => "CONSTANT",
+            Self::Rle => "RLE",
+            Self::Dictionary => "DICTIONARY",
+            Self::PforDelta => "PFOR",
+            Self::BitPacking => "BITPACKING",
+            Self::Fsst => "FSST",
+            Self::Chimp => "CHIMP",
+            Self::Patas => "PATAS",
+            Self::Alp => "ALP",
+            Self::AlpRd => "ALPRD",
+            Self::Zstd => "ZSTD",
+            Self::Roaring => "ROARING",
+            Self::Empty => "EMPTY",
+            Self::DictFsst => "DICT_FSST",
+        }
+    }
+
+    /// `EnumUtil::FromString<CompressionType>`.
+    pub fn from_enum_name(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|compression| compression.enum_name().eq_ignore_ascii_case(name))
+    }
+}
+
+/// How checkpoints compress segments: the database-wide settings DuckDB reads in
+/// `ColumnDataCheckpointer` and the codecs (`force_compression`,
+/// `zstd_min_string_length`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CompressionConfig {
+    /// `force_compression`: the codec to use where it applies (`Auto` lets every codec
+    /// compete).
+    pub force_compression: CompressionType,
+    /// `zstd_min_string_length`: below this average string length ZSTD is penalised.
+    pub zstd_min_string_length: u64,
+}
+
+impl Default for CompressionConfig {
+    fn default() -> Self {
+        Self {
+            force_compression: CompressionType::Auto,
+            zstd_min_string_length: 4096,
+        }
+    }
+}
+
+/// What a codec knows about the database it writes to (DuckDB's `CompressionInfo` plus the
+/// storage version and settings the codecs consult).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CompressionInfo {
+    /// The usable size of a block.
+    pub block_size: usize,
+    /// The serialization version written (`StorageManager::GetStorageVersion`).
+    pub storage_version: u64,
+    pub config: CompressionConfig,
+}
+
+impl CompressionInfo {
+    /// `GetCompactionFlushLimit`: segments filled beyond this are not compacted.
+    pub(crate) fn compaction_flush_limit(&self) -> usize {
+        self.block_size / 5 * 4
+    }
+}
+
+/// The analyze step of a codec (`init_analyze` / `analyze` / `final_analyze`).
+pub(crate) trait Analyzer {
+    /// Accounts for `count` rows of `input`; `false` rules the codec out.
+    fn analyze(&mut self, input: &Vector, count: usize) -> Result<bool>;
+    /// The estimated size of the compressed data (`None`: the codec cannot be used).
+    fn final_analyze(&mut self) -> Result<Option<u64>>;
+    /// `init_compression`: the compression state, built from the analysis.
+    fn into_compressor(self: Box<Self>) -> Result<Box<dyn Compressor>>;
+}
+
+/// The compression step of a codec (`compress` / `compress_finalize`).
+pub(crate) trait Compressor {
+    fn compress(&mut self, sink: &mut SegmentSink<'_>, input: &Vector, count: usize) -> Result<()>;
+    fn finalize(&mut self, sink: &mut SegmentSink<'_>) -> Result<()>;
+}
+
+/// `EmitCompressionFunction` + `TypeIsSupported`: the codecs that compete for a column of
+/// `physical` type, in DuckDB's registry order (ties go to the earlier one).
+pub(crate) fn candidate_functions(physical: PhysicalType) -> Vec<CompressionType> {
+    use CompressionType as C;
+    use PhysicalType as P;
+    let integer = matches!(
+        physical,
+        P::Bool
+            | P::Int8
+            | P::Int16
+            | P::Int32
+            | P::Int64
+            | P::Int128
+            | P::UInt8
+            | P::UInt16
+            | P::UInt32
+            | P::UInt64
+            | P::UInt128
+            | P::List
+    );
+    let float = matches!(physical, P::Float | P::Double);
+    let string = physical == P::Varchar;
+    let supported = |compression: C| match compression {
+        C::Uncompressed => integer || float || string || matches!(physical, P::Interval | P::Bit),
+        C::Rle => integer || float,
+        C::BitPacking => integer,
+        C::Dictionary | C::Fsst | C::Zstd | C::DictFsst => string,
+        C::Chimp | C::Patas | C::Alp | C::AlpRd => float,
+        C::Roaring => matches!(physical, P::Bit | P::Bool),
+        C::Auto | C::Constant | C::PforDelta | C::Empty => false,
+    };
+    [
+        C::Uncompressed,
+        C::Rle,
+        C::BitPacking,
+        C::Dictionary,
+        C::Chimp,
+        C::Patas,
+        C::Alp,
+        C::AlpRd,
+        C::Fsst,
+        C::Zstd,
+        C::Roaring,
+        C::DictFsst,
+    ]
+    .into_iter()
+    .filter(|&compression| supported(compression))
+    .collect()
+}
+
+/// Whether a codec stores the column's validity itself (`CompressionValidity::
+/// NO_VALIDITY_REQUIRED`), so the validity column is written as an empty segment.
+pub(crate) fn covers_validity(compression: CompressionType) -> bool {
+    compression == CompressionType::DictFsst
+}
+
+/// `init_analyze` of `compression` for a column of type `ty` (`physical`); `None` when the
+/// codec does not apply (unsupported type or storage version, deprecated codec).
+pub(crate) fn init_analyze(
+    compression: CompressionType,
+    ty: &LogicalType,
+    physical: PhysicalType,
+    info: &CompressionInfo,
+    io: &Arc<TableIoManager>,
+) -> Result<Option<Box<dyn Analyzer>>> {
+    Ok(match compression {
+        CompressionType::Uncompressed => Some(uncompressed::init_analyze(ty, info, io)?),
+        CompressionType::Rle => rle::init_analyze(ty, physical, info),
+        CompressionType::BitPacking => bitpacking::init_analyze(ty, physical, info),
+        CompressionType::Roaring => roaring::init_analyze(ty, physical, info),
+        CompressionType::Alp => alp::init_analyze(ty, physical, info),
+        CompressionType::AlpRd => alprd::init_analyze(ty, physical, info),
+        CompressionType::Dictionary if physical == PhysicalType::Varchar => {
+            dictionary::init_analyze(ty, info)
+        }
+        CompressionType::Fsst if physical == PhysicalType::Varchar => fsst::init_analyze(ty, info),
+        CompressionType::DictFsst if physical == PhysicalType::Varchar => dict_fsst::init_analyze(ty, info),
+        CompressionType::Zstd if physical == PhysicalType::Varchar => zstd::init_analyze(ty, info),
+        _ => None,
+    })
 }

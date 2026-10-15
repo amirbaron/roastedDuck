@@ -739,6 +739,26 @@ impl ColumnData {
         Ok(scanned)
     }
 
+    /// Scans the next `count` rows (`offset..offset + count`) of the column for a checkpoint
+    /// (`CheckpointScan`): the data with its validity and committed updates for standard
+    /// and validity columns, the raw end offsets for LIST columns. `state` must be
+    /// positioned at `offset` and moves along.
+    pub(crate) fn checkpoint_scan(
+        &self,
+        state: &mut ColumnScanState,
+        offset: u64,
+        count: usize,
+        result: &mut Vector,
+    ) -> Result<usize> {
+        Self::prepare_result(result, count);
+        if matches!(self.kind, ColumnKind::List { .. }) {
+            return self.scan_segments(state, result, count, 0);
+        }
+        let scanned = self.scan_into(None, state, result, count, 0)?;
+        self.merge_committed_updates(offset, count, result);
+        Ok(scanned)
+    }
+
     fn merge_committed_updates(&self, offset: u64, count: usize, result: &mut Vector) {
         if let Some(updates) = self.update_segment() {
             updates.fetch_committed_range(offset, count as u64, result);

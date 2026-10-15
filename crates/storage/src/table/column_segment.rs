@@ -20,7 +20,7 @@ use rustdb_buffer::{
 use rustdb_common::{Error, Result};
 use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, Vector};
 
-use crate::compression::{CompressionType, constant, uncompressed};
+use crate::compression::{self, CompressionType, SegmentScan, constant, uncompressed};
 use crate::statistics::BaseStatistics;
 
 /// Whether a segment is still appendable memory or written to the database file.
@@ -112,6 +112,30 @@ impl SegmentBuffer {
     }
 }
 
+/// A pin of a persistent segment's block, whose bytes never change once the segment is
+/// loaded from (or written to) the database file. Compressed segments are only read
+/// through this view.
+#[derive(Clone, Debug)]
+pub(crate) struct PersistentData {
+    buffer: SegmentBuffer,
+}
+
+impl PersistentData {
+    /// The bytes from the start of the segment to the end of its block.
+    pub(crate) fn bytes(&self) -> &[u8] {
+        let len = self.buffer.len();
+        // SAFETY: persistent blocks are immutable (only transient segments are appended
+        // to), and the pin held by `self.buffer` keeps the memory alive for `&self`.
+        unsafe { self.buffer.bytes(0, len) }.unwrap_or(&[])
+    }
+}
+
+impl AsRef<[u8]> for PersistentData {
+    fn as_ref(&self) -> &[u8] {
+        self.bytes()
+    }
+}
+
 /// An in-memory block holding uncompressed strings too large for the segment
 /// (DuckDB's `StringBlock`).
 #[derive(Debug)]
@@ -135,6 +159,8 @@ pub enum SegmentScanState {
     Pinned(SegmentBuffer),
     /// The segment has no block (constant encodings).
     NoBlock,
+    /// The scan state of a compressed segment.
+    Compressed(Box<dyn SegmentScan>),
 }
 
 /// Append state of a transient segment: its block, pinned for the append.
@@ -216,7 +242,10 @@ impl ColumnSegment {
                 segment.compression = compression;
                 Ok(segment)
             }
-            CompressionType::Uncompressed => {
+            CompressionType::Auto | CompressionType::PforDelta => Err(Error::not_implemented(format!(
+                "reading {compression} compressed segments"
+            ))),
+            _ => {
                 let layout = Layout::of(&ty)?;
                 let block = buffer_manager.register_block(block_manager, block_id);
                 Ok(Self {
@@ -237,9 +266,6 @@ impl ColumnSegment {
                     overflow_blocks,
                 })
             }
-            other => Err(Error::not_implemented(format!(
-                "reading {other} compressed segments"
-            ))),
         }
     }
 
@@ -381,6 +407,14 @@ impl ColumnSegment {
         self.string_state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Pins the block of a persistent segment for reading.
+    pub(crate) fn pin_persistent(&self) -> Result<PersistentData> {
+        if self.segment_type != SegmentType::Persistent {
+            return Err(Error::internal("reading a compressed transient segment"));
+        }
+        Ok(PersistentData { buffer: self.pin()? })
+    }
+
     /// Pins the segment's block.
     pub(crate) fn pin(&self) -> Result<SegmentBuffer> {
         let block = self
@@ -395,7 +429,7 @@ impl ColumnSegment {
         match self.compression {
             CompressionType::Constant | CompressionType::Empty => Ok(SegmentScanState::NoBlock),
             CompressionType::Uncompressed => Ok(SegmentScanState::Pinned(self.pin()?)),
-            other => Err(Error::not_implemented(format!("scanning {other} segments"))),
+            _ => Ok(SegmentScanState::Compressed(compression::init_scan(self)?)),
         }
     }
 
@@ -416,7 +450,12 @@ impl ColumnSegment {
             (CompressionType::Uncompressed, SegmentScanState::Pinned(buffer)) => {
                 uncompressed::scan(self, buffer, start as usize, count, result, result_offset)
             }
-            (other, _) => Err(Error::not_implemented(format!("scanning {other} segments"))),
+            (_, SegmentScanState::Compressed(state)) => {
+                state.scan(self, start as usize, count, result, result_offset)
+            }
+            (other, _) => Err(Error::internal(format!(
+                "scan state does not match the {other} segment"
+            ))),
         }
     }
 
@@ -435,7 +474,7 @@ impl ColumnSegment {
                 let buffer = self.pin()?;
                 uncompressed::scan(self, &buffer, row as usize, 1, result, result_index)
             }
-            other => Err(Error::not_implemented(format!("fetching from {other} segments"))),
+            _ => compression::fetch_row(self, row as usize, result, result_index),
         }
     }
 

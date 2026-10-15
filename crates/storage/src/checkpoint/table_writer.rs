@@ -2,9 +2,10 @@
 //! `RowGroup::WriteToDisk/Checkpoint`, `ColumnCheckpointState`, `PartialBlockManager` and
 //! `WriteOverflowStringsToDisk`).
 //!
-//! Every committed row is re-appended to fresh uncompressed segments, which are then
-//! written to blocks: segments whose statistics show a single value become constant
-//! segments without a block; small segments share blocks.
+//! Every column of every row group is checkpointed by the
+//! [column checkpointer](super::column_checkpointer), which picks a codec per column and
+//! writes its segments here: segments whose statistics show a single value become
+//! constant segments without a block; small segments share blocks.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -14,8 +15,9 @@ use rustdb_common::{Error, Result};
 use rustdb_serde::binary::BinarySerializer;
 use rustdb_serde::{SerializationOptions, Serializer};
 
-use super::pointers::{BlockPointer, DataPointer, PersistentColumnData, RowGroupPointer};
-use crate::compression::CompressionType;
+use super::column_checkpointer::{CheckpointContext, checkpoint_column, merge_persistent_statistics};
+use super::pointers::{BlockPointer, RowGroupPointer};
+use crate::compression::CompressionInfo;
 use crate::compression::uncompressed::{
     BIG_STRING_MARKER_SIZE, DICTIONARY_HEADER_SIZE, read_overflow_string_bytes,
 };
@@ -23,8 +25,9 @@ use crate::data_table::DataTable;
 use crate::metadata::{MetaBlockPointer, MetadataManager, MetadataWriter};
 use crate::single_file_block_manager::SingleFileBlockManager;
 use crate::statistics::{BaseStatistics, serialize_table_statistics};
+use crate::checkpoint::pointers::PersistentColumnData;
 use crate::table::RowGroup;
-use crate::table::column_data::{ColumnData, ColumnKind};
+use crate::table::column_data::ColumnData;
 use crate::table::column_segment::{ColumnSegment, Layout};
 
 /// The writer of data blocks of a checkpoint (DuckDB's `PartialBlockManager` for full
@@ -47,19 +50,29 @@ impl BlockWriter {
         }
     }
 
-    fn block_size(&self) -> usize {
+    pub(crate) fn block_size(&self) -> usize {
         rustdb_buffer::BlockManager::block_size(self.manager.as_ref())
     }
 
+    /// What the codecs of this checkpoint need to know: the block size, the storage version
+    /// written and the compression settings.
+    pub(crate) fn compression_info(&self) -> CompressionInfo {
+        CompressionInfo {
+            block_size: self.block_size(),
+            storage_version: self.manager.storage_version(),
+            config: self.manager.compression_config(),
+        }
+    }
+
     /// A new block id for checkpoint data.
-    fn new_block(&mut self) -> Result<BlockId> {
+    pub(crate) fn new_block(&mut self) -> Result<BlockId> {
         let id = self.manager.get_free_block_id_for_checkpoint()?;
         self.used_blocks.insert(id, 1);
         Ok(id)
     }
 
     /// Writes a block, zero-padding it to the block size.
-    fn write_block(&self, block_id: BlockId, mut data: Vec<u8>) -> Result<()> {
+    pub(crate) fn write_block(&self, block_id: BlockId, mut data: Vec<u8>) -> Result<()> {
         data.resize(self.block_size(), 0);
         self.manager.write_block(block_id, &data)
     }
@@ -188,7 +201,10 @@ impl OverflowWriter {
 /// blocks: fixed-size values, validity masks per vector, or a string dictionary moved
 /// next to its offsets when the segment is less than 80% full. Big strings are moved to
 /// on-disk overflow blocks and their markers rewritten.
-fn segment_bytes(segment: &ColumnSegment, writer: &mut BlockWriter) -> Result<(Vec<u8>, Vec<BlockId>)> {
+pub(crate) fn segment_bytes(
+    segment: &ColumnSegment,
+    writer: &mut BlockWriter,
+) -> Result<(Vec<u8>, Vec<BlockId>)> {
     let count = segment.count() as usize;
     let buffer = segment.pin()?;
     match segment.layout() {
@@ -261,70 +277,6 @@ fn segment_bytes(segment: &ColumnSegment, writer: &mut BlockWriter) -> Result<(V
             Ok((result, overflow.blocks))
         }
     }
-}
-
-/// Writes the segments of a filled checkpoint column and of its children.
-fn persist_column(
-    column: &ColumnData,
-    row_group_start: u64,
-    writer: &mut BlockWriter,
-) -> Result<PersistentColumnData> {
-    let mut result = PersistentColumnData::new(column.logical_type().clone());
-    let mut row_start = 0u64;
-    for node in column.segments().nodes() {
-        let segment = &node.node;
-        let count = segment.count();
-        if count == 0 {
-            continue;
-        }
-        let statistics = segment.statistics().clone();
-        let (block_pointer, compression, overflow_blocks) = if statistics.is_constant() {
-            (BlockPointer::invalid(), CompressionType::Constant, Vec::new())
-        } else {
-            let (bytes, overflow_blocks) = segment_bytes(segment, writer)?;
-            (
-                writer.write_segment(&bytes)?,
-                CompressionType::Uncompressed,
-                overflow_blocks,
-            )
-        };
-        result.pointers.push(DataPointer {
-            row_start: row_start + row_group_start,
-            tuple_count: count,
-            block_pointer,
-            compression,
-            statistics,
-            overflow_blocks,
-        });
-        row_start += count;
-    }
-    match column.kind() {
-        ColumnKind::Validity => {}
-        ColumnKind::Standard { validity } => {
-            result
-                .child_columns
-                .push(persist_column(validity, row_group_start, writer)?);
-        }
-        ColumnKind::List { validity, child } | ColumnKind::Array { validity, child } => {
-            result
-                .child_columns
-                .push(persist_column(validity, row_group_start, writer)?);
-            result
-                .child_columns
-                .push(persist_column(child, row_group_start, writer)?);
-        }
-        ColumnKind::Struct { validity, fields } => {
-            result
-                .child_columns
-                .push(persist_column(validity, row_group_start, writer)?);
-            for field in fields {
-                result
-                    .child_columns
-                    .push(persist_column(field, row_group_start, writer)?);
-            }
-        }
-    }
-    Ok(result)
 }
 
 /// Serializes `write` as one unit into a metadata writer (a `BinarySerializer` over the
@@ -429,11 +381,15 @@ pub fn write_table_data(
         };
         let mut written_columns = Vec::with_capacity(row_group.columns().len());
         for (index, column) in row_group.columns().iter().enumerate() {
-            let target = column.checkpoint_copy(count)?;
+            let mut context = CheckpointContext {
+                info: blocks.compression_info(),
+                writer: &mut *blocks,
+                io: collection.io(),
+            };
+            let persistent = checkpoint_column(column, count, row_group_start, &mut context)?;
             if let Some(stats) = table_stats.get_mut(index) {
-                target.merge_into_statistics(stats)?;
+                merge_persistent_statistics(&persistent, stats);
             }
-            let persistent = persist_column(&target, row_group_start, blocks)?;
             pointer.data_pointers.push(table_writer.meta_block_pointer()?);
             write_unit(table_writer, options, |s| persistent.serialize_fields(s))?;
             written_columns.push(persistent);

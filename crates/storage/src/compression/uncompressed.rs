@@ -13,10 +13,14 @@ use std::sync::Arc;
 
 use rustdb_buffer::{MAXIMUM_BLOCK, MemoryTag};
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::{LogicalTypeId, PhysicalType, StringT, ValidityMask, Vector};
+use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, StringT, ValidityMask, Vector};
 
+use super::{Analyzer, CompressionInfo, CompressionType, Compressor};
+use crate::checkpoint::column_checkpointer::{FinishedSegment, SegmentSink};
+use crate::checkpoint::table_writer::segment_bytes;
+use crate::data_table::TableIoManager;
 use crate::statistics::BaseStatistics;
-use crate::table::column_segment::{ColumnSegment, Layout, OverflowBlock, SegmentBuffer};
+use crate::table::column_segment::{ColumnSegment, Layout, OverflowBlock, SegmentAppendState, SegmentBuffer};
 
 /// Size of the string dictionary header (`DICTIONARY_HEADER_SIZE`).
 pub(crate) const DICTIONARY_HEADER_SIZE: usize = 8;
@@ -586,5 +590,139 @@ pub(crate) fn revert_append(segment: &ColumnSegment, new_count: u64) -> Result<(
             // SAFETY: as above.
             unsafe { buffer.write(0, &dictionary_size.to_le_bytes()) }
         }
+    }
+}
+
+/// The analysis of uncompressed storage (`FixedSizeAnalyze`, `ValidityAnalyze` and
+/// `UncompressedStringStorage::StringAnalyze`): its size is known exactly.
+#[derive(Debug)]
+struct UncompressedAnalyzer {
+    ty: LogicalType,
+    layout: Layout,
+    info: CompressionInfo,
+    io: Arc<TableIoManager>,
+    count: u64,
+    total_string_size: u64,
+    overflow_strings: u64,
+}
+
+/// `UncompressedFun::GetFunction(type).init_analyze`.
+pub(crate) fn init_analyze(
+    ty: &LogicalType,
+    info: &CompressionInfo,
+    io: &Arc<TableIoManager>,
+) -> Result<Box<dyn Analyzer>> {
+    Ok(Box::new(UncompressedAnalyzer {
+        ty: ty.clone(),
+        layout: Layout::of(ty)?,
+        info: *info,
+        io: Arc::clone(io),
+        count: 0,
+        total_string_size: 0,
+        overflow_strings: 0,
+    }))
+}
+
+impl Analyzer for UncompressedAnalyzer {
+    fn analyze(&mut self, input: &Vector, count: usize) -> Result<bool> {
+        self.count += count as u64;
+        if self.layout == Layout::Strings {
+            let limit = string_block_limit(self.info.block_size);
+            let data = input.unified::<StringT>();
+            for row in 0..count {
+                if let Some(value) = data.get(row) {
+                    let size = value.len();
+                    self.total_string_size += size as u64;
+                    if size >= limit {
+                        self.overflow_strings += 1;
+                    }
+                }
+            }
+        }
+        Ok(true)
+    }
+
+    fn final_analyze(&mut self) -> Result<Option<u64>> {
+        Ok(Some(match self.layout {
+            Layout::Fixed(width) => width as u64 * self.count,
+            Layout::Validity => self.count.div_ceil(8),
+            Layout::Strings => {
+                self.count * 4
+                    + self.total_string_size
+                    + self.overflow_strings * BIG_STRING_MARKER_SIZE as u64
+            }
+        }))
+    }
+
+    fn into_compressor(self: Box<Self>) -> Result<Box<dyn Compressor>> {
+        Ok(Box::new(UncompressedCompressor {
+            ty: self.ty,
+            io: self.io,
+            current: None,
+        }))
+    }
+}
+
+/// Uncompressed storage (`UncompressedCompressState`): values are appended to a transient
+/// segment of a full block, which is flushed when full.
+#[derive(Debug)]
+struct UncompressedCompressor {
+    ty: LogicalType,
+    io: Arc<TableIoManager>,
+    current: Option<(ColumnSegment, SegmentAppendState)>,
+}
+
+impl UncompressedCompressor {
+    /// `CreateEmptySegment`.
+    fn create_empty_segment(&self, block_size: usize) -> Result<(ColumnSegment, SegmentAppendState)> {
+        let segment = ColumnSegment::create_transient(
+            self.io.buffer_manager(),
+            self.io.block_manager().as_ref(),
+            self.ty.clone(),
+            block_size,
+        )?;
+        let state = segment.init_append()?;
+        Ok((segment, state))
+    }
+
+    /// `FlushSegment` of the current segment (`FinalizeAppend` + `FlushSegmentInternal`).
+    fn flush_segment(&mut self, sink: &mut SegmentSink<'_>) -> Result<()> {
+        let Some((segment, _)) = self.current.take() else {
+            return Ok(());
+        };
+        let (data, overflow_blocks) = segment_bytes(&segment, sink.writer)?;
+        let stats = segment.statistics().clone();
+        sink.flush(FinishedSegment {
+            data,
+            count: segment.count(),
+            stats,
+            compression: CompressionType::Uncompressed,
+            overflow_blocks,
+        })
+    }
+}
+
+impl Compressor for UncompressedCompressor {
+    /// `UncompressedFunctions::Compress`.
+    fn compress(&mut self, sink: &mut SegmentSink<'_>, input: &Vector, count: usize) -> Result<()> {
+        let mut offset = 0;
+        while offset < count {
+            if self.current.is_none() {
+                self.current = Some(self.create_empty_segment(sink.info.block_size)?);
+            }
+            let Some((segment, state)) = &mut self.current else {
+                return Err(Error::internal("uncompressed segment missing"));
+            };
+            let appended = segment.append(state, input, offset, count - offset)?;
+            offset += appended;
+            if offset < count {
+                self.flush_segment(sink)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn finalize(&mut self, sink: &mut SegmentSink<'_>) -> Result<()> {
+        self.flush_segment(sink)
     }
 }
