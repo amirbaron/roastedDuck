@@ -743,7 +743,7 @@ impl PlanGenerator {
                 distinct_targets,
                 order_by,
                 ..
-            } => plan_distinct(distinct_targets, order_by, next_child("distinct")?)?,
+            } => plan_distinct(distinct_targets, order_by.as_ref(), next_child("distinct")?)?,
             _ => return Err(not_implemented(operator_type)),
         };
         Ok(plan)
@@ -815,7 +815,7 @@ fn except_or_intersect(
 /// `ORDER BY` of a `DISTINCT ON`), and a projection restores the column order.
 fn plan_distinct(
     groups: Vec<Expression>,
-    order_by: Option<BoundOrderModifier>,
+    order_by: Option<&BoundOrderModifier>,
     child: PhysicalRef,
 ) -> Result<PhysicalRef> {
     let types = child.types().to_vec();
@@ -843,7 +843,7 @@ fn plan_distinct(
             bind_info: None,
             aggr_type: AggregateType::NonDistinct,
             filter: None,
-            order_bys: order_by.clone(),
+            order_bys: order_by.cloned(),
         };
         projections.push(Expression::reference(
             "",
