@@ -6,3 +6,4 @@ mod flatten_dependent_join;
 mod rewrite;
 
 pub use flatten_dependent_join::decorrelate_independent;
+pub(crate) use flatten_dependent_join::row_number;

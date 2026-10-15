@@ -465,6 +465,16 @@ pub trait ExpressionBinder: ColumnQualifier {
         if is_bound(expr) {
             return Ok(None);
         }
+        // A window function partly bound in an inner query cannot be retried here
+        // (DuckDB's `WindowExpression::HasBoundedParts` check).
+        if let ParsedExpressionKind::Window(window) = &expr.kind
+            && (window.children.iter().any(is_bound)
+                || window.partitions.iter().any(is_bound)
+                || window.orders.iter().any(|order| is_bound(&order.expression))
+                || window.arg_orders.iter().any(|order| is_bound(&order.expression)))
+        {
+            return Ok(Some(unsupported(expr, "window expression is not supported here")));
+        }
         let query_location = expr.query_location;
         let alias = expr.alias.clone();
         match self.bind_expression(expr, depth, root_expression)? {

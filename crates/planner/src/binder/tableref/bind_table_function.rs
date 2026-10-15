@@ -168,7 +168,7 @@ fn bind_table_function_internal(
     scope: &mut BindScope<'_>,
     function: TableFunction,
     function_name: String,
-    column_name_alias: &[String],
+    reference: &TableFunctionRef,
     parameters: Vec<Value>,
     named_parameters: Vec<(String, Value)>,
     input_table: InputTable,
@@ -190,8 +190,30 @@ fn bind_table_function_internal(
         input_table_types: &input_table_types,
         input_table_names: &input_table_names,
     })?;
-    let return_types = output.return_types;
+    let column_name_alias = &reference.column_name_alias;
+    let mut return_types = output.return_types;
     let mut names = output.names;
+    let with_ordinality = reference.with_ordinality == OrdinalityType::WithOrdinality;
+    let correlated = !scope.binder.correlated_columns.is_empty();
+    let mut ordinality_name = "ordinality".to_owned();
+    let mut ordinality_index = None;
+    if with_ordinality {
+        // A name not taken by the function's columns or the aliases.
+        let mut taken = rustdb_common::CaseInsensitiveSet::default();
+        for name in names.iter().chain(column_name_alias) {
+            taken.insert(name.clone());
+        }
+        let mut suffix = 0;
+        while taken.contains(&ordinality_name) {
+            ordinality_name = format!("ordinality{suffix}");
+            suffix += 1;
+        }
+        if correlated {
+            return_types.push(LogicalType::BIGINT);
+            names.push(ordinality_name.clone());
+            ordinality_index = Some(return_types.len() as u64 - 1);
+        }
+    }
     if return_types.len() != names.len() {
         return Err(Error::internal(format!(
             "Failed to bind \"{}\": return_types/names must have same size",
@@ -233,7 +255,7 @@ fn bind_table_function_internal(
         input_table_types,
         input_table_names,
         projected_input: Vec::new(),
-        ordinality_index: None,
+        ordinality_index,
         shared_column_ids: Some(std::sync::Arc::clone(&shared_column_ids)),
     };
     // DuckDB's `AddTableFunction`: a table binding tracking the columns used.
@@ -243,16 +265,34 @@ fn bind_table_function_internal(
             entry: None,
             virtual_columns: Vec::new(),
         },
-        BindingAlias::new(function_name),
+        BindingAlias::new(function_name.clone()),
         return_types.clone(),
         names.clone(),
         bind_index,
     )?);
-    Ok(BoundStatement::new(
-        LogicalOperator::new(LogicalKind::Get(Box::new(get))),
-        names,
-        return_types,
-    ))
+    let get = LogicalOperator::new(LogicalKind::Get(Box::new(get)));
+    if !with_ordinality || correlated {
+        return Ok(BoundStatement::new(get, names, return_types));
+    }
+    // WITH ORDINALITY: a row number over the scan.
+    let window_index = scope.binder.generate_table_index();
+    let ordinality_alias = column_name_alias
+        .get(names.len())
+        .cloned()
+        .unwrap_or(ordinality_name);
+    let row_number = crate::subquery::row_number(Vec::new(), Vec::new(), &ordinality_alias);
+    names.push(ordinality_alias.clone());
+    return_types.push(LogicalType::BIGINT);
+    scope.binder.bind_context.add_generic_binding(
+        window_index,
+        &function_name,
+        vec![ordinality_alias],
+        vec![LogicalType::BIGINT],
+    )?;
+    let window = LogicalOperator::new(LogicalKind::Window { window_index })
+        .with_expressions(vec![row_number])
+        .with_children(vec![get]);
+    Ok(BoundStatement::new(window, names, return_types))
 }
 
 /// `FROM f(args)` (DuckDB's `Binder::Bind(TableFunctionRef &)`).
@@ -262,9 +302,6 @@ pub fn bind_table_function(
     alias: &str,
     location: Option<u64>,
 ) -> Result<BoundStatement> {
-    if function_ref.with_ordinality == OrdinalityType::WithOrdinality {
-        return Err(Error::not_implemented("WITH ORDINALITY"));
-    }
     let ParsedExpressionKind::Function(function) = &mut function_ref.function.kind else {
         return Err(Error::internal(
             "table function reference without a function call",
@@ -347,7 +384,7 @@ pub fn bind_table_function(
         scope,
         table_function,
         alias,
-        &function_ref.column_name_alias,
+        function_ref,
         parameters,
         named.0,
         input_table,

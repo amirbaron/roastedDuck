@@ -78,7 +78,11 @@ fn comparison_join(
 }
 
 /// `row_number() OVER (PARTITION BY partitions ORDER BY orders ROWS UNBOUNDED PRECEDING)`.
-fn row_number(partitions: Vec<Expression>, orders: Vec<BoundOrderByNode>, alias: &str) -> Expression {
+pub(crate) fn row_number(
+    partitions: Vec<Expression>,
+    orders: Vec<BoundOrderByNode>,
+    alias: &str,
+) -> Expression {
     Expression::new(
         ExpressionType::WindowRowNumber,
         LogicalType::BIGINT,

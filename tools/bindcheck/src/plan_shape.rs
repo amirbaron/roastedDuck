@@ -13,8 +13,26 @@ fn join(parts: impl IntoIterator<Item = String>) -> String {
     parts.into_iter().collect::<Vec<_>>().join(",")
 }
 
+/// The nested expressions in DuckDB's serialization order (which, for window
+/// functions, differs from the expression iterator's).
+fn serialization_children(expression: &Expression) -> Vec<&Expression> {
+    if let rustdb_planner::ExpressionKind::Window(window) = &expression.kind {
+        let mut children: Vec<&Expression> = window.children.iter().collect();
+        children.extend(&window.partitions);
+        children.extend(window.orders.iter().map(|order| &order.expression));
+        children.extend(&window.filter_expr);
+        children.extend(&window.start_expr);
+        children.extend(&window.end_expr);
+        children.extend(&window.offset_expr);
+        children.extend(&window.default_expr);
+        children.extend(window.arg_orders.iter().map(|order| &order.expression));
+        return children;
+    }
+    expression.children()
+}
+
 fn rust_expression(expression: &Expression) -> String {
-    let children = expression.children();
+    let children = serialization_children(expression);
     let head = format!(
         "{}/{}",
         expression.expression_class().name(),

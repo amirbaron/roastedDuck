@@ -174,12 +174,15 @@ fn bind_show_table(scope: &mut BindScope<'_>, show: &ShowRef) -> Result<BoundSta
                 catalog = std::mem::take(&mut schema);
             }
             if !schema.is_empty() {
-                if catalog.is_empty() {
-                    scope.context.default_catalog().clone_into(&mut catalog);
-                }
+                // The default entry of the search path has an empty catalog name.
+                let lookup = if catalog.is_empty() {
+                    scope.context.default_catalog()
+                } else {
+                    catalog.as_str()
+                };
                 let exists = scope
                     .context
-                    .catalog(&catalog)
+                    .catalog(lookup)
                     .and_then(|entry| entry.schema(&scope.context.transaction, &schema))
                     .is_some();
                 if !exists {
