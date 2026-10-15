@@ -16,6 +16,7 @@
 
 mod compare;
 mod oracle;
+mod plan_shape;
 
 use std::collections::BTreeMap;
 use std::io::{BufRead as _, Write as _};
@@ -44,6 +45,8 @@ struct Options {
     dir: PathBuf,
     jobs: usize,
     filter: Option<String>,
+    /// Recompute cached oracle results.
+    refresh: bool,
 }
 
 fn workspace_root() -> PathBuf {
@@ -117,7 +120,7 @@ fn run_oracle(options: &Options) -> Result<()> {
     let out_dir = options.dir.join("bindcheck");
     std::fs::create_dir_all(&out_dir)?;
     let path = out_dir.join("oracle.jsonl");
-    let mut cached: BTreeMap<u64, OracleResult> = if path.exists() {
+    let mut cached: BTreeMap<u64, OracleResult> = if path.exists() && !options.refresh {
         read_jsonl::<OracleResult>(&path)?.into_iter().map(|row| (row.id, row)).collect()
     } else {
         BTreeMap::new()
@@ -165,7 +168,11 @@ fn run_sql(options: &Options, sql: &str) -> Result<bool> {
     let expected = oracle::run_one(&options.duckdb, 0, sql);
     let actual = compare::run_rustdb(sql, &json);
     println!("== duckdb\n{}", compare::render(&expected.outcome()));
-    println!("== rustdb\n{}", compare::render(&actual));
+    println!("== rustdb\n{}", compare::render(&actual.result));
+    if let Some(plan) = &expected.plan {
+        println!("== duckdb plan\n{}", plan_shape::duckdb_shape(plan).unwrap_or_else(|error| error));
+    }
+    println!("== rustdb plan\n{}", actual.plan.as_ref().unwrap_or_else(|error| error));
     let outcome = compare::compare(&expected, &actual);
     println!("== {}", outcome.label());
     Ok(matches!(outcome, Outcome::Pass))
@@ -183,6 +190,7 @@ fn run() -> Result<bool> {
         dir: root.join("target"),
         jobs: 8,
         filter: None,
+        refresh: false,
     };
     let mut args = std::env::args().skip(1);
     let command = args.next().unwrap_or_default();
@@ -190,6 +198,10 @@ fn run() -> Result<bool> {
     while let Some(arg) = args.next() {
         if !arg.starts_with("--") {
             positional.push(arg);
+            continue;
+        }
+        if arg == "--refresh" {
+            options.refresh = true;
             continue;
         }
         let value = args.next().ok_or_else(|| format!("{arg} needs a value"))?;

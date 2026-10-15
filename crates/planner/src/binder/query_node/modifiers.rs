@@ -2,7 +2,7 @@
 //! `BindModifiers`, `BindLimitValue` and `VisitQueryNode`).
 
 use rustdb_ast::{ExpressionType, ParsedExpression, ParsedExpressionKind, ResultModifier};
-use rustdb_common::{Error, ErrorKind, Result};
+use rustdb_common::{Error, Result};
 use rustdb_function::cast::{CastParameters, ValueCast};
 use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
@@ -412,9 +412,4 @@ pub fn visit_query_node(modifiers: Vec<BoundResultModifier>, mut root: LogicalOp
         }
     }
     root
-}
-
-/// "Parameter not supported" for parameters in ORDER BY (DuckDB's `ParameterNotAllowedException`).
-pub fn parameter_not_allowed(message: impl Into<String>) -> Error {
-    Error::new(ErrorKind::ParameterNotAllowed, message.into())
 }

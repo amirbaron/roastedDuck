@@ -2,9 +2,8 @@
 
 use rustdb_ast::{
     AggregateHandling, ExpressionType, ParsedExpression, ParsedExpressionKind, QueryNode, QueryNodeKind, SelectNode,
-    StarExpression,
 };
-use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
+use rustdb_common::{CaseInsensitiveMap, Error, Result};
 use rustdb_types::LogicalType;
 
 use super::modifiers::{OrderTargets, bind_modifiers, prepare_modifiers, visit_query_node};
@@ -17,7 +16,7 @@ use crate::expression_binder::{
     qualify_column_names,
 };
 use crate::operator::{LogicalAggregate, LogicalKind, LogicalOperator};
-use crate::{ColumnBinding, parsed_equality};
+use crate::ColumnBinding;
 
 /// Binds a SELECT node: its FROM clause first (DuckDB's `BindNode(SelectNode &)`).
 pub fn bind_select(scope: &mut BindScope<'_>, node: &mut QueryNode) -> Result<BoundStatement> {

@@ -163,6 +163,25 @@ impl Connection {
         result.map_err(|error| error.with_query_context(query))
     }
 
+    /// The logical plan of a parsed statement of `query`, with column references
+    /// resolved, as `json_serialize_plan` (without optimization) sees it. A development
+    /// aid for comparing plans with DuckDB's.
+    pub fn logical_plan(&mut self, query: &str, statement: SqlStatement) -> Result<LogicalOperator> {
+        let transaction = self.transactions.current();
+        let planner = Planner::new(self.client_context(transaction));
+        let outcome = planner.create_plan(statement).and_then(|planned| {
+            let mut plan = planned
+                .plan
+                .ok_or_else(|| Error::invalid_input("Not all parameters were bound"))?;
+            ColumnBindingResolver::resolve(&mut plan)?;
+            Ok(plan)
+        });
+        let ended = self.transactions.end_statement(outcome.is_ok(), false);
+        outcome
+            .and_then(|plan| ended.map(|()| plan))
+            .map_err(|error| error.with_query_context(query))
+    }
+
     /// The planner's view of this connection, in `transaction`.
     fn client_context(&self, transaction: Arc<Transaction>) -> Arc<ClientContext> {
         let instance = self.database.instance();

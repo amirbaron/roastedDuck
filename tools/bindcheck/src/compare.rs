@@ -8,27 +8,17 @@ use rustdb::{Database, MaterializedResult};
 use rustdb_ast::{SqlStatement, SqlStatementKind};
 
 use crate::oracle::{OracleResult, Table};
+use crate::plan_shape::{duckdb_shape, rust_shape};
 
-/// Runs a statement parsed by DuckDB (`json`) in a fresh in-memory rustdb database.
-pub fn run_rustdb(sql: &str, json: &str) -> Result<Table, String> {
-    let mut statements = rustdb_ast::json::deserialize_statements(json).map_err(|error| error.to_string())?;
-    if statements.len() != 1 {
-        return Err(format!("<{} statements>", statements.len()));
-    }
-    let statement = SqlStatement {
-        location: 0,
-        length: sql.len() as u64,
-        query: sql.to_owned(),
-        kind: SqlStatementKind::Select(statements.remove(0)),
-    };
-    let run = || -> Result<Table, String> {
-        let database = Database::open_in_memory().map_err(|error| error.to_string())?;
-        let mut connection = database.connect().map_err(|error| error.to_string())?;
-        let result = connection
-            .execute_statement(sql, statement)
-            .map_err(|error| error.to_string())?;
-        render_result(&result)
-    };
+/// rustdb's outcome for a statement: its result, and the shape of its logical plan.
+#[derive(Debug)]
+pub struct RustOutcome {
+    pub result: Result<Table, String>,
+    pub plan: Result<String, String>,
+}
+
+/// Runs `run`, turning a panic into an error message.
+fn guarded<T>(run: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
     match catch_unwind(AssertUnwindSafe(run)) {
         Ok(result) => result,
         Err(payload) => {
@@ -40,6 +30,39 @@ pub fn run_rustdb(sql: &str, json: &str) -> Result<Table, String> {
             Err(format!("<panic> {message}"))
         }
     }
+}
+
+/// Runs a statement parsed by DuckDB (`json`) in a fresh in-memory rustdb database.
+pub fn run_rustdb(sql: &str, json: &str) -> RustOutcome {
+    let statement = || -> Result<SqlStatement, String> {
+        let mut statements = rustdb_ast::json::deserialize_statements(json).map_err(|error| error.to_string())?;
+        if statements.len() != 1 {
+            return Err(format!("<{} statements>", statements.len()));
+        }
+        Ok(SqlStatement {
+            location: 0,
+            length: sql.len() as u64,
+            query: sql.to_owned(),
+            kind: SqlStatementKind::Select(statements.remove(0)),
+        })
+    };
+    let connect = || -> Result<rustdb::Connection, String> {
+        let database = Database::open_in_memory().map_err(|error| error.to_string())?;
+        database.connect().map_err(|error| error.to_string())
+    };
+    let result = guarded(|| {
+        let result = connect()?
+            .execute_statement(sql, statement()?)
+            .map_err(|error| error.to_string())?;
+        render_result(&result)
+    });
+    let plan = guarded(|| {
+        let plan = connect()?
+            .logical_plan(sql, statement()?)
+            .map_err(|error| error.to_string())?;
+        Ok(rust_shape(&plan))
+    });
+    RustOutcome { result, plan }
 }
 
 fn render_result(result: &MaterializedResult) -> Result<Table, String> {
@@ -86,6 +109,8 @@ pub fn render(outcome: &Result<Table, String>) -> String {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
     Pass,
+    /// rustdb cannot execute the plan yet, but built the same logical plan as DuckDB.
+    PlanPass,
     /// DuckDB needs tables the statement's test file created earlier.
     NeedsTables,
     /// rustdb reports `Not implemented` (the message is the bucket).
@@ -101,6 +126,7 @@ impl Outcome {
     pub fn label(&self) -> String {
         match self {
             Self::Pass => "pass".to_owned(),
+            Self::PlanPass => "pass (plan)".to_owned(),
             Self::NeedsTables => "needs tables".to_owned(),
             Self::NotImplemented(what) => format!("not implemented: {what}"),
             Self::MissingFunction(name) => format!("missing function: {name}"),
@@ -112,6 +138,7 @@ impl Outcome {
     fn category(&self) -> &'static str {
         match self {
             Self::Pass => "pass",
+            Self::PlanPass => "pass (plan)",
             Self::NeedsTables => "needs tables",
             Self::NotImplemented(_) => "not implemented",
             Self::MissingFunction(_) => "missing function",
@@ -125,11 +152,21 @@ fn first_line(text: &str) -> &str {
     text.lines().next().unwrap_or("")
 }
 
-/// The name in `... Function with name <name> does not exist!`.
+/// The name in `... Function with name <name> does not exist!` (or `type <name>` for
+/// `Type with name <name> does not exist!`).
 fn missing_function(error: &str) -> Option<String> {
-    let rest = first_line(error).split("Function with name ").nth(1)?;
+    let line = first_line(error);
+    let (rest, prefix) = match line.split("Function with name ").nth(1) {
+        Some(rest) => (rest, ""),
+        None => (line.split("Type with name ").nth(1)?, "type "),
+    };
     let name = rest.split(" does not exist").next()?;
-    Some(name.trim_matches('"').to_owned())
+    Some(format!("{prefix}{}", name.trim_matches('"')))
+}
+
+/// Whether DuckDB's error says the statement needs tables or files from its test file.
+fn needs_environment(expected: &str) -> bool {
+    expected.starts_with("Catalog Error: Table with name") || expected.starts_with("IO Error: No files found")
 }
 
 /// Truncates bucket keys built from messages (which may embed SQL text).
@@ -142,9 +179,27 @@ fn bucket(text: &str) -> String {
     key
 }
 
+/// Compares plan shapes when DuckDB serialized its plan.
+fn compare_plans(expected: &OracleResult, actual: &RustOutcome) -> Option<Outcome> {
+    let expected = duckdb_shape(expected.plan.as_deref()?).ok()?;
+    Some(match &actual.plan {
+        Ok(plan) if *plan == expected => Outcome::PlanPass,
+        Ok(_) => Outcome::Mismatch("plan shape differs".to_owned()),
+        Err(error) => Outcome::Mismatch(format!("planning failed: {}", bucket(error))),
+    })
+}
+
 /// Classifies rustdb's outcome against DuckDB's.
-pub fn compare(expected: &OracleResult, actual: &Result<Table, String>) -> Outcome {
-    let expected = expected.outcome();
+pub fn compare(oracle: &OracleResult, rust: &RustOutcome) -> Outcome {
+    let expected = oracle.outcome();
+    let actual = &rust.result;
+    if expected.is_ok()
+        && let Err(error) = actual
+        && error.starts_with("Not implemented Error: physical plan for logical operator")
+        && let Some(outcome) = compare_plans(oracle, rust)
+    {
+        return outcome;
+    }
     match (&expected, actual) {
         (Ok(expected), Ok(actual)) => {
             if expected.names != actual.names {
@@ -154,17 +209,25 @@ pub fn compare(expected: &OracleResult, actual: &Result<Table, String>) -> Outco
             } else if expected.rows != actual.rows {
                 Outcome::Mismatch("rows differ".to_owned())
             } else {
-                Outcome::Pass
+                match compare_plans(oracle, rust) {
+                    Some(Outcome::Mismatch(kind)) => Outcome::Mismatch(format!("result ok, {kind}")),
+                    _ => Outcome::Pass,
+                }
             }
         }
         (Err(expected), Err(actual)) if expected == actual => Outcome::Pass,
         (_, Err(actual)) if actual.starts_with("<panic>") => Outcome::Panic(bucket(actual)),
-        (Err(expected), Err(_)) if expected.starts_with("Catalog Error: Table with name") => Outcome::NeedsTables,
+        (Err(expected), Err(_)) if needs_environment(expected) => Outcome::NeedsTables,
         (_, Err(actual)) if actual.starts_with("Not implemented Error: ") => {
             Outcome::NotImplemented(bucket(&actual["Not implemented Error: ".len()..]))
         }
-        (_, Err(actual)) if missing_function(actual).is_some_and(|name| !expected_mentions(&expected, &name)) => {
-            Outcome::MissingFunction(missing_function(actual).unwrap_or_default())
+        (_, Err(actual)) if missing_function(actual).is_some() => {
+            if same_missing_entry(&expected, actual) {
+                // Both miss the entry; the suggestions come from different catalogs.
+                Outcome::MissingFunction("(suggestions differ)".to_owned())
+            } else {
+                Outcome::MissingFunction(missing_function(actual).unwrap_or_default())
+            }
         }
         (Err(expected), Err(actual)) => {
             let expected_kind = expected.split(':').next().unwrap_or("");
@@ -180,8 +243,12 @@ pub fn compare(expected: &OracleResult, actual: &Result<Table, String>) -> Outco
     }
 }
 
-fn expected_mentions(expected: &Result<Table, String>, name: &str) -> bool {
-    expected.as_ref().is_err_and(|error| error.contains(name))
+/// Whether DuckDB also failed to find the entry rustdb is missing (then the messages
+/// are compared as usual).
+fn same_missing_entry(expected: &Result<Table, String>, actual: &str) -> bool {
+    expected
+        .as_ref()
+        .is_err_and(|error| first_line(error) == first_line(actual))
 }
 
 /// One sample of a bucket.
@@ -210,10 +277,10 @@ impl Report {
         sql: &str,
         outcome: &Outcome,
         expected: &OracleResult,
-        actual: &Result<Table, String>,
+        actual: &RustOutcome,
     ) {
         *self.counts.entry(outcome.category()).or_default() += 1;
-        if matches!(outcome, Outcome::Pass | Outcome::NeedsTables) {
+        if matches!(outcome, Outcome::Pass | Outcome::PlanPass | Outcome::NeedsTables) {
             return;
         }
         let entry = self.buckets.entry(outcome.label()).or_default();
@@ -223,8 +290,20 @@ impl Report {
                 id,
                 location: format!("{file}:{line}"),
                 sql: sql.to_owned(),
-                expected: render(&expected.outcome()),
-                actual: render(actual),
+                expected: format!(
+                    "{}{}",
+                    render(&expected.outcome()),
+                    expected
+                        .plan
+                        .as_deref()
+                        .map(|plan| format!("plan: {}", duckdb_shape(plan).unwrap_or_else(|error| error)))
+                        .unwrap_or_default()
+                ),
+                actual: format!(
+                    "{}plan: {}",
+                    render(&actual.result),
+                    actual.plan.as_ref().unwrap_or_else(|error| error)
+                ),
             });
         }
     }
@@ -236,7 +315,8 @@ impl Report {
             let _ = writeln!(text, "  {category:>16}: {count}");
         }
         let comparable = total - self.counts.get("needs tables").copied().unwrap_or(0);
-        let passed = self.counts.get("pass").copied().unwrap_or(0);
+        let passed =
+            self.counts.get("pass").copied().unwrap_or(0) + self.counts.get("pass (plan)").copied().unwrap_or(0);
         if comparable > 0 {
             let _ = writeln!(
                 text,

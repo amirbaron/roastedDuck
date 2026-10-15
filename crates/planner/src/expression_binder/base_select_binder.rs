@@ -12,7 +12,7 @@ use rustdb_types::{LogicalType, Value};
 
 use super::base::{BinderBase, expression_binder_accessors, expression_binder_base};
 use super::column_alias_binder::ColumnAliasBinder;
-use super::qualify::{ColumnQualifier, default_qualify_column_name};
+use super::qualify::default_qualify_column_name;
 use super::simple_binders::AggregateBinder;
 use super::{BindError, BindResult, ExpressionBinder, is_potential_alias, peek_bound, take_bound, unsupported};
 use crate::binder::expression::{bind_column_ref, bind_expression_base, push_collation};
@@ -107,9 +107,6 @@ pub struct BoundGroupInformation {
     /// Groups with a collation: group index → index of the `first()` aggregate.
     pub collated_groups: HashMap<usize, usize>,
 }
-
-/// The state of a select node being bound that the select-list binders write to.
-pub type SelectNodeState = BoundSelectNode;
 
 /// Which clause a [`SelectBinder`] binds.
 #[derive(Debug)]

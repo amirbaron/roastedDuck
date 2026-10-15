@@ -75,6 +75,8 @@ dependencies = [
  "rustdb",
  "rustdb-ast",
  "rustdb-common",
+ "rustdb-planner",
+ "rustdb-serde",
  "serde",
  "serde_json",
 ]

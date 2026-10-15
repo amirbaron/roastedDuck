@@ -29,6 +29,7 @@ impl TransactionContext {
         }
     }
 
+    #[cfg(test)]
     pub fn is_auto_commit(&self) -> bool {
         self.auto_commit
     }
@@ -52,6 +53,7 @@ impl TransactionContext {
 
     /// The transaction a statement should run in, starting one if needed; fails if the
     /// explicit transaction was aborted.
+    #[cfg(test)]
     pub fn active(&mut self) -> Result<Arc<Transaction>> {
         if self.invalidated {
             return Err(Self::aborted_error());

@@ -22,7 +22,7 @@ pub fn bind_function_expression<B: ExpressionBinder + ?Sized>(
     let ParsedExpressionKind::Function(function) = &mut expr.kind else {
         return Err(Error::internal("expected a function call"));
     };
-    let lookup = bind_and_qualify_function(&*binder, function, true)?
+    let lookup = bind_and_qualify_function(&*binder, function, location, true)?
         .ok_or_else(|| Error::internal("function lookup returned nothing"))?;
     let entry = lookup.entry;
     let is_aggregate = matches!(entry.kind, EntryKind::AggregateFunction(_));
@@ -84,9 +84,4 @@ fn bind_scalar_function<B: ExpressionBinder + ?Sized>(
         binder.binder_ref().set_always_require_rebind();
     }
     Ok(bound.into())
-}
-
-/// The bound children of an aggregate call, used by binders that compute aggregates.
-pub fn bind_aggregate_call(children: &mut [ParsedExpression]) -> Result<Vec<Expression>> {
-    children.iter_mut().map(take_bound).collect()
 }

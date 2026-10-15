@@ -19,7 +19,7 @@ use crate::expression_binder::SelectBindState;
 use crate::generated::enums::DistinctType;
 use crate::operator::{BoundLimitNode, GroupingSet, LogicalKind, LogicalOperator};
 
-pub use bind_select_node::bind_select_node;
+
 pub use plan_subquery::plan_subqueries;
 
 /// GROUP BY terms and grouping sets (DuckDB's `BoundGroupByNode`).

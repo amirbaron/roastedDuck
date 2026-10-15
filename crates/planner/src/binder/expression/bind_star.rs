@@ -10,7 +10,7 @@ use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
 use crate::binder::BindScope;
 use crate::expression_binder::{
-    ExpressionBinder, TableFunctionBinder, for_each_child, function_call, operator_expression, parameter_not_resolved,
+    ExpressionBinder, TableFunctionBinder, for_each_child, function_call, parameter_not_resolved,
 };
 
 /// What kind of star an expression contains (DuckDB's `StarExpressionType`).
@@ -18,7 +18,6 @@ use crate::expression_binder::{
 pub enum StarExpressionType {
     None,
     Star,
-    Columns,
     Unpacked,
 }
 
@@ -55,7 +54,7 @@ pub fn find_star_expression(
             Some(child) => find_star_expression(scope, child, star, is_root, in_columns)?,
             None => StarExpressionType::None,
         };
-        if !matches!(result, StarExpressionType::Star | StarExpressionType::Columns) {
+        if result != StarExpressionType::Star {
             return Err(Error::binder(
                 "UNPACK can only be used in combination with a STAR (*) expression or COLUMNS expression",
             ));
@@ -416,21 +415,4 @@ pub fn expand_star_expression(
         new_select_list.push(new_expr);
     }
     Ok(())
-}
-
-/// Expands the stars of a select list (DuckDB's `ExpandStarExpressions`).
-pub fn expand_star_expressions(
-    scope: &mut BindScope<'_>,
-    select_list: Vec<ParsedExpression>,
-) -> Result<Vec<ParsedExpression>> {
-    let mut result = Vec::with_capacity(select_list.len());
-    for expr in select_list {
-        expand_star_expression(scope, expr, &mut result)?;
-    }
-    Ok(result)
-}
-
-/// `NOT (expr)`.
-pub fn not_expression(child: ParsedExpression) -> ParsedExpression {
-    operator_expression(ExpressionType::OperatorNot, vec![child])
 }

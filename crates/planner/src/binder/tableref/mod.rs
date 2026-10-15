@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, PoisonError};
 
-use rustdb_ast::{BaseTableRef, ExpressionListRef, ParsedExpression, SubqueryRef, TableRef, TableRefKind};
+use rustdb_ast::{BaseTableRef, ExpressionListRef, SubqueryRef, TableRef, TableRefKind};
 use rustdb_catalog::{CatalogType, EntryKind};
 use rustdb_common::{Error, Result};
 use rustdb_function::TableFunction;
@@ -379,9 +379,4 @@ fn bind_base_table(
         }
         _ => Err(Error::internal("Catalog entry type")),
     }
-}
-
-/// A parsed expression list row, for callers building VALUES lists.
-pub fn values_row(values: Vec<ParsedExpression>) -> Vec<ParsedExpression> {
-    values
 }

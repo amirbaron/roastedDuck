@@ -125,9 +125,10 @@ fn qualify_recursive<Q: ColumnQualifier + ?Sized>(
             }
         }
         ExpressionType::Function => {
+            let location = expr.query_location;
             if let ParsedExpressionKind::Function(function) = &mut expr.kind {
                 if !is_unnest_function(&function.function_name) {
-                    bind_and_qualify_function(qualifier, function, false)?;
+                    bind_and_qualify_function(qualifier, function, location, false)?;
                 }
                 if is_lambda_function(function) {
                     return qualify_in_lambda(qualifier, function, lambda_params);
@@ -521,6 +522,7 @@ fn qualify_many_dots<Q: ColumnQualifier + ?Sized>(
 pub fn bind_and_qualify_function<Q: ColumnQualifier + ?Sized>(
     qualifier: &Q,
     function: &mut FunctionExpression,
+    location: Option<u64>,
     allow_throw: bool,
 ) -> Result<Option<EntryLookup>> {
     let binder = qualifier.binder_ref();
@@ -566,11 +568,13 @@ pub fn bind_and_qualify_function<Q: ColumnQualifier + ?Sized>(
         function.schema.clear();
         return lookup("", "", CatalogType::ScalarFunction);
     }
-    context.get_entry(
-        &function.catalog,
-        &function.schema,
-        CatalogType::ScalarFunction,
-        &function.function_name,
-        !allow_throw,
-    )
+    context
+        .get_entry(
+            &function.catalog,
+            &function.schema,
+            CatalogType::ScalarFunction,
+            &function.function_name,
+            !allow_throw,
+        )
+        .map_err(|error| error.with_position(location))
 }

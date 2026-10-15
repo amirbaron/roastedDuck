@@ -32,6 +32,9 @@ pub struct OracleResult {
     pub error: Option<String>,
     #[serde(default)]
     pub table: Table,
+    /// `json_serialize_plan` of a statement that succeeded.
+    #[serde(default)]
+    pub plan: Option<String>,
 }
 
 impl OracleResult {
@@ -44,11 +47,11 @@ impl OracleResult {
 }
 
 /// Runs the CLI with `sql`; `Ok(stdout)` or `Err(stderr)`.
-fn run_cli(duckdb: &Path, sql: &str) -> Result<String, String> {
+fn run_cli(duckdb: &Path, commands: &[&str]) -> Result<String, String> {
     let mut child = Command::new(duckdb)
-        .args(["-init", "/dev/null", "-list", "-noheader", "-nullvalue", "NULL"])
+        .args(["-init", "/dev/null", "-list", "-header", "-nullvalue", "NULL"])
         .args(["-separator", &FIELD.to_string(), "-newline", &RECORD.to_string()])
-        .args(["-c", sql])
+        .args(commands.iter().flat_map(|command| ["-c", command]))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -93,45 +96,67 @@ fn run_cli(duckdb: &Path, sql: &str) -> Result<String, String> {
     }
 }
 
+/// The records of list-mode output (every record, including the header, ends with the
+/// record separator).
 fn records(output: &str) -> Vec<Vec<String>> {
+    let output = output.strip_suffix(RECORD).unwrap_or(output);
+    if output.is_empty() {
+        return Vec::new();
+    }
     output
         .split(RECORD)
-        .filter(|record| !record.is_empty())
         .map(|record| record.split(FIELD).map(str::to_owned).collect())
         .collect()
 }
 
-/// The CLI's result for one statement.
+/// Single-quotes `text` for a SQL string literal.
+fn sql_literal(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "''"))
+}
+
+/// The CLI's result for one statement: its rows, then (in a second process, so that a
+/// failing statement keeps its own error) the column names and types from `DESCRIBE`
+/// and the unoptimized plan from `json_serialize_plan`.
 pub fn run_one(duckdb: &Path, id: u64, sql: &str) -> OracleResult {
-    let rows = match run_cli(duckdb, sql) {
-        Ok(output) => records(&output),
-        Err(error) => {
-            return OracleResult {
-                id,
-                error: Some(error),
-                table: Table::default(),
-            };
-        }
+    let failed = |error: String| OracleResult {
+        id,
+        error: Some(error),
+        table: Table::default(),
+        plan: None,
     };
-    let sql = sql.trim_end().trim_end_matches(';');
-    match run_cli(duckdb, &format!("DESCRIBE {sql}")) {
+    let rows = match run_cli(duckdb, &[sql]) {
+        // The first record is the header.
+        Ok(output) => records(&output).into_iter().skip(1).collect(),
+        Err(error) => return failed(error),
+    };
+    let trimmed = sql.trim_end().trim_end_matches(';');
+    let describe = format!("DESCRIBE {trimmed}");
+    let plan = format!(
+        "SELECT json_serialize_plan({}, skip_null := true, skip_empty := true)::VARCHAR",
+        sql_literal(sql)
+    );
+    match run_cli(duckdb, &[&describe, &plan]) {
         Ok(output) => {
-            let columns = records(&output);
+            let mut records = records(&output);
+            // DESCRIBE: a header and one six-field record per column; then the plan's
+            // header and value.
+            let plan = match records.as_slice() {
+                [.., last] if last.len() == 1 => records.pop().and_then(|mut record| record.pop()),
+                _ => None,
+            };
+            let columns: Vec<Vec<String>> = records.into_iter().skip(1).filter(|record| record.len() == 6).collect();
             OracleResult {
                 id,
                 error: None,
                 table: Table {
-                    names: columns.iter().map(|column| column.first().cloned().unwrap_or_default()).collect(),
-                    types: columns.iter().map(|column| column.get(1).cloned().unwrap_or_default()).collect(),
+                    names: columns.iter().map(|column| column[0].clone()).collect(),
+                    types: columns.iter().map(|column| column[1].clone()).collect(),
                     rows,
                 },
+                plan,
             }
         }
-        Err(error) => OracleResult {
-            id,
-            error: Some(format!("<DESCRIBE failed> {error}")),
-            table: Table::default(),
-        },
+        Err(error) => failed(format!("<DESCRIBE failed> {error}")),
     }
 }
 
@@ -169,14 +194,15 @@ pub fn run_all(duckdb: &Path, statements: &[(u64, &str)], jobs: usize) -> Vec<Or
 /// `json_serialize_sql(sql)` as the parser builds it (`storage_compatibility_version =
 /// 'latest'`).
 pub fn serialize(duckdb: &Path, sql: &str) -> Result<String> {
-    let literal = format!("'{}'", sql.replace('\'', "''"));
     let query = format!(
-        "SET storage_compatibility_version = 'latest'; SELECT json_serialize_sql({literal})::VARCHAR"
+        "SET storage_compatibility_version = 'latest'; SELECT json_serialize_sql({})::VARCHAR",
+        sql_literal(sql)
     );
-    let output = run_cli(duckdb, &query)?;
-    let rows = records(&output);
-    rows.into_iter()
-        .next()
+    let output = run_cli(duckdb, &[&query])?;
+    // Skip the header.
+    records(&output)
+        .into_iter()
+        .nth(1)
         .and_then(|row| row.into_iter().next())
         .ok_or_else(|| "json_serialize_sql returned nothing".into())
 }

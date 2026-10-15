@@ -19,8 +19,8 @@ use crate::expression_binder::{
 };
 use crate::function_binder::{add_cast_to_type, try_bind_comparison};
 
-pub use bind_function::{bind_aggregate_call, bind_function_expression};
-pub use bind_star::{StarExpressionType, expand_star_expression, expand_star_expressions, find_star_expression};
+pub use bind_function::bind_function_expression;
+pub use bind_star::expand_star_expression;
 pub use bind_subquery::bind_subquery_expression;
 
 /// Binds every child of `expr` and reports the first error (DuckDB's
