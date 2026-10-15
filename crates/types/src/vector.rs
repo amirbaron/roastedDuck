@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use rustdb_common::{Error, Result};
 
+mod access;
+
 use crate::buffer::{RawBuffer, SharedBuffer};
 use crate::selection::{Sel, SelectionVector};
 use crate::{LogicalType, NativeType, PhysicalType, StringT, TypeInfo, ValidityMask, Value};
@@ -54,6 +56,9 @@ unsafe impl NativeType for ListEntry {
 pub struct StringHeap {
     chunks: Vec<Box<[u8]>>,
     used: usize,
+    /// Memory owned elsewhere that strings may point into (see [`Vector::add_keep_alive`]).
+    #[expect(dead_code, reason = "held only to keep foreign string memory alive")]
+    keep_alive: Option<access::KeepAlive>,
 }
 
 impl StringHeap {
