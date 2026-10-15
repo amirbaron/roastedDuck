@@ -461,6 +461,7 @@ impl Catalog {
                 existing.name()
             )));
         }
+        self.check_drop_dependencies(transaction, schema, &existing, cascade)?;
         if ty == CatalogType::Table {
             // The table's indexes depend on it automatically and are dropped first
             // (`DependencyManager::DropObject`), so the WAL drops them before the table.
@@ -474,6 +475,99 @@ impl Catalog {
         }
         set.drop_entry(transaction, name, false)?;
         Ok(())
+    }
+
+    /// The entries of this catalog that depend on `entry` of `schema` (DuckDB's
+    /// `DependencyManager::ScanDependents`).
+    pub fn dependents(
+        &self,
+        transaction: &Transaction,
+        schema: &str,
+        entry: &CatalogEntry,
+    ) -> Vec<(String, Arc<CatalogEntry>)> {
+        let ty = entry.dependency_type();
+        let mut result = Vec::new();
+        for schema_entry in self.schemas.scan(transaction) {
+            let Some(contents) = schema_entry.as_schema() else {
+                continue;
+            };
+            for set in [
+                &contents.tables,
+                &contents.functions,
+                &contents.table_functions,
+                &contents.sequences,
+                &contents.types,
+                &contents.indexes,
+            ] {
+                for candidate in set.scan(transaction) {
+                    if candidate.dependencies.iter().any(|dependency| {
+                        dependency.entry.catalog_type == ty
+                            && dependency.entry.schema.eq_ignore_ascii_case(schema)
+                            && dependency.entry.name.eq_ignore_ascii_case(entry.name())
+                    }) {
+                        result.push((schema_entry.name().to_owned(), candidate));
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    /// `DependencyManager::CheckDropDependencies` / `DropObject`: without CASCADE the
+    /// dependents block the drop; with it they are dropped first.
+    fn check_drop_dependencies(
+        &self,
+        transaction: &Transaction,
+        schema: &str,
+        entry: &CatalogEntry,
+        cascade: bool,
+    ) -> Result<()> {
+        let dependents = self.dependents(transaction, schema, entry);
+        if dependents.is_empty() {
+            return Ok(());
+        }
+        if !cascade {
+            let mut message = format!(
+                "Cannot drop entry \"{}\" because there are entries that depend on it.\n",
+                entry.name()
+            );
+            self.collect_dependents(transaction, &dependents, entry, &mut message);
+            message.push_str("Use DROP...CASCADE to drop all dependents.");
+            return Err(Error::new(rustdb_common::ErrorKind::Dependency, message));
+        }
+        for (dependent_schema, dependent) in dependents {
+            self.drop_entry(
+                transaction,
+                dependent.catalog_type(),
+                &dependent_schema,
+                dependent.name(),
+                true,
+                true,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// `DependencyManager::CollectDependents`.
+    fn collect_dependents(
+        &self,
+        transaction: &Transaction,
+        dependents: &[(String, Arc<CatalogEntry>)],
+        subject: &CatalogEntry,
+        message: &mut String,
+    ) {
+        for (schema, dependent) in dependents {
+            let _ = writeln!(
+                message,
+                "{} depends on {}.",
+                entry_to_string(dependent),
+                entry_to_string(subject)
+            );
+            let nested = self.dependents(transaction, schema, dependent);
+            if !nested.is_empty() {
+                self.collect_dependents(transaction, &nested, dependent, message);
+            }
+        }
     }
 
     fn drop_schema(
@@ -536,6 +630,26 @@ impl Catalog {
         self.schemas.drop_entry(transaction, name, false)?;
         Ok(())
     }
+}
+
+/// `EntryToString` of the dependency manager (sequences print as indexes, like DuckDB).
+fn entry_to_string(entry: &CatalogEntry) -> String {
+    let kind = match entry.catalog_type() {
+        CatalogType::Table => "table",
+        CatalogType::Schema => "schema",
+        CatalogType::View => "view",
+        CatalogType::Index | CatalogType::Sequence => "index",
+        CatalogType::Collation => "collation",
+        CatalogType::Type => "type",
+        CatalogType::TableFunction => "table function",
+        CatalogType::ScalarFunction => "scalar function",
+        CatalogType::AggregateFunction => "aggregate function",
+        CatalogType::PragmaFunction => "pragma function",
+        CatalogType::CopyFunction => "copy function",
+        CatalogType::Macro => "macro function",
+        CatalogType::TableMacro => "table macro function",
+    };
+    format!("{kind} \"{}\"", entry.name())
 }
 
 /// Whether `name` is one of the builtin types every `main` schema holds (DuckDB's

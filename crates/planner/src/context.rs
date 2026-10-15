@@ -26,6 +26,7 @@ pub trait ExpressionEvaluator: Send + Sync + fmt::Debug {
 
 /// The settings the binder reads (DuckDB's `ClientConfig`/`DBConfig` options).
 #[derive(Clone, Debug)]
+#[allow(clippy::struct_excessive_bools, reason = "one flag per boolean setting, like DuckDB's options")]
 pub struct PlannerConfig {
     /// `default_order`: the direction of `ORDER BY x` without `ASC`/`DESC`.
     pub default_order: OrderType,
@@ -45,6 +46,10 @@ pub struct PlannerConfig {
     pub pivot_filter_threshold: u64,
     /// `pivot_limit`: the maximum number of pivot columns.
     pub pivot_limit: u64,
+    /// `enable_view_dependencies`: views depend on the entries they reference.
+    pub enable_view_dependencies: bool,
+    /// `enable_macro_dependencies`: macros depend on the entries they reference.
+    pub enable_macro_dependencies: bool,
 }
 
 /// The `default_null_order` setting (DuckDB's `DefaultOrderByNullType`).
@@ -67,6 +72,8 @@ impl Default for PlannerConfig {
             scalar_subquery_error_on_multiple_rows: true,
             pivot_filter_threshold: 20,
             pivot_limit: 100_000,
+            enable_view_dependencies: false,
+            enable_macro_dependencies: false,
         }
     }
 }
@@ -111,6 +118,9 @@ pub struct ClientContext {
     pub prepared_statements: rustdb_common::CaseInsensitiveMap<Arc<PreparedStatementData>>,
     /// Connection state functions use (random engine, ...).
     pub function_client: Arc<FunctionClient>,
+    /// The entries looked up while recording (DuckDB's catalog lookup callback of the
+    /// binder, which collects the dependencies of a created entry).
+    pub dependency_recorder: Arc<std::sync::Mutex<Option<Vec<EntryLookup>>>>,
     /// `SET VARIABLE` values of the connection (DuckDB's `ClientConfig::user_variables`).
     pub user_variables: rustdb_common::CaseInsensitiveMap<Value>,
 }
@@ -124,6 +134,29 @@ pub struct EntryLookup {
 }
 
 impl ClientContext {
+    /// Starts recording the entries looked up; returns the recording it interrupts.
+    pub fn start_recording_dependencies(&self) -> Option<Vec<EntryLookup>> {
+        self.dependency_recorder
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .replace(Vec::new())
+    }
+
+    /// Stops recording and returns the entries looked up since the start; `previous`
+    /// (from [`ClientContext::start_recording_dependencies`]) resumes.
+    pub fn stop_recording_dependencies(&self, previous: Option<Vec<EntryLookup>>) -> Vec<EntryLookup> {
+        let mut recorder = self
+            .dependency_recorder
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let recorded = recorder.take().unwrap_or_default();
+        *recorder = previous;
+        if let Some(outer) = recorder.as_mut() {
+            outer.extend(recorded.iter().cloned());
+        }
+        recorded
+    }
+
     /// The catalog called `name` (case-insensitive).
     pub fn catalog(&self, name: &str) -> Option<&Arc<Catalog>> {
         self.catalogs
@@ -236,11 +269,20 @@ impl ClientContext {
         let path = self.search_path(catalog, schema);
         for (catalog_name, schema_name) in &path {
             if let Some(entry) = self.lookup_in(catalog_name, schema_name, ty, name) {
-                return Ok(Some(EntryLookup {
+                let lookup = EntryLookup {
                     catalog: catalog_name.clone(),
                     schema: schema_name.clone(),
                     entry,
-                }));
+                };
+                if let Some(recorded) = self
+                    .dependency_recorder
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .as_mut()
+                {
+                    recorded.push(lookup.clone());
+                }
+                return Ok(Some(lookup));
             }
         }
         if if_exists {

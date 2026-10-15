@@ -60,6 +60,19 @@ pub fn schema_create_info(catalog: &str, schema: &str) -> CreateInfo {
     base_info(catalog, schema, false, CreateInfoKind::Schema)
 }
 
+/// [`base_info`] carrying the dependencies `entry` records.
+fn entry_info(
+    catalog: &str,
+    schema: &str,
+    entry: &CatalogEntry,
+    temporary: bool,
+    kind: CreateInfoKind,
+) -> CreateInfo {
+    let mut info = base_info(catalog, schema, temporary, kind);
+    info.dependencies.set.clone_from(&entry.dependencies);
+    info
+}
+
 /// `TableCatalogEntry::GetInfo`.
 pub(crate) fn table_create_info(
     catalog: &str,
@@ -86,9 +99,10 @@ pub(crate) fn table_create_info(
             }
         })
         .collect();
-    base_info(
+    entry_info(
         catalog,
         schema,
+        entry,
         entry.temporary,
         CreateInfoKind::Table(Box::new(CreateTableInfo {
             table: entry.name().to_owned(),
@@ -109,9 +123,10 @@ pub(crate) fn view_create_info(
     entry: &CatalogEntry,
     view: &ViewEntry,
 ) -> CreateInfo {
-    base_info(
+    entry_info(
         catalog,
         schema,
+        entry,
         entry.temporary,
         CreateInfoKind::View(Box::new(CreateViewInfo {
             view_name: entry.name().to_owned(),
@@ -132,9 +147,10 @@ pub(crate) fn sequence_create_info(
     sequence: &SequenceEntry,
 ) -> CreateInfo {
     let data = sequence.data();
-    base_info(
+    entry_info(
         catalog,
         schema,
+        entry,
         entry.temporary,
         CreateInfoKind::Sequence(Box::new(CreateSequenceInfo {
             name: entry.name().to_owned(),
@@ -155,9 +171,10 @@ pub(crate) fn type_create_info(
     entry: &CatalogEntry,
     ty: &TypeEntry,
 ) -> CreateInfo {
-    base_info(
+    entry_info(
         catalog,
         schema,
+        entry,
         entry.temporary,
         CreateInfoKind::Type(CreateTypeInfo {
             name: entry.name().to_owned(),
@@ -183,7 +200,7 @@ pub(crate) fn macro_create_info(catalog: &str, schema: &str, entry: &CatalogEntr
     } else {
         CreateInfoKind::Macro(info)
     };
-    Some(base_info(catalog, schema, false, kind))
+    Some(entry_info(catalog, schema, entry, false, kind))
 }
 
 /// The catalog entry a `CREATE TYPE` or `CREATE MACRO` info describes (DuckDB's
@@ -212,6 +229,7 @@ pub fn entry_from_create_info(info: &CreateInfo) -> Result<CatalogEntry> {
     };
     entry.temporary = info.temporary;
     entry.internal = info.internal;
+    entry.dependencies.clone_from(&info.dependencies.set);
     Ok(entry)
 }
 
@@ -396,7 +414,52 @@ pub fn export_create_infos(catalog: &Catalog, transaction: &Transaction) -> Vec<
     result.extend(macros);
     result.extend(views);
     result.extend(indexes);
-    result
+    reorder_by_dependencies(result)
+}
+
+/// The name of the entry `info` creates.
+fn create_info_name(info: &CreateInfo) -> &str {
+    match &info.kind {
+        CreateInfoKind::Schema => &info.schema,
+        CreateInfoKind::Table(table) => &table.table,
+        CreateInfoKind::View(view) => &view.view_name,
+        CreateInfoKind::Sequence(sequence) => &sequence.name,
+        CreateInfoKind::Type(ty) => &ty.name,
+        CreateInfoKind::Macro(function) | CreateInfoKind::TableMacro(function) => &function.name,
+        CreateInfoKind::Index(index) => &index.name,
+        CreateInfoKind::Secret(_) => "",
+    }
+}
+
+/// `DependencyManager::ReorderEntries`: every entry comes after the entries it depends on.
+fn reorder_by_dependencies(infos: Vec<CreateInfo>) -> Vec<CreateInfo> {
+    fn visit(index: usize, infos: &[CreateInfo], visited: &mut [bool], order: &mut Vec<usize>) {
+        if visited[index] {
+            return;
+        }
+        visited[index] = true;
+        for dependency in &infos[index].dependencies.set {
+            let found = infos.iter().position(|info| {
+                info.kind.catalog_type() == dependency.entry.catalog_type
+                    && info.schema.eq_ignore_ascii_case(&dependency.entry.schema)
+                    && create_info_name(info).eq_ignore_ascii_case(&dependency.entry.name)
+            });
+            if let Some(found) = found {
+                visit(found, infos, visited, order);
+            }
+        }
+        order.push(index);
+    }
+    let mut visited = vec![false; infos.len()];
+    let mut order = Vec::with_capacity(infos.len());
+    for index in 0..infos.len() {
+        visit(index, &infos, &mut visited, &mut order);
+    }
+    let mut slots: Vec<Option<CreateInfo>> = infos.into_iter().map(Some).collect();
+    order
+        .into_iter()
+        .filter_map(|index| slots[index].take())
+        .collect()
 }
 
 /// Writes a checkpoint: the catalog visible to `transaction` and all table data
@@ -826,6 +889,7 @@ pub fn load_checkpoint(
                 entry.storage = Some(table);
                 let mut catalog_entry = CatalogEntry::new(create.table.clone(), EntryKind::Table(entry));
                 catalog_entry.temporary = info.temporary;
+                catalog_entry.dependencies.clone_from(&info.dependencies.set);
                 catalog.create_entry_committed(&info.schema, catalog_entry)?;
             }
             AstCatalogType::ViewEntry => {
@@ -843,6 +907,7 @@ pub fn load_checkpoint(
                     }),
                 );
                 entry.temporary = info.temporary;
+                entry.dependencies.clone_from(&info.dependencies.set);
                 catalog.create_entry_committed(&info.schema, entry)?;
             }
             AstCatalogType::IndexEntry => {

@@ -147,7 +147,7 @@ impl DdlAction for CreateViewAction {
         let CreateInfoKind::View(view) = &self.info.kind else {
             return Err(Error::internal("expected a view"));
         };
-        let entry = CatalogEntry::new(
+        let mut entry = CatalogEntry::new(
             view.view_name.clone(),
             EntryKind::View(ViewEntry {
                 query: (*view.query).clone(),
@@ -156,6 +156,7 @@ impl DdlAction for CreateViewAction {
                 names: view.names.clone(),
             }),
         );
+        entry.dependencies.clone_from(&self.info.dependencies.set);
         self.catalog
             .create_entry(transaction, &self.info.schema, entry, self.info.on_conflict)?;
         Ok(())
@@ -234,12 +235,11 @@ impl TableCreator for CatalogTableCreator {
         }
         entry.storage = Some(Arc::clone(&storage));
         let name = table.table.clone();
-        let created = self.catalog.create_entry(
-            transaction,
-            &self.schema,
-            CatalogEntry::new(name.clone(), EntryKind::Table(entry)),
-            self.info.on_conflict,
-        )?;
+        let mut catalog_entry = CatalogEntry::new(name.clone(), EntryKind::Table(entry));
+        catalog_entry.dependencies.clone_from(&self.info.dependencies.set);
+        let created =
+            self.catalog
+                .create_entry(transaction, &self.schema, catalog_entry, self.info.on_conflict)?;
         if !created {
             return Ok(None);
         }
@@ -305,6 +305,7 @@ fn alter_referenced_table(
     alter(&mut table.constraints);
     let mut entry = CatalogEntry::new(existing.name(), EntryKind::Table(table));
     entry.temporary = existing.temporary;
+    entry.dependencies.clone_from(&existing.dependencies);
     catalog.replace_entry(transaction, schema, CatalogType::Table, existing.name(), entry)
 }
 

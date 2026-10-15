@@ -10,7 +10,7 @@ use rustdb_planner::{
     ClientContext, ColumnBindingResolver, LogicalKind, LogicalOperator, PlannedStatement, Planner,
     PreparedStatementData,
 };
-use rustdb_types::LogicalType;
+use rustdb_types::{LogicalType, Value};
 
 use crate::attached::{AttachOptions, AttachedDatabase, DatabaseManager};
 use crate::settings::Settings;
@@ -398,6 +398,15 @@ pub struct Connection {
 }
 
 impl Connection {
+    /// The options set on this connection (and not reset since), by canonical name,
+    /// like the values DuckDB's `RestartCommand` carries over to the restarted database.
+    pub fn assigned_settings(&self) -> Vec<(String, Value)> {
+        self.settings
+            .assigned()
+            .map(|(name, value)| (name.to_owned(), value.clone()))
+            .collect()
+    }
+
     pub fn database(&self) -> &Database {
         &self.database
     }
@@ -484,6 +493,7 @@ impl Connection {
             prepared_statements: self.prepared_statements.clone(),
             function_client: Arc::clone(&self.function_client),
             user_variables: self.user_variables.clone(),
+            dependency_recorder: Arc::default(),
         })
     }
 

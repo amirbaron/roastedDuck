@@ -26,6 +26,27 @@ pub enum CatalogType {
 }
 
 impl CatalogType {
+    /// The serialized catalog type (DuckDB's `CatalogType` enum).
+    pub const fn to_ast(self) -> rustdb_ast::CatalogType {
+        use rustdb_ast::CatalogType as A;
+        match self {
+            Self::Schema => A::SchemaEntry,
+            Self::Table => A::TableEntry,
+            Self::View => A::ViewEntry,
+            Self::Index => A::IndexEntry,
+            Self::Sequence => A::SequenceEntry,
+            Self::Type => A::TypeEntry,
+            Self::Collation => A::CollationEntry,
+            Self::ScalarFunction => A::ScalarFunctionEntry,
+            Self::AggregateFunction => A::AggregateFunctionEntry,
+            Self::TableFunction => A::TableFunctionEntry,
+            Self::PragmaFunction => A::PragmaFunctionEntry,
+            Self::CopyFunction => A::CopyFunctionEntry,
+            Self::Macro => A::MacroEntry,
+            Self::TableMacro => A::TableMacroEntry,
+        }
+    }
+
     /// The name DuckDB uses in messages (`CatalogTypeToString`).
     pub const fn display_name(self) -> &'static str {
         match self {
@@ -386,6 +407,9 @@ pub struct CatalogEntry {
     pub internal: bool,
     pub temporary: bool,
     pub kind: EntryKind,
+    /// The entries this one depends on (DuckDB's dependency manager subjects); dropping
+    /// one of them requires CASCADE.
+    pub dependencies: Vec<rustdb_ast::LogicalDependency>,
 }
 
 impl CatalogEntry {
@@ -396,6 +420,7 @@ impl CatalogEntry {
             internal: false,
             temporary: false,
             kind,
+            dependencies: Vec::new(),
         }
     }
 
@@ -418,6 +443,11 @@ impl CatalogEntry {
             EntryKind::Macro(_) => CatalogType::Macro,
             EntryKind::TableMacro(_) => CatalogType::TableMacro,
         }
+    }
+
+    /// The type a dependency on this entry records (`CatalogEntryInfo::type`).
+    pub fn dependency_type(&self) -> rustdb_ast::CatalogType {
+        self.catalog_type().to_ast()
     }
 
     pub fn as_schema(&self) -> Option<&SchemaEntry> {

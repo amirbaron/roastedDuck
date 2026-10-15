@@ -199,12 +199,29 @@ pub(crate) struct Settings {
     pub planner: PlannerConfig,
     /// Values of options the engine does not interpret yet.
     other: HashMap<&'static str, Value>,
+    /// Every option set (and not reset since), in the order of the first `SET`.
+    assigned: Vec<(&'static str, Value)>,
 }
 
 impl Settings {
+    /// The options set and not reset since, by canonical name.
+    pub fn assigned(&self) -> impl Iterator<Item = (&'static str, &Value)> {
+        self.assigned.iter().map(|(name, value)| (*name, value))
+    }
+
     /// `SET name = value`.
     pub fn set(&mut self, name: &str, value: &Value) -> Result<()> {
         let option = canonical_name(name).ok_or_else(|| unrecognized(name))?;
+        self.apply(option, value)?;
+        match self.assigned.iter_mut().find(|(name, _)| *name == option) {
+            Some((_, assigned)) => *assigned = value.clone(),
+            None => self.assigned.push((option, value.clone())),
+        }
+        Ok(())
+    }
+
+    /// Applies the value of the option `option` (a canonical name).
+    fn apply(&mut self, option: &'static str, value: &Value) -> Result<()> {
         match option {
             "default_order" => {
                 let parameter = value.to_varchar()?.to_lowercase();
@@ -270,6 +287,18 @@ impl Settings {
                 let enabled = value.default_cast_as(&LogicalType::BOOLEAN)?;
                 self.planner.order_by_non_integer_literal = enabled.as_bool().unwrap_or(false);
             }
+            "enable_view_dependencies" | "enable_macro_dependencies" => {
+                let enabled = value
+                    .default_cast_as(&LogicalType::BOOLEAN)?
+                    .as_bool()
+                    .unwrap_or(false);
+                if option == "enable_view_dependencies" {
+                    self.planner.enable_view_dependencies = enabled;
+                } else {
+                    self.planner.enable_macro_dependencies = enabled;
+                }
+                self.other.insert(option, value.clone());
+            }
             other => {
                 self.other.insert(other, value.clone());
             }
@@ -280,6 +309,7 @@ impl Settings {
     /// `RESET name`.
     pub fn reset(&mut self, name: &str) -> Result<()> {
         let option = canonical_name(name).ok_or_else(|| unrecognized(name))?;
+        self.assigned.retain(|(name, _)| *name != option);
         let defaults = PlannerConfig::default();
         match option {
             "default_order" => self.planner.default_order = defaults.default_order,
@@ -292,6 +322,14 @@ impl Settings {
                 self.planner.order_by_non_integer_literal = defaults.order_by_non_integer_literal;
             }
             "pivot_limit" => self.planner.pivot_limit = defaults.pivot_limit,
+            "enable_view_dependencies" => {
+                self.planner.enable_view_dependencies = defaults.enable_view_dependencies;
+                self.other.remove(option);
+            }
+            "enable_macro_dependencies" => {
+                self.planner.enable_macro_dependencies = defaults.enable_macro_dependencies;
+                self.other.remove(option);
+            }
             "pivot_filter_threshold" => self.planner.pivot_filter_threshold = defaults.pivot_filter_threshold,
             other => {
                 self.other.remove(other);
