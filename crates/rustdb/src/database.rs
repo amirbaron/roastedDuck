@@ -539,6 +539,10 @@ impl Connection {
         if let rustdb_ast::SqlStatementKind::Multi(statements) = statement.kind {
             return self.run_multi_statement(statements);
         }
+        if let rustdb_ast::SqlStatementKind::Load(info) = &statement.kind {
+            crate::extensions::load_extension(info)?;
+            return Ok(MaterializedResult::default());
+        }
         // Pragmas that stand for a query run that query (DuckDB's `PragmaHandler`).
         let statement = statement;
         if let rustdb_ast::SqlStatementKind::Pragma(pragma) = &statement.kind {
