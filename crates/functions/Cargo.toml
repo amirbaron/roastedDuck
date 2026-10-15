@@ -11,6 +11,7 @@ rustdb-common.workspace = true
 rustdb-types.workspace = true
 rustdb-function = { path = "../function" }
 rustdb-row = { path = "../row" }
+rustdb-buffer = { path = "../buffer" }
 
 [lints]
 workspace = true

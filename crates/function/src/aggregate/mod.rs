@@ -14,6 +14,7 @@
 //!   states, for aggregates over strings, nested values or several arguments.
 
 mod binary;
+mod owned;
 mod typed;
 mod unary;
 
@@ -28,6 +29,7 @@ use rustdb_types::{LogicalType, Vector};
 use crate::{BindInput, FunctionData, NullHandling};
 
 pub use binary::{Binary, BinaryAggregate};
+pub use owned::AggregateState;
 pub use typed::{Aggregate, States, Typed};
 pub use unary::{Unary, UnaryAggregate};
 

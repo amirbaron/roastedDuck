@@ -8,6 +8,7 @@ pub(crate) mod heap;
 pub mod holistic;
 pub mod nested;
 pub mod regression;
+pub mod sorted;
 pub(crate) mod stored;
 
 use rustdb_common::Result;

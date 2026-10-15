@@ -107,6 +107,22 @@ pub trait Aggregate: Send + Sync + 'static {
         result: &mut Vector,
         row: usize,
     ) -> Result<()>;
+
+    /// Writes the results of `count` distinct states into rows `offset..offset + count` of
+    /// `result`; override to process a batch at once (e.g. one sort for all states).
+    fn finalize_all(
+        &self,
+        states: &mut States<'_, Self::State>,
+        count: usize,
+        input: AggregateInput<'_>,
+        result: &mut Vector,
+        offset: usize,
+    ) -> Result<()> {
+        for index in 0..count {
+            self.finalize(states.get(index), input, result, offset + index)?;
+        }
+        Ok(())
+    }
 }
 
 /// Adapts an [`Aggregate`] to [`AggregateOps`].
@@ -177,12 +193,10 @@ impl<A: Aggregate> AggregateOps for Typed<A> {
         result: &mut Vector,
         offset: usize,
     ) -> Result<()> {
-        for (i, &state) in states.iter().enumerate() {
-            // SAFETY: per the trait contract.
-            self.0
-                .finalize(unsafe { state_mut(state) }, input, result, offset + i)?;
-        }
-        Ok(())
+        // SAFETY: per the trait contract the states are initialised, distinct and exclusive.
+        let mut scattered = unsafe { States::scattered(states) };
+        self.0
+            .finalize_all(&mut scattered, states.len(), input, result, offset)
     }
 
     unsafe fn destroy(&self, states: &[StatePtr]) {
