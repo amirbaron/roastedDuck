@@ -266,6 +266,6 @@ mod tests {
         assert_eq!(split("/path/to//file.csv"), ["/", "path", "to", "file.csv"]);
         assert_eq!(split("/"), ["/"]);
         assert_eq!(split("a\\b/"), ["a", "b"]);
-        assert!(split("").is_empty());
+        assert_eq!(split(""), Vec::<String>::new());
     }
 }
