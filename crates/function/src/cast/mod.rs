@@ -10,6 +10,7 @@
 //! `CastRules::ImplicitCast` plus registered casts) and binds casts with
 //! [`CastFunctionSet::get_cast_function`].
 
+mod bignum;
 mod binary;
 mod compare;
 mod decimal;
@@ -329,6 +330,9 @@ impl CastFunctionSet {
         if target.id() == L::Union && !matches!(source.id(), L::Union | L::SqlNull | L::Variant) {
             return structs::to_union(self, source, target).map(Some);
         }
+        if target.id() == L::Bignum && source.id() != L::Bignum {
+            return Ok(bignum::to_bignum(source));
+        }
         Ok(match source.id() {
             L::Boolean
             | L::TinyInt
@@ -346,6 +350,7 @@ impl CastFunctionSet {
             L::Decimal => decimal::cast_switch(source, target),
             L::Varchar => string::cast_switch(self, source, target)?,
             L::Blob | L::Bit | L::Uuid => binary::cast_switch(source, target),
+            L::Bignum => bignum::from_bignum(target),
             L::Date
             | L::Time
             | L::TimeNs

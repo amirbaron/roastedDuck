@@ -5,6 +5,7 @@
 //! bound the same way through [`cast::CastFunctionSet`].
 
 pub mod aggregate;
+pub mod bignum;
 pub mod cast;
 pub mod client;
 pub mod random;
