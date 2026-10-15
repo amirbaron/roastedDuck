@@ -10,6 +10,7 @@ mod ddl;
 mod delete;
 mod delim;
 mod dummy_scan;
+mod expression_scan;
 mod filter;
 mod hash_aggregate;
 mod insert;
@@ -43,6 +44,7 @@ pub use ddl::{
 pub use delete::PhysicalDelete;
 pub use delim::{DelimData, DelimGlobal, DelimShared, PhysicalDelimJoin, PhysicalDelimScan};
 pub use dummy_scan::PhysicalDummyScan;
+pub use expression_scan::{ExpressionScanState, PhysicalExpressionScan};
 pub use filter::{FilterState, PhysicalFilter};
 pub use hash_aggregate::{HashAggregateGlobal, HashAggregateLocal, PhysicalHashAggregate};
 pub use insert::{InsertGlobal, InsertTarget, PhysicalInsert, TableCreator};
