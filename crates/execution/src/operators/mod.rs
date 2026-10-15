@@ -3,6 +3,7 @@
 mod alter;
 mod column_data_scan;
 mod create_table;
+mod cross_product;
 mod cte;
 mod ddl;
 mod delete;
@@ -28,6 +29,7 @@ mod window;
 pub use alter::AlterEntryAction;
 pub use column_data_scan::PhysicalColumnDataScan;
 pub use create_table::PhysicalCreateTable;
+pub use cross_product::{CrossProductExecutor, CrossProductGlobal, PhysicalCrossProduct};
 pub use cte::{CteData, PhysicalCte, PhysicalCteScan, PhysicalRecursiveCte, RecursiveCteState};
 pub use ddl::{
     CatalogTableCreator, CreateIndexAction, CreateSchemaAction, CreateSequenceAction, CreateViewAction,

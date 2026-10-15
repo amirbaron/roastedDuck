@@ -28,6 +28,7 @@ mod window;
 
 use crate::expression_executor::ExpressionExecutor;
 use crate::operator::{PhysicalRef, SinkData};
+use crate::operators::PhysicalCrossProduct;
 use crate::operators::{
     AlterEntryAction, CatalogTableCreator, CreateIndexAction, CreateSchemaAction, CreateSequenceAction,
     CreateViewAction, DdlAction, DropAction, InsertTarget, PhysicalCreateTable, PhysicalDdl, PhysicalDelete,
@@ -674,14 +675,7 @@ impl PlanGenerator {
             LogicalKind::CrossProduct => {
                 let left = next_child("cross product")?;
                 let right = next_child("cross product")?;
-                Arc::new(PhysicalNestedLoopJoin::new(
-                    types,
-                    JoinType::Inner,
-                    Vec::new(),
-                    None,
-                    left,
-                    right,
-                )?)
+                Arc::new(PhysicalCrossProduct::new(types, left, right))
             }
             LogicalKind::AnyJoin { join_type, condition } => {
                 let left = next_child("join")?;
