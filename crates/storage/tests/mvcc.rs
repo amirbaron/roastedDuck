@@ -322,3 +322,102 @@ fn large_appends_span_row_groups_and_scan_in_parallel() {
     assert_eq!(stats.numeric_max(), Some(Value::integer(total - 1)));
     manager.commit(&t2).unwrap();
 }
+
+#[test]
+fn alter_table_creates_new_versions() {
+    let manager = TransactionManager::default();
+    let table = table();
+    let setup = manager.begin();
+    insert(&table, &setup, &[(1, "a"), (2, "b")]);
+    manager.commit(&setup).unwrap();
+
+    let t1 = manager.begin();
+    insert(&table, &t1, &[(3, "c")]);
+    let added = table
+        .add_column(&t1, &ColumnDefinition::new("d", LogicalType::BIGINT), &|count| {
+            let mut vector = Vector::flat(LogicalType::BIGINT, count);
+            vector.values_mut::<i64>()[..count].fill(42);
+            Ok(vector)
+        })
+        .unwrap();
+    assert!(!table.is_main_table());
+    let error = table
+        .append_chunk(&t1, &chunk(&[(9, "z")]), TableConstraints::default())
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "TransactionContext Error: Transaction conflict: attempting to insert into table \"t\" but it has been altered by a different transaction"
+    );
+    let retyped = added
+        .alter_type(
+            &t1,
+            0,
+            &LogicalType::BIGINT,
+            &[StorageIndex::new(0)],
+            &|chunk: &DataChunk| {
+                let mut vector = Vector::flat(LogicalType::BIGINT, chunk.len());
+                for row in 0..chunk.len() {
+                    let value = chunk.column(0).get_value(row).as_i32().map_or_else(
+                        || Value::null(LogicalType::BIGINT),
+                        |i| Value::bigint(i64::from(i) * 100),
+                    );
+                    vector.set_value(row, &value).unwrap();
+                }
+                Ok(vector)
+            },
+        )
+        .unwrap();
+    let dropped = retyped.remove_column(&t1, 1).unwrap();
+    assert_eq!(dropped.columns().len(), 2);
+    let mut state = TableScanState::default();
+    dropped
+        .initialize_scan(
+            &t1,
+            &mut state,
+            vec![StorageIndex::new(0), StorageIndex::new(1)],
+            None,
+        )
+        .unwrap();
+    let mut result = DataChunk::default();
+    let mut rows = Vec::new();
+    loop {
+        dropped.scan(&t1, &mut result, &mut state).unwrap();
+        if result.is_empty() {
+            break;
+        }
+        for row in 0..result.len() {
+            rows.push((result.column(0).get_value(row), result.column(1).get_value(row)));
+        }
+    }
+    assert_eq!(
+        rows,
+        vec![
+            (Value::bigint(100), Value::bigint(42)),
+            (Value::bigint(200), Value::bigint(42)),
+            (Value::bigint(300), Value::bigint(42)),
+        ],
+        "transaction-local rows are altered too"
+    );
+    manager.commit(&t1).unwrap();
+    let t2 = manager.begin();
+    let mut null = Vector::flat(LogicalType::BIGINT, 1);
+    null.set_value(0, &Value::null(LogicalType::BIGINT)).unwrap();
+    dropped
+        .update(
+            &t2,
+            &[0],
+            &[1],
+            &DataChunk::new(vec![null], 1),
+            &TableConstraints::default(),
+        )
+        .unwrap();
+    manager.commit(&t2).unwrap();
+    let t3 = manager.begin();
+    let error = dropped.add_not_null_constraint(&t3, 1).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "Constraint Error: NOT NULL constraint failed: t.d"
+    );
+    assert!(dropped.add_not_null_constraint(&t3, 0).is_ok());
+    manager.commit(&t3).unwrap();
+}

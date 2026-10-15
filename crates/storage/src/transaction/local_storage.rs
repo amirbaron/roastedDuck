@@ -204,6 +204,23 @@ impl LocalStorage {
         }
     }
 
+    /// Rewrites the local data of `old` with `alter` and moves it to `new` (the local part
+    /// of ALTER TABLE: `AddColumn`, `DropColumn`, `ChangeType`).
+    pub fn alter(
+        &self,
+        old: &Arc<DataTable>,
+        new: &Arc<DataTable>,
+        alter: impl FnOnce(&RowGroupCollection) -> Result<RowGroupCollection>,
+    ) -> Result<()> {
+        let Some(storage) = self.storage(old) else {
+            return Ok(());
+        };
+        let altered = alter(&storage.collection())?;
+        storage.set_collection(Arc::new(altered));
+        storage.set_table(Arc::clone(new));
+        Ok(())
+    }
+
     /// Flushes every table's local data into the table (`LocalStorage::Commit`).
     pub(crate) fn commit(&self, transaction: &Transaction) -> Result<()> {
         let tables = std::mem::take(&mut *self.tables());

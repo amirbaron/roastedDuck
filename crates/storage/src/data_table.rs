@@ -14,7 +14,7 @@ use crate::table::{
     TableAppendState, TableScanState,
 };
 use crate::table_filter::TableFilterSet;
-use crate::transaction::{LocalTableStorage, Transaction};
+use crate::transaction::{LocalTableStorage, Transaction, TransactionData};
 use crate::{DEFAULT_ROW_GROUP_SIZE, MAX_ROW_ID};
 
 /// Where a table's blocks live (DuckDB's `TableIOManager`).
@@ -658,6 +658,110 @@ impl DataTable {
             verifier.verify_update(chunk, column_ids)?;
         }
         Ok(())
+    }
+}
+
+impl DataTable {
+    /// A new version of `parent` (sharing its info) with `columns` stored in `row_groups`.
+    fn derived(
+        parent: &Arc<Self>,
+        columns: Vec<ColumnDefinition>,
+        row_groups: Arc<RowGroupCollection>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            info: Arc::clone(&parent.info),
+            columns,
+            row_groups,
+            append_lock: Mutex::new(()),
+            version: AtomicU8::new(TableVersion::MainTable as u8),
+        })
+    }
+
+    /// `ALTER TABLE ADD COLUMN`: a new version of the table with `column` appended,
+    /// filled by `default` (given a row count, returns that many values). This table is
+    /// marked as altered (`DataTable(parent, new_column, default_value)`).
+    pub fn add_column(
+        self: &Arc<Self>,
+        transaction: &Transaction,
+        column: &ColumnDefinition,
+        default: &dyn Fn(usize) -> Result<Vector>,
+    ) -> Result<Arc<Self>> {
+        let _lock = self.append_lock();
+        let row_groups = Arc::new(self.row_groups.add_column(&column.ty, default)?);
+        let mut columns = self.columns.clone();
+        columns.push(column.clone());
+        let table = Self::derived(self, columns, row_groups);
+        transaction.local_storage().alter(self, &table, |collection| {
+            collection.add_column(&column.ty, default)
+        })?;
+        self.set_as_altered();
+        Ok(table)
+    }
+
+    /// `ALTER TABLE DROP COLUMN` of physical column `column` (`DataTable(parent,
+    /// removed_column)`).
+    pub fn remove_column(self: &Arc<Self>, transaction: &Transaction, column: usize) -> Result<Arc<Self>> {
+        let _lock = self.append_lock();
+        if column >= self.columns.len() {
+            return Err(Error::internal("dropping a column that does not exist"));
+        }
+        let row_groups = Arc::new(self.row_groups.remove_column(column));
+        let mut columns = self.columns.clone();
+        columns.remove(column);
+        let table = Self::derived(self, columns, row_groups);
+        transaction
+            .local_storage()
+            .alter(self, &table, |collection| Ok(collection.remove_column(column)))?;
+        self.set_as_altered();
+        Ok(table)
+    }
+
+    /// `ALTER TABLE ALTER COLUMN TYPE`: column `column` becomes `target`, computed by
+    /// `cast` from the scanned `bound_columns` (`DataTable(parent, changed_idx, ...)`).
+    pub fn alter_type(
+        self: &Arc<Self>,
+        transaction: &Transaction,
+        column: usize,
+        target: &LogicalType,
+        bound_columns: &[StorageIndex],
+        cast: &dyn Fn(&DataChunk) -> Result<Vector>,
+    ) -> Result<Arc<Self>> {
+        let _lock = self.append_lock();
+        let row_groups =
+            Arc::new(
+                self.row_groups
+                    .alter_type(transaction.data(), column, target, bound_columns, cast)?,
+            );
+        let mut columns = self.columns.clone();
+        columns[column].ty = target.clone();
+        let table = Self::derived(self, columns, row_groups);
+        transaction.local_storage().alter(self, &table, |collection| {
+            collection.alter_type(TransactionData::local(), column, target, bound_columns, cast)
+        })?;
+        self.set_as_altered();
+        Ok(table)
+    }
+
+    /// `ALTER TABLE ALTER COLUMN SET NOT NULL`: verifies that column `column` holds no
+    /// NULLs and returns the new version of the table (`DataTable(parent, constraint)`).
+    pub fn add_not_null_constraint(
+        self: &Arc<Self>,
+        transaction: &Transaction,
+        column: usize,
+    ) -> Result<Arc<Self>> {
+        let _lock = self.append_lock();
+        let local = transaction.local_storage().storage(self);
+        let local_has_null = match &local {
+            Some(storage) => storage.collection().column_has_null(transaction.data(), column)?,
+            None => false,
+        };
+        if local_has_null || self.row_groups.column_has_null(transaction.data(), column)? {
+            return Err(self.not_null_error(column));
+        }
+        let table = Self::derived(self, self.columns.clone(), Arc::clone(&self.row_groups));
+        transaction.local_storage().move_storage(self, &table);
+        self.set_as_altered();
+        Ok(table)
     }
 }
 

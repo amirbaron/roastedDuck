@@ -5,10 +5,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
 use rustdb_common::{Error, Result};
-use rustdb_types::{DataChunk, LogicalType, SelectionVector};
+use rustdb_types::{DataChunk, LogicalType, SelectionVector, Vector};
 
 use super::chunk_info::ScanOptions;
-use super::column_data::ColumnDataType;
+use super::column_data::{ColumnData, ColumnDataType};
 use super::row_group::{DeleteRecord, RowGroup, RowGroupAppendState, TableScanType, UpdateRecord};
 use super::scan_state::{CollectionScanState, ParallelCollectionScanState, ScanFilterInfo, StorageIndex};
 use super::segment_tree::{SegmentNode, SegmentTree};
@@ -715,5 +715,182 @@ impl RowGroupCollection {
             .iter()
             .map(|node| node.node.committed_row_count())
             .sum()
+    }
+
+    // ----------------------------------------------------------------------------------
+    // ALTER TABLE
+    // ----------------------------------------------------------------------------------
+
+    /// A collection with the same row id range and `types`, sharing nothing yet.
+    fn derived(&self, types: Vec<LogicalType>, stats: TableStatistics) -> Self {
+        let row_groups = self.row_groups();
+        Self {
+            io: Arc::clone(&self.io),
+            types,
+            row_group_size: self.row_group_size,
+            total_rows: AtomicU64::new(self.total_rows()),
+            row_groups: RwLock::new(Arc::new(RowGroupSegmentTree::new(row_groups.base_row_id))),
+            stats: Mutex::new(stats),
+            append_mode: Mutex::new(self.append_mode()),
+        }
+    }
+
+    /// A copy of the collection with a new last column of type `ty`, filled by `default`
+    /// (called with a row count, returns that many values) (`AddColumn`).
+    pub fn add_column(&self, ty: &LogicalType, default: &dyn Fn(usize) -> Result<Vector>) -> Result<Self> {
+        let mut types = self.types.clone();
+        types.push(ty.clone());
+        let mut stats = self.stats().clone();
+        stats.columns.push(BaseStatistics::create_empty(ty.clone()));
+        let result = self.derived(types, stats);
+        let target = result.row_groups();
+        let column_index = self.types.len();
+        for node in self.row_groups().tree.nodes() {
+            let column = Arc::new(ColumnData::new(
+                Arc::clone(&self.io),
+                column_index,
+                ty.clone(),
+                ColumnDataType::MainTable,
+            ));
+            let mut append = column.initialize_append()?;
+            let count = node.node.count();
+            let mut written = 0;
+            while written < count {
+                let rows = (count - written).min(VECTOR_SIZE) as usize;
+                let values = default(rows)?;
+                column.append(&mut append, &values, rows)?;
+                written += rows as u64;
+            }
+            let mut columns = node.node.columns().to_vec();
+            columns.push(Arc::clone(&column));
+            let row_group = Arc::new(node.node.with_columns(columns));
+            if let Some(column_stats) = result.stats().columns.get_mut(column_index) {
+                column.merge_into_statistics(column_stats)?;
+            }
+            target.tree.push(node.row_start, row_group);
+        }
+        Ok(result)
+    }
+
+    /// A copy of the collection without column `column` (`RemoveColumn`).
+    #[must_use]
+    pub fn remove_column(&self, column: usize) -> Self {
+        let mut types = self.types.clone();
+        types.remove(column);
+        let mut stats = self.stats().clone();
+        stats.columns.remove(column);
+        let result = self.derived(types, stats);
+        let target = result.row_groups();
+        for node in self.row_groups().tree.nodes() {
+            let mut columns = node.node.columns().to_vec();
+            columns.remove(column);
+            target
+                .tree
+                .push(node.row_start, Arc::new(node.node.with_columns(columns)));
+        }
+        result
+    }
+
+    /// A copy of the collection where column `changed` has type `target`, computed by
+    /// `cast` from the columns `bound_columns` of every row (`AlterType`).
+    pub fn alter_type(
+        &self,
+        transaction: TransactionData,
+        changed: usize,
+        target: &LogicalType,
+        bound_columns: &[StorageIndex],
+        cast: &dyn Fn(&DataChunk) -> Result<Vector>,
+    ) -> Result<Self> {
+        let mut types = self.types.clone();
+        types[changed] = target.clone();
+        let mut stats = self.stats().clone();
+        stats.columns[changed] = BaseStatistics::create_empty(target.clone());
+        let result = self.derived(types, stats);
+        let target_tree = result.row_groups();
+        let options = RowGroup::scan_options(TableScanType::AllRows, transaction);
+        let scan_types: Vec<LogicalType> = bound_columns
+            .iter()
+            .map(|column| {
+                if column.is_row_id() {
+                    LogicalType::BIGINT
+                } else {
+                    self.types[column.primary_index()].clone()
+                }
+            })
+            .collect();
+        for (position, node) in self.row_groups().tree.nodes().into_iter().enumerate() {
+            let column = Arc::new(ColumnData::new(
+                Arc::clone(&self.io),
+                changed,
+                target.clone(),
+                ColumnDataType::MainTable,
+            ));
+            let mut append = column.initialize_append()?;
+            let mut filters = ScanFilterInfo::default();
+            let mut state = CollectionScanState {
+                max_row: node.row_end(),
+                column_scans: RowGroup::column_scan_states(&self.types, bound_columns),
+                ..CollectionScanState::default()
+            };
+            if node
+                .node
+                .initialize_scan(&mut state, bound_columns, &mut filters, node.row_start, 0)?
+            {
+                state.row_group = Some((position, node.clone()));
+                let mut chunk = DataChunk::with_types(&scan_types, rustdb_common::STANDARD_VECTOR_SIZE);
+                loop {
+                    node.node.scan(
+                        options,
+                        &mut state,
+                        bound_columns,
+                        &mut filters,
+                        node.row_start,
+                        &mut chunk,
+                    )?;
+                    if chunk.is_empty() {
+                        break;
+                    }
+                    let values = cast(&chunk)?;
+                    column.append(&mut append, &values, chunk.len())?;
+                }
+            }
+            let mut columns = node.node.columns().to_vec();
+            columns[changed] = Arc::clone(&column);
+            if let Some(column_stats) = result.stats().columns.get_mut(changed) {
+                column.merge_into_statistics(column_stats)?;
+            }
+            target_tree
+                .tree
+                .push(node.row_start, Arc::new(node.node.with_columns(columns)));
+        }
+        Ok(result)
+    }
+
+    /// Whether column `column` holds a NULL in any row not permanently deleted
+    /// (`VerifyNewConstraint` for NOT NULL).
+    pub fn column_has_null(&self, transaction: TransactionData, column: usize) -> Result<bool> {
+        if self.total_rows() == 0 {
+            return Ok(false);
+        }
+        let column_ids = [StorageIndex::from(column)];
+        let mut filters = ScanFilterInfo::default();
+        let mut state = CollectionScanState::default();
+        self.initialize_scan(&mut state, &column_ids, &mut filters)?;
+        let mut chunk = DataChunk::with_types(
+            std::slice::from_ref(&self.types[column]),
+            rustdb_common::STANDARD_VECTOR_SIZE,
+        );
+        let options = RowGroup::scan_options(TableScanType::OmitPermanentlyDeleted, transaction);
+        while Self::scan(options, &mut state, &column_ids, &mut filters, &mut chunk)? {
+            let vector = chunk.column(0);
+            let validity = vector.validity();
+            if !validity.is_all_valid() {
+                let sel = vector.sel();
+                if (0..chunk.len()).any(|row| !validity.is_valid(sel.slot(row))) {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
     }
 }
