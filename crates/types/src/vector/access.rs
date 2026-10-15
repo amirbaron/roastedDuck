@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use super::{Aux, Repr, StringHeap, Vector};
 use crate::buffer::RawBuffer;
-use crate::TypeInfo;
+use crate::{TypeInfo, ValidityMask};
 
 /// Shared ownership of memory that `StringT` values of a vector point into.
 #[derive(Clone)]
@@ -69,6 +69,14 @@ impl Vector {
             unsafe { std::ptr::copy_nonoverlapping(old.as_ptr(), grown.as_mut_ptr(), old.len()) };
             flat.data = Arc::new(grown);
         }
+        // New rows are valid: extend an existing NULL mask with all-valid words.
+        if let Some(words) = flat.validity.words()
+            && words.len() < capacity.div_ceil(64)
+        {
+            let mut grown = words.to_vec();
+            grown.resize(capacity.div_ceil(64), u64::MAX);
+            flat.validity = ValidityMask::from_words(grown);
+        }
         match &mut flat.aux {
             Aux::Struct(children) => {
                 for child in children {
@@ -77,6 +85,19 @@ impl Vector {
             }
             Aux::Array(child) => child.reserve(capacity * array_size.unwrap_or(0)),
             _ => {}
+        }
+    }
+
+    /// Rows the vector can hold. Unlike [`Vector::capacity`] this also covers STRUCT and
+    /// ARRAY vectors, whose own data buffer is empty, through their children.
+    pub fn row_capacity(&self) -> usize {
+        match &self.storage().aux {
+            Aux::Struct(children) => children.iter().map(Vector::row_capacity).min().unwrap_or(0),
+            Aux::Array(child) => match self.ty.info() {
+                Some(TypeInfo::Array { size, .. }) if *size > 0 => child.row_capacity() / *size as usize,
+                _ => 0,
+            },
+            _ => self.capacity(),
         }
     }
 
