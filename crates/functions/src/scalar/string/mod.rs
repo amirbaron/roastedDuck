@@ -10,6 +10,7 @@ pub mod length;
 pub mod like;
 pub mod normalize;
 pub mod parse_path;
+pub mod printf;
 pub mod regexp;
 pub mod replace;
 pub mod reverse;

@@ -254,6 +254,8 @@ fn string_functions(sets: &mut Vec<ScalarFunctionSet>) {
     sets.push(encode::parse_formatted_bytes_functions());
     sets.push(encode::bar_functions());
     sets.extend(string::parse_path::parse_path_functions());
+    sets.push(string::printf::printf_functions());
+    sets.push(string::printf::format_functions());
     with_aliases(sets, blob::base64::to_base64_functions(), &["base64"]);
     sets.push(blob::base64::from_base64_functions());
     sets.push(blob::encode::encode_functions());
