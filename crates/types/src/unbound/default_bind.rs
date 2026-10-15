@@ -131,6 +131,11 @@ pub fn builtin_type_id(name: &str) -> Option<LogicalTypeId> {
         .map(|&(_, id, _)| id)
 }
 
+/// The names of the builtin types, lowercase (DuckDB's `DefaultTypeGenerator::GetDefaultEntries`).
+pub fn builtin_type_names() -> impl Iterator<Item = &'static str> {
+    BUILTIN_TYPES.iter().map(|&(name, _, _)| name)
+}
+
 impl UnboundTypeInfo {
     /// Binds this type, and the types among its parameters, where they name builtin types
     /// (DuckDB's `TryDefaultBindTypeExpression`). A name that is not builtin stays an

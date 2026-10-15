@@ -162,6 +162,23 @@ impl DdlAction for CreateViewAction {
     }
 }
 
+/// `CREATE TYPE` and `CREATE MACRO` (DuckDB's `DuckSchemaEntry::CreateType` and
+/// `CreateFunction` with a `CreateMacroInfo`): the info is already bound.
+#[derive(Debug)]
+pub struct CreateEntryAction {
+    pub catalog: Arc<Catalog>,
+    pub info: CreateInfo,
+}
+
+impl DdlAction for CreateEntryAction {
+    fn execute(&self, transaction: &Transaction) -> Result<()> {
+        let entry = rustdb_catalog::checkpoint::entry_from_create_info(&self.info)?;
+        self.catalog
+            .create_entry(transaction, &self.info.schema, entry, self.info.on_conflict)?;
+        Ok(())
+    }
+}
+
 /// Creates a table's storage and catalog entry (DuckDB's `DuckSchemaEntry::CreateTable`
 /// with the `DuckTableEntry` constructor), for `CREATE TABLE [AS]`.
 #[derive(Debug)]

@@ -255,7 +255,8 @@ impl ClientContext {
         Err(self.missing_entry_error(&path, ty, name))
     }
 
-    /// The best similar entry name in each schema (DuckDB's `SimilarEntriesInSchemas`).
+    /// The best similar entry name in each schema, with the catalog and schema it is in
+    /// (DuckDB's `SimilarEntriesInSchemas`).
     fn similar_entries(
         &self,
         schemas: &[(String, String)],
@@ -287,12 +288,21 @@ impl ClientContext {
             };
             let mut entry_score = 0.0;
             let mut entry_name = String::new();
-            for entry in set.scan(&self.transaction) {
-                let score = similarity_rating(&entry.name().to_lowercase(), name);
+            let mut consider = |candidate: &str| {
+                let score = similarity_rating(&candidate.to_lowercase(), name);
                 if score > entry_score {
                     entry_score = score;
-                    entry.name().clone_into(&mut entry_name);
+                    candidate.clone_into(&mut entry_name);
                 }
+            };
+            if ty == CatalogType::Type && schema_name.eq_ignore_ascii_case(DEFAULT_SCHEMA) {
+                // The builtin types of every `main` schema (`DefaultTypeGenerator`).
+                for builtin in rustdb_types::builtin_type_names() {
+                    consider(builtin);
+                }
+            }
+            for entry in set.scan(&self.transaction) {
+                consider(entry.name());
             }
             if entry_name.is_empty() {
                 continue;
@@ -308,21 +318,21 @@ impl ClientContext {
         (best, results)
     }
 
-    /// Whether naming an entry of `catalog.schema` needs the catalog and/or the schema
-    /// (DuckDB's `FindMinimalQualification`).
-    fn minimal_qualification(&self, catalog: &str, schema: &str) -> (bool, bool) {
-        let matches = |entries: Vec<(String, String)>| {
-            entries
+    /// `name` in `catalog.schema`, qualified only as far as the search path requires
+    /// (DuckDB's `FindMinimalQualification` with `SimilarCatalogEntry::GetQualifiedName`).
+    fn minimally_qualified(&self, catalog: &str, schema: &str, name: &str) -> String {
+        let reaches = |paths: Vec<(String, String)>| {
+            paths
                 .iter()
                 .any(|(c, s)| c.eq_ignore_ascii_case(catalog) && s.eq_ignore_ascii_case(schema))
         };
-        if matches(self.search_path("", schema)) {
-            return (false, true);
+        if reaches(self.search_path("", schema)) {
+            format!("{schema}.{name}")
+        } else if reaches(self.search_path(catalog, "")) {
+            format!("{catalog}.{name}")
+        } else {
+            format!("{catalog}.{schema}.{name}")
         }
-        if matches(self.search_path(catalog, "")) {
-            return (true, false);
-        }
-        (true, true)
     }
 
     /// DuckDB's `Catalog::CreateMissingEntryException`.
@@ -345,18 +355,9 @@ impl ClientContext {
         let (unseen_score, unseen) = self.similar_entries(&unseen_schemas, ty, name);
         let mut suggestions = BTreeSet::new();
         if !unseen.is_empty() && (unseen_score >= 1.0 || unseen_score - UNSEEN_PENALTY > seen_score) {
-            // Entries outside the search path need the minimal qualification that finds them.
+            // Entries outside the search path need (minimal) qualification.
             for (catalog, schema, entry) in unseen {
-                let (qualify_catalog, qualify_schema) = self.minimal_qualification(&catalog, &schema);
-                let mut qualified = Vec::new();
-                if qualify_catalog {
-                    qualified.push(catalog);
-                }
-                if qualify_schema {
-                    qualified.push(schema);
-                }
-                qualified.push(entry);
-                suggestions.insert(qualified.join("."));
+                suggestions.insert(self.minimally_qualified(&catalog, &schema, &entry));
             }
         } else {
             suggestions.extend(seen.into_iter().map(|(_, _, entry)| entry));

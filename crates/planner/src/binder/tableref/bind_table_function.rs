@@ -5,8 +5,8 @@
 use std::fmt::Write as _;
 
 use rustdb_ast::{
-    ExpressionType, FunctionExpression, OrdinalityType, ParsedExpression, ParsedExpressionKind,
-    TableFunctionRef,
+    ExpressionType, FunctionExpression, MacroFunction, MacroFunctionKind, OrdinalityType, ParsedExpression,
+    ParsedExpressionKind, QueryNode, TableFunctionRef,
 };
 use rustdb_catalog::{CatalogType, EntryKind};
 use rustdb_common::{Error, ErrorKind, Result};
@@ -14,6 +14,8 @@ use rustdb_function::cast::{CastParameters, ValueCast};
 use rustdb_function::{TableFunction, TableFunctionBindInput};
 use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
+use crate::binder::expression::bind_macro;
+use crate::binder::query_node::bind_node;
 use crate::binder::{BindScope, Binding, BindingAlias, BindingKind, BoundStatement};
 use crate::expression_binder::{
     ExpressionBinder, TableFunctionBinder, parameter_not_resolved, parsed_is_scalar,
@@ -60,7 +62,9 @@ fn bind_parameters(
     children: &mut [ParsedExpression],
     location: Option<u64>,
 ) -> Result<(Vec<LogicalType>, Vec<Value>, NamedParameters)> {
-    if !children.iter_mut().all(parsed_is_scalar) {
+    // While a macro definition is verified its parameters stand for constants; binding
+    // them reports that their types are unknown.
+    if scope.binder.macro_binding.is_none() && !children.iter_mut().all(parsed_is_scalar) {
         return Err(Error::not_implemented(
             "table in-out functions and table parameters",
         ));
@@ -327,6 +331,11 @@ pub fn bind_table_function(
         )
         .map_err(|error| crate::context::position_missing_entry(error, location))?
         .ok_or_else(|| Error::internal("table function lookup returned nothing"))?;
+    if let EntryKind::TableMacro(macro_entry) = &entry.entry.kind {
+        let macros = macro_entry.macros.clone();
+        let location = function_ref.function.query_location;
+        return bind_table_macro_ref(scope, function_ref, entry.entry.name(), &macros, alias, location);
+    }
     let EntryKind::TableFunction(functions) = &entry.entry.kind else {
         return Err(Error::not_implemented(format!(
             "{} as a table function",
@@ -393,4 +402,74 @@ pub fn bind_table_function(
         input_table,
     )
     .map_err(|error| error.with_position(location))
+}
+
+/// The query of a table macro call with the parameters replaced by the arguments
+/// (DuckDB's `Binder::BindTableMacro`).
+fn bind_table_macro(
+    binder: &mut crate::binder::Binder,
+    function: &mut FunctionExpression,
+    name: &str,
+    macros: &[MacroFunction],
+    location: Option<u64>,
+) -> Result<QueryNode> {
+    let arguments = match bind_macro::bind_macro_function(binder, macros, name, function, 0)? {
+        Ok(arguments) => arguments,
+        Err(message) => return Err(Error::binder(message).with_position(location)),
+    };
+    let definition = &macros[arguments.index];
+    let MacroFunctionKind::Table(table) = &definition.kind else {
+        return Err(Error::internal("expected a table macro"));
+    };
+    let binding = bind_macro::create_dummy_binding(definition, name, arguments)?;
+    let mut node = (*table.query_node).clone();
+    bind_macro::replace_macro_parameters_in_node(&mut node, &binding)?;
+    Ok(node)
+}
+
+/// `FROM m(args)` of a table macro (the `TABLE_MACRO_ENTRY` case of DuckDB's
+/// `Binder::Bind(TableFunctionRef &)`): the macro's query is bound like a subquery.
+fn bind_table_macro_ref(
+    scope: &mut BindScope<'_>,
+    function_ref: &mut TableFunctionRef,
+    name: &str,
+    macros: &[MacroFunction],
+    alias: &str,
+    location: Option<u64>,
+) -> Result<BoundStatement> {
+    let ParsedExpressionKind::Function(function) = &mut function_ref.function.kind else {
+        return Err(Error::internal(
+            "table function reference without a function call",
+        ));
+    };
+    let mut node = bind_table_macro(scope.binder, function, name, macros, location)?;
+    let mut binder = scope.binder.child()?;
+    binder.can_contain_nulls = true;
+    binder.alias = if alias.is_empty() {
+        "unnamed_query".to_owned()
+    } else {
+        alias.to_owned()
+    };
+    let bound = {
+        let mut child_scope = BindScope {
+            binder: &mut binder,
+            outer: Some(&mut *scope),
+        };
+        bind_node(&mut child_scope, &mut node).map_err(|error| error.with_position(location))?
+    };
+    let bind_index = bound.plan.root_index()?;
+    let subquery_alias = if alias.is_empty() {
+        format!("unnamed_query{bind_index}")
+    } else {
+        alias.to_owned()
+    };
+    scope.binder.bind_context.add_subquery(
+        bind_index,
+        &subquery_alias,
+        &function_ref.column_name_alias,
+        &bound.names,
+        bound.types.clone(),
+    )?;
+    scope.binder.move_correlated_expressions(&mut binder);
+    Ok(bound)
 }

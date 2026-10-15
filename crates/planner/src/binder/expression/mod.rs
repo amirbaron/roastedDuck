@@ -3,11 +3,13 @@
 //! that specialised binders can fall back to it.
 
 mod bind_function;
+pub(crate) mod bind_macro;
 mod bind_star;
 mod bind_subquery;
+mod bind_type;
 
 use rustdb_ast::{ExpressionType, ParsedExpression, ParsedExpressionKind};
-use rustdb_common::{Error, ErrorKind, Result};
+use rustdb_common::{Error, Result};
 use rustdb_types::{LogicalType, LogicalTypeId};
 
 use crate::expression::{
@@ -22,6 +24,7 @@ use crate::function_binder::{add_cast_to_type, try_bind_comparison};
 pub use bind_function::bind_function_expression;
 pub use bind_star::expand_star_expression;
 pub use bind_subquery::bind_subquery_expression;
+pub use bind_type::{bind_logical_type, bind_logical_type_in_schema};
 
 /// Binds every child of `expr` and reports the first error (DuckDB's
 /// `BindUnsupportedExpression`), or else `message` at `expr`'s location.
@@ -307,55 +310,13 @@ fn bind_cast<B: ExpressionBinder + ?Sized>(
     if let Some(error) = binder.bind_in_place(&mut cast.child, depth, false)? {
         return Ok(BindResult::Unbound(error));
     }
-    let target = bind_logical_type(&cast.cast_type)?;
-    let child = take_bound(&mut cast.child)?;
     let context = binder.binder_ref().context.clone();
+    let target = bind_logical_type(&context, &cast.cast_type)?;
+    let child = take_bound(&mut cast.child)?;
     if cast.try_cast && crate::expression_binder::expression_return_type(&child) == target {
         return Ok(child.into());
     }
     Ok(add_cast_to_type(&context, child, &target, cast.try_cast)?.into())
-}
-
-/// Resolves a type written in SQL (DuckDB's `Binder::BindLogicalType`): user types and
-/// unbound type names are not ported yet.
-pub fn bind_logical_type(ty: &LogicalType) -> Result<LogicalType> {
-    match (ty.id(), ty.info()) {
-        (LogicalTypeId::Unbound, Some(rustdb_types::TypeInfo::Unbound(info))) => {
-            let bound = info.default_bind()?;
-            if bound.id() == LogicalTypeId::Unbound {
-                return Err(Error::new(
-                    ErrorKind::Catalog,
-                    format!("Type with name {} does not exist!", info.name),
-                ));
-            }
-            bind_logical_type(&bound)
-        }
-        (LogicalTypeId::List, _) => match ty.child_type() {
-            Some(child) => Ok(LogicalType::list(bind_logical_type(child)?)),
-            None => Ok(ty.clone()),
-        },
-        (LogicalTypeId::Array, _) => match ty.array_child() {
-            Some((child, size)) => Ok(LogicalType::array(bind_logical_type(child)?, size)),
-            None => Ok(ty.clone()),
-        },
-        (LogicalTypeId::Struct, _) => {
-            let children = ty
-                .struct_children()
-                .unwrap_or_default()
-                .iter()
-                .map(|(name, child)| Ok((name.clone(), bind_logical_type(child)?)))
-                .collect::<Result<Vec<_>>>()?;
-            Ok(LogicalType::struct_type(children))
-        }
-        (LogicalTypeId::Map, _) => match ty.map_key_value() {
-            Some((key, value)) => Ok(LogicalType::map(
-                bind_logical_type(key)?,
-                bind_logical_type(value)?,
-            )),
-            None => Ok(ty.clone()),
-        },
-        _ => Ok(ty.clone()),
-    }
 }
 
 /// DuckDB's `BindExpression(CaseExpression &)`.

@@ -880,6 +880,34 @@ impl SelectBinder<'_> {
         } else {
             None
         };
+        if let Some(found) = &entry
+            && let rustdb_catalog::EntryKind::Macro(macro_entry) = &found.entry.kind
+        {
+            // A macro used as a windowed aggregate: its body takes the window's place.
+            let mut function = rustdb_ast::FunctionExpression {
+                function_name: window.function_name.clone(),
+                schema: window.schema.clone(),
+                children: window.children.clone(),
+                filter: window.filter_expr.clone(),
+                order_bys: rustdb_ast::OrderModifier { orders: Vec::new() },
+                distinct: window.distinct,
+                is_operator: false,
+                export_state: false,
+                catalog: window.catalog.clone(),
+            };
+            let macros = macro_entry.macros.clone();
+            let name = found.entry.name().to_owned();
+            let mut macro_expr = expr.clone();
+            crate::binder::expression::bind_macro::unfold_macro_expression(
+                self.base.binder,
+                &mut function,
+                &name,
+                &macros,
+                &mut macro_expr,
+                depth,
+            )?;
+            return self.bind_expression(&mut macro_expr, depth, false);
+        }
         if self.inside_window {
             return Err(Error::binder("window function calls cannot be nested").with_position(location));
         }

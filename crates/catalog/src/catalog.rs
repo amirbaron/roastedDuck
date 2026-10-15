@@ -271,6 +271,17 @@ impl Catalog {
         let set = Self::set_for(schema_entry, entry.catalog_type());
         let name = entry.name().to_owned();
         let ty = entry.catalog_type();
+        if ty == CatalogType::Type && is_builtin_type(schema, &name) {
+            // The builtin types of `main` exist in every catalog (DuckDB's
+            // `DefaultTypeGenerator`) and are internal entries.
+            return match on_conflict {
+                OnCreateConflict::IgnoreOnConflict => Ok(false),
+                OnCreateConflict::ReplaceOnConflict => Err(internal_entry_error(&name)),
+                _ => Err(Error::catalog(format!(
+                    "Type with name \"{name}\" already exists!"
+                ))),
+            };
+        }
         if on_conflict == OnCreateConflict::IgnoreOnConflict && set.get(transaction, &name).is_some() {
             return Ok(false);
         }
@@ -418,6 +429,9 @@ impl Catalog {
         let schema_entry = self.schema_entry(transaction, schema)?;
         let schema_entry = schema_entry.as_schema().ok_or_else(missing_main)?;
         let set = Self::set_for(schema_entry, ty);
+        if ty == CatalogType::Type && is_builtin_type(schema, name) {
+            return Err(internal_entry_error(name));
+        }
         let Some(existing) = set.get(transaction, name) else {
             if if_exists {
                 return Ok(());
@@ -517,6 +531,87 @@ impl Catalog {
     }
 }
 
+/// Whether `name` is one of the builtin types every `main` schema holds (DuckDB's
+/// `DefaultTypeGenerator::CreateDefaultEntry`).
+fn is_builtin_type(schema: &str, name: &str) -> bool {
+    schema.eq_ignore_ascii_case(DEFAULT_SCHEMA) && rustdb_types::builtin_type_id(name).is_some()
+}
+
+/// DuckDB's error for dropping or replacing an internal entry.
+fn internal_entry_error(name: &str) -> Error {
+    Error::catalog(format!(
+        "Cannot drop entry \"{name}\" because it is an internal system entry"
+    ))
+}
+
 fn missing_main() -> Error {
     Error::internal("the main schema is missing from the catalog")
+}
+
+#[cfg(test)]
+mod tests {
+    use rustdb_types::LogicalType;
+
+    use super::*;
+    use crate::{TransactionManager, TypeEntry};
+
+    fn type_entry(name: &str) -> CatalogEntry {
+        CatalogEntry::new(
+            name,
+            EntryKind::Type(TypeEntry {
+                user_type: LogicalType::INTEGER,
+            }),
+        )
+    }
+
+    #[test]
+    fn builtin_types_exist_in_every_main_schema() {
+        let catalog = Catalog::new("memory").unwrap();
+        let manager = TransactionManager::default();
+        let transaction = manager.begin();
+        let error = catalog
+            .create_entry(
+                &transaction,
+                "main",
+                type_entry("INTEGER"),
+                OnCreateConflict::ErrorOnConflict,
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Catalog Error: Type with name \"INTEGER\" already exists!"
+        );
+        let created = catalog
+            .create_entry(
+                &transaction,
+                "main",
+                type_entry("integer"),
+                OnCreateConflict::IgnoreOnConflict,
+            )
+            .unwrap();
+        assert!(!created);
+        assert!(
+            catalog
+                .create_entry(
+                    &transaction,
+                    "main",
+                    type_entry("mood"),
+                    OnCreateConflict::ErrorOnConflict
+                )
+                .unwrap()
+        );
+        assert!(
+            catalog
+                .get_entry(&transaction, CatalogType::Type, "main", "MOOD")
+                .is_some()
+        );
+        catalog
+            .drop_entry(&transaction, CatalogType::Type, "main", "mood", false, false)
+            .unwrap();
+        assert!(
+            catalog
+                .get_entry(&transaction, CatalogType::Type, "main", "mood")
+                .is_none()
+        );
+    }
 }

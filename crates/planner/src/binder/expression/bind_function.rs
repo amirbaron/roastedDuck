@@ -48,6 +48,10 @@ pub fn bind_function_expression<B: ExpressionBinder + ?Sized>(
             let functions = functions.clone();
             binder.bind_aggregate(expr, &functions, depth)
         }
+        EntryKind::Macro(macro_entry) => {
+            let macros = macro_entry.macros.clone();
+            super::bind_macro::bind_macro(binder, expr, entry.name(), &macros, depth)
+        }
         _ => Err(Error::not_implemented(format!(
             "binding calls to {}",
             entry.catalog_type().display_name()
