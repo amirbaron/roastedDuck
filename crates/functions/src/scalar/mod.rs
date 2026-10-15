@@ -141,4 +141,5 @@ fn string_functions(sets: &mut Vec<ScalarFunctionSet>) {
     sets.push(reverse::reverse_functions());
     sets.push(replace::repeat_functions());
     sets.push(replace::replace_functions());
+    sets.extend(string::like::like_functions());
 }

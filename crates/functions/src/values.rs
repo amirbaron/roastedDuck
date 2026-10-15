@@ -26,6 +26,18 @@ pub(crate) fn as_bigint(value: &Value) -> Result<i64> {
         .ok_or_else(|| Error::internal("BIGINT cast did not produce a bigint"))
 }
 
+/// The value as text (DuckDB's `Value::ToString` for a constant argument).
+pub(crate) fn as_text(value: &Value) -> Result<String> {
+    if let Some(text) = value.as_str() {
+        return Ok(text.to_owned());
+    }
+    value
+        .default_cast_as(&LogicalType::VARCHAR)?
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| Error::internal("VARCHAR cast did not produce a string"))
+}
+
 /// DuckDB's `CastExceptionText` for a numeric value that does not fit `target` (raised as
 /// an Invalid Input Error by `Cast::Operation`).
 pub(crate) fn cast_error<T: rustdb_function::cast::numeric::CastNumber>(value: T, target: &str) -> Error {

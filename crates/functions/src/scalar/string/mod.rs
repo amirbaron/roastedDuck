@@ -6,6 +6,7 @@ pub mod concat;
 pub mod contains;
 pub mod hash;
 pub mod length;
+pub mod like;
 pub mod normalize;
 pub mod replace;
 pub mod reverse;
