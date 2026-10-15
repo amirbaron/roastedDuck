@@ -28,7 +28,9 @@ pub fn builtin_aggregate_functions() -> Result<Vec<AggregateFunctionSet>> {
 
 /// Every builtin table function set, ready to be registered in the system catalog.
 pub fn builtin_table_functions() -> Vec<TableFunctionSet> {
-    table::range::range_functions()
+    let mut sets = table::range::range_functions();
+    sets.push(table::test_all_types::test_all_types_functions());
+    sets
 }
 
 /// DuckDB's `ParameterNotResolvedException`, raised by bind callbacks that need the type of
