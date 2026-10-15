@@ -8,6 +8,7 @@ pub mod hash;
 pub mod length;
 pub mod like;
 pub mod normalize;
+pub mod regexp;
 pub mod replace;
 pub mod reverse;
 pub mod substring;

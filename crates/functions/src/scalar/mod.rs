@@ -142,4 +142,7 @@ fn string_functions(sets: &mut Vec<ScalarFunctionSet>) {
     sets.push(replace::repeat_functions());
     sets.push(replace::replace_functions());
     sets.extend(string::like::like_functions());
+    for (set, aliases) in string::regexp::regexp_functions() {
+        with_aliases(sets, set, aliases);
+    }
 }

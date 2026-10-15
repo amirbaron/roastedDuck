@@ -16,6 +16,8 @@ unicode-segmentation = "1"
 unicode-normalization = "0.1"
 md-5 = "0.10"
 memchr = "2"
+regex = "1"
+regex-syntax = "0.8"
 
 [lints]
 workspace = true
