@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use crate::identifier::{sql_identifier, write_quoted};
 use crate::{
-    ArrayTypeInfo, DecimalTypeInfo, EnumTypeInfo, ExtraTypeInfo, IntegerLiteralTypeInfo, ListTypeInfo,
-    LogicalTypeId, PhysicalType, StructTypeInfo, TypeInfo, Value,
+    AnyTypeInfo, ArrayTypeInfo, DecimalTypeInfo, EnumTypeInfo, ExtraTypeInfo, IntegerLiteralTypeInfo,
+    ListTypeInfo, LogicalTypeId, PhysicalType, StructTypeInfo, TypeInfo, Value,
 };
 
 /// A SQL type: an id plus optional parameters, cheap to clone.
@@ -160,6 +160,18 @@ impl LogicalType {
             LogicalTypeId::IntegerLiteral,
             TypeInfo::IntegerLiteral(IntegerLiteralTypeInfo {
                 constant_value: constant,
+            }),
+        )
+    }
+
+    /// `ANY` with a custom implicit cast score (DuckDB's `LogicalType::ANY_PARAMS`): an
+    /// overload taking it loses to every overload whose casts cost less than `cast_score`.
+    pub fn any_params(target_type: Self, cast_score: u64) -> Self {
+        Self::with_info(
+            LogicalTypeId::Any,
+            TypeInfo::Any(AnyTypeInfo {
+                target_type,
+                cast_score,
             }),
         )
     }

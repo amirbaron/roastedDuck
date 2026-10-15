@@ -2,6 +2,7 @@
 //! `extension/core_functions/scalar`.
 
 pub mod array;
+pub mod binning;
 pub mod bit;
 pub mod blob;
 pub mod compressed_materialization;
@@ -62,6 +63,7 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
         union::union_extract_functions(),
         union::union_tag_functions(),
         union::union_value_functions(),
+        binning::equi_width_bins_functions(),
         enums::enum_first_functions(),
         enums::enum_last_functions(),
         enums::enum_code_functions(),
