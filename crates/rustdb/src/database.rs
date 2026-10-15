@@ -118,12 +118,14 @@ impl Database {
         for (name, value) in &self.instance.config.options {
             settings.set(name, value)?;
         }
+        let function_client = Arc::new(rustdb_function::FunctionClient::default());
+        function_client.set_database(self.instance.catalog.name());
         Ok(Connection {
             database: self.clone(),
             transactions,
             settings,
             prepared_statements: CaseInsensitiveMap::default(),
-            function_client: Arc::default(),
+            function_client,
         })
     }
 
@@ -188,6 +190,7 @@ impl Connection {
     /// `ExecutePendingQueryInternal`): bind and plan, resolve column bindings, build the
     /// physical plan and run it, all inside the connection's transaction.
     pub fn execute_statement(&mut self, query: &str, statement: SqlStatement) -> Result<MaterializedResult> {
+        self.function_client.set_query(query);
         let outcome = self.run_statement(statement);
         let invalidates = outcome
             .as_ref()

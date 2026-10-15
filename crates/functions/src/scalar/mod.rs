@@ -16,6 +16,7 @@ pub mod operator;
 pub mod random;
 pub mod string;
 pub mod structs;
+pub mod system;
 pub mod union;
 
 use rustdb_function::ScalarFunctionSet;
@@ -106,6 +107,7 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
     with_aliases(&mut sets, string::substring::substring_functions(), &["substr"]);
     sets.push(string::substring::substring_grapheme_functions());
     sets.extend(generic::generic_functions());
+    sets.extend(system::system_functions());
     sets.extend(date::to_interval::to_interval_functions());
     for (set, aliases) in date::date_part::named_part_functions() {
         with_aliases(&mut sets, set, aliases);
