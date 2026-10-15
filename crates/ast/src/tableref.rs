@@ -40,8 +40,8 @@ pub(crate) fn pivot_entries_for_serialization(
             result.push(entry.clone());
         } else {
             return Err(Error::serialization(format!(
-                "Cannot serialize non-constant expression in pivot list when targeting database storage \
-                 version '{}'",
+                "Cannot serialize non-constant expression '{expr}' in pivot list when targeting database \
+                 storage version '{}'",
                 serializer.options().compatibility.duckdb_version
             )));
         }

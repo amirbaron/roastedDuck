@@ -30,6 +30,10 @@ const fn is_dollar_tag_char(c: u8) -> bool {
 /// alone. This reproduces DuckDB's scan exactly, including its bounds (it stops
 /// looking two bytes before the end of the input).
 pub fn strip_unicode_spaces(query: &str) -> Option<String> {
+    if query.is_ascii() {
+        // All the spaces in question are multi-byte UTF-8 sequences.
+        return None;
+    }
     let q = query.as_bytes();
     let n = q.len();
     let mut spaces: Vec<(usize, usize)> = Vec::new();

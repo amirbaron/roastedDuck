@@ -114,6 +114,8 @@ pub struct Error {
     /// Byte offset in the query the error refers to (DuckDB's `position` extra info);
     /// rendered as `LINE n:` context once the query text is attached.
     position: Option<u64>,
+    /// DuckDB's `error_subtype` extra info (`"SYNTAX_ERROR"` for parse failures).
+    subtype: Option<&'static str>,
 }
 
 /// Engine-wide result alias.
@@ -129,7 +131,20 @@ impl Error {
             kind,
             message: message.into(),
             position: None,
+            subtype: None,
         }
+    }
+
+    /// Tags the error with DuckDB's `error_subtype` extra info (such as `"SYNTAX_ERROR"`).
+    #[must_use]
+    pub const fn with_subtype(mut self, subtype: &'static str) -> Self {
+        self.subtype = Some(subtype);
+        self
+    }
+
+    /// The `error_subtype` extra info, if any.
+    pub const fn subtype(&self) -> Option<&'static str> {
+        self.subtype
     }
 
     /// Attaches a query position, unless one is already set.

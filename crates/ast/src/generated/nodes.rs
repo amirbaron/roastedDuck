@@ -170,6 +170,8 @@ pub struct PivotColumn {
     pub entries: Vec<PivotColumnEntry>,
     /// `pivot_enum` (property 103).
     pub pivot_enum: String,
+    /// `subquery`: the query of `IN (SELECT ...)`, which the binder rejects.
+    pub subquery: Option<Box<crate::QueryNode>>,
 }
 
 impl SerializeObject for PivotColumn {
@@ -198,6 +200,7 @@ impl DeserializeObject for PivotColumn {
             unpivot_names,
             entries,
             pivot_enum,
+            subquery: None,
         })
     }
 }
