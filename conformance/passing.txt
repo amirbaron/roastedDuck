@@ -19,6 +19,7 @@ test/fuzzer/fuzz_not_operator.test
 test/fuzzer/pedro/another_binder_error.test
 test/fuzzer/pedro/concurrent_set_threads.test
 test/fuzzer/pedro/floating_point_conversion_overflow.test
+test/fuzzer/pedro/force_external_blob.test
 test/fuzzer/pedro/is_distinct_from_validation.test
 test/fuzzer/pedro/window_self_reference.test
 test/fuzzer/public/distinct_on_non_integer_literal.test
@@ -133,6 +134,7 @@ test/sql/sample/table_samples/test_sample_is_destroyed_on_updates.test
 test/sql/sample/table_samples/test_sample_types.test
 test/sql/sample/table_samples/test_table_sample_errors.test
 test/sql/secrets/secret_compatibility_http.test
+test/sql/settings/setting_order.test
 test/sql/storage/compact_block_size/compact_vector_size.test
 test/sql/storage/compact_block_size/create_table_compression.test
 test/sql/storage/compact_block_size/insertion_order_odd_batches.test

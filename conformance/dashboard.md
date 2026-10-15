@@ -1,6 +1,6 @@
 # rustdb conformance dashboard
 
-Rust passing: **189 / 4870 files** (139 pass on both engines). "Passing" means the Rust run passed, or both engines skipped the file for the same reason.
+Rust passing: **191 / 4870 files** (141 pass on both engines). "Passing" means the Rust run passed, or both engines skipped the file for the same reason.
 
 | group | files | C++ pass | C++ skip | C++ fail | Rust passing | both pass | Rust fail | Rust crash/timeout | Rust skip (C++ pass) | Rust % |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -10,7 +10,7 @@ Rust passing: **189 / 4870 files** (139 pass on both engines). "Passing" means t
 | test/fuzzer | 4 | 4 | 0 | 0 | 1 | 1 | 2 | 0 | 1 | 25.0% |
 | test/fuzzer/afl | 15 | 15 | 0 | 0 | 4 | 4 | 11 | 0 | 0 | 26.7% |
 | test/fuzzer/duckfuzz | 77 | 77 | 0 | 0 | 2 | 2 | 56 | 0 | 19 | 2.6% |
-| test/fuzzer/pedro | 133 | 133 | 0 | 0 | 5 | 5 | 127 | 0 | 1 | 3.8% |
+| test/fuzzer/pedro | 133 | 133 | 0 | 0 | 6 | 6 | 126 | 0 | 1 | 4.5% |
 | test/fuzzer/public | 22 | 22 | 0 | 0 | 2 | 2 | 20 | 0 | 0 | 9.1% |
 | test/fuzzer/sqlsmith | 31 | 31 | 0 | 0 | 2 | 2 | 26 | 0 | 3 | 6.5% |
 | test/geoparquet | 8 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 8 | 0.0% |
@@ -87,7 +87,7 @@ Rust passing: **189 / 4870 files** (139 pass on both engines). "Passing" means t
 | test/sql/secrets | 6 | 5 | 1 | 0 | 1 | 0 | 5 | 0 | 0 | 16.7% |
 | test/sql/select | 9 | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 | 0.0% |
 | test/sql/setops | 24 | 24 | 0 | 0 | 0 | 0 | 24 | 0 | 0 | 0.0% |
-| test/sql/settings | 32 | 32 | 0 | 0 | 0 | 0 | 28 | 0 | 4 | 0.0% |
+| test/sql/settings | 32 | 32 | 0 | 0 | 1 | 1 | 27 | 0 | 4 | 3.1% |
 | test/sql/show_select | 10 | 10 | 0 | 0 | 0 | 0 | 10 | 0 | 0 | 0.0% |
 | test/sql/storage | 601 | 582 | 19 | 0 | 16 | 1 | 531 | 0 | 50 | 2.7% |
 | test/sql/storage_version | 1 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0.0% |
@@ -108,4 +108,4 @@ Rust passing: **189 / 4870 files** (139 pass on both engines). "Passing" means t
 | test/sqlite | 4 | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0.0% |
 | test/sqlite/tags | 4 | 0 | 4 | 0 | 4 | 0 | 0 | 0 | 0 | 100.0% |
 | test/sqlserver | 2 | 2 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0.0% |
-| **total** | 4870 | 4794 | 75 | 1 | 189 | 139 | 3902 | 0 | 760 | 3.9% |
+| **total** | 4870 | 4794 | 75 | 1 | 191 | 141 | 3900 | 0 | 760 | 3.9% |
