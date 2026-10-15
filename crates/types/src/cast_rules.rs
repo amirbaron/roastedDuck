@@ -179,7 +179,11 @@ pub fn implicit_cast_cost(from: &LogicalType, to: &LogicalType) -> i64 {
         if !to.is_valid() {
             return -1;
         }
-        return if to.id() == L::Varchar { 1 } else { 20 };
+        return if to.id() == L::Varchar && to.alias().is_none() {
+            1
+        } else {
+            20
+        };
     }
     if let (L::IntegerLiteral, Some(value), Some(literal_type)) = (
         from.id(),
@@ -194,6 +198,10 @@ pub fn implicit_cast_cost(from: &LogicalType, to: &LogicalType) -> i64 {
             return target_type_cost(to) - 90;
         }
         return implicit_cast_cost(literal_type, to);
+    }
+    if from.alias() != to.alias() {
+        // Aliased types (e.g. `JSON`) only cast implicitly to the same alias.
+        return -1;
     }
     match (from.id(), to.id()) {
         (L::List, L::List) => {
@@ -560,6 +568,13 @@ fn combine_equal(left: &LogicalType, right: &LogicalType, mode: Unify) -> Option
 }
 
 fn unify(left: &LogicalType, right: &LogicalType, mode: Unify) -> Option<LogicalType> {
+    // Aliased types are always preferred.
+    if left.alias().is_some() {
+        return Some(left.clone());
+    }
+    if right.alias().is_some() {
+        return Some(right.clone());
+    }
     if left.id() == right.id() {
         combine_equal(left, right, mode)
     } else {
@@ -686,6 +701,18 @@ mod tests {
                 &LogicalType::list(LogicalType::BIGINT)
             ),
             100
+        );
+    }
+
+    #[test]
+    fn aliases_only_cast_to_themselves() {
+        let json = LogicalType::VARCHAR.with_alias("JSON");
+        assert_eq!(implicit_cast_cost(&json, &LogicalType::VARCHAR), -1);
+        assert_eq!(implicit_cast_cost(&json, &json), 0);
+        assert_eq!(implicit_cast_cost(&LogicalType::STRING_LITERAL, &json), 20);
+        assert_eq!(
+            LogicalType::try_max_logical_type(&LogicalType::VARCHAR, &json),
+            Some(json)
         );
     }
 
