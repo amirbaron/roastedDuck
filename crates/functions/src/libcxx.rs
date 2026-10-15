@@ -38,7 +38,7 @@ impl<K> Default for UnorderedOrder<K> {
 /// libc++'s `__constrain_hash`.
 fn constrain(hash: u64, bucket_count: usize) -> usize {
     let count = bucket_count as u64;
-    if count & (count - 1) == 0 {
+    if count.is_power_of_two() {
         (hash & (count - 1)) as usize
     } else if hash < count {
         hash as usize
@@ -49,7 +49,7 @@ fn constrain(hash: u64, bucket_count: usize) -> usize {
 
 /// libc++'s `__is_hash_power2`.
 fn is_hash_power2(count: usize) -> bool {
-    count > 2 && count & (count - 1) == 0
+    count > 2 && count.is_power_of_two()
 }
 
 /// libc++'s `__next_prime`: the smallest prime at least `n`.
@@ -62,7 +62,7 @@ fn next_prime(n: usize) -> usize {
         let mut divisor = 3;
         let mut prime = true;
         while divisor * divisor <= candidate {
-            if candidate % divisor == 0 {
+            if candidate.is_multiple_of(divisor) {
                 prime = false;
                 break;
             }
@@ -76,10 +76,6 @@ fn next_prime(n: usize) -> usize {
 }
 
 impl<K> UnorderedOrder<K> {
-    pub(crate) fn len(&self) -> usize {
-        self.keys.len()
-    }
-
     fn link_next(&self, before: Before) -> Option<usize> {
         match before {
             Before::Head => self.head,

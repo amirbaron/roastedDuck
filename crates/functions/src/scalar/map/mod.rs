@@ -229,12 +229,11 @@ fn map_field_list(args: &DataChunk, result: &mut Vector, field: usize) -> Result
     let mut entries = Vec::with_capacity(rows);
     let mut nulls = Vec::new();
     for row in 0..rows {
-        match input.get(row) {
-            Some(entry) => entries.push(entry),
-            None => {
-                nulls.push(row);
-                entries.push(ListEntry::new(0, 0));
-            }
+        if let Some(entry) = input.get(row) {
+            entries.push(entry);
+        } else {
+            nulls.push(row);
+            entries.push(ListEntry::new(0, 0));
         }
     }
     let mut output = Vector::flat(result.logical_type().clone(), rows.max(1));
@@ -490,6 +489,12 @@ fn bind_map_concat(function: &mut ScalarFunction, input: &BindInput<'_>) -> Bind
 /// DuckDB's `MapConcatFunction`: later maps win for duplicate keys, which keep the
 /// position of their first occurrence.
 fn map_concat(args: &DataChunk, result: &mut Vector) -> Result<()> {
+    struct MapColumn<'a> {
+        input: ListInput<'a>,
+        keys: Vector,
+        values: Vector,
+        key_bytes: SortKeyBuffer,
+    }
     let ty = result.logical_type().clone();
     if ty.id() == LogicalTypeId::SqlNull {
         *result = Vector::constant_null(ty);
@@ -503,12 +508,6 @@ fn map_concat(args: &DataChunk, result: &mut Vector) -> Result<()> {
         .iter()
         .map(|column| addressable(column, count))
         .collect();
-    struct MapColumn<'a> {
-        input: ListInput<'a>,
-        keys: Vector,
-        values: Vector,
-        key_bytes: SortKeyBuffer,
-    }
     let mut columns: Vec<Option<MapColumn<'_>>> = Vec::with_capacity(maps.len());
     for map in &maps {
         if map.logical_type().id() == LogicalTypeId::SqlNull {

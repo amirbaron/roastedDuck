@@ -245,7 +245,7 @@ fn bit_shift_right(bits: &[u8], shift: i32, out: &mut Vec<u8>) {
     }
     match usize::try_from(shift) {
         Ok(amount) if amount < bit_length(bits) => {
-            out.extend_from_slice(&bitstring::right_shift(bits, amount))
+            out.extend_from_slice(&bitstring::right_shift(bits, amount));
         }
         _ => out.extend_from_slice(&bitstring::zeros(bit_length(bits))),
     }

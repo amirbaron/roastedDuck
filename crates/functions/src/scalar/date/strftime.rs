@@ -96,7 +96,7 @@ impl Formattable for Timestamp {
     }
 }
 
-/// TIMESTAMP_NS values (nanoseconds since the epoch).
+/// `TIMESTAMP_NS` values (nanoseconds since the epoch).
 impl Formattable for i64 {
     fn parts(self) -> std::result::Result<(Date, [i32; 8]), String> {
         let timestamp = Timestamp(self);

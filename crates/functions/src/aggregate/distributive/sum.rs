@@ -242,9 +242,10 @@ fn bind_decimal_sum(
     Ok(None)
 }
 
-fn decimal_overload(
-    bind: fn(&mut AggregateFunction, &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>>,
-) -> AggregateFunction {
+/// A plain bind callback.
+type BindFn = fn(&mut AggregateFunction, &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>>;
+
+fn decimal_overload(bind: BindFn) -> AggregateFunction {
     AggregateFunction::unbound(
         vec![LogicalType::simple(LogicalTypeId::Decimal)],
         LogicalType::simple(LogicalTypeId::Decimal),

@@ -79,6 +79,7 @@ fn fixed_keys(child: &Vector, size: usize) -> Option<Vec<Option<(u64, HistogramK
     }
 }
 
+#[allow(clippy::float_cmp, reason = "std::equal_to<double> semantics")]
 fn key_equal(a: &HistogramKey, b: &HistogramKey) -> bool {
     match (a, b) {
         (HistogramKey::Fixed(x, None), HistogramKey::Fixed(y, None)) => x == y,
@@ -116,9 +117,13 @@ fn histogram_keys(child: &Vector, size: usize) -> Result<Vec<Option<(u64, Histog
         .collect())
 }
 
+/// The distinct child rows of each list (`None` for a NULL list), whether the input was
+/// constant, and the list child vector.
+type DistinctRows = (Vec<Option<Vec<usize>>>, bool, Vector);
+
 /// For each row, the child rows of its distinct values in DuckDB's order (`None` for a
 /// NULL list).
-fn distinct_rows(args: &DataChunk) -> Result<(Vec<Option<Vec<usize>>>, bool, Vector)> {
+fn distinct_rows(args: &DataChunk) -> Result<DistinctRows> {
     let count = args.len();
     let constant = all_constant(args.columns());
     let rows = if constant { 1 } else { count };
@@ -132,8 +137,14 @@ fn distinct_rows(args: &DataChunk) -> Result<(Vec<Option<Vec<usize>>>, bool, Vec
             continue;
         };
         let mut table: UnorderedOrder<(HistogramKey, usize)> = UnorderedOrder::default();
-        for child in entry.offset as usize..(entry.offset + entry.length) as usize {
-            if let Some((hash, key)) = &keys[child] {
+        let start = entry.offset as usize;
+        let end = (entry.offset + entry.length) as usize;
+        for (child, slot) in keys[start..end]
+            .iter()
+            .enumerate()
+            .map(|(i, slot)| (start + i, slot))
+        {
+            if let Some((hash, key)) = slot {
                 table.insert(*hash, (key.clone(), child), |a, b| key_equal(&a.0, &b.0));
             }
         }

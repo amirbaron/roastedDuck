@@ -170,17 +170,14 @@ impl Interpolator {
 
     /// The discrete rank for `n` values (DuckDB's `QuantileInterpolator<true>::Index`).
     fn discrete(q: &QuantileValue, n: usize) -> Result<Self> {
-        let floored = match q.decimal {
-            Some((integral, scaling)) => {
-                let overflow = || Error::out_of_range("Overflow in multiplication of DECIMAL(38)");
-                let scaled_q = (n as i128).checked_mul(integral).ok_or_else(overflow)?;
-                let scaled_n = (n as i128).checked_mul(scaling).ok_or_else(overflow)?;
-                ((scaled_n - scaled_q) / scaling) as usize
-            }
-            None => {
-                let scaled_q = n as f64 * q.dbl;
-                (n as f64 - scaled_q).floor() as usize
-            }
+        let floored = if let Some((integral, scaling)) = q.decimal {
+            let overflow = || Error::out_of_range("Overflow in multiplication of DECIMAL(38)");
+            let scaled_q = (n as i128).checked_mul(integral).ok_or_else(overflow)?;
+            let scaled_n = (n as i128).checked_mul(scaling).ok_or_else(overflow)?;
+            ((scaled_n - scaled_q) / scaling) as usize
+        } else {
+            let scaled_q = n as f64 * q.dbl;
+            (n as f64 - scaled_q).floor() as usize
         };
         let index = n.saturating_sub(floored).max(1) - 1;
         Ok(Self {
@@ -618,7 +615,7 @@ fn install(
     quantile_type: Option<LogicalType>,
 ) {
     bound.arguments.extend(quantile_type);
-    bound.bind = function.bind.clone();
+    bound.bind.clone_from(&function.bind);
     function.replace_with(bound);
 }
 

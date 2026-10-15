@@ -52,16 +52,16 @@ fn start_end(input_size: i64, offset: i64, mut length: i64) -> Option<(i64, i64)
     if length == 0 {
         return None;
     }
-    let mut start = if offset > 0 {
-        input_size.min(offset - 1)
-    } else if offset < 0 {
-        (input_size + offset).max(0)
-    } else {
-        length -= 1;
-        if length <= 0 {
-            return None;
+    let mut start = match offset.cmp(&0) {
+        std::cmp::Ordering::Greater => input_size.min(offset - 1),
+        std::cmp::Ordering::Less => (input_size + offset).max(0),
+        std::cmp::Ordering::Equal => {
+            length -= 1;
+            if length <= 0 {
+                return None;
+            }
+            0
         }
-        0
     };
     let end;
     if length > 0 {
@@ -74,7 +74,7 @@ fn start_end(input_size: i64, offset: i64, mut length: i64) -> Option<(i64, i64)
 }
 
 /// The substring of `input` counted in bytes (DuckDB's `SubstringASCII`).
-pub(crate) fn substring_ascii<'a>(input: &'a [u8], offset: i64, length: i64) -> Result<&'a [u8]> {
+pub(crate) fn substring_ascii(input: &[u8], offset: i64, length: i64) -> Result<&[u8]> {
     check_range(input.len(), offset, length)?;
     Ok(match start_end(input.len() as i64, offset, length) {
         Some((start, end)) => &input[start as usize..end as usize],
@@ -83,7 +83,7 @@ pub(crate) fn substring_ascii<'a>(input: &'a [u8], offset: i64, length: i64) -> 
 }
 
 /// The substring of `input` counted in code points (DuckDB's `SubstringUnicode`).
-pub(crate) fn substring_unicode<'a>(input: &'a [u8], offset: i64, length: i64) -> Result<&'a [u8]> {
+pub(crate) fn substring_unicode(input: &[u8], offset: i64, length: i64) -> Result<&[u8]> {
     let input_size = input.len();
     check_range(input_size, offset, length)?;
     if length == 0 {

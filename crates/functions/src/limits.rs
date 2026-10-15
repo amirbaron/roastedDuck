@@ -57,47 +57,6 @@ pub(crate) fn maximum_value(ty: &LogicalType) -> Result<Value> {
     })
 }
 
-/// DuckDB's `Value::MinimumValue`.
-pub(crate) fn minimum_value(ty: &LogicalType) -> Result<Value> {
-    use LogicalTypeId as L;
-    Ok(match ty.id() {
-        L::Boolean => Value::boolean(false),
-        L::TinyInt => Value::tinyint(i8::MIN),
-        L::SmallInt => Value::smallint(i16::MIN),
-        L::Integer | L::SqlNull => Value::integer(i32::MIN),
-        L::BigInt => Value::bigint(i64::MIN),
-        L::HugeInt => Value::hugeint(i128::MIN),
-        L::UHugeInt => Value::uhugeint(0),
-        L::UTinyInt => Value::utinyint(0),
-        L::USmallInt => Value::usmallint(0),
-        L::UInteger => Value::uinteger(0),
-        L::UBigInt => Value::ubigint(0),
-        L::Date => Value::date(Date::MIN),
-        L::Time => Value::time(Time(0)),
-        L::TimeNs => Value::time_ns(TimeNs(0)),
-        L::Timestamp | L::TimestampTz => {
-            // 290309-12-22 (BC) 00:00:00, DuckDB's `Timestamp::MIN_*`.
-            let date = Date::from_ymd(-290_308, 12, 22).ok_or_else(|| Error::internal("minimum date"))?;
-            let ts = Timestamp::from_date(date).ok_or_else(|| Error::internal("minimum timestamp"))?;
-            if ty.id() == L::Timestamp {
-                Value::timestamp(ts)
-            } else {
-                Value::timestamp_tz(ts)
-            }
-        }
-        L::TimestampNs => Value::timestamp_ns(i64::MIN / NANOS_PER_DAY * NANOS_PER_DAY),
-        L::TimeTz => Value::time_tz(TimeTz::new(Time(0), TimeTz::MAX_OFFSET)),
-        L::Float => Value::float(f32::MIN),
-        L::Double => Value::double(f64::MIN),
-        L::Decimal => {
-            let (width, scale) = ty.decimal_properties().unwrap_or((18, 3));
-            Value::decimal(-decimal_max(width), width, scale)
-        }
-        L::Enum => Value::enum_value(ty.clone(), 0),
-        _ => return Err(invalid(ty, "MinimumValue requires numeric type")),
-    })
-}
-
 /// DuckDB's `Value::Infinity`.
 pub(crate) fn infinity(ty: &LogicalType) -> Result<Value> {
     use LogicalTypeId as L;
@@ -111,21 +70,5 @@ pub(crate) fn infinity(ty: &LogicalType) -> Result<Value> {
         L::Float => Value::float(f32::INFINITY),
         L::Double => Value::double(f64::INFINITY),
         _ => return Err(invalid(ty, "Infinity requires numeric type")),
-    })
-}
-
-/// DuckDB's `Value::NegativeInfinity`.
-pub(crate) fn negative_infinity(ty: &LogicalType) -> Result<Value> {
-    use LogicalTypeId as L;
-    Ok(match ty.id() {
-        L::Date => Value::date(Date::NEG_INFINITY),
-        L::Timestamp => Value::timestamp(Timestamp::NEG_INFINITY),
-        L::TimestampSec => Value::timestamp_s(Timestamp::NEG_INFINITY.0),
-        L::TimestampMs => Value::timestamp_ms(Timestamp::NEG_INFINITY.0),
-        L::TimestampNs => Value::timestamp_ns(Timestamp::NEG_INFINITY.0),
-        L::TimestampTz => Value::timestamp_tz(Timestamp::NEG_INFINITY),
-        L::Float => Value::float(f32::NEG_INFINITY),
-        L::Double => Value::double(f64::NEG_INFINITY),
-        _ => return Err(invalid(ty, "NegativeInfinity requires numeric type")),
     })
 }

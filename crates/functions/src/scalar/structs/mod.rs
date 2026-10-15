@@ -328,16 +328,13 @@ pub fn struct_update_functions() -> ScalarFunctionSet {
         let mut children = Vec::new();
         let mut layout = Vec::new();
         for (field, (name, ty)) in existing.iter().enumerate() {
-            match incoming.iter().position(|(alias, _)| lower(alias) == lower(name)) {
-                Some(argument) => {
-                    children.push(incoming[argument].clone());
-                    layout.push(Err(argument + 1));
-                    is_new[argument] = false;
-                }
-                None => {
-                    children.push((name.clone(), ty.clone()));
-                    layout.push(Ok(field));
-                }
+            if let Some(argument) = incoming.iter().position(|(alias, _)| lower(alias) == lower(name)) {
+                children.push(incoming[argument].clone());
+                layout.push(Err(argument + 1));
+                is_new[argument] = false;
+            } else {
+                children.push((name.clone(), ty.clone()));
+                layout.push(Ok(field));
             }
         }
         for (argument, child) in incoming.iter().enumerate() {

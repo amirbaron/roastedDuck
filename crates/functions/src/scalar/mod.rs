@@ -131,7 +131,9 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
 /// The string functions (DuckDB's `function/scalar/string` and
 /// `core_functions/scalar/string`).
 fn string_functions(sets: &mut Vec<ScalarFunctionSet>) {
-    use string::{caseconvert, character, concat, contains, hash, length, normalize, replace, reverse};
+    use string::{
+        caseconvert, character, concat, contains, encode, hash, length, normalize, replace, reverse, trim_pad,
+    };
     with_aliases(sets, caseconvert::upper_functions(), &["ucase"]);
     with_aliases(sets, caseconvert::lower_functions(), &["lcase"]);
     sets.push(concat::concat_ws_functions());
@@ -224,7 +226,6 @@ fn string_functions(sets: &mut Vec<ScalarFunctionSet>) {
     for (set, aliases) in string::similarity::similarity_functions() {
         with_aliases(sets, set, aliases);
     }
-    use string::{encode, trim_pad};
     sets.extend(trim_pad::left_right_functions());
     sets.extend(trim_pad::pad_functions());
     sets.extend(trim_pad::trim_functions());

@@ -256,39 +256,6 @@ pub(crate) fn ternary<A: ScalarArg, B: ScalarArg, C: ScalarArg, O: ScalarOutput>
     Ok(())
 }
 
-/// Like [`unary`], but `f` also sees NULL inputs (as `None`), for functions with special
-/// NULL handling.
-pub(crate) fn unary_nullable<A: ScalarArg, O: ScalarOutput>(
-    args: &DataChunk,
-    result: &mut Vector,
-    mut f: impl FnMut(Option<A::Item<'_>>, &mut O::Value) -> Result<bool>,
-) -> Result<()> {
-    let count = args.len();
-    let a = addressable(args.column(0), count);
-    let (rows, constant) = result_shape(&[&a], count);
-    let a = Input::<A>::new(&a);
-    O::write(result, rows, |row, out| f(a.get(row), out))?;
-    finish(result, constant);
-    Ok(())
-}
-
-/// Like [`binary`], but `f` also sees NULL inputs.
-pub(crate) fn binary_nullable<A: ScalarArg, B: ScalarArg, O: ScalarOutput>(
-    args: &DataChunk,
-    result: &mut Vector,
-    mut f: impl FnMut(Option<A::Item<'_>>, Option<B::Item<'_>>, &mut O::Value) -> Result<bool>,
-) -> Result<()> {
-    let count = args.len();
-    let a = addressable(args.column(0), count);
-    let b = addressable(args.column(1), count);
-    let (rows, constant) = result_shape(&[&a, &b], count);
-    let a = Input::<A>::new(&a);
-    let b = Input::<B>::new(&b);
-    O::write(result, rows, |row, out| f(a.get(row), b.get(row), out))?;
-    finish(result, constant);
-    Ok(())
-}
-
 /// Applies `f` to every row of a call with any number of arguments of one kind; rows with a
 /// NULL argument are NULL unless `nulls` is set, in which case `f` sees them as `None`.
 pub(crate) fn variadic<A: ScalarArg, O: ScalarOutput>(

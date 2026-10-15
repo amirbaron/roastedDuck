@@ -249,13 +249,12 @@ pub fn bind_sorted_aggregate(
         stats: None,
     }];
     for (index, order) in orders.iter().enumerate() {
-        let column = match order.argument {
-            Some(argument) => argument + 1,
-            None => {
-                buffered.push(arguments + index);
-                buffered_types.push(order.ty.clone());
-                buffered.len()
-            }
+        let column = if let Some(argument) = order.argument {
+            argument + 1
+        } else {
+            buffered.push(arguments + index);
+            buffered_types.push(order.ty.clone());
+            buffered.len()
         };
         sort_columns.push(SortColumn {
             column,

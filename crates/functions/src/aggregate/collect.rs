@@ -66,11 +66,4 @@ impl RowCollection {
         }
         Ok(())
     }
-
-    /// The rows as one flat vector of type `ty`.
-    pub(crate) fn to_vector(&self, ty: rustdb_types::LogicalType) -> Result<Vector> {
-        let mut vector = Vector::flat(ty, self.len.max(1));
-        self.write_to(&mut vector, 0)?;
-        Ok(vector)
-    }
 }

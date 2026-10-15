@@ -146,11 +146,11 @@ fn truncate_interval(mut input: Interval, unit: Unit) -> Interval {
         Unit::Day => input.micros = 0,
         Unit::Hour => input.micros = (input.micros / Interval::MICROS_PER_HOUR) * Interval::MICROS_PER_HOUR,
         Unit::Minute => {
-            input.micros = (input.micros / Interval::MICROS_PER_MINUTE) * Interval::MICROS_PER_MINUTE
+            input.micros = (input.micros / Interval::MICROS_PER_MINUTE) * Interval::MICROS_PER_MINUTE;
         }
         Unit::Second => input.micros = (input.micros / Interval::MICROS_PER_SEC) * Interval::MICROS_PER_SEC,
         Unit::Millisecond => {
-            input.micros = (input.micros / Interval::MICROS_PER_MSEC) * Interval::MICROS_PER_MSEC
+            input.micros = (input.micros / Interval::MICROS_PER_MSEC) * Interval::MICROS_PER_MSEC;
         }
         Unit::Microsecond => {}
     }

@@ -95,7 +95,7 @@ impl SlopeState {
         if !var_pop.is_finite() {
             return Err(Error::out_of_range("VARPOP is out of range!"));
         }
-        Ok(Some(if var_pop != 0.0 { cov / var_pop } else { f64::NAN }))
+        Ok(Some(if var_pop == 0.0 { f64::NAN } else { cov / var_pop }))
     }
 }
 

@@ -73,16 +73,12 @@ fn unsupported_kernel(physical: PhysicalType) -> Kernel {
 trait DecimalStorage: CheckedInt + Into<i128> {
     /// `10^width - 1` for the widest DECIMAL stored in this type.
     const MAX: Self;
-    fn neg(self) -> Self;
 }
 
 macro_rules! decimal_storage {
     ($($ty:ty => $max:expr),*) => {$(
         impl DecimalStorage for $ty {
             const MAX: Self = $max;
-            fn neg(self) -> Self {
-                self.wrapping_neg()
-            }
         }
     )*};
 }
@@ -396,16 +392,16 @@ impl Arith {
     }
 }
 
+/// A DECIMAL bind callback.
+type DecimalBind =
+    dyn Fn(&mut ScalarFunction, &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>> + Send + Sync;
+
 /// `left op right` for two values of the same numeric type.
 fn numeric_binary(op: Arith, ty: &LogicalType) -> ScalarFunction {
     let name = op.symbol();
     let args = vec![ty.clone(), ty.clone()];
     if ty.id() == LogicalTypeId::Decimal {
-        let bind: Box<
-            dyn Fn(&mut ScalarFunction, &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>>
-                + Send
-                + Sync,
-        > = match op {
+        let bind: Box<DecimalBind> = match op {
             Arith::Add => Box::new(bind_decimal_add_subtract(DecimalOp::Add)),
             Arith::Subtract => Box::new(bind_decimal_add_subtract(DecimalOp::Subtract)),
             Arith::Multiply => Box::new(bind_decimal_multiply),
@@ -825,9 +821,7 @@ fn bind_decimal_modulo(
 ) -> Result<Option<Arc<dyn FunctionData>>> {
     let data = bind_decimal_arithmetic(function, input, true)?;
     if data.check_overflow {
-        for argument in &mut function.arguments {
-            *argument = LogicalType::DOUBLE;
-        }
+        function.arguments.fill(LogicalType::DOUBLE);
         function.return_type = LogicalType::DOUBLE;
         set_kernel(function, zero_is_null_float::<f64>(true));
     } else {

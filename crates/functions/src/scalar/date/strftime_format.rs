@@ -725,7 +725,7 @@ pub(crate) struct ParseResult {
 
 impl ParseResult {
     fn fail(&mut self, message: &str, position: usize) -> std::result::Result<(), ()> {
-        self.error_message = message.to_owned();
+        message.clone_into(&mut self.error_message);
         self.error_position = Some(position);
         Err(())
     }
@@ -986,7 +986,7 @@ fn write_standard_specifier(spec: Spec, data: &[i32; 8], out: &mut Vec<u8>) {
     match spec {
         Spec::DayOfMonthPadded => write_padded(out, data[2] as u32, 2),
         Spec::AbbreviatedMonthName => {
-            out.extend_from_slice(MONTH_NAMES_ABBREVIATED[(data[1] - 1) as usize].as_bytes())
+            out.extend_from_slice(MONTH_NAMES_ABBREVIATED[(data[1] - 1) as usize].as_bytes());
         }
         Spec::FullMonthName => out.extend_from_slice(MONTH_NAMES[(data[1] - 1) as usize].as_bytes()),
         Spec::MonthDecimalPadded => write_padded(out, data[1] as u32, 2),
@@ -1020,7 +1020,6 @@ fn write_standard_specifier(spec: Spec, data: &[i32; 8], out: &mut Vec<u8>) {
                 write_padded(out, ss, 2);
             }
         }
-        Spec::TzName => {}
         Spec::DayOfMonth => write2(out, (data[2] % 100) as u32),
         Spec::MonthDecimal => write2(out, data[1] as u32),
         Spec::YearWithoutCentury => write2(out, data[0].unsigned_abs() % 100),

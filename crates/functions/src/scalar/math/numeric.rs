@@ -277,6 +277,7 @@ pub fn abs_functions() -> ScalarFunctionSet {
     clippy::cast_possible_wrap,
     reason = "DuckDB counts into an int8_t"
 )]
+#[allow(clippy::unnecessary_wraps, reason = "the signature of a fallible kernel")]
 fn bit_count<T: SignedInt>(value: T) -> Result<i8> {
     Ok(value.count_ones_() as i8)
 }
@@ -312,7 +313,8 @@ pub fn bit_count_functions() -> ScalarFunctionSet {
 }
 
 /// DuckDB's `SignOperator` (NaN has sign 0).
-fn sign<T: PartialOrd + Default>(value: T) -> Result<i8> {
+#[allow(clippy::unnecessary_wraps, reason = "the signature of a fallible kernel")]
+fn sign<T: PartialOrd + Default + Copy>(value: T) -> Result<i8> {
     Ok(match value.partial_cmp(&T::default()) {
         Some(std::cmp::Ordering::Greater) => 1,
         Some(std::cmp::Ordering::Less) => -1,
@@ -539,19 +541,23 @@ fn as_double(value: f64) -> f64 {
 }
 
 #[allow(clippy::cast_possible_truncation, reason = "LossyNumericCast<float>")]
+#[allow(clippy::unnecessary_wraps, reason = "the signature of a fallible kernel")]
 fn float_round_precision(input: f32, precision: i32) -> Result<f32> {
     Ok(float_precision(f64::from(input), precision, as_float, false) as f32)
 }
 
 #[allow(clippy::cast_possible_truncation, reason = "LossyNumericCast<float>")]
+#[allow(clippy::unnecessary_wraps, reason = "the signature of a fallible kernel")]
 fn float_trunc_precision(input: f32, precision: i32) -> Result<f32> {
     Ok(float_precision(f64::from(input), precision, as_float, true) as f32)
 }
 
+#[allow(clippy::unnecessary_wraps, reason = "the signature of a fallible kernel")]
 fn double_round_precision(input: f64, precision: i32) -> Result<f64> {
     Ok(float_precision(input, precision, as_double, false))
 }
 
+#[allow(clippy::unnecessary_wraps, reason = "the signature of a fallible kernel")]
 fn double_trunc_precision(input: f64, precision: i32) -> Result<f64> {
     Ok(float_precision(input, precision, as_double, true))
 }
@@ -941,6 +947,7 @@ fn factorial(input: i32) -> Result<i128> {
 }
 
 /// Rounds away from zero to the next even integer (DuckDB's `EvenOperator`).
+#[allow(clippy::unnecessary_wraps, reason = "the signature of a fallible kernel")]
 fn even(input: f64) -> Result<f64> {
     let mut value = if input >= 0.0 {
         input.ceil()

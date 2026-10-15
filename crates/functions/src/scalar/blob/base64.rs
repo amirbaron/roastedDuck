@@ -27,9 +27,8 @@ fn decode_char(c: u8) -> Option<u32> {
 pub(crate) fn to_base64(input: &[u8], out: &mut Vec<u8>) {
     let map = |index: u8| BASE64_MAP[usize::from(index & 0x3F)];
     out.reserve(input.len().div_ceil(3) * 4);
-    let mut chunks = input.chunks_exact(3);
-    for chunk in &mut chunks {
-        let (a, b, c) = (chunk[0], chunk[1], chunk[2]);
+    let (chunks, remainder) = input.as_chunks::<3>();
+    for &[a, b, c] in chunks {
         out.extend_from_slice(&[
             map(a >> 2),
             map(((a & 0x3) << 4) | (b >> 4)),
@@ -37,7 +36,7 @@ pub(crate) fn to_base64(input: &[u8], out: &mut Vec<u8>) {
             map(c),
         ]);
     }
-    match *chunks.remainder() {
+    match *remainder {
         [a] => out.extend_from_slice(&[map(a >> 2), map((a & 0x3) << 4), BASE64_PADDING, BASE64_PADDING]),
         [a, b] => out.extend_from_slice(&[
             map(a >> 2),
@@ -52,7 +51,7 @@ pub(crate) fn to_base64(input: &[u8], out: &mut Vec<u8>) {
 /// The decoded size of a base64 string (DuckDB's `Blob::FromBase64Size`).
 fn from_base64_size(input: &[u8]) -> Result<usize> {
     let size = input.len();
-    if size % 4 != 0 {
+    if !size.is_multiple_of(4) {
         return Err(Error::conversion(format!(
             "Could not decode string \"{}\" as base64: length must be a multiple of 4",
             String::from_utf8_lossy(input)

@@ -563,6 +563,7 @@ fn time_part_set<R: NativeType>(name: &str, return_type: LogicalType, op: TimeOp
 }
 
 /// One operation per temporal type.
+#[derive(Clone, Copy)]
 struct TimeOps<R> {
     date: fn(Date) -> Result<R>,
     timestamp: fn(Timestamp) -> Result<R>,
@@ -583,16 +584,6 @@ macro_rules! time_ops {
             time_tz: |value| value.$method($($arg)?),
         }
     };
-}
-
-/// The constant specifier of a `date_part` call, as bound (DuckDB's `DatePartBind`).
-#[derive(Debug)]
-struct PartBindData(Option<Part>);
-
-impl FunctionData for PartBindData {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
 }
 
 /// `date_part(specifier, value)` per row (DuckDB's `DatePartFunction`).
@@ -649,27 +640,22 @@ fn bind_date_part<T: Temporal>(function: &mut ScalarFunction, input: &BindInput<
         }
         Part::Epoch => {
             function.return_type = LogicalType::DOUBLE;
-            let kernel: Arc<dyn Fn(&DataChunk, &mut FunctionState, &mut Vector) -> Result<()> + Send + Sync> =
-                match ty {
-                    LogicalTypeId::Timestamp
-                    | LogicalTypeId::TimestampSec
-                    | LogicalTypeId::TimestampMs
-                    | LogicalTypeId::TimestampNs => {
-                        Arc::new(part_kernel::<Timestamp, f64>(<Timestamp as Temporal>::to_epoch))
-                    }
-                    LogicalTypeId::Date => Arc::new(part_kernel::<Date, f64>(<Date as Temporal>::to_epoch)),
-                    LogicalTypeId::Interval => {
-                        Arc::new(part_kernel::<Interval, f64>(<Interval as Temporal>::to_epoch))
-                    }
-                    LogicalTypeId::Time => Arc::new(part_kernel::<Time, f64>(<Time as Temporal>::to_epoch)),
-                    LogicalTypeId::TimeNs => {
-                        Arc::new(part_kernel::<TimeNs, f64>(<TimeNs as Temporal>::to_epoch))
-                    }
-                    LogicalTypeId::TimeTz => {
-                        Arc::new(part_kernel::<TimeTz, f64>(<TimeTz as Temporal>::to_epoch))
-                    }
-                    _ => return Err(Error::binder("epoch can only take temporal arguments")),
-                };
+            let kernel: rustdb_function::ScalarKernel = match ty {
+                LogicalTypeId::Timestamp
+                | LogicalTypeId::TimestampSec
+                | LogicalTypeId::TimestampMs
+                | LogicalTypeId::TimestampNs => {
+                    Arc::new(part_kernel::<Timestamp, f64>(<Timestamp as Temporal>::to_epoch))
+                }
+                LogicalTypeId::Date => Arc::new(part_kernel::<Date, f64>(<Date as Temporal>::to_epoch)),
+                LogicalTypeId::Interval => {
+                    Arc::new(part_kernel::<Interval, f64>(<Interval as Temporal>::to_epoch))
+                }
+                LogicalTypeId::Time => Arc::new(part_kernel::<Time, f64>(<Time as Temporal>::to_epoch)),
+                LogicalTypeId::TimeNs => Arc::new(part_kernel::<TimeNs, f64>(<TimeNs as Temporal>::to_epoch)),
+                LogicalTypeId::TimeTz => Arc::new(part_kernel::<TimeTz, f64>(<TimeTz as Temporal>::to_epoch)),
+                _ => return Err(Error::binder("epoch can only take temporal arguments")),
+            };
             function.kernel =
                 Arc::new(move |args, state, result| kernel(&second_column(args), state, result));
         }
@@ -685,7 +671,7 @@ fn bind_date_part<T: Temporal>(function: &mut ScalarFunction, input: &BindInput<
             });
         }
     }
-    Ok(Some(Arc::new(PartBindData(Some(part)))))
+    Ok(None)
 }
 
 /// The name DuckDB's `EnumUtil::ToString(LogicalTypeId)` gives a temporal type.
@@ -971,6 +957,7 @@ pub fn date_part_functions() -> ScalarFunctionSet {
 }
 
 /// `last_day(date)`: the last day of the month (DuckDB's `LastDayOperator`).
+#[allow(clippy::unnecessary_wraps, reason = "the signature of a fallible kernel")]
 fn last_day(date: Date) -> Result<Date> {
     let (mut year, mut month, _) = date.to_ymd();
     year += month / 12;

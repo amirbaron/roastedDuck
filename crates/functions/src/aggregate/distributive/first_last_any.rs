@@ -112,13 +112,12 @@ impl<K: StoredKind, const LAST: bool, const SKIP_NULLS: bool> Aggregate for Firs
         result: &mut Vector,
         row: usize,
     ) -> Result<()> {
-        match (&state.value, state.is_set) {
-            (Some(value), true) => K::write(value, result, row),
-            _ => {
-                let capacity = result.capacity();
-                result.validity_mut().set_invalid(row, capacity);
-                Ok(())
-            }
+        if let (Some(value), true) = (&state.value, state.is_set) {
+            K::write(value, result, row)
+        } else {
+            let capacity = result.capacity();
+            result.validity_mut().set_invalid(row, capacity);
+            Ok(())
         }
     }
 }
@@ -140,6 +139,7 @@ pub fn first_function<const LAST: bool, const SKIP_NULLS: bool>(ty: &LogicalType
 }
 
 /// DuckDB's `BindFirst`/`BindDecimalFirst`: specialises on the argument type.
+#[allow(clippy::unnecessary_wraps, reason = "the signature of a bind callback")]
 fn bind_first<const LAST: bool, const SKIP_NULLS: bool>(
     function: &mut AggregateFunction,
     input: &BindInput<'_>,

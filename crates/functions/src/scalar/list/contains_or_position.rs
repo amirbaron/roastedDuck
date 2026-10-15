@@ -15,6 +15,10 @@ use crate::signature::template;
 /// parallel to the list's child) for the target, comparing values by sort key. Returns a
 /// BOOLEAN (contains) or the 1-based INTEGER position; `find_nulls` lets a NULL target
 /// match a NULL element.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors DuckDB's ListSearchOp parameters"
+)]
 pub(crate) fn list_search(
     lists: &Vector,
     source: &Vector,

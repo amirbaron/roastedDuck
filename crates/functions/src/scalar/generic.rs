@@ -311,19 +311,16 @@ fn least_greatest(name: &'static str, greatest: bool) -> ScalarFunctionSet {
                         best = Some(index);
                     }
                 }
-                match best {
-                    Some(index) => {
-                        decode_sort_key(
-                            keys[index].key(row),
-                            std::slice::from_mut(&mut out),
-                            row,
-                            &[modifiers],
-                        )?;
-                    }
-                    None => {
-                        let capacity = out.capacity();
-                        out.validity_mut().set_invalid(row, capacity);
-                    }
+                if let Some(index) = best {
+                    decode_sort_key(
+                        keys[index].key(row),
+                        std::slice::from_mut(&mut out),
+                        row,
+                        &[modifiers],
+                    )?;
+                } else {
+                    let capacity = out.capacity();
+                    out.validity_mut().set_invalid(row, capacity);
                 }
             }
             if constant {
@@ -381,7 +378,7 @@ fn bind_create_sort_key(
     function: &mut ScalarFunction,
     input: &BindInput<'_>,
 ) -> Result<Option<Arc<dyn FunctionData>>> {
-    if input.argument_types.len() % 2 != 0 {
+    if !input.argument_types.len().is_multiple_of(2) {
         return Err(Error::binder(
             "Arguments to create_sort_key must be [key1, sort_specifier1, key2, sort_specifier2, ...]",
         ));

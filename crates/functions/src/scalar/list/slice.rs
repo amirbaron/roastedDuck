@@ -44,7 +44,7 @@ fn slice_length(begin: i64, end: i64, step: i64, step_valid: bool) -> Result<u64
     if step >= span {
         return Ok(1);
     }
-    if step != 0 && span % step != 0 {
+    if step != 0 && !span.is_multiple_of(step) {
         return Ok(span / step + 1);
     }
     Ok(span.checked_div(step).unwrap_or(0))
@@ -121,23 +121,21 @@ struct Bounds<'a> {
 impl Bounds<'_> {
     /// `(begin, end, step)` of a row, `None` if any given value is NULL.
     fn get(&self, row: usize, length: i64, empty: SliceBindData) -> Option<(i64, i64, i64)> {
-        let begin = match &self.begin {
-            Some(values) => values.get(row)?,
-            None => {
-                if self.columns[1].is_null(row) {
-                    return None;
-                }
-                0
+        let begin = if let Some(values) = &self.begin {
+            values.get(row)?
+        } else {
+            if self.columns[1].is_null(row) {
+                return None;
             }
+            0
         };
-        let end = match &self.end {
-            Some(values) => values.get(row)?,
-            None => {
-                if self.columns[2].is_null(row) {
-                    return None;
-                }
-                length
+        let end = if let Some(values) = &self.end {
+            values.get(row)?
+        } else {
+            if self.columns[2].is_null(row) {
+                return None;
             }
+            length
         };
         let step = match &self.step {
             Some(values) => values.get(row)?,
