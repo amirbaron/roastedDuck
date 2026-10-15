@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_planner::expression::BoundConjunctionExpression;
+use rustdb_planner::operator::LogicalAggregate;
 use rustdb_planner::{
     BoundLimitNode, Expression, ExpressionKind, ExpressionType, LogicalKind, LogicalOperator,
     LogicalOperatorType,
@@ -15,8 +16,8 @@ use rustdb_types::{DataChunk, LogicalType};
 use crate::expression_executor::ExpressionExecutor;
 use crate::operator::PhysicalRef;
 use crate::operators::{
-    PhysicalColumnDataScan, PhysicalDummyScan, PhysicalFilter, PhysicalOrder, PhysicalProjection,
-    PhysicalStreamingLimit, PhysicalTableScan, PhysicalUngroupedAggregate,
+    PhysicalColumnDataScan, PhysicalDummyScan, PhysicalFilter, PhysicalHashAggregate, PhysicalOrder,
+    PhysicalProjection, PhysicalStreamingLimit, PhysicalTableScan, PhysicalUngroupedAggregate,
 };
 
 /// Converts a logical plan whose column references are resolved into a physical plan.
@@ -92,7 +93,29 @@ pub fn create_physical_plan(op: LogicalOperator) -> Result<PhysicalRef> {
         LogicalKind::Aggregate(aggregate) => {
             let child = next_child("aggregate")?;
             if !aggregate.groups.is_empty() || aggregate.grouping_sets.len() > 1 {
-                return Err(Error::not_implemented("GROUP BY (hash aggregate)"));
+                let aggregates = expressions
+                    .into_iter()
+                    .map(|expression| match expression.kind {
+                        ExpressionKind::Aggregate(aggregate) => Ok(*aggregate),
+                        _ => Err(Error::internal(format!(
+                            "non-aggregate {expression} in an aggregate operator"
+                        ))),
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let LogicalAggregate {
+                    groups,
+                    grouping_sets,
+                    grouping_functions,
+                    ..
+                } = *aggregate;
+                return Ok(Arc::new(PhysicalHashAggregate::new(
+                    types,
+                    groups,
+                    aggregates,
+                    grouping_sets,
+                    grouping_functions,
+                    child,
+                )?));
             }
             let aggregates = expressions
                 .into_iter()

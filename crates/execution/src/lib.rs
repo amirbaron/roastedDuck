@@ -4,6 +4,7 @@
 //! its source, pushes them through streaming operators and into its sink. Operators keep
 //! their state in typed global (shared) and local (per-thread) state objects.
 
+pub mod aggregate_hashtable;
 mod context;
 mod executor;
 mod expression_executor;

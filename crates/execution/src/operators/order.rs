@@ -54,7 +54,9 @@ impl PhysicalOrder {
         let mut columns = Vec::with_capacity(self.orders.len());
         let mut computed = Vec::new();
         for order in &self.orders {
-            if let ExpressionKind::Reference(reference) = &order.expression.kind { columns.push(reference.index as usize) } else {
+            if let ExpressionKind::Reference(reference) = &order.expression.kind {
+                columns.push(reference.index as usize);
+            } else {
                 columns.push(self.input_types.len() + computed.len());
                 computed.push(order.expression.clone());
             }
