@@ -122,14 +122,51 @@ impl<'a> PipelineExecutor<'a> {
                 break;
             }
         }
+        if !self.finished {
+            self.flush_operators()?;
+        }
+        Ok(())
+    }
+
+    /// Lets operators emit the rows they held back once the source is exhausted
+    /// (DuckDB's `FlushCachingOperatorsPush`).
+    fn flush_operators(&mut self) -> Result<()> {
+        for index in 0..self.operators.len() {
+            if self.finished {
+                break;
+            }
+            if !self.operators[index].requires_final_execute() {
+                continue;
+            }
+            loop {
+                let mut chunk = DataChunk::default();
+                let more = self.operators[index].final_execute(
+                    &self.ctx,
+                    &mut chunk,
+                    self.states.operator_globals[index],
+                    self.operator_locals[index].as_mut(),
+                )?;
+                if !chunk.is_empty() {
+                    self.push_from(&chunk, index + 1)?;
+                }
+                if !more || self.finished {
+                    break;
+                }
+            }
+        }
         Ok(())
     }
 
     /// Pushes one source chunk through the operators into the sink, re-entering operators
     /// that still have output buffered (DuckDB's `ExecutePushInternal`).
     fn push(&mut self, input: &DataChunk) -> Result<()> {
+        self.push_from(input, 0)
+    }
+
+    /// Pushes `input` through the operators from `start` on into the sink.
+    fn push_from(&mut self, input: &DataChunk, start: usize) -> Result<()> {
         loop {
-            let (result, final_index) = self.execute_operators(input)?;
+            let (result, final_index) = self.execute_operators(input, start)?;
             let final_chunk = match final_index {
                 Some(index) => &self.outputs[index],
                 None => input,
@@ -160,9 +197,13 @@ impl<'a> PipelineExecutor<'a> {
     /// Runs the operator chain once. Returns whether operators still have buffered output
     /// and which chunk holds the final result (`None` = the input itself, when there are
     /// no operators). Mirrors DuckDB's `PipelineExecutor::Execute`.
-    fn execute_operators(&mut self, input: &DataChunk) -> Result<(OperatorResult, Option<usize>)> {
+    fn execute_operators(
+        &mut self,
+        input: &DataChunk,
+        start: usize,
+    ) -> Result<(OperatorResult, Option<usize>)> {
         let count = self.operators.len();
-        if count == 0 {
+        if start >= count {
             return Ok((OperatorResult::NeedMoreInput, None));
         }
         // `current` is the index of the next operator to run; operators re-entered from
@@ -170,12 +211,16 @@ impl<'a> PipelineExecutor<'a> {
         // Only output produced in this pass may reach the sink (DuckDB resets the final
         // chunk before every pass).
         self.outputs[count - 1].reset();
-        let mut current = self.in_process.pop().unwrap_or(0);
+        let mut current = self.in_process.pop().unwrap_or(start);
         loop {
             let (before, rest) = self.outputs.split_at_mut(current);
             let output = &mut rest[0];
             output.reset();
-            let op_input = if current == 0 { input } else { &before[current - 1] };
+            let op_input = if current == start {
+                input
+            } else {
+                &before[current - 1]
+            };
             let result = self.operators[current].execute(
                 &self.ctx,
                 op_input,

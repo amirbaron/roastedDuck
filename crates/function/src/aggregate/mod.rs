@@ -24,7 +24,7 @@ use std::ptr::NonNull;
 use std::sync::Arc;
 
 use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, Vector};
+use rustdb_types::{LogicalType, ValidityMask, Vector};
 
 use crate::{BindInput, FunctionData, NullHandling};
 
@@ -146,6 +146,91 @@ pub trait AggregateOps: Send + Sync + 'static {
     /// # Safety
     /// See the trait-level contract.
     unsafe fn destroy(&self, states: &[StatePtr]);
+
+    /// Whether the function can be computed through update/combine/finalize (DuckDB's
+    /// `AggregateFunction::CanAggregate`); window-only functions return `false`.
+    fn can_aggregate(&self) -> bool {
+        true
+    }
+
+    /// The function's own windowed evaluation, if it has one (DuckDB's `window` and
+    /// `window_init` callbacks, used for holistic aggregates such as `quantile`).
+    fn window(&self) -> Option<&dyn WindowAggregate> {
+        None
+    }
+}
+
+/// One subframe `[start, end)` of the rows of a window partition (DuckDB's `FrameBounds`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WindowFrame {
+    pub start: usize,
+    pub end: usize,
+}
+
+/// Bounds on how far a frame boundary lies from the current row (DuckDB's `FrameDelta`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FrameDelta {
+    pub begin: i64,
+    pub end: i64,
+}
+
+/// A window partition as seen by a [`WindowAggregate`] (DuckDB's `WindowPartitionInput`).
+#[derive(Clone, Copy, Debug)]
+pub struct WindowPartitionInput<'a> {
+    /// The argument columns, one flat vector per argument holding every row.
+    pub inputs: &'a [Vector],
+    /// Rows in the partition data.
+    pub count: usize,
+    /// Per argument: whether no value is NULL.
+    pub all_valid: &'a [bool],
+    /// Rows that pass the aggregate's `FILTER` clause.
+    pub filter_mask: &'a ValidityMask,
+    /// Estimated ranges of the frame start and end relative to the current row.
+    pub stats: [FrameDelta; 2],
+}
+
+/// A custom windowed evaluation of an aggregate (DuckDB's `aggregate_window_t` and
+/// `aggregate_wininit_t`).
+///
+/// # Safety (for every method taking `StatePtr`s)
+/// Each state must have been initialised with [`AggregateOps::initialize`] of the same
+/// function and not be accessed concurrently.
+pub trait WindowAggregate: Send + Sync {
+    /// Whether [`WindowAggregate::window_init`] builds a state shared by all rows.
+    fn has_window_init(&self) -> bool {
+        false
+    }
+
+    /// Builds the shared state `global` for a partition (e.g. a sorted index).
+    ///
+    /// # Safety
+    /// See the trait-level contract.
+    unsafe fn window_init(
+        &self,
+        input: AggregateInput<'_>,
+        partition: &WindowPartitionInput<'_>,
+        global: StatePtr,
+    ) -> Result<()> {
+        let _ = (input, partition, global);
+        Ok(())
+    }
+
+    /// Computes the aggregate over `frames` into row `row` of `result`; `local` is a
+    /// per-thread scratch state kept across rows, `global` the shared state if any.
+    ///
+    /// # Safety
+    /// See the trait-level contract.
+    #[allow(clippy::too_many_arguments, reason = "mirrors DuckDB's aggregate_window_t")]
+    unsafe fn window(
+        &self,
+        input: AggregateInput<'_>,
+        partition: &WindowPartitionInput<'_>,
+        global: Option<StatePtr>,
+        local: StatePtr,
+        frames: &[WindowFrame],
+        result: &mut Vector,
+        row: usize,
+    ) -> Result<()>;
 }
 
 /// Placeholder operations of overloads that are always replaced by their bind callback

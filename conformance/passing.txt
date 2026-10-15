@@ -22,6 +22,7 @@ test/fuzzer/afl/limit_out_of_range.test
 test/fuzzer/afl/non_foldable_parameter.test
 test/fuzzer/afl/random_join.test
 test/fuzzer/afl/self_referential_alias.test
+test/fuzzer/afl/window_type_mismatch.test
 test/fuzzer/duckfuzz/array_const_columndatacopy.test
 test/fuzzer/duckfuzz/array_serialization_flattening.test
 test/fuzzer/duckfuzz/complex_join_cardinality_assert.test
@@ -81,6 +82,7 @@ test/fuzzer/pedro/index_not_updated_returning.test
 test/fuzzer/pedro/intersect_correlated_subquery.test
 test/fuzzer/pedro/intersect_empty_array.test
 test/fuzzer/pedro/is_distinct_from_validation.test
+test/fuzzer/pedro/lag_window_function.test
 test/fuzzer/pedro/last_memory_leak.test
 test/fuzzer/pedro/lateral_join.test
 test/fuzzer/pedro/like_empty_list.test
@@ -177,6 +179,7 @@ test/issues/general/test_3140.test
 test/issues/general/test_3518.test
 test/issues/general/test_3878.test
 test/issues/general/test_4008.test
+test/issues/general/test_4063.test
 test/issues/general/test_4165.test
 test/issues/general/test_4612.test
 test/issues/general/test_4753.test
@@ -1129,6 +1132,7 @@ test/sql/subquery/lateral/lateral_grouping_sets.test
 test/sql/subquery/lateral/lateral_join_aggregate.test
 test/sql/subquery/lateral/lateral_join_nested.test_slow
 test/sql/subquery/lateral/lateral_left_join.test
+test/sql/subquery/lateral/lateral_qualify.test
 test/sql/subquery/scalar/coalesce_subquery.test
 test/sql/subquery/scalar/in_multiple_columns.test
 test/sql/subquery/scalar/test_complex_correlated_subquery.test
@@ -1393,6 +1397,8 @@ test/sql/upsert/test_problematic_conditional_do_update.test
 test/sql/upsert/upsert_conflict_target_index.test
 test/sql/upsert/upsert_default_values.test
 test/sql/upsert/upsert_distinct_bug.test
+test/sql/window/test_order_by_all.test
+test/sql/window/test_wide_orderby.test
 test/sqlite/select1.test_slow
 test/sqlite/select2.test_slow
 test/sqlite/select3.test_slow

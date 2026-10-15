@@ -24,6 +24,8 @@ use rustdb_storage::{DataTable, StorageIndex, TableConstraints, TableIoManager};
 use rustdb_types::{DataChunk, LogicalType};
 
 use crate::constraints::table_constraints;
+mod window;
+
 use crate::expression_executor::ExpressionExecutor;
 use crate::operator::{PhysicalRef, SinkData};
 use crate::operators::{
@@ -358,6 +360,7 @@ impl PlanGenerator {
             children,
             expressions,
             types,
+            estimated_cardinality,
             ..
         } = op;
         // VALUES over a dummy scan is evaluated here, like DuckDB's foldable fast path.
@@ -719,6 +722,11 @@ impl PlanGenerator {
                     distinct_on_all_columns(types, plan)?
                 }
             }
+            LogicalKind::Window { .. } => {
+                let child = next_child("window")?;
+                let estimate = estimated_cardinality.unwrap_or(0) as usize;
+                window::plan_window(types, expressions, estimate, child)?
+            }
             LogicalKind::Distinct {
                 distinct_targets,
                 order_by,
@@ -754,13 +762,8 @@ fn except_or_intersect(
     if left.types() != right.types() {
         return Err(Error::invalid_input("Type mismatch for SET OPERATION"));
     }
-    if setop_all {
-        return Err(Error::not_implemented(
-            "EXCEPT ALL / INTERSECT ALL (requires the window operator)",
-        ));
-    }
-    let conditions = left
-        .types()
+    let column_types = left.types().to_vec();
+    let mut conditions: Vec<JoinCondition> = column_types
         .iter()
         .enumerate()
         .map(|(index, ty)| JoinCondition {
@@ -769,19 +772,41 @@ fn except_or_intersect(
             comparison: ExpressionType::CompareNotDistinctFrom,
         })
         .collect();
+    // EXCEPT ALL / INTERSECT ALL number the duplicates on each side and also join on the
+    // numbers, for bag semantics.
+    let (left, right, join_types) = if setop_all {
+        conditions.push(JoinCondition {
+            left: Expression::reference("", LogicalType::BIGINT, column_types.len() as u64),
+            right: Expression::reference("", LogicalType::BIGINT, column_types.len() as u64),
+            comparison: ExpressionType::CompareNotDistinctFrom,
+        });
+        let mut join_types = types.clone();
+        join_types.push(LogicalType::BIGINT);
+        (
+            window::partitioned_row_number(left)?,
+            window::partitioned_row_number(right)?,
+            join_types,
+        )
+    } else {
+        (left, right, types.clone())
+    };
     let join_type = if operator_type == LogicalOperatorType::LogicalExcept {
         JoinType::Anti
     } else {
         JoinType::Semi
     };
-    let join = Arc::new(PhysicalNestedLoopJoin::new(
-        types.clone(),
-        join_type,
-        conditions,
-        None,
-        left,
-        right,
+    let join: PhysicalRef = Arc::new(PhysicalNestedLoopJoin::new(
+        join_types, join_type, conditions, None, left, right,
     )?);
+    if setop_all {
+        // Drop the row numbers again.
+        let select_list = column_types
+            .iter()
+            .enumerate()
+            .map(|(index, ty)| Expression::reference("", ty.clone(), index as u64))
+            .collect();
+        return Ok(Arc::new(PhysicalProjection::new(types, select_list, join)));
+    }
     distinct_on_all_columns(types, join)
 }
 
