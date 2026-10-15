@@ -161,6 +161,9 @@ fn string_functions(sets: &mut Vec<ScalarFunctionSet>) {
     {
         with_aliases(sets, set, aliases);
     }
+    sets.extend(list::range::range_functions());
+    with_aliases(sets, list::slice::list_slice_functions(), &["array_slice"]);
+    sets.push(list::slice::flatten_functions());
     sets.push(map::map_functions());
     sets.push(map::cardinality_functions());
     sets.extend(map::map_unpack_functions());

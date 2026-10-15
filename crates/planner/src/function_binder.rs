@@ -483,7 +483,8 @@ impl<'a> FunctionBinder<'a> {
         };
         let function = functions.functions[index].clone();
         if function.null_handling == NullHandling::Default {
-            let null_type = if function.return_type.is_valid() {
+            // DuckDB's `IsComplete`: templates count as incomplete too.
+            let null_type = if function.return_type.is_valid() && !is_templated(&function.return_type) {
                 function.return_type.clone()
             } else {
                 LogicalType::SQLNULL
