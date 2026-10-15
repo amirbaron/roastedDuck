@@ -22,6 +22,7 @@
 //! only rows below a column's published count, which appends never touch again.
 
 pub mod compression;
+pub mod index;
 pub mod statistics;
 pub mod table;
 pub mod table_filter;
