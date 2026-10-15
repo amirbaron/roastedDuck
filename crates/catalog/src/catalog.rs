@@ -246,6 +246,16 @@ impl Catalog {
             )));
         }
         set.drop_entry(transaction, name, false)?;
+        if ty == CatalogType::Table {
+            // The table's indexes depend on it automatically and go with it.
+            for index in schema_entry.indexes.scan(transaction) {
+                if let EntryKind::Index(info) = &index.kind
+                    && info.info.table.eq_ignore_ascii_case(name)
+                {
+                    schema_entry.indexes.drop_entry(transaction, index.name(), true)?;
+                }
+            }
+        }
         Ok(())
     }
 

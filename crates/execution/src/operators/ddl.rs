@@ -7,16 +7,20 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use rustdb_ast::{
-    CatalogType as AstCatalogType, Constraint, CreateInfo, CreateInfoKind, DropInfo, ForeignKeyConstraint,
-    ForeignKeyType, OnEntryNotFound, TableColumnType,
+    CatalogType as AstCatalogType, Constraint, CreateIndexInfo, CreateInfo, CreateInfoKind, DropInfo,
+    ForeignKeyConstraint, ForeignKeyType, IndexConstraintType as AstIndexConstraintType, OnCreateConflict,
+    OnEntryNotFound, TableColumnType,
 };
-use rustdb_catalog::{Catalog, CatalogEntry, CatalogType, EntryKind, TableEntry, ViewEntry};
+use rustdb_catalog::{Catalog, CatalogEntry, CatalogType, EntryKind, IndexEntry, TableEntry, ViewEntry};
 use rustdb_common::{Error, Result};
+use rustdb_planner::{Expression, ExpressionKind};
 use rustdb_storage::index::IndexConstraintType;
+use rustdb_storage::index::art::{Art, IndexKeyExecutor, IndexKeyExpressions};
 use rustdb_storage::{ColumnDefinition, DataTable, TableIoManager, Transaction};
 use rustdb_types::{DataChunk, LogicalType};
 
 use super::insert::TableCreator;
+use crate::expression_executor::ExpressionExecutor;
 use crate::operator::{ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
 use crate::{ExecutionContext, Source, SourceResult};
 
@@ -326,5 +330,141 @@ impl DdlAction for DropAction {
         }
         self.catalog
             .drop_entry(transaction, ty, &info.schema, &info.name, info.cascade, if_exists)
+    }
+}
+
+/// Evaluates the key expressions of an expression index over table chunks.
+#[derive(Debug)]
+struct IndexExpressionExecutor {
+    executor: std::sync::Mutex<ExpressionExecutor>,
+    names: Vec<String>,
+}
+
+impl IndexKeyExecutor for IndexExpressionExecutor {
+    fn execute(&self, table_chunk: &DataChunk) -> Result<DataChunk> {
+        let mut keys = DataChunk::default();
+        self.executor
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .execute(table_chunk, &mut keys)?;
+        Ok(keys)
+    }
+
+    fn names(&self) -> &[String] {
+        &self.names
+    }
+}
+
+/// `CREATE INDEX` (DuckDB's `PhysicalCreateIndex` with the ART build): builds the index
+/// over the table's rows, adds it to the table and creates its catalog entry.
+#[derive(Debug)]
+pub struct CreateIndexAction {
+    pub catalog: Arc<Catalog>,
+    pub info: CreateInfo,
+    pub table: Arc<CatalogEntry>,
+    /// The key expressions over the table's physical columns.
+    pub expressions: Vec<Expression>,
+}
+
+impl CreateIndexAction {
+    /// An empty ART over the keys.
+    fn new_art(&self, storage: &DataTable, index: &CreateIndexInfo) -> Result<Art> {
+        let constraint = match index.constraint_type {
+            AstIndexConstraintType::Unique => IndexConstraintType::Unique,
+            AstIndexConstraintType::Primary => IndexConstraintType::Primary,
+            AstIndexConstraintType::Foreign => IndexConstraintType::Foreign,
+            AstIndexConstraintType::None => IndexConstraintType::None,
+        };
+        let references: Option<Vec<usize>> = self
+            .expressions
+            .iter()
+            .map(|expression| match &expression.kind {
+                ExpressionKind::Reference(reference) => usize::try_from(reference.index).ok(),
+                _ => None,
+            })
+            .collect();
+        if let Some(columns) = references {
+            return storage.new_art(&index.name, constraint, &columns);
+        }
+        let columns: Vec<usize> = index
+            .column_ids
+            .iter()
+            .filter_map(|&c| usize::try_from(c).ok())
+            .collect();
+        let key_types = self.expressions.iter().map(|e| e.return_type.clone()).collect();
+        let executor = IndexExpressionExecutor {
+            executor: std::sync::Mutex::new(ExpressionExecutor::new(self.expressions.clone())),
+            names: self.expressions.iter().map(Expression::name).collect(),
+        };
+        storage.new_art_with_expressions(
+            &index.name,
+            constraint,
+            &columns,
+            key_types,
+            IndexKeyExpressions::Custom(Arc::new(executor)),
+        )
+    }
+}
+
+impl DdlAction for CreateIndexAction {
+    fn execute(&self, transaction: &Transaction) -> Result<()> {
+        let CreateInfoKind::Index(index) = &self.info.kind else {
+            return Err(Error::internal("expected an index"));
+        };
+        let schema = &self.info.schema;
+        if self
+            .catalog
+            .get_entry(transaction, CatalogType::Index, schema, &index.name)
+            .is_some()
+        {
+            if self.info.on_conflict == OnCreateConflict::IgnoreOnConflict {
+                return Ok(());
+            }
+            return Err(Error::catalog(format!(
+                "Index with name \"{}\" already exists!",
+                index.name
+            )));
+        }
+        if self
+            .expressions
+            .iter()
+            .any(|expression| !expression.is_consistent())
+        {
+            return Err(Error::binder(
+                "Index keys cannot contain expressions with side effects.",
+            ));
+        }
+        if !index.index_type_name.is_empty() && !index.index_type_name.eq_ignore_ascii_case("ART") {
+            return Err(Error::binder(format!(
+                "Unknown index type: {}",
+                index.index_type_name
+            )));
+        }
+        let EntryKind::Table(table) = &self.table.kind else {
+            return Err(Error::binder("Indexes can only be created on DuckDB tables."));
+        };
+        let storage = table
+            .storage
+            .clone()
+            .ok_or_else(|| Error::binder("Indexes can only be created on DuckDB tables."))?;
+        let art = self.new_art(&storage, index)?;
+        storage.create_index(transaction, art)?;
+        let mut entry = CatalogEntry::new(
+            index.name.clone(),
+            EntryKind::Index(IndexEntry {
+                info: (**index).clone(),
+                schema: schema.clone(),
+                storage: Some(Arc::clone(storage.info())),
+            }),
+        );
+        entry.temporary = self.info.temporary;
+        if let Err(error) = self
+            .catalog
+            .create_entry(transaction, schema, entry, self.info.on_conflict)
+        {
+            storage.remove_index(&index.name);
+            return Err(error);
+        }
+        Ok(())
     }
 }

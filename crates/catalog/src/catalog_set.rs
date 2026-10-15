@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use rustdb_common::{Error, ErrorKind, Result};
 
 use crate::CatalogEntry;
-use crate::transaction::{TRANSACTION_ID_START, Transaction, TransactionExt};
+use crate::transaction::{StorageHook, TRANSACTION_ID_START, Transaction, TransactionExt};
 
 /// One version in an entry chain.
 #[derive(Debug)]
@@ -98,6 +98,12 @@ impl CatalogSet {
     /// already exists (callers turn this into the appropriate "already exists" error).
     pub fn create(self: &Arc<Self>, transaction: &Transaction, entry: CatalogEntry) -> Result<bool> {
         let name = key(entry.name());
+        let hook = match &entry.kind {
+            crate::EntryKind::Index(index) => index.storage.as_ref().map_or(StorageHook::None, |info| {
+                StorageHook::CreatedIndex(Arc::clone(info), entry.name().to_owned())
+            }),
+            _ => StorageHook::None,
+        };
         let version = Version::new(transaction.transaction_id, Some(Arc::new(entry)));
         {
             let mut chains = self.lock();
@@ -125,7 +131,7 @@ impl CatalogSet {
                 }
             }
         }
-        transaction.push_catalog_change(Arc::clone(self), name, version, None);
+        transaction.push_catalog_change(Arc::clone(self), name, version, hook);
         Ok(true)
     }
 
@@ -159,7 +165,7 @@ impl CatalogSet {
             }
             chain.insert(0, Arc::clone(&version));
         }
-        transaction.push_catalog_change(Arc::clone(self), name, version, None);
+        transaction.push_catalog_change(Arc::clone(self), name, version, StorageHook::None);
         Ok(true)
     }
 
@@ -172,7 +178,7 @@ impl CatalogSet {
     ) -> Result<bool> {
         let name = key(name);
         let version = Version::new(transaction.transaction_id, None);
-        let mut dropped_table = None;
+        let mut hook = StorageHook::None;
         {
             let mut chains = self.lock();
             let Some(chain) = chains.get_mut(&name) else {
@@ -197,17 +203,25 @@ impl CatalogSet {
                     entry.name()
                 )));
             }
-            if let crate::EntryKind::Table(table) = &entry.kind
-                && let Some(storage) = &table.storage
-            {
-                // Concurrent writers of the table now fail (`DuckTableEntry::OnDrop`).
-                storage.set_as_dropped();
-                transaction.local_storage().drop_table(storage);
-                dropped_table = Some(Arc::clone(storage));
+            match &entry.kind {
+                crate::EntryKind::Table(table) => {
+                    if let Some(storage) = &table.storage {
+                        // Concurrent writers of the table now fail (`DuckTableEntry::OnDrop`).
+                        storage.set_as_dropped();
+                        transaction.local_storage().drop_table(storage);
+                        hook = StorageHook::DroppedTable(Arc::clone(storage));
+                    }
+                }
+                crate::EntryKind::Index(index) => {
+                    if let Some(info) = &index.storage {
+                        hook = StorageHook::DroppedIndex(Arc::clone(info), entry.name().to_owned());
+                    }
+                }
+                _ => {}
             }
             chain.insert(0, Arc::clone(&version));
         }
-        transaction.push_catalog_change(Arc::clone(self), name, version, dropped_table);
+        transaction.push_catalog_change(Arc::clone(self), name, version, hook);
         Ok(true)
     }
 

@@ -452,6 +452,7 @@ pub enum LogicalKind {
     },
     /// `DROP ...` (DuckDB's `LogicalSimple` of type `LOGICAL_DROP`).
     Drop(Box<rustdb_ast::DropInfo>),
+    CreateIndex(Box<LogicalCreateIndex>),
     Insert(Box<LogicalInsert>),
     Delete(Box<LogicalDelete>),
     Update(Box<LogicalUpdate>),
@@ -496,6 +497,19 @@ pub enum BoundConstraint {
         is_primary_key: bool,
     },
     ForeignKey(BoundForeignKeyInfo),
+}
+
+/// `CREATE INDEX` (DuckDB's `LogicalCreateIndex`). The table is scanned by the index
+/// build itself.
+#[derive(Clone, Debug)]
+pub struct LogicalCreateIndex {
+    /// The statement (`CreateInfoKind::Index`) with catalog and schema resolved;
+    /// `column_ids` are the physical columns the keys read.
+    pub info: rustdb_ast::CreateInfo,
+    pub table: Arc<rustdb_catalog::CatalogEntry>,
+    /// The key expressions, referencing the table's physical columns by index
+    /// (`unbound_expressions`).
+    pub expressions: Vec<Expression>,
 }
 
 /// `INSERT` (DuckDB's `LogicalInsert`).
@@ -714,6 +728,7 @@ impl LogicalOperator {
             LogicalKind::Deallocate { .. } | LogicalKind::Drop(_) => T::LogicalDrop,
             LogicalKind::Pragma { .. } => T::LogicalPragma,
             LogicalKind::CreateTable(_) => T::LogicalCreateTable,
+            LogicalKind::CreateIndex(_) => T::LogicalCreateIndex,
             LogicalKind::Insert(_) => T::LogicalInsert,
             LogicalKind::Delete(_) => T::LogicalDelete,
             LogicalKind::Update(_) => T::LogicalUpdate,
@@ -859,6 +874,7 @@ impl LogicalOperator {
             | LogicalKind::Deallocate { .. }
             | LogicalKind::Pragma { .. }
             | LogicalKind::CreateTable(_)
+            | LogicalKind::CreateIndex(_)
             | LogicalKind::Create { .. }
             | LogicalKind::Drop(_) => vec![ColumnBinding::new(0, 0)],
             LogicalKind::Insert(insert) => {
@@ -1042,13 +1058,15 @@ impl LogicalOperator {
             | LogicalKind::Transaction { .. }
             | LogicalKind::Pragma { .. }
             | LogicalKind::Drop(_) => vec![LogicalType::BOOLEAN],
-            LogicalKind::CreateTable(_) | LogicalKind::Create { .. } => vec![LogicalType::BIGINT],
             LogicalKind::Insert(insert) if insert.return_chunk => insert.table_types(),
             LogicalKind::Delete(delete) if delete.return_chunk => table_types(&delete.table),
             LogicalKind::Update(update) if update.return_chunk => table_types(&update.table),
-            LogicalKind::Insert(_) | LogicalKind::Delete(_) | LogicalKind::Update(_) => {
-                vec![LogicalType::BIGINT]
-            }
+            LogicalKind::CreateTable(_)
+            | LogicalKind::CreateIndex(_)
+            | LogicalKind::Create { .. }
+            | LogicalKind::Insert(_)
+            | LogicalKind::Delete(_)
+            | LogicalKind::Update(_) => vec![LogicalType::BIGINT],
         };
     }
 

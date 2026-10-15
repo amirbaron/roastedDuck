@@ -13,6 +13,7 @@ use rustdb_common::{CaseInsensitiveMap, Error, Result};
 use rustdb_types::{LogicalType, LogicalTypeId};
 
 mod create;
+mod create_index;
 mod modify;
 mod table;
 

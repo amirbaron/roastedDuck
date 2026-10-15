@@ -24,8 +24,9 @@ use crate::constraints::table_constraints;
 use crate::expression_executor::ExpressionExecutor;
 use crate::operator::PhysicalRef;
 use crate::operators::{
-    CatalogTableCreator, CreateSchemaAction, CreateViewAction, DdlAction, DropAction, InsertTarget,
-    PhysicalCreateTable, PhysicalDdl, PhysicalDelete, PhysicalInsert, PhysicalSeqScan, PhysicalUpdate,
+    CatalogTableCreator, CreateIndexAction, CreateSchemaAction, CreateViewAction, DdlAction, DropAction,
+    InsertTarget, PhysicalCreateTable, PhysicalDdl, PhysicalDelete, PhysicalInsert, PhysicalSeqScan,
+    PhysicalUpdate,
 };
 use crate::operators::{CteData, PhysicalCte, PhysicalCteScan, PhysicalRecursiveCte};
 use crate::operators::{
@@ -485,6 +486,20 @@ impl PlanGenerator {
                     }
                     other => return Err(not_implemented(other)),
                 }
+            }
+            LogicalKind::CreateIndex(create) => {
+                let create = *create;
+                let catalog = self.context()?.catalog(&create.info.catalog)?;
+                self.ddl(
+                    "CREATE_INDEX",
+                    types,
+                    Arc::new(CreateIndexAction {
+                        catalog,
+                        info: create.info,
+                        table: create.table,
+                        expressions: create.expressions,
+                    }),
+                )?
             }
             LogicalKind::Drop(info) => {
                 let catalog = self.context()?.catalog(&info.catalog)?;

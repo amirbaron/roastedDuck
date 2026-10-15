@@ -35,7 +35,10 @@ fn insert_update_delete_with_defaults_and_returning() {
     let mut con = connect();
     con.query("CREATE TABLE t(i INTEGER PRIMARY KEY, j VARCHAR DEFAULT 'x', k INTEGER CHECK (k > 0))")
         .unwrap();
-    assert_eq!(rows(&mut con, "INSERT INTO t VALUES (1, 'a', 1), (2, 'b', 2)"), vec![vec!["2"]]);
+    assert_eq!(
+        rows(&mut con, "INSERT INTO t VALUES (1, 'a', 1), (2, 'b', 2)"),
+        vec![vec!["2"]]
+    );
     con.query("INSERT INTO t(i) VALUES (3)").unwrap();
     con.query("INSERT INTO t(k, i) VALUES (5, 4)").unwrap();
     assert_eq!(
@@ -47,7 +50,10 @@ fn insert_update_delete_with_defaults_and_returning() {
             vec!["4", "x", "5"]
         ]
     );
-    assert_eq!(rows(&mut con, "UPDATE t SET j = 'z' WHERE i = 2"), vec![vec!["1"]]);
+    assert_eq!(
+        rows(&mut con, "UPDATE t SET j = 'z' WHERE i = 2"),
+        vec![vec!["1"]]
+    );
     con.query("UPDATE t SET k = DEFAULT WHERE i = 1").unwrap();
     assert_eq!(rows(&mut con, "DELETE FROM t WHERE i = 3"), vec![vec!["1"]]);
     assert_eq!(
@@ -144,8 +150,50 @@ fn rolled_back_ddl_and_dml_disappear() {
     con.query("INSERT INTO t VALUES (1)").unwrap();
     con.query("DROP TABLE t").unwrap();
     con.query("ROLLBACK").unwrap();
-    assert!(error(&mut con, "SELECT * FROM tx").starts_with("Catalog Error: Table with name tx does not exist!"));
+    assert!(
+        error(&mut con, "SELECT * FROM tx").starts_with("Catalog Error: Table with name tx does not exist!")
+    );
     assert_eq!(rows(&mut con, "SELECT * FROM t"), Vec::<Vec<String>>::new());
     con.query("INSERT INTO t VALUES (2)").unwrap();
     assert_eq!(rows(&mut con, "SELECT * FROM t"), vec![vec!["2"]]);
+}
+
+#[test]
+fn create_and_drop_index() {
+    let mut con = connect();
+    con.query("CREATE TABLE t(i INT, j INT)").unwrap();
+    con.query("INSERT INTO t VALUES (1, 10), (2, 20), (1, 30)")
+        .unwrap();
+    assert_eq!(
+        error(&mut con, "CREATE INDEX idx ON t(rowid)"),
+        "Binder Error: cannot create an index on the rowid"
+    );
+    con.query("CREATE INDEX idx ON t(i)").unwrap();
+    assert_eq!(
+        error(&mut con, "CREATE INDEX idx ON t(j)"),
+        "Catalog Error: Index with name \"idx\" already exists!"
+    );
+    con.query("CREATE INDEX IF NOT EXISTS idx ON t(j)").unwrap();
+    assert_eq!(rows(&mut con, "SELECT j FROM t WHERE i = 2"), vec![vec!["20"]]);
+    assert_eq!(
+        error(&mut con, "CREATE UNIQUE INDEX u ON t(i)"),
+        "Constraint Error: Data contains duplicates on indexed column(s)"
+    );
+    con.query("CREATE UNIQUE INDEX u ON t((i + j))").unwrap();
+    assert!(error(&mut con, "INSERT INTO t VALUES (5, 6)").starts_with("Constraint Error: Duplicate key"));
+    // A rolled back index disappears with its constraint.
+    con.query("BEGIN").unwrap();
+    con.query("DROP INDEX u").unwrap();
+    con.query("ROLLBACK").unwrap();
+    assert!(con.query("INSERT INTO t VALUES (5, 6)").is_err());
+    con.query("DROP INDEX u").unwrap();
+    con.query("INSERT INTO t VALUES (5, 6)").unwrap();
+    assert_eq!(
+        error(&mut con, "DROP INDEX u"),
+        "Catalog Error: Index with name u does not exist!"
+    );
+    // Dropping the table drops its indexes.
+    con.query("DROP TABLE t").unwrap();
+    con.query("CREATE TABLE t(i INT)").unwrap();
+    con.query("CREATE INDEX idx ON t(i)").unwrap();
 }

@@ -169,6 +169,18 @@ impl TableEntry {
     }
 }
 
+/// An index (DuckDB's `DuckIndexEntry`): its definition and the storage of the table
+/// holding it.
+#[derive(Clone, Debug)]
+pub struct IndexEntry {
+    /// The `CREATE INDEX` definition; `column_ids` are physical column indexes.
+    pub info: rustdb_ast::CreateIndexInfo,
+    /// The schema of the indexed table.
+    pub schema: String,
+    /// The indexed table's storage info (`IndexDataTableInfo`).
+    pub storage: Option<Arc<rustdb_storage::DataTableInfo>>,
+}
+
 /// A view: a stored query (DuckDB's `ViewCatalogEntry`).
 #[derive(Clone, Debug)]
 pub struct ViewEntry {
@@ -189,6 +201,7 @@ pub enum EntryKind {
     TableFunction(TableFunctionSet),
     Table(TableEntry),
     View(ViewEntry),
+    Index(IndexEntry),
 }
 
 /// A named object in the catalog.
@@ -223,6 +236,7 @@ impl CatalogEntry {
             EntryKind::TableFunction(_) => CatalogType::TableFunction,
             EntryKind::Table(_) => CatalogType::Table,
             EntryKind::View(_) => CatalogType::View,
+            EntryKind::Index(_) => CatalogType::Index,
         }
     }
 

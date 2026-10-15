@@ -154,6 +154,50 @@ impl ExpressionBinder for UpdateBinder<'_> {
     }
 }
 
+/// The key expressions of `CREATE INDEX` (DuckDB's `IndexBinder`), bound against the
+/// indexed table.
+#[derive(Debug)]
+pub struct IndexBinder<'a> {
+    base: BinderBase<'a>,
+}
+
+impl<'a> IndexBinder<'a> {
+    pub fn new(binder: &'a mut Binder, outer: Option<&'a mut dyn Scope>) -> Self {
+        Self {
+            base: BinderBase::new(binder, outer),
+        }
+    }
+}
+
+expression_binder_base!(IndexBinder);
+
+impl ExpressionBinder for IndexBinder<'_> {
+    expression_binder_accessors!();
+
+    fn bind_expression(
+        &mut self,
+        expr: &mut ParsedExpression,
+        depth: u64,
+        root_expression: bool,
+    ) -> Result<BindResult> {
+        match &expr.kind {
+            ParsedExpressionKind::Window(_) => Ok(BindResult::Unbound(unsupported(
+                expr,
+                "window functions are not allowed in index expressions",
+            ))),
+            ParsedExpressionKind::Subquery(_) => Ok(BindResult::Unbound(unsupported(
+                expr,
+                "cannot use subquery in index expressions",
+            ))),
+            _ => bind_expression_base(self, expr, depth, root_expression),
+        }
+    }
+
+    fn unsupported_aggregate_message(&self) -> String {
+        "aggregate functions are not allowed in index expressions".to_owned()
+    }
+}
+
 /// The `RETURNING` list (DuckDB's `ReturningBinder`).
 #[derive(Debug)]
 pub struct ReturningBinder<'a> {
