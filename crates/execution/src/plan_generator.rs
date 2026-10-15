@@ -16,10 +16,10 @@ use rustdb_planner::{
 use rustdb_types::{DataChunk, LogicalType};
 
 use crate::expression_executor::ExpressionExecutor;
-use crate::operator::PhysicalRef;
+use crate::operator::{PhysicalRef, SinkData};
 use crate::operators::{CteData, PhysicalCte, PhysicalCteScan, PhysicalRecursiveCte};
 use crate::operators::{
-    DelimData, DelimShared, PhysicalDelimJoin, PhysicalDelimScan, PhysicalNestedLoopJoin, PhysicalUnion,
+    DelimShared, PhysicalDelimJoin, PhysicalDelimScan, PhysicalNestedLoopJoin, PhysicalUnion,
 };
 use crate::operators::{
     PhysicalColumnDataScan, PhysicalDummyScan, PhysicalFilter, PhysicalHashAggregate, PhysicalLimitPercent,
@@ -36,15 +36,31 @@ pub fn create_physical_plan(op: LogicalOperator) -> Result<PhysicalRef> {
 struct PlanGenerator {
     /// The delim joins being planned, innermost last; their delim gets read the data of
     /// the innermost one.
-    delim: Vec<Arc<DelimShared>>,
-    /// Materialised CTEs by table index (`materialized_ctes`).
-    materialized: HashMap<u64, Arc<CteData>>,
+    delim: Vec<(Arc<DelimShared>, usize)>,
+    /// Materialised CTEs by table index (`materialized_ctes`), with the recursion depth
+    /// they were planned at.
+    materialized: HashMap<u64, (Arc<CteData>, usize)>,
     /// Recursive CTE working tables and their types by table index
     /// (`recursive_cte_tables`).
     working_tables: HashMap<u64, (Arc<CteData>, Vec<LogicalType>)>,
+    /// Per recursive CTE being planned (outermost first), the data from outside it that
+    /// its parts read.
+    external: Vec<Vec<Arc<dyn SinkData>>>,
 }
 
 impl PlanGenerator {
+    /// Records that a scan at the current depth reads `data` produced at `depth`: every
+    /// recursive CTE in between must wait for it. Returns whether the scan is external.
+    fn read_from(&mut self, data: &Arc<dyn SinkData>, depth: usize) -> bool {
+        let Some(levels) = self.external.get_mut(depth..) else {
+            return false;
+        };
+        for level in levels.iter_mut() {
+            level.push(Arc::clone(data));
+        }
+        !levels.is_empty()
+    }
+
     /// A duplicate-eliminated join: the left input is buffered by a delim sink that also
     /// computes the distinct correlated values the right side's delim gets scan
     /// (DuckDB's `PlanDelimJoin` + `PhysicalLeftDelimJoin`).
@@ -63,7 +79,7 @@ impl PlanGenerator {
         };
         let left = self.plan(left)?;
         let shared = Arc::new(DelimShared::default());
-        self.delim.push(Arc::clone(&shared));
+        self.delim.push((Arc::clone(&shared), self.external.len()));
         let right = self.plan(right);
         self.delim.pop();
         let right = right?;
@@ -111,22 +127,21 @@ impl PlanGenerator {
             return self.plan_delim_join(*join, children, types);
         }
         if let LogicalKind::DelimGet { .. } = &kind {
-            let shared = self
+            let (shared, depth) = self
                 .delim
                 .last()
+                .cloned()
                 .ok_or_else(|| Error::internal("delim get outside a delim join"))?;
-            return Ok(Arc::new(PhysicalDelimScan::new(
-                types,
-                Arc::clone(shared),
-                DelimData::Distinct,
-            )));
+            let external = self.read_from(&(Arc::clone(&shared) as Arc<dyn SinkData>), depth);
+            return Ok(Arc::new(PhysicalDelimScan::new(types, shared, external)));
         }
         match kind {
             LogicalKind::MaterializedCte { table_index, .. } => {
                 let [definition, query] = two_children(children, "CTE")?;
                 let definition = self.plan(definition)?;
                 let data = Arc::new(CteData::default());
-                self.materialized.insert(table_index, Arc::clone(&data));
+                self.materialized
+                    .insert(table_index, (Arc::clone(&data), self.external.len()));
                 let query = self.plan(query)?;
                 return Ok(PhysicalCte::new(&data, definition, query));
             }
@@ -144,14 +159,19 @@ impl PlanGenerator {
                 let working_table = Arc::new(CteData::default());
                 self.working_tables
                     .insert(table_index, (Arc::clone(&working_table), types.clone()));
-                let anchor = self.plan(anchor)?;
-                let recursive = self.plan(recursive)?;
+                self.external.push(Vec::new());
+                let parts = self
+                    .plan(anchor)
+                    .and_then(|anchor| Ok((anchor, self.plan(recursive)?)));
+                let external = self.external.pop().unwrap_or_default();
+                let (anchor, recursive) = parts?;
                 return Ok(Arc::new(PhysicalRecursiveCte::new(
                     types,
                     union_all,
                     working_table,
                     anchor,
                     recursive,
+                    external,
                 )));
             }
             LogicalKind::CteRef {
@@ -160,8 +180,9 @@ impl PlanGenerator {
                 is_recurring,
                 ..
             } => {
-                if let Some(data) = self.materialized.get(&cte_index) {
-                    return Ok(Arc::new(PhysicalCteScan::new(chunk_types, Arc::clone(data))));
+                if let Some((data, depth)) = self.materialized.get(&cte_index).cloned() {
+                    let external = self.read_from(&(Arc::clone(&data) as Arc<dyn SinkData>), depth);
+                    return Ok(Arc::new(PhysicalCteScan::new(chunk_types, data, external)));
                 }
                 if is_recurring {
                     return Err(Error::invalid_input(
@@ -172,7 +193,11 @@ impl PlanGenerator {
                     .working_tables
                     .get(&cte_index)
                     .ok_or_else(|| Error::invalid_input("Referenced recursive CTE does not exist."))?;
-                return Ok(Arc::new(PhysicalCteScan::new(types.clone(), Arc::clone(data))));
+                return Ok(Arc::new(PhysicalCteScan::new(
+                    types.clone(),
+                    Arc::clone(data),
+                    false,
+                )));
             }
             _ => {}
         }

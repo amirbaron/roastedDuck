@@ -69,11 +69,17 @@ pub trait PhysicalOperator: Send + Sync + fmt::Debug + 'static {
     fn is_cte(&self) -> bool {
         false
     }
-    /// A sink outside this source's subtree whose pipeline must finish first (delim
-    /// scans read the data of their delim join).
-    fn source_dependency(&self) -> Option<PhysicalRef> {
-        None
+    /// Sinks outside this source's subtree whose pipelines must finish first (delim
+    /// scans read the data of their delim join, CTE scans that of their CTE).
+    fn source_dependencies(&self) -> Vec<PhysicalRef> {
+        Vec::new()
     }
+}
+
+/// Data materialised by a sink and read by scans elsewhere in the plan.
+pub trait SinkData: std::fmt::Debug + Send + Sync {
+    /// The sink producing the data, while the plan is alive.
+    fn sink(&self) -> Option<PhysicalRef>;
 }
 
 /// An operator that produces chunks at the start of a pipeline.

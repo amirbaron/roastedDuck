@@ -6,7 +6,7 @@ use rustdb_row::hash::hash_columns;
 use rustdb_types::{DataChunk, LogicalType, SelectionVector, Value, Vector};
 
 use crate::aggregate_hashtable::{GroupedAggregateHashTable, initial_capacity};
-use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
+use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkData, SinkState};
 use crate::operators::{CollectedResult, PhysicalResultCollector};
 use crate::{ClientEnv, ExecutionContext, Executor, Sink, SinkFinalize, SinkResult, Source, SourceResult};
 
@@ -18,6 +18,15 @@ pub struct CteData {
     /// The CTE operator materialising these rows (unset for recursive working tables),
     /// so scans can make their pipelines wait for it.
     sink: OnceLock<Weak<PhysicalCte>>,
+}
+
+impl SinkData for CteData {
+    fn sink(&self) -> Option<PhysicalRef> {
+        self.sink
+            .get()
+            .and_then(Weak::upgrade)
+            .map(|sink| sink as PhysicalRef)
+    }
 }
 
 impl CteData {
@@ -113,11 +122,18 @@ impl Sink for PhysicalCte {
 pub struct PhysicalCteScan {
     types: Vec<LogicalType>,
     data: Arc<CteData>,
+    /// Whether the scan is inside a recursive CTE that the CTE it reads is outside of
+    /// (the recursive CTE then waits for the materialisation instead).
+    external: bool,
 }
 
 impl PhysicalCteScan {
-    pub fn new(types: Vec<LogicalType>, data: Arc<CteData>) -> Self {
-        Self { types, data }
+    pub fn new(types: Vec<LogicalType>, data: Arc<CteData>, external: bool) -> Self {
+        Self {
+            types,
+            data,
+            external,
+        }
     }
 }
 
@@ -134,12 +150,11 @@ impl PhysicalOperator for PhysicalCteScan {
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
     }
-    fn source_dependency(&self) -> Option<PhysicalRef> {
-        self.data
-            .sink
-            .get()
-            .and_then(Weak::upgrade)
-            .map(|sink| sink as PhysicalRef)
+    fn source_dependencies(&self) -> Vec<PhysicalRef> {
+        if self.external {
+            return Vec::new();
+        }
+        self.data.sink().into_iter().collect()
     }
 }
 
@@ -179,6 +194,9 @@ impl Source for PhysicalCteScan {
 /// recursive part repeatedly over the rows the previous iteration produced (the working
 /// table), until an iteration produces no new rows. Without `ALL`, rows already produced
 /// are discarded.
+///
+/// Both parts run as nested executions; data they read from outside the CTE (delim
+/// joins, materialised CTEs) is produced by the outer plan first.
 #[derive(Debug)]
 pub struct PhysicalRecursiveCte {
     types: Vec<LogicalType>,
@@ -186,6 +204,7 @@ pub struct PhysicalRecursiveCte {
     working_table: Arc<CteData>,
     anchor: PhysicalRef,
     recursive: PhysicalRef,
+    external: Vec<Arc<dyn SinkData>>,
 }
 
 impl PhysicalRecursiveCte {
@@ -195,6 +214,7 @@ impl PhysicalRecursiveCte {
         working_table: Arc<CteData>,
         anchor: PhysicalRef,
         recursive: PhysicalRef,
+        external: Vec<Arc<dyn SinkData>>,
     ) -> Self {
         Self {
             types,
@@ -202,6 +222,7 @@ impl PhysicalRecursiveCte {
             working_table,
             anchor,
             recursive,
+            external,
         }
     }
 
@@ -257,6 +278,9 @@ impl PhysicalOperator for PhysicalRecursiveCte {
     }
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
+    }
+    fn source_dependencies(&self) -> Vec<PhysicalRef> {
+        self.external.iter().filter_map(|data| data.sink()).collect()
     }
 }
 

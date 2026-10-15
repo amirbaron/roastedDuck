@@ -91,7 +91,8 @@ impl Executor {
                 let external = pipeline
                     .source
                     .as_ref()
-                    .and_then(|source| source.source_dependency());
+                    .map(|source| source.source_dependencies())
+                    .unwrap_or_default();
                 let explicit = pipeline
                     .dependencies
                     .iter()
@@ -101,7 +102,7 @@ impl Executor {
                     .iter()
                     .rev()
                     .chain(pipeline.source.as_ref())
-                    .chain(external.as_ref())
+                    .chain(external.iter())
                     .chain(explicit)
                 {
                     if by_sink.contains_key(&key(dependency)) {
@@ -179,12 +180,14 @@ impl Executor {
         }
         if op.as_source().is_some() {
             self.pipelines[current].source = Some(Arc::clone(op));
-            if let Some(dependency) = op.source_dependency()
-                && !self
+            for dependency in op.source_dependencies() {
+                if self
                     .pipelines
                     .iter()
                     .any(|pipeline| Arc::ptr_eq(&pipeline.sink, &dependency))
-            {
+                {
+                    continue;
+                }
                 // The sink feeding this source is outside its subtree: give it a pipeline.
                 let pipeline = self.add_pipeline(Pipeline::new(Arc::clone(&dependency)));
                 self.build(Self::first_child(&dependency, "sink")?, pipeline)?;

@@ -25,6 +25,7 @@ test/fuzzer/pedro/force_external_blob.test
 test/fuzzer/pedro/is_distinct_from_validation.test
 test/fuzzer/pedro/nested_limit_subquery.test
 test/fuzzer/pedro/prepared_statement_recursive_cte.test
+test/fuzzer/pedro/recursive_cte_dependent_join.test
 test/fuzzer/pedro/window_self_reference.test
 test/fuzzer/public/distinct_on_non_integer_literal.test
 test/fuzzer/public/pragma_named_parameters.test

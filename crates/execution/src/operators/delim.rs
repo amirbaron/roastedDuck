@@ -1,21 +1,24 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
-use rustdb_common::{Error, Result};
+use rustdb_common::Result;
 use rustdb_planner::Expression;
 use rustdb_row::hash::hash_columns;
 use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
 use crate::aggregate_hashtable::{GroupedAggregateHashTable, initial_capacity};
-use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
+use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkData, SinkState};
 use crate::{ExecutionContext, ExpressionExecutor, Sink, SinkFinalize, SinkResult, Source, SourceResult};
 
 /// Data produced by a delim join's sink and read by its scans: the buffered left input
 /// and the distinct values of its duplicate-eliminated columns.
+///
+/// A delim join inside a recursive CTE runs once per iteration, so the data is replaced
+/// on every finalize.
 #[derive(Debug, Default)]
 pub struct DelimShared {
-    cached: OnceLock<Vec<DataChunk>>,
-    distinct: OnceLock<Vec<DataChunk>>,
+    cached: Mutex<Arc<Vec<DataChunk>>>,
+    distinct: Mutex<Arc<Vec<DataChunk>>>,
     /// The sink filling this data, so scans can make their pipelines wait for it.
     sink: OnceLock<Weak<PhysicalDelimJoin>>,
 }
@@ -138,9 +141,12 @@ impl Sink for PhysicalDelimJoin {
                 distinct.push(chunk);
                 Ok(())
             })?;
-        let already = || Error::internal("delim join data finalized twice");
-        self.shared.cached.set(chunks).map_err(|_| already())?;
-        self.shared.distinct.set(distinct).map_err(|_| already())?;
+        *self.shared.cached.lock().unwrap_or_else(PoisonError::into_inner) = Arc::new(chunks);
+        *self
+            .shared
+            .distinct
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Arc::new(distinct);
         Ok(SinkFinalize::Ready)
     }
 }
@@ -163,16 +169,21 @@ pub struct PhysicalDelimScan {
     /// The delim sink, owned by the scan of its buffered input (the plan's only strong
     /// reference to it; `DelimShared` points back weakly to avoid a cycle).
     owner: Option<Arc<PhysicalDelimJoin>>,
+    /// Whether the scan is inside a recursive CTE that the delim join is outside of: the
+    /// recursive CTE then waits for the delim join, and re-running the scan must not
+    /// re-run the join.
+    external: bool,
 }
 
 impl PhysicalDelimScan {
     /// A scan of the distinct duplicate-eliminated values (`DELIM_SCAN`).
-    pub fn new(types: Vec<LogicalType>, shared: Arc<DelimShared>, data: DelimData) -> Self {
+    pub fn new(types: Vec<LogicalType>, shared: Arc<DelimShared>, external: bool) -> Self {
         Self {
             types,
             shared,
-            data,
+            data: DelimData::Distinct,
             owner: None,
+            external,
         }
     }
 
@@ -187,6 +198,7 @@ impl PhysicalDelimScan {
             shared,
             data: DelimData::Cached,
             owner: Some(owner),
+            external: false,
         }
     }
 }
@@ -207,12 +219,20 @@ impl PhysicalOperator for PhysicalDelimScan {
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
     }
-    fn source_dependency(&self) -> Option<PhysicalRef> {
+    fn source_dependencies(&self) -> Vec<PhysicalRef> {
         if let Some(owner) = &self.owner {
-            return Some(Arc::clone(owner) as PhysicalRef);
+            return vec![Arc::clone(owner) as PhysicalRef];
         }
-        self.shared
-            .sink
+        if self.external {
+            return Vec::new();
+        }
+        self.shared.sink().into_iter().collect()
+    }
+}
+
+impl SinkData for DelimShared {
+    fn sink(&self) -> Option<PhysicalRef> {
+        self.sink
             .get()
             .and_then(Weak::upgrade)
             .map(|sink| sink as PhysicalRef)
@@ -220,14 +240,20 @@ impl PhysicalOperator for PhysicalDelimScan {
 }
 
 impl Source for PhysicalDelimScan {
-    type Global = AtomicUsize;
+    /// The data when the scan started and the next chunk to hand out.
+    type Global = (Arc<Vec<DataChunk>>, AtomicUsize);
     type Local = ();
 
-    fn global_source_state(&self, _: &ExecutionContext, _: Option<&SinkState>) -> Result<AtomicUsize> {
-        Ok(AtomicUsize::new(0))
+    fn global_source_state(&self, _: &ExecutionContext, _: Option<&SinkState>) -> Result<Self::Global> {
+        let lock = match self.data {
+            DelimData::Cached => &self.shared.cached,
+            DelimData::Distinct => &self.shared.distinct,
+        };
+        let chunks = Arc::clone(&lock.lock().unwrap_or_else(PoisonError::into_inner));
+        Ok((chunks, AtomicUsize::new(0)))
     }
 
-    fn local_source_state(&self, _: &ExecutionContext, _: &AtomicUsize) -> Result<()> {
+    fn local_source_state(&self, _: &ExecutionContext, _: &Self::Global) -> Result<()> {
         Ok(())
     }
 
@@ -235,16 +261,9 @@ impl Source for PhysicalDelimScan {
         &self,
         _: &ExecutionContext,
         chunk: &mut DataChunk,
-        next: &AtomicUsize,
+        (chunks, next): &Self::Global,
         (): &mut (),
     ) -> Result<SourceResult> {
-        let lock = match self.data {
-            DelimData::Cached => &self.shared.cached,
-            DelimData::Distinct => &self.shared.distinct,
-        };
-        let chunks = lock
-            .get()
-            .ok_or_else(|| Error::internal("delim scan ran before its delim join"))?;
         let index = next.fetch_add(1, Ordering::Relaxed);
         if let Some(source) = chunks.get(index) {
             chunk.set_columns(source.columns().to_vec(), source.len());
