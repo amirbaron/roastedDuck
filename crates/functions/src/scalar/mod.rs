@@ -145,4 +145,25 @@ fn string_functions(sets: &mut Vec<ScalarFunctionSet>) {
     for (set, aliases) in string::regexp::regexp_functions() {
         with_aliases(sets, set, aliases);
     }
+    for (set, aliases) in string::similarity::similarity_functions() {
+        with_aliases(sets, set, aliases);
+    }
+    use string::{encode, trim_pad};
+    sets.extend(trim_pad::left_right_functions());
+    sets.extend(trim_pad::pad_functions());
+    sets.extend(trim_pad::trim_functions());
+    with_aliases(sets, trim_pad::instr_functions(), &["strpos", "position"]);
+    sets.push(trim_pad::translate_functions());
+    with_aliases(sets, encode::hex_functions(), &["to_hex"]);
+    with_aliases(sets, encode::bin_functions(), &["to_binary"]);
+    let (unhex, unbin) = encode::unhex_unbin_functions();
+    with_aliases(sets, unhex, &["from_hex"]);
+    with_aliases(sets, unbin, &["from_binary"]);
+    sets.push(encode::to_base_functions());
+    sets.extend(encode::url_functions());
+    let (format_bytes, decimal_size) = encode::format_bytes_functions();
+    with_aliases(sets, format_bytes, &["formatReadableSize"]);
+    sets.push(decimal_size);
+    sets.push(encode::parse_formatted_bytes_functions());
+    sets.push(encode::bar_functions());
 }
