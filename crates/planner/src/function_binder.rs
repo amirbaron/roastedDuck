@@ -521,12 +521,14 @@ impl<'a> FunctionBinder<'a> {
         if let Some(bind) = function.bind.clone() {
             let (argument_types, constants) = self.bind_input(&children);
             let aliases: Vec<String> = children.iter().map(|child| child.alias.clone()).collect();
+            let names: Vec<String> = children.iter().map(expression_name).collect();
             bind_info = bind(
                 &mut function,
                 &BindInput {
                     argument_types: &argument_types,
                     constants: &constants,
                     aliases: &aliases,
+                    names: &names,
                     client: &self.context.function_client,
                 },
             )?;
@@ -569,12 +571,14 @@ impl<'a> FunctionBinder<'a> {
         if let Some(bind) = function.bind.clone() {
             let (argument_types, constants) = self.bind_input(&children);
             let aliases: Vec<String> = children.iter().map(|child| child.alias.clone()).collect();
+            let names: Vec<String> = children.iter().map(expression_name).collect();
             bind_info = bind(
                 &mut function,
                 &BindInput {
                     argument_types: &argument_types,
                     constants: &constants,
                     aliases: &aliases,
+                    names: &names,
                     client: &self.context.function_client,
                 },
             )?;
@@ -861,4 +865,13 @@ fn unresolved_template(ty: &LogicalType) -> Option<String> {
             ty.struct_children()
                 .and_then(|children| children.iter().find_map(|(_, child)| unresolved_template(child)))
         })
+}
+
+/// DuckDB's `Expression::GetName`: the alias, or the expression's SQL text.
+fn expression_name(expression: &Expression) -> String {
+    if expression.alias.is_empty() {
+        expression.to_string()
+    } else {
+        expression.alias.clone()
+    }
 }

@@ -77,7 +77,7 @@ pub fn alias_functions() -> ScalarFunctionSet {
             constant(result, &name)
         },
     )
-    .with_bind(|_, input| Ok(Some(Arc::new(ConstantValue(Value::varchar(&input.aliases[0]))))));
+    .with_bind(|_, input| Ok(Some(Arc::new(ConstantValue(Value::varchar(&input.names[0]))))));
     function.null_handling = NullHandling::Special;
     set("alias", vec![function])
 }

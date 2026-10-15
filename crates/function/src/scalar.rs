@@ -53,6 +53,9 @@ pub struct BindInput<'a> {
     /// The alias of each argument expression (`a := x` names, or the column name of a
     /// column reference).
     pub aliases: &'a [String],
+    /// The name of each argument expression (DuckDB's `Expression::GetName`): its alias, or
+    /// its SQL text when it has none.
+    pub names: &'a [String],
     /// The calling connection's state (DuckDB's `ClientContext`).
     pub client: &'a Arc<FunctionClient>,
 }
