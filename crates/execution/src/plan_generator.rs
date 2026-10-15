@@ -619,6 +619,17 @@ impl PlanGenerator {
             LogicalKind::Update(update) => self.plan_update(*update, expressions, next_child("update")?)?,
             LogicalKind::MergeInto(merge) => self.plan_merge_into(*merge, next_child("merge")?)?,
             LogicalKind::CopyToFile(copy) => plan_copy_to_file(*copy, next_child("copy")?),
+            LogicalKind::Export(export) => {
+                let context = self.context()?;
+                let catalog = context.catalog(&export.catalog)?;
+                let child = next_child("export").ok();
+                Arc::new(crate::operators::PhysicalExport::new(
+                    child,
+                    *export,
+                    catalog,
+                    Arc::clone(&context.transaction),
+                ))
+            }
             LogicalKind::CreateTable(info) => {
                 let context = self.context()?;
                 let info = *info;

@@ -103,7 +103,7 @@ fn extract_format(file_path: &str) -> String {
 }
 
 /// `BindCopyOptions`: evaluates the file name and the options.
-fn bind_copy_options(scope: &mut BindScope<'_>, info: &mut CopyInfo) -> Result<()> {
+pub(super) fn bind_copy_options(scope: &mut BindScope<'_>, info: &mut CopyInfo) -> Result<()> {
     if let Some(expr) = info.file_path_expression.take() {
         let inputs = bind_copy_option(scope, "filename", Some(&expr))?;
         if inputs.len() != 1 || inputs[0].logical_type().id() != LogicalTypeId::Varchar {
@@ -160,7 +160,11 @@ fn format_extension_error(format: &str) -> Option<Error> {
 }
 
 /// Looks up a COPY format in the system catalog.
-fn copy_function(scope: &BindScope<'_>, format: &str, if_exists: bool) -> Result<Option<CopyFunction>> {
+pub(super) fn copy_function(
+    scope: &BindScope<'_>,
+    format: &str,
+    if_exists: bool,
+) -> Result<Option<CopyFunction>> {
     let found = scope
         .context
         .get_entry("system", "main", CatalogType::CopyFunction, format, if_exists)?;

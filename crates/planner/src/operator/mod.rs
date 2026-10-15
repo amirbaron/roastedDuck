@@ -24,7 +24,10 @@ use crate::generated::enums::{DistinctType, LogicalOperatorType};
 use crate::prepared::PreparedStatementData;
 use crate::{ColumnBinding, SubqueryType};
 
-pub use copy_to_file::{CopyFunctionReturnType, CopyOverwriteMode, FilenamePattern, LogicalCopyToFile};
+pub use copy_to_file::{
+    CopyFunctionReturnType, CopyOverwriteMode, ExportedTable, FilenamePattern, LogicalCopyToFile,
+    LogicalExport,
+};
 pub use display::render_plan;
 
 /// A LIMIT or OFFSET value (DuckDB's `BoundLimitNode`).
@@ -467,6 +470,8 @@ pub enum LogicalKind {
     MergeInto(Box<LogicalMergeInto>),
     /// `COPY ... TO`.
     CopyToFile(Box<LogicalCopyToFile>),
+    /// `EXPORT DATABASE`.
+    Export(Box<LogicalExport>),
 }
 
 /// A bound `CREATE TABLE` (DuckDB's `BoundCreateTableInfo`): the table definition with
@@ -851,6 +856,7 @@ impl LogicalOperator {
             LogicalKind::Update(_) => T::LogicalUpdate,
             LogicalKind::MergeInto(_) => T::LogicalMergeInto,
             LogicalKind::CopyToFile(_) => T::LogicalCopyToFile,
+            LogicalKind::Export(_) => T::LogicalExport,
         }
     }
 
@@ -987,6 +993,7 @@ impl LogicalOperator {
             LogicalKind::Explain { .. } => vec![ColumnBinding::new(0, 0), ColumnBinding::new(0, 1)],
             LogicalKind::Execute { prepared } => generate_column_bindings(0, prepared.types.len()),
             LogicalKind::Prepare { .. }
+            | LogicalKind::Export(_)
             | LogicalKind::Set { .. }
             | LogicalKind::Reset { .. }
             | LogicalKind::Attach(_)
@@ -1182,6 +1189,7 @@ impl LogicalOperator {
             LogicalKind::Explain { .. } => vec![LogicalType::VARCHAR, LogicalType::VARCHAR],
             LogicalKind::Execute { prepared } => prepared.types.clone(),
             LogicalKind::Prepare { .. }
+            | LogicalKind::Export(_)
             | LogicalKind::Deallocate { .. }
             | LogicalKind::Set { .. }
             | LogicalKind::Reset { .. }

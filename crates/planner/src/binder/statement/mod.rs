@@ -17,6 +17,7 @@ mod copy;
 mod create;
 mod create_index;
 mod create_macro;
+mod export;
 mod merge_into;
 mod modify;
 mod table;
@@ -74,6 +75,7 @@ pub fn bind_statement(scope: &mut BindScope<'_>, statement: &mut SqlStatement) -
         SqlStatementKind::Attach(info) => bind_attach(scope, info),
         SqlStatementKind::Detach(info) => Ok(bind_detach(scope, info)),
         SqlStatementKind::Copy(info) => copy::bind_copy(scope, info),
+        SqlStatementKind::Export(export) => export::bind_export(scope, export),
         other => Err(Error::not_implemented(format!(
             "Unimplemented statement type \"{}\" for Bind",
             other.statement_type().name()

@@ -487,6 +487,54 @@ impl Connection {
         })
     }
 
+    /// `IMPORT DATABASE 'dir'` (DuckDB's `PragmaImportDatabase`): runs the directory's
+    /// `schema.sql`, then its `load.sql` with the files taken from the directory.
+    fn import_database(&mut self, parameters: &[rustdb_types::Value]) -> Result<MaterializedResult> {
+        let directory = parameters
+            .first()
+            .map(rustdb_types::Value::to_varchar)
+            .transpose()?
+            .unwrap_or_default();
+        let join = |name: &str| {
+            if directory.ends_with('/') {
+                format!("{directory}{name}")
+            } else {
+                format!("{directory}/{name}")
+            }
+        };
+        let mut statements = Vec::new();
+        for file in ["schema.sql", "load.sql"] {
+            let path = join(file);
+            let query = std::fs::read_to_string(&path).map_err(|error| {
+                let reason = if error.kind() == std::io::ErrorKind::NotFound {
+                    "No such file or directory".to_owned()
+                } else {
+                    error.to_string()
+                };
+                Error::new(ErrorKind::Io, format!("Cannot open file \"{path}\": {reason}"))
+            })?;
+            for mut statement in rustdb_parser::parse(&query)? {
+                if file == "load.sql"
+                    && let rustdb_ast::SqlStatementKind::Copy(info) = &mut statement.kind
+                {
+                    let name = info
+                        .file_path
+                        .rsplit(['/', '\\'])
+                        .next()
+                        .unwrap_or_default()
+                        .to_owned();
+                    info.file_path = join(&name);
+                }
+                statements.push(statement);
+            }
+        }
+        let mut result = MaterializedResult::default();
+        for statement in statements {
+            result = self.run_statement(statement)?;
+        }
+        Ok(result)
+    }
+
     fn run_statement(&mut self, statement: SqlStatement) -> Result<MaterializedResult> {
         if let rustdb_ast::SqlStatementKind::Multi(statements) = statement.kind {
             return self.run_multi_statement(statements);
@@ -505,6 +553,11 @@ impl Connection {
                     _ => None,
                 })
                 .collect();
+            if let Some(constants) = &constants
+                && pragma.name.eq_ignore_ascii_case("import_database")
+            {
+                return self.import_database(constants);
+            }
             if let Some(constants) = constants
                 && let Some(query) = crate::system_functions::pragma_query(&pragma.name, &constants)?
             {

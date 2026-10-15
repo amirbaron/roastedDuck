@@ -223,3 +223,26 @@ impl LogicalCopyToFile {
             .collect()
     }
 }
+
+/// A table written by `EXPORT DATABASE` (DuckDB's `ExportedTableData`).
+#[derive(Clone, Debug)]
+pub struct ExportedTable {
+    pub schema_name: String,
+    pub table_name: String,
+    pub file_path: String,
+    /// Columns with a NOT NULL constraint (read back with `force_not_null`).
+    pub not_null_columns: Vec<String>,
+}
+
+/// `EXPORT DATABASE` (DuckDB's `LogicalExport`): its child (if any) copies the tables;
+/// the operator then writes `schema.sql` and `load.sql`.
+#[derive(Clone, Debug)]
+pub struct LogicalExport {
+    pub function: CopyFunction,
+    pub file_path: String,
+    pub format: String,
+    /// The options of the generated `COPY ... FROM` statements.
+    pub options: Vec<(String, Vec<rustdb_types::Value>)>,
+    pub catalog: String,
+    pub tables: Vec<ExportedTable>,
+}
