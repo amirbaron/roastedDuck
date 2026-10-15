@@ -1,99 +1,97 @@
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+//! Transactions are owned by the storage layer (`DuckTransaction`); the catalog records
+//! its version changes in the transaction's undo log so that they commit, roll back and
+//! are logged in order with the data changes.
 
-use rustdb_common::Result;
+use std::sync::Arc;
+
+use rustdb_storage::CatalogUndo;
+pub use rustdb_storage::transaction::{
+    MAX_TRANSACTION_ID, TRANSACTION_ID_START, Transaction, TransactionManager,
+};
 
 use crate::catalog_set::{CatalogSet, Version};
 
-/// Transaction ids start here; anything below is a commit timestamp (DuckDB's
-/// `TRANSACTION_ID_START`).
-pub const TRANSACTION_ID_START: u64 = 4_611_686_018_427_388_000;
-/// Larger than every transaction id (DuckDB's `MAX_TRANSACTION_ID`).
-pub const MAX_TRANSACTION_ID: u64 = u64::MAX;
-
-/// A catalog change to finalise on commit or revert on rollback.
+/// What a catalog change does to storage when it commits or rolls back.
 #[derive(Debug)]
-struct CatalogUndo {
+pub enum StorageHook {
+    None,
+    /// The previous storage of an altered table, made the main table again on rollback
+    /// (`DuckTableEntry::SetAsRoot`).
+    AlteredTable(Arc<rustdb_storage::DataTable>),
+    /// A renamed table's storage and its old name, restored on rollback
+    /// (`DuckTableEntry::UndoAlter`).
+    RenamedTable(Arc<rustdb_storage::DataTableInfo>, String),
+    /// The storage of a dropped table, restored as the main table on rollback
+    /// (`DuckTableEntry::OnDrop` / `SetAsRoot`).
+    DroppedTable(Arc<rustdb_storage::DataTable>),
+    /// A created index, removed from its table on rollback (`DuckIndexEntry::Rollback`).
+    CreatedIndex(Arc<rustdb_storage::DataTableInfo>, String),
+    /// A dropped index, removed from its table on commit (`DuckIndexEntry::CommitDrop`).
+    DroppedIndex(Arc<rustdb_storage::DataTableInfo>, String),
+}
+
+/// A created or dropped catalog entry version, as an undo-log entry.
+#[derive(Debug)]
+struct CatalogChange {
     set: Arc<CatalogSet>,
     name: String,
     version: Arc<Version>,
+    hook: StorageHook,
 }
 
-/// A running transaction's identity and its undo log.
-#[derive(Debug)]
-pub struct Transaction {
-    /// Commit timestamps below this are visible.
-    pub start_time: u64,
-    /// Versions written by this transaction carry this id until commit.
-    pub transaction_id: u64,
-    catalog_undo: Mutex<Vec<CatalogUndo>>,
-}
-
-impl Transaction {
-    /// A read-only view used for internal lookups (sees every committed version).
-    pub fn system() -> Self {
-        Self {
-            start_time: TRANSACTION_ID_START - 1,
-            transaction_id: MAX_TRANSACTION_ID,
-            catalog_undo: Mutex::default(),
+impl CatalogUndo for CatalogChange {
+    fn commit(&self, commit_id: u64) {
+        self.version.commit(commit_id);
+        if let StorageHook::DroppedIndex(info, name) = &self.hook {
+            info.indexes().remove(name);
         }
     }
 
-    pub(crate) fn push_catalog_change(&self, set: Arc<CatalogSet>, name: String, version: Arc<Version>) {
-        self.catalog_undo
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(CatalogUndo { set, name, version });
+    fn revert_commit(&self, transaction_id: u64) {
+        self.version.commit(transaction_id);
     }
 
-    fn take_undo(&self) -> Vec<CatalogUndo> {
-        std::mem::take(&mut *self.catalog_undo.lock().unwrap_or_else(PoisonError::into_inner))
+    fn rollback(&self) {
+        self.set.undo(&self.name, &self.version);
+        match &self.hook {
+            StorageHook::DroppedTable(table) | StorageHook::AlteredTable(table) => table.set_as_main_table(),
+            StorageHook::RenamedTable(info, name) => info.set_table_name(name.clone()),
+            StorageHook::CreatedIndex(info, name) => {
+                info.indexes().remove(name);
+            }
+            StorageHook::None | StorageHook::DroppedIndex(..) => {}
+        }
+    }
+
+    fn is_drop(&self) -> bool {
+        self.version.is_tombstone()
     }
 }
 
-/// Hands out start timestamps and transaction ids, and commits/rolls back transactions
-/// (DuckDB's `DuckTransactionManager`, catalog part).
-#[derive(Debug)]
-pub struct TransactionManager {
-    current_timestamp: AtomicU64,
-    next_transaction_id: AtomicU64,
-    /// Serialises commits so commit timestamps are assigned in order.
-    commit_lock: Mutex<()>,
+/// Registers catalog changes in a transaction's undo log.
+pub(crate) trait TransactionExt {
+    fn push_catalog_change(
+        &self,
+        set: Arc<CatalogSet>,
+        name: String,
+        version: Arc<Version>,
+        hook: StorageHook,
+    );
 }
 
-impl Default for TransactionManager {
-    fn default() -> Self {
-        Self {
-            current_timestamp: AtomicU64::new(2),
-            next_transaction_id: AtomicU64::new(TRANSACTION_ID_START),
-            commit_lock: Mutex::new(()),
-        }
-    }
-}
-
-impl TransactionManager {
-    pub fn begin(&self) -> Transaction {
-        Transaction {
-            start_time: self.current_timestamp.load(Ordering::SeqCst),
-            transaction_id: self.next_transaction_id.fetch_add(1, Ordering::SeqCst),
-            catalog_undo: Mutex::default(),
-        }
-    }
-
-    /// Makes the transaction's changes visible to transactions that start afterwards.
-    pub fn commit(&self, transaction: &Transaction) -> Result<()> {
-        let _guard = self.commit_lock.lock().unwrap_or_else(PoisonError::into_inner);
-        let commit_id = self.current_timestamp.fetch_add(1, Ordering::SeqCst);
-        for change in transaction.take_undo() {
-            change.version.commit(commit_id);
-        }
-        Ok(())
-    }
-
-    /// Discards the transaction's changes, newest first.
-    pub fn rollback(&self, transaction: &Transaction) {
-        for change in transaction.take_undo().into_iter().rev() {
-            change.set.undo(&change.name, &change.version);
-        }
+impl TransactionExt for Transaction {
+    fn push_catalog_change(
+        &self,
+        set: Arc<CatalogSet>,
+        name: String,
+        version: Arc<Version>,
+        hook: StorageHook,
+    ) {
+        self.push_catalog_undo(Box::new(CatalogChange {
+            set,
+            name,
+            version,
+            hook,
+        }));
     }
 }

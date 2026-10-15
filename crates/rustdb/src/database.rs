@@ -4,7 +4,7 @@ use rustdb_ast::{SqlStatement, TransactionType};
 use rustdb_catalog::{Catalog, Transaction, TransactionManager};
 use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
 use rustdb_execution::operators::{CollectedResult, PhysicalResultCollector};
-use rustdb_execution::{Executor, PhysicalRef, ScalarEvaluator, create_physical_plan};
+use rustdb_execution::{Executor, PhysicalRef, PlanContext, ScalarEvaluator, create_physical_plan_with};
 use rustdb_function::cast::CastFunctionSet;
 use rustdb_planner::{
     ClientContext, ColumnBindingResolver, LogicalKind, LogicalOperator, PlannedStatement, Planner,
@@ -38,6 +38,10 @@ pub(crate) struct DatabaseInstance {
     pub(crate) catalog: Arc<Catalog>,
     /// The cast functions (DuckDB's `DBConfig::GetCastFunctions`).
     pub(crate) casts: Arc<CastFunctionSet>,
+    /// Buffer manager and thread count used by every query.
+    pub(crate) env: Arc<rustdb_execution::ClientEnv>,
+    /// Where tables keep their data (in memory for now).
+    pub(crate) io: Arc<rustdb_storage::TableIoManager>,
 }
 
 /// A database instance (DuckDB's `DuckDB`). Cheap to clone; clones share the instance.
@@ -69,6 +73,17 @@ impl Database {
         for set in rustdb_functions::builtin_table_functions() {
             system_catalog.register_table_functions(set)?;
         }
+        for set in crate::sequence::sequence_functions() {
+            system_catalog.register_scalar_functions(set)?;
+        }
+        for set in crate::checkpoint::checkpoint_functions(&["memory".to_owned(), "system".to_owned()]) {
+            system_catalog.register_table_functions(set)?;
+        }
+        let env = rustdb_execution::ClientEnv::standalone()?;
+        let io = Arc::new(rustdb_storage::TableIoManager::new(
+            env.buffer_manager.clone(),
+            Arc::new(rustdb_buffer::InMemoryBlockManager::default()),
+        ));
         let instance = DatabaseInstance {
             path,
             config: config.clone(),
@@ -76,6 +91,8 @@ impl Database {
             system_catalog: Arc::new(system_catalog),
             catalog: Arc::new(Catalog::new("memory")?),
             casts: Arc::new(CastFunctionSet::new()),
+            env,
+            io,
         };
         Ok(Self {
             instance: Arc::new(instance),
@@ -142,6 +159,11 @@ pub struct Connection {
 impl Connection {
     pub fn database(&self) -> &Database {
         &self.database
+    }
+
+    /// Parses `sql` into its statements (DuckDB's `ClientContext::ExtractStatements`).
+    pub fn extract_statements(&self, sql: &str) -> Result<Vec<SqlStatement>> {
+        rustdb_parser::parse(sql).map_err(|error| error.with_query_context(sql))
     }
 
     /// Runs every statement in `sql` and returns the result of the last one (DuckDB's
@@ -237,7 +259,9 @@ impl Connection {
             Some(plan) if properties.bound_all_parameters => plan,
             _ => return Err(Error::invalid_input("Not all parameters were bound")),
         };
+        let return_type = properties.return_type;
         self.run_plan(plan, names, types)
+            .map(|result| result.with_return_type(return_type))
     }
 
     /// Runs a bound plan: statements that act on the connection are executed here
@@ -297,9 +321,18 @@ impl Connection {
             _ => {}
         }
         ColumnBindingResolver::resolve(&mut plan)?;
-        let physical = create_physical_plan(plan)?;
+        let instance = self.database.instance();
+        let context = PlanContext {
+            transaction: self.transactions.current(),
+            catalogs: vec![
+                Arc::clone(&instance.catalog),
+                Arc::clone(&instance.system_catalog),
+            ],
+            io: Arc::clone(&instance.io),
+        };
+        let physical = create_physical_plan_with(plan, &context)?;
         let root: PhysicalRef = Arc::new(PhysicalResultCollector::new(physical));
-        let state = Executor::execute(&root)?;
+        let state = Executor::execute(&root, Arc::clone(&self.database.instance().env))?;
         let collected = state
             .downcast_ref::<Mutex<CollectedResult>>()
             .ok_or_else(|| Error::internal("result collector state has an unexpected type"))?;
@@ -334,6 +367,9 @@ const NO_OP_PRAGMAS: &[&str] = &[
     "disable_optimizer",
     "enable_checkpoint_on_shutdown",
     "disable_checkpoint_on_shutdown",
+    // Nothing to checkpoint while databases live in memory.
+    "checkpoint",
+    "force_checkpoint",
 ];
 
 /// Whether an error aborts an explicit transaction (DuckDB's

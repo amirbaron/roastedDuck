@@ -74,15 +74,55 @@ pub struct TableColumn {
     pub generated: Option<ParsedExpression>,
 }
 
-/// A table's definition (DuckDB's `TableCatalogEntry`). Its data lives in storage.
+/// A table's definition (DuckDB's `TableCatalogEntry` / `DuckTableEntry`). Its data lives
+/// in `storage`.
 #[derive(Clone, Debug, Default)]
 pub struct TableEntry {
+    /// The columns in logical order (generated columns included).
     pub columns: Vec<TableColumn>,
-    /// Columns that may not be NULL, by index.
+    /// Columns that may not be NULL, by logical index.
     pub not_null_columns: Vec<usize>,
+    /// The constraints as written (with column indexes resolved), DuckDB's
+    /// `TableCatalogEntry::constraints`.
+    pub constraints: Vec<rustdb_ast::Constraint>,
+    /// The table's data (`DuckTableEntry::storage`); `None` for tables of other catalogs.
+    pub storage: Option<Arc<rustdb_storage::DataTable>>,
 }
 
 impl TableEntry {
+    /// The definition of a `CREATE TABLE` (without storage).
+    pub fn from_create_info(info: &rustdb_ast::CreateTableInfo) -> Self {
+        let columns = info
+            .columns
+            .columns
+            .iter()
+            .map(|column| {
+                let generated = column.category == rustdb_ast::TableColumnType::Generated;
+                let expression = column.expression.as_deref().cloned();
+                TableColumn {
+                    name: column.name.clone(),
+                    logical_type: column.logical_type.clone(),
+                    default_value: if generated { None } else { expression.clone() },
+                    generated: if generated { expression } else { None },
+                }
+            })
+            .collect();
+        let not_null_columns = info
+            .constraints
+            .iter()
+            .filter_map(|constraint| match constraint {
+                rustdb_ast::Constraint::NotNull(not_null) => Some(not_null.index.0 as usize),
+                _ => None,
+            })
+            .collect();
+        Self {
+            columns,
+            not_null_columns,
+            constraints: info.constraints.clone(),
+            storage: None,
+        }
+    }
+
     /// The column called `name` (case-insensitive), with its index.
     pub fn column(&self, name: &str) -> Option<(usize, &TableColumn)> {
         self.columns
@@ -90,6 +130,158 @@ impl TableEntry {
             .enumerate()
             .find(|(_, column)| column.name.eq_ignore_ascii_case(name))
     }
+
+    /// The stored (non-generated) columns as `(physical index, logical index, column)`
+    /// (DuckDB's `ColumnList::Physical`).
+    pub fn physical_columns(&self) -> impl Iterator<Item = (usize, usize, &TableColumn)> {
+        self.columns
+            .iter()
+            .enumerate()
+            .filter(|(_, column)| column.generated.is_none())
+            .enumerate()
+            .map(|(physical, (logical, column))| (physical, logical, column))
+    }
+
+    /// The physical index of logical column `logical`, if it is stored.
+    pub fn logical_to_physical(&self, logical: usize) -> Option<usize> {
+        self.physical_columns()
+            .find(|&(_, l, _)| l == logical)
+            .map(|(physical, _, _)| physical)
+    }
+
+    /// The logical index of physical column `physical`.
+    pub fn physical_to_logical(&self, physical: usize) -> Option<usize> {
+        self.physical_columns()
+            .find(|&(p, _, _)| p == physical)
+            .map(|(_, logical, _)| logical)
+    }
+
+    /// The types of the stored columns (DuckDB's `GetTypes`).
+    pub fn physical_types(&self) -> Vec<LogicalType> {
+        self.physical_columns()
+            .map(|(_, _, column)| column.logical_type.clone())
+            .collect()
+    }
+
+    /// Whether any column is generated.
+    pub fn has_generated_columns(&self) -> bool {
+        self.columns.iter().any(|column| column.generated.is_some())
+    }
+}
+
+/// An index (DuckDB's `DuckIndexEntry`): its definition and the storage of the table
+/// holding it.
+#[derive(Clone, Debug)]
+pub struct IndexEntry {
+    /// The `CREATE INDEX` definition; `column_ids` are physical column indexes.
+    pub info: rustdb_ast::CreateIndexInfo,
+    /// The schema of the indexed table.
+    pub schema: String,
+    /// The indexed table's storage info (`IndexDataTableInfo`).
+    pub storage: Option<Arc<rustdb_storage::DataTableInfo>>,
+}
+
+/// The state of a sequence (DuckDB's `SequenceData`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SequenceData {
+    /// How many values were taken.
+    pub usage_count: u64,
+    /// The next value.
+    pub counter: i64,
+    /// The value `currval` returns.
+    pub last_value: i64,
+    pub increment: i64,
+    pub start_value: i64,
+    pub min_value: i64,
+    pub max_value: i64,
+    pub cycle: bool,
+}
+
+/// A sequence (DuckDB's `SequenceCatalogEntry`). Its state is shared by every version of
+/// the entry and is not transactional.
+#[derive(Clone, Debug)]
+pub struct SequenceEntry {
+    pub data: Arc<std::sync::Mutex<SequenceData>>,
+}
+
+impl SequenceEntry {
+    pub fn new(info: &rustdb_ast::CreateSequenceInfo) -> Self {
+        Self {
+            data: Arc::new(std::sync::Mutex::new(SequenceData {
+                usage_count: info.usage_count,
+                counter: info.start_value,
+                last_value: info.start_value,
+                increment: info.increment,
+                start_value: info.start_value,
+                min_value: info.min_value,
+                max_value: info.max_value,
+                cycle: info.cycle,
+            })),
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, SequenceData> {
+        self.data
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// A copy of the state.
+    pub fn data(&self) -> SequenceData {
+        *self.lock()
+    }
+
+    /// `SequenceCatalogEntry::NextValue` of the sequence called `name`.
+    pub fn next_value(&self, name: &str) -> rustdb_common::Result<i64> {
+        let mut data = self.lock();
+        let result = data.counter;
+        let (next, overflow) = data.counter.overflowing_add(data.increment);
+        data.counter = next;
+        if data.cycle {
+            if overflow {
+                data.counter = if data.increment < 0 {
+                    data.max_value
+                } else {
+                    data.min_value
+                };
+            } else if data.counter < data.min_value {
+                data.counter = data.max_value;
+            } else if data.counter > data.max_value {
+                data.counter = data.min_value;
+            }
+        } else {
+            if result < data.min_value || (overflow && data.increment < 0) {
+                return Err(sequence_error(format!(
+                    "nextval: reached minimum value of sequence \"{name}\" ({})",
+                    data.min_value
+                )));
+            }
+            if result > data.max_value || overflow {
+                return Err(sequence_error(format!(
+                    "nextval: reached maximum value of sequence \"{name}\" ({})",
+                    data.max_value
+                )));
+            }
+        }
+        data.last_value = result;
+        data.usage_count += 1;
+        Ok(result)
+    }
+
+    /// `SequenceCatalogEntry::CurrentValue`.
+    pub fn current_value(&self) -> rustdb_common::Result<i64> {
+        let data = self.lock();
+        if data.usage_count == 0 {
+            return Err(sequence_error(
+                "currval: sequence is not yet defined in this session".to_owned(),
+            ));
+        }
+        Ok(data.last_value)
+    }
+}
+
+fn sequence_error(message: String) -> rustdb_common::Error {
+    rustdb_common::Error::new(rustdb_common::ErrorKind::Sequence, message)
 }
 
 /// A view: a stored query (DuckDB's `ViewCatalogEntry`).
@@ -112,6 +304,8 @@ pub enum EntryKind {
     TableFunction(TableFunctionSet),
     Table(TableEntry),
     View(ViewEntry),
+    Index(IndexEntry),
+    Sequence(SequenceEntry),
 }
 
 /// A named object in the catalog.
@@ -146,6 +340,8 @@ impl CatalogEntry {
             EntryKind::TableFunction(_) => CatalogType::TableFunction,
             EntryKind::Table(_) => CatalogType::Table,
             EntryKind::View(_) => CatalogType::View,
+            EntryKind::Index(_) => CatalogType::Index,
+            EntryKind::Sequence(_) => CatalogType::Sequence,
         }
     }
 

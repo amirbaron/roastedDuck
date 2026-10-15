@@ -4,6 +4,8 @@
 //! its source, pushes them through streaming operators and into its sink. Operators keep
 //! their state in typed global (shared) and local (per-thread) state objects.
 
+pub mod aggregate_hashtable;
+mod constraints;
 mod context;
 mod executor;
 mod expression_executor;
@@ -11,12 +13,14 @@ mod operator;
 pub mod operators;
 mod pipeline;
 mod plan_generator;
+pub mod window;
 
-pub use context::ExecutionContext;
+pub use constraints::table_constraints;
+pub use context::{ClientEnv, ExecutionContext};
 pub use executor::Executor;
 pub use expression_executor::{ExpressionExecutor, ScalarEvaluator};
 pub use operator::{
     Operator, OperatorResult, PhysicalOperator, PhysicalRef, Sink, SinkFinalize, SinkResult, Source,
     SourceResult,
 };
-pub use plan_generator::create_physical_plan;
+pub use plan_generator::{PlanContext, create_physical_plan, create_physical_plan_with};

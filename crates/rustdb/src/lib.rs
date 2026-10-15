@@ -9,14 +9,18 @@
 //! assert_eq!(result.value(0, 0).to_varchar().unwrap(), "42");
 //! ```
 
+mod checkpoint;
 mod config;
 mod database;
 mod result;
+mod sequence;
 mod settings;
 mod transaction;
 
 pub use config::{AccessMode, Config};
 pub use database::{Connection, Database, ExtensionLoad};
 pub use result::MaterializedResult;
+pub use rustdb_ast::SqlStatement;
 pub use rustdb_common::{Error, ErrorKind, Result};
+pub use rustdb_planner::StatementReturnType;
 pub use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Value};

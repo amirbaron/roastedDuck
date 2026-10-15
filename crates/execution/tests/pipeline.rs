@@ -30,7 +30,7 @@ fn run(mut plan: LogicalOperator) -> rustdb_common::Result<Vec<Vec<Value>>> {
     plan.resolve_operator_types()?;
     let physical = create_physical_plan(plan)?;
     let root: PhysicalRef = Arc::new(PhysicalResultCollector::new(physical));
-    let state = Executor::execute(&root)?;
+    let state = Executor::execute(&root, rustdb_execution::ClientEnv::standalone()?)?;
     let collected = state
         .downcast_ref::<Mutex<CollectedResult>>()
         .unwrap()
@@ -274,4 +274,123 @@ fn limit_and_offset() {
         run(limit).unwrap(),
         vec![vec![Value::integer(2)], vec![Value::integer(3)]]
     );
+}
+
+/// A two-column INTEGER table `(g, x)`, split into chunks of at most 2048 rows.
+fn pairs(rows: &[(Option<i32>, Option<i32>)]) -> LogicalOperator {
+    use rustdb_types::{DataChunk, Vector};
+    let to_value = |value: Option<i32>| value.map_or(Value::null(LogicalType::INTEGER), Value::integer);
+    let chunks: Vec<DataChunk> = rows
+        .chunks(2048)
+        .map(|batch| {
+            let mut g = Vector::flat(LogicalType::INTEGER, batch.len());
+            let mut x = Vector::flat(LogicalType::INTEGER, batch.len());
+            for (row, (gv, xv)) in batch.iter().enumerate() {
+                g.set_value(row, &to_value(*gv)).unwrap();
+                x.set_value(row, &to_value(*xv)).unwrap();
+            }
+            DataChunk::new(vec![g, x], batch.len())
+        })
+        .collect();
+    LogicalOperator::new(LogicalKind::ChunkGet {
+        table_index: 0,
+        chunk_types: vec![LogicalType::INTEGER, LogicalType::INTEGER],
+        collection: Arc::from(chunks),
+    })
+}
+
+fn sum_of_x(filter: Option<Expression>) -> Expression {
+    let mut expression = sum(filter);
+    if let ExpressionKind::Aggregate(aggregate) = &mut expression.kind {
+        aggregate.children = vec![Expression::reference("x", LogicalType::INTEGER, 1)];
+    }
+    expression
+}
+
+fn group_by(child: LogicalOperator, sets: Vec<Vec<u64>>, aggregates: Vec<Expression>) -> LogicalOperator {
+    LogicalOperator::new(LogicalKind::Aggregate(Box::new(LogicalAggregate {
+        group_index: 1,
+        aggregate_index: 2,
+        groupings_index: 3,
+        groups: vec![Expression::reference("g", LogicalType::INTEGER, 0)],
+        grouping_sets: sets.into_iter().map(|set| set.into_iter().collect()).collect(),
+        grouping_functions: vec![],
+    })))
+    .with_expressions(aggregates)
+    .with_children(vec![child])
+}
+
+fn sorted(mut rows: Vec<Vec<Value>>) -> Vec<String> {
+    let mut text: Vec<String> = rows
+        .drain(..)
+        .map(|row| {
+            row.iter()
+                .map(|v| v.to_varchar().unwrap())
+                .collect::<Vec<_>>()
+                .join("|")
+        })
+        .collect();
+    text.sort();
+    text
+}
+
+#[test]
+fn hash_aggregate_groups_nulls_and_filters() {
+    let input = pairs(&[
+        (Some(1), Some(10)),
+        (None, Some(5)),
+        (Some(2), Some(7)),
+        (Some(1), Some(1)),
+        (None, None),
+    ]);
+    let plan = group_by(
+        input,
+        vec![],
+        vec![
+            sum_of_x(None),
+            sum_of_x(Some(cmp(
+                GREATER_THAN,
+                Expression::reference("x", LogicalType::INTEGER, 1),
+                int(6),
+            ))),
+        ],
+    );
+    assert_eq!(sorted(run(plan).unwrap()), ["1|11|10", "2|7|7", "NULL|5|NULL"]);
+}
+
+#[test]
+fn hash_aggregate_many_groups_across_chunks() {
+    // 5000 groups, each seen three times across several chunks: forces table resizes.
+    let rows: Vec<_> = (0..15_000).map(|i| (Some(i % 5000), Some(1))).collect();
+    let plan = group_by(pairs(&rows), vec![], vec![sum_of_x(None)]);
+    let result = run(plan).unwrap();
+    assert_eq!(result.len(), 5000);
+    assert!(result.iter().all(|row| row[1] == Value::bigint(3)));
+}
+
+#[test]
+fn hash_aggregate_grouping_sets_include_the_empty_set() {
+    let input = pairs(&[(Some(1), Some(10)), (Some(2), Some(7)), (Some(1), Some(1))]);
+    // GROUP BY ROLLUP (g): sets {g} and {}.
+    let plan = group_by(input, vec![vec![0], vec![]], vec![sum_of_x(None)]);
+    assert_eq!(sorted(run(plan).unwrap()), ["1|11", "2|7", "NULL|18"]);
+    let empty = group_by(pairs(&[]), vec![vec![0], vec![]], vec![sum_of_x(None)]);
+    assert_eq!(sorted(run(empty).unwrap()), ["NULL|NULL"]);
+}
+
+#[test]
+fn operators_with_buffered_output_do_not_repeat_rows() {
+    // A cross product produces its output over several passes; each row must reach the
+    // sink exactly once.
+    let left = ints(&[Some(1), Some(2), Some(3)]);
+    let right = ints(&[Some(10), Some(20)]);
+    let product = LogicalOperator::new(LogicalKind::CrossProduct).with_children(vec![left, right]);
+    let rows = run(product).unwrap();
+    assert_eq!(rows.len(), 6);
+    let mut pairs: Vec<(i128, i128)> = rows
+        .iter()
+        .map(|row| (row[0].as_i128().unwrap(), row[1].as_i128().unwrap()))
+        .collect();
+    pairs.sort_unstable();
+    assert_eq!(pairs, [(1, 10), (1, 20), (2, 10), (2, 20), (3, 10), (3, 20)]);
 }

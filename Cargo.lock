@@ -427,6 +427,7 @@ name = "rustdb"
 version = "1.5.6"
 dependencies = [
  "rustdb-ast",
+ "rustdb-buffer",
  "rustdb-catalog",
  "rustdb-common",
  "rustdb-execution",
@@ -434,6 +435,7 @@ dependencies = [
  "rustdb-functions",
  "rustdb-parser",
  "rustdb-planner",
+ "rustdb-storage",
  "rustdb-types",
 ]
 
@@ -480,6 +482,7 @@ dependencies = [
  "rustdb-ast",
  "rustdb-common",
  "rustdb-function",
+ "rustdb-storage",
  "rustdb-types",
 ]
 
@@ -496,10 +499,14 @@ name = "rustdb-execution"
 version = "1.5.6"
 dependencies = [
  "rustdb-ast",
+ "rustdb-buffer",
+ "rustdb-catalog",
  "rustdb-common",
  "rustdb-function",
  "rustdb-functions",
  "rustdb-planner",
+ "rustdb-row",
+ "rustdb-storage",
  "rustdb-types",
 ]
 
@@ -558,6 +565,7 @@ dependencies = [
  "rustdb-function",
  "rustdb-parser",
  "rustdb-serde",
+ "rustdb-storage",
  "rustdb-types",
 ]
 
@@ -584,6 +592,15 @@ name = "rustdb-shell"
 version = "1.5.6"
 dependencies = [
  "rustdb",
+]
+
+[[package]]
+name = "rustdb-storage"
+version = "1.5.6"
+dependencies = [
+ "rustdb-buffer",
+ "rustdb-common",
+ "rustdb-types",
 ]
 
 [[package]]

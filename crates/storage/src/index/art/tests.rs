@@ -1,0 +1,317 @@
+//! Randomised tests of the ART against a `BTreeMap` model.
+#![allow(clippy::unwrap_used, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use rustdb_buffer::{BufferManager, BufferManagerConfig};
+use rustdb_types::LogicalType;
+
+use super::node::ALLOCATOR_COUNT;
+use super::*;
+use crate::index::{IndexAppendMode, IndexConstraintType};
+
+/// A small xorshift generator so the tests are deterministic.
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0
+    }
+
+    fn below(&mut self, n: u64) -> u64 {
+        self.next() % n
+    }
+}
+
+fn art(constraint: IndexConstraintType, ty: LogicalType) -> Art {
+    let manager = BufferManager::new(BufferManagerConfig::default()).unwrap();
+    Art::new(
+        "idx",
+        constraint,
+        vec![0],
+        vec![ty],
+        IndexKeyExpressions::Columns(vec!["k".into()]),
+        manager,
+        262_136,
+    )
+    .unwrap()
+}
+
+type Model = BTreeMap<Vec<u8>, BTreeSet<i64>>;
+
+/// Counts the segments reachable from the root per allocator (`VerifyAllocations`).
+fn count_segments(art: &Art) -> [usize; ALLOCATOR_COUNT] {
+    let mut counts = [0; ALLOCATOR_COUNT];
+    let mut stack = vec![art.tree];
+    while let Some(node) = stack.pop() {
+        if !node.has_metadata() {
+            continue;
+        }
+        let ty = node.ntype().unwrap();
+        if let Some(index) = ty.allocator_index() {
+            counts[index] += 1;
+        }
+        match ty {
+            NType::Prefix => stack.push(art.prefix_child(node).unwrap()),
+            NType::Node4 | NType::Node16 | NType::Node48 | NType::Node256 => {
+                for (_, child) in art.children(node).unwrap() {
+                    stack.push(child);
+                }
+            }
+            _ => {}
+        }
+    }
+    counts
+}
+
+fn check(art: &Art, model: &Model) {
+    let counts = count_segments(art);
+    for (i, count) in counts.iter().enumerate() {
+        assert_eq!(*count, art.allocators[i].segment_count(), "allocator {i}");
+    }
+    let mut all = BTreeSet::new();
+    assert!(art.full_scan(usize::MAX, &mut all).unwrap());
+    let expected: BTreeSet<i64> = model.values().flatten().copied().collect();
+    assert_eq!(all, expected);
+    for (key, row_ids) in model {
+        let mut found = BTreeSet::new();
+        assert!(art.search_equal(key, usize::MAX, &mut found).unwrap());
+        assert_eq!(&found, row_ids, "key {key:?}");
+        for &row_id in row_ids {
+            assert!(art.contains(key, row_id).unwrap());
+        }
+    }
+}
+
+fn check_ranges(art: &Art, model: &Model, rng: &mut Rng, keys: &[Vec<u8>]) {
+    for _ in 0..20 {
+        let a = &keys[rng.below(keys.len() as u64) as usize];
+        let b = &keys[rng.below(keys.len() as u64) as usize];
+        let (low, high) = if a <= b { (a, b) } else { (b, a) };
+        for equal in [false, true] {
+            let mut found = BTreeSet::new();
+            art.search_greater(low, equal, usize::MAX, &mut found).unwrap();
+            let expected: BTreeSet<i64> = model
+                .iter()
+                .filter(|(k, _)| if equal { *k >= low } else { *k > low })
+                .flat_map(|(_, v)| v.iter().copied())
+                .collect();
+            assert_eq!(found, expected, "greater {low:?} {equal}");
+            let mut found = BTreeSet::new();
+            art.search_less(high, equal, usize::MAX, &mut found).unwrap();
+            let expected: BTreeSet<i64> = model
+                .iter()
+                .filter(|(k, _)| if equal { *k <= high } else { *k < high })
+                .flat_map(|(_, v)| v.iter().copied())
+                .collect();
+            assert_eq!(found, expected, "less {high:?} {equal}");
+            let mut found = BTreeSet::new();
+            art.search_close_range(low, high, equal, !equal, usize::MAX, &mut found)
+                .unwrap();
+            let expected: BTreeSet<i64> = model
+                .iter()
+                .filter(|(k, _)| {
+                    (if equal { *k >= low } else { *k > low }) && (if equal { *k < high } else { *k <= high })
+                })
+                .flat_map(|(_, v)| v.iter().copied())
+                .collect();
+            assert_eq!(found, expected, "range {low:?} {high:?}");
+        }
+    }
+}
+
+fn run_random(keys: &[Vec<u8>], unique: bool, seed: u64, operations: usize) {
+    let constraint = if unique {
+        IndexConstraintType::Unique
+    } else {
+        IndexConstraintType::None
+    };
+    let mut art = art(constraint, LogicalType::BIGINT);
+    let mut model = Model::new();
+    let mut rng = Rng(seed);
+    let mut next_row_id = 0i64;
+    let mut live: Vec<(Vec<u8>, i64)> = Vec::new();
+    for step in 0..operations {
+        if live.is_empty() || rng.below(3) != 0 {
+            let key = keys[rng.below(keys.len() as u64) as usize].clone();
+            // sparse row ids exercise every nested node type
+            let row_id = if rng.below(2) == 0 {
+                next_row_id
+            } else {
+                (rng.next() % (1 << 50)) as i64
+            };
+            next_row_id += 1;
+            if model.values().any(|v| v.contains(&row_id)) {
+                continue;
+            }
+            let result = art.insert_keys(
+                &[Some(key.clone())],
+                &[row_id],
+                &[],
+                IndexAppendMode::Default,
+                None,
+            );
+            if unique && model.contains_key(&key) {
+                assert!(result.is_err());
+            } else {
+                result.unwrap();
+                model.entry(key.clone()).or_default().insert(row_id);
+                live.push((key, row_id));
+            }
+        } else {
+            let pos = rng.below(live.len() as u64) as usize;
+            let (key, row_id) = live.swap_remove(pos);
+            assert!(art.delete_key(&key, row_id_key(row_id)).unwrap());
+            assert!(!art.delete_key(&key, row_id_key(row_id)).unwrap());
+            let set = model.get_mut(&key).unwrap();
+            set.remove(&row_id);
+            if set.is_empty() {
+                model.remove(&key);
+            }
+        }
+        if step % 97 == 0 {
+            check(&art, &model);
+            check_ranges(&art, &model, &mut rng, keys);
+        }
+    }
+    check(&art, &model);
+    check_ranges(&art, &model, &mut rng, keys);
+    // delete everything: all memory is released
+    for (key, row_id) in live {
+        assert!(art.delete_key(&key, row_id_key(row_id)).unwrap());
+    }
+    assert!(art.is_empty());
+    for allocator in &art.allocators {
+        assert_eq!(allocator.segment_count(), 0);
+    }
+}
+
+fn int_keys(count: usize, spread: u64, rng: &mut Rng) -> Vec<Vec<u8>> {
+    (0..count)
+        .map(|_| row_id_key((rng.below(spread) as i64) - (spread as i64 / 2)).to_vec())
+        .collect()
+}
+
+fn string_keys(count: usize, rng: &mut Rng) -> Vec<Vec<u8>> {
+    (0..count)
+        .map(|_| {
+            let len = rng.below(40) as usize;
+            let mut bytes = Vec::new();
+            // long shared prefixes exercise prefix chains
+            if rng.below(2) == 0 {
+                bytes.extend_from_slice(b"a shared prefix that is longer than one prefix segment ");
+            }
+            for _ in 0..len {
+                bytes.push(b"ab\x00\x01xyz"[rng.below(7) as usize]);
+            }
+            let mut key = Vec::new();
+            key::encode_value(&rustdb_types::Value::blob(&bytes), &mut key).unwrap();
+            key
+        })
+        .collect()
+}
+
+#[test]
+fn non_unique_integer_keys() {
+    let mut rng = Rng(7);
+    let keys = int_keys(300, 1000, &mut rng);
+    run_random(&keys, false, 11, 6000);
+}
+
+#[test]
+fn non_unique_few_keys_many_row_ids() {
+    let mut rng = Rng(3);
+    let keys = int_keys(4, 10, &mut rng);
+    run_random(&keys, false, 5, 4000);
+}
+
+#[test]
+fn unique_integer_keys() {
+    let mut rng = Rng(13);
+    let keys = int_keys(2000, 1 << 40, &mut rng);
+    run_random(&keys, true, 17, 5000);
+}
+
+#[test]
+fn string_keys_with_long_prefixes() {
+    let mut rng = Rng(23);
+    let keys = string_keys(400, &mut rng);
+    run_random(&keys, false, 29, 5000);
+    run_random(&keys, true, 31, 3000);
+}
+
+#[test]
+fn unique_conflict_rolls_back_the_batch() {
+    let mut art = art(IndexConstraintType::Primary, LogicalType::BIGINT);
+    let k = |v: i64| Some(row_id_key(v).to_vec());
+    art.insert_keys(&[k(1)], &[100], &[], IndexAppendMode::Default, None)
+        .unwrap();
+    let err = art
+        .insert_keys(
+            &[k(2), k(3), k(1)],
+            &[0, 1, 2],
+            &[],
+            IndexAppendMode::Default,
+            None,
+        )
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "Constraint Error: PRIMARY KEY or UNIQUE constraint violation: duplicate key \"???\""
+    );
+    let mut all = BTreeSet::new();
+    art.full_scan(usize::MAX, &mut all).unwrap();
+    assert_eq!(all, BTreeSet::from([100]));
+    // ignore duplicates
+    art.insert_keys(
+        &[k(1), k(5)],
+        &[7, 8],
+        &[],
+        IndexAppendMode::IgnoreDuplicates,
+        None,
+    )
+    .unwrap();
+    let mut all = BTreeSet::new();
+    art.full_scan(usize::MAX, &mut all).unwrap();
+    assert_eq!(all, BTreeSet::from([8, 100]));
+}
+
+#[test]
+fn delete_index_allows_reinsert() {
+    let mut main = art(IndexConstraintType::Unique, LogicalType::BIGINT);
+    let mut deleted = art(IndexConstraintType::Unique, LogicalType::BIGINT);
+    let k = |v: i64| Some(row_id_key(v).to_vec());
+    main.insert_keys(&[k(1)], &[10], &[], IndexAppendMode::Default, None)
+        .unwrap();
+    deleted
+        .insert_keys(&[k(1)], &[10], &[], IndexAppendMode::Default, None)
+        .unwrap();
+    main.insert_keys(&[k(1)], &[11], &[&deleted], IndexAppendMode::Default, None)
+        .unwrap();
+    let mut found = BTreeSet::new();
+    main.search_equal(&row_id_key(1), usize::MAX, &mut found).unwrap();
+    assert_eq!(found, BTreeSet::from([10, 11]));
+    assert!(main.delete_key(&row_id_key(1), row_id_key(10)).unwrap());
+    let mut found = BTreeSet::new();
+    main.search_equal(&row_id_key(1), usize::MAX, &mut found).unwrap();
+    assert_eq!(found, BTreeSet::from([11]));
+}
+
+#[test]
+fn paused_scans_resume() {
+    let mut art = art(IndexConstraintType::None, LogicalType::BIGINT);
+    let key = row_id_key(42).to_vec();
+    let row_ids: Vec<i64> = (0..600).map(|i| i * 3).collect();
+    let keys: Vec<Option<ArtKey>> = row_ids.iter().map(|_| Some(key.clone())).collect();
+    art.insert_keys(&keys, &row_ids, &[], IndexAppendMode::Default, None)
+        .unwrap();
+    let mut found = BTreeSet::new();
+    assert!(!art.search_equal(&key, 100, &mut found).unwrap());
+    assert_eq!(found.len(), 100);
+    let mut found = BTreeSet::new();
+    assert!(art.search_equal(&key, 600, &mut found).unwrap());
+    assert_eq!(found.len(), 600);
+}

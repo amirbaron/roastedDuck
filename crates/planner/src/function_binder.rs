@@ -530,6 +530,7 @@ impl<'a> FunctionBinder<'a> {
                     aliases: &aliases,
                     names: &names,
                     client: &self.context.function_client,
+                    binder: Some(self.context as &dyn std::any::Any),
                 },
             )?;
             // The bind may have dropped trailing arguments (DuckDB's `EraseArgument`).
@@ -580,6 +581,7 @@ impl<'a> FunctionBinder<'a> {
                     aliases: &aliases,
                     names: &names,
                     client: &self.context.function_client,
+                    binder: Some(self.context as &dyn std::any::Any),
                 },
             )?;
             // The bind may have dropped arguments.

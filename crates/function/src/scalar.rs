@@ -58,6 +58,9 @@ pub struct BindInput<'a> {
     pub names: &'a [String],
     /// The calling connection's state (DuckDB's `ClientContext`).
     pub client: &'a Arc<FunctionClient>,
+    /// The binder's client context (`ScalarFunctionBindInput::binder`), for functions
+    /// that look up catalog entries; the database crate downcasts it.
+    pub binder: Option<&'a dyn Any>,
 }
 
 /// Specialises a chosen overload for a call (DuckDB's `bind_scalar_function_t`).

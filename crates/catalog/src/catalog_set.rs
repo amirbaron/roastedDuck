@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use rustdb_common::{Error, ErrorKind, Result};
 
 use crate::CatalogEntry;
-use crate::transaction::{TRANSACTION_ID_START, Transaction};
+use crate::transaction::{StorageHook, TRANSACTION_ID_START, Transaction, TransactionExt};
 
 /// One version in an entry chain.
 #[derive(Debug)]
@@ -31,6 +31,11 @@ impl Version {
 
     pub(crate) fn commit(&self, commit_id: u64) {
         self.timestamp.store(commit_id, Ordering::Release);
+    }
+
+    /// Whether this version is a drop (no entry).
+    pub(crate) fn is_tombstone(&self) -> bool {
+        self.entry.is_none()
     }
 }
 
@@ -93,6 +98,12 @@ impl CatalogSet {
     /// already exists (callers turn this into the appropriate "already exists" error).
     pub fn create(self: &Arc<Self>, transaction: &Transaction, entry: CatalogEntry) -> Result<bool> {
         let name = key(entry.name());
+        let hook = match &entry.kind {
+            crate::EntryKind::Index(index) => index.storage.as_ref().map_or(StorageHook::None, |info| {
+                StorageHook::CreatedIndex(Arc::clone(info), entry.name().to_owned())
+            }),
+            _ => StorageHook::None,
+        };
         let version = Version::new(transaction.transaction_id, Some(Arc::new(entry)));
         {
             let mut chains = self.lock();
@@ -120,7 +131,90 @@ impl CatalogSet {
                 }
             }
         }
-        transaction.push_catalog_change(Arc::clone(self), name, version);
+        transaction.push_catalog_change(Arc::clone(self), name, version, hook);
+        Ok(true)
+    }
+
+    /// Replaces the visible entry called `name` by `entry` (DuckDB's `AlterEntry`).
+    /// Returns `false` if no visible entry exists.
+    pub fn alter(
+        self: &Arc<Self>,
+        transaction: &Transaction,
+        name: &str,
+        entry: CatalogEntry,
+    ) -> Result<bool> {
+        self.alter_with_hook(transaction, name, entry, StorageHook::None)
+    }
+
+    /// Renames the visible entry called `name` to the name of `entry`, which replaces it
+    /// (DuckDB's `AlterEntry` with a rename). Returns `false` if no visible entry exists.
+    pub fn rename(
+        self: &Arc<Self>,
+        transaction: &Transaction,
+        name: &str,
+        entry: CatalogEntry,
+        hook: StorageHook,
+    ) -> Result<bool> {
+        let old = key(name);
+        let tombstone = Version::new(transaction.transaction_id, None);
+        {
+            let mut chains = self.lock();
+            let Some(chain) = chains.get_mut(&old) else {
+                return Ok(false);
+            };
+            let head = &chain[0];
+            if conflicts(transaction, head.timestamp()) {
+                return Err(Error::new(
+                    ErrorKind::Transaction,
+                    format!(
+                        "Catalog write-write conflict on alter with \"{}\"",
+                        display_name(head, &old)
+                    ),
+                ));
+            }
+            if head.entry.is_none() {
+                return Ok(false);
+            }
+            chain.insert(0, Arc::clone(&tombstone));
+        }
+        transaction.push_catalog_change(Arc::clone(self), old, tombstone, hook);
+        if !self.create(transaction, entry)? {
+            return Err(Error::internal("rename target exists"));
+        }
+        Ok(true)
+    }
+
+    /// [`CatalogSet::alter`] with the storage change of the alter, undone on rollback.
+    pub fn alter_with_hook(
+        self: &Arc<Self>,
+        transaction: &Transaction,
+        name: &str,
+        entry: CatalogEntry,
+        hook: StorageHook,
+    ) -> Result<bool> {
+        let name = key(name);
+        let version = Version::new(transaction.transaction_id, Some(Arc::new(entry)));
+        {
+            let mut chains = self.lock();
+            let Some(chain) = chains.get_mut(&name) else {
+                return Ok(false);
+            };
+            let head = &chain[0];
+            if conflicts(transaction, head.timestamp()) {
+                return Err(Error::new(
+                    ErrorKind::Transaction,
+                    format!(
+                        "Catalog write-write conflict on alter with \"{}\"",
+                        display_name(head, &name)
+                    ),
+                ));
+            }
+            if head.entry.is_none() {
+                return Ok(false);
+            }
+            chain.insert(0, Arc::clone(&version));
+        }
+        transaction.push_catalog_change(Arc::clone(self), name, version, hook);
         Ok(true)
     }
 
@@ -133,6 +227,7 @@ impl CatalogSet {
     ) -> Result<bool> {
         let name = key(name);
         let version = Version::new(transaction.transaction_id, None);
+        let mut hook = StorageHook::None;
         {
             let mut chains = self.lock();
             let Some(chain) = chains.get_mut(&name) else {
@@ -157,9 +252,25 @@ impl CatalogSet {
                     entry.name()
                 )));
             }
+            match &entry.kind {
+                crate::EntryKind::Table(table) => {
+                    if let Some(storage) = &table.storage {
+                        // Concurrent writers of the table now fail (`DuckTableEntry::OnDrop`).
+                        storage.set_as_dropped();
+                        transaction.local_storage().drop_table(storage);
+                        hook = StorageHook::DroppedTable(Arc::clone(storage));
+                    }
+                }
+                crate::EntryKind::Index(index) => {
+                    if let Some(info) = &index.storage {
+                        hook = StorageHook::DroppedIndex(Arc::clone(info), entry.name().to_owned());
+                    }
+                }
+                _ => {}
+            }
             chain.insert(0, Arc::clone(&version));
         }
-        transaction.push_catalog_change(Arc::clone(self), name, version);
+        transaction.push_catalog_change(Arc::clone(self), name, version, hook);
         Ok(true)
     }
 
