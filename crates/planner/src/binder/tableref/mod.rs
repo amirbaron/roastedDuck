@@ -298,6 +298,10 @@ fn extract_base_name(path: &str) -> String {
 /// The CSV replacement scan (DuckDB's `ReadCSVReplacement` through
 /// `Binder::BindWithReplacementScan`): `FROM 'file.csv'` reads the file with
 /// `read_csv_auto`.
+#[allow(
+    clippy::case_sensitive_file_extension_comparisons,
+    reason = "the name is lowercased"
+)]
 fn csv_replacement_scan(base: &BaseTableRef, alias: &str) -> Option<TableRef> {
     let mut full_path = base.catalog_name.clone();
     if !base.schema_name.is_empty() {

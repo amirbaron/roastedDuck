@@ -4,6 +4,7 @@
 //! output types, cardinality estimate) and its operator-specific data in [`LogicalKind`].
 //! The generic members let plan rewrites traverse any operator uniformly.
 
+mod copy_to_file;
 mod display;
 
 use std::sync::{Arc, Mutex, PoisonError};
@@ -23,6 +24,7 @@ use crate::generated::enums::{DistinctType, LogicalOperatorType};
 use crate::prepared::PreparedStatementData;
 use crate::{ColumnBinding, SubqueryType};
 
+pub use copy_to_file::{CopyFunctionReturnType, CopyOverwriteMode, FilenamePattern, LogicalCopyToFile};
 pub use display::render_plan;
 
 /// A LIMIT or OFFSET value (DuckDB's `BoundLimitNode`).
@@ -463,6 +465,8 @@ pub enum LogicalKind {
     Delete(Box<LogicalDelete>),
     Update(Box<LogicalUpdate>),
     MergeInto(Box<LogicalMergeInto>),
+    /// `COPY ... TO`.
+    CopyToFile(Box<LogicalCopyToFile>),
 }
 
 /// A bound `CREATE TABLE` (DuckDB's `BoundCreateTableInfo`): the table definition with
@@ -846,6 +850,7 @@ impl LogicalOperator {
             LogicalKind::Delete(_) => T::LogicalDelete,
             LogicalKind::Update(_) => T::LogicalUpdate,
             LogicalKind::MergeInto(_) => T::LogicalMergeInto,
+            LogicalKind::CopyToFile(_) => T::LogicalCopyToFile,
         }
     }
 
@@ -1003,6 +1008,7 @@ impl LogicalOperator {
             LogicalKind::Update(update) => {
                 modify_bindings(update.return_chunk, update.table_index, &update.table)
             }
+            LogicalKind::CopyToFile(copy) => generate_column_bindings(0, copy.return_type.types().len()),
             LogicalKind::MergeInto(merge) => {
                 if merge.return_chunk {
                     generate_column_bindings(merge.table_index, table_types(&merge.table).len() + 1)
@@ -1188,6 +1194,7 @@ impl LogicalOperator {
             LogicalKind::Insert(insert) if insert.return_chunk => insert.table_types(),
             LogicalKind::Delete(delete) if delete.return_chunk => table_types(&delete.table),
             LogicalKind::Update(update) if update.return_chunk => table_types(&update.table),
+            LogicalKind::CopyToFile(copy) => copy.return_type.types(),
             LogicalKind::MergeInto(merge) if merge.return_chunk => {
                 // The RETURNING input ends with the `merge_action` column.
                 let mut types = table_types(&merge.table);

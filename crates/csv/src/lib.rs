@@ -2,6 +2,7 @@
 //! `function/table/copy_csv.cpp`).
 
 pub mod buffer;
+pub mod copy_csv;
 pub mod error;
 pub mod file_scan;
 pub mod multi_file;

@@ -618,6 +618,7 @@ impl PlanGenerator {
             LogicalKind::Delete(delete) => self.plan_delete(&delete, &expressions, next_child("delete")?)?,
             LogicalKind::Update(update) => self.plan_update(*update, expressions, next_child("update")?)?,
             LogicalKind::MergeInto(merge) => self.plan_merge_into(*merge, next_child("merge")?)?,
+            LogicalKind::CopyToFile(copy) => plan_copy_to_file(*copy, next_child("copy")?),
             LogicalKind::CreateTable(info) => {
                 let context = self.context()?;
                 let info = *info;
@@ -1166,4 +1167,45 @@ fn evaluate_rows(types: &[LogicalType], rows: &[Vec<Expression>]) -> Result<Vec<
         chunks.push(chunk);
     }
     Ok(chunks)
+}
+
+/// `PhysicalPlanGenerator::CreatePlan(LogicalCopyToFile &)`.
+fn plan_copy_to_file(copy: rustdb_planner::operator::LogicalCopyToFile, child: PhysicalRef) -> PhysicalRef {
+    let mut file_path = copy.file_path;
+    if let Some(rest) = file_path.strip_prefix('~')
+        && (rest.is_empty() || rest.starts_with('/'))
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        file_path = format!("{}{rest}", home.to_string_lossy());
+    }
+    if copy.use_tmp_file {
+        file_path = match file_path.rfind('/') {
+            Some(slash) => format!("{}tmp_{}", &file_path[..=slash], &file_path[slash + 1..]),
+            None => format!("tmp_{file_path}"),
+        };
+    }
+    let options = crate::operators::CopyToFileOptions {
+        file_path,
+        use_tmp_file: copy.use_tmp_file,
+        overwrite_mode: copy.overwrite_mode,
+        filename_pattern: copy.filename_pattern,
+        file_extension: copy.file_extension,
+        per_thread_output: copy.per_thread_output,
+        file_size_bytes: copy.file_size_bytes,
+        rotate: copy.rotate,
+        partition_output: copy.partition_output,
+        partition_columns: copy.partition_columns,
+        write_partition_columns: copy.write_partition_columns,
+        write_empty_file: copy.write_empty_file,
+        hive_file_pattern: copy.hive_file_pattern,
+        return_type: copy.return_type,
+        names: copy.names,
+        expected_types: copy.expected_types,
+    };
+    Arc::new(crate::operators::PhysicalCopyToFile::new(
+        child,
+        copy.function,
+        copy.bind_data,
+        options,
+    ))
 }

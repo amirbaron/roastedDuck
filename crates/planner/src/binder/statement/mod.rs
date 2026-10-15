@@ -13,6 +13,7 @@ use rustdb_common::{CaseInsensitiveMap, Error, Result};
 use rustdb_types::{LogicalType, LogicalTypeId};
 
 mod alter;
+mod copy;
 mod create;
 mod create_index;
 mod create_macro;
@@ -72,6 +73,7 @@ pub fn bind_statement(scope: &mut BindScope<'_>, statement: &mut SqlStatement) -
         SqlStatementKind::Alter(info) => alter::bind_alter(scope, info),
         SqlStatementKind::Attach(info) => bind_attach(scope, info),
         SqlStatementKind::Detach(info) => Ok(bind_detach(scope, info)),
+        SqlStatementKind::Copy(info) => copy::bind_copy(scope, info),
         other => Err(Error::not_implemented(format!(
             "Unimplemented statement type \"{}\" for Bind",
             other.statement_type().name()

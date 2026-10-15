@@ -133,6 +133,12 @@ impl Catalog {
         self.register_builtin(name, EntryKind::TableFunction(set))
     }
 
+    /// Registers a built-in COPY file format in `main`.
+    pub fn register_copy_function(&self, function: rustdb_function::CopyFunction) -> Result<()> {
+        let name = function.name.to_string();
+        self.register_builtin(name, EntryKind::CopyFunction(function))
+    }
+
     /// Registers a built-in view in `main` (DuckDB's `DefaultViewGenerator`).
     pub fn register_view(&self, name: &str, view: crate::ViewEntry) -> Result<()> {
         self.register_builtin(name.to_owned(), EntryKind::View(view))
@@ -163,6 +169,7 @@ impl Catalog {
         let set = match entry.catalog_type() {
             CatalogType::TableFunction => &schema.table_functions,
             CatalogType::Table | CatalogType::View => &schema.tables,
+            CatalogType::CopyFunction => &schema.copy_functions,
             _ => &schema.functions,
         };
         set.create_committed(entry)

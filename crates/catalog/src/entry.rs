@@ -350,6 +350,8 @@ pub enum EntryKind {
     ScalarFunction(ScalarFunctionSet),
     AggregateFunction(AggregateFunctionSet),
     TableFunction(TableFunctionSet),
+    /// A COPY file format (`CopyFunctionCatalogEntry`).
+    CopyFunction(rustdb_function::CopyFunction),
     Table(TableEntry),
     View(ViewEntry),
     Index(IndexEntry),
@@ -407,6 +409,7 @@ impl CatalogEntry {
             EntryKind::ScalarFunction(_) => CatalogType::ScalarFunction,
             EntryKind::AggregateFunction(_) => CatalogType::AggregateFunction,
             EntryKind::TableFunction(_) => CatalogType::TableFunction,
+            EntryKind::CopyFunction(_) => CatalogType::CopyFunction,
             EntryKind::Table(_) => CatalogType::Table,
             EntryKind::View(_) => CatalogType::View,
             EntryKind::Index(_) => CatalogType::Index,

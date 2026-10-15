@@ -254,6 +254,7 @@ impl Database {
         for set in crate::system_functions::pragma_table_functions() {
             system_catalog.register_table_functions(set)?;
         }
+        system_catalog.register_copy_function(rustdb_csv::copy_csv::csv_copy_function())?;
         for set in rustdb_csv::sniff_csv::sniff_csv_functions() {
             system_catalog.register_table_functions(set)?;
         }
