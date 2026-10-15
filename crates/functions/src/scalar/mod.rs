@@ -6,6 +6,7 @@ pub mod date;
 pub(crate) mod executor;
 pub mod generic;
 pub mod list;
+pub mod math;
 pub(crate) mod nested;
 pub mod operator;
 pub mod string;
@@ -78,5 +79,8 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
     sets.push(string::substring::substring_grapheme_functions());
     sets.extend(generic::generic_functions());
     sets.extend(date::to_interval::to_interval_functions());
+    for (set, aliases) in math::numeric::numeric_functions() {
+        with_aliases(&mut sets, set, aliases);
+    }
     sets
 }

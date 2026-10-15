@@ -418,7 +418,7 @@ mod tests {
     #[test]
     fn typeof_names_the_type() {
         let function = &typeof_functions().functions[0];
-        let args = DataChunk::new(vec![Vector::constant(&Value::bigint(1)).unwrap()], 1);
+        let args = rustdb_types::DataChunk::new(vec![Vector::constant(&Value::bigint(1)).unwrap()], 1);
         let mut result = Vector::flat(LogicalType::VARCHAR, 0);
         (function.kernel)(&args, &mut FunctionState::default(), &mut result).unwrap();
         assert_eq!(result.get_value(0), Value::varchar("BIGINT"));

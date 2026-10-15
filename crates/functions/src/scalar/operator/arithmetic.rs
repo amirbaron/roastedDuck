@@ -17,7 +17,7 @@ use crate::operator::{
     CheckedInt, checked_add, checked_multiply, checked_subtract, interval_add, interval_subtract,
 };
 use crate::scalar::executor::{binary, unary};
-use crate::signature::type_id;
+use crate::signature::numeric_types;
 use crate::temporal;
 
 /// A binary scalar kernel.
@@ -45,25 +45,6 @@ fn binary_kernel<T: NativeType>(f: fn(T, T) -> Result<T>) -> Kernel {
     Arc::new(move |args: &DataChunk, result: &mut Vector| {
         try_binary::<T, T, T>(args.column(0), args.column(1), args.len(), result, f)
     })
-}
-
-/// The numeric types in DuckDB's `LogicalType::Numeric()` order.
-fn numeric_types() -> [LogicalType; 13] {
-    [
-        LogicalType::TINYINT,
-        LogicalType::SMALLINT,
-        LogicalType::INTEGER,
-        LogicalType::BIGINT,
-        LogicalType::HUGEINT,
-        LogicalType::FLOAT,
-        LogicalType::DOUBLE,
-        type_id(LogicalTypeId::Decimal),
-        LogicalType::UTINYINT,
-        LogicalType::USMALLINT,
-        LogicalType::UINTEGER,
-        LogicalType::UBIGINT,
-        LogicalType::UHUGEINT,
-    ]
 }
 
 /// Dispatches `$body` with `$T` bound to the integer type of `$physical`; other types get a

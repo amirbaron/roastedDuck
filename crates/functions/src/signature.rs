@@ -39,3 +39,22 @@ pub(crate) fn normalize_type(ty: &LogicalType) -> LogicalType {
 pub(crate) fn type_id(id: LogicalTypeId) -> LogicalType {
     LogicalType::simple(id)
 }
+
+/// The numeric types in DuckDB's `LogicalType::Numeric()` order.
+pub(crate) fn numeric_types() -> [LogicalType; 13] {
+    [
+        LogicalType::TINYINT,
+        LogicalType::SMALLINT,
+        LogicalType::INTEGER,
+        LogicalType::BIGINT,
+        LogicalType::HUGEINT,
+        LogicalType::FLOAT,
+        LogicalType::DOUBLE,
+        type_id(LogicalTypeId::Decimal),
+        LogicalType::UTINYINT,
+        LogicalType::USMALLINT,
+        LogicalType::UINTEGER,
+        LogicalType::UBIGINT,
+        LogicalType::UHUGEINT,
+    ]
+}
