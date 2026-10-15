@@ -92,12 +92,17 @@ impl Executor {
                     .source
                     .as_ref()
                     .and_then(|source| source.source_dependency());
+                let explicit = pipeline
+                    .dependencies
+                    .iter()
+                    .map(|&dependency| &self.pipelines[dependency].sink);
                 for dependency in pipeline
                     .operators
                     .iter()
                     .rev()
                     .chain(pipeline.source.as_ref())
                     .chain(external.as_ref())
+                    .chain(explicit)
                 {
                     if by_sink.contains_key(&key(dependency)) {
                         stack.push((key(dependency), false));
@@ -137,6 +142,26 @@ impl Executor {
             let sibling = self.add_pipeline(sibling);
             self.build(left, current)?;
             return self.build(right, sibling);
+        }
+        if op.is_cte() {
+            let [definition, query] = op.children() else {
+                return Err(Error::internal("CTE must have two inputs"));
+            };
+            if !self
+                .pipelines
+                .iter()
+                .any(|pipeline| Arc::ptr_eq(&pipeline.sink, op))
+            {
+                let materialize = self.add_pipeline(Pipeline::new(Arc::clone(op)));
+                self.build(definition, materialize)?;
+            }
+            let materialize = self
+                .pipelines
+                .iter()
+                .position(|pipeline| Arc::ptr_eq(&pipeline.sink, op))
+                .ok_or_else(|| Error::internal("CTE pipeline missing"))?;
+            self.pipelines[current].dependencies.push(materialize);
+            return self.build(query, current);
         }
         if op.as_sink().is_some() && op.as_operator().is_some() {
             return self.build_join(op, current);

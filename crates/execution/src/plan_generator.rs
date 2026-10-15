@@ -2,11 +2,13 @@
 //! `PhysicalPlanGenerator`). Logical operators without a ported physical counterpart
 //! raise `Not implemented`.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
+use rustdb_ast::JoinType;
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_planner::expression::BoundConjunctionExpression;
-use rustdb_planner::operator::{LogicalAggregate, LogicalComparisonJoin};
+use rustdb_planner::operator::{JoinCondition, LogicalAggregate, LogicalComparisonJoin};
 use rustdb_planner::{
     BoundLimitNode, Expression, ExpressionKind, ExpressionType, LogicalKind, LogicalOperator,
     LogicalOperatorType,
@@ -15,6 +17,7 @@ use rustdb_types::{DataChunk, LogicalType};
 
 use crate::expression_executor::ExpressionExecutor;
 use crate::operator::PhysicalRef;
+use crate::operators::{CteData, PhysicalCte, PhysicalCteScan, PhysicalRecursiveCte};
 use crate::operators::{
     DelimData, DelimShared, PhysicalDelimJoin, PhysicalDelimScan, PhysicalNestedLoopJoin, PhysicalUnion,
 };
@@ -34,6 +37,11 @@ struct PlanGenerator {
     /// The delim joins being planned, innermost last; their delim gets read the data of
     /// the innermost one.
     delim: Vec<Arc<DelimShared>>,
+    /// Materialised CTEs by table index (`materialized_ctes`).
+    materialized: HashMap<u64, Arc<CteData>>,
+    /// Recursive CTE working tables and their types by table index
+    /// (`recursive_cte_tables`).
+    working_tables: HashMap<u64, (Arc<CteData>, Vec<LogicalType>)>,
 }
 
 impl PlanGenerator {
@@ -112,6 +120,61 @@ impl PlanGenerator {
                 Arc::clone(shared),
                 DelimData::Distinct,
             )));
+        }
+        match kind {
+            LogicalKind::MaterializedCte { table_index, .. } => {
+                let [definition, query] = two_children(children, "CTE")?;
+                let definition = self.plan(definition)?;
+                let data = Arc::new(CteData::default());
+                self.materialized.insert(table_index, Arc::clone(&data));
+                let query = self.plan(query)?;
+                return Ok(PhysicalCte::new(&data, definition, query));
+            }
+            LogicalKind::RecursiveCte {
+                table_index,
+                union_all,
+                key_targets,
+                ref_recurring,
+                ..
+            } => {
+                if !key_targets.is_empty() || ref_recurring {
+                    return Err(Error::not_implemented("recursive CTE with USING KEY"));
+                }
+                let [anchor, recursive] = two_children(children, "recursive CTE")?;
+                let working_table = Arc::new(CteData::default());
+                self.working_tables
+                    .insert(table_index, (Arc::clone(&working_table), types.clone()));
+                let anchor = self.plan(anchor)?;
+                let recursive = self.plan(recursive)?;
+                return Ok(Arc::new(PhysicalRecursiveCte::new(
+                    types,
+                    union_all,
+                    working_table,
+                    anchor,
+                    recursive,
+                )));
+            }
+            LogicalKind::CteRef {
+                cte_index,
+                chunk_types,
+                is_recurring,
+                ..
+            } => {
+                if let Some(data) = self.materialized.get(&cte_index) {
+                    return Ok(Arc::new(PhysicalCteScan::new(chunk_types, Arc::clone(data))));
+                }
+                if is_recurring {
+                    return Err(Error::invalid_input(
+                        "RECURRING can only be used with USING KEY in recursive CTE.",
+                    ));
+                }
+                let (data, types) = self
+                    .working_tables
+                    .get(&cte_index)
+                    .ok_or_else(|| Error::invalid_input("Referenced recursive CTE does not exist."))?;
+                return Ok(Arc::new(PhysicalCteScan::new(types.clone(), Arc::clone(data))));
+            }
+            _ => {}
         }
         let mut children = children
             .into_iter()
@@ -249,7 +312,7 @@ impl PlanGenerator {
                 let right = next_child("cross product")?;
                 Arc::new(PhysicalNestedLoopJoin::new(
                     types,
-                    rustdb_ast::JoinType::Inner,
+                    JoinType::Inner,
                     Vec::new(),
                     None,
                     left,
@@ -274,7 +337,12 @@ impl PlanGenerator {
                 ..
             } => {
                 if operator_type != LogicalOperatorType::LogicalUnion {
-                    return Err(not_implemented(operator_type));
+                    let (Some(left), Some(right)) = (children.next(), children.next()) else {
+                        return Err(Error::internal(
+                            "EXCEPT / INTERSECT must have exactly two children",
+                        ));
+                    };
+                    return except_or_intersect(operator_type, setop_all, types, left, right);
                 }
                 let inputs: Vec<PhysicalRef> = children.by_ref().collect();
                 let mut inputs = inputs.into_iter().rev();
@@ -311,6 +379,54 @@ impl PlanGenerator {
         };
         Ok(plan)
     }
+}
+
+/// `EXCEPT` as an anti join and `INTERSECT` as a semi join on all columns compared with
+/// `IS NOT DISTINCT FROM`, then made distinct (DuckDB's `CreatePlan(LogicalSetOperation&)`).
+fn except_or_intersect(
+    operator_type: LogicalOperatorType,
+    setop_all: bool,
+    types: Vec<LogicalType>,
+    left: PhysicalRef,
+    right: PhysicalRef,
+) -> Result<PhysicalRef> {
+    if left.types() != right.types() {
+        return Err(Error::invalid_input("Type mismatch for SET OPERATION"));
+    }
+    if setop_all {
+        return Err(Error::not_implemented(
+            "EXCEPT ALL / INTERSECT ALL (requires the window operator)",
+        ));
+    }
+    let conditions = left
+        .types()
+        .iter()
+        .enumerate()
+        .map(|(index, ty)| JoinCondition {
+            left: Expression::reference("", ty.clone(), index as u64),
+            right: Expression::reference("", ty.clone(), index as u64),
+            comparison: ExpressionType::CompareNotDistinctFrom,
+        })
+        .collect();
+    let join_type = if operator_type == LogicalOperatorType::LogicalExcept {
+        JoinType::Anti
+    } else {
+        JoinType::Semi
+    };
+    let join = Arc::new(PhysicalNestedLoopJoin::new(
+        types.clone(),
+        join_type,
+        conditions,
+        None,
+        left,
+        right,
+    )?);
+    distinct_on_all_columns(types, join)
+}
+
+fn two_children(children: Vec<LogicalOperator>, what: &str) -> Result<[LogicalOperator; 2]> {
+    <[LogicalOperator; 2]>::try_from(children)
+        .map_err(|_| Error::internal(format!("{what} must have two inputs")))
 }
 
 /// A `GROUP BY` on every column without aggregates: removes duplicate rows

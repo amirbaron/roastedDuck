@@ -71,6 +71,9 @@ pub struct GroupedAggregateHashTable {
     row_state: RowOperationsState,
     /// Row of the group of each input row of the last `find_or_create_groups`.
     addresses: Vec<RowPtr>,
+    /// Input rows of the last `find_or_create_groups` that created a group, in creation
+    /// order (`new_groups_out`).
+    new_group_rows: Vec<u32>,
     ht_offsets: Vec<u64>,
     salts: Vec<u64>,
     /// Whether rows still hold aggregate states that need destroying.
@@ -132,6 +135,7 @@ impl GroupedAggregateHashTable {
             matcher,
             row_state: RowOperationsState::default(),
             addresses: Vec::new(),
+            new_group_rows: Vec::new(),
             ht_offsets: Vec::new(),
             salts: Vec::new(),
             states_live: false,
@@ -147,6 +151,11 @@ impl GroupedAggregateHashTable {
     /// Number of groups.
     pub fn count(&self) -> usize {
         self.count
+    }
+
+    /// The input rows of the last `find_or_create_groups` that created a new group.
+    pub fn new_group_rows(&self) -> &[u32] {
+        &self.new_group_rows
     }
 
     pub fn capacity(&self) -> usize {
@@ -219,6 +228,7 @@ impl GroupedAggregateHashTable {
         }
         self.addresses.clear();
         self.addresses.resize(count, RowPtr::NULL);
+        self.new_group_rows.clear();
 
         let mut remaining: Vec<u32> = (0..count as u32).collect();
         let mut new_groups = 0;
@@ -257,6 +267,7 @@ impl GroupedAggregateHashTable {
             }
             if !empty.is_empty() {
                 self.append_new_groups(&formats, &empty)?;
+                self.new_group_rows.extend_from_slice(&empty);
                 new_groups += empty.len();
             }
             no_match.clear();
