@@ -4,13 +4,24 @@
 //!
 //! 1. [`rustdb_pg_parser`] runs the Postgres-derived grammar and produces a
 //!    `libpg_query`-style node tree;
-//! 2. the [`transformer`](crate::transformer) turns that tree into DuckDB's parse tree —
-//!    statements, query nodes, table refs and parsed expressions — applying the same
-//!    rewrites and raising the same errors as `src/parser/transform/**` in DuckDB.
+//! 2. the transformer turns that tree into DuckDB's parse tree — statements, query
+//!    nodes, table refs and parsed expressions — applying the same rewrites and raising
+//!    the same errors as `src/parser/transform/**` in DuckDB.
 //!
 //! [`parse`] is DuckDB's `Parser::ParseQuery`: it replaces Unicode spaces, wraps
 //! grammar errors as syntax errors, and splits the query text among the statements.
 //! [`json::serialize_sql`] reproduces `json_serialize_sql` on top of it.
+//!
+//! # Layout
+//!
+//! `transformer/` has one module per area of DuckDB's `transform/` directory:
+//! `expression` (the dispatch and small expressions), `constant`, `star` (column refs
+//! and `*`), `operator`, `function` (calls and windows), `subquery`, `typename`,
+//! `select` (SELECT / set operations / VALUES / SHOW), `tableref`, `cte`, `pivot`,
+//! `helpers` (ORDER BY, GROUP BY, samples, aliases), `ddl`, `dml` and `misc`; `build`
+//! holds the parse-tree constructors with DuckDB's defaults. `equality` ports
+//! `ParsedExpression::Equals` (used to deduplicate GROUP BY expressions), and
+//! `candidates` the "Candidates: ..." hints of unrecognized enum values.
 //!
 //! # Map ordering
 //!
@@ -18,6 +29,21 @@
 //! the `EXCLUDE`/`REPLACE`/`RENAME` lists of `*`). Their order is part of the output, so
 //! the transformer replays libc++'s hash-table algorithm (`hash_order`) and stores the
 //! entries in DuckDB's iteration order.
+//!
+//! # Validation
+//!
+//! `examples/json_check` compares [`json::serialize_sql`] with the output of the C++
+//! `json_serialize_sql` that `tools/corpus` records for every statement of the
+//! sqllogictest corpus (`cargo run -p corpus -- extract`, then `-- oracle`), in all five
+//! option variants it records:
+//!
+//! ```text
+//! cargo run --release -p rustdb-parser --example json_check -- \
+//!     target/corpus/statements.jsonl target/corpus/serialized.jsonl
+//! ```
+//!
+//! `examples/parse_bench` and `scripts/parser_bench.cpp` time [`parse`] against
+//! DuckDB's `Parser::ParseQuery` on a corpus file.
 
 mod candidates;
 mod equality;
