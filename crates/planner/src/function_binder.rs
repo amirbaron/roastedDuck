@@ -526,6 +526,7 @@ impl<'a> FunctionBinder<'a> {
                     argument_types: &argument_types,
                     constants: &constants,
                     aliases: &aliases,
+                    client: &self.context.function_client,
                 },
             )?;
             // The bind may have dropped trailing arguments (DuckDB's `EraseArgument`).
@@ -573,6 +574,7 @@ impl<'a> FunctionBinder<'a> {
                     argument_types: &argument_types,
                     constants: &constants,
                     aliases: &aliases,
+                    client: &self.context.function_client,
                 },
             )?;
             // The bind may have dropped arguments.

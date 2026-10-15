@@ -5,6 +5,8 @@ use std::sync::Arc;
 use rustdb_common::Result;
 use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
+use crate::FunctionClient;
+
 /// How a function treats NULL inputs (DuckDB's `FunctionNullHandling`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum NullHandling {
@@ -51,6 +53,8 @@ pub struct BindInput<'a> {
     /// The alias of each argument expression (`a := x` names, or the column name of a
     /// column reference).
     pub aliases: &'a [String],
+    /// The calling connection's state (DuckDB's `ClientContext`).
+    pub client: &'a Arc<FunctionClient>,
 }
 
 /// Specialises a chosen overload for a call (DuckDB's `bind_scalar_function_t`).

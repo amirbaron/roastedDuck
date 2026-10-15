@@ -10,6 +10,7 @@ use rustdb_ast::{OrderByNullType, OrderType};
 use rustdb_catalog::{Catalog, CatalogEntry, CatalogType, DEFAULT_SCHEMA, Transaction};
 use rustdb_common::string_util::similarity_rating;
 use rustdb_common::{Error, Result};
+use rustdb_function::FunctionClient;
 use rustdb_function::cast::CastFunctionSet;
 use rustdb_types::Value;
 
@@ -98,6 +99,8 @@ pub struct ClientContext {
     pub config: PlannerConfig,
     /// Prepared statements of the connection, by name.
     pub prepared_statements: rustdb_common::CaseInsensitiveMap<Arc<PreparedStatementData>>,
+    /// Connection state functions use (random engine, ...).
+    pub function_client: Arc<FunctionClient>,
 }
 
 /// A catalog entry found by a lookup, with where it was found.

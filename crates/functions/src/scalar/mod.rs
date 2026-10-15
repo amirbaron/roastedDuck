@@ -9,6 +9,7 @@ pub mod list;
 pub mod math;
 pub(crate) mod nested;
 pub mod operator;
+pub mod random;
 pub mod string;
 pub mod structs;
 
@@ -53,7 +54,20 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
         structs::struct_values_functions(),
         list::list_extract::array_extract_functions(),
         array::array_value::array_value_functions(),
+        operator::bitwise::bitwise_and_functions(),
+        operator::bitwise::bitwise_or_functions(),
+        operator::bitwise::bitwise_xor_functions(),
+        operator::bitwise::bitwise_not_functions(),
+        operator::bitwise::left_shift_functions(),
+        operator::bitwise::right_shift_functions(),
+        random::random_functions(),
+        random::setseed_functions(),
+        random::uuid_functions("uuidv4"),
+        random::uuidv7_functions(),
+        random::uuid_extract_version_functions(),
+        random::uuid_extract_timestamp_functions(),
     ];
+    with_aliases(&mut sets, random::uuid_functions("uuid"), &["gen_random_uuid"]);
     with_aliases(&mut sets, arithmetic::add_functions(), &["add"]);
     with_aliases(&mut sets, arithmetic::subtract_functions(), &["subtract"]);
     with_aliases(&mut sets, arithmetic::multiply_functions(), &["multiply"]);
