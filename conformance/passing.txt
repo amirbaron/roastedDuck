@@ -37,6 +37,7 @@ test/optimizer/joins/test_tpcds_pushdown.test
 test/optimizer/optimize_unsigned_vs_signed_ints.test
 test/parquet/encrypted_parquet.test
 test/parquet/parquet_long_string_stats.test
+test/sql/aggregate/group/group_by_all_having.test
 test/sql/alter/rename_schema/rename_schema.test
 test/sql/attach/attach_encrypted_db_key_test.test
 test/sql/attach/attach_encryption_block_header.test
@@ -134,6 +135,9 @@ test/sql/sample/table_samples/test_sample_is_destroyed_on_updates.test
 test/sql/sample/table_samples/test_sample_types.test
 test/sql/sample/table_samples/test_table_sample_errors.test
 test/sql/secrets/secret_compatibility_http.test
+test/sql/setops/ambiguous_order_by.test
+test/sql/setops/test_union_error.test
+test/sql/setops/test_union_type_cast.test
 test/sql/settings/setting_order.test
 test/sql/storage/compact_block_size/compact_vector_size.test
 test/sql/storage/compact_block_size/create_table_compression.test
@@ -152,6 +156,7 @@ test/sql/storage/vacuum/vacuum_rebuild_indexes.test_slow
 test/sql/storage/vacuum/vacuum_rebuild_indexes_attach_overrides_global.test_slow
 test/sql/storage/vacuum/vacuum_rebuild_indexes_threshold.test_slow
 test/sql/subquery/scalar/test_correlated_side_effects.test
+test/sql/subquery/table/test_subquery_union.test
 test/sql/table_function/range_function_different_iterators.test
 test/sql/tpch/tpch_power_test.test_slow
 test/sql/transactions/test_transaction_functionality.test
