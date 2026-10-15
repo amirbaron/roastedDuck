@@ -261,7 +261,7 @@ pub fn bind_table_function(
             &function.function_name,
             false,
         )
-        .map_err(|error| error.with_position(location))?
+        .map_err(|error| crate::context::position_missing_entry(error, location))?
         .ok_or_else(|| Error::internal("table function lookup returned nothing"))?;
     let EntryKind::TableFunction(functions) = &entry.entry.kind else {
         return Err(Error::not_implemented(format!(

@@ -576,5 +576,5 @@ pub fn bind_and_qualify_function<Q: ColumnQualifier + ?Sized>(
             &function.function_name,
             !allow_throw,
         )
-        .map_err(|error| error.with_position(location))
+        .map_err(|error| crate::context::position_missing_entry(error, location))
 }

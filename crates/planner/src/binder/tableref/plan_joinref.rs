@@ -13,7 +13,7 @@ use crate::binder::{BindScope, BoundStatement, CorrelatedColumns};
 use crate::context::ClientContext;
 use crate::expression::{Expression, ExpressionKind};
 use crate::expression_binder::reduce_expression_depth;
-use crate::operator::{JoinCondition, LogicalComparisonJoin, LogicalKind, LogicalOperator};
+use crate::operator::{JoinCondition, LogicalComparisonJoin, LogicalKind, LogicalOperator, split_predicates};
 use crate::{ExpressionType, LogicalOperatorType};
 
 /// A bound join (DuckDB's `BoundJoinRef`).
@@ -89,31 +89,6 @@ impl JoinSide {
 /// The table indexes of the columns `op` produces (DuckDB's `LogicalJoin::GetTableReferences`).
 pub fn table_references(op: &LogicalOperator) -> HashSet<u64> {
     op.column_bindings().iter().map(|binding| binding.table_index).collect()
-}
-
-/// Splits AND-ed predicates into separate expressions (DuckDB's
-/// `LogicalFilter::SplitPredicates`): further children go to the end of the list.
-pub fn split_predicates(expressions: &mut Vec<Expression>) -> bool {
-    let mut found = false;
-    let mut i = 0;
-    while i < expressions.len() {
-        if expressions[i].expression_type == ExpressionType::ConjunctionAnd
-            && let ExpressionKind::Conjunction(conjunction) = &mut expressions[i].kind
-            && !conjunction.children.is_empty()
-        {
-            found = true;
-            let mut children = std::mem::take(&mut conjunction.children).into_iter();
-            let first = children.next();
-            expressions.extend(children);
-            if let Some(first) = first {
-                expressions[i] = first;
-            }
-            // Check the replacement again: it may be an AND too.
-            continue;
-        }
-        i += 1;
-    }
-    found
 }
 
 /// The comparison with its sides swapped (DuckDB's `FlipComparisonExpression`).

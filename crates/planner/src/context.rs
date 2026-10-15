@@ -247,3 +247,13 @@ impl ClientContext {
         Error::catalog(format!("{} with name {name} does not exist!{hint}", ty.display_name()))
     }
 }
+
+/// Attaches `location` to a missing-entry error of a catalog lookup; errors about a
+/// missing catalog or schema have no position in DuckDB.
+pub fn position_missing_entry(error: Error, location: Option<u64>) -> Error {
+    if error.kind() == rustdb_common::ErrorKind::Catalog {
+        error.with_position(location)
+    } else {
+        error
+    }
+}

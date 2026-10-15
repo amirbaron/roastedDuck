@@ -18,7 +18,7 @@ use rustdb_types::{DataChunk, LogicalType, Value};
 
 use crate::binder::CorrelatedColumns;
 use crate::column_binding::generate_column_bindings;
-use crate::expression::{BoundOrderByNode, BoundOrderModifier, Expression};
+use crate::expression::{BoundOrderByNode, BoundOrderModifier, Expression, ExpressionKind};
 use crate::generated::enums::{DistinctType, LogicalOperatorType};
 use crate::prepared::PreparedStatementData;
 use crate::{ColumnBinding, SubqueryType};
@@ -122,6 +122,31 @@ pub struct LogicalGet {
     /// The columns bound so far through the scan's table binding, which shares them
     /// (DuckDB's `TableBinding` refers to the scan's `column_ids`).
     pub shared_column_ids: Option<SharedColumnIds>,
+}
+
+/// Splits AND-ed predicates into separate expressions (DuckDB's
+/// `LogicalFilter::SplitPredicates`): further children go to the end of the list.
+pub fn split_predicates(expressions: &mut Vec<Expression>) -> bool {
+    let mut found = false;
+    let mut i = 0;
+    while i < expressions.len() {
+        if expressions[i].expression_type == ExpressionType::ConjunctionAnd
+            && let ExpressionKind::Conjunction(conjunction) = &mut expressions[i].kind
+            && !conjunction.children.is_empty()
+        {
+            found = true;
+            let mut children = std::mem::take(&mut conjunction.children).into_iter();
+            let first = children.next();
+            expressions.extend(children);
+            if let Some(first) = first {
+                expressions[i] = first;
+            }
+            // Check the replacement again: it may be an AND too.
+            continue;
+        }
+        i += 1;
+    }
+    found
 }
 
 /// The column ids of a scan, shared between its table binding and the scan.
@@ -445,12 +470,15 @@ impl LogicalOperator {
             .with_children(vec![child])
     }
 
-    /// `LOGICAL_FILTER` with one predicate over `child`.
+    /// `LOGICAL_FILTER` with one predicate over `child`, split at its ANDs (DuckDB's
+    /// `LogicalFilter(expression)`).
     pub fn filter(predicate: Expression, child: Self) -> Self {
+        let mut expressions = vec![predicate];
+        split_predicates(&mut expressions);
         Self::new(LogicalKind::Filter {
             projection_map: Vec::new(),
         })
-        .with_expressions(vec![predicate])
+        .with_expressions(expressions)
         .with_children(vec![child])
     }
 
