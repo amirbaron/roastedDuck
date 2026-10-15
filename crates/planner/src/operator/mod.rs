@@ -161,11 +161,11 @@ pub struct LogicalComparisonJoin {
     pub predicate: Option<Expression>,
 }
 
-/// A dependent (correlated) join to be decorrelated (DuckDB's `LogicalDependentJoin`).
+/// A dependent (correlated) join to be decorrelated (DuckDB's `LogicalDependentJoin`,
+/// which extends `LogicalComparisonJoin`: `join` holds the members it inherits).
 #[derive(Clone, Debug)]
 pub struct LogicalDependentJoin {
-    pub join_type: JoinType,
-    pub mark_index: u64,
+    pub join: LogicalComparisonJoin,
     pub join_condition: Option<Expression>,
     pub correlated_columns: CorrelatedColumns,
     pub subquery_type: SubqueryType,
@@ -408,7 +408,7 @@ impl LogicalOperator {
         match &self.kind {
             LogicalKind::ComparisonJoin(join) => Some(join.join_type),
             LogicalKind::AnyJoin { join_type, .. } => Some(*join_type),
-            LogicalKind::DependentJoin(join) => Some(join.join_type),
+            LogicalKind::DependentJoin(dependent) => Some(dependent.join.join_type),
             _ => None,
         }
     }
@@ -500,7 +500,12 @@ impl LogicalOperator {
                 &join.right_projection_map,
             ),
             LogicalKind::AnyJoin { join_type, .. } => self.join_bindings(*join_type, 0, &[], &[]),
-            LogicalKind::DependentJoin(join) => self.join_bindings(join.join_type, join.mark_index, &[], &[]),
+            LogicalKind::DependentJoin(dependent) => self.join_bindings(
+                dependent.join.join_type,
+                dependent.join.mark_index,
+                &dependent.join.left_projection_map,
+                &dependent.join.right_projection_map,
+            ),
             LogicalKind::CrossProduct | LogicalKind::PositionalJoin => {
                 let mut bindings = self.child_bindings(0);
                 bindings.extend(self.child_bindings(1));
@@ -659,9 +664,13 @@ impl LogicalOperator {
                 let join_type = *join_type;
                 self.join_types(join_type, &[], &[])
             }
-            LogicalKind::DependentJoin(join) => {
-                let join_type = join.join_type;
-                self.join_types(join_type, &[], &[])
+            LogicalKind::DependentJoin(dependent) => {
+                let (join_type, left, right) = (
+                    dependent.join.join_type,
+                    dependent.join.left_projection_map.clone(),
+                    dependent.join.right_projection_map.clone(),
+                );
+                self.join_types(join_type, &left, &right)
             }
             LogicalKind::CrossProduct | LogicalKind::PositionalJoin => {
                 let mut types = self.child_types(0);
@@ -744,9 +753,19 @@ impl LogicalOperator {
                 }
             }
             LogicalKind::AnyJoin { condition, .. } => callback(condition)?,
-            LogicalKind::DependentJoin(join) => {
-                if let Some(condition) = &mut join.join_condition {
-                    callback(condition)?;
+            LogicalKind::DependentJoin(dependent) => {
+                for target in &mut dependent.join.duplicate_eliminated_columns {
+                    callback(target)?;
+                }
+                for condition in &mut dependent.join.conditions {
+                    callback(&mut condition.left)?;
+                    callback(&mut condition.right)?;
+                }
+                for expression in &mut dependent.arbitrary_expressions {
+                    callback(expression)?;
+                }
+                for expression in &mut dependent.expression_children {
+                    callback(expression)?;
                 }
             }
             LogicalKind::Limit { limit, offset } => {

@@ -115,8 +115,9 @@ pub enum Outcome {
     NeedsTables,
     /// rustdb reports `Not implemented` (the message is the bucket).
     NotImplemented(String),
-    /// A function rustdb does not provide yet.
-    MissingFunction(String),
+    /// A function, overload, cast or system table rustdb does not provide yet (outside
+    /// the binder's scope).
+    Environment(String),
     Panic(String),
     /// A genuine difference.
     Mismatch(String),
@@ -129,7 +130,7 @@ impl Outcome {
             Self::PlanPass => "pass (plan)".to_owned(),
             Self::NeedsTables => "needs tables".to_owned(),
             Self::NotImplemented(what) => format!("not implemented: {what}"),
-            Self::MissingFunction(name) => format!("missing function: {name}"),
+            Self::Environment(what) => format!("environment: {what}"),
             Self::Panic(message) => format!("panic: {message}"),
             Self::Mismatch(kind) => format!("mismatch: {kind}"),
         }
@@ -141,7 +142,7 @@ impl Outcome {
             Self::PlanPass => "pass (plan)",
             Self::NeedsTables => "needs tables",
             Self::NotImplemented(_) => "not implemented",
-            Self::MissingFunction(_) => "missing function",
+            Self::Environment(_) => "environment",
             Self::Panic(_) => "panic",
             Self::Mismatch(_) => "mismatch",
         }
@@ -221,14 +222,7 @@ pub fn compare(oracle: &OracleResult, rust: &RustOutcome) -> Outcome {
         (_, Err(actual)) if actual.starts_with("Not implemented Error: ") => {
             Outcome::NotImplemented(bucket(&actual["Not implemented Error: ".len()..]))
         }
-        (_, Err(actual)) if missing_function(actual).is_some() => {
-            if same_missing_entry(&expected, actual) {
-                // Both miss the entry; the suggestions come from different catalogs.
-                Outcome::MissingFunction("(suggestions differ)".to_owned())
-            } else {
-                Outcome::MissingFunction(missing_function(actual).unwrap_or_default())
-            }
-        }
+        (_, Err(actual)) if let Some(gap) = environment_gap(&expected, actual) => Outcome::Environment(gap),
         (Err(expected), Err(actual)) => {
             let expected_kind = expected.split(':').next().unwrap_or("");
             let actual_kind = actual.split(':').next().unwrap_or("");
@@ -241,6 +235,42 @@ pub fn compare(oracle: &OracleResult, rust: &RustOutcome) -> Outcome {
         (Ok(_), Err(actual)) => Outcome::Mismatch(format!("rustdb error: {}", bucket(actual))),
         (Err(expected), Ok(_)) => Outcome::Mismatch(format!("duckdb error: {}", bucket(expected))),
     }
+}
+
+/// What rustdb lacks outside the binder when its error stems from a missing function,
+/// overload, cast or system table.
+fn environment_gap(expected: &Result<Table, String>, actual: &str) -> Option<String> {
+    let expected_line = expected.as_ref().err().map(|error| first_line(error));
+    let actual_line = first_line(actual);
+    if let Some(name) = missing_function(actual) {
+        return Some(if same_missing_entry(expected, actual) {
+            // Both miss the entry; the suggestions come from different catalogs.
+            "missing function (suggestions differ)".to_owned()
+        } else {
+            format!("missing function {name}")
+        });
+    }
+    if let Some(rest) = actual_line.split("Unimplemented type for cast (").nth(1)
+        && expected_line != Some(actual_line)
+    {
+        return Some(format!("missing cast {}", rest.trim_end_matches(')')));
+    }
+    if let Some(rest) = actual_line.split("No function matches the given name and argument types '").nth(1) {
+        let call = rest.split("'.").next().unwrap_or(rest);
+        let name = call.split('(').next().unwrap_or(call);
+        let duckdb_also = expected_line.is_some_and(|line| line.contains("No function matches"));
+        return Some(if duckdb_also {
+            format!("overloads of {name} differ")
+        } else {
+            format!("missing overload {name}")
+        });
+    }
+    if expected.is_ok()
+        && let Some(rest) = actual_line.strip_prefix("Catalog Error: Table with name ")
+    {
+        return Some(format!("missing system table {}", rest.trim_end_matches(" does not exist!")));
+    }
+    None
 }
 
 /// Whether DuckDB also failed to find the entry rustdb is missing (then the messages
