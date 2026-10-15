@@ -94,6 +94,9 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
     sets.push(string::substring::substring_grapheme_functions());
     sets.extend(generic::generic_functions());
     sets.extend(date::to_interval::to_interval_functions());
+    for (set, aliases) in date::date_part::named_part_functions() {
+        with_aliases(&mut sets, set, aliases);
+    }
     for (set, aliases) in math::numeric::numeric_functions() {
         with_aliases(&mut sets, set, aliases);
     }
