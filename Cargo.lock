@@ -430,6 +430,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustdb-bench"
+version = "1.5.6"
+dependencies = [
+ "clap",
+ "libc",
+ "regex",
+ "rustdb",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rustdb-buffer"
 version = "1.5.6"
 dependencies = [
