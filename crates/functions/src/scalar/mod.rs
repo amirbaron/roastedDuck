@@ -15,6 +15,7 @@ pub mod operator;
 pub mod random;
 pub mod string;
 pub mod structs;
+pub mod union;
 
 use rustdb_function::ScalarFunctionSet;
 
@@ -55,6 +56,9 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
         structs::struct_update_functions(),
         structs::struct_keys_functions(),
         structs::struct_values_functions(),
+        union::union_extract_functions(),
+        union::union_tag_functions(),
+        union::union_value_functions(),
         list::list_extract::array_extract_functions(),
         array::array_value::array_value_functions(),
         operator::bitwise::bitwise_and_functions(),
