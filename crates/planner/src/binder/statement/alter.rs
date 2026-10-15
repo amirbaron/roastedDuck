@@ -229,6 +229,56 @@ fn bind_alter_table(
     }
 }
 
+/// The generated columns whose expressions reference column `index`, directly or through
+/// other generated columns (`ColumnDependencyManager::GetDependents`).
+fn generated_dependents(table: &TableEntry, index: usize) -> Vec<usize> {
+    let name_of = |i: usize| table.columns[i].name.as_str();
+    let mut dependents: Vec<usize> = Vec::new();
+    let mut frontier = vec![index];
+    while let Some(current) = frontier.pop() {
+        let name = name_of(current).to_owned();
+        for (i, column) in table.columns.iter().enumerate() {
+            let Some(generated) = &column.generated else {
+                continue;
+            };
+            if dependents.contains(&i) || i == index {
+                continue;
+            }
+            let mut finder = FindColumnRef {
+                name: &name,
+                found: false,
+            };
+            let mut copy = generated.clone();
+            finder.visit_expression(&mut copy);
+            if finder.found {
+                dependents.push(i);
+                frontier.push(i);
+            }
+        }
+    }
+    dependents
+}
+
+/// Whether an expression references column `name`.
+struct FindColumnRef<'a> {
+    name: &'a str,
+    found: bool,
+}
+
+impl VisitorMut for FindColumnRef<'_> {
+    fn visit_expression(&mut self, expression: &mut ParsedExpression) {
+        if let ParsedExpressionKind::ColumnRef(column) = &expression.kind
+            && column
+                .column_names
+                .last()
+                .is_some_and(|last| last.eq_ignore_ascii_case(self.name))
+        {
+            self.found = true;
+        }
+        walk_expression(self, expression);
+    }
+}
+
 /// Renames column references to `old` in parsed expressions (`RenameExpression`).
 struct RenameColumnRefs<'a> {
     old: &'a str,
@@ -259,9 +309,15 @@ fn rename_column(table: &TableEntry, table_name: &str, old: &str, new: &str) -> 
         return Err(Error::catalog(format!("Column with name {new} already exists!")));
     }
     let old = table.columns[index].name.clone();
+    let dependents = generated_dependents(table, index);
     let mut columns = table.columns.clone();
     new.clone_into(&mut columns[index].name);
     let mut renamer = RenameColumnRefs { old: &old, new };
+    for dependent in dependents {
+        if let Some(generated) = &mut columns[dependent].generated {
+            renamer.visit_expression(generated);
+        }
+    }
     let mut constraints = Vec::with_capacity(table.constraints.len());
     for constraint in &table.constraints {
         let mut copy = constraint.clone();
@@ -305,7 +361,9 @@ fn add_column(
         )));
     }
     if column.category == TableColumnType::Generated {
-        return Err(Error::not_implemented("generated columns"));
+        return Err(Error::parser(
+            "Adding generated columns after table creation is not supported yet",
+        ));
     }
     let logical_type = bind_logical_type(&column.logical_type)?;
     let default_value = column.expression.as_deref().cloned();
@@ -344,10 +402,45 @@ fn remove_column(
         ));
     }
     let removed_name = &remove.removed_column;
-    let physical = table
-        .logical_to_physical(removed)
-        .ok_or_else(|| Error::not_implemented("dropping generated columns"))?;
-    let adjust = |index: usize| if index > removed { index - 1 } else { index };
+    let dependents = generated_dependents(table, removed);
+    if !dependents.is_empty() && !remove.cascade {
+        return Err(Error::catalog(
+            "Cannot drop column: column is a dependency of 1 or more generated column(s)",
+        ));
+    }
+    let mut removed_columns = dependents;
+    removed_columns.push(removed);
+    if removed_columns.len() >= table.columns.len() {
+        return Err(Error::catalog(
+            "Cannot drop column: table only has one column remaining!",
+        ));
+    }
+    let adjust = |index: usize| index - removed_columns.iter().filter(|&&r| r < index).count();
+    let Some(physical) = table.logical_to_physical(removed) else {
+        // A generated column has no storage: only the definition changes.
+        let mut constraints = Vec::with_capacity(table.constraints.len());
+        for constraint in &table.constraints {
+            let mut copy = constraint.clone();
+            match &mut copy {
+                Constraint::NotNull(not_null) => {
+                    not_null.index = LogicalIndex(adjust(not_null.index.0 as usize) as u64);
+                }
+                Constraint::Unique(unique) if unique.index.0 != u64::MAX => {
+                    unique.index = LogicalIndex(adjust(unique.index.0 as usize) as u64);
+                }
+                _ => {}
+            }
+            constraints.push(copy);
+        }
+        let columns = table
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !removed_columns.contains(i))
+            .map(|(_, column)| column.clone())
+            .collect();
+        return Ok(AlterAction::Definition(definition(columns, constraints)));
+    };
     let bound = bind_constraints(scope, table_name, table)?;
     let mut constraints = Vec::with_capacity(table.constraints.len());
     for (constraint, bound) in table.constraints.iter().zip(&bound) {
@@ -400,8 +493,13 @@ fn remove_column(
             (Constraint::Check(_), _) => return Err(Error::internal("unbound CHECK constraint")),
         }
     }
-    let mut columns = table.columns.clone();
-    columns.remove(removed);
+    let columns = table
+        .columns
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !removed_columns.contains(i))
+        .map(|(_, column)| column.clone())
+        .collect();
     Ok(AlterAction::RemoveColumn {
         definition: definition(columns, constraints),
         column: physical,
@@ -431,6 +529,17 @@ fn alter_column_type(
     let mut alter_binder = AlterBinder::new(&mut binder, table_name, &columns, target.clone());
     let bound = alter_binder.bind(&mut expression, true)?;
     let bound_columns = alter_binder.bound_columns.clone();
+    if table.columns[index].generated.is_some() {
+        return Err(Error::not_implemented(
+            "Changing types of generated columns is not supported yet",
+        ));
+    }
+    if let Some(&dependent) = generated_dependents(table, index).first() {
+        return Err(Error::binder(format!(
+            "This column is referenced by the generated column \"{}\", so its type can not be changed",
+            table.columns[dependent].name
+        )));
+    }
     let target = match target.take() {
         Some(target) => target,
         None => bound.return_type.clone(),

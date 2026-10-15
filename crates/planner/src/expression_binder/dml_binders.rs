@@ -48,6 +48,30 @@ impl<'a> CheckBinder<'a> {
         }
     }
 
+    /// A binder for the expressions of generated columns (the `ExpressionBinder` of
+    /// `Binder::BindGeneratedColumns`): column references expand like in CHECK
+    /// constraints, without a target type.
+    pub fn generated(
+        binder: &'a mut Binder,
+        outer: Option<&'a mut dyn Scope>,
+        table: impl Into<String>,
+        columns: &'a [CheckColumn],
+    ) -> Self {
+        Self {
+            base: BinderBase::new(binder, outer),
+            table: table.into(),
+            columns,
+            bound_columns: Vec::new(),
+        }
+    }
+
+    /// Casts the bound expression to `target` (DuckDB's `target_type`).
+    #[must_use]
+    pub fn with_target_type(mut self, target: LogicalType) -> Self {
+        self.base = self.base.with_target_type(target);
+        self
+    }
+
     /// `CheckBinder::BindCheckColumn`.
     fn bind_check_column(&mut self, expr: &mut ParsedExpression, depth: u64) -> Result<BindResult> {
         let ParsedExpressionKind::ColumnRef(column) = &expr.kind else {

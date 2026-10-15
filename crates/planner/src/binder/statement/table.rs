@@ -103,6 +103,22 @@ pub fn bind_constraints(
     for constraint in &table.constraints {
         bound.push(bind_constraint(scope, constraint, table_name, table, &columns)?);
     }
+    // The generated columns are verified against appended rows (`VerifyAppendConstraints`).
+    for column in &table.columns {
+        let Some(generated) = &column.generated else {
+            continue;
+        };
+        let mut expression = generated.clone();
+        let mut binder = scope.binder.child()?;
+        let mut generated_binder =
+            crate::expression_binder::CheckBinder::generated(&mut binder, None, table_name, &columns)
+                .with_target_type(column.logical_type.clone());
+        let bound_expression = generated_binder.bind(&mut expression, true)?;
+        bound.push(BoundConstraint::Generated {
+            expression: bound_expression,
+            text: format!("{} {} AS ({generated})", column.name, column.logical_type),
+        });
+    }
     Ok(bound)
 }
 

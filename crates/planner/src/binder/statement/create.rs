@@ -13,6 +13,7 @@ use super::super::expression::bind_logical_type;
 use super::super::query_node::bind_node;
 use super::super::{BindScope, BoundStatement, Scope};
 use super::table::{bind_default_value, bind_schema_or_catalog, table_of};
+use crate::expression_binder::{CheckColumn, ExpressionBinder};
 use crate::generated::enums::LogicalOperatorType;
 use crate::operator::{BoundCreateTableInfo, LogicalKind, LogicalOperator};
 use crate::prepared::StatementReturnType;
@@ -196,11 +197,11 @@ pub fn bind_create_table_info(
         query_plan = Some(bound.plan);
     } else {
         for column in &mut table.columns.columns {
-            column.logical_type = bind_logical_type(&column.logical_type)?;
-            if column.category == TableColumnType::Generated {
-                return Err(Error::not_implemented("generated columns"));
+            if column.logical_type.id() != rustdb_types::LogicalTypeId::Any {
+                column.logical_type = bind_logical_type(&column.logical_type)?;
             }
         }
+        bind_generated_columns(scope, &table.table, &mut table.columns.columns)?;
         bind_create_table_constraints(
             scope,
             &table.table,
@@ -208,10 +209,17 @@ pub fn bind_create_table_info(
             &mut table.columns.columns,
             &mut table.constraints,
         )?;
+        if any_constraint_references_generated_column(&table.columns.columns, &table.constraints) {
+            return Err(Error::binder(
+                "Constraints on generated columns are not supported yet",
+            ));
+        }
         bind_new_constraints(&table.table, &table.columns.columns, &mut table.constraints)?;
         // Validate the default values (`BindDefaultValues`).
         for column in &table.columns.columns {
-            bind_default_value(scope, column.expression.as_deref(), &column.logical_type)?;
+            if column.category != TableColumnType::Generated {
+                bind_default_value(scope, column.expression.as_deref(), &column.logical_type)?;
+            }
         }
     }
     if !table
@@ -232,6 +240,185 @@ pub fn bind_create_table_info(
         },
         query_plan,
     ))
+}
+
+/// The names of the columns `expression` references (`ColumnDependencyManager`'s
+/// dependency extraction).
+fn referenced_columns(expression: &rustdb_ast::ParsedExpression, out: &mut Vec<String>) {
+    struct Collect<'a>(&'a mut Vec<String>);
+    impl rustdb_ast::visit::VisitorMut for Collect<'_> {
+        fn visit_expression(&mut self, expression: &mut rustdb_ast::ParsedExpression) {
+            if let rustdb_ast::ParsedExpressionKind::ColumnRef(column) = &expression.kind
+                && let Some(name) = column.column_names.last()
+                && !self.0.iter().any(|seen| seen.eq_ignore_ascii_case(name))
+            {
+                self.0.push(name.clone());
+            }
+            rustdb_ast::visit::walk_expression(self, expression);
+        }
+    }
+    let mut copy = expression.clone();
+    rustdb_ast::visit::VisitorMut::visit_expression(&mut Collect(out), &mut copy);
+}
+
+/// Depth-first visit of the generated columns for their bind order; a column seen again
+/// while its dependencies are visited is a cycle.
+fn visit_generated(
+    column: usize,
+    columns: &[ColumnDefinition],
+    dependencies: &[Vec<usize>],
+    state: &mut [u8],
+    order: &mut Vec<usize>,
+) -> Result<()> {
+    match state[column] {
+        2 => return Ok(()),
+        1 => {
+            return Err(Error::invalid_input(
+                "Circular dependency encountered when resolving generated column expressions",
+            ));
+        }
+        _ => {}
+    }
+    state[column] = 1;
+    for &dependency in &dependencies[column] {
+        if columns[dependency].category == TableColumnType::Generated {
+            visit_generated(dependency, columns, dependencies, state, order)?;
+        }
+    }
+    state[column] = 2;
+    order.push(column);
+    Ok(())
+}
+
+/// `Binder::BindGeneratedColumns`: checks the columns generated expressions reference,
+/// rejects circular dependencies, and binds the expressions in dependency order; a
+/// generated column without a type takes its expression's type (wrapped in a cast).
+fn bind_generated_columns(
+    scope: &mut BindScope<'_>,
+    table: &str,
+    columns: &mut [ColumnDefinition],
+) -> Result<()> {
+    let count = columns.len();
+    let mut dependencies: Vec<Vec<usize>> = vec![Vec::new(); count];
+    for (index, column) in columns.iter().enumerate() {
+        if column.category != TableColumnType::Generated {
+            continue;
+        }
+        let Some(expression) = &column.expression else {
+            continue;
+        };
+        let mut names = Vec::new();
+        referenced_columns(expression, &mut names);
+        for name in names {
+            let Some(dependency) = columns.iter().position(|c| c.name.eq_ignore_ascii_case(&name)) else {
+                return Err(Error::binder(format!(
+                    "Column \"{name}\" referenced by generated column does not exist"
+                )));
+            };
+            dependencies[index].push(dependency);
+        }
+    }
+    // Order the generated columns so that every column comes after the generated
+    // columns it references (`ColumnDependencyManager::GetBindOrder`).
+    let mut state = vec![0u8; count];
+    let mut order = Vec::with_capacity(count);
+    for index in 0..count {
+        if columns[index].category == TableColumnType::Generated {
+            visit_generated(index, columns, &dependencies, &mut state, &mut order)?;
+        }
+    }
+    for index in order {
+        let check_columns = generated_check_columns(columns);
+        let Some(mut expression) = columns[index].expression.as_deref().cloned() else {
+            continue;
+        };
+        let bound = {
+            let mut binder = scope.binder.child()?;
+            let mut generated_binder =
+                crate::expression_binder::CheckBinder::generated(&mut binder, None, table, &check_columns);
+            generated_binder.bind(&mut expression, true)?
+        };
+        let column = &mut columns[index];
+        if column.logical_type.id() == rustdb_types::LogicalTypeId::Any {
+            // `ColumnDefinition::ChangeGeneratedExpressionType`.
+            column.logical_type = bound.return_type.clone();
+            if let Some(expression) = column.expression.take() {
+                column.expression = Some(Box::new(rustdb_ast::ParsedExpression::new(
+                    rustdb_ast::ExpressionType::OperatorCast,
+                    rustdb_ast::ParsedExpressionKind::Cast(rustdb_ast::CastExpression {
+                        child: expression,
+                        cast_type: bound.return_type.clone(),
+                        try_cast: false,
+                    }),
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The columns of a table being created, as generated expressions see them.
+fn generated_check_columns(columns: &[ColumnDefinition]) -> Vec<CheckColumn> {
+    let mut physical = 0;
+    columns
+        .iter()
+        .map(|column| {
+            let generated = column.category == TableColumnType::Generated;
+            let index = if generated {
+                None
+            } else {
+                physical += 1;
+                Some(physical - 1)
+            };
+            CheckColumn {
+                name: column.name.clone(),
+                logical_type: column.logical_type.clone(),
+                physical: index,
+                generated: if generated {
+                    column.expression.as_deref().cloned()
+                } else {
+                    None
+                },
+            }
+        })
+        .collect()
+}
+
+/// `AnyConstraintReferencesGeneratedColumn`.
+fn any_constraint_references_generated_column(
+    columns: &[ColumnDefinition],
+    constraints: &[Constraint],
+) -> bool {
+    let generated = |name: &str| {
+        columns
+            .iter()
+            .any(|c| c.category == TableColumnType::Generated && c.name.eq_ignore_ascii_case(name))
+    };
+    let generated_index = |index: u64| {
+        usize::try_from(index)
+            .ok()
+            .and_then(|index| columns.get(index))
+            .is_some_and(|c| c.category == TableColumnType::Generated)
+    };
+    if !columns.iter().any(|c| c.category == TableColumnType::Generated) {
+        return false;
+    }
+    constraints.iter().any(|constraint| match constraint {
+        Constraint::Check(check) => {
+            let mut names = Vec::new();
+            referenced_columns(&check.expression, &mut names);
+            names.iter().any(|name| generated(name))
+        }
+        Constraint::NotNull(not_null) => generated_index(not_null.index.0),
+        Constraint::Unique(unique) => {
+            if unique.index.0 == u64::MAX {
+                unique.columns.iter().any(|name| generated(name))
+            } else {
+                generated_index(unique.index.0)
+            }
+        }
+        Constraint::ForeignKey(fk) => fk.fk_columns.iter().any(|name| generated(name)),
+    })
 }
 
 /// The physical index of each column of a column list (`None` for generated columns).

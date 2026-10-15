@@ -503,6 +503,13 @@ pub enum BoundConstraint {
         is_primary_key: bool,
     },
     ForeignKey(BoundForeignKeyInfo),
+    /// The expression of a generated column, evaluated over appended rows so that values
+    /// it cannot produce fail at INSERT (`VerifyGeneratedExpressionSuccess`).
+    Generated {
+        expression: Expression,
+        /// `name TYPE AS (expression)`, for the error message.
+        text: String,
+    },
 }
 
 /// A bound `ALTER TABLE` / `ALTER VIEW`: the checks of DuckDB's

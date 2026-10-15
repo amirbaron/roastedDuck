@@ -25,13 +25,15 @@ struct CheckConstraint {
     text: String,
 }
 
-/// Evaluates the `CHECK` constraints of a table.
+/// Evaluates the generated column expressions and `CHECK` constraints of a table.
 #[derive(Debug)]
 struct CheckVerifier {
     table: String,
     /// The types of the table's physical columns.
     types: Vec<LogicalType>,
     checks: Vec<CheckConstraint>,
+    /// Generated column expressions with their `name TYPE AS (expression)` text.
+    generated: Vec<(Expression, String)>,
 }
 
 impl CheckVerifier {
@@ -61,6 +63,24 @@ impl CheckVerifier {
 
 impl ConstraintVerifier for CheckVerifier {
     fn verify_append(&self, chunk: &DataChunk) -> Result<()> {
+        // `VerifyGeneratedExpressionSuccess`: a value the expression cannot produce fails
+        // the INSERT rather than later SELECTs.
+        for (expression, text) in &self.generated {
+            let mut executor = ExpressionExecutor::new(vec![expression.clone()]);
+            let mut result = DataChunk::default();
+            if let Err(error) = executor.execute(chunk, &mut result) {
+                if error.kind() == ErrorKind::Internal {
+                    return Err(error);
+                }
+                return Err(Error::new(
+                    ErrorKind::Constraint,
+                    format!(
+                        "Incorrect value for generated column \"{text}\" : {}",
+                        error.raw_message()
+                    ),
+                ));
+            }
+        }
         for check in &self.checks {
             self.verify(check, chunk)?;
         }
@@ -114,6 +134,7 @@ pub fn table_constraints(
             .collect();
     }
     let mut checks = Vec::new();
+    let mut generated = Vec::new();
     for constraint in bound {
         match constraint {
             BoundConstraint::NotNull(column) => constraints.not_null.push(*column),
@@ -127,6 +148,9 @@ pub fn table_constraints(
                 text: text.clone(),
             }),
             BoundConstraint::Unique { .. } => {}
+            BoundConstraint::Generated { expression, text } => {
+                generated.push((expression.clone(), text.clone()));
+            }
             BoundConstraint::ForeignKey(fk) => {
                 let other = if fk.fk_type == ForeignKeyType::FkTypeSelfReferenceTable {
                     Some(Arc::clone(storage))
@@ -159,11 +183,12 @@ pub fn table_constraints(
             }
         }
     }
-    if !checks.is_empty() {
+    if !checks.is_empty() || !generated.is_empty() {
         constraints.verifier = Some(Arc::new(CheckVerifier {
             table: storage.name(),
             types: storage.types(),
             checks,
+            generated,
         }));
     }
     Ok(constraints)

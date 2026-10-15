@@ -412,7 +412,7 @@ fn create_struct_pack(binder: &Binder, names: &[String]) -> Result<Option<Parsed
     let children = binding
         .names
         .iter()
-        .map(|column| context.create_column_reference(&binding.alias, column))
+        .map(|column| context.create_column_reference_unexpanded(&binding.alias, column))
         .collect();
     Ok(Some(function_call("struct_pack", children)))
 }

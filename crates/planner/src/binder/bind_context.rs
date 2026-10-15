@@ -367,9 +367,58 @@ impl BindContext {
         Ok(ParsedExpression::column_ref([table, column]))
     }
 
-    /// A column reference qualified with `alias`, aliased to the column's own spelling if
-    /// it differs (DuckDB's `CreateColumnReference`).
+    /// A column reference qualified with `alias` (DuckDB's `CreateColumnReference` with
+    /// `EXPAND_GENERATED_COLUMNS`): a generated column of a table becomes its expression
+    /// over the table's columns, aliased to the column name.
     pub fn create_column_reference(&self, alias: &BindingAlias, column_name: &str) -> ParsedExpression {
+        if let Some(expanded) = self.expand_generated_column(alias, column_name) {
+            return expanded;
+        }
+        self.create_column_reference_unexpanded(alias, column_name)
+    }
+
+    /// `TableBinding::ExpandGeneratedColumn`: the generated expression with its column
+    /// references renamed to the binding's names and qualified with its alias.
+    fn expand_generated_column(&self, alias: &BindingAlias, column_name: &str) -> Option<ParsedExpression> {
+        let index = self.binding_with_column(alias, column_name).ok()?.ok()?;
+        let binding = &self.bindings[index];
+        let BindingKind::Table {
+            entry: Some(entry), ..
+        } = &binding.kind
+        else {
+            return None;
+        };
+        let rustdb_catalog::EntryKind::Table(table) = &entry.kind else {
+            return None;
+        };
+        let column_index = usize::try_from(binding.binding_index(column_name)?).ok()?;
+        let generated = table.columns.get(column_index)?.generated.as_ref()?;
+        let mut expression = generated.clone();
+        let mut prefix = Vec::new();
+        if !binding.alias.catalog.is_empty() {
+            prefix.push(binding.alias.catalog.clone());
+        }
+        if !binding.alias.schema.is_empty() {
+            prefix.push(binding.alias.schema.clone());
+        }
+        prefix.push(binding.alias.alias.clone());
+        let mut qualify = QualifyGenerated {
+            table,
+            names: &binding.names,
+            prefix: &prefix,
+        };
+        rustdb_ast::visit::VisitorMut::visit_expression(&mut qualify, &mut expression);
+        column_name.clone_into(&mut expression.alias);
+        Some(expression)
+    }
+
+    /// A column reference qualified with `alias`, aliased to the column's own spelling if
+    /// it differs (DuckDB's `CreateColumnReference` with `DO_NOT_EXPAND_GENERATED_COLUMNS`).
+    pub fn create_column_reference_unexpanded(
+        &self,
+        alias: &BindingAlias,
+        column_name: &str,
+    ) -> ParsedExpression {
         let mut names = Vec::new();
         if !alias.catalog.is_empty() {
             names.push(alias.catalog.clone());
@@ -471,7 +520,7 @@ impl BindContext {
                         handled_sets.push(set);
                         continue;
                     }
-                    let mut expr = self.create_column_reference(&binding.alias, column_name);
+                    let mut expr = self.create_column_reference_unexpanded(&binding.alias, column_name);
                     if handle_rename(&qualified, &mut expr) {
                         list.push(expr);
                     }
@@ -514,7 +563,7 @@ impl BindContext {
                     if check_exclusion(&qualified) {
                         continue;
                     }
-                    let mut expr = self.create_column_reference(&binding.alias, column_name);
+                    let mut expr = self.create_column_reference_unexpanded(&binding.alias, column_name);
                     if handle_rename(&qualified, &mut expr) {
                         list.push(expr);
                     }
@@ -722,4 +771,31 @@ pub fn alias_column_names(
     let mut result: Vec<String> = column_aliases.iter().map(|alias| add(alias)).collect();
     result.extend(names[column_aliases.len()..].iter().map(|name| add(name)));
     Ok(result)
+}
+
+/// Renames the column references of a generated expression to a binding's names and
+/// qualifies them with its alias (`ReplaceAliases` + `BakeTableName`).
+struct QualifyGenerated<'a> {
+    table: &'a rustdb_catalog::TableEntry,
+    names: &'a [String],
+    prefix: &'a [String],
+}
+
+impl rustdb_ast::visit::VisitorMut for QualifyGenerated<'_> {
+    fn visit_expression(&mut self, expression: &mut ParsedExpression) {
+        if let rustdb_ast::ParsedExpressionKind::ColumnRef(column) = &mut expression.kind
+            && let [name] = column.column_names.as_slice()
+        {
+            let renamed = self
+                .table
+                .column(name)
+                .and_then(|(index, _)| self.names.get(index))
+                .cloned()
+                .unwrap_or_else(|| name.clone());
+            let mut names = self.prefix.to_vec();
+            names.push(renamed);
+            column.column_names = names;
+        }
+        rustdb_ast::visit::walk_expression(self, expression);
+    }
 }
