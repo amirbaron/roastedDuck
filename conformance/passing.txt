@@ -1465,6 +1465,7 @@ test/sql/order/test_order_nested.test_slow
 test/sql/order/test_order_pragma.test
 test/sql/order/test_order_range_mapping.test
 test/sql/order/test_order_same_value.test_slow
+test/sql/order/test_order_variable_size_payload.test_slow
 test/sql/order/top_n_limit_zero.test
 test/sql/overflow/bigint_overflow.test
 test/sql/overflow/double_float_overflow.test
@@ -1572,9 +1573,11 @@ test/sql/pivot/pivot_in_subquery.test
 test/sql/pivot/pivot_operator_expression.test
 test/sql/pivot/pivot_prepare.test
 test/sql/pivot/pivot_star.test
+test/sql/pivot/pivot_storage.test
 test/sql/pivot/pivot_struct_aggregate.test
 test/sql/pivot/pivot_subquery.test
 test/sql/pivot/test_multi_pivot.test
+test/sql/pivot/test_pivot.test
 test/sql/pivot/test_pivot_duplicate_aggregates.test
 test/sql/pivot/test_unpivot.test
 test/sql/pivot/test_unpivot_stmt.test

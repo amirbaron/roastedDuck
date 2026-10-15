@@ -213,9 +213,9 @@ fn presorted<K: SortKey>(blocks: &mut KeyBlocks<K>) -> bool {
         let key = blocks.get(index);
         match key.compare(&previous) {
             Ordering::Less => ascending = false,
-            Ordering::Greater => descending = false,
-            // Reversing a non-increasing sequence still sorts it.
-            Ordering::Equal => {}
+            // Only strictly descending runs are reversed (like vergesort), so equal keys
+            // keep their input order.
+            Ordering::Greater | Ordering::Equal => descending = false,
         }
         if !ascending && !descending {
             return false;

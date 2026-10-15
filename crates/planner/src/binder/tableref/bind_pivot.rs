@@ -24,8 +24,8 @@ use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
 use super::{bind_subquery_ref, bind_table_ref, deduplicate_columns};
 use crate::binder::expression::expand_star_expression;
-use crate::binder::{BindScope, BoundStatement};
-use crate::expression_binder::{ConstantBinder, ExpressionBinder};
+use crate::binder::{BindScope, Binding, BoundStatement, DUMMY_NAME};
+use crate::expression_binder::{ConstantBinder, ExpressionBinder, parameter_not_resolved};
 use crate::operator::{BoundPivotInfo, LogicalKind, LogicalOperator};
 
 /// Binds a PIVOT or UNPIVOT table ref (DuckDB's `Binder::Bind(PivotRef &)`).
@@ -175,10 +175,21 @@ fn visit_expressions(
 
 /// Records the columns referenced by a pivot or aggregate expression
 /// (`ExtractPivotExpressions`).
-fn extract_pivot_columns(expression: &mut ParsedExpression, handled: &mut HashSet<String>) -> Result<()> {
+fn extract_pivot_columns(
+    expression: &mut ParsedExpression,
+    handled: &mut HashSet<String>,
+    macro_binding: Option<&Binding>,
+) -> Result<()> {
     visit_expressions(expression, |child| {
         if let ParsedExpressionKind::ColumnRef(column) = &child.kind {
             if column.column_names.len() > 1 {
+                let name = column.column_names.last().map_or("", String::as_str);
+                if column.column_names[0].contains(DUMMY_NAME)
+                    && macro_binding.is_some_and(|binding| binding.has_matching_binding(name))
+                {
+                    // A macro parameter: bind once the macro is called.
+                    return Err(parameter_not_resolved());
+                }
                 return Err(Error::binder("PIVOT expression cannot contain qualified columns")
                     .with_position(child.query_location));
             }
@@ -597,6 +608,7 @@ fn bind_pivot_node(
     all_columns: Vec<ParsedExpression>,
 ) -> Result<SelectNode> {
     let mut handled = HashSet::new();
+    let macro_binding = scope.binder.macro_binding.clone();
     for aggregate in &mut pivot.aggregates {
         if contains_subquery(aggregate) {
             return Err(Error::binder("Pivot expression cannot contain subqueries")
@@ -620,7 +632,7 @@ fn bind_pivot_node(
         }
         with_pivot_aggregate(scope, aggregate, |call| {
             // Errors here only concern qualified names, reported below on the copy.
-            let _ = extract_pivot_columns(call, &mut handled);
+            let _ = extract_pivot_columns(call, &mut handled, macro_binding.as_ref());
         })?;
     }
     for aggregate in &mut pivot.aggregates {
@@ -628,7 +640,7 @@ fn bind_pivot_node(
         let mut calls = Vec::new();
         with_pivot_aggregate(scope, &mut copy, |call| calls.push(call.clone()))?;
         for mut call in calls {
-            extract_pivot_columns(&mut call, &mut handled)?;
+            extract_pivot_columns(&mut call, &mut handled, macro_binding.as_ref())?;
         }
     }
 
@@ -659,7 +671,7 @@ fn bind_pivot_node(
         }
         total_pivots = total_pivots.saturating_mul(column.entries.len() as u64);
         for pivot_expression in &mut column.pivot_expressions {
-            extract_pivot_columns(pivot_expression, &mut handled)?;
+            extract_pivot_columns(pivot_expression, &mut handled, macro_binding.as_ref())?;
         }
         let mut seen = HashSet::new();
         for entry in &column.entries {
