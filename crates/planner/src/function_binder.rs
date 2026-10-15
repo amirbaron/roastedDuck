@@ -751,7 +751,8 @@ fn infer_template(
     }
     if source.id() == LogicalTypeId::Struct
         && actual.id() == LogicalTypeId::Struct
-        && let (Some(source_children), Some(actual_children)) = (source.struct_children(), actual.struct_children())
+        && let (Some(source_children), Some(actual_children)) =
+            (source.struct_children(), actual.struct_children())
         && source_children.iter().all(|(name, _)| name.is_empty())
     {
         for ((_, source_child), (_, actual_child)) in source_children.iter().zip(actual_children) {
@@ -777,9 +778,10 @@ fn substitute_template(ty: &LogicalType, bindings: &CaseInsensitiveMap<LogicalTy
             None => ty.clone(),
         },
         LogicalTypeId::Map => match ty.map_key_value() {
-            Some((key, value)) => {
-                LogicalType::map(substitute_template(key, bindings), substitute_template(value, bindings))
-            }
+            Some((key, value)) => LogicalType::map(
+                substitute_template(key, bindings),
+                substitute_template(value, bindings),
+            ),
             None => ty.clone(),
         },
         LogicalTypeId::Struct => match ty.struct_children() {

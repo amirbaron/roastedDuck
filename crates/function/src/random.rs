@@ -96,7 +96,10 @@ mod tests {
         let mut engine = RandomEngine::new(42);
         let first: Vec<u32> = (0..3).map(|_| engine.next_random_integer()).collect();
         let mut again = RandomEngine::new(42);
-        assert_eq!(first, (0..3).map(|_| again.next_random_integer()).collect::<Vec<_>>());
+        assert_eq!(
+            first,
+            (0..3).map(|_| again.next_random_integer()).collect::<Vec<_>>()
+        );
         let value = RandomEngine::new(7).next_random();
         assert!((0.0..1.0).contains(&value));
     }

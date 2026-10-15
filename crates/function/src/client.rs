@@ -46,7 +46,7 @@ impl FunctionClient {
 /// The wall clock in microseconds since the epoch (DuckDB's
 /// `Timestamp::GetCurrentTimestamp`).
 fn now_micros() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| i64::try_from(elapsed.as_micros()).unwrap_or(i64::MAX))
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |elapsed| {
+        i64::try_from(elapsed.as_micros()).unwrap_or(i64::MAX)
+    })
 }
