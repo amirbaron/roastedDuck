@@ -123,7 +123,7 @@ fn set_primary_binding(
 ) {
     match join_type {
         JoinType::Left | JoinType::Inner | JoinType::Semi | JoinType::Anti => {
-            set.primary_binding = left.clone()
+            set.primary_binding = left.clone();
         }
         JoinType::Right | JoinType::RightSemi | JoinType::RightAnti => set.primary_binding = right.clone(),
         _ => {}

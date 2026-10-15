@@ -349,8 +349,8 @@ pub fn bind_modifiers(
             BoundResultModifier::Limit { limit, offset } => {
                 for node in [limit, offset] {
                     if let Some(expr) = node.expression_mut() {
-                        if expr.expression_type == ExpressionType::ValueConstant {
-                            if let Some(finalized) = finalize_order_expression(
+                        if expr.expression_type == ExpressionType::ValueConstant
+                            && let Some(finalized) = finalize_order_expression(
                                 expr.clone(),
                                 table_index,
                                 names,
@@ -359,7 +359,6 @@ pub fn bind_modifiers(
                             )? {
                                 *expr = finalized;
                             }
-                        }
                         if let ExpressionKind::ColumnRef(column) = &expr.kind
                             && let Some(ty) = types.get(column.binding.column_index as usize)
                         {
@@ -372,15 +371,12 @@ pub fn bind_modifiers(
                 let mut order_by_all = false;
                 let mut finalized = Vec::with_capacity(order.orders.len());
                 for node in order.orders.drain(..) {
-                    match finalize_order_expression(node.expression, table_index, names, types, bind_state)? {
-                        Some(expression) => finalized.push(BoundOrderByNode { expression, ..node }),
-                        None => {
-                            order_by_all = true;
-                            finalized.push(BoundOrderByNode {
-                                expression: Expression::constant(Value::null(LogicalType::SQLNULL)),
-                                ..node
-                            });
-                        }
+                    if let Some(expression) = finalize_order_expression(node.expression, table_index, names, types, bind_state)? { finalized.push(BoundOrderByNode { expression, ..node }) } else {
+                        order_by_all = true;
+                        finalized.push(BoundOrderByNode {
+                            expression: Expression::constant(Value::null(LogicalType::SQLNULL)),
+                            ..node
+                        });
                     }
                 }
                 if order_by_all {

@@ -436,7 +436,7 @@ pub fn default_qualify_column_name<Q: ColumnQualifier + ?Sized>(
             Err(error) => Ok(create_struct_pack(binder, names)?.ok_or(error)),
         },
         [table, column] => match matching_binding(binder, &BindingAlias::new(table), column)? {
-            Ok(alias) => return Ok(Ok(binder.bind_context.create_column_reference(&alias, column))),
+            Ok(alias) => Ok(Ok(binder.bind_context.create_column_reference(&alias, column))),
             Err(error) => {
                 if let Ok(qualified) = qualify_single(qualifier, table, location)? {
                     return Ok(Ok(create_struct_extract(qualified, column)));

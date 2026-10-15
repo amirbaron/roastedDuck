@@ -507,17 +507,13 @@ impl<'a> SelectBinder<'a> {
             AggregateType::NonDistinct
         };
         let aggregate = binder.bind_aggregate_function(overload, children, filter, aggr_type, order_bys)?;
-        let index = match self
+        let index = if let Some(index) = self
             .node
             .aggregates
             .iter()
-            .position(|existing| existing.equals(&aggregate))
-        {
-            Some(index) => index,
-            None => {
-                self.node.aggregates.push(aggregate);
-                self.node.aggregates.len() - 1
-            }
+            .position(|existing| existing.equals(&aggregate)) { index } else {
+            self.node.aggregates.push(aggregate);
+            self.node.aggregates.len() - 1
         };
         let aggregate = &self.node.aggregates[index];
         let name = if alias.is_empty() {
@@ -1316,22 +1312,19 @@ impl SelectBinder<'_> {
                 alias.clone()
             };
             let level = self.unnest_level + list_unnests - current_depth - 1;
-            let (table_index, column_index) = match self.node.unnests.get_mut(&level) {
-                Some(node) => {
-                    node.expressions.push(result);
-                    (node.index, node.expressions.len() as u64 - 1)
-                }
-                None => {
-                    let index = self.base.binder.generate_table_index();
-                    self.node.unnests.insert(
-                        level,
-                        BoundUnnestNode {
-                            index,
-                            expressions: vec![result],
-                        },
-                    );
-                    (index, 0)
-                }
+            let (table_index, column_index) = if let Some(node) = self.node.unnests.get_mut(&level) {
+                node.expressions.push(result);
+                (node.index, node.expressions.len() as u64 - 1)
+            } else {
+                let index = self.base.binder.generate_table_index();
+                self.node.unnests.insert(
+                    level,
+                    BoundUnnestNode {
+                        index,
+                        expressions: vec![result],
+                    },
+                );
+                (index, 0)
             };
             unnest_expr = Expression::column_ref(
                 name,

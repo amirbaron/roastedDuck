@@ -34,10 +34,7 @@ impl<'a> BinderBase<'a> {
     /// The binder and the enclosing levels, reborrowed separately (to create a nested
     /// expression binder for the same level).
     pub fn split(&mut self) -> (&mut Binder, Option<&mut dyn Scope>) {
-        let outer = match &mut self.outer {
-            Some(outer) => Some(&mut **outer as &mut dyn Scope),
-            None => None,
-        };
+        let outer = self.outer.as_mut().map(|outer| &mut **outer as &mut dyn Scope);
         (&mut *self.binder, outer)
     }
 

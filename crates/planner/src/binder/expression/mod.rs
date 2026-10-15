@@ -510,8 +510,7 @@ fn bind_operator<B: ExpressionBinder + ?Sized>(
         }
         ExpressionType::ArrayExtract => {
             let base_type = crate::expression_binder::peek_bound(&operator.children[0])
-                .map(|e| e.return_type.id())
-                .unwrap_or(LogicalTypeId::Invalid);
+                .map_or(LogicalTypeId::Invalid, |e| e.return_type.id());
             Some(if base_type == LogicalTypeId::Map {
                 "map_extract_value"
             } else {

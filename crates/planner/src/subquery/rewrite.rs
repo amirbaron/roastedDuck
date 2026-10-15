@@ -130,7 +130,7 @@ pub fn rewrite_correlated_expressions(
         rebind_correlated_columns(&mut join.correlated_columns, base, map);
     }
     op.for_each_expression_mut(|expression| {
-        rewrite_expression(expression, base, map, lateral_depth, recursive)
+        rewrite_expression(expression, base, map, lateral_depth, recursive);
     });
 }
 
@@ -143,7 +143,7 @@ fn rewrite_recursive_expression(expression: &mut Expression, base: ColumnBinding
             return;
         }
         ExpressionKind::Subquery(subquery) => {
-            rewrite_correlated_recursive(&mut subquery.subquery.plan, base, map)
+            rewrite_correlated_recursive(&mut subquery.subquery.plan, base, map);
         }
         _ => {}
     }

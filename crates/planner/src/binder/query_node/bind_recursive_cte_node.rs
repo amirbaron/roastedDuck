@@ -85,7 +85,7 @@ pub fn bind_recursive_cte(scope: &mut BindScope<'_>, node: &mut QueryNode) -> Re
         };
         bind_node(&mut right_scope, &mut statement.right)?
     };
-    for column in left_binder.correlated_columns.clone().iter() {
+    for column in &left_binder.correlated_columns.clone() {
         right_binder.add_correlated_column(column.clone());
     }
     scope.binder.move_correlated_expressions(&mut left_binder);

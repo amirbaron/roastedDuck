@@ -106,16 +106,13 @@ impl BoundParameterMap {
     /// (DuckDB's `BindParameterExpression`).
     pub fn bind_parameter_expression(&mut self, identifier: &str, alias: &str) -> Expression {
         let identifier_type = self.return_type(identifier);
-        let data = match self.parameters.get(identifier) {
-            Some(data) => Arc::clone(data),
-            None => {
-                let data = Arc::new(Mutex::new(BoundParameterData {
-                    value: Value::default(),
-                    return_type: identifier_type.clone(),
-                }));
-                self.parameters.insert(identifier, Arc::clone(&data));
-                data
-            }
+        let data = if let Some(data) = self.parameters.get(identifier) { Arc::clone(data) } else {
+            let data = Arc::new(Mutex::new(BoundParameterData {
+                value: Value::default(),
+                return_type: identifier_type.clone(),
+            }));
+            self.parameters.insert(identifier, Arc::clone(&data));
+            data
         };
         let param_type = data
             .lock()

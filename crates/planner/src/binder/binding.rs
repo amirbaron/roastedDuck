@@ -228,25 +228,22 @@ impl Binding {
                 .map(|(_, _, ty)| ty.clone()),
             _ => None,
         };
-        let (logical_type, name) = match virtual_type {
-            Some(ty) => (
-                ty,
-                if alias.is_empty() {
-                    column_name.to_owned()
-                } else {
-                    alias.to_owned()
-                },
-            ),
-            None => {
-                let index = column_index as usize;
-                let ty = self.types.get(index).cloned().unwrap_or_default();
-                let name = if alias.is_empty() {
-                    self.names.get(index).cloned().unwrap_or_default()
-                } else {
-                    alias.to_owned()
-                };
-                (ty, name)
-            }
+        let (logical_type, name) = if let Some(ty) = virtual_type { (
+            ty,
+            if alias.is_empty() {
+                column_name.to_owned()
+            } else {
+                alias.to_owned()
+            },
+        ) } else {
+            let index = column_index as usize;
+            let ty = self.types.get(index).cloned().unwrap_or_default();
+            let name = if alias.is_empty() {
+                self.names.get(index).cloned().unwrap_or_default()
+            } else {
+                alias.to_owned()
+            };
+            (ty, name)
         };
         let binding = match &mut self.kind {
             BindingKind::Table { bound_column_ids, .. } => {

@@ -1,6 +1,6 @@
 //! Flattening of dependent joins (DuckDB's `flatten_dependent_join.cpp`, after
 //! "Unnesting Arbitrary Subqueries"): the duplicate-eliminated correlated columns of the
-//! left side are pushed into the right side through DELIM_GET scans until no correlated
+//! left side are pushed into the right side through `DELIM_GET` scans until no correlated
 //! expressions remain, and the dependent join becomes a DELIM join.
 
 use std::collections::HashMap;
@@ -178,7 +178,7 @@ fn first_aggregate(binder: &Binder, child: Expression) -> Result<Expression> {
         return Err(Error::internal("first is not an aggregate function"));
     };
     let function_binder = FunctionBinder::new(context);
-    let function = function_binder.bind_aggregate_overload(functions, &[child.return_type.clone()])??;
+    let function = function_binder.bind_aggregate_overload(functions, std::slice::from_ref(&child.return_type))??;
     function_binder.bind_aggregate_function(function, vec![child], None, AggregateType::NonDistinct, None)
 }
 
