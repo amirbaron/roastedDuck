@@ -564,7 +564,7 @@ fn decode_value(
         }
         PhysicalType::Array => {
             let array_size = match target.logical_type().info() {
-                Some(TypeInfo::Array { size, .. }) => *size as usize,
+                Some(TypeInfo::Array(rustdb_types::ArrayTypeInfo { size, .. })) => *size as usize,
                 _ => return Err(Error::internal("ARRAY type without size")),
             };
             let delimiter = if flip { !LIST_DELIMITER } else { LIST_DELIMITER };
@@ -770,12 +770,12 @@ mod tests {
         // create_sort_key({'a': 1, 'b': NULL::VARCHAR}, 'DESC NULLS LAST')
         let ty = LogicalType::with_info(
             LogicalTypeId::Struct,
-            TypeInfo::Struct {
-                children: vec![
+            TypeInfo::Struct(rustdb_types::StructTypeInfo {
+                child_types: vec![
                     ("a".into(), LogicalType::INTEGER),
                     ("b".into(), LogicalType::VARCHAR),
                 ],
-            },
+            }),
         );
         let mut row = Vector::flat(ty, 1);
         {

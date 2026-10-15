@@ -97,7 +97,9 @@ fn format_kind(vector: &Vector) -> Result<FormatKind> {
         PhysicalType::Struct => FormatKind::Struct,
         PhysicalType::List => FormatKind::List,
         PhysicalType::Array => match ty.info() {
-            Some(TypeInfo::Array { size, .. }) => FormatKind::Array(u64::from(*size)),
+            Some(TypeInfo::Array(rustdb_types::ArrayTypeInfo { size, .. })) => {
+                FormatKind::Array(u64::from(*size))
+            }
             _ => return Err(Error::internal(format!("ARRAY type without size: {ty}"))),
         },
         PhysicalType::Bit | PhysicalType::Unknown | PhysicalType::Invalid => {
@@ -292,9 +294,9 @@ mod tests {
     fn struct_children_follow_a_dictionary_parent() {
         let ty = LogicalType::with_info(
             LogicalTypeId::Struct,
-            TypeInfo::Struct {
-                children: vec![("a".into(), LogicalType::INTEGER)],
-            },
+            TypeInfo::Struct(rustdb_types::StructTypeInfo {
+                child_types: vec![("a".into(), LogicalType::INTEGER)],
+            }),
         );
         let mut base = Vector::flat(ty, 3);
         base.struct_children_mut().unwrap()[0]

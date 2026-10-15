@@ -45,39 +45,50 @@ pub enum TestValue {
 pub fn struct_type(fields: &[(&str, LogicalType)]) -> LogicalType {
     LogicalType::with_info(
         LogicalTypeId::Struct,
-        TypeInfo::Struct {
-            children: fields
+        TypeInfo::Struct(rustdb_types::StructTypeInfo {
+            child_types: fields
                 .iter()
                 .map(|(name, ty)| ((*name).to_owned(), ty.clone()))
                 .collect(),
-        },
+        }),
     )
 }
 
 pub fn array_type(child: LogicalType, size: u32) -> LogicalType {
-    LogicalType::with_info(LogicalTypeId::Array, TypeInfo::Array { child, size })
+    LogicalType::with_info(
+        LogicalTypeId::Array,
+        TypeInfo::Array(rustdb_types::ArrayTypeInfo {
+            child_type: child,
+            size,
+        }),
+    )
 }
 
 pub fn map_type(key: LogicalType, value: LogicalType) -> LogicalType {
     LogicalType::with_info(
         LogicalTypeId::Map,
-        TypeInfo::List {
-            child: struct_type(&[("key", key), ("value", value)]),
-        },
+        TypeInfo::List(rustdb_types::ListTypeInfo {
+            child_type: struct_type(&[("key", key), ("value", value)]),
+        }),
     )
 }
 
 fn struct_fields(ty: &LogicalType) -> Vec<LogicalType> {
     match ty.info() {
-        Some(TypeInfo::Struct { children }) => children.iter().map(|(_, ty)| ty.clone()).collect(),
+        Some(TypeInfo::Struct(rustdb_types::StructTypeInfo {
+            child_types: children,
+        })) => children.iter().map(|(_, ty)| ty.clone()).collect(),
         _ => panic!("not a struct: {ty}"),
     }
 }
 
 fn element_type(ty: &LogicalType) -> (LogicalType, Option<usize>) {
     match ty.info() {
-        Some(TypeInfo::List { child }) => (child.clone(), None),
-        Some(TypeInfo::Array { child, size }) => (child.clone(), Some(*size as usize)),
+        Some(TypeInfo::List(rustdb_types::ListTypeInfo { child_type: child })) => (child.clone(), None),
+        Some(TypeInfo::Array(rustdb_types::ArrayTypeInfo {
+            child_type: child,
+            size,
+        })) => (child.clone(), Some(*size as usize)),
         _ => panic!("not a list/array: {ty}"),
     }
 }
@@ -150,7 +161,7 @@ fn write_value(vector: &mut Vector, row: usize, value: &TestValue) {
         (P::List, TestValue::List(elements)) => {
             let offset = vector.list_child().unwrap().1;
             let child = vector.list_child_mut().unwrap();
-            child.reserve(offset + elements.len());
+            child.resize(offset + elements.len());
             for (i, element) in elements.iter().enumerate() {
                 write_value(child, offset + i, element);
             }

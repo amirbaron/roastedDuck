@@ -284,7 +284,7 @@ mod tests {
 
         let mut list = Vector::flat(LogicalType::list(LogicalType::INTEGER), 1);
         let child = list.list_child_mut().unwrap();
-        child.reserve(2);
+        child.resize(2);
         child.values_mut::<i32>()[..2].copy_from_slice(&[1, 2]);
         list.set_list_size(2);
         list.values_mut::<ListEntry>()[0] = ListEntry { offset: 0, length: 2 };
@@ -292,12 +292,12 @@ mod tests {
 
         let struct_type = LogicalType::with_info(
             LogicalTypeId::Struct,
-            TypeInfo::Struct {
-                children: vec![
+            TypeInfo::Struct(rustdb_types::StructTypeInfo {
+                child_types: vec![
                     ("a".into(), LogicalType::INTEGER),
                     ("b".into(), LogicalType::VARCHAR),
                 ],
-            },
+            }),
         );
         let mut row = Vector::flat(struct_type, 1);
         let children = row.struct_children_mut().unwrap();

@@ -390,6 +390,14 @@ impl Vector {
         unsafe { std::ptr::copy_nonoverlapping(storage.data.as_ptr(), data.as_mut_ptr(), used) };
         storage.data = Arc::new(data);
         storage.capacity = capacity;
+        // New rows are valid: extend an existing NULL mask with all-valid words.
+        if let Some(words) = storage.validity.words()
+            && words.len() < capacity.div_ceil(64)
+        {
+            let mut grown = words.to_vec();
+            grown.resize(capacity.div_ceil(64), u64::MAX);
+            storage.validity = ValidityMask::from_words(grown);
+        }
         match &mut storage.aux {
             Aux::Struct(children) => children.iter_mut().for_each(|child| child.resize(capacity)),
             Aux::Array(child) => child.resize(capacity * array_size),

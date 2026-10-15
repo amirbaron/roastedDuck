@@ -10,8 +10,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use super::{Aux, Repr, StringHeap, Vector};
-use crate::buffer::RawBuffer;
-use crate::{TypeInfo, ValidityMask};
+use crate::TypeInfo;
 
 /// Shared ownership of memory that `StringT` values of a vector point into.
 #[derive(Clone)]
@@ -49,63 +48,16 @@ impl Vector {
         unsafe { std::slice::from_raw_parts_mut(buffer.as_mut_ptr(), len) }
     }
 
-    /// Grows the vector so it holds at least `capacity` rows, keeping existing values.
-    ///
-    /// STRUCT children grow with the vector and ARRAY children to `capacity * size`
-    /// elements. The child of a LIST is sized independently (see
-    /// [`Vector::list_child_mut`]).
-    pub fn reserve(&mut self, capacity: usize) {
-        let width = self.ty.physical_type().size();
-        let array_size = match self.ty.info() {
-            Some(TypeInfo::Array { size, .. }) => Some(*size as usize),
-            _ => None,
-        };
-        let flat = self.storage_mut();
-        if width > 0 && flat.data.len() < capacity * width {
-            let mut grown = RawBuffer::zeroed(capacity * width);
-            let old = &flat.data;
-            // SAFETY: `grown` is larger than `old`; both are valid for their lengths and
-            // distinct allocations.
-            unsafe { std::ptr::copy_nonoverlapping(old.as_ptr(), grown.as_mut_ptr(), old.len()) };
-            flat.data = Arc::new(grown);
-        }
-        // New rows are valid: extend an existing NULL mask with all-valid words.
-        if let Some(words) = flat.validity.words()
-            && words.len() < capacity.div_ceil(64)
-        {
-            let mut grown = words.to_vec();
-            grown.resize(capacity.div_ceil(64), u64::MAX);
-            flat.validity = ValidityMask::from_words(grown);
-        }
-        match &mut flat.aux {
-            Aux::Struct(children) => {
-                for child in children {
-                    child.reserve(capacity);
-                }
-            }
-            Aux::Array(child) => child.reserve(capacity * array_size.unwrap_or(0)),
-            _ => {}
-        }
-    }
-
     /// Rows the vector can hold. Unlike [`Vector::capacity`] this also covers STRUCT and
     /// ARRAY vectors, whose own data buffer is empty, through their children.
     pub fn row_capacity(&self) -> usize {
         match &self.storage().aux {
             Aux::Struct(children) => children.iter().map(Vector::row_capacity).min().unwrap_or(0),
             Aux::Array(child) => match self.ty.info() {
-                Some(TypeInfo::Array { size, .. }) if *size > 0 => child.row_capacity() / *size as usize,
+                Some(TypeInfo::Array(info)) if info.size > 0 => child.row_capacity() / info.size as usize,
                 _ => 0,
             },
             _ => self.capacity(),
-        }
-    }
-
-    /// The child vector of a LIST/MAP vector, for writing list elements in place.
-    pub fn list_child_mut(&mut self) -> Option<&mut Vector> {
-        match &mut self.storage_mut().aux {
-            Aux::List { child, .. } => Some(child),
-            _ => None,
         }
     }
 
@@ -113,22 +65,6 @@ impl Vector {
     pub fn set_list_size(&mut self, size: usize) {
         if let Aux::List { size: used, .. } = &mut self.storage_mut().aux {
             *used = size;
-        }
-    }
-
-    /// The field vectors of a STRUCT vector, for writing in place.
-    pub fn struct_children_mut(&mut self) -> Option<&mut [Vector]> {
-        match &mut self.storage_mut().aux {
-            Aux::Struct(children) => Some(children),
-            _ => None,
-        }
-    }
-
-    /// The element vector of an ARRAY vector, for writing in place.
-    pub fn array_child_mut(&mut self) -> Option<&mut Vector> {
-        match &mut self.storage_mut().aux {
-            Aux::Array(child) => Some(child),
-            _ => None,
         }
     }
 
@@ -166,16 +102,11 @@ mod tests {
     use crate::{ListEntry, LogicalType, StringT, Value};
 
     #[test]
-    fn reserve_keeps_values_and_grows_struct_children() {
-        let ty = LogicalType::with_info(
-            crate::LogicalTypeId::Struct,
-            TypeInfo::Struct {
-                children: vec![("a".into(), LogicalType::INTEGER)],
-            },
-        );
+    fn resize_keeps_values_and_grows_struct_children() {
+        let ty = LogicalType::struct_type(vec![("a".into(), LogicalType::INTEGER)]);
         let mut vector = Vector::flat(ty, 2);
         vector.struct_children_mut().unwrap()[0].values_mut::<i32>()[1] = 7;
-        vector.reserve(100);
+        vector.resize(100);
         let child = &vector.struct_children().unwrap()[0];
         assert!(child.capacity() >= 100);
         assert_eq!(child.values::<i32>()[1], 7);
@@ -185,7 +116,7 @@ mod tests {
     fn list_children_are_writable_in_place() {
         let mut list = Vector::flat(LogicalType::list(LogicalType::BIGINT), 2);
         let child = list.list_child_mut().unwrap();
-        child.reserve(3);
+        child.resize(3);
         child.values_mut::<i64>()[..3].copy_from_slice(&[1, 2, 3]);
         list.set_list_size(3);
         list.values_mut::<ListEntry>()[0] = ListEntry { offset: 0, length: 2 };

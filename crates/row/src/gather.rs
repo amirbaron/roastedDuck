@@ -112,7 +112,7 @@ pub(crate) unsafe fn gather_column(
             }
             PhysicalType::Array => {
                 let size = match target.logical_type().info() {
-                    Some(TypeInfo::Array { size, .. }) => *size as usize,
+                    Some(TypeInfo::Array(rustdb_types::ArrayTypeInfo { size, .. })) => *size as usize,
                     _ => return Err(Error::internal("ARRAY type without size")),
                 };
                 for i in 0..count {

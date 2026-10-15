@@ -91,7 +91,12 @@ fn normalize_key(ty: &LogicalType, value: &mut TestValue) {
         }
         (_, TestValue::List(values)) => {
             let child = match ty.info() {
-                Some(TypeInfo::List { child } | TypeInfo::Array { child, .. }) => child.clone(),
+                Some(
+                    TypeInfo::List(rustdb_types::ListTypeInfo { child_type: child })
+                    | TypeInfo::Array(rustdb_types::ArrayTypeInfo {
+                        child_type: child, ..
+                    }),
+                ) => child.clone(),
                 _ => return,
             };
             for value in values.iter_mut() {
@@ -99,7 +104,10 @@ fn normalize_key(ty: &LogicalType, value: &mut TestValue) {
             }
         }
         (_, TestValue::Struct(values)) => {
-            if let Some(TypeInfo::Struct { children }) = ty.info() {
+            if let Some(TypeInfo::Struct(rustdb_types::StructTypeInfo {
+                child_types: children,
+            })) = ty.info()
+            {
                 for ((_, child), value) in children.iter().zip(values) {
                     normalize_key(child, value);
                 }

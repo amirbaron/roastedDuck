@@ -99,7 +99,10 @@ impl MatchFunction {
             PhysicalType::Struct
                 if matches!(predicate, MatchPredicate::Equal | MatchPredicate::NotDistinctFrom) =>
             {
-                let Some(rustdb_types::TypeInfo::Struct { children }) = ty.info() else {
+                let Some(rustdb_types::TypeInfo::Struct(rustdb_types::StructTypeInfo {
+                    child_types: children,
+                })) = ty.info()
+                else {
                     return Err(Error::internal("STRUCT type without children"));
                 };
                 Self::StructEquality {

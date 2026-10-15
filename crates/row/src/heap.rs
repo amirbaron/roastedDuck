@@ -169,7 +169,7 @@ impl Targets<'_> {
 pub(crate) fn ensure_capacity(vector: &mut Vector, rows: usize) {
     let capacity = vector.row_capacity();
     if rows > capacity {
-        vector.reserve(rows.max(capacity * 2));
+        vector.resize(rows.max(capacity * 2));
     }
 }
 
@@ -261,7 +261,7 @@ pub(crate) unsafe fn read_elements(
             PhysicalType::Array => {
                 *heap = heap.add(n * size_of::<u64>());
                 let size = match target.logical_type().info() {
-                    Some(TypeInfo::Array { size, .. }) => *size as usize,
+                    Some(TypeInfo::Array(rustdb_types::ArrayTypeInfo { size, .. })) => *size as usize,
                     _ => return Err(type_error(target)),
                 };
                 let mut rows = Vec::new();

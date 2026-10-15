@@ -181,7 +181,10 @@ impl TupleDataLayout {
         for (col, ty) in layout.types.iter().enumerate() {
             match ty.physical_type() {
                 PhysicalType::Struct => {
-                    let Some(TypeInfo::Struct { children }) = ty.info() else {
+                    let Some(TypeInfo::Struct(rustdb_types::StructTypeInfo {
+                        child_types: children,
+                    })) = ty.info()
+                    else {
                         return Err(Error::internal(format!("STRUCT type without children: {ty}")));
                     };
                     let child_types = children.iter().map(|(_, child)| child.clone()).collect();
@@ -443,12 +446,12 @@ mod tests {
     fn struct_of(children: &[(&str, LogicalType)]) -> LogicalType {
         LogicalType::with_info(
             LogicalTypeId::Struct,
-            TypeInfo::Struct {
-                children: children
+            TypeInfo::Struct(rustdb_types::StructTypeInfo {
+                child_types: children
                     .iter()
                     .map(|(n, t)| ((*n).to_owned(), t.clone()))
                     .collect(),
-            },
+            }),
         )
     }
 
