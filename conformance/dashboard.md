@@ -1,6 +1,6 @@
 # rustdb conformance dashboard
 
-Rust passing: **2613 / 4870 files** (2560 pass on both engines). "Passing" means the Rust run passed, or both engines skipped the file for the same reason.
+Rust passing: **2643 / 4870 files** (2590 pass on both engines). "Passing" means the Rust run passed, or both engines skipped the file for the same reason.
 
 | group | files | C++ pass | C++ skip | C++ fail | Rust passing | both pass | Rust fail | Rust crash/timeout | Rust skip (C++ pass) | Rust % |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -77,7 +77,7 @@ Rust passing: **2613 / 4870 files** (2560 pass on both engines). "Passing" means
 | test/sql/parser | 29 | 29 | 0 | 0 | 22 | 22 | 7 | 0 | 0 | 75.9% |
 | test/sql/peg_parser | 61 | 61 | 0 | 0 | 1 | 1 | 0 | 0 | 60 | 1.6% |
 | test/sql/pg_catalog | 18 | 18 | 0 | 0 | 8 | 8 | 10 | 0 | 0 | 44.4% |
-| test/sql/pivot | 35 | 35 | 0 | 0 | 1 | 1 | 33 | 0 | 1 | 2.9% |
+| test/sql/pivot | 35 | 35 | 0 | 0 | 31 | 31 | 3 | 0 | 1 | 88.6% |
 | test/sql/pragma | 49 | 48 | 1 | 0 | 8 | 8 | 18 | 0 | 22 | 16.3% |
 | test/sql/prepared | 36 | 36 | 0 | 0 | 31 | 31 | 5 | 0 | 0 | 86.1% |
 | test/sql/progress_bar | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0.0% |
@@ -108,4 +108,4 @@ Rust passing: **2613 / 4870 files** (2560 pass on both engines). "Passing" means
 | test/sqlite | 4 | 4 | 0 | 0 | 3 | 3 | 0 | 1 | 0 | 75.0% |
 | test/sqlite/tags | 4 | 0 | 4 | 0 | 4 | 0 | 0 | 0 | 0 | 100.0% |
 | test/sqlserver | 2 | 2 | 0 | 0 | 1 | 1 | 1 | 0 | 0 | 50.0% |
-| **total** | 4870 | 4794 | 75 | 1 | 2613 | 2560 | 1442 | 18 | 778 | 53.7% |
+| **total** | 4870 | 4794 | 75 | 1 | 2643 | 2590 | 1412 | 18 | 778 | 54.3% |
