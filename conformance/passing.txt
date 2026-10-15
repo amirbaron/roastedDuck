@@ -104,6 +104,7 @@ test/sql/function/string/parse_path_windows.test
 test/sql/generated_columns/stored/basic.test
 test/sql/index/art/constraints/test_art_tx_same_row_id.test
 test/sql/index/art/storage/test_upsert_reclaim_space.test_slow
+test/sql/join/inner/test_varchar_join.test
 test/sql/json/test_json_bool.test
 test/sql/logging/http_log_timing.test
 test/sql/order/order_overflow.test
@@ -135,6 +136,7 @@ test/sql/sample/table_samples/test_sample_is_destroyed_on_updates.test
 test/sql/sample/table_samples/test_sample_types.test
 test/sql/sample/table_samples/test_table_sample_errors.test
 test/sql/secrets/secret_compatibility_http.test
+test/sql/select/test_positional_reference.test
 test/sql/setops/ambiguous_order_by.test
 test/sql/setops/test_union_error.test
 test/sql/setops/test_union_type_cast.test
@@ -155,8 +157,10 @@ test/sql/storage/types/variant/extension_types.test
 test/sql/storage/vacuum/vacuum_rebuild_indexes.test_slow
 test/sql/storage/vacuum/vacuum_rebuild_indexes_attach_overrides_global.test_slow
 test/sql/storage/vacuum/vacuum_rebuild_indexes_threshold.test_slow
+test/sql/subquery/any_all/test_scalar_any_all.test
 test/sql/subquery/scalar/test_correlated_side_effects.test
 test/sql/subquery/table/test_subquery_union.test
+test/sql/subquery/table/test_unnamed_subquery.test
 test/sql/table_function/range_function_different_iterators.test
 test/sql/tpch/tpch_power_test.test_slow
 test/sql/transactions/test_transaction_functionality.test
