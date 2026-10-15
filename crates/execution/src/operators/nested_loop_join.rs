@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_ast::JoinType;
+use rustdb_ast::{ExpressionType, JoinType};
 use rustdb_common::{Error, Result};
 use rustdb_planner::Expression;
 use rustdb_planner::operator::JoinCondition;
@@ -150,11 +150,23 @@ pub struct NestedLoopJoinSinkLocal {
     keys: ExpressionExecutor,
 }
 
-fn chunk_has_nulls(chunk: &DataChunk) -> bool {
-    chunk
-        .columns()
-        .iter()
-        .any(|column| (0..chunk.len()).any(|row| column.is_null(row)))
+/// Whether a key of a NULL-rejecting condition (not `[NOT] DISTINCT FROM`) is NULL in
+/// some row; only those keys make MARK join results NULL (DuckDB's
+/// `null_values_are_equal`).
+fn has_rejecting_nulls(conditions: &[JoinCondition], keys: &DataChunk, row: Option<usize>) -> bool {
+    conditions.iter().enumerate().any(|(index, condition)| {
+        if matches!(
+            condition.comparison,
+            ExpressionType::CompareDistinctFrom | ExpressionType::CompareNotDistinctFrom
+        ) {
+            return false;
+        }
+        let column = keys.column(index);
+        match row {
+            Some(row) => column.is_null(row),
+            None => (0..keys.len()).any(|row| column.is_null(row)),
+        }
+    })
 }
 
 impl Sink for PhysicalNestedLoopJoin {
@@ -186,7 +198,7 @@ impl Sink for PhysicalNestedLoopJoin {
         local.keys.execute(chunk, &mut keys)?;
         if self.join_type == JoinType::Mark
             && !global.has_null.load(Ordering::Relaxed)
-            && chunk_has_nulls(&keys)
+            && has_rejecting_nulls(&self.conditions, &keys, None)
         {
             global.has_null.store(true, Ordering::Relaxed);
         }
@@ -407,8 +419,7 @@ impl PhysicalNestedLoopJoin {
                 let has_null = global.has_null.load(Ordering::Relaxed);
                 let mut mark = Vector::flat(LogicalType::BOOLEAN, count);
                 for (row, &matched) in found.iter().enumerate() {
-                    let left_null =
-                        (0..state.left_keys.column_count()).any(|c| state.left_keys.column(c).is_null(row));
+                    let left_null = has_rejecting_nulls(&self.conditions, &state.left_keys, Some(row));
                     let value = if left_null || (!matched && has_null) {
                         Value::null(LogicalType::BOOLEAN)
                     } else {

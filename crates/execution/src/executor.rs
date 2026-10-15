@@ -88,7 +88,22 @@ impl Executor {
             // Dependencies are pushed in reverse so the first branch's run first.
             for &index in pipelines.iter().rev() {
                 let pipeline = &self.pipelines[index];
-                for dependency in pipeline.operators.iter().rev().chain(pipeline.source.as_ref()) {
+                let external = pipeline
+                    .source
+                    .as_ref()
+                    .and_then(|source| source.source_dependency());
+                let explicit = pipeline
+                    .dependencies
+                    .iter()
+                    .map(|&dependency| &self.pipelines[dependency].sink);
+                for dependency in pipeline
+                    .operators
+                    .iter()
+                    .rev()
+                    .chain(pipeline.source.as_ref())
+                    .chain(external.as_ref())
+                    .chain(explicit)
+                {
                     if by_sink.contains_key(&key(dependency)) {
                         stack.push((key(dependency), false));
                     }
@@ -128,6 +143,26 @@ impl Executor {
             self.build(left, current)?;
             return self.build(right, sibling);
         }
+        if op.is_cte() {
+            let [definition, query] = op.children() else {
+                return Err(Error::internal("CTE must have two inputs"));
+            };
+            if !self
+                .pipelines
+                .iter()
+                .any(|pipeline| Arc::ptr_eq(&pipeline.sink, op))
+            {
+                let materialize = self.add_pipeline(Pipeline::new(Arc::clone(op)));
+                self.build(definition, materialize)?;
+            }
+            let materialize = self
+                .pipelines
+                .iter()
+                .position(|pipeline| Arc::ptr_eq(&pipeline.sink, op))
+                .ok_or_else(|| Error::internal("CTE pipeline missing"))?;
+            self.pipelines[current].dependencies.push(materialize);
+            return self.build(query, current);
+        }
         if op.as_sink().is_some() && op.as_operator().is_some() {
             return self.build_join(op, current);
         }
@@ -144,6 +179,16 @@ impl Executor {
         }
         if op.as_source().is_some() {
             self.pipelines[current].source = Some(Arc::clone(op));
+            if let Some(dependency) = op.source_dependency()
+                && !self
+                    .pipelines
+                    .iter()
+                    .any(|pipeline| Arc::ptr_eq(&pipeline.sink, &dependency))
+            {
+                // The sink feeding this source is outside its subtree: give it a pipeline.
+                let pipeline = self.add_pipeline(Pipeline::new(Arc::clone(&dependency)));
+                self.build(Self::first_child(&dependency, "sink")?, pipeline)?;
+            }
             return Ok(());
         }
         Err(Error::internal(format!(

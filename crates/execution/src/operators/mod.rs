@@ -2,7 +2,9 @@
 
 mod column_data_scan;
 mod create_table;
+mod cte;
 mod delete;
+mod delim;
 mod dummy_scan;
 mod filter;
 mod hash_aggregate;
@@ -21,12 +23,16 @@ mod update;
 
 pub use column_data_scan::PhysicalColumnDataScan;
 pub use create_table::PhysicalCreateTable;
+pub use cte::{CteData, PhysicalCte, PhysicalCteScan, PhysicalRecursiveCte, RecursiveCteState};
 pub use delete::PhysicalDelete;
+pub use delim::{DelimData, DelimGlobal, DelimShared, PhysicalDelimJoin, PhysicalDelimScan};
 pub use dummy_scan::PhysicalDummyScan;
 pub use filter::{FilterState, PhysicalFilter};
 pub use hash_aggregate::{HashAggregateGlobal, HashAggregateLocal, PhysicalHashAggregate};
 pub use insert::{InsertGlobal, InsertTarget, PhysicalInsert, TableCreator};
-pub use limit::PhysicalStreamingLimit;
+pub use limit::{
+    LimitBounds, LimitPercentGlobal, LimitPercentSource, PhysicalLimitPercent, PhysicalStreamingLimit,
+};
 pub use modify::ModifyResult;
 pub use nested_loop_join::{
     NestedLoopJoinGlobal, NestedLoopJoinProbe, NestedLoopJoinSinkLocal, PhysicalNestedLoopJoin,

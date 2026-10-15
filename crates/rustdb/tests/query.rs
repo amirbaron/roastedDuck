@@ -151,3 +151,36 @@ fn describe_and_subqueries() {
         ]
     );
 }
+
+#[test]
+fn materialized_and_recursive_ctes() {
+    let mut con = connect();
+    assert_eq!(
+        rows(&mut con, "WITH t AS (SELECT 1 x), u AS (SELECT x + 1 y FROM t) SELECT * FROM u, t"),
+        vec![vec!["2", "1"]]
+    );
+    // An unreferenced CTE is still materialised.
+    assert_eq!(rows(&mut con, "WITH t AS MATERIALIZED (SELECT 1 x) SELECT 2"), vec![vec!["2"]]);
+    assert_eq!(
+        rows(
+            &mut con,
+            "WITH t AS MATERIALIZED (SELECT range x FROM range(2)) SELECT a.x, b.x FROM t a, t b ORDER BY 1, 2"
+        ),
+        vec![vec!["0", "0"], vec!["0", "1"], vec!["1", "0"], vec!["1", "1"]]
+    );
+    assert_eq!(
+        rows(
+            &mut con,
+            "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 4) SELECT * FROM r"
+        ),
+        vec![vec!["1"], vec!["2"], vec!["3"], vec!["4"]]
+    );
+    // UNION stops once an iteration produces only rows seen before.
+    assert_eq!(
+        rows(
+            &mut con,
+            "WITH RECURSIVE r(n) AS (SELECT 1 UNION SELECT 3 - n FROM r) SELECT * FROM r ORDER BY n"
+        ),
+        vec![vec!["1"], vec!["2"]]
+    );
+}
