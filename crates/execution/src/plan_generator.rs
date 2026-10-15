@@ -15,6 +15,8 @@ use rustdb_planner::{
 };
 use rustdb_types::{DataChunk, LogicalType};
 
+mod window;
+
 use crate::expression_executor::ExpressionExecutor;
 use crate::operator::{PhysicalRef, SinkData};
 use crate::operators::{CteData, PhysicalCte, PhysicalCteScan, PhysicalRecursiveCte};
@@ -103,6 +105,7 @@ impl PlanGenerator {
             children,
             expressions,
             types,
+            estimated_cardinality,
             ..
         } = op;
         // VALUES over a dummy scan is evaluated here, like DuckDB's foldable fast path.
@@ -379,6 +382,11 @@ impl PlanGenerator {
                 } else {
                     distinct_on_all_columns(types, plan)?
                 }
+            }
+            LogicalKind::Window { .. } => {
+                let child = next_child("window")?;
+                let estimate = estimated_cardinality.unwrap_or(0) as usize;
+                window::plan_window(types, expressions, estimate, child)?
             }
             LogicalKind::Distinct {
                 distinct_targets,
