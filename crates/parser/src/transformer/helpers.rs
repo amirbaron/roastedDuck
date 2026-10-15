@@ -1,7 +1,7 @@
 //! Helpers shared by the statement transforms (`transform/helpers/*.cpp` and a few
 //! small functions from the statement files).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use rustdb_ast::{
     AggregateHandling, ExpressionType, OnCreateConflict, OnEntryNotFound, OrderByNode, OrderByNullType,
@@ -118,16 +118,18 @@ fn add_cube_sets(
 /// The GROUP BY expressions seen so far, for deduplication (`GroupingExpressionMap`).
 #[derive(Default)]
 struct GroupingExpressionMap {
-    entries: Vec<(u64, u64)>,
+    /// Indexes of the group expressions, by [`expression_hash`].
+    by_hash: HashMap<u64, Vec<u64>>,
 }
 
 impl GroupingExpressionMap {
-    fn find(&self, groups: &[ParsedExpression], expression: &ParsedExpression) -> Option<u64> {
-        let hash = expression_hash(expression);
-        self.entries
-            .iter()
-            .find(|(h, index)| *h == hash && expressions_equal(&groups[*index as usize], expression))
-            .map(|(_, index)| *index)
+    fn find(&self, groups: &[ParsedExpression], expression: &ParsedExpression, hash: u64) -> Option<u64> {
+        self.by_hash.get(&hash)?.iter().copied().find(|&index| {
+            usize::try_from(index)
+                .ok()
+                .and_then(|index| groups.get(index))
+                .is_some_and(|group| expressions_equal(group, expression))
+        })
     }
 }
 
@@ -151,11 +153,12 @@ fn add_group_by_expression(
         }
         return;
     }
-    let index = if let Some(index) = map.find(groups, &expression) {
+    let hash = expression_hash(&expression);
+    let index = if let Some(index) = map.find(groups, &expression, hash) {
         index
     } else {
         let index = groups.len() as u64;
-        map.entries.push((expression_hash(&expression), index));
+        map.by_hash.entry(hash).or_default().push(index);
         groups.push(expression);
         index
     };
