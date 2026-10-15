@@ -84,13 +84,15 @@ pub(crate) struct Transformer<'a> {
     /// The current nesting depth (`stack_depth`).
     depth: u64,
     frames: Vec<Frame<'a>>,
-    /// Whether the query text mentions PIVOT at all; CTEs are only recorded for
-    /// `ExtractCTEsRecursive` then.
-    may_pivot: bool,
+    /// The query text, to tell whether it mentions PIVOT at all: CTEs are only recorded
+    /// for `ExtractCTEsRecursive` then.
+    query: &'a str,
+    /// Whether `query` mentions PIVOT, once known.
+    may_pivot: Option<bool>,
 }
 
 impl<'a> Transformer<'a> {
-    pub(crate) fn new(options: ParserOptions, query: &str) -> Self {
+    pub(crate) fn new(options: ParserOptions, query: &'a str) -> Self {
         Self {
             options,
             param_count: 0,
@@ -99,7 +101,8 @@ impl<'a> Transformer<'a> {
             pivot_entries: Vec::new(),
             depth: 0,
             frames: vec![Frame::default()],
-            may_pivot: contains_ignore_ascii_case(query.as_bytes(), b"pivot"),
+            query,
+            may_pivot: None,
         }
     }
 
@@ -308,6 +311,13 @@ impl<'a> Transformer<'a> {
                 }
             }
         }
+    }
+
+    /// Whether the query mentions PIVOT (and so may need the stored CTEs).
+    pub(crate) fn may_pivot(&mut self) -> bool {
+        *self
+            .may_pivot
+            .get_or_insert_with(|| contains_ignore_ascii_case(self.query.as_bytes(), b"pivot"))
     }
 
     /// `PivotEntryCheck`: CREATE VIEW / MACRO cannot use a PIVOT that reads its values

@@ -21,7 +21,7 @@ impl<'a> Transformer<'a> {
     ) -> Result<()> {
         // `stored_cte_map.push_back(cte_map)`: the map is recorded before it is filled, so
         // CTEs see the earlier ones of the same WITH clause.
-        let slot = self.may_pivot.then(|| {
+        let slot = self.may_pivot().then(|| {
             let frame = self.frame();
             frame.stored_cte_maps.push(CommonTableExpressionMap::default());
             frame.stored_cte_maps.len() - 1

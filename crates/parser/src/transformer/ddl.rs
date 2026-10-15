@@ -18,6 +18,8 @@ use rustdb_ast::{
     SetPartitionedByInfo, SetSortedByInfo, SetTableOptionsInfo, SqlStatement, SqlStatementKind,
     TableColumnType, TableMacroFunction, TableRefKind, UniqueConstraint, UpdateSetInfo, UpdateStatement,
 };
+use std::collections::HashSet;
+
 use rustdb_common::{CaseInsensitiveMap, CaseInsensitiveSet, Error, LogicalIndex, Result};
 use rustdb_function::cast::{CastFunctionSet, ValueCast};
 use rustdb_pg_parser::nodes::{
@@ -129,20 +131,30 @@ fn set_generated_expression(column: &mut ColumnDefinition, expr: ParsedExpressio
     Ok(())
 }
 
-/// `ColumnList::AddColumn` (with `AddToNameMap`): names must be unique.
-fn add_column(columns: &mut ColumnList, column: ColumnDefinition) -> Result<()> {
-    if columns
-        .columns
-        .iter()
-        .any(|existing| existing.name.eq_ignore_ascii_case(&column.name))
-    {
-        return Err(Error::catalog(format!(
-            "Column with name {} already exists!",
-            column.name
-        )));
+/// A `ColumnList` being built, with its case-insensitive name map.
+#[derive(Default)]
+struct ColumnListBuilder {
+    list: ColumnList,
+    names: HashSet<String>,
+}
+
+impl ColumnListBuilder {
+    /// `LogicalColumnCount`.
+    fn len(&self) -> usize {
+        self.list.columns.len()
     }
-    columns.columns.push(column);
-    Ok(())
+
+    /// `ColumnList::AddColumn` (with `AddToNameMap`): names must be unique.
+    fn add(&mut self, column: ColumnDefinition) -> Result<()> {
+        if !self.names.insert(column.name.to_ascii_lowercase()) {
+            return Err(Error::catalog(format!(
+                "Column with name {} already exists!",
+                column.name
+            )));
+        }
+        self.list.columns.push(column);
+        Ok(())
+    }
 }
 
 /// `ForeignKeyActionSupported`.
@@ -457,6 +469,7 @@ impl<'a> Transformer<'a> {
         if stmt.table_elts.is_empty() {
             return Err(Error::parser("Table must have at least one column!"));
         }
+        let mut columns = ColumnListBuilder::default();
         let mut table = CreateTableInfo {
             table: qname.name.clone(),
             columns: ColumnList::default(),
@@ -473,14 +486,14 @@ impl<'a> Transformer<'a> {
                     let mut column = self.transform_column_definition(pg_column)?;
                     for constraint in &pg_column.constraints {
                         let constraint: &'a PgConstraint = cast_node(constraint)?;
-                        let index = table.columns.columns.len();
+                        let index = columns.len();
                         if let Some(constraint) =
                             self.transform_column_constraint(constraint, &mut column, index)?
                         {
                             table.constraints.push(constraint);
                         }
                     }
-                    add_column(&mut table.columns, column)?;
+                    columns.add(column)?;
                     column_count += 1;
                 }
                 Node::Constraint(constraint) => {
@@ -498,6 +511,7 @@ impl<'a> Transformer<'a> {
         if column_count == 0 {
             return Err(Error::parser("Table must have at least one column!"));
         }
+        table.columns = columns.list;
         let mut info = create_info("", CreateInfoKind::Table(Box::new(table)));
         info.catalog = qname.catalog;
         info.schema = qname.schema;
@@ -546,13 +560,13 @@ impl<'a> Transformer<'a> {
             }));
             query = build::select_statement(node);
         }
-        let mut columns = ColumnList::default();
+        let mut columns = ColumnListBuilder::default();
         for name in string_list(&into.col_names)? {
-            add_column(&mut columns, column_definition(name, LogicalType::UNKNOWN))?;
+            columns.add(column_definition(name, LogicalType::UNKNOWN))?;
         }
         let table = CreateTableInfo {
             table: qname.name,
-            columns,
+            columns: columns.list,
             constraints: Vec::new(),
             query: Some(Box::new(query)),
             partition_keys,
