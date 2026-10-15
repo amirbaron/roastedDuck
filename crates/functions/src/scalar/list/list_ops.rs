@@ -140,6 +140,8 @@ pub fn list_select_functions() -> Vec<(ScalarFunctionSet, &'static [&'static str
 
 /// DuckDB's `ListResizeFunction`: truncates or pads (with the default or NULL).
 fn list_resize(args: &DataChunk, result: &mut Vector) -> Result<()> {
+    // `VectorListBuffer::Reserve`: DuckDB's `MAX_VECTOR_SIZE` (2^37 rows).
+    const MAX_VECTOR_SIZE: u64 = 1 << 37;
     let ty = result.logical_type().clone();
     if ty.id() == LogicalTypeId::SqlNull {
         *result = Vector::constant_null(ty);
@@ -158,6 +160,11 @@ fn list_resize(args: &DataChunk, result: &mut Vector) -> Result<()> {
         if let (Some(_), Some(size)) = (input.get(row), sizes.get(row)) {
             total = total.checked_add(size).ok_or_else(|| add_overflow(total, size))?;
         }
+    }
+    if total > MAX_VECTOR_SIZE {
+        return Err(Error::out_of_range(format!(
+            "Cannot resize vector to {total} rows: maximum allowed vector size is 128.0 GiB"
+        )));
     }
     let child_type = list_child_type(&ty)?;
     let mut child = Vector::flat(child_type, (total as usize).max(1));

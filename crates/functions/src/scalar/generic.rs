@@ -431,6 +431,128 @@ pub fn create_sort_key_functions() -> ScalarFunctionSet {
     set("create_sort_key", vec![function])
 }
 
+/// DuckDB's `TypeVisitor::VisitReplace`: `ty` with every occurrence of `from` (also
+/// nested) replaced by `to`.
+fn replace_type(ty: &LogicalType, from: &LogicalType, to: &LogicalType) -> LogicalType {
+    if ty == from {
+        return to.clone();
+    }
+    let replace = |child: &LogicalType| replace_type(child, from, to);
+    match ty.id() {
+        LogicalTypeId::List => ty
+            .child_type()
+            .map_or_else(|| ty.clone(), |child| LogicalType::list(replace(child))),
+        LogicalTypeId::Array => ty.array_child().map_or_else(
+            || ty.clone(),
+            |(child, size)| LogicalType::array(replace(child), size),
+        ),
+        LogicalTypeId::Map => ty.map_key_value().map_or_else(
+            || ty.clone(),
+            |(key, value)| LogicalType::map(replace(key), replace(value)),
+        ),
+        LogicalTypeId::Struct => ty.struct_children().map_or_else(
+            || ty.clone(),
+            |children| {
+                LogicalType::struct_type(
+                    children
+                        .iter()
+                        .map(|(name, child)| (name.clone(), replace(child)))
+                        .collect(),
+                )
+            },
+        ),
+        LogicalTypeId::Union => ty.union_members().map_or_else(
+            || ty.clone(),
+            |members| {
+                LogicalType::union_type(
+                    members
+                        .iter()
+                        .map(|(name, child)| (name.clone(), replace(child)))
+                        .collect(),
+                )
+            },
+        ),
+        _ => ty.clone(),
+    }
+}
+
+/// `replace_type(value, from_type_witness, to_type_witness)`: casts `value` to its type
+/// with `from` replaced by `to` (DuckDB's `BindReplaceTypeFunction`, which rewrites the
+/// call into the cast).
+fn replace_type_functions() -> ScalarFunctionSet {
+    let mut function = ScalarFunction::new(
+        "replace_type",
+        vec![LogicalType::ANY, LogicalType::ANY, LogicalType::ANY],
+        LogicalType::ANY,
+        |args, _, result| {
+            *result = args.column(0).clone();
+            Ok(())
+        },
+    )
+    .with_bind(|function, input| {
+        let (from, to) = (&input.argument_types[1], &input.argument_types[2]);
+        if from.id() == LogicalTypeId::Unknown || to.id() == LogicalTypeId::Unknown {
+            return Err(crate::parameter_not_resolved());
+        }
+        if to.id() == LogicalTypeId::SqlNull {
+            return Err(Error::invalid_input(
+                "replace_type cannot be used to replace type with NULL",
+            ));
+        }
+        let target = replace_type(&input.argument_types[0], from, to);
+        function.arguments[0] = target.clone();
+        function.return_type = target;
+        Ok(None)
+    });
+    function.null_handling = NullHandling::Special;
+    set("replace_type", vec![function])
+}
+
+/// `vector_type(value)`: the physical representation of the argument (DuckDB's
+/// `VectorType` names).
+fn vector_type_functions() -> ScalarFunctionSet {
+    let mut function = ScalarFunction::new(
+        "vector_type",
+        vec![LogicalType::ANY],
+        LogicalType::VARCHAR,
+        |args, _, result| {
+            let name = match args.column(0).kind() {
+                rustdb_types::VectorKind::Flat => "FLAT_VECTOR",
+                rustdb_types::VectorKind::Constant => "CONSTANT_VECTOR",
+                rustdb_types::VectorKind::Dictionary => "DICTIONARY_VECTOR",
+                rustdb_types::VectorKind::Sequence => "SEQUENCE_VECTOR",
+            };
+            constant(result, &Value::varchar(name))
+        },
+    );
+    function.null_handling = NullHandling::Special;
+    set("vector_type", vec![function])
+}
+
+/// `sleep_ms(ms)`: sleeps per row (negative values count as 0) and returns NULL.
+fn sleep_ms_functions() -> ScalarFunctionSet {
+    let mut function = ScalarFunction::new(
+        "sleep_ms",
+        vec![LogicalType::BIGINT],
+        LogicalType::SQLNULL,
+        |args, _, result| {
+            let count = args.len();
+            let input = addressable(args.column(0), count);
+            let values = input.unified::<i64>();
+            for row in 0..count {
+                if let Some(ms) = values.get(row) {
+                    std::thread::sleep(std::time::Duration::from_millis(u64::try_from(ms).unwrap_or(0)));
+                }
+            }
+            *result = Vector::constant_null(LogicalType::SQLNULL);
+            Ok(())
+        },
+    );
+    function.null_handling = NullHandling::Special;
+    function.stability = Stability::Volatile;
+    set("sleep_ms", vec![function])
+}
+
 /// Every generic function set with its aliases.
 pub fn generic_functions() -> Vec<ScalarFunctionSet> {
     vec![
@@ -446,6 +568,9 @@ pub fn generic_functions() -> Vec<ScalarFunctionSet> {
         least_functions(),
         greatest_functions(),
         create_sort_key_functions(),
+        replace_type_functions(),
+        vector_type_functions(),
+        sleep_ms_functions(),
     ]
 }
 
