@@ -93,6 +93,16 @@ pub trait Operator: PhysicalOperator {
     type Local: Send + 'static;
 
     fn global_operator_state(&self, ctx: &ExecutionContext) -> Result<Self::Global>;
+    /// Like [`Operator::global_operator_state`], for operators that are also sinks (joins):
+    /// `sink_state` is the operator's finalized sink state.
+    fn global_operator_state_with_sink(
+        &self,
+        ctx: &ExecutionContext,
+        sink_state: Option<&SinkState>,
+    ) -> Result<Self::Global> {
+        let _ = sink_state;
+        self.global_operator_state(ctx)
+    }
     fn local_operator_state(&self, ctx: &ExecutionContext, global: &Self::Global) -> Result<Self::Local>;
     fn execute(
         &self,
@@ -206,7 +216,11 @@ impl<T: Source> ErasedSource for T {
 
 /// Object-safe view of [`Operator`] used by the executor.
 pub trait ErasedOperator {
-    fn global_operator_state(&self, ctx: &ExecutionContext) -> Result<AnyGlobal>;
+    fn global_operator_state(
+        &self,
+        ctx: &ExecutionContext,
+        sink_state: Option<&SinkState>,
+    ) -> Result<AnyGlobal>;
     fn local_operator_state(
         &self,
         ctx: &ExecutionContext,
@@ -223,8 +237,14 @@ pub trait ErasedOperator {
 }
 
 impl<T: Operator> ErasedOperator for T {
-    fn global_operator_state(&self, ctx: &ExecutionContext) -> Result<AnyGlobal> {
-        Ok(Box::new(Operator::global_operator_state(self, ctx)?))
+    fn global_operator_state(
+        &self,
+        ctx: &ExecutionContext,
+        sink_state: Option<&SinkState>,
+    ) -> Result<AnyGlobal> {
+        Ok(Box::new(Operator::global_operator_state_with_sink(
+            self, ctx, sink_state,
+        )?))
     }
     fn local_operator_state(
         &self,

@@ -167,6 +167,9 @@ impl<'a> PipelineExecutor<'a> {
         }
         // `current` is the index of the next operator to run; operators re-entered from
         // the in-process stack resume with their previous input.
+        // Only output produced in this pass may reach the sink (DuckDB resets the final
+        // chunk before every pass).
+        self.outputs[count - 1].reset();
         let mut current = self.in_process.pop().unwrap_or(0);
         loop {
             let (before, rest) = self.outputs.split_at_mut(current);

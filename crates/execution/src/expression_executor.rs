@@ -631,7 +631,7 @@ fn select_or(
 
 /// Compares two vectors row by row (DuckDB's `VectorOperations::Equals` and friends,
 /// plus the NULL-aware `[NOT] DISTINCT FROM`).
-fn compare_vectors(
+pub(crate) fn compare_vectors(
     expression_type: ExpressionType,
     left: &Vector,
     right: &Vector,

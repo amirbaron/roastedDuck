@@ -87,10 +87,11 @@ impl Executor {
             stack.push((sink, true));
             // Dependencies are pushed in reverse so the first branch's run first.
             for &index in pipelines.iter().rev() {
-                if let Some(source) = &self.pipelines[index].source
-                    && by_sink.contains_key(&key(source))
-                {
-                    stack.push((key(source), false));
+                let pipeline = &self.pipelines[index];
+                for dependency in pipeline.operators.iter().rev().chain(pipeline.source.as_ref()) {
+                    if by_sink.contains_key(&key(dependency)) {
+                        stack.push((key(dependency), false));
+                    }
                 }
             }
         }
@@ -127,6 +128,9 @@ impl Executor {
             self.build(left, current)?;
             return self.build(right, sibling);
         }
+        if op.as_sink().is_some() && op.as_operator().is_some() {
+            return self.build_join(op, current);
+        }
         if op.as_sink().is_some() {
             // A sink ends a child pipeline and is the source of the current one.
             self.pipelines[current].source = Some(Arc::clone(op));
@@ -148,6 +152,36 @@ impl Executor {
         )))
     }
 
+    /// A join probes in the current pipeline, builds from its right input in a child
+    /// pipeline, and, if it is also a source (outer joins emitting unmatched build rows),
+    /// gets a pipeline that runs after the probe with the operators above it
+    /// (`PhysicalJoin::BuildJoinPipelines`).
+    fn build_join(&mut self, op: &PhysicalRef, current: usize) -> Result<()> {
+        let [left, right] = op.children() else {
+            return Err(Error::internal(format!(
+                "join {} must have two inputs",
+                op.name()
+            )));
+        };
+        let above = self.pipelines[current].operators.clone();
+        self.pipelines[current].operators.push(Arc::clone(op));
+        let build = self.add_pipeline(Pipeline::new(Arc::clone(op)));
+        self.pipelines[current].dependencies.push(build);
+        self.build(right, build)?;
+        self.build(left, current)?;
+        if op.as_source().is_some() {
+            let sink = Arc::clone(&self.pipelines[current].sink);
+            let outer = Pipeline {
+                source: Some(Arc::clone(op)),
+                operators: above,
+                sink,
+                dependencies: Vec::new(),
+            };
+            self.add_pipeline(outer);
+        }
+        Ok(())
+    }
+
     fn run_pipeline(&mut self, index: usize) -> Result<()> {
         let ctx = ExecutionContext::new(Arc::clone(&self.env));
         let no_role = |name: &str| Error::internal(format!("operator {name} lacks its pipeline role"));
@@ -166,7 +200,7 @@ impl Executor {
         for op in &operators {
             if let std::collections::hash_map::Entry::Vacant(entry) = self.operator_globals.entry(key(op)) {
                 let operator = op.as_operator().ok_or_else(|| no_role(op.name()))?;
-                entry.insert(operator.global_operator_state(&ctx)?);
+                entry.insert(operator.global_operator_state(&ctx, self.sink_states.get(&key(op)))?);
             }
         }
         if let std::collections::hash_map::Entry::Vacant(entry) = self.sink_globals.entry(key(&sink_op)) {

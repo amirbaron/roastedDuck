@@ -15,11 +15,11 @@ use rustdb_types::{DataChunk, LogicalType};
 
 use crate::expression_executor::ExpressionExecutor;
 use crate::operator::PhysicalRef;
-use crate::operators::PhysicalUnion;
 use crate::operators::{
     PhysicalColumnDataScan, PhysicalDummyScan, PhysicalFilter, PhysicalHashAggregate, PhysicalOrder,
     PhysicalProjection, PhysicalStreamingLimit, PhysicalTableScan, PhysicalUngroupedAggregate,
 };
+use crate::operators::{PhysicalNestedLoopJoin, PhysicalUnion};
 
 /// Converts a logical plan whose column references are resolved into a physical plan.
 pub fn create_physical_plan(op: LogicalOperator) -> Result<PhysicalRef> {
@@ -154,6 +154,48 @@ pub fn create_physical_plan(op: LogicalOperator) -> Result<PhysicalRef> {
                 projections,
                 next_child("order")?,
             ))
+        }
+        LogicalKind::ComparisonJoin(join)
+            if join.operator_type == LogicalOperatorType::LogicalComparisonJoin =>
+        {
+            let left = next_child("join")?;
+            let right = next_child("join")?;
+            let join = *join;
+            if !join.left_projection_map.is_empty() || !join.right_projection_map.is_empty() {
+                return Err(Error::not_implemented("join projection maps"));
+            }
+            Arc::new(PhysicalNestedLoopJoin::new(
+                types,
+                join.join_type,
+                join.conditions,
+                join.predicate,
+                left,
+                right,
+            )?)
+        }
+        LogicalKind::CrossProduct => {
+            let left = next_child("cross product")?;
+            let right = next_child("cross product")?;
+            Arc::new(PhysicalNestedLoopJoin::new(
+                types,
+                rustdb_ast::JoinType::Inner,
+                Vec::new(),
+                None,
+                left,
+                right,
+            )?)
+        }
+        LogicalKind::AnyJoin { join_type, condition } => {
+            let left = next_child("join")?;
+            let right = next_child("join")?;
+            Arc::new(PhysicalNestedLoopJoin::new(
+                types,
+                join_type,
+                Vec::new(),
+                Some(*condition),
+                left,
+                right,
+            )?)
         }
         LogicalKind::SetOperation {
             operator_type,

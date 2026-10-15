@@ -377,3 +377,20 @@ fn hash_aggregate_grouping_sets_include_the_empty_set() {
     let empty = group_by(pairs(&[]), vec![vec![0], vec![]], vec![sum_of_x(None)]);
     assert_eq!(sorted(run(empty).unwrap()), ["NULL|NULL"]);
 }
+
+#[test]
+fn operators_with_buffered_output_do_not_repeat_rows() {
+    // A cross product produces its output over several passes; each row must reach the
+    // sink exactly once.
+    let left = ints(&[Some(1), Some(2), Some(3)]);
+    let right = ints(&[Some(10), Some(20)]);
+    let product = LogicalOperator::new(LogicalKind::CrossProduct).with_children(vec![left, right]);
+    let rows = run(product).unwrap();
+    assert_eq!(rows.len(), 6);
+    let mut pairs: Vec<(i128, i128)> = rows
+        .iter()
+        .map(|row| (row[0].as_i128().unwrap(), row[1].as_i128().unwrap()))
+        .collect();
+    pairs.sort_unstable();
+    assert_eq!(pairs, [(1, 10), (1, 20), (2, 10), (2, 20), (3, 10), (3, 20)]);
+}
