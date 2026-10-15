@@ -52,6 +52,7 @@ fn run_cli(duckdb: &Path, commands: &[&str]) -> Result<String, String> {
         .args(["-init", "/dev/null", "-list", "-header", "-nullvalue", "NULL"])
         .args(["-separator", &FIELD.to_string(), "-newline", &RECORD.to_string()])
         .args(commands.iter().flat_map(|command| ["-c", command]))
+        .env("TZ", "UTC")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

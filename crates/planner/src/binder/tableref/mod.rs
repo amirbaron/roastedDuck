@@ -290,7 +290,12 @@ fn bind_base_table(
             .get_entry(&base.catalog_name, &base.schema_name, CatalogType::Table, &base.table_name, false)
             .err()
             .unwrap_or_else(|| Error::internal("table lookup"));
-        return Err(error.with_position(location));
+        // Missing entries point at the table name; a missing catalog has no position.
+        return Err(if error.kind() == rustdb_common::ErrorKind::Catalog {
+            error.with_position(location)
+        } else {
+            error
+        });
     };
     match &found.entry.kind {
         EntryKind::Table(table) => {

@@ -63,18 +63,20 @@ const KEYWORDS: &[&str] = &[
     "years", "yes", "zone",
 ];
 
-/// Whether `name` is a keyword of the SQL grammar (names are compared as written).
+/// Whether `name` is a keyword of the SQL grammar, compared after ASCII lower-casing
+/// (DuckDB's `Parser::IsKeyword`).
 pub fn is_keyword(name: &str) -> bool {
-    KEYWORDS.binary_search(&name).is_ok()
+    KEYWORDS.binary_search(&name.to_ascii_lowercase().as_str()).is_ok()
 }
 
 /// Whether `name` must be double-quoted to read back as the same identifier
-/// (DuckDB's `KeywordHelper::RequiresQuotes` with `allow_caps = false`).
+/// (DuckDB's `KeywordHelper::RequiresQuotes` with its defaults: upper-case letters are
+/// allowed, keywords of any category are quoted).
 pub fn requires_quotes(name: &str) -> bool {
     let plain = name
         .bytes()
         .enumerate()
-        .all(|(i, b)| b.is_ascii_lowercase() || b == b'_' || (i > 0 && b.is_ascii_digit()));
+        .all(|(i, b)| b.is_ascii_alphabetic() || b == b'_' || (i > 0 && b.is_ascii_digit()));
     !plain || is_keyword(name)
 }
 
@@ -113,6 +115,8 @@ mod tests {
         assert_eq!(sql_identifier("My Field"), "\"My Field\"");
         assert_eq!(sql_identifier("a\"b"), "\"a\"\"b\"");
         assert_eq!(sql_identifier("1a"), "\"1a\"");
+        assert_eq!(sql_identifier("key_A"), "key_A");
+        assert_eq!(sql_identifier("Select"), "\"Select\"");
         assert_eq!(write_quoted("it's", '\''), "'it''s'");
     }
 }
