@@ -6,6 +6,7 @@ use rustdb_common::Result;
 use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
 use crate::FunctionClient;
+use crate::aggregate::AggregateFunction;
 
 /// How a function treats NULL inputs (DuckDB's `FunctionNullHandling`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -42,6 +43,37 @@ pub struct FunctionState {
 /// A vectorised scalar kernel: computes `result` from the argument columns of `args`.
 pub type ScalarKernel = Arc<dyn Fn(&DataChunk, &mut FunctionState, &mut Vector) -> Result<()> + Send + Sync>;
 
+/// A builtin aggregate resolved and bound for a scalar function that runs it internally
+/// (such as `list_aggregate`).
+#[derive(Clone, Debug)]
+pub struct BoundAggregateFunction {
+    /// The chosen overload after its bind callback.
+    pub function: AggregateFunction,
+    pub bind_data: Option<Arc<dyn FunctionData>>,
+    /// The number of arguments left after the bind (it may consume constant ones).
+    pub argument_count: usize,
+    /// The bound call as SQL text, e.g. `arg_max(NULL, 1)`.
+    pub display: String,
+}
+
+/// Resolves a builtin aggregate by name and binds it (DuckDB's lookup in the system
+/// catalog, `FunctionBinder::BindFunction` and `FunctionBinder::BindAggregateFunction`).
+pub trait AggregateResolver {
+    /// Binds aggregate `name` for arguments of the given types; constant arguments carry
+    /// their value, the others are bound as NULL constants of their type.
+    fn bind_aggregate(
+        &self,
+        name: &str,
+        arguments: &[(LogicalType, Option<Value>)],
+    ) -> Result<BoundAggregateFunction>;
+}
+
+impl fmt::Debug for dyn AggregateResolver + '_ {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("AggregateResolver")
+    }
+}
+
 /// What a bind callback learns about a call (DuckDB's `ScalarFunctionBindInput` plus the
 /// bound argument expressions, reduced to what functions actually inspect).
 #[derive(Clone, Copy, Debug)]
@@ -61,6 +93,8 @@ pub struct BindInput<'a> {
     /// The binder's client context (`ScalarFunctionBindInput::binder`), for functions
     /// that look up catalog entries; the database crate downcasts it.
     pub binder: Option<&'a dyn Any>,
+    /// Aggregate resolution for functions that run an aggregate (`None` outside a binder).
+    pub aggregates: Option<&'a dyn AggregateResolver>,
 }
 
 /// Specialises a chosen overload for a call (DuckDB's `bind_scalar_function_t`).

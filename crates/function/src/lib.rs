@@ -11,11 +11,13 @@ pub mod random;
 mod scalar;
 mod table;
 
-pub use aggregate::{AggregateFunction, AggregateFunctionSet, AggregateOps, StatePtr, UnaryAggregate};
+pub use aggregate::{
+    AggregateFunction, AggregateFunctionSet, AggregateOps, OwnedStates, StatePtr, UnaryAggregate,
+};
 pub use client::FunctionClient;
 pub use scalar::{
-    BindInput, FunctionData, FunctionState, NullHandling, ScalarBind, ScalarFunction, ScalarFunctionSet,
-    ScalarKernel, Stability,
+    AggregateResolver, BindInput, BoundAggregateFunction, FunctionData, FunctionState, NullHandling,
+    ScalarBind, ScalarFunction, ScalarFunctionSet, ScalarKernel, Stability,
 };
 pub use table::{
     TableFunction, TableFunctionBind, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionScan,

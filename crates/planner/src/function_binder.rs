@@ -531,6 +531,7 @@ impl<'a> FunctionBinder<'a> {
                     names: &names,
                     client: &self.context.function_client,
                     binder: Some(self.context as &dyn std::any::Any),
+                    aggregates: Some(self.context as &dyn rustdb_function::AggregateResolver),
                 },
             )?;
             // The bind may have dropped trailing arguments (DuckDB's `EraseArgument`).
@@ -582,6 +583,7 @@ impl<'a> FunctionBinder<'a> {
                     names: &names,
                     client: &self.context.function_client,
                     binder: Some(self.context as &dyn std::any::Any),
+                    aggregates: Some(self.context as &dyn rustdb_function::AggregateResolver),
                 },
             )?;
             // The bind may have dropped arguments.
@@ -875,5 +877,51 @@ fn expression_name(expression: &Expression) -> String {
         expression.to_string()
     } else {
         expression.alias.clone()
+    }
+}
+
+/// Aggregate resolution for scalar functions that run an aggregate (`list_aggregate`):
+/// DuckDB's `Catalog::GetSystemCatalog(context).GetEntry<AggregateFunctionCatalogEntry>`,
+/// `FunctionBinder::BindFunction` and `FunctionBinder::BindAggregateFunction`.
+impl rustdb_function::AggregateResolver for ClientContext {
+    fn bind_aggregate(
+        &self,
+        name: &str,
+        arguments: &[(LogicalType, Option<Value>)],
+    ) -> Result<rustdb_function::BoundAggregateFunction> {
+        let lookup = self
+            .get_entry(
+                "system",
+                "main",
+                rustdb_catalog::CatalogType::AggregateFunction,
+                name,
+                false,
+            )?
+            .ok_or_else(|| Error::internal("aggregate lookup returned nothing"))?;
+        let rustdb_catalog::EntryKind::AggregateFunction(functions) = &lookup.entry.kind else {
+            return Err(Error::catalog(format!("{name} is not an aggregate function")));
+        };
+        let binder = FunctionBinder::new(self);
+        let types: Vec<LogicalType> = arguments.iter().map(|(ty, _)| ty.clone()).collect();
+        let function = binder
+            .bind_aggregate_overload(functions, &types)?
+            .map_err(|error| Error::binder(format!("No matching aggregate function\n{error}")))?;
+        let children = arguments
+            .iter()
+            .map(|(ty, value)| Expression::constant(value.clone().unwrap_or_else(|| Value::null(ty.clone()))))
+            .collect();
+        let bound =
+            binder.bind_aggregate_function(function, children, None, AggregateType::NonDistinct, None)?;
+        let display = bound.to_string();
+        let ExpressionKind::Aggregate(aggregate) = bound.kind else {
+            return Err(Error::internal("aggregate binding did not produce an aggregate"));
+        };
+        let aggregate = *aggregate;
+        Ok(rustdb_function::BoundAggregateFunction {
+            argument_count: aggregate.children.len(),
+            display,
+            function: aggregate.function,
+            bind_data: aggregate.bind_info,
+        })
     }
 }

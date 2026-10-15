@@ -1,16 +1,26 @@
-//! `list_distinct`/`array_distinct` and `list_unique`/`array_unique` (DuckDB's
-//! `list_aggregates.cpp`, which collects the values in a histogram hash map).
+//! `list_aggregate` and its aliases, `list_distinct`/`array_distinct` and
+//! `list_unique`/`array_unique` (DuckDB's `list_aggregates.cpp`). `list_aggregate` runs a
+//! builtin aggregate over each list; the other two collect the values in a histogram
+//! hash map.
 //!
 //! DuckDB returns the distinct values in the iteration order of its `std::unordered_map`
 //! (libc++), keyed by the value for fixed-size types and by the value's sort key otherwise;
 //! [`UnorderedOrder`] reproduces that order.
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{BindInput, FunctionData, ScalarFunction, ScalarFunctionSet};
+use std::sync::Arc;
+
+use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use rustdb_function::aggregate::AggregateInput;
+use rustdb_function::{
+    AggregateFunction, BindInput, FunctionData, FunctionState, NullHandling, OwnedStates, ScalarFunction,
+    ScalarFunctionSet, StatePtr,
+};
 use rustdb_row::hash::hash_bytes;
 use rustdb_row::sort::{NullOrder, OrderModifiers, OrderType, create_sort_keys};
 use rustdb_types::kernels::scatter;
-use rustdb_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, PhysicalType, StringT, Vector};
+use rustdb_types::{
+    DataChunk, ListEntry, LogicalType, LogicalTypeId, PhysicalType, SelectionVector, StringT, Vector,
+};
 
 use crate::libcxx::UnorderedOrder;
 use crate::scalar::executor::addressable;
@@ -277,4 +287,155 @@ pub fn list_distinct_functions() -> Vec<(ScalarFunctionSet, &'static [&'static s
         .with_bind(bind_list_aggregate),
     );
     vec![(distinct, &["array_distinct"]), (unique, &["array_unique"])]
+}
+
+/// The aggregate a `list_aggregate` call runs (DuckDB's `ListAggregatesBindData`).
+#[derive(Debug)]
+struct ListAggregateData {
+    function: AggregateFunction,
+    bind_data: Option<Arc<dyn FunctionData>>,
+}
+
+impl FunctionData for ListAggregateData {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// DuckDB's `ListAggregatesBind<true>` and `ListAggregatesBindFunction<true>`.
+fn bind_list_aggregate_function(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindResult {
+    let ty = &input.argument_types[0];
+    let child_type = match ty.id() {
+        LogicalTypeId::SqlNull => {
+            function.arguments[0] = LogicalType::SQLNULL;
+            function.return_type = LogicalType::SQLNULL;
+            return Ok(None);
+        }
+        LogicalTypeId::Unknown => None,
+        LogicalTypeId::List | LogicalTypeId::Array | LogicalTypeId::Map => Some(list_child_type(ty)?),
+        _ => {
+            return Err(Error::invalid_input(
+                "First argument of list aggregate must be a list, map or array",
+            ));
+        }
+    };
+    let Some(name) = &input.constants[1] else {
+        return Err(Error::invalid_input("Aggregate function name must be a constant"));
+    };
+    let name = name.to_varchar()?;
+    let Some(child_type) = child_type else {
+        function.arguments[0] = LogicalType::simple(LogicalTypeId::Unknown);
+        function.return_type = LogicalType::SQLNULL;
+        return Ok(None);
+    };
+    let resolver = input
+        .aggregates
+        .ok_or_else(|| Error::internal("list_aggregate bound without an aggregate resolver"))?;
+    let mut arguments = vec![(child_type, None)];
+    for index in 2..input.argument_types.len() {
+        arguments.push((
+            input.argument_types[index].clone(),
+            input.constants[index].clone(),
+        ));
+    }
+    let bound = resolver.bind_aggregate(&name, &arguments)?;
+    if bound.argument_count > 1 {
+        return Err(Error::invalid_input(format!(
+            "Aggregate function {} is not supported for list_aggr: extra arguments were not removed during bind",
+            bound.display
+        )));
+    }
+    let element = bound
+        .function
+        .arguments
+        .first()
+        .cloned()
+        .ok_or_else(|| Error::internal("list_aggregate on an aggregate without arguments"))?;
+    // The extra arguments are consumed by the aggregate's bind.
+    function.arguments = vec![LogicalType::list(element), LogicalType::VARCHAR];
+    function.varargs = None;
+    function.return_type = bound.function.return_type.clone();
+    Ok(Some(Arc::new(ListAggregateData {
+        function: bound.function,
+        bind_data: bound.bind_data,
+    })))
+}
+
+/// DuckDB's `ListAggregatesFunction<AggregateFunctor, true>`: one aggregate state per
+/// list, updated with the list's elements in order.
+fn list_aggregate(args: &DataChunk, state: &FunctionState, result: &mut Vector) -> Result<()> {
+    if args.column(0).logical_type().id() == LogicalTypeId::SqlNull {
+        *result = Vector::constant_null(result.logical_type().clone());
+        return Ok(());
+    }
+    let data = state
+        .bind_data
+        .as_ref()
+        .and_then(|data| data.as_any().downcast_ref::<ListAggregateData>())
+        .ok_or_else(|| Error::internal("list_aggregate without bind data"))?;
+    let ops = &data.function.ops;
+    let aggregate_input = AggregateInput {
+        bind_data: data.bind_data.as_deref(),
+    };
+    let count = args.len();
+    let lists = addressable(args.column(0), count);
+    let input = ListInput::new(&lists)?;
+    let child = input.child.flattened(input.child_size);
+    let states = OwnedStates::new(Arc::clone(ops), count);
+    let pointers = states.pointers();
+    let mut nulls = Vec::new();
+    let mut selection: Vec<u32> = Vec::with_capacity(STANDARD_VECTOR_SIZE);
+    let mut targets: Vec<StatePtr> = Vec::with_capacity(STANDARD_VECTOR_SIZE);
+    let flush = |selection: &mut Vec<u32>, targets: &mut Vec<StatePtr>| -> Result<()> {
+        if selection.is_empty() {
+            return Ok(());
+        }
+        let slice = child.slice(&SelectionVector::new(std::mem::take(selection)));
+        // SAFETY: every target is a state of `states`, initialised and not yet destroyed.
+        unsafe { ops.update(&[slice], aggregate_input, targets, targets.len())? };
+        targets.clear();
+        Ok(())
+    };
+    for (row, &pointer) in pointers.iter().enumerate() {
+        let Some(entry) = input.get(row) else {
+            nulls.push(row);
+            continue;
+        };
+        for index in entry.offset..entry.offset + entry.length {
+            if selection.len() == STANDARD_VECTOR_SIZE {
+                flush(&mut selection, &mut targets)?;
+            }
+            selection.push(u32::try_from(index).map_err(|_| Error::internal("list child index overflow"))?);
+            targets.push(pointer);
+        }
+    }
+    flush(&mut selection, &mut targets)?;
+    let mut output = Vector::flat(result.logical_type().clone(), count.max(1));
+    // SAFETY: the states are initialised and owned by `states`.
+    unsafe { ops.finalize(&pointers, aggregate_input, &mut output, 0)? };
+    let validity = output.validity_mut();
+    for row in nulls {
+        validity.set_invalid(row, count);
+    }
+    if all_constant(args.columns()) {
+        output.make_constant();
+    }
+    *result = output;
+    Ok(())
+}
+
+/// `list_aggregate(list, name, ...)` and its aliases.
+pub fn list_aggregate_functions() -> ScalarFunctionSet {
+    let mut function = ScalarFunction::new(
+        "list_aggregate",
+        vec![LogicalType::list(LogicalType::ANY), LogicalType::VARCHAR],
+        LogicalType::ANY,
+        |args, state, result| list_aggregate(args, state, result),
+    )
+    .with_bind(bind_list_aggregate_function);
+    function.null_handling = NullHandling::Special;
+    function.varargs = Some(LogicalType::ANY);
+    let mut set = ScalarFunctionSet::new("list_aggregate");
+    set.add(function);
+    set
 }

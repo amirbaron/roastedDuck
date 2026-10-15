@@ -180,6 +180,11 @@ fn string_functions(sets: &mut Vec<ScalarFunctionSet>) {
         with_aliases(sets, set, aliases);
     }
     sets.extend(list::range::range_functions());
+    with_aliases(
+        sets,
+        list::list_aggregates::list_aggregate_functions(),
+        &["array_aggregate", "list_aggr", "array_aggr", "aggregate"],
+    );
     with_aliases(sets, list::slice::list_slice_functions(), &["array_slice"]);
     sets.push(list::slice::flatten_functions());
     for (set, aliases) in list::list_ops::list_select_functions() {
