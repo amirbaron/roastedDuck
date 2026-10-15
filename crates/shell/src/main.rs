@@ -65,7 +65,8 @@ fn render(result: &MaterializedResult, mode: Mode, out: &mut impl Write) -> io::
             .map(|column| {
                 let value = result.value(column, row);
                 if value.is_null() {
-                    String::new()
+                    // The shell's default `.nullvalue`.
+                    "NULL".to_owned()
                 } else {
                     format(&value.to_varchar().unwrap_or_else(|error| error.to_string()))
                 }

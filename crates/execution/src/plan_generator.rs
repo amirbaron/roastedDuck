@@ -8,10 +8,13 @@ use std::sync::Arc;
 use rustdb_ast::{JoinType, OrderByNullType, OrderType};
 use rustdb_catalog::{Catalog, CatalogEntry, EntryKind, Transaction};
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use rustdb_functions::aggregate::distributive::first_last_any::first_function;
 use rustdb_functions::aggregate::sorted::{
     self, NullOrder, OrderModifiers, OrderType as SortOrderType, SortedOrder,
 };
-use rustdb_planner::expression::{BoundAggregateExpression, BoundConjunctionExpression, BoundOrderByNode};
+use rustdb_planner::expression::{
+    AggregateType, BoundAggregateExpression, BoundConjunctionExpression, BoundOrderByNode, BoundOrderModifier,
+};
 use rustdb_planner::operator::{
     COLUMN_IDENTIFIER_ROW_ID, JoinCondition, LogicalAggregate, LogicalComparisonJoin, LogicalDelete,
     LogicalGet, LogicalInsert, LogicalUpdate,
@@ -575,9 +578,6 @@ impl PlanGenerator {
                 next_child("projection")?,
             )),
             LogicalKind::Filter { projection_map } => {
-                if !projection_map.is_empty() {
-                    return Err(Error::not_implemented("filter with a projection map"));
-                }
                 let child = next_child("filter")?;
                 let mut expressions = expressions;
                 let predicate = if expressions.len() == 1 {
@@ -591,7 +591,25 @@ impl PlanGenerator {
                         }),
                     )
                 };
-                Arc::new(PhysicalFilter::new(types, predicate, child))
+                if projection_map.is_empty() {
+                    Arc::new(PhysicalFilter::new(types, predicate, child))
+                } else {
+                    // The filter keeps its input's columns; a projection then selects the
+                    // mapped ones (DuckDB's `CreatePlan(LogicalFilter&)`).
+                    let input_types = child.types().to_vec();
+                    let filter: PhysicalRef =
+                        Arc::new(PhysicalFilter::new(input_types.clone(), predicate, child));
+                    let select_list = projection_map
+                        .iter()
+                        .map(|&index| {
+                            input_types
+                                .get(index as usize)
+                                .map(|ty| Expression::reference("", ty.clone(), index))
+                                .ok_or_else(|| Error::internal("filter projection map out of range"))
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    Arc::new(PhysicalProjection::new(types, select_list, filter))
+                }
             }
             LogicalKind::Aggregate(aggregate) => {
                 let child = next_child("aggregate")?;
@@ -725,19 +743,7 @@ impl PlanGenerator {
                 distinct_targets,
                 order_by,
                 ..
-            } => {
-                let child = next_child("distinct")?;
-                let identity = distinct_targets.len() == types.len()
-                && distinct_targets.iter().enumerate().all(|(i, target)| {
-                    matches!(&target.kind, ExpressionKind::Reference(r) if r.index as usize == i)
-                });
-                if !identity || order_by.is_some() {
-                    return Err(Error::not_implemented(
-                        "DISTINCT ON (requires the first() aggregate)",
-                    ));
-                }
-                distinct_on_all_columns(types, child)?
-            }
+            } => plan_distinct(distinct_targets, order_by, next_child("distinct")?)?,
             _ => return Err(not_implemented(operator_type)),
         };
         Ok(plan)
@@ -802,6 +808,64 @@ fn except_or_intersect(
         return Ok(Arc::new(PhysicalProjection::new(types, select_list, join)));
     }
     distinct_on_all_columns(types, join)
+}
+
+/// `DISTINCT` / `DISTINCT ON` (DuckDB's `CreatePlan(LogicalDistinct&)`): one group per
+/// distinct target; every other column becomes a `first` aggregate (ordered by the
+/// `ORDER BY` of a `DISTINCT ON`), and a projection restores the column order.
+fn plan_distinct(
+    groups: Vec<Expression>,
+    order_by: Option<BoundOrderModifier>,
+    child: PhysicalRef,
+) -> Result<PhysicalRef> {
+    let types = child.types().to_vec();
+    let group_count = groups.len();
+    let mut group_by_references = HashMap::new();
+    let mut aggregate_types = Vec::with_capacity(types.len());
+    for (index, target) in groups.iter().enumerate() {
+        if let ExpressionKind::Reference(reference) = &target.kind {
+            group_by_references.insert(reference.index as usize, index);
+        }
+        aggregate_types.push(target.return_type.clone());
+    }
+    let mut requires_projection = types.len() != group_count;
+    let mut aggregates = Vec::new();
+    let mut projections = Vec::with_capacity(types.len());
+    for (index, ty) in types.iter().enumerate() {
+        if let Some(&group) = group_by_references.get(&index) {
+            projections.push(Expression::reference("", ty.clone(), group as u64));
+            requires_projection |= group != index;
+            continue;
+        }
+        let first = BoundAggregateExpression {
+            function: first_function::<false, false>(ty),
+            children: vec![Expression::reference("", ty.clone(), index as u64)],
+            bind_info: None,
+            aggr_type: AggregateType::NonDistinct,
+            filter: None,
+            order_bys: order_by.clone(),
+        };
+        projections.push(Expression::reference(
+            "",
+            ty.clone(),
+            (group_count + aggregates.len()) as u64,
+        ));
+        aggregate_types.push(ty.clone());
+        aggregates.push(bind_sorted_aggregate(first)?);
+        requires_projection = true;
+    }
+    let group_by: PhysicalRef = Arc::new(PhysicalHashAggregate::new(
+        aggregate_types,
+        groups,
+        aggregates,
+        Vec::new(),
+        Vec::new(),
+        child,
+    )?);
+    if !requires_projection {
+        return Ok(group_by);
+    }
+    Ok(Arc::new(PhysicalProjection::new(types, projections, group_by)))
 }
 
 fn two_children(children: Vec<LogicalOperator>, what: &str) -> Result<[LogicalOperator; 2]> {
