@@ -130,6 +130,14 @@ fn transactions_and_settings() {
         "Catalog Error: unrecognized configuration parameter \"foo_bar\"\n\nDid you mean: \"force_bitpacking_mode\""
     );
     con.query("SET default_order = 'desc'").unwrap();
+    let nested = "SELECT (1+(1+(1+(1+(1+(1+(1+1)))))))";
+    assert_eq!(rows(&mut con, nested), vec![vec!["8"]]);
+    con.query("SET max_expression_depth TO 7").unwrap();
+    assert_eq!(
+        error(&mut con, nested),
+        "Binder Error: Max expression depth limit of 7 exceeded. Use \"SET max_expression_depth TO x\" to increase \
+         the maximum expression depth."
+    );
 }
 
 #[test]

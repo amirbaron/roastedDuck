@@ -23,11 +23,26 @@ impl std::fmt::Debug for BinderBase<'_> {
 }
 
 impl<'a> BinderBase<'a> {
-    pub fn new(binder: &'a mut Binder, outer: Option<&'a mut dyn Scope>) -> Self {
+    pub fn new(binder: &'a mut Binder, mut outer: Option<&'a mut dyn Scope>) -> Self {
+        // DuckDB's `InitializeStackCheck`: a nested expression binder continues the depth
+        // of the active one.
+        const INITIAL_DEPTH: u64 = 5;
+        let mut stack_depth = INITIAL_DEPTH;
+        let mut current = outer.as_mut().map(|outer| &mut **outer as &mut dyn Scope);
+        while let Some(scope) = current {
+            if let Some(active) = scope.expression_binder() {
+                stack_depth = active.state_ref().stack_depth + INITIAL_DEPTH;
+                break;
+            }
+            current = scope.parts().1;
+        }
         Self {
             binder,
             outer,
-            state: ExpressionBinderState::default(),
+            state: ExpressionBinderState {
+                stack_depth,
+                ..ExpressionBinderState::default()
+            },
         }
     }
 

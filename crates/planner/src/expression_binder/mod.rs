@@ -177,6 +177,9 @@ pub struct ExpressionBinderState {
     pub bound_columns: Vec<BoundColumnReferenceInfo>,
     /// Parameters of the lambdas being bound, innermost last.
     pub lambda_bindings: Vec<Binding>,
+    /// The nesting depth checked against `max_expression_depth` (DuckDB's
+    /// `stack_depth`).
+    pub stack_depth: u64,
 }
 
 /// "The parsed expression was not bound" (an internal invariant violation).

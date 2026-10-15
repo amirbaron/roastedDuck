@@ -47,6 +47,27 @@ pub fn bind_expression_base<B: ExpressionBinder + ?Sized>(
     depth: u64,
     root_expression: bool,
 ) -> Result<BindResult> {
+    // DuckDB's `StackCheck`.
+    let max_depth = binder.binder_ref().context.config.max_expression_depth;
+    if binder.state_ref().stack_depth + 1 >= max_depth {
+        return Err(Error::binder(format!(
+            "Max expression depth limit of {max_depth} exceeded. Use \"SET max_expression_depth TO x\" to \
+             increase the maximum expression depth."
+        )));
+    }
+    binder.state().stack_depth += 1;
+    let result = bind_expression_kind(binder, expr, depth, root_expression);
+    binder.state().stack_depth -= 1;
+    result
+}
+
+/// The dispatch of [`bind_expression_base`] on the expression class.
+fn bind_expression_kind<B: ExpressionBinder + ?Sized>(
+    binder: &mut B,
+    expr: &mut ParsedExpression,
+    depth: u64,
+    root_expression: bool,
+) -> Result<BindResult> {
     match &expr.kind {
         ParsedExpressionKind::Between(_) => bind_between(binder, expr, depth),
         ParsedExpressionKind::Case(_) => bind_case(binder, expr, depth),
