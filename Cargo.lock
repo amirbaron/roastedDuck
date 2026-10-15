@@ -430,6 +430,7 @@ dependencies = [
  "rustdb-buffer",
  "rustdb-catalog",
  "rustdb-common",
+ "rustdb-csv",
  "rustdb-execution",
  "rustdb-function",
  "rustdb-functions",
@@ -495,6 +496,22 @@ version = "1.5.6"
 dependencies = [
  "unicode-segmentation",
  "unicode-width",
+]
+
+[[package]]
+name = "rustdb-csv"
+version = "1.5.6"
+dependencies = [
+ "flate2",
+ "rustdb-ast",
+ "rustdb-common",
+ "rustdb-function",
+ "rustdb-functions",
+ "rustdb-parser",
+ "rustdb-planner",
+ "rustdb-types",
+ "ruzstd",
+ "unicode-normalization",
 ]
 
 [[package]]

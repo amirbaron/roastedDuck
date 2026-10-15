@@ -122,6 +122,7 @@ impl<'a> Transformer<'a> {
             groups,
             column_name_alias: Vec::new(),
             include_nulls: false,
+            bound: None,
         })));
         set_ref_location(&mut pivot_ref, pivot.location);
         *select_node.from_table = pivot_ref;

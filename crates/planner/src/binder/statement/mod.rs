@@ -153,7 +153,39 @@ fn bind_set(scope: &mut BindScope<'_>, set: &mut SetStatement) -> Result<BoundSt
         })));
     };
     if set.scope == SetScope::Variable {
-        return Err(Error::not_implemented("SET VARIABLE"));
+        // The value is computed by running `SELECT value` when the statement executes.
+        let select = rustdb_ast::SelectNode {
+            select_list: vec![(**value).clone()],
+            from_table: Box::new(rustdb_ast::TableRef {
+                alias: String::new(),
+                sample: None,
+                query_location: None,
+                kind: rustdb_ast::TableRefKind::Empty,
+            }),
+            where_clause: None,
+            group_expressions: Vec::new(),
+            group_sets: Vec::new(),
+            aggregate_handling: rustdb_ast::AggregateHandling::StandardHandling,
+            having: None,
+            sample: None,
+            qualify: None,
+        };
+        let mut node = rustdb_ast::QueryNode {
+            modifiers: Vec::new(),
+            cte_map: rustdb_ast::CommonTableExpressionMap::default(),
+            kind: rustdb_ast::QueryNodeKind::Select(Box::new(select)),
+        };
+        let bound = bind_node(scope, &mut node)?;
+        if bound.types.len() > 1 {
+            return Err(Error::binder("SET variable expected a single input"));
+        }
+        let plan = LogicalOperator::new(LogicalKind::Set {
+            name: set.name.clone(),
+            value: rustdb_types::Value::null(LogicalType::SQLNULL),
+            scope: set.scope,
+        })
+        .with_children(vec![bound.plan]);
+        return Ok(success(plan));
     }
     let bound = {
         let (inner, outer) = scope.split();

@@ -11,6 +11,7 @@ use rustdb_function::TableFunction;
 use rustdb_types::LogicalType;
 
 pub(crate) mod bind_joinref;
+mod bind_pivot;
 mod bind_showref;
 mod bind_table_function;
 mod plan_joinref;
@@ -48,7 +49,7 @@ pub fn bind_table_ref(scope: &mut BindScope<'_>, table_ref: &mut TableRef) -> Re
             &table_ref.alias,
             table_ref.query_location,
         ),
-        TableRefKind::Pivot(_) => Err(Error::not_implemented("PIVOT/UNPIVOT")),
+        TableRefKind::Pivot(pivot) => bind_pivot::bind_pivot(scope, pivot, &table_ref.alias),
         TableRefKind::Show(show) => bind_showref::bind_show(scope, show),
     }?;
     if let Some(sample_options) = table_ref.sample.take() {
@@ -282,6 +283,82 @@ fn bind_cte_query(
     Ok(())
 }
 
+/// `FileSystem::ExtractBaseName`: the file name up to its first dot.
+fn extract_base_name(path: &str) -> String {
+    let file = path
+        .split(['/', '\\'])
+        .rfind(|part| !part.is_empty())
+        .unwrap_or("");
+    file.split('.')
+        .find(|part| !part.is_empty())
+        .unwrap_or("")
+        .to_owned()
+}
+
+/// The CSV replacement scan (DuckDB's `ReadCSVReplacement` through
+/// `Binder::BindWithReplacementScan`): `FROM 'file.csv'` reads the file with
+/// `read_csv_auto`.
+fn csv_replacement_scan(base: &BaseTableRef, alias: &str) -> Option<TableRef> {
+    let mut full_path = base.catalog_name.clone();
+    if !base.schema_name.is_empty() {
+        if !full_path.is_empty() {
+            full_path.push('.');
+        }
+        full_path += &base.schema_name;
+    }
+    if !full_path.is_empty() {
+        full_path.push('.');
+    }
+    full_path += &base.table_name;
+    let mut lower_name = full_path.to_lowercase();
+    if lower_name.ends_with(".gz") {
+        lower_name.truncate(lower_name.len() - 3);
+    } else if lower_name.ends_with(".zst") {
+        lower_name.truncate(lower_name.len() - 4);
+    }
+    if !lower_name.ends_with(".csv")
+        && !lower_name.contains(".csv?")
+        && !lower_name.ends_with(".tsv")
+        && !lower_name.contains(".tsv?")
+    {
+        return None;
+    }
+    let function = rustdb_ast::FunctionExpression {
+        function_name: "read_csv_auto".to_owned(),
+        schema: String::new(),
+        children: vec![rustdb_ast::ParsedExpression::constant(
+            rustdb_types::Value::varchar(&full_path),
+        )],
+        filter: None,
+        order_bys: rustdb_ast::OrderModifier { orders: Vec::new() },
+        distinct: false,
+        is_operator: false,
+        export_state: false,
+        catalog: String::new(),
+    };
+    let has_glob = full_path.contains(['*', '?', '[']);
+    let alias = if !alias.is_empty() {
+        alias.to_owned()
+    } else if !has_glob {
+        extract_base_name(&full_path)
+    } else {
+        base.table_name.clone()
+    };
+    Some(TableRef {
+        alias,
+        sample: None,
+        query_location: None,
+        kind: TableRefKind::TableFunction(rustdb_ast::TableFunctionRef {
+            function: Box::new(rustdb_ast::ParsedExpression::new(
+                rustdb_ast::ExpressionType::Function,
+                rustdb_ast::ParsedExpressionKind::Function(Box::new(function)),
+            )),
+            column_name_alias: base.column_name_alias.clone(),
+            with_ordinality: rustdb_ast::OrdinalityType::WithoutOrdinality,
+        }),
+    })
+}
+
 /// A table, view or CTE name in FROM (DuckDB's `Binder::Bind(BaseTableRef &)`).
 fn bind_base_table(
     scope: &mut BindScope<'_>,
@@ -333,6 +410,9 @@ fn bind_base_table(
         true,
     )?;
     let Some(found) = found else {
+        if let Some(mut replacement) = csv_replacement_scan(base, alias) {
+            return bind_table_ref(scope, &mut replacement);
+        }
         if matches!(lookup, CteLookup::Circular) {
             return Err(Error::binder(format!(
                 "Circular reference to CTE \"{}\", use WITH RECURSIVE to use recursive CTEs.",

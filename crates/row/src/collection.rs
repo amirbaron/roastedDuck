@@ -559,7 +559,12 @@ impl TupleDataCollection {
         if !needs_heap || self.layout.all_constant() {
             return None;
         }
-        let pins: Vec<Arc<BufferHandle>> = pin_state.heap_pins();
+        let mut pins: Vec<Arc<BufferHandle>> = pin_state.heap_pins();
+        if pins.is_empty() {
+            // `AlreadyPinned` scans hold no pins of their own: the segments do, and the
+            // gathered strings must outlive the collection (e.g. a finalized hash table).
+            pins = self.segments.iter().flat_map(Segment::pinned_heaps).collect();
+        }
         Some(Arc::new(pins))
     }
 

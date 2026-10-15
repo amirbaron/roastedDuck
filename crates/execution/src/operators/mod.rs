@@ -10,6 +10,7 @@ mod ddl;
 mod delete;
 mod delim;
 mod dummy_scan;
+mod expression_scan;
 mod filter;
 mod hash_aggregate;
 mod insert;
@@ -18,8 +19,10 @@ mod merge_into;
 mod modify;
 mod nested_loop_join;
 mod order;
+mod pivot;
 mod projection;
 mod result_collector;
+mod sample;
 mod seq_scan;
 mod streaming_window;
 mod table_scan;
@@ -42,6 +45,7 @@ pub use ddl::{
 pub use delete::PhysicalDelete;
 pub use delim::{DelimData, DelimGlobal, DelimShared, PhysicalDelimJoin, PhysicalDelimScan};
 pub use dummy_scan::PhysicalDummyScan;
+pub use expression_scan::{ExpressionScanState, PhysicalExpressionScan};
 pub use filter::{FilterState, PhysicalFilter};
 pub use hash_aggregate::{HashAggregateGlobal, HashAggregateLocal, PhysicalHashAggregate};
 pub use insert::{InsertGlobal, InsertTarget, PhysicalInsert, TableCreator};
@@ -54,8 +58,10 @@ pub use nested_loop_join::{
     NestedLoopJoinGlobal, NestedLoopJoinProbe, NestedLoopJoinSinkLocal, PhysicalNestedLoopJoin,
 };
 pub use order::{OrderGlobalState, OrderLocalState, OrderSourceState, PhysicalOrder};
+pub use pivot::PhysicalPivot;
 pub use projection::PhysicalProjection;
 pub use result_collector::{CollectedResult, PhysicalResultCollector};
+pub use sample::{BlockingSample, PhysicalReservoirSample, PhysicalStreamingSample};
 pub use seq_scan::{PhysicalSeqScan, SeqScanLocal};
 pub use streaming_window::{PhysicalStreamingWindow, StreamingWindowGlobalState, StreamingWindowState};
 pub use table_scan::{PhysicalTableScan, TableScanGlobal};

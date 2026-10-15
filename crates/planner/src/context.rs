@@ -42,6 +42,11 @@ pub struct PlannerConfig {
     pub scalar_subquery_error_on_multiple_rows: bool,
     /// `default_collation`: the collation of VARCHAR values without one, lowercase.
     pub default_collation: String,
+    /// `pivot_filter_threshold`: up to this many pivot columns, PIVOT uses filtered
+    /// aggregates instead of the LIST-based plan.
+    pub pivot_filter_threshold: u64,
+    /// `pivot_limit`: the maximum number of pivot columns.
+    pub pivot_limit: u64,
 }
 
 /// The `default_null_order` setting (DuckDB's `DefaultOrderByNullType`).
@@ -63,6 +68,8 @@ impl Default for PlannerConfig {
             catalog_error_max_schemas: 100,
             scalar_subquery_error_on_multiple_rows: true,
             default_collation: String::new(),
+            pivot_filter_threshold: 20,
+            pivot_limit: 100_000,
         }
     }
 }
@@ -107,6 +114,8 @@ pub struct ClientContext {
     pub prepared_statements: rustdb_common::CaseInsensitiveMap<Arc<PreparedStatementData>>,
     /// Connection state functions use (random engine, ...).
     pub function_client: Arc<FunctionClient>,
+    /// `SET VARIABLE` values of the connection (DuckDB's `ClientConfig::user_variables`).
+    pub user_variables: rustdb_common::CaseInsensitiveMap<Value>,
 }
 
 /// A catalog entry found by a lookup, with where it was found.

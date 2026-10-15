@@ -40,9 +40,15 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Options, String> {
     Ok(options)
 }
 
-/// Quotes a CSV field when needed (RFC 4180 style, like DuckDB's `-csv` mode).
+/// Quotes a CSV field like DuckDB's `-csv` mode (`PrintEscapedCSV`): fields holding a
+/// control character, a quote, a non-ASCII byte or the separator become a quoted
+/// identifier.
 fn csv_field(text: &str) -> String {
-    if text.contains([',', '"', '\n', '\r']) {
+    let needs_quote = text.contains(',')
+        || text
+            .bytes()
+            .any(|byte| byte <= 31 || byte == b'"' || byte == b'\'' || byte >= 127);
+    if needs_quote {
         format!("\"{}\"", text.replace('"', "\"\""))
     } else {
         text.to_owned()

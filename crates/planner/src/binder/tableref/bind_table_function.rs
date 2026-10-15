@@ -64,17 +64,18 @@ fn bind_parameters(
 ) -> Result<(Vec<LogicalType>, Vec<Value>, NamedParameters)> {
     // While a macro definition is verified its parameters stand for constants; binding
     // them reports that their types are unknown.
-    // `name = value` parameters only need a constant value.
-    let value_is_scalar = |child: &mut ParsedExpression| {
+    // `name = value` names a parameter: only its value has to be a constant.
+    let argument_is_scalar = |child: &mut ParsedExpression| {
         if child.expression_type == ExpressionType::CompareEqual
             && let ParsedExpressionKind::Comparison(comparison) = &mut child.kind
-            && matches!(comparison.left.kind, ParsedExpressionKind::ColumnRef(_))
+            && let ParsedExpressionKind::ColumnRef(column) = &comparison.left.kind
+            && column.column_names.len() == 1
         {
             return parsed_is_scalar(&mut comparison.right);
         }
         parsed_is_scalar(child)
     };
-    if scope.binder.macro_binding.is_none() && !children.iter_mut().all(value_is_scalar) {
+    if scope.binder.macro_binding.is_none() && !children.iter_mut().all(argument_is_scalar) {
         return Err(Error::not_implemented(
             "table in-out functions and table parameters",
         ));

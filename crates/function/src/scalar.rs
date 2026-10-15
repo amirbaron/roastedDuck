@@ -168,7 +168,14 @@ pub struct ScalarFunction {
     pub lambda_cast: Option<LogicalType>,
     /// How argument collations are handled.
     pub collation_handling: CollationHandling,
+    /// Replaces the bound call by a constant computed from its bind data (DuckDB's
+    /// `bind_expression` callback, for functions such as `getvariable` that resolve
+    /// completely while binding).
+    pub bind_expression: Option<BindExpression>,
 }
+
+/// See [`ScalarFunction::bind_expression`].
+pub type BindExpression = Arc<dyn Fn(Option<&dyn FunctionData>) -> Option<Value> + Send + Sync>;
 
 impl ScalarFunction {
     pub fn new(
@@ -189,7 +196,18 @@ impl ScalarFunction {
             bind_lambda: None,
             lambda_cast: None,
             collation_handling: CollationHandling::PropagateCollations,
+            bind_expression: None,
         }
+    }
+
+    /// Sets the bind-expression callback (see [`ScalarFunction::bind_expression`]).
+    #[must_use]
+    pub fn with_bind_expression(
+        mut self,
+        bind_expression: impl Fn(Option<&dyn FunctionData>) -> Option<Value> + Send + Sync + 'static,
+    ) -> Self {
+        self.bind_expression = Some(Arc::new(bind_expression));
+        self
     }
 
     /// Sets the bind callback.

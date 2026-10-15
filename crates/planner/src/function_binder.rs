@@ -625,6 +625,11 @@ impl<'a> FunctionBinder<'a> {
             function.varargs.as_ref(),
             &function.return_type,
         )?;
+        if let Some(bind_expression) = &function.bind_expression
+            && let Some(value) = bind_expression(bind_info.as_deref())
+        {
+            return Ok(Expression::constant(value));
+        }
         let children = self.handle_collations(&mut function, children)?;
         let mut arguments = std::mem::take(&mut function.arguments);
         let mut varargs = function.varargs.take();

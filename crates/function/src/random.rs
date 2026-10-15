@@ -83,6 +83,67 @@ impl RandomEngine {
     pub fn next_random_integer_in(&mut self, min: u32, max: u32) -> u32 {
         min + (self.next_random() * f64::from(max - min)) as u32
     }
+
+    /// A random integer in `[min, max)` from 32 random bits (`NextRandomInteger32`).
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "static_cast<uint32_t> of a value in [0, max - min)"
+    )]
+    pub fn next_random_integer32_in(&mut self, min: u32, max: u32) -> u32 {
+        min + (self.next_random32() * f64::from(max - min)) as u32
+    }
+
+    /// A random double in `[min, max)` (`NextRandom(min, max)`).
+    pub fn next_random_in(&mut self, min: f64, max: f64) -> f64 {
+        min + self.next_random() * (max - min)
+    }
+
+    /// A random double in `[min, max)` from 32 random bits (`NextRandom32(min, max)`).
+    pub fn next_random32_in(&mut self, min: f64, max: f64) -> f64 {
+        min + self.next_random32() * (max - min)
+    }
+
+    /// A uniform integer in `[0, bound]` as libc++'s `uniform_int_distribution` draws it
+    /// from this engine used as a 32-bit URBG (DuckDB's `ReservoirRNG`), so that
+    /// `std::shuffle` is reproduced exactly.
+    fn libcxx_uniform(&mut self, bound: u64) -> u64 {
+        let range = bound.wrapping_add(1);
+        if range == 1 {
+            return 0;
+        }
+        // `__independent_bits_engine` with a 32-bit engine: for at most 32 bits it takes
+        // the low bits of one draw.
+        let mut width = 64 - range.leading_zeros() as usize - 1;
+        if range & (u64::MAX >> (64 - width)) != 0 {
+            width += 1;
+        }
+        debug_assert!(width <= 32, "ranges wider than 32 bits are not used");
+        let mask = u64::from(u32::MAX >> (32 - width.min(32)));
+        loop {
+            let value = u64::from(self.next_random_integer()) & mask;
+            if value < range {
+                return value;
+            }
+        }
+    }
+
+    /// Shuffles `items` exactly like libc++'s `std::shuffle(first, last, engine)`.
+    pub fn libcxx_shuffle<T>(&mut self, items: &mut [T]) {
+        let len = items.len();
+        if len < 2 {
+            return;
+        }
+        let mut remaining = len as u64 - 1;
+        for first in 0..len - 1 {
+            #[allow(clippy::cast_possible_truncation, reason = "at most the slice length")]
+            let offset = self.libcxx_uniform(remaining) as usize;
+            if offset != 0 {
+                items.swap(first, first + offset);
+            }
+            remaining -= 1;
+        }
+    }
 }
 
 #[cfg(test)]

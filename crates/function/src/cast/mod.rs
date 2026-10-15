@@ -25,6 +25,7 @@ mod string;
 mod string_nested;
 mod structs;
 mod temporal;
+pub mod text_parse;
 mod value;
 
 use std::fmt;
