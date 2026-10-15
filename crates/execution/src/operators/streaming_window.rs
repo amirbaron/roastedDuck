@@ -154,6 +154,8 @@ pub struct StreamingWindowGlobalState {
 }
 
 impl PhysicalStreamingWindow {
+    /// A streaming window over `child` computing `select_list` (streamable functions,
+    /// see [`Self::is_streaming_function`]); `types` are the input types plus one per function.
     pub fn new(types: Vec<LogicalType>, select_list: Vec<Expression>, child: PhysicalRef) -> Result<Self> {
         Ok(Self {
             types,

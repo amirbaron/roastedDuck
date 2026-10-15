@@ -5,6 +5,10 @@
 //! while sinking and finalizing) and a local state per evaluating thread (boundary state,
 //! cursors and scratch space). Sinking and finalizing a hash group take the global state
 //! mutably, so a hash group is built by one thread; evaluation only reads it.
+//!
+//! Each function module (`rownumber_function`, `rank_function`, `value_function`,
+//! `aggregate_function`) provides the same phases as [`WindowExecutor`]: `global_state`,
+//! `local_state`, `sink`, `finalize` and `evaluate`.
 
 use rustdb_common::{Error, Result};
 use rustdb_planner::ExpressionType;
