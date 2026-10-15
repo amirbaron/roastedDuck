@@ -21,6 +21,18 @@ fn transaction_error(message: &'static str) -> Error {
     Error::new(ErrorKind::Transaction, message)
 }
 
+/// A failed commit (`TransactionContext::Commit`): fatal and internal errors pass
+/// through, the others become "Failed to commit: ...".
+fn commit_error(error: Error) -> Error {
+    if matches!(error.kind(), ErrorKind::Fatal | ErrorKind::Internal) {
+        return error;
+    }
+    Error::new(
+        ErrorKind::Transaction,
+        format!("Failed to commit: {}", error.raw_message()),
+    )
+}
+
 impl TransactionContext {
     pub fn new(manager: Arc<TransactionManager>) -> Self {
         Self {
@@ -80,7 +92,7 @@ impl TransactionContext {
     pub fn end_statement(&mut self, success: bool, invalidates: bool) -> Result<()> {
         if self.auto_commit {
             return match self.current.take() {
-                Some(transaction) if success => self.manager.commit(&transaction),
+                Some(transaction) if success => self.manager.commit(&transaction).map_err(commit_error),
                 Some(transaction) => {
                     self.manager.rollback(&transaction);
                     Ok(())
@@ -119,7 +131,7 @@ impl TransactionContext {
                 self.manager.rollback(&transaction);
                 Ok(())
             }
-            Some(transaction) => self.manager.commit(&transaction),
+            Some(transaction) => self.manager.commit(&transaction).map_err(commit_error),
             None => Ok(()),
         }
     }

@@ -123,7 +123,13 @@ fn compare_strings(op: CompareOp, left: &Vector, right: &Vector, count: usize, r
 /// LIST/STRUCT/ARRAY comparisons: NULL at the top level gives NULL; inside, values
 /// compare element-wise with NULLs last and a shorter list before a longer one sharing
 /// its prefix (DuckDB's nested `PositionComparator`). Row by row through `Value`s.
-fn compare_nested(op: CompareOp, left: &Vector, right: &Vector, count: usize, result: &mut Vector) -> Result<()> {
+fn compare_nested(
+    op: CompareOp,
+    left: &Vector,
+    right: &Vector,
+    count: usize,
+    result: &mut Vector,
+) -> Result<()> {
     let mut out = Vector::flat(LogicalType::BOOLEAN, count);
     for row in 0..count {
         if left.is_null(row) || right.is_null(row) {
