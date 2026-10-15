@@ -14,6 +14,8 @@ Dependencies point downwards only.
 | `crates/serde` | `rustdb-serde` | `common/serializer` (binary + JSON) |
 | `crates/ast` | `rustdb-ast` | `parser/*` node classes (generated from serialization specs) |
 | `crates/pg-parser` | `rustdb-pg-parser` | `third_party/libpg_query` |
+| `crates/buffer` | `rustdb-buffer` | `storage/buffer`, `StandardBufferManager`, temporary files, `TemporaryMemoryManager`, `ArenaAllocator` |
+| `crates/row` | `rustdb-row` | `common/types/row` (TupleDataCollection, partitioning, row matcher, row aggregates), `common/sort` |
 | `crates/function` | `rustdb-function` | `function/*` definitions (ScalarFunction, cast functions, ...) |
 | `crates/functions` | `rustdb-functions` | builtin function library (`function/scalar`, `core_functions`, ...) |
 | `crates/catalog` | `rustdb-catalog` | `catalog/*`, catalog part of `transaction/*` |
