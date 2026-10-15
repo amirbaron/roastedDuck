@@ -29,6 +29,7 @@ use rustdb_storage::metadata::MetaBlockPointer;
 use rustdb_storage::storage_manager::StorageManager;
 use rustdb_storage::wal::{WAL_VERSION_NUMBER, WalReader, WalType, checkpoint_wal_path};
 
+use crate::attached::AttachedDatabase;
 use crate::{Connection, Database};
 
 fn io_error(message: impl Into<std::borrow::Cow<'static, str>>) -> Error {
@@ -59,18 +60,17 @@ fn version_error(checkpoint_iteration: u64, expected: u64) -> Error {
 
 /// Replays the WAL of the database's file, if any, and sets up the WAL that commits are
 /// logged to from now on (`WriteAheadLog::Replay`).
-pub(crate) fn replay(database: &Database) -> Result<()> {
-    let instance = database.instance();
-    let Some(storage) = instance.storage.clone() else {
+pub(crate) fn replay(database: &Database, attached: &Arc<AttachedDatabase>) -> Result<()> {
+    let Some(storage) = attached.storage.clone() else {
         return Ok(());
     };
     let (size, requires_truncate) = match WalReader::open(&storage.wal_path())? {
         None => (0, false),
-        Some(reader) => replay_log(database, &storage, reader)?,
+        Some(reader) => replay_log(database, attached, &storage, reader)?,
     };
     let wal = storage.init_wal(size, requires_truncate)?;
     if !storage.is_read_only() {
-        instance.transactions.set_wal(wal)?;
+        attached.catalog.set_wal(wal)?;
     }
     Ok(())
 }
@@ -168,6 +168,7 @@ fn scan_log(reader: &mut WalReader, storage: &StorageManager) -> Result<ScanStat
 /// rest must be cut off (`WriteAheadLogReplayer::ReplayLog`).
 fn replay_log(
     database: &Database,
+    attached: &AttachedDatabase,
     storage: &Arc<StorageManager>,
     mut reader: WalReader,
 ) -> Result<(u64, bool)> {
@@ -229,7 +230,7 @@ fn replay_log(
     reader.reset()?;
     let mut connection = database.connect()?;
     let mut replayer = Replayer {
-        catalog: Arc::clone(&database.instance().catalog),
+        catalog: Arc::clone(&attached.catalog),
         storage: Arc::clone(storage),
         current_table: None,
     };

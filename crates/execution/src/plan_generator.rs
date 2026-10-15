@@ -23,7 +23,7 @@ use rustdb_planner::{
     BoundLimitNode, Expression, ExpressionKind, ExpressionType, LogicalKind, LogicalOperator,
     LogicalOperatorType,
 };
-use rustdb_storage::{DataTable, StorageIndex, TableConstraints, TableIoManager};
+use rustdb_storage::{DataTable, StorageIndex, TableConstraints};
 use rustdb_types::{DataChunk, LogicalType};
 
 use crate::constraints::table_constraints;
@@ -69,8 +69,6 @@ pub struct PlanContext {
     pub transaction: Arc<Transaction>,
     /// The attached catalogs, the default one first.
     pub catalogs: Vec<Arc<Catalog>>,
-    /// Where new tables keep their data.
-    pub io: Arc<TableIoManager>,
 }
 
 impl PlanContext {
@@ -492,11 +490,13 @@ impl PlanGenerator {
             LogicalKind::CreateTable(info) => {
                 let context = self.context()?;
                 let info = *info;
+                let catalog = context.catalog(&info.catalog)?;
+                let io = Arc::clone(catalog.io()?);
                 let creator = Arc::new(CatalogTableCreator {
-                    catalog: context.catalog(&info.catalog)?,
+                    catalog,
                     schema: info.schema,
                     info: info.info,
-                    io: Arc::clone(&context.io),
+                    io,
                 });
                 let transaction = Arc::clone(&context.transaction);
                 match children.next() {

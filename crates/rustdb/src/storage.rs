@@ -12,6 +12,7 @@ use rustdb_storage::DataTable;
 use rustdb_storage::storage_manager::{StorageManager, StorageOptions};
 use rustdb_types::Value;
 
+use crate::attached::AttachOptions;
 use crate::{AccessMode, Config};
 
 /// The catalog name of a database file (`AttachedDatabase::ExtractDatabaseName`): the
@@ -39,24 +40,41 @@ fn option<'a>(config: &'a Config, name: &str) -> Option<&'a Value> {
         .map(|(_, value)| value)
 }
 
-/// The storage options a configuration asks for.
-fn storage_options(config: &Config) -> Result<StorageOptions> {
-    let mut options = StorageOptions {
+/// The attach options of the database opened at start-up.
+pub(crate) fn startup_options(config: &Config) -> AttachOptions {
+    AttachOptions {
         read_only: config.access_mode == AccessMode::ReadOnly,
+        storage_version: option(config, "storage_compatibility_version").cloned(),
+        block_size: option(config, "default_block_size").cloned(),
+        row_group_size: None,
+    }
+}
+
+fn unsigned(value: &Value, name: &str) -> Result<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_i64().and_then(|v| u64::try_from(v).ok()))
+        .or_else(|| value.to_varchar().ok().and_then(|text| text.parse().ok()))
+        .ok_or_else(|| Error::invalid_input(format!("{name} must be an integer")))
+}
+
+/// The storage options of an attach.
+fn storage_options(attach: &AttachOptions) -> Result<StorageOptions> {
+    let mut options = StorageOptions {
+        read_only: attach.read_only,
         ..StorageOptions::default()
     };
-    if let Some(version) = option(config, "storage_compatibility_version") {
+    if let Some(version) = &attach.storage_version {
         let name = version.to_varchar()?;
         options.storage_version =
             Some(SerializationCompatibility::from_version_name(&name)?.serialization_version);
     }
-    if let Some(size) = option(config, "default_block_size") {
-        let size = size
-            .as_u64()
-            .or_else(|| size.as_i64().and_then(|v| u64::try_from(v).ok()))
-            .ok_or_else(|| Error::invalid_input("default_block_size must be an integer"))?;
-        options.block_alloc_size =
-            usize::try_from(size).map_err(|_| Error::invalid_input("block size too large"))?;
+    if let Some(size) = &attach.block_size {
+        options.block_alloc_size = usize::try_from(unsigned(size, "block_size")?)
+            .map_err(|_| Error::invalid_input("block size too large"))?;
+    }
+    if let Some(size) = &attach.row_group_size {
+        options.row_group_size = unsigned(size, "row_group_size")?;
     }
     Ok(options)
 }
@@ -76,11 +94,11 @@ impl IndexExpressionLoader for NoExpressionIndexes {
 /// Opens the database file at `path` and loads its catalog into `catalog`.
 pub(crate) fn open_storage(
     path: &str,
-    config: &Config,
+    attach: &AttachOptions,
     buffer_manager: rustdb_buffer::BufferManager,
     catalog: &Catalog,
 ) -> Result<Arc<StorageManager>> {
-    let options = storage_options(config)?;
+    let options = storage_options(attach)?;
     let storage = StorageManager::open(path, buffer_manager, options)?;
     load_checkpoint(catalog, &storage, &NoExpressionIndexes)?;
     Ok(Arc::new(storage))

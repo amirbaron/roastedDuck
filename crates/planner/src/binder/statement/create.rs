@@ -81,11 +81,17 @@ fn bind_catalog(scope: &BindScope<'_>, catalog: &str) -> String {
 /// (`Binder::BindCreateSchema`).
 pub fn bind_create_schema(scope: &BindScope<'_>, info: &mut CreateInfo) -> Result<()> {
     let (mut catalog, mut schema) = bind_schema_or_catalog(scope, &info.catalog, &info.schema);
-    if catalog.is_empty() || catalog == "temp" {
-        scope.context.default_catalog().clone_into(&mut catalog);
+    if catalog == "temp" {
+        catalog.clear();
     }
-    if schema.is_empty() {
-        rustdb_catalog::DEFAULT_SCHEMA.clone_into(&mut schema);
+    match (catalog.is_empty(), schema.is_empty()) {
+        (true, true) => {
+            scope.context.default_catalog().clone_into(&mut catalog);
+            scope.context.default_schema().clone_into(&mut schema);
+        }
+        (false, true) => schema = scope.context.default_schema_for(&catalog),
+        (true, false) => catalog = scope.context.default_catalog_for(&schema),
+        (false, false) => {}
     }
     let Some(found) = scope.context.catalog(&catalog) else {
         return Err(Error::binder(format!("Catalog \"{catalog}\" does not exist!")));
@@ -560,12 +566,16 @@ pub fn bind_drop(scope: &mut BindScope<'_>, drop: &mut DropInfo) -> Result<Bound
             drop.catalog = found.catalog;
             drop.schema = found.schema;
         } else {
-            drop.catalog = catalog;
             drop.schema = if schema.is_empty() {
-                rustdb_catalog::DEFAULT_SCHEMA.to_owned()
+                scope.context.default_schema_for(if catalog.is_empty() {
+                    scope.context.default_catalog()
+                } else {
+                    &catalog
+                })
             } else {
                 schema
             };
+            drop.catalog = catalog;
         }
     } else if drop.catalog.is_empty() {
         scope.context.default_catalog().clone_into(&mut drop.catalog);

@@ -430,6 +430,10 @@ pub enum LogicalKind {
         name: String,
         scope: SetScope,
     },
+    /// `ATTACH`, options evaluated.
+    Attach(Box<rustdb_ast::AttachInfo>),
+    /// `DETACH`.
+    Detach(rustdb_ast::DetachInfo),
     /// `BEGIN` / `COMMIT` / `ROLLBACK`.
     Transaction {
         info: TransactionInfo,
@@ -788,6 +792,8 @@ impl LogicalOperator {
             LogicalKind::Execute { .. } => T::LogicalExecute,
             LogicalKind::Set { .. } => T::LogicalSet,
             LogicalKind::Reset { .. } => T::LogicalReset,
+            LogicalKind::Attach(_) => T::LogicalAttach,
+            LogicalKind::Detach(_) => T::LogicalDetach,
             LogicalKind::Transaction { .. } => T::LogicalTransaction,
             LogicalKind::Deallocate { .. } | LogicalKind::Drop(_) => T::LogicalDrop,
             LogicalKind::Pragma { .. } => T::LogicalPragma,
@@ -935,6 +941,8 @@ impl LogicalOperator {
             LogicalKind::Prepare { .. }
             | LogicalKind::Set { .. }
             | LogicalKind::Reset { .. }
+            | LogicalKind::Attach(_)
+            | LogicalKind::Detach(_)
             | LogicalKind::Transaction { .. }
             | LogicalKind::Deallocate { .. }
             | LogicalKind::Pragma { .. }
@@ -1121,6 +1129,8 @@ impl LogicalOperator {
             | LogicalKind::Deallocate { .. }
             | LogicalKind::Set { .. }
             | LogicalKind::Reset { .. }
+            | LogicalKind::Attach(_)
+            | LogicalKind::Detach(_)
             | LogicalKind::Transaction { .. }
             | LogicalKind::Pragma { .. }
             | LogicalKind::Alter(_)

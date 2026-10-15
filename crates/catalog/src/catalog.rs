@@ -1,5 +1,5 @@
 use std::fmt::Write as _;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use rustdb_ast::OnCreateConflict;
 use rustdb_common::{Error, Result};
@@ -15,6 +15,10 @@ pub const DEFAULT_SCHEMA: &str = "main";
 pub struct Catalog {
     name: String,
     schemas: Arc<CatalogSet>,
+    /// Where the database's tables keep their data.
+    io: OnceLock<Arc<rustdb_storage::TableIoManager>>,
+    /// The WAL changes to this database are logged to (database files only).
+    wal: OnceLock<Arc<rustdb_storage::wal::WriteAheadLog>>,
 }
 
 impl Catalog {
@@ -24,6 +28,8 @@ impl Catalog {
         let catalog = Self {
             schemas: Arc::new(CatalogSet::new(name.clone(), "")),
             name,
+            io: OnceLock::new(),
+            wal: OnceLock::new(),
         };
         let mut main = CatalogEntry::new(
             DEFAULT_SCHEMA,
@@ -36,6 +42,32 @@ impl Catalog {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Sets where the database's tables keep their data (once).
+    pub fn set_io(&self, io: Arc<rustdb_storage::TableIoManager>) -> Result<()> {
+        self.io
+            .set(io)
+            .map_err(|_| Error::internal("the storage of a catalog is set once"))
+    }
+
+    /// Where the database's tables keep their data.
+    pub fn io(&self) -> Result<&Arc<rustdb_storage::TableIoManager>> {
+        self.io
+            .get()
+            .ok_or_else(|| Error::internal(format!("catalog \"{}\" has no storage", self.name)))
+    }
+
+    /// Logs every following commit to this database to `wal` (once, after replay).
+    pub fn set_wal(&self, wal: Arc<rustdb_storage::wal::WriteAheadLog>) -> Result<()> {
+        self.wal
+            .set(wal)
+            .map_err(|_| Error::internal("the WAL of a database is set once"))
+    }
+
+    /// The WAL changes to this database are logged to.
+    pub fn wal(&self) -> Option<&Arc<rustdb_storage::wal::WriteAheadLog>> {
+        self.wal.get()
     }
 
     pub fn schemas(&self) -> &Arc<CatalogSet> {

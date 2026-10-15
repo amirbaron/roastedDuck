@@ -12,6 +12,7 @@ use rustdb_planner::{
 };
 use rustdb_types::LogicalType;
 
+use crate::attached::{AttachOptions, AttachedDatabase, DatabaseManager};
 use crate::settings::Settings;
 use crate::transaction::TransactionContext;
 use crate::{Config, MaterializedResult};
@@ -34,16 +35,14 @@ pub(crate) struct DatabaseInstance {
     pub(crate) transactions: Arc<TransactionManager>,
     /// Builtin functions and system objects (`system.main`); read by the binder.
     pub(crate) system_catalog: Arc<Catalog>,
-    /// The database's own catalog (`memory` for in-memory databases).
-    pub(crate) catalog: Arc<Catalog>,
+    /// The database opened at start-up and every attached one.
+    pub(crate) databases: DatabaseManager,
+    /// The name of the database opened at start-up (the default database).
+    default_database: std::sync::OnceLock<String>,
     /// The cast functions (DuckDB's `DBConfig::GetCastFunctions`).
     pub(crate) casts: Arc<CastFunctionSet>,
     /// Buffer manager and thread count used by every query.
     pub(crate) env: Arc<rustdb_execution::ClientEnv>,
-    /// Where new tables keep their data.
-    pub(crate) io: Arc<rustdb_storage::TableIoManager>,
-    /// The database file, unless the database is in memory.
-    pub(crate) storage: Option<Arc<rustdb_storage::storage_manager::StorageManager>>,
     /// Set by `PRAGMA disable_checkpoint_on_shutdown`.
     pub(crate) shutdown_checkpoint_disabled: std::sync::atomic::AtomicBool,
     /// A commit that grows the WAL beyond this many bytes checkpoints
@@ -60,14 +59,12 @@ fn is_checkpoint_threshold(name: &str) -> bool {
 }
 
 impl Drop for DatabaseInstance {
-    /// Writes a checkpoint when the last handle goes away (`checkpoint_on_shutdown`).
+    /// Writes a checkpoint of every database file when the last handle goes away
+    /// (`checkpoint_on_shutdown`).
     fn drop(&mut self) {
-        if let Some(storage) = &self.storage
-            && !storage.is_read_only()
-            && self.checkpoint_on_shutdown()
-        {
-            // Errors cannot be reported from a destructor (DuckDB logs them).
-            let _ = crate::storage::checkpoint_on_close(&self.catalog, storage);
+        let checkpoint = self.checkpoint_on_shutdown();
+        for database in self.databases.all() {
+            database.close(checkpoint);
         }
     }
 }
@@ -81,24 +78,56 @@ impl DatabaseInstance {
         Ok(())
     }
 
-    /// Checkpoints after a commit grew the WAL beyond `checkpoint_threshold`, unless
-    /// other transactions are running (`DuckTransactionManager::CanCheckpoint`).
+    /// The name of the database opened at start-up.
+    pub(crate) fn default_database_name(&self) -> &str {
+        self.default_database.get().map_or("memory", String::as_str)
+    }
+
+    /// The attached database called `name`.
+    pub(crate) fn database(&self, name: &str) -> Result<Arc<AttachedDatabase>> {
+        self.databases
+            .get(name)
+            .ok_or_else(|| Error::binder(format!("Catalog \"{name}\" does not exist!")))
+    }
+
+    /// The catalogs the binder sees: `default` first, the other attached databases,
+    /// then `system`.
+    pub(crate) fn catalogs(&self, default: &str) -> Vec<Arc<Catalog>> {
+        let databases = self.databases.all();
+        let mut catalogs: Vec<Arc<Catalog>> = databases
+            .iter()
+            .filter(|database| database.name.eq_ignore_ascii_case(default))
+            .map(|database| Arc::clone(&database.catalog))
+            .collect();
+        catalogs.extend(
+            databases
+                .iter()
+                .filter(|database| !database.name.eq_ignore_ascii_case(default))
+                .map(|database| Arc::clone(&database.catalog)),
+        );
+        catalogs.push(Arc::clone(&self.system_catalog));
+        catalogs
+    }
+
+    /// Checkpoints databases whose WAL a commit grew beyond `checkpoint_threshold`,
+    /// unless other transactions are running (`DuckTransactionManager::CanCheckpoint`).
     fn auto_checkpoint(&self) -> Result<()> {
-        let Some(storage) = &self.storage else {
-            return Ok(());
-        };
-        let Some(wal) = storage.wal() else {
-            return Ok(());
-        };
-        if wal.size()
-            <= self
-                .checkpoint_wal_size
-                .load(std::sync::atomic::Ordering::Relaxed)
-            || self.transactions.active_count() > 0
-        {
-            return Ok(());
+        let threshold = self
+            .checkpoint_wal_size
+            .load(std::sync::atomic::Ordering::Relaxed);
+        for database in self.databases.all() {
+            let Some(storage) = &database.storage else {
+                continue;
+            };
+            let Some(wal) = storage.wal() else {
+                continue;
+            };
+            if wal.size() <= threshold || self.transactions.active_count() > 0 {
+                continue;
+            }
+            crate::storage::create_checkpoint(&database.catalog, storage, false)?;
         }
-        crate::storage::create_checkpoint(&self.catalog, storage, false)
+        Ok(())
     }
 
     /// Whether `checkpoint_on_shutdown` is on (`PRAGMA disable_checkpoint_on_shutdown`).
@@ -142,34 +171,15 @@ impl Database {
             system_catalog.register_table_functions(set)?;
         }
         let env = rustdb_execution::ClientEnv::standalone()?;
-        let catalog = Catalog::new(crate::storage::database_name(&path))?;
-        let storage = if path.is_empty() {
-            None
-        } else {
-            Some(crate::storage::open_storage(
-                &path,
-                config,
-                env.buffer_manager.clone(),
-                &catalog,
-            )?)
-        };
-        let io = match &storage {
-            Some(storage) => Arc::clone(storage.io()),
-            None => Arc::new(rustdb_storage::TableIoManager::new(
-                env.buffer_manager.clone(),
-                Arc::new(rustdb_buffer::InMemoryBlockManager::default()),
-            )),
-        };
         let instance = DatabaseInstance {
-            path,
+            path: path.clone(),
             config: config.clone(),
             transactions: Arc::default(),
             system_catalog: Arc::new(system_catalog),
-            catalog: Arc::new(catalog),
+            databases: DatabaseManager::default(),
+            default_database: std::sync::OnceLock::new(),
             casts: Arc::new(CastFunctionSet::new()),
             env,
-            io,
-            storage,
             shutdown_checkpoint_disabled: std::sync::atomic::AtomicBool::new(false),
             checkpoint_wal_size: std::sync::atomic::AtomicU64::new(DEFAULT_CHECKPOINT_WAL_SIZE),
         };
@@ -181,8 +191,38 @@ impl Database {
         let database = Self {
             instance: Arc::new(instance),
         };
-        crate::wal::replay(&database)?;
+        let options = crate::storage::startup_options(config);
+        let main = database.attach("", &path, &options, rustdb_ast::OnCreateConflict::ErrorOnConflict)?;
+        if let Some(main) = main {
+            let _ = database.instance.default_database.set(main.name.clone());
+        }
         Ok(database)
+    }
+
+    /// Attaches the database at `path` as `name` and replays its WAL
+    /// (`DatabaseManager::AttachDatabase`).
+    pub(crate) fn attach(
+        &self,
+        name: &str,
+        path: &str,
+        options: &AttachOptions,
+        on_conflict: rustdb_ast::OnCreateConflict,
+    ) -> Result<Option<Arc<AttachedDatabase>>> {
+        let Some(attached) = self.instance.databases.attach(
+            name,
+            path,
+            options,
+            on_conflict,
+            &self.instance.env.buffer_manager,
+        )?
+        else {
+            return Ok(None);
+        };
+        if let Err(error) = crate::wal::replay(self, &attached) {
+            self.instance.databases.remove(&attached.name);
+            return Err(error);
+        }
+        Ok(Some(attached))
     }
 
     pub fn open_in_memory() -> Result<Self> {
@@ -208,6 +248,7 @@ impl Database {
             database: self.clone(),
             transactions,
             settings,
+            search_path: Vec::new(),
             prepared_statements: CaseInsensitiveMap::default(),
             function_client: Arc::default(),
         })
@@ -237,6 +278,9 @@ pub struct Connection {
     database: Database,
     transactions: TransactionContext,
     settings: Settings,
+    /// The `(catalog, schema)` entries set by `USE` / `SET search_path` (DuckDB's
+    /// `ClientData::catalog_search_path`).
+    search_path: Vec<(String, String)>,
     prepared_statements: CaseInsensitiveMap<Arc<PreparedStatementData>>,
     /// Connection state functions use (DuckDB keeps it in the `ClientContext`).
     function_client: Arc<rustdb_function::FunctionClient>,
@@ -317,10 +361,8 @@ impl Connection {
     fn client_context(&self, transaction: Arc<Transaction>) -> Arc<ClientContext> {
         let instance = self.database.instance();
         Arc::new(ClientContext {
-            catalogs: vec![
-                Arc::clone(&instance.catalog),
-                Arc::clone(&instance.system_catalog),
-            ],
+            catalogs: instance.catalogs(instance.default_database_name()),
+            search_path: self.search_path.clone(),
             transaction,
             casts: Arc::clone(&instance.casts),
             evaluator: Arc::new(ScalarEvaluator),
@@ -345,16 +387,132 @@ impl Connection {
             },
             _ => None,
         };
+        let database = checkpoint.and_then(|_| match &statement.kind {
+            rustdb_ast::SqlStatementKind::Call(call) => match &call.function.kind {
+                rustdb_ast::ParsedExpressionKind::Function(function) => {
+                    function.children.first().and_then(|name| match &name.kind {
+                        rustdb_ast::ParsedExpressionKind::Constant(constant) => {
+                            constant.value.to_varchar().ok()
+                        }
+                        _ => None,
+                    })
+                }
+                _ => None,
+            },
+            _ => None,
+        });
         let result = self.run_planned(statement)?;
         if let Some(force) = checkpoint {
             let instance = self.database.instance();
+            let name = database.unwrap_or_else(|| self.default_catalog());
+            let attached = instance.database(&name)?;
             let transaction = self.transactions.current();
-            crate::storage::checkpoint(&instance.catalog, instance.storage.as_ref(), &transaction, force)?;
+            crate::storage::checkpoint(&attached.catalog, attached.storage.as_ref(), &transaction, force)?;
         }
         Ok(result)
     }
 
+    /// `DETACH name` (`DatabaseManager::DetachDatabase`).
+    fn detach(&mut self, info: &rustdb_ast::DetachInfo) -> Result<()> {
+        if self.default_catalog().eq_ignore_ascii_case(&info.name) {
+            return Err(Error::binder(format!(
+                "Cannot detach database \"{}\" because it is the default database. Select a different database \
+                 using `USE` to allow detaching this database",
+                info.name
+            )));
+        }
+        let instance = self.database.instance();
+        match instance.databases.remove(&info.name) {
+            Some(database) => {
+                database.close(true);
+                Ok(())
+            }
+            None if info.if_not_found == rustdb_ast::OnEntryNotFound::ReturnNull => Ok(()),
+            None => Err(Error::binder(format!(
+                "Failed to detach database with name \"{}\": database not found",
+                info.name
+            ))),
+        }
+    }
+
+    /// `SET schema` / `SET search_path` (`CatalogSearchPath::Set`): every entry must name
+    /// an existing schema; a single name may be a database (its default schema).
+    fn set_search_path(&mut self, name: &str, value: &rustdb_types::Value) -> Result<()> {
+        let set_schema = name.eq_ignore_ascii_case("schema");
+        let set_name = if set_schema {
+            "SET schema"
+        } else {
+            "SET search_path"
+        };
+        let entries = parse_search_path(&value.to_varchar()?)?;
+        if set_schema && entries.len() != 1 {
+            return Err(Error::catalog(format!(
+                "{set_name} can set only 1 schema. This has {}",
+                entries.len()
+            )));
+        }
+        let instance = self.database.instance();
+        let transaction = self.transactions.current();
+        let mut resolved = Vec::with_capacity(entries.len());
+        for (catalog, schema) in entries {
+            let display = if catalog.is_empty() {
+                schema.clone()
+            } else {
+                format!("{catalog}.{schema}")
+            };
+            let not_found = || {
+                Error::catalog(format!(
+                    "{set_name}: No catalog + schema named \"{display}\" found."
+                ))
+            };
+            if catalog.is_empty() {
+                // A database name alone means its default schema.
+                if let Some(database) = instance.databases.get(&schema)
+                    && let Some(main) = database
+                        .catalog
+                        .schema(&transaction, rustdb_catalog::DEFAULT_SCHEMA)
+                {
+                    resolved.push((database.name.clone(), main.name().to_owned()));
+                    continue;
+                }
+                let default = self.default_catalog();
+                let database = instance.databases.get(&default).ok_or_else(not_found)?;
+                let found = database
+                    .catalog
+                    .schema(&transaction, &schema)
+                    .ok_or_else(not_found)?;
+                resolved.push((database.name.clone(), found.name().to_owned()));
+                continue;
+            }
+            let database = instance.databases.get(&catalog).ok_or_else(not_found)?;
+            let found = database
+                .catalog
+                .schema(&transaction, &schema)
+                .ok_or_else(not_found)?;
+            resolved.push((database.name.clone(), found.name().to_owned()));
+        }
+        if set_schema
+            && let Some((catalog, _)) = resolved.first()
+            && (catalog.eq_ignore_ascii_case("temp") || catalog.eq_ignore_ascii_case("system"))
+        {
+            return Err(Error::catalog(format!(
+                "{set_name} cannot be set to internal schema \"{catalog}\""
+            )));
+        }
+        self.search_path = resolved;
+        Ok(())
+    }
+
+    /// The name of the default database of this connection.
+    fn default_catalog(&self) -> String {
+        self.search_path.first().map_or_else(
+            || self.database.instance().default_database_name().to_owned(),
+            |(catalog, _)| catalog.clone(),
+        )
+    }
+
     fn run_planned(&mut self, statement: SqlStatement) -> Result<MaterializedResult> {
+        let statement_type = statement.kind.statement_type();
         let transaction = self.transactions.current();
         let planner = Planner::new(self.client_context(transaction));
         let planned = planner.create_plan(statement)?;
@@ -379,8 +537,44 @@ impl Connection {
             _ => return Err(Error::invalid_input("Not all parameters were bound")),
         };
         let return_type = properties.return_type;
+        self.register_modifications(&plan, statement_type)?;
         self.run_plan(plan, names, types)
             .map(|result| result.with_return_type(return_type))
+    }
+
+    /// Records which database the statement writes to in the transaction and rejects
+    /// writes to read-only databases (`MetaTransaction::ModifyDatabase` and the check in
+    /// `ClientContext::CreatePreparedStatementInternal`).
+    fn register_modifications(
+        &mut self,
+        plan: &LogicalOperator,
+        statement_type: rustdb_ast::StatementType,
+    ) -> Result<()> {
+        let instance = self.database.instance();
+        let mut modified: Vec<String> = Vec::new();
+        collect_modified_databases(plan, instance, &mut modified);
+        if modified.is_empty() {
+            return Ok(());
+        }
+        let transaction = self.transactions.current();
+        for name in modified {
+            if name.eq_ignore_ascii_case("system") || name.eq_ignore_ascii_case("temp") {
+                continue;
+            }
+            let Some(database) = instance.databases.get(&name) else {
+                continue;
+            };
+            if database.read_only {
+                let ty = statement_type.name();
+                return Err(Error::invalid_input(format!(
+                    "Cannot execute statement of type \"{}\" on database \"{}\" which is attached in read-only mode!",
+                    ty.strip_suffix("_STATEMENT").unwrap_or(ty),
+                    database.name
+                )));
+            }
+            transaction.modify_database(&database.name, database.catalog.wal())?;
+        }
+        Ok(())
     }
 
     /// Runs a bound plan: statements that act on the connection are executed here
@@ -404,6 +598,28 @@ impl Connection {
                         return Err(Error::not_implemented("Unrecognized transaction type!"));
                     }
                 }
+                return Ok(nothing());
+            }
+            LogicalKind::Attach(info) => {
+                let instance = self.database.instance();
+                let options = AttachOptions::from_info(
+                    info,
+                    instance.config.access_mode == crate::AccessMode::ReadOnly,
+                )?;
+                self.database
+                    .attach(&info.name, &info.path, &options, info.on_conflict)?;
+                return Ok(nothing());
+            }
+            LogicalKind::Detach(info) => {
+                self.detach(info)?;
+                return Ok(nothing());
+            }
+            LogicalKind::Set { name, value, .. } if is_search_path_setting(name) => {
+                self.set_search_path(name, value)?;
+                return Ok(nothing());
+            }
+            LogicalKind::Reset { name, .. } if is_search_path_setting(name) => {
+                self.search_path.clear();
                 return Ok(nothing());
             }
             LogicalKind::Set { name, value, .. } => {
@@ -459,11 +675,7 @@ impl Connection {
         let instance = self.database.instance();
         let context = PlanContext {
             transaction: self.transactions.current(),
-            catalogs: vec![
-                Arc::clone(&instance.catalog),
-                Arc::clone(&instance.system_catalog),
-            ],
-            io: Arc::clone(&instance.io),
+            catalogs: instance.catalogs(&self.default_catalog()),
         };
         let physical = create_physical_plan_with(plan, &context)?;
         let root: PhysicalRef = Arc::new(PhysicalResultCollector::new(physical));
@@ -473,6 +685,122 @@ impl Connection {
             .ok_or_else(|| Error::internal("result collector state has an unexpected type"))?;
         let chunks = std::mem::take(&mut collected.lock().unwrap_or_else(PoisonError::into_inner).chunks);
         Ok(MaterializedResult::new(names, types, chunks))
+    }
+}
+
+/// Whether `name` is `schema` or `search_path`, which set the catalog search path.
+fn is_search_path_setting(name: &str) -> bool {
+    name.eq_ignore_ascii_case("schema") || name.eq_ignore_ascii_case("search_path")
+}
+
+/// `CatalogSearchEntry::ParseList`: comma-separated `[catalog.]schema` entries with
+/// double-quoted identifiers.
+fn parse_search_path(input: &str) -> Result<Vec<(String, String)>> {
+    let mut entries = Vec::new();
+    let mut parts: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut chars = input.chars().peekable();
+    let finish_entry = |parts: &mut Vec<String>,
+                        current: &mut String,
+                        entries: &mut Vec<(String, String)>|
+     -> Result<()> {
+        parts.push(std::mem::take(current));
+        let entry = match parts.len() {
+            1 => (String::new(), parts[0].clone()),
+            2 => (parts[0].clone(), parts[1].clone()),
+            _ => {
+                return Err(Error::parser(format!(
+                    "Too many dots - expected [schema] or [catalog.schema] for search path entry \"{input}\""
+                )));
+            }
+        };
+        parts.clear();
+        if !entry.1.is_empty() {
+            entries.push(entry);
+        }
+        Ok(())
+    };
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => loop {
+                match chars.next() {
+                    Some('"') if chars.peek() == Some(&'"') => {
+                        chars.next();
+                        current.push('"');
+                    }
+                    Some('"') => break,
+                    Some(c) => current.push(c),
+                    None => {
+                        return Err(Error::parser(format!(
+                            "Unterminated quote in qualified name! (input: {input})"
+                        )));
+                    }
+                }
+            },
+            '.' => parts.push(std::mem::take(&mut current)),
+            ',' => finish_entry(&mut parts, &mut current, &mut entries)?,
+            c if c.is_whitespace() && current.is_empty() => {}
+            c => current.push(c),
+        }
+    }
+    finish_entry(&mut parts, &mut current, &mut entries)?;
+    Ok(entries)
+}
+
+/// The databases a plan writes to: the catalog of DDL statements and the database of
+/// the table of DML statements.
+fn collect_modified_databases(plan: &LogicalOperator, instance: &DatabaseInstance, out: &mut Vec<String>) {
+    let mut push = |name: &str| {
+        if !name.is_empty() && !out.iter().any(|existing| existing.eq_ignore_ascii_case(name)) {
+            out.push(name.to_owned());
+        }
+    };
+    let table_database = |entry: &rustdb_catalog::CatalogEntry| -> Option<String> {
+        let rustdb_catalog::EntryKind::Table(table) = &entry.kind else {
+            return None;
+        };
+        let storage = table.storage.as_ref()?;
+        instance
+            .databases
+            .all()
+            .into_iter()
+            .find(|database| {
+                database
+                    .catalog
+                    .io()
+                    .is_ok_and(|io| Arc::ptr_eq(io, storage.io()))
+            })
+            .map(|database| database.name.clone())
+    };
+    match &plan.kind {
+        LogicalKind::Insert(insert) => {
+            if let Some(name) = table_database(&insert.table) {
+                push(&name);
+            }
+        }
+        LogicalKind::Delete(delete) => {
+            if let Some(name) = table_database(&delete.table) {
+                push(&name);
+            }
+        }
+        LogicalKind::Update(update) => {
+            if let Some(name) = table_database(&update.table) {
+                push(&name);
+            }
+        }
+        LogicalKind::CreateTable(info) => push(&info.catalog),
+        LogicalKind::Create { info, .. } => push(&info.catalog),
+        LogicalKind::CreateIndex(index) => {
+            if let Some(name) = table_database(&index.table) {
+                push(&name);
+            }
+        }
+        LogicalKind::Alter(alter) => push(&alter.catalog),
+        LogicalKind::Drop(info) => push(&info.catalog),
+        _ => {}
+    }
+    for child in &plan.children {
+        collect_modified_databases(child, instance, out);
     }
 }
 

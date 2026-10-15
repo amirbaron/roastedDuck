@@ -19,7 +19,7 @@ pub(crate) use undo::{SequenceValue, UndoBuffer, UndoEntry};
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rustdb_common::{Error, Result};
 
@@ -72,6 +72,9 @@ pub struct Transaction {
     commit_id: AtomicU64,
     undo: Mutex<UndoBuffer>,
     local_storage: Arc<LocalStorage>,
+    /// The attached database the transaction writes to, and its WAL
+    /// (`MetaTransaction::modified_database`).
+    modified_database: Mutex<Option<(String, Option<Arc<WriteAheadLog>>)>>,
 }
 
 impl Transaction {
@@ -82,7 +85,49 @@ impl Transaction {
             commit_id: AtomicU64::new(0),
             undo: Mutex::default(),
             local_storage: Arc::default(),
+            modified_database: Mutex::new(None),
         }
+    }
+
+    /// Records that the transaction writes to the database `name`, whose commits are
+    /// logged to `wal` (`MetaTransaction::ModifyDatabase`). A transaction writes to one
+    /// attached database only.
+    pub fn modify_database(&self, name: &str, wal: Option<&Arc<WriteAheadLog>>) -> Result<()> {
+        let mut modified = self
+            .modified_database
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        match &*modified {
+            None => {
+                *modified = Some((name.to_owned(), wal.cloned()));
+                Ok(())
+            }
+            Some((current, _)) if current.eq_ignore_ascii_case(name) => Ok(()),
+            Some((current, _)) => Err(Error::new(
+                rustdb_common::ErrorKind::Transaction,
+                format!(
+                    "Attempting to write to database \"{name}\" in a transaction that has already modified database \"{current}\" - a single transaction can only write to a single attached database."
+                ),
+            )),
+        }
+    }
+
+    /// The database the transaction writes to (`MetaTransaction::ModifiedDatabase`).
+    pub fn modified_database(&self) -> Option<String> {
+        self.modified_database
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(|(name, _)| name.clone())
+    }
+
+    /// The WAL the transaction's commit is logged to.
+    fn wal(&self) -> Option<Arc<WriteAheadLog>> {
+        self.modified_database
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .and_then(|(_, wal)| wal.clone())
     }
 
     /// A read-only view used for internal lookups: sees every committed version.
@@ -200,8 +245,6 @@ pub struct TransactionManager {
     lowest_active_start: AtomicU64,
     lowest_active_id: AtomicU64,
     last_commit: AtomicU64,
-    /// The WAL commits are logged to (database files only).
-    wal: OnceLock<Arc<WriteAheadLog>>,
 }
 
 impl Default for TransactionManager {
@@ -216,7 +259,6 @@ impl Default for TransactionManager {
             lowest_active_start: AtomicU64::new(MAX_TRANSACTION_ID),
             lowest_active_id: AtomicU64::new(TRANSACTION_ID_START),
             last_commit: AtomicU64::new(0),
-            wal: OnceLock::new(),
         }
     }
 }
@@ -226,25 +268,14 @@ impl TransactionManager {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Logs every following commit to `wal`; set once, after the WAL was replayed.
-    pub fn set_wal(&self, wal: Arc<WriteAheadLog>) -> Result<()> {
-        self.wal
-            .set(wal)
-            .map_err(|_| Error::internal("the WAL of a database is set once"))
-    }
-
-    /// The WAL commits are logged to.
-    pub fn wal(&self) -> Option<&Arc<WriteAheadLog>> {
-        self.wal.get()
-    }
-
     /// Logs the undo log of `transaction` and stamps it with `commit_id`, holding the
     /// WAL lock so that a checkpoint sees either both or neither
     /// (`DuckTransaction::WriteToWAL` + `UndoBuffer::Commit`). If stamping fails, the
     /// logged entries are cut off again (`RevertCommit`).
-    fn log_and_commit(&self, transaction: &Transaction, commit_id: u64, others_active: bool) -> Result<()> {
+    fn log_and_commit(transaction: &Transaction, commit_id: u64, others_active: bool) -> Result<()> {
         let undo = transaction.undo();
-        let Some(wal) = self.wal.get().filter(|_| !undo.is_empty()) else {
+        let wal = transaction.wal();
+        let Some(wal) = wal.filter(|_| !undo.is_empty()) else {
             return undo.commit(commit_id, transaction.transaction_id, others_active);
         };
         let mut guard = wal.lock();
@@ -306,7 +337,7 @@ impl TransactionManager {
         let result = transaction
             .local_storage
             .commit(transaction)
-            .and_then(|()| self.log_and_commit(transaction, commit_id, others_active));
+            .and_then(|()| Self::log_and_commit(transaction, commit_id, others_active));
         let undo = std::mem::take(&mut *transaction.undo());
         let outcome = match result {
             Ok(()) => {

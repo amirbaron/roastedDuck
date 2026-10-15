@@ -9,6 +9,7 @@
 //! assert_eq!(result.value(0, 0).to_varchar().unwrap(), "42");
 //! ```
 
+mod attached;
 mod checkpoint;
 mod config;
 mod database;

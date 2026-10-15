@@ -23,6 +23,9 @@ pub struct TableFunctionBindInput<'a> {
     /// For table-in/table-out functions: the input table's column types and names.
     pub input_table_types: &'a [LogicalType],
     pub input_table_names: &'a [String],
+    /// The binder's client context (the planner's `ClientContext`), for functions that
+    /// read the catalog.
+    pub binder: Option<&'a dyn std::any::Any>,
 }
 
 /// The columns a table function call produces, and its bind data.

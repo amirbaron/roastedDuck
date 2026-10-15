@@ -93,6 +93,9 @@ impl PlannerConfig {
 pub struct ClientContext {
     /// The attached catalogs, the default one first; the `system` catalog holds built-ins.
     pub catalogs: Vec<Arc<Catalog>>,
+    /// The `(catalog, schema)` entries of `search_path` / `USE`; empty for the default
+    /// (DuckDB's `CatalogSearchPath::set_paths`).
+    pub search_path: Vec<(String, String)>,
     pub transaction: Arc<Transaction>,
     pub casts: Arc<CastFunctionSet>,
     pub evaluator: Arc<dyn ExpressionEvaluator>,
@@ -119,26 +122,80 @@ impl ClientContext {
             .find(|catalog| catalog.name().eq_ignore_ascii_case(name))
     }
 
-    /// The name of the default catalog.
+    /// The name of the default catalog (`DatabaseManager::GetDefaultDatabase`): the
+    /// catalog of the first `search_path` entry, else the database opened first.
     pub fn default_catalog(&self) -> &str {
-        self.catalogs.first().map_or("", |catalog| catalog.name())
+        match self.search_path.first() {
+            Some((catalog, _)) => catalog,
+            None => self.catalogs.first().map_or("", |catalog| catalog.name()),
+        }
     }
 
-    /// The `(catalog, schema)` pairs searched for unqualified names (DuckDB's default
-    /// `CatalogSearchPath`).
+    /// The default schema (`CatalogSearchPath::GetDefault`).
+    pub fn default_schema(&self) -> &str {
+        self.search_path
+            .first()
+            .map_or(DEFAULT_SCHEMA, |(_, schema)| schema.as_str())
+    }
+
+    /// The default schema of `catalog` (`CatalogSearchPath::GetDefaultSchema`): that of
+    /// the first search path entry in it, else `main`.
+    pub fn default_schema_for(&self, catalog: &str) -> String {
+        self.search_path
+            .iter()
+            .find(|(path_catalog, _)| path_catalog.eq_ignore_ascii_case(catalog))
+            .map_or_else(|| DEFAULT_SCHEMA.to_owned(), |(_, schema)| schema.clone())
+    }
+
+    /// The catalog an entry of `schema` goes to by default
+    /// (`CatalogSearchPath::GetDefaultCatalog`).
+    pub fn default_catalog_for(&self, schema: &str) -> String {
+        self.search_path
+            .iter()
+            .find(|(_, path_schema)| path_schema.eq_ignore_ascii_case(schema))
+            .map_or_else(
+                || self.default_catalog().to_owned(),
+                |(catalog, _)| catalog.clone(),
+            )
+    }
+
+    /// Every `(catalog, schema)` searched for unqualified names, in order
+    /// (`CatalogSearchPath::Get`): the set entries, the default database's `main`, then
+    /// `system.main`.
+    fn full_search_path(&self) -> Vec<(String, String)> {
+        let mut paths = self.search_path.clone();
+        paths.push((self.default_catalog().to_owned(), DEFAULT_SCHEMA.to_owned()));
+        paths.push(("system".to_owned(), DEFAULT_SCHEMA.to_owned()));
+        let mut unique: Vec<(String, String)> = Vec::with_capacity(paths.len());
+        for path in paths {
+            if !unique
+                .iter()
+                .any(|(c, s)| c.eq_ignore_ascii_case(&path.0) && s.eq_ignore_ascii_case(&path.1))
+            {
+                unique.push(path);
+            }
+        }
+        unique
+    }
+
+    /// The `(catalog, schema)` pairs searched for a name qualified by `catalog` and
+    /// `schema`, either of which may be empty (`Catalog::GetCatalogEntries`).
     fn search_path(&self, catalog: &str, schema: &str) -> Vec<(String, String)> {
         match (catalog.is_empty(), schema.is_empty()) {
-            (true, true) => self
-                .catalogs
-                .iter()
-                .map(|catalog| (catalog.name().to_owned(), DEFAULT_SCHEMA.to_owned()))
-                .collect(),
-            (true, false) => self
-                .catalogs
-                .iter()
-                .map(|catalog| (catalog.name().to_owned(), schema.to_owned()))
-                .collect(),
-            (false, true) => vec![(catalog.to_owned(), DEFAULT_SCHEMA.to_owned())],
+            (true, true) => self.full_search_path(),
+            (true, false) => {
+                let mut entries: Vec<(String, String)> = self
+                    .full_search_path()
+                    .into_iter()
+                    .filter(|(_, path_schema)| path_schema.eq_ignore_ascii_case(schema))
+                    .map(|(path_catalog, _)| (path_catalog, schema.to_owned()))
+                    .collect();
+                if entries.is_empty() {
+                    entries.push((self.default_catalog().to_owned(), schema.to_owned()));
+                }
+                entries
+            }
+            (false, true) => vec![(catalog.to_owned(), self.default_schema_for(catalog))],
             (false, false) => vec![(catalog.to_owned(), schema.to_owned())],
         }
     }

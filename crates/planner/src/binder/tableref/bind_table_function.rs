@@ -184,11 +184,13 @@ fn bind_table_function_internal(
             function.name
         )));
     };
+    let context = std::sync::Arc::clone(&scope.context);
     let output = bind(&TableFunctionBindInput {
         inputs: &parameters,
         named_parameters: &named_parameters,
         input_table_types: &input_table_types,
         input_table_names: &input_table_names,
+        binder: Some(context.as_ref() as &dyn std::any::Any),
     })?;
     let column_name_alias = &reference.column_name_alias;
     let mut return_types = output.return_types;

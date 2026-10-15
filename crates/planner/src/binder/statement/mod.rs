@@ -53,6 +53,8 @@ pub fn bind_statement(scope: &mut BindScope<'_>, statement: &mut SqlStatement) -
         SqlStatementKind::Delete(delete) => modify::bind_delete(scope, delete),
         SqlStatementKind::Call(call) => bind_call(scope, call),
         SqlStatementKind::Alter(info) => alter::bind_alter(scope, info),
+        SqlStatementKind::Attach(info) => bind_attach(scope, info),
+        SqlStatementKind::Detach(info) => Ok(bind_detach(scope, info)),
         other => Err(Error::not_implemented(format!(
             "Unimplemented statement type \"{}\" for Bind",
             other.statement_type().name()
@@ -150,6 +152,48 @@ fn bind_set(scope: &mut BindScope<'_>, set: &mut SetStatement) -> Result<BoundSt
         value,
         scope: set.scope,
     })))
+}
+
+/// `ATTACH path AS name (options)` (DuckDB's `Binder::Bind(AttachStatement &)`): the
+/// options are evaluated; a bare identifier is its own name as a string.
+fn bind_attach(scope: &mut BindScope<'_>, info: &mut rustdb_ast::AttachInfo) -> Result<BoundStatement> {
+    scope.with_properties(|properties| {
+        properties.return_type = StatementReturnType::Nothing;
+        properties.requires_valid_transaction = false;
+    });
+    let mut bound_info = info.clone();
+    let parsed = std::mem::take(&mut bound_info.parsed_options);
+    for (name, expression) in parsed.iter() {
+        let value = if let rustdb_ast::ParsedExpressionKind::ColumnRef(column) = &expression.kind {
+            if column.column_names.len() != 1 {
+                return Err(Error::binder(format!(
+                    "ATTACH option \"{name}\": qualified column names are not supported"
+                )));
+            }
+            rustdb_types::Value::varchar(column.column_names[0].clone())
+        } else {
+            let mut expression = expression.clone();
+            let bound = {
+                let (inner, outer) = scope.split();
+                let mut binder = ConstantBinder::new(inner, outer, "ATTACH option");
+                binder.bind(&mut expression, true)?
+            };
+            scope.context.evaluator.evaluate_scalar(&bound)?
+        };
+        bound_info.options.insert(name.to_lowercase(), value);
+    }
+    Ok(success(LogicalOperator::new(LogicalKind::Attach(Box::new(
+        bound_info,
+    )))))
+}
+
+/// `DETACH name` (DuckDB's `Binder::Bind(DetachStatement &)`).
+fn bind_detach(scope: &BindScope<'_>, info: &rustdb_ast::DetachInfo) -> BoundStatement {
+    scope.with_properties(|properties| {
+        properties.return_type = StatementReturnType::Nothing;
+        properties.requires_valid_transaction = false;
+    });
+    success(LogicalOperator::new(LogicalKind::Detach(info.clone())))
 }
 
 /// `BEGIN` / `COMMIT` / `ROLLBACK` (DuckDB's `Bind(TransactionStatement &)`).

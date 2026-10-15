@@ -16,6 +16,8 @@ struct SequenceBindData {
     name: String,
     schema: String,
     sequence: SequenceEntry,
+    /// The catalog of the sequence; taking a value writes to its database.
+    catalog: Option<Arc<rustdb_catalog::Catalog>>,
     /// The transaction the call runs in; it logs the sequence's state at commit.
     transaction: Weak<rustdb_storage::Transaction>,
 }
@@ -108,6 +110,7 @@ fn bind_sequence(input: &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>>
         name: found.entry.name().to_owned(),
         schema: found.schema,
         sequence: sequence.clone(),
+        catalog: context.catalog(&found.catalog).cloned(),
         transaction: Arc::downgrade(&context.transaction),
     })))
 }
@@ -139,7 +142,10 @@ fn sequence_kernel(
         && count > 0
         && let Some(transaction) = data.transaction.upgrade()
     {
-        // `DuckTransaction::PushSequenceUsage`.
+        // `DuckTransaction::PushSequenceUsage`; the sequence's database is modified.
+        if let Some(catalog) = &data.catalog {
+            transaction.modify_database(catalog.name(), catalog.wal())?;
+        }
         let state = data.sequence.data();
         transaction.push_sequence_usage(
             data.sequence.key(),
