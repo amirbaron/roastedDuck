@@ -336,6 +336,7 @@ test/sql/aggregate/aggregates/aggregate_limit.test_slow
 test/sql/aggregate/aggregates/arg_min_max_n.test
 test/sql/aggregate/aggregates/arg_min_max_nulls_last.test
 test/sql/aggregate/aggregates/duckdb_fuzzer_4313.test
+test/sql/aggregate/aggregates/histogram_test_all_types.test_slow
 test/sql/aggregate/aggregates/string_agg_union.test
 test/sql/aggregate/aggregates/test_aggr_string.test
 test/sql/aggregate/aggregates/test_aggregate_types.test
@@ -349,6 +350,7 @@ test/sql/aggregate/aggregates/test_arg_min_max_null.test
 test/sql/aggregate/aggregates/test_arg_min_max_null_nested.test_slow
 test/sql/aggregate/aggregates/test_arg_min_max_null_strings.test_slow
 test/sql/aggregate/aggregates/test_arg_min_max_strings.test_slow
+test/sql/aggregate/aggregates/test_avg.test
 test/sql/aggregate/aggregates/test_bigint_avg.test
 test/sql/aggregate/aggregates/test_bit_and.test
 test/sql/aggregate/aggregates/test_bit_or.test
@@ -372,6 +374,7 @@ test/sql/aggregate/aggregates/test_kurtosis.test
 test/sql/aggregate/aggregates/test_last.test
 test/sql/aggregate/aggregates/test_last_noninlined.test
 test/sql/aggregate/aggregates/test_mad.test
+test/sql/aggregate/aggregates/test_median.test
 test/sql/aggregate/aggregates/test_minmax.test
 test/sql/aggregate/aggregates/test_null_aggregates.test
 test/sql/aggregate/aggregates/test_order_by_aggregate.test
@@ -752,6 +755,7 @@ test/sql/function/blob/test_concat_blob.test
 test/sql/function/date/date_diff_extreme_dates.test
 test/sql/function/date/date_trunc_4202.test
 test/sql/function/date/date_trunc_stats.test
+test/sql/function/date/test_date_part.test
 test/sql/function/date/test_extract.test
 test/sql/function/date/test_extract_edge_cases.test
 test/sql/function/date/test_extract_month.test
@@ -764,6 +768,7 @@ test/sql/function/generic/case_condition.test
 test/sql/function/generic/case_short_circuit.test
 test/sql/function/generic/case_varchar.test
 test/sql/function/generic/constant_or_null.test
+test/sql/function/generic/error.test
 test/sql/function/generic/test_between.test
 test/sql/function/generic/test_boolean_test.test
 test/sql/function/generic/test_case.test_slow
@@ -776,6 +781,7 @@ test/sql/function/interval/test_extract.test
 test/sql/function/interval/test_interval_muldiv.test
 test/sql/function/interval/test_interval_trunc.test
 test/sql/function/list/aggregates/incorrect.test
+test/sql/function/list/aggregates/null_or_empty.test
 test/sql/function/list/aggregates/sum_bool.test
 test/sql/function/list/aggregates/sum_no_overflow.test
 test/sql/function/list/array_length.test
@@ -811,6 +817,7 @@ test/sql/function/numeric/test_nextafter.test
 test/sql/function/numeric/test_pg_math.test
 test/sql/function/numeric/test_pow.test
 test/sql/function/numeric/test_round.test
+test/sql/function/numeric/test_round_integers.test
 test/sql/function/numeric/test_sign_bit.test
 test/sql/function/numeric/test_trigo.test
 test/sql/function/numeric/test_trunc.test
@@ -823,8 +830,11 @@ test/sql/function/operator/test_bitwise_ops_types.test
 test/sql/function/operator/test_comparison.test
 test/sql/function/operator/test_division_overflow.test
 test/sql/function/operator/test_in_empty_table.test
+test/sql/function/string/hex.test
 test/sql/function/string/like_unicode.test
+test/sql/function/string/null_byte.test
 test/sql/function/string/parse_formatted_bytes.test
+test/sql/function/string/parse_path.test
 test/sql/function/string/parse_path_windows.test
 test/sql/function/string/regex_capture.test
 test/sql/function/string/regex_escape.test
@@ -847,6 +857,8 @@ test/sql/function/string/test_concat_ws.test
 test/sql/function/string/test_contains.test
 test/sql/function/string/test_contains_utf8.test
 test/sql/function/string/test_damerau_levenshtein.test
+test/sql/function/string/test_format.test
+test/sql/function/string/test_format_extensions.test
 test/sql/function/string/test_glob.test
 test/sql/function/string/test_ilike.test
 test/sql/function/string/test_ilike_escape.test
@@ -862,6 +874,7 @@ test/sql/function/string/test_like_escape.test
 test/sql/function/string/test_mismatches.test
 test/sql/function/string/test_pad.test
 test/sql/function/string/test_prefix.test
+test/sql/function/string/test_printf.test
 test/sql/function/string/test_repeat.test
 test/sql/function/string/test_replace.test
 test/sql/function/string/test_reverse.test
@@ -890,6 +903,7 @@ test/sql/function/timestamp/date_sub.test_slow
 test/sql/function/timestamp/epoch.test
 test/sql/function/timestamp/make_date.test
 test/sql/function/timestamp/test_date_diff_epoch.test
+test/sql/function/timestamp/test_date_part.test
 test/sql/function/timestamp/test_extract.test
 test/sql/function/timestamp/test_extract_ms.test
 test/sql/function/timestamp/test_now.test
@@ -1334,7 +1348,19 @@ test/sql/transactions/test_transactional_sequences.test
 test/sql/transactions/transaction_errors.test
 test/sql/transactions/transaction_insert_delete_chunks.test
 test/sql/transactions/transaction_insert_mixed_deletes.test
+test/sql/types/bignum/test_big_bignum.test
+test/sql/types/bignum/test_bignum_boundaries.test
+test/sql/types/bignum/test_bignum_comparisons.test
+test/sql/types/bignum/test_bignum_double.test
+test/sql/types/bignum/test_bignum_hugeint.test
+test/sql/types/bignum/test_bignum_implicit_cast.test
+test/sql/types/bignum/test_bignum_not_cast.test
+test/sql/types/bignum/test_bignum_try_cast.test
+test/sql/types/bignum/test_double_bignum.test
+test/sql/types/bignum/test_int_bignum_conversion.test
 test/sql/types/bignum/test_int_varchar_bignum_compatibility.test_slow
+test/sql/types/bignum/test_varchar_bignum_conversion.test
+test/sql/types/bignum/test_varchar_bignum_unhappy.test
 test/sql/types/bit/bit_issue_11211.test
 test/sql/types/bit/test_bit_bitwise_operations.test
 test/sql/types/blob/test_blob.test
