@@ -304,8 +304,7 @@ fn alter_referenced_table(
     let mut table = table.clone();
     alter(&mut table.constraints);
     let mut entry = CatalogEntry::new(existing.name(), EntryKind::Table(table));
-    entry.temporary = existing.temporary;
-    entry.dependencies.clone_from(&existing.dependencies);
+    entry.inherit_links(&existing);
     catalog.replace_entry(transaction, schema, CatalogType::Table, existing.name(), entry)
 }
 

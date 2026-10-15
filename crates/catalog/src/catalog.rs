@@ -295,6 +295,15 @@ impl Catalog {
         if on_conflict == OnCreateConflict::ReplaceOnConflict
             && let Some(old) = set.get(transaction, &name)
         {
+            if entry
+                .dependencies
+                .iter()
+                .any(|dependency| old.is_described_by(schema, &dependency.entry))
+            {
+                return Err(Error::catalog(
+                    "CREATE OR REPLACE is not allowed to depend on itself",
+                ));
+            }
             if old.catalog_type() != ty {
                 return Err(Error::catalog(format!(
                     "Existing object {name} is of type {}, trying to replace with type {}",
@@ -302,6 +311,7 @@ impl Catalog {
                     ty.display_name()
                 )));
             }
+            self.check_drop_dependencies(transaction, schema, &old, false)?;
             set.drop_entry(transaction, &name, entry.internal)?;
         }
         if set.create(transaction, entry)? {
@@ -462,6 +472,10 @@ impl Catalog {
             )));
         }
         self.check_drop_dependencies(transaction, schema, &existing, cascade)?;
+        if set.get(transaction, name).is_none() {
+            // Dropped along with a dependent that owned it.
+            return Ok(());
+        }
         if ty == CatalogType::Table {
             // The table's indexes depend on it automatically and are dropped first
             // (`DependencyManager::DropObject`), so the WAL drops them before the table.
@@ -474,7 +488,115 @@ impl Catalog {
             }
         }
         set.drop_entry(transaction, name, false)?;
+        // The entries it owns go with it (`DependencyManager::CheckDropDependencies`).
+        for owned in &existing.owned {
+            if let Some(owned_type) = CatalogType::from_ast(owned.catalog_type) {
+                self.drop_entry(transaction, owned_type, &owned.schema, &owned.name, cascade, true)?;
+            }
+        }
         Ok(())
+    }
+
+    /// The tables and sequences of this catalog that own `entry` of `schema`.
+    fn owners(
+        &self,
+        transaction: &Transaction,
+        schema: &str,
+        entry: &CatalogEntry,
+    ) -> Vec<Arc<CatalogEntry>> {
+        let mut result = Vec::new();
+        for schema_entry in self.schemas.scan(transaction) {
+            let Some(contents) = schema_entry.as_schema() else {
+                continue;
+            };
+            for set in [&contents.tables, &contents.sequences] {
+                result.extend(set.scan(transaction).into_iter().filter(|candidate| {
+                    candidate
+                        .owned
+                        .iter()
+                        .any(|owned| entry.is_described_by(schema, owned))
+                }));
+            }
+        }
+        result
+    }
+
+    /// `CatalogSet::AlterOwnership` and `DependencyManager::AddOwnership`: `entry` of
+    /// `schema` becomes owned by the table or sequence `owner_name` of `owner_schema`,
+    /// which then drops it along with itself. `info` is the logged ALTER.
+    pub fn change_ownership(
+        &self,
+        transaction: &Transaction,
+        schema: &str,
+        entry: &CatalogEntry,
+        (owner_schema, owner_name): (&str, &str),
+        info: Option<rustdb_ast::AlterInfo>,
+    ) -> Result<()> {
+        let missing = || {
+            Error::catalog(format!(
+                "CatalogElement \"{owner_schema}.{owner_name}\" does not exist!"
+            ))
+        };
+        let owner_schema_entry = self.schema(transaction, owner_schema).ok_or_else(missing)?;
+        let contents = owner_schema_entry.as_schema().ok_or_else(missing)?;
+        let owner = contents
+            .tables
+            .get(transaction, owner_name)
+            .or_else(|| contents.sequences.get(transaction, owner_name))
+            .ok_or_else(missing)?;
+        let owner_schema = owner_schema_entry.name().to_owned();
+        let dependency_error = |message: String| Error::new(rustdb_common::ErrorKind::Dependency, message);
+        if let Some(other) = self.owners(transaction, &owner_schema, &owner).first() {
+            return Err(dependency_error(format!(
+                "{} can not become the owner, it is already owned by {}",
+                owner.name(),
+                other.name()
+            )));
+        }
+        if let Some(owned) = entry.owned.first() {
+            return Err(dependency_error(format!(
+                "{} already owns {}. Cannot have circular dependencies",
+                entry.name(),
+                owned.name
+            )));
+        }
+        let mut already_owned = false;
+        for other in self.owners(transaction, schema, entry) {
+            if Arc::ptr_eq(&other, &owner) {
+                already_owned = true;
+            } else {
+                return Err(dependency_error(format!(
+                    "{} is already owned by {}",
+                    entry.name(),
+                    other.name()
+                )));
+            }
+        }
+        if already_owned {
+            return Ok(());
+        }
+        let kind = match &owner.kind {
+            EntryKind::Table(table) => EntryKind::Table(table.clone()),
+            EntryKind::View(view) => EntryKind::View(view.clone()),
+            EntryKind::Sequence(sequence) => EntryKind::Sequence(sequence.clone()),
+            _ => return Err(missing()),
+        };
+        let mut new_owner = CatalogEntry::new(owner.name(), kind);
+        new_owner.inherit_links(&owner);
+        new_owner.owned.push(rustdb_ast::CatalogEntryInfo {
+            catalog_type: entry.dependency_type(),
+            schema: schema.to_owned(),
+            name: entry.name().to_owned(),
+        });
+        self.alter_entry(
+            transaction,
+            &owner_schema,
+            owner.catalog_type(),
+            owner.name(),
+            new_owner,
+            StorageHook::None,
+            info,
+        )
     }
 
     /// The entries of this catalog that depend on `entry` of `schema` (DuckDB's
@@ -485,7 +607,6 @@ impl Catalog {
         schema: &str,
         entry: &CatalogEntry,
     ) -> Vec<(String, Arc<CatalogEntry>)> {
-        let ty = entry.dependency_type();
         let mut result = Vec::new();
         for schema_entry in self.schemas.scan(transaction) {
             let Some(contents) = schema_entry.as_schema() else {
@@ -500,11 +621,15 @@ impl Catalog {
                 &contents.indexes,
             ] {
                 for candidate in set.scan(transaction) {
-                    if candidate.dependencies.iter().any(|dependency| {
-                        dependency.entry.catalog_type == ty
-                            && dependency.entry.schema.eq_ignore_ascii_case(schema)
-                            && dependency.entry.name.eq_ignore_ascii_case(entry.name())
-                    }) {
+                    if candidate
+                        .dependencies
+                        .iter()
+                        .any(|dependency| entry.is_described_by(schema, &dependency.entry))
+                        || candidate
+                            .owned
+                            .iter()
+                            .any(|owned| entry.is_described_by(schema, owned))
+                    {
                         result.push((schema_entry.name().to_owned(), candidate));
                     }
                 }

@@ -546,6 +546,11 @@ pub enum AlterAction {
     Nothing,
     /// `RENAME TO`.
     Rename(String),
+    /// `ALTER SEQUENCE ... OWNED BY schema.name`.
+    ChangeOwnership {
+        owner_schema: String,
+        owner_name: String,
+    },
     /// A new definition over the same data (rename column, defaults, drop NOT NULL).
     Definition(rustdb_catalog::TableEntry),
     /// `ADD COLUMN`, filled with `default`.

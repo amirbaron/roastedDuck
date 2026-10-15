@@ -47,6 +47,28 @@ impl CatalogType {
         }
     }
 
+    /// The catalog type of a serialized one (`None` for types without entries here).
+    pub const fn from_ast(ty: rustdb_ast::CatalogType) -> Option<Self> {
+        use rustdb_ast::CatalogType as A;
+        Some(match ty {
+            A::SchemaEntry => Self::Schema,
+            A::TableEntry => Self::Table,
+            A::ViewEntry => Self::View,
+            A::IndexEntry => Self::Index,
+            A::SequenceEntry => Self::Sequence,
+            A::TypeEntry => Self::Type,
+            A::CollationEntry => Self::Collation,
+            A::ScalarFunctionEntry => Self::ScalarFunction,
+            A::AggregateFunctionEntry => Self::AggregateFunction,
+            A::TableFunctionEntry => Self::TableFunction,
+            A::PragmaFunctionEntry => Self::PragmaFunction,
+            A::CopyFunctionEntry => Self::CopyFunction,
+            A::MacroEntry => Self::Macro,
+            A::TableMacroEntry => Self::TableMacro,
+            _ => return None,
+        })
+    }
+
     /// The name DuckDB uses in messages (`CatalogTypeToString`).
     pub const fn display_name(self) -> &'static str {
         match self {
@@ -410,6 +432,9 @@ pub struct CatalogEntry {
     /// The entries this one depends on (DuckDB's dependency manager subjects); dropping
     /// one of them requires CASCADE.
     pub dependencies: Vec<rustdb_ast::LogicalDependency>,
+    /// The entries this one owns (`ALTER SEQUENCE ... OWNED BY`): they depend on it and
+    /// are dropped along with it.
+    pub owned: Vec<rustdb_ast::CatalogEntryInfo>,
 }
 
 impl CatalogEntry {
@@ -421,7 +446,23 @@ impl CatalogEntry {
             temporary: false,
             kind,
             dependencies: Vec::new(),
+            owned: Vec::new(),
         }
+    }
+
+    /// Carries the catalog links of `previous` (the version this one replaces) over:
+    /// temporariness, dependencies and owned entries.
+    pub fn inherit_links(&mut self, previous: &Self) {
+        self.temporary = previous.temporary;
+        self.dependencies.clone_from(&previous.dependencies);
+        self.owned.clone_from(&previous.owned);
+    }
+
+    /// Whether `info` names this entry of `schema`.
+    pub fn is_described_by(&self, schema: &str, info: &rustdb_ast::CatalogEntryInfo) -> bool {
+        info.catalog_type == self.dependency_type()
+            && info.schema.eq_ignore_ascii_case(schema)
+            && info.name.eq_ignore_ascii_case(&self.name)
     }
 
     pub fn name(&self) -> &str {

@@ -26,7 +26,10 @@ pub trait ExpressionEvaluator: Send + Sync + fmt::Debug {
 
 /// The settings the binder reads (DuckDB's `ClientConfig`/`DBConfig` options).
 #[derive(Clone, Debug)]
-#[allow(clippy::struct_excessive_bools, reason = "one flag per boolean setting, like DuckDB's options")]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "one flag per boolean setting, like DuckDB's options"
+)]
 pub struct PlannerConfig {
     /// `default_order`: the direction of `ORDER BY x` without `ASC`/`DESC`.
     pub default_order: OrderType,

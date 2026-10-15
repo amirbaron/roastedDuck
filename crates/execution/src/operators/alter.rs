@@ -85,7 +85,7 @@ impl AlterEntryAction {
             "main",
         );
         let mut new_entry = CatalogEntry::new(entry.name(), EntryKind::Table(definition));
-        new_entry.temporary = entry.temporary;
+        new_entry.inherit_links(entry);
         new_entry.dependencies = dependencies;
         self.catalog.alter_entry(
             transaction,
@@ -134,6 +134,16 @@ impl DdlAction for AlterEntryAction {
         };
         match &self.action {
             AlterAction::Nothing => Ok(()),
+            AlterAction::ChangeOwnership {
+                owner_schema,
+                owner_name,
+            } => self.catalog.change_ownership(
+                transaction,
+                &self.schema,
+                entry,
+                (owner_schema, owner_name),
+                self.info.as_deref().cloned(),
+            ),
             AlterAction::Rename(new_name) => {
                 self.check_dependents(transaction, entry)?;
                 let kind = match &entry.kind {
@@ -142,8 +152,7 @@ impl DdlAction for AlterEntryAction {
                     _ => return Err(Error::internal("rename of an unexpected entry")),
                 };
                 let mut renamed = CatalogEntry::new(new_name.clone(), kind);
-                renamed.temporary = entry.temporary;
-                renamed.dependencies.clone_from(&entry.dependencies);
+                renamed.inherit_links(entry);
                 let hook = match &storage {
                     Some(storage) => {
                         StorageHook::RenamedTable(Arc::clone(storage.info()), entry.name().to_owned())

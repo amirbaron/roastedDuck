@@ -636,12 +636,7 @@ impl Connection {
         }
         let instance = self.database.instance();
         for attached in attaches {
-            let current = instance.databases.get(&attached.name);
-            if current.is_some_and(|current| Arc::ptr_eq(&current, &attached))
-                && let Some(database) = instance.databases.remove(&attached.name)
-            {
-                database.close(true);
-            }
+            instance.databases.detach_if_current(&attached);
         }
     }
 
@@ -672,11 +667,8 @@ impl Connection {
             )));
         }
         let instance = self.database.instance();
-        match instance.databases.remove(&info.name) {
-            Some(database) => {
-                database.close(true);
-                Ok(())
-            }
+        match instance.databases.detach(&info.name) {
+            Some(_) => Ok(()),
             None if info.if_not_found == rustdb_ast::OnEntryNotFound::ReturnNull => Ok(()),
             None => Err(Error::binder(format!(
                 "Failed to detach database with name \"{}\": database not found",
