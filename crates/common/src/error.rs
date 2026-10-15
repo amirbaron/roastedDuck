@@ -145,6 +145,18 @@ impl Error {
         self.position
     }
 
+    /// Sets the query position (used by the parser for syntax errors).
+    #[must_use]
+    pub fn with_query_location(mut self, location: usize) -> Self {
+        self.position = Some(location as u64);
+        self
+    }
+
+    /// The query position the error refers to, if known.
+    pub fn query_location(&self) -> Option<usize> {
+        self.position.and_then(|position| usize::try_from(position).ok())
+    }
+
     /// Renders the position as `LINE n: ...` context within `query`
     /// (DuckDB's `ErrorData::AddErrorLocation`).
     #[must_use]

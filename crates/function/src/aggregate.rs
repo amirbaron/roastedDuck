@@ -140,8 +140,9 @@ pub enum DistinctDependence {
 
 /// Specialises a chosen aggregate overload for a call (DuckDB's
 /// `bind_aggregate_function_t`); may rewrite `arguments`/`return_type`.
-pub type AggregateBind =
-    Arc<dyn Fn(&mut AggregateFunction, &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>> + Send + Sync>;
+pub type AggregateBind = Arc<
+    dyn Fn(&mut AggregateFunction, &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>> + Send + Sync,
+>;
 
 /// One overload of an aggregate function.
 #[derive(Clone)]
