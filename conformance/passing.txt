@@ -1670,7 +1670,16 @@ test/sql/returning/returning_delete_list.test
 test/sql/returning/returning_delete_same_transaction.test
 test/sql/returning/returning_insert.test
 test/sql/returning/returning_large.test
+test/sql/sample/bernoulli_sampling.test_slow
+test/sql/sample/get_multiple_samples_small.test_slow
+test/sql/sample/large_reservoir_sample.test_slow
+test/sql/sample/reservoir_testing_percentage.test_slow
+test/sql/sample/reservoir_testing_percentage_2.test_slow
+test/sql/sample/reservoir_testing_rows_value.test_slow
+test/sql/sample/same_seed_same_sample.test
+test/sql/sample/same_seed_same_sample.test_slow
 test/sql/sample/same_seed_same_sample_vec_size_2.test
+test/sql/sample/sample_verification.test_slow
 test/sql/sample/table_samples/basic_sample_tests.test
 test/sql/sample/table_samples/sample_stores_rows_from_later_on.test_slow
 test/sql/sample/table_samples/table_sample_converts_to_block_sample.test
@@ -1678,6 +1687,7 @@ test/sql/sample/table_samples/table_sample_is_stored.test_slow
 test/sql/sample/table_samples/test_sample_is_destroyed_on_updates.test
 test/sql/sample/table_samples/test_sample_types.test
 test/sql/sample/table_samples/test_table_sample_errors.test
+test/sql/sample/test_sample_too_big.test
 test/sql/secrets/secret_compatibility_http.test
 test/sql/select/test_multi_column_reference.test
 test/sql/select/test_positional_reference.test
