@@ -60,6 +60,10 @@ pub trait PhysicalOperator: Send + Sync + fmt::Debug + 'static {
     fn as_sink(&self) -> Option<&dyn ErasedSink> {
         None
     }
+    /// Whether this is a `UNION ALL`, whose children feed the same pipeline sink.
+    fn is_union(&self) -> bool {
+        false
+    }
 }
 
 /// An operator that produces chunks at the start of a pipeline.

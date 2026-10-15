@@ -15,6 +15,7 @@ use rustdb_types::{DataChunk, LogicalType};
 
 use crate::expression_executor::ExpressionExecutor;
 use crate::operator::PhysicalRef;
+use crate::operators::PhysicalUnion;
 use crate::operators::{
     PhysicalColumnDataScan, PhysicalDummyScan, PhysicalFilter, PhysicalHashAggregate, PhysicalOrder,
     PhysicalProjection, PhysicalStreamingLimit, PhysicalTableScan, PhysicalUngroupedAggregate,
@@ -154,9 +155,66 @@ pub fn create_physical_plan(op: LogicalOperator) -> Result<PhysicalRef> {
                 next_child("order")?,
             ))
         }
+        LogicalKind::SetOperation {
+            operator_type,
+            setop_all,
+            ..
+        } => {
+            if operator_type != LogicalOperatorType::LogicalUnion {
+                return Err(not_implemented(operator_type));
+            }
+            let inputs: Vec<PhysicalRef> = children.by_ref().collect();
+            let mut inputs = inputs.into_iter().rev();
+            let mut plan = inputs
+                .next()
+                .ok_or_else(|| Error::internal("UNION without inputs"))?;
+            for left in inputs {
+                plan = Arc::new(PhysicalUnion::new(types.clone(), left, plan));
+            }
+            if setop_all {
+                plan
+            } else {
+                distinct_on_all_columns(types, plan)?
+            }
+        }
+        LogicalKind::Distinct {
+            distinct_targets,
+            order_by,
+            ..
+        } => {
+            let child = next_child("distinct")?;
+            let identity = distinct_targets.len() == types.len()
+                && distinct_targets.iter().enumerate().all(|(i, target)| {
+                    matches!(&target.kind, ExpressionKind::Reference(r) if r.index as usize == i)
+                });
+            if !identity || order_by.is_some() {
+                return Err(Error::not_implemented(
+                    "DISTINCT ON (requires the first() aggregate)",
+                ));
+            }
+            distinct_on_all_columns(types, child)?
+        }
         _ => return Err(not_implemented(operator_type)),
     };
     Ok(plan)
+}
+
+/// A `GROUP BY` on every column without aggregates: removes duplicate rows
+/// (DuckDB plans `UNION` and `DISTINCT` this way).
+fn distinct_on_all_columns(types: Vec<LogicalType>, child: PhysicalRef) -> Result<PhysicalRef> {
+    let groups = types
+        .iter()
+        .enumerate()
+        .map(|(index, ty)| Expression::reference("", ty.clone(), index as u64))
+        .collect();
+    Ok(Arc::new(PhysicalHashAggregate::new(
+        types,
+        groups,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        child,
+    )?))
 }
 
 fn not_implemented(operator_type: LogicalOperatorType) -> Error {

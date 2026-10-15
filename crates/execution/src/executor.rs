@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -5,13 +6,24 @@ use rustdb_common::{Error, Result};
 
 use crate::operator::{PhysicalRef, SinkState};
 use crate::pipeline::{Pipeline, PipelineExecutor, PipelineStates};
-use crate::{ClientEnv, ExecutionContext, SinkFinalize};
+use crate::{ClientEnv, ExecutionContext};
 
-/// Splits a physical plan into pipelines and runs them (DuckDB's `Executor`).
+type AnyGlobal = Box<dyn Any + Send + Sync>;
+
+/// Splits a physical plan into pipelines and runs them (DuckDB's `Executor` +
+/// `MetaPipeline`).
+///
+/// Every sink owns one or more pipelines (more than one below a `UNION ALL`). Sink and
+/// operator global states are shared by all pipelines that use the operator; a sink is
+/// finalized once its last pipeline has finished.
 #[derive(Debug)]
 pub struct Executor {
     env: Arc<ClientEnv>,
     pipelines: Vec<Pipeline>,
+    sink_globals: HashMap<usize, AnyGlobal>,
+    operator_globals: HashMap<usize, AnyGlobal>,
+    /// Pipelines still to run, per sink.
+    remaining: HashMap<usize, usize>,
     /// Finalized sink states, keyed by operator address.
     sink_states: HashMap<usize, SinkState>,
 }
@@ -27,6 +39,9 @@ impl Executor {
         let mut executor = Self {
             env,
             pipelines: Vec::new(),
+            sink_globals: HashMap::new(),
+            operator_globals: HashMap::new(),
+            remaining: HashMap::new(),
             sink_states: HashMap::new(),
         };
         let root_pipeline = executor.add_pipeline(Pipeline::new(Arc::clone(root)));
@@ -35,9 +50,12 @@ impl Executor {
             .first()
             .ok_or_else(|| Error::internal("the root operator of a plan must have an input"))?;
         executor.build(input, root_pipeline)?;
-        // Child pipelines are always created after the pipelines that depend on them, so
-        // running in reverse creation order respects every dependency.
-        for index in (0..executor.pipelines.len()).rev() {
+        for pipeline in &mut executor.pipelines {
+            // Operators were collected top-down; execution order is source side first.
+            pipeline.operators.reverse();
+            *executor.remaining.entry(key(&pipeline.sink)).or_default() += 1;
+        }
+        for index in executor.schedule(key(root)) {
             executor.run_pipeline(index)?;
         }
         executor
@@ -46,32 +64,79 @@ impl Executor {
             .ok_or_else(|| Error::internal("the root pipeline produced no sink state"))
     }
 
+    /// The order to run pipelines in: before a pipeline whose source is another sink, all
+    /// of that sink's pipelines; the pipelines of one sink in creation order, so union
+    /// branches produce their rows left to right.
+    fn schedule(&self, root: usize) -> Vec<usize> {
+        let mut by_sink: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (index, pipeline) in self.pipelines.iter().enumerate() {
+            by_sink.entry(key(&pipeline.sink)).or_default().push(index);
+        }
+        let mut order = Vec::with_capacity(self.pipelines.len());
+        let mut scheduled = std::collections::HashSet::new();
+        let mut stack = vec![(root, false)];
+        while let Some((sink, expanded)) = stack.pop() {
+            let pipelines = by_sink.get(&sink).map(Vec::as_slice).unwrap_or_default();
+            if expanded {
+                order.extend_from_slice(pipelines);
+                continue;
+            }
+            if !scheduled.insert(sink) {
+                continue;
+            }
+            stack.push((sink, true));
+            // Dependencies are pushed in reverse so the first branch's run first.
+            for &index in pipelines.iter().rev() {
+                if let Some(source) = &self.pipelines[index].source
+                    && by_sink.contains_key(&key(source))
+                {
+                    stack.push((key(source), false));
+                }
+            }
+        }
+        order
+    }
+
     fn add_pipeline(&mut self, pipeline: Pipeline) -> usize {
         self.pipelines.push(pipeline);
         self.pipelines.len() - 1
     }
 
-    /// Adds `op` (and its inputs) to pipeline `current` (DuckDB's `BuildPipelines`).
+    fn first_child<'a>(op: &'a PhysicalRef, role: &str) -> Result<&'a PhysicalRef> {
+        op.children()
+            .first()
+            .ok_or_else(|| Error::internal(format!("{role} {} has no input", op.name())))
+    }
+
+    /// Adds `op` (and its inputs) to pipeline `current`, top-down (DuckDB's
+    /// `BuildPipelines`).
     fn build(&mut self, op: &PhysicalRef, current: usize) -> Result<()> {
+        if op.is_union() {
+            // Each union child runs in its own pipeline with the operators collected so
+            // far and the same sink (`MetaPipeline::CreateUnionPipeline`).
+            let [left, right] = op.children() else {
+                return Err(Error::internal("UNION must have two inputs"));
+            };
+            let sibling = Pipeline {
+                source: None,
+                operators: self.pipelines[current].operators.clone(),
+                sink: Arc::clone(&self.pipelines[current].sink),
+                dependencies: Vec::new(),
+            };
+            let sibling = self.add_pipeline(sibling);
+            self.build(left, current)?;
+            return self.build(right, sibling);
+        }
         if op.as_sink().is_some() {
             // A sink ends a child pipeline and is the source of the current one.
             self.pipelines[current].source = Some(Arc::clone(op));
             let child = self.add_pipeline(Pipeline::new(Arc::clone(op)));
             self.pipelines[current].dependencies.push(child);
-            let input = op
-                .children()
-                .first()
-                .ok_or_else(|| Error::internal(format!("sink {} has no input", op.name())))?;
-            return self.build(input, child);
+            return self.build(Self::first_child(op, "sink")?, child);
         }
         if op.as_operator().is_some() {
-            let input = op
-                .children()
-                .first()
-                .ok_or_else(|| Error::internal(format!("operator {} has no input", op.name())))?;
-            self.build(input, current)?;
             self.pipelines[current].operators.push(Arc::clone(op));
-            return Ok(());
+            return self.build(Self::first_child(op, "operator")?, current);
         }
         if op.as_source().is_some() {
             self.pipelines[current].source = Some(Arc::clone(op));
@@ -85,45 +150,70 @@ impl Executor {
 
     fn run_pipeline(&mut self, index: usize) -> Result<()> {
         let ctx = ExecutionContext::new(Arc::clone(&self.env));
-        let pipeline = &self.pipelines[index];
-        let source_op = pipeline
-            .source
-            .as_ref()
-            .ok_or_else(|| Error::internal("pipeline without a source"))?;
         let no_role = |name: &str| Error::internal(format!("operator {name} lacks its pipeline role"));
-        let source = source_op.as_source().ok_or_else(|| no_role(source_op.name()))?;
-        let sink = pipeline
-            .sink
-            .as_sink()
-            .ok_or_else(|| no_role(pipeline.sink.name()))?;
-
-        let source_global = source.global_source_state(&ctx, self.sink_states.get(&key(source_op)))?;
-        let operator_globals = pipeline
-            .operators
-            .iter()
-            .map(|op| {
-                op.as_operator()
-                    .ok_or_else(|| no_role(op.name()))?
-                    .global_operator_state(&ctx)
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let mut sink_global = sink.global_sink_state(&ctx)?;
-
-        let states = PipelineStates {
-            source_global: source_global.as_ref(),
-            operator_globals: &operator_globals,
-            sink_global: sink_global.as_ref(),
+        let (source_op, sink_op, operators) = {
+            let pipeline = &self.pipelines[index];
+            let source = pipeline
+                .source
+                .clone()
+                .ok_or_else(|| Error::internal("pipeline without a source"))?;
+            (source, Arc::clone(&pipeline.sink), pipeline.operators.clone())
         };
-        let mut executor = PipelineExecutor::new(ctx.clone(), pipeline, states)?;
-        executor.run(source_op.types())?;
-        let local = std::mem::replace(&mut executor.sink_local, Box::new(()));
-        drop(executor);
+        let source = source_op.as_source().ok_or_else(|| no_role(source_op.name()))?;
+        let sink = sink_op.as_sink().ok_or_else(|| no_role(sink_op.name()))?;
+
+        let source_global = source.global_source_state(&ctx, self.sink_states.get(&key(&source_op)))?;
+        for op in &operators {
+            if let std::collections::hash_map::Entry::Vacant(entry) = self.operator_globals.entry(key(op)) {
+                let operator = op.as_operator().ok_or_else(|| no_role(op.name()))?;
+                entry.insert(operator.global_operator_state(&ctx)?);
+            }
+        }
+        if let std::collections::hash_map::Entry::Vacant(entry) = self.sink_globals.entry(key(&sink_op)) {
+            entry.insert(sink.global_sink_state(&ctx)?);
+        }
+
+        let local = {
+            let operator_globals = operators
+                .iter()
+                .map(|op| {
+                    self.operator_globals
+                        .get(&key(op))
+                        .map(AsRef::as_ref)
+                        .ok_or_else(|| Error::internal("operator state missing"))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let sink_global = self
+                .sink_globals
+                .get(&key(&sink_op))
+                .ok_or_else(|| Error::internal("sink state missing"))?;
+            let states = PipelineStates {
+                source_global: source_global.as_ref(),
+                operator_globals,
+                sink_global: sink_global.as_ref(),
+            };
+            let mut executor = PipelineExecutor::new(ctx.clone(), &self.pipelines[index], states)?;
+            executor.run(source_op.types())?;
+            std::mem::replace(&mut executor.sink_local, Box::new(()))
+        };
+        let sink_global = self
+            .sink_globals
+            .get_mut(&key(&sink_op))
+            .ok_or_else(|| Error::internal("sink state missing"))?;
         sink.combine(&ctx, sink_global.as_ref(), local)?;
-        // `NoOutputPossible` needs no special handling yet: dependent sources simply observe
-        // an empty state.
-        let _: SinkFinalize = sink.finalize(&ctx, sink_global.as_mut())?;
-        self.sink_states
-            .insert(key(&pipeline.sink), Arc::from(sink_global));
+
+        let remaining = self.remaining.entry(key(&sink_op)).or_default();
+        *remaining = remaining.saturating_sub(1);
+        if *remaining == 0 {
+            let mut sink_global = self
+                .sink_globals
+                .remove(&key(&sink_op))
+                .ok_or_else(|| Error::internal("sink state missing"))?;
+            // `NoOutputPossible` needs no special handling yet: dependent sources simply
+            // observe an empty state.
+            sink.finalize(&ctx, sink_global.as_mut())?;
+            self.sink_states.insert(key(&sink_op), Arc::from(sink_global));
+        }
         Ok(())
     }
 }

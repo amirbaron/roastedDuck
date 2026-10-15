@@ -31,7 +31,7 @@ impl Pipeline {
 /// Global (shared) states of one pipeline run.
 pub(crate) struct PipelineStates<'a> {
     pub source_global: &'a (dyn Any + Send + Sync),
-    pub operator_globals: &'a [Box<dyn Any + Send + Sync>],
+    pub operator_globals: Vec<&'a (dyn Any + Send + Sync)>,
     pub sink_global: &'a (dyn Any + Send + Sync),
 }
 
@@ -80,8 +80,8 @@ impl<'a> PipelineExecutor<'a> {
         let source_local = source.local_source_state(&ctx, states.source_global)?;
         let operator_locals = operators
             .iter()
-            .zip(states.operator_globals)
-            .map(|(op, global)| op.local_operator_state(&ctx, global.as_ref()))
+            .zip(&states.operator_globals)
+            .map(|(op, global)| op.local_operator_state(&ctx, *global))
             .collect::<Result<Vec<_>>>()?;
         let sink_local = sink.local_sink_state(&ctx, states.sink_global)?;
         let outputs = pipeline
@@ -177,7 +177,7 @@ impl<'a> PipelineExecutor<'a> {
                 &self.ctx,
                 op_input,
                 output,
-                self.states.operator_globals[current].as_ref(),
+                self.states.operator_globals[current],
                 self.operator_locals[current].as_mut(),
             )?;
             match result {

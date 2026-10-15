@@ -10,6 +10,7 @@ mod projection;
 mod result_collector;
 mod table_scan;
 mod ungrouped_aggregate;
+mod union;
 
 pub use column_data_scan::PhysicalColumnDataScan;
 pub use dummy_scan::PhysicalDummyScan;
@@ -21,3 +22,4 @@ pub use projection::PhysicalProjection;
 pub use result_collector::{CollectedResult, PhysicalResultCollector};
 pub use table_scan::{PhysicalTableScan, TableScanGlobal};
 pub use ungrouped_aggregate::{AggregateStates, PhysicalUngroupedAggregate, UngroupedLocal};
+pub use union::PhysicalUnion;
