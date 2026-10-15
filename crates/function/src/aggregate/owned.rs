@@ -57,10 +57,15 @@ impl AggregateState {
         unsafe { self.ops.simple_update(inputs, input, self.pointer(), count) }
     }
 
-    /// Merges this state into `target`.
+    /// Merges this state into `target`, a state of the same aggregate.
     pub fn combine_into(&self, target: &mut Self, input: AggregateInput<'_>) -> Result<()> {
-        // SAFETY: both states are initialised, distinct (`target` is borrowed mutably) and
-        // of the same aggregate when the caller pairs them correctly.
+        if !Arc::ptr_eq(&self.ops, &target.ops) {
+            return Err(rustdb_common::Error::internal(
+                "combining states of different aggregates",
+            ));
+        }
+        // SAFETY: both states are initialised states of the same aggregate (checked above)
+        // and distinct (`target` is borrowed mutably).
         unsafe { self.ops.combine(&[self.pointer()], &[target.pointer()], input) }
     }
 

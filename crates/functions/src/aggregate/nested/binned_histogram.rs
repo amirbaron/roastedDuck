@@ -7,7 +7,9 @@ use std::sync::Arc;
 use rustdb_common::{Error, Result};
 use rustdb_function::aggregate::{Aggregate, AggregateInput, AggregateOps, States, Typed};
 use rustdb_function::cast::values_not_distinct;
-use rustdb_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionData, ScalarFunction};
+use rustdb_function::{
+    AggregateFunction, AggregateFunctionSet, BindInput, FunctionData, ScalarFunction, ScalarFunctionSet,
+};
 use rustdb_types::{ListEntry, LogicalType, LogicalTypeId, PhysicalType, Value, Vector};
 
 use crate::aggregate::nested::histogram::{histogram_function, write_map};
@@ -300,6 +302,13 @@ pub fn histogram_functions() -> AggregateFunctionSet {
 /// `histogram_exact(ANY, ANY[]) -> MAP`.
 pub fn histogram_exact_functions() -> AggregateFunctionSet {
     AggregateFunctionSet::single("histogram_exact", binned_function::<true>()).renamed("histogram_exact")
+}
+
+/// The `is_histogram_other_bin` set.
+pub fn is_histogram_other_bin_function_set() -> ScalarFunctionSet {
+    let mut set = ScalarFunctionSet::new("is_histogram_other_bin");
+    set.add(is_histogram_other_bin_function());
+    set
 }
 
 /// `is_histogram_other_bin(ANY) -> BOOLEAN` (DuckDB's `IsHistogramOtherBinFunction`).
