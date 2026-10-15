@@ -5,6 +5,7 @@ pub mod array;
 pub mod bit;
 pub mod blob;
 pub mod date;
+pub mod enums;
 pub(crate) mod executor;
 pub mod generic;
 pub mod list;
@@ -59,6 +60,11 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
         union::union_extract_functions(),
         union::union_tag_functions(),
         union::union_value_functions(),
+        enums::enum_first_functions(),
+        enums::enum_last_functions(),
+        enums::enum_code_functions(),
+        enums::enum_range_functions(),
+        enums::enum_range_boundary_functions(),
         list::list_extract::array_extract_functions(),
         array::array_value::array_value_functions(),
         operator::bitwise::bitwise_and_functions(),
