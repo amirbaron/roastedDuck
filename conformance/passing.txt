@@ -86,6 +86,7 @@ test/sql/create/create_database.test
 test/sql/create/create_table_as_error.test
 test/sql/create/create_using_index.test
 test/sql/cte/lazy_cte_bind.test
+test/sql/cte/lazy_cte_bind_correlated.test
 test/sql/error/error_location_not_duplicated.test
 test/sql/error/subquery_single_column.test
 test/sql/export/export_types.test
@@ -158,6 +159,7 @@ test/sql/storage/vacuum/vacuum_rebuild_indexes.test_slow
 test/sql/storage/vacuum/vacuum_rebuild_indexes_attach_overrides_global.test_slow
 test/sql/storage/vacuum/vacuum_rebuild_indexes_threshold.test_slow
 test/sql/subquery/any_all/test_scalar_any_all.test
+test/sql/subquery/lateral/lateral_fuzzer_1463.test
 test/sql/subquery/scalar/test_correlated_side_effects.test
 test/sql/subquery/table/test_subquery_union.test
 test/sql/subquery/table/test_unnamed_subquery.test

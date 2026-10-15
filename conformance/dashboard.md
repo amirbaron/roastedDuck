@@ -1,6 +1,6 @@
 # rustdb conformance dashboard
 
-Rust passing: **200 / 4870 files** (150 pass on both engines). "Passing" means the Rust run passed, or both engines skipped the file for the same reason.
+Rust passing: **202 / 4870 files** (152 pass on both engines). "Passing" means the Rust run passed, or both engines skipped the file for the same reason.
 
 | group | files | C++ pass | C++ skip | C++ fail | Rust passing | both pass | Rust fail | Rust crash/timeout | Rust skip (C++ pass) | Rust % |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -50,7 +50,7 @@ Rust passing: **200 / 4870 files** (150 pass on both engines). "Passing" means t
 | test/sql/copy | 539 | 518 | 21 | 0 | 24 | 14 | 265 | 0 | 239 | 4.5% |
 | test/sql/copy_database | 11 | 11 | 0 | 0 | 1 | 1 | 9 | 0 | 1 | 9.1% |
 | test/sql/create | 16 | 16 | 0 | 0 | 3 | 3 | 13 | 0 | 0 | 18.8% |
-| test/sql/cte | 62 | 62 | 0 | 0 | 1 | 1 | 57 | 0 | 4 | 1.6% |
+| test/sql/cte | 62 | 62 | 0 | 0 | 2 | 2 | 56 | 0 | 4 | 3.2% |
 | test/sql/delete | 22 | 22 | 0 | 0 | 0 | 0 | 22 | 0 | 0 | 0.0% |
 | test/sql/detailed_profiler | 3 | 3 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 0.0% |
 | test/sql/error | 15 | 15 | 0 | 0 | 2 | 2 | 13 | 0 | 0 | 13.3% |
@@ -91,7 +91,7 @@ Rust passing: **200 / 4870 files** (150 pass on both engines). "Passing" means t
 | test/sql/show_select | 10 | 10 | 0 | 0 | 0 | 0 | 10 | 0 | 0 | 0.0% |
 | test/sql/storage | 601 | 582 | 19 | 0 | 16 | 1 | 531 | 0 | 50 | 2.7% |
 | test/sql/storage_version | 1 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0.0% |
-| test/sql/subquery | 89 | 89 | 0 | 0 | 4 | 4 | 84 | 0 | 1 | 4.5% |
+| test/sql/subquery | 89 | 89 | 0 | 0 | 5 | 5 | 83 | 0 | 1 | 5.6% |
 | test/sql/table_function | 43 | 42 | 1 | 0 | 1 | 1 | 39 | 0 | 3 | 2.3% |
 | test/sql/timezone | 5 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0.0% |
 | test/sql/topn | 21 | 21 | 0 | 0 | 0 | 0 | 20 | 0 | 1 | 0.0% |
@@ -108,4 +108,4 @@ Rust passing: **200 / 4870 files** (150 pass on both engines). "Passing" means t
 | test/sqlite | 4 | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0.0% |
 | test/sqlite/tags | 4 | 0 | 4 | 0 | 4 | 0 | 0 | 0 | 0 | 100.0% |
 | test/sqlserver | 2 | 2 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0.0% |
-| **total** | 4870 | 4794 | 75 | 1 | 200 | 150 | 3891 | 0 | 760 | 4.1% |
+| **total** | 4870 | 4794 | 75 | 1 | 202 | 152 | 3889 | 0 | 760 | 4.1% |
