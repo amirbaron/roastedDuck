@@ -435,6 +435,7 @@ dependencies = [
  "rustdb-functions",
  "rustdb-parser",
  "rustdb-planner",
+ "rustdb-serde",
  "rustdb-storage",
  "rustdb-types",
 ]
@@ -480,8 +481,10 @@ name = "rustdb-catalog"
 version = "1.5.6"
 dependencies = [
  "rustdb-ast",
+ "rustdb-buffer",
  "rustdb-common",
  "rustdb-function",
+ "rustdb-serde",
  "rustdb-storage",
  "rustdb-types",
 ]
@@ -592,6 +595,7 @@ version = "1.5.6"
 dependencies = [
  "rustdb-buffer",
  "rustdb-common",
+ "rustdb-serde",
  "rustdb-types",
 ]
 
