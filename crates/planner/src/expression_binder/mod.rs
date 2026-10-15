@@ -15,6 +15,7 @@ mod base;
 mod base_select_binder;
 mod column_alias_binder;
 mod group_binder;
+mod lateral_binder;
 mod order_binder;
 mod qualify;
 mod simple_binders;
@@ -37,6 +38,7 @@ pub use base_select_binder::{
 };
 pub use column_alias_binder::ColumnAliasBinder;
 pub use group_binder::GroupBinder;
+pub use lateral_binder::{LateralBinder, reduce_expression_depth};
 pub use order_binder::OrderBinder;
 pub use qualify::{
     ColumnQualifier, QualifyContext, bind_and_qualify_function, create_struct_extract, for_each_child,

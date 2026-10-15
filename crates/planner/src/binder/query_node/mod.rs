@@ -20,7 +20,7 @@ use crate::generated::enums::DistinctType;
 use crate::operator::{BoundLimitNode, GroupingSet, LogicalKind, LogicalOperator};
 
 
-pub use plan_subquery::plan_subqueries;
+pub use plan_subquery::{plan_lateral_join, plan_subqueries, recursive_dependent_join_planner};
 
 /// GROUP BY terms and grouping sets (DuckDB's `BoundGroupByNode`).
 #[derive(Clone, Debug, Default)]

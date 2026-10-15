@@ -161,6 +161,52 @@ pub struct LogicalComparisonJoin {
     pub predicate: Option<Expression>,
 }
 
+impl JoinCondition {
+    /// The condition as a comparison (DuckDB's `JoinCondition::CreateExpression`).
+    pub fn into_expression(self) -> Expression {
+        Expression::comparison(self.comparison, self.left, self.right)
+    }
+}
+
+impl LogicalComparisonJoin {
+    /// A join without conditions (DuckDB's `LogicalComparisonJoin(type, logical_type)`).
+    pub fn new(join_type: JoinType, operator_type: LogicalOperatorType) -> Self {
+        Self {
+            operator_type,
+            join_type,
+            mark_index: 0,
+            left_projection_map: Vec::new(),
+            right_projection_map: Vec::new(),
+            conditions: Vec::new(),
+            mark_types: Vec::new(),
+            duplicate_eliminated_columns: Vec::new(),
+            delim_flipped: false,
+            predicate: None,
+        }
+    }
+}
+
+impl LogicalDependentJoin {
+    /// DuckDB's `LogicalDependentJoin(JoinType)`.
+    pub fn new(join_type: JoinType) -> Self {
+        Self {
+            join: LogicalComparisonJoin::new(join_type, LogicalOperatorType::LogicalDependentJoin),
+            join_condition: None,
+            correlated_columns: CorrelatedColumns::default(),
+            subquery_type: SubqueryType::Invalid,
+            perform_delim: true,
+            any_join: false,
+            propagate_null_values: true,
+            is_lateral_join: false,
+            arbitrary_expressions: Vec::new(),
+            expression_children: Vec::new(),
+            child_types: Vec::new(),
+            child_targets: Vec::new(),
+            comparison_type: ExpressionType::Invalid,
+        }
+    }
+}
+
 /// A dependent (correlated) join to be decorrelated (DuckDB's `LogicalDependentJoin`,
 /// which extends `LogicalComparisonJoin`: `join` holds the members it inherits).
 #[derive(Clone, Debug)]

@@ -163,6 +163,15 @@ impl CorrelatedColumns {
         self.columns.iter()
     }
 
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, CorrelatedColumnInfo> {
+        self.columns.iter_mut()
+    }
+
+    /// The column at `index`.
+    pub fn get(&self, index: usize) -> Option<&CorrelatedColumnInfo> {
+        self.columns.get(index)
+    }
+
     pub fn contains(&self, binding: ColumnBinding) -> bool {
         self.columns.iter().any(|column| column.binding == binding)
     }
@@ -211,7 +220,7 @@ pub struct Binder {
     pub is_outside_flattened: bool,
     /// Whether expressions may keep the `NULL` type (instead of becoming INTEGER).
     pub can_contain_nulls: bool,
-    unnamed_subquery_index: u64,
+    pub(crate) unnamed_subquery_index: u64,
     depth: u64,
 }
 
@@ -261,7 +270,7 @@ impl Binder {
         Ok(binder)
     }
 
-    fn increase_depth(&mut self) -> Result<()> {
+    pub(crate) fn increase_depth(&mut self) -> Result<()> {
         self.depth += 1;
         let max = self.context.config.max_expression_depth;
         if self.depth > max {

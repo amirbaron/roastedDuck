@@ -36,6 +36,9 @@ pub struct PlannerConfig {
     pub order_by_non_integer_literal: bool,
     /// `catalog_error_max_schemas`.
     pub catalog_error_max_schemas: usize,
+    /// `scalar_subquery_error_on_multiple_rows`: scalar subqueries returning several rows
+    /// raise an error (instead of returning one of them).
+    pub scalar_subquery_error_on_multiple_rows: bool,
 }
 
 /// The `default_null_order` setting (DuckDB's `DefaultOrderByNullType`).
@@ -55,6 +58,7 @@ impl Default for PlannerConfig {
             max_expression_depth: 1000,
             order_by_non_integer_literal: false,
             catalog_error_max_schemas: 100,
+            scalar_subquery_error_on_multiple_rows: true,
         }
     }
 }

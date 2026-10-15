@@ -10,6 +10,11 @@ use rustdb_common::{Error, Result};
 use rustdb_function::TableFunction;
 use rustdb_types::LogicalType;
 
+mod bind_joinref;
+mod plan_joinref;
+
+pub use plan_joinref::extract_join_conditions_from;
+
 use super::binding::{Binding, BindingAlias, BindingKind};
 use super::bind_context::alias_column_names;
 use super::query_node::{bind_node, plan_subqueries};
@@ -31,7 +36,7 @@ pub fn bind_table_ref(scope: &mut BindScope<'_>, table_ref: &mut TableRef) -> Re
         TableRefKind::ExpressionList(list) => bind_expression_list(scope, list, &table_ref.alias),
         TableRefKind::Subquery(subquery) => bind_subquery_ref(scope, subquery, &table_ref.alias),
         TableRefKind::BaseTable(base) => bind_base_table(scope, base, &table_ref.alias, table_ref.query_location),
-        TableRefKind::Join(_) => Err(Error::not_implemented("joins")),
+        TableRefKind::Join(join) => bind_joinref::bind_join(scope, join, table_ref.query_location),
         TableRefKind::TableFunction(_) => Err(Error::not_implemented("table functions")),
         TableRefKind::Pivot(_) => Err(Error::not_implemented("PIVOT/UNPIVOT")),
         TableRefKind::Show(_) => Err(Error::not_implemented("SHOW/DESCRIBE/SUMMARIZE")),
