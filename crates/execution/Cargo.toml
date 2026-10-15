@@ -11,9 +11,11 @@ rustdb-common.workspace = true
 rustdb-types.workspace = true
 rustdb-function = { path = "../function" }
 rustdb-planner = { path = "../planner" }
+rustdb-storage = { path = "../storage" }
 
 [lints]
 workspace = true
 
 [dev-dependencies]
 rustdb-functions = { path = "../functions" }
+rustdb-buffer = { path = "../buffer" }
