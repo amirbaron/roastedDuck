@@ -15,7 +15,7 @@ use std::sync::Arc;
 use rustdb_common::Result;
 use rustdb_types::{LogicalType, NativeType, Vector};
 
-use crate::{FunctionData, NullHandling};
+use crate::{BindInput, FunctionData, NullHandling};
 
 /// A pointer to one aggregate state inside caller-owned memory.
 ///
@@ -138,6 +138,11 @@ pub enum DistinctDependence {
     NotDistinctDependent,
 }
 
+/// Specialises a chosen aggregate overload for a call (DuckDB's
+/// `bind_aggregate_function_t`); may rewrite `arguments`/`return_type`.
+pub type AggregateBind =
+    Arc<dyn Fn(&mut AggregateFunction, &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>> + Send + Sync>;
+
 /// One overload of an aggregate function.
 #[derive(Clone)]
 pub struct AggregateFunction {
@@ -149,6 +154,8 @@ pub struct AggregateFunction {
     pub null_handling: NullHandling,
     pub order_dependence: OrderDependence,
     pub distinct_dependence: DistinctDependence,
+    /// Called once per call site after overload resolution.
+    pub bind: Option<AggregateBind>,
 }
 
 impl AggregateFunction {
@@ -167,6 +174,7 @@ impl AggregateFunction {
             null_handling: NullHandling::Default,
             order_dependence: OrderDependence::default(),
             distinct_dependence: DistinctDependence::default(),
+            bind: None,
         }
     }
 }
