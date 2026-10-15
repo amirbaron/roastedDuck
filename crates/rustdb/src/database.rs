@@ -1,9 +1,8 @@
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rustdb_ast::{SqlStatement, TransactionType};
 use rustdb_catalog::{Catalog, Transaction, TransactionManager};
-use rustdb_common::{Error, ErrorKind, Result};
+use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
 use rustdb_execution::operators::{CollectedResult, PhysicalResultCollector};
 use rustdb_execution::{Executor, PhysicalRef, ScalarEvaluator, create_physical_plan};
 use rustdb_function::cast::CastFunctionSet;
@@ -103,7 +102,7 @@ impl Database {
             database: self.clone(),
             transactions,
             settings,
-            prepared_statements: HashMap::new(),
+            prepared_statements: CaseInsensitiveMap::default(),
         })
     }
 
@@ -131,7 +130,7 @@ pub struct Connection {
     database: Database,
     transactions: TransactionContext,
     settings: Settings,
-    prepared_statements: HashMap<String, Arc<PreparedStatementData>>,
+    prepared_statements: CaseInsensitiveMap<Arc<PreparedStatementData>>,
 }
 
 impl Connection {

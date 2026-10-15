@@ -2,7 +2,7 @@
 //! `ClientContext` the planner uses): catalog access in a transaction, settings, casts,
 //! prepared statements and constant folding.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 
@@ -97,7 +97,7 @@ pub struct ClientContext {
     pub evaluator: Arc<dyn ExpressionEvaluator>,
     pub config: PlannerConfig,
     /// Prepared statements of the connection, by name.
-    pub prepared_statements: HashMap<String, Arc<PreparedStatementData>>,
+    pub prepared_statements: rustdb_common::CaseInsensitiveMap<Arc<PreparedStatementData>>,
 }
 
 /// A catalog entry found by a lookup, with where it was found.

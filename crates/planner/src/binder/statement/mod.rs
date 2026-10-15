@@ -159,6 +159,14 @@ fn bind_execute(scope: &mut BindScope<'_>, execute: &mut ExecuteStatement) -> Re
         )));
     };
     prepared.check_parameter_count(execute.named_values.len())?;
+    // DuckDB's `PreparedStatementData::Bind`: every parameter needs a value.
+    for (identifier, _) in prepared.value_map.iter() {
+        if execute.named_values.get(identifier).is_none() {
+            return Err(Error::binder(format!(
+                "Could not find parameter with identifier {identifier}"
+            )));
+        }
+    }
     let mut values = CaseInsensitiveMap::default();
     let mut constant_binder = Binder::new(Arc::clone(&scope.context))?;
     constant_binder.can_contain_nulls = true;

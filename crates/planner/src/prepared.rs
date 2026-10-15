@@ -24,11 +24,11 @@ pub enum StatementReturnType {
 }
 
 /// Properties of a bound statement (DuckDB's `StatementProperties`).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct StatementProperties {
-    /// Whether the statement must run inside a valid transaction.
+    /// Whether the statement must run inside a valid (not aborted) transaction.
     pub requires_valid_transaction: bool,
-    /// Whether the statement can only run while no transaction is active.
+    /// Whether the result can be streamed.
     pub allow_stream_result: bool,
     /// Whether every parameter's type could be resolved.
     pub bound_all_parameters: bool,
@@ -37,6 +37,19 @@ pub struct StatementProperties {
     pub return_type: StatementReturnType,
     /// The number of prepared statement parameters.
     pub parameter_count: usize,
+}
+
+impl Default for StatementProperties {
+    fn default() -> Self {
+        Self {
+            requires_valid_transaction: true,
+            allow_stream_result: false,
+            bound_all_parameters: true,
+            always_require_rebind: false,
+            return_type: StatementReturnType::QueryResult,
+            parameter_count: 0,
+        }
+    }
 }
 
 /// A statement prepared with `PREPARE` (DuckDB's `PreparedStatementData`).

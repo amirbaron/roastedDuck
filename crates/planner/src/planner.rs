@@ -56,6 +56,8 @@ impl Planner {
         mut statement: SqlStatement,
         values: CaseInsensitiveMap<BoundParameterData>,
     ) -> Result<PlannedStatement> {
+        // DuckDB counts the parameters the parser found, bound or not.
+        let parameter_count = statement.named_param_map.len();
         let mut binder = Binder::new(Arc::clone(&self.context))?;
         binder.set_parameters(BoundParameterMap::new(values));
         let bound = {
@@ -78,7 +80,7 @@ impl Planner {
         }
         let parameter_map = binder.take_parameters().unwrap_or_default();
         let mut properties = binder.properties();
-        properties.parameter_count = parameter_map.parameters.len();
+        properties.parameter_count = parameter_count;
         properties.bound_all_parameters = !parameter_map.rebind && resolved;
         let mut parameters = CaseInsensitiveMap::default();
         for (identifier, data) in parameter_map.parameters {
