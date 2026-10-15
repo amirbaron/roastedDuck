@@ -114,10 +114,14 @@ test/sql/parser/pg_err_pos_reset.test
 test/sql/parser/test_long_error.test
 test/sql/peg_parser/transformer/load_statement.test
 test/sql/pragma/profiling/test_no_reset_setting.test
+test/sql/prepared/invalid_prepare.test
 test/sql/prepared/parameter_variants.test
+test/sql/prepared/prepare_from_first.test
 test/sql/prepared/prepare_maintain_types.test
 test/sql/prepared/prepare_offset_first.test
+test/sql/prepared/test_basic_prepare.test
 test/sql/prepared/test_issue_2079.test
+test/sql/prepared/test_issue_6276.test
 test/sql/prepared/test_prepare_error.test
 test/sql/sample/same_seed_same_sample_vec_size_2.test
 test/sql/sample/table_samples/basic_sample_tests.test
