@@ -10,7 +10,7 @@ use super::decimal::{ToDecimal, to_decimal_kernel};
 use super::executor::{RowError, addressable, cast_rows, try_map_values, values_to_string};
 
 /// A numeric value that takes part in casts.
-pub(super) trait CastNumber: NativeType + Copy {
+pub trait CastNumber: NativeType + Copy {
     /// Appends the VARCHAR text of the value (DuckDB's `StringCast`).
     fn write_text(self, out: &mut Vec<u8>);
 
@@ -103,7 +103,7 @@ impl CastNumber for u64 {
 }
 
 /// A checked numeric conversion (DuckDB's `TryCastWithOverflowCheck`).
-pub(super) trait TryCastTo<D>: Sized {
+pub trait TryCastTo<D>: Sized {
     fn try_cast_to(self) -> Option<D>;
 }
 
@@ -153,7 +153,7 @@ small_int_to_float!(i8, i16, i32, i64, u8, u16, u32, u64);
 
 /// DuckDB's HUGEINT to DOUBLE conversion, which combines the two 64-bit halves (and so
 /// may round twice): `lower + upper * 2^64`, with a special case for small negatives.
-pub(super) fn i128_to_f64(value: i128) -> f64 {
+pub fn i128_to_f64(value: i128) -> f64 {
     let lower = value as u64;
     let upper = (value >> 64) as i64;
     if upper == -1 {
@@ -164,7 +164,7 @@ pub(super) fn i128_to_f64(value: i128) -> f64 {
 }
 
 /// DuckDB's UHUGEINT to DOUBLE conversion: `lower + upper * 2^64`.
-pub(super) fn u128_to_f64(value: u128) -> f64 {
+pub fn u128_to_f64(value: u128) -> f64 {
     let lower = value as u64;
     let upper = (value >> 64) as u64;
     lower as f64 + upper as f64 * u64::MAX as f64
@@ -236,7 +236,7 @@ float_to_int!(f64 =>
 );
 
 /// DuckDB's `ConvertFloatingToBigint` (after `nearbyint`).
-fn f64_to_i128(value: f64) -> Option<i128> {
+pub fn f64_to_i128(value: f64) -> Option<i128> {
     if !value.is_finite()
         || value <= -170_141_183_460_469_231_731_687_303_715_884_105_728.0
         || value >= 1.701_411_834_604_692_3e38
@@ -256,7 +256,7 @@ fn f64_to_i128(value: f64) -> Option<i128> {
 }
 
 /// DuckDB's `ConvertFloatingToUhugeint` (after `nearbyint`).
-fn f64_to_u128(value: f64) -> Option<u128> {
+pub fn f64_to_u128(value: f64) -> Option<u128> {
     if !value.is_finite() || value < 0.0 || value >= 3.402_823_669_209_385e38 {
         return None;
     }

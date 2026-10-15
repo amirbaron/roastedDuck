@@ -63,6 +63,9 @@ impl Database {
         for set in rustdb_functions::builtin_scalar_functions() {
             system_catalog.register_scalar_functions(set)?;
         }
+        for set in rustdb_functions::builtin_aggregate_functions()? {
+            system_catalog.register_aggregate_functions(set)?;
+        }
         for set in rustdb_functions::builtin_table_functions() {
             system_catalog.register_table_functions(set)?;
         }
