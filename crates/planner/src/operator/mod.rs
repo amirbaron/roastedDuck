@@ -359,7 +359,7 @@ pub struct BoundPivotInfo {
 }
 
 /// A node of a logical plan (DuckDB's `LogicalOperator`).
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct LogicalOperator {
     pub kind: LogicalKind,
     pub children: Vec<LogicalOperator>,
@@ -367,6 +367,28 @@ pub struct LogicalOperator {
     /// Output column types, filled by [`LogicalOperator::resolve_operator_types`].
     pub types: Vec<LogicalType>,
     pub estimated_cardinality: Option<u64>,
+    /// Identifies this operator in analyses keyed by operator (DuckDB keys them by the
+    /// operator's address); unique per created or cloned operator.
+    node_id: u64,
+}
+
+/// The next operator identity.
+fn next_node_id() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+impl Clone for LogicalOperator {
+    fn clone(&self) -> Self {
+        Self {
+            kind: self.kind.clone(),
+            children: self.children.clone(),
+            expressions: self.expressions.clone(),
+            types: self.types.clone(),
+            estimated_cardinality: self.estimated_cardinality,
+            node_id: next_node_id(),
+        }
+    }
 }
 
 fn map_list<T: Clone>(items: Vec<T>, projection_map: &[u64]) -> Vec<T> {
@@ -380,9 +402,15 @@ fn map_list<T: Clone>(items: Vec<T>, projection_map: &[u64]) -> Vec<T> {
 }
 
 impl LogicalOperator {
+    /// The operator's identity (see [`LogicalOperator::node_id`]).
+    pub const fn node_id(&self) -> u64 {
+        self.node_id
+    }
+
     /// An operator without children or expressions.
     pub fn new(kind: LogicalKind) -> Self {
         Self {
+            node_id: next_node_id(),
             kind,
             children: Vec::new(),
             expressions: Vec::new(),
@@ -426,8 +454,15 @@ impl LogicalOperator {
         .with_children(vec![child])
     }
 
-    /// `LOGICAL_CROSS_PRODUCT` of two inputs.
+    /// `LOGICAL_CROSS_PRODUCT` of two inputs; a dummy scan (one row, no columns) on
+    /// either side is dropped (DuckDB's `LogicalCrossProduct::Create`).
     pub fn cross_product(left: Self, right: Self) -> Self {
+        if matches!(left.kind, LogicalKind::DummyScan { .. }) {
+            return right;
+        }
+        if matches!(right.kind, LogicalKind::DummyScan { .. }) {
+            return left;
+        }
         Self::new(LogicalKind::CrossProduct).with_children(vec![left, right])
     }
 

@@ -21,6 +21,7 @@ pub mod operator;
 pub mod parsed_equality;
 pub mod planner;
 pub mod prepared;
+pub mod subquery;
 
 pub use binder::{Binder, BoundStatement};
 pub use column_binding::{ColumnBinding, generate_column_bindings};

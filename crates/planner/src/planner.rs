@@ -60,15 +60,16 @@ impl Planner {
             let mut scope = BindScope::root(&mut binder);
             bind_statement(&mut scope, &mut statement)
         };
-        let (plan, names, types, resolved) = match bound {
+        let (mut plan, names, types, resolved) = match bound {
             Ok(bound) => (Some(bound.plan), bound.names, bound.types, true),
             Err(error) if error.kind() == ErrorKind::ParameterNotResolved => {
                 (None, vec!["unknown".to_owned()], vec![LogicalType::UNKNOWN], false)
             }
             Err(error) => return Err(error),
         };
-        if let Some(plan) = &plan {
-            check_tree_depth(plan, self.context.config.max_expression_depth, 0)?;
+        if let Some(bound_plan) = plan.take() {
+            check_tree_depth(&bound_plan, self.context.config.max_expression_depth, 0)?;
+            plan = Some(crate::subquery::decorrelate_independent(&binder, bound_plan)?);
         }
         let parameter_map = binder.take_parameters().unwrap_or_default();
         let mut properties = binder.properties();
