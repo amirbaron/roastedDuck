@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "tools/bench", "tools/codegen", "tools/corpus", "tools/slt"]
+members = ["crates/*", "tools/bench", "tools/bindcheck", "tools/codegen", "tools/corpus", "tools/slt"]
 
 [workspace.package]
 version = "1.5.6"
