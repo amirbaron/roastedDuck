@@ -513,8 +513,12 @@ dependencies = [
 name = "rustdb-planner"
 version = "1.5.6"
 dependencies = [
+ "regex",
+ "rustdb-ast",
+ "rustdb-catalog",
  "rustdb-common",
  "rustdb-function",
+ "rustdb-serde",
  "rustdb-types",
 ]
 

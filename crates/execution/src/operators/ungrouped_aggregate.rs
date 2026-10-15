@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use rustdb_common::{Error, Result};
 use rustdb_function::aggregate::AggregateInput;
 use rustdb_function::{AggregateOps, StatePtr};
-use rustdb_planner::BoundAggregate;
+use rustdb_planner::expression::BoundAggregateExpression as BoundAggregate;
 use rustdb_types::{DataChunk, LogicalType, Vector};
 
 use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
@@ -96,9 +96,9 @@ pub struct PhysicalUngroupedAggregate {
 
 impl PhysicalUngroupedAggregate {
     pub fn new(types: Vec<LogicalType>, aggregates: Vec<BoundAggregate>, child: PhysicalRef) -> Result<Self> {
-        if let Some(aggregate) = aggregates.iter().find(|a| a.distinct) {
+        if let Some(aggregate) = aggregates.iter().find(|a| a.is_distinct() || a.order_bys.is_some()) {
             return Err(Error::not_implemented(format!(
-                "DISTINCT aggregate {}",
+                "DISTINCT or ordered aggregate {}",
                 aggregate.function.name
             )));
         }
@@ -163,7 +163,7 @@ impl Sink for PhysicalUngroupedAggregate {
                 .map(|a| {
                     a.filter
                         .as_ref()
-                        .map(|f| ExpressionExecutor::new(vec![(**f).clone()]))
+                        .map(|f| ExpressionExecutor::new(vec![f.clone()]))
                 })
                 .collect(),
             selection: Vec::new(),
@@ -187,7 +187,7 @@ impl Sink for PhysicalUngroupedAggregate {
             let mut arguments = DataChunk::default();
             local.arguments[index].execute(&input, &mut arguments)?;
             let data = AggregateInput {
-                bind_data: aggregate.bind_data.as_deref().map(|d| d as _),
+                bind_data: aggregate.bind_info.as_deref().map(|d| d as _),
             };
             // SAFETY: the local state was initialised for this aggregate and is only used by
             // this thread.
@@ -207,7 +207,7 @@ impl Sink for PhysicalUngroupedAggregate {
         let global = global.lock().map_err(|_| poisoned())?;
         for (index, aggregate) in self.aggregates.iter().enumerate() {
             let data = AggregateInput {
-                bind_data: aggregate.bind_data.as_deref().map(|d| d as _),
+                bind_data: aggregate.bind_info.as_deref().map(|d| d as _),
             };
             // SAFETY: both states are initialised; the global one is protected by the lock.
             unsafe {
@@ -264,7 +264,7 @@ fn finalize_ungrouped(
     for (index, aggregate) in op.aggregates.iter().enumerate() {
         let mut result = Vector::flat(aggregate.function.return_type.clone(), 1);
         let data = AggregateInput {
-            bind_data: aggregate.bind_data.as_deref().map(|d| d as _),
+            bind_data: aggregate.bind_info.as_deref().map(|d| d as _),
         };
         // SAFETY: the global state is initialised and protected by the lock.
         unsafe {

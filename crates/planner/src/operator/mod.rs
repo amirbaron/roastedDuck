@@ -528,6 +528,19 @@ impl LogicalOperator {
         }
     }
 
+    /// The single table index all output columns share (DuckDB's `GetRootIndex`).
+    pub fn root_index(&self) -> Result<u64> {
+        let bindings = self.column_bindings();
+        let first = bindings
+            .first()
+            .ok_or_else(|| Error::internal("Empty bindings in GetRootIndex"))?
+            .table_index;
+        if bindings.iter().any(|binding| binding.table_index != first) {
+            return Err(Error::internal("GetRootIndex - multiple column bindings found"));
+        }
+        Ok(first)
+    }
+
     /// DuckDB's `LogicalJoin::GetColumnBindings`.
     fn join_bindings(
         &self,
@@ -577,8 +590,16 @@ impl LogicalOperator {
     /// Computes `types` from the children's types and the expressions (DuckDB's
     /// `ResolveTypes`).
     fn resolve_types(&mut self) -> Result<()> {
+        if let LogicalKind::Get(get) = &mut self.kind
+            && get.column_ids.is_empty()
+        {
+            // No projection: scan any column to know how many rows there are.
+            get.column_ids.push(ColumnIndex::new(COLUMN_IDENTIFIER_ROW_ID));
+        }
         let expression_types = || self.expressions.iter().map(|e| e.return_type.clone()).collect::<Vec<_>>();
-        self.types = match &mut self.kind {
+        self.types = match &self.kind {
+
+
             LogicalKind::Projection { .. } => expression_types(),
             LogicalKind::Filter { projection_map } | LogicalKind::Order { projection_map, .. } => {
                 map_list(self.child_types(0), projection_map)
@@ -603,10 +624,6 @@ impl LogicalOperator {
             LogicalKind::MaterializedCte { .. } => self.child_types(1),
             LogicalKind::Pivot { bound_pivot, .. } => bound_pivot.types.clone(),
             LogicalKind::Get(get) => {
-                if get.column_ids.is_empty() {
-                    // No projection: scan any column to know how many rows there are.
-                    get.column_ids.push(ColumnIndex::new(COLUMN_IDENTIFIER_ROW_ID));
-                }
                 let mut types: Vec<LogicalType> = if get.projection_ids.is_empty() {
                     get.column_ids.iter().map(|column| get.column_type(column)).collect()
                 } else {
