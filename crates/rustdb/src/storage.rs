@@ -13,7 +13,7 @@ use rustdb_storage::storage_manager::{StorageManager, StorageOptions};
 use rustdb_types::Value;
 
 use crate::attached::AttachOptions;
-use crate::{AccessMode, Config};
+use crate::Config;
 
 /// The catalog name of a database file (`AttachedDatabase::ExtractDatabaseName`): the
 /// file name up to its first dot; reserved names get a `_db` suffix.
@@ -43,7 +43,8 @@ fn option<'a>(config: &'a Config, name: &str) -> Option<&'a Value> {
 /// The attach options of the database opened at start-up.
 pub(crate) fn startup_options(config: &Config) -> AttachOptions {
     AttachOptions {
-        read_only: config.access_mode == AccessMode::ReadOnly,
+        access: config.access_mode,
+        hidden: false,
         storage_version: option(config, "storage_compatibility_version").cloned(),
         block_size: option(config, "default_block_size").cloned(),
         row_group_size: None,
@@ -58,10 +59,32 @@ fn unsigned(value: &Value, name: &str) -> Result<u64> {
         .ok_or_else(|| Error::invalid_input(format!("{name} must be an integer")))
 }
 
+/// `Storage::VerifyBlockAllocSize`.
+fn verify_block_alloc_size(size: u64) -> Result<()> {
+    const MIN_BLOCK_ALLOC_SIZE: u64 = 16_384;
+    const MAX_BLOCK_ALLOC_SIZE: u64 = 262_144;
+    if !size.is_power_of_two() {
+        return Err(Error::invalid_input(format!(
+            "the block size must be a power of two, got {size}"
+        )));
+    }
+    if size < MIN_BLOCK_ALLOC_SIZE {
+        return Err(Error::invalid_input(format!(
+            "the block size must be greater or equal than the minimum block size of {MIN_BLOCK_ALLOC_SIZE}, got {size}"
+        )));
+    }
+    if size > MAX_BLOCK_ALLOC_SIZE {
+        return Err(Error::invalid_input(format!(
+            "the block size must be lesser or equal than the maximum block size of {MAX_BLOCK_ALLOC_SIZE}, got {size}"
+        )));
+    }
+    Ok(())
+}
+
 /// The storage options of an attach.
 fn storage_options(attach: &AttachOptions) -> Result<StorageOptions> {
     let mut options = StorageOptions {
-        read_only: attach.read_only,
+        read_only: attach.read_only(),
         ..StorageOptions::default()
     };
     if let Some(version) = &attach.storage_version {
@@ -70,8 +93,10 @@ fn storage_options(attach: &AttachOptions) -> Result<StorageOptions> {
             Some(SerializationCompatibility::from_version_name(&name)?.serialization_version);
     }
     if let Some(size) = &attach.block_size {
-        options.block_alloc_size = usize::try_from(unsigned(size, "block_size")?)
-            .map_err(|_| Error::invalid_input("block size too large"))?;
+        let size = unsigned(size, "block_size")?;
+        verify_block_alloc_size(size)?;
+        options.block_alloc_size =
+            usize::try_from(size).map_err(|_| Error::invalid_input("block size too large"))?;
     }
     if let Some(size) = &attach.row_group_size {
         options.row_group_size = unsigned(size, "row_group_size")?;

@@ -9,6 +9,7 @@ use rustdb_common::{Error, ErrorKind, Result};
 use rustdb_storage::storage_manager::StorageManager;
 use rustdb_types::Value;
 
+use crate::AccessMode;
 use crate::storage::{database_name, open_storage};
 
 /// One attached database.
@@ -21,6 +22,8 @@ pub(crate) struct AttachedDatabase {
     /// The database file, unless the database is in memory.
     pub storage: Option<Arc<StorageManager>>,
     pub read_only: bool,
+    /// Left out of catalog listings (`ATTACH ... (HIDDEN)`).
+    pub hidden: bool,
 }
 
 impl AttachedDatabase {
@@ -39,50 +42,58 @@ impl AttachedDatabase {
 /// How a database is attached (the options of `ATTACH` or the start-up configuration).
 #[derive(Clone, Debug, Default)]
 pub(crate) struct AttachOptions {
-    pub read_only: bool,
+    pub access: AccessMode,
+    /// `HIDDEN`: left out of catalog listings.
+    pub hidden: bool,
     pub storage_version: Option<Value>,
     pub block_size: Option<Value>,
     pub row_group_size: Option<Value>,
 }
 
 impl AttachOptions {
-    /// The options of an `ATTACH` statement (`AttachOptions::AttachOptions`).
-    pub fn from_info(info: &AttachInfo, default_read_only: bool) -> Result<Self> {
+    /// Whether the database is opened read-only.
+    pub fn read_only(&self) -> bool {
+        self.access == AccessMode::ReadOnly
+    }
+
+    /// The options of an `ATTACH` statement (`AttachOptions::AttachOptions` and
+    /// `StorageOptions::Initialize`).
+    pub fn from_info(info: &AttachInfo, default_access: AccessMode) -> Result<Self> {
         let mut options = Self {
-            read_only: default_read_only,
+            access: default_access,
             ..Self::default()
         };
         for (name, value) in info.options.iter() {
             match name.to_lowercase().as_str() {
-                "access_mode" => {
-                    let mode = value.to_varchar()?.to_lowercase();
-                    options.read_only = match mode.as_str() {
-                        "read_only" => true,
-                        "read_write" => false,
-                        "automatic" => default_read_only,
-                        _ => {
-                            return Err(Error::binder(format!("Unrecognized access mode \"{mode}\"")));
-                        }
+                "readonly" | "read_only" => {
+                    options.access = if value_as_bool(value)? {
+                        AccessMode::ReadOnly
+                    } else {
+                        AccessMode::ReadWrite
                     };
                 }
-                "read_only" | "readonly" | "readonly_mode" => {
-                    options.read_only = value_as_bool(value)?;
+                "readwrite" | "read_write" => {
+                    options.access = if value_as_bool(value)? {
+                        AccessMode::ReadWrite
+                    } else {
+                        AccessMode::ReadOnly
+                    };
                 }
-                "read_write" => options.read_only = !value_as_bool(value)?,
-                "type" | "db_type" => {
-                    let ty = value.to_varchar()?;
-                    if !ty.is_empty() && !ty.eq_ignore_ascii_case("duckdb") {
+                "type" => {
+                    let ty = value.to_varchar()?.to_lowercase();
+                    if !ty.is_empty() && ty != "duckdb" {
                         return Err(Error::new(
                             ErrorKind::Binder,
                             format!("Unknown database type \"{ty}\""),
                         ));
                     }
                 }
+                "hidden" => options.hidden = value_as_bool(value)?,
+                "default_table" | "recovery_mode" | "vacuum_rebuild_indexes" | "compress" => {}
                 "storage_version" => options.storage_version = Some(value.clone()),
                 "block_size" => options.block_size = Some(value.clone()),
                 "row_group_size" => options.row_group_size = Some(value.clone()),
-                "default_table" | "compress" => {}
-                "encryption_key" | "encryption_cipher" => {
+                "encryption_key" | "encryption_cipher" | "debug_encryption_version" => {
                     return Err(Error::not_implemented("attaching encrypted databases"));
                 }
                 other => {
@@ -96,13 +107,22 @@ impl AttachOptions {
     }
 }
 
+/// `DefaultCastAs(BOOLEAN)` of an option value.
 fn value_as_bool(value: &Value) -> Result<bool> {
-    if value.is_null() {
-        return Ok(true);
+    if let Some(flag) = value.as_bool() {
+        return Ok(flag);
     }
-    match value.as_bool() {
-        Some(flag) => Ok(flag),
-        None => Ok(value.to_varchar()?.eq_ignore_ascii_case("true")),
+    if let Some(number) = value.as_i64() {
+        return Ok(number != 0);
+    }
+    let text = value.to_varchar()?.to_lowercase();
+    match text.as_str() {
+        "true" | "t" | "1" => Ok(true),
+        "false" | "f" | "0" => Ok(false),
+        _ => Err(Error::new(
+            ErrorKind::Conversion,
+            format!("Could not convert string '{text}' to BOOL"),
+        )),
     }
 }
 
@@ -169,7 +189,30 @@ impl DatabaseManager {
                 "Attached database name \"{name}\" cannot be used because it is a reserved name"
             )));
         }
+        if path.is_empty() && options.read_only() {
+            return Err(Error::catalog(
+                "Cannot launch in-memory database in read-only mode!",
+            ));
+        }
         if let Some(existing) = self.get(&name) {
+            if matches!(
+                on_conflict,
+                OnCreateConflict::IgnoreOnConflict | OnCreateConflict::ReplaceOnConflict
+            ) {
+                let conflicting = match options.access {
+                    AccessMode::ReadOnly => !existing.read_only,
+                    AccessMode::ReadWrite => existing.read_only,
+                    AccessMode::Automatic => false,
+                };
+                if conflicting {
+                    let mode = |read_only: bool| if read_only { "READ_ONLY" } else { "READ_WRITE" };
+                    return Err(Error::binder(format!(
+                        "Database \"{name}\" is already attached in {} mode, cannot re-attach in {} mode",
+                        mode(existing.read_only),
+                        mode(options.read_only())
+                    )));
+                }
+            }
             if on_conflict == OnCreateConflict::IgnoreOnConflict {
                 return Ok(None);
             }
@@ -185,7 +228,7 @@ impl DatabaseManager {
         if !path.is_empty()
             && let Some(existing) = self.read().iter().find(|database| {
                 canonical_path(&database.path) == canonical_path(&path)
-                    && !(database.read_only && options.read_only)
+                    && !(database.read_only && options.read_only())
                     && !(on_conflict == OnCreateConflict::ReplaceOnConflict
                         && database.name.eq_ignore_ascii_case(&name))
             })
@@ -213,7 +256,8 @@ impl DatabaseManager {
             path,
             catalog,
             storage,
-            read_only: options.read_only,
+            read_only: options.read_only(),
+            hidden: options.hidden,
         });
         let mut databases = self.write();
         if let Some(position) = databases

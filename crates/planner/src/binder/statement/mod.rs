@@ -180,6 +180,11 @@ fn bind_attach(scope: &mut BindScope<'_>, info: &mut rustdb_ast::AttachInfo) -> 
             };
             scope.context.evaluator.evaluate_scalar(&bound)?
         };
+        if value.is_null() {
+            return Err(Error::binder(format!(
+                "NULL is not supported as a valid option for ATTACH option \"{name}\""
+            )));
+        }
         bound_info.options.insert(name.to_lowercase(), value);
     }
     Ok(success(LogicalOperator::new(LogicalKind::Attach(Box::new(

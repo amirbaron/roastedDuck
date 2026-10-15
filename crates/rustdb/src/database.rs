@@ -167,7 +167,7 @@ impl Database {
         for set in crate::sequence::sequence_functions() {
             system_catalog.register_scalar_functions(set)?;
         }
-        for set in crate::checkpoint::checkpoint_functions(&["memory".to_owned(), "system".to_owned()]) {
+        for set in crate::checkpoint::checkpoint_functions() {
             system_catalog.register_table_functions(set)?;
         }
         let env = rustdb_execution::ClientEnv::standalone()?;
@@ -561,6 +561,14 @@ impl Connection {
             if name.eq_ignore_ascii_case("system") || name.eq_ignore_ascii_case("temp") {
                 continue;
             }
+            if self.transactions.is_read_only() {
+                return Err(Error::new(
+                    ErrorKind::Transaction,
+                    format!(
+                        "Cannot write to database \"{name}\" - transaction is launched in read-only mode"
+                    ),
+                ));
+            }
             let Some(database) = instance.databases.get(&name) else {
                 continue;
             };
@@ -591,7 +599,9 @@ impl Connection {
         match &plan.kind {
             LogicalKind::Transaction { info } => {
                 match info.transaction_type {
-                    TransactionType::BeginTransaction => self.transactions.begin()?,
+                    TransactionType::BeginTransaction => self
+                        .transactions
+                        .begin(info.modifier == rustdb_ast::TransactionModifierType::TransactionReadOnly)?,
                     TransactionType::Commit => self.transactions.commit()?,
                     TransactionType::Rollback => self.transactions.rollback()?,
                     TransactionType::Invalid => {
@@ -601,11 +611,7 @@ impl Connection {
                 return Ok(nothing());
             }
             LogicalKind::Attach(info) => {
-                let instance = self.database.instance();
-                let options = AttachOptions::from_info(
-                    info,
-                    instance.config.access_mode == crate::AccessMode::ReadOnly,
-                )?;
+                let options = AttachOptions::from_info(info, crate::AccessMode::Automatic)?;
                 self.database
                     .attach(&info.name, &info.path, &options, info.on_conflict)?;
                 return Ok(nothing());

@@ -13,6 +13,8 @@ pub(crate) struct TransactionContext {
     current: Option<Arc<Transaction>>,
     auto_commit: bool,
     invalidated: bool,
+    /// `BEGIN TRANSACTION READ ONLY`.
+    read_only: bool,
 }
 
 fn transaction_error(message: &'static str) -> Error {
@@ -26,7 +28,13 @@ impl TransactionContext {
             current: None,
             auto_commit: true,
             invalidated: false,
+            read_only: false,
         }
+    }
+
+    /// Whether the explicit transaction was started read-only.
+    pub fn is_read_only(&self) -> bool {
+        self.read_only && !self.auto_commit
     }
 
     #[cfg(test)]
@@ -86,14 +94,15 @@ impl TransactionContext {
         Ok(())
     }
 
-    /// `BEGIN TRANSACTION`
-    pub fn begin(&mut self) -> Result<()> {
+    /// `BEGIN TRANSACTION [READ ONLY]`
+    pub fn begin(&mut self, read_only: bool) -> Result<()> {
         if !self.auto_commit {
             return Err(transaction_error(
                 "cannot start a transaction within a transaction",
             ));
         }
         self.auto_commit = false;
+        self.read_only = read_only;
         Ok(())
     }
 
@@ -149,9 +158,9 @@ mod tests {
             context.commit().unwrap_err().to_string(),
             "TransactionContext Error: cannot commit - no transaction is active"
         );
-        context.begin().unwrap();
+        context.begin(false).unwrap();
         assert_eq!(
-            context.begin().unwrap_err().to_string(),
+            context.begin(false).unwrap_err().to_string(),
             "TransactionContext Error: cannot start a transaction within a transaction"
         );
         context.active().unwrap();
