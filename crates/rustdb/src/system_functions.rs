@@ -791,12 +791,69 @@ fn context_function(name: &'static str, value: fn(&ClientContext) -> String) -> 
     set
 }
 
-/// `current_database()`, `current_schema()` and `in_search_path()`.
+/// The value of a `SET VARIABLE` variable, read when `getvariable` is bound.
+#[derive(Debug)]
+struct VariableValue(Value);
+
+impl FunctionData for VariableValue {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// `getvariable(name)` (DuckDB's `GetVariableFun`): replaced by the variable's value,
+/// a constant of the value's type, when bound.
+fn getvariable_function() -> ScalarFunctionSet {
+    let function = ScalarFunction::new(
+        "getvariable",
+        vec![LogicalType::VARCHAR],
+        LogicalType::ANY,
+        |_: &DataChunk, _: &mut FunctionState, _: &mut Vector| {
+            Err(Error::internal("getvariable is replaced by its value when bound"))
+        },
+    )
+    .with_bind(|function, input| {
+        if input.argument_types[0].id() == LogicalTypeId::Unknown {
+            return Err(Error::new(
+                rustdb_common::ErrorKind::ParameterNotResolved,
+                "Parameter types could not be resolved",
+            ));
+        }
+        let Some(name) = &input.constants[0] else {
+            return Err(Error::not_implemented("getvariable requires a constant input"));
+        };
+        let context = input
+            .binder
+            .and_then(|binder| binder.downcast_ref::<ClientContext>())
+            .ok_or_else(|| Error::internal("getvariable bound without a client context"))?;
+        let value = if name.is_null() {
+            Value::null(LogicalType::SQLNULL)
+        } else {
+            context
+                .user_variables
+                .get(&name.to_varchar()?)
+                .cloned()
+                .unwrap_or_else(|| Value::null(LogicalType::SQLNULL))
+        };
+        function.return_type = value.logical_type().clone();
+        Ok(Some(Arc::new(VariableValue(value)) as Arc<dyn FunctionData>))
+    })
+    .with_bind_expression(|data| {
+        data.and_then(|data| data.as_any().downcast_ref::<VariableValue>())
+            .map(|variable| variable.0.clone())
+    });
+    let mut set = ScalarFunctionSet::new("getvariable");
+    set.add(function);
+    set
+}
+
+/// `current_database()`, `current_schema()`, `in_search_path()` and `getvariable()`.
 pub(crate) fn context_scalar_functions() -> Vec<ScalarFunctionSet> {
     vec![
         context_function("current_database", |context| context.default_catalog().to_owned()),
         context_function("current_schema", |context| context.default_schema().to_owned()),
         in_search_path_function(),
+        getvariable_function(),
     ]
 }
 

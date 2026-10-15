@@ -111,6 +111,8 @@ pub struct ClientContext {
     pub prepared_statements: rustdb_common::CaseInsensitiveMap<Arc<PreparedStatementData>>,
     /// Connection state functions use (random engine, ...).
     pub function_client: Arc<FunctionClient>,
+    /// `SET VARIABLE` values of the connection (DuckDB's `ClientConfig::user_variables`).
+    pub user_variables: rustdb_common::CaseInsensitiveMap<Value>,
 }
 
 /// A catalog entry found by a lookup, with where it was found.

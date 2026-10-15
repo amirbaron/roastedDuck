@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_ast::{SqlStatement, TransactionType};
+use rustdb_ast::{SetScope, SqlStatement, TransactionType};
 use rustdb_catalog::{Catalog, Transaction, TransactionManager};
 use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
 use rustdb_execution::operators::{CollectedResult, PhysicalResultCollector};
@@ -345,6 +345,7 @@ impl Database {
             search_path: Vec::new(),
             prepared_statements: CaseInsensitiveMap::default(),
             function_client,
+            user_variables: CaseInsensitiveMap::default(),
         })
     }
 
@@ -378,6 +379,8 @@ pub struct Connection {
     prepared_statements: CaseInsensitiveMap<Arc<PreparedStatementData>>,
     /// Connection state functions use (DuckDB keeps it in the `ClientContext`).
     function_client: Arc<rustdb_function::FunctionClient>,
+    /// `SET VARIABLE` values (DuckDB's `ClientConfig::user_variables`).
+    user_variables: CaseInsensitiveMap<rustdb_types::Value>,
 }
 
 impl Connection {
@@ -466,6 +469,7 @@ impl Connection {
             config: self.settings.planner.clone(),
             prepared_statements: self.prepared_statements.clone(),
             function_client: Arc::clone(&self.function_client),
+            user_variables: self.user_variables.clone(),
         })
     }
 
@@ -788,6 +792,40 @@ impl Connection {
             }
             LogicalKind::Detach(info) => {
                 self.detach(info)?;
+                return Ok(nothing());
+            }
+            LogicalKind::Set {
+                name,
+                scope: SetScope::Variable,
+                ..
+            } => {
+                // `SET VARIABLE`: the value comes from running the child query
+                // (DuckDB's `PhysicalSetVariable`).
+                let name = name.clone();
+                let child = plan
+                    .children
+                    .pop()
+                    .ok_or_else(|| Error::internal("SET VARIABLE without a value plan"))?;
+                let types = child.types.clone();
+                let result = self.run_plan(child, vec![String::new(); types.len()], types)?;
+                match result.row_count() {
+                    0 => {}
+                    1 => {
+                        self.user_variables.insert(&name, result.value(0, 0));
+                    }
+                    _ => {
+                        return Err(Error::invalid_input(
+                            "PhysicalSetVariable can only handle a single value",
+                        ));
+                    }
+                }
+                return Ok(nothing());
+            }
+            LogicalKind::Reset {
+                name,
+                scope: SetScope::Variable,
+            } => {
+                self.user_variables.remove(name);
                 return Ok(nothing());
             }
             LogicalKind::Set { name, value, .. } if is_search_path_setting(name) => {
