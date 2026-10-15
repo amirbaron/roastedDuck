@@ -127,7 +127,8 @@ pub fn walk_expression<V: VisitorMut + ?Sized>(visitor: &mut V, expression: &mut
         | ParsedExpressionKind::Default
         | ParsedExpressionKind::LambdaRef(_)
         | ParsedExpressionKind::Parameter(_)
-        | ParsedExpressionKind::PositionalReference(_) => {}
+        | ParsedExpressionKind::PositionalReference(_)
+        | ParsedExpressionKind::Bound(_) => {}
     }
 }
 

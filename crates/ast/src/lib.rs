@@ -20,6 +20,8 @@
 //! [`visit`] walks a tree mutably.
 
 mod expression;
+mod display;
+pub mod keyword;
 mod generated;
 pub mod json;
 mod parsed_data;
@@ -28,7 +30,7 @@ mod sql_statement;
 mod tableref;
 pub mod visit;
 
-pub use expression::StarExpression;
+pub use expression::{BoundExpression, StarExpression};
 pub use generated::constraint::*;
 pub use generated::create_info::*;
 pub use generated::dependency::*;
