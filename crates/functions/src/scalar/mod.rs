@@ -170,6 +170,12 @@ fn string_functions(sets: &mut Vec<ScalarFunctionSet>) {
     with_aliases(sets, list::list_ops::list_resize_functions(), &["array_resize"]);
     with_aliases(sets, list::list_ops::list_zip_functions(), &["array_zip"]);
     with_aliases(sets, list::list_ops::list_intersect_functions(), &["array_intersect"]);
+    for (set, aliases) in list::has_any_or_all::has_any_or_all_functions()
+        .into_iter()
+        .chain(array::array_functions::distance_functions())
+    {
+        with_aliases(sets, set, aliases);
+    }
     sets.push(map::map_functions());
     sets.push(map::cardinality_functions());
     sets.extend(map::map_unpack_functions());
