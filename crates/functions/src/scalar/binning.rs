@@ -24,18 +24,20 @@ fn previous_power_of_ten_int(input: i128) -> i128 {
     power / 10
 }
 
-fn round_to_number_int(input: i128, number: i128, rounding: Rounding) -> Result<i128> {
-    if number == 0 {
-        return Err(Error::out_of_range("Hugeint division by zero!"));
+/// `hugeint_t::operator/`: unchecked, so a zero divisor yields 0 (`Hugeint::DivMod`).
+fn hugeint_div(lhs: i128, rhs: i128) -> i128 {
+    if rhs == 0 { 0 } else { lhs.wrapping_div(rhs) }
+}
+
+fn round_to_number_int(input: i128, number: i128, rounding: Rounding) -> i128 {
+    match rounding {
+        Rounding::Round => hugeint_div(input + number / 2, number) * number,
+        Rounding::Ceiling => hugeint_div(input + (number - 1), number) * number,
     }
-    Ok(match rounding {
-        Rounding::Round => (input + number / 2) / number * number,
-        Rounding::Ceiling => (input + (number - 1)) / number * number,
-    })
 }
 
 /// DuckDB's `MakeNumberNice(hugeint_t, ...)`.
-fn make_nice_int(input: i128, step: i128, rounding: Rounding) -> Result<i128> {
+fn make_nice_int(input: i128, step: i128, rounding: Rounding) -> i128 {
     let power = previous_power_of_ten_int(step);
     let mut two = power * 2;
     let mut five = power;
@@ -45,16 +47,20 @@ fn make_nice_int(input: i128, step: i128, rounding: Rounding) -> Result<i128> {
     if power * 2 <= step {
         five *= 5;
     }
-    let round_to_two = round_to_number_int(input, two, rounding)?;
-    let round_to_five = round_to_number_int(input, five, rounding)?;
-    Ok(if (input - round_to_two).abs() < (input - round_to_five).abs() {
+    let round_to_two = round_to_number_int(input, two, rounding);
+    let round_to_five = round_to_number_int(input, five, rounding);
+    if (input - round_to_two).abs() < (input - round_to_five).abs() {
         round_to_two
     } else {
         round_to_five
-    })
+    }
 }
 
 /// DuckDB's `EquiWidthBinsInteger::Operation`.
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "shares the signature of the other kernels"
+)]
 fn integer_bins(input_min: i64, input_max: i64, mut bin_count: u64, nice: bool) -> Result<Vec<i64>> {
     const FACTOR: i128 = 1000;
     let min = i128::from(input_min) * FACTOR;
@@ -62,8 +68,8 @@ fn integer_bins(input_min: i64, input_max: i64, mut bin_count: u64, nice: bool) 
     let span = max - min;
     let mut step = span / i128::from(bin_count);
     if nice {
-        let new_step = make_nice_int(step, step, Rounding::Round)?;
-        let new_max = round_to_number_int(max, new_step, Rounding::Ceiling)?;
+        let new_step = make_nice_int(step, step, Rounding::Round);
+        let new_max = round_to_number_int(max, new_step, Rounding::Ceiling);
         if new_max != min && new_step != 0 {
             max = new_max;
             step = new_step;
