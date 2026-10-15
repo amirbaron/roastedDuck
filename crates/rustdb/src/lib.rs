@@ -13,6 +13,7 @@ mod attached;
 mod checkpoint;
 mod config;
 mod database;
+mod default_functions;
 mod default_views;
 mod result;
 mod sequence;

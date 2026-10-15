@@ -736,6 +736,86 @@ pub(crate) fn register_default_views(system: &Catalog) -> Result<()> {
     Ok(())
 }
 
+/// One overload of a default macro (`DefaultFunctionGenerator::CreateInternalMacroInfo`
+/// and its table counterpart): the parameters as column references, the defaults and
+/// the parsed body.
+fn default_macro_function(
+    default: &crate::default_functions::DefaultMacro,
+    table: bool,
+) -> Result<rustdb_ast::MacroFunction> {
+    let kind = if table {
+        let mut statements = rustdb_parser::parse(default.body)?;
+        let Some(rustdb_ast::SqlStatementKind::Select(select)) = statements.pop().map(|s| s.kind) else {
+            return Err(Error::internal("default table macro is not a SELECT"));
+        };
+        rustdb_ast::MacroFunctionKind::Table(rustdb_ast::TableMacroFunction {
+            query_node: select.node,
+        })
+    } else {
+        let mut expressions =
+            rustdb_parser::parse_expression_list(default.body, &rustdb_parser::ParserOptions::default())?;
+        let (Some(expression), true) = (expressions.pop(), expressions.is_empty()) else {
+            return Err(Error::internal("Expected a single expression"));
+        };
+        rustdb_ast::MacroFunctionKind::Scalar(rustdb_ast::ScalarMacroFunction {
+            expression: Box::new(expression),
+        })
+    };
+    let mut parameters: Vec<rustdb_ast::ParsedExpression> = default
+        .parameters
+        .iter()
+        .map(|name| rustdb_ast::ParsedExpression::column_ref([*name]))
+        .collect();
+    let mut default_parameters = CaseInsensitiveMap::default();
+    for (name, value) in default.named_parameters {
+        let mut expressions =
+            rustdb_parser::parse_expression_list(value, &rustdb_parser::ParserOptions::default())?;
+        let (Some(expression), true) = (expressions.pop(), expressions.is_empty()) else {
+            return Err(Error::internal("Expected a single expression"));
+        };
+        parameters.push(rustdb_ast::ParsedExpression::column_ref([*name]));
+        default_parameters.insert(*name, expression);
+    }
+    let types = vec![LogicalType::UNKNOWN; parameters.len()];
+    Ok(rustdb_ast::MacroFunction {
+        parameters,
+        default_parameters,
+        types,
+        kind,
+    })
+}
+
+/// Registers the default scalar and table macros in the system catalog (DuckDB's
+/// `DefaultFunctionGenerator` and `DefaultTableFunctionGenerator`, created eagerly).
+/// Consecutive entries with the same schema and name are the overloads of one macro.
+pub(crate) fn register_default_macros(system: &Catalog) -> Result<()> {
+    use crate::default_functions::{DEFAULT_MACROS, DEFAULT_TABLE_MACROS};
+    for (defaults, table) in [(DEFAULT_MACROS, false), (DEFAULT_TABLE_MACROS, true)] {
+        let mut index = 0;
+        while index < defaults.len() {
+            let first = &defaults[index];
+            let mut macros = Vec::new();
+            while index < defaults.len()
+                && defaults[index].schema == first.schema
+                && defaults[index].name == first.name
+            {
+                macros.push(default_macro_function(&defaults[index], table)?);
+                index += 1;
+            }
+            let entry = rustdb_catalog::MacroEntry { macros };
+            let kind = if table {
+                EntryKind::TableMacro(entry)
+            } else {
+                EntryKind::Macro(entry)
+            };
+            let mut entry = CatalogEntry::new(first.name, kind);
+            entry.internal = true;
+            system.create_entry_committed(first.schema, entry)?;
+        }
+    }
+    Ok(())
+}
+
 /// The catalog table functions.
 pub(crate) fn catalog_table_functions() -> Vec<TableFunctionSet> {
     vec![

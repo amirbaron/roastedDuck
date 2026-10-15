@@ -255,6 +255,7 @@ impl Database {
             system_catalog.register_table_functions(set)?;
         }
         crate::system_functions::register_default_views(&system_catalog)?;
+        crate::system_functions::register_default_macros(&system_catalog)?;
         let env = rustdb_execution::ClientEnv::standalone()?;
         let instance = DatabaseInstance {
             path: path.clone(),
