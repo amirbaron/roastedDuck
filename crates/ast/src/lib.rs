@@ -59,6 +59,7 @@ pub use sql_statement::{
     ExplainStatement, ExportStatement, InsertStatement, MergeIntoAction, MergeIntoStatement, OnConflictInfo,
     PrepareStatement, SetStatement, SqlStatement, SqlStatementKind, UpdateSetInfo, UpdateStatement,
 };
+pub use tableref::{BoundPivotSpec, PivotValueElement};
 
 #[cfg(test)]
 mod tests;

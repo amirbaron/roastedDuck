@@ -18,6 +18,7 @@ mod merge_into;
 mod modify;
 mod nested_loop_join;
 mod order;
+mod pivot;
 mod projection;
 mod result_collector;
 mod seq_scan;
@@ -54,6 +55,7 @@ pub use nested_loop_join::{
     NestedLoopJoinGlobal, NestedLoopJoinProbe, NestedLoopJoinSinkLocal, PhysicalNestedLoopJoin,
 };
 pub use order::{OrderGlobalState, OrderLocalState, OrderSourceState, PhysicalOrder};
+pub use pivot::PhysicalPivot;
 pub use projection::PhysicalProjection;
 pub use result_collector::{CollectedResult, PhysicalResultCollector};
 pub use seq_scan::{PhysicalSeqScan, SeqScanLocal};

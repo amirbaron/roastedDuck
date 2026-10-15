@@ -1,4 +1,5 @@
-//! Hand-written parts of table references: the backwards-compatible form of PIVOT entries.
+//! Hand-written parts of table references: the backwards-compatible form of PIVOT entries
+//! and the binder's rewritten pivots.
 
 use std::collections::BTreeSet;
 
@@ -7,6 +8,23 @@ use rustdb_serde::Serializer;
 use rustdb_types::{LogicalType, LogicalTypeId, TypeInfo, Value};
 
 use crate::{ParsedExpression, ParsedExpressionKind, PivotColumn, PivotColumnEntry};
+
+/// One output column group of a pivot: the pivot values it stands for and its name
+/// (DuckDB's `PivotValueElement`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PivotValueElement {
+    pub values: Vec<Value>,
+    pub name: String,
+}
+
+/// What the binder records on a pivot it rewrote into the LIST-based plan, for binding the
+/// final PIVOT operator (DuckDB's `PivotRef::bound_*` members).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BoundPivotSpec {
+    pub pivot_values: Vec<PivotValueElement>,
+    pub group_names: Vec<String>,
+    pub aggregate_names: Vec<String>,
+}
 
 /// From this version on, PIVOT entries may hold arbitrary expressions.
 const PIVOT_EXPRESSION_VERSION: u64 = 7;

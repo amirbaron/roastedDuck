@@ -291,6 +291,7 @@ impl<'a> Transformer<'a> {
             groups,
             column_name_alias,
             include_nulls: root.include_nulls,
+            bound: None,
         })));
         result.alias = alias;
         set_ref_location(&mut result, root.location);

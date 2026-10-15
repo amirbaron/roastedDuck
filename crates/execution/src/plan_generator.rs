@@ -33,7 +33,6 @@ mod window;
 
 use crate::expression_executor::ExpressionExecutor;
 use crate::operator::{PhysicalRef, SinkData};
-use crate::operators::PhysicalUnnest;
 use crate::operators::{
     AlterEntryAction, CatalogTableCreator, CreateIndexAction, CreateSchemaAction, CreateSequenceAction,
     CreateViewAction, DdlAction, DropAction, InsertTarget, PhysicalCreateTable, PhysicalDdl, PhysicalDelete,
@@ -48,6 +47,7 @@ use crate::operators::{
     PhysicalColumnDataScan, PhysicalDummyScan, PhysicalFilter, PhysicalHashAggregate, PhysicalLimitPercent,
     PhysicalOrder, PhysicalProjection, PhysicalStreamingLimit, PhysicalTableScan, PhysicalUngroupedAggregate,
 };
+use crate::operators::{PhysicalPivot, PhysicalUnnest};
 
 /// Converts a logical plan whose column references are resolved into a physical plan.
 /// Plans that read or change tables or the catalog need [`create_physical_plan_with`].
@@ -886,6 +886,9 @@ impl PlanGenerator {
                 let child = next_child("window")?;
                 let estimate = estimated_cardinality.unwrap_or(0) as usize;
                 window::plan_window(types, expressions, estimate, child)?
+            }
+            LogicalKind::Pivot { bound_pivot, .. } => {
+                Arc::new(PhysicalPivot::new(types, next_child("pivot")?, *bound_pivot)?)
             }
             LogicalKind::Unnest { .. } => {
                 Arc::new(PhysicalUnnest::new(types, expressions, next_child("unnest")?)?)

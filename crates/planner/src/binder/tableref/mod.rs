@@ -11,6 +11,7 @@ use rustdb_function::TableFunction;
 use rustdb_types::LogicalType;
 
 pub(crate) mod bind_joinref;
+mod bind_pivot;
 mod bind_showref;
 mod bind_table_function;
 mod plan_joinref;
@@ -48,7 +49,7 @@ pub fn bind_table_ref(scope: &mut BindScope<'_>, table_ref: &mut TableRef) -> Re
             &table_ref.alias,
             table_ref.query_location,
         ),
-        TableRefKind::Pivot(_) => Err(Error::not_implemented("PIVOT/UNPIVOT")),
+        TableRefKind::Pivot(pivot) => bind_pivot::bind_pivot(scope, pivot, &table_ref.alias),
         TableRefKind::Show(show) => bind_showref::bind_show(scope, show),
     }?;
     if let Some(sample_options) = table_ref.sample.take() {

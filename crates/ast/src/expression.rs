@@ -9,8 +9,11 @@ use rustdb_common::{CaseInsensitiveMap, OrderedMap};
 use rustdb_serde::{DeserializeObject, Deserializer, Result, SerializeObject, Serializer};
 use rustdb_types::Value;
 
+use rustdb_types::LogicalType;
+
 use crate::{
-    ColumnRefExpression, ConstantExpression, ExpressionType, OperatorExpression, ParsedExpression,
+    CastExpression, ColumnRefExpression, ComparisonExpression, ConjunctionExpression, ConstantExpression,
+    ExpressionType, FunctionExpression, OperatorExpression, OrderModifier, ParsedExpression,
     ParsedExpressionKind, QualifiedColumnName,
 };
 
@@ -40,6 +43,80 @@ impl ParsedExpression {
             ParsedExpressionKind::ColumnRef(ColumnRefExpression {
                 column_names: names.into_iter().map(Into::into).collect(),
             }),
+        )
+    }
+
+    /// A call of function `name` (`FunctionExpression(name, children)`).
+    pub fn function(name: &str, children: Vec<Self>) -> Self {
+        Self::new(
+            ExpressionType::Function,
+            ParsedExpressionKind::Function(Box::new(FunctionExpression {
+                function_name: name.to_ascii_lowercase(),
+                schema: String::new(),
+                children,
+                filter: None,
+                order_bys: OrderModifier { orders: Vec::new() },
+                distinct: false,
+                is_operator: false,
+                export_state: false,
+                catalog: String::new(),
+            })),
+        )
+    }
+
+    /// An operator such as `COALESCE` or `IS NOT NULL` (`OperatorExpression`).
+    pub fn operator(expression_type: ExpressionType, children: Vec<Self>) -> Self {
+        Self::new(
+            expression_type,
+            ParsedExpressionKind::Operator(OperatorExpression { children }),
+        )
+    }
+
+    /// A comparison `left <op> right` (`ComparisonExpression`).
+    pub fn comparison(expression_type: ExpressionType, left: Self, right: Self) -> Self {
+        Self::new(
+            expression_type,
+            ParsedExpressionKind::Comparison(ComparisonExpression {
+                left: Box::new(left),
+                right: Box::new(right),
+            }),
+        )
+    }
+
+    /// `left AND right` (`ConjunctionExpression`).
+    pub fn and(left: Self, right: Self) -> Self {
+        Self::new(
+            ExpressionType::ConjunctionAnd,
+            ParsedExpressionKind::Conjunction(ConjunctionExpression {
+                children: vec![left, right],
+            }),
+        )
+    }
+
+    /// `CAST(child AS cast_type)` (`CastExpression`).
+    pub fn cast(child: Self, cast_type: LogicalType) -> Self {
+        Self::new(
+            ExpressionType::OperatorCast,
+            ParsedExpressionKind::Cast(CastExpression {
+                child: Box::new(child),
+                cast_type,
+                try_cast: false,
+            }),
+        )
+    }
+
+    /// `*` (`StarExpression`).
+    pub fn star() -> Self {
+        Self::new(
+            ExpressionType::Star,
+            ParsedExpressionKind::Star(Box::new(StarExpression {
+                relation_name: String::new(),
+                exclude_list: Vec::new(),
+                replace_list: CaseInsensitiveMap::default(),
+                rename_list: OrderedMap::default(),
+                columns: false,
+                expr: None,
+            })),
         )
     }
 
