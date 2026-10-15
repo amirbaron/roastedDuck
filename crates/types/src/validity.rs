@@ -22,8 +22,14 @@ impl ValidityMask {
     pub fn is_valid(&self, row: usize) -> bool {
         match &self.words {
             None => true,
-            Some(words) => words[row / 64] >> (row % 64) & 1 == 1,
+            // Rows past the materialised words were never invalidated.
+            Some(words) => words.get(row / 64).is_none_or(|word| word >> (row % 64) & 1 == 1),
         }
+    }
+
+    /// A mask with the first `count` rows NULL.
+    pub fn all_invalid(count: usize) -> Self {
+        Self::from_words(vec![0; count.div_ceil(64)])
     }
 
     pub fn set_invalid(&mut self, row: usize, capacity: usize) {
@@ -38,8 +44,19 @@ impl ValidityMask {
     }
 
     pub fn set_valid(&mut self, row: usize) {
-        if let Some(words) = &mut self.words {
+        if let Some(words) = &mut self.words
+            && words.len() > row / 64
+        {
             Arc::make_mut(words)[row / 64] |= 1 << (row % 64);
+        }
+    }
+
+    /// Sets row `row` to `valid`.
+    pub fn set(&mut self, row: usize, valid: bool, capacity: usize) {
+        if valid {
+            self.set_valid(row);
+        } else {
+            self.set_invalid(row, capacity);
         }
     }
 
