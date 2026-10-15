@@ -59,24 +59,32 @@ impl ParsedExpression {
 /// their inner binding. The payload is the binder's own representation, which this crate
 /// cannot name; it is never serialized.
 #[derive(Clone)]
-pub struct BoundExpression(pub Arc<dyn Any + Send + Sync>);
+pub struct BoundExpression {
+    /// The binder's bound expression.
+    pub payload: Arc<dyn Any + Send + Sync>,
+    /// How the bound expression prints (its `ToString`).
+    pub text: String,
+}
 
 impl BoundExpression {
-    pub fn new(payload: impl Any + Send + Sync) -> Self {
-        Self(Arc::new(payload))
+    pub fn new(payload: impl Any + Send + Sync, text: impl Into<String>) -> Self {
+        Self {
+            payload: Arc::new(payload),
+            text: text.into(),
+        }
     }
 }
 
 impl fmt::Debug for BoundExpression {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("BoundExpression")
+        write!(f, "BoundExpression({})", self.text)
     }
 }
 
 impl PartialEq for BoundExpression {
     /// Bound sub-trees are only equal to themselves.
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+        Arc::ptr_eq(&self.payload, &other.payload)
     }
 }
 
