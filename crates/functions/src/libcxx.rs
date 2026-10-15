@@ -220,7 +220,11 @@ mod tests {
         for &value in values {
             table.insert(value, value, |a, b| a == b);
         }
-        table.order().into_iter().map(|index| table.keys()[index]).collect()
+        table
+            .order()
+            .into_iter()
+            .map(|index| table.keys()[index])
+            .collect()
     }
 
     #[test]

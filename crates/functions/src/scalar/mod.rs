@@ -2,11 +2,13 @@
 //! `extension/core_functions/scalar`.
 
 pub mod array;
+pub mod bit;
+pub mod blob;
 pub mod date;
 pub(crate) mod executor;
-pub mod map;
 pub mod generic;
 pub mod list;
+pub mod map;
 pub mod math;
 pub(crate) mod nested;
 pub mod operator;
@@ -98,7 +100,11 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
     for (set, aliases) in date::date_part::named_part_functions() {
         with_aliases(&mut sets, set, aliases);
     }
-    with_aliases(&mut sets, date::date_trunc::date_trunc_functions(), &["datetrunc"]);
+    with_aliases(
+        &mut sets,
+        date::date_trunc::date_trunc_functions(),
+        &["datetrunc"],
+    );
     with_aliases(&mut sets, date::date_diff::date_diff_functions(), &["datediff"]);
     with_aliases(&mut sets, date::date_diff::date_sub_functions(), &["datesub"]);
     sets.push(date::date_diff::age_functions());
@@ -169,7 +175,11 @@ fn string_functions(sets: &mut Vec<ScalarFunctionSet>) {
     }
     with_aliases(sets, list::list_ops::list_resize_functions(), &["array_resize"]);
     with_aliases(sets, list::list_ops::list_zip_functions(), &["array_zip"]);
-    with_aliases(sets, list::list_ops::list_intersect_functions(), &["array_intersect"]);
+    with_aliases(
+        sets,
+        list::list_ops::list_intersect_functions(),
+        &["array_intersect"],
+    );
     for (set, aliases) in list::has_any_or_all::has_any_or_all_functions()
         .into_iter()
         .chain(array::array_functions::distance_functions())
@@ -232,4 +242,12 @@ fn string_functions(sets: &mut Vec<ScalarFunctionSet>) {
     sets.push(decimal_size);
     sets.push(encode::parse_formatted_bytes_functions());
     sets.push(encode::bar_functions());
+    with_aliases(sets, blob::base64::to_base64_functions(), &["base64"]);
+    sets.push(blob::base64::from_base64_functions());
+    sets.push(blob::encode::encode_functions());
+    sets.push(blob::encode::decode_functions());
+    sets.push(bit::bitstring_functions());
+    sets.push(bit::get_bit_functions());
+    sets.push(bit::set_bit_functions());
+    sets.push(bit::bit_position_functions());
 }

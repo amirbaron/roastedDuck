@@ -71,17 +71,28 @@ fn bind_array_binary(function: &mut ScalarFunction, input: &BindInput<'_>) -> Bi
         function.return_type = LogicalType::simple(LogicalTypeId::Unknown);
         return Ok(None);
     }
-    let left = if unknown(left) { right.clone() } else { left.clone() };
-    let right = if unknown(right) { left.clone() } else { right.clone() };
+    let left = if unknown(left) {
+        right.clone()
+    } else {
+        left.clone()
+    };
+    let right = if unknown(right) {
+        left.clone()
+    } else {
+        right.clone()
+    };
     let name = function.name.clone();
-    let (Some((left_child, left_size)), Some((right_child, right_size))) = (left.array_child(), right.array_child())
+    let (Some((left_child, left_size)), Some((right_child, right_size))) =
+        (left.array_child(), right.array_child())
     else {
         return Err(Error::invalid_input(format!(
             "{name}: Arguments must be arrays of FLOAT or DOUBLE"
         )));
     };
     if left_size != right_size {
-        return Err(Error::binder(format!("{name}: Array arguments must be of the same size")));
+        return Err(Error::binder(format!(
+            "{name}: Array arguments must be of the same size"
+        )));
     }
     let common = LogicalType::try_max_logical_type(left_child, right_child).ok_or_else(|| {
         Error::binder(format!(
@@ -219,7 +230,9 @@ fn list_fold<T: Float>(args: &DataChunk, result: &mut Vector, name: &str, fold: 
             nulls.push(row);
             continue;
         }
-        let slice = |values: &[T], entry: ListEntry| values[entry.offset as usize..(entry.offset + entry.length) as usize].to_vec();
+        let slice = |values: &[T], entry: ListEntry| {
+            values[entry.offset as usize..(entry.offset + entry.length) as usize].to_vec()
+        };
         result.values_mut::<T>()[row] = fold.apply(&slice(&left_values, l), &slice(&right_values, r));
     }
     let validity = result.validity_mut();
@@ -237,13 +250,18 @@ fn list_fold_set(name: &'static str, fold: Fold) -> ScalarFunctionSet {
     for ty in [LogicalType::FLOAT, LogicalType::DOUBLE] {
         let list = LogicalType::list(ty.clone());
         let float = ty.id() == LogicalTypeId::Float;
-        set.add(ScalarFunction::new(name, vec![list.clone(), list], ty, move |args, _, result| {
-            if float {
-                list_fold::<f32>(args, result, name, fold)
-            } else {
-                list_fold::<f64>(args, result, name, fold)
-            }
-        }));
+        set.add(ScalarFunction::new(
+            name,
+            vec![list.clone(), list],
+            ty,
+            move |args, _, result| {
+                if float {
+                    list_fold::<f32>(args, result, name, fold)
+                } else {
+                    list_fold::<f64>(args, result, name, fold)
+                }
+            },
+        ));
     }
     set
 }
@@ -252,18 +270,33 @@ fn list_fold_set(name: &'static str, fold: Fold) -> ScalarFunctionSet {
 pub fn distance_functions() -> Vec<(ScalarFunctionSet, &'static [&'static str])> {
     vec![
         (array_cross_product_set(), &[]),
-        (array_fold_set("array_cosine_similarity", Fold::CosineSimilarity), &[]),
+        (
+            array_fold_set("array_cosine_similarity", Fold::CosineSimilarity),
+            &[],
+        ),
         (array_fold_set("array_cosine_distance", Fold::CosineDistance), &[]),
         (array_fold_set("array_distance", Fold::Distance), &[]),
-        (array_fold_set("array_inner_product", Fold::InnerProduct), &["array_dot_product"]),
+        (
+            array_fold_set("array_inner_product", Fold::InnerProduct),
+            &["array_dot_product"],
+        ),
         (
             array_fold_set("array_negative_inner_product", Fold::NegativeInnerProduct),
             &["array_negative_dot_product"],
         ),
-        (list_fold_set("list_cosine_distance", Fold::CosineDistance), &["<=>"]),
-        (list_fold_set("list_cosine_similarity", Fold::CosineSimilarity), &[]),
+        (
+            list_fold_set("list_cosine_distance", Fold::CosineDistance),
+            &["<=>"],
+        ),
+        (
+            list_fold_set("list_cosine_similarity", Fold::CosineSimilarity),
+            &[],
+        ),
         (list_fold_set("list_distance", Fold::Distance), &["<->"]),
-        (list_fold_set("list_inner_product", Fold::InnerProduct), &["list_dot_product"]),
+        (
+            list_fold_set("list_inner_product", Fold::InnerProduct),
+            &["list_dot_product"],
+        ),
         (
             list_fold_set("list_negative_inner_product", Fold::NegativeInnerProduct),
             &["list_negative_dot_product"],

@@ -80,7 +80,10 @@ fn has_all(args: &DataChunk, result: &mut Vector, swap: bool) -> Result<()> {
     let right = ListInput::new(&right_lists)?;
     let left_keys = keys(&left)?;
     let right_keys = keys(&right)?;
-    let ordered = DataChunk::new(vec![left_lists.as_ref().clone(), right_lists.as_ref().clone()], count);
+    let ordered = DataChunk::new(
+        vec![left_lists.as_ref().clone(), right_lists.as_ref().clone()],
+        count,
+    );
     binary::<ListEntry, ListEntry, bool>(&ordered, result, |build, probe, out| {
         if probe.length == 0 {
             *out = true;
@@ -101,17 +104,26 @@ fn signature() -> Vec<LogicalType> {
 /// `list_has_any`, `list_has_all` and `<@`, with their aliases.
 pub fn has_any_or_all_functions() -> Vec<(ScalarFunctionSet, &'static [&'static str])> {
     let mut any = ScalarFunctionSet::new("list_has_any");
-    any.add(ScalarFunction::new("list_has_any", signature(), LogicalType::BOOLEAN, |args, _, result| {
-        has_any(args, result)
-    }));
+    any.add(ScalarFunction::new(
+        "list_has_any",
+        signature(),
+        LogicalType::BOOLEAN,
+        |args, _, result| has_any(args, result),
+    ));
     let mut all = ScalarFunctionSet::new("list_has_all");
-    all.add(ScalarFunction::new("list_has_all", signature(), LogicalType::BOOLEAN, |args, _, result| {
-        has_all(args, result, false)
-    }));
+    all.add(ScalarFunction::new(
+        "list_has_all",
+        signature(),
+        LogicalType::BOOLEAN,
+        |args, _, result| has_all(args, result, false),
+    ));
     let mut contained = ScalarFunctionSet::new("<@");
-    contained.add(ScalarFunction::new("<@", signature(), LogicalType::BOOLEAN, |args, _, result| {
-        has_all(args, result, true)
-    }));
+    contained.add(ScalarFunction::new(
+        "<@",
+        signature(),
+        LogicalType::BOOLEAN,
+        |args, _, result| has_all(args, result, true),
+    ));
     vec![
         (any, &["array_has_any", "&&"]),
         (all, &["array_has_all", "@>"]),

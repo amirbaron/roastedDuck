@@ -29,7 +29,11 @@ pub(crate) fn list_search(
     let modifiers = [OrderModifiers::new(OrderType::Ascending, NullOrder::NullsLast)];
     let source_keys = create_sort_keys(&[source], &modifiers, source_size)?;
     let target_keys = create_sort_keys(&[target], &modifiers, count)?;
-    let ty = if position { LogicalType::INTEGER } else { LogicalType::BOOLEAN };
+    let ty = if position {
+        LogicalType::INTEGER
+    } else {
+        LogicalType::BOOLEAN
+    };
     let mut out = Vector::flat(ty, count.max(1));
     out.reset_flat(count);
     let mut nulls = Vec::new();
@@ -85,7 +89,9 @@ fn list_search_function(args: &DataChunk, result: &mut Vector, position: bool) -
         .list_child()
         .map(|(child, size)| (child.clone(), size))
         .ok_or_else(|| rustdb_common::Error::internal("list search on a non-list vector"))?;
-    list_search(&lists, &child, child_size, &target, count, position, position, result)
+    list_search(
+        &lists, &child, child_size, &target, count, position, position, result,
+    )
 }
 
 /// The `list_contains(LIST(T), T)` overload (also used by `contains`).

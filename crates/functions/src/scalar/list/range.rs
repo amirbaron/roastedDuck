@@ -18,7 +18,12 @@ trait RangeInfo {
     type Increment: NativeType;
     fn default_start() -> Self::Value;
     fn default_increment() -> Self::Increment;
-    fn length(start: Self::Value, end: Self::Value, increment: Self::Increment, inclusive: bool) -> Result<u64>;
+    fn length(
+        start: Self::Value,
+        end: Self::Value,
+        increment: Self::Increment,
+        inclusive: bool,
+    ) -> Result<u64>;
     fn step(value: Self::Value, increment: Self::Increment) -> Result<Self::Value>;
 }
 
@@ -115,13 +120,18 @@ impl RangeInfo for Timestamps {
 /// DuckDB's `ListRangeFunction`.
 fn range_rows<I: RangeInfo>(args: &DataChunk, result: &mut Vector, inclusive: bool) -> Result<()> {
     let count = args.len();
-    let columns: Vec<_> = args.columns().iter().map(|column| addressable(column, count)).collect();
+    let columns: Vec<_> = args
+        .columns()
+        .iter()
+        .map(|column| addressable(column, count))
+        .collect();
     let constant = all_constant(args.columns());
     let rows = if constant { 1 } else { count };
     let arity = columns.len();
     let starts: Option<Unified<'_, I::Value>> = (arity > 1).then(|| columns[0].unified::<I::Value>());
     let ends = columns[usize::from(arity > 1)].unified::<I::Value>();
-    let increments: Option<Unified<'_, I::Increment>> = (arity > 2).then(|| columns[2].unified::<I::Increment>());
+    let increments: Option<Unified<'_, I::Increment>> =
+        (arity > 2).then(|| columns[2].unified::<I::Increment>());
     let mut entries = Vec::with_capacity(rows);
     let mut nulls = Vec::new();
     let mut values: Vec<I::Value> = Vec::new();
@@ -181,7 +191,11 @@ fn range_set(name: &str, inclusive: bool) -> ScalarFunctionSet {
     }
     set.add(ScalarFunction::new(
         name,
-        vec![LogicalType::TIMESTAMP, LogicalType::TIMESTAMP, LogicalType::INTERVAL],
+        vec![
+            LogicalType::TIMESTAMP,
+            LogicalType::TIMESTAMP,
+            LogicalType::INTERVAL,
+        ],
         LogicalType::list(LogicalType::TIMESTAMP),
         move |args, _, result| range_rows::<Timestamps>(args, result, inclusive),
     ));

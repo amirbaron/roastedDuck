@@ -8,7 +8,8 @@ use std::sync::Arc;
 use rustdb_common::{Error, ErrorKind, Result};
 use rustdb_function::{BindInput, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet};
 use rustdb_types::{
-    DataChunk, Date, Interval, LogicalType, LogicalTypeId, NativeType, Time, TimeNs, TimeTz, Timestamp, Vector,
+    DataChunk, Date, Interval, LogicalType, LogicalTypeId, NativeType, Time, TimeNs, TimeTz, Timestamp,
+    Vector,
 };
 
 use super::calendar;
@@ -62,8 +63,12 @@ impl Part {
             "decade" | "dec" | "decades" | "decs" => Self::Decade,
             "century" | "cent" | "centuries" | "c" => Self::Century,
             "millennium" | "mil" | "millenniums" | "millennia" | "mils" | "millenium" => Self::Millennium,
-            "microseconds" | "microsecond" | "us" | "usec" | "usecs" | "usecond" | "useconds" => Self::Microseconds,
-            "milliseconds" | "millisecond" | "ms" | "msec" | "msecs" | "msecond" | "mseconds" => Self::Milliseconds,
+            "microseconds" | "microsecond" | "us" | "usec" | "usecs" | "usecond" | "useconds" => {
+                Self::Microseconds
+            }
+            "milliseconds" | "millisecond" | "ms" | "msec" | "msecs" | "msecond" | "mseconds" => {
+                Self::Milliseconds
+            }
             "second" | "sec" | "seconds" | "secs" | "s" => Self::Second,
             "minute" | "min" | "minutes" | "mins" | "m" => Self::Minute,
             "hour" | "hr" | "hours" | "hrs" | "h" => Self::Hour,
@@ -135,11 +140,19 @@ fn decade(year: i64) -> i64 {
 }
 
 fn century(year: i64) -> i64 {
-    if year > 0 { (year - 1) / 100 + 1 } else { year / 100 - 1 }
+    if year > 0 {
+        (year - 1) / 100 + 1
+    } else {
+        year / 100 - 1
+    }
 }
 
 fn millennium(year: i64) -> i64 {
-    if year > 0 { (year - 1) / 1000 + 1 } else { year / 1000 - 1 }
+    if year > 0 {
+        (year - 1) / 1000 + 1
+    } else {
+        year / 1000 - 1
+    }
 }
 
 fn year_week(year: i64, week: i64) -> i64 {
@@ -158,7 +171,9 @@ pub(crate) trait Temporal: NativeType {
     fn to_epoch(self) -> Result<f64>;
     /// `julian(value)`; only dates and timestamps have one.
     fn to_julian(self) -> Result<f64> {
-        Err(not_implemented("Specifier type not implemented for DATEPART".to_owned()))
+        Err(not_implemented(
+            "Specifier type not implemented for DATEPART".to_owned(),
+        ))
     }
     /// Microseconds since the epoch (`epoch_us`).
     fn to_epoch_us(self) -> Result<i64>;
@@ -197,10 +212,15 @@ fn date_part(date: Date, part: Part) -> Result<i64> {
         Part::Era => i64::from(year > 0),
         Part::Microseconds | Part::Milliseconds | Part::Second | Part::Minute | Part::Hour => 0,
         Part::Timezone | Part::TimezoneHour | Part::TimezoneMinute => {
-            return Err(not_implemented(format!("\"date\" units \"{}\" not recognized", part.unit_name())));
+            return Err(not_implemented(format!(
+                "\"date\" units \"{}\" not recognized",
+                part.unit_name()
+            )));
         }
         Part::Epoch | Part::JulianDay => {
-            return Err(not_implemented("Specifier type not implemented for DATEPART".to_owned()));
+            return Err(not_implemented(
+                "Specifier type not implemented for DATEPART".to_owned(),
+            ));
         }
     })
 }
@@ -215,9 +235,16 @@ fn time_part(micros: i64, part: Part) -> Result<i64> {
         Part::Hour => micros / Interval::MICROS_PER_HOUR,
         Part::Timezone | Part::TimezoneHour | Part::TimezoneMinute => 0,
         Part::Epoch | Part::JulianDay => {
-            return Err(not_implemented("Specifier type not implemented for DATEPART".to_owned()));
+            return Err(not_implemented(
+                "Specifier type not implemented for DATEPART".to_owned(),
+            ));
         }
-        _ => return Err(not_implemented(format!("\"time\" units \"{}\" not recognized", part.unit_name()))),
+        _ => {
+            return Err(not_implemented(format!(
+                "\"time\" units \"{}\" not recognized",
+                part.unit_name()
+            )));
+        }
     })
 }
 
@@ -337,7 +364,9 @@ impl Temporal for Interval {
                 )));
             }
             Part::Epoch | Part::JulianDay => {
-                return Err(not_implemented("Specifier type not implemented for DATEPART".to_owned()));
+                return Err(not_implemented(
+                    "Specifier type not implemented for DATEPART".to_owned(),
+                ));
             }
         })
     }
@@ -494,12 +523,42 @@ fn date_part_set(name: &str, part: Part) -> ScalarFunctionSet {
 /// A part function over every temporal type (DuckDB's `GetTimePartFunction`).
 fn time_part_set<R: NativeType>(name: &str, return_type: LogicalType, op: TimeOps<R>) -> ScalarFunctionSet {
     let mut set = ScalarFunctionSet::new(name);
-    set.add(overload::<Date, R>(name, LogicalType::DATE, return_type.clone(), op.date));
-    set.add(overload::<Timestamp, R>(name, LogicalType::TIMESTAMP, return_type.clone(), op.timestamp));
-    set.add(overload::<Interval, R>(name, LogicalType::INTERVAL, return_type.clone(), op.interval));
-    set.add(overload::<Time, R>(name, LogicalType::TIME, return_type.clone(), op.time));
-    set.add(overload::<TimeNs, R>(name, LogicalType::TIME_NS, return_type.clone(), op.time_ns));
-    set.add(overload::<TimeTz, R>(name, LogicalType::TIME_TZ, return_type, op.time_tz));
+    set.add(overload::<Date, R>(
+        name,
+        LogicalType::DATE,
+        return_type.clone(),
+        op.date,
+    ));
+    set.add(overload::<Timestamp, R>(
+        name,
+        LogicalType::TIMESTAMP,
+        return_type.clone(),
+        op.timestamp,
+    ));
+    set.add(overload::<Interval, R>(
+        name,
+        LogicalType::INTERVAL,
+        return_type.clone(),
+        op.interval,
+    ));
+    set.add(overload::<Time, R>(
+        name,
+        LogicalType::TIME,
+        return_type.clone(),
+        op.time,
+    ));
+    set.add(overload::<TimeNs, R>(
+        name,
+        LogicalType::TIME_NS,
+        return_type.clone(),
+        op.time_ns,
+    ));
+    set.add(overload::<TimeTz, R>(
+        name,
+        LogicalType::TIME_TZ,
+        return_type,
+        op.time_tz,
+    ));
     set
 }
 
@@ -590,19 +649,29 @@ fn bind_date_part<T: Temporal>(function: &mut ScalarFunction, input: &BindInput<
         }
         Part::Epoch => {
             function.return_type = LogicalType::DOUBLE;
-            let kernel: Arc<dyn Fn(&DataChunk, &mut FunctionState, &mut Vector) -> Result<()> + Send + Sync> = match ty {
-                LogicalTypeId::Timestamp
-                | LogicalTypeId::TimestampSec
-                | LogicalTypeId::TimestampMs
-                | LogicalTypeId::TimestampNs => Arc::new(part_kernel::<Timestamp, f64>(<Timestamp as Temporal>::to_epoch)),
-                LogicalTypeId::Date => Arc::new(part_kernel::<Date, f64>(<Date as Temporal>::to_epoch)),
-                LogicalTypeId::Interval => Arc::new(part_kernel::<Interval, f64>(<Interval as Temporal>::to_epoch)),
-                LogicalTypeId::Time => Arc::new(part_kernel::<Time, f64>(<Time as Temporal>::to_epoch)),
-                LogicalTypeId::TimeNs => Arc::new(part_kernel::<TimeNs, f64>(<TimeNs as Temporal>::to_epoch)),
-                LogicalTypeId::TimeTz => Arc::new(part_kernel::<TimeTz, f64>(<TimeTz as Temporal>::to_epoch)),
-                _ => return Err(Error::binder("epoch can only take temporal arguments")),
-            };
-            function.kernel = Arc::new(move |args, state, result| kernel(&second_column(args), state, result));
+            let kernel: Arc<dyn Fn(&DataChunk, &mut FunctionState, &mut Vector) -> Result<()> + Send + Sync> =
+                match ty {
+                    LogicalTypeId::Timestamp
+                    | LogicalTypeId::TimestampSec
+                    | LogicalTypeId::TimestampMs
+                    | LogicalTypeId::TimestampNs => {
+                        Arc::new(part_kernel::<Timestamp, f64>(<Timestamp as Temporal>::to_epoch))
+                    }
+                    LogicalTypeId::Date => Arc::new(part_kernel::<Date, f64>(<Date as Temporal>::to_epoch)),
+                    LogicalTypeId::Interval => {
+                        Arc::new(part_kernel::<Interval, f64>(<Interval as Temporal>::to_epoch))
+                    }
+                    LogicalTypeId::Time => Arc::new(part_kernel::<Time, f64>(<Time as Temporal>::to_epoch)),
+                    LogicalTypeId::TimeNs => {
+                        Arc::new(part_kernel::<TimeNs, f64>(<TimeNs as Temporal>::to_epoch))
+                    }
+                    LogicalTypeId::TimeTz => {
+                        Arc::new(part_kernel::<TimeTz, f64>(<TimeTz as Temporal>::to_epoch))
+                    }
+                    _ => return Err(Error::binder("epoch can only take temporal arguments")),
+                };
+            function.kernel =
+                Arc::new(move |args, state, result| kernel(&second_column(args), state, result));
         }
         _ => {
             function.kernel = Arc::new(move |args, _, result| {
@@ -712,7 +781,12 @@ fn bind_struct_date_part(function: &mut ScalarFunction, input: &BindInput<'_>) -
     if input.argument_types[0].id() == LogicalTypeId::Unknown {
         return Err(crate::parameter_not_resolved());
     }
-    let not_constant = || Error::binder(format!("{} can only take constant lists of part names", function.name));
+    let not_constant = || {
+        Error::binder(format!(
+            "{} can only take constant lists of part names",
+            function.name
+        ))
+    };
     let Some(Some(list)) = input.constants.first() else {
         return Err(not_constant());
     };
@@ -732,7 +806,10 @@ fn bind_struct_date_part(function: &mut ScalarFunction, input: &BindInput<'_>) -
     let mut fields = Vec::with_capacity(children.len());
     for child in children {
         if child.is_null() {
-            return Err(Error::binder(format!("NULL struct entry name in {}", function.name)));
+            return Err(Error::binder(format!(
+                "NULL struct entry name in {}",
+                function.name
+            )));
         }
         let name = crate::values::as_text(child)?;
         let part = struct_part(&name, ty)?;
@@ -742,7 +819,11 @@ fn bind_struct_date_part(function: &mut ScalarFunction, input: &BindInput<'_>) -
                 function.name
             )));
         }
-        let field_type = if part.is_bigint() { LogicalType::BIGINT } else { LogicalType::DOUBLE };
+        let field_type = if part.is_bigint() {
+            LogicalType::BIGINT
+        } else {
+            LogicalType::DOUBLE
+        };
         fields.push((name.clone(), field_type));
         names.push(name);
         parts.push(part);
@@ -762,7 +843,11 @@ fn bind_struct_date_part(function: &mut ScalarFunction, input: &BindInput<'_>) -
 
 /// DuckDB's `StructDatePart::Function`: NULL input gives a NULL struct, infinite input a
 /// struct of NULLs.
-fn struct_kernel<T: Temporal>(args: &DataChunk, state: &mut FunctionState, result: &mut Vector) -> Result<()> {
+fn struct_kernel<T: Temporal>(
+    args: &DataChunk,
+    state: &mut FunctionState,
+    result: &mut Vector,
+) -> Result<()> {
     let parts = state
         .bind_data
         .as_ref()
@@ -896,15 +981,20 @@ fn last_day(date: Date) -> Result<Date> {
 
 fn name_set(name: &str, names: &'static [&'static str], index: fn(Date) -> usize) -> ScalarFunctionSet {
     let mut set = ScalarFunctionSet::new(name);
-    set.add(ScalarFunction::new(name, vec![LogicalType::DATE], LogicalType::VARCHAR, move |args, _, result| {
-        unary::<Date, StrOut>(args, result, |date, out| {
-            if !date.is_finite() {
-                return Ok(false);
-            }
-            out.extend_from_slice(names[index(date)].as_bytes());
-            Ok(true)
-        })
-    }));
+    set.add(ScalarFunction::new(
+        name,
+        vec![LogicalType::DATE],
+        LogicalType::VARCHAR,
+        move |args, _, result| {
+            unary::<Date, StrOut>(args, result, |date, out| {
+                if !date.is_finite() {
+                    return Ok(false);
+                }
+                out.extend_from_slice(names[index(date)].as_bytes());
+                Ok(true)
+            })
+        },
+    ));
     set.add(ScalarFunction::new(
         name,
         vec![LogicalType::TIMESTAMP],
@@ -924,16 +1014,20 @@ fn name_set(name: &str, names: &'static [&'static str], index: fn(Date) -> usize
 
 /// `epoch_ms(BIGINT)`/`make_timestamp_ms`: milliseconds since the epoch to a TIMESTAMP.
 fn timestamp_from_millis() -> ScalarFunction {
-    ScalarFunction::new("epoch_ms", vec![LogicalType::BIGINT], LogicalType::TIMESTAMP, |args, _, result| {
-        unary::<i64, Timestamp>(args, result, |millis, out| {
-            *out = Timestamp(
-                millis
-                    .checked_mul(Interval::MICROS_PER_MSEC)
-                    .ok_or_else(|| Error::conversion("Could not convert Timestamp(MS) to Timestamp(US)"))?,
-            );
-            Ok(true)
-        })
-    })
+    ScalarFunction::new(
+        "epoch_ms",
+        vec![LogicalType::BIGINT],
+        LogicalType::TIMESTAMP,
+        |args, _, result| {
+            unary::<i64, Timestamp>(args, result, |millis, out| {
+                *out =
+                    Timestamp(millis.checked_mul(Interval::MICROS_PER_MSEC).ok_or_else(|| {
+                        Error::conversion("Could not convert Timestamp(MS) to Timestamp(US)")
+                    })?);
+                Ok(true)
+            })
+        },
+    )
 }
 
 fn renamed(mut function: ScalarFunction, name: &str) -> ScalarFunction {
@@ -964,12 +1058,46 @@ pub fn named_part_functions() -> Vec<(ScalarFunctionSet, &'static [&'static str]
         (date_part_set("dayofmonth", Part::Day), &[]),
         (date_part_set("weekday", Part::Dow), &[]),
         (date_part_set("weekofyear", Part::Week), &[]),
-        (time_part_set("epoch", LogicalType::DOUBLE, time_ops!(to_epoch)), &[]),
-        (time_part_set("microsecond", LogicalType::BIGINT, time_ops!(bigint_part, Part::Microseconds)), &[]),
-        (time_part_set("millisecond", LogicalType::BIGINT, time_ops!(bigint_part, Part::Milliseconds)), &[]),
-        (time_part_set("second", LogicalType::BIGINT, time_ops!(bigint_part, Part::Second)), &[]),
-        (time_part_set("minute", LogicalType::BIGINT, time_ops!(bigint_part, Part::Minute)), &[]),
-        (time_part_set("hour", LogicalType::BIGINT, time_ops!(bigint_part, Part::Hour)), &[]),
+        (
+            time_part_set("epoch", LogicalType::DOUBLE, time_ops!(to_epoch)),
+            &[],
+        ),
+        (
+            time_part_set(
+                "microsecond",
+                LogicalType::BIGINT,
+                time_ops!(bigint_part, Part::Microseconds),
+            ),
+            &[],
+        ),
+        (
+            time_part_set(
+                "millisecond",
+                LogicalType::BIGINT,
+                time_ops!(bigint_part, Part::Milliseconds),
+            ),
+            &[],
+        ),
+        (
+            time_part_set(
+                "second",
+                LogicalType::BIGINT,
+                time_ops!(bigint_part, Part::Second),
+            ),
+            &[],
+        ),
+        (
+            time_part_set(
+                "minute",
+                LogicalType::BIGINT,
+                time_ops!(bigint_part, Part::Minute),
+            ),
+            &[],
+        ),
+        (
+            time_part_set("hour", LogicalType::BIGINT, time_ops!(bigint_part, Part::Hour)),
+            &[],
+        ),
     ];
     let mut timezone = date_part_set("timezone", Part::Timezone);
     timezone.add(ScalarFunction::new(
@@ -989,7 +1117,12 @@ pub fn named_part_functions() -> Vec<(ScalarFunctionSet, &'static [&'static str]
     sets.push((timezone, &[]));
 
     let mut epoch_ns = time_part_set("epoch_ns", LogicalType::BIGINT, time_ops!(to_epoch_ns));
-    epoch_ns.add(overload::<Timestamp, i64>("epoch_ns", LogicalType::TIMESTAMP_TZ, LogicalType::BIGINT, <Timestamp as Temporal>::to_epoch_ns));
+    epoch_ns.add(overload::<Timestamp, i64>(
+        "epoch_ns",
+        LogicalType::TIMESTAMP_TZ,
+        LogicalType::BIGINT,
+        <Timestamp as Temporal>::to_epoch_ns,
+    ));
     epoch_ns.add(ScalarFunction::new(
         "epoch_ns",
         vec![LogicalType::TIMESTAMP_NS],
@@ -1003,10 +1136,20 @@ pub fn named_part_functions() -> Vec<(ScalarFunctionSet, &'static [&'static str]
     ));
     sets.push((epoch_ns, &[]));
     let mut epoch_us = time_part_set("epoch_us", LogicalType::BIGINT, time_ops!(to_epoch_us));
-    epoch_us.add(overload::<Timestamp, i64>("epoch_us", LogicalType::TIMESTAMP_TZ, LogicalType::BIGINT, <Timestamp as Temporal>::to_epoch_us));
+    epoch_us.add(overload::<Timestamp, i64>(
+        "epoch_us",
+        LogicalType::TIMESTAMP_TZ,
+        LogicalType::BIGINT,
+        <Timestamp as Temporal>::to_epoch_us,
+    ));
     sets.push((epoch_us, &[]));
     let mut epoch_ms = time_part_set("epoch_ms", LogicalType::BIGINT, time_ops!(to_epoch_ms));
-    epoch_ms.add(overload::<Timestamp, i64>("epoch_ms", LogicalType::TIMESTAMP_TZ, LogicalType::BIGINT, <Timestamp as Temporal>::to_epoch_ms));
+    epoch_ms.add(overload::<Timestamp, i64>(
+        "epoch_ms",
+        LogicalType::TIMESTAMP_TZ,
+        LogicalType::BIGINT,
+        <Timestamp as Temporal>::to_epoch_ms,
+    ));
     epoch_ms.add(timestamp_from_millis());
     sets.push((epoch_ms, &[]));
     let mut make_timestamp_ms = ScalarFunctionSet::new("make_timestamp_ms");
@@ -1031,17 +1174,32 @@ pub fn named_part_functions() -> Vec<(ScalarFunctionSet, &'static [&'static str]
             })
         },
     ));
-    nanosecond.add(overload::<Timestamp, i64>("nanosecond", LogicalType::TIMESTAMP_TZ, LogicalType::BIGINT, <Timestamp as Temporal>::to_nanosecond));
+    nanosecond.add(overload::<Timestamp, i64>(
+        "nanosecond",
+        LogicalType::TIMESTAMP_TZ,
+        LogicalType::BIGINT,
+        <Timestamp as Temporal>::to_nanosecond,
+    ));
     sets.push((nanosecond, &[]));
 
     let mut last_day_set = ScalarFunctionSet::new("last_day");
-    last_day_set.add(overload::<Date, Date>("last_day", LogicalType::DATE, LogicalType::DATE, last_day));
-    last_day_set.add(overload::<Timestamp, Date>("last_day", LogicalType::TIMESTAMP, LogicalType::DATE, |ts| {
-        last_day(ts.to_date())
-    }));
+    last_day_set.add(overload::<Date, Date>(
+        "last_day",
+        LogicalType::DATE,
+        LogicalType::DATE,
+        last_day,
+    ));
+    last_day_set.add(overload::<Timestamp, Date>(
+        "last_day",
+        LogicalType::TIMESTAMP,
+        LogicalType::DATE,
+        |ts| last_day(ts.to_date()),
+    ));
     sets.push((last_day_set, &[]));
     sets.push((
-        name_set("monthname", &calendar::MONTH_NAMES, |date| (date.to_ymd().1 - 1) as usize),
+        name_set("monthname", &calendar::MONTH_NAMES, |date| {
+            (date.to_ymd().1 - 1) as usize
+        }),
         &[],
     ));
     sets.push((
@@ -1051,8 +1209,18 @@ pub fn named_part_functions() -> Vec<(ScalarFunctionSet, &'static [&'static str]
         &[],
     ));
     let mut julian = ScalarFunctionSet::new("julian");
-    julian.add(overload::<Date, f64>("julian", LogicalType::DATE, LogicalType::DOUBLE, <Date as Temporal>::to_julian));
-    julian.add(overload::<Timestamp, f64>("julian", LogicalType::TIMESTAMP, LogicalType::DOUBLE, <Timestamp as Temporal>::to_julian));
+    julian.add(overload::<Date, f64>(
+        "julian",
+        LogicalType::DATE,
+        LogicalType::DOUBLE,
+        <Date as Temporal>::to_julian,
+    ));
+    julian.add(overload::<Timestamp, f64>(
+        "julian",
+        LogicalType::TIMESTAMP,
+        LogicalType::DOUBLE,
+        <Timestamp as Temporal>::to_julian,
+    ));
     sets.push((julian, &[]));
     sets
 }

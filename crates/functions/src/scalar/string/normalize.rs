@@ -16,7 +16,11 @@ fn strip_accents(input: &[u8], out: &mut Vec<u8>) {
         out.extend_from_slice(input);
         return;
     }
-    let stripped: String = text(input).nfd().filter(|&c| !is_combining_mark(c)).nfc().collect();
+    let stripped: String = text(input)
+        .nfd()
+        .filter(|&c| !is_combining_mark(c))
+        .nfc()
+        .collect();
     out.extend_from_slice(stripped.as_bytes());
 }
 

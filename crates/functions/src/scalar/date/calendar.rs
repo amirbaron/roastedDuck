@@ -82,11 +82,20 @@ pub(crate) const MONTH_NAMES: [&str; 12] = [
 ];
 
 /// `Date::MONTH_NAMES_ABBREVIATED`.
-pub(crate) const MONTH_NAMES_ABBREVIATED: [&str; 12] =
-    ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+pub(crate) const MONTH_NAMES_ABBREVIATED: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
 
 /// `Date::DAY_NAMES` (Sunday first).
-pub(crate) const DAY_NAMES: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+pub(crate) const DAY_NAMES: [&str; 7] = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+];
 
 /// `Date::DAY_NAMES_ABBREVIATED`.
 pub(crate) const DAY_NAMES_ABBREVIATED: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];

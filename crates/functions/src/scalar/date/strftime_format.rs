@@ -253,7 +253,11 @@ impl StrTimeFormat {
             } else {
                 write_standard_specifier(*spec, data, &mut bytes);
             }
-            let advance = if *spec == Spec::NanosecondPadded { 6 } else { bytes.len() };
+            let advance = if *spec == Spec::NanosecondPadded {
+                6
+            } else {
+                bytes.len()
+            };
             segments.push((bytes, advance));
         }
         if let Some(last) = self.literals.last() {
@@ -286,7 +290,12 @@ impl StrTimeFormat {
         result
     }
 
-    fn parse_into(&self, input: &[u8], strict: bool, result: &mut ParseResult) -> std::result::Result<(), ()> {
+    fn parse_into(
+        &self,
+        input: &[u8],
+        strict: bool,
+        result: &mut ParseResult,
+    ) -> std::result::Result<(), ()> {
         let mut start = 0;
         while input.get(start).copied().is_some_and(is_space) {
             start += 1;
@@ -353,8 +362,10 @@ impl StrTimeFormat {
                 pos += 1;
                 l += 1;
                 if !matched {
-                    result.error_message =
-                        format!("Literal does not match, expected {}", String::from_utf8_lossy(literal));
+                    result.error_message = format!(
+                        "Literal does not match, expected {}",
+                        String::from_utf8_lossy(literal)
+                    );
                     result.error_position = Some(pos);
                     return Err(());
                 }
@@ -401,7 +412,10 @@ impl StrTimeFormat {
                         offset_specifier = spec;
                     }
                     Spec::YearWithoutCenturyPadded | Spec::YearWithoutCentury => {
-                        if matches!(offset_specifier, Spec::YearIso | Spec::WeekNumberIso | Spec::WeekdayDecimal) {
+                        if matches!(
+                            offset_specifier,
+                            Spec::YearIso | Spec::WeekNumberIso | Spec::WeekdayDecimal
+                        ) {
                             offset_specifier = spec;
                         }
                         if pos - start_pos < 2 && strict {
@@ -410,10 +424,17 @@ impl StrTimeFormat {
                         if number >= 100 {
                             fail!("Year without century out of range, expected a value between 0 and 99");
                         }
-                        result.data[0] = if number >= 69 { 1900 + number as i32 } else { 2000 + number as i32 };
+                        result.data[0] = if number >= 69 {
+                            1900 + number as i32
+                        } else {
+                            2000 + number as i32
+                        };
                     }
                     Spec::YearDecimal => {
-                        if matches!(offset_specifier, Spec::YearIso | Spec::WeekNumberIso | Spec::WeekdayDecimal) {
+                        if matches!(
+                            offset_specifier,
+                            Spec::YearIso | Spec::WeekNumberIso | Spec::WeekdayDecimal
+                        ) {
                             offset_specifier = spec;
                         }
                         if pos - start_pos < 2 && strict {
@@ -479,7 +500,10 @@ impl StrTimeFormat {
                     }
                     Spec::WeekNumberPaddedSunFirst | Spec::WeekNumberPaddedMonFirst => {
                         match offset_specifier {
-                            Spec::DayOfMonthPadded | Spec::DayOfMonth | Spec::MonthDecimalPadded | Spec::MonthDecimal => {}
+                            Spec::DayOfMonthPadded
+                            | Spec::DayOfMonth
+                            | Spec::MonthDecimalPadded
+                            | Spec::MonthDecimal => {}
                             Spec::YearWithoutCenturyPadded
                             | Spec::YearWithoutCentury
                             | Spec::YearDecimal
@@ -501,9 +525,14 @@ impl StrTimeFormat {
                     Spec::WeekNumberIso => {
                         match offset_specifier {
                             Spec::YearWithoutCenturyPadded | Spec::YearWithoutCentury | Spec::YearDecimal => {
-                                fail!("ISO week offsets are incompatible with non-ISO year specifiers. Use '%G' instead")
+                                fail!(
+                                    "ISO week offsets are incompatible with non-ISO year specifiers. Use '%G' instead"
+                                )
                             }
-                            Spec::DayOfMonthPadded | Spec::DayOfMonth | Spec::MonthDecimalPadded | Spec::MonthDecimal => {}
+                            Spec::DayOfMonthPadded
+                            | Spec::DayOfMonth
+                            | Spec::MonthDecimalPadded
+                            | Spec::MonthDecimal => {}
                             Spec::WeekdayDecimal => offset_specifier = spec,
                             Spec::WeekNumberIso | Spec::YearIso => {
                                 if iso_week <= 53 {
@@ -528,7 +557,10 @@ impl StrTimeFormat {
                     }
                     Spec::DayOfYearPadded | Spec::DayOfYearDecimal => {
                         match offset_specifier {
-                            Spec::DayOfMonthPadded | Spec::DayOfMonth | Spec::MonthDecimalPadded | Spec::MonthDecimal => {}
+                            Spec::DayOfMonthPadded
+                            | Spec::DayOfMonth
+                            | Spec::MonthDecimalPadded
+                            | Spec::MonthDecimal => {}
                             Spec::YearWithoutCenturyPadded
                             | Spec::YearWithoutCentury
                             | Spec::YearDecimal
@@ -572,19 +604,20 @@ impl StrTimeFormat {
                             return result.fail("Expected a full day name (Monday, Tuesday, etc...)", pos);
                         }
                     }
-                    Spec::AbbreviatedMonthName => match parse_collection(data, &mut pos, &MONTH_NAMES_ABBREVIATED) {
-                        Some(month) => result.data[1] = month as i32 + 1,
-                        None => {
-                            return result.fail(
-                                "Expected an abbreviated month name (Jan, Feb, Mar, etc..)",
-                                pos,
-                            );
+                    Spec::AbbreviatedMonthName => {
+                        match parse_collection(data, &mut pos, &MONTH_NAMES_ABBREVIATED) {
+                            Some(month) => result.data[1] = month as i32 + 1,
+                            None => {
+                                return result
+                                    .fail("Expected an abbreviated month name (Jan, Feb, Mar, etc..)", pos);
+                            }
                         }
-                    },
+                    }
                     Spec::FullMonthName => match parse_collection(data, &mut pos, &MONTH_NAMES) {
                         Some(month) => result.data[1] = month as i32 + 1,
                         None => {
-                            return result.fail("Expected a full month name (January, February, etc...)", pos);
+                            return result
+                                .fail("Expected a full month name (January, February, etc...)", pos);
                         }
                     },
                     Spec::UtcOffset => match parse_utc_offset(data, &mut pos) {
@@ -650,7 +683,8 @@ impl StrTimeFormat {
             }
             Spec::WeekNumberPaddedSunFirst | Spec::WeekNumberPaddedMonFirst => {
                 if has_weekday {
-                    weekday = (weekday + 7 - u64::from(offset_specifier == Spec::WeekNumberPaddedMonFirst)) % 7;
+                    weekday =
+                        (weekday + 7 - u64::from(offset_specifier == Spec::WeekNumberPaddedMonFirst)) % 7;
                 }
                 let jan1 = calendar::days_from_ymd(values[0], 1, 1);
                 let mut yeardate = jan1 - (calendar::iso_day_of_week(jan1) - 1);
@@ -727,7 +761,8 @@ impl ParseResult {
     fn time_nanos(&self) -> i64 {
         let offset = self.data[7];
         let (hh, mm, ss) = (offset / 3600, (offset % 3600) / 60, offset % 60);
-        ((i64::from(self.data[3] - hh) * 60 + i64::from(self.data[4] - mm)) * 60 + i64::from(self.data[5] - ss))
+        ((i64::from(self.data[3] - hh) * 60 + i64::from(self.data[4] - mm)) * 60
+            + i64::from(self.data[5] - ss))
             * Interval::NANOS_PER_SEC
             + i64::from(self.data[6])
     }
@@ -924,7 +959,9 @@ fn write_date_specifier(spec: Spec, date: Date, out: &mut Vec<u8>) {
     let days = i64::from(date.0);
     match spec {
         Spec::AbbreviatedWeekdayName => {
-            out.extend_from_slice(DAY_NAMES_ABBREVIATED[(calendar::iso_day_of_week(days) % 7) as usize].as_bytes());
+            out.extend_from_slice(
+                DAY_NAMES_ABBREVIATED[(calendar::iso_day_of_week(days) % 7) as usize].as_bytes(),
+            );
         }
         Spec::FullWeekdayName => {
             out.extend_from_slice(DAY_NAMES[(calendar::iso_day_of_week(days) % 7) as usize].as_bytes());
@@ -948,7 +985,9 @@ fn write_standard_specifier(spec: Spec, data: &[i32; 8], out: &mut Vec<u8>) {
     };
     match spec {
         Spec::DayOfMonthPadded => write_padded(out, data[2] as u32, 2),
-        Spec::AbbreviatedMonthName => out.extend_from_slice(MONTH_NAMES_ABBREVIATED[(data[1] - 1) as usize].as_bytes()),
+        Spec::AbbreviatedMonthName => {
+            out.extend_from_slice(MONTH_NAMES_ABBREVIATED[(data[1] - 1) as usize].as_bytes())
+        }
         Spec::FullMonthName => out.extend_from_slice(MONTH_NAMES[(data[1] - 1) as usize].as_bytes()),
         Spec::MonthDecimalPadded => write_padded(out, data[1] as u32, 2),
         Spec::YearWithoutCenturyPadded => write_padded(out, data[0].unsigned_abs() % 100, 2),
@@ -1003,10 +1042,18 @@ mod tests {
         let date = Date(calendar::days_from_ymd(2021, 3, 15) as i32);
         let mut out = Vec::new();
         format.format(date, &[2021, 3, 15, 10, 20, 30, 123_456_000, 0], &mut out);
-        assert_eq!(String::from_utf8(out).unwrap(), "2021-03-15 10:20:30.123456 Mon March 074 %");
-        let parsed = StrTimeFormat::parse("%d/%m/%Y").unwrap().parse_text(b"15/03/2021", false);
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "2021-03-15 10:20:30.123456 Mon March 074 %"
+        );
+        let parsed = StrTimeFormat::parse("%d/%m/%Y")
+            .unwrap()
+            .parse_text(b"15/03/2021", false);
         assert!(parsed.ok);
         assert_eq!(&parsed.data[..3], &[2021, 3, 15]);
-        assert_eq!(StrTimeFormat::parse("%q").unwrap_err(), "Unrecognized format for strftime/strptime: %q");
+        assert_eq!(
+            StrTimeFormat::parse("%q").unwrap_err(),
+            "Unrecognized format for strftime/strptime: %q"
+        );
     }
 }

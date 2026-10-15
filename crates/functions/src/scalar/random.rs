@@ -39,7 +39,11 @@ fn client(state: &FunctionState) -> Result<&Arc<FunctionClient>> {
 /// The per-thread engine of a `random`/`uuid` call, seeded from the connection's engine
 /// on first use (DuckDB's `RandomInitLocalState`).
 fn local_engine(state: &mut FunctionState) -> Result<&mut RandomEngine> {
-    if state.local.as_ref().is_none_or(|local| !local.is::<RandomEngine>()) {
+    if state
+        .local
+        .as_ref()
+        .is_none_or(|local| !local.is::<RandomEngine>())
+    {
         let seed = client(state)?.random_engine().next_random_integer64();
         state.local = Some(Box::new(RandomEngine::new(seed)));
     }
@@ -197,7 +201,11 @@ pub fn uuid_extract_version_functions() -> ScalarFunctionSet {
 }
 
 /// `uuid_extract_timestamp(uuid)`: the millisecond timestamp of a version 7 UUID.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "bit extraction")]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "bit extraction"
+)]
 pub fn uuid_extract_timestamp_functions() -> ScalarFunctionSet {
     let mut set = ScalarFunctionSet::new("uuid_extract_timestamp");
     set.add(ScalarFunction::new(

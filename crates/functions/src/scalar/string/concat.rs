@@ -192,7 +192,11 @@ fn bind_concat(function: &mut ScalarFunction, input: &BindInput<'_>, is_operator
         };
         set_argument_type(function, &ty, is_operator);
     } else {
-        let ty = if all_blob { LogicalType::BLOB } else { LogicalType::VARCHAR };
+        let ty = if all_blob {
+            LogicalType::BLOB
+        } else {
+            LogicalType::VARCHAR
+        };
         set_argument_type(function, &ty, is_operator);
     }
     set_kernel(function, is_operator);
@@ -205,8 +209,13 @@ fn unbound_concat() -> impl Fn(&DataChunk, &mut rustdb_function::FunctionState, 
 
 /// `concat(...)` (DuckDB's `ConcatFun`).
 pub fn concat_functions() -> ScalarFunctionSet {
-    let mut function = ScalarFunction::new("concat", vec![LogicalType::ANY], LogicalType::ANY, unbound_concat())
-        .with_bind(|function, input| bind_concat(function, input, false));
+    let mut function = ScalarFunction::new(
+        "concat",
+        vec![LogicalType::ANY],
+        LogicalType::ANY,
+        unbound_concat(),
+    )
+    .with_bind(|function, input| bind_concat(function, input, false));
     function.varargs = Some(LogicalType::ANY);
     function.null_handling = NullHandling::Special;
     let mut set = ScalarFunctionSet::new("concat");

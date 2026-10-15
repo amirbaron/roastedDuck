@@ -106,7 +106,14 @@ fn list_select(args: &DataChunk, result: &mut Vector, by_index: bool) -> Result<
         }
         entries.push(ListEntry::new(start, selection.len() - start));
     }
-    *result = assemble(result.logical_type(), &entries, &nulls, input.child, &selection, constant)?;
+    *result = assemble(
+        result.logical_type(),
+        &entries,
+        &nulls,
+        input.child,
+        &selection,
+        constant,
+    )?;
     Ok(())
 }
 
@@ -248,10 +255,11 @@ pub fn list_resize_functions() -> ScalarFunctionSet {
         vec![any_list.clone(), LogicalType::ANY],
         vec![any_list.clone(), LogicalType::ANY, LogicalType::ANY],
     ] {
-        let mut function = ScalarFunction::new("list_resize", arguments, any_list.clone(), |args, _, result| {
-            list_resize(args, result)
-        })
-        .with_bind(bind_list_resize);
+        let mut function =
+            ScalarFunction::new("list_resize", arguments, any_list.clone(), |args, _, result| {
+                list_resize(args, result)
+            })
+            .with_bind(bind_list_resize);
         function.null_handling = NullHandling::Special;
         set.add(function);
     }
@@ -263,7 +271,10 @@ fn bind_list_zip(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindRe
     let types = input.argument_types;
     let mut size = types.len();
     if size == 0 {
-        return Err(Error::binder(format!("Provide at least one argument to {}", function.name)));
+        return Err(Error::binder(format!(
+            "Provide at least one argument to {}",
+            function.name
+        )));
     }
     if types[size - 1].id() == LogicalTypeId::Boolean {
         size -= 1;
@@ -305,7 +316,11 @@ fn list_zip(args: &DataChunk, result: &mut Vector) -> Result<()> {
     let count = args.len();
     let constant = all_constant(args.columns());
     let rows = if constant { 1 } else { count };
-    let columns: Vec<_> = args.columns().iter().map(|column| addressable(column, count)).collect();
+    let columns: Vec<_> = args
+        .columns()
+        .iter()
+        .map(|column| addressable(column, count))
+        .collect();
     let truncate_flag = columns
         .last()
         .is_some_and(|column| column.logical_type().id() == LogicalTypeId::Boolean);
@@ -331,12 +346,17 @@ fn list_zip(args: &DataChunk, result: &mut Vector) -> Result<()> {
                 Some(list) if list.child_size > 0 => list.get(row).map_or(0, |entry| entry.length as usize),
                 _ => 0,
             };
-            length = if shortest { length.min(current) } else { length.max(current) };
+            length = if shortest {
+                length.min(current)
+            } else {
+                length.max(current)
+            };
         }
         let start = selections.first().map_or(0, Vec::len);
         for (list, selection) in lists.iter().zip(&mut selections) {
             let entry = list.as_ref().and_then(|list| list.get(row));
-            let (offset, current) = entry.map_or((0, 0), |entry| (entry.offset as usize, entry.length as usize));
+            let (offset, current) =
+                entry.map_or((0, 0), |entry| (entry.offset as usize, entry.length as usize));
             for index in 0..length {
                 selection.push((index < current).then_some((offset + index) as u32));
             }
@@ -430,7 +450,11 @@ fn list_intersect(args: &DataChunk, result: &mut Vector) -> Result<()> {
         }
         let use_left_for_hash = l.length <= r.length;
         let (hash_list, iter_list) = if use_left_for_hash { (l, r) } else { (r, l) };
-        let (hash_input, iter_input) = if use_left_for_hash { (&left, &right) } else { (&right, &left) };
+        let (hash_input, iter_input) = if use_left_for_hash {
+            (&left, &right)
+        } else {
+            (&right, &left)
+        };
         let (hash_keys, iter_keys) = if use_left_for_hash {
             (&left_keys, &right_keys)
         } else {
@@ -457,7 +481,11 @@ fn list_intersect(args: &DataChunk, result: &mut Vector) -> Result<()> {
             if !set.contains(key) || !emitted.insert(key) {
                 continue;
             }
-            let emit = if use_left_for_hash { key_to_index[key] } else { index };
+            let emit = if use_left_for_hash {
+                key_to_index[key]
+            } else {
+                index
+            };
             selection.push(Some(emit as u32));
         }
         entries.push(ListEntry::new(start, selection.len() - start));

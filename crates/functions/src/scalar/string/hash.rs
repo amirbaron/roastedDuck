@@ -11,12 +11,17 @@ use crate::scalar::executor::{Str, StrOut, unary};
 fn hex_digest_set(name: &str, digest: fn(&[u8], &mut Vec<u8>)) -> ScalarFunctionSet {
     let mut set = ScalarFunctionSet::new(name);
     for ty in [LogicalType::VARCHAR, LogicalType::BLOB] {
-        set.add(ScalarFunction::new(name, vec![ty], LogicalType::VARCHAR, move |args, _, result| {
-            unary::<Str, StrOut>(args, result, |input, out| {
-                digest(input, out);
-                Ok(true)
-            })
-        }));
+        set.add(ScalarFunction::new(
+            name,
+            vec![ty],
+            LogicalType::VARCHAR,
+            move |args, _, result| {
+                unary::<Str, StrOut>(args, result, |input, out| {
+                    digest(input, out);
+                    Ok(true)
+                })
+            },
+        ));
     }
     set
 }

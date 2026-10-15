@@ -4,7 +4,9 @@ use std::any::Any;
 use std::sync::Arc;
 
 use rustdb_common::{Error, Result};
-use rustdb_function::{BindInput, FunctionData, FunctionState, NullHandling, ScalarFunction, ScalarFunctionSet};
+use rustdb_function::{
+    BindInput, FunctionData, FunctionState, NullHandling, ScalarFunction, ScalarFunctionSet,
+};
 use rustdb_types::{DataChunk, Date, Interval, LogicalType, LogicalTypeId, Timestamp, Value, Vector};
 
 use super::strftime_format::{Spec, StrTimeFormat};
@@ -216,7 +218,9 @@ fn bind_strptime(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindRe
         return Err(Error::invalid_input("strptime format must be a string"));
     };
     let has_offset = formats.iter().any(|format| format.has_specifier(Spec::UtcOffset));
-    let has_nanos = formats.iter().any(|format| format.has_specifier(Spec::NanosecondPadded));
+    let has_nanos = formats
+        .iter()
+        .any(|format| format.has_specifier(Spec::NanosecondPadded));
     let mut nanos = false;
     if has_offset {
         function.return_type = LogicalType::TIMESTAMP_TZ;
@@ -234,7 +238,12 @@ fn value_text(value: &Value) -> Result<String> {
     crate::values::as_text(value)
 }
 
-fn strptime_rows(args: &DataChunk, state: &mut FunctionState, result: &mut Vector, try_parse: bool) -> Result<()> {
+fn strptime_rows(
+    args: &DataChunk,
+    state: &mut FunctionState,
+    result: &mut Vector,
+    try_parse: bool,
+) -> Result<()> {
     let data = state
         .bind_data
         .as_ref()
@@ -315,5 +324,8 @@ fn strptime_set(name: &str, try_parse: bool) -> ScalarFunctionSet {
 
 /// `strptime` and `try_strptime`.
 pub fn strptime_functions() -> Vec<ScalarFunctionSet> {
-    vec![strptime_set("strptime", false), strptime_set("try_strptime", true)]
+    vec![
+        strptime_set("strptime", false),
+        strptime_set("try_strptime", true),
+    ]
 }

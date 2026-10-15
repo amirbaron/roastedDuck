@@ -59,9 +59,9 @@ impl WholeUnit {
         T: TryCastTo<i32> + rustdb_function::cast::numeric::CastNumber + std::fmt::Display,
     {
         let count = to_i32(value)?;
-        let scaled = count
-            .checked_mul(self.factor())
-            .ok_or_else(|| Error::out_of_range(format!("Interval value {value} {} out of range", self.name())))?;
+        let scaled = count.checked_mul(self.factor()).ok_or_else(|| {
+            Error::out_of_range(format!("Interval value {value} {} out of range", self.name()))
+        })?;
         Ok(match self {
             Self::Weeks | Self::Days => Interval::new(0, scaled, 0),
             _ => Interval::new(scaled, 0, 0),
@@ -103,12 +103,17 @@ fn micros_set<T: NativeType + Copy>(
     convert: fn(T) -> Result<i64>,
 ) -> ScalarFunctionSet {
     let mut set = ScalarFunctionSet::new(name);
-    set.add(ScalarFunction::new(name, vec![input], LogicalType::INTERVAL, move |args, _, result| {
-        unary::<T, Interval>(args, result, |value, out| {
-            *out = Interval::new(0, 0, convert(value)?);
-            Ok(true)
-        })
-    }));
+    set.add(ScalarFunction::new(
+        name,
+        vec![input],
+        LogicalType::INTERVAL,
+        move |args, _, result| {
+            unary::<T, Interval>(args, result, |value, out| {
+                *out = Interval::new(0, 0, convert(value)?);
+                Ok(true)
+            })
+        },
+    ));
     set
 }
 

@@ -27,7 +27,9 @@ fn make_time(hour: i64, minute: i64, seconds: f64) -> Result<Time> {
     let hour = to_i32(hour)?;
     let minute = to_i32(minute)?;
     let whole: i32 = if seconds < 0.0 || seconds > 60.0 {
-        seconds.try_cast_to().ok_or_else(|| cast_error(seconds, "INT32"))?
+        seconds
+            .try_cast_to()
+            .ok_or_else(|| cast_error(seconds, "INT32"))?
     } else {
         seconds as i32
     };
@@ -123,48 +125,60 @@ pub fn make_timestamp_functions() -> ScalarFunctionSet {
     let mut set = ScalarFunctionSet::new("make_timestamp");
     let mut arguments = vec![LogicalType::BIGINT; 5];
     arguments.push(LogicalType::DOUBLE);
-    set.add(ScalarFunction::new("make_timestamp", arguments, LogicalType::TIMESTAMP, |args, _, result| {
-        // The parts are BIGINT except the DOUBLE seconds; read them all as DOUBLE-free
-        // values through the matching unified accessors.
-        let count = args.len();
-        let columns: Vec<_> = args.columns().iter().map(|column| addressable(column, count)).collect();
-        let constant = columns.iter().all(|column| column.is_constant());
-        let rows = if constant { 1 } else { count };
-        let parts: Vec<_> = columns[..5].iter().map(|column| column.unified::<i64>()).collect();
-        let seconds = columns[5].unified::<f64>();
-        let mut values = Vec::with_capacity(rows);
-        for row in 0..rows {
-            let fields: Option<Vec<i64>> = parts.iter().map(|part| part.get(row)).collect();
-            let (Some(fields), Some(seconds)) = (fields, seconds.get(row)) else {
-                values.push(None);
-                continue;
-            };
-            let date = make_date(fields[0], fields[1], fields[2])?;
-            let time = make_time(fields[3], fields[4], seconds)?;
-            values.push(Some(timestamp_from_datetime(date, time)?));
-        }
-        let mut output = Vector::flat(LogicalType::TIMESTAMP, rows.max(1));
-        output.reset_flat(rows);
-        let mut nulls = Vec::new();
-        {
-            let data = output.values_mut::<Timestamp>();
-            for (row, value) in values.iter().enumerate() {
-                match value {
-                    Some(value) => data[row] = *value,
-                    None => nulls.push(row),
+    set.add(ScalarFunction::new(
+        "make_timestamp",
+        arguments,
+        LogicalType::TIMESTAMP,
+        |args, _, result| {
+            // The parts are BIGINT except the DOUBLE seconds; read them all as DOUBLE-free
+            // values through the matching unified accessors.
+            let count = args.len();
+            let columns: Vec<_> = args
+                .columns()
+                .iter()
+                .map(|column| addressable(column, count))
+                .collect();
+            let constant = columns.iter().all(|column| column.is_constant());
+            let rows = if constant { 1 } else { count };
+            let parts: Vec<_> = columns[..5]
+                .iter()
+                .map(|column| column.unified::<i64>())
+                .collect();
+            let seconds = columns[5].unified::<f64>();
+            let mut values = Vec::with_capacity(rows);
+            for row in 0..rows {
+                let fields: Option<Vec<i64>> = parts.iter().map(|part| part.get(row)).collect();
+                let (Some(fields), Some(seconds)) = (fields, seconds.get(row)) else {
+                    values.push(None);
+                    continue;
+                };
+                let date = make_date(fields[0], fields[1], fields[2])?;
+                let time = make_time(fields[3], fields[4], seconds)?;
+                values.push(Some(timestamp_from_datetime(date, time)?));
+            }
+            let mut output = Vector::flat(LogicalType::TIMESTAMP, rows.max(1));
+            output.reset_flat(rows);
+            let mut nulls = Vec::new();
+            {
+                let data = output.values_mut::<Timestamp>();
+                for (row, value) in values.iter().enumerate() {
+                    match value {
+                        Some(value) => data[row] = *value,
+                        None => nulls.push(row),
+                    }
                 }
             }
-        }
-        let validity = output.validity_mut();
-        for row in nulls {
-            validity.set_invalid(row, rows);
-        }
-        if constant {
-            output.make_constant();
-        }
-        *result = output;
-        Ok(())
-    }));
+            let validity = output.validity_mut();
+            for row in nulls {
+                validity.set_invalid(row, rows);
+            }
+            if constant {
+                output.make_constant();
+            }
+            *result = output;
+            Ok(())
+        },
+    ));
     set.add(ScalarFunction::new(
         "make_timestamp",
         vec![LogicalType::BIGINT],
@@ -205,9 +219,11 @@ pub fn to_timestamp_functions() -> ScalarFunctionSet {
         LogicalType::TIMESTAMP_TZ,
         |args, _, result| {
             unary::<f64, Timestamp>(args, result, |seconds, out| {
-                let micros: i64 = (seconds * Interval::MICROS_PER_SEC as f64).try_cast_to().ok_or_else(|| {
-                    Error::conversion("Epoch seconds out of range for TIMESTAMP WITH TIME ZONE")
-                })?;
+                let micros: i64 = (seconds * Interval::MICROS_PER_SEC as f64)
+                    .try_cast_to()
+                    .ok_or_else(|| {
+                        Error::conversion("Epoch seconds out of range for TIMESTAMP WITH TIME ZONE")
+                    })?;
                 *out = Timestamp(micros);
                 Ok(true)
             })

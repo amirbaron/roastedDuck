@@ -49,7 +49,9 @@ fn classify_or_error(width: Interval) -> Result<Width> {
         }
         Ok(Width::Months)
     } else {
-        Err(not_implemented("Month intervals cannot have day or time component"))
+        Err(not_implemented(
+            "Month intervals cannot have day or time component",
+        ))
     }
 }
 
@@ -119,10 +121,14 @@ fn epoch_months<T: Bucketed>(value: T) -> i32 {
 /// DuckDB's `WidthConvertibleToMicrosCommon`.
 fn bucket_micros(width: i64, value: i64, origin: i64) -> Result<Timestamp> {
     let origin = origin % width;
-    let value = value.checked_sub(origin).ok_or_else(|| subtract_overflow(value, origin))?;
+    let value = value
+        .checked_sub(origin)
+        .ok_or_else(|| subtract_overflow(value, origin))?;
     let mut result = (value / width) * width;
     if value < 0 && value % width != 0 {
-        result = result.checked_sub(width).ok_or_else(|| subtract_overflow(result, width))?;
+        result = result
+            .checked_sub(width)
+            .ok_or_else(|| subtract_overflow(result, width))?;
     }
     Ok(Timestamp(result.wrapping_add(origin)))
 }
@@ -130,10 +136,14 @@ fn bucket_micros(width: i64, value: i64, origin: i64) -> Result<Timestamp> {
 /// DuckDB's `WidthConvertibleToMonthsCommon`.
 fn bucket_months(width: i32, value: i32, origin: i32) -> Result<Date> {
     let origin = origin % width;
-    let value = value.checked_sub(origin).ok_or_else(|| subtract_overflow(value, origin))?;
+    let value = value
+        .checked_sub(origin)
+        .ok_or_else(|| subtract_overflow(value, origin))?;
     let mut result = (value / width) * width;
     if value < 0 && value % width != 0 {
-        result = result.checked_sub(width).ok_or_else(|| subtract_overflow(result, width))?;
+        result = result
+            .checked_sub(width)
+            .ok_or_else(|| subtract_overflow(result, width))?;
     }
     result = result.wrapping_add(origin);
     let (year, month) = if result < 0 && result % 12 != 0 {
@@ -155,7 +165,11 @@ fn bucket<T: Bucketed>(width: Interval, value: T, kind: Width) -> Result<T> {
             value.to_timestamp()?.0,
             DEFAULT_ORIGIN_MICROS,
         )?)),
-        Width::Months => T::from_date(bucket_months(width.months, epoch_months(value), DEFAULT_ORIGIN_MONTHS)?),
+        Width::Months => T::from_date(bucket_months(
+            width.months,
+            epoch_months(value),
+            DEFAULT_ORIGIN_MONTHS,
+        )?),
         Width::Unclassified => bucket(width, value, classify_or_error(width)?),
     }
 }
@@ -193,7 +207,11 @@ fn bucket_origin<T: Bucketed>(width: Interval, value: T, origin: T, kind: Width)
             value.to_timestamp()?.0,
             origin.to_timestamp()?.0,
         )?),
-        Width::Months => T::from_date(bucket_months(width.months, epoch_months(value), epoch_months(origin))?)?,
+        Width::Months => T::from_date(bucket_months(
+            width.months,
+            epoch_months(value),
+            epoch_months(origin),
+        )?)?,
         Width::Unclassified => return bucket_origin(width, value, origin, classify_or_error(width)?),
     }))
 }
@@ -241,7 +259,10 @@ fn time_bucket_origin_rows<T: Bucketed>(args: &DataChunk, result: &mut Vector) -
     let both_constant = args.column(0).is_constant() && args.column(2).is_constant();
     let kind = if both_constant {
         let origins = addressable(args.column(2), 1);
-        let origin_null = origins.unified::<T>().get(0).is_none_or(|origin| !origin.finite());
+        let origin_null = origins
+            .unified::<T>()
+            .get(0)
+            .is_none_or(|origin| !origin.finite());
         if args.column(0).is_null(0) || origin_null {
             *result = Vector::constant_null(result.logical_type().clone());
             return Ok(());
@@ -286,9 +307,29 @@ pub fn time_bucket_functions() -> ScalarFunctionSet {
             ));
         };
     }
-    add3!(Date, LogicalType::DATE, LogicalType::INTERVAL, time_bucket_offset_rows);
-    add3!(Timestamp, LogicalType::TIMESTAMP, LogicalType::INTERVAL, time_bucket_offset_rows);
-    add3!(Date, LogicalType::DATE, LogicalType::DATE, time_bucket_origin_rows);
-    add3!(Timestamp, LogicalType::TIMESTAMP, LogicalType::TIMESTAMP, time_bucket_origin_rows);
+    add3!(
+        Date,
+        LogicalType::DATE,
+        LogicalType::INTERVAL,
+        time_bucket_offset_rows
+    );
+    add3!(
+        Timestamp,
+        LogicalType::TIMESTAMP,
+        LogicalType::INTERVAL,
+        time_bucket_offset_rows
+    );
+    add3!(
+        Date,
+        LogicalType::DATE,
+        LogicalType::DATE,
+        time_bucket_origin_rows
+    );
+    add3!(
+        Timestamp,
+        LogicalType::TIMESTAMP,
+        LogicalType::TIMESTAMP,
+        time_bucket_origin_rows
+    );
     set
 }

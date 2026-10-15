@@ -93,7 +93,8 @@ trait Difference: NativeType {
 }
 
 fn subtract(end: i64, start: i64) -> Result<i64> {
-    end.checked_sub(start).ok_or_else(|| subtract_overflow(end, start))
+    end.checked_sub(start)
+        .ok_or_else(|| subtract_overflow(end, start))
 }
 
 /// `(value + (value < 0)) / units - (value < 0)`: floor division (DuckDB's `Truncate`).
@@ -125,11 +126,13 @@ fn diff_dates(start: Date, end: Date, unit: Unit) -> Result<i64> {
         Unit::Quarter => end_months / 3 - start_months / 3,
         Unit::Week => (i64::from(end.0) - i64::from(start.0)) / 7,
         Unit::IsoYear => {
-            i64::from(super::calendar::iso_year_week(end).0) - i64::from(super::calendar::iso_year_week(start).0)
+            i64::from(super::calendar::iso_year_week(end).0)
+                - i64::from(super::calendar::iso_year_week(start).0)
         }
         Unit::Microsecond => subtract(date_epoch_micros(end)?, date_epoch_micros(start)?)?,
         Unit::Millisecond => {
-            date_epoch_micros(end)? / Interval::MICROS_PER_MSEC - date_epoch_micros(start)? / Interval::MICROS_PER_MSEC
+            date_epoch_micros(end)? / Interval::MICROS_PER_MSEC
+                - date_epoch_micros(start)? / Interval::MICROS_PER_MSEC
         }
         Unit::Second => (i64::from(end.0) - i64::from(start.0)) * Interval::SECS_PER_DAY,
         Unit::Minute => {
@@ -178,17 +181,14 @@ impl Difference for Timestamp {
     fn diff(start: Self, end: Self, unit: Unit) -> Result<i64> {
         match unit {
             Unit::Microsecond => subtract(end.0, start.0),
-            Unit::Millisecond => {
-                Ok(floor_truncate(end.0, Interval::MICROS_PER_MSEC) - floor_truncate(start.0, Interval::MICROS_PER_MSEC))
-            }
-            Unit::Second => {
-                Ok(floor_truncate(end.0, Interval::MICROS_PER_SEC) - floor_truncate(start.0, Interval::MICROS_PER_SEC))
-            }
+            Unit::Millisecond => Ok(floor_truncate(end.0, Interval::MICROS_PER_MSEC)
+                - floor_truncate(start.0, Interval::MICROS_PER_MSEC)),
+            Unit::Second => Ok(floor_truncate(end.0, Interval::MICROS_PER_SEC)
+                - floor_truncate(start.0, Interval::MICROS_PER_SEC)),
             Unit::Minute => Ok(floor_truncate(end.0, Interval::MICROS_PER_MINUTE)
                 - floor_truncate(start.0, Interval::MICROS_PER_MINUTE)),
-            Unit::Hour => {
-                Ok(floor_truncate(end.0, Interval::MICROS_PER_HOUR) - floor_truncate(start.0, Interval::MICROS_PER_HOUR))
-            }
+            Unit::Hour => Ok(floor_truncate(end.0, Interval::MICROS_PER_HOUR)
+                - floor_truncate(start.0, Interval::MICROS_PER_HOUR)),
             _ => diff_dates(start.to_date(), end.to_date(), unit),
         }
     }
@@ -424,8 +424,10 @@ pub fn age_functions() -> ScalarFunctionSet {
         },
     )
     .with_bind(|_, input| {
-        Ok(Some(std::sync::Arc::new(ClientData(std::sync::Arc::clone(input.client)))
-            as std::sync::Arc<dyn rustdb_function::FunctionData>))
+        Ok(Some(
+            std::sync::Arc::new(ClientData(std::sync::Arc::clone(input.client)))
+                as std::sync::Arc<dyn rustdb_function::FunctionData>,
+        ))
     });
     current.stability = rustdb_function::Stability::ConsistentWithinQuery;
     set.add(current);

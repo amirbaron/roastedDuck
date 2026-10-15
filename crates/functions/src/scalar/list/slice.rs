@@ -5,7 +5,9 @@ use std::any::Any;
 use std::sync::Arc;
 
 use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_function::{BindInput, FunctionData, FunctionState, NullHandling, ScalarFunction, ScalarFunctionSet};
+use rustdb_function::{
+    BindInput, FunctionData, FunctionState, NullHandling, ScalarFunction, ScalarFunctionSet,
+};
 use rustdb_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, StringT, Unified, Vector};
 
 use crate::scalar::executor::{ScalarOutput, StrOut, addressable};
@@ -158,11 +160,13 @@ fn array_slice(args: &DataChunk, state: &mut FunctionState, result: &mut Vector)
     let count = args.len();
     let constant = all_constant(args.columns());
     let rows = if constant { 1 } else { count };
-    let columns: Vec<_> = args.columns().iter().map(|column| addressable(column, count)).collect();
+    let columns: Vec<_> = args
+        .columns()
+        .iter()
+        .map(|column| addressable(column, count))
+        .collect();
     let has_step = columns.len() == 4;
-    let bound = |index: usize, is_empty: bool| {
-        (!is_empty).then(|| columns[index].unified::<i64>())
-    };
+    let bound = |index: usize, is_empty: bool| (!is_empty).then(|| columns[index].unified::<i64>());
     let bounds = Bounds {
         begin: bound(1, empty.begin_is_empty),
         end: bound(2, empty.end_is_empty),
@@ -170,7 +174,9 @@ fn array_slice(args: &DataChunk, state: &mut FunctionState, result: &mut Vector)
         columns: &columns,
     };
     match ty.id() {
-        LogicalTypeId::List => slice_lists(&columns[0], &bounds, rows, constant, has_step, empty, &ty, result),
+        LogicalTypeId::List => {
+            slice_lists(&columns[0], &bounds, rows, constant, has_step, empty, &ty, result)
+        }
         LogicalTypeId::Varchar | LogicalTypeId::Blob => {
             let blob = ty.id() == LogicalTypeId::Blob;
             let strings = columns[0].unified::<StringT>();
@@ -240,7 +246,10 @@ fn slice_lists(
             reference = true;
         }
         if reference {
-            entries.push(ListEntry::new(entry.offset as usize + begin as usize, (end - begin) as usize));
+            entries.push(ListEntry::new(
+                entry.offset as usize + begin as usize,
+                (end - begin) as usize,
+            ));
             continue;
         }
         if end - begin == 0 {
@@ -291,7 +300,9 @@ fn param_is_empty(input: &BindInput<'_>, index: usize) -> Result<bool> {
         .as_ref()
         .is_some_and(|value| !value.is_null() && value.children().is_some_and(<[_]>::is_empty));
     if !empty {
-        return Err(Error::binder("The upper and lower bounds of the slice must be a BIGINT"));
+        return Err(Error::binder(
+            "The upper and lower bounds of the slice must be a BIGINT",
+        ));
     }
     Ok(true)
 }
@@ -329,7 +340,11 @@ fn bind_slice(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindResul
             function.arguments[0] = LogicalType::simple(LogicalTypeId::Unknown);
             function.return_type = LogicalType::SQLNULL;
         }
-        _ => return Err(Error::binder("ARRAY_SLICE can only operate on LISTs and VARCHARs")),
+        _ => {
+            return Err(Error::binder(
+                "ARRAY_SLICE can only operate on LISTs and VARCHARs",
+            ));
+        }
     }
     let begin_is_empty = param_is_empty(input, 1)?;
     if !begin_is_empty {
@@ -353,8 +368,9 @@ pub fn list_slice_functions() -> ScalarFunctionSet {
         if with_step {
             arguments.push(LogicalType::BIGINT);
         }
-        let mut function = ScalarFunction::new("list_slice", arguments.clone(), LogicalType::ANY, array_slice)
-            .with_bind(bind_slice);
+        let mut function =
+            ScalarFunction::new("list_slice", arguments.clone(), LogicalType::ANY, array_slice)
+                .with_bind(bind_slice);
         function.null_handling = NullHandling::Special;
         set.add(function);
     }

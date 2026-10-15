@@ -35,7 +35,9 @@ pub fn current_timestamp_functions() -> ScalarFunctionSet {
         },
     )
     .with_bind(|_, input| {
-        Ok(Some(Arc::new(ClientData(Arc::clone(input.client))) as Arc<dyn FunctionData>))
+        Ok(Some(
+            Arc::new(ClientData(Arc::clone(input.client))) as Arc<dyn FunctionData>
+        ))
     });
     function.stability = Stability::ConsistentWithinQuery;
     let mut set = ScalarFunctionSet::new("get_current_timestamp");

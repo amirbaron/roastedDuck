@@ -137,7 +137,13 @@ fn distinct_rows(args: &DataChunk) -> Result<(Vec<Option<Vec<usize>>>, bool, Vec
                 table.insert(*hash, (key.clone(), child), |a, b| key_equal(&a.0, &b.0));
             }
         }
-        result.push(Some(table.order().into_iter().map(|index| table.keys()[index].1).collect()));
+        result.push(Some(
+            table
+                .order()
+                .into_iter()
+                .map(|index| table.keys()[index].1)
+                .collect(),
+        ));
     }
     Ok((result, constant, input.child.clone()))
 }
@@ -241,9 +247,12 @@ pub fn list_distinct_functions() -> Vec<(ScalarFunctionSet, &'static [&'static s
     let element = LogicalType::list(template("T"));
     let mut distinct = ScalarFunctionSet::new("list_distinct");
     distinct.add(
-        ScalarFunction::new("list_distinct", vec![element.clone()], element, |args, _, result| {
-            list_distinct(args, result)
-        })
+        ScalarFunction::new(
+            "list_distinct",
+            vec![element.clone()],
+            element,
+            |args, _, result| list_distinct(args, result),
+        )
         .with_bind(bind_list_aggregate),
     );
     let mut unique = ScalarFunctionSet::new("list_unique");

@@ -145,20 +145,20 @@ fn truncate_interval(mut input: Interval, unit: Unit) -> Interval {
         }
         Unit::Day => input.micros = 0,
         Unit::Hour => input.micros = (input.micros / Interval::MICROS_PER_HOUR) * Interval::MICROS_PER_HOUR,
-        Unit::Minute => input.micros = (input.micros / Interval::MICROS_PER_MINUTE) * Interval::MICROS_PER_MINUTE,
+        Unit::Minute => {
+            input.micros = (input.micros / Interval::MICROS_PER_MINUTE) * Interval::MICROS_PER_MINUTE
+        }
         Unit::Second => input.micros = (input.micros / Interval::MICROS_PER_SEC) * Interval::MICROS_PER_SEC,
-        Unit::Millisecond => input.micros = (input.micros / Interval::MICROS_PER_MSEC) * Interval::MICROS_PER_MSEC,
+        Unit::Millisecond => {
+            input.micros = (input.micros / Interval::MICROS_PER_MSEC) * Interval::MICROS_PER_MSEC
+        }
         Unit::Microsecond => {}
     }
     input
 }
 
 /// DuckDB's `DateTruncFunction`: a constant unit is parsed once, before any row.
-fn truncate_rows<T, R>(
-    args: &DataChunk,
-    result: &mut Vector,
-    op: fn(T, Unit) -> Result<R>,
-) -> Result<()>
+fn truncate_rows<T, R>(args: &DataChunk, result: &mut Vector, op: fn(T, Unit) -> Result<R>) -> Result<()>
 where
     T: rustdb_types::NativeType,
     R: rustdb_types::NativeType,
@@ -226,7 +226,11 @@ pub fn date_trunc_functions() -> ScalarFunctionSet {
         "date_trunc",
         vec![LogicalType::VARCHAR, LogicalType::INTERVAL],
         LogicalType::INTERVAL,
-        |args, _, result| truncate_rows::<Interval, Interval>(args, result, |value, unit| Ok(truncate_interval(value, unit))),
+        |args, _, result| {
+            truncate_rows::<Interval, Interval>(args, result, |value, unit| {
+                Ok(truncate_interval(value, unit))
+            })
+        },
     ));
     set
 }

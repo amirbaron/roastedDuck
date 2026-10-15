@@ -45,13 +45,25 @@ fn order_text(input: &BindInput<'_>, index: usize) -> Result<String> {
     let Some(Some(value)) = input.constants.get(index) else {
         return Err(Error::invalid_input("Sorting order must be a constant"));
     };
-    let text = if value.is_null() { "NULL".to_owned() } else { crate::values::as_text(value)? };
+    let text = if value.is_null() {
+        "NULL".to_owned()
+    } else {
+        crate::values::as_text(value)?
+    };
     Ok(text.to_uppercase())
 }
 
 /// `EnumUtil::FromString<OrderType>`; `None` is `ORDER_DEFAULT`.
 fn parse_order(text: &str) -> Result<Option<OrderType>> {
-    const NAMES: [&str; 7] = ["INVALID", "ORDER_DEFAULT", "DEFAULT", "ASCENDING", "ASC", "DESCENDING", "DESC"];
+    const NAMES: [&str; 7] = [
+        "INVALID",
+        "ORDER_DEFAULT",
+        "DEFAULT",
+        "ASCENDING",
+        "ASC",
+        "DESCENDING",
+        "DESC",
+    ];
     match text {
         "ORDER_DEFAULT" | "DEFAULT" => Ok(None),
         "ASCENDING" | "ASC" => Ok(Some(OrderType::Ascending)),
@@ -91,7 +103,11 @@ fn list_argument(ty: &LogicalType) -> Result<LogicalType> {
 /// settings (ascending, NULLS LAST).
 fn bind_sort(reverse: bool, grade_up: bool) -> impl Fn(&mut ScalarFunction, &BindInput<'_>) -> BindResult {
     move |function, input| {
-        let (order_index, null_index) = if reverse { (None, Some(1)) } else { (Some(1), Some(2)) };
+        let (order_index, null_index) = if reverse {
+            (None, Some(1))
+        } else {
+            (Some(1), Some(2))
+        };
         let mut order = None;
         let mut nulls = None;
         if let Some(index) = order_index.filter(|&index| index < input.argument_types.len()) {
@@ -115,9 +131,17 @@ fn bind_sort(reverse: bool, grade_up: bool) -> impl Fn(&mut ScalarFunction, &Bin
         } else {
             let list = list_argument(ty)?;
             function.arguments[0] = list.clone();
-            function.return_type = if grade_up { LogicalType::list(LogicalType::BIGINT) } else { list };
+            function.return_type = if grade_up {
+                LogicalType::list(LogicalType::BIGINT)
+            } else {
+                list
+            };
         }
-        Ok(Some(Arc::new(SortBindData { order, nulls, grade_up })))
+        Ok(Some(Arc::new(SortBindData {
+            order,
+            nulls,
+            grade_up,
+        })))
     }
 }
 
@@ -194,7 +218,10 @@ fn sort_set(name: &str, reverse: bool, grade_up: bool) -> ScalarFunctionSet {
     for arity in arities {
         let mut arguments = vec![list.clone()];
         arguments.extend(std::iter::repeat_n(LogicalType::VARCHAR, arity - 1));
-        set.add(ScalarFunction::new(name, arguments, list.clone(), list_sort).with_bind(bind_sort(reverse, grade_up)));
+        set.add(
+            ScalarFunction::new(name, arguments, list.clone(), list_sort)
+                .with_bind(bind_sort(reverse, grade_up)),
+        );
     }
     set
 }
@@ -203,7 +230,13 @@ fn sort_set(name: &str, reverse: bool, grade_up: bool) -> ScalarFunctionSet {
 pub fn list_sort_functions() -> Vec<(ScalarFunctionSet, &'static [&'static str])> {
     vec![
         (sort_set("list_sort", false, false), &["array_sort"]),
-        (sort_set("list_reverse_sort", true, false), &["array_reverse_sort"]),
-        (sort_set("list_grade_up", false, true), &["array_grade_up", "grade_up"]),
+        (
+            sort_set("list_reverse_sort", true, false),
+            &["array_reverse_sort"],
+        ),
+        (
+            sort_set("list_grade_up", false, true),
+            &["array_grade_up", "grade_up"],
+        ),
     ]
 }

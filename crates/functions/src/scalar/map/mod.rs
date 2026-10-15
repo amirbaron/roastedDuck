@@ -260,17 +260,25 @@ fn map_signature() -> (LogicalType, LogicalType, LogicalType) {
 /// `map_entries`, `map_keys` and `map_values`.
 pub fn map_unpack_functions() -> Vec<ScalarFunctionSet> {
     let (map, key, value) = map_signature();
-    let row = LogicalType::struct_type(vec![("key".to_owned(), key.clone()), ("value".to_owned(), value.clone())]);
+    let row = LogicalType::struct_type(vec![
+        ("key".to_owned(), key.clone()),
+        ("value".to_owned(), value.clone()),
+    ]);
     let mut sets = Vec::new();
     for (name, return_type, field) in [
         ("map_entries", LogicalType::list(row), None),
         ("map_keys", LogicalType::list(key), Some(0)),
         ("map_values", LogicalType::list(value), Some(1)),
     ] {
-        let mut function = ScalarFunction::new(name, vec![map.clone()], return_type, move |args, _, result| match field {
-            Some(field) => map_field_list(args, result, field),
-            None => map_entries_function(args, result),
-        });
+        let mut function = ScalarFunction::new(
+            name,
+            vec![map.clone()],
+            return_type,
+            move |args, _, result| match field {
+                Some(field) => map_field_list(args, result, field),
+                None => map_entries_function(args, result),
+            },
+        );
         function.null_handling = NullHandling::Special;
         let mut set = ScalarFunctionSet::new(name);
         set.add(function);
@@ -287,7 +295,16 @@ fn key_positions(maps: &Vector, target: &Vector, count: usize) -> Result<Vector>
         .ok_or_else(|| Error::internal("map function on a non-map vector"))?;
     let keys = struct_field(&child, 0, child_size)?;
     let mut positions = Vector::flat(LogicalType::INTEGER, count.max(1));
-    list_search(maps, &keys, child_size, target, count, true, false, &mut positions)?;
+    list_search(
+        maps,
+        &keys,
+        child_size,
+        target,
+        count,
+        true,
+        false,
+        &mut positions,
+    )?;
     Ok(positions)
 }
 
@@ -375,12 +392,10 @@ pub fn map_extract_functions() -> (ScalarFunctionSet, ScalarFunctionSet) {
     extract.null_handling = NullHandling::Special;
     let mut extract_set = ScalarFunctionSet::new("map_extract");
     extract_set.add(extract);
-    let mut extract_value = ScalarFunction::new(
-        "map_extract_value",
-        vec![map, key],
-        value,
-        |args, _, result| map_extract_value(args, result),
-    );
+    let mut extract_value =
+        ScalarFunction::new("map_extract_value", vec![map, key], value, |args, _, result| {
+            map_extract_value(args, result)
+        });
     extract_value.null_handling = NullHandling::Special;
     let mut value_set = ScalarFunctionSet::new("map_extract_value");
     value_set.add(extract_value);
@@ -483,7 +498,11 @@ fn map_concat(args: &DataChunk, result: &mut Vector) -> Result<()> {
     let count = args.len();
     let constant = all_constant(args.columns());
     let rows = if constant { 1 } else { count };
-    let maps: Vec<_> = args.columns().iter().map(|column| addressable(column, count)).collect();
+    let maps: Vec<_> = args
+        .columns()
+        .iter()
+        .map(|column| addressable(column, count))
+        .collect();
     struct MapColumn<'a> {
         input: ListInput<'a>,
         keys: Vector,
@@ -500,7 +519,12 @@ fn map_concat(args: &DataChunk, result: &mut Vector) -> Result<()> {
         let keys = struct_field(input.child, 0, input.child_size)?;
         let values = struct_field(input.child, 1, input.child_size)?;
         let key_bytes = equality_keys(&keys, input.child_size)?;
-        columns.push(Some(MapColumn { input, keys, values, key_bytes }));
+        columns.push(Some(MapColumn {
+            input,
+            keys,
+            values,
+            key_bytes,
+        }));
     }
     let (key_type, value_type) = map_key_value(&ty)?;
     let mut out_keys = Vec::new();
@@ -512,7 +536,9 @@ fn map_concat(args: &DataChunk, result: &mut Vector) -> Result<()> {
         let mut all_null = true;
         for (map_index, column) in columns.iter().enumerate() {
             let Some(column) = column else { continue };
-            let Some(entry) = column.input.get(row) else { continue };
+            let Some(entry) = column.input.get(row) else {
+                continue;
+            };
             all_null = false;
             for key in entry.offset as usize..(entry.offset + entry.length) as usize {
                 let bytes = column.key_bytes.key(key).to_vec();

@@ -47,7 +47,11 @@ pub fn replace_functions() -> ScalarFunctionSet {
 /// `repeat(string, count)` for VARCHAR and BLOB.
 fn repeat_string(args: &DataChunk, result: &mut Vector) -> Result<()> {
     binary::<Str, i64, StrOut>(args, result, |input, count, out| {
-        let copies = if count <= 0 || input.is_empty() { 0 } else { count as u64 };
+        let copies = if count <= 0 || input.is_empty() {
+            0
+        } else {
+            count as u64
+        };
         let size = (input.len() as u64).checked_mul(copies).ok_or_else(|| {
             Error::out_of_range(format!(
                 "Cannot create a string of size: '{}' * '{copies}', the maximum supported string size is: \
@@ -83,7 +87,11 @@ fn repeat_list(args: &DataChunk, result: &mut Vector) -> Result<()> {
             nulls.push(row);
             continue;
         };
-        let copies = if copies <= 0 || list.length == 0 { 0 } else { copies as u64 };
+        let copies = if copies <= 0 || list.length == 0 {
+            0
+        } else {
+            copies as u64
+        };
         let length = (list.length as u64).checked_mul(copies).ok_or_else(|| {
             Error::out_of_range(format!(
                 "Cannot create a list of size: '{}' * '{copies}', the result is too large",
