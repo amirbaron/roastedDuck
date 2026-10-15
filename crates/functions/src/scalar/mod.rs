@@ -4,6 +4,7 @@
 pub mod array;
 pub mod bit;
 pub mod blob;
+pub mod compressed_materialization;
 pub mod date;
 pub mod enums;
 pub(crate) mod executor;
@@ -108,6 +109,7 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
     sets.push(string::substring::substring_grapheme_functions());
     sets.extend(generic::generic_functions());
     sets.extend(system::system_functions());
+    sets.extend(compressed_materialization::compressed_materialization_functions());
     sets.extend(date::to_interval::to_interval_functions());
     for (set, aliases) in date::date_part::named_part_functions() {
         with_aliases(&mut sets, set, aliases);
