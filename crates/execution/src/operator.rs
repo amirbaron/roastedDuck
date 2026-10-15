@@ -128,6 +128,25 @@ pub trait Operator: PhysicalOperator {
         global: &Self::Global,
         local: &mut Self::Local,
     ) -> Result<OperatorResult>;
+
+    /// Whether the operator holds back rows that [`Operator::final_execute`] must emit
+    /// once its input is exhausted (DuckDB's `RequiresFinalExecute`).
+    fn requires_final_execute(&self) -> bool {
+        false
+    }
+
+    /// Emits held-back rows after the last input chunk (DuckDB's `FinalExecute`).
+    /// Returns whether it must be called again for more output.
+    fn final_execute(
+        &self,
+        ctx: &ExecutionContext,
+        output: &mut DataChunk,
+        global: &Self::Global,
+        local: &mut Self::Local,
+    ) -> Result<bool> {
+        let _ = (ctx, output, global, local);
+        Ok(false)
+    }
 }
 
 /// An operator that consumes a pipeline's output (and may act as the source of a parent
@@ -250,6 +269,14 @@ pub trait ErasedOperator {
         global: &(dyn Any + Send + Sync),
         local: &mut (dyn Any + Send),
     ) -> Result<OperatorResult>;
+    fn requires_final_execute(&self) -> bool;
+    fn final_execute(
+        &self,
+        ctx: &ExecutionContext,
+        output: &mut DataChunk,
+        global: &(dyn Any + Send + Sync),
+        local: &mut (dyn Any + Send),
+    ) -> Result<bool>;
 }
 
 impl<T: Operator> ErasedOperator for T {
@@ -286,6 +313,25 @@ impl<T: Operator> ErasedOperator for T {
             self,
             ctx,
             input,
+            output,
+            downcast(global, name)?,
+            downcast_local(local, name)?,
+        )
+    }
+    fn requires_final_execute(&self) -> bool {
+        Operator::requires_final_execute(self)
+    }
+    fn final_execute(
+        &self,
+        ctx: &ExecutionContext,
+        output: &mut DataChunk,
+        global: &(dyn Any + Send + Sync),
+        local: &mut (dyn Any + Send),
+    ) -> Result<bool> {
+        let name = self.name();
+        Operator::final_execute(
+            self,
+            ctx,
             output,
             downcast(global, name)?,
             downcast_local(local, name)?,
