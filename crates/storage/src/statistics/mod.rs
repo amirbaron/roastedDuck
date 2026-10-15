@@ -3,9 +3,11 @@
 //! optimizer reads them through `DataTable::column_statistics`.
 
 mod numeric;
+mod serialize;
 mod string;
 
 pub use numeric::{NumericStats, NumericValue, StatsNative, maximum_value, minimum_value};
+pub use serialize::{deserialize_table_statistics, serialize_table_statistics};
 pub use string::{MAX_STRING_MINMAX_SIZE, StringStats};
 
 use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, Value};
@@ -151,6 +153,12 @@ impl BaseStatistics {
     /// Statistics that admit any value (`CreateUnknown`).
     pub fn create_unknown(ty: LogicalType) -> Self {
         Self::create(ty, Init::Unknown)
+    }
+
+    /// Merges only the NULL flags of `other` (the statistics of a validity column).
+    pub fn merge_validity(&mut self, other: &Self) {
+        self.has_null |= other.has_null;
+        self.has_no_null |= other.has_no_null;
     }
 
     /// Statistics of a single constant value (`BaseStatistics::FromConstant`).

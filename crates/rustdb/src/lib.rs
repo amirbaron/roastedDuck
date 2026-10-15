@@ -15,6 +15,7 @@ mod database;
 mod result;
 mod sequence;
 mod settings;
+mod storage;
 mod transaction;
 
 pub use config::{AccessMode, Config};

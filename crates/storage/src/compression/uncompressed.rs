@@ -343,7 +343,7 @@ fn read_overflow_string(
     offset: i32,
 ) -> Result<(SegmentBuffer, usize, usize)> {
     if block_id < MAXIMUM_BLOCK {
-        return Err(Error::not_implemented("reading on-disk overflow strings"));
+        return read_disk_overflow_string(segment, block_id, offset);
     }
     let handle = {
         let state = segment.string_state();
@@ -359,6 +359,62 @@ fn read_overflow_string(
     // SAFETY: published overflow strings are immutable.
     let length = unsafe { pin.read_u32(offset)? } as usize;
     Ok((pin, offset + 4, length))
+}
+
+/// The bytes of a big string stored at `block_id`/`offset`, in memory or on disk.
+pub(crate) fn read_overflow_string_bytes(
+    segment: &ColumnSegment,
+    block_id: i64,
+    offset: i32,
+) -> Result<Vec<u8>> {
+    let (pin, start, length) = read_overflow_string(segment, block_id, offset)?;
+    // SAFETY: published overflow strings are immutable.
+    Ok(unsafe { pin.bytes(start, length)? }.to_vec())
+}
+
+/// Reads a big string from on-disk overflow blocks (`ReadOverflowString` for persistent
+/// blocks): `[length: u32][bytes]`, continuing in the block whose id is stored in the
+/// last 8 bytes of a full block. The string is copied into a fresh buffer.
+fn read_disk_overflow_string(
+    segment: &ColumnSegment,
+    block_id: i64,
+    offset: i32,
+) -> Result<(SegmentBuffer, usize, usize)> {
+    let block_manager = segment
+        .persistent_block_manager()
+        .ok_or_else(|| Error::internal("on-disk overflow string of a transient segment"))?;
+    let buffer_manager = segment.buffer_manager();
+    let string_space = segment.block_size() - 8;
+    let mut handle = buffer_manager.register_block(block_manager, block_id);
+    let mut pin = SegmentBuffer::new(buffer_manager.pin(&handle)?, 0);
+    let mut offset = usize::try_from(offset).map_err(|_| Error::internal("negative overflow offset"))?;
+    // SAFETY: on-disk blocks are immutable.
+    let length = unsafe { pin.read_u32(offset)? } as usize;
+    offset += 4;
+    let target = buffer_manager.allocate(MemoryTag::OverflowStrings, length.max(1), false)?;
+    let target = SegmentBuffer::new(target, 0);
+    let mut written = 0;
+    while written < length {
+        let to_copy = (length - written).min(string_space.saturating_sub(offset));
+        if to_copy > 0 {
+            // SAFETY: on-disk blocks are immutable; the target buffer is not shared yet.
+            unsafe {
+                let bytes = pin.bytes(offset, to_copy)?.to_vec();
+                target.write(written, &bytes)?;
+            }
+            written += to_copy;
+            offset += to_copy;
+        }
+        if written < length {
+            // SAFETY: as above.
+            let next = unsafe { pin.bytes(string_space, 8)? };
+            let next = i64::from_le_bytes(next.try_into().unwrap_or_default());
+            handle = buffer_manager.register_block(block_manager, next);
+            pin = SegmentBuffer::new(buffer_manager.pin(&handle)?, 0);
+            offset = 0;
+        }
+    }
+    Ok((target, 0, length))
 }
 
 /// Scans rows `start..start + count` into `result` at `result_offset`.

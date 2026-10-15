@@ -18,6 +18,7 @@ rustdb-planner = { path = "../planner" }
 rustdb-execution = { path = "../execution" }
 rustdb-storage = { path = "../storage" }
 rustdb-buffer = { path = "../buffer" }
+rustdb-serde = { path = "../serde" }
 
 [lints]
 workspace = true

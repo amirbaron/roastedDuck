@@ -188,9 +188,70 @@ pub struct ColumnSegment {
     stats: Mutex<BaseStatistics>,
     string_state: Mutex<StringSegmentState>,
     buffer_manager: BufferManager,
+    /// The block manager of a persistent segment, for its overflow string blocks.
+    block_manager: Option<Arc<dyn BlockManager>>,
+    /// The on-disk overflow string blocks of a persistent string segment
+    /// (`UncompressedStringSegmentState::on_disk_blocks`).
+    overflow_blocks: Vec<BlockId>,
 }
 
 impl ColumnSegment {
+    /// A segment stored in the database file (`ColumnSegment::CreatePersistentSegment`):
+    /// uncompressed segments refer to their block, constant ones need none.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_persistent(
+        buffer_manager: &BufferManager,
+        block_manager: &Arc<dyn BlockManager>,
+        block_id: BlockId,
+        offset: usize,
+        ty: LogicalType,
+        count: u64,
+        compression: CompressionType,
+        stats: BaseStatistics,
+        overflow_blocks: Vec<BlockId>,
+    ) -> Result<Self> {
+        match compression {
+            CompressionType::Constant | CompressionType::Empty => {
+                let mut segment = Self::create_constant(buffer_manager, ty, count, stats);
+                segment.compression = compression;
+                Ok(segment)
+            }
+            CompressionType::Uncompressed => {
+                let layout = Layout::of(&ty)?;
+                let block = buffer_manager.register_block(block_manager, block_id);
+                Ok(Self {
+                    ty,
+                    layout,
+                    compression,
+                    segment_type: SegmentType::Persistent,
+                    block: Some(block),
+                    block_id,
+                    offset,
+                    segment_size: block_manager.block_size() - offset,
+                    block_size: block_manager.block_size(),
+                    count: AtomicU64::new(count),
+                    stats: Mutex::new(stats),
+                    string_state: Mutex::default(),
+                    buffer_manager: buffer_manager.clone(),
+                    block_manager: Some(Arc::clone(block_manager)),
+                    overflow_blocks,
+                })
+            }
+            other => Err(Error::not_implemented(format!(
+                "reading {other} compressed segments"
+            ))),
+        }
+    }
+
+    /// The block manager of a persistent segment.
+    pub(crate) fn persistent_block_manager(&self) -> Option<&Arc<dyn BlockManager>> {
+        self.block_manager.as_ref()
+    }
+
+    /// The on-disk overflow string blocks of a persistent string segment.
+    pub fn overflow_blocks(&self) -> &[BlockId] {
+        &self.overflow_blocks
+    }
     /// An empty uncompressed segment of `segment_size` bytes in fresh memory
     /// (`ColumnSegment::CreateTransientSegment`).
     pub fn create_transient(
@@ -221,6 +282,8 @@ impl ColumnSegment {
             stats: Mutex::new(stats),
             string_state: Mutex::default(),
             buffer_manager: buffer_manager.clone(),
+            block_manager: None,
+            overflow_blocks: Vec::new(),
         };
         uncompressed::init_segment(&segment)?;
         Ok(segment)
@@ -254,6 +317,8 @@ impl ColumnSegment {
             stats: Mutex::new(stats),
             string_state: Mutex::default(),
             buffer_manager: buffer_manager.clone(),
+            block_manager: None,
+            overflow_blocks: Vec::new(),
         }
     }
 

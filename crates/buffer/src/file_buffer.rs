@@ -142,14 +142,14 @@ impl FileBuffer {
     ///
     /// # Safety
     /// No one may write the buffer through a pin while the slice is alive.
-    pub(crate) unsafe fn internal(&self) -> &[u8] {
+    pub unsafe fn internal(&self) -> &[u8] {
         // SAFETY: the allocation holds `alloc_size` bytes; absence of writers is
         // guaranteed by the caller.
         unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.alloc_size) }
     }
 
     /// The whole allocation, header included, for filling it from disk.
-    pub(crate) fn internal_mut(&mut self) -> &mut [u8] {
+    pub fn internal_mut(&mut self) -> &mut [u8] {
         // SAFETY: `&mut self` means the buffer is not shared (it is not loaded into a
         // block yet, or the block's lock is held with no readers).
         unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.alloc_size) }

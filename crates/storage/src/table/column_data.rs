@@ -898,6 +898,113 @@ impl ColumnData {
         })
     }
 
+    /// A column of type `ty` whose segments are stored in the database file
+    /// (`ColumnData::Deserialize` + `InitializeColumn`).
+    pub fn from_persistent(
+        io: Arc<TableIoManager>,
+        column_index: usize,
+        ty: LogicalType,
+        data: &crate::checkpoint::pointers::PersistentColumnData,
+    ) -> Result<Self> {
+        let column = Self::new(io, column_index, ty, ColumnDataType::MainTable);
+        let mut stats = BaseStatistics::create_empty(column.ty.clone());
+        column.initialize_persistent(data, &mut stats)?;
+        if let Some(own) = &column.stats {
+            *own.lock().unwrap_or_else(PoisonError::into_inner) = stats;
+        }
+        Ok(column)
+    }
+
+    /// Creates the persistent segments of `data` and of the children
+    /// (`InitializeColumn`); their statistics are merged into `stats`.
+    fn initialize_persistent(
+        &self,
+        data: &crate::checkpoint::pointers::PersistentColumnData,
+        stats: &mut BaseStatistics,
+    ) -> Result<()> {
+        let buffer_manager = self.io.buffer_manager();
+        let block_manager = self.io.block_manager();
+        let mut count = 0u64;
+        for pointer in &data.pointers {
+            let segment = ColumnSegment::create_persistent(
+                buffer_manager,
+                block_manager,
+                pointer.block_pointer.block_id,
+                pointer.block_pointer.offset as usize,
+                self.ty.clone(),
+                pointer.tuple_count,
+                pointer.compression,
+                pointer.statistics.clone(),
+                pointer.overflow_blocks.clone(),
+            )?;
+            if self.ty.id() == LogicalTypeId::Validity {
+                stats.merge_validity(&pointer.statistics);
+            } else {
+                stats.merge(&pointer.statistics);
+            }
+            self.segments.push(count, Arc::new(segment));
+            count += pointer.tuple_count;
+        }
+        self.count.store(count, Ordering::Release);
+        let child = |index: usize| {
+            data.child_columns
+                .get(index)
+                .ok_or_else(|| Error::internal("persistent column data without its children"))
+        };
+        match &self.kind {
+            ColumnKind::Validity => {}
+            ColumnKind::Standard { validity } => validity.initialize_persistent(child(0)?, stats)?,
+            ColumnKind::List {
+                validity,
+                child: list_child,
+            }
+            | ColumnKind::Array {
+                validity,
+                child: list_child,
+            } => {
+                validity.initialize_persistent(child(0)?, stats)?;
+                let mut child_stats = BaseStatistics::create_empty(list_child.ty.clone());
+                list_child.initialize_persistent(child(1)?, &mut child_stats)?;
+                if let Some(target) = stats.child_mut() {
+                    target.merge(&child_stats);
+                }
+            }
+            ColumnKind::Struct { validity, fields } => {
+                validity.initialize_persistent(child(0)?, stats)?;
+                for (index, field) in fields.iter().enumerate() {
+                    let mut field_stats = BaseStatistics::create_empty(field.ty.clone());
+                    field.initialize_persistent(child(index + 1)?, &mut field_stats)?;
+                    if let Some(target) = stats.struct_children_mut().and_then(|c| c.get_mut(index)) {
+                        target.merge(&field_stats);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// A copy of the column's committed data (with committed updates applied) in fresh
+    /// transient segments, for writing at a checkpoint (`ColumnData::Checkpoint` re-reads
+    /// the column the same way).
+    pub fn checkpoint_copy(&self, count: u64) -> Result<Self> {
+        let target = Self::new(
+            Arc::clone(&self.io),
+            self.column_index,
+            self.ty.clone(),
+            ColumnDataType::CheckpointTarget,
+        );
+        let mut state = target.initialize_append()?;
+        let mut vector = Vector::flat(self.ty.clone(), STANDARD_VECTOR_SIZE);
+        let mut offset = 0u64;
+        while offset < count {
+            let rows = (count - offset).min(VECTOR_SIZE) as usize;
+            let scanned = self.scan_committed_range(offset, rows, &mut vector)?;
+            target.append(&mut state, &vector, scanned)?;
+            offset += rows as u64;
+        }
+        Ok(target)
+    }
+
     /// Prepares appending to the column (`InitializeAppend`).
     pub fn initialize_append(&self) -> Result<ColumnAppendState> {
         let mut state = ColumnAppendState::default();

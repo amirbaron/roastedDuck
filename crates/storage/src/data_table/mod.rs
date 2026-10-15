@@ -211,6 +211,23 @@ impl DataTable {
         })
     }
 
+    /// A table over existing row groups (read from a checkpoint).
+    pub fn from_collection(
+        io: Arc<TableIoManager>,
+        schema: impl Into<String>,
+        table: impl Into<String>,
+        columns: Vec<ColumnDefinition>,
+        row_groups: RowGroupCollection,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            info: Arc::new(DataTableInfo::new(io, schema, table)),
+            columns,
+            row_groups: Arc::new(row_groups),
+            append_lock: Mutex::new(()),
+            version: AtomicU8::new(TableVersion::MainTable as u8),
+        })
+    }
+
     pub fn info(&self) -> &Arc<DataTableInfo> {
         &self.info
     }

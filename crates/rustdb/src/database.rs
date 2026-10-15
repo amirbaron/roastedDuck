@@ -40,8 +40,36 @@ pub(crate) struct DatabaseInstance {
     pub(crate) casts: Arc<CastFunctionSet>,
     /// Buffer manager and thread count used by every query.
     pub(crate) env: Arc<rustdb_execution::ClientEnv>,
-    /// Where tables keep their data (in memory for now).
+    /// Where new tables keep their data.
     pub(crate) io: Arc<rustdb_storage::TableIoManager>,
+    /// The database file, unless the database is in memory.
+    pub(crate) storage: Option<Arc<rustdb_storage::storage_manager::StorageManager>>,
+    /// Set by `PRAGMA disable_checkpoint_on_shutdown`.
+    pub(crate) shutdown_checkpoint_disabled: std::sync::atomic::AtomicBool,
+}
+
+impl Drop for DatabaseInstance {
+    /// Writes a checkpoint when the last handle goes away (`checkpoint_on_shutdown`).
+    fn drop(&mut self) {
+        if let Some(storage) = &self.storage
+            && !storage.is_read_only()
+            && self.checkpoint_on_shutdown()
+        {
+            // Errors cannot be reported from a destructor (DuckDB logs them).
+            let _ = crate::storage::checkpoint_on_close(&self.catalog, storage);
+        }
+    }
+}
+
+impl DatabaseInstance {
+    /// Whether `checkpoint_on_shutdown` is on (`PRAGMA disable_checkpoint_on_shutdown`).
+    fn checkpoint_on_shutdown(&self) -> bool {
+        !self.config.options.iter().any(|(name, value)| {
+            name.eq_ignore_ascii_case("checkpoint_on_shutdown") && value.as_bool() == Some(false)
+        }) && !self
+            .shutdown_checkpoint_disabled
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 /// A database instance (DuckDB's `DuckDB`). Cheap to clone; clones share the instance.
@@ -58,11 +86,6 @@ impl Database {
         } else {
             path.to_owned()
         };
-        if !path.is_empty() {
-            return Err(Error::not_implemented(
-                "persistent databases are not supported yet",
-            ));
-        }
         let system_catalog = Catalog::new("system")?;
         for set in rustdb_functions::builtin_scalar_functions() {
             system_catalog.register_scalar_functions(set)?;
@@ -77,19 +100,35 @@ impl Database {
             system_catalog.register_table_functions(set)?;
         }
         let env = rustdb_execution::ClientEnv::standalone()?;
-        let io = Arc::new(rustdb_storage::TableIoManager::new(
-            env.buffer_manager.clone(),
-            Arc::new(rustdb_buffer::InMemoryBlockManager::default()),
-        ));
+        let catalog = Catalog::new(crate::storage::database_name(&path))?;
+        let storage = if path.is_empty() {
+            None
+        } else {
+            Some(crate::storage::open_storage(
+                &path,
+                config,
+                env.buffer_manager.clone(),
+                &catalog,
+            )?)
+        };
+        let io = match &storage {
+            Some(storage) => Arc::clone(storage.io()),
+            None => Arc::new(rustdb_storage::TableIoManager::new(
+                env.buffer_manager.clone(),
+                Arc::new(rustdb_buffer::InMemoryBlockManager::default()),
+            )),
+        };
         let instance = DatabaseInstance {
             path,
             config: config.clone(),
             transactions: Arc::default(),
             system_catalog: Arc::new(system_catalog),
-            catalog: Arc::new(Catalog::new("memory")?),
+            catalog: Arc::new(catalog),
             casts: Arc::new(CastFunctionSet::new()),
             env,
             io,
+            storage,
+            shutdown_checkpoint_disabled: std::sync::atomic::AtomicBool::new(false),
         };
         Ok(Self {
             instance: Arc::new(instance),
@@ -222,6 +261,30 @@ impl Connection {
     }
 
     fn run_statement(&mut self, statement: SqlStatement) -> Result<MaterializedResult> {
+        // `CHECKPOINT` is `CALL checkpoint()`: the call is bound and run like any table
+        // function, then the connection writes the checkpoint.
+        let checkpoint = match &statement.kind {
+            rustdb_ast::SqlStatementKind::Call(call) => match &call.function.kind {
+                rustdb_ast::ParsedExpressionKind::Function(function)
+                    if function.function_name.eq_ignore_ascii_case("checkpoint")
+                        || function.function_name.eq_ignore_ascii_case("force_checkpoint") =>
+                {
+                    Some(function.function_name.eq_ignore_ascii_case("force_checkpoint"))
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        let result = self.run_planned(statement)?;
+        if let Some(force) = checkpoint {
+            let instance = self.database.instance();
+            let transaction = self.transactions.current();
+            crate::storage::checkpoint(&instance.catalog, instance.storage.as_ref(), &transaction, force)?;
+        }
+        Ok(result)
+    }
+
+    fn run_planned(&mut self, statement: SqlStatement) -> Result<MaterializedResult> {
         let transaction = self.transactions.current();
         let planner = Planner::new(self.client_context(transaction));
         let planned = planner.create_plan(statement)?;
@@ -289,6 +352,13 @@ impl Connection {
                 return Ok(nothing());
             }
             LogicalKind::Pragma { name, .. } => {
+                let lower = name.to_ascii_lowercase();
+                if lower == "disable_checkpoint_on_shutdown" || lower == "enable_checkpoint_on_shutdown" {
+                    self.database
+                        .instance()
+                        .shutdown_checkpoint_disabled
+                        .store(lower.starts_with("disable"), std::sync::atomic::Ordering::Relaxed);
+                }
                 return if NO_OP_PRAGMAS.contains(&name.to_ascii_lowercase().as_str()) {
                     Ok(nothing())
                 } else {

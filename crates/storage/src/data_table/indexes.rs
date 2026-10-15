@@ -171,6 +171,20 @@ impl DataTable {
         self.add_index(art)
     }
 
+    /// Like [`DataTable::add_constraint_index`], for a table with rows (read from a
+    /// checkpoint): the index is built over them.
+    pub fn load_constraint_index(
+        &self,
+        constraint: IndexConstraintType,
+        column_ids: &[usize],
+        constraint_index: usize,
+    ) -> Result<()> {
+        let name = format!("{}_{}_{constraint_index}", constraint.name(), self.name());
+        let mut art = self.new_art(&name, constraint, column_ids)?;
+        self.build_index(&Transaction::system(), &mut art, false)?;
+        self.add_index(art)
+    }
+
     /// Adds a built index to the table (`DataTable::AddIndex`).
     pub fn add_index(&self, index: Art) -> Result<()> {
         self.check_main_table("add an index to")?;

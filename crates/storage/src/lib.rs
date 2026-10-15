@@ -21,9 +21,14 @@
 //! serialised by the table's append lock; scans run concurrently with appends and read
 //! only rows below a column's published count, which appends never touch again.
 
+pub mod checkpoint;
 pub mod compression;
 pub mod index;
+pub mod metadata;
+pub mod single_file_block_manager;
 pub mod statistics;
+pub mod storage_info;
+pub mod storage_manager;
 pub mod table;
 pub mod table_filter;
 pub mod transaction;
@@ -46,6 +51,8 @@ pub const MAX_ROW_ID: u64 = 36_028_797_018_960_000;
 
 /// The number of rows in a full row group (DuckDB's `DEFAULT_ROW_GROUP_SIZE`).
 pub const DEFAULT_ROW_GROUP_SIZE: u64 = 122_880;
+/// The largest row group (`Storage::MAX_ROW_GROUP_SIZE`).
+pub const MAX_ROW_GROUP_SIZE: u64 = 1 << 30;
 
 /// The column id of the `rowid` pseudo column (DuckDB's `COLUMN_IDENTIFIER_ROW_ID`).
 pub const COLUMN_IDENTIFIER_ROW_ID: u64 = u64::MAX;

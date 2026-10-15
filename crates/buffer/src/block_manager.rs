@@ -82,7 +82,7 @@ impl BlockRegistry {
         self.get(block_id).is_some()
     }
 
-    pub(crate) fn unregister(&self, block_id: BlockId) {
+    pub fn unregister(&self, block_id: BlockId) {
         let mut blocks = self.blocks.lock().unwrap_or_else(PoisonError::into_inner);
         // A handle registered after the dropped one must stay.
         if blocks.get(&block_id).is_some_and(|weak| weak.strong_count() == 0) {

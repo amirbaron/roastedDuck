@@ -6,6 +6,7 @@
 
 mod catalog;
 mod catalog_set;
+pub mod checkpoint;
 mod entry;
 mod transaction;
 

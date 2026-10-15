@@ -127,6 +127,24 @@ impl Catalog {
             .ok_or_else(|| Error::catalog(format!("Schema with name {schema} does not exist!")))
     }
 
+    /// Creates a schema read from a checkpoint, visible to every transaction; an existing
+    /// schema is kept (`IGNORE_ON_CONFLICT`).
+    pub fn create_schema_committed(&self, name: &str) -> Result<()> {
+        if self.schema(&Transaction::system(), name).is_some() {
+            return Ok(());
+        }
+        self.schemas
+            .create_committed(CatalogEntry::new(name, EntryKind::Schema(SchemaEntry::default())))
+    }
+
+    /// Adds an entry read from a checkpoint or replayed from the WAL to `schema`, visible
+    /// to every transaction.
+    pub fn create_entry_committed(&self, schema: &str, entry: CatalogEntry) -> Result<()> {
+        let schema_entry = self.schema_entry(&Transaction::system(), schema)?;
+        let schema_entry = schema_entry.as_schema().ok_or_else(missing_main)?;
+        Self::set_for(schema_entry, entry.catalog_type()).create_committed(entry)
+    }
+
     /// `CREATE SCHEMA` (DuckDB's `DuckCatalog::CreateSchema`).
     pub fn create_schema(
         &self,
