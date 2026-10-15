@@ -7,10 +7,12 @@ use rustdb_common::{Error, Result};
 use rustdb_function::aggregate::AggregateInput;
 use rustdb_function::{AggregateOps, StatePtr};
 use rustdb_planner::expression::BoundAggregateExpression as BoundAggregate;
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use rustdb_row::hash::hash_columns;
+use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
+use crate::aggregate_hashtable::{GroupedAggregateHashTable, initial_capacity};
 use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
-use crate::{ExecutionContext, ExpressionExecutor, Sink, SinkResult, Source, SourceResult};
+use crate::{ExecutionContext, ExpressionExecutor, Sink, SinkFinalize, SinkResult, Source, SourceResult};
 
 /// One state per aggregate, allocated together in a single aligned buffer.
 pub struct AggregateStates {
@@ -96,12 +98,9 @@ pub struct PhysicalUngroupedAggregate {
 
 impl PhysicalUngroupedAggregate {
     pub fn new(types: Vec<LogicalType>, aggregates: Vec<BoundAggregate>, child: PhysicalRef) -> Result<Self> {
-        if let Some(aggregate) = aggregates
-            .iter()
-            .find(|a| a.is_distinct() || a.order_bys.is_some())
-        {
+        if let Some(aggregate) = aggregates.iter().find(|a| a.order_bys.is_some()) {
             return Err(Error::not_implemented(format!(
-                "DISTINCT or ordered aggregate {}",
+                "ordered aggregate {}",
                 aggregate.function.name
             )));
         }
@@ -131,6 +130,15 @@ impl PhysicalOperator for PhysicalUngroupedAggregate {
     }
 }
 
+/// The global aggregate states, and for each `DISTINCT` aggregate the table of its
+/// distinct argument tuples (DuckDB's `DistinctAggregateData`), fed into its state when
+/// the sink finishes.
+#[derive(Debug)]
+pub struct UngroupedGlobal {
+    states: Mutex<AggregateStates>,
+    distinct: Vec<Option<Mutex<GroupedAggregateHashTable>>>,
+}
+
 /// Per-thread state: local aggregate states plus executors for arguments and filters.
 #[derive(Debug)]
 pub struct UngroupedLocal {
@@ -145,11 +153,32 @@ fn poisoned() -> Error {
 }
 
 impl Sink for PhysicalUngroupedAggregate {
-    type Global = Mutex<AggregateStates>;
+    type Global = UngroupedGlobal;
     type Local = UngroupedLocal;
 
-    fn global_sink_state(&self, _: &ExecutionContext) -> Result<Self::Global> {
-        Ok(Mutex::new(AggregateStates::new(&self.aggregates)))
+    fn global_sink_state(&self, ctx: &ExecutionContext) -> Result<Self::Global> {
+        let distinct = self
+            .aggregates
+            .iter()
+            .map(|aggregate| {
+                if !aggregate.is_distinct() {
+                    return Ok(None);
+                }
+                let types = aggregate.children.iter().map(|c| c.return_type.clone()).collect();
+                let table = GroupedAggregateHashTable::new(
+                    ctx.env.buffer_manager.clone(),
+                    types,
+                    &[],
+                    initial_capacity(),
+                    0,
+                )?;
+                Ok(Some(Mutex::new(table)))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(UngroupedGlobal {
+            states: Mutex::new(AggregateStates::new(&self.aggregates)),
+            distinct,
+        })
     }
 
     fn local_sink_state(&self, _: &ExecutionContext, _: &Self::Global) -> Result<UngroupedLocal> {
@@ -177,7 +206,7 @@ impl Sink for PhysicalUngroupedAggregate {
         &self,
         _: &ExecutionContext,
         chunk: &DataChunk,
-        _: &Self::Global,
+        global: &Self::Global,
         local: &mut UngroupedLocal,
     ) -> Result<SinkResult> {
         for (index, aggregate) in self.aggregates.iter().enumerate() {
@@ -189,6 +218,11 @@ impl Sink for PhysicalUngroupedAggregate {
             }
             let mut arguments = DataChunk::default();
             local.arguments[index].execute(&input, &mut arguments)?;
+            if let Some(distinct) = &global.distinct[index] {
+                let arguments = DataChunk::new(arguments.columns().to_vec(), input.len());
+                add_distinct(distinct, &arguments)?;
+                continue;
+            }
             let data = AggregateInput {
                 bind_data: aggregate.bind_info.as_deref().map(|d| d as _),
             };
@@ -207,7 +241,7 @@ impl Sink for PhysicalUngroupedAggregate {
     }
 
     fn combine(&self, _: &ExecutionContext, global: &Self::Global, local: UngroupedLocal) -> Result<()> {
-        let global = global.lock().map_err(|_| poisoned())?;
+        let global = global.states.lock().map_err(|_| poisoned())?;
         for (index, aggregate) in self.aggregates.iter().enumerate() {
             let data = AggregateInput {
                 bind_data: aggregate.bind_info.as_deref().map(|d| d as _),
@@ -222,6 +256,51 @@ impl Sink for PhysicalUngroupedAggregate {
         }
         Ok(())
     }
+
+    /// Feeds the distinct argument tuples into the states of the `DISTINCT` aggregates.
+    fn finalize(&self, _: &ExecutionContext, global: &mut Self::Global) -> Result<SinkFinalize> {
+        let states = global.states.get_mut().map_err(|_| poisoned())?;
+        for (index, aggregate) in self.aggregates.iter().enumerate() {
+            let Some(distinct) = &mut global.distinct[index] else {
+                continue;
+            };
+            let data = AggregateInput {
+                bind_data: aggregate.bind_info.as_deref().map(|d| d as _),
+            };
+            let state = states.state(index);
+            distinct
+                .get_mut()
+                .map_err(|_| poisoned())?
+                .finalize_into(|tuples| {
+                    // SAFETY: the global state is initialised and exclusively borrowed.
+                    unsafe {
+                        aggregate
+                            .function
+                            .ops
+                            .simple_update(tuples.columns(), data, state, tuples.len())
+                    }
+                })?;
+        }
+        Ok(SinkFinalize::Ready)
+    }
+}
+
+/// Adds the argument tuples of one chunk to a distinct table.
+fn add_distinct(distinct: &Mutex<GroupedAggregateHashTable>, arguments: &DataChunk) -> Result<()> {
+    if arguments.is_empty() {
+        return Ok(());
+    }
+    let hashes = if arguments.column_count() == 0 {
+        Vector::constant(&Value::ubigint(0))?
+    } else {
+        let columns: Vec<&Vector> = arguments.columns().iter().collect();
+        hash_columns(&columns, arguments.len())?
+    };
+    distinct
+        .lock()
+        .map_err(|_| poisoned())?
+        .add_chunk(arguments, &hashes, &[], &[])?;
+    Ok(())
 }
 
 impl Source for PhysicalUngroupedAggregate {
@@ -248,9 +327,9 @@ impl Source for PhysicalUngroupedAggregate {
     ) -> Result<SourceResult> {
         if !emitted.swap(true, Ordering::Relaxed) {
             let states = sink
-                .downcast_ref::<Mutex<AggregateStates>>()
+                .downcast_ref::<UngroupedGlobal>()
                 .ok_or_else(|| Error::internal("ungrouped aggregate sink state has the wrong type"))?;
-            finalize_ungrouped(self, states, chunk)?;
+            finalize_ungrouped(self, &states.states, chunk)?;
         }
         Ok(SourceResult::Finished)
     }

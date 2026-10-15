@@ -54,7 +54,7 @@ pub use result_collector::{CollectedResult, PhysicalResultCollector};
 pub use seq_scan::{PhysicalSeqScan, SeqScanLocal};
 pub use streaming_window::{PhysicalStreamingWindow, StreamingWindowGlobalState, StreamingWindowState};
 pub use table_scan::{PhysicalTableScan, TableScanGlobal};
-pub use ungrouped_aggregate::{AggregateStates, PhysicalUngroupedAggregate, UngroupedLocal};
+pub use ungrouped_aggregate::{AggregateStates, PhysicalUngroupedAggregate, UngroupedGlobal, UngroupedLocal};
 pub use union::PhysicalUnion;
 pub use update::{PhysicalUpdate, UpdateGlobal};
 pub use window::{

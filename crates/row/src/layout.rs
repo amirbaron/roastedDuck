@@ -233,6 +233,9 @@ impl TupleDataLayout {
         }
         layout.data_width = layout.row_width - layout.flag_width;
         for aggregate in &aggregates {
+            // Rust states may need more than DuckDB's 8-byte alignment (`i128` needs 16),
+            // so each state starts at a multiple of its own alignment.
+            layout.row_width = layout.row_width.next_multiple_of(aggregate.alignment);
             layout.offsets.push(layout.row_width);
             layout.row_width += aggregate.payload_size;
         }
