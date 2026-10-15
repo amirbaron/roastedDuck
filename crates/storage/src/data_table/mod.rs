@@ -523,13 +523,13 @@ impl DataTable {
     /// Verifies NOT NULL and CHECK constraints of rows about to be inserted
     /// (`VerifyAppendConstraints`).
     pub fn verify_append_constraints(&self, constraints: &TableConstraints, chunk: &DataChunk) -> Result<()> {
-        if let Some(verifier) = &constraints.verifier {
-            verifier.verify_append(chunk)?;
-        }
         for &column in &constraints.not_null {
             if has_null(chunk.column(column), chunk.len()) {
                 return Err(self.not_null_error(column));
             }
+        }
+        if let Some(verifier) = &constraints.verifier {
+            verifier.verify_append(chunk)?;
         }
         Ok(())
     }

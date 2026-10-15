@@ -427,6 +427,7 @@ name = "rustdb"
 version = "1.5.6"
 dependencies = [
  "rustdb-ast",
+ "rustdb-buffer",
  "rustdb-catalog",
  "rustdb-common",
  "rustdb-execution",
@@ -434,6 +435,7 @@ dependencies = [
  "rustdb-functions",
  "rustdb-parser",
  "rustdb-planner",
+ "rustdb-storage",
  "rustdb-types",
 ]
 
@@ -498,6 +500,7 @@ version = "1.5.6"
 dependencies = [
  "rustdb-ast",
  "rustdb-buffer",
+ "rustdb-catalog",
  "rustdb-common",
  "rustdb-function",
  "rustdb-functions",

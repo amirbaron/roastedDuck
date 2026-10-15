@@ -14,7 +14,8 @@ use super::super::{BindScope, Binder, Binding, BindingAlias, BindingKind, BoundS
 use crate::expression::Expression;
 use crate::expression_binder::{CheckBinder, CheckColumn, ConstantBinder, ExpressionBinder, ReturningBinder};
 use crate::operator::{
-    BoundConstraint, BoundForeignKeyInfo, COLUMN_IDENTIFIER_ROW_ID, ColumnIndex, LogicalOperator, SharedColumnIds,
+    BoundConstraint, BoundForeignKeyInfo, COLUMN_IDENTIFIER_ROW_ID, ColumnIndex, LogicalOperator,
+    SharedColumnIds,
 };
 use crate::prepared::StatementReturnType;
 
@@ -28,7 +29,6 @@ pub fn table_of(entry: &CatalogEntry) -> Result<&TableEntry> {
 
 /// A table looked up for INSERT/UPDATE/DELETE, with the schema it was found in.
 pub struct FoundTable {
-    pub catalog: String,
     pub schema: String,
     pub entry: Arc<CatalogEntry>,
 }
@@ -47,7 +47,6 @@ pub fn find_table(scope: &BindScope<'_>, catalog: &str, schema: &str, name: &str
         )));
     }
     Ok(FoundTable {
-        catalog: found.catalog,
         schema: found.schema,
         entry: found.entry,
     })
@@ -85,7 +84,11 @@ pub fn check_columns(table: &TableEntry) -> Vec<CheckColumn> {
 }
 
 /// Binds the constraints of `table` (DuckDB's `Binder::BindConstraints`).
-pub fn bind_constraints(scope: &mut BindScope<'_>, table_name: &str, table: &TableEntry) -> Result<Vec<BoundConstraint>> {
+pub fn bind_constraints(
+    scope: &mut BindScope<'_>,
+    table_name: &str,
+    table: &TableEntry,
+) -> Result<Vec<BoundConstraint>> {
     let columns = check_columns(table);
     let mut bound = Vec::with_capacity(table.constraints.len());
     for constraint in &table.constraints {
@@ -181,7 +184,11 @@ pub fn unique_keys(
 pub fn bind_default_values(scope: &mut BindScope<'_>, table: &TableEntry) -> Result<Vec<Expression>> {
     let mut defaults = Vec::new();
     for (_, _, column) in table.physical_columns() {
-        defaults.push(bind_default_value(scope, column.default_value.as_ref(), &column.logical_type)?);
+        defaults.push(bind_default_value(
+            scope,
+            column.default_value.as_ref(),
+            &column.logical_type,
+        )?);
     }
     Ok(defaults)
 }
@@ -211,9 +218,9 @@ pub fn expand_default(expr: &mut ParsedExpression, default: Option<&ParsedExpres
     if !matches!(expr.kind, ParsedExpressionKind::Default) {
         return;
     }
-    *expr = default.cloned().unwrap_or_else(|| {
-        rustdb_ast::ParsedExpression::constant(Value::null(ty.clone()))
-    });
+    *expr = default
+        .cloned()
+        .unwrap_or_else(|| rustdb_ast::ParsedExpression::constant(Value::null(ty.clone())));
 }
 
 /// `RETURNING` (DuckDB's `Binder::BindReturning`): a projection over the modifying

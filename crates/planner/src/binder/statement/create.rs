@@ -9,10 +9,10 @@ use rustdb_catalog::{CatalogType, EntryKind, TableEntry};
 use rustdb_common::{Error, LogicalIndex, PhysicalIndex, Result};
 use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
-use super::table::{bind_default_value, bind_schema_or_catalog, table_of};
 use super::super::expression::bind_logical_type;
 use super::super::query_node::bind_node;
 use super::super::{BindScope, BoundStatement, Scope};
+use super::table::{bind_default_value, bind_schema_or_catalog, table_of};
 use crate::generated::enums::LogicalOperatorType;
 use crate::operator::{BoundCreateTableInfo, LogicalKind, LogicalOperator};
 use crate::prepared::StatementReturnType;
@@ -74,7 +74,7 @@ fn bind_catalog(scope: &BindScope<'_>, catalog: &str) -> String {
 pub fn bind_create_schema(scope: &BindScope<'_>, info: &mut CreateInfo) -> Result<()> {
     let (mut catalog, mut schema) = bind_schema_or_catalog(scope, &info.catalog, &info.schema);
     if catalog.is_empty() || catalog == "temp" {
-        catalog = scope.context.default_catalog().to_owned();
+        scope.context.default_catalog().clone_into(&mut catalog);
     }
     if schema.is_empty() {
         rustdb_catalog::DEFAULT_SCHEMA.clone_into(&mut schema);
@@ -90,8 +90,8 @@ pub fn bind_create_schema(scope: &BindScope<'_>, info: &mut CreateInfo) -> Resul
             "Schema with name {schema} does not exist!"
         )));
     };
-    info.catalog = found.name().to_owned();
-    info.schema = schema_entry.name().to_owned();
+    found.name().clone_into(&mut info.catalog);
+    schema_entry.name().clone_into(&mut info.schema);
     Ok(())
 }
 
@@ -133,7 +133,10 @@ fn column(name: String, ty: LogicalType) -> ColumnDefinition {
 fn push_deduplicated(columns: &mut Vec<ColumnDefinition>, mut definition: ColumnDefinition) {
     let base = definition.name.clone();
     let mut index = 1;
-    while columns.iter().any(|c| c.name.eq_ignore_ascii_case(&definition.name)) {
+    while columns
+        .iter()
+        .any(|c| c.name.eq_ignore_ascii_case(&definition.name))
+    {
         definition.name = format!("{base}_{index}");
         index += 1;
     }
@@ -184,19 +187,37 @@ pub fn bind_create_table_info(
                 return Err(Error::not_implemented("generated columns"));
             }
         }
-        bind_create_table_constraints(scope, &table.table, &schema, &mut table.columns.columns, &mut table.constraints)?;
+        bind_create_table_constraints(
+            scope,
+            &table.table,
+            &schema,
+            &mut table.columns.columns,
+            &mut table.constraints,
+        )?;
         bind_new_constraints(&table.table, &table.columns.columns, &mut table.constraints)?;
         // Validate the default values (`BindDefaultValues`).
         for column in &table.columns.columns {
             bind_default_value(scope, column.expression.as_deref(), &column.logical_type)?;
         }
     }
-    if !table.columns.columns.iter().any(|c| c.category != TableColumnType::Generated) {
+    if !table
+        .columns
+        .columns
+        .iter()
+        .any(|c| c.category != TableColumnType::Generated)
+    {
         return Err(Error::binder(
             "Creating a table without physical (non-generated) columns is not supported",
         ));
     }
-    Ok((BoundCreateTableInfo { catalog, schema, info }, query_plan))
+    Ok((
+        BoundCreateTableInfo {
+            catalog,
+            schema,
+            info,
+        },
+        query_plan,
+    ))
 }
 
 /// The physical index of each column of a column list (`None` for generated columns).
@@ -213,7 +234,11 @@ fn physical_index(columns: &[ColumnDefinition], logical: usize) -> Option<usize>
 }
 
 /// `Binder::BindNewConstraints`: a PRIMARY KEY makes its columns NOT NULL.
-fn bind_new_constraints(table: &str, columns: &[ColumnDefinition], constraints: &mut Vec<Constraint>) -> Result<()> {
+fn bind_new_constraints(
+    table: &str,
+    columns: &[ColumnDefinition],
+    constraints: &mut Vec<Constraint>,
+) -> Result<()> {
     let mut primary_keys: Option<Vec<usize>> = None;
     let mut not_null = Vec::new();
     for constraint in constraints.iter() {
@@ -228,7 +253,8 @@ fn bind_new_constraints(table: &str, columns: &[ColumnDefinition], constraints: 
                 let keys = if unique.index.0 == u64::MAX {
                     let mut keys = Vec::new();
                     for name in &unique.columns {
-                        let Some(index) = columns.iter().position(|c| c.name.eq_ignore_ascii_case(name)) else {
+                        let Some(index) = columns.iter().position(|c| c.name.eq_ignore_ascii_case(name))
+                        else {
                             return Err(Error::catalog(format!(
                                 "table \"{table}\" does not have a column named \"{name}\""
                             )));
@@ -474,7 +500,10 @@ fn bind_create_table_constraints(
             let keys: Vec<usize> = fk.pk_keys.iter().map(|k| k.0 as usize).collect();
             if storage
                 .indexes()
-                .find_foreign_key_index(&keys, rustdb_storage::index::table_index_list::ForeignKeyType::PrimaryKeyTable)
+                .find_foreign_key_index(
+                    &keys,
+                    rustdb_storage::index::table_index_list::ForeignKeyType::PrimaryKeyTable,
+                )
                 .is_none()
             {
                 return Err(Error::binder(format!(
@@ -524,10 +553,14 @@ pub fn bind_drop(scope: &mut BindScope<'_>, drop: &mut DropInfo) -> Result<Bound
             drop.schema = found.schema;
         } else {
             drop.catalog = catalog;
-            drop.schema = schema;
+            drop.schema = if schema.is_empty() {
+                rustdb_catalog::DEFAULT_SCHEMA.to_owned()
+            } else {
+                schema
+            };
         }
     } else if drop.catalog.is_empty() {
-        drop.catalog = scope.context.default_catalog().to_owned();
+        scope.context.default_catalog().clone_into(&mut drop.catalog);
     }
     let plan = LogicalOperator::new(LogicalKind::Drop(Box::new(drop.clone())));
     Ok(BoundStatement::new(

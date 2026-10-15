@@ -156,11 +156,17 @@ fn describe_and_subqueries() {
 fn materialized_and_recursive_ctes() {
     let mut con = connect();
     assert_eq!(
-        rows(&mut con, "WITH t AS (SELECT 1 x), u AS (SELECT x + 1 y FROM t) SELECT * FROM u, t"),
+        rows(
+            &mut con,
+            "WITH t AS (SELECT 1 x), u AS (SELECT x + 1 y FROM t) SELECT * FROM u, t"
+        ),
         vec![vec!["2", "1"]]
     );
     // An unreferenced CTE is still materialised.
-    assert_eq!(rows(&mut con, "WITH t AS MATERIALIZED (SELECT 1 x) SELECT 2"), vec![vec!["2"]]);
+    assert_eq!(
+        rows(&mut con, "WITH t AS MATERIALIZED (SELECT 1 x) SELECT 2"),
+        vec![vec!["2"]]
+    );
     assert_eq!(
         rows(
             &mut con,

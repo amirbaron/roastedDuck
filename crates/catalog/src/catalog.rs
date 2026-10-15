@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use rustdb_ast::OnCreateConflict;
@@ -127,7 +128,12 @@ impl Catalog {
     }
 
     /// `CREATE SCHEMA` (DuckDB's `DuckCatalog::CreateSchema`).
-    pub fn create_schema(&self, transaction: &Transaction, name: &str, on_conflict: OnCreateConflict) -> Result<()> {
+    pub fn create_schema(
+        &self,
+        transaction: &Transaction,
+        name: &str,
+        on_conflict: OnCreateConflict,
+    ) -> Result<()> {
         let entry = CatalogEntry::new(name, EntryKind::Schema(SchemaEntry::default()));
         if self.schemas.create(transaction, entry)? {
             return Ok(());
@@ -217,6 +223,9 @@ impl Catalog {
         if ty == CatalogType::Schema {
             return self.drop_schema(transaction, name, cascade, if_exists);
         }
+        if if_exists && self.schema(transaction, schema).is_none() {
+            return Ok(());
+        }
         let schema_entry = self.schema_entry(transaction, schema)?;
         let schema_entry = schema_entry.as_schema().ok_or_else(missing_main)?;
         let set = Self::set_for(schema_entry, ty);
@@ -240,14 +249,18 @@ impl Catalog {
         Ok(())
     }
 
-    fn drop_schema(&self, transaction: &Transaction, name: &str, cascade: bool, if_exists: bool) -> Result<()> {
+    fn drop_schema(
+        &self,
+        transaction: &Transaction,
+        name: &str,
+        cascade: bool,
+        if_exists: bool,
+    ) -> Result<()> {
         let Some(schema) = self.schema(transaction, name) else {
             if if_exists {
                 return Ok(());
             }
-            return Err(Error::catalog(format!(
-                "Schema with name {name} does not exist!"
-            )));
+            return Err(Error::catalog(format!("Schema with name {name} does not exist!")));
         };
         if schema.internal {
             return Err(Error::catalog(format!(
@@ -275,12 +288,13 @@ impl Catalog {
                 schema.name()
             );
             for entry in dependents.iter().rev() {
-                message.push_str(&format!(
-                    "{} \"{}\" depends on schema \"{}\".\n",
+                let _ = writeln!(
+                    message,
+                    "{} \"{}\" depends on schema \"{}\".",
                     entry.catalog_type().display_name().to_lowercase(),
                     entry.name(),
                     schema.name()
-                ));
+                );
             }
             message.push_str("Use DROP...CASCADE to drop all dependents.");
             return Err(Error::new(rustdb_common::ErrorKind::Dependency, message));

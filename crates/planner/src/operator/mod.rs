@@ -128,7 +128,11 @@ pub struct LogicalGet {
 
 /// The output bindings of INSERT/DELETE/UPDATE: the table's columns with `RETURNING`, the
 /// row count otherwise.
-fn modify_bindings(return_chunk: bool, table_index: u64, table: &rustdb_catalog::CatalogEntry) -> Vec<ColumnBinding> {
+fn modify_bindings(
+    return_chunk: bool,
+    table_index: u64,
+    table: &rustdb_catalog::CatalogEntry,
+) -> Vec<ColumnBinding> {
     if return_chunk {
         generate_column_bindings(table_index, table_types(table).len())
     } else {
@@ -696,7 +700,9 @@ impl LogicalOperator {
             LogicalKind::CrossProduct => T::LogicalCrossProduct,
             LogicalKind::PositionalJoin => T::LogicalPositionalJoin,
             LogicalKind::DependentJoin(_) => T::LogicalDependentJoin,
-            LogicalKind::SetOperation { operator_type, .. } => *operator_type,
+            LogicalKind::SetOperation { operator_type, .. } | LogicalKind::Create { operator_type, .. } => {
+                *operator_type
+            }
             LogicalKind::RecursiveCte { .. } => T::LogicalRecursiveCte,
             LogicalKind::MaterializedCte { .. } => T::LogicalMaterializedCte,
             LogicalKind::Explain { .. } => T::LogicalExplain,
@@ -705,11 +711,9 @@ impl LogicalOperator {
             LogicalKind::Set { .. } => T::LogicalSet,
             LogicalKind::Reset { .. } => T::LogicalReset,
             LogicalKind::Transaction { .. } => T::LogicalTransaction,
-            LogicalKind::Deallocate { .. } => T::LogicalDrop,
+            LogicalKind::Deallocate { .. } | LogicalKind::Drop(_) => T::LogicalDrop,
             LogicalKind::Pragma { .. } => T::LogicalPragma,
             LogicalKind::CreateTable(_) => T::LogicalCreateTable,
-            LogicalKind::Create { operator_type, .. } => *operator_type,
-            LogicalKind::Drop(_) => T::LogicalDrop,
             LogicalKind::Insert(_) => T::LogicalInsert,
             LogicalKind::Delete(_) => T::LogicalDelete,
             LogicalKind::Update(_) => T::LogicalUpdate,
@@ -857,9 +861,15 @@ impl LogicalOperator {
             | LogicalKind::CreateTable(_)
             | LogicalKind::Create { .. }
             | LogicalKind::Drop(_) => vec![ColumnBinding::new(0, 0)],
-            LogicalKind::Insert(insert) => modify_bindings(insert.return_chunk, insert.table_index, &insert.table),
-            LogicalKind::Delete(delete) => modify_bindings(delete.return_chunk, delete.table_index, &delete.table),
-            LogicalKind::Update(update) => modify_bindings(update.return_chunk, update.table_index, &update.table),
+            LogicalKind::Insert(insert) => {
+                modify_bindings(insert.return_chunk, insert.table_index, &insert.table)
+            }
+            LogicalKind::Delete(delete) => {
+                modify_bindings(delete.return_chunk, delete.table_index, &delete.table)
+            }
+            LogicalKind::Update(update) => {
+                modify_bindings(update.return_chunk, update.table_index, &update.table)
+            }
         }
     }
 
@@ -1036,7 +1046,9 @@ impl LogicalOperator {
             LogicalKind::Insert(insert) if insert.return_chunk => insert.table_types(),
             LogicalKind::Delete(delete) if delete.return_chunk => table_types(&delete.table),
             LogicalKind::Update(update) if update.return_chunk => table_types(&update.table),
-            LogicalKind::Insert(_) | LogicalKind::Delete(_) | LogicalKind::Update(_) => vec![LogicalType::BIGINT],
+            LogicalKind::Insert(_) | LogicalKind::Delete(_) | LogicalKind::Update(_) => {
+                vec![LogicalType::BIGINT]
+            }
         };
     }
 

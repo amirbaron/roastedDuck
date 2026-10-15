@@ -156,7 +156,12 @@ impl TableCreator for CatalogTableCreator {
             .filter(|c| c.category != TableColumnType::Generated)
             .map(|c| ColumnDefinition::new(c.name.clone(), c.logical_type.clone()))
             .collect();
-        let storage = DataTable::new(Arc::clone(&self.io), self.schema.clone(), table.table.clone(), columns);
+        let storage = DataTable::new(
+            Arc::clone(&self.io),
+            self.schema.clone(),
+            table.table.clone(),
+            columns,
+        );
         // The indexes of the UNIQUE, PRIMARY KEY and FOREIGN KEY constraints.
         for (i, constraint) in table.constraints.iter().enumerate() {
             match constraint {
@@ -282,9 +287,9 @@ impl DdlAction for DropAction {
             }
         };
         if ty == CatalogType::Table
-            && let Some(existing) = self
-                .catalog
-                .get_entry(transaction, CatalogType::Table, &info.schema, &info.name)
+            && let Some(existing) =
+                self.catalog
+                    .get_entry(transaction, CatalogType::Table, &info.schema, &info.name)
             && let EntryKind::Table(table) = &existing.kind
         {
             // `FindForeignKeyInformation` with `AFT_DELETE`.

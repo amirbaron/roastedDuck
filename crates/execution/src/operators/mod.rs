@@ -3,6 +3,7 @@
 mod column_data_scan;
 mod create_table;
 mod cte;
+mod ddl;
 mod delete;
 mod delim;
 mod dummy_scan;
@@ -24,6 +25,9 @@ mod update;
 pub use column_data_scan::PhysicalColumnDataScan;
 pub use create_table::PhysicalCreateTable;
 pub use cte::{CteData, PhysicalCte, PhysicalCteScan, PhysicalRecursiveCte, RecursiveCteState};
+pub use ddl::{
+    CatalogTableCreator, CreateSchemaAction, CreateViewAction, DdlAction, DropAction, PhysicalDdl,
+};
 pub use delete::PhysicalDelete;
 pub use delim::{DelimData, DelimGlobal, DelimShared, PhysicalDelimJoin, PhysicalDelimScan};
 pub use dummy_scan::PhysicalDummyScan;

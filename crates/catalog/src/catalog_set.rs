@@ -131,7 +131,12 @@ impl CatalogSet {
 
     /// Replaces the visible entry called `name` by `entry` (DuckDB's `AlterEntry`).
     /// Returns `false` if no visible entry exists.
-    pub fn alter(self: &Arc<Self>, transaction: &Transaction, name: &str, entry: CatalogEntry) -> Result<bool> {
+    pub fn alter(
+        self: &Arc<Self>,
+        transaction: &Transaction,
+        name: &str,
+        entry: CatalogEntry,
+    ) -> Result<bool> {
         let name = key(name);
         let version = Version::new(transaction.transaction_id, Some(Arc::new(entry)));
         {

@@ -19,6 +19,7 @@ use super::super::{BindScope, BoundStatement, Scope};
 use super::table::{
     bind_constraints, bind_default_values, bind_returning, expand_default, find_table, table_of,
 };
+use crate::ColumnBinding;
 use crate::expression::{Expression, ExpressionKind};
 use crate::expression_binder::{ExpressionBinder, UpdateBinder, WhereBinder};
 use crate::operator::{
@@ -26,7 +27,6 @@ use crate::operator::{
     LogicalOperator, LogicalUpdate,
 };
 use crate::prepared::StatementReturnType;
-use crate::ColumnBinding;
 
 fn count_result(plan: LogicalOperator) -> BoundStatement {
     BoundStatement::new(plan, vec!["Count".to_owned()], vec![LogicalType::BIGINT])
@@ -111,15 +111,16 @@ pub fn bind_insert(scope: &mut BindScope<'_>, stmt: &mut InsertStatement) -> Res
     let mut column_index_map = Vec::new();
     if !stmt.columns.is_empty() || stmt.default_values {
         for (i, name) in stmt.columns.iter().enumerate() {
-            if stmt.columns[..i].iter().any(|other| other.eq_ignore_ascii_case(name)) {
+            if stmt.columns[..i]
+                .iter()
+                .any(|other| other.eq_ignore_ascii_case(name))
+            {
                 return Err(Error::binder(format!(
                     "Duplicate column name \"{name}\" in INSERT"
                 )));
             }
             if name.eq_ignore_ascii_case("rowid") && table.column(name).is_none() {
-                return Err(Error::binder(
-                    "Cannot explicitly insert values into rowid column",
-                ));
+                return Err(Error::binder("Cannot explicitly insert values into rowid column"));
             }
             let Some((logical, column)) = table.column(name) else {
                 return Err(missing_column_error(table, &table_name, name));
@@ -153,7 +154,8 @@ pub fn bind_insert(scope: &mut BindScope<'_>, stmt: &mut InsertStatement) -> Res
     // `ExpandDefaultInValuesList`
     let columns_provided = !stmt.columns.is_empty();
     if let Some(list) = values_list(stmt) {
-        list.expected_types.resize(expected_columns, LogicalType::default());
+        list.expected_types
+            .resize(expected_columns, LogicalType::default());
         list.expected_names.resize(expected_columns, String::new());
         let first_len = list.values.first().map_or(0, Vec::len);
         check_column_count(expected_columns, first_len, columns_provided, &table_name)?;
@@ -195,7 +197,10 @@ pub fn bind_insert(scope: &mut BindScope<'_>, stmt: &mut InsertStatement) -> Res
     };
     insert.add_child(root);
     if !stmt.returning_list.is_empty() {
-        let alias = stmt.table_ref.as_ref().map_or_else(String::new, |r| r.alias.clone());
+        let alias = stmt
+            .table_ref
+            .as_ref()
+            .map_or_else(String::new, |r| r.alias.clone());
         let returning = std::mem::take(&mut stmt.returning_list);
         return bind_returning(scope, returning, &table_name, &entry, &alias, table_index, insert);
     }
@@ -204,9 +209,11 @@ pub fn bind_insert(scope: &mut BindScope<'_>, stmt: &mut InsertStatement) -> Res
 }
 
 /// "Table "t" does not have a column with name "x"" (`TableCatalogEntry::GetColumnIndex`).
-fn missing_column_error(_table: &rustdb_catalog::TableEntry, table_name: &str, name: &str) -> Error {
+fn missing_column_error(table: &rustdb_catalog::TableEntry, table_name: &str, name: &str) -> Error {
+    let names: Vec<String> = table.columns.iter().map(|column| column.name.clone()).collect();
+    let candidates = rustdb_common::string_util::candidates_error_message(&names, name, "Did you mean");
     Error::binder(format!(
-        "Table \"{table_name}\" does not have a column with name \"{name}\""
+        "Table \"{table_name}\" does not have a column with name \"{name}\"\n{candidates}"
     ))
 }
 
@@ -243,12 +250,11 @@ fn bind_row_id_column(get: &mut LogicalOperator) -> Result<Expression> {
         .clone()
         .ok_or_else(|| Error::internal("table scan without shared column ids"))?;
     let mut ids = shared.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let position = match ids.iter().position(|id| id.index == COLUMN_IDENTIFIER_ROW_ID) {
-        Some(position) => position,
-        None => {
-            ids.push(ColumnIndex::new(COLUMN_IDENTIFIER_ROW_ID));
-            ids.len() - 1
-        }
+    let position = if let Some(position) = ids.iter().position(|id| id.index == COLUMN_IDENTIFIER_ROW_ID) {
+        position
+    } else {
+        ids.push(ColumnIndex::new(COLUMN_IDENTIFIER_ROW_ID));
+        ids.len() - 1
     };
     Ok(Expression::column_ref(
         "rowid",
@@ -313,9 +319,11 @@ pub fn bind_delete(scope: &mut BindScope<'_>, stmt: &mut DeleteStatement) -> Res
         let get = base_get(&mut root).ok_or_else(|| Error::binder("Can only delete from base table"))?;
         bind_row_id_column(get)?
     };
-    let schema = match &root.kind {
-        _ => String::new(),
-    };
+    let schema = table
+        .storage
+        .as_ref()
+        .map(|storage| storage.info().schema_name())
+        .unwrap_or_default();
     let delete = LogicalOperator::new(LogicalKind::Delete(Box::new(LogicalDelete {
         table: Arc::clone(&entry),
         schema,
@@ -406,12 +414,28 @@ pub fn bind_update(scope: &mut BindScope<'_>, stmt: &mut UpdateStatement) -> Res
     let get = base_get(&mut root).ok_or_else(|| Error::binder("Can only update base table"))?;
     for constraint in &bound_constraints {
         if let BoundConstraint::Check { bound_columns, .. } = constraint {
-            bind_extra_columns(table, get, proj_index, &mut projection_expressions, &mut update_expressions, &mut columns, bound_columns)?;
+            bind_extra_columns(
+                table,
+                get,
+                proj_index,
+                &mut projection_expressions,
+                &mut update_expressions,
+                &mut columns,
+                bound_columns,
+            )?;
         }
     }
     let all_columns: Vec<usize> = table.physical_columns().map(|(p, _, _)| p).collect();
     if return_chunk {
-        bind_extra_columns(table, get, proj_index, &mut projection_expressions, &mut update_expressions, &mut columns, &all_columns)?;
+        bind_extra_columns(
+            table,
+            get,
+            proj_index,
+            &mut projection_expressions,
+            &mut update_expressions,
+            &mut columns,
+            &all_columns,
+        )?;
     }
     let mut update_is_del_and_insert = false;
     if let Some(storage) = &table.storage
@@ -427,7 +451,15 @@ pub fn bind_update(scope: &mut BindScope<'_>, stmt: &mut UpdateStatement) -> Res
         }
     }
     if update_is_del_and_insert {
-        bind_extra_columns(table, get, proj_index, &mut projection_expressions, &mut update_expressions, &mut columns, &all_columns)?;
+        bind_extra_columns(
+            table,
+            get,
+            proj_index,
+            &mut projection_expressions,
+            &mut update_expressions,
+            &mut columns,
+            &all_columns,
+        )?;
     }
     let row_id = bind_row_id_column(get)?;
     projection_expressions.push(row_id);
@@ -468,10 +500,7 @@ fn bind_update_set(
 ) -> Result<()> {
     for (name, expression) in set_info.columns.iter().zip(set_info.expressions.iter_mut()) {
         let Some((logical, column)) = table.column(name) else {
-            let candidates: Vec<String> = table
-                .physical_columns()
-                .map(|(_, _, c)| c.name.clone())
-                .collect();
+            let candidates: Vec<String> = table.physical_columns().map(|(_, _, c)| c.name.clone()).collect();
             let scores = candidates
                 .iter()
                 .map(|candidate| {
