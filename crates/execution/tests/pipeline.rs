@@ -3,7 +3,13 @@
 
 use rustdb_execution::operators::{CollectedResult, PhysicalResultCollector};
 use rustdb_execution::{Executor, PhysicalRef, create_physical_plan};
-use rustdb_planner::{BoundFunction, Expression, LogicalKind, LogicalOperator};
+use rustdb_planner::expression::{
+    AggregateType, BoundAggregateExpression, BoundCaseCheck, BoundCaseExpression,
+};
+use rustdb_planner::operator::LogicalAggregate;
+use rustdb_planner::{
+    BoundLimitNode, Expression, ExpressionKind, ExpressionType, LogicalKind, LogicalOperator,
+};
 use rustdb_types::{LogicalType, Value};
 use std::sync::{Arc, Mutex};
 
@@ -17,15 +23,11 @@ fn plus(left: Expression, right: Expression) -> Expression {
         .into_iter()
         .find(|f| f.arguments[0] == LogicalType::INTEGER)
         .unwrap();
-    Expression::Function(BoundFunction {
-        function,
-        children: vec![left, right],
-        bind_data: None,
-        is_operator: true,
-    })
+    Expression::function(function, vec![left, right], None, true)
 }
 
-fn run(plan: LogicalOperator) -> rustdb_common::Result<Vec<Vec<Value>>> {
+fn run(mut plan: LogicalOperator) -> rustdb_common::Result<Vec<Vec<Value>>> {
+    plan.resolve_operator_types()?;
     let physical = create_physical_plan(plan)?;
     let root: PhysicalRef = Arc::new(PhysicalResultCollector::new(physical));
     let state = Executor::execute(&root)?;
@@ -48,23 +50,19 @@ fn run(plan: LogicalOperator) -> rustdb_common::Result<Vec<Vec<Value>>> {
 }
 
 fn select(expressions: Vec<Expression>) -> LogicalOperator {
-    let scan = LogicalOperator::new(LogicalKind::DummyScan { table_index: 0 }, vec![], vec![]);
-    LogicalOperator::new(
-        LogicalKind::Projection { table_index: 1 },
-        vec![scan],
-        expressions,
-    )
+    let scan = LogicalOperator::new(LogicalKind::DummyScan { table_index: 0 });
+    LogicalOperator::projection(1, expressions, scan)
 }
 
 #[test]
 fn select_constants_and_arithmetic() {
     let plan = select(vec![
-        Expression::Constant(Value::integer(42)),
+        Expression::constant(Value::integer(42)),
         plus(
-            Expression::Constant(Value::integer(1)),
-            Expression::Constant(Value::integer(2)),
+            Expression::constant(Value::integer(1)),
+            Expression::constant(Value::integer(2)),
         ),
-        Expression::Constant(Value::varchar("a")),
+        Expression::constant(Value::varchar("a")),
     ]);
     let rows = run(plan).unwrap();
     assert_eq!(
@@ -76,8 +74,8 @@ fn select_constants_and_arithmetic() {
 #[test]
 fn errors_propagate_out_of_the_pipeline() {
     let plan = select(vec![plus(
-        Expression::Constant(Value::integer(i32::MAX)),
-        Expression::Constant(Value::integer(1)),
+        Expression::constant(Value::integer(i32::MAX)),
+        Expression::constant(Value::integer(1)),
     )]);
     let error = run(plan).unwrap_err();
     assert_eq!(
@@ -92,12 +90,7 @@ fn function(name: &str, ty: &LogicalType, children: Vec<Expression>) -> Expressi
         .find(|set| &*set.name == name)
         .unwrap();
     let function = set.functions.into_iter().find(|f| &f.arguments[0] == ty).unwrap();
-    Expression::Function(BoundFunction {
-        function,
-        children,
-        bind_data: None,
-        is_operator: true,
-    })
+    Expression::function(function, children, None, true)
 }
 
 /// A one-column INTEGER table.
@@ -113,85 +106,79 @@ fn ints(values: &[Option<i32>]) -> LogicalOperator {
             .unwrap();
     }
     let chunk = DataChunk::new(vec![vector], values.len());
-    LogicalOperator::new(
-        LogicalKind::ColumnDataGet {
-            table_index: 0,
-            types: vec![LogicalType::INTEGER],
-            chunks: Arc::from(vec![chunk]),
-        },
-        vec![],
-        vec![],
-    )
+    LogicalOperator::new(LogicalKind::ChunkGet {
+        table_index: 0,
+        chunk_types: vec![LogicalType::INTEGER],
+        collection: Arc::from(vec![chunk]),
+    })
 }
 
 fn column() -> Expression {
-    Expression::Reference {
-        index: 0,
-        ty: LogicalType::INTEGER,
-    }
+    Expression::reference("x", LogicalType::INTEGER, 0)
 }
 
 fn int(value: i32) -> Expression {
-    Expression::Constant(Value::integer(value))
+    Expression::constant(Value::integer(value))
 }
 
-fn cmp(op: rustdb_planner::ComparisonOp, left: Expression, right: Expression) -> Expression {
-    Expression::Comparison {
-        op,
-        left: Box::new(left),
-        right: Box::new(right),
-    }
+fn cmp(op: ExpressionType, left: Expression, right: Expression) -> Expression {
+    Expression::comparison(op, left, right)
+}
+
+const GREATER_THAN: ExpressionType = ExpressionType::CompareGreaterthan;
+const LESS_THAN: ExpressionType = ExpressionType::CompareLessthan;
+
+fn filter(child: LogicalOperator, predicates: Vec<Expression>) -> LogicalOperator {
+    LogicalOperator::new(LogicalKind::Filter {
+        projection_map: vec![],
+    })
+    .with_expressions(predicates)
+    .with_children(vec![child])
 }
 
 #[test]
 fn filters_drop_null_and_false_rows() {
-    use rustdb_planner::ComparisonOp::GreaterThan;
-    let filter = LogicalOperator::new(
-        LogicalKind::Filter,
-        vec![ints(&[Some(1), None, Some(5), Some(3)])],
-        vec![cmp(GreaterThan, column(), int(2))],
+    let plan = filter(
+        ints(&[Some(1), None, Some(5), Some(3)]),
+        vec![cmp(GREATER_THAN, column(), int(2))],
     );
-    let rows = run(filter).unwrap();
+    let rows = run(plan).unwrap();
     assert_eq!(rows, vec![vec![Value::integer(5)], vec![Value::integer(3)]]);
 }
 
 #[test]
 fn and_filters_only_evaluate_surviving_rows() {
-    use rustdb_planner::ComparisonOp::{GreaterThan, LessThan};
     // x * 1000 overflows for x = 2^30, but that row fails the first conjunct.
     let big = 1 << 30;
-    let filter = LogicalOperator::new(
-        LogicalKind::Filter,
-        vec![ints(&[Some(1), Some(big), Some(7)])],
+    let plan = filter(
+        ints(&[Some(1), Some(big), Some(7)]),
         vec![
-            cmp(LessThan, column(), int(100)),
+            cmp(LESS_THAN, column(), int(100)),
             cmp(
-                GreaterThan,
+                GREATER_THAN,
                 function("*", &LogicalType::INTEGER, vec![column(), int(1000)]),
                 int(5000),
             ),
         ],
     );
-    assert_eq!(run(filter).unwrap(), vec![vec![Value::integer(7)]]);
+    assert_eq!(run(plan).unwrap(), vec![vec![Value::integer(7)]]);
 }
 
 #[test]
 fn case_evaluates_branches_only_on_their_rows() {
-    use rustdb_planner::ComparisonOp::LessThan;
     let big = 1 << 30;
-    let case = Expression::Case {
-        checks: vec![(
-            cmp(LessThan, column(), int(100)),
-            function("*", &LogicalType::INTEGER, vec![column(), int(1000)]),
-        )],
-        otherwise: Box::new(int(-1)),
-        ty: LogicalType::INTEGER,
-    };
-    let projection = LogicalOperator::new(
-        LogicalKind::Projection { table_index: 1 },
-        vec![ints(&[Some(2), Some(big), None])],
-        vec![case],
+    let case = Expression::new(
+        ExpressionType::CaseExpr,
+        LogicalType::INTEGER,
+        ExpressionKind::Case(Box::new(BoundCaseExpression {
+            case_checks: vec![BoundCaseCheck {
+                when_expr: cmp(LESS_THAN, column(), int(100)),
+                then_expr: function("*", &LogicalType::INTEGER, vec![column(), int(1000)]),
+            }],
+            else_expr: int(-1),
+        })),
     );
+    let projection = LogicalOperator::projection(1, vec![case], ints(&[Some(2), Some(big), None]));
     assert_eq!(
         run(projection).unwrap(),
         vec![
@@ -234,57 +221,55 @@ fn sum(filter: Option<Expression>) -> Expression {
         LogicalType::BIGINT,
         rustdb_function::aggregate::Unary::<TestSum>::default(),
     );
-    Expression::Aggregate(rustdb_planner::BoundAggregate {
-        function,
-        children: vec![column()],
-        bind_data: None,
-        distinct: false,
-        filter: filter.map(Box::new),
-    })
+    Expression::new(
+        ExpressionType::BoundAggregate,
+        LogicalType::BIGINT,
+        ExpressionKind::Aggregate(Box::new(BoundAggregateExpression {
+            function,
+            children: vec![column()],
+            bind_info: None,
+            aggr_type: AggregateType::NonDistinct,
+            filter,
+            order_bys: None,
+        })),
+    )
+}
+
+fn aggregate(child: LogicalOperator, aggregates: Vec<Expression>) -> LogicalOperator {
+    LogicalOperator::new(LogicalKind::Aggregate(Box::new(LogicalAggregate {
+        group_index: 1,
+        aggregate_index: 2,
+        groupings_index: 3,
+        groups: vec![],
+        grouping_sets: vec![],
+        grouping_functions: vec![],
+    })))
+    .with_expressions(aggregates)
+    .with_children(vec![child])
 }
 
 #[test]
 fn ungrouped_aggregates_with_filters() {
-    use rustdb_planner::ComparisonOp::GreaterThan;
-    let aggregate = LogicalOperator::new(
-        LogicalKind::Aggregate {
-            group_index: 1,
-            aggregate_index: 2,
-            groupings_index: 3,
-            groups: vec![],
-        },
-        vec![ints(&[Some(1), None, Some(5), Some(3)])],
-        vec![sum(None), sum(Some(cmp(GreaterThan, column(), int(2))))],
+    let grouped = aggregate(
+        ints(&[Some(1), None, Some(5), Some(3)]),
+        vec![sum(None), sum(Some(cmp(GREATER_THAN, column(), int(2))))],
     );
     assert_eq!(
-        run(aggregate).unwrap(),
+        run(grouped).unwrap(),
         vec![vec![Value::bigint(9), Value::bigint(8)]]
     );
 
-    let empty = LogicalOperator::new(
-        LogicalKind::Aggregate {
-            group_index: 1,
-            aggregate_index: 2,
-            groupings_index: 3,
-            groups: vec![],
-        },
-        vec![ints(&[None])],
-        vec![sum(None)],
-    );
+    let empty = aggregate(ints(&[None]), vec![sum(None)]);
     assert_eq!(run(empty).unwrap(), vec![vec![Value::null(LogicalType::BIGINT)]]);
 }
 
 #[test]
 fn limit_and_offset() {
-    use rustdb_planner::BoundLimit;
-    let limit = LogicalOperator::new(
-        LogicalKind::Limit {
-            limit: BoundLimit::Constant(2),
-            offset: BoundLimit::Constant(1),
-        },
-        vec![ints(&[Some(1), Some(2), Some(3), Some(4)])],
-        vec![],
-    );
+    let limit = LogicalOperator::new(LogicalKind::Limit {
+        limit: BoundLimitNode::ConstantValue(2),
+        offset: BoundLimitNode::ConstantValue(1),
+    })
+    .with_children(vec![ints(&[Some(1), Some(2), Some(3), Some(4)])]);
     assert_eq!(
         run(limit).unwrap(),
         vec![vec![Value::integer(2)], vec![Value::integer(3)]]

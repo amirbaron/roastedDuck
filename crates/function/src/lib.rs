@@ -7,9 +7,14 @@
 pub mod aggregate;
 pub mod cast;
 mod scalar;
+mod table;
 
 pub use aggregate::{AggregateFunction, AggregateFunctionSet, AggregateOps, StatePtr, UnaryAggregate};
 pub use scalar::{
     BindInput, FunctionData, FunctionState, NullHandling, ScalarBind, ScalarFunction, ScalarFunctionSet,
     ScalarKernel, Stability,
+};
+pub use table::{
+    TableFunction, TableFunctionBind, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionScan,
+    TableFunctionSet, TableScanState,
 };

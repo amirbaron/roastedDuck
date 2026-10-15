@@ -19,9 +19,6 @@ fn transaction_error(message: &'static str) -> Error {
     Error::new(ErrorKind::Transaction, message)
 }
 
-// BEGIN/COMMIT/ROLLBACK are reached through transaction statements once the binder
-// lands; until then only the tests below call them.
-#[allow(dead_code)]
 impl TransactionContext {
     pub fn new(manager: Arc<TransactionManager>) -> Self {
         Self {
@@ -32,25 +29,42 @@ impl TransactionContext {
         }
     }
 
+    #[cfg(test)]
     pub fn is_auto_commit(&self) -> bool {
         self.auto_commit
     }
 
-    /// The transaction a statement should run in, starting one if needed.
+    /// The error of statements run in an aborted transaction (DuckDB's
+    /// `ErrorManager::InvalidatedTransaction`).
+    pub fn aborted_error() -> Error {
+        transaction_error("Current transaction is aborted (please ROLLBACK)")
+    }
+
+    /// Whether a failed statement aborted the explicit transaction.
+    pub fn is_invalidated(&self) -> bool {
+        self.invalidated
+    }
+
+    /// The transaction a statement runs in, starting one if needed. Statements that
+    /// require a valid transaction check [`TransactionContext::is_invalidated`] once bound.
+    pub fn current(&mut self) -> Arc<Transaction> {
+        Arc::clone(self.current.get_or_insert_with(|| Arc::new(self.manager.begin())))
+    }
+
+    /// The transaction a statement should run in, starting one if needed; fails if the
+    /// explicit transaction was aborted.
+    #[cfg(test)]
     pub fn active(&mut self) -> Result<Arc<Transaction>> {
         if self.invalidated {
-            return Err(transaction_error(
-                "Current transaction is aborted (please ROLLBACK)",
-            ));
+            return Err(Self::aborted_error());
         }
-        Ok(Arc::clone(
-            self.current.get_or_insert_with(|| Arc::new(self.manager.begin())),
-        ))
+        Ok(self.current())
     }
 
     /// Finishes a statement: auto-commit transactions commit on success and roll back on
-    /// failure; an explicit transaction is invalidated by a failure.
-    pub fn end_statement(&mut self, success: bool) -> Result<()> {
+    /// failure; in an explicit transaction, a failure whose error `invalidates` the
+    /// transaction aborts it.
+    pub fn end_statement(&mut self, success: bool, invalidates: bool) -> Result<()> {
         if self.auto_commit {
             return match self.current.take() {
                 Some(transaction) if success => self.manager.commit(&transaction),
@@ -61,7 +75,7 @@ impl TransactionContext {
                 None => Ok(()),
             };
         }
-        if !success {
+        if !success && invalidates {
             self.invalidated = true;
         }
         Ok(())
@@ -137,7 +151,7 @@ mod tests {
             "TransactionContext Error: cannot start a transaction within a transaction"
         );
         context.active().unwrap();
-        context.end_statement(false).unwrap();
+        context.end_statement(false, true).unwrap();
         assert_eq!(
             context.active().unwrap_err().to_string(),
             "TransactionContext Error: Current transaction is aborted (please ROLLBACK)"
@@ -145,6 +159,6 @@ mod tests {
         context.rollback().unwrap();
         assert!(context.is_auto_commit());
         context.active().unwrap();
-        context.end_statement(true).unwrap();
+        context.end_statement(true, false).unwrap();
     }
 }

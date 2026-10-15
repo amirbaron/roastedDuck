@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use rustdb_common::{Error, Result};
-use rustdb_function::ScalarFunctionSet;
+use rustdb_function::{AggregateFunctionSet, ScalarFunctionSet, TableFunctionSet};
 
 use crate::{CatalogEntry, CatalogSet, CatalogType, EntryKind, SchemaEntry, Transaction};
 
@@ -43,13 +43,36 @@ impl Catalog {
 
     /// Registers a built-in scalar function set in `main`.
     pub fn register_scalar_functions(&self, set: ScalarFunctionSet) -> Result<()> {
+        let name = set.name.to_string();
+        self.register_builtin(name, EntryKind::ScalarFunction(set))
+    }
+
+    /// Registers a built-in aggregate function set in `main`.
+    pub fn register_aggregate_functions(&self, set: AggregateFunctionSet) -> Result<()> {
+        let name = set.name.to_string();
+        self.register_builtin(name, EntryKind::AggregateFunction(set))
+    }
+
+    /// Registers a built-in table function set in `main`.
+    pub fn register_table_functions(&self, set: TableFunctionSet) -> Result<()> {
+        let name = set.name.to_string();
+        self.register_builtin(name, EntryKind::TableFunction(set))
+    }
+
+    /// Adds an internal entry to the set of `main` its kind belongs to.
+    fn register_builtin(&self, name: String, kind: EntryKind) -> Result<()> {
         let schema = self
             .schema(&Transaction::system(), DEFAULT_SCHEMA)
             .ok_or_else(missing_main)?;
         let schema = schema.as_schema().ok_or_else(missing_main)?;
-        let mut entry = CatalogEntry::new(set.name.to_string(), EntryKind::ScalarFunction(set));
+        let mut entry = CatalogEntry::new(name, kind);
         entry.internal = true;
-        schema.functions.create_committed(entry)
+        let set = match entry.catalog_type() {
+            CatalogType::TableFunction => &schema.table_functions,
+            CatalogType::Table | CatalogType::View => &schema.tables,
+            _ => &schema.functions,
+        };
+        set.create_committed(entry)
     }
 
     /// Looks up an entry of type `ty` in `schema`.

@@ -8,6 +8,7 @@ pub mod collections;
 mod error;
 mod index;
 mod query_context;
+pub mod string_util;
 
 pub use collections::{CaseInsensitiveMap, CaseInsensitiveSet, OrderedMap};
 pub use error::{Error, ErrorKind, Result};

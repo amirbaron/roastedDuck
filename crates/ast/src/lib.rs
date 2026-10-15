@@ -31,7 +31,8 @@ mod tableref;
 pub mod visit;
 
 pub use display::{
-    expression_type_to_operator, expression_type_to_string, lambda_parameters, value_to_sql_string,
+    expression_type_to_operator, expression_type_to_string, lambda_parameters, logical_type_to_string,
+    value_to_sql_string,
 };
 pub use expression::{BoundExpression, StarExpression};
 pub use generated::constraint::*;

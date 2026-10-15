@@ -14,7 +14,7 @@ mod plan_generator;
 
 pub use context::ExecutionContext;
 pub use executor::Executor;
-pub use expression_executor::ExpressionExecutor;
+pub use expression_executor::{ExpressionExecutor, ScalarEvaluator};
 pub use operator::{
     Operator, OperatorResult, PhysicalOperator, PhysicalRef, Sink, SinkFinalize, SinkResult, Source,
     SourceResult,

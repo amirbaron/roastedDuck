@@ -68,6 +68,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bindcheck"
+version = "1.5.6"
+dependencies = [
+ "corpus",
+ "rustdb",
+ "rustdb-ast",
+ "rustdb-common",
+ "rustdb-planner",
+ "rustdb-serde",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -412,10 +426,13 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "rustdb"
 version = "1.5.6"
 dependencies = [
+ "rustdb-ast",
  "rustdb-catalog",
  "rustdb-common",
  "rustdb-execution",
+ "rustdb-function",
  "rustdb-functions",
+ "rustdb-parser",
  "rustdb-planner",
  "rustdb-types",
 ]
@@ -460,6 +477,7 @@ dependencies = [
 name = "rustdb-catalog"
 version = "1.5.6"
 dependencies = [
+ "rustdb-ast",
  "rustdb-common",
  "rustdb-function",
  "rustdb-types",
@@ -524,8 +542,13 @@ dependencies = [
 name = "rustdb-planner"
 version = "1.5.6"
 dependencies = [
+ "regex",
+ "rustdb-ast",
+ "rustdb-catalog",
  "rustdb-common",
  "rustdb-function",
+ "rustdb-parser",
+ "rustdb-serde",
  "rustdb-types",
 ]
 

@@ -2,7 +2,7 @@
 //!
 //! The public API mirrors DuckDB's C++ `DuckDB` / `Connection` / `MaterializedQueryResult`.
 //!
-//! ```no_run
+//! ```
 //! let db = rustdb::Database::open_in_memory().unwrap();
 //! let mut con = db.connect().unwrap();
 //! let result = con.query("SELECT 42").unwrap();
@@ -12,6 +12,7 @@
 mod config;
 mod database;
 mod result;
+mod settings;
 mod transaction;
 
 pub use config::{AccessMode, Config};

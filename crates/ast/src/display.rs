@@ -7,7 +7,7 @@
 use std::borrow::Cow;
 use std::fmt::{self, Write as _};
 
-use rustdb_types::{LogicalTypeId, Value};
+use rustdb_types::{LogicalType, LogicalTypeId, TypeInfo, TypeParameterValue, UnboundTypeInfo, Value};
 
 use crate::keyword::{
     KeywordCategory, sql_identifier, write_optionally_quoted, write_optionally_quoted_with,
@@ -239,7 +239,7 @@ impl fmt::Display for ParsedExpression {
                 "{}{} AS {})",
                 if cast.try_cast { "TRY_CAST(" } else { "CAST(" },
                 cast.child,
-                cast.cast_type
+                logical_type_to_string(&cast.cast_type)
             ),
             ParsedExpressionKind::Collate(collate) => {
                 write!(
@@ -593,6 +593,68 @@ fn window_to_string(window: &WindowExpression) -> String {
         WindowExcludeMode::Ties => result.push_str(" EXCLUDE TIES"),
     }
     result.push(')');
+    result
+}
+
+/// DuckDB's `LogicalType::ToString` for types in parse trees: unbound types print as
+/// the type expression they were parsed from.
+pub fn logical_type_to_string(ty: &LogicalType) -> String {
+    match ty.info() {
+        Some(TypeInfo::Unbound(info)) if ty.id() == LogicalTypeId::Unbound => unbound_type_to_string(info),
+        _ => ty.to_string(),
+    }
+}
+
+/// [`type_expression_to_string`] for the unbound type form of a type expression.
+fn unbound_type_to_string(info: &UnboundTypeInfo) -> String {
+    let mut result = String::new();
+    if !info.catalog.is_empty() {
+        let _ = write!(result, "{}.", write_optionally_quoted(&info.catalog));
+    }
+    if !info.schema.is_empty() {
+        let _ = write!(result, "{}.", write_optionally_quoted(&info.schema));
+    }
+    let param = |value: &TypeParameterValue| match value {
+        TypeParameterValue::Type(ty) => unbound_type_to_string(ty),
+        TypeParameterValue::Constant(value) => value_to_sql_string(value),
+    };
+    let params = &info.parameters;
+    let named = |kind: &str| {
+        let fields: Vec<String> = params
+            .iter()
+            .map(|p| format!("{} {}", write_optionally_quoted(&p.name), param(&p.value)))
+            .collect();
+        format!("{kind}({})", fields.join(", "))
+    };
+    if result.is_empty() {
+        match (info.name.to_ascii_uppercase().as_str(), params.as_slice()) {
+            ("LIST", [child]) => return format!("{}[]", param(&child.value)),
+            ("ARRAY", [child, size]) => return format!("{}[{}]", param(&child.value), param(&size.value)),
+            ("STRUCT", []) => return "STRUCT".to_owned(),
+            ("STRUCT", _) => return named("STRUCT"),
+            ("UNION", []) => return "UNION".to_owned(),
+            ("UNION", _) => return named("UNION"),
+            ("MAP", [key, value]) => return format!("MAP({}, {})", param(&key.value), param(&value.value)),
+            ("VARCHAR", [.., last]) if last.name.eq_ignore_ascii_case("collation") => {
+                if let TypeParameterValue::Constant(value) = &last.value {
+                    let collation = value.to_varchar().unwrap_or_default();
+                    return format!("VARCHAR COLLATE {}", sql_identifier(&collation));
+                }
+            }
+            ("INTERVAL", [_, ..]) => return "INTERVAL".to_owned(),
+            _ => {}
+        }
+    }
+    result.push_str(&write_optionally_quoted_with(
+        &info.name,
+        '"',
+        true,
+        KeywordCategory::ColName,
+    ));
+    if !params.is_empty() {
+        let rendered: Vec<String> = params.iter().map(|p| param(&p.value)).collect();
+        let _ = write!(result, "({})", rendered.join(", "));
+    }
     result
 }
 
