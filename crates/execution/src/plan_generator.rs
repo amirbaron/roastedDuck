@@ -15,7 +15,7 @@ use crate::expression_executor::ExpressionExecutor;
 use crate::operator::PhysicalRef;
 use crate::operators::{
     PhysicalColumnDataScan, PhysicalDummyScan, PhysicalFilter, PhysicalProjection, PhysicalStreamingLimit,
-    PhysicalUngroupedAggregate,
+    PhysicalTableScan, PhysicalUngroupedAggregate,
 };
 
 /// Converts a logical plan whose column references are resolved into a physical plan.
@@ -55,6 +55,10 @@ pub fn create_physical_plan(op: LogicalOperator) -> Result<PhysicalRef> {
         LogicalKind::DummyScan { .. } => Arc::new(PhysicalDummyScan::new(types)),
         LogicalKind::EmptyResult { .. } => Arc::new(PhysicalColumnDataScan::new(types, Arc::from([]))),
         LogicalKind::ChunkGet { collection, .. } => Arc::new(PhysicalColumnDataScan::new(types, collection)),
+        LogicalKind::Get(get) if get.function.scan.is_some() && get.projection_ids.is_empty() => {
+            let column_ids = get.column_ids.iter().map(|column| column.index).collect();
+            Arc::new(PhysicalTableScan::new(types, get.function, get.bind_data, column_ids))
+        }
         LogicalKind::Projection { .. } => Arc::new(PhysicalProjection::new(types, expressions, next_child("projection")?)),
         LogicalKind::Filter { projection_map } => {
             if !projection_map.is_empty() {

@@ -341,6 +341,8 @@ pub fn bind_select_node(
     let original_expressions = std::mem::take(&mut result.bind_state.original_expressions);
 
     let types = result.types.clone();
+    let mut from_table = from_table;
+    crate::operator::sync_column_ids(&mut from_table.plan);
     let plan = create_plan(scope, result, from_table)?;
     let mut statement_result = BoundStatement::new(plan, names, types);
     statement_result.extra_info.original_expressions = original_expressions;

@@ -11,6 +11,7 @@ use rustdb_function::TableFunction;
 use rustdb_types::LogicalType;
 
 mod bind_joinref;
+mod bind_table_function;
 mod plan_joinref;
 
 pub use plan_joinref::extract_join_conditions_from;
@@ -37,7 +38,12 @@ pub fn bind_table_ref(scope: &mut BindScope<'_>, table_ref: &mut TableRef) -> Re
         TableRefKind::Subquery(subquery) => bind_subquery_ref(scope, subquery, &table_ref.alias),
         TableRefKind::BaseTable(base) => bind_base_table(scope, base, &table_ref.alias, table_ref.query_location),
         TableRefKind::Join(join) => bind_joinref::bind_join(scope, join, table_ref.query_location),
-        TableRefKind::TableFunction(_) => Err(Error::not_implemented("table functions")),
+        TableRefKind::TableFunction(function) => bind_table_function::bind_table_function(
+            scope,
+            function,
+            &table_ref.alias,
+            table_ref.query_location,
+        ),
         TableRefKind::Pivot(_) => Err(Error::not_implemented("PIVOT/UNPIVOT")),
         TableRefKind::Show(_) => Err(Error::not_implemented("SHOW/DESCRIBE/SUMMARIZE")),
     }?;
@@ -313,9 +319,10 @@ fn bind_base_table(
             } else {
                 BindingAlias::new(alias)
             };
+            let shared_column_ids = crate::operator::SharedColumnIds::default();
             scope.bind_context.add_binding(Binding::new(
                 BindingKind::Table {
-                    bound_column_ids: Vec::new(),
+                    bound_column_ids: Arc::clone(&shared_column_ids),
                     entry: Some(Arc::clone(&found.entry)),
                     virtual_columns: vec![(crate::operator::COLUMN_IDENTIFIER_ROW_ID, "rowid".to_owned(), LogicalType::BIGINT)],
                 },
@@ -338,6 +345,7 @@ fn bind_base_table(
                 input_table_names: Vec::new(),
                 projected_input: Vec::new(),
                 ordinality_index: None,
+                shared_column_ids: Some(shared_column_ids),
             };
             Ok(BoundStatement::new(
                 LogicalOperator::new(LogicalKind::Get(Box::new(get))),

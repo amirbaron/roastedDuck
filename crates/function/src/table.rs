@@ -38,7 +38,9 @@ pub type TableFunctionBind =
     Arc<dyn Fn(&TableFunctionBindInput<'_>) -> Result<TableFunctionBindOutput> + Send + Sync>;
 
 /// Produces the function's rows: called repeatedly with the bind data and the projected
-/// column ids; returns `false` once exhausted (a single-threaded `table_function_t`).
+/// column ids, it fills the chunk (all of the function's columns, at most
+/// `STANDARD_VECTOR_SIZE` rows) and returns whether more rows may follow (a
+/// single-threaded `table_function_t`).
 pub type TableFunctionScan = Arc<
     dyn Fn(Option<&dyn FunctionData>, &[u64], &mut TableScanState, &mut DataChunk) -> Result<bool> + Send + Sync,
 >;
@@ -65,6 +67,9 @@ pub struct TableFunction {
     pub projection_pushdown: bool,
     /// Whether the scan can apply filters itself.
     pub filter_pushdown: bool,
+    /// Whether this is a table-in/table-out function (DuckDB's `in_out_function`):
+    /// constant arguments form its input row, and every output column is scanned.
+    pub in_out: bool,
 }
 
 impl TableFunction {
@@ -78,7 +83,21 @@ impl TableFunction {
             scan: None,
             projection_pushdown: false,
             filter_pushdown: false,
+            in_out: false,
         }
+    }
+
+    /// Sets the scan callback.
+    #[must_use]
+    pub fn with_scan(
+        mut self,
+        scan: impl Fn(Option<&dyn FunctionData>, &[u64], &mut TableScanState, &mut DataChunk) -> Result<bool>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        self.scan = Some(Arc::new(scan));
+        self
     }
 
     /// Sets the bind callback.

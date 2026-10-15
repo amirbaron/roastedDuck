@@ -6,7 +6,7 @@
 
 mod display;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use rustdb_ast::{
     CteMaterialize, ExplainFormat, ExplainType, ExpressionType, JoinType, SampleOptions, SetScope,
@@ -119,9 +119,32 @@ pub struct LogicalGet {
     pub projected_input: Vec<u64>,
     /// The column holding `WITH ORDINALITY` numbers.
     pub ordinality_index: Option<u64>,
+    /// The columns bound so far through the scan's table binding, which shares them
+    /// (DuckDB's `TableBinding` refers to the scan's `column_ids`).
+    pub shared_column_ids: Option<SharedColumnIds>,
+}
+
+/// The column ids of a scan, shared between its table binding and the scan.
+pub type SharedColumnIds = Arc<Mutex<Vec<ColumnIndex>>>;
+
+/// Copies the columns bound through table bindings into the scans of `op`'s tree.
+pub fn sync_column_ids(op: &mut LogicalOperator) {
+    if let LogicalKind::Get(get) = &mut op.kind {
+        get.sync_column_ids();
+    }
+    for child in &mut op.children {
+        sync_column_ids(child);
+    }
 }
 
 impl LogicalGet {
+    /// Takes over the columns bound through the table binding so far.
+    pub fn sync_column_ids(&mut self) {
+        if let Some(shared) = &self.shared_column_ids {
+            self.column_ids = shared.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        }
+    }
+
     /// The type of a scanned column.
     pub fn column_type(&self, column: &ColumnIndex) -> LogicalType {
         if column.is_row_id_column() {
@@ -641,11 +664,13 @@ impl LogicalOperator {
     /// Computes `types` from the children's types and the expressions (DuckDB's
     /// `ResolveTypes`).
     fn resolve_types(&mut self) -> Result<()> {
-        if let LogicalKind::Get(get) = &mut self.kind
-            && get.column_ids.is_empty()
-        {
-            // No projection: scan any column to know how many rows there are.
-            get.column_ids.push(ColumnIndex::new(COLUMN_IDENTIFIER_ROW_ID));
+        if let LogicalKind::Get(get) = &mut self.kind {
+            get.sync_column_ids();
+            get.shared_column_ids = None;
+            if get.column_ids.is_empty() {
+                // No projection: scan any column to know how many rows there are.
+                get.column_ids.push(ColumnIndex::new(COLUMN_IDENTIFIER_ROW_ID));
+            }
         }
         let expression_types = || self.expressions.iter().map(|e| e.return_type.clone()).collect::<Vec<_>>();
         self.types = match &self.kind {

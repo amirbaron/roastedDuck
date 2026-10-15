@@ -251,6 +251,12 @@ fn environment_gap(expected: &Result<Table, String>, actual: &str) -> Option<Str
             format!("missing function {name}")
         });
     }
+    if let Some(rest) = actual_line.strip_prefix("Binder Error: Function \"")
+        && actual_line.contains("is a table function but it was used as a scalar function")
+        && expected_line != Some(actual_line)
+    {
+        return Some(format!("missing scalar function {}", rest.split('"').next().unwrap_or(rest)));
+    }
     if let Some(rest) = actual_line.split("Unimplemented type for cast (").nth(1)
         && expected_line != Some(actual_line)
     {

@@ -12,7 +12,7 @@ use rustdb_types::LogicalType;
 
 use super::BoundStatement;
 use crate::expression::Expression;
-use crate::operator::ColumnIndex;
+use crate::operator::{ColumnIndex, SharedColumnIds};
 use crate::ColumnBinding;
 
 /// The name of the dummy binding holding macro parameters (DuckDB's `DummyBinding::DUMMY_NAME`).
@@ -94,7 +94,7 @@ pub enum BindingKind {
     Base,
     /// A base table or table function: tracks which of its columns are used.
     Table {
-        bound_column_ids: Vec<ColumnIndex>,
+        bound_column_ids: SharedColumnIds,
         entry: Option<Arc<CatalogEntry>>,
         /// `rowid` and similar columns: `(column id, name, type)`.
         virtual_columns: Vec<(u64, String, LogicalType)>,
@@ -238,6 +238,7 @@ impl Binding {
         let binding = match &mut self.kind {
             BindingKind::Table { bound_column_ids, .. } => {
                 // The column's position among the columns the scan produces.
+                let mut bound_column_ids = bound_column_ids.lock().unwrap_or_else(PoisonError::into_inner);
                 let position = bound_column_ids
                     .iter()
                     .position(|id| id.index == column_index)
