@@ -3,10 +3,13 @@
 pub mod aggregate;
 mod bitstring;
 mod dispatch;
+mod limits;
 mod operator;
 pub mod scalar;
+mod signature;
 pub mod table;
 mod temporal;
+mod values;
 
 use rustdb_common::{Error, ErrorKind, Result};
 use rustdb_function::{AggregateFunctionSet, ScalarFunctionSet, TableFunctionSet};

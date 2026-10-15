@@ -516,6 +516,7 @@ version = "1.5.6"
 dependencies = [
  "rustdb-common",
  "rustdb-function",
+ "rustdb-row",
  "rustdb-types",
 ]
 

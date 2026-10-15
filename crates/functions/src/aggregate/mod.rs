@@ -2,8 +2,11 @@
 //! `extension/core_functions/aggregate`.
 
 pub mod algebraic;
+pub(crate) mod collect;
 pub mod distributive;
 pub(crate) mod heap;
+pub mod holistic;
+pub mod nested;
 pub mod regression;
 pub(crate) mod stored;
 
@@ -11,7 +14,11 @@ use rustdb_common::Result;
 use rustdb_function::AggregateFunctionSet;
 
 use algebraic::{avg, stddev};
-use distributive::{approx_count, bitagg, bool, count, first_last_any, minmax, moments, product, sum};
+use distributive::{
+    approx_count, arg_min_max, bitagg, bool, count, first_last_any, minmax, moments, product, string_agg, sum,
+};
+use holistic::{mode, quantile};
+use nested::{binned_histogram, list};
 
 /// Every builtin aggregate function set, aliases included.
 pub fn aggregate_functions() -> Result<Vec<AggregateFunctionSet>> {
@@ -61,6 +68,37 @@ pub fn aggregate_functions() -> Result<Vec<AggregateFunctionSet>> {
         stddev::covar_samp_functions(),
         stddev::corr_functions(),
     ];
+    let arg_min = arg_min_max::arg_min_functions();
+    let arg_max = arg_min_max::arg_max_functions();
+    let string_agg = string_agg::string_agg_functions();
+    let list = list::list_functions();
+    let quantile_disc = quantile::quantile_disc_functions();
+    sets.extend([
+        arg_min.clone().renamed("argmin"),
+        arg_min.clone().renamed("min_by"),
+        arg_min,
+        arg_max.clone().renamed("argmax"),
+        arg_max.clone().renamed("max_by"),
+        arg_max,
+        arg_min_max::arg_min_null_functions(),
+        arg_min_max::arg_max_null_functions(),
+        arg_min_max::arg_min_nulls_last_functions(),
+        arg_min_max::arg_max_nulls_last_functions(),
+        string_agg.clone().renamed("listagg"),
+        string_agg.clone().renamed("group_concat"),
+        string_agg,
+        list.clone().renamed("array_agg"),
+        list,
+        binned_histogram::histogram_functions(),
+        binned_histogram::histogram_exact_functions(),
+        mode::mode_functions(),
+        mode::entropy_functions(),
+        quantile_disc.clone().renamed("quantile"),
+        quantile_disc,
+        quantile::quantile_cont_functions(),
+        quantile::median_functions(),
+        quantile::mad_functions()?,
+    ]);
     sets.extend(regression::regression_functions());
     Ok(sets)
 }

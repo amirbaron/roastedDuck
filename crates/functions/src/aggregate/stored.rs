@@ -270,3 +270,33 @@ macro_rules! with_stored_kind {
 }
 
 pub(crate) use with_stored_kind;
+
+/// A stored value ordered by its kind's SQL order, usable as a map key (DuckDB keys
+/// `std::map`s with the type's `operator<`).
+pub(crate) struct OrdKey<K: StoredKind>(pub(crate) K::Owned);
+
+impl<K: StoredKind> Clone for OrdKey<K> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<K: StoredKind> PartialEq for OrdKey<K> {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl<K: StoredKind> Eq for OrdKey<K> {}
+
+impl<K: StoredKind> PartialOrd for OrdKey<K> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<K: StoredKind> Ord for OrdKey<K> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        K::cmp(K::borrow(&self.0), K::borrow(&other.0))
+    }
+}
