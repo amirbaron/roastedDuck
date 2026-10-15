@@ -10,5 +10,6 @@ mod scalar;
 
 pub use aggregate::{AggregateFunction, AggregateFunctionSet, AggregateOps, StatePtr, UnaryAggregate};
 pub use scalar::{
-    FunctionData, FunctionState, NullHandling, ScalarFunction, ScalarFunctionSet, ScalarKernel, Stability,
+    BindInput, FunctionData, FunctionState, NullHandling, ScalarBind, ScalarFunction, ScalarFunctionSet,
+    ScalarKernel, Stability,
 };

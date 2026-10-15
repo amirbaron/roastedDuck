@@ -3,7 +3,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use rustdb_common::Result;
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
 /// How a function treats NULL inputs (DuckDB's `FunctionNullHandling`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -40,6 +40,23 @@ pub struct FunctionState {
 /// A vectorised scalar kernel: computes `result` from the argument columns of `args`.
 pub type ScalarKernel = Arc<dyn Fn(&DataChunk, &mut FunctionState, &mut Vector) -> Result<()> + Send + Sync>;
 
+/// What a bind callback learns about a call (DuckDB's `ScalarFunctionBindInput` plus the
+/// bound argument expressions, reduced to what functions actually inspect).
+#[derive(Clone, Copy, Debug)]
+pub struct BindInput<'a> {
+    /// Types of the bound argument expressions, before casting to the overload.
+    pub argument_types: &'a [LogicalType],
+    /// The value of each argument that is a foldable constant, `None` otherwise.
+    pub constants: &'a [Option<Value>],
+}
+
+/// Specialises a chosen overload for a call (DuckDB's `bind_scalar_function_t`).
+///
+/// The callback may rewrite the function's `arguments` (the binder then casts the call's
+/// arguments to them) and `return_type`, and may return data shared by every execution.
+pub type ScalarBind =
+    Arc<dyn Fn(&mut ScalarFunction, &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>> + Send + Sync>;
+
 /// One overload of a scalar function.
 #[derive(Clone)]
 pub struct ScalarFunction {
@@ -51,6 +68,8 @@ pub struct ScalarFunction {
     pub kernel: ScalarKernel,
     pub null_handling: NullHandling,
     pub stability: Stability,
+    /// Called once per call site after overload resolution.
+    pub bind: Option<ScalarBind>,
 }
 
 impl ScalarFunction {
@@ -68,7 +87,21 @@ impl ScalarFunction {
             kernel: Arc::new(kernel),
             null_handling: NullHandling::Default,
             stability: Stability::Consistent,
+            bind: None,
         }
+    }
+
+    /// Sets the bind callback.
+    #[must_use]
+    pub fn with_bind(
+        mut self,
+        bind: impl Fn(&mut ScalarFunction, &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        self.bind = Some(Arc::new(bind));
+        self
     }
 }
 
@@ -81,6 +114,7 @@ impl fmt::Debug for ScalarFunction {
             .field("return_type", &self.return_type)
             .field("null_handling", &self.null_handling)
             .field("stability", &self.stability)
+            .field("has_bind", &self.bind.is_some())
             .finish_non_exhaustive()
     }
 }
