@@ -572,6 +572,12 @@ pub const CLASSES: &[ClassConfig] = &[
     ClassConfig {
         class: "PivotRef",
         fields: &[required("source")],
+        extra_fields: &[ExtraField {
+            name: "bound",
+            ty: "Option<Box<crate::BoundPivotSpec>>",
+            doc: "`bound_*`: set on a pivot the binder rewrote; never serialized.",
+            default: "None",
+        }],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {

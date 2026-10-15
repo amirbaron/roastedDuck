@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_ast::{SqlStatement, TransactionType};
+use rustdb_ast::{SetScope, SqlStatement, TransactionType};
 use rustdb_catalog::{Catalog, Transaction, TransactionManager};
 use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
 use rustdb_execution::operators::{CollectedResult, PhysicalResultCollector};
@@ -352,6 +352,7 @@ impl Database {
             transaction_attaches: Vec::new(),
             prepared_statements: CaseInsensitiveMap::default(),
             function_client,
+            user_variables: CaseInsensitiveMap::default(),
         })
     }
 
@@ -388,6 +389,8 @@ pub struct Connection {
     /// Databases attached by the open explicit transaction; rolling it back detaches
     /// them (the `ATTACHED_DATABASE` undo entries).
     transaction_attaches: Vec<Arc<AttachedDatabase>>,
+    /// `SET VARIABLE` values (DuckDB's `ClientConfig::user_variables`).
+    user_variables: CaseInsensitiveMap<rustdb_types::Value>,
 }
 
 impl Connection {
@@ -476,6 +479,7 @@ impl Connection {
             config: self.settings.planner.clone(),
             prepared_statements: self.prepared_statements.clone(),
             function_client: Arc::clone(&self.function_client),
+            user_variables: self.user_variables.clone(),
         })
     }
 
@@ -850,6 +854,40 @@ impl Connection {
                 self.detach(info)?;
                 return Ok(nothing());
             }
+            LogicalKind::Set {
+                name,
+                scope: SetScope::Variable,
+                ..
+            } => {
+                // `SET VARIABLE`: the value comes from running the child query
+                // (DuckDB's `PhysicalSetVariable`).
+                let name = name.clone();
+                let child = plan
+                    .children
+                    .pop()
+                    .ok_or_else(|| Error::internal("SET VARIABLE without a value plan"))?;
+                let types = child.types.clone();
+                let result = self.run_plan(child, vec![String::new(); types.len()], types)?;
+                match result.row_count() {
+                    0 => {}
+                    1 => {
+                        self.user_variables.insert(&name, result.value(0, 0));
+                    }
+                    _ => {
+                        return Err(Error::invalid_input(
+                            "PhysicalSetVariable can only handle a single value",
+                        ));
+                    }
+                }
+                return Ok(nothing());
+            }
+            LogicalKind::Reset {
+                name,
+                scope: SetScope::Variable,
+            } => {
+                self.user_variables.remove(name);
+                return Ok(nothing());
+            }
             LogicalKind::Set { name, value, .. } if is_search_path_setting(name) => {
                 self.set_search_path(name, value)?;
                 return Ok(nothing());
@@ -914,6 +952,7 @@ impl Connection {
             _ => {}
         }
         ColumnBindingResolver::resolve(&mut plan)?;
+        seed_samples(&mut plan, &self.function_client);
         let instance = self.database.instance();
         let context = PlanContext {
             transaction: self.transactions.current(),
@@ -927,6 +966,19 @@ impl Connection {
             .ok_or_else(|| Error::internal("result collector state has an unexpected type"))?;
         let chunks = std::mem::take(&mut collected.lock().unwrap_or_else(PoisonError::into_inner).chunks);
         Ok(MaterializedResult::new(names, types, chunks))
+    }
+}
+
+/// Gives every unseeded sample a seed from the connection's random engine, children
+/// first, as DuckDB's physical planner does (`CreatePlan(LogicalSample &)`).
+fn seed_samples(plan: &mut LogicalOperator, client: &rustdb_function::FunctionClient) {
+    for child in &mut plan.children {
+        seed_samples(child, client);
+    }
+    if let LogicalKind::Sample { sample_options } = &mut plan.kind
+        && sample_options.seed.is_none()
+    {
+        sample_options.seed = Some(u64::from(client.random_engine().next_random_integer()));
     }
 }
 

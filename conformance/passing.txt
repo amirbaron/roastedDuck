@@ -26,6 +26,7 @@ test/fuzzer/afl/random_join.test
 test/fuzzer/afl/self_referential_alias.test
 test/fuzzer/afl/window_function_binder_error.test
 test/fuzzer/afl/window_type_mismatch.test
+test/fuzzer/duckfuzz/arg_minmax_by_decimal.test
 test/fuzzer/duckfuzz/array_const_columndatacopy.test
 test/fuzzer/duckfuzz/array_distance.test
 test/fuzzer/duckfuzz/array_list_gather_cast.test
@@ -183,6 +184,7 @@ test/fuzzer/public/pragma_named_parameters.test
 test/fuzzer/public/regex_range_filter_mismatch.test
 test/fuzzer/public/semi_anti_join_using.test
 test/fuzzer/public/semi_join_using.test
+test/fuzzer/public/unpivot_partial_values.test
 test/fuzzer/public/unsatisfiable_filter_prune.test
 test/fuzzer/public/window_subquery_error.test
 test/fuzzer/sqlsmith/bitstring_agg_executor.test
@@ -346,6 +348,7 @@ test/issues/rigger/test_531.test
 test/issues/rigger/test_533.test
 test/issues/rigger/test_534.test
 test/issues/rigger/test_535.test
+test/issues/rigger/test_536.test
 test/issues/rigger/test_537.test
 test/issues/rigger/test_538.test
 test/issues/rigger/test_540.test
@@ -523,7 +526,9 @@ test/sql/aggregate/group/group_by_limits.test
 test/sql/aggregate/group/test_group_by.test
 test/sql/aggregate/group/test_group_by_alias.test
 test/sql/aggregate/group/test_group_by_error.test
+test/sql/aggregate/group/test_group_by_large_string.test
 test/sql/aggregate/group/test_group_by_multi_column.test
+test/sql/aggregate/group/test_group_by_nested.test
 test/sql/aggregate/group/test_group_by_null_length.test
 test/sql/aggregate/group/test_group_by_parallel.test_slow
 test/sql/aggregate/group/test_group_null.test
@@ -539,6 +544,7 @@ test/sql/aggregate/having/having_alias.test
 test/sql/aggregate/having/having_without_groupby.test
 test/sql/aggregate/having/test_having.test
 test/sql/aggregate/having/test_scalar_having.test
+test/sql/aggregate/qualify/test_qualify.test
 test/sql/aggregate/qualify/test_qualify_macro.test
 test/sql/aggregate/qualify/test_qualify_view_no_view_dependencies.test
 test/sql/alter/add_col/test_add_col.test
@@ -570,6 +576,7 @@ test/sql/alter/alter_col/test_not_null_in_tran.test
 test/sql/alter/alter_col/test_not_null_multi_tran.test
 test/sql/alter/alter_table_set_partitioned_by.test
 test/sql/alter/alter_table_set_sorted_by.test
+test/sql/alter/alter_table_set_table_options.test
 test/sql/alter/alter_type/alter_type_struct.test
 test/sql/alter/alter_type/test_alter_type_check.test
 test/sql/alter/alter_type/test_alter_type_expression.test
@@ -636,6 +643,7 @@ test/sql/attach/attach_encryption_block_header.test
 test/sql/attach/attach_encryption_downgrade_prevention.test
 test/sql/attach/attach_encryption_fallback_readonly.test
 test/sql/attach/attach_enums.test
+test/sql/attach/attach_expr.test
 test/sql/attach/attach_force_checkpoint_deadlock.test_slow
 test/sql/attach/attach_hidden.test
 test/sql/attach/attach_huggingface_index.test
@@ -788,6 +796,7 @@ test/sql/catalog/view/test_view_schema_change.test
 test/sql/catalog/view/test_view_sql.test
 test/sql/catalog/view/view_if_not_exists.test
 test/sql/collate/collate_non_varchar.test
+test/sql/collate/test_collate_pivot.test
 test/sql/conjunction/or_between.test
 test/sql/conjunction/or_comparison.test
 test/sql/constraints/check/check_struct.test
@@ -952,6 +961,7 @@ test/sql/extensions/version_is_valid_sqlite.test
 test/sql/filter/filter_cache.test
 test/sql/filter/test_alias_filter.test
 test/sql/filter/test_constant_comparisons.test
+test/sql/filter/test_filter_clause.test_slow
 test/sql/filter/test_illegal_filters.test
 test/sql/filter/test_obsolete_filters.test
 test/sql/filter/test_transitive_filters.test
@@ -1018,12 +1028,14 @@ test/sql/function/list/flatten.test
 test/sql/function/list/generate_series_timestamp.test
 test/sql/function/list/lambda_constant_null.test
 test/sql/function/list/lambdas/arrow/lambda_scope_deprecated.test
+test/sql/function/list/lambdas/arrow/lambdas_and_group_by_deprecated.test
 test/sql/function/list/lambdas/arrow/list_comprehension_deprecated.test
 test/sql/function/list/lambdas/arrow/reduce_deprecated.test
 test/sql/function/list/lambdas/arrow/reduce_initial_deprecated.test
 test/sql/function/list/lambdas/arrow/storage_deprecated.test
 test/sql/function/list/lambdas/arrow/test_lambda_arrow_storage_deprecated.test
 test/sql/function/list/lambdas/lambda_scope.test
+test/sql/function/list/lambdas/lambdas_and_group_by.test
 test/sql/function/list/lambdas/list_comprehension.test
 test/sql/function/list/lambdas/reduce.test
 test/sql/function/list/lambdas/reduce_initial.test_slow
@@ -1278,6 +1290,7 @@ test/sql/index/art/nodes/test_art_node_4.test
 test/sql/index/art/nodes/test_art_node_48.test
 test/sql/index/art/nodes/test_art_prefix_edge_cases.test_slow
 test/sql/index/art/nodes/test_art_prefix_transform_deprecated.test_slow
+test/sql/index/art/nodes/test_art_prefix_transform_deprecated_create.test
 test/sql/index/art/nodes/test_art_prefixes.test_slow
 test/sql/index/art/nodes/test_art_prefixes_restart.test
 test/sql/index/art/nodes/test_art_sparse_merge.test
@@ -1317,6 +1330,7 @@ test/sql/index/art/vacuum/test_art_vacuum_strings.test_slow
 test/sql/index/create_index_options.test
 test/sql/insert/big_insert_rollback.test_slow
 test/sql/insert/insert_from_many_grouping_sets.test
+test/sql/insert/insert_from_many_groups.test_slow
 test/sql/insert/insert_from_many_groups_complex.test_slow
 test/sql/insert/insert_non_order_preserving.test_slow
 test/sql/insert/insert_rollback.test
@@ -1391,6 +1405,7 @@ test/sql/join/test_join_always_true_conditions.test
 test/sql/join/test_join_on_aggregates.test
 test/sql/join/test_nested_inequality.test
 test/sql/join/test_nested_keys.test_slow
+test/sql/join/test_nested_payloads.test_slow
 test/sql/join/test_string_payload.test
 test/sql/json/issues/large_quoted_string_constant.test
 test/sql/json/test_json_bool.test
@@ -1465,6 +1480,7 @@ test/sql/order/test_order_nested.test_slow
 test/sql/order/test_order_pragma.test
 test/sql/order/test_order_range_mapping.test
 test/sql/order/test_order_same_value.test_slow
+test/sql/order/test_order_variable_size_payload.test_slow
 test/sql/order/top_n_limit_zero.test
 test/sql/overflow/bigint_overflow.test
 test/sql/overflow/double_float_overflow.test
@@ -1472,6 +1488,7 @@ test/sql/overflow/integer_overflow.test
 test/sql/overflow/table_overflow.test
 test/sql/overflow/test_numeric_overflow.test
 test/sql/overflow/test_overflow.test
+test/sql/parallelism/interquery/concurrent_append_transactional.test_slow
 test/sql/parallelism/interquery/concurrent_append_transactions.test_slow
 test/sql/parallelism/interquery/concurrent_append_transactions_indexes.test_slow
 test/sql/parallelism/interquery/concurrent_appends.test
@@ -1483,11 +1500,14 @@ test/sql/parallelism/interquery/concurrent_checkpoint_deletes_mix_fk.test_slow
 test/sql/parallelism/interquery/concurrent_checkpoint_deletes_mix_index.test_slow
 test/sql/parallelism/interquery/concurrent_checkpoint_index_single_inserter.test_slow
 test/sql/parallelism/interquery/concurrent_checkpoint_insert.test
+test/sql/parallelism/interquery/concurrent_checkpoint_multiple_updater.test_slow
+test/sql/parallelism/interquery/concurrent_checkpoint_single_updater.test_slow
 test/sql/parallelism/interquery/concurrent_checkpoint_wal_fk.test_slow
 test/sql/parallelism/interquery/concurrent_checkpoint_wal_index.test_slow
 test/sql/parallelism/interquery/concurrent_checkpoint_wal_optimistic.test_slow
 test/sql/parallelism/interquery/concurrent_checkpoint_wal_optimistic_index.test_slow
 test/sql/parallelism/interquery/concurrent_checkpoints_long_reads.test_slow
+test/sql/parallelism/interquery/concurrent_delete.test_slow
 test/sql/parallelism/interquery/concurrent_drop_schema_macro_table.test_slow
 test/sql/parallelism/interquery/concurrent_force_checkpoint.test
 test/sql/parallelism/interquery/concurrent_force_checkpoint_unbound_index.test_slow
@@ -1497,6 +1517,7 @@ test/sql/parallelism/interquery/concurrent_index_scans_while_appending.test
 test/sql/parallelism/interquery/concurrent_insert_pk.test_slow
 test/sql/parallelism/interquery/concurrent_mix_operations.test_slow
 test/sql/parallelism/interquery/concurrent_pk_mix_updates_inserts.test_slow
+test/sql/parallelism/interquery/concurrent_pk_transactional_appends.test_slow
 test/sql/parallelism/interquery/concurrent_read_during_vacuum_rebuild.test_slow
 test/sql/parallelism/interquery/concurrent_reads_append_list.test_slow
 test/sql/parallelism/interquery/concurrent_reads_during_index_creation.test_slow
@@ -1509,6 +1530,7 @@ test/sql/parallelism/interquery/concurrent_settings.test_slow
 test/sql/parallelism/interquery/concurrent_update_drop.test_slow
 test/sql/parallelism/interquery/concurrent_update_multiple_updaters.test_slow
 test/sql/parallelism/interquery/concurrent_update_pk.test_slow
+test/sql/parallelism/interquery/concurrent_update_single_updater.test_slow
 test/sql/parallelism/interquery/concurrent_writes_during_index_creation.test_slow
 test/sql/parallelism/interquery/parallel_dependencies_catalog_operations.test_slow
 test/sql/parallelism/interquery/parallel_dependencies_prepared_statement.test_slow
@@ -1555,7 +1577,39 @@ test/sql/pg_catalog/pg_sequence.test
 test/sql/pg_catalog/pg_sequences.test
 test/sql/pg_catalog/pg_tablespace.test
 test/sql/pg_catalog/pg_views.test
+test/sql/pivot/optional_pivots.test
 test/sql/pivot/pivot_15141.test
+test/sql/pivot/pivot_6390.test
+test/sql/pivot/pivot_bigquery.test
+test/sql/pivot/pivot_case_insensitive.test
+test/sql/pivot/pivot_databricks.test
+test/sql/pivot/pivot_empty.test
+test/sql/pivot/pivot_enum.test
+test/sql/pivot/pivot_errors.test
+test/sql/pivot/pivot_example.test_slow
+test/sql/pivot/pivot_expressions.test
+test/sql/pivot/pivot_generated.test
+test/sql/pivot/pivot_in_boolean.test
+test/sql/pivot/pivot_in_subquery.test
+test/sql/pivot/pivot_operator_expression.test
+test/sql/pivot/pivot_prepare.test
+test/sql/pivot/pivot_star.test
+test/sql/pivot/pivot_storage.test
+test/sql/pivot/pivot_struct_aggregate.test
+test/sql/pivot/pivot_subquery.test
+test/sql/pivot/test_multi_pivot.test
+test/sql/pivot/test_pivot.test
+test/sql/pivot/test_pivot_duplicate_aggregates.test
+test/sql/pivot/test_unpivot.test
+test/sql/pivot/test_unpivot_stmt.test
+test/sql/pivot/top_level_pivot_syntax.test
+test/sql/pivot/unpivot_expression.test
+test/sql/pivot/unpivot_internal_names.test
+test/sql/pivot/unpivot_no_columns.test
+test/sql/pivot/unpivot_non_aligned_columns.test
+test/sql/pivot/unpivot_types.test
+test/sql/pivot/unpivot_unnamed_subquery.test
+test/sql/pivot/unpivot_view.test
 test/sql/pragma/pragma_database_size_readonly.test
 test/sql/pragma/profiling/test_no_reset_setting.test
 test/sql/pragma/test_force_compression.test
@@ -1829,6 +1883,8 @@ test/sql/storage/compression/string/lists_vector_type_assertion.test_slow
 test/sql/storage/compression/string/null_large.test_slow
 test/sql/storage/compression/string/simple.test
 test/sql/storage/compression/zstd/fetch_row.test
+test/sql/storage/compression/zstd/nulls.test
+test/sql/storage/compression/zstd/page_flushing_test1.test_slow
 test/sql/storage/compression/zstd/reclaim_space_column.test_slow
 test/sql/storage/compression/zstd/test_skipping.test
 test/sql/storage/compression/zstd/zstd.test
@@ -1839,6 +1895,7 @@ test/sql/storage/concurrent_attach_if_not_exists.test_slow
 test/sql/storage/concurrent_attach_or_replace.test_slow
 test/sql/storage/concurrent_checkpoint_unchanged_table_delete_blocks.test_slow
 test/sql/storage/concurrent_table_insertion.test_slow
+test/sql/storage/concurrent_wal/concurrent_checkpoint_abort_autocheckpoint.test_slow
 test/sql/storage/constraints/foreignkey/foreign_key_persistent.test
 test/sql/storage/corrupt/corrupt_catalog_entry.test
 test/sql/storage/corrupt/corrupt_encoding_overflow.test
@@ -2065,6 +2122,7 @@ test/sql/subquery/lateral/lateral_left_join.test
 test/sql/subquery/lateral/lateral_qualify.test
 test/sql/subquery/scalar/array_subquery.test
 test/sql/subquery/scalar/coalesce_subquery.test
+test/sql/subquery/scalar/correlated_pivot.test
 test/sql/subquery/scalar/in_multiple_columns.test
 test/sql/subquery/scalar/nested_subquery_window.test
 test/sql/subquery/scalar/order_by_correlated.test
@@ -2134,6 +2192,7 @@ test/sql/transactions/rollback_drop_table_with_pk.test
 test/sql/transactions/statement-preprocessor/invalidation_policy_is_respected_by_preprocessor.test
 test/sql/transactions/statement-preprocessor/multistatement_is_transactional.test
 test/sql/transactions/statement-preprocessor/multistatement_is_transactional_chained_PRAGMA.test
+test/sql/transactions/statement-preprocessor/pivot_is_handled_correctly.test
 test/sql/transactions/test_basic_transactions.test
 test/sql/transactions/test_from_update_conflict.test
 test/sql/transactions/test_index_abort.test
@@ -2200,6 +2259,7 @@ test/sql/types/blob/test_blob.test
 test/sql/types/blob/test_blob_cast.test
 test/sql/types/blob/test_blob_function.test
 test/sql/types/blob/test_blob_invalid_utf8.test
+test/sql/types/blob/test_blob_operator.test
 test/sql/types/blob/test_blob_string.test
 test/sql/types/blob/test_blob_try_cast.test
 test/sql/types/date/date_implicit_cast.test
@@ -2330,6 +2390,7 @@ test/sql/types/nested/array/array_string_heap_gather.test_slow
 test/sql/types/nested/array/array_try_cast.test
 test/sql/types/nested/array/array_tupleformat.test
 test/sql/types/nested/array/array_unnest.test
+test/sql/types/nested/list/array_agg.test
 test/sql/types/nested/list/internal_issue_2457.test
 test/sql/types/nested/list/list.test_slow
 test/sql/types/nested/list/list_aggregates.test
@@ -2503,6 +2564,7 @@ test/sql/update/update_delete_wal.test
 test/sql/update/update_error_suggestions.test
 test/sql/update/update_join_nulls.test
 test/sql/update/update_null_integers.test
+test/sql/upsert/concurrent_insert_or_replace.test
 test/sql/upsert/insert_or_replace.test_slow
 test/sql/upsert/insert_or_replace/issue_20952_non_pk_index_column.test
 test/sql/upsert/insert_or_replace/pk_and_non_unique_index.test
@@ -2596,6 +2658,7 @@ test/sql/window/test_window_fusion.test
 test/sql/window/test_window_groups.test_slow
 test/sql/window/test_window_interval.test
 test/sql/window/test_window_repartition.test_slow
+test/sql/window/test_window_rows.test
 test/sql/window/test_window_string_agg.test
 test/sql/window/test_window_tpcds.test
 test/sql/window/test_window_types.test

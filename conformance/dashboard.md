@@ -1,6 +1,6 @@
 # rustdb conformance dashboard
 
-Rust passing: **2613 / 4870 files** (2560 pass on both engines). "Passing" means the Rust run passed, or both engines skipped the file for the same reason.
+Rust passing: **2676 / 4870 files** (2623 pass on both engines). "Passing" means the Rust run passed, or both engines skipped the file for the same reason.
 
 | group | files | C++ pass | C++ skip | C++ fail | Rust passing | both pass | Rust fail | Rust crash/timeout | Rust skip (C++ pass) | Rust % |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -9,16 +9,16 @@ Rust passing: **2613 / 4870 files** (2560 pass on both engines). "Passing" means
 | test/extension | 24 | 17 | 7 | 0 | 8 | 2 | 16 | 0 | 0 | 33.3% |
 | test/fuzzer | 4 | 4 | 0 | 0 | 1 | 1 | 2 | 0 | 1 | 25.0% |
 | test/fuzzer/afl | 15 | 15 | 0 | 0 | 14 | 14 | 1 | 0 | 0 | 93.3% |
-| test/fuzzer/duckfuzz | 77 | 77 | 0 | 0 | 36 | 36 | 22 | 0 | 19 | 46.8% |
+| test/fuzzer/duckfuzz | 77 | 77 | 0 | 0 | 37 | 37 | 21 | 0 | 19 | 48.1% |
 | test/fuzzer/pedro | 133 | 133 | 0 | 0 | 105 | 105 | 27 | 0 | 1 | 78.9% |
-| test/fuzzer/public | 22 | 22 | 0 | 0 | 17 | 17 | 5 | 0 | 0 | 77.3% |
+| test/fuzzer/public | 22 | 22 | 0 | 0 | 18 | 18 | 4 | 0 | 0 | 81.8% |
 | test/fuzzer/sqlsmith | 31 | 31 | 0 | 0 | 22 | 22 | 6 | 0 | 3 | 71.0% |
 | test/geoparquet | 8 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 8 | 0.0% |
 | test/issues/fuzz | 12 | 12 | 0 | 0 | 11 | 11 | 1 | 0 | 0 | 91.7% |
 | test/issues/general | 97 | 96 | 1 | 0 | 71 | 71 | 12 | 0 | 13 | 73.2% |
 | test/issues/internal | 3 | 3 | 0 | 0 | 1 | 1 | 1 | 0 | 1 | 33.3% |
 | test/issues/monetdb | 12 | 12 | 0 | 0 | 11 | 11 | 1 | 0 | 0 | 91.7% |
-| test/issues/rigger | 96 | 96 | 0 | 0 | 88 | 88 | 8 | 0 | 0 | 91.7% |
+| test/issues/rigger | 96 | 96 | 0 | 0 | 89 | 89 | 7 | 0 | 0 | 92.7% |
 | test/ldbc | 1 | 1 | 0 | 0 | 1 | 1 | 0 | 0 | 0 | 100.0% |
 | test/logging | 1 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0.0% |
 | test/optimizer | 61 | 61 | 0 | 0 | 12 | 12 | 37 | 0 | 12 | 19.7% |
@@ -37,14 +37,14 @@ Rust passing: **2613 / 4870 files** (2560 pass on both engines). "Passing" means
 | test/parquet/variant | 28 | 28 | 0 | 0 | 0 | 0 | 0 | 0 | 28 | 0.0% |
 | test/planner | 1 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0.0% |
 | test/sakila | 1 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0.0% |
-| test/sql/aggregate | 153 | 151 | 2 | 0 | 119 | 118 | 24 | 2 | 7 | 77.8% |
-| test/sql/alter | 107 | 107 | 0 | 0 | 77 | 77 | 30 | 0 | 0 | 72.0% |
+| test/sql/aggregate | 153 | 151 | 2 | 0 | 122 | 121 | 21 | 2 | 7 | 79.7% |
+| test/sql/alter | 107 | 107 | 0 | 0 | 78 | 78 | 29 | 0 | 0 | 72.9% |
 | test/sql/append | 1 | 1 | 0 | 0 | 1 | 1 | 0 | 0 | 0 | 100.0% |
-| test/sql/attach | 86 | 81 | 5 | 0 | 48 | 43 | 36 | 0 | 2 | 55.8% |
+| test/sql/attach | 86 | 81 | 5 | 0 | 49 | 44 | 35 | 0 | 2 | 57.0% |
 | test/sql/binder | 38 | 38 | 0 | 0 | 27 | 27 | 9 | 0 | 2 | 71.1% |
 | test/sql/cast | 30 | 30 | 0 | 0 | 22 | 22 | 8 | 0 | 0 | 73.3% |
 | test/sql/catalog | 119 | 119 | 0 | 0 | 71 | 71 | 48 | 0 | 0 | 59.7% |
-| test/sql/collate | 24 | 24 | 0 | 0 | 1 | 1 | 19 | 0 | 4 | 4.2% |
+| test/sql/collate | 24 | 24 | 0 | 0 | 2 | 2 | 18 | 0 | 4 | 8.3% |
 | test/sql/conjunction | 2 | 2 | 0 | 0 | 2 | 2 | 0 | 0 | 0 | 100.0% |
 | test/sql/constraints | 50 | 50 | 0 | 0 | 44 | 44 | 5 | 0 | 1 | 88.0% |
 | test/sql/copy | 539 | 518 | 21 | 0 | 24 | 14 | 265 | 0 | 239 | 4.5% |
@@ -57,27 +57,27 @@ Rust passing: **2613 / 4870 files** (2560 pass on both engines). "Passing" means
 | test/sql/explain | 6 | 6 | 0 | 0 | 0 | 0 | 5 | 0 | 1 | 0.0% |
 | test/sql/export | 22 | 22 | 0 | 0 | 1 | 1 | 10 | 0 | 11 | 4.5% |
 | test/sql/extensions | 7 | 4 | 3 | 0 | 3 | 0 | 4 | 0 | 0 | 42.9% |
-| test/sql/filter | 14 | 14 | 0 | 0 | 9 | 9 | 4 | 0 | 1 | 64.3% |
-| test/sql/function | 361 | 359 | 2 | 0 | 210 | 209 | 105 | 0 | 46 | 58.2% |
+| test/sql/filter | 14 | 14 | 0 | 0 | 10 | 10 | 3 | 0 | 1 | 71.4% |
+| test/sql/function | 361 | 359 | 2 | 0 | 212 | 211 | 103 | 0 | 46 | 58.7% |
 | test/sql/generated_columns | 39 | 39 | 0 | 0 | 37 | 37 | 2 | 0 | 0 | 94.9% |
-| test/sql/index | 145 | 145 | 0 | 0 | 110 | 110 | 34 | 0 | 1 | 75.9% |
-| test/sql/insert | 17 | 17 | 0 | 0 | 15 | 15 | 1 | 1 | 0 | 88.2% |
-| test/sql/join | 115 | 115 | 0 | 0 | 62 | 62 | 44 | 5 | 4 | 53.9% |
+| test/sql/index | 145 | 145 | 0 | 0 | 111 | 111 | 33 | 0 | 1 | 76.6% |
+| test/sql/insert | 17 | 17 | 0 | 0 | 16 | 16 | 0 | 1 | 0 | 94.1% |
+| test/sql/join | 115 | 115 | 0 | 0 | 63 | 63 | 43 | 5 | 4 | 54.8% |
 | test/sql/json | 85 | 84 | 1 | 0 | 2 | 2 | 0 | 0 | 82 | 2.4% |
 | test/sql/keywords | 2 | 2 | 0 | 0 | 2 | 2 | 0 | 0 | 0 | 100.0% |
 | test/sql/limit | 11 | 11 | 0 | 0 | 8 | 8 | 2 | 0 | 1 | 72.7% |
 | test/sql/logging | 15 | 14 | 1 | 0 | 1 | 0 | 11 | 0 | 3 | 6.7% |
 | test/sql/merge | 22 | 22 | 0 | 0 | 19 | 19 | 0 | 1 | 2 | 86.4% |
 | test/sql/optimizer | 40 | 40 | 0 | 0 | 17 | 17 | 18 | 2 | 3 | 42.5% |
-| test/sql/order | 33 | 33 | 0 | 0 | 25 | 25 | 5 | 0 | 3 | 75.8% |
+| test/sql/order | 33 | 33 | 0 | 0 | 26 | 26 | 4 | 0 | 3 | 78.8% |
 | test/sql/ordinality | 3 | 3 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0.0% |
 | test/sql/outofcore | 10 | 10 | 0 | 0 | 0 | 0 | 3 | 0 | 7 | 0.0% |
 | test/sql/overflow | 7 | 7 | 0 | 0 | 6 | 6 | 1 | 0 | 0 | 85.7% |
-| test/sql/parallelism | 70 | 68 | 1 | 1 | 52 | 51 | 15 | 0 | 3 | 74.3% |
+| test/sql/parallelism | 70 | 68 | 1 | 1 | 58 | 57 | 8 | 1 | 3 | 82.9% |
 | test/sql/parser | 29 | 29 | 0 | 0 | 22 | 22 | 7 | 0 | 0 | 75.9% |
 | test/sql/peg_parser | 61 | 61 | 0 | 0 | 1 | 1 | 0 | 0 | 60 | 1.6% |
 | test/sql/pg_catalog | 18 | 18 | 0 | 0 | 8 | 8 | 10 | 0 | 0 | 44.4% |
-| test/sql/pivot | 35 | 35 | 0 | 0 | 1 | 1 | 33 | 0 | 1 | 2.9% |
+| test/sql/pivot | 35 | 35 | 0 | 0 | 33 | 33 | 1 | 0 | 1 | 94.3% |
 | test/sql/pragma | 49 | 48 | 1 | 0 | 8 | 8 | 18 | 0 | 22 | 16.3% |
 | test/sql/prepared | 36 | 36 | 0 | 0 | 31 | 31 | 5 | 0 | 0 | 86.1% |
 | test/sql/progress_bar | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0.0% |
@@ -89,23 +89,23 @@ Rust passing: **2613 / 4870 files** (2560 pass on both engines). "Passing" means
 | test/sql/setops | 24 | 24 | 0 | 0 | 22 | 22 | 2 | 0 | 0 | 91.7% |
 | test/sql/settings | 32 | 32 | 0 | 0 | 4 | 4 | 24 | 0 | 4 | 12.5% |
 | test/sql/show_select | 10 | 10 | 0 | 0 | 5 | 5 | 5 | 0 | 0 | 50.0% |
-| test/sql/storage | 601 | 582 | 19 | 0 | 368 | 353 | 168 | 2 | 59 | 61.2% |
+| test/sql/storage | 601 | 582 | 19 | 0 | 371 | 356 | 166 | 1 | 59 | 61.7% |
 | test/sql/storage_version | 1 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0.0% |
-| test/sql/subquery | 89 | 89 | 0 | 0 | 63 | 63 | 24 | 0 | 2 | 70.8% |
+| test/sql/subquery | 89 | 89 | 0 | 0 | 64 | 64 | 23 | 0 | 2 | 71.9% |
 | test/sql/table_function | 43 | 42 | 1 | 0 | 10 | 10 | 30 | 0 | 3 | 23.3% |
 | test/sql/timezone | 5 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0.0% |
 | test/sql/topn | 21 | 21 | 0 | 0 | 12 | 12 | 8 | 0 | 1 | 57.1% |
 | test/sql/tpcds | 11 | 11 | 0 | 0 | 0 | 0 | 0 | 0 | 11 | 0.0% |
 | test/sql/tpch | 24 | 24 | 0 | 0 | 1 | 1 | 0 | 0 | 23 | 4.2% |
-| test/sql/transactions | 70 | 70 | 0 | 0 | 50 | 50 | 19 | 0 | 1 | 71.4% |
-| test/sql/types | 433 | 432 | 1 | 0 | 307 | 306 | 101 | 0 | 25 | 70.9% |
+| test/sql/transactions | 70 | 70 | 0 | 0 | 51 | 51 | 18 | 0 | 1 | 72.9% |
+| test/sql/types | 433 | 432 | 1 | 0 | 309 | 308 | 96 | 3 | 25 | 71.4% |
 | test/sql/update | 35 | 35 | 0 | 0 | 27 | 27 | 8 | 0 | 0 | 77.1% |
-| test/sql/upsert | 46 | 46 | 0 | 0 | 44 | 44 | 1 | 0 | 1 | 95.7% |
+| test/sql/upsert | 46 | 46 | 0 | 0 | 45 | 45 | 0 | 0 | 1 | 97.8% |
 | test/sql/vacuum | 2 | 2 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0.0% |
 | test/sql/variables | 1 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0.0% |
 | test/sql/vector_types | 2 | 2 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0.0% |
-| test/sql/window | 78 | 78 | 0 | 0 | 58 | 58 | 15 | 1 | 4 | 74.4% |
+| test/sql/window | 78 | 78 | 0 | 0 | 59 | 59 | 14 | 1 | 4 | 75.6% |
 | test/sqlite | 4 | 4 | 0 | 0 | 3 | 3 | 0 | 1 | 0 | 75.0% |
 | test/sqlite/tags | 4 | 0 | 4 | 0 | 4 | 0 | 0 | 0 | 0 | 100.0% |
 | test/sqlserver | 2 | 2 | 0 | 0 | 1 | 1 | 1 | 0 | 0 | 50.0% |
-| **total** | 4870 | 4794 | 75 | 1 | 2613 | 2560 | 1442 | 18 | 778 | 53.7% |
+| **total** | 4870 | 4794 | 75 | 1 | 2676 | 2623 | 1376 | 21 | 778 | 54.9% |

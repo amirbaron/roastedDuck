@@ -13,6 +13,7 @@ mod operator;
 pub mod operators;
 mod pipeline;
 mod plan_generator;
+pub mod sample;
 pub mod window;
 
 pub use constraints::table_constraints;

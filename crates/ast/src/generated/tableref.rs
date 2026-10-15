@@ -400,6 +400,8 @@ pub struct PivotRef {
     pub column_name_alias: Vec<String>,
     /// `include_nulls` (property 206).
     pub include_nulls: bool,
+    /// `bound_*`: set on a pivot the binder rewrote; never serialized.
+    pub bound: Option<Box<crate::BoundPivotSpec>>,
 }
 
 impl SerializeObject for PivotRef {
@@ -437,6 +439,7 @@ impl DeserializeObject for PivotRef {
             groups,
             column_name_alias,
             include_nulls,
+            bound: None,
         })
     }
 }

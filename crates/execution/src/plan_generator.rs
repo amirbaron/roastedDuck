@@ -33,7 +33,6 @@ mod window;
 
 use crate::expression_executor::ExpressionExecutor;
 use crate::operator::{PhysicalRef, SinkData};
-use crate::operators::PhysicalUnnest;
 use crate::operators::{
     AlterEntryAction, CatalogTableCreator, CreateIndexAction, CreateSchemaAction, CreateSequenceAction,
     CreateViewAction, DdlAction, DropAction, InsertTarget, PhysicalCreateTable, PhysicalDdl, PhysicalDelete,
@@ -47,6 +46,9 @@ use crate::operators::{
 use crate::operators::{
     PhysicalColumnDataScan, PhysicalDummyScan, PhysicalFilter, PhysicalHashAggregate, PhysicalLimitPercent,
     PhysicalOrder, PhysicalProjection, PhysicalStreamingLimit, PhysicalTableScan, PhysicalUngroupedAggregate,
+};
+use crate::operators::{
+    PhysicalExpressionScan, PhysicalPivot, PhysicalReservoirSample, PhysicalStreamingSample, PhysicalUnnest,
 };
 
 /// Converts a logical plan whose column references are resolved into a physical plan.
@@ -886,6 +888,43 @@ impl PlanGenerator {
                 let child = next_child("window")?;
                 let estimate = estimated_cardinality.unwrap_or(0) as usize;
                 window::plan_window(types, expressions, estimate, child)?
+            }
+            LogicalKind::ExpressionGet {
+                expressions: rows, ..
+            } => Arc::new(PhysicalExpressionScan::new(
+                types,
+                rows,
+                next_child("expression get")?,
+            )),
+            LogicalKind::Sample { mut sample_options } => {
+                let child = next_child("sample")?;
+                if sample_options.seed.is_none() {
+                    // Planned without a client: an unseeded sample.
+                    let mut random = rustdb_function::random::RandomEngine::default();
+                    sample_options.seed = Some(u64::from(random.next_random_integer()));
+                }
+                match sample_options.method {
+                    rustdb_ast::SampleMethod::ReservoirSample => {
+                        Arc::new(PhysicalReservoirSample::new(types, *sample_options, child))
+                    }
+                    method => {
+                        if !sample_options.is_percentage {
+                            let name = if method == rustdb_ast::SampleMethod::SystemSample {
+                                "System"
+                            } else {
+                                "Bernoulli"
+                            };
+                            return Err(Error::parser(format!(
+                                "Sample method {name} cannot be used with a discrete sample count, either switch \
+                                 to reservoir sampling or use a sample_size"
+                            )));
+                        }
+                        Arc::new(PhysicalStreamingSample::new(types, &sample_options, child)?)
+                    }
+                }
+            }
+            LogicalKind::Pivot { bound_pivot, .. } => {
+                Arc::new(PhysicalPivot::new(types, next_child("pivot")?, *bound_pivot)?)
             }
             LogicalKind::Unnest { .. } => {
                 Arc::new(PhysicalUnnest::new(types, expressions, next_child("unnest")?)?)

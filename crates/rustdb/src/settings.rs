@@ -254,6 +254,18 @@ impl Settings {
                     .and_then(|count| usize::try_from(count).ok())
                     .ok_or_else(|| Error::internal("catalog_error_max_schemas is not a UBIGINT"))?;
             }
+            "pivot_filter_threshold" | "pivot_limit" => {
+                let count = value.default_cast_as(&LogicalType::UBIGINT)?;
+                let count = count
+                    .as_i128()
+                    .and_then(|count| u64::try_from(count).ok())
+                    .ok_or_else(|| Error::internal("pivot setting is not a UBIGINT"))?;
+                if option == "pivot_limit" {
+                    self.planner.pivot_limit = count;
+                } else {
+                    self.planner.pivot_filter_threshold = count;
+                }
+            }
             "order_by_non_integer_literal" => {
                 let enabled = value.default_cast_as(&LogicalType::BOOLEAN)?;
                 self.planner.order_by_non_integer_literal = enabled.as_bool().unwrap_or(false);
@@ -279,6 +291,8 @@ impl Settings {
             "order_by_non_integer_literal" => {
                 self.planner.order_by_non_integer_literal = defaults.order_by_non_integer_literal;
             }
+            "pivot_limit" => self.planner.pivot_limit = defaults.pivot_limit,
+            "pivot_filter_threshold" => self.planner.pivot_filter_threshold = defaults.pivot_filter_threshold,
             other => {
                 self.other.remove(other);
             }

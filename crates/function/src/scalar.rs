@@ -153,7 +153,14 @@ pub struct ScalarFunction {
     /// Set by the bind of a lambda function: the type the lambda body is cast to (DuckDB
     /// wraps the lambda expression in a cast, e.g. to BOOLEAN for `list_filter`).
     pub lambda_cast: Option<LogicalType>,
+    /// Replaces the bound call by a constant computed from its bind data (DuckDB's
+    /// `bind_expression` callback, for functions such as `getvariable` that resolve
+    /// completely while binding).
+    pub bind_expression: Option<BindExpression>,
 }
+
+/// See [`ScalarFunction::bind_expression`].
+pub type BindExpression = Arc<dyn Fn(Option<&dyn FunctionData>) -> Option<Value> + Send + Sync>;
 
 impl ScalarFunction {
     pub fn new(
@@ -173,7 +180,18 @@ impl ScalarFunction {
             bind: None,
             bind_lambda: None,
             lambda_cast: None,
+            bind_expression: None,
         }
+    }
+
+    /// Sets the bind-expression callback (see [`ScalarFunction::bind_expression`]).
+    #[must_use]
+    pub fn with_bind_expression(
+        mut self,
+        bind_expression: impl Fn(Option<&dyn FunctionData>) -> Option<Value> + Send + Sync + 'static,
+    ) -> Self {
+        self.bind_expression = Some(Arc::new(bind_expression));
+        self
     }
 
     /// Sets the bind callback.
