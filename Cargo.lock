@@ -432,6 +432,7 @@ dependencies = [
  "rustdb-execution",
  "rustdb-function",
  "rustdb-functions",
+ "rustdb-parser",
  "rustdb-planner",
  "rustdb-types",
 ]

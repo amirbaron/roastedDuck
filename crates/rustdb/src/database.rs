@@ -134,18 +134,20 @@ impl Connection {
         &self.database
     }
 
-    /// Runs every statement in `sql` and returns the result of the last one.
+    /// Runs every statement in `sql` and returns the result of the last one (DuckDB's
+    /// `ClientContext::Query`).
     pub fn query(&mut self, sql: &str) -> Result<MaterializedResult> {
-        let _ = sql;
-        Err(Error::not_implemented("the SQL parser is not available yet"))
+        let statements = rustdb_parser::parse(sql).map_err(|error| error.with_query_context(sql))?;
+        self.execute_statements(statements)
     }
 
-    /// Runs already parsed statements of `query` and returns the result of the last one
-    /// (DuckDB's `ClientContext::Query` after parsing). Error positions refer to `query`.
-    pub fn execute_statements(&mut self, query: &str, statements: Vec<SqlStatement>) -> Result<MaterializedResult> {
+    /// Runs parsed statements and returns the result of the last one; errors are put in
+    /// the context of their statement's text.
+    pub fn execute_statements(&mut self, statements: Vec<SqlStatement>) -> Result<MaterializedResult> {
         let mut result = MaterializedResult::default();
         for statement in statements {
-            result = self.execute_statement(query, statement)?;
+            let query = statement.query.clone();
+            result = self.execute_statement(&query, statement)?;
         }
         Ok(result)
     }

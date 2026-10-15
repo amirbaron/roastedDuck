@@ -43,6 +43,7 @@ pub fn run_rustdb(sql: &str, json: &str) -> RustOutcome {
             location: 0,
             length: sql.len() as u64,
             query: sql.to_owned(),
+            named_param_map: Default::default(),
             kind: SqlStatementKind::Select(statements.remove(0)),
         })
     };
