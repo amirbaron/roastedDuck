@@ -929,13 +929,24 @@ fn parse_utc_offset(data: &[u8], pos: &mut usize) -> Option<(i32, i32, i32)> {
 /// `WritePadded`: the last `width` decimal digits of `value`, zero padded.
 fn write_padded(out: &mut Vec<u8>, value: u32, width: usize) {
     let modulus = 10u64.pow(width as u32);
-    let value = u64::from(value) % modulus;
-    out.extend_from_slice(format!("{value:0width$}").as_bytes());
+    let mut value = u64::from(value) % modulus;
+    let start = out.len();
+    out.resize(start + width, b'0');
+    for slot in out[start..].iter_mut().rev() {
+        *slot = b'0' + (value % 10) as u8;
+        value /= 10;
+    }
 }
 
-/// `Write2`: one or two digits.
+/// `Write2`: the decimal digits of `value` (one or two for the date parts).
 fn write2(out: &mut Vec<u8>, value: u32) {
-    out.extend_from_slice(value.to_string().as_bytes());
+    if value < 10 {
+        out.push(b'0' + value as u8);
+    } else if value < 100 {
+        out.extend_from_slice(&[b'0' + (value / 10) as u8, b'0' + (value % 10) as u8]);
+    } else {
+        out.extend_from_slice(value.to_string().as_bytes());
+    }
 }
 
 /// DuckDB's `ExtractWeekNumberRegular`.
