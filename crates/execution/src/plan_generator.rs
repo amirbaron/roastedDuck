@@ -22,8 +22,8 @@ use crate::operators::{
     DelimData, DelimShared, PhysicalDelimJoin, PhysicalDelimScan, PhysicalNestedLoopJoin, PhysicalUnion,
 };
 use crate::operators::{
-    PhysicalColumnDataScan, PhysicalDummyScan, PhysicalFilter, PhysicalHashAggregate, PhysicalOrder,
-    PhysicalProjection, PhysicalStreamingLimit, PhysicalTableScan, PhysicalUngroupedAggregate,
+    PhysicalColumnDataScan, PhysicalDummyScan, PhysicalFilter, PhysicalHashAggregate, PhysicalLimitPercent,
+    PhysicalOrder, PhysicalProjection, PhysicalStreamingLimit, PhysicalTableScan, PhysicalUngroupedAggregate,
 };
 
 /// Converts a logical plan whose column references are resolved into a physical plan.
@@ -265,17 +265,14 @@ impl PlanGenerator {
             }
             LogicalKind::Limit { limit, offset } => {
                 let child = next_child("limit")?;
-                let constant = |bound: &BoundLimitNode, unset: u64| match bound {
-                    BoundLimitNode::Unset => Ok(unset),
-                    BoundLimitNode::ConstantValue(value) => Ok(*value),
-                    _ => Err(Error::not_implemented("non-constant or percentage LIMIT/OFFSET")),
-                };
-                Arc::new(PhysicalStreamingLimit::new(
-                    types,
-                    constant(&limit, u64::MAX)?,
-                    constant(&offset, 0)?,
-                    child,
-                ))
+                if matches!(
+                    limit,
+                    BoundLimitNode::ConstantPercentage(_) | BoundLimitNode::ExpressionPercentage(_)
+                ) {
+                    Arc::new(PhysicalLimitPercent::new(types, limit, offset, child))
+                } else {
+                    Arc::new(PhysicalStreamingLimit::new(types, limit, offset, child))
+                }
             }
             LogicalKind::Order {
                 orders,

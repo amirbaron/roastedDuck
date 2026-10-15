@@ -30,7 +30,9 @@ pub use dummy_scan::PhysicalDummyScan;
 pub use filter::{FilterState, PhysicalFilter};
 pub use hash_aggregate::{HashAggregateGlobal, HashAggregateLocal, PhysicalHashAggregate};
 pub use insert::{InsertGlobal, InsertTarget, PhysicalInsert, TableCreator};
-pub use limit::PhysicalStreamingLimit;
+pub use limit::{
+    LimitBounds, LimitPercentGlobal, LimitPercentSource, PhysicalLimitPercent, PhysicalStreamingLimit,
+};
 pub use modify::ModifyResult;
 pub use nested_loop_join::{
     NestedLoopJoinGlobal, NestedLoopJoinProbe, NestedLoopJoinSinkLocal, PhysicalNestedLoopJoin,
