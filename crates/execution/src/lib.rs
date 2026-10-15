@@ -12,6 +12,7 @@ mod operator;
 pub mod operators;
 mod pipeline;
 mod plan_generator;
+pub mod window;
 
 pub use context::{ClientEnv, ExecutionContext};
 pub use executor::Executor;
