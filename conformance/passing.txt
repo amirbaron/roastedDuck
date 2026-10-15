@@ -13,6 +13,7 @@ test/fuzzer/afl/decimal_string_roundtrip.test
 test/fuzzer/afl/generate_series_null.test
 test/fuzzer/afl/issue_7551.test
 test/fuzzer/afl/limit_out_of_range.test
+test/fuzzer/afl/window_type_mismatch.test
 test/fuzzer/duckfuzz/regex_syntax_2889.test
 test/fuzzer/duckfuzz/unpivot_multiple_in.test
 test/fuzzer/fuzz_not_operator.test
@@ -23,9 +24,11 @@ test/fuzzer/pedro/concurrent_set_threads.test
 test/fuzzer/pedro/floating_point_conversion_overflow.test
 test/fuzzer/pedro/force_external_blob.test
 test/fuzzer/pedro/is_distinct_from_validation.test
+test/fuzzer/pedro/lag_window_function.test
 test/fuzzer/pedro/nested_limit_subquery.test
 test/fuzzer/pedro/prepared_statement_recursive_cte.test
 test/fuzzer/pedro/recursive_cte_dependent_join.test
+test/fuzzer/pedro/recursive_cte_limit_percent.test
 test/fuzzer/pedro/window_self_reference.test
 test/fuzzer/public/distinct_on_non_integer_literal.test
 test/fuzzer/public/pragma_named_parameters.test
@@ -38,6 +41,7 @@ test/issues/general/test_17310.test
 test/issues/general/test_19504.test
 test/issues/general/test_3140.test
 test/issues/general/test_4008.test
+test/issues/general/test_4063.test
 test/issues/monetdb/test_left_join_bug.test
 test/issues/rigger/double_bigint_cast_overflow.test
 test/issues/rigger/test_507.test
@@ -160,6 +164,7 @@ test/sql/sample/table_samples/test_table_sample_errors.test
 test/sql/secrets/secret_compatibility_http.test
 test/sql/select/test_positional_reference.test
 test/sql/setops/ambiguous_order_by.test
+test/sql/setops/setops_pushdown.test
 test/sql/setops/test_union_error.test
 test/sql/setops/test_union_type_cast.test
 test/sql/settings/setting_null_order.test
@@ -182,6 +187,7 @@ test/sql/storage/vacuum/vacuum_rebuild_indexes_attach_overrides_global.test_slow
 test/sql/storage/vacuum/vacuum_rebuild_indexes_threshold.test_slow
 test/sql/subquery/any_all/test_scalar_any_all.test
 test/sql/subquery/lateral/lateral_fuzzer_1463.test
+test/sql/subquery/lateral/lateral_qualify.test
 test/sql/subquery/scalar/test_correlated_side_effects.test
 test/sql/subquery/table/test_subquery_union.test
 test/sql/subquery/table/test_unnamed_subquery.test
@@ -220,6 +226,8 @@ test/sql/types/uhugeint/test_uhugeint_exponent.test
 test/sql/types/uhugeint/uhugeint_multiply.test
 test/sql/types/uhugeint/uhugeint_try_cast.test
 test/sql/types/uuid/test_uuid_cast.test
+test/sql/window/test_order_by_all.test
+test/sql/window/test_wide_orderby.test
 test/sqlite/tags/tags-1-2-3.test_slow
 test/sqlite/tags/tags-1-2.test
 test/sqlite/tags/tags-1.test
