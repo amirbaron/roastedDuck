@@ -1,6 +1,7 @@
 //! Query nodes: SELECT, set operations, recursive CTEs and the CTEs attached to any node
 //! (DuckDB's `planner/binder/query_node`). Since DuckDB 1.4 binding a node also plans it.
 
+mod bind_recursive_cte_node;
 mod bind_select_node;
 mod bind_setop_node;
 mod modifiers;
@@ -9,7 +10,7 @@ mod plan_subquery;
 use std::sync::{Arc, Mutex};
 
 use rustdb_ast::{CommonTableExpressionInfo, CteMaterialize, QueryNode, QueryNodeKind, SampleOptions};
-use rustdb_common::{Error, Result};
+use rustdb_common::Result;
 use rustdb_types::LogicalType;
 
 use super::binding::{Binding, BindingAlias, BindingKind, CteBindState};
@@ -187,6 +188,6 @@ fn bind_node_kind(scope: &mut BindScope<'_>, node: &mut QueryNode) -> Result<Bou
     match &node.kind {
         QueryNodeKind::Select(_) => bind_select_node::bind_select(scope, node),
         QueryNodeKind::SetOperation(_) => bind_setop_node::bind_set_operation(scope, node),
-        QueryNodeKind::RecursiveCte(_) => Err(Error::not_implemented("recursive CTEs")),
+        QueryNodeKind::RecursiveCte(_) => bind_recursive_cte_node::bind_recursive_cte(scope, node),
     }
 }

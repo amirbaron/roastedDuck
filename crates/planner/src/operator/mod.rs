@@ -348,6 +348,8 @@ pub enum LogicalKind {
         union_all: bool,
         key_targets: Vec<Expression>,
         correlated_columns: CorrelatedColumns,
+        /// Whether the recursive part reads `recurring.<name>`.
+        ref_recurring: bool,
     },
     MaterializedCte {
         ctename: String,

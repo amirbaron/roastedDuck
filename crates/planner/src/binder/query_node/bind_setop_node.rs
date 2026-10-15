@@ -152,7 +152,7 @@ fn build_union_by_name_info(
 }
 
 /// Casts an operand's output to the result types (DuckDB's `CastLogicalOperatorToTypes`).
-fn cast_operator_to_types(
+pub(crate) fn cast_operator_to_types(
     binder: &Binder,
     source: &[LogicalType],
     target: &[LogicalType],
