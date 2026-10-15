@@ -2,6 +2,7 @@
 
 pub mod aggregate;
 mod bitstring;
+mod digest;
 mod dispatch;
 mod limits;
 mod operator;

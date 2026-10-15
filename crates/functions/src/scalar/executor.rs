@@ -124,6 +124,16 @@ impl<T: NativeType> ScalarOutput for T {
     }
 }
 
+/// DuckDB's `string_t::MAX_STRING_SIZE`.
+const MAX_STRING_SIZE: u64 = u32::MAX as u64;
+
+/// The error for a string result longer than DuckDB supports (`StringHeap::EmptyString`).
+pub(crate) fn string_too_large(size: u64) -> rustdb_common::Error {
+    rustdb_common::Error::out_of_range(format!(
+        "Cannot create a string of size: '{size}', the maximum supported string size is: '{MAX_STRING_SIZE}'"
+    ))
+}
+
 /// A string result: the kernel appends the row's bytes to the given buffer.
 #[derive(Debug)]
 pub(crate) struct StrOut;
@@ -145,6 +155,9 @@ impl ScalarOutput for StrOut {
             for (row, out) in data.iter_mut().enumerate() {
                 buffer.clear();
                 if value(row, &mut buffer)? {
+                    if buffer.len() as u64 > MAX_STRING_SIZE {
+                        return Err(string_too_large(buffer.len() as u64));
+                    }
                     *out = heap.add(&buffer);
                 } else {
                     nulls.push(row);

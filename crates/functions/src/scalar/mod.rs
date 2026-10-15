@@ -68,6 +68,7 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
         random::uuid_extract_timestamp_functions(),
     ];
     with_aliases(&mut sets, random::uuid_functions("uuid"), &["gen_random_uuid"]);
+    string_functions(&mut sets);
     with_aliases(&mut sets, arithmetic::add_functions(), &["add"]);
     with_aliases(&mut sets, arithmetic::subtract_functions(), &["subtract"]);
     with_aliases(&mut sets, arithmetic::multiply_functions(), &["multiply"]);
@@ -97,4 +98,47 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
         with_aliases(&mut sets, set, aliases);
     }
     sets
+}
+
+/// The string functions (DuckDB's `function/scalar/string` and
+/// `core_functions/scalar/string`).
+fn string_functions(sets: &mut Vec<ScalarFunctionSet>) {
+    use string::{caseconvert, character, concat, contains, hash, length, normalize, replace, reverse};
+    with_aliases(sets, caseconvert::upper_functions(), &["ucase"]);
+    with_aliases(sets, caseconvert::lower_functions(), &["lcase"]);
+    sets.push(concat::concat_ws_functions());
+    sets.push(concat::concat_functions());
+    with_aliases(
+        sets,
+        concat::list_concat_functions(),
+        &["list_cat", "array_concat", "array_cat"],
+    );
+    sets.push(concat::concat_operator_functions());
+    sets.push(contains::prefix_functions());
+    with_aliases(sets, contains::suffix_functions(), &["ends_with"]);
+    let struct_contains = structs::struct_contains_functions().functions;
+    sets.push(contains::contains_functions(struct_contains));
+    with_aliases(sets, contains::starts_with_functions(), &["starts_with"]);
+    sets.push(normalize::strip_accents_functions());
+    sets.push(normalize::nfc_normalize_functions());
+    with_aliases(
+        sets,
+        length::length_functions("length"),
+        &["len", "char_length", "character_length"],
+    );
+    sets.push(length::strlen_functions());
+    sets.push(length::bit_length_functions());
+    sets.push(length::octet_length_functions());
+    sets.push(length::length_grapheme_functions());
+    sets.push(length::array_length_functions());
+    sets.push(hash::md5_functions());
+    sets.push(hash::md5_number_functions());
+    sets.push(hash::sha1_functions());
+    sets.push(hash::sha256_functions());
+    sets.push(character::ascii_functions());
+    sets.push(character::chr_functions());
+    with_aliases(sets, character::unicode_functions(), &["ord"]);
+    sets.push(reverse::reverse_functions());
+    sets.push(replace::repeat_functions());
+    sets.push(replace::replace_functions());
 }

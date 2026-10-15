@@ -515,6 +515,8 @@ dependencies = [
 name = "rustdb-functions"
 version = "1.5.6"
 dependencies = [
+ "md-5",
+ "memchr",
  "rustdb-buffer",
  "rustdb-common",
  "rustdb-function",
