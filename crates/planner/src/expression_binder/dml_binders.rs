@@ -154,6 +154,111 @@ impl ExpressionBinder for UpdateBinder<'_> {
     }
 }
 
+/// The `USING` expression of `ALTER TABLE ... ALTER COLUMN ... TYPE` (DuckDB's
+/// `AlterBinder`): column references become references to the scanned columns, in the
+/// order they are first referenced.
+#[derive(Debug)]
+pub struct AlterBinder<'a> {
+    base: BinderBase<'a>,
+    table: String,
+    columns: &'a [CheckColumn],
+    /// The physical columns read, one per reference.
+    pub bound_columns: Vec<usize>,
+}
+
+impl<'a> AlterBinder<'a> {
+    pub fn new(
+        binder: &'a mut Binder,
+        table: impl Into<String>,
+        columns: &'a [CheckColumn],
+        target: Option<LogicalType>,
+    ) -> Self {
+        let base = BinderBase::new(binder, None);
+        let base = match target {
+            Some(target) => base.with_target_type(target),
+            None => base,
+        };
+        Self {
+            base,
+            table: table.into(),
+            columns,
+            bound_columns: Vec::new(),
+        }
+    }
+
+    /// `AlterBinder::BindColumnReference`.
+    fn bind_alter_column(&mut self, expr: &mut ParsedExpression, depth: u64) -> Result<BindResult> {
+        let ParsedExpressionKind::ColumnRef(column) = &expr.kind else {
+            return Err(Error::internal("expected a column reference"));
+        };
+        let names = column.column_names.clone();
+        if names.len() > 1 {
+            let start = usize::from(names[0] == self.table);
+            let mut result = ParsedExpression::column_ref(vec![names[names.len() - 1].clone()]);
+            for field in &names[start..names.len() - 1] {
+                result = super::create_struct_extract(result, field);
+            }
+            return self.bind_expression(&mut result, depth, false);
+        }
+        let name = &names[0];
+        let Some(column) = self
+            .columns
+            .iter()
+            .find(|column| column.name.eq_ignore_ascii_case(name))
+        else {
+            return Err(Error::binder(format!(
+                "Table does not contain column {name} referenced in alter statement!"
+            )));
+        };
+        let Some(physical) = column.physical else {
+            return Err(Error::binder(
+                "Using generated columns in alter statement not supported",
+            ));
+        };
+        self.bound_columns.push(physical);
+        Ok(Expression::reference(
+            column.name.clone(),
+            column.logical_type.clone(),
+            (self.bound_columns.len() - 1) as u64,
+        )
+        .into())
+    }
+}
+
+expression_binder_base!(AlterBinder);
+
+impl ExpressionBinder for AlterBinder<'_> {
+    expression_binder_accessors!();
+
+    fn bind_expression(
+        &mut self,
+        expr: &mut ParsedExpression,
+        depth: u64,
+        root_expression: bool,
+    ) -> Result<BindResult> {
+        match &expr.kind {
+            ParsedExpressionKind::Window(_) => Ok(BindResult::Unbound(unsupported(
+                expr,
+                "window functions are not allowed in alter statement",
+            ))),
+            ParsedExpressionKind::Subquery(_) => Ok(BindResult::Unbound(unsupported(
+                expr,
+                "cannot use subquery in alter statement",
+            ))),
+            ParsedExpressionKind::Default => Ok(BindResult::Unbound(unsupported(
+                expr,
+                "default values are not supported in alter statement",
+            ))),
+            ParsedExpressionKind::ColumnRef(_) => self.bind_alter_column(expr, depth),
+            _ => bind_expression_base(self, expr, depth, root_expression),
+        }
+    }
+
+    fn unsupported_aggregate_message(&self) -> String {
+        "aggregate functions are not allowed in alter statement".to_owned()
+    }
+}
+
 /// The key expressions of `CREATE INDEX` (DuckDB's `IndexBinder`), bound against the
 /// indexed table.
 #[derive(Debug)]

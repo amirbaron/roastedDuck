@@ -453,6 +453,8 @@ pub enum LogicalKind {
     /// `DROP ...` (DuckDB's `LogicalSimple` of type `LOGICAL_DROP`).
     Drop(Box<rustdb_ast::DropInfo>),
     CreateIndex(Box<LogicalCreateIndex>),
+    /// `ALTER TABLE` / `ALTER VIEW` (DuckDB's `LogicalSimple` of type `LOGICAL_ALTER`).
+    Alter(Box<LogicalAlter>),
     Insert(Box<LogicalInsert>),
     Delete(Box<LogicalDelete>),
     Update(Box<LogicalUpdate>),
@@ -497,6 +499,66 @@ pub enum BoundConstraint {
         is_primary_key: bool,
     },
     ForeignKey(BoundForeignKeyInfo),
+}
+
+/// A bound `ALTER TABLE` / `ALTER VIEW`: the checks of DuckDB's
+/// `DuckTableEntry::AlterEntry` are done while binding; what is left changes storage
+/// and the catalog.
+#[derive(Clone, Debug)]
+pub struct LogicalAlter {
+    pub catalog: String,
+    pub schema: String,
+    /// The altered entry; `None` with `IF EXISTS` when it does not exist.
+    pub entry: Option<Arc<rustdb_catalog::CatalogEntry>>,
+    pub action: AlterAction,
+    /// Whether the alter is allowed while other entries (indexes) depend on the table
+    /// (`DependencyManager::AlterObject`: ADD COLUMN and SET DEFAULT).
+    pub dependents_allowed: bool,
+}
+
+/// What an `ALTER` does. `definition` is the table's new definition (without storage).
+#[derive(Clone, Debug)]
+pub enum AlterAction {
+    /// Nothing (`IF EXISTS` / `IF NOT EXISTS` found nothing to do).
+    Nothing,
+    /// `RENAME TO`.
+    Rename(String),
+    /// A new definition over the same data (rename column, defaults, drop NOT NULL).
+    Definition(rustdb_catalog::TableEntry),
+    /// `ADD COLUMN`, filled with `default`.
+    AddColumn {
+        definition: rustdb_catalog::TableEntry,
+        name: String,
+        logical_type: LogicalType,
+        default: Expression,
+    },
+    /// `DROP COLUMN` of a physical column.
+    RemoveColumn {
+        definition: rustdb_catalog::TableEntry,
+        column: usize,
+    },
+    /// `ALTER COLUMN ... TYPE`: physical column `column` becomes `target`, computed by
+    /// `expression` over the physical columns `bound_columns`.
+    AlterType {
+        definition: rustdb_catalog::TableEntry,
+        column: usize,
+        target: LogicalType,
+        expression: Expression,
+        bound_columns: Vec<usize>,
+    },
+    /// `ALTER COLUMN ... SET NOT NULL` of a physical column without NOT NULL.
+    SetNotNull {
+        definition: rustdb_catalog::TableEntry,
+        column: usize,
+    },
+    /// `ADD PRIMARY KEY`: an index named `index_name` over the physical `keys`.
+    AddPrimaryKey {
+        definition: rustdb_catalog::TableEntry,
+        keys: Vec<usize>,
+        index_name: String,
+        /// The existing primary key, as `PRIMARY KEY(a, b)`, if any.
+        existing: Option<String>,
+    },
 }
 
 /// `CREATE INDEX` (DuckDB's `LogicalCreateIndex`). The table is scanned by the index
@@ -729,6 +791,7 @@ impl LogicalOperator {
             LogicalKind::Pragma { .. } => T::LogicalPragma,
             LogicalKind::CreateTable(_) => T::LogicalCreateTable,
             LogicalKind::CreateIndex(_) => T::LogicalCreateIndex,
+            LogicalKind::Alter(_) => T::LogicalAlter,
             LogicalKind::Insert(_) => T::LogicalInsert,
             LogicalKind::Delete(_) => T::LogicalDelete,
             LogicalKind::Update(_) => T::LogicalUpdate,
@@ -875,6 +938,7 @@ impl LogicalOperator {
             | LogicalKind::Pragma { .. }
             | LogicalKind::CreateTable(_)
             | LogicalKind::CreateIndex(_)
+            | LogicalKind::Alter(_)
             | LogicalKind::Create { .. }
             | LogicalKind::Drop(_) => vec![ColumnBinding::new(0, 0)],
             LogicalKind::Insert(insert) => {
@@ -1057,6 +1121,7 @@ impl LogicalOperator {
             | LogicalKind::Reset { .. }
             | LogicalKind::Transaction { .. }
             | LogicalKind::Pragma { .. }
+            | LogicalKind::Alter(_)
             | LogicalKind::Drop(_) => vec![LogicalType::BOOLEAN],
             LogicalKind::Insert(insert) if insert.return_chunk => insert.table_types(),
             LogicalKind::Delete(delete) if delete.return_chunk => table_types(&delete.table),

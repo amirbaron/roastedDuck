@@ -24,9 +24,9 @@ use crate::constraints::table_constraints;
 use crate::expression_executor::ExpressionExecutor;
 use crate::operator::PhysicalRef;
 use crate::operators::{
-    CatalogTableCreator, CreateIndexAction, CreateSchemaAction, CreateViewAction, DdlAction, DropAction,
-    InsertTarget, PhysicalCreateTable, PhysicalDdl, PhysicalDelete, PhysicalInsert, PhysicalSeqScan,
-    PhysicalUpdate,
+    AlterEntryAction, CatalogTableCreator, CreateIndexAction, CreateSchemaAction, CreateViewAction,
+    DdlAction, DropAction, InsertTarget, PhysicalCreateTable, PhysicalDdl, PhysicalDelete, PhysicalInsert,
+    PhysicalSeqScan, PhysicalUpdate,
 };
 use crate::operators::{CteData, PhysicalCte, PhysicalCteScan, PhysicalRecursiveCte};
 use crate::operators::{
@@ -187,6 +187,7 @@ impl PlanGenerator {
         let constraints = table_constraints(
             &context.transaction,
             &context.catalogs,
+            &insert.table,
             &storage,
             &insert.bound_constraints,
         )?;
@@ -215,6 +216,7 @@ impl PlanGenerator {
         let constraints = table_constraints(
             &context.transaction,
             &context.catalogs,
+            &delete.table,
             &storage,
             &delete.bound_constraints,
         )?;
@@ -264,6 +266,7 @@ impl PlanGenerator {
         let constraints = table_constraints(
             &context.transaction,
             &context.catalogs,
+            &update.table,
             &storage,
             &update.bound_constraints,
         )?;
@@ -498,6 +501,21 @@ impl PlanGenerator {
                         info: create.info,
                         table: create.table,
                         expressions: create.expressions,
+                    }),
+                )?
+            }
+            LogicalKind::Alter(alter) => {
+                let alter = *alter;
+                let catalog = self.context()?.catalog(&alter.catalog)?;
+                self.ddl(
+                    "ALTER",
+                    types,
+                    Arc::new(AlterEntryAction {
+                        catalog,
+                        schema: alter.schema,
+                        entry: alter.entry,
+                        action: alter.action,
+                        dependents_allowed: alter.dependents_allowed,
                     }),
                 )?
             }

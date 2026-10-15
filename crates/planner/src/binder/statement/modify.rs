@@ -17,7 +17,8 @@ use super::super::query_node::plan_subqueries;
 use super::super::tableref::bind_table_ref;
 use super::super::{BindScope, BoundStatement, Scope};
 use super::table::{
-    bind_constraints, bind_default_values, bind_returning, expand_default, find_table, table_of,
+    bind_constraints, bind_default_values, bind_returning, expand_default, find_table, missing_column_error,
+    table_of,
 };
 use crate::ColumnBinding;
 use crate::expression::{Expression, ExpressionKind};
@@ -206,15 +207,6 @@ pub fn bind_insert(scope: &mut BindScope<'_>, stmt: &mut InsertStatement) -> Res
     }
     scope.with_properties(|properties| properties.return_type = StatementReturnType::ChangedRows);
     Ok(count_result(insert))
-}
-
-/// "Table "t" does not have a column with name "x"" (`TableCatalogEntry::GetColumnIndex`).
-fn missing_column_error(table: &rustdb_catalog::TableEntry, table_name: &str, name: &str) -> Error {
-    let names: Vec<String> = table.columns.iter().map(|column| column.name.clone()).collect();
-    let candidates = rustdb_common::string_util::candidates_error_message(&names, name, "Did you mean");
-    Error::binder(format!(
-        "Table \"{table_name}\" does not have a column with name \"{name}\"\n{candidates}"
-    ))
 }
 
 /// Binds a query in a child binder and moves its correlated columns up.

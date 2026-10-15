@@ -1,5 +1,6 @@
 //! Physical operator implementations.
 
+mod alter;
 mod column_data_scan;
 mod create_table;
 mod cte;
@@ -22,6 +23,7 @@ mod ungrouped_aggregate;
 mod union;
 mod update;
 
+pub use alter::AlterEntryAction;
 pub use column_data_scan::PhysicalColumnDataScan;
 pub use create_table::PhysicalCreateTable;
 pub use cte::{CteData, PhysicalCte, PhysicalCteScan, PhysicalRecursiveCte, RecursiveCteState};

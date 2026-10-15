@@ -143,6 +143,55 @@ impl CatalogSet {
         name: &str,
         entry: CatalogEntry,
     ) -> Result<bool> {
+        self.alter_with_hook(transaction, name, entry, StorageHook::None)
+    }
+
+    /// Renames the visible entry called `name` to the name of `entry`, which replaces it
+    /// (DuckDB's `AlterEntry` with a rename). Returns `false` if no visible entry exists.
+    pub fn rename(
+        self: &Arc<Self>,
+        transaction: &Transaction,
+        name: &str,
+        entry: CatalogEntry,
+        hook: StorageHook,
+    ) -> Result<bool> {
+        let old = key(name);
+        let tombstone = Version::new(transaction.transaction_id, None);
+        {
+            let mut chains = self.lock();
+            let Some(chain) = chains.get_mut(&old) else {
+                return Ok(false);
+            };
+            let head = &chain[0];
+            if conflicts(transaction, head.timestamp()) {
+                return Err(Error::new(
+                    ErrorKind::Transaction,
+                    format!(
+                        "Catalog write-write conflict on alter with \"{}\"",
+                        display_name(head, &old)
+                    ),
+                ));
+            }
+            if head.entry.is_none() {
+                return Ok(false);
+            }
+            chain.insert(0, Arc::clone(&tombstone));
+        }
+        transaction.push_catalog_change(Arc::clone(self), old, tombstone, hook);
+        if !self.create(transaction, entry)? {
+            return Err(Error::internal("rename target exists"));
+        }
+        Ok(true)
+    }
+
+    /// [`CatalogSet::alter`] with the storage change of the alter, undone on rollback.
+    pub fn alter_with_hook(
+        self: &Arc<Self>,
+        transaction: &Transaction,
+        name: &str,
+        entry: CatalogEntry,
+        hook: StorageHook,
+    ) -> Result<bool> {
         let name = key(name);
         let version = Version::new(transaction.transaction_id, Some(Arc::new(entry)));
         {
@@ -165,7 +214,7 @@ impl CatalogSet {
             }
             chain.insert(0, Arc::clone(&version));
         }
-        transaction.push_catalog_change(Arc::clone(self), name, version, StorageHook::None);
+        transaction.push_catalog_change(Arc::clone(self), name, version, hook);
         Ok(true)
     }
 

@@ -197,3 +197,44 @@ fn create_and_drop_index() {
     con.query("CREATE TABLE t(i INT)").unwrap();
     con.query("CREATE INDEX idx ON t(i)").unwrap();
 }
+
+#[test]
+fn alter_table() {
+    let mut con = connect();
+    con.query("CREATE TABLE t(i INT, j INT DEFAULT 3, k VARCHAR)")
+        .unwrap();
+    con.query("INSERT INTO t VALUES (1, 2, 'a')").unwrap();
+    assert_eq!(
+        error(&mut con, "ALTER TABLE t RENAME COLUMN i TO j"),
+        "Catalog Error: Column with name j already exists!"
+    );
+    con.query("ALTER TABLE t RENAME COLUMN i TO ii").unwrap();
+    con.query("ALTER TABLE t ADD COLUMN l INT DEFAULT 7").unwrap();
+    con.query("ALTER TABLE t ADD COLUMN IF NOT EXISTS l INT").unwrap();
+    con.query("ALTER TABLE t DROP COLUMN k").unwrap();
+    assert_eq!(rows(&mut con, "SELECT * FROM t"), vec![vec!["1", "2", "7"]]);
+    con.query("ALTER TABLE t ALTER COLUMN ii SET NOT NULL").unwrap();
+    assert_eq!(
+        error(&mut con, "INSERT INTO t(j) VALUES (1)"),
+        "Constraint Error: NOT NULL constraint failed: t.ii"
+    );
+    con.query("ALTER TABLE t ALTER COLUMN j TYPE BIGINT USING j * 10")
+        .unwrap();
+    assert_eq!(rows(&mut con, "SELECT j FROM t"), vec![vec!["20"]]);
+    // A rolled back alter leaves the table as it was.
+    con.query("BEGIN").unwrap();
+    con.query("ALTER TABLE t DROP COLUMN l").unwrap();
+    con.query("ALTER TABLE t RENAME TO t2").unwrap();
+    con.query("ROLLBACK").unwrap();
+    assert_eq!(rows(&mut con, "SELECT * FROM t"), vec![vec!["1", "20", "7"]]);
+    con.query("ALTER TABLE t ADD PRIMARY KEY (ii)").unwrap();
+    assert_eq!(
+        error(&mut con, "INSERT INTO t VALUES (1, 1, 1)"),
+        "Constraint Error: Duplicate key \"ii: 1\" violates primary key constraint."
+    );
+    con.query("CREATE INDEX idx ON t(j)").unwrap();
+    assert_eq!(
+        error(&mut con, "ALTER TABLE t DROP COLUMN l"),
+        "Dependency Error: Cannot alter entry \"t\" because there are entries that depend on it."
+    );
+}

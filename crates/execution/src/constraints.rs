@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use rustdb_ast::ForeignKeyType;
-use rustdb_catalog::{Catalog, CatalogType, EntryKind, Transaction};
+use rustdb_catalog::{Catalog, CatalogEntry, CatalogType, EntryKind, Transaction};
 use rustdb_common::{Error, ErrorKind, Result};
 use rustdb_planner::Expression;
 use rustdb_planner::operator::BoundConstraint;
@@ -96,16 +96,23 @@ impl ConstraintVerifier for CheckVerifier {
     }
 }
 
-/// The storage-level constraints of `table` (stored as `storage`) from its bound
-/// constraints; foreign keys are resolved to the other table's storage through
+/// The storage-level constraints of the table `entry` (stored as `storage`) from its
+/// bound constraints; foreign keys are resolved to the other table's storage through
 /// `catalogs`.
 pub fn table_constraints(
     transaction: &Transaction,
     catalogs: &[Arc<Catalog>],
+    entry: &CatalogEntry,
     storage: &Arc<DataTable>,
     bound: &[BoundConstraint],
 ) -> Result<TableConstraints> {
     let mut constraints = TableConstraints::default();
+    if let EntryKind::Table(table) = &entry.kind {
+        constraints.column_names = table
+            .physical_columns()
+            .map(|(_, _, column)| column.name.clone())
+            .collect();
+    }
     let mut checks = Vec::new();
     for constraint in bound {
         match constraint {

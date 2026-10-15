@@ -5,7 +5,7 @@ use rustdb_ast::OnCreateConflict;
 use rustdb_common::{Error, Result};
 use rustdb_function::{AggregateFunctionSet, ScalarFunctionSet, TableFunctionSet};
 
-use crate::{CatalogEntry, CatalogSet, CatalogType, EntryKind, SchemaEntry, Transaction};
+use crate::{CatalogEntry, CatalogSet, CatalogType, EntryKind, SchemaEntry, StorageHook, Transaction};
 
 /// The schema new objects go to when none is given.
 pub const DEFAULT_SCHEMA: &str = "main";
@@ -206,6 +206,79 @@ impl Catalog {
             )));
         }
         Ok(())
+    }
+
+    /// Replaces the entry `name` of type `ty` in `schema` by `entry` after an ALTER that
+    /// changed storage as described by `hook`, which a rollback undoes.
+    pub fn alter_entry(
+        &self,
+        transaction: &Transaction,
+        schema: &str,
+        ty: CatalogType,
+        name: &str,
+        entry: CatalogEntry,
+        hook: StorageHook,
+    ) -> Result<()> {
+        let schema_entry = self.schema_entry(transaction, schema)?;
+        let schema_entry = schema_entry.as_schema().ok_or_else(missing_main)?;
+        let set = Self::set_for(schema_entry, ty);
+        if !set.alter_with_hook(transaction, name, entry, hook)? {
+            return Err(Error::catalog(format!(
+                "{} with name {name} does not exist!",
+                ty.display_name()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Renames the entry `name` of type `ty` in `schema`; `entry` is the renamed entry
+    /// (`CatalogSet::AlterEntry` with `RENAME`).
+    pub fn rename_entry(
+        &self,
+        transaction: &Transaction,
+        schema: &str,
+        ty: CatalogType,
+        name: &str,
+        entry: CatalogEntry,
+        hook: StorageHook,
+    ) -> Result<()> {
+        let schema_entry = self.schema_entry(transaction, schema)?;
+        let schema_entry = schema_entry.as_schema().ok_or_else(missing_main)?;
+        let set = Self::set_for(schema_entry, ty);
+        if set.get(transaction, entry.name()).is_some() {
+            return Err(Error::catalog(format!(
+                "Could not rename \"{name}\" to \"{}\": another entry with this name already exists!",
+                entry.name()
+            )));
+        }
+        if !set.rename(transaction, name, entry, hook)? {
+            return Err(Error::catalog(format!(
+                "{} with name {name} does not exist!",
+                ty.display_name()
+            )));
+        }
+        Ok(())
+    }
+
+    /// The index entries of the table `table` in `schema` (the entries depending on it).
+    pub fn table_indexes(
+        &self,
+        transaction: &Transaction,
+        schema: &str,
+        table: &str,
+    ) -> Vec<Arc<CatalogEntry>> {
+        let Some(schema_entry) = self.schema(transaction, schema) else {
+            return Vec::new();
+        };
+        let Some(schema_entry) = schema_entry.as_schema() else {
+            return Vec::new();
+        };
+        schema_entry
+            .indexes
+            .scan(transaction)
+            .into_iter()
+            .filter(|index| matches!(&index.kind, EntryKind::Index(info) if info.info.table.eq_ignore_ascii_case(table)))
+            .collect()
     }
 
     /// Drops the entry `name` of type `ty` from `schema` (DuckDB's

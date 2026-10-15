@@ -13,8 +13,14 @@ use crate::catalog_set::{CatalogSet, Version};
 
 /// What a catalog change does to storage when it commits or rolls back.
 #[derive(Debug)]
-pub(crate) enum StorageHook {
+pub enum StorageHook {
     None,
+    /// The previous storage of an altered table, made the main table again on rollback
+    /// (`DuckTableEntry::SetAsRoot`).
+    AlteredTable(Arc<rustdb_storage::DataTable>),
+    /// A renamed table's storage and its old name, restored on rollback
+    /// (`DuckTableEntry::UndoAlter`).
+    RenamedTable(Arc<rustdb_storage::DataTableInfo>, String),
     /// The storage of a dropped table, restored as the main table on rollback
     /// (`DuckTableEntry::OnDrop` / `SetAsRoot`).
     DroppedTable(Arc<rustdb_storage::DataTable>),
@@ -48,7 +54,8 @@ impl CatalogUndo for CatalogChange {
     fn rollback(&self) {
         self.set.undo(&self.name, &self.version);
         match &self.hook {
-            StorageHook::DroppedTable(table) => table.set_as_main_table(),
+            StorageHook::DroppedTable(table) | StorageHook::AlteredTable(table) => table.set_as_main_table(),
+            StorageHook::RenamedTable(info, name) => info.set_table_name(name.clone()),
             StorageHook::CreatedIndex(info, name) => {
                 info.indexes().remove(name);
             }

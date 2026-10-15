@@ -60,6 +60,15 @@ pub fn bind_schema_or_catalog(scope: &BindScope<'_>, catalog: &str, schema: &str
     (catalog.to_owned(), schema.to_owned())
 }
 
+/// "Table "t" does not have a column with name "x"" (`TableCatalogEntry::GetColumnIndex`).
+pub fn missing_column_error(table: &TableEntry, table_name: &str, name: &str) -> Error {
+    let names: Vec<String> = table.columns.iter().map(|column| column.name.clone()).collect();
+    let candidates = rustdb_common::string_util::candidates_error_message(&names, name, "Did you mean");
+    Error::binder(format!(
+        "Table \"{table_name}\" does not have a column with name \"{name}\"\n{candidates}"
+    ))
+}
+
 /// The columns of `table` as seen by CHECK constraints.
 pub fn check_columns(table: &TableEntry) -> Vec<CheckColumn> {
     let mut physical = 0;

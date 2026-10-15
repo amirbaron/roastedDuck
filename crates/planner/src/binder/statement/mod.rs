@@ -12,6 +12,7 @@ use rustdb_ast::{
 use rustdb_common::{CaseInsensitiveMap, Error, Result};
 use rustdb_types::{LogicalType, LogicalTypeId};
 
+mod alter;
 mod create;
 mod create_index;
 mod modify;
@@ -51,6 +52,7 @@ pub fn bind_statement(scope: &mut BindScope<'_>, statement: &mut SqlStatement) -
         SqlStatementKind::Update(update) => modify::bind_update(scope, update),
         SqlStatementKind::Delete(delete) => modify::bind_delete(scope, delete),
         SqlStatementKind::Call(call) => bind_call(scope, call),
+        SqlStatementKind::Alter(info) => alter::bind_alter(scope, info),
         other => Err(Error::not_implemented(format!(
             "Unimplemented statement type \"{}\" for Bind",
             other.statement_type().name()
