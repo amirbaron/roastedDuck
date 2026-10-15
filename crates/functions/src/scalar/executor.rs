@@ -54,6 +54,11 @@ pub(crate) fn addressable(vector: &Vector, count: usize) -> Cow<'_, Vector> {
     }
 }
 
+/// The bytes of row `row` of a (non-sequence) VARCHAR/BLOB/BIT vector, `None` if NULL.
+pub(crate) fn str_at(vector: &Vector, row: usize) -> Option<&[u8]> {
+    Input::<Str>::new(vector).get(row)
+}
+
 /// An argument prepared for row access.
 struct Input<'a, A: ScalarArg> {
     vector: &'a Vector,
