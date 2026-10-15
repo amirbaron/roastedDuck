@@ -38,16 +38,16 @@ pub(crate) fn lookup(art: &Art, node: Node, key: &[u8], depth: usize) -> Result<
 }
 
 /// Whether the leaf `node` holds `row_id` (`ARTOperator::LookupInLeaf`).
-pub(crate) fn lookup_in_leaf(art: &Art, node: Node, row_id: &[u8; ROW_ID_SIZE]) -> Result<bool> {
+pub(crate) fn lookup_in_leaf(art: &Art, node: Node, row_id: [u8; ROW_ID_SIZE]) -> Result<bool> {
     let mut node = node;
     let mut depth = 0;
     while node.has_metadata() {
         match node.ntype()? {
-            NType::LeafInlined => return Ok(node.row_id() == super::key::decode_row_id(row_id)),
+            NType::LeafInlined => return Ok(node.row_id() == super::key::decode_row_id(&row_id)),
             NType::Leaf => {
                 return Ok(art
                     .deprecated_row_ids(node)?
-                    .contains(&super::key::decode_row_id(row_id)));
+                    .contains(&super::key::decode_row_id(&row_id)));
             }
             NType::Node7Leaf | NType::Node15Leaf | NType::Node256Leaf => {
                 return art.has_byte(node, row_id[ROW_ID_SIZE - 1]);
@@ -86,7 +86,7 @@ pub(crate) fn insert(
     slot: Slot,
     key: &[u8],
     depth: usize,
-    row_id: &[u8; ROW_ID_SIZE],
+    row_id: [u8; ROW_ID_SIZE],
     status: GateStatus,
     delete_arts: &[&Art],
     mode: IndexAppendMode,
@@ -97,11 +97,11 @@ pub(crate) fn insert(
     let mut active_key: &[u8] = key;
     if !art.get(slot)?.has_metadata() {
         if status == GateStatus::Set {
-            art.set(slot, Node::inlined_leaf(super::key::decode_row_id(row_id)))?;
+            art.set(slot, Node::inlined_leaf(super::key::decode_row_id(&row_id)))?;
             return Ok(ConflictType::NoConflict);
         }
         let tail = art.new_prefix_chain(slot, key, depth, key.len() - depth)?;
-        art.set(tail, Node::inlined_leaf(super::key::decode_row_id(row_id)))?;
+        art.set(tail, Node::inlined_leaf(super::key::decode_row_id(&row_id)))?;
         return Ok(ConflictType::NoConflict);
     }
     loop {
@@ -112,7 +112,7 @@ pub(crate) fn insert(
         if status == GateStatus::NotSet && node.gate_status() == GateStatus::Set {
             if !art.is_unique() {
                 // Enter the nested ART of row ids.
-                active_key = row_id;
+                active_key = &row_id;
                 depth = 0;
                 status = GateStatus::Set;
                 continue;
@@ -171,13 +171,13 @@ fn insert_into_inlined(
     art: &mut Art,
     slot: Slot,
     key: &[u8],
-    row_id: &[u8; ROW_ID_SIZE],
+    row_id: [u8; ROW_ID_SIZE],
     depth: usize,
     status: GateStatus,
     delete_arts: &[&Art],
     mode: IndexAppendMode,
 ) -> Result<ConflictType> {
-    let row_id_node = Node::inlined_leaf(super::key::decode_row_id(row_id));
+    let row_id_node = Node::inlined_leaf(super::key::decode_row_id(&row_id));
     if !art.is_unique() || mode == IndexAppendMode::InsertDuplicates {
         art.merge_inlined(slot, row_id_node, status, depth)?;
         return Ok(ConflictType::NoConflict);
@@ -206,11 +206,11 @@ fn insert_into_node(
     art: &mut Art,
     slot: Slot,
     key: &[u8],
-    row_id: &[u8; ROW_ID_SIZE],
+    row_id: [u8; ROW_ID_SIZE],
     depth: usize,
     status: GateStatus,
 ) -> Result<()> {
-    let leaf = Node::inlined_leaf(super::key::decode_row_id(row_id));
+    let leaf = Node::inlined_leaf(super::key::decode_row_id(&row_id));
     if status == GateStatus::Set {
         // Inside gates, inlined row ids hang directly below the node.
         return art.insert_child(slot, row_id[depth], leaf);
@@ -240,7 +240,7 @@ fn insert_into_prefix(
     art: &mut Art,
     slot: Slot,
     key: &[u8],
-    row_id: &[u8; ROW_ID_SIZE],
+    row_id: [u8; ROW_ID_SIZE],
     pos: usize,
     depth: usize,
     status: GateStatus,
@@ -271,7 +271,7 @@ impl ActiveKey<'_> {
 }
 
 /// Removes `row_id` from `key`, compressing nodes on the way back (`ARTOperator::Delete`).
-pub(crate) fn delete(art: &mut Art, key: &[u8], row_id: &[u8; ROW_ID_SIZE]) -> Result<bool> {
+pub(crate) fn delete(art: &mut Art, key: &[u8], row_id: [u8; ROW_ID_SIZE]) -> Result<bool> {
     let mut greatgrandparent = Slot::Dummy;
     let mut grandparent = Slot::Dummy;
     let mut parent = Slot::Root;
@@ -282,7 +282,7 @@ pub(crate) fn delete(art: &mut Art, key: &[u8], row_id: &[u8; ROW_ID_SIZE]) -> R
     let mut depth = 0;
     let mut status = GateStatus::NotSet;
     let mut passed_node = false;
-    let row_id_value = super::key::decode_row_id(row_id);
+    let row_id_value = super::key::decode_row_id(&row_id);
     let missing = || Error::internal("ART key shorter than its path");
     loop {
         let node = art.get(current)?;
@@ -291,7 +291,7 @@ pub(crate) fn delete(art: &mut Art, key: &[u8], row_id: &[u8; ROW_ID_SIZE]) -> R
         }
         if status == GateStatus::NotSet && node.gate_status() == GateStatus::Set {
             status = GateStatus::Set;
-            current_key = ActiveKey::RowId(row_id);
+            current_key = ActiveKey::RowId(&row_id);
             depth = 0;
             continue;
         }

@@ -66,7 +66,7 @@ impl Art {
                 slot,
                 &key,
                 0,
-                &key,
+                key,
                 GateStatus::Set,
                 &[],
                 IndexAppendMode::InsertDuplicates,

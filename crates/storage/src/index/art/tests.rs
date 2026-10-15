@@ -164,8 +164,8 @@ fn run_random(keys: &[Vec<u8>], unique: bool, seed: u64, operations: usize) {
         } else {
             let pos = rng.below(live.len() as u64) as usize;
             let (key, row_id) = live.swap_remove(pos);
-            assert!(art.delete_key(&key, &row_id_key(row_id)).unwrap());
-            assert!(!art.delete_key(&key, &row_id_key(row_id)).unwrap());
+            assert!(art.delete_key(&key, row_id_key(row_id)).unwrap());
+            assert!(!art.delete_key(&key, row_id_key(row_id)).unwrap());
             let set = model.get_mut(&key).unwrap();
             set.remove(&row_id);
             if set.is_empty() {
@@ -181,7 +181,7 @@ fn run_random(keys: &[Vec<u8>], unique: bool, seed: u64, operations: usize) {
     check_ranges(&art, &model, &mut rng, keys);
     // delete everything: all memory is released
     for (key, row_id) in live {
-        assert!(art.delete_key(&key, &row_id_key(row_id)).unwrap());
+        assert!(art.delete_key(&key, row_id_key(row_id)).unwrap());
     }
     assert!(art.is_empty());
     for allocator in &art.allocators {
@@ -294,7 +294,7 @@ fn delete_index_allows_reinsert() {
     let mut found = BTreeSet::new();
     main.search_equal(&row_id_key(1), usize::MAX, &mut found).unwrap();
     assert_eq!(found, BTreeSet::from([10, 11]));
-    assert!(main.delete_key(&row_id_key(1), &row_id_key(10)).unwrap());
+    assert!(main.delete_key(&row_id_key(1), row_id_key(10)).unwrap());
     let mut found = BTreeSet::new();
     main.search_equal(&row_id_key(1), usize::MAX, &mut found).unwrap();
     assert_eq!(found, BTreeSet::from([11]));

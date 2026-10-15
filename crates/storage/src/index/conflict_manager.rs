@@ -173,10 +173,10 @@ impl ConflictManager {
     /// the transaction sees (`ConflictManager::Finalize`).
     pub fn finalize(&mut self, mut visible: impl FnMut(i64) -> bool) {
         for hit in self.hits.values_mut() {
-            if let Some(second) = hit.1.take() {
-                if visible(second) {
-                    hit.0 = second;
-                }
+            if let Some(second) = hit.1.take()
+                && visible(second)
+            {
+                hit.0 = second;
             }
         }
     }

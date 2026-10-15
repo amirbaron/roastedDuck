@@ -429,7 +429,7 @@ impl Art {
         for (i, key) in keys.iter().enumerate() {
             let Some(key) = key else { continue };
             let row_id = row_id_key(row_ids[i]);
-            if self.insert_key(Slot::Root, key, 0, &row_id, GateStatus::NotSet, delete_arts, mode)?
+            if self.insert_key(Slot::Root, key, 0, row_id, GateStatus::NotSet, delete_arts, mode)?
                 == ConflictType::Constraint
             {
                 conflict = Some(i);
@@ -441,7 +441,7 @@ impl Art {
         };
         for (i, key) in keys.iter().enumerate().take(conflict) {
             if let Some(key) = key {
-                self.delete_key(key, &row_id_key(row_ids[i]))?;
+                self.delete_key(key, row_id_key(row_ids[i]))?;
             }
         }
         let message = match key_chunk {
@@ -463,7 +463,7 @@ impl Art {
         let mut deleted = 0;
         for (i, key) in keys.iter().enumerate() {
             let removed = match key {
-                Some(key) => self.delete_key(key, &row_id_key(row_ids[i]))?,
+                Some(key) => self.delete_key(key, row_id_key(row_ids[i]))?,
                 None => true,
             };
             if removed {
@@ -486,12 +486,13 @@ impl Art {
     }
 
     /// Inserts one key at `slot` (`ARTOperator::Insert` from the root).
+    #[allow(clippy::too_many_arguments, reason = "mirrors ARTOperator::Insert")]
     pub(crate) fn insert_key(
         &mut self,
         slot: Slot,
         key: &[u8],
         depth: usize,
-        row_id: &[u8; ROW_ID_SIZE],
+        row_id: [u8; ROW_ID_SIZE],
         status: GateStatus,
         delete_arts: &[&Self],
         mode: IndexAppendMode,
@@ -500,7 +501,7 @@ impl Art {
     }
 
     /// Removes one key/row id pair (`ARTOperator::Delete`).
-    pub(crate) fn delete_key(&mut self, key: &[u8], row_id: &[u8; ROW_ID_SIZE]) -> Result<bool> {
+    pub(crate) fn delete_key(&mut self, key: &[u8], row_id: [u8; ROW_ID_SIZE]) -> Result<bool> {
         operator::delete(self, key, row_id)
     }
 
@@ -512,7 +513,7 @@ impl Art {
     /// Whether `row_id` is stored under `key`.
     pub fn contains(&self, key: &[u8], row_id: i64) -> Result<bool> {
         match self.lookup(key)? {
-            Some(leaf) => operator::lookup_in_leaf(self, leaf, &row_id_key(row_id)),
+            Some(leaf) => operator::lookup_in_leaf(self, leaf, row_id_key(row_id)),
             None => Ok(false),
         }
     }
@@ -528,13 +529,11 @@ impl Art {
         delete_arts: &[&Self],
         manager: Option<&mut ConflictManager>,
     ) -> Result<()> {
-        match manager {
-            Some(manager) => self.verify_constraint(table_chunk, delete_arts, manager),
-            None => {
-                let mut manager = ConflictManager::new(VerifyExistenceType::Append, table_chunk.len());
-                self.verify_constraint(table_chunk, delete_arts, &mut manager)
-            }
+        if let Some(manager) = manager {
+            return self.verify_constraint(table_chunk, delete_arts, manager);
         }
+        let mut manager = ConflictManager::new(VerifyExistenceType::Append, table_chunk.len());
+        self.verify_constraint(table_chunk, delete_arts, &mut manager)
     }
 
     /// Looks up every key of `table_chunk` and records hits in `manager`; throws on the
@@ -626,10 +625,10 @@ impl Art {
             return Ok(());
         }
         let mut iter = row_ids.into_iter();
-        if let Some(first) = iter.next() {
-            if manager.add_hit(i, first) {
-                *conflict = Some(i);
-            }
+        if let Some(first) = iter.next()
+            && manager.add_hit(i, first)
+        {
+            *conflict = Some(i);
         }
         if let Some(second) = iter.next() {
             manager.add_second_hit(i, second);
@@ -789,7 +788,7 @@ impl Art {
                     CompareOp::GreaterThan => self.search_greater(&key, false, max_count, row_ids),
                     CompareOp::LessThanOrEqual => self.search_less(&key, true, max_count, row_ids),
                     CompareOp::LessThan => self.search_less(&key, false, max_count, row_ids),
-                    _ => Err(Error::internal("Index scan type not implemented")),
+                    CompareOp::NotEqual => Err(Error::internal("Index scan type not implemented")),
                 }
             }
             IndexScanPredicate::Range {
@@ -876,7 +875,7 @@ impl IndexScanPredicate {
                     op: *op,
                     value: constant.clone(),
                 }]),
-                _ => None,
+                CompareOp::NotEqual => None,
             },
             _ => None,
         }

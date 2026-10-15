@@ -70,7 +70,7 @@ pub struct Transaction {
     pub transaction_id: u64,
     commit_id: AtomicU64,
     undo: Mutex<UndoBuffer>,
-    local_storage: LocalStorage,
+    local_storage: Arc<LocalStorage>,
 }
 
 impl Transaction {
@@ -80,7 +80,7 @@ impl Transaction {
             transaction_id,
             commit_id: AtomicU64::new(0),
             undo: Mutex::default(),
-            local_storage: LocalStorage::default(),
+            local_storage: Arc::default(),
         }
     }
 
@@ -139,6 +139,11 @@ impl Transaction {
     /// The transaction-local storage (DuckDB's `LocalStorage`).
     pub fn local_storage(&self) -> &LocalStorage {
         &self.local_storage
+    }
+
+    /// A shared handle to the transaction-local storage.
+    pub(crate) fn local_storage_arc(&self) -> Arc<LocalStorage> {
+        Arc::clone(&self.local_storage)
     }
 
     /// Whether the transaction changed anything (`ChangesMade`).
@@ -243,10 +248,13 @@ impl TransactionManager {
         let commit_id = state.current_start_timestamp;
         state.current_start_timestamp += 1;
         transaction.commit_id.store(commit_id, Ordering::Release);
-        let result = transaction
-            .local_storage
-            .commit(transaction)
-            .and_then(|()| transaction.undo().commit(commit_id, transaction.transaction_id));
+        // Deleted rows stay in a side index while other transactions may still see them.
+        let others_active = state.active.len() > 1;
+        let result = transaction.local_storage.commit(transaction).and_then(|()| {
+            transaction
+                .undo()
+                .commit(commit_id, transaction.transaction_id, others_active)
+        });
         let undo = std::mem::take(&mut *transaction.undo());
         let outcome = match result {
             Ok(()) => {

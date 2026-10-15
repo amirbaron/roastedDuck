@@ -30,6 +30,21 @@ pub struct DeleteRecord {
     pub rows: DeletedRows,
 }
 
+impl DeleteRecord {
+    /// The row ids of the deleted rows.
+    pub fn row_ids(&self) -> Vec<i64> {
+        match &self.rows {
+            DeletedRows::Consecutive(count) => (0..*count as u64)
+                .map(|row| (self.base_row + row) as i64)
+                .collect(),
+            DeletedRows::Rows(rows) => rows
+                .iter()
+                .map(|&row| (self.base_row + u64::from(row)) as i64)
+                .collect(),
+        }
+    }
+}
+
 /// An update of one column vector, to be registered in the undo log.
 #[derive(Debug)]
 pub struct UpdateRecord {

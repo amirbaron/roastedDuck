@@ -209,3 +209,86 @@ fn dml_through_the_executor() {
     );
     manager.commit(&reader).unwrap();
 }
+
+#[test]
+fn index_scans_return_the_same_rows_as_table_scans() {
+    let buffer_manager = BufferManager::new(BufferManagerConfig::default()).unwrap();
+    let io = Arc::new(TableIoManager::new(
+        buffer_manager,
+        Arc::new(InMemoryBlockManager::default()),
+    ));
+    let table = DataTable::new(
+        io,
+        "main",
+        "t",
+        vec![
+            ColumnDefinition::new("i", LogicalType::INTEGER),
+            ColumnDefinition::new("s", LogicalType::VARCHAR),
+        ],
+    );
+    let index = table
+        .new_art("idx", rustdb_storage::index::IndexConstraintType::None, &[0])
+        .unwrap();
+    table.add_index(index).unwrap();
+    let manager = TransactionManager::default();
+    let writer = Arc::new(manager.begin());
+    let types = vec![LogicalType::INTEGER, LogicalType::VARCHAR];
+    let rows: Vec<Vec<Value>> = (0..3000)
+        .map(|i| vec![Value::integer(i % 100), Value::varchar(format!("row {i}"))])
+        .collect();
+    for batch in rows.chunks(1000) {
+        let insert = PhysicalInsert::new(
+            values_scan(types.clone(), batch),
+            InsertTarget::Table(Arc::clone(&table)),
+            Arc::clone(&writer),
+            TableConstraints::default(),
+            false,
+        );
+        run(Arc::new(insert));
+    }
+    manager.commit(&writer).unwrap();
+    // uncommitted rows of the reader are found by its scans too
+    let reader = Arc::new(manager.begin());
+    let insert = PhysicalInsert::new(
+        values_scan(types.clone(), &[vec![Value::integer(7), Value::varchar("local")]]),
+        InsertTarget::Table(Arc::clone(&table)),
+        Arc::clone(&reader),
+        TableConstraints::default(),
+        false,
+    );
+    run(Arc::new(insert));
+    for op in [
+        CompareOp::Equal,
+        CompareOp::LessThan,
+        CompareOp::GreaterThanOrEqual,
+    ] {
+        let mut filters = TableFilterSet::default();
+        filters.push_filter(
+            0,
+            TableFilter::ConstantComparison {
+                op,
+                constant: Value::integer(7),
+            },
+        );
+        let make = |index: bool| {
+            Arc::new(
+                PhysicalSeqScan::new(
+                    vec![LogicalType::VARCHAR],
+                    Arc::clone(&table),
+                    Arc::clone(&reader),
+                    vec![StorageIndex::new(0), StorageIndex::new(1)],
+                    Some(filters.clone()),
+                    vec![1],
+                )
+                .with_index_scan(index.then_some((100_000, 0.001))),
+            )
+        };
+        let mut with_index = run(make(true));
+        let mut without = run(make(false));
+        with_index.sort_by_key(|row| row[0].to_varchar().unwrap());
+        without.sort_by_key(|row| row[0].to_varchar().unwrap());
+        assert_ne!(without.len(), 0);
+        assert_eq!(with_index, without, "{op:?}");
+    }
+    manager.commit(&reader).unwrap();
+}

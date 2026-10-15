@@ -1,5 +1,9 @@
 //! The storage of one table (DuckDB's `DataTable` and `DataTableInfo`).
 
+mod indexes;
+
+pub use indexes::{BoundForeignKey, ForeignKeyKind};
+
 use std::fmt;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
@@ -8,13 +12,14 @@ use rustdb_buffer::{BlockManager, BufferManager};
 use rustdb_common::{Error, ErrorKind, Result, STANDARD_VECTOR_SIZE};
 use rustdb_types::{DataChunk, LogicalType, Vector};
 
+use crate::index::TableIndexList;
 use crate::statistics::BaseStatistics;
 use crate::table::{
     CollectionScanState, FetchType, ParallelTableScanState, RowGroupCollection, ScanOptions, StorageIndex,
     TableAppendState, TableScanState,
 };
 use crate::table_filter::TableFilterSet;
-use crate::transaction::{LocalTableStorage, Transaction, TransactionData};
+use crate::transaction::{LocalStorage, LocalTableStorage, Transaction, TransactionData};
 use crate::{DEFAULT_ROW_GROUP_SIZE, MAX_ROW_ID};
 
 /// Where a table's blocks live (DuckDB's `TableIOManager`).
@@ -61,6 +66,8 @@ pub struct DataTableInfo {
     io: Arc<TableIoManager>,
     schema: RwLock<String>,
     table: RwLock<String>,
+    /// The indexes, shared by every version of the table.
+    indexes: TableIndexList,
 }
 
 impl DataTableInfo {
@@ -69,7 +76,13 @@ impl DataTableInfo {
             io,
             schema: RwLock::new(schema.into()),
             table: RwLock::new(table.into()),
+            indexes: TableIndexList::default(),
         }
+    }
+
+    /// The table's indexes.
+    pub fn indexes(&self) -> &TableIndexList {
+        &self.indexes
     }
 
     pub fn io(&self) -> &Arc<TableIoManager> {
@@ -120,12 +133,18 @@ pub trait ConstraintVerifier: Send + Sync + fmt::Debug {
 }
 
 /// The constraints a table's storage enforces (DuckDB's bound constraints).
+///
+/// PRIMARY KEY and UNIQUE constraints are enforced by the table's indexes and need no
+/// entry here. Appends verify unique indexes, then NOT NULL, then `verifier`, then the
+/// append-side foreign keys; deletes verify the delete-side foreign keys.
 #[derive(Clone, Debug, Default)]
 pub struct TableConstraints {
     /// Columns that may not be NULL, by physical index.
     pub not_null: Vec<usize>,
     /// CHECK constraints and other expression-based checks.
     pub verifier: Option<Arc<dyn ConstraintVerifier>>,
+    /// Foreign keys in which the table takes part.
+    pub foreign_keys: Vec<BoundForeignKey>,
 }
 
 /// Whether a table is still the current version (DuckDB's `DataTableVersion`).
@@ -151,6 +170,7 @@ impl TableVersion {
 #[derive(Debug)]
 pub struct LocalAppendState {
     storage: Arc<LocalTableStorage>,
+    local_storage: Arc<LocalStorage>,
     append: TableAppendState,
     constraints: TableConstraints,
 }
@@ -165,7 +185,7 @@ pub struct DataTable {
     version: AtomicU8,
 }
 
-fn constraint_error(message: String) -> Error {
+pub(crate) fn constraint_error(message: String) -> Error {
     Error::new(ErrorKind::Constraint, message)
 }
 
@@ -373,6 +393,19 @@ impl DataTable {
         state
     }
 
+    /// Prepares a parallel scan of only the transaction's local rows (the local phase of
+    /// an index scan).
+    pub fn initialize_local_parallel_scan(
+        self: &Arc<Self>,
+        transaction: &Transaction,
+    ) -> ParallelTableScanState {
+        let state = ParallelTableScanState::default();
+        if let Some(local) = transaction.local_storage().storage(self) {
+            local.collection().initialize_parallel_scan(&state.local_state);
+        }
+        state
+    }
+
     /// Hands the next morsel (row group) to `state`; returns `false` when there is none
     /// (`NextParallelScan`). Scan it with [`DataTable::scan_morsel`].
     pub fn next_parallel_scan(
@@ -477,10 +510,11 @@ impl DataTable {
         constraints: TableConstraints,
     ) -> Result<LocalAppendState> {
         self.check_main_table("insert into")?;
-        let storage = transaction.local_storage().get_or_create(self);
+        let storage = transaction.local_storage().get_or_create(self)?;
         let append = storage.collection().initialize_append(transaction.data())?;
         Ok(LocalAppendState {
             storage,
+            local_storage: transaction.local_storage_arc(),
             append,
             constraints,
         })
@@ -515,7 +549,25 @@ impl DataTable {
             return Ok(());
         }
         self.check_main_table("insert into")?;
+        if self.has_unique_indexes() {
+            self.verify_unique_indexes(Some(&state.storage), chunk)?;
+        }
         self.verify_append_constraints(&state.constraints, chunk)?;
+        Self::verify_append_foreign_keys(
+            &state.local_storage,
+            Some(&state.storage),
+            &state.constraints,
+            chunk,
+        )?;
+        if !state.storage.append_indexes.is_empty() {
+            Self::append_to_indexes(
+                &state.storage.append_indexes,
+                Some(&state.storage.delete_indexes),
+                chunk,
+                state.append.current_row as i64,
+                state.storage.index_append_mode(),
+            )?;
+        }
         state.storage.collection().append(chunk, &mut state.append)?;
         Ok(())
     }
@@ -548,10 +600,11 @@ impl DataTable {
         self.row_groups.commit_append(commit_id, row_start, count);
     }
 
-    /// Removes the rows of a rolled-back append (`RevertAppend`).
+    /// Removes the rows of a rolled-back append from the indexes and the table
+    /// (`RevertAppend`).
     pub fn revert_append(&self, row_start: u64, count: u64) -> Result<()> {
-        let _ = count;
         let _lock = self.append_lock.lock().unwrap_or_else(PoisonError::into_inner);
+        self.revert_index_append(row_start, count)?;
         if !self.is_main_table() {
             self.set_as_main_table();
         }
@@ -571,6 +624,29 @@ impl DataTable {
     /// Deletes the rows `row_ids` in the transaction; returns how many were deleted
     /// (`DataTable::Delete`). Rows deleted by a concurrent transaction are a conflict.
     pub fn delete(self: &Arc<Self>, transaction: &Transaction, row_ids: &[i64]) -> Result<u64> {
+        self.delete_with_constraints(transaction, row_ids, &TableConstraints::default())
+    }
+
+    /// [`DataTable::delete`] that also verifies the delete-side foreign keys of
+    /// `constraints` (`PhysicalDelete` with `VerifyDeleteConstraints`).
+    pub fn delete_with_constraints(
+        self: &Arc<Self>,
+        transaction: &Transaction,
+        row_ids: &[i64],
+        constraints: &TableConstraints,
+    ) -> Result<u64> {
+        let has_delete_constraints = constraints
+            .foreign_keys
+            .iter()
+            .any(|fk| fk.kind == ForeignKeyKind::Delete);
+        let storage = if self.has_unique_indexes() {
+            let storage = transaction.local_storage().get_or_create(self)?;
+            self.append_to_delete_indexes(&storage, row_ids)?;
+            Some(storage)
+        } else {
+            transaction.local_storage().storage(self)
+        };
+        let all_columns: Vec<StorageIndex> = (0..self.columns.len()).map(StorageIndex::from).collect();
         let mut deleted = 0;
         let mut position = 0;
         while position < row_ids.len() {
@@ -580,6 +656,16 @@ impl DataTable {
                 position += 1;
             }
             let ids = &row_ids[start..position];
+            if has_delete_constraints {
+                let mut rows = DataChunk::default();
+                self.fetch(transaction, &mut rows, &all_columns, ids)?;
+                Self::verify_delete_foreign_keys(
+                    transaction.local_storage(),
+                    storage.as_deref(),
+                    constraints,
+                    &rows,
+                )?;
+            }
             if local {
                 deleted += transaction.local_storage().delete(self, ids)?;
             } else {
@@ -705,6 +791,18 @@ impl DataTable {
         if column >= self.columns.len() {
             return Err(Error::internal("dropping a column that does not exist"));
         }
+        for entry in self.indexes().entries() {
+            for &indexed in entry.column_ids() {
+                if indexed == column {
+                    return Err(Error::catalog("Cannot drop this column: an index depends on it!"));
+                }
+                if indexed > column {
+                    return Err(Error::catalog(
+                        "Cannot drop this column: an index depends on a column after it!",
+                    ));
+                }
+            }
+        }
         let row_groups = Arc::new(self.row_groups.remove_column(column));
         let mut columns = self.columns.clone();
         columns.remove(column);
@@ -727,6 +825,16 @@ impl DataTable {
         cast: &dyn Fn(&DataChunk) -> Result<Vector>,
     ) -> Result<Arc<Self>> {
         let _lock = self.append_lock();
+        if self
+            .indexes()
+            .entries()
+            .iter()
+            .any(|entry| entry.column_ids().contains(&column))
+        {
+            return Err(Error::catalog(
+                "Cannot change the type of this column: an index depends on it!",
+            ));
+        }
         let row_groups =
             Arc::new(
                 self.row_groups

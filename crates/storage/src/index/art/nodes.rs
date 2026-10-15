@@ -419,7 +419,7 @@ impl Art {
         prefix: Slot,
         byte: u8,
         status: GateStatus,
-        row_id: &[u8; ROW_ID_SIZE],
+        row_id: [u8; ROW_ID_SIZE],
     ) -> Result<()> {
         let node = self.get(slot)?;
         match node.ntype()? {
@@ -575,14 +575,14 @@ impl Art {
         node: Node,
         prefix: Slot,
         byte: u8,
-        row_id: &[u8; ROW_ID_SIZE],
+        row_id: [u8; ROW_ID_SIZE],
     ) -> Result<()> {
         let count = self.leaf_delete_byte(node, byte)?;
         if count != 1 {
             return Ok(());
         }
         let last = self.seg(node)?[1];
-        let mut remaining = *row_id;
+        let mut remaining = row_id;
         remaining[ROW_ID_SIZE - 1] = last;
         let remainder = super::key::decode_row_id(&remaining);
         if self.get(prefix)?.is(NType::Prefix) {

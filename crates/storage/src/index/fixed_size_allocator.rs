@@ -106,7 +106,7 @@ impl FixedSizeAllocator {
         let mut bitmask_count = 0;
         let mut available = 0;
         while byte_count < block_size {
-            if bitmask_count == 0 || (bitmask_count * BITS_PER_WORD) % available == 0 {
+            if bitmask_count == 0 || (bitmask_count * BITS_PER_WORD).is_multiple_of(available) {
                 bitmask_count += 1;
                 byte_count += WORD_SIZE;
             }
@@ -153,9 +153,10 @@ impl FixedSizeAllocator {
 
     /// Allocates a zeroed segment (`New`).
     pub fn new_segment(&mut self) -> Result<IndexPointer> {
-        let buffer_id = match self.buffer_with_free_space {
-            Some(id) => id,
-            None => {
+        let buffer_id = if let Some(id) = self.buffer_with_free_space {
+            id
+        } else {
+            {
                 let id = self.available_buffer_id();
                 let reservation = self
                     .buffer_manager
@@ -326,7 +327,8 @@ impl FixedSizeAllocator {
     }
 
     /// Recomputes the allocation size of every dirty buffer (`SetAllocationSize`).
-    pub(crate) fn update_allocation_sizes(&mut self) -> Result<()> {
+    #[allow(dead_code, reason = "used by checkpointing")]
+    pub(crate) fn update_allocation_sizes(&mut self) {
         let available = self.available_segments_per_buffer;
         let segment_size = self.segment_size;
         let bitmask_offset = self.bitmask_offset;
@@ -346,7 +348,6 @@ impl FixedSizeAllocator {
             }
             buffer.allocation_size = max_offset * segment_size + bitmask_offset;
         }
-        Ok(())
     }
 
     /// The serialization information of this allocator (`GetInfo`).
@@ -414,6 +415,7 @@ impl FixedSizeAllocator {
     }
 
     /// The bytes of every buffer that must be written, with its id (`SerializeBuffers`).
+    #[allow(dead_code, reason = "used by checkpointing")]
     pub(crate) fn dirty_buffers(&self) -> Vec<(u64, &[u8], usize)> {
         self.buffers
             .iter()
@@ -427,6 +429,7 @@ impl FixedSizeAllocator {
     }
 
     /// Records where a buffer was written.
+    #[allow(dead_code, reason = "used by checkpointing")]
     pub(crate) fn set_persisted(&mut self, id: u64, pointer: BufferPointer) {
         if let Some(buffer) = self.buffers.get_mut(&id) {
             buffer.disk = Some(pointer);
@@ -434,10 +437,12 @@ impl FixedSizeAllocator {
         }
     }
 
+    #[allow(dead_code, reason = "used by checkpointing")]
     pub(crate) fn bitmask_offset(&self) -> usize {
         self.bitmask_offset
     }
 
+    #[allow(dead_code, reason = "used by checkpointing")]
     pub(crate) fn available_segments_per_buffer(&self) -> usize {
         self.available_segments_per_buffer
     }

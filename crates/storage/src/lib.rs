@@ -31,8 +31,8 @@ pub mod transaction;
 mod data_table;
 
 pub use data_table::{
-    ColumnDefinition, ConstraintVerifier, DataTable, DataTableInfo, LocalAppendState, TableConstraints,
-    TableIoManager,
+    BoundForeignKey, ColumnDefinition, ConstraintVerifier, DataTable, DataTableInfo, ForeignKeyKind,
+    LocalAppendState, TableConstraints, TableIoManager,
 };
 pub use table::{ParallelTableScanState, StorageIndex, TableScanState};
 pub use table_filter::{TableFilter, TableFilterSet};

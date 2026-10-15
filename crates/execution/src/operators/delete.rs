@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
 use rustdb_common::{Error, Result};
-use rustdb_storage::{DataTable, Transaction};
+use rustdb_storage::{DataTable, TableConstraints, Transaction};
 use rustdb_types::{DataChunk, LogicalType};
 
 use super::modify::{ModifyResult, all_columns, count_types, row_ids};
@@ -22,6 +22,8 @@ pub struct PhysicalDelete {
     /// Position of the BIGINT row id column in the input.
     row_id_index: usize,
     return_chunk: bool,
+    /// Foreign keys referencing the table (verified before rows are deleted).
+    constraints: TableConstraints,
 }
 
 impl PhysicalDelete {
@@ -44,7 +46,15 @@ impl PhysicalDelete {
             transaction,
             row_id_index,
             return_chunk,
+            constraints: TableConstraints::default(),
         }
+    }
+
+    /// Verifies the delete-side foreign keys of `constraints` before deleting.
+    #[must_use]
+    pub fn with_constraints(mut self, constraints: TableConstraints) -> Self {
+        self.constraints = constraints;
+        self
     }
 }
 
@@ -93,7 +103,9 @@ impl Sink for PhysicalDelete {
                 .fetch(&self.transaction, &mut deleted, &columns, &ids)?;
             global.push_returned(deleted);
         }
-        let count = self.table.delete(&self.transaction, &ids)?;
+        let count = self
+            .table
+            .delete_with_constraints(&self.transaction, &ids, &self.constraints)?;
         global.add_count(count);
         Ok(SinkResult::NeedMoreInput)
     }

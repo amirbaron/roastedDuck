@@ -256,7 +256,7 @@ fn not_null_constraints_reject_rows() {
         .unwrap();
     let constraints = TableConstraints {
         not_null: vec![1],
-        verifier: None,
+        ..TableConstraints::default()
     };
     let error = table.append_chunk(&t1, &rows, constraints).unwrap_err();
     assert_eq!(

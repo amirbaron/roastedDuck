@@ -14,6 +14,7 @@ use rustdb_types::DataChunk;
 use super::{Transaction, TransactionData};
 use crate::MAX_ROW_ID;
 use crate::data_table::DataTable;
+use crate::index::{IndexAppendMode, TableIndexList};
 use crate::table::{CollectionScanState, RowGroupCollection, ScanFilterInfo, ScanOptions, StorageIndex};
 
 /// The uncommitted inserts of one transaction into one table.
@@ -23,17 +24,52 @@ pub struct LocalTableStorage {
     collection: Mutex<Arc<RowGroupCollection>>,
     deleted_rows: AtomicU64,
     dropped: AtomicBool,
+    /// Copies of the table's constraint indexes holding the local rows (`append_indexes`).
+    pub(crate) append_indexes: TableIndexList,
+    /// Committed rows this transaction deleted, per unique index, so that their keys can be
+    /// inserted again (`delete_indexes`).
+    pub(crate) delete_indexes: TableIndexList,
+    index_append_mode: Mutex<IndexAppendMode>,
 }
 
 impl LocalTableStorage {
-    fn new(table: &Arc<DataTable>) -> Self {
+    fn new(table: &Arc<DataTable>) -> Result<Self> {
         let collection = RowGroupCollection::new(Arc::clone(table.io()), table.types(), MAX_ROW_ID);
-        Self {
+        Ok(Self {
             table: Mutex::new(Arc::clone(table)),
             collection: Mutex::new(Arc::new(collection)),
             deleted_rows: AtomicU64::new(0),
             dropped: AtomicBool::new(false),
-        }
+            append_indexes: table.indexes().delta_list()?,
+            delete_indexes: table.indexes().delta_list()?,
+            index_append_mode: Mutex::new(IndexAppendMode::Default),
+        })
+    }
+
+    /// How the rows are appended to the table's indexes at commit (`index_append_mode`).
+    pub fn index_append_mode(&self) -> IndexAppendMode {
+        *self
+            .index_append_mode
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Sets the index append mode; WAL replay inserts duplicates.
+    pub fn set_index_append_mode(&self, mode: IndexAppendMode) {
+        *self
+            .index_append_mode
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = mode;
+    }
+
+    /// The local copies of the table's constraint indexes.
+    pub fn append_indexes(&self) -> &TableIndexList {
+        &self.append_indexes
+    }
+
+    /// The indexes of committed rows deleted by the transaction.
+    pub fn delete_indexes(&self) -> &TableIndexList {
+        &self.delete_indexes
     }
 
     /// The table the rows belong to.
@@ -81,6 +117,9 @@ impl LocalTableStorage {
         let append_lock = table.append_lock();
         table.check_main_table("insert into")?;
         let row_start = table.total_rows();
+        if table.has_indexes() {
+            self.append_to_indexes(transaction.data(), &table, &collection, row_start)?;
+        }
         let bulk = row_start == 0 || collection.total_rows() >= collection.row_group_size();
         if bulk && deleted == 0 {
             table.row_groups().merge_storage(&collection)?;
@@ -99,17 +138,75 @@ impl LocalTableStorage {
         Ok(())
     }
 
+    /// Appends the visible local rows to the table's indexes with the row ids they get in
+    /// the table, starting at `row_start`; on a violation the rows already appended are
+    /// removed again (`LocalTableStorage::AppendToIndexes`).
+    fn append_to_indexes(
+        &self,
+        transaction: TransactionData,
+        table: &Arc<DataTable>,
+        collection: &RowGroupCollection,
+        row_start: u64,
+    ) -> Result<()> {
+        let indexes = table.indexes();
+        let columns = indexes.required_columns();
+        let mode = self.index_append_mode();
+        let mut current_row = row_start;
+        let result = Self::scan_columns(transaction, collection, &columns, |chunk| {
+            let table_chunk = table.index_table_chunk(&columns, chunk);
+            DataTable::append_to_indexes(
+                indexes,
+                Some(&self.delete_indexes),
+                &table_chunk,
+                current_row as i64,
+                mode,
+            )?;
+            current_row += chunk.len() as u64;
+            Ok(())
+        });
+        let Err(error) = result else {
+            return Ok(());
+        };
+        // Remove the rows of the chunks appended before the failing one.
+        let mut reverted = row_start;
+        Self::scan_columns(transaction, collection, &columns, |chunk| {
+            if reverted >= current_row {
+                return Ok(());
+            }
+            let table_chunk = table.index_table_chunk(&columns, chunk);
+            let row_ids: Vec<i64> = (0..chunk.len() as i64).map(|i| reverted as i64 + i).collect();
+            for entry in indexes.entries() {
+                entry.lock().index.try_delete(&table_chunk, &row_ids)?;
+            }
+            reverted += chunk.len() as u64;
+            Ok(())
+        })?;
+        Err(error)
+    }
+
     /// Scans every local row visible to the transaction (`Chunks`).
     fn scan_visible(
         transaction: TransactionData,
         collection: &RowGroupCollection,
+        f: impl FnMut(&DataChunk) -> Result<()>,
+    ) -> Result<()> {
+        let columns: Vec<usize> = (0..collection.types().len()).collect();
+        Self::scan_columns(transaction, collection, &columns, f)
+    }
+
+    /// Scans columns `columns` of every local row visible to the transaction.
+    fn scan_columns(
+        transaction: TransactionData,
+        collection: &RowGroupCollection,
+        columns: &[usize],
         mut f: impl FnMut(&DataChunk) -> Result<()>,
     ) -> Result<()> {
-        let column_ids: Vec<StorageIndex> = (0..collection.types().len()).map(StorageIndex::from).collect();
+        let column_ids: Vec<StorageIndex> = columns.iter().map(|&c| StorageIndex::from(c)).collect();
+        let types: Vec<_> = columns.iter().map(|&c| collection.types()[c].clone()).collect();
         let mut filters = ScanFilterInfo::default();
         let mut state = CollectionScanState::default();
         collection.initialize_scan(&mut state, &column_ids, &mut filters)?;
-        let mut chunk = DataChunk::with_types(collection.types(), rustdb_common::STANDARD_VECTOR_SIZE);
+        let mut chunk = DataChunk::with_types(&types, rustdb_common::STANDARD_VECTOR_SIZE);
         while RowGroupCollection::scan(
             ScanOptions::new(transaction),
             &mut state,
@@ -143,14 +240,14 @@ impl LocalStorage {
     }
 
     /// The local storage of `table`, created on first use.
-    pub fn get_or_create(&self, table: &Arc<DataTable>) -> Arc<LocalTableStorage> {
+    pub fn get_or_create(&self, table: &Arc<DataTable>) -> Result<Arc<LocalTableStorage>> {
         let mut tables = self.tables();
         if let Some(storage) = tables.iter().find(|storage| Arc::ptr_eq(&storage.table(), table)) {
-            return Arc::clone(storage);
+            return Ok(Arc::clone(storage));
         }
-        let storage = Arc::new(LocalTableStorage::new(table));
+        let storage = Arc::new(LocalTableStorage::new(table)?);
         tables.push(Arc::clone(&storage));
-        storage
+        Ok(storage)
     }
 
     /// Whether any table has local data (`ChangesMade`).
@@ -168,6 +265,19 @@ impl LocalStorage {
         let Some(storage) = self.storage(table) else {
             return Ok(0);
         };
+        if !storage.append_indexes.is_empty() {
+            // Remove the rows from the local indexes (`RemoveFromIndexes`).
+            let collection = storage.collection();
+            let columns = storage.append_indexes.required_columns();
+            let mut unique_ids = ids.to_vec();
+            unique_ids.sort_unstable();
+            unique_ids.dedup();
+            let fetched = table.fetch_columns(&collection, &columns, &unique_ids)?;
+            let table_chunk = table.index_table_chunk(&columns, &fetched);
+            for entry in storage.append_indexes.entries() {
+                entry.lock().index.try_delete(&table_chunk, &unique_ids)?;
+            }
+        }
         let (count, _) = storage.collection().delete(TransactionData::local(), ids)?;
         storage.deleted_rows.fetch_add(count, Ordering::AcqRel);
         Ok(count)

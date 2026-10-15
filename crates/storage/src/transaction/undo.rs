@@ -7,6 +7,7 @@ use std::sync::Arc;
 use rustdb_common::Result;
 
 use crate::data_table::DataTable;
+use crate::index::IndexRemovalType;
 use crate::table::{DeleteRecord, UpdateRegistration};
 use crate::transaction::NOT_DELETED_ID;
 
@@ -94,13 +95,25 @@ impl UndoBuffer {
         properties
     }
 
-    /// Applies `commit_id` to every entry, in order (`UndoBuffer::Commit`). On failure the
-    /// already committed entries are reverted to `transaction_id` and the error returned.
-    pub fn commit(&self, commit_id: u64, transaction_id: u64) -> Result<()> {
+    /// Applies `commit_id` to every entry, in order (`UndoBuffer::Commit`). Deleted rows
+    /// leave the indexes; with `others_active` they are kept in the indexes' side index of
+    /// deleted rows still in use. On failure the already committed entries are reverted to
+    /// `transaction_id` and the error returned.
+    pub fn commit(&self, commit_id: u64, transaction_id: u64, others_active: bool) -> Result<()> {
+        let removal = if others_active {
+            IndexRemovalType::MainIndex
+        } else {
+            IndexRemovalType::MainIndexOnly
+        };
         for (index, entry) in self.entries.iter().enumerate() {
-            if let Err(error) = Self::commit_entry(entry, commit_id) {
+            if let Err(error) = Self::commit_entry(entry, commit_id, removal) {
+                let revert = if others_active {
+                    IndexRemovalType::RevertMainIndex
+                } else {
+                    IndexRemovalType::RevertMainIndexOnly
+                };
                 for committed in &self.entries[..index] {
-                    Self::revert_entry(committed, transaction_id);
+                    Self::revert_entry(committed, transaction_id, revert)?;
                 }
                 return Err(error);
             }
@@ -108,7 +121,7 @@ impl UndoBuffer {
         Ok(())
     }
 
-    fn commit_entry(entry: &UndoEntry, commit_id: u64) -> Result<()> {
+    fn commit_entry(entry: &UndoEntry, commit_id: u64, removal: IndexRemovalType) -> Result<()> {
         match entry {
             UndoEntry::Catalog(change) => change.commit(commit_id),
             UndoEntry::Append {
@@ -124,6 +137,11 @@ impl UndoBuffer {
                 record
                     .version_info
                     .commit_delete(record.vector_index, commit_id, &record.rows);
+                table
+                    .remove_from_indexes(&record.row_ids(), removal)
+                    .map_err(|e| {
+                        rustdb_common::Error::new(rustdb_common::ErrorKind::Fatal, e.raw_message().to_owned())
+                    })?;
             }
             UndoEntry::Update {
                 table, registration, ..
@@ -135,20 +153,22 @@ impl UndoBuffer {
         Ok(())
     }
 
-    fn revert_entry(entry: &UndoEntry, transaction_id: u64) {
+    fn revert_entry(entry: &UndoEntry, transaction_id: u64, removal: IndexRemovalType) -> Result<()> {
         match entry {
             UndoEntry::Catalog(change) => change.revert_commit(transaction_id),
             UndoEntry::Append { table, start_row, .. } => {
                 // The append is reverted by the rollback that follows a failed commit.
                 let _ = (table, start_row);
             }
-            UndoEntry::Delete { record, .. } => {
+            UndoEntry::Delete { table, record } => {
                 record
                     .version_info
                     .commit_delete(record.vector_index, transaction_id, &record.rows);
+                table.remove_from_indexes(&record.row_ids(), removal)?;
             }
             UndoEntry::Update { registration, .. } => registration.version.set(transaction_id),
         }
+        Ok(())
     }
 
     /// Undoes every entry, newest first (`UndoBuffer::Rollback`).
@@ -191,7 +211,11 @@ impl UndoBuffer {
                         .segment
                         .cleanup_update(registration.vector_index, &registration.version);
                 }
-                UndoEntry::Delete { .. } => {}
+                UndoEntry::Delete { table, record } => {
+                    // Older transactions no longer need the deleted rows' keys. Failures
+                    // only leave stale entries in the side index, which scans tolerate.
+                    let _ = table.remove_from_indexes(&record.row_ids(), IndexRemovalType::DeletedRowsInUse);
+                }
             }
         }
     }

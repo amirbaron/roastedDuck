@@ -104,6 +104,7 @@ pub enum GateStatus {
 }
 
 impl GateStatus {
+    #[must_use]
     pub const fn flipped(self) -> Self {
         match self {
             Self::NotSet => Self::Set,
@@ -117,6 +118,7 @@ const AND_ROW_ID: u64 = 0x00FF_FFFF_FFFF_FFFF;
 
 impl IndexPointer {
     /// An inlined leaf holding `row_id` (`Leaf::New`).
+    #[must_use]
     pub fn inlined_leaf(row_id: i64) -> Self {
         let mut node = Self::from_raw((row_id as u64) & AND_ROW_ID);
         node.set_metadata(NType::LeafInlined as u8);

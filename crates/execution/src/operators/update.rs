@@ -124,7 +124,8 @@ impl PhysicalUpdate {
         if rows.len() != fresh_ids.len() {
             return Err(Error::internal("update could not fetch every row it deletes"));
         }
-        self.table.delete(&self.transaction, &fresh_ids)?;
+        self.table
+            .delete_with_constraints(&self.transaction, &fresh_ids, &self.constraints)?;
         let sel = SelectionVector::new(fresh);
         let mut columns = rows.into_columns();
         for (index, &column) in self.columns.iter().enumerate() {
