@@ -16,9 +16,10 @@ use rustdb_function::AggregateFunctionSet;
 
 use algebraic::{avg, stddev};
 use distributive::{
-    approx_count, arg_min_max, bitagg, bool, count, first_last_any, minmax, moments, product, string_agg, sum,
+    approx_count, arg_min_max, bitagg, bitstring_agg, bool, count, first_last_any, minmax, moments, product,
+    string_agg, sum,
 };
-use holistic::{mode, quantile};
+use holistic::{approx_top_k, mode, quantile};
 use nested::{binned_histogram, list};
 
 /// Every builtin aggregate function set, aliases included.
@@ -53,6 +54,7 @@ pub fn aggregate_functions() -> Result<Vec<AggregateFunctionSet>> {
         bitagg::bit_and_functions(),
         bitagg::bit_or_functions(),
         bitagg::bit_xor_functions(),
+        bitstring_agg::bitstring_agg_functions(),
         product::product_functions(),
         moments::skewness_functions(),
         moments::kurtosis_functions(),
@@ -94,6 +96,7 @@ pub fn aggregate_functions() -> Result<Vec<AggregateFunctionSet>> {
         binned_histogram::histogram_exact_functions(),
         mode::mode_functions(),
         mode::entropy_functions(),
+        approx_top_k::approx_top_k_functions(),
         quantile_disc.clone().renamed("quantile"),
         quantile_disc,
         quantile::quantile_cont_functions(),

@@ -293,11 +293,23 @@ impl FunctionSignature for TableFunction {
 #[derive(Debug)]
 pub struct FunctionBinder<'a> {
     context: &'a ClientContext,
+    /// The lambda argument of the call being bound, for lambda functions.
+    lambda: Option<rustdb_function::LambdaInput>,
 }
 
 impl<'a> FunctionBinder<'a> {
     pub fn new(context: &'a ClientContext) -> Self {
-        Self { context }
+        Self {
+            context,
+            lambda: None,
+        }
+    }
+
+    /// A binder for a lambda function call whose lambda argument is `lambda`.
+    #[must_use]
+    pub fn with_lambda(mut self, lambda: rustdb_function::LambdaInput) -> Self {
+        self.lambda = Some(lambda);
+        self
     }
 
     fn implicit_cast_cost(&self, from: &LogicalType, to: &LogicalType) -> i64 {
@@ -532,6 +544,7 @@ impl<'a> FunctionBinder<'a> {
                     client: &self.context.function_client,
                     binder: Some(self.context as &dyn std::any::Any),
                     aggregates: Some(self.context as &dyn rustdb_function::AggregateResolver),
+                    lambda: self.lambda.as_ref(),
                 },
             )?;
             // The bind may have dropped trailing arguments (DuckDB's `EraseArgument`).
@@ -584,6 +597,7 @@ impl<'a> FunctionBinder<'a> {
                     client: &self.context.function_client,
                     binder: Some(self.context as &dyn std::any::Any),
                     aggregates: Some(self.context as &dyn rustdb_function::AggregateResolver),
+                    lambda: self.lambda.as_ref(),
                 },
             )?;
             // The bind may have dropped arguments.

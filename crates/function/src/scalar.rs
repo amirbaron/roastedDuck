@@ -32,12 +32,27 @@ pub trait FunctionData: Any + Send + Sync + fmt::Debug {
     fn as_any(&self) -> &dyn Any;
 }
 
+/// Evaluates the bound lambda of a lambda function call (DuckDB's `ExpressionExecutor` over
+/// the lambda expression of `ListLambdaBindData`), supplied by the executor.
+pub trait LambdaExecutor: Send + fmt::Debug {
+    /// Evaluates the lambda body for every row of `input`, whose columns are the lambda
+    /// parameters (in DuckDB's order: index first, then the element(s)) followed by the
+    /// captured columns.
+    fn execute(&mut self, input: &DataChunk) -> Result<Vector>;
+
+    /// Whether the lambda body is volatile (then a constant input does not give a
+    /// constant result).
+    fn is_volatile(&self) -> bool;
+}
+
 /// Per-call state handed to a kernel.
 #[derive(Debug, Default)]
 pub struct FunctionState {
     pub bind_data: Option<Arc<dyn FunctionData>>,
     /// Thread-local state created on first use by the kernel.
     pub local: Option<Box<dyn Any + Send>>,
+    /// The lambda of a lambda function call (`list_transform(l, x -> ...)`).
+    pub lambda: Option<Box<dyn LambdaExecutor>>,
 }
 
 /// A vectorised scalar kernel: computes `result` from the argument columns of `args`.
@@ -74,6 +89,19 @@ impl fmt::Debug for dyn AggregateResolver + '_ {
     }
 }
 
+/// The lambda argument of a lambda function call, as its bind callback sees it.
+#[derive(Clone, Debug)]
+pub struct LambdaInput {
+    /// The number of lambda parameters (`x -> ...` has 1, `(x, i) -> ...` has 2).
+    pub parameter_count: usize,
+    /// The type of the lambda body.
+    pub return_type: LogicalType,
+}
+
+/// The type of lambda parameter `parameter` given the call's argument types (DuckDB's
+/// `bind_lambda_function_t`; the lambda argument has type `LAMBDA`).
+pub type BindLambda = fn(&[LogicalType], usize) -> Result<LogicalType>;
+
 /// What a bind callback learns about a call (DuckDB's `ScalarFunctionBindInput` plus the
 /// bound argument expressions, reduced to what functions actually inspect).
 #[derive(Clone, Copy, Debug)]
@@ -95,6 +123,8 @@ pub struct BindInput<'a> {
     pub binder: Option<&'a dyn Any>,
     /// Aggregate resolution for functions that run an aggregate (`None` outside a binder).
     pub aggregates: Option<&'a dyn AggregateResolver>,
+    /// The lambda argument, for lambda functions.
+    pub lambda: Option<&'a LambdaInput>,
 }
 
 /// Specialises a chosen overload for a call (DuckDB's `bind_scalar_function_t`).
@@ -117,6 +147,12 @@ pub struct ScalarFunction {
     pub stability: Stability,
     /// Called once per call site after overload resolution.
     pub bind: Option<ScalarBind>,
+    /// The lambda parameter types, for functions taking a lambda (DuckDB's
+    /// `bind_lambda_function`).
+    pub bind_lambda: Option<BindLambda>,
+    /// Set by the bind of a lambda function: the type the lambda body is cast to (DuckDB
+    /// wraps the lambda expression in a cast, e.g. to BOOLEAN for `list_filter`).
+    pub lambda_cast: Option<LogicalType>,
 }
 
 impl ScalarFunction {
@@ -135,6 +171,8 @@ impl ScalarFunction {
             null_handling: NullHandling::Default,
             stability: Stability::Consistent,
             bind: None,
+            bind_lambda: None,
+            lambda_cast: None,
         }
     }
 

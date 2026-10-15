@@ -281,9 +281,13 @@ impl<'a> SelectBinder<'a> {
                 .iter()
                 .rposition(|binding| binding.has_matching_binding(name))
             {
-                return Ok(self.base.state.lambda_bindings[index]
-                    .bind(name, "", depth)?
-                    .into());
+                return Ok(crate::binder::expression::bind_lambda_parameter(
+                    &mut self.base.state.lambda_bindings,
+                    index as u64,
+                    name,
+                    depth,
+                )?
+                .into());
             }
             if let Some(mut function) = self.sql_value_function(name) {
                 return self.bind_expression(&mut function, depth, false);

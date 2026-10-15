@@ -32,8 +32,14 @@ struct ExpressionState {
 
 impl ExpressionState {
     fn for_expression(expression: &Expression) -> Self {
+        let mut function = FunctionState::default();
+        if let ExpressionKind::Function(bound) = &expression.kind
+            && let Some(lambda) = &bound.lambda
+        {
+            function.lambda = Some(Box::new(LambdaRunner::new((**lambda).clone())));
+        }
         Self {
-            function: FunctionState::default(),
+            function,
             children: expression
                 .children()
                 .into_iter()
@@ -41,6 +47,35 @@ impl ExpressionState {
                 .collect(),
             arguments: DataChunk::default(),
         }
+    }
+}
+
+/// Evaluates the lambda body of a lambda function call over the lambda's input chunk
+/// (DuckDB's `LambdaExecuteInfo::expr_executor`).
+#[derive(Debug)]
+struct LambdaRunner {
+    executor: ExpressionExecutor,
+    volatile: bool,
+}
+
+impl LambdaRunner {
+    fn new(body: Expression) -> Self {
+        Self {
+            volatile: body.is_volatile(),
+            executor: ExpressionExecutor::new(vec![body]),
+        }
+    }
+}
+
+impl rustdb_function::LambdaExecutor for LambdaRunner {
+    fn execute(&mut self, input: &DataChunk) -> Result<Vector> {
+        let mut output = DataChunk::default();
+        self.executor.execute(input, &mut output)?;
+        Ok(output.column(0).clone())
+    }
+
+    fn is_volatile(&self) -> bool {
+        self.volatile
     }
 }
 

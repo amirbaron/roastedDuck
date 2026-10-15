@@ -2,6 +2,7 @@
 
 pub mod contains_or_position;
 pub mod has_any_or_all;
+pub mod lambda;
 pub mod list_aggregates;
 pub mod list_extract;
 pub mod list_ops;

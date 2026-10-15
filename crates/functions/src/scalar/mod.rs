@@ -197,6 +197,9 @@ fn string_functions(sets: &mut Vec<ScalarFunctionSet>) {
         list::list_ops::list_intersect_functions(),
         &["array_intersect"],
     );
+    for (set, aliases) in list::lambda::lambda_functions() {
+        with_aliases(sets, set, aliases);
+    }
     for (set, aliases) in list::has_any_or_all::has_any_or_all_functions()
         .into_iter()
         .chain(array::array_functions::distance_functions())

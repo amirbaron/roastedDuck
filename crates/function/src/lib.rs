@@ -17,8 +17,9 @@ pub use aggregate::{
 };
 pub use client::FunctionClient;
 pub use scalar::{
-    AggregateResolver, BindInput, BoundAggregateFunction, FunctionData, FunctionState, NullHandling,
-    ScalarBind, ScalarFunction, ScalarFunctionSet, ScalarKernel, Stability,
+    AggregateResolver, BindInput, BindLambda, BoundAggregateFunction, FunctionData, FunctionState,
+    LambdaExecutor, LambdaInput, NullHandling, ScalarBind, ScalarFunction, ScalarFunctionSet, ScalarKernel,
+    Stability,
 };
 pub use table::{
     TableFunction, TableFunctionBind, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionScan,
