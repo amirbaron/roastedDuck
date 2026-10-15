@@ -1269,7 +1269,6 @@ impl SelectBinder<'_> {
                 ));
             }
         }
-        let _ = keep_parent_names;
         self.unnest_level += 1;
         let first = &mut function.children[0];
         self.bind_child(first, depth, &mut error)?;
@@ -1370,8 +1369,76 @@ impl SelectBinder<'_> {
             );
         }
         if struct_unnests > 0 {
-            return Err(Error::not_implemented("UNNEST of structs"));
+            // Each struct is replaced by its fields, level by level (DuckDB's
+            // CreateBoundStructExtract / CreateBoundStructExtractIndex).
+            let mut struct_expressions = vec![unnest_expr];
+            for _ in 0..struct_unnests {
+                let mut expanded = Vec::new();
+                let mut has_structs = false;
+                for expression in struct_expressions {
+                    let Some(fields) = (expression.return_type.id() == LogicalTypeId::Struct)
+                        .then(|| expression.return_type.struct_children().map(<[_]>::to_vec))
+                        .flatten()
+                    else {
+                        expanded.push(expression);
+                        continue;
+                    };
+                    has_structs = true;
+                    if fields.iter().all(|(name, _)| name.is_empty()) {
+                        for index in 0..fields.len() {
+                            let key = Value::bigint(index as i64 + 1);
+                            let mut field = self.bind_struct_extract(expression.clone(), key, depth)?;
+                            field.alias = format!("element{}", index + 1);
+                            expanded.push(field);
+                        }
+                    } else {
+                        for (name, _) in &fields {
+                            let mut key_path = Vec::new();
+                            if keep_parent_names
+                                && expression.expression_type == ExpressionType::BoundFunction
+                            {
+                                key_path.push(expression.alias.clone());
+                            }
+                            key_path.push(name.clone());
+                            let mut field =
+                                self.bind_struct_extract(expression.clone(), Value::varchar(name), depth)?;
+                            field.alias = if keep_parent_names {
+                                let alias = key_path.join(".");
+                                alias.strip_prefix('.').map_or(alias.clone(), str::to_owned)
+                            } else {
+                                key_path[0].clone()
+                            };
+                            expanded.push(field);
+                        }
+                    }
+                }
+                struct_expressions = expanded;
+                if !has_structs {
+                    break;
+                }
+            }
+            unnest_expr = Expression::new(
+                ExpressionType::BoundExpanded,
+                LogicalType::INTEGER,
+                ExpressionKind::Expanded(crate::expression::BoundExpandedExpression {
+                    expanded_expressions: struct_expressions,
+                }),
+            );
         }
         Ok(unnest_expr.into())
+    }
+
+    /// `struct_extract(child, key)` bound as a function call.
+    fn bind_struct_extract(&mut self, child: Expression, key: Value, depth: u64) -> Result<Expression> {
+        let mut argument = ParsedExpression::constant(Value::null(LogicalType::SQLNULL));
+        crate::expression_binder::set_bound(&mut argument, child);
+        let mut call = crate::expression_binder::function_call(
+            "struct_extract",
+            vec![argument, ParsedExpression::constant(key)],
+        );
+        match self.bind_expression(&mut call, depth, false)? {
+            BindResult::Bound(expression) => Ok(expression),
+            BindResult::Unbound(error) => Err(error.error),
+        }
     }
 }
