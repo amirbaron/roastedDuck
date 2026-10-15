@@ -12,7 +12,7 @@ use rustdb_function::{TableFunction, TableFunctionBindInput};
 use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
 use crate::binder::{BindScope, Binding, BindingAlias, BindingKind, BoundStatement};
-use crate::expression_binder::{ExpressionBinder, TableFunctionBinder, for_each_child, parameter_not_resolved};
+use crate::expression_binder::{ExpressionBinder, TableFunctionBinder, parameter_not_resolved, parsed_is_scalar};
 use crate::function_binder::FunctionBinder;
 use crate::operator::{LogicalGet, LogicalKind, LogicalOperator};
 
@@ -34,25 +34,6 @@ impl NamedParameters {
     }
 }
 
-/// DuckDB's `ParsedExpression::IsScalar`.
-fn is_scalar(expr: &mut ParsedExpression) -> bool {
-    match &expr.kind {
-        ParsedExpressionKind::ColumnRef(_)
-        | ParsedExpressionKind::Subquery(_)
-        | ParsedExpressionKind::Default
-        | ParsedExpressionKind::PositionalReference(_) => false,
-        ParsedExpressionKind::Parameter(_) => true,
-        _ => {
-            let mut scalar = true;
-            let _ = for_each_child(expr, &mut |child| {
-                scalar &= is_scalar(child);
-                Ok(())
-            });
-            scalar
-        }
-    }
-}
-
 /// The name a table function's columns are bound under (DuckDB's `GetAlias`).
 fn function_alias(alias: &str, function: &FunctionExpression) -> String {
     if alias.is_empty() {
@@ -70,7 +51,7 @@ fn bind_parameters(
     children: &mut [ParsedExpression],
     location: Option<u64>,
 ) -> Result<(Vec<LogicalType>, Vec<Value>, NamedParameters)> {
-    if !children.iter_mut().all(is_scalar) {
+    if !children.iter_mut().all(parsed_is_scalar) {
         return Err(Error::not_implemented("table in-out functions and table parameters"));
     }
     let mut arguments = Vec::new();

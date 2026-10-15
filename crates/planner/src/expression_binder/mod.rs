@@ -521,6 +521,39 @@ pub trait ExpressionBinder: ColumnQualifier {
     }
 }
 
+/// DuckDB's `ParsedExpression::IsScalar`: no column references, subqueries, DEFAULT or
+/// positional references.
+pub fn parsed_is_scalar(expr: &mut ParsedExpression) -> bool {
+    match &expr.kind {
+        ParsedExpressionKind::ColumnRef(_)
+        | ParsedExpressionKind::Subquery(_)
+        | ParsedExpressionKind::Default
+        | ParsedExpressionKind::PositionalReference(_) => false,
+        ParsedExpressionKind::Parameter(_) => true,
+        _ => {
+            let mut scalar = true;
+            let _ = for_each_child(expr, &mut |child| {
+                scalar &= parsed_is_scalar(child);
+                Ok(())
+            });
+            scalar
+        }
+    }
+}
+
+/// DuckDB's `ParsedExpression::HasParameter`.
+pub fn parsed_has_parameter(expr: &mut ParsedExpression) -> bool {
+    if matches!(expr.kind, ParsedExpressionKind::Parameter(_)) {
+        return true;
+    }
+    let mut found = false;
+    let _ = for_each_child(expr, &mut |child| {
+        found |= parsed_has_parameter(child);
+        Ok(())
+    });
+    found
+}
+
 /// A constant of type `NULL`.
 pub fn null_constant() -> Expression {
     Expression::constant(Value::null(LogicalType::SQLNULL))

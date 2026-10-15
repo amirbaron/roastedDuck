@@ -16,12 +16,12 @@ use super::qualify::default_qualify_column_name;
 use super::simple_binders::AggregateBinder;
 use super::{BindError, BindResult, ExpressionBinder, is_potential_alias, peek_bound, take_bound, unsupported};
 use crate::binder::expression::{bind_column_ref, bind_expression_base, push_collation};
-use crate::binder::query_node::BoundSelectNode;
+use crate::binder::query_node::{BoundSelectNode, BoundUnnestNode};
 use crate::binder::{Binder, Scope};
 use crate::context::ClientContext;
 use crate::expression::{
-    AggregateType, BoundCaseCheck, BoundCaseExpression, BoundOrderByNode, BoundOrderModifier, BoundWindowExpression,
-    Expression, ExpressionKind,
+    AggregateType, BoundCaseCheck, BoundCaseExpression, BoundOrderByNode, BoundOrderModifier, BoundUnnestExpression,
+    BoundWindowExpression, Expression, ExpressionKind,
 };
 use crate::function_binder::{FunctionBinder, add_cast_to_type};
 use crate::parsed_equality::ParsedExpressionMap;
@@ -132,6 +132,8 @@ pub struct SelectBinder<'a> {
     role: SelectRole,
     inside_window: bool,
     bound_aggregate: bool,
+    /// How many UNNEST calls enclose the expression being bound.
+    unnest_level: u64,
 }
 
 /// The HAVING binder (a [`SelectBinder`] with the HAVING role).
@@ -158,6 +160,7 @@ impl<'a> SelectBinder<'a> {
             role,
             inside_window: false,
             bound_aggregate: false,
+            unnest_level: 0,
         }
     }
 
@@ -626,6 +629,14 @@ impl ExpressionBinder for SelectBinder<'_> {
         self.bind_select_aggregate(expr, functions, depth)
     }
 
+    fn bind_unnest(&mut self, expr: &mut ParsedExpression, depth: u64, root_expression: bool) -> Result<BindResult> {
+        if matches!(self.role, SelectRole::Select) {
+            return self.bind_select_unnest(expr, depth, root_expression);
+        }
+        let message = self.unsupported_unnest_message();
+        crate::binder::expression::bind_unsupported_expression(self, expr, depth, &message)
+    }
+
     fn bind_window(&mut self, expr: &mut ParsedExpression, depth: u64) -> Result<BindResult> {
         if matches!(self.role, SelectRole::Having { .. }) {
             return Err(unsupported(expr, "HAVING clause cannot contain window functions!").error);
@@ -968,5 +979,183 @@ impl SelectBinder<'_> {
         let binding = ColumnBinding::new(self.node.window_index, self.node.windows.len() as u64);
         self.node.windows.push(result);
         Ok(Expression::column_ref(name, return_type, binding, depth).into())
+    }
+}
+
+impl SelectBinder<'_> {
+    /// DuckDB's `SelectBinder::BindUnnest`: list unnests become references to the
+    /// node's UNNEST operators, one per nesting level.
+    #[allow(clippy::too_many_lines)]
+    fn bind_select_unnest(&mut self, expr: &mut ParsedExpression, depth: u64, root_expression: bool) -> Result<BindResult> {
+        let location = expr.query_location;
+        let alias = expr.alias.clone();
+        let positioned = |message: String| BindResult::Unbound(BindError::binder(message).with_position(location));
+        let ParsedExpressionKind::Function(function) = &mut expr.kind else {
+            return Err(Error::internal("expected an UNNEST call"));
+        };
+        if depth > 0 {
+            return Ok(positioned("UNNEST() for correlated expressions is not supported yet".to_owned()));
+        }
+        if function.children.is_empty() {
+            return Ok(positioned("UNNEST() requires at lease one argument".to_owned()));
+        }
+        if self.inside_window {
+            return Ok(positioned(self.unsupported_unnest_message()));
+        }
+        if function.distinct || function.filter.is_some() || !function.order_bys.orders.is_empty() {
+            return Err(Error::invalid_input(
+                "\"DISTINCT\", \"FILTER\", and \"ORDER BY\" are not applicable to \"UNNEST\"",
+            ));
+        }
+        let mut max_depth = 1_u64;
+        let mut keep_parent_names = false;
+        let mut error: Option<BindError> = None;
+        if function.children.len() != 1 {
+            let mut supported_argument = false;
+            let context = self.base.binder.context.clone();
+            for i in 1..function.children.len() {
+                let child = &mut function.children[i];
+                if super::parsed_has_parameter(child) {
+                    return Err(Error::new(
+                        rustdb_common::ErrorKind::ParameterNotAllowed,
+                        "Parameter not allowed in unnest parameter",
+                    ));
+                }
+                if !super::parsed_is_scalar(child) {
+                    break;
+                }
+                let name = child.alias.to_lowercase();
+                self.bind_child(child, depth, &mut error)?;
+                if let Some(error) = error.take() {
+                    return Ok(BindResult::Unbound(error));
+                }
+                let bound = peek_bound(child).ok_or_else(|| Error::internal("unnest argument not bound"))?;
+                let value = context.evaluator.evaluate_scalar(bound)?;
+                match name.as_str() {
+                    "recursive" => {
+                        if value.as_bool() == Some(true) {
+                            max_depth = u64::MAX;
+                        }
+                    }
+                    "max_depth" => {
+                        max_depth = value
+                            .as_i128()
+                            .and_then(|depth| u64::try_from(depth).ok())
+                            .ok_or_else(|| Error::conversion("max_depth must be an unsigned integer"))?;
+                        if max_depth == 0 {
+                            return Err(Error::binder("UNNEST cannot have a max depth of 0"));
+                        }
+                    }
+                    "keep_parent_names" => keep_parent_names = value.as_bool() == Some(true),
+                    "" => break,
+                    other => return Err(Error::binder(format!("Unsupported parameter \"{other}\" for unnest"))),
+                }
+                supported_argument = true;
+            }
+            if !supported_argument {
+                return Ok(positioned(
+                    "UNNEST - unsupported extra argument, unnest only supports recursive := [true/false], max_depth := \
+                     # or keep_parent_names := [true/false]"
+                        .to_owned(),
+                ));
+            }
+        }
+        let _ = keep_parent_names;
+        self.unnest_level += 1;
+        let first = &mut function.children[0];
+        self.bind_child(first, depth, &mut error)?;
+        if let Some(bind_error) = error.take() {
+            if let Some(correlated_error) = self.bind_correlated_columns(first, bind_error)? {
+                self.unnest_level -= 1;
+                return Ok(BindResult::Unbound(correlated_error));
+            }
+            if let Some(bound) = peek_bound(first).cloned() {
+                self.base.binder.extract_correlated_expressions(&bound);
+            }
+        }
+        let context = self.base.binder.context.clone();
+        let mut child = take_bound(first)?;
+        // Arrays unnest like lists (DuckDB's `AddArrayCastToList`).
+        if child.return_type.id() == LogicalTypeId::Array
+            && let Some((element, _)) = child.return_type.array_child()
+        {
+            let list = LogicalType::list(element.clone());
+            child = add_cast_to_type(&context, child, &list, false)?;
+        }
+        self.unnest_level -= 1;
+        if self.unnest_level > 0 {
+            return Err(Error::binder(
+                "Nested UNNEST calls are not supported - use UNNEST(x, recursive := true) to unnest multiple levels",
+            )
+            .with_position(location));
+        }
+        let child_type = child.return_type.clone();
+        match child_type.id() {
+            LogicalTypeId::Unknown => return Err(super::parameter_not_resolved()),
+            LogicalTypeId::List | LogicalTypeId::Struct | LogicalTypeId::SqlNull => {}
+            _ => {
+                return Ok(positioned(format!(
+                    "UNNEST() can only be applied to lists, structs and NULL, not {child_type}"
+                )));
+            }
+        }
+        let mut list_unnests = 0_u64;
+        let mut struct_unnests = 0_u64;
+        if child_type.id() == LogicalTypeId::SqlNull {
+            list_unnests = 1;
+        } else {
+            let mut ty = child_type.clone();
+            while ty.id() == LogicalTypeId::List {
+                ty = ty.child_type().cloned().unwrap_or_default();
+                list_unnests += 1;
+                if list_unnests >= max_depth {
+                    break;
+                }
+            }
+            if ty.id() == LogicalTypeId::Struct {
+                struct_unnests = max_depth - list_unnests;
+            }
+        }
+        if struct_unnests > 0 && !root_expression {
+            return Ok(positioned(
+                "UNNEST() on a struct column can only be applied as the root element of a SELECT expression".to_owned(),
+            ));
+        }
+        let mut unnest_expr = child;
+        let mut return_type = child_type;
+        for current_depth in 0..list_unnests {
+            if return_type.id() == LogicalTypeId::List {
+                return_type = return_type.child_type().cloned().unwrap_or_default();
+            }
+            let result = Expression::new(
+                ExpressionType::BoundUnnest,
+                return_type.clone(),
+                ExpressionKind::Unnest(Box::new(BoundUnnestExpression { child: unnest_expr })),
+            );
+            let name = if alias.is_empty() { result.to_string() } else { alias.clone() };
+            let level = self.unnest_level + list_unnests - current_depth - 1;
+            let (table_index, column_index) = match self.node.unnests.get_mut(&level) {
+                Some(node) => {
+                    node.expressions.push(result);
+                    (node.index, node.expressions.len() as u64 - 1)
+                }
+                None => {
+                    let index = self.base.binder.generate_table_index();
+                    self.node.unnests.insert(
+                        level,
+                        BoundUnnestNode {
+                            index,
+                            expressions: vec![result],
+                        },
+                    );
+                    (index, 0)
+                }
+            };
+            unnest_expr = Expression::column_ref(name, return_type.clone(), ColumnBinding::new(table_index, column_index), depth);
+        }
+        if struct_unnests > 0 {
+            return Err(Error::not_implemented("UNNEST of structs"));
+        }
+        Ok(unnest_expr.into())
     }
 }
