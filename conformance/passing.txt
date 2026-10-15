@@ -110,6 +110,7 @@ test/sql/parallelism/interquery/parallel_dependencies_catalog_operations.test_sl
 test/sql/parallelism/intraquery/depth_first_evaluation.test_slow
 test/sql/parallelism/modify_thread_settings.test
 test/sql/parser/dollar_quotes_internal_issue2224.test
+test/sql/parser/expression_depth_limit.test
 test/sql/parser/pg_err_pos_reset.test
 test/sql/parser/test_long_error.test
 test/sql/peg_parser/transformer/load_statement.test
