@@ -319,11 +319,12 @@ mod tests {
         let config = engine.test_config().unwrap();
         let db = engine.open("", &config).unwrap();
         let mut con = engine.connect(&db).unwrap();
-        let result = engine.query(&mut con, "SELECT 42");
+        assert!(engine.query(&mut con, "SELECT 42").error().is_none());
+        let result = engine.query(&mut con, "SELEC 42");
         assert!(
             result
                 .error()
-                .is_some_and(|error| error.starts_with("Not implemented Error"))
+                .is_some_and(|error| error.starts_with("Parser Error: syntax error at or near \"SELEC\""))
         );
         assert_eq!(
             engine.setting(&config, RequireSetting::DefaultBlockSize),
