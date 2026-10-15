@@ -196,6 +196,7 @@ impl Connection {
 
     /// The planner's view of this connection, in `transaction`.
     fn client_context(&self, transaction: Arc<Transaction>) -> Arc<ClientContext> {
+        self.function_client.observe_transaction(transaction.transaction_id);
         let instance = self.database.instance();
         Arc::new(ClientContext {
             catalogs: vec![

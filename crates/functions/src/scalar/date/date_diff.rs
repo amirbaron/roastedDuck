@@ -394,9 +394,41 @@ pub(crate) fn age(first: Timestamp, second: Timestamp) -> Interval {
     )
 }
 
-/// `age(timestamp, timestamp)`.
+/// The connection whose transaction start `age(timestamp)` uses.
+#[derive(Debug)]
+struct ClientData(std::sync::Arc<rustdb_function::FunctionClient>);
+
+impl rustdb_function::FunctionData for ClientData {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// `age(timestamp)` and `age(timestamp, timestamp)`.
 pub fn age_functions() -> ScalarFunctionSet {
     let mut set = ScalarFunctionSet::new("age");
+    let mut current = ScalarFunction::new(
+        "age",
+        vec![LogicalType::TIMESTAMP],
+        LogicalType::INTERVAL,
+        |args, state, result| {
+            let client = state
+                .bind_data
+                .as_ref()
+                .and_then(|data| data.as_any().downcast_ref::<ClientData>())
+                .ok_or_else(|| Error::internal("age without bind data"))?;
+            // Midnight (UTC) of the day the transaction started.
+            let start = Timestamp(client.0.transaction_start_micros());
+            let today = timestamp_from_datetime(start.to_date(), Time(0))?;
+            binary_age_rows(args, result, today)
+        },
+    )
+    .with_bind(|_, input| {
+        Ok(Some(std::sync::Arc::new(ClientData(std::sync::Arc::clone(input.client)))
+            as std::sync::Arc<dyn rustdb_function::FunctionData>))
+    });
+    current.stability = rustdb_function::Stability::ConsistentWithinQuery;
+    set.add(current);
     set.add(ScalarFunction::new(
         "age",
         vec![LogicalType::TIMESTAMP, LogicalType::TIMESTAMP],
@@ -412,4 +444,15 @@ pub fn age_functions() -> ScalarFunctionSet {
         },
     ));
     set
+}
+
+/// `age(current_date, value)` per row.
+fn binary_age_rows(args: &DataChunk, result: &mut Vector, today: Timestamp) -> Result<()> {
+    crate::scalar::executor::unary::<Timestamp, Interval>(args, result, |value, out| {
+        if !value.is_finite() {
+            return Ok(false);
+        }
+        *out = age(today, value);
+        Ok(true)
+    })
 }

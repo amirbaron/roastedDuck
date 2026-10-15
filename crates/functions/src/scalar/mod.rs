@@ -103,6 +103,11 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
     sets.push(date::date_diff::age_functions());
     sets.push(date::time_bucket::time_bucket_functions());
     sets.push(date::strftime::strftime_functions());
+    with_aliases(
+        &mut sets,
+        date::current::current_timestamp_functions(),
+        &["now", "transaction_timestamp"],
+    );
     sets.extend(date::strftime::strptime_functions());
     sets.push(date::make_date::make_date_functions());
     sets.push(date::make_date::make_time_functions());
