@@ -101,6 +101,13 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
     with_aliases(&mut sets, date::date_diff::date_diff_functions(), &["datediff"]);
     with_aliases(&mut sets, date::date_diff::date_sub_functions(), &["datesub"]);
     sets.push(date::date_diff::age_functions());
+    sets.push(date::time_bucket::time_bucket_functions());
+    sets.push(date::make_date::make_date_functions());
+    sets.push(date::make_date::make_time_functions());
+    sets.push(date::make_date::make_timestamp_functions());
+    sets.push(date::make_date::make_timestamp_ns_functions());
+    sets.push(date::make_date::to_timestamp_functions());
+    sets.extend(date::make_date::interval_helper_functions());
     for (set, aliases) in math::numeric::numeric_functions() {
         with_aliases(&mut sets, set, aliases);
     }

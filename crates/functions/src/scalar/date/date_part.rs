@@ -295,7 +295,7 @@ fn interval_unit_error(part: Part) -> Error {
 }
 
 /// DuckDB's `Interval::GetMicro`.
-fn interval_micros(interval: Interval) -> Result<i64> {
+pub(crate) fn interval_micros(interval: Interval) -> Result<i64> {
     let month = i64::from(interval.months)
         .checked_mul(Interval::MICROS_PER_DAY * Interval::DAYS_PER_MONTH)
         .ok_or_else(|| Error::conversion("Could not convert Month to Microseconds"))?;
