@@ -267,18 +267,11 @@ fn schema_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
             schema.oid,
             schema.internal,
         );
-        if catalog.name().eq_ignore_ascii_case("system") {
-            push("system", 0, "information_schema", SYSTEM_SCHEMA_OID, true);
-            push("system", 0, "pg_catalog", SYSTEM_SCHEMA_OID + 1, true);
-        }
     }
     push("temp", TEMP_OID, "main", TEMP_OID + 1, true);
     rows.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
     Ok(rows.into_iter().map(|(_, _, row)| row).collect())
 }
-
-/// Object ids shown for the built-in `information_schema` and `pg_catalog` schemas.
-const SYSTEM_SCHEMA_OID: u64 = 2;
 
 /// The `CreateInfo` of a table entry (`TableCatalogEntry::GetInfo`).
 fn table_create_info(catalog: &str, schema: &str, entry: &CatalogEntry, table: &TableEntry) -> CreateInfo {
@@ -719,44 +712,9 @@ fn column_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
     Ok(rows)
 }
 
-/// The views of `system.main` over the catalog functions (`DefaultViewGenerator`).
-const DEFAULT_VIEWS: &[(&str, &str)] = &[
-    (
-        "pragma_database_list",
-        "SELECT database_oid AS seq, database_name AS name, path AS file FROM duckdb_databases() WHERE NOT internal ORDER BY 1",
-    ),
-    (
-        "sqlite_master",
-        "select 'table' \"type\", table_name \"name\", table_name \"tbl_name\", 0 rootpage, sql from duckdb_tables union all select 'view' \"type\", view_name \"name\", view_name \"tbl_name\", 0 rootpage, sql from duckdb_views union all select 'index' \"type\", index_name \"name\", table_name \"tbl_name\", 0 rootpage, sql from duckdb_indexes;",
-    ),
-    ("sqlite_schema", "SELECT * FROM sqlite_master"),
-    ("sqlite_temp_master", "SELECT * FROM sqlite_master"),
-    ("sqlite_temp_schema", "SELECT * FROM sqlite_master"),
-    ("duckdb_constraints", "SELECT * FROM duckdb_constraints()"),
-    (
-        "duckdb_columns",
-        "SELECT * FROM duckdb_columns() WHERE NOT internal",
-    ),
-    (
-        "duckdb_databases",
-        "SELECT * FROM duckdb_databases() WHERE NOT internal",
-    ),
-    ("duckdb_indexes", "SELECT * FROM duckdb_indexes()"),
-    (
-        "duckdb_schemas",
-        "SELECT * FROM duckdb_schemas() WHERE NOT internal",
-    ),
-    (
-        "duckdb_tables",
-        "SELECT * FROM duckdb_tables() WHERE NOT internal",
-    ),
-    ("duckdb_types", "SELECT * FROM duckdb_types()"),
-    ("duckdb_views", "SELECT * FROM duckdb_views() WHERE NOT internal"),
-];
-
 /// Registers the default views in the system catalog.
 pub(crate) fn register_default_views(system: &Catalog) -> Result<()> {
-    for (name, sql) in DEFAULT_VIEWS {
+    for (schema, name, sql) in crate::default_views::DEFAULT_VIEWS {
         let mut statements = rustdb_parser::parse(sql)?;
         let Some(statement) = statements.pop() else {
             continue;
@@ -764,7 +722,8 @@ pub(crate) fn register_default_views(system: &Catalog) -> Result<()> {
         let rustdb_ast::SqlStatementKind::Select(select) = statement.kind else {
             return Err(Error::internal("default view is not a SELECT"));
         };
-        system.register_view(
+        system.register_view_in(
+            schema,
             name,
             rustdb_catalog::ViewEntry {
                 query: select,

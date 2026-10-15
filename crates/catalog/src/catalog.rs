@@ -138,6 +138,20 @@ impl Catalog {
         self.register_builtin(name.to_owned(), EntryKind::View(view))
     }
 
+    /// Registers a built-in view in `schema`, creating the (internal) schema if needed
+    /// (DuckDB's `DefaultSchemaGenerator` and `DefaultViewGenerator`).
+    pub fn register_view_in(&self, schema: &str, name: &str, view: crate::ViewEntry) -> Result<()> {
+        if self.schema(&Transaction::system(), schema).is_none() {
+            let mut entry =
+                CatalogEntry::new(schema, EntryKind::Schema(SchemaEntry::new(&self.name, schema)));
+            entry.internal = true;
+            self.schemas.create_committed(entry)?;
+        }
+        let mut entry = CatalogEntry::new(name, EntryKind::View(view));
+        entry.internal = true;
+        self.create_entry_committed(schema, entry)
+    }
+
     /// Adds an internal entry to the set of `main` its kind belongs to.
     fn register_builtin(&self, name: String, kind: EntryKind) -> Result<()> {
         let schema = self

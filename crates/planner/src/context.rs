@@ -166,6 +166,7 @@ impl ClientContext {
         let mut paths = self.search_path.clone();
         paths.push((self.default_catalog().to_owned(), DEFAULT_SCHEMA.to_owned()));
         paths.push(("system".to_owned(), DEFAULT_SCHEMA.to_owned()));
+        paths.push(("system".to_owned(), "pg_catalog".to_owned()));
         let mut unique: Vec<(String, String)> = Vec::with_capacity(paths.len());
         for path in paths {
             if !unique
@@ -183,6 +184,7 @@ impl ClientContext {
     fn search_path(&self, catalog: &str, schema: &str) -> Vec<(String, String)> {
         match (catalog.is_empty(), schema.is_empty()) {
             (true, true) => self.full_search_path(),
+            (true, false) if is_default_schema(schema) => vec![("system".to_owned(), schema.to_lowercase())],
             (true, false) => {
                 let mut entries: Vec<(String, String)> = self
                     .full_search_path()
@@ -259,9 +261,9 @@ impl ClientContext {
         schemas: &[(String, String)],
         ty: CatalogType,
         name: &str,
-    ) -> (f64, Vec<String>) {
+    ) -> (f64, Vec<(String, String, String)>) {
         let mut best = 0.0;
-        let mut results: Vec<String> = Vec::new();
+        let mut results: Vec<(String, String, String)> = Vec::new();
         for (catalog_name, schema_name) in schemas {
             let Some(catalog) = self.catalog(catalog_name) else {
                 continue;
@@ -300,10 +302,27 @@ impl ClientContext {
                     results.clear();
                 }
                 best = entry_score;
-                results.push(entry_name);
+                results.push((catalog.name().to_owned(), schema_name.clone(), entry_name));
             }
         }
         (best, results)
+    }
+
+    /// Whether naming an entry of `catalog.schema` needs the catalog and/or the schema
+    /// (DuckDB's `FindMinimalQualification`).
+    fn minimal_qualification(&self, catalog: &str, schema: &str) -> (bool, bool) {
+        let matches = |entries: Vec<(String, String)>| {
+            entries
+                .iter()
+                .any(|(c, s)| c.eq_ignore_ascii_case(catalog) && s.eq_ignore_ascii_case(schema))
+        };
+        if matches(self.search_path("", schema)) {
+            return (false, true);
+        }
+        if matches(self.search_path(catalog, "")) {
+            return (true, false);
+        }
+        (true, true)
     }
 
     /// DuckDB's `Catalog::CreateMissingEntryException`.
@@ -326,9 +345,21 @@ impl ClientContext {
         let (unseen_score, unseen) = self.similar_entries(&unseen_schemas, ty, name);
         let mut suggestions = BTreeSet::new();
         if !unseen.is_empty() && (unseen_score >= 1.0 || unseen_score - UNSEEN_PENALTY > seen_score) {
-            suggestions.extend(unseen);
+            // Entries outside the search path need the minimal qualification that finds them.
+            for (catalog, schema, entry) in unseen {
+                let (qualify_catalog, qualify_schema) = self.minimal_qualification(&catalog, &schema);
+                let mut qualified = Vec::new();
+                if qualify_catalog {
+                    qualified.push(catalog);
+                }
+                if qualify_schema {
+                    qualified.push(schema);
+                }
+                qualified.push(entry);
+                suggestions.insert(qualified.join("."));
+            }
         } else {
-            suggestions.extend(seen);
+            suggestions.extend(seen.into_iter().map(|(_, _, entry)| entry));
         }
         let mut suggestions: Vec<String> = suggestions.into_iter().collect();
         let did_you_mean = if suggestions.len() > 2 {
@@ -347,6 +378,12 @@ impl ClientContext {
             ty.display_name()
         ))
     }
+}
+
+/// Whether `schema` is one of the schemas of the system catalog every database shows
+/// (DuckDB's `DefaultSchemaGenerator::IsDefaultSchema`).
+pub fn is_default_schema(schema: &str) -> bool {
+    schema.eq_ignore_ascii_case("information_schema") || schema.eq_ignore_ascii_case("pg_catalog")
 }
 
 /// Attaches `location` to a missing-entry error of a catalog lookup; errors about a
