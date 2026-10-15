@@ -1,3 +1,4 @@
+use rustdb_planner::StatementReturnType;
 use rustdb_types::{DataChunk, LogicalType, Value};
 
 /// A fully materialised query result (DuckDB's `MaterializedQueryResult`).
@@ -8,6 +9,8 @@ pub struct MaterializedResult {
     chunks: Vec<DataChunk>,
     /// `(chunk index, row in chunk)` for each result row.
     row_index: Vec<(u32, u32)>,
+    /// What the statement returns: rows, a changed-row count or nothing.
+    return_type: StatementReturnType,
 }
 
 impl MaterializedResult {
@@ -22,7 +25,20 @@ impl MaterializedResult {
             types,
             chunks,
             row_index,
+            return_type: StatementReturnType::QueryResult,
         }
+    }
+
+    /// The result with `return_type` (DuckDB's `StatementProperties::return_type`).
+    #[must_use]
+    pub fn with_return_type(mut self, return_type: StatementReturnType) -> Self {
+        self.return_type = return_type;
+        self
+    }
+
+    /// What the statement returns; shells print only query results.
+    pub fn return_type(&self) -> StatementReturnType {
+        self.return_type
     }
 
     pub fn names(&self) -> &[String] {

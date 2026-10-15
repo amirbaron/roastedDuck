@@ -7,7 +7,7 @@
 use std::io::{self, BufRead, Write};
 use std::process::ExitCode;
 
-use rustdb::{Config, Connection, Database, MaterializedResult};
+use rustdb::{Config, Connection, Database, MaterializedResult, StatementReturnType};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -76,15 +76,26 @@ fn render(result: &MaterializedResult, mode: Mode, out: &mut impl Write) -> io::
     Ok(())
 }
 
+/// Runs each statement of `sql`, printing the results of queries (statements that
+/// change rows or return nothing print nothing), and stops at the first error.
 fn run(connection: &mut Connection, sql: &str, mode: Mode) -> bool {
     let stdout = io::stdout();
-    match connection.query(sql) {
-        Ok(result) => render(&result, mode, &mut stdout.lock()).is_ok(),
-        Err(error) => {
-            eprintln!("{error}");
-            false
+    let outcome = connection.extract_statements(sql).and_then(|statements| {
+        for statement in statements {
+            let query = statement.query.clone();
+            let result = connection.execute_statement(&query, statement)?;
+            if result.return_type() == StatementReturnType::QueryResult
+                && render(&result, mode, &mut stdout.lock()).is_err()
+            {
+                return Ok(false);
+            }
         }
-    }
+        Ok(true)
+    });
+    outcome.unwrap_or_else(|error| {
+        eprintln!("{error}");
+        false
+    })
 }
 
 fn main() -> ExitCode {
@@ -110,12 +121,20 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         };
     }
+    // Statements run once a line completes them with `;`.
     let mut ok = true;
+    let mut pending = String::new();
     for line in io::stdin().lock().lines() {
         let Ok(line) = line else { break };
-        if !line.trim().is_empty() {
-            ok &= run(&mut connection, &line, options.mode);
+        pending.push_str(&line);
+        pending.push('\n');
+        if pending.trim_end().ends_with(';') {
+            ok &= run(&mut connection, &pending, options.mode);
+            pending.clear();
         }
+    }
+    if !pending.trim().is_empty() {
+        ok &= run(&mut connection, &pending, options.mode);
     }
     if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE }
 }

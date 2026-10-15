@@ -161,6 +161,11 @@ impl Connection {
         &self.database
     }
 
+    /// Parses `sql` into its statements (DuckDB's `ClientContext::ExtractStatements`).
+    pub fn extract_statements(&self, sql: &str) -> Result<Vec<SqlStatement>> {
+        rustdb_parser::parse(sql).map_err(|error| error.with_query_context(sql))
+    }
+
     /// Runs every statement in `sql` and returns the result of the last one (DuckDB's
     /// `ClientContext::Query`).
     pub fn query(&mut self, sql: &str) -> Result<MaterializedResult> {
@@ -252,7 +257,9 @@ impl Connection {
             Some(plan) if properties.bound_all_parameters => plan,
             _ => return Err(Error::invalid_input("Not all parameters were bound")),
         };
+        let return_type = properties.return_type;
         self.run_plan(plan, names, types)
+            .map(|result| result.with_return_type(return_type))
     }
 
     /// Runs a bound plan: statements that act on the connection are executed here
