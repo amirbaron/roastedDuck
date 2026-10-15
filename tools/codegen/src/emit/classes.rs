@@ -70,6 +70,9 @@ impl<'m> Emitter<'m> {
             let doc = Self::field_doc(member);
             let _ = writeln!(self.body, "{doc}    pub {}: {ty},", member.rust_name);
         }
+        for extra in class.config.extra_fields {
+            let _ = writeln!(self.body, "    /// {}\n    pub {}: {},", extra.doc, extra.name, extra.ty);
+        }
         Ok(())
     }
 
@@ -125,6 +128,13 @@ impl<'m> Emitter<'m> {
             .data_members()
             .filter(|m| m.status == MemberStatus::Existing)
             .map(|m| m.rust_name.clone())
+            .chain(
+                class
+                    .config
+                    .extra_fields
+                    .iter()
+                    .map(|extra| format!("{}: {}", extra.name, extra.default)),
+            )
             .collect::<Vec<_>>()
             .join(", ")
     }

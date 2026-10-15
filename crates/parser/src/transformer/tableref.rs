@@ -2,7 +2,7 @@
 
 use rustdb_ast::{
     AtClause, BaseTableRef, JoinRef, JoinRefType, JoinType, OrdinalityType, PivotColumn, PivotColumnEntry,
-    PivotRef, QueryNode, QueryNodeKind, SubqueryRef, TableFunctionRef, TableRef, TableRefKind,
+    PivotRef, QueryNodeKind, SubqueryRef, TableFunctionRef, TableRef, TableRefKind,
 };
 use rustdb_common::{Error, Result};
 use rustdb_pg_parser::nodes::{
@@ -14,13 +14,6 @@ use super::build::{self, set_ref_location};
 use super::helpers::transform_alias;
 use super::{Transformer, cast_node, parser_error_at, required, string_list};
 use crate::equality::{has_subquery, is_scalar};
-
-/// A pivot column together with the subquery of its `IN (SELECT ...)`, which DuckDB keeps
-/// on `PivotColumn::subquery` but does not serialize.
-pub(crate) struct PivotColumnWithSubquery {
-    pub(crate) column: PivotColumn,
-    pub(crate) subquery: Option<QueryNode>,
-}
 
 impl<'a> Transformer<'a> {
     /// `TransformTableRefNode`.
@@ -217,12 +210,13 @@ impl<'a> Transformer<'a> {
     }
 
     /// `TransformPivotColumn`: one `ON ... IN (...)` of a PIVOT, or the `ON` of an UNPIVOT.
-    pub(crate) fn transform_pivot_column(&mut self, pivot: &'a Pivot) -> Result<PivotColumnWithSubquery> {
+    pub(crate) fn transform_pivot_column(&mut self, pivot: &'a Pivot) -> Result<PivotColumn> {
         let mut column = PivotColumn {
             pivot_expressions: Vec::new(),
             unpivot_names: Vec::new(),
             entries: Vec::new(),
             pivot_enum: String::new(),
+            subquery: None,
         };
         if !pivot.pivot_columns.is_empty() {
             self.transform_expression_list(&pivot.pivot_columns, &mut column.pivot_expressions)?;
@@ -255,18 +249,18 @@ impl<'a> Transformer<'a> {
                 star_expr: Some(Box::new(expr)),
             });
         }
-        let subquery = match &pivot.subquery {
-            Some(node) => Some(self.transform_select_node(node, true)?),
+        column.subquery = match &pivot.subquery {
+            Some(node) => Some(Box::new(self.transform_select_node(node, true)?)),
             None => None,
         };
         if let Some(pivot_enum) = &pivot.pivot_enum {
             column.pivot_enum.clone_from(pivot_enum);
         }
-        Ok(PivotColumnWithSubquery { column, subquery })
+        Ok(column)
     }
 
     /// `TransformPivotList`.
-    pub(crate) fn transform_pivot_list(&mut self, list: &'a List) -> Result<Vec<PivotColumnWithSubquery>> {
+    pub(crate) fn transform_pivot_list(&mut self, list: &'a List) -> Result<Vec<PivotColumn>> {
         list.iter()
             .map(|node| self.transform_pivot_column(cast_node(node)?))
             .collect()
@@ -278,11 +272,7 @@ impl<'a> Transformer<'a> {
         let aggregates = self.transform_expressions(&root.aggrs)?;
         let unpivot_names = string_list(&root.unpivots)?;
         let is_pivot = unpivot_names.is_empty();
-        let pivots: Vec<PivotColumn> = self
-            .transform_pivot_list(&root.pivots)?
-            .into_iter()
-            .map(|pivot| pivot.column)
-            .collect();
+        let pivots: Vec<PivotColumn> = self.transform_pivot_list(&root.pivots)?.into_iter().collect();
         if !is_pivot && pivots.len() > 1 {
             return Err(Error::parser("UNPIVOT requires a single pivot element"));
         }

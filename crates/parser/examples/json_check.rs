@@ -170,9 +170,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (index, (name, _)) in variants.iter().enumerate() {
         println!("  {name:20} identical: {}", equal[index]);
     }
-    println!("time in serialize_sql: {:.2?}", elapsed);
+    println!("time in serialize_sql: {elapsed:.2?}");
     let mut sorted: Vec<_> = categories.into_iter().collect();
-    sorted.sort_by(|a, b| b.1.cmp(&a.1));
+    sorted.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
     println!("mismatch categories (default variant):");
     for (name, count) in sorted.iter().take(60) {
         println!("  {count:6}  {name}");

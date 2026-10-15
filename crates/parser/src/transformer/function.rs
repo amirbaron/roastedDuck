@@ -161,6 +161,7 @@ impl<'a> Transformer<'a> {
         window_spec: &'a WindowDef,
         expr: &mut WindowExpression,
     ) -> Result<()> {
+        use WindowBoundary as B;
         expr.start_expr = self.transform_opt_boxed(window_spec.start_offset.as_ref())?;
         expr.end_expr = self.transform_opt_boxed(window_spec.end_offset.as_ref())?;
         let options = window_spec.frame_options;
@@ -169,7 +170,6 @@ impl<'a> Transformer<'a> {
                 "Window frames starting with unbounded following or ending in unbounded preceding make no sense",
             ));
         }
-        use WindowBoundary as B;
         if options & fo::START_UNBOUNDED_PRECEDING != 0 {
             expr.start = B::UnboundedPreceding;
         } else if options & fo::START_OFFSET_PRECEDING != 0 {
@@ -292,13 +292,13 @@ impl<'a> Transformer<'a> {
                     if children.len() != 1 {
                         return Err(Error::parser("Wrong number of arguments for PERCENTILE_CONT"));
                     }
-                    lowercase_name = "quantile_cont".to_owned();
+                    "quantile_cont".clone_into(&mut lowercase_name);
                 }
                 "percentile_disc" => {
                     if children.len() != 1 {
                         return Err(Error::parser("Wrong number of arguments for PERCENTILE_DISC"));
                     }
-                    lowercase_name = "quantile_disc".to_owned();
+                    "quantile_disc".clone_into(&mut lowercase_name);
                 }
                 "mode" => {
                     if !children.is_empty() {
@@ -313,7 +313,7 @@ impl<'a> Transformer<'a> {
             }
         }
         if lowercase_name == "count" && children.is_empty() {
-            lowercase_name = "count_star".to_owned();
+            "count_star".clone_into(&mut lowercase_name);
         }
         match lowercase_name.as_str() {
             "if" => {
@@ -350,7 +350,7 @@ impl<'a> Transformer<'a> {
                     ));
                 }
                 children.swap(0, 1);
-                lowercase_name = "position".to_owned();
+                "position".clone_into(&mut lowercase_name);
             }
             "ifnull" => {
                 if children.len() != 2 {
@@ -377,7 +377,7 @@ impl<'a> Transformer<'a> {
                         false,
                         root.export_state,
                     );
-                    lowercase_name = "list_sort".to_owned();
+                    "list_sort".clone_into(&mut lowercase_name);
                     order_bys.orders.clear();
                     distinct = false;
                     children = vec![unordered, sense, nulls];

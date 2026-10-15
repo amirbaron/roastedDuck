@@ -70,6 +70,9 @@ pub struct ClassConfig {
     /// Hierarchy roots: variants for C++ subclasses that have no serialization spec
     /// because they never reach a serializer.
     pub extra_variants: &'static [ExtraVariant],
+    /// In-memory members that are not serialized (such as the parsed options of a COPY,
+    /// which the binder turns into the serialized ones).
+    pub extra_fields: &'static [ExtraField],
 }
 
 impl ClassConfig {
@@ -87,7 +90,20 @@ impl ClassConfig {
         fields: &[],
         derives: &[],
         extra_variants: &[],
+        extra_fields: &[],
     };
+}
+
+/// A member of the C++ class that its serialization spec leaves out; deserialization
+/// initializes it with `default`.
+#[derive(Debug)]
+pub struct ExtraField {
+    pub name: &'static str,
+    /// The field type, as a Rust path.
+    pub ty: &'static str,
+    pub doc: &'static str,
+    /// Rust expression of the value after deserialization.
+    pub default: &'static str,
 }
 
 /// A hand-written variant of a kind enum, for a C++ subclass without a serialization spec
@@ -603,6 +619,12 @@ pub const CLASSES: &[ClassConfig] = &[
             serialize_with: Some("crate::tableref::pivot_entries_for_serialization(self, serializer)?"),
             ..FieldConfig::DEFAULT
         }],
+        extra_fields: &[ExtraField {
+            name: "subquery",
+            ty: "Option<Box<crate::QueryNode>>",
+            doc: "`subquery`: the query of `IN (SELECT ...)`, which the binder rejects.",
+            default: "None",
+        }],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
@@ -635,6 +657,23 @@ pub const CLASSES: &[ClassConfig] = &[
     ClassConfig {
         class: "CreateInfo",
         strip_suffix: Some("_ENTRY"),
+        extra_variants: &[ExtraVariant {
+            variant: "Secret",
+            ty: "Box<crate::CreateSecretInfo>",
+            discriminant: "SECRET_ENTRY",
+            doc: "`CreateSecretInfo` (`CatalogType::SECRET_ENTRY`); never serialized.",
+            serialize: "Err(Error::serialization(\"Cannot serialize a CREATE SECRET\"))",
+        }],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "CreateTypeInfo",
+        extra_fields: &[ExtraField {
+            name: "query",
+            ty: "Option<Box<crate::SelectStatement>>",
+            doc: "`query`: the query of `CREATE TYPE ... AS ENUM (SELECT ...)`.",
+            default: "None",
+        }],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
@@ -651,6 +690,35 @@ pub const CLASSES: &[ClassConfig] = &[
     ClassConfig {
         class: "ParseInfo",
         strip_suffix: Some("_INFO"),
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "AttachInfo",
+        extra_fields: &[ExtraField {
+            name: "parsed_options",
+            ty: "rustdb_common::CaseInsensitiveMap<crate::ParsedExpression>",
+            doc: "`parsed_options`: the options as written, before the binder evaluates them.",
+            default: "rustdb_common::CaseInsensitiveMap::default()",
+        }],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "CopyInfo",
+        extra_fields: &[
+            ExtraField {
+                name: "parsed_options",
+                ty: "rustdb_common::CaseInsensitiveMap<Option<crate::ParsedExpression>>",
+                doc: "`parsed_options`: the options as written (`None` for a bare option name), before \
+                      the binder evaluates them.",
+                default: "rustdb_common::CaseInsensitiveMap::default()",
+            },
+            ExtraField {
+                name: "file_path_expression",
+                ty: "Option<Box<crate::ParsedExpression>>",
+                doc: "`file_path_expression`: the file name when it is not a string constant.",
+                default: "None",
+            },
+        ],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {

@@ -59,6 +59,8 @@ pub enum CreateInfoKind {
     TableMacro(CreateMacroInfo),
     /// `CreateSequenceInfo` (`CatalogType::SEQUENCE_ENTRY`).
     Sequence(Box<CreateSequenceInfo>),
+    /// `CreateSecretInfo` (`CatalogType::SECRET_ENTRY`); never serialized.
+    Secret(Box<crate::CreateSecretInfo>),
 }
 
 impl CreateInfoKind {
@@ -73,6 +75,7 @@ impl CreateInfoKind {
             Self::Macro(_) => CatalogType::MacroEntry,
             Self::TableMacro(_) => CatalogType::TableMacroEntry,
             Self::Sequence(_) => CatalogType::SequenceEntry,
+            Self::Secret(_) => CatalogType::SecretEntry,
         }
     }
 
@@ -85,6 +88,7 @@ impl CreateInfoKind {
             Self::Macro(value) | Self::TableMacro(value) => value.serialize_fields(serializer),
             Self::Sequence(value) => value.serialize_fields(serializer),
             Self::Schema => Ok(()),
+            Self::Secret(_) => Err(Error::serialization("Cannot serialize a CREATE SECRET")),
         }
     }
 }
@@ -322,6 +326,8 @@ pub struct CreateTypeInfo {
     pub name: String,
     /// `logical_type` (property 201).
     pub logical_type: LogicalType,
+    /// `query`: the query of `CREATE TYPE ... AS ENUM (SELECT ...)`.
+    pub query: Option<Box<crate::SelectStatement>>,
 }
 
 impl SerializeObject for CreateTypeInfo {
@@ -336,7 +342,11 @@ impl DeserializeObject for CreateTypeInfo {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
         let name: String = deserializer.read_property_with_default(200, "name")?;
         let logical_type: LogicalType = deserializer.read_property(201, "logical_type")?;
-        Ok(Self { name, logical_type })
+        Ok(Self {
+            name,
+            logical_type,
+            query: None,
+        })
     }
 }
 

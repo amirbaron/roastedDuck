@@ -19,6 +19,7 @@
 //! the transformer replays libc++'s hash-table algorithm (`hash_order`) and stores the
 //! entries in DuckDB's iteration order.
 
+mod candidates;
 mod equality;
 mod hash_order;
 pub mod json;
@@ -105,7 +106,7 @@ fn substring(query: &str, start: usize, end: usize) -> String {
 }
 
 fn set_create_sql(info: &mut CreateInfo, sql: &str) {
-    info.sql = sql.to_owned();
+    sql.clone_into(&mut info.sql);
 }
 
 /// `ParserException::SyntaxError`: grammar errors keep their message and position and

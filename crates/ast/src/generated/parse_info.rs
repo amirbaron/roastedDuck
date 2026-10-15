@@ -975,6 +975,8 @@ pub struct AttachInfo {
     pub options: OrderedMap<String, Value>,
     /// `on_conflict` (property 203).
     pub on_conflict: OnCreateConflict,
+    /// `parsed_options`: the options as written, before the binder evaluates them.
+    pub parsed_options: rustdb_common::CaseInsensitiveMap<crate::ParsedExpression>,
 }
 
 impl SerializeObject for AttachInfo {
@@ -1007,6 +1009,7 @@ impl DeserializeObject for AttachInfo {
             path,
             options,
             on_conflict,
+            parsed_options: rustdb_common::CaseInsensitiveMap::default(),
         })
     }
 }
@@ -1062,6 +1065,10 @@ pub struct CopyInfo {
     pub select_statement: Option<Box<QueryNode>>,
     /// `is_format_auto_detected` (property 209).
     pub is_format_auto_detected: bool,
+    /// `parsed_options`: the options as written (`None` for a bare option name), before the binder evaluates them.
+    pub parsed_options: rustdb_common::CaseInsensitiveMap<Option<crate::ParsedExpression>>,
+    /// `file_path_expression`: the file name when it is not a string constant.
+    pub file_path_expression: Option<Box<crate::ParsedExpression>>,
 }
 
 impl SerializeObject for CopyInfo {
@@ -1110,6 +1117,8 @@ impl DeserializeObject for CopyInfo {
             options,
             select_statement,
             is_format_auto_detected,
+            parsed_options: rustdb_common::CaseInsensitiveMap::default(),
+            file_path_expression: None,
         })
     }
 }

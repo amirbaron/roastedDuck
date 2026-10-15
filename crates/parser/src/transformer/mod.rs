@@ -191,28 +191,28 @@ impl<'a> Transformer<'a> {
         Ok(match node {
             Node::SelectStmt(stmt) => SqlStatementKind::Select(self.transform_select_stmt(stmt, true)?),
             Node::CreateStmt(stmt) => self.transform_create_table(stmt)?,
-            Node::CreateSchemaStmt(stmt) => self.transform_create_schema(stmt)?,
+            Node::CreateSchemaStmt(stmt) => Self::transform_create_schema(stmt)?,
             Node::ViewStmt(stmt) => self.transform_create_view(stmt)?,
-            Node::CreateSeqStmt(stmt) => self.transform_create_sequence(stmt)?,
+            Node::CreateSeqStmt(stmt) => Self::transform_create_sequence(stmt)?,
             Node::CreateFunctionStmt(stmt) => self.transform_create_function(stmt)?,
-            Node::DropStmt(stmt) => self.transform_drop(stmt)?,
+            Node::DropStmt(stmt) => Self::transform_drop(stmt)?,
             Node::InsertStmt(stmt) => self.transform_insert(stmt)?,
             Node::CopyStmt(stmt) => self.transform_copy(stmt)?,
-            Node::TransactionStmt(stmt) => self.transform_transaction(stmt)?,
+            Node::TransactionStmt(stmt) => Self::transform_transaction(stmt)?,
             Node::DeleteStmt(stmt) => self.transform_delete(stmt)?,
             Node::UpdateStmt(stmt) => self.transform_update(stmt)?,
-            Node::UpdateExtensionsStmt(stmt) => self.transform_update_extensions(stmt),
+            Node::UpdateExtensionsStmt(stmt) => Self::transform_update_extensions(stmt)?,
             Node::IndexStmt(stmt) => self.transform_create_index(stmt)?,
             Node::AlterTableStmt(stmt) => self.transform_alter(stmt)?,
-            Node::AlterDatabaseStmt(stmt) => self.transform_alter_database(stmt)?,
-            Node::RenameStmt(stmt) => self.transform_rename(stmt)?,
+            Node::AlterDatabaseStmt(stmt) => Self::transform_alter_database(stmt)?,
+            Node::RenameStmt(stmt) => Self::transform_rename(stmt)?,
             Node::PrepareStmt(stmt) => self.transform_prepare(stmt)?,
             Node::ExecuteStmt(stmt) => self.transform_execute(stmt)?,
-            Node::DeallocateStmt(stmt) => self.transform_deallocate(stmt)?,
+            Node::DeallocateStmt(stmt) => Self::transform_deallocate(stmt)?,
             Node::CreateTableAsStmt(stmt) => self.transform_create_table_as(stmt)?,
             Node::PragmaStmt(stmt) => self.transform_pragma(stmt)?,
             Node::ExportStmt(stmt) => self.transform_export(stmt)?,
-            Node::ImportStmt(stmt) => self.transform_import(stmt),
+            Node::ImportStmt(stmt) => Self::transform_import(stmt),
             Node::ExplainStmt(stmt) => self.transform_explain(stmt)?,
             Node::VacuumStmt(stmt) => self.transform_vacuum(stmt)?,
             Node::VariableShowStmt(stmt) => SqlStatementKind::Select(self.transform_show_stmt(stmt)?),
@@ -221,16 +221,16 @@ impl<'a> Transformer<'a> {
             }
             Node::CallStmt(stmt) => self.transform_call(stmt)?,
             Node::VariableSetStmt(stmt) => self.transform_set(stmt)?,
-            Node::CheckPointStmt(stmt) => self.transform_checkpoint(stmt),
-            Node::LoadStmt(stmt) => self.transform_load(stmt),
+            Node::CheckPointStmt(stmt) => Self::transform_checkpoint(stmt),
+            Node::LoadStmt(stmt) => Self::transform_load(stmt),
             Node::CreateTypeStmt(stmt) => self.transform_create_type(stmt)?,
-            Node::AlterSeqStmt(stmt) => self.transform_alter_sequence(stmt)?,
+            Node::AlterSeqStmt(stmt) => Self::transform_alter_sequence(stmt)?,
             Node::AttachStmt(stmt) => self.transform_attach(stmt)?,
-            Node::DetachStmt(stmt) => self.transform_detach(stmt),
-            Node::UseStmt(stmt) => self.transform_use(stmt)?,
-            Node::CopyDatabaseStmt(stmt) => self.transform_copy_database(stmt)?,
+            Node::DetachStmt(stmt) => Self::transform_detach(stmt),
+            Node::UseStmt(stmt) => Self::transform_use(stmt)?,
+            Node::CopyDatabaseStmt(stmt) => Self::transform_copy_database(stmt)?,
             Node::CreateSecretStmt(stmt) => self.transform_secret(stmt)?,
-            Node::DropSecretStmt(stmt) => self.transform_drop_secret(stmt)?,
+            Node::DropSecretStmt(stmt) => Self::transform_drop_secret(stmt)?,
             Node::CommentOnStmt(stmt) => self.transform_comment_on(stmt)?,
             Node::MergeIntoStmt(stmt) => self.transform_merge_into(stmt)?,
             other => return Err(Error::not_implemented(node_tag(other).1)),
@@ -390,13 +390,22 @@ pub(crate) fn string_list(list: &List) -> Result<Vec<String>> {
         .collect()
 }
 
-/// A C string that may be NULL, as `std::string` (`char *` NULL becomes "").
-pub(crate) fn opt_string(text: Option<&String>) -> String {
-    text.cloned().unwrap_or_default()
+/// The `name` DuckDB reads from a list cell it treats as a `PGResTarget`. Some grammar
+/// rules put plain strings in such lists; `PGResTarget::name` and `PGValue::val.str`
+/// share their offset, so DuckDB reads the string.
+pub(crate) fn res_target_name(node: &Node) -> Result<Option<String>> {
+    match node {
+        Node::ResTarget(target) => Ok(target.name.clone()),
+        Node::Value(Value::String(text)) | Node::Str(text) => Ok(Some(text.clone())),
+        other => Err(Error::internal(format!(
+            "Expected a ResTarget node in the parse tree, found {}",
+            node_tag(other).1
+        ))),
+    }
 }
 
 /// Borrows `node` as the node struct `T`, failing like a bad `PGCast` would.
-pub(crate) fn cast_node<'b, T: rustdb_pg_parser::nodes::NodeStruct>(node: &'b Node) -> Result<&'b T> {
+pub(crate) fn cast_node<T: rustdb_pg_parser::nodes::NodeStruct>(node: &Node) -> Result<&T> {
     node.downcast_ref::<T>().ok_or_else(|| {
         Error::internal(format!(
             "Expected a {} node in the parse tree, found {}",

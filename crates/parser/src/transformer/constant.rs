@@ -14,7 +14,7 @@ const MAX_WIDTH_DECIMAL: usize = 38;
 
 impl Transformer<'_> {
     /// `TransformConstant`.
-    pub(crate) fn transform_constant(&mut self, constant: &AConst) -> Result<ParsedExpression> {
+    pub(crate) fn transform_constant(constant: &AConst) -> Result<ParsedExpression> {
         let mut result = Self::transform_value(&constant.val)?;
         set_location(&mut result, constant.location);
         Ok(result)

@@ -260,7 +260,7 @@ impl<'a> Transformer<'a> {
             expected_types: Vec::new(),
             values,
         })));
-        result.alias = "valueslist".to_owned();
+        "valueslist".clone_into(&mut result.alias);
         Ok(result)
     }
 

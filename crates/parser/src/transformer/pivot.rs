@@ -1,6 +1,7 @@
 //! PIVOT statements (`transform_pivot_stmt.cpp`).
 
 use std::collections::BTreeSet;
+use std::fmt::Write as _;
 use std::hash::{BuildHasher, Hasher};
 
 use rustdb_ast::{
@@ -31,7 +32,10 @@ fn random_uuid() -> String {
     }
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    let hex = bytes.iter().fold(String::with_capacity(32), |mut hex, byte| {
+        let _ = write!(hex, "{byte:02x}");
+        hex
+    });
     format!(
         "{}-{}-{}-{}-{}",
         &hex[0..8],
@@ -76,10 +80,10 @@ impl<'a> Transformer<'a> {
         }
         let mut columns = self.transform_pivot_list(&pivot.columns)?;
         for column in &mut columns {
-            if !column.column.pivot_enum.is_empty() || !column.column.entries.is_empty() {
+            if !column.pivot_enum.is_empty() || !column.entries.is_empty() {
                 continue;
             }
-            let [pivot_expression] = column.column.pivot_expressions.as_slice() else {
+            let [pivot_expression] = column.pivot_expressions.as_slice() else {
                 return Err(Error::internal(
                     "PIVOT statement with multiple names in pivot entry!?",
                 ));
@@ -94,10 +98,10 @@ impl<'a> Transformer<'a> {
                 base: Some(base),
                 base_cte_map,
                 column: pivot_expression.clone(),
-                subquery: column.subquery.take(),
+                subquery: column.subquery.take().map(|subquery| *subquery),
                 has_parameters,
             });
-            column.column.pivot_enum = enum_name;
+            column.pivot_enum = enum_name;
         }
         select_node.select_list.push(build::star());
         let mut aggregates = Vec::new();
@@ -114,7 +118,7 @@ impl<'a> Transformer<'a> {
             source: Box::new(source),
             aggregates,
             unpivot_names,
-            pivots: columns.into_iter().map(|column| column.column).collect(),
+            pivots: columns,
             groups,
             column_name_alias: Vec::new(),
             include_nulls: false,

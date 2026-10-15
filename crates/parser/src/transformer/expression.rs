@@ -79,7 +79,7 @@ impl<'a> Transformer<'a> {
     fn transform_expression_inner(&mut self, node: &'a Node) -> Result<ParsedExpression> {
         match node {
             Node::ColumnRef(column_ref) => self.transform_column_ref(column_ref),
-            Node::AConst(constant) => self.transform_constant(constant),
+            Node::AConst(constant) => Self::transform_constant(constant),
             Node::AExpr(expr) => self.transform_a_expr(expr),
             Node::FuncCall(call) => self.transform_func_call(call),
             Node::BoolExpr(expr) => self.transform_bool_expr(expr),
@@ -444,22 +444,22 @@ impl<'a> Transformer<'a> {
             };
             (param_type, node.number.to_string())
         };
-        let known = self.get_param(&identifier, param_type)?;
-        let index = match known {
-            Some(index) => index,
-            None => {
-                let index = if node.number != 0 {
-                    u64::try_from(node.number).unwrap_or(0)
-                } else {
-                    let index = self.param_count() + 1;
-                    if node.name.is_none() {
-                        identifier = index.to_string();
-                    }
-                    index
-                };
-                self.set_param(&identifier, index, param_type)?;
+        let index = if let Some(index) = self.get_param(&identifier, param_type)? {
+            index
+        } else {
+            // A parameter seen for the first time: `$n` keeps its number, `?` and `$name`
+            // take the next one.
+            let index = if node.number == 0 {
+                let index = self.param_count() + 1;
+                if node.name.is_none() {
+                    identifier = index.to_string();
+                }
                 index
-            }
+            } else {
+                u64::try_from(node.number).unwrap_or(0)
+            };
+            self.set_param(&identifier, index, param_type)?;
+            index
         };
         self.param_count = self.param_count.max(index);
         Ok(ParsedExpression::new(
@@ -523,6 +523,7 @@ impl<'a> Transformer<'a> {
 
     /// `TransformInterval`: `INTERVAL x unit`.
     fn transform_interval(&mut self, node: &'a IntervalConstant) -> Result<ParsedExpression> {
+        use interval_field as f;
         // `val_type` is the node tag of the value: an expression, a string or an integer.
         const T_PG_INTEGER: i32 = 218;
         const T_PG_STRING: i32 = 220;
@@ -546,7 +547,6 @@ impl<'a> Transformer<'a> {
             return Err(Error::internal("Interval type modifier is not an integer"));
         };
         let has = |field: i32| mask & i64::from(interval_mask(field)) != 0;
-        use interval_field as f;
         let combined = [
             (f::YEAR, f::MONTH, "YEAR TO MONTH"),
             (f::DAY, f::HOUR, "DAY TO HOUR"),

@@ -18,31 +18,23 @@ use crate::hash_order::{CiHashMap, HashOrder, ci_hash};
 /// `TransformQualifiedColumnName`: `[[[catalog.]schema.]table.]column`.
 fn transform_qualified_column_name(list: &List) -> Result<QualifiedColumnName> {
     let parts: Vec<&str> = list.iter().map(node_string).collect::<Result<_>>()?;
-    let mut result = QualifiedColumnName::default();
-    match parts.as_slice() {
-        [column] => result.column = (*column).to_owned(),
-        [table, column] => {
-            result.table = (*table).to_owned();
-            result.column = (*column).to_owned();
-        }
-        [schema, table, column] => {
-            result.schema = (*schema).to_owned();
-            result.table = (*table).to_owned();
-            result.column = (*column).to_owned();
-        }
-        [catalog, schema, table, column] => {
-            result.catalog = (*catalog).to_owned();
-            result.schema = (*schema).to_owned();
-            result.table = (*table).to_owned();
-            result.column = (*column).to_owned();
-        }
+    let (catalog, schema, table, column) = match parts.as_slice() {
+        [column] => ("", "", "", *column),
+        [table, column] => ("", "", *table, *column),
+        [schema, table, column] => ("", *schema, *table, *column),
+        [catalog, schema, table, column] => (*catalog, *schema, *table, *column),
         _ => {
             return Err(Error::parser(
                 "Qualified column name must have between 1 and 4 elements",
             ));
         }
-    }
-    Ok(result)
+    };
+    Ok(QualifiedColumnName {
+        catalog: catalog.to_owned(),
+        schema: schema.to_owned(),
+        table: table.to_owned(),
+        column: column.to_owned(),
+    })
 }
 
 /// `QualifiedColumnEquality`: a prefix comparison, so `tbl.i` equals `i` but not `tbl2.i`.
