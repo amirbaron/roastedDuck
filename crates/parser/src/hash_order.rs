@@ -18,24 +18,14 @@ const ANCHOR: usize = 0;
 /// The node list and bucket array of a libc++ hash table, without the values.
 ///
 /// Node `i` (1-based; 0 is the anchor) stands for the `i`-th inserted element; callers
-/// keep the elements themselves and map iteration results back through these ids.
-#[derive(Clone, Debug)]
+/// keep the elements themselves and map iteration results back through these ids. The
+/// anchor is only allocated with the first element, so empty tables cost nothing.
+#[derive(Clone, Debug, Default)]
 pub(crate) struct HashOrder {
     hashes: Vec<u64>,
     next: Vec<usize>,
     buckets: Vec<usize>,
     size: usize,
-}
-
-impl Default for HashOrder {
-    fn default() -> Self {
-        Self {
-            hashes: vec![0],
-            next: vec![NIL],
-            buckets: Vec::new(),
-            size: 0,
-        }
-    }
 }
 
 /// `std::__constrain_hash`.
@@ -92,7 +82,7 @@ impl HashOrder {
     /// The node ids in iteration order.
     pub(crate) fn order(&self) -> Vec<usize> {
         let mut result = Vec::with_capacity(self.size);
-        let mut node = self.next[ANCHOR];
+        let mut node = self.next.first().copied().unwrap_or(NIL);
         while node != NIL {
             result.push(node);
             node = self.next[node];
@@ -128,6 +118,10 @@ impl HashOrder {
     pub(crate) fn insert_unique(&mut self, hash: u64, eq: impl FnMut(usize) -> bool) -> Result<usize, usize> {
         if let Some(existing) = self.find(hash, eq) {
             return Err(existing);
+        }
+        if self.next.is_empty() {
+            self.hashes.push(0);
+            self.next.push(NIL);
         }
         self.hashes.push(hash);
         self.next.push(NIL);

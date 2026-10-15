@@ -83,7 +83,10 @@ pub(crate) struct Transformer<'a> {
     pivot_entries: Vec<PivotEntry>,
     /// The current nesting depth (`stack_depth`).
     depth: u64,
-    frames: Vec<Frame<'a>>,
+    /// The state of the root transformer.
+    root: Frame<'a>,
+    /// The states of the child transformers, innermost last.
+    children: Vec<Frame<'a>>,
     /// The query text, to tell whether it mentions PIVOT at all: CTEs are only recorded
     /// for `ExtractCTEsRecursive` then.
     query: &'a str,
@@ -100,7 +103,8 @@ impl<'a> Transformer<'a> {
             last_param_type: ParamType::Invalid,
             pivot_entries: Vec::new(),
             depth: 0,
-            frames: vec![Frame::default()],
+            root: Frame::default(),
+            children: Vec::new(),
             query,
             may_pivot: None,
         }
@@ -246,21 +250,25 @@ impl<'a> Transformer<'a> {
 
     /// Runs `body` in a child transformer (`Transformer child(*this)`).
     pub(crate) fn child<R>(&mut self, body: impl FnOnce(&mut Self) -> Result<R>) -> Result<R> {
-        self.frames.push(Frame::default());
+        self.children.push(Frame::default());
         let result = body(self);
-        self.frames.pop();
+        self.children.pop();
         result
     }
 
     fn frame(&mut self) -> &mut Frame<'a> {
-        let last = self.frames.len() - 1;
-        &mut self.frames[last]
+        self.children.last_mut().unwrap_or(&mut self.root)
+    }
+
+    /// The frames from the innermost transformer out to the root.
+    fn frames_inside_out(&self) -> impl Iterator<Item = &Frame<'a>> {
+        self.children.iter().rev().chain(std::iter::once(&self.root))
     }
 
     /// `InWindowDefinition`: whether this or an enclosing transformer is inside a
     /// window definition.
     pub(crate) fn in_window_definition(&self) -> bool {
-        self.frames.iter().any(|frame| frame.in_window_definition)
+        self.frames_inside_out().any(|frame| frame.in_window_definition)
     }
 
     // ------------------------------------------------------------------------------
@@ -302,7 +310,7 @@ impl<'a> Transformer<'a> {
     /// `ExtractCTEsRecursive`: copies of the CTEs visible here, innermost first; a name
     /// defined twice keeps its innermost definition.
     pub(crate) fn extract_ctes(&self, cte_map: &mut CommonTableExpressionMap) {
-        for frame in self.frames.iter().rev() {
+        for frame in self.frames_inside_out() {
             for stored in &frame.stored_cte_maps {
                 for (name, info) in stored.map.iter() {
                     if !cte_map.map.contains_key(name) {
