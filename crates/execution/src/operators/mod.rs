@@ -3,6 +3,7 @@
 mod column_data_scan;
 mod create_table;
 mod delete;
+mod delim;
 mod dummy_scan;
 mod filter;
 mod hash_aggregate;
@@ -22,6 +23,7 @@ mod update;
 pub use column_data_scan::PhysicalColumnDataScan;
 pub use create_table::PhysicalCreateTable;
 pub use delete::PhysicalDelete;
+pub use delim::{DelimData, DelimGlobal, DelimShared, PhysicalDelimJoin, PhysicalDelimScan};
 pub use dummy_scan::PhysicalDummyScan;
 pub use filter::{FilterState, PhysicalFilter};
 pub use hash_aggregate::{HashAggregateGlobal, HashAggregateLocal, PhysicalHashAggregate};

@@ -88,7 +88,17 @@ impl Executor {
             // Dependencies are pushed in reverse so the first branch's run first.
             for &index in pipelines.iter().rev() {
                 let pipeline = &self.pipelines[index];
-                for dependency in pipeline.operators.iter().rev().chain(pipeline.source.as_ref()) {
+                let external = pipeline
+                    .source
+                    .as_ref()
+                    .and_then(|source| source.source_dependency());
+                for dependency in pipeline
+                    .operators
+                    .iter()
+                    .rev()
+                    .chain(pipeline.source.as_ref())
+                    .chain(external.as_ref())
+                {
                     if by_sink.contains_key(&key(dependency)) {
                         stack.push((key(dependency), false));
                     }
@@ -144,6 +154,16 @@ impl Executor {
         }
         if op.as_source().is_some() {
             self.pipelines[current].source = Some(Arc::clone(op));
+            if let Some(dependency) = op.source_dependency()
+                && !self
+                    .pipelines
+                    .iter()
+                    .any(|pipeline| Arc::ptr_eq(&pipeline.sink, &dependency))
+            {
+                // The sink feeding this source is outside its subtree: give it a pipeline.
+                let pipeline = self.add_pipeline(Pipeline::new(Arc::clone(&dependency)));
+                self.build(Self::first_child(&dependency, "sink")?, pipeline)?;
+            }
             return Ok(());
         }
         Err(Error::internal(format!(
