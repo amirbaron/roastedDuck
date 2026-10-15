@@ -341,6 +341,7 @@ impl Database {
             transactions,
             settings,
             search_path: Vec::new(),
+            transaction_attaches: Vec::new(),
             prepared_statements: CaseInsensitiveMap::default(),
             function_client: Arc::default(),
         })
@@ -376,6 +377,9 @@ pub struct Connection {
     prepared_statements: CaseInsensitiveMap<Arc<PreparedStatementData>>,
     /// Connection state functions use (DuckDB keeps it in the `ClientContext`).
     function_client: Arc<rustdb_function::FunctionClient>,
+    /// Databases attached by the open explicit transaction; rolling it back detaches
+    /// them (the `ATTACHED_DATABASE` undo entries).
+    transaction_attaches: Vec<Arc<AttachedDatabase>>,
 }
 
 impl Connection {
@@ -537,8 +541,43 @@ impl Connection {
         Ok(result)
     }
 
+    /// Ends the explicit transaction's attaches: kept on commit, detached again when the
+    /// transaction rolled back (`RollbackState` of `ATTACHED_DATABASE`).
+    fn finish_transaction_attaches(&mut self, rolled_back: bool) {
+        let attaches = std::mem::take(&mut self.transaction_attaches);
+        if !rolled_back {
+            return;
+        }
+        let instance = self.database.instance();
+        for attached in attaches {
+            let current = instance.databases.get(&attached.name);
+            if current.is_some_and(|current| Arc::ptr_eq(&current, &attached))
+                && let Some(database) = instance.databases.remove(&attached.name)
+            {
+                database.close(true);
+            }
+        }
+    }
+
     /// `DETACH name` (`DatabaseManager::DetachDatabase`).
     fn detach(&mut self, info: &rustdb_ast::DetachInfo) -> Result<()> {
+        // `PhysicalDetach`: not while this transaction has work on the database.
+        if !self.transactions.is_auto_commit()
+            && self
+                .transactions
+                .current()
+                .modified_database()
+                .is_some_and(|name| name.eq_ignore_ascii_case(&info.name))
+        {
+            return Err(Error::new(
+                ErrorKind::Transaction,
+                format!(
+                    "Cannot detach database \"{}\" because the current transaction has outstanding work on it - \
+                     commit or rollback first",
+                    info.name
+                ),
+            ));
+        }
         if self.default_catalog().eq_ignore_ascii_case(&info.name) {
             return Err(Error::binder(format!(
                 "Cannot detach database \"{}\" because it is the default database. Select a different database \
@@ -767,8 +806,17 @@ impl Connection {
                     TransactionType::BeginTransaction => self
                         .transactions
                         .begin(info.modifier == rustdb_ast::TransactionModifierType::TransactionReadOnly)?,
-                    TransactionType::Commit => self.transactions.commit()?,
-                    TransactionType::Rollback => self.transactions.rollback()?,
+                    TransactionType::Commit => {
+                        // An aborted transaction's COMMIT rolls it back.
+                        let rolls_back = self.transactions.is_invalidated();
+                        let result = self.transactions.commit();
+                        self.finish_transaction_attaches(rolls_back || result.is_err());
+                        result?;
+                    }
+                    TransactionType::Rollback => {
+                        self.transactions.rollback()?;
+                        self.finish_transaction_attaches(true);
+                    }
                     TransactionType::Invalid => {
                         return Err(Error::not_implemented("Unrecognized transaction type!"));
                     }
@@ -777,8 +825,14 @@ impl Connection {
             }
             LogicalKind::Attach(info) => {
                 let options = AttachOptions::from_info(info, crate::AccessMode::Automatic)?;
-                self.database
+                let attached = self
+                    .database
                     .attach(&info.name, &info.path, &options, info.on_conflict)?;
+                if let Some(attached) = attached
+                    && !self.transactions.is_auto_commit()
+                {
+                    self.transaction_attaches.push(attached);
+                }
                 return Ok(nothing());
             }
             LogicalKind::Detach(info) => {
