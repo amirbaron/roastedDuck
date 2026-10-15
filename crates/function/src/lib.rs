@@ -25,5 +25,5 @@ pub use scalar::{
 };
 pub use table::{
     TableFunction, TableFunctionBind, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionScan,
-    TableFunctionSet, TableScanState,
+    TableFunctionSet, TableFunctionTypePushdown, TableScanState,
 };

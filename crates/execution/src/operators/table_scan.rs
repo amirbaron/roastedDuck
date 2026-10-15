@@ -99,13 +99,15 @@ impl Source for PhysicalTableScan {
         let count = output.len();
         let mut columns = output.into_columns();
         let mut projected = Vec::with_capacity(self.column_ids.len());
-        for &id in &self.column_ids {
-            let index = usize::try_from(id)
-                .map_err(|_| Error::not_implemented("virtual columns of table functions"))?;
-            let column = columns
-                .get_mut(index)
-                .ok_or_else(|| Error::not_implemented("virtual columns of table functions"))?;
-            projected.push(column.clone());
+        for (position, &id) in self.column_ids.iter().enumerate() {
+            match usize::try_from(id).ok().and_then(|index| columns.get_mut(index)) {
+                Some(column) => projected.push(column.clone()),
+                // A column the function does not produce (the empty projection of
+                // `count(*)`): constant NULL.
+                None => projected.push(rustdb_types::Vector::constant_null(
+                    self.types.get(position).cloned().unwrap_or(LogicalType::BOOLEAN),
+                )),
+            }
         }
         chunk.set_columns(projected, count);
         Ok(if more {

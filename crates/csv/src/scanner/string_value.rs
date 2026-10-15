@@ -214,8 +214,9 @@ impl StringValueResult {
 }
 
 /// `IsValueNull`.
+/// `IsValueNull`: whether the value is the null string.
 fn is_value_null(null_str: &[u8], value: &[u8]) -> bool {
-    value.len() >= null_str.len() && null_str.iter().zip(value).all(|(a, b)| a == b)
+    value == null_str
 }
 
 /// Reads one CSV file part into chunks of values (DuckDB's `StringValueScanner`).
@@ -354,7 +355,8 @@ impl StringValueScanner {
             projected_columns: Vec::new(),
             projecting_columns: false,
             chunk_col_id: 0,
-            icu_loaded: true,
+            // The reference harness (DuckDB's unittest) runs without ICU loaded.
+            icu_loaded: false,
             buffer_handles: HashMap::new(),
             requested_size: 0,
             current_errors: LineError::new(scanner_idx, sm.options.ignore_errors_only()),

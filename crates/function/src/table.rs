@@ -50,6 +50,11 @@ pub type TableFunctionScan = Arc<
         + Sync,
 >;
 
+/// Makes the function produce other types for some of its columns (DuckDB's
+/// `table_function_type_pushdown_t`): the bind data with column index -> type applied.
+pub type TableFunctionTypePushdown =
+    Arc<dyn Fn(&dyn FunctionData, &[(usize, LogicalType)]) -> Result<Arc<dyn FunctionData>> + Send + Sync>;
+
 /// Per-scan state of a [`TableFunctionScan`] (cursor position and similar).
 #[derive(Debug, Default)]
 pub struct TableScanState {
@@ -75,6 +80,8 @@ pub struct TableFunction {
     /// Whether this is a table-in/table-out function (DuckDB's `in_out_function`):
     /// constant arguments form its input row, and every output column is scanned.
     pub in_out: bool,
+    /// Reads columns directly as the types an INSERT needs (`type_pushdown`).
+    pub type_pushdown: Option<TableFunctionTypePushdown>,
 }
 
 impl TableFunction {
@@ -89,6 +96,7 @@ impl TableFunction {
             projection_pushdown: false,
             filter_pushdown: false,
             in_out: false,
+            type_pushdown: None,
         }
     }
 

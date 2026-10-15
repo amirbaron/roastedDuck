@@ -255,6 +255,9 @@ impl Database {
             system_catalog.register_table_functions(set)?;
         }
         system_catalog.register_copy_function(rustdb_csv::copy_csv::csv_copy_function())?;
+        for set in rustdb_csv::multi_file::glob_functions() {
+            system_catalog.register_table_functions(set)?;
+        }
         for set in rustdb_csv::sniff_csv::sniff_csv_functions() {
             system_catalog.register_table_functions(set)?;
         }
