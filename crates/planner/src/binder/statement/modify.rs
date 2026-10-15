@@ -437,7 +437,35 @@ pub fn bind_update(scope: &mut BindScope<'_>, stmt: &mut UpdateStatement) -> Res
         proj_index,
         ..UpdateSet::default()
     };
-    bind_update_set(scope, Some(&mut root), &mut stmt.set_info, table, &mut set)?;
+    // `prioritize_table_when_binding` (the UPDATE of a materialized ADD COLUMN default):
+    // names resolve in the table's catalog and schema first (`CreateBinderWithSearchPath`).
+    let saved_context = if stmt.prioritize_table_when_binding
+        && let TableRefKind::BaseTable(base) = &stmt.table.kind
+    {
+        let catalog = if base.catalog_name.is_empty() {
+            scope.context.default_catalog().to_owned()
+        } else {
+            base.catalog_name.clone()
+        };
+        let schema = if base.schema_name.is_empty() {
+            "main".to_owned()
+        } else {
+            base.schema_name.clone()
+        };
+        let mut context = (*scope.binder.context).clone();
+        context.search_path = vec![(catalog.clone(), schema.clone())];
+        if !schema.eq_ignore_ascii_case("main") {
+            context.search_path.push((catalog, "main".to_owned()));
+        }
+        Some(std::mem::replace(&mut scope.binder.context, Arc::new(context)))
+    } else {
+        None
+    };
+    let bound = bind_update_set(scope, Some(&mut root), &mut stmt.set_info, table, &mut set);
+    if let Some(context) = saved_context {
+        scope.binder.context = context;
+    }
+    bound?;
     let get = base_get(&mut root).ok_or_else(|| Error::binder("Can only update base table"))?;
     let update_is_del_and_insert =
         bind_update_constraints(table, get, &bound_constraints, return_chunk, &mut set)?;

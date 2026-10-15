@@ -171,7 +171,8 @@ fn bind_alter_table(
             }
             column.default_value = set.expression.as_deref().cloned();
             let ty = column.logical_type.clone();
-            bind_default_value(scope, column.default_value.as_ref(), &ty)?;
+            let path = super::table::table_catalog_schema(scope, table);
+            super::table::bind_default_value_in(scope, column.default_value.as_ref(), &ty, path.as_ref())?;
             Ok(AlterAction::Definition(definition(
                 columns,
                 table.constraints.clone(),

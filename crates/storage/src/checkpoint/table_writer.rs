@@ -17,6 +17,7 @@ use rustdb_serde::{SerializationOptions, Serializer};
 
 use super::column_checkpointer::{CheckpointContext, checkpoint_column, merge_persistent_statistics};
 use super::pointers::{BlockPointer, RowGroupPointer};
+use crate::checkpoint::pointers::PersistentColumnData;
 use crate::compression::CompressionInfo;
 use crate::compression::uncompressed::{
     BIG_STRING_MARKER_SIZE, DICTIONARY_HEADER_SIZE, read_overflow_string_bytes,
@@ -25,7 +26,6 @@ use crate::data_table::DataTable;
 use crate::metadata::{MetaBlockPointer, MetadataManager, MetadataWriter};
 use crate::single_file_block_manager::SingleFileBlockManager;
 use crate::statistics::{BaseStatistics, serialize_table_statistics};
-use crate::checkpoint::pointers::PersistentColumnData;
 use crate::table::RowGroup;
 use crate::table::column_data::ColumnData;
 use crate::table::column_segment::{ColumnSegment, Layout};

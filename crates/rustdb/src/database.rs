@@ -465,7 +465,11 @@ impl Connection {
     }
 
     fn run_statement(&mut self, statement: SqlStatement) -> Result<MaterializedResult> {
+        if let rustdb_ast::SqlStatementKind::Multi(statements) = statement.kind {
+            return self.run_multi_statement(statements);
+        }
         // Pragmas that stand for a query run that query (DuckDB's `PragmaHandler`).
+        let statement = statement;
         if let rustdb_ast::SqlStatementKind::Pragma(pragma) = &statement.kind {
             let constants: Option<Vec<rustdb_types::Value>> = pragma
                 .parameters
@@ -661,6 +665,42 @@ impl Connection {
         self.register_modifications(&plan, statement_type)?;
         self.run_plan(plan, names, types)
             .map(|result| result.with_return_type(return_type))
+    }
+
+    /// The statements a statement was rewritten into (DuckDB's `UnpackMultiStatement`):
+    /// outside a transaction, several statements without a SELECT run in one transaction
+    /// that a failure rolls back. The result is the last statement's.
+    fn run_multi_statement(&mut self, statements: Vec<SqlStatement>) -> Result<MaterializedResult> {
+        let has_select = statements
+            .iter()
+            .any(|statement| matches!(statement.kind, rustdb_ast::SqlStatementKind::Select(_)));
+        let wrap = statements.len() > 1 && !has_select && self.transactions.is_auto_commit();
+        let run_sql = |connection: &mut Self, sql: &str| -> Result<MaterializedResult> {
+            let mut result = MaterializedResult::default();
+            for statement in rustdb_parser::parse(sql)? {
+                result = connection.run_statement(statement)?;
+            }
+            Ok(result)
+        };
+        if wrap {
+            run_sql(self, "BEGIN TRANSACTION")?;
+        }
+        let mut result = MaterializedResult::default();
+        for statement in statements {
+            match self.run_statement(statement) {
+                Ok(statement_result) => result = statement_result,
+                Err(error) => {
+                    if wrap && !self.transactions.is_auto_commit() {
+                        let _ = run_sql(self, "ROLLBACK");
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        if wrap {
+            run_sql(self, "COMMIT")?;
+        }
+        Ok(result)
     }
 
     /// Records which database the statement writes to in the transaction and rejects

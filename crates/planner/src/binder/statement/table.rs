@@ -207,15 +207,28 @@ pub fn unique_keys(
 /// Binds the default value of every stored column (DuckDB's `BindDefaultValues`); columns
 /// without a default get a typed NULL.
 pub fn bind_default_values(scope: &mut BindScope<'_>, table: &TableEntry) -> Result<Vec<Expression>> {
+    let path = table_catalog_schema(scope, table);
     let mut defaults = Vec::new();
     for (_, _, column) in table.physical_columns() {
-        defaults.push(bind_default_value(
+        defaults.push(bind_default_value_in(
             scope,
             column.default_value.as_ref(),
             &column.logical_type,
+            path.as_ref(),
         )?);
     }
     Ok(defaults)
+}
+
+/// The catalog and schema of a table, found through its storage.
+pub fn table_catalog_schema(scope: &BindScope<'_>, table: &TableEntry) -> Option<(String, String)> {
+    let storage = table.storage.as_ref()?;
+    let catalog = scope
+        .context
+        .catalogs
+        .iter()
+        .find(|catalog| catalog.io().is_ok_and(|io| Arc::ptr_eq(io, storage.io())))?;
+    Some((catalog.name().to_owned(), storage.info().schema_name()))
 }
 
 /// Binds one `DEFAULT` expression with target type `ty`.
@@ -223,6 +236,17 @@ pub fn bind_default_value(
     scope: &mut BindScope<'_>,
     default: Option<&ParsedExpression>,
     ty: &LogicalType,
+) -> Result<Expression> {
+    bind_default_value_in(scope, default, ty, None)
+}
+
+/// Binds one `DEFAULT` expression with target type `ty`; names resolve in `path`
+/// (`catalog`, `schema`) first, then its catalog's `main` (`Binder::BindDefaultValues`).
+pub fn bind_default_value_in(
+    scope: &mut BindScope<'_>,
+    default: Option<&ParsedExpression>,
+    ty: &LogicalType,
+    path: Option<&(String, String)>,
 ) -> Result<Expression> {
     let Some(default) = default else {
         return Ok(Expression::constant(Value::null(ty.clone())));
@@ -232,6 +256,14 @@ pub fn bind_default_value(
         return Err(Error::binder("DEFAULT values cannot contain parameters"));
     }
     let mut binder = scope.binder.child()?;
+    if let Some((catalog, schema)) = path {
+        let mut context = (*binder.context).clone();
+        context.search_path = vec![(catalog.clone(), schema.clone())];
+        if !schema.eq_ignore_ascii_case("main") {
+            context.search_path.push((catalog.clone(), "main".to_owned()));
+        }
+        binder.context = Arc::new(context);
+    }
     let mut constant_binder = ConstantBinder::new(&mut binder, None, "DEFAULT value");
     constant_binder.state().target_type = Some(ty.clone());
     constant_binder.bind(&mut copy, true)

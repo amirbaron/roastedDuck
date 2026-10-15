@@ -49,7 +49,7 @@ impl TransactionContext {
         self.read_only && !self.auto_commit
     }
 
-    #[cfg(test)]
+    /// Whether no explicit transaction is open.
     pub fn is_auto_commit(&self) -> bool {
         self.auto_commit
     }
