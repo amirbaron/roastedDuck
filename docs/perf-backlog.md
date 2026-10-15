@@ -10,9 +10,5 @@ CPU time unless noted; most were measured on a heavily loaded machine and need r
 | Sort: multi-key (int, varchar desc, double) | 1.9× DuckDB CPU | same | `crates/row` |
 | Parser: tiny statements (`SELECT 1`, short SELECTs) | ~1.05–1.25× DuckDB cycles per query | per-node malloc/free vs DuckDB's arena-allocated parse tree | `crates/parser` (`parse_bench`) |
 | Spill files | uncompressed, no block header | zstd encoder not wired | `crates/buffer` |
-- **Nested comparisons** (`crates/types/src/compare.rs::compare_nested`): LIST/STRUCT/ARRAY
-  `=`/`<`/… go row by row through `Value`s. Port DuckDB's vectorised `PositionComparator`
-  (`is_distinct_from.cpp`) before nested-key workloads are benchmarked.
-- **Cross product / unnest constants**: the constant side is built through one `Value` per
-  output chunk; a zero-copy `ConstantVector::Reference` equivalent (constant view of a row)
-  would avoid it.
+| Nested comparisons (LIST/STRUCT/ARRAY `=`, `<`, …) | not measured | row by row through `Value`s; port DuckDB's vectorised `PositionComparator` (`is_distinct_from.cpp`) | `crates/types` (`compare.rs`) |
+| Cross product / UNNEST constant side | not measured | one `Value` per output chunk instead of a zero-copy constant view of a row (`ConstantVector::Reference`) | `crates/execution` |
