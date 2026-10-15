@@ -60,7 +60,14 @@ pub fn bind_create(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Result<B
             plan
         }
         CreateInfoKind::Type(_) => bind_create_type(scope, info)?,
-        CreateInfoKind::Macro(_) | CreateInfoKind::TableMacro(_) | CreateInfoKind::Secret(_) => {
+        CreateInfoKind::Macro(_) | CreateInfoKind::TableMacro(_) => {
+            super::create_macro::bind_create_function_info(scope, info)?;
+            LogicalOperator::new(LogicalKind::Create {
+                operator_type: LogicalOperatorType::LogicalCreateMacro,
+                info: Box::new(info.clone()),
+            })
+        }
+        CreateInfoKind::Secret(_) => {
             return Err(Error::not_implemented(format!(
                 "CREATE {}",
                 info.kind.catalog_type().name()

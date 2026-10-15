@@ -15,6 +15,7 @@ use rustdb_types::{LogicalType, LogicalTypeId};
 mod alter;
 mod create;
 mod create_index;
+mod create_macro;
 mod modify;
 mod table;
 

@@ -3,6 +3,7 @@
 //! that specialised binders can fall back to it.
 
 mod bind_function;
+pub(crate) mod bind_macro;
 mod bind_star;
 mod bind_subquery;
 mod bind_type;
