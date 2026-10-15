@@ -73,6 +73,9 @@ pub struct ClassConfig {
     /// In-memory members that are not serialized (such as the parsed options of a COPY,
     /// which the binder turns into the serialized ones).
     pub extra_fields: &'static [ExtraField],
+    /// Lay the struct out like the C++ one (`#[repr(C)]`), for types stored in vectors
+    /// whose bytes are read field by field (`interval_t`).
+    pub repr_c: bool,
 }
 
 impl ClassConfig {
@@ -91,6 +94,7 @@ impl ClassConfig {
         derives: &[],
         extra_variants: &[],
         extra_fields: &[],
+        repr_c: false,
     };
 }
 
@@ -446,6 +450,7 @@ pub const CLASSES: &[ClassConfig] = &[
         class: "interval_t",
         rust_name: Some("Interval"),
         derives: &["Copy", "Default"],
+        repr_c: true,
         ..ClassConfig::DEFAULT
     },
     ClassConfig {

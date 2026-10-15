@@ -264,21 +264,12 @@ fn bind_comparison<B: ExpressionBinder + ?Sized>(
     let try_cast = input_type.id() == LogicalTypeId::Enum;
     let left = add_cast_to_type(&context, left, &input_type, try_cast)?;
     let right = add_cast_to_type(&context, right, &input_type, try_cast)?;
-    let left = push_collation(left, &input_type)?;
-    let right = push_collation(right, &input_type)?;
+    let left = push_collation(&context, left, &input_type)?;
+    let right = push_collation(&context, right, &input_type)?;
     Ok(Expression::comparison(comparison_type, left, right).into())
 }
 
-/// Applies a VARCHAR collation to an expression (DuckDB's `ExpressionBinder::PushCollation`).
-/// Collations are not ported yet; without one this is the identity.
-pub fn push_collation(expression: Expression, ty: &LogicalType) -> Result<Expression> {
-    match crate::expression_binder::collation(ty) {
-        Some(collation) if ty.id() == LogicalTypeId::Varchar && !collation.eq_ignore_ascii_case("binary") => {
-            Err(Error::not_implemented(format!("collation \"{collation}\"")))
-        }
-        _ => Ok(expression),
-    }
-}
+pub use crate::collation_binding::push_collation;
 
 /// DuckDB's `BindExpression(ConjunctionExpression &)`.
 fn bind_conjunction<B: ExpressionBinder + ?Sized>(
@@ -417,9 +408,21 @@ fn bind_between<B: ExpressionBinder + ?Sized>(
     let common = try_bind_comparison(&common, &upper_type, between_type)?
         .ok_or_else(|| mismatch(&common, &upper_type))?;
     let context = binder.binder_ref().context.clone();
-    let input = push_collation(add_cast_to_type(&context, input, &common, false)?, &common)?;
-    let lower = push_collation(add_cast_to_type(&context, lower, &common, false)?, &common)?;
-    let upper = push_collation(add_cast_to_type(&context, upper, &common, false)?, &common)?;
+    let input = push_collation(
+        &context,
+        add_cast_to_type(&context, input, &common, false)?,
+        &common,
+    )?;
+    let lower = push_collation(
+        &context,
+        add_cast_to_type(&context, lower, &common, false)?,
+        &common,
+    )?;
+    let upper = push_collation(
+        &context,
+        add_cast_to_type(&context, upper, &common, false)?,
+        &common,
+    )?;
     if !input.is_volatile() && !input.has_parameter() && !input.has_subquery() {
         // Two comparisons are easier on the optimizer; it folds them back into a BETWEEN.
         let left = Expression::comparison(ExpressionType::CompareGreaterthanorequalto, input.clone(), lower);
@@ -466,9 +469,11 @@ fn bind_collate<B: ExpressionBinder + ?Sized>(
             collation: collate.collation.clone(),
         }),
     );
-    // Validates the collation.
+    // Validates the collation (`ExpressionBinder::TestCollation`).
+    let context = binder.binder_ref().context.clone();
     push_collation(
-        Expression::constant(rustdb_types::Value::null(LogicalType::VARCHAR)),
+        &context,
+        Expression::constant(rustdb_types::Value::varchar("")),
         &collation_type,
     )?;
     child.return_type = collation_type;
@@ -653,7 +658,7 @@ fn resolve_coalesce_type(
     for child in children.drain(..) {
         let child = add_cast_to_type(context, child, &max_type, false)?;
         cast_children.push(if is_in {
-            push_collation(child, &max_type)?
+            push_collation(context, child, &max_type)?
         } else {
             child
         });

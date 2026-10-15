@@ -484,7 +484,7 @@ impl<'a> SelectBinder<'a> {
             for order in &mut function.order_bys.orders {
                 let expression = take_bound(&mut order.expression)?;
                 let ty = expression.return_type.clone();
-                let expression = push_collation(expression, &ty)?;
+                let expression = push_collation(&context, expression, &ty)?;
                 let sense = context.config.resolve_order(order.order_type);
                 let null_order = context.config.resolve_null_order(sense, order.null_order);
                 orders.push(BoundOrderByNode::new(sense, null_order, expression));
@@ -984,7 +984,7 @@ impl SelectBinder<'_> {
         let take = |expr: &mut ParsedExpression| -> Result<Expression> {
             let bound = take_bound(expr)?;
             let ty = bound.return_type.clone();
-            push_collation(bound, &ty)
+            push_collation(&context, bound, &ty)
         };
         let mut arg_orders = Vec::with_capacity(window.arg_orders.len());
         for order in &mut window.arg_orders {

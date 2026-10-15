@@ -30,6 +30,12 @@ pub fn builtin_aggregate_functions() -> Result<Vec<AggregateFunctionSet>> {
 pub fn builtin_table_functions() -> Vec<TableFunctionSet> {
     let mut sets = table::range::range_functions();
     sets.push(table::test_all_types::test_all_types_functions());
+    sets.push(table::repeat::repeat_functions());
+    sets.push(table::repeat::repeat_row_functions());
+    sets.push(table::unnest::unnest_functions());
+    sets.push(table::test_vector_types::test_vector_types_functions());
+    sets.push(table::query_function::query_functions());
+    sets.push(table::query_function::query_table_functions());
     sets
 }
 

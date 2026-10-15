@@ -12,7 +12,11 @@ use crate::{
 /// The parameters are DuckDB's `ExtraTypeInfo`: the subclass-specific data in
 /// [`TypeInfo`] plus the members every info carries (an alias such as `JSON` on a
 /// `VARCHAR`, and extension metadata).
-#[derive(Clone, PartialEq, Eq, Hash)]
+///
+/// Equality is DuckDB's `LogicalType::operator==`: a VARCHAR's collation does not count,
+/// and a parameterless info (STRING or GENERIC) equals no info unless it carries an alias
+/// or extension metadata.
+#[derive(Clone)]
 pub struct LogicalType {
     id: LogicalTypeId,
     info: Option<Arc<ExtraTypeInfo>>,
@@ -465,6 +469,54 @@ impl LogicalType {
     }
 }
 
+/// Whether `info` is a STRING or GENERIC info, whose contents do not take part in equality
+/// (`ExtraTypeInfo::Equals`).
+fn info_without_contents(info: &ExtraTypeInfo) -> bool {
+    matches!(info.kind, TypeInfo::String(_) | TypeInfo::Generic)
+}
+
+impl PartialEq for LogicalType {
+    /// `LogicalType::operator==` and `EqualTypeInfo`.
+    fn eq(&self, other: &Self) -> bool {
+        if self.id != other.id {
+            return false;
+        }
+        match (self.info.as_deref(), other.info.as_deref()) {
+            (None, None) => true,
+            (Some(info), None) | (None, Some(info)) => {
+                info_without_contents(info) && info.alias.is_empty() && info.extension_info.is_none()
+            }
+            (Some(left), Some(right)) => {
+                if left.alias != right.alias || left.extension_info != right.extension_info {
+                    return false;
+                }
+                if info_without_contents(left) {
+                    return true;
+                }
+                left.kind == right.kind
+            }
+        }
+    }
+}
+
+impl Eq for LogicalType {}
+
+impl std::hash::Hash for LogicalType {
+    /// Consistent with [`PartialEq`]: the contents of STRING and GENERIC infos are skipped.
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+        match self.info.as_deref() {
+            None => "".hash(state),
+            Some(info) => {
+                info.alias.hash(state);
+                if !info_without_contents(info) {
+                    info.kind.hash(state);
+                }
+            }
+        }
+    }
+}
+
 impl Default for LogicalType {
     /// `INVALID`, like DuckDB's default-constructed `LogicalType`.
     fn default() -> Self {
@@ -527,6 +579,11 @@ impl fmt::Display for LogicalType {
                     f.write_str(&write_quoted(value, '\''))?;
                 }
                 f.write_str(")")
+            }
+            (L::Template, Some(TypeInfo::Template(info))) => f.write_str(&info.name),
+            (L::Template, None) => f.write_str("T"),
+            (L::Geometry, Some(TypeInfo::Geo(info))) if !info.crs.definition.is_empty() => {
+                write!(f, "GEOMETRY({})", write_quoted(&info.crs.definition, '\''))
             }
             (id, _) => f.write_str(type_id_name(id)),
         }

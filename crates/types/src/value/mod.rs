@@ -588,6 +588,7 @@ impl Value {
             (Payload::Interval(v), L::Interval) => v.write_to(out),
             (Payload::Bytes(bytes), L::Blob) => crate::blob::write_text(bytes, out),
             (Payload::Bytes(bytes), L::Bit) => crate::bit::write_text(bytes, out),
+            (Payload::Bytes(bytes), L::Geometry) => crate::geometry::to_text(bytes, out)?,
             (Payload::Bytes(bytes), L::Bignum) => {
                 crate::bignum::write_text(bytes, out).map_err(Error::invalid_input)?;
             }

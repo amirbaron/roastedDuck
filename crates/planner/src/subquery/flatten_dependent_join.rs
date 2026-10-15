@@ -417,8 +417,8 @@ impl<'a> FlattenDependentJoins<'a> {
                 let column = column_ref("", child_type, plan_columns[i]);
                 let right = add_cast_to_type(&context, column, compare_type, false)?;
                 delim_join.conditions.push(JoinCondition {
-                    left: push_collation(left, compare_type)?,
-                    right: push_collation(right, compare_type)?,
+                    left: push_collation(&context, left, compare_type)?,
+                    right: push_collation(&context, right, compare_type)?,
                     comparison: dependent.comparison_type,
                 });
             }

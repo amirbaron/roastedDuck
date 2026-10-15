@@ -64,7 +64,17 @@ fn bind_parameters(
 ) -> Result<(Vec<LogicalType>, Vec<Value>, NamedParameters)> {
     // While a macro definition is verified its parameters stand for constants; binding
     // them reports that their types are unknown.
-    if scope.binder.macro_binding.is_none() && !children.iter_mut().all(parsed_is_scalar) {
+    // `name = value` parameters only need a constant value.
+    let value_is_scalar = |child: &mut ParsedExpression| {
+        if child.expression_type == ExpressionType::CompareEqual
+            && let ParsedExpressionKind::Comparison(comparison) = &mut child.kind
+            && matches!(comparison.left.kind, ParsedExpressionKind::ColumnRef(_))
+        {
+            return parsed_is_scalar(&mut comparison.right);
+        }
+        parsed_is_scalar(child)
+    };
+    if scope.binder.macro_binding.is_none() && !children.iter_mut().all(value_is_scalar) {
         return Err(Error::not_implemented(
             "table in-out functions and table parameters",
         ));
@@ -389,6 +399,31 @@ pub fn bind_table_function(
                         error
                     }
                 })?;
+        }
+    }
+    if let Some(bind_replace) = table_function.bind_replace.clone() {
+        let replacement = bind_replace(&TableFunctionBindInput {
+            inputs: &parameters,
+            named_parameters: &named.0,
+            input_table_types: &input_table.types,
+            input_table_names: &input_table.names,
+            binder: Some(context.as_ref() as &dyn std::any::Any),
+        })
+        .map_err(|error| error.with_position(location))?;
+        if let Some(replacement) = replacement {
+            // The query replaces the call, keeping the reference's aliases.
+            let mut statements = rustdb_parser::parse(&replacement.query)?;
+            let (Some(statement), true) = (statements.pop(), statements.is_empty()) else {
+                return Err(Error::parser(replacement.error));
+            };
+            let rustdb_ast::SqlStatementKind::Select(select) = statement.kind else {
+                return Err(Error::parser(replacement.error));
+            };
+            let mut subquery = rustdb_ast::SubqueryRef {
+                subquery: Box::new(select),
+                column_name_alias: function_ref.column_name_alias.clone(),
+            };
+            return super::bind_subquery_ref(scope, &mut subquery, alias);
         }
     }
     let alias = function_alias(alias, function);

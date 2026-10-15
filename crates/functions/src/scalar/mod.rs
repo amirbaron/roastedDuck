@@ -10,6 +10,7 @@ pub mod date;
 pub mod enums;
 pub(crate) mod executor;
 pub mod generic;
+pub mod geometry;
 pub mod list;
 pub mod map;
 pub mod math;
@@ -52,6 +53,7 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
         crate::aggregate::nested::binned_histogram::is_histogram_other_bin_function_set(),
         list::list_value::unpivot_list_functions(),
         structs::row_functions(),
+        structs::remap_struct::remap_struct_functions(),
         structs::struct_pack_functions(),
         structs::struct_extract::struct_extract_functions(),
         structs::struct_extract::struct_extract_at_functions(),
@@ -110,6 +112,7 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
     with_aliases(&mut sets, string::substring::substring_functions(), &["substr"]);
     sets.push(string::substring::substring_grapheme_functions());
     sets.extend(generic::generic_functions());
+    sets.extend(geometry::geometry_functions());
     sets.extend(system::system_functions());
     sets.extend(compressed_materialization::compressed_materialization_functions());
     sets.extend(date::to_interval::to_interval_functions());

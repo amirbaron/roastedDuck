@@ -1,0 +1,151 @@
+//! Collations (DuckDB's `planner/collation_binding.cpp`): expressions that must compare,
+//! group and sort by a normalised form get wrapped in a function computing it.
+//!
+//! VARCHAR collations (`nocase`, `noaccent`, `nfc`) wrap the string in the collation's
+//! function; TIME WITH TIME ZONE compares through `timetz_byte_comparable` and INTERVAL
+//! through `normalized_interval`, so `1 month = 30 days` also holds for grouping, sorting
+//! and joins.
+
+use rustdb_catalog::{CatalogType, EntryKind};
+use rustdb_common::{Error, Result};
+use rustdb_types::{LogicalType, LogicalTypeId, TypeInfo};
+
+use crate::context::ClientContext;
+use crate::expression::Expression;
+use crate::function_binder::FunctionBinder;
+
+/// Which collations to apply (DuckDB's `CollationType`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CollationType {
+    /// Every collation.
+    AllCollations,
+    /// Only collations that can be combined with others (for functions such as `like`).
+    CombinableCollations,
+}
+
+/// A builtin collation (DuckDB's `CollateCatalogEntry`, registered by
+/// `BuiltinFunctions::AddCollation`).
+struct Collation {
+    name: &'static str,
+    /// The scalar function computing the collated value.
+    function: &'static str,
+    /// Whether the collation can be combined with other collations.
+    combinable: bool,
+}
+
+/// `BuiltinFunctions::Initialize`: `nocase`, `noaccent` and `nfc`.
+const COLLATIONS: &[Collation] = &[
+    Collation {
+        name: "nocase",
+        function: "lower",
+        combinable: true,
+    },
+    Collation {
+        name: "noaccent",
+        function: "strip_accents",
+        combinable: true,
+    },
+    Collation {
+        name: "nfc",
+        function: "nfc_normalize",
+        combinable: false,
+    },
+];
+
+/// The collation of a VARCHAR type (`StringType::GetCollation`), empty without one.
+fn type_collation(ty: &LogicalType) -> &str {
+    match ty.info() {
+        Some(TypeInfo::String(info)) => &info.collation,
+        _ => "",
+    }
+}
+
+/// Wraps `source` in the single overload of the system function `name`.
+fn wrap(context: &ClientContext, name: &str, source: Expression) -> Result<Expression> {
+    let entry = context
+        .get_entry("system", "main", CatalogType::ScalarFunction, name, true)?
+        .ok_or_else(|| Error::internal(format!("collation function {name} is missing")))?;
+    let EntryKind::ScalarFunction(functions) = &entry.entry.kind else {
+        return Err(Error::internal(format!("{name} is not a scalar function")));
+    };
+    let [function] = functions.functions.as_slice() else {
+        return Err(Error::internal(format!(
+            "{name} should only have a single overload"
+        )));
+    };
+    FunctionBinder::new(context).bind_scalar_overload(function.clone(), vec![source], false)
+}
+
+/// `PushVarcharCollation`.
+fn push_varchar_collation(
+    context: &ClientContext,
+    source: Expression,
+    ty: &LogicalType,
+    kind: CollationType,
+) -> Result<(Expression, bool)> {
+    if ty.id() != LogicalTypeId::Varchar {
+        return Ok((source, false));
+    }
+    let collation = match type_collation(ty) {
+        "" => context.config.default_collation.as_str(),
+        collation => collation,
+    }
+    .to_lowercase();
+    if collation.is_empty() || matches!(collation.as_str(), "binary" | "c" | "posix") {
+        return Ok((source, false));
+    }
+    let mut entries: Vec<&Collation> = Vec::new();
+    let mut seen: Vec<&str> = Vec::new();
+    for argument in collation.split('.') {
+        if seen.contains(&argument) {
+            continue;
+        }
+        let entry = COLLATIONS
+            .iter()
+            .find(|entry| entry.name == argument)
+            .ok_or_else(|| Error::catalog(format!("Collation with name {argument} does not exist!")))?;
+        if entry.combinable {
+            entries.insert(0, entry);
+        } else {
+            if let Some(last) = entries.last()
+                && !last.combinable
+            {
+                return Err(Error::binder(format!(
+                    "Cannot combine collation types \"{}\" and \"{}\"",
+                    last.name, entry.name
+                )));
+            }
+            entries.push(entry);
+        }
+        seen.push(argument);
+    }
+    let mut source = source;
+    for entry in entries {
+        if !entry.combinable && kind == CollationType::CombinableCollations {
+            return Ok((source, false));
+        }
+        source = wrap(context, entry.function, source)?;
+    }
+    Ok((source, true))
+}
+
+/// Applies the collation `ty` calls for to `source` (DuckDB's
+/// `ExpressionBinder::PushCollation`); the flag tells whether one was applied.
+pub fn push_collation_with(
+    context: &ClientContext,
+    source: Expression,
+    ty: &LogicalType,
+    kind: CollationType,
+) -> Result<(Expression, bool)> {
+    match ty.id() {
+        LogicalTypeId::Varchar => push_varchar_collation(context, source, ty, kind),
+        LogicalTypeId::TimeTz => Ok((wrap(context, "timetz_byte_comparable", source)?, true)),
+        LogicalTypeId::Interval => Ok((wrap(context, "normalized_interval", source)?, true)),
+        _ => Ok((source, false)),
+    }
+}
+
+/// [`push_collation_with`] for every collation, returning only the expression.
+pub fn push_collation(context: &ClientContext, source: Expression, ty: &LogicalType) -> Result<Expression> {
+    push_collation_with(context, source, ty, CollationType::AllCollations).map(|(expression, _)| expression)
+}

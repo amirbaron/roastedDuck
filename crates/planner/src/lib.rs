@@ -31,6 +31,7 @@
 //! [`LogicalOperator::node_id`].
 
 pub mod binder;
+pub mod collation_binding;
 mod column_binding;
 pub mod column_binding_resolver;
 pub mod context;

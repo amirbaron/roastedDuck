@@ -72,6 +72,7 @@ fn repeat_string(args: &DataChunk, result: &mut Vector) -> Result<()> {
 
 /// `repeat(list, count)` (DuckDB's `RepeatListFunction`).
 fn repeat_list(args: &DataChunk, result: &mut Vector) -> Result<()> {
+    const MAX_VECTOR_SIZE: u64 = 1 << 37;
     let count = args.len();
     let lists = addressable(args.column(0), count);
     let counts = addressable(args.column(1), count);
@@ -98,6 +99,13 @@ fn repeat_list(args: &DataChunk, result: &mut Vector) -> Result<()> {
                 list.length
             ))
         })?;
+        // `ListVector::Reserve`: the child vector may hold at most `MAX_VECTOR_SIZE` rows.
+        let total = sources.len() as u64 + length;
+        if total > MAX_VECTOR_SIZE {
+            return Err(Error::out_of_range(format!(
+                "Cannot resize vector to {total} rows: maximum allowed vector size is 128.0 GiB"
+            )));
+        }
         let start = sources.len();
         for _ in 0..copies {
             sources.extend((list.offset..list.offset + list.length).map(|child| Some(child as u32)));

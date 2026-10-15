@@ -40,6 +40,8 @@ pub struct PlannerConfig {
     /// `scalar_subquery_error_on_multiple_rows`: scalar subqueries returning several rows
     /// raise an error (instead of returning one of them).
     pub scalar_subquery_error_on_multiple_rows: bool,
+    /// `default_collation`: the collation of VARCHAR values without one, lowercase.
+    pub default_collation: String,
 }
 
 /// The `default_null_order` setting (DuckDB's `DefaultOrderByNullType`).
@@ -60,6 +62,7 @@ impl Default for PlannerConfig {
             order_by_non_integer_literal: false,
             catalog_error_max_schemas: 100,
             scalar_subquery_error_on_multiple_rows: true,
+            default_collation: String::new(),
         }
     }
 }

@@ -14,6 +14,7 @@ use super::{BoundSelectNode, plan_subqueries};
 use crate::ColumnBinding;
 use crate::binder::expression::expand_star_expression;
 use crate::binder::{BindScope, BoundStatement};
+use crate::collation_binding::{CollationType, push_collation_with};
 use crate::expression::{Expression, ExpressionKind};
 use crate::expression_binder::{
     BoundGroupInformation, ColumnAliasBinder, ExpressionBinder, GroupBinder, SelectBinder, SelectRole,
@@ -159,9 +160,6 @@ pub fn bind_select_node(
                 group_binder.unbound_expression = Some(group.clone());
                 group_binder.bind_index = i;
                 let bound = group_binder.bind(&mut group, true)?;
-                if bound.has_subquery() {
-                    // A group with a subquery cannot be copied; no collation handling.
-                }
                 bound_groups.push(bound);
                 unbound_groups.push(group_binder.unbound_expression.take().unwrap_or(group));
             }
@@ -173,7 +171,25 @@ pub fn bind_select_node(
             qualify_column_names(scope.binder, &mut unbound)?;
             info.map.insert(&unbound, i);
         }
-        result.groups.group_expressions = bound_groups;
+        // Push collations: group by the collated expression, and keep a `first(x)`
+        // aggregate in case `x` itself is selected (uncollated).
+        let context = scope.binder.context.clone();
+        let mut collated_groups = Vec::with_capacity(bound_groups.len());
+        for (i, bound) in bound_groups.into_iter().enumerate() {
+            let group_type = bound.return_type.clone();
+            let contains_subquery = bound.has_subquery();
+            let original = (!contains_subquery).then(|| bound.clone());
+            let (bound, requires_collation) =
+                push_collation_with(&context, bound, &group_type, CollationType::AllCollations)?;
+            if let (Some(original), true) = (original, requires_collation) {
+                info.collated_groups.insert(i, result.aggregates.len());
+                let mut first = super::plan_subquery::builtin_aggregate(&context, "first", vec![original])?;
+                "__collated_group".clone_into(&mut first.alias);
+                result.aggregates.push(first);
+            }
+            collated_groups.push(bound);
+        }
+        result.groups.group_expressions = collated_groups;
     }
     result.groups.grouping_sets.clone_from(&statement.group_sets);
 
@@ -369,7 +385,9 @@ pub fn bind_select_node(
 
     let names = result.names.clone();
     let mut bound_modifiers = std::mem::take(&mut result.modifiers);
+    let context = scope.binder.context.clone();
     bind_modifiers(
+        &context,
         &mut bound_modifiers,
         result.projection_index,
         &names,

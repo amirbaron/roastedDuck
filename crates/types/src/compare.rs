@@ -7,7 +7,7 @@
 use rustdb_common::{Error, Result};
 
 use crate::kernels::binary;
-use crate::{LogicalType, NativeType, PhysicalType, StringT, Vector};
+use crate::{Interval, LogicalType, NativeType, PhysicalType, StringT, Vector};
 
 /// A comparison between two values of the same type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -73,6 +73,19 @@ macro_rules! sql_ord_float {
     )*};
 }
 sql_ord_float!(f32, f64);
+
+/// Intervals compare by their normalised `(months, days, micros)`, so `1 month = 30 days`
+/// (`Interval::Equals` and `Interval::GreaterThan`).
+impl SqlOrd for Interval {
+    #[inline]
+    fn sql_eq(self, other: Self) -> bool {
+        self.normalized_eq(other)
+    }
+    #[inline]
+    fn sql_gt(self, other: Self) -> bool {
+        self > other
+    }
+}
 
 #[inline]
 fn apply<T: SqlOrd>(op: CompareOp, left: T, right: T) -> bool {
@@ -183,6 +196,7 @@ pub fn compare(
         PhysicalType::UInt128 => compare_native::<u128>(op, left, right, count, result),
         PhysicalType::Float => compare_native::<f32>(op, left, right, count, result),
         PhysicalType::Double => compare_native::<f64>(op, left, right, count, result),
+        PhysicalType::Interval => compare_native::<Interval>(op, left, right, count, result),
         PhysicalType::Varchar => compare_strings(op, left, right, count, result),
         PhysicalType::List | PhysicalType::Struct | PhysicalType::Array => {
             compare_nested(op, left, right, count, result)?;

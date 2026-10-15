@@ -40,6 +40,21 @@ pub struct TableFunctionBindOutput {
 pub type TableFunctionBind =
     Arc<dyn Fn(&TableFunctionBindInput<'_>) -> Result<TableFunctionBindOutput> + Send + Sync>;
 
+/// What a `bind_replace` callback substitutes for the call: a query the binder parses
+/// and binds as a subquery in place of the function (DuckDB returns the parsed
+/// `TableRef`; the function library only builds the SQL).
+#[derive(Clone, Debug)]
+pub struct TableFunctionReplacement {
+    /// The SQL of a single SELECT statement.
+    pub query: String,
+    /// The parser error raised when `query` is not a single SELECT statement.
+    pub error: String,
+}
+
+/// A table function's `bind_replace` callback: `Some` replaces the call by a subquery.
+pub type TableFunctionBindReplace =
+    Arc<dyn Fn(&TableFunctionBindInput<'_>) -> Result<Option<TableFunctionReplacement>> + Send + Sync>;
+
 /// Produces the function's rows: called repeatedly with the bind data and the projected
 /// column ids, it fills the chunk (all of the function's columns, at most
 /// `STANDARD_VECTOR_SIZE` rows) and returns whether more rows may follow (a
@@ -67,6 +82,8 @@ pub struct TableFunction {
     /// The accepted `name := value` parameters and their types.
     pub named_parameters: Vec<(String, LogicalType)>,
     pub bind: Option<TableFunctionBind>,
+    /// Replaces the call by a subquery before `bind` (DuckDB's `bind_replace`).
+    pub bind_replace: Option<TableFunctionBindReplace>,
     pub scan: Option<TableFunctionScan>,
     /// Whether the scan can produce only the requested columns.
     pub projection_pushdown: bool,
@@ -85,6 +102,7 @@ impl TableFunction {
             varargs: None,
             named_parameters: Vec::new(),
             bind: None,
+            bind_replace: None,
             scan: None,
             projection_pushdown: false,
             filter_pushdown: false,

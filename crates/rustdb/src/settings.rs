@@ -254,6 +254,9 @@ impl Settings {
                     .and_then(|count| usize::try_from(count).ok())
                     .ok_or_else(|| Error::internal("catalog_error_max_schemas is not a UBIGINT"))?;
             }
+            "default_collation" => {
+                self.planner.default_collation = value.to_varchar()?.to_lowercase();
+            }
             "order_by_non_integer_literal" => {
                 let enabled = value.default_cast_as(&LogicalType::BOOLEAN)?;
                 self.planner.order_by_non_integer_literal = enabled.as_bool().unwrap_or(false);
@@ -279,6 +282,7 @@ impl Settings {
             "order_by_non_integer_literal" => {
                 self.planner.order_by_non_integer_literal = defaults.order_by_non_integer_literal;
             }
+            "default_collation" => self.planner.default_collation = defaults.default_collation,
             other => {
                 self.other.remove(other);
             }
