@@ -178,6 +178,100 @@ impl ExpressionBinder for UpdateBinder<'_> {
     }
 }
 
+/// Expressions over a projection being built (DuckDB's `ProjectionBinder`): every
+/// column reference or subquery is pushed into the projection's expressions and replaced
+/// by a reference to that projection column.
+#[derive(Debug)]
+pub struct ProjectionBinder<'a> {
+    base: BinderBase<'a>,
+    proj_index: u64,
+    proj_expressions: &'a mut Vec<Expression>,
+    /// The clause named in errors (`WHERE clause`, `Error Message`).
+    clause: String,
+    in_child_projection: bool,
+}
+
+impl<'a> ProjectionBinder<'a> {
+    pub fn new(
+        binder: &'a mut Binder,
+        outer: Option<&'a mut dyn Scope>,
+        proj_index: u64,
+        proj_expressions: &'a mut Vec<Expression>,
+        clause: impl Into<String>,
+        target: LogicalType,
+    ) -> Self {
+        Self {
+            base: BinderBase::new(binder, outer).with_target_type(target),
+            proj_index,
+            proj_expressions,
+            clause: clause.into(),
+            in_child_projection: false,
+        }
+    }
+
+    /// `ProjectionBinder::BindColumnRef`.
+    fn bind_projected(
+        &mut self,
+        expr: &mut ParsedExpression,
+        depth: u64,
+        root_expression: bool,
+    ) -> Result<BindResult> {
+        if self.in_child_projection {
+            return bind_expression_base(self, expr, depth, root_expression);
+        }
+        self.in_child_projection = true;
+        let result = bind_expression_base(self, expr, depth, root_expression);
+        self.in_child_projection = false;
+        let bound = match result? {
+            BindResult::Bound(bound) => bound,
+            unbound @ BindResult::Unbound(_) => return Ok(unbound),
+        };
+        if matches!(bound.kind, crate::expression::ExpressionKind::LambdaRef(_)) {
+            return Ok(bound.into());
+        }
+        let reference = Expression::column_ref(
+            bound.name(),
+            bound.return_type.clone(),
+            crate::ColumnBinding::new(self.proj_index, self.proj_expressions.len() as u64),
+            0,
+        );
+        self.proj_expressions.push(bound);
+        Ok(reference.into())
+    }
+}
+
+expression_binder_base!(ProjectionBinder);
+
+impl ExpressionBinder for ProjectionBinder<'_> {
+    expression_binder_accessors!();
+
+    fn bind_expression(
+        &mut self,
+        expr: &mut ParsedExpression,
+        depth: u64,
+        root_expression: bool,
+    ) -> Result<BindResult> {
+        match &expr.kind {
+            ParsedExpressionKind::Default => {
+                let message = format!("{} cannot contain DEFAULT clause", self.clause);
+                crate::binder::expression::bind_unsupported_expression(self, expr, depth, &message)
+            }
+            ParsedExpressionKind::Window(_) => {
+                let message = format!("{} cannot contain window functions!", self.clause);
+                crate::binder::expression::bind_unsupported_expression(self, expr, depth, &message)
+            }
+            ParsedExpressionKind::ColumnRef(_) | ParsedExpressionKind::Subquery(_) => {
+                self.bind_projected(expr, depth, root_expression)
+            }
+            _ => bind_expression_base(self, expr, depth, root_expression),
+        }
+    }
+
+    fn unsupported_aggregate_message(&self) -> String {
+        format!("{} cannot contain aggregate functions", self.clause)
+    }
+}
+
 /// The `USING` expression of `ALTER TABLE ... ALTER COLUMN ... TYPE` (DuckDB's
 /// `AlterBinder`): column references become references to the scanned columns, in the
 /// order they are first referenced.

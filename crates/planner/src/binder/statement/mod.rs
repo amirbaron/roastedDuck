@@ -15,10 +15,11 @@ use rustdb_types::{LogicalType, LogicalTypeId};
 mod alter;
 mod create;
 mod create_index;
+mod merge_into;
 mod modify;
 mod table;
 
-use super::query_node::bind_node;
+use super::query_node::{bind_node, bind_statement_with_ctes};
 use super::{BindScope, Binder, BoundStatement};
 use crate::expression::BoundParameterData;
 use crate::expression_binder::{ConstantBinder, ExpressionBinder};
@@ -48,9 +49,24 @@ pub fn bind_statement(scope: &mut BindScope<'_>, statement: &mut SqlStatement) -
         SqlStatementKind::Pragma(pragma) => bind_pragma(scope, pragma),
         SqlStatementKind::Create(info) => create::bind_create(scope, info),
         SqlStatementKind::Drop(drop) => create::bind_drop(scope, drop),
-        SqlStatementKind::Insert(insert) => modify::bind_insert(scope, insert),
-        SqlStatementKind::Update(update) => modify::bind_update(scope, update),
-        SqlStatementKind::Delete(delete) => modify::bind_delete(scope, delete),
+        SqlStatementKind::Insert(insert) => {
+            let cte_map = std::mem::take(&mut insert.cte_map);
+            bind_statement_with_ctes(scope, &cte_map, &mut |scope| modify::bind_insert(scope, insert))
+        }
+        SqlStatementKind::Update(update) => {
+            let cte_map = std::mem::take(&mut update.cte_map);
+            bind_statement_with_ctes(scope, &cte_map, &mut |scope| modify::bind_update(scope, update))
+        }
+        SqlStatementKind::Delete(delete) => {
+            let cte_map = std::mem::take(&mut delete.cte_map);
+            bind_statement_with_ctes(scope, &cte_map, &mut |scope| modify::bind_delete(scope, delete))
+        }
+        SqlStatementKind::MergeInto(merge_into) => {
+            let cte_map = std::mem::take(&mut merge_into.cte_map);
+            bind_statement_with_ctes(scope, &cte_map, &mut |scope| {
+                merge_into::bind_merge_into(scope, merge_into)
+            })
+        }
         SqlStatementKind::Call(call) => bind_call(scope, call),
         SqlStatementKind::Alter(info) => alter::bind_alter(scope, info),
         SqlStatementKind::Attach(info) => bind_attach(scope, info),

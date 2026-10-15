@@ -827,6 +827,20 @@ fn collect_modified_databases(plan: &LogicalOperator, instance: &DatabaseInstanc
                 push(&name);
             }
         }
+        LogicalKind::MergeInto(merge) => {
+            // Only UPDATE, DELETE and INSERT actions modify the table.
+            let modifies = merge.actions.values().flatten().any(|action| {
+                matches!(
+                    action.action_type,
+                    rustdb_ast::MergeActionType::MergeUpdate
+                        | rustdb_ast::MergeActionType::MergeDelete
+                        | rustdb_ast::MergeActionType::MergeInsert
+                )
+            });
+            if modifies && let Some(name) = table_database(&merge.table) {
+                push(&name);
+            }
+        }
         LogicalKind::CreateTable(info) => push(&info.catalog),
         LogicalKind::Create { info, .. } => push(&info.catalog),
         LogicalKind::CreateIndex(index) => {

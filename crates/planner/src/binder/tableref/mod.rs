@@ -10,12 +10,13 @@ use rustdb_common::{Error, Result};
 use rustdb_function::TableFunction;
 use rustdb_types::LogicalType;
 
-mod bind_joinref;
+pub(crate) mod bind_joinref;
 mod bind_showref;
 mod bind_table_function;
 mod plan_joinref;
 
 pub use plan_joinref::extract_join_conditions_from;
+pub(crate) use plan_joinref::table_references;
 
 use super::bind_context::alias_column_names;
 use super::binding::{Binding, BindingAlias, BindingKind};

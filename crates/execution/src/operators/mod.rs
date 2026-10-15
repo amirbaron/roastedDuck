@@ -13,6 +13,7 @@ mod filter;
 mod hash_aggregate;
 mod insert;
 mod limit;
+mod merge_into;
 mod modify;
 mod nested_loop_join;
 mod order;
@@ -44,7 +45,8 @@ pub use insert::{InsertGlobal, InsertTarget, PhysicalInsert, TableCreator};
 pub use limit::{
     LimitBounds, LimitPercentGlobal, LimitPercentSource, PhysicalLimitPercent, PhysicalStreamingLimit,
 };
-pub use modify::ModifyResult;
+pub use merge_into::{MergeGlobal, MergeIntoOperator, PhysicalMergeInto};
+pub use modify::{ModifyResult, SharedAppend};
 pub use nested_loop_join::{
     NestedLoopJoinGlobal, NestedLoopJoinProbe, NestedLoopJoinSinkLocal, PhysicalNestedLoopJoin,
 };

@@ -153,12 +153,7 @@ fn remove_duplicate_using_columns(using_columns: Vec<String>) -> Vec<String> {
 }
 
 /// The `NATURAL JOIN` columns: names of the left side also present on the right.
-fn natural_join_columns(
-    join: &JoinRef,
-    left: &Binder,
-    right: &Binder,
-    location: Option<u64>,
-) -> Result<Vec<String>> {
+fn natural_join_columns(left: &Binder, right: &Binder, location: Option<u64>) -> Result<Vec<String>> {
     let mut lhs_columns = Vec::new();
     let mut seen = CaseInsensitiveSet::default();
     for binding in left.bind_context.bindings() {
@@ -187,7 +182,6 @@ fn natural_join_columns(
             }
             list.join(", ")
         };
-        let _ = join;
         return Err(Error::binder(format!(
             "No columns found to join on in NATURAL JOIN.\nUse CROSS JOIN if you intended for this to be a \
              cross-product.\n   Left candidates: {}\n   Right candidates: {}",
@@ -242,19 +236,56 @@ pub fn bind_join(
         )?
     };
     scope.binder.unnamed_subquery_index = unnamed_index;
+    let spec = JoinSpec {
+        join_type: join.join_type,
+        ref_type: join.ref_type,
+        using_columns: &join.using_columns,
+        condition: &mut join.condition,
+        location,
+    };
+    bind_bound_join(scope, spec, (left_binder, left), (right_binder, right))
+}
+
+/// What a join is bound with besides its sides.
+#[derive(Debug)]
+pub struct JoinSpec<'a> {
+    pub join_type: JoinType,
+    pub ref_type: JoinRefType,
+    pub using_columns: &'a [String],
+    /// The `ON` condition; USING columns are added to it.
+    pub condition: &'a mut Option<Box<ParsedExpression>>,
+    pub location: Option<u64>,
+}
+
+/// Finishes binding a join whose sides are bound in `left` and `right` (the rest of
+/// DuckDB's `Binder::Bind(JoinRef &)`, also used with the pre-bound sides of
+/// `BoundRefWrapper`).
+pub fn bind_bound_join(
+    scope: &mut BindScope<'_>,
+    spec: JoinSpec<'_>,
+    (mut left_binder, left): (Binder, BoundStatement),
+    (mut right_binder, right): (Binder, BoundStatement),
+) -> Result<BoundStatement> {
+    let JoinSpec {
+        join_type,
+        ref_type,
+        using_columns,
+        condition: join_condition,
+        location,
+    } = spec;
     // Correlations of the right side with the left (depth 1) make this a LATERAL join;
     // those of the left side are handled when flattening.
     let correlated_columns = right_binder.correlated_columns.clone();
     let lateral = correlated_columns.iter().any(|column| column.depth == 1);
-    if lateral && !matches!(join.join_type, JoinType::Inner | JoinType::Left) {
+    if lateral && !matches!(join_type, JoinType::Inner | JoinType::Left) {
         return Err(Error::binder(
             "The combining JOIN type must be INNER or LEFT for a LATERAL reference",
         ));
     }
 
-    let mut extra_using_columns = match join.ref_type {
-        JoinRefType::Natural => natural_join_columns(join, &left_binder, &right_binder, location)?,
-        JoinRefType::Regular | JoinRefType::Asof => join.using_columns.clone(),
+    let mut extra_using_columns = match ref_type {
+        JoinRefType::Natural => natural_join_columns(&left_binder, &right_binder, location)?,
+        JoinRefType::Regular | JoinRefType::Asof => using_columns.to_vec(),
         _ => Vec::new(),
     };
     extra_using_columns = remove_duplicate_using_columns(extra_using_columns);
@@ -283,7 +314,7 @@ pub fn bind_join(
             let left_alias = retrieve_using_binding(&left_binder, left_set, using_column, "left")?;
             let right_alias = retrieve_using_binding(&right_binder, right_set, using_column, "right")?;
             // The last column of ASOF JOIN ... USING is the inequality.
-            let comparison = if join.ref_type == JoinRefType::Asof && i == column_count - 1 {
+            let comparison = if ref_type == JoinRefType::Asof && i == column_count - 1 {
                 ExpressionType::CompareGreaterthanorequalto
             } else {
                 ExpressionType::CompareEqual
@@ -299,7 +330,7 @@ pub fn bind_join(
             let mut set = UsingColumnSet::default();
             add_using_bindings(&mut set, left_set, &left_alias);
             add_using_bindings(&mut set, right_set, &right_alias);
-            set_primary_binding(&mut set, join.join_type, &left_alias, &right_alias);
+            set_primary_binding(&mut set, join_type, &left_alias, &right_alias);
             let set: UsingSetRef = Arc::new(Mutex::new(set));
             // DuckDB's TransferUsingBinding, for both sides.
             scope
@@ -350,7 +381,7 @@ pub fn bind_join(
     }
 
     for condition in extra_conditions {
-        join.condition = Some(Box::new(match join.condition.take() {
+        *join_condition = Some(Box::new(match join_condition.take() {
             Some(existing) => ParsedExpression::new(
                 ExpressionType::ConjunctionAnd,
                 ParsedExpressionKind::Conjunction(ConjunctionExpression {
@@ -360,7 +391,7 @@ pub fn bind_join(
             None => condition,
         }));
     }
-    let condition = match &mut join.condition {
+    let condition = match join_condition {
         Some(condition) => {
             let (inner, outer) = scope.split();
             Some(WhereBinder::new(inner, outer, None).bind(condition, true)?)
@@ -369,9 +400,9 @@ pub fn bind_join(
     };
 
     let mut mark_index = 0;
-    if matches!(join.join_type, JoinType::Semi | JoinType::Anti | JoinType::Mark) {
+    if matches!(join_type, JoinType::Semi | JoinType::Anti | JoinType::Mark) {
         scope.binder.bind_context.remove_context(&right_aliases);
-        if join.join_type == JoinType::Mark {
+        if join_type == JoinType::Mark {
             mark_index = scope.binder.generate_table_index();
             let alias = format!("__internal_mark_join_ref{mark_index}");
             scope.binder.bind_context.add_generic_binding(
@@ -382,7 +413,7 @@ pub fn bind_join(
             )?;
         }
     }
-    if matches!(join.join_type, JoinType::RightSemi | JoinType::RightAnti) {
+    if matches!(join_type, JoinType::RightSemi | JoinType::RightAnti) {
         scope.binder.bind_context.remove_context(&left_aliases);
     }
 
@@ -393,8 +424,8 @@ pub fn bind_join(
     let bound = BoundJoinRef {
         left,
         right,
-        join_type: join.join_type,
-        ref_type: join.ref_type,
+        join_type,
+        ref_type,
         condition,
         lateral,
         correlated_columns,

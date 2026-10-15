@@ -3,10 +3,10 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rustdb_common::{Error, Result};
-use rustdb_storage::{DataTable, LocalAppendState, TableConstraints, Transaction};
+use rustdb_storage::{DataTable, TableConstraints, Transaction};
 use rustdb_types::{DataChunk, LogicalType, SelectionVector};
 
-use super::modify::{ModifyResult, all_columns, count_types, row_ids};
+use super::modify::{ModifyResult, SharedAppend, all_columns, count_types, row_ids};
 use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
 use crate::{ExecutionContext, Sink, SinkFinalize, SinkResult, Source, SourceResult};
 
@@ -26,6 +26,8 @@ pub struct PhysicalUpdate {
     constraints: TableConstraints,
     del_and_insert: bool,
     return_chunk: bool,
+    /// An append shared with other operators writing the same table (MERGE actions).
+    shared_append: Option<SharedAppend>,
 }
 
 impl PhysicalUpdate {
@@ -52,7 +54,15 @@ impl PhysicalUpdate {
             constraints,
             del_and_insert,
             return_chunk,
+            shared_append: None,
         }
+    }
+
+    /// Re-inserts rows through `append`, shared with other operators on the same table.
+    #[must_use]
+    pub fn with_shared_append(mut self, append: SharedAppend) -> Self {
+        self.shared_append = Some(append);
+        self
     }
 }
 
@@ -81,7 +91,7 @@ pub struct UpdateGlobal {
     /// Rows already deleted and re-inserted by this statement (delete + insert mode).
     updated_rows: Mutex<HashSet<i64>>,
     /// The append of re-inserted rows (delete + insert mode).
-    append: Mutex<Option<LocalAppendState>>,
+    append: SharedAppend,
 }
 
 impl PhysicalUpdate {
@@ -158,7 +168,7 @@ impl Sink for PhysicalUpdate {
         Ok(UpdateGlobal {
             result: ModifyResult::default(),
             updated_rows: Mutex::default(),
-            append: Mutex::default(),
+            append: self.shared_append.clone().unwrap_or_default(),
         })
     }
 
@@ -194,7 +204,7 @@ impl Sink for PhysicalUpdate {
     fn finalize(&self, _: &ExecutionContext, global: &mut Self::Global) -> Result<SinkFinalize> {
         if let Some(append) = global
             .append
-            .get_mut()
+            .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take()
         {

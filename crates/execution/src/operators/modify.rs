@@ -57,6 +57,10 @@ impl ModifyResult {
     }
 }
 
+/// The transaction-local append of a table, shared by the operators of one statement
+/// that insert into it (appends must not interleave).
+pub type SharedAppend = std::sync::Arc<Mutex<Option<rustdb_storage::LocalAppendState>>>;
+
 /// The result types of a modifying statement without `RETURNING`: one BIGINT `Count`.
 pub fn count_types() -> Vec<LogicalType> {
     vec![LogicalType::BIGINT]

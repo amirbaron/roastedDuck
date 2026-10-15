@@ -3,10 +3,10 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rustdb_common::{Error, Result};
-use rustdb_storage::{DataTable, LocalAppendState, TableConstraints, Transaction};
+use rustdb_storage::{DataTable, TableConstraints, Transaction};
 use rustdb_types::{DataChunk, LogicalType};
 
-use super::modify::{ModifyResult, count_types};
+use super::modify::{ModifyResult, SharedAppend, count_types};
 use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
 use crate::{ExecutionContext, Sink, SinkFinalize, SinkResult, Source, SourceResult};
 
@@ -38,6 +38,9 @@ pub struct PhysicalInsert {
     transaction: Arc<Transaction>,
     constraints: TableConstraints,
     return_chunk: bool,
+    /// An append shared with other operators writing the same table (the actions of a
+    /// MERGE), which must not run interleaved appends.
+    shared_append: Option<SharedAppend>,
 }
 
 impl PhysicalInsert {
@@ -60,7 +63,15 @@ impl PhysicalInsert {
             transaction,
             constraints,
             return_chunk,
+            shared_append: None,
         }
+    }
+
+    /// Appends through `append`, shared with other operators on the same table.
+    #[must_use]
+    pub fn with_shared_append(mut self, append: SharedAppend) -> Self {
+        self.shared_append = Some(append);
+        self
     }
 }
 
@@ -87,7 +98,7 @@ impl PhysicalOperator for PhysicalInsert {
 #[derive(Debug)]
 pub struct InsertGlobal {
     table: Option<Arc<DataTable>>,
-    append: Mutex<Option<LocalAppendState>>,
+    append: SharedAppend,
     result: ModifyResult,
 }
 
@@ -100,13 +111,16 @@ impl Sink for PhysicalInsert {
             InsertTarget::Table(table) => Some(Arc::clone(table)),
             InsertTarget::Create(creator) => creator.create(&self.transaction)?,
         };
-        let append = match &table {
-            Some(table) => Some(table.initialize_local_append(&self.transaction, self.constraints.clone())?),
-            None => None,
+        let append = match (&self.shared_append, &table) {
+            (Some(shared), _) => Arc::clone(shared),
+            (None, Some(table)) => Arc::new(Mutex::new(Some(
+                table.initialize_local_append(&self.transaction, self.constraints.clone())?,
+            ))),
+            (None, None) => SharedAppend::default(),
         };
         Ok(InsertGlobal {
             table,
-            append: Mutex::new(append),
+            append,
             result: ModifyResult::default(),
         })
     }
@@ -126,6 +140,9 @@ impl Sink for PhysicalInsert {
             return Ok(SinkResult::Finished);
         };
         let mut append = global.append.lock().unwrap_or_else(PoisonError::into_inner);
+        if append.is_none() {
+            *append = Some(table.initialize_local_append(&self.transaction, self.constraints.clone())?);
+        }
         let state = append
             .as_mut()
             .ok_or_else(|| Error::internal("insert after its append was finalized"))?;
@@ -144,7 +161,7 @@ impl Sink for PhysicalInsert {
     fn finalize(&self, _: &ExecutionContext, global: &mut Self::Global) -> Result<SinkFinalize> {
         let append = global
             .append
-            .get_mut()
+            .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take();
         if let (Some(table), Some(append)) = (&global.table, append) {

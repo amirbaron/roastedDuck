@@ -252,12 +252,61 @@ pub fn expand_default(expr: &mut ParsedExpression, default: Option<&ParsedExpres
 /// operator, whose output columns are the table's stored columns.
 pub fn bind_returning(
     scope: &mut BindScope<'_>,
+    returning_list: Vec<ParsedExpression>,
+    table_name: &str,
+    table: &Arc<CatalogEntry>,
+    alias: &str,
+    table_index: u64,
+    child: LogicalOperator,
+) -> Result<BoundStatement> {
+    bind_returning_with_virtual(
+        scope,
+        returning_list,
+        table_name,
+        table,
+        alias,
+        table_index,
+        child,
+        None,
+    )
+}
+
+/// `VerifyNotExcluded`: `excluded.column` (of `ON CONFLICT`) cannot be returned.
+fn verify_not_excluded(expression: &mut ParsedExpression) -> Result<()> {
+    if let ParsedExpressionKind::ColumnRef(column) = &expression.kind {
+        let names = &column.column_names;
+        let table_name = match names.len() {
+            2 => Some(&names[0]),
+            3 => Some(&names[1]),
+            4 => Some(&names[2]),
+            _ => None,
+        };
+        if table_name.is_some_and(|name| name == "excluded") {
+            return Err(Error::not_implemented(
+                "'excluded' qualified columns are not supported in the RETURNING clause yet",
+            ));
+        }
+        return Ok(());
+    }
+    crate::expression_binder::for_each_child(expression, &mut verify_not_excluded)
+}
+
+/// The virtual `merge_action` column of `MERGE INTO ... RETURNING` (DuckDB's
+/// `VIRTUAL_COLUMN_START`).
+pub const VIRTUAL_COLUMN_START: u64 = 1 << 63;
+
+/// [`bind_returning`] with an extra virtual column `(name, type)` that the child outputs
+/// after the table's columns.
+#[allow(clippy::too_many_arguments, reason = "mirrors Binder::BindReturning")]
+pub fn bind_returning_with_virtual(
+    scope: &mut BindScope<'_>,
     mut returning_list: Vec<ParsedExpression>,
     table_name: &str,
     table: &Arc<CatalogEntry>,
     alias: &str,
     table_index: u64,
     child: LogicalOperator,
+    extra_virtual: Option<(&str, LogicalType)>,
 ) -> Result<BoundStatement> {
     let entry = table_of(table)?;
     let mut binder = Binder::new(Arc::clone(&scope.context))?;
@@ -269,6 +318,13 @@ pub fn bind_returning(
         for (_, logical, _) in entry.physical_columns() {
             ids.push(ColumnIndex::new(logical as u64));
         }
+        if extra_virtual.is_some() {
+            ids.push(ColumnIndex::new(VIRTUAL_COLUMN_START));
+        }
+    }
+    let mut virtual_columns = vec![(COLUMN_IDENTIFIER_ROW_ID, "rowid".to_owned(), LogicalType::BIGINT)];
+    if let Some((name, ty)) = extra_virtual {
+        virtual_columns.insert(0, (VIRTUAL_COLUMN_START, name.to_owned(), ty));
     }
     let names: Vec<String> = entry.columns.iter().map(|c| c.name.clone()).collect();
     let types: Vec<LogicalType> = entry.columns.iter().map(|c| c.logical_type.clone()).collect();
@@ -281,7 +337,7 @@ pub fn bind_returning(
         BindingKind::Table {
             bound_column_ids: shared,
             entry: Some(Arc::clone(table)),
-            virtual_columns: vec![(COLUMN_IDENTIFIER_ROW_ID, "rowid".to_owned(), LogicalType::BIGINT)],
+            virtual_columns,
         },
         binding_alias,
         types,
@@ -302,6 +358,7 @@ pub fn bind_returning(
     let mut result_types = Vec::new();
     let mut projections = Vec::new();
     for mut expression in expanded {
+        verify_not_excluded(&mut expression)?;
         let mut returning_binder = ReturningBinder::new(&mut binder, None);
         let bound = returning_binder.bind(&mut expression, true)?;
         result_names.push(bound.name());

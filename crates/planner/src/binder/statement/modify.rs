@@ -34,7 +34,12 @@ fn count_result(plan: LogicalOperator) -> BoundStatement {
 }
 
 /// `Binder::CheckInsertColumnCountMismatch`.
-fn check_column_count(expected: usize, result: usize, columns_provided: bool, table: &str) -> Result<()> {
+pub(super) fn check_column_count(
+    expected: usize,
+    result: usize,
+    columns_provided: bool,
+    table: &str,
+) -> Result<()> {
     if expected == result {
         return Ok(());
     }
@@ -49,7 +54,7 @@ fn check_column_count(expected: usize, result: usize, columns_provided: bool, ta
 
 /// The VALUES list an INSERT reads, if its query is a plain `VALUES (...)`
 /// (`InsertStatement::GetValuesList`).
-fn values_list(stmt: &mut InsertStatement) -> Option<&mut rustdb_ast::ExpressionListRef> {
+pub(super) fn values_list(stmt: &mut InsertStatement) -> Option<&mut rustdb_ast::ExpressionListRef> {
     let select = stmt.select_statement.as_mut()?;
     if !select.node.cte_map.map.is_empty() || !select.node.modifiers.is_empty() {
         return None;
@@ -72,11 +77,48 @@ fn values_list(stmt: &mut InsertStatement) -> Option<&mut rustdb_ast::Expression
     }
 }
 
+/// `Binder::ExpandDefaultInValuesList`: a `VALUES` list gets the target columns' types
+/// and names, and `DEFAULT` becomes the column's default.
+pub(super) fn expand_default_in_values_list(
+    stmt: &mut InsertStatement,
+    table: &rustdb_catalog::TableEntry,
+    table_name: &str,
+    named_column_map: &[usize],
+) -> Result<()> {
+    let expected_columns = if stmt.columns.is_empty() {
+        table.physical_columns().count()
+    } else {
+        stmt.columns.len()
+    };
+    let columns_provided = !stmt.columns.is_empty();
+    let Some(list) = values_list(stmt) else {
+        return Ok(());
+    };
+    list.expected_types
+        .resize(expected_columns, LogicalType::default());
+    list.expected_names.resize(expected_columns, String::new());
+    let first_len = list.values.first().map_or(0, Vec::len);
+    check_column_count(expected_columns, first_len, columns_provided, table_name)?;
+    for (column_index, &logical) in named_column_map.iter().enumerate().take(expected_columns) {
+        let column = &table.columns[logical];
+        list.expected_types[column_index] = column.logical_type.clone();
+        list.expected_names[column_index].clone_from(&column.name);
+        for row in &mut list.values {
+            if let Some(value) = row.get_mut(column_index) {
+                expand_default(value, column.default_value.as_ref(), &column.logical_type);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// `INSERT` (DuckDB's `Binder::Bind(InsertStatement &)`).
 pub fn bind_insert(scope: &mut BindScope<'_>, stmt: &mut InsertStatement) -> Result<BoundStatement> {
     let found = find_table(scope, &stmt.catalog, &stmt.schema, &stmt.table)?;
     if stmt.on_conflict_info.is_some() {
-        return Err(Error::not_implemented("INSERT ... ON CONFLICT"));
+        // ON CONFLICT is bound as the equivalent MERGE INTO.
+        let mut merge_into = super::merge_into::generate_merge_into(stmt, &found.entry)?;
+        return super::merge_into::bind_merge_into(scope, &mut merge_into);
     }
     let entry = Arc::clone(&found.entry);
     let table = table_of(&entry)?;
@@ -106,45 +148,11 @@ pub fn bind_insert(scope: &mut BindScope<'_>, stmt: &mut InsertStatement) -> Res
         stmt.columns.clone_from(&bound.names);
         root_select = Some(bound);
     }
-    // `BindInsertColumnList`
-    let mut named_column_map: Vec<usize> = Vec::new();
-    let mut expected_types = Vec::new();
-    let mut column_index_map = Vec::new();
-    if !stmt.columns.is_empty() || stmt.default_values {
-        for (i, name) in stmt.columns.iter().enumerate() {
-            if stmt.columns[..i]
-                .iter()
-                .any(|other| other.eq_ignore_ascii_case(name))
-            {
-                return Err(Error::binder(format!(
-                    "Duplicate column name \"{name}\" in INSERT"
-                )));
-            }
-            if name.eq_ignore_ascii_case("rowid") && table.column(name).is_none() {
-                return Err(Error::binder("Cannot explicitly insert values into rowid column"));
-            }
-            let Some((logical, column)) = table.column(name) else {
-                return Err(missing_column_error(table, &table_name, name));
-            };
-            if column.generated.is_some() {
-                return Err(Error::binder("Cannot insert into a generated column"));
-            }
-            expected_types.push(column.logical_type.clone());
-            named_column_map.push(logical);
-        }
-        for (_, _, column) in table.physical_columns() {
-            column_index_map.push(
-                stmt.columns
-                    .iter()
-                    .position(|name| name.eq_ignore_ascii_case(&column.name)),
-            );
-        }
-    } else {
-        for (_, logical, column) in table.physical_columns() {
-            named_column_map.push(logical);
-            expected_types.push(column.logical_type.clone());
-        }
-    }
+    let InsertColumnList {
+        named_column_map,
+        expected_types,
+        column_index_map,
+    } = bind_insert_column_list(table, &table_name, &stmt.columns, stmt.default_values)?;
     let bound_defaults = bind_default_values(scope, table)?;
     let bound_constraints = bind_constraints(scope, &table_name, table)?;
     let expected_columns = if stmt.columns.is_empty() {
@@ -152,25 +160,8 @@ pub fn bind_insert(scope: &mut BindScope<'_>, stmt: &mut InsertStatement) -> Res
     } else {
         stmt.columns.len()
     };
-    // `ExpandDefaultInValuesList`
     let columns_provided = !stmt.columns.is_empty();
-    if let Some(list) = values_list(stmt) {
-        list.expected_types
-            .resize(expected_columns, LogicalType::default());
-        list.expected_names.resize(expected_columns, String::new());
-        let first_len = list.values.first().map_or(0, Vec::len);
-        check_column_count(expected_columns, first_len, columns_provided, &table_name)?;
-        for (column_index, &logical) in named_column_map.iter().enumerate().take(expected_columns) {
-            let column = &table.columns[logical];
-            list.expected_types[column_index] = column.logical_type.clone();
-            list.expected_names[column_index].clone_from(&column.name);
-            for row in &mut list.values {
-                if let Some(value) = row.get_mut(column_index) {
-                    expand_default(value, column.default_value.as_ref(), &column.logical_type);
-                }
-            }
-        }
-    }
+    expand_default_in_values_list(stmt, table, &table_name, &named_column_map)?;
     let table_index = scope.generate_table_index();
     let mut insert = LogicalOperator::new(LogicalKind::Insert(Box::new(LogicalInsert {
         table: Arc::clone(&entry),
@@ -209,6 +200,60 @@ pub fn bind_insert(scope: &mut BindScope<'_>, stmt: &mut InsertStatement) -> Res
     Ok(count_result(insert))
 }
 
+/// The target columns of an INSERT (the outputs of `Binder::BindInsertColumnList`).
+#[derive(Debug, Default)]
+pub(super) struct InsertColumnList {
+    /// The logical table column of each inserted value.
+    pub named_column_map: Vec<usize>,
+    pub expected_types: Vec<LogicalType>,
+    /// For each physical column, the inserted value holding it (`None`: the default);
+    /// empty when every column is inserted in order.
+    pub column_index_map: Vec<Option<usize>>,
+}
+
+/// `Binder::BindInsertColumnList`.
+pub(super) fn bind_insert_column_list(
+    table: &rustdb_catalog::TableEntry,
+    table_name: &str,
+    columns: &[String],
+    default_values: bool,
+) -> Result<InsertColumnList> {
+    let mut result = InsertColumnList::default();
+    if columns.is_empty() && !default_values {
+        for (_, logical, column) in table.physical_columns() {
+            result.named_column_map.push(logical);
+            result.expected_types.push(column.logical_type.clone());
+        }
+        return Ok(result);
+    }
+    for (i, name) in columns.iter().enumerate() {
+        if columns[..i].iter().any(|other| other.eq_ignore_ascii_case(name)) {
+            return Err(Error::binder(format!(
+                "Duplicate column name \"{name}\" in INSERT"
+            )));
+        }
+        if name.eq_ignore_ascii_case("rowid") && table.column(name).is_none() {
+            return Err(Error::binder("Cannot explicitly insert values into rowid column"));
+        }
+        let Some((logical, column)) = table.column(name) else {
+            return Err(missing_column_error(table, table_name, name));
+        };
+        if column.generated.is_some() {
+            return Err(Error::binder("Cannot insert into a generated column"));
+        }
+        result.expected_types.push(column.logical_type.clone());
+        result.named_column_map.push(logical);
+    }
+    for (_, _, column) in table.physical_columns() {
+        result.column_index_map.push(
+            columns
+                .iter()
+                .position(|name| name.eq_ignore_ascii_case(&column.name)),
+        );
+    }
+    Ok(result)
+}
+
 /// Binds a query in a child binder and moves its correlated columns up.
 fn bind_child_select(scope: &mut BindScope<'_>, node: &mut rustdb_ast::QueryNode) -> Result<BoundStatement> {
     let mut child = scope.binder.child()?;
@@ -233,7 +278,7 @@ fn base_get(op: &mut LogicalOperator) -> Option<&mut LogicalOperator> {
 
 /// Adds the `rowid` column to the scan and returns a reference to it
 /// (`Binder::BindRowIdColumns`).
-fn bind_row_id_column(get: &mut LogicalOperator) -> Result<Expression> {
+pub(super) fn bind_row_id_column(get: &mut LogicalOperator) -> Result<Expression> {
     let LogicalKind::Get(get) = &mut get.kind else {
         return Err(Error::internal("expected a table scan"));
     };
@@ -388,71 +433,20 @@ pub fn bind_update(scope: &mut BindScope<'_>, stmt: &mut UpdateStatement) -> Res
     }
     // `BindUpdateSet`
     let proj_index = scope.generate_table_index();
-    let mut columns: Vec<usize> = Vec::new();
-    let mut update_expressions = Vec::new();
-    let mut projection_expressions = Vec::new();
-    bind_update_set(
-        scope,
+    let mut set = UpdateSet {
         proj_index,
-        &mut root,
-        &mut stmt.set_info,
-        table,
-        &mut columns,
-        &mut update_expressions,
-        &mut projection_expressions,
-    )?;
-    // `BindUpdateConstraints`: CHECK constraints over several columns and RETURNING need
-    // every involved column in the update.
+        ..UpdateSet::default()
+    };
+    bind_update_set(scope, Some(&mut root), &mut stmt.set_info, table, &mut set)?;
     let get = base_get(&mut root).ok_or_else(|| Error::binder("Can only update base table"))?;
-    for constraint in &bound_constraints {
-        if let BoundConstraint::Check { bound_columns, .. } = constraint {
-            bind_extra_columns(
-                table,
-                get,
-                proj_index,
-                &mut projection_expressions,
-                &mut update_expressions,
-                &mut columns,
-                bound_columns,
-            )?;
-        }
-    }
-    let all_columns: Vec<usize> = table.physical_columns().map(|(p, _, _)| p).collect();
-    if return_chunk {
-        bind_extra_columns(
-            table,
-            get,
-            proj_index,
-            &mut projection_expressions,
-            &mut update_expressions,
-            &mut columns,
-            &all_columns,
-        )?;
-    }
-    let mut update_is_del_and_insert = false;
-    if let Some(storage) = &table.storage
-        && storage.index_columns_updated(&columns)
-    {
-        update_is_del_and_insert = true;
-    }
-    for &column in &columns {
-        if let Some(logical) = table.physical_to_logical(column)
-            && !supports_regular_update(&table.columns[logical].logical_type)
-        {
-            update_is_del_and_insert = true;
-        }
-    }
-    if update_is_del_and_insert {
-        bind_extra_columns(
-            table,
-            get,
-            proj_index,
-            &mut projection_expressions,
-            &mut update_expressions,
-            &mut columns,
-            &all_columns,
-        )?;
-    }
+    let update_is_del_and_insert =
+        bind_update_constraints(table, get, &bound_constraints, return_chunk, &mut set)?;
+    let UpdateSet {
+        columns,
+        update_expressions,
+        mut projection_expressions,
+        ..
+    } = set;
     let row_id = bind_row_id_column(get)?;
     projection_expressions.push(row_id);
     let projection = LogicalOperator::projection(proj_index, projection_expressions, root);
@@ -478,18 +472,74 @@ pub fn bind_update(scope: &mut BindScope<'_>, stmt: &mut UpdateStatement) -> Res
     Ok(count_result(update))
 }
 
-/// `Binder::BindUpdateSet`: binds each `column = expression`.
-#[allow(clippy::too_many_arguments, reason = "mirrors Binder::BindUpdateSet")]
-fn bind_update_set(
+/// The bound `SET` list of an UPDATE: the new value of each updated column references a
+/// column of the projection being built below the update.
+#[derive(Debug, Default)]
+pub(super) struct UpdateSet {
+    pub proj_index: u64,
+    /// The updated physical columns.
+    pub columns: Vec<usize>,
+    /// The new value of each column in `columns`.
+    pub update_expressions: Vec<Expression>,
+    /// The expressions of the projection below the update.
+    pub projection_expressions: Vec<Expression>,
+}
+
+/// `TableCatalogEntry::BindUpdateConstraints`: CHECK constraints over several columns and
+/// RETURNING need every involved column in the update; updates of indexed or nested
+/// columns become a delete plus an insert of whole rows. Returns whether the update is a
+/// delete plus insert.
+pub(super) fn bind_update_constraints(
+    table: &rustdb_catalog::TableEntry,
+    get: &mut LogicalOperator,
+    bound_constraints: &[BoundConstraint],
+    return_chunk: bool,
+    set: &mut UpdateSet,
+) -> Result<bool> {
+    for constraint in bound_constraints {
+        if let BoundConstraint::Check { bound_columns, .. } = constraint {
+            bind_extra_columns(table, get, set, bound_columns)?;
+        }
+    }
+    let all_columns: Vec<usize> = table.physical_columns().map(|(p, _, _)| p).collect();
+    if return_chunk {
+        bind_extra_columns(table, get, set, &all_columns)?;
+    }
+    let mut update_is_del_and_insert = false;
+    if let Some(storage) = &table.storage
+        && storage.index_columns_updated(&set.columns)
+    {
+        update_is_del_and_insert = true;
+    }
+    for &column in &set.columns {
+        if let Some(logical) = table.physical_to_logical(column)
+            && !supports_regular_update(&table.columns[logical].logical_type)
+        {
+            update_is_del_and_insert = true;
+        }
+    }
+    if update_is_del_and_insert {
+        bind_extra_columns(table, get, set, &all_columns)?;
+    }
+    Ok(update_is_del_and_insert)
+}
+
+/// `Binder::BindUpdateSet`: binds each `column = expression`; subqueries are planned on
+/// `root` if given.
+pub(super) fn bind_update_set(
     scope: &mut BindScope<'_>,
-    proj_index: u64,
-    root: &mut LogicalOperator,
+    mut root: Option<&mut LogicalOperator>,
     set_info: &mut UpdateSetInfo,
     table: &rustdb_catalog::TableEntry,
-    columns: &mut Vec<usize>,
-    update_expressions: &mut Vec<Expression>,
-    projection_expressions: &mut Vec<Expression>,
+    set: &mut UpdateSet,
 ) -> Result<()> {
+    let proj_index = set.proj_index;
+    let UpdateSet {
+        columns,
+        update_expressions,
+        projection_expressions,
+        ..
+    } = set;
     for (name, expression) in set_info.columns.iter().zip(set_info.expressions.iter_mut()) {
         let Some((logical, column)) = table.column(name) else {
             let candidates: Vec<String> = table.physical_columns().map(|(_, _, c)| c.name.clone()).collect();
@@ -541,7 +591,9 @@ fn bind_update_set(
             let mut binder = UpdateBinder::new(inner, outer, column.logical_type.clone());
             binder.bind(expression, true)?
         };
-        plan_subqueries(scope, &mut bound, root)?;
+        if let Some(root) = root.as_deref_mut() {
+            plan_subqueries(scope, &mut bound, root)?;
+        }
         update_expressions.push(Expression::column_ref(
             "",
             bound.return_type.clone(),
@@ -558,12 +610,16 @@ fn bind_update_set(
 fn bind_extra_columns(
     table: &rustdb_catalog::TableEntry,
     get: &mut LogicalOperator,
-    proj_index: u64,
-    projection_expressions: &mut Vec<Expression>,
-    update_expressions: &mut Vec<Expression>,
-    columns: &mut Vec<usize>,
+    set: &mut UpdateSet,
     bound_columns: &[usize],
 ) -> Result<()> {
+    let proj_index = set.proj_index;
+    let UpdateSet {
+        columns,
+        update_expressions,
+        projection_expressions,
+        ..
+    } = set;
     if bound_columns.len() <= 1 {
         return Ok(());
     }

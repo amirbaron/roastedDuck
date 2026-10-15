@@ -108,8 +108,33 @@ fn bind_node_with_ctes(
     node: &mut QueryNode,
     ctes: &[(String, CommonTableExpressionInfo)],
 ) -> Result<BoundStatement> {
+    bind_with_ctes(scope, ctes, &mut |scope| bind_node_kind(scope, node))
+}
+
+/// Binds a statement with the CTEs of its `WITH` clause in scope (DuckDB's
+/// `Binder::BindWithCTE`, binding a `StatementNode`).
+pub fn bind_statement_with_ctes(
+    scope: &mut BindScope<'_>,
+    cte_map: &rustdb_ast::CommonTableExpressionMap,
+    bind_inner: &mut dyn FnMut(&mut BindScope<'_>) -> Result<BoundStatement>,
+) -> Result<BoundStatement> {
+    let ctes: Vec<(String, CommonTableExpressionInfo)> = cte_map
+        .map
+        .iter()
+        .map(|(name, info)| (name.to_owned(), info.clone()))
+        .collect();
+    bind_with_ctes(scope, &ctes, bind_inner)
+}
+
+/// Prepares the first CTE in a child binder, binds the rest and the inner part in it,
+/// then wraps the result in the materialized CTE if it was referenced.
+fn bind_with_ctes(
+    scope: &mut BindScope<'_>,
+    ctes: &[(String, CommonTableExpressionInfo)],
+    bind_inner: &mut dyn FnMut(&mut BindScope<'_>) -> Result<BoundStatement>,
+) -> Result<BoundStatement> {
     let Some(((name, info), rest)) = ctes.split_first() else {
-        return bind_node_kind(scope, node);
+        return bind_inner(scope);
     };
     let cte = prepare_cte(scope, name, info);
     let mut child = scope.binder.child()?;
@@ -130,7 +155,7 @@ fn bind_node_with_ctes(
             binder: &mut child,
             outer: Some(scope),
         };
-        bind_node_with_ctes(&mut child_scope, node, rest)?
+        bind_with_ctes(&mut child_scope, rest, bind_inner)?
     };
     Ok(finish_cte(scope, cte, child, child_result))
 }

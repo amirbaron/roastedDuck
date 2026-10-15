@@ -462,6 +462,7 @@ pub enum LogicalKind {
     Insert(Box<LogicalInsert>),
     Delete(Box<LogicalDelete>),
     Update(Box<LogicalUpdate>),
+    MergeInto(Box<LogicalMergeInto>),
 }
 
 /// A bound `CREATE TABLE` (DuckDB's `BoundCreateTableInfo`): the table definition with
@@ -626,6 +627,40 @@ pub struct LogicalUpdate {
     pub bound_constraints: Vec<BoundConstraint>,
     pub update_is_del_and_insert: bool,
     pub return_chunk: bool,
+}
+
+/// One `WHEN ... THEN ...` of a bound `MERGE INTO` (DuckDB's `BoundMergeIntoAction`).
+/// Expressions reference the columns of the merge's input projection.
+#[derive(Clone, Debug)]
+pub struct BoundMergeIntoAction {
+    pub action_type: rustdb_ast::MergeActionType,
+    /// The `AND ...` condition, if any.
+    pub condition: Option<Expression>,
+    /// The updated physical columns (UPDATE).
+    pub columns: Vec<usize>,
+    /// The new values (UPDATE, in `columns` order), the inserted values (INSERT) or the
+    /// error message (ERROR).
+    pub expressions: Vec<Expression>,
+    /// For each physical column, the INSERT expression holding its value, or `None` for
+    /// the default; empty when the expressions cover every column in order.
+    pub column_index_map: Vec<Option<usize>>,
+    pub update_is_del_and_insert: bool,
+}
+
+/// `MERGE INTO` (DuckDB's `LogicalMergeInto`). Its child is a projection whose column
+/// `row_id_start` is the target's row id (NULL when there is no matching target row).
+#[derive(Clone, Debug)]
+pub struct LogicalMergeInto {
+    pub table: Arc<rustdb_catalog::CatalogEntry>,
+    pub table_index: u64,
+    /// The default of each physical column.
+    pub bound_defaults: Vec<Expression>,
+    pub row_id_start: usize,
+    /// The input column that is NULL for target rows without a matching source row.
+    pub source_marker: Option<usize>,
+    pub bound_constraints: Vec<BoundConstraint>,
+    pub return_chunk: bool,
+    pub actions: std::collections::BTreeMap<rustdb_ast::MergeActionCondition, Vec<BoundMergeIntoAction>>,
 }
 
 impl LogicalInsert {
@@ -810,6 +845,7 @@ impl LogicalOperator {
             LogicalKind::Insert(_) => T::LogicalInsert,
             LogicalKind::Delete(_) => T::LogicalDelete,
             LogicalKind::Update(_) => T::LogicalUpdate,
+            LogicalKind::MergeInto(_) => T::LogicalMergeInto,
         }
     }
 
@@ -966,6 +1002,13 @@ impl LogicalOperator {
             }
             LogicalKind::Update(update) => {
                 modify_bindings(update.return_chunk, update.table_index, &update.table)
+            }
+            LogicalKind::MergeInto(merge) => {
+                if merge.return_chunk {
+                    generate_column_bindings(merge.table_index, table_types(&merge.table).len() + 1)
+                } else {
+                    vec![ColumnBinding::new(0, 0)]
+                }
             }
         }
     }
@@ -1145,12 +1188,19 @@ impl LogicalOperator {
             LogicalKind::Insert(insert) if insert.return_chunk => insert.table_types(),
             LogicalKind::Delete(delete) if delete.return_chunk => table_types(&delete.table),
             LogicalKind::Update(update) if update.return_chunk => table_types(&update.table),
+            LogicalKind::MergeInto(merge) if merge.return_chunk => {
+                // The RETURNING input ends with the `merge_action` column.
+                let mut types = table_types(&merge.table);
+                types.push(LogicalType::VARCHAR);
+                types
+            }
             LogicalKind::CreateTable(_)
             | LogicalKind::CreateIndex(_)
             | LogicalKind::Create { .. }
             | LogicalKind::Insert(_)
             | LogicalKind::Delete(_)
-            | LogicalKind::Update(_) => vec![LogicalType::BIGINT],
+            | LogicalKind::Update(_)
+            | LogicalKind::MergeInto(_) => vec![LogicalType::BIGINT],
         };
     }
 
@@ -1249,6 +1299,16 @@ impl LogicalOperator {
             LogicalKind::RecursiveCte { key_targets, .. } => {
                 for target in key_targets {
                     callback(target)?;
+                }
+            }
+            LogicalKind::MergeInto(merge) => {
+                for action in merge.actions.values_mut().flatten() {
+                    if let Some(condition) = &mut action.condition {
+                        callback(condition)?;
+                    }
+                    for expression in &mut action.expressions {
+                        callback(expression)?;
+                    }
                 }
             }
             _ => {}

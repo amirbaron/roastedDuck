@@ -5,6 +5,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::operators::{MergeIntoOperator, PhysicalMergeInto, SharedAppend};
+use rustdb_ast::MergeActionType;
 use rustdb_ast::{JoinType, OrderByNullType, OrderType};
 use rustdb_catalog::{Catalog, CatalogEntry, EntryKind, Transaction};
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
@@ -17,7 +19,7 @@ use rustdb_planner::expression::{
 };
 use rustdb_planner::operator::{
     COLUMN_IDENTIFIER_ROW_ID, JoinCondition, LogicalAggregate, LogicalComparisonJoin, LogicalDelete,
-    LogicalGet, LogicalInsert, LogicalUpdate,
+    LogicalGet, LogicalInsert, LogicalMergeInto, LogicalUpdate,
 };
 use rustdb_planner::{
     BoundLimitNode, Expression, ExpressionKind, ExpressionType, LogicalKind, LogicalOperator,
@@ -304,6 +306,131 @@ impl PlanGenerator {
         )))
     }
 
+    /// `MERGE INTO` (DuckDB's `DuckCatalog::PlanMergeInto` and `PlanMergeIntoAction`):
+    /// each action gets its own INSERT, UPDATE or DELETE operator, fed by the merge; the
+    /// operators that append share one append.
+    fn plan_merge_into(&self, merge: LogicalMergeInto, child: PhysicalRef) -> Result<PhysicalRef> {
+        let context = self.context()?;
+        let storage = table_storage(&merge.table)?;
+        let table_types = storage.types();
+        let constraints = table_constraints(
+            &context.transaction,
+            &context.catalogs,
+            &merge.table,
+            &storage,
+            &merge.bound_constraints,
+        )?;
+        let append = SharedAppend::default();
+        let input_types = child.types().to_vec();
+        let row_id = Expression::reference("", LogicalType::BIGINT, merge.row_id_start as u64);
+        // The sub-operators are not part of the pipeline: their child only gives their types.
+        let placeholder =
+            |types: Vec<LogicalType>| -> PhysicalRef { Arc::new(PhysicalDummyScan::new(types)) };
+        let mut actions = Vec::with_capacity(merge.actions.len());
+        for (condition, bound_actions) in merge.actions {
+            let mut planned = Vec::with_capacity(bound_actions.len());
+            for action in bound_actions {
+                let mut operator = MergeIntoOperator {
+                    action_type: action.action_type,
+                    condition: action.condition,
+                    op: None,
+                    expressions: Vec::new(),
+                };
+                match action.action_type {
+                    MergeActionType::MergeUpdate => {
+                        // The new values followed by the row id (`PhysicalUpdate`'s input).
+                        for (expression, &column) in action.expressions.into_iter().zip(&action.columns) {
+                            if matches!(expression.kind, ExpressionKind::Default) {
+                                operator.expressions.push(
+                                    merge
+                                        .bound_defaults
+                                        .get(column)
+                                        .cloned()
+                                        .ok_or_else(|| Error::internal("update without a default"))?,
+                                );
+                            } else {
+                                operator.expressions.push(expression);
+                            }
+                        }
+                        operator.expressions.push(row_id.clone());
+                        let types = operator
+                            .expressions
+                            .iter()
+                            .map(|e| e.return_type.clone())
+                            .collect();
+                        operator.op = Some(Arc::new(
+                            PhysicalUpdate::new(
+                                placeholder(types),
+                                Arc::clone(&storage),
+                                Arc::clone(&context.transaction),
+                                action.columns,
+                                constraints.clone(),
+                                action.update_is_del_and_insert,
+                                merge.return_chunk,
+                            )
+                            .with_shared_append(Arc::clone(&append)),
+                        ));
+                    }
+                    MergeActionType::MergeDelete => {
+                        operator.op = Some(Arc::new(
+                            PhysicalDelete::new(
+                                placeholder(input_types.clone()),
+                                Arc::clone(&storage),
+                                Arc::clone(&context.transaction),
+                                merge.row_id_start,
+                                merge.return_chunk,
+                            )
+                            .with_constraints(constraints.clone()),
+                        ));
+                    }
+                    MergeActionType::MergeInsert => {
+                        let mut expressions = action.expressions;
+                        if !action.column_index_map.is_empty() {
+                            let mut mapped = Vec::with_capacity(action.column_index_map.len());
+                            for (column, source) in action.column_index_map.iter().enumerate() {
+                                mapped.push(match source {
+                                    Some(source) => expressions
+                                        .get(*source)
+                                        .cloned()
+                                        .ok_or_else(|| Error::internal("insert column map out of range"))?,
+                                    None => merge
+                                        .bound_defaults
+                                        .get(column)
+                                        .cloned()
+                                        .ok_or_else(|| Error::internal("insert without a default"))?,
+                                });
+                            }
+                            expressions = mapped;
+                        }
+                        operator.expressions = expressions;
+                        operator.op = Some(Arc::new(
+                            PhysicalInsert::new(
+                                placeholder(table_types.clone()),
+                                InsertTarget::Table(Arc::clone(&storage)),
+                                Arc::clone(&context.transaction),
+                                constraints.clone(),
+                                merge.return_chunk,
+                            )
+                            .with_shared_append(Arc::clone(&append)),
+                        ));
+                    }
+                    MergeActionType::MergeError => operator.expressions = action.expressions,
+                    MergeActionType::MergeDoNothing => {}
+                }
+                planned.push(operator);
+            }
+            actions.push((condition, planned));
+        }
+        Ok(Arc::new(PhysicalMergeInto::new(
+            child,
+            table_types,
+            actions,
+            merge.row_id_start,
+            merge.source_marker,
+            merge.return_chunk,
+        )))
+    }
+
     /// A catalog statement run by [`PhysicalDdl`].
     fn ddl(
         &self,
@@ -487,6 +614,7 @@ impl PlanGenerator {
             LogicalKind::Insert(insert) => self.plan_insert(&insert, next_child("insert")?)?,
             LogicalKind::Delete(delete) => self.plan_delete(&delete, &expressions, next_child("delete")?)?,
             LogicalKind::Update(update) => self.plan_update(*update, expressions, next_child("update")?)?,
+            LogicalKind::MergeInto(merge) => self.plan_merge_into(*merge, next_child("merge")?)?,
             LogicalKind::CreateTable(info) => {
                 let context = self.context()?;
                 let info = *info;
