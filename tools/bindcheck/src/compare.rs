@@ -168,7 +168,11 @@ fn missing_function(error: &str) -> Option<String> {
 
 /// Whether DuckDB's error says the statement needs tables or files from its test file.
 fn needs_environment(expected: &str) -> bool {
-    expected.starts_with("Catalog Error: Table with name") || expected.starts_with("IO Error: No files found")
+    expected.starts_with("Catalog Error: Table with name")
+        || expected.starts_with("IO Error: No files found")
+        // The CLI cannot describe SHOW/DESCRIBE/SUMMARIZE statements, so their column
+        // types are unknown.
+        || expected.starts_with("<DESCRIBE failed> Parser Error")
 }
 
 /// Truncates bucket keys built from messages (which may embed SQL text).
@@ -219,7 +223,7 @@ pub fn compare(oracle: &OracleResult, rust: &RustOutcome) -> Outcome {
         }
         (Err(expected), Err(actual)) if expected == actual => Outcome::Pass,
         (_, Err(actual)) if actual.starts_with("<panic>") => Outcome::Panic(bucket(actual)),
-        (Err(expected), Err(_)) if needs_environment(expected) => Outcome::NeedsTables,
+        (Err(expected), _) if needs_environment(expected) => Outcome::NeedsTables,
         (_, Err(actual)) if actual.starts_with("Not implemented Error: ") => {
             Outcome::NotImplemented(bucket(&actual["Not implemented Error: ".len()..]))
         }

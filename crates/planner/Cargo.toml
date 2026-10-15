@@ -11,6 +11,7 @@ rustdb-common.workspace = true
 rustdb-types.workspace = true
 rustdb-serde.workspace = true
 rustdb-ast.workspace = true
+rustdb-parser.workspace = true
 rustdb-catalog = { path = "../catalog" }
 rustdb-function = { path = "../function" }
 regex = "1"

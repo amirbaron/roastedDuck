@@ -11,6 +11,7 @@ use rustdb_function::TableFunction;
 use rustdb_types::LogicalType;
 
 mod bind_joinref;
+mod bind_showref;
 mod bind_table_function;
 mod plan_joinref;
 
@@ -45,7 +46,7 @@ pub fn bind_table_ref(scope: &mut BindScope<'_>, table_ref: &mut TableRef) -> Re
             table_ref.query_location,
         ),
         TableRefKind::Pivot(_) => Err(Error::not_implemented("PIVOT/UNPIVOT")),
-        TableRefKind::Show(_) => Err(Error::not_implemented("SHOW/DESCRIBE/SUMMARIZE")),
+        TableRefKind::Show(show) => bind_showref::bind_show(scope, show),
     }?;
     if let Some(sample_options) = table_ref.sample.take() {
         result.plan = LogicalOperator::new(LogicalKind::Sample { sample_options }).with_children(vec![result.plan]);
@@ -116,7 +117,7 @@ fn bind_expression_list(scope: &mut BindScope<'_>, list: &mut ExpressionListRef,
 }
 
 /// A subquery in FROM (DuckDB's `Binder::Bind(SubqueryRef &)`).
-fn bind_subquery_ref(scope: &mut BindScope<'_>, subquery: &mut SubqueryRef, alias: &str) -> Result<BoundStatement> {
+pub(crate) fn bind_subquery_ref(scope: &mut BindScope<'_>, subquery: &mut SubqueryRef, alias: &str) -> Result<BoundStatement> {
     let mut binder = scope.binder.child()?;
     binder.can_contain_nulls = true;
     let bound = {
