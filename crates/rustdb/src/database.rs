@@ -56,7 +56,9 @@ impl Database {
             path.to_owned()
         };
         if !path.is_empty() {
-            return Err(Error::not_implemented("persistent databases are not supported yet"));
+            return Err(Error::not_implemented(
+                "persistent databases are not supported yet",
+            ));
         }
         let system_catalog = Catalog::new("system")?;
         for set in rustdb_functions::builtin_scalar_functions() {
@@ -108,10 +110,10 @@ impl Database {
     /// Loads a (statically linked) extension, like `LOAD name`.
     pub fn load_extension(&self, name: &str) -> ExtensionLoad {
         match name {
-            "core_functions" | "parquet" | "json" | "icu" | "tpch" | "tpcds" | "autocomplete" | "httpfs" | "fts"
-            | "inet" | "excel" | "sqlsmith" | "spatial" | "delta" | "iceberg" | "aws" | "azure" | "motherduck"
-            | "postgres_scanner" | "mysql_scanner" | "sqlite_scanner" | "vss" | "ui" | "encodings" | "ducklake"
-            | "avro" | "demo_capi" => ExtensionLoad::NotAvailable,
+            "core_functions" | "parquet" | "json" | "icu" | "tpch" | "tpcds" | "autocomplete" | "httpfs"
+            | "fts" | "inet" | "excel" | "sqlsmith" | "spatial" | "delta" | "iceberg" | "aws" | "azure"
+            | "motherduck" | "postgres_scanner" | "mysql_scanner" | "sqlite_scanner" | "vss" | "ui"
+            | "encodings" | "ducklake" | "avro" | "demo_capi" => ExtensionLoad::NotAvailable,
             _ => ExtensionLoad::Unknown,
         }
     }
@@ -191,7 +193,10 @@ impl Connection {
     fn client_context(&self, transaction: Arc<Transaction>) -> Arc<ClientContext> {
         let instance = self.database.instance();
         Arc::new(ClientContext {
-            catalogs: vec![Arc::clone(&instance.catalog), Arc::clone(&instance.system_catalog)],
+            catalogs: vec![
+                Arc::clone(&instance.catalog),
+                Arc::clone(&instance.system_catalog),
+            ],
             transaction,
             casts: Arc::clone(&instance.casts),
             evaluator: Arc::new(ScalarEvaluator),
@@ -236,14 +241,17 @@ impl Connection {
         names: Vec<String>,
         types: Vec<LogicalType>,
     ) -> Result<MaterializedResult> {
-        let nothing = || MaterializedResult::new(vec!["Success".to_owned()], vec![LogicalType::BOOLEAN], Vec::new());
+        let nothing =
+            || MaterializedResult::new(vec!["Success".to_owned()], vec![LogicalType::BOOLEAN], Vec::new());
         match &plan.kind {
             LogicalKind::Transaction { info } => {
                 match info.transaction_type {
                     TransactionType::BeginTransaction => self.transactions.begin()?,
                     TransactionType::Commit => self.transactions.commit()?,
                     TransactionType::Rollback => self.transactions.rollback()?,
-                    TransactionType::Invalid => return Err(Error::not_implemented("Unrecognized transaction type!")),
+                    TransactionType::Invalid => {
+                        return Err(Error::not_implemented("Unrecognized transaction type!"));
+                    }
                 }
                 return Ok(nothing());
             }
@@ -256,7 +264,8 @@ impl Connection {
                 return Ok(nothing());
             }
             LogicalKind::Prepare { name, prepared } => {
-                self.prepared_statements.insert(name.clone(), Arc::clone(prepared));
+                self.prepared_statements
+                    .insert(name.clone(), Arc::clone(prepared));
                 return Ok(nothing());
             }
             LogicalKind::Deallocate { name } => {

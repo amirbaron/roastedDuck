@@ -121,7 +121,10 @@ fn run_oracle(options: &Options) -> Result<()> {
     std::fs::create_dir_all(&out_dir)?;
     let path = out_dir.join("oracle.jsonl");
     let mut cached: BTreeMap<u64, OracleResult> = if path.exists() && !options.refresh {
-        read_jsonl::<OracleResult>(&path)?.into_iter().map(|row| (row.id, row)).collect()
+        read_jsonl::<OracleResult>(&path)?
+            .into_iter()
+            .map(|row| (row.id, row))
+            .collect()
     } else {
         BTreeMap::new()
     };
@@ -150,10 +153,20 @@ fn run_check(options: &Options) -> Result<bool> {
         .collect();
     let mut report = Report::default();
     for candidate in &candidates {
-        let Some(expected) = oracle.get(&candidate.id) else { continue };
+        let Some(expected) = oracle.get(&candidate.id) else {
+            continue;
+        };
         let actual = compare::run_rustdb(&candidate.sql, &candidate.json);
         let outcome = compare::compare(expected, &actual);
-        report.add(candidate.id, &candidate.file, candidate.line, &candidate.sql, &outcome, expected, &actual);
+        report.add(
+            candidate.id,
+            &candidate.file,
+            candidate.line,
+            &candidate.sql,
+            &outcome,
+            expected,
+            &actual,
+        );
     }
     let log_path = out_dir.join("mismatches.txt");
     std::fs::write(&log_path, report.log())?;
@@ -170,9 +183,15 @@ fn run_sql(options: &Options, sql: &str) -> Result<bool> {
     println!("== duckdb\n{}", compare::render(&expected.outcome()));
     println!("== rustdb\n{}", compare::render(&actual.result));
     if let Some(plan) = &expected.plan {
-        println!("== duckdb plan\n{}", plan_shape::duckdb_shape(plan).unwrap_or_else(|error| error));
+        println!(
+            "== duckdb plan\n{}",
+            plan_shape::duckdb_shape(plan).unwrap_or_else(|error| error)
+        );
     }
-    println!("== rustdb plan\n{}", actual.plan.as_ref().unwrap_or_else(|error| error));
+    println!(
+        "== rustdb plan\n{}",
+        actual.plan.as_ref().unwrap_or_else(|error| error)
+    );
     let outcome = compare::compare(&expected, &actual);
     println!("== {}", outcome.label());
     Ok(matches!(outcome, Outcome::Pass))
@@ -217,7 +236,10 @@ fn run() -> Result<bool> {
         "oracle" => run_oracle(&options).map(|()| true),
         "check" => run_check(&options),
         "sql" => run_sql(&options, &positional.join(" ")),
-        _ => Err("usage: bindcheck <oracle | check | sql TEXT> [--duckdb CLI] [--dir DIR] [--jobs N] [--filter S]".into()),
+        _ => Err(
+            "usage: bindcheck <oracle | check | sql TEXT> [--duckdb CLI] [--dir DIR] [--jobs N] [--filter S]"
+                .into(),
+        ),
     }
 }
 

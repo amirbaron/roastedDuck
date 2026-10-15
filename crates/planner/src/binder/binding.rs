@@ -3,17 +3,17 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_ast::keyword::write_optionally_quoted;
 use rustdb_ast::QueryNode;
+use rustdb_ast::keyword::write_optionally_quoted;
 use rustdb_catalog::CatalogEntry;
 use rustdb_common::string_util::candidates_error_message;
 use rustdb_common::{CaseInsensitiveMap, Error, Result};
 use rustdb_types::LogicalType;
 
 use super::BoundStatement;
+use crate::ColumnBinding;
 use crate::expression::Expression;
 use crate::operator::{ColumnIndex, SharedColumnIds};
-use crate::ColumnBinding;
 
 /// The name of the dummy binding holding macro parameters (DuckDB's `DummyBinding::DUMMY_NAME`).
 pub const DUMMY_NAME: &str = "0_macro_parameters";
@@ -34,7 +34,11 @@ impl BindingAlias {
         }
     }
 
-    pub fn qualified(catalog: impl Into<String>, schema: impl Into<String>, alias: impl Into<String>) -> Self {
+    pub fn qualified(
+        catalog: impl Into<String>,
+        schema: impl Into<String>,
+        alias: impl Into<String>,
+    ) -> Self {
         Self {
             catalog: catalog.into(),
             schema: schema.into(),
@@ -170,7 +174,9 @@ impl Binding {
     /// Macro parameter bindings (DuckDB's `DummyBinding`).
     pub fn dummy(types: Vec<LogicalType>, names: Vec<String>, dummy_name: &str) -> Result<Self> {
         Self::new(
-            BindingKind::Dummy { arguments: Vec::new() },
+            BindingKind::Dummy {
+                arguments: Vec::new(),
+            },
             BindingAlias::new(format!("{DUMMY_NAME}{dummy_name}")),
             types,
             names,
@@ -223,7 +229,14 @@ impl Binding {
             _ => None,
         };
         let (logical_type, name) = match virtual_type {
-            Some(ty) => (ty, if alias.is_empty() { column_name.to_owned() } else { alias.to_owned() }),
+            Some(ty) => (
+                ty,
+                if alias.is_empty() {
+                    column_name.to_owned()
+                } else {
+                    alias.to_owned()
+                },
+            ),
             None => {
                 let index = column_index as usize;
                 let ty = self.types.get(index).cloned().unwrap_or_default();
@@ -259,7 +272,9 @@ impl Binding {
             .binding_index(column_name)
             .ok_or_else(|| Error::internal(format!("Column {column_name} not found in macro")))?;
         let BindingKind::Dummy { arguments } = &self.kind else {
-            return Err(Error::internal("parameter of a binding that is not a macro binding"));
+            return Err(Error::internal(
+                "parameter of a binding that is not a macro binding",
+            ));
         };
         let mut argument = arguments
             .get(index as usize)

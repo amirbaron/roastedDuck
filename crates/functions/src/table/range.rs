@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_function::{
-    FunctionData, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet, TableScanState,
+    FunctionData, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet,
+    TableScanState,
 };
 use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
@@ -51,7 +52,11 @@ fn range_parameters(inputs: &[Value], generate_series: bool) -> Result<RangePara
     }
     let values: Vec<i128> = inputs
         .iter()
-        .map(|value| value.as_i128().ok_or_else(|| Error::internal("range argument is not an integer")))
+        .map(|value| {
+            value
+                .as_i128()
+                .ok_or_else(|| Error::internal("range argument is not an integer"))
+        })
         .collect::<Result<_>>()?;
     let (start, mut end) = match values.as_slice() {
         [end] => (0, *end),
@@ -96,7 +101,11 @@ fn range_scan(
         let values = output.values_mut::<i64>();
         let mut current = data.start + data.increment * i128::from(state.position);
         while count < STANDARD_VECTOR_SIZE {
-            let finished = if data.increment > 0 { current >= data.end } else { current <= data.end };
+            let finished = if data.increment > 0 {
+                current >= data.end
+            } else {
+                current <= data.end
+            };
             if finished {
                 break;
             }

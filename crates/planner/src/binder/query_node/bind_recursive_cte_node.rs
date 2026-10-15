@@ -7,13 +7,18 @@ use rustdb_common::{Error, Result};
 
 use super::bind_node;
 use super::bind_setop_node::cast_operator_to_types;
+use crate::LogicalOperatorType;
 use crate::binder::{BindScope, Binding, BindingAlias, BindingKind, BoundStatement};
 use crate::expression_binder::{BaseBinder, ExpressionBinder};
 use crate::operator::{LogicalKind, LogicalOperator};
-use crate::LogicalOperatorType;
 
 /// A CTE binding of the recursive CTE for its right side.
-fn recursive_binding(alias: BindingAlias, index: u64, names: &[String], types: &[rustdb_types::LogicalType]) -> Result<Binding> {
+fn recursive_binding(
+    alias: BindingAlias,
+    index: u64,
+    names: &[String],
+    types: &[rustdb_types::LogicalType],
+) -> Result<Binding> {
     Binding::new(
         BindingKind::Cte {
             can_be_referenced: true,
@@ -61,12 +66,18 @@ pub fn bind_recursive_cte(scope: &mut BindScope<'_>, node: &mut QueryNode) -> Re
     let mut right_binder = scope.binder.child()?;
     let cte_alias = BindingAlias::new(&ctename);
     let recurring_alias = BindingAlias::qualified("", "recurring", &ctename);
-    right_binder
-        .bind_context
-        .add_cte_binding(recursive_binding(cte_alias.clone(), setop_index, &names, &types)?)?;
-    right_binder
-        .bind_context
-        .add_cte_binding(recursive_binding(recurring_alias.clone(), setop_index, &names, &types)?)?;
+    right_binder.bind_context.add_cte_binding(recursive_binding(
+        cte_alias.clone(),
+        setop_index,
+        &names,
+        &types,
+    )?)?;
+    right_binder.bind_context.add_cte_binding(recursive_binding(
+        recurring_alias.clone(),
+        setop_index,
+        &names,
+        &types,
+    )?)?;
     let right = {
         let mut right_scope = BindScope {
             binder: &mut right_binder,

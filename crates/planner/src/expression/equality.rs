@@ -70,7 +70,9 @@ impl Expression {
     /// Whether two expressions compute the same thing (DuckDB's `Expression::Equals`;
     /// aliases and locations are ignored).
     pub fn equals(&self, other: &Self) -> bool {
-        if self.expression_type != other.expression_type || self.expression_class() != other.expression_class() {
+        if self.expression_type != other.expression_type
+            || self.expression_class() != other.expression_class()
+        {
             return false;
         }
         match (&self.kind, &other.kind) {
@@ -103,7 +105,9 @@ impl Expression {
             (ExpressionKind::Comparison(l), ExpressionKind::Comparison(r)) => {
                 l.left.equals(&r.left) && l.right.equals(&r.right)
             }
-            (ExpressionKind::Conjunction(l), ExpressionKind::Conjunction(r)) => set_equals(&l.children, &r.children),
+            (ExpressionKind::Conjunction(l), ExpressionKind::Conjunction(r)) => {
+                set_equals(&l.children, &r.children)
+            }
             (ExpressionKind::Constant(l), ExpressionKind::Constant(r)) => l.value == r.value,
             (ExpressionKind::Default, ExpressionKind::Default) => true,
             (ExpressionKind::Function(l), ExpressionKind::Function(r)) => {
@@ -117,7 +121,9 @@ impl Expression {
                     && list_equals(&l.captures, &r.captures)
             }
             (ExpressionKind::LambdaRef(l), ExpressionKind::LambdaRef(r)) => l == r,
-            (ExpressionKind::Operator(l), ExpressionKind::Operator(r)) => list_equals(&l.children, &r.children),
+            (ExpressionKind::Operator(l), ExpressionKind::Operator(r)) => {
+                list_equals(&l.children, &r.children)
+            }
             (ExpressionKind::Parameter(l), ExpressionKind::Parameter(r)) => l.identifier == r.identifier,
             (ExpressionKind::Reference(l), ExpressionKind::Reference(r)) => l == r,
             (ExpressionKind::Unnest(l), ExpressionKind::Unnest(r)) => l.child.equals(&r.child),

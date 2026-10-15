@@ -26,7 +26,9 @@ pub fn bind_function_expression<B: ExpressionBinder + ?Sized>(
         .ok_or_else(|| Error::internal("function lookup returned nothing"))?;
     let entry = lookup.entry;
     let is_aggregate = matches!(entry.kind, EntryKind::AggregateFunction(_));
-    if !is_aggregate && (function.distinct || function.filter.is_some() || !function.order_bys.orders.is_empty()) {
+    if !is_aggregate
+        && (function.distinct || function.filter.is_some() || !function.order_bys.orders.is_empty())
+    {
         return Err(Error::invalid_input(format!(
             "Function \"{}\" is a {}. \"DISTINCT\", \"FILTER\", and \"ORDER BY\" are only applicable to aggregate \
              functions.",
@@ -76,7 +78,8 @@ fn bind_scalar_function<B: ExpressionBinder + ?Sized>(
         children.push(take_bound(child)?);
     }
     let context = binder.binder_ref().context.clone();
-    let result = FunctionBinder::new(&context).bind_scalar_function(functions, children, function.is_operator)?;
+    let result =
+        FunctionBinder::new(&context).bind_scalar_function(functions, children, function.is_operator)?;
     let bound = result.map_err(|error| error.with_position(location).error)?;
     if let crate::expression::ExpressionKind::Function(bound_function) = &bound.kind
         && bound_function.function.stability == rustdb_function::Stability::ConsistentWithinQuery

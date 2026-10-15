@@ -96,7 +96,10 @@ pub struct PhysicalUngroupedAggregate {
 
 impl PhysicalUngroupedAggregate {
     pub fn new(types: Vec<LogicalType>, aggregates: Vec<BoundAggregate>, child: PhysicalRef) -> Result<Self> {
-        if let Some(aggregate) = aggregates.iter().find(|a| a.is_distinct() || a.order_bys.is_some()) {
+        if let Some(aggregate) = aggregates
+            .iter()
+            .find(|a| a.is_distinct() || a.order_bys.is_some())
+        {
             return Err(Error::not_implemented(format!(
                 "DISTINCT or ordered aggregate {}",
                 aggregate.function.name

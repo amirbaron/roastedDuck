@@ -82,7 +82,10 @@ impl Source for PhysicalTableScan {
         (): &mut (),
     ) -> Result<SourceResult> {
         let Some(scan) = &self.function.scan else {
-            return Err(Error::internal(format!("table function {} cannot be scanned", self.function.name)));
+            return Err(Error::internal(format!(
+                "table function {} cannot be scanned",
+                self.function.name
+            )));
         };
         let mut guard = global.state.lock().unwrap_or_else(PoisonError::into_inner);
         let (state, finished) = &mut *guard;
@@ -97,7 +100,8 @@ impl Source for PhysicalTableScan {
         let mut columns = output.into_columns();
         let mut projected = Vec::with_capacity(self.column_ids.len());
         for &id in &self.column_ids {
-            let index = usize::try_from(id).map_err(|_| Error::not_implemented("virtual columns of table functions"))?;
+            let index = usize::try_from(id)
+                .map_err(|_| Error::not_implemented("virtual columns of table functions"))?;
             let column = columns
                 .get_mut(index)
                 .ok_or_else(|| Error::not_implemented("virtual columns of table functions"))?;

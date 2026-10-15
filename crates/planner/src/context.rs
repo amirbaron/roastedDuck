@@ -111,7 +111,9 @@ pub struct EntryLookup {
 impl ClientContext {
     /// The catalog called `name` (case-insensitive).
     pub fn catalog(&self, name: &str) -> Option<&Arc<Catalog>> {
-        self.catalogs.iter().find(|catalog| catalog.name().eq_ignore_ascii_case(name))
+        self.catalogs
+            .iter()
+            .find(|catalog| catalog.name().eq_ignore_ascii_case(name))
     }
 
     /// The name of the default catalog.
@@ -138,8 +140,15 @@ impl ClientContext {
         }
     }
 
-    fn lookup_in(&self, catalog: &str, schema: &str, ty: CatalogType, name: &str) -> Option<Arc<CatalogEntry>> {
-        self.catalog(catalog)?.get_entry(&self.transaction, ty, schema, name)
+    fn lookup_in(
+        &self,
+        catalog: &str,
+        schema: &str,
+        ty: CatalogType,
+        name: &str,
+    ) -> Option<Arc<CatalogEntry>> {
+        self.catalog(catalog)?
+            .get_entry(&self.transaction, ty, schema, name)
     }
 
     /// Looks up an entry like DuckDB's `CatalogEntryRetriever::GetEntry`: through the search
@@ -167,21 +176,30 @@ impl ClientContext {
             return Ok(None);
         }
         if !catalog.is_empty() && self.catalog(catalog).is_none() {
-            return Err(Error::binder(format!(
-                "Catalog \"{catalog}\" does not exist!"
-            )));
+            return Err(Error::binder(format!("Catalog \"{catalog}\" does not exist!")));
         }
         Err(self.missing_entry_error(&path, ty, name))
     }
 
     /// The best similar entry name in each schema (DuckDB's `SimilarEntriesInSchemas`).
-    fn similar_entries(&self, schemas: &[(String, String)], ty: CatalogType, name: &str) -> (f64, Vec<String>) {
+    fn similar_entries(
+        &self,
+        schemas: &[(String, String)],
+        ty: CatalogType,
+        name: &str,
+    ) -> (f64, Vec<String>) {
         let mut best = 0.0;
         let mut results: Vec<String> = Vec::new();
         for (catalog_name, schema_name) in schemas {
-            let Some(catalog) = self.catalog(catalog_name) else { continue };
-            let Some(schema) = catalog.schema(&self.transaction, schema_name) else { continue };
-            let Some(schema) = schema.as_schema() else { continue };
+            let Some(catalog) = self.catalog(catalog_name) else {
+                continue;
+            };
+            let Some(schema) = catalog.schema(&self.transaction, schema_name) else {
+                continue;
+            };
+            let Some(schema) = schema.as_schema() else {
+                continue;
+            };
             let set = match ty {
                 CatalogType::Table | CatalogType::View => &schema.tables,
                 CatalogType::TableFunction | CatalogType::TableMacro => &schema.table_functions,
@@ -223,8 +241,10 @@ impl ClientContext {
                 }
             }
         }
-        let unseen_schemas: Vec<(String, String)> =
-            unseen_schemas.into_iter().filter(|key| !searched.contains(key)).collect();
+        let unseen_schemas: Vec<(String, String)> = unseen_schemas
+            .into_iter()
+            .filter(|key| !searched.contains(key))
+            .collect();
         let (unseen_score, unseen) = self.similar_entries(&unseen_schemas, ty, name);
         let mut suggestions = BTreeSet::new();
         if !unseen.is_empty() && (unseen_score >= 1.0 || unseen_score - UNSEEN_PENALTY > seen_score) {
@@ -244,7 +264,10 @@ impl ClientContext {
         } else {
             format!("\nDid you mean \"{did_you_mean}\"?")
         };
-        Error::catalog(format!("{} with name {name} does not exist!{hint}", ty.display_name()))
+        Error::catalog(format!(
+            "{} with name {name} does not exist!{hint}",
+            ty.display_name()
+        ))
     }
 }
 

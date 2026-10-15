@@ -7,13 +7,13 @@ use rustdb_function::cast::{CastParameters, ValueCast};
 use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
 use super::BoundResultModifier;
+use crate::ColumnBinding;
 use crate::binder::expression::{expand_star_expression, push_collation};
 use crate::binder::{BindScope, Binder};
 use crate::expression::{BoundOrderByNode, BoundOrderModifier, Expression, ExpressionKind};
 use crate::expression_binder::{BaseBinder, ExpressionBinder, OrderBinder, SelectBindState};
 use crate::generated::enums::DistinctType;
 use crate::operator::{BoundLimitNode, LogicalKind, LogicalOperator};
-use crate::ColumnBinding;
 
 /// Where ORDER BY terms are matched: the node's own select list (SELECT), or the select
 /// lists of the operands' binders (set operations, which cannot add columns).
@@ -31,8 +31,12 @@ fn bind_order_expression(
     expr: ParsedExpression,
 ) -> Result<Option<Expression>> {
     let mut order_binder = match targets {
-        OrderTargets::SelectList(list) => OrderBinder::new(vec![&*scope.binder], Some(&mut **list), bind_state, component),
-        OrderTargets::SetOperation(binders) => OrderBinder::new(binders.iter().collect(), None, bind_state, component),
+        OrderTargets::SelectList(list) => {
+            OrderBinder::new(vec![&*scope.binder], Some(&mut **list), bind_state, component)
+        }
+        OrderTargets::SetOperation(binders) => {
+            OrderBinder::new(binders.iter().collect(), None, bind_state, component)
+        }
     };
     order_binder.bind(expr)
 }
@@ -86,7 +90,9 @@ pub fn prepare_modifiers(
                 let mut targets_bound: Vec<Expression> = Vec::new();
                 for target in distinct.distinct_on_targets {
                     for expr in expand_order_star(scope, &targets, target)? {
-                        let Some(expr) = bind_order_expression(scope, &mut targets, bind_state, "DISTINCT ON", expr)? else {
+                        let Some(expr) =
+                            bind_order_expression(scope, &mut targets, bind_state, "DISTINCT ON", expr)?
+                        else {
                             continue;
                         };
                         if !targets_bound.iter().any(|existing| existing.equals(&expr)) {
@@ -124,7 +130,9 @@ pub fn prepare_modifiers(
                     let order_type = config.resolve_order(node.order_type);
                     let null_order = config.resolve_null_order(order_type, node.null_order);
                     for expr in expand_order_star(scope, &targets, *node.expression)? {
-                        if let Some(expr) = bind_order_expression(scope, &mut targets, bind_state, "ORDER BY", expr)? {
+                        if let Some(expr) =
+                            bind_order_expression(scope, &mut targets, bind_state, "ORDER BY", expr)?
+                        {
                             orders.push(BoundOrderByNode::new(order_type, null_order, expr));
                         }
                     }
@@ -175,7 +183,11 @@ fn bind_limit_value(
     is_percentage: bool,
     is_offset: bool,
 ) -> Result<BoundLimitNode> {
-    let target_type = if is_percentage { LogicalType::DOUBLE } else { LogicalType::BIGINT };
+    let target_type = if is_percentage {
+        LogicalType::DOUBLE
+    } else {
+        LogicalType::BIGINT
+    };
     let original = value.clone();
     let mut new_binder = scope.binder.child()?;
     let expr = {
@@ -183,16 +195,23 @@ fn bind_limit_value(
             binder: &mut new_binder,
             outer: Some(scope),
         };
-        let mut binder = { let (inner, outer) = child_scope.split(); BaseBinder::new(inner, outer) };
+        let mut binder = {
+            let (inner, outer) = child_scope.split();
+            BaseBinder::new(inner, outer)
+        };
         binder.state().target_type = Some(target_type.clone());
         binder.bind(&mut value, true)?
     };
     if expr.has_subquery() {
         let OrderTargets::SelectList(_) = targets else {
-            return Err(Error::binder("Subquery in LIMIT/OFFSET not supported in set operation"));
+            return Err(Error::binder(
+                "Subquery in LIMIT/OFFSET not supported in set operation",
+            ));
         };
         let mut order_binder = match targets {
-            OrderTargets::SelectList(list) => OrderBinder::new(vec![&*scope.binder], Some(&mut **list), bind_state, "LIMIT"),
+            OrderTargets::SelectList(list) => {
+                OrderBinder::new(vec![&*scope.binder], Some(&mut **list), bind_state, "LIMIT")
+            }
             OrderTargets::SetOperation(_) => return Err(Error::internal("set operation limit")),
         };
         let reference = order_binder.create_extra_reference(original)?;
@@ -206,9 +225,15 @@ fn bind_limit_value(
         let value = scope.context.evaluator.evaluate_scalar(&expr)?;
         let value = value.cast_with(&scope.context.casts, &target_type, &mut CastParameters::new())?;
         if is_percentage {
-            let percentage = if value.is_null() { 100.0 } else { value.as_f64().unwrap_or_default() };
+            let percentage = if value.is_null() {
+                100.0
+            } else {
+                value.as_f64().unwrap_or_default()
+            };
             if percentage.is_nan() || !(0.0..=100.0).contains(&percentage) {
-                return Err(Error::out_of_range("Limit percent out of range, should be between 0% and 100%"));
+                return Err(Error::out_of_range(
+                    "Limit percent out of range, should be between 0% and 100%",
+                ));
             }
             return Ok(BoundLimitNode::ConstantPercentage(percentage));
         }
@@ -252,7 +277,12 @@ fn create_order_expression(
     if alias.is_empty() {
         alias = names.get(index).cloned().unwrap_or_default();
     }
-    Ok(Expression::column_ref(alias, ty.clone(), ColumnBinding::new(table_index, index as u64), 0))
+    Ok(Expression::column_ref(
+        alias,
+        ty.clone(),
+        ColumnBinding::new(table_index, index as u64),
+        0,
+    ))
 }
 
 /// Turns a position constant into a column reference (DuckDB's
@@ -320,9 +350,13 @@ pub fn bind_modifiers(
                 for node in [limit, offset] {
                     if let Some(expr) = node.expression_mut() {
                         if expr.expression_type == ExpressionType::ValueConstant {
-                            if let Some(finalized) =
-                                finalize_order_expression(expr.clone(), table_index, names, types, bind_state)?
-                            {
+                            if let Some(finalized) = finalize_order_expression(
+                                expr.clone(),
+                                table_index,
+                                names,
+                                types,
+                                bind_state,
+                            )? {
                                 *expr = finalized;
                             }
                         }
@@ -359,14 +393,20 @@ pub fn bind_modifiers(
                             BoundOrderByNode::new(
                                 order_type,
                                 null_order,
-                                Expression::column_ref(alias, ty.clone(), ColumnBinding::new(table_index, i as u64), 0),
+                                Expression::column_ref(
+                                    alias,
+                                    ty.clone(),
+                                    ColumnBinding::new(table_index, i as u64),
+                                    0,
+                                ),
                             )
                         })
                         .collect();
                 }
                 for node in &mut finalized {
                     let ty = node.expression.return_type.clone();
-                    let expression = std::mem::replace(&mut node.expression, Expression::constant(Value::default()));
+                    let expression =
+                        std::mem::replace(&mut node.expression, Expression::constant(Value::default()));
                     node.expression = push_collation(expression, &ty)?;
                 }
                 order.orders = finalized;
@@ -380,7 +420,10 @@ pub fn bind_modifiers(
 pub fn visit_query_node(modifiers: Vec<BoundResultModifier>, mut root: LogicalOperator) -> LogicalOperator {
     for modifier in modifiers {
         match modifier {
-            BoundResultModifier::Distinct { distinct_type, targets } => {
+            BoundResultModifier::Distinct {
+                distinct_type,
+                targets,
+            } => {
                 if targets.is_empty() {
                     continue;
                 }

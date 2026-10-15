@@ -176,7 +176,11 @@ const OPTION_NAMES: &[&str] = &[
 /// The canonical name of an option (`null_order` is an alias of `default_null_order`).
 fn canonical_name(name: &str) -> Option<&'static str> {
     let lower = name.to_ascii_lowercase();
-    let lower = if lower == "null_order" { "default_null_order".to_owned() } else { lower };
+    let lower = if lower == "null_order" {
+        "default_null_order".to_owned()
+    } else {
+        lower
+    };
     OPTION_NAMES.iter().copied().find(|option| *option == lower)
 }
 
@@ -222,7 +226,9 @@ impl Settings {
                     "nulls_first_on_asc_last_on_desc" | "sqlite" | "mysql" => {
                         DefaultNullOrder::NullsFirstOnAscLastOnDesc
                     }
-                    "nulls_last_on_asc_first_on_desc" | "postgres" => DefaultNullOrder::NullsLastOnAscFirstOnDesc,
+                    "nulls_last_on_asc_first_on_desc" | "postgres" => {
+                        DefaultNullOrder::NullsLastOnAscFirstOnDesc
+                    }
                     _ => {
                         return Err(Error::new(
                             ErrorKind::Parser,
@@ -301,8 +307,13 @@ mod tests {
         settings.set("default_order", &Value::varchar("DESC")).unwrap();
         assert_eq!(settings.planner.default_order, OrderType::Descending);
         settings.set("null_order", &Value::varchar("postgres")).unwrap();
-        assert_eq!(settings.planner.default_null_order, DefaultNullOrder::NullsLastOnAscFirstOnDesc);
-        let error = settings.set("max_expression_depth", &Value::varchar("abc")).unwrap_err();
+        assert_eq!(
+            settings.planner.default_null_order,
+            DefaultNullOrder::NullsLastOnAscFirstOnDesc
+        );
+        let error = settings
+            .set("max_expression_depth", &Value::varchar("abc"))
+            .unwrap_err();
         assert_eq!(
             error.to_string(),
             "Invalid Input Error: Failed to cast value: Could not convert string 'abc' to UINT64"

@@ -10,14 +10,17 @@ mod equality;
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_ast::{ExpressionClass, ExpressionType, OrderByNullType, OrderType, SubqueryType, WindowBoundary, WindowExcludeMode};
+use rustdb_ast::{
+    ExpressionClass, ExpressionType, OrderByNullType, OrderType, SubqueryType, WindowBoundary,
+    WindowExcludeMode,
+};
 use rustdb_common::Result;
 use rustdb_function::cast::BoundCastInfo;
 use rustdb_function::{AggregateFunction, FunctionData, NullHandling, ScalarFunction, Stability};
 use rustdb_types::{LogicalType, Value};
 
-use crate::binder::{Binder, BoundStatement};
 use crate::ColumnBinding;
+use crate::binder::{Binder, BoundStatement};
 
 pub use display::expression_list_to_string;
 
@@ -356,7 +359,12 @@ impl Expression {
     }
 
     /// A reference to `binding` (`BOUND_COLUMN_REF`).
-    pub fn column_ref(alias: impl Into<String>, return_type: LogicalType, binding: ColumnBinding, depth: u64) -> Self {
+    pub fn column_ref(
+        alias: impl Into<String>,
+        return_type: LogicalType,
+        binding: ColumnBinding,
+        depth: u64,
+    ) -> Self {
         let mut expression = Self::new(
             ExpressionType::BoundColumnRef,
             return_type,
@@ -482,7 +490,10 @@ impl Expression {
     }
 
     /// Calls `callback` on every direct child, in DuckDB's `ExpressionIterator` order.
-    pub fn try_for_each_child_mut<E>(&mut self, mut callback: impl FnMut(&mut Self) -> Result<(), E>) -> Result<(), E> {
+    pub fn try_for_each_child_mut<E>(
+        &mut self,
+        mut callback: impl FnMut(&mut Self) -> Result<(), E>,
+    ) -> Result<(), E> {
         match &mut self.kind {
             ExpressionKind::Aggregate(aggregate) => {
                 for child in &mut aggregate.children {

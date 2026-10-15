@@ -44,7 +44,11 @@ impl<'a> OrderBinder<'a> {
 
     /// A constant naming select-list position `index` (DuckDB's `CreateProjectionReference`).
     fn projection_reference(&self, expr: &ParsedExpression, index: u64) -> Expression {
-        let alias = match self.extra_list.as_deref().and_then(|list| list.get(index as usize)) {
+        let alias = match self
+            .extra_list
+            .as_deref()
+            .and_then(|list| list.get(index as usize))
+        {
             Some(entry) => entry.to_string(),
             None => expr.alias.clone(),
         };
@@ -86,7 +90,11 @@ impl<'a> OrderBinder<'a> {
                     return Ok(None);
                 }
                 let value = constant.value.as_i128().unwrap_or_default();
-                Ok(Some(if value <= 0 { i64::MAX as u64 } else { (value - 1) as u64 }))
+                Ok(Some(if value <= 0 {
+                    i64::MAX as u64
+                } else {
+                    (value - 1) as u64
+                }))
             }
             ParsedExpressionKind::ColumnRef(column) => {
                 if !is_potential_alias(&column.column_names) {

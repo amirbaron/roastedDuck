@@ -6,19 +6,25 @@ use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
 use super::modifiers::{OrderTargets, bind_modifiers, prepare_modifiers, visit_query_node};
 use super::{BoundResultModifier, bind_node};
+use crate::ColumnBinding;
 use crate::binder::{BindScope, Binder, BoundChildInfo, BoundStatement, ExtraBoundInfo};
 use crate::expression::Expression;
 use crate::expression_binder::{SelectBindState, contains_type, exchange_type};
 use crate::function_binder::add_cast_to_type;
 use crate::generated::enums::LogicalOperatorType;
 use crate::operator::{LogicalKind, LogicalOperator};
-use crate::ColumnBinding;
 
 /// Records the operands' select-list aliases and expressions so that ORDER BY can refer to
 /// them (DuckDB's `SetOpAliasGatherer`).
 fn gather_aliases(bind_state: &mut SelectBindState, child: &BoundChildInfo, reorder: &[usize]) -> Result<()> {
     if let Some(setop_type) = child.extra_info.setop_type {
-        return gather_setop_aliases(bind_state, setop_type, &child.names, &child.extra_info.bound_children, reorder);
+        return gather_setop_aliases(
+            bind_state,
+            setop_type,
+            &child.names,
+            &child.extra_info.bound_children,
+            reorder,
+        );
     }
     for (name, &index) in child.names.iter().zip(reorder) {
         if !bind_state.alias_map.contains_key(name) {
@@ -52,10 +58,9 @@ fn gather_setop_aliases(
                 .names
                 .iter()
                 .map(|name| {
-                    reorder_map
-                        .get(name)
-                        .copied()
-                        .ok_or_else(|| Error::internal("SetOp - Column name not found in reorder_map in UNION BY NAME"))
+                    reorder_map.get(name).copied().ok_or_else(|| {
+                        Error::internal("SetOp - Column name not found in reorder_map in UNION BY NAME")
+                    })
                 })
                 .collect::<Result<Vec<_>>>()?;
             gather_aliases(bind_state, child, &child_reorder)?;
@@ -72,7 +77,11 @@ fn gather_setop_aliases(
 fn gather_binders(binders: &[Binder], children: &[BoundChildInfo], result: &mut Vec<Binder>) {
     result.extend(binders.iter().cloned());
     for child in children {
-        gather_binders(&child.extra_info.child_binders, &child.extra_info.bound_children, result);
+        gather_binders(
+            &child.extra_info.child_binders,
+            &child.extra_info.bound_children,
+            result,
+        );
     }
 }
 
@@ -165,9 +174,11 @@ pub(crate) fn cast_operator_to_types(
     if let LogicalKind::Projection { .. } = op.kind {
         for (i, (source_type, target_type)) in source.iter().zip(target).enumerate() {
             if source_type != target_type {
-                let expression = std::mem::replace(&mut op.expressions[i], Expression::constant(Value::default()));
+                let expression =
+                    std::mem::replace(&mut op.expressions[i], Expression::constant(Value::default()));
                 let alias = expression.alias.clone();
-                op.expressions[i] = add_cast_to_type(&context, expression, target_type, false)?.with_alias(alias);
+                op.expressions[i] =
+                    add_cast_to_type(&context, expression, target_type, false)?.with_alias(alias);
             }
         }
         return Ok(op);
@@ -181,7 +192,11 @@ pub(crate) fn cast_operator_to_types(
         }
         select_list.push(expression);
     }
-    Ok(LogicalOperator::projection(binder.generate_table_index(), select_list, op))
+    Ok(LogicalOperator::projection(
+        binder.generate_table_index(),
+        select_list,
+        op,
+    ))
 }
 
 /// DuckDB's `Binder::BindNode(SetOperationNode &)` and `CreatePlan(BoundSetOperationNode &)`.
@@ -195,7 +210,12 @@ pub fn bind_set_operation(scope: &mut BindScope<'_>, node: &mut QueryNode) -> Re
     if setop.children.len() < 2 {
         return Err(Error::internal("Set Operations must have at least 2 children"));
     }
-    if setop.children.len() != 2 && !matches!(setop_type, SetOperationType::Union | SetOperationType::UnionByName) {
+    if setop.children.len() != 2
+        && !matches!(
+            setop_type,
+            SetOperationType::Union | SetOperationType::UnionByName
+        )
+    {
         return Err(Error::internal(
             "Set Operation type must have exactly 2 children - except for UNION/UNION_BY_NAME",
         ));
@@ -221,7 +241,10 @@ pub fn bind_set_operation(scope: &mut BindScope<'_>, node: &mut QueryNode) -> Re
     } else {
         let names = bound_children[0].names.clone();
         let column_count = bound_children[0].types.len();
-        if bound_children.iter().any(|child| child.types.len() != column_count) {
+        if bound_children
+            .iter()
+            .any(|child| child.types.len() != column_count)
+        {
             return Err(Error::binder(
                 "Set operations can only apply to expressions with the same number of result columns",
             ));
@@ -247,11 +270,17 @@ pub fn bind_set_operation(scope: &mut BindScope<'_>, node: &mut QueryNode) -> Re
                 distinct_on_targets: Vec::new(),
             }),
         );
-        if matches!(setop_type, SetOperationType::Union | SetOperationType::UnionByName) {
+        if matches!(
+            setop_type,
+            SetOperationType::Union | SetOperationType::UnionByName
+        ) {
             setop_all = true;
         }
     }
-    let child_infos: Vec<BoundChildInfo> = bound_children.iter().map(BoundChildInfo::from_statement).collect();
+    let child_infos: Vec<BoundChildInfo> = bound_children
+        .iter()
+        .map(BoundChildInfo::from_statement)
+        .collect();
     let mut bind_state = SelectBindState::default();
     let mut bound_modifiers: Vec<BoundResultModifier> = Vec::new();
     if !modifiers.is_empty() {
@@ -275,11 +304,20 @@ pub fn bind_set_operation(scope: &mut BindScope<'_>, node: &mut QueryNode) -> Re
         SetOperationType::Union | SetOperationType::UnionByName => LogicalOperatorType::LogicalUnion,
         SetOperationType::Except => LogicalOperatorType::LogicalExcept,
         SetOperationType::Intersect => LogicalOperatorType::LogicalIntersect,
-        SetOperationType::None => return Err(Error::internal("Unsupported logical operator type for set-operation")),
+        SetOperationType::None => {
+            return Err(Error::internal(
+                "Unsupported logical operator type for set-operation",
+            ));
+        }
     };
     let mut plans = Vec::with_capacity(bound_children.len());
     for (child, child_binder) in bound_children.into_iter().zip(&child_binders) {
-        plans.push(cast_operator_to_types(scope.binder, &child.types, &types, child.plan)?);
+        plans.push(cast_operator_to_types(
+            scope.binder,
+            &child.types,
+            &types,
+            child.plan,
+        )?);
         if child_binder.has_unplanned_dependent_joins {
             scope.binder.has_unplanned_dependent_joins = true;
         }

@@ -53,14 +53,20 @@ impl JoinSide {
 
     /// The side a table index belongs to.
     pub fn of_table(table_index: u64, left: &HashSet<u64>) -> Self {
-        if left.contains(&table_index) { Self::Left } else { Self::Right }
+        if left.contains(&table_index) {
+            Self::Left
+        } else {
+            Self::Right
+        }
     }
 
     /// The sides `expression` references (DuckDB's `JoinSide::GetJoinSide`).
     pub fn of_expression(expression: &Expression, left: &HashSet<u64>, right: &HashSet<u64>) -> Result<Self> {
         if let Some(column) = expression.as_column_ref() {
             if column.depth > 0 {
-                return Err(Error::not_implemented("Non-inner join on correlated columns not supported"));
+                return Err(Error::not_implemented(
+                    "Non-inner join on correlated columns not supported",
+                ));
             }
             return Ok(Self::of_table(column.binding.table_index, left));
         }
@@ -88,14 +94,19 @@ impl JoinSide {
 
 /// The table indexes of the columns `op` produces (DuckDB's `LogicalJoin::GetTableReferences`).
 pub fn table_references(op: &LogicalOperator) -> HashSet<u64> {
-    op.column_bindings().iter().map(|binding| binding.table_index).collect()
+    op.column_bindings()
+        .iter()
+        .map(|binding| binding.table_index)
+        .collect()
 }
 
 /// The comparison with its sides swapped (DuckDB's `FlipComparisonExpression`).
 pub fn flip_comparison(expression_type: ExpressionType) -> Result<ExpressionType> {
     use ExpressionType as E;
     Ok(match expression_type {
-        E::CompareNotDistinctFrom | E::CompareDistinctFrom | E::CompareNotequal | E::CompareEqual => expression_type,
+        E::CompareNotDistinctFrom | E::CompareDistinctFrom | E::CompareNotequal | E::CompareEqual => {
+            expression_type
+        }
         E::CompareLessthan => E::CompareGreaterthan,
         E::CompareGreaterthan => E::CompareLessthan,
         E::CompareLessthanorequalto => E::CompareGreaterthanorequalto,
@@ -111,13 +122,21 @@ const fn can_push_to_left_child(join_type: JoinType) -> bool {
 
 /// Whether a condition on the right side alone can become a filter below the join.
 const fn can_push_to_right_child(join_type: JoinType) -> bool {
-    matches!(join_type, JoinType::Inner | JoinType::Semi | JoinType::Anti | JoinType::Left)
+    matches!(
+        join_type,
+        JoinType::Inner | JoinType::Semi | JoinType::Anti | JoinType::Left
+    )
 }
 
 /// Adds `expression` to the filter on top of `child`, creating one if needed.
 fn push_filter_to_child(child: &mut LogicalOperator, expression: Expression) {
     if !matches!(child.kind, LogicalKind::Filter { .. }) {
-        let input = std::mem::replace(child, LogicalOperator::new(LogicalKind::Filter { projection_map: Vec::new() }));
+        let input = std::mem::replace(
+            child,
+            LogicalOperator::new(LogicalKind::Filter {
+                projection_map: Vec::new(),
+            }),
+        );
         child.children.push(input);
     }
     child.expressions.push(expression);
@@ -136,7 +155,12 @@ fn can_eliminate(context: &ClientContext, join_type: JoinType, expression: &Expr
     }
     matches!(
         join_type,
-        JoinType::Inner | JoinType::Left | JoinType::Right | JoinType::Semi | JoinType::Anti | JoinType::Outer
+        JoinType::Inner
+            | JoinType::Left
+            | JoinType::Right
+            | JoinType::Semi
+            | JoinType::Anti
+            | JoinType::Outer
     )
 }
 
@@ -313,7 +337,10 @@ pub fn create_join(
             use ExpressionType as E;
             match condition.comparison {
                 E::CompareEqual | E::CompareNotDistinctFrom => {}
-                E::CompareGreaterthanorequalto | E::CompareGreaterthan | E::CompareLessthanorequalto | E::CompareLessthan => {
+                E::CompareGreaterthanorequalto
+                | E::CompareGreaterthan
+                | E::CompareLessthanorequalto
+                | E::CompareLessthan => {
                     if asof_index.is_some() {
                         return Err(Error::binder("Multiple ASOF JOIN inequalities"));
                     }
@@ -337,7 +364,8 @@ pub fn create_join(
         if arbitrary_expressions.is_empty() {
             arbitrary_expressions.push(Expression::constant(Value::boolean(true)));
         }
-        let condition = conjunction(arbitrary_expressions).ok_or_else(|| Error::internal("empty join condition"))?;
+        let condition =
+            conjunction(arbitrary_expressions).ok_or_else(|| Error::internal("empty join condition"))?;
         return Ok(LogicalOperator::new(LogicalKind::AnyJoin {
             join_type,
             condition: Box::new(condition),
@@ -351,11 +379,16 @@ pub fn create_join(
             join.conditions = conditions;
             let join = LogicalOperator::new(LogicalKind::ComparisonJoin(Box::new(join)))
                 .with_children(vec![left_child, right_child]);
-            return Ok(LogicalOperator::new(LogicalKind::Filter { projection_map: Vec::new() })
-                .with_expressions(arbitrary_expressions)
-                .with_children(vec![join]));
+            return Ok(LogicalOperator::new(LogicalKind::Filter {
+                projection_map: Vec::new(),
+            })
+            .with_expressions(arbitrary_expressions)
+            .with_children(vec![join]));
         }
-        let mut predicates: Vec<Expression> = conditions.into_iter().map(JoinCondition::into_expression).collect();
+        let mut predicates: Vec<Expression> = conditions
+            .into_iter()
+            .map(JoinCondition::into_expression)
+            .collect();
         predicates.extend(arbitrary_expressions);
         let condition = conjunction(predicates).ok_or_else(|| Error::internal("empty join condition"))?;
         return Ok(LogicalOperator::new(LogicalKind::AnyJoin {
@@ -366,7 +399,8 @@ pub fn create_join(
     }
     let mut join = LogicalComparisonJoin::new(join_type, LogicalOperatorType::LogicalComparisonJoin);
     join.conditions = conditions;
-    Ok(LogicalOperator::new(LogicalKind::ComparisonJoin(Box::new(join))).with_children(vec![left_child, right_child]))
+    Ok(LogicalOperator::new(LogicalKind::ComparisonJoin(Box::new(join)))
+        .with_children(vec![left_child, right_child]))
 }
 
 /// DuckDB's `LogicalComparisonJoin::CreateJoin(context, type, reftype, left, right, condition)`.
@@ -390,7 +424,14 @@ pub fn create_join_from_condition(
         &mut conditions,
         &mut arbitrary_expressions,
     )?;
-    create_join(join_type, ref_type, left_child, right_child, conditions, arbitrary_expressions)
+    create_join(
+        join_type,
+        ref_type,
+        left_child,
+        right_child,
+        conditions,
+        arbitrary_expressions,
+    )
 }
 
 /// Whether `expression` references columns of enclosing queries.
@@ -404,7 +445,9 @@ fn plan_join_subqueries(scope: &mut BindScope<'_>, join: &mut LogicalOperator) -
     for child in &mut join.children {
         if matches!(child.kind, LogicalKind::Filter { .. }) {
             let LogicalOperator {
-                expressions, children, ..
+                expressions,
+                children,
+                ..
             } = child;
             if let Some(input) = children.first_mut() {
                 for expression in expressions {
@@ -425,7 +468,9 @@ fn plan_join_subqueries(scope: &mut BindScope<'_>, join: &mut LogicalOperator) -
             }
         }
         LogicalKind::AnyJoin { condition, .. } if condition.has_subquery() => {
-            return Err(Error::not_implemented("Cannot perform non-inner join on subquery!"));
+            return Err(Error::not_implemented(
+                "Cannot perform non-inner join on subquery!",
+            ));
         }
         _ => {}
     }

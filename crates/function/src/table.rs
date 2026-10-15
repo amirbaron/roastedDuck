@@ -42,7 +42,9 @@ pub type TableFunctionBind =
 /// `STANDARD_VECTOR_SIZE` rows) and returns whether more rows may follow (a
 /// single-threaded `table_function_t`).
 pub type TableFunctionScan = Arc<
-    dyn Fn(Option<&dyn FunctionData>, &[u64], &mut TableScanState, &mut DataChunk) -> Result<bool> + Send + Sync,
+    dyn Fn(Option<&dyn FunctionData>, &[u64], &mut TableScanState, &mut DataChunk) -> Result<bool>
+        + Send
+        + Sync,
 >;
 
 /// Per-scan state of a [`TableFunctionScan`] (cursor position and similar).

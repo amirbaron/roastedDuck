@@ -5,16 +5,16 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rustdb_ast::{
-    ComparisonExpression, ConjunctionExpression, ExpressionType, JoinRef, JoinRefType, JoinType, ParsedExpression,
-    ParsedExpressionKind,
+    ComparisonExpression, ConjunctionExpression, ExpressionType, JoinRef, JoinRefType, JoinType,
+    ParsedExpression, ParsedExpressionKind,
 };
 use rustdb_common::{CaseInsensitiveSet, Error, Result};
 
 use super::bind_table_ref;
 use super::plan_joinref::{BoundJoinRef, create_join_plan};
-use crate::binder::{UsingColumnSet, UsingSetRef};
 use crate::binder::BindingAlias;
 use crate::binder::{BindScope, Binder, BoundStatement, Scope};
+use crate::binder::{UsingColumnSet, UsingSetRef};
 use crate::expression_binder::{BaseBinder, ExpressionBinder, LateralBinder, WhereBinder, set_bound};
 
 /// A column reference qualified by `alias` (DuckDB's `ColumnRefExpression(name, alias)`).
@@ -76,7 +76,11 @@ fn try_find_binding(binder: &Binder, using_column: &str, join_side: &str) -> Res
                 error.push_str("\n\t");
                 error.push_str(other.alias_name());
                 error.push('.');
-                error.push_str(&binder.bind_context.actual_column_name(&other.alias, using_column)?);
+                error.push_str(
+                    &binder
+                        .bind_context
+                        .actual_column_name(&other.alias, using_column)?,
+                );
             }
             return Err(Error::binder(error));
         }
@@ -99,7 +103,11 @@ fn lock(set: &UsingSetRef) -> std::sync::MutexGuard<'_, UsingColumnSet> {
 }
 
 /// DuckDB's `AddUsingBindings`.
-fn add_using_bindings(set: &mut UsingColumnSet, input_set: Option<&UsingSetRef>, input_binding: &BindingAlias) {
+fn add_using_bindings(
+    set: &mut UsingColumnSet,
+    input_set: Option<&UsingSetRef>,
+    input_binding: &BindingAlias,
+) {
     match input_set {
         Some(input_set) => set.bindings.extend(lock(input_set).bindings.iter().cloned()),
         None => set.bindings.push(input_binding.clone()),
@@ -107,9 +115,16 @@ fn add_using_bindings(set: &mut UsingColumnSet, input_set: Option<&UsingSetRef>,
 }
 
 /// DuckDB's `SetPrimaryBinding`: outer joins have no primary binding.
-fn set_primary_binding(set: &mut UsingColumnSet, join_type: JoinType, left: &BindingAlias, right: &BindingAlias) {
+fn set_primary_binding(
+    set: &mut UsingColumnSet,
+    join_type: JoinType,
+    left: &BindingAlias,
+    right: &BindingAlias,
+) {
     match join_type {
-        JoinType::Left | JoinType::Inner | JoinType::Semi | JoinType::Anti => set.primary_binding = left.clone(),
+        JoinType::Left | JoinType::Inner | JoinType::Semi | JoinType::Anti => {
+            set.primary_binding = left.clone()
+        }
         JoinType::Right | JoinType::RightSemi | JoinType::RightAnti => set.primary_binding = right.clone(),
         _ => {}
     }
@@ -138,7 +153,12 @@ fn remove_duplicate_using_columns(using_columns: Vec<String>) -> Vec<String> {
 }
 
 /// The `NATURAL JOIN` columns: names of the left side also present on the right.
-fn natural_join_columns(join: &JoinRef, left: &Binder, right: &Binder, location: Option<u64>) -> Result<Vec<String>> {
+fn natural_join_columns(
+    join: &JoinRef,
+    left: &Binder,
+    right: &Binder,
+    location: Option<u64>,
+) -> Result<Vec<String>> {
     let mut lhs_columns = Vec::new();
     let mut seen = CaseInsensitiveSet::default();
     for binding in left.bind_context.bindings() {
@@ -200,7 +220,11 @@ fn bind_join_side(
 }
 
 /// `left JOIN right ...` (DuckDB's `Binder::Bind(JoinRef &)`).
-pub fn bind_join(scope: &mut BindScope<'_>, join: &mut JoinRef, location: Option<u64>) -> Result<BoundStatement> {
+pub fn bind_join(
+    scope: &mut BindScope<'_>,
+    join: &mut JoinRef,
+    location: Option<u64>,
+) -> Result<BoundStatement> {
     let mut left_binder = scope.binder.child()?;
     let mut right_binder = scope.binder.child()?;
     let mut unnamed_index = scope.binder.unnamed_subquery_index;
@@ -210,7 +234,12 @@ pub fn bind_join(scope: &mut BindScope<'_>, join: &mut JoinRef, location: Option
     }
     let right = {
         let mut lateral = LateralBinder::new(&mut left_binder, Some(&mut *scope as &mut dyn Scope));
-        bind_join_side(&mut right_binder, &mut unnamed_index, &mut lateral, &mut join.right)?
+        bind_join_side(
+            &mut right_binder,
+            &mut unnamed_index,
+            &mut lateral,
+            &mut join.right,
+        )?
     };
     scope.binder.unnamed_subquery_index = unnamed_index;
     // Correlations of the right side with the left (depth 1) make this a LATERAL join;
@@ -273,13 +302,23 @@ pub fn bind_join(scope: &mut BindScope<'_>, join: &mut JoinRef, location: Option
             set_primary_binding(&mut set, join.join_type, &left_alias, &right_alias);
             let set: UsingSetRef = Arc::new(Mutex::new(set));
             // DuckDB's TransferUsingBinding, for both sides.
-            scope.binder.bind_context.add_using_binding(using_column, Arc::clone(&set));
+            scope
+                .binder
+                .bind_context
+                .add_using_binding(using_column, Arc::clone(&set));
             if let Some(left_set) = left_set {
-                left_binder.bind_context.remove_using_binding(using_column, left_set);
+                left_binder
+                    .bind_context
+                    .remove_using_binding(using_column, left_set);
             }
-            scope.binder.bind_context.add_using_binding(using_column, Arc::clone(&set));
+            scope
+                .binder
+                .bind_context
+                .add_using_binding(using_column, Arc::clone(&set));
             if let Some(right_set) = right_set {
-                right_binder.bind_context.remove_using_binding(using_column, right_set);
+                right_binder
+                    .bind_context
+                    .remove_using_binding(using_column, right_set);
             }
         }
     }

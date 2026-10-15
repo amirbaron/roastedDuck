@@ -66,7 +66,9 @@ const KEYWORDS: &[&str] = &[
 /// Whether `name` is a keyword of the SQL grammar, compared after ASCII lower-casing
 /// (DuckDB's `Parser::IsKeyword`).
 pub fn is_keyword(name: &str) -> bool {
-    KEYWORDS.binary_search(&name.to_ascii_lowercase().as_str()).is_ok()
+    KEYWORDS
+        .binary_search(&name.to_ascii_lowercase().as_str())
+        .is_ok()
 }
 
 /// Whether `name` must be double-quoted to read back as the same identifier

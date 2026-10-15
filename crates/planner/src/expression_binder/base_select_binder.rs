@@ -5,7 +5,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use rustdb_ast::{AggregateHandling, ExpressionType, OrderType, ParsedExpression, ParsedExpressionKind, expression_type_to_string};
+use rustdb_ast::{
+    AggregateHandling, ExpressionType, OrderType, ParsedExpression, ParsedExpressionKind,
+    expression_type_to_string,
+};
 use rustdb_common::{CaseInsensitiveMap, Error, Result};
 use rustdb_function::AggregateFunctionSet;
 use rustdb_types::{LogicalType, LogicalTypeId, Value};
@@ -14,18 +17,20 @@ use super::base::{BinderBase, expression_binder_accessors, expression_binder_bas
 use super::column_alias_binder::ColumnAliasBinder;
 use super::qualify::default_qualify_column_name;
 use super::simple_binders::AggregateBinder;
-use super::{BindError, BindResult, ExpressionBinder, is_potential_alias, peek_bound, take_bound, unsupported};
+use super::{
+    BindError, BindResult, ExpressionBinder, is_potential_alias, peek_bound, take_bound, unsupported,
+};
+use crate::ColumnBinding;
 use crate::binder::expression::{bind_column_ref, bind_expression_base, push_collation};
 use crate::binder::query_node::{BoundSelectNode, BoundUnnestNode};
 use crate::binder::{Binder, Scope};
 use crate::context::ClientContext;
 use crate::expression::{
-    AggregateType, BoundCaseCheck, BoundCaseExpression, BoundOrderByNode, BoundOrderModifier, BoundUnnestExpression,
-    BoundWindowExpression, Expression, ExpressionKind,
+    AggregateType, BoundCaseCheck, BoundCaseExpression, BoundOrderByNode, BoundOrderModifier,
+    BoundUnnestExpression, BoundWindowExpression, Expression, ExpressionKind,
 };
 use crate::function_binder::{FunctionBinder, add_cast_to_type};
 use crate::parsed_equality::ParsedExpressionMap;
-use crate::ColumnBinding;
 
 /// What the select list makes available to other clauses (DuckDB's `SelectBindState`).
 #[derive(Clone, Debug, Default)]
@@ -62,7 +67,11 @@ impl SelectBindState {
     /// Marks a select-list entry as volatile (DuckDB's `SetExpressionIsVolatile`).
     pub fn set_expression_is_volatile(&mut self, index: usize) -> Result<()> {
         if self.referenced_aliases.contains(&index) {
-            let alias = self.original_expressions.get(index).map(|e| e.alias.clone()).unwrap_or_default();
+            let alias = self
+                .original_expressions
+                .get(index)
+                .map(|e| e.alias.clone())
+                .unwrap_or_default();
             return Err(Error::binder(format!(
                 "Alias \"{alias}\" referenced - but the expression has side effects. This is not yet supported."
             )));
@@ -217,7 +226,11 @@ impl<'a> SelectBinder<'a> {
                 ColumnBinding::new(self.node.group_index, index as u64),
                 depth,
             );
-            let when = Expression::operator(ExpressionType::OperatorIsNull, LogicalType::BOOLEAN, vec![collated]);
+            let when = Expression::operator(
+                ExpressionType::OperatorIsNull,
+                LogicalType::BOOLEAN,
+                vec![collated],
+            );
             let then = Expression::constant(Value::null(return_type.clone()));
             return Ok(Expression::new(
                 ExpressionType::CaseExpr,
@@ -239,11 +252,22 @@ impl<'a> SelectBinder<'a> {
             .get(index)
             .map(|group| group.return_type.clone())
             .ok_or_else(|| Error::internal("group index out of range"))?;
-        Ok(Expression::column_ref(name, group_type, ColumnBinding::new(self.node.group_index, index as u64), depth).into())
+        Ok(Expression::column_ref(
+            name,
+            group_type,
+            ColumnBinding::new(self.node.group_index, index as u64),
+            depth,
+        )
+        .into())
     }
 
     /// HAVING's column references (DuckDB's `HavingBinder::BindColumnRef`).
-    fn bind_having_column_ref(&mut self, expr: &mut ParsedExpression, depth: u64, root_expression: bool) -> Result<BindResult> {
+    fn bind_having_column_ref(
+        &mut self,
+        expr: &mut ParsedExpression,
+        depth: u64,
+        root_expression: bool,
+    ) -> Result<BindResult> {
         let ParsedExpressionKind::ColumnRef(column) = &expr.kind else {
             return Err(Error::internal("expected a column reference"));
         };
@@ -257,13 +281,18 @@ impl<'a> SelectBinder<'a> {
                 .iter()
                 .rposition(|binding| binding.has_matching_binding(name))
             {
-                return Ok(self.base.state.lambda_bindings[index].bind(name, "", depth)?.into());
+                return Ok(self.base.state.lambda_bindings[index]
+                    .bind(name, "", depth)?
+                    .into());
             }
             if let Some(mut function) = self.sql_value_function(name) {
                 return self.bind_expression(&mut function, depth, false);
             }
         }
-        let SelectRole::Having { aggregate_handling, .. } = &self.role else {
+        let SelectRole::Having {
+            aggregate_handling, ..
+        } = &self.role
+        else {
             return Err(Error::internal("not a HAVING binder"));
         };
         let aggregate_handling = *aggregate_handling;
@@ -290,13 +319,21 @@ impl<'a> SelectBinder<'a> {
             unbound @ BindResult::Unbound(_) => return Ok(unbound),
         };
         let return_type = bound.return_type.clone();
-        let binding = ColumnBinding::new(self.node.group_index, self.node.groups.group_expressions.len() as u64);
+        let binding = ColumnBinding::new(
+            self.node.group_index,
+            self.node.groups.group_expressions.len() as u64,
+        );
         self.node.groups.group_expressions.push(bound);
         Ok(Expression::column_ref("", return_type, binding, 0).into())
     }
 
     /// QUALIFY's column references (DuckDB's `QualifyBinder::BindColumnRef`).
-    fn bind_qualify_column_ref(&mut self, expr: &mut ParsedExpression, depth: u64, root_expression: bool) -> Result<BindResult> {
+    fn bind_qualify_column_ref(
+        &mut self,
+        expr: &mut ParsedExpression,
+        depth: u64,
+        root_expression: bool,
+    ) -> Result<BindResult> {
         let text = expr.to_string();
         let location = expr.query_location;
         if let BindResult::Bound(bound) = bind_column_ref(self, expr, depth, root_expression)? {
@@ -315,7 +352,12 @@ impl<'a> SelectBinder<'a> {
     }
 
     /// Binds a select-list alias referenced from HAVING/QUALIFY (DuckDB's `ColumnAliasBinder::BindAlias`).
-    fn bind_alias(&mut self, expr: &mut ParsedExpression, depth: u64, root_expression: bool) -> Result<Option<BindResult>> {
+    fn bind_alias(
+        &mut self,
+        expr: &mut ParsedExpression,
+        depth: u64,
+        root_expression: bool,
+    ) -> Result<Option<BindResult>> {
         let index = match &mut self.role {
             SelectRole::Having { alias_binder, .. } | SelectRole::Qualify { alias_binder } => {
                 alias_binder.begin(&mut self.node.bind_state, expr)?
@@ -326,7 +368,8 @@ impl<'a> SelectBinder<'a> {
             return Ok(None);
         };
         let result = self.bind_expression(expr, depth, root_expression);
-        if let SelectRole::Having { alias_binder, .. } | SelectRole::Qualify { alias_binder } = &mut self.role {
+        if let SelectRole::Having { alias_binder, .. } | SelectRole::Qualify { alias_binder } = &mut self.role
+        {
             alias_binder.end(index);
         }
         result.map(Some)
@@ -361,7 +404,9 @@ impl<'a> SelectBinder<'a> {
             aggregate_binder.bind_child(child, 0, &mut error)?;
         }
         if ordered_set_agg == 2 {
-            return Err(Error::not_implemented("ordered-set aggregates (quantile WITHIN GROUP)"));
+            return Err(Error::not_implemented(
+                "ordered-set aggregates (quantile WITHIN GROUP)",
+            ));
         }
         for order in &mut function.order_bys.orders {
             if let ParsedExpressionKind::Constant(constant) = &order.expression.kind
@@ -405,7 +450,12 @@ impl<'a> SelectBinder<'a> {
         }
         drop(aggregate_binder);
         let filter = match &mut function.filter {
-            Some(filter) => Some(add_cast_to_type(&context, take_bound(filter)?, &LogicalType::BOOLEAN, false)?),
+            Some(filter) => Some(add_cast_to_type(
+                &context,
+                take_bound(filter)?,
+                &LogicalType::BOOLEAN,
+                false,
+            )?),
             None => None,
         };
         let mut children = Vec::with_capacity(function.children.len() + 1);
@@ -457,7 +507,12 @@ impl<'a> SelectBinder<'a> {
             AggregateType::NonDistinct
         };
         let aggregate = binder.bind_aggregate_function(overload, children, filter, aggr_type, order_bys)?;
-        let index = match self.node.aggregates.iter().position(|existing| existing.equals(&aggregate)) {
+        let index = match self
+            .node
+            .aggregates
+            .iter()
+            .position(|existing| existing.equals(&aggregate))
+        {
             Some(index) => index,
             None => {
                 self.node.aggregates.push(aggregate);
@@ -465,7 +520,11 @@ impl<'a> SelectBinder<'a> {
             }
         };
         let aggregate = &self.node.aggregates[index];
-        let name = if alias.is_empty() { aggregate.to_string() } else { alias };
+        let name = if alias.is_empty() {
+            aggregate.to_string()
+        } else {
+            alias
+        };
         Ok(Expression::column_ref(
             name,
             aggregate.return_type.clone(),
@@ -481,11 +540,18 @@ fn is_functionally_dependent(expression: &Expression, dependencies: &[Expression
     if expression.is_volatile() {
         return false;
     }
-    if expression.is_foldable() || dependencies.iter().any(|dependency| expression.equals(dependency)) {
+    if expression.is_foldable()
+        || dependencies
+            .iter()
+            .any(|dependency| expression.equals(dependency))
+    {
         return true;
     }
     let children = expression.children();
-    !children.is_empty() && children.into_iter().all(|child| is_functionally_dependent(child, dependencies))
+    !children.is_empty()
+        && children
+            .into_iter()
+            .all(|child| is_functionally_dependent(child, dependencies))
 }
 
 expression_binder_base!(SelectBinder {
@@ -524,7 +590,12 @@ expression_binder_base!(SelectBinder {
 impl ExpressionBinder for SelectBinder<'_> {
     expression_binder_accessors!();
 
-    fn bind_expression(&mut self, expr: &mut ParsedExpression, depth: u64, root_expression: bool) -> Result<BindResult> {
+    fn bind_expression(
+        &mut self,
+        expr: &mut ParsedExpression,
+        depth: u64,
+        root_expression: bool,
+    ) -> Result<BindResult> {
         if let Some(index) = self.try_bind_group(expr) {
             return self.bind_group(expr, depth, index);
         }
@@ -599,12 +670,16 @@ impl ExpressionBinder for SelectBinder<'_> {
         }
         if self.node.groups.group_expressions.is_empty() {
             return Ok(BindResult::Unbound(
-                Error::binder("GROUPING statement cannot be used without groups").with_position(location).into(),
+                Error::binder("GROUPING statement cannot be used without groups")
+                    .with_position(location)
+                    .into(),
             ));
         }
         if operator.children.len() >= 64 {
             return Ok(BindResult::Unbound(
-                Error::binder("GROUPING statement cannot have more than 64 groups").with_position(location).into(),
+                Error::binder("GROUPING statement cannot have more than 64 groups")
+                    .with_position(location)
+                    .into(),
             ));
         }
         let mut indexes = Vec::with_capacity(operator.children.len());
@@ -612,24 +687,42 @@ impl ExpressionBinder for SelectBinder<'_> {
             super::qualify_column_names(self.base.binder, child)?;
             let Some(index) = self.try_bind_group(child) else {
                 return Ok(BindResult::Unbound(
-                    Error::binder(format!("GROUPING child \"{}\" must be a grouping column", child.name()))
-                        .with_position(location)
-                        .into(),
+                    Error::binder(format!(
+                        "GROUPING child \"{}\" must be a grouping column",
+                        child.name()
+                    ))
+                    .with_position(location)
+                    .into(),
                 ));
             };
             indexes.push(index as u64);
         }
         let column = self.node.grouping_functions.len() as u64;
         self.node.grouping_functions.push(indexes);
-        Ok(Expression::column_ref(name, LogicalType::BIGINT, ColumnBinding::new(self.node.groupings_index, column), depth)
-            .into())
+        Ok(Expression::column_ref(
+            name,
+            LogicalType::BIGINT,
+            ColumnBinding::new(self.node.groupings_index, column),
+            depth,
+        )
+        .into())
     }
 
-    fn bind_aggregate(&mut self, expr: &mut ParsedExpression, functions: &AggregateFunctionSet, depth: u64) -> Result<BindResult> {
+    fn bind_aggregate(
+        &mut self,
+        expr: &mut ParsedExpression,
+        functions: &AggregateFunctionSet,
+        depth: u64,
+    ) -> Result<BindResult> {
         self.bind_select_aggregate(expr, functions, depth)
     }
 
-    fn bind_unnest(&mut self, expr: &mut ParsedExpression, depth: u64, root_expression: bool) -> Result<BindResult> {
+    fn bind_unnest(
+        &mut self,
+        expr: &mut ParsedExpression,
+        depth: u64,
+        root_expression: bool,
+    ) -> Result<BindResult> {
         if matches!(self.role, SelectRole::Select) {
             return self.bind_select_unnest(expr, depth, root_expression);
         }
@@ -647,11 +740,23 @@ impl ExpressionBinder for SelectBinder<'_> {
 
 /// The result type of a non-aggregate window function (DuckDB's
 /// `ResolveWindowExpressionType`).
-fn resolve_window_expression_type(window_type: ExpressionType, child_types: &[LogicalType]) -> Result<LogicalType> {
+fn resolve_window_expression_type(
+    window_type: ExpressionType,
+    child_types: &[LogicalType],
+) -> Result<LogicalType> {
     use ExpressionType as E;
     let parameter_count = match window_type {
-        E::WindowRank | E::WindowRankDense | E::WindowRowNumber | E::WindowPercentRank | E::WindowCumeDist => 0,
-        E::WindowNtile | E::WindowFirstValue | E::WindowLastValue | E::WindowLead | E::WindowLag | E::WindowFill => 1,
+        E::WindowRank
+        | E::WindowRankDense
+        | E::WindowRowNumber
+        | E::WindowPercentRank
+        | E::WindowCumeDist => 0,
+        E::WindowNtile
+        | E::WindowFirstValue
+        | E::WindowLastValue
+        | E::WindowLead
+        | E::WindowLag
+        | E::WindowFill => 1,
         E::WindowNthValue => 2,
         _ => {
             return Err(Error::internal(format!(
@@ -683,8 +788,19 @@ fn is_range_type(ty: &LogicalType) -> bool {
     use rustdb_types::PhysicalType as P;
     matches!(
         ty.physical_type(),
-        P::Int8 | P::Int16 | P::Int32 | P::Int64 | P::UInt8 | P::UInt16 | P::UInt32 | P::UInt64 | P::Int128 | P::UInt128
-            | P::Float | P::Double | P::Interval
+        P::Int8
+            | P::Int16
+            | P::Int32
+            | P::Int64
+            | P::UInt8
+            | P::UInt16
+            | P::UInt32
+            | P::UInt64
+            | P::Int128
+            | P::UInt128
+            | P::Float
+            | P::Double
+            | P::Interval
     )
 }
 
@@ -694,19 +810,38 @@ fn is_fill_type(ty: &LogicalType) -> bool {
     // DuckDB's `LogicalType::IsTemporal`.
     let temporal = matches!(
         ty.id(),
-        L::Date | L::Time | L::TimeNs | L::Timestamp | L::TimeTz | L::TimestampTz | L::TimestampSec | L::TimestampMs | L::TimestampNs
+        L::Date
+            | L::Time
+            | L::TimeNs
+            | L::Timestamp
+            | L::TimeTz
+            | L::TimestampTz
+            | L::TimestampSec
+            | L::TimestampMs
+            | L::TimestampNs
     );
     ty.is_numeric() || (temporal && ty.id() != L::TimeTz)
 }
 
 /// `order <op> bound` for a RANGE frame boundary (DuckDB's `BindRangeExpression`).
-fn bind_range_expression(context: &ClientContext, name: &str, bound: Expression, order: &Expression) -> Result<Expression> {
+fn bind_range_expression(
+    context: &ClientContext,
+    name: &str,
+    bound: Expression,
+    order: &Expression,
+) -> Result<Expression> {
     let location = bound.query_location;
     if bound.return_type.id() == LogicalTypeId::SqlNull {
         return Err(Error::binder("Window RANGE expressions cannot be NULL").with_position(location));
     }
     let entry = context
-        .get_entry("", "main", rustdb_catalog::CatalogType::ScalarFunction, name, false)?
+        .get_entry(
+            "",
+            "main",
+            rustdb_catalog::CatalogType::ScalarFunction,
+            name,
+            false,
+        )?
         .ok_or_else(|| Error::internal("function lookup returned nothing"))?;
     let rustdb_catalog::EntryKind::ScalarFunction(functions) = &entry.entry.kind else {
         return Err(Error::internal(format!("{name} is not a scalar function")));
@@ -733,7 +868,13 @@ impl SelectBinder<'_> {
         let context = self.base.binder.context.clone();
         let entry = if window_type == ExpressionType::WindowAggregate {
             context
-                .get_entry(&window.catalog, &window.schema, rustdb_catalog::CatalogType::ScalarFunction, &window.function_name, true)
+                .get_entry(
+                    &window.catalog,
+                    &window.schema,
+                    rustdb_catalog::CatalogType::ScalarFunction,
+                    &window.function_name,
+                    true,
+                )
                 .map_err(|error| error.with_position(location))?
         } else {
             None
@@ -742,18 +883,25 @@ impl SelectBinder<'_> {
             return Err(Error::binder("window function calls cannot be nested").with_position(location));
         }
         if depth > 0 {
-            return Err(Error::binder("correlated columns in window functions not supported").with_position(location));
+            return Err(
+                Error::binder("correlated columns in window functions not supported").with_position(location),
+            );
         }
         use rustdb_ast::WindowBoundary as B;
         let is_range = matches!(window.start, B::ExprPrecedingRange | B::ExprFollowingRange)
             || matches!(window.end, B::ExprPrecedingRange | B::ExprFollowingRange);
         if is_range && window.orders.len() != 1 {
-            return Err(Error::binder("RANGE frames must have only one ORDER BY expression").with_position(location));
+            return Err(
+                Error::binder("RANGE frames must have only one ORDER BY expression").with_position(location),
+            );
         }
         if window_type == ExpressionType::WindowFill
             && (window.arg_orders.len() > 1 || (window.arg_orders.is_empty() && window.orders.len() != 1))
         {
-            return Err(Error::binder("FILL functions must have only one ORDER BY expression").with_position(location));
+            return Err(
+                Error::binder("FILL functions must have only one ORDER BY expression")
+                    .with_position(location),
+            );
         }
         // Bind the children; nested window functions are rejected meanwhile.
         self.inside_window = true;
@@ -770,7 +918,10 @@ impl SelectBinder<'_> {
                 if is_range
                     && error.is_none()
                     && let Some(bound) = peek_bound(&order.expression)
-                    && matches!(bound.return_type.id(), LogicalTypeId::Time | LogicalTypeId::TimeTz)
+                    && matches!(
+                        bound.return_type.id(),
+                        LogicalTypeId::Time | LogicalTypeId::TimeTz
+                    )
                 {
                     return Err(Error::not_implemented("RANGE frames over TIME"));
                 }
@@ -831,8 +982,11 @@ impl SelectBinder<'_> {
             let functions = match entry.as_ref().map(|entry| &entry.entry.kind) {
                 Some(rustdb_catalog::EntryKind::AggregateFunction(functions)) => functions.clone(),
                 Some(_) => {
-                    return Err(Error::catalog(format!("{} is not an aggregate function", window.function_name))
-                        .with_position(location));
+                    return Err(Error::catalog(format!(
+                        "{} is not an aggregate function",
+                        window.function_name
+                    ))
+                    .with_position(location));
                 }
                 None => {
                     let error = context
@@ -882,9 +1036,16 @@ impl SelectBinder<'_> {
             Some(expr) => Some(take_bound(expr)?),
             None => None,
         };
-        let order_sense = window.orders.first().map(|order| context.config.resolve_order(order.order_type));
+        let order_sense = window
+            .orders
+            .first()
+            .map(|order| context.config.resolve_order(order.order_type));
         let range_operator = |preceding: bool, sense: OrderType| {
-            if (sense == OrderType::Ascending) == preceding { "-" } else { "+" }
+            if (sense == OrderType::Ascending) == preceding {
+                "-"
+            } else {
+                "+"
+            }
         };
         if matches!(window.start, B::ExprPrecedingRange | B::ExprFollowingRange)
             && let (Some(sense), Some(bound)) = (order_sense, start_expr.take())
@@ -931,7 +1092,10 @@ impl SelectBinder<'_> {
             bound_arg_orders.push(BoundOrderByNode::new(sense, null_order, expression));
         }
         if window_type == ExpressionType::WindowFill {
-            if !children.first().is_some_and(|child| is_fill_type(&child.return_type)) {
+            if !children
+                .first()
+                .is_some_and(|child| is_fill_type(&child.return_type))
+            {
                 return Err(Error::binder("FILL argument must support subtraction").with_position(location));
             }
             let order_type = bound_arg_orders
@@ -944,7 +1108,8 @@ impl SelectBinder<'_> {
             }
         }
         let cast = |expr: Option<Expression>, ty: &LogicalType| -> Result<Option<Expression>> {
-            expr.map(|expr| add_cast_to_type(&context, expr, ty, false)).transpose()
+            expr.map(|expr| add_cast_to_type(&context, expr, ty, false))
+                .transpose()
         };
         let take_optional = |expr: &mut Option<Box<ParsedExpression>>| -> Result<Option<Expression>> {
             expr.as_deref_mut().map(take_bound).transpose()
@@ -986,15 +1151,23 @@ impl SelectBinder<'_> {
     /// DuckDB's `SelectBinder::BindUnnest`: list unnests become references to the
     /// node's UNNEST operators, one per nesting level.
     #[allow(clippy::too_many_lines)]
-    fn bind_select_unnest(&mut self, expr: &mut ParsedExpression, depth: u64, root_expression: bool) -> Result<BindResult> {
+    fn bind_select_unnest(
+        &mut self,
+        expr: &mut ParsedExpression,
+        depth: u64,
+        root_expression: bool,
+    ) -> Result<BindResult> {
         let location = expr.query_location;
         let alias = expr.alias.clone();
-        let positioned = |message: String| BindResult::Unbound(BindError::binder(message).with_position(location));
+        let positioned =
+            |message: String| BindResult::Unbound(BindError::binder(message).with_position(location));
         let ParsedExpressionKind::Function(function) = &mut expr.kind else {
             return Err(Error::internal("expected an UNNEST call"));
         };
         if depth > 0 {
-            return Ok(positioned("UNNEST() for correlated expressions is not supported yet".to_owned()));
+            return Ok(positioned(
+                "UNNEST() for correlated expressions is not supported yet".to_owned(),
+            ));
         }
         if function.children.is_empty() {
             return Ok(positioned("UNNEST() requires at lease one argument".to_owned()));
@@ -1048,7 +1221,11 @@ impl SelectBinder<'_> {
                     }
                     "keep_parent_names" => keep_parent_names = value.as_bool() == Some(true),
                     "" => break,
-                    other => return Err(Error::binder(format!("Unsupported parameter \"{other}\" for unnest"))),
+                    other => {
+                        return Err(Error::binder(format!(
+                            "Unsupported parameter \"{other}\" for unnest"
+                        )));
+                    }
                 }
                 supported_argument = true;
             }
@@ -1118,7 +1295,8 @@ impl SelectBinder<'_> {
         }
         if struct_unnests > 0 && !root_expression {
             return Ok(positioned(
-                "UNNEST() on a struct column can only be applied as the root element of a SELECT expression".to_owned(),
+                "UNNEST() on a struct column can only be applied as the root element of a SELECT expression"
+                    .to_owned(),
             ));
         }
         let mut unnest_expr = child;
@@ -1132,7 +1310,11 @@ impl SelectBinder<'_> {
                 return_type.clone(),
                 ExpressionKind::Unnest(Box::new(BoundUnnestExpression { child: unnest_expr })),
             );
-            let name = if alias.is_empty() { result.to_string() } else { alias.clone() };
+            let name = if alias.is_empty() {
+                result.to_string()
+            } else {
+                alias.clone()
+            };
             let level = self.unnest_level + list_unnests - current_depth - 1;
             let (table_index, column_index) = match self.node.unnests.get_mut(&level) {
                 Some(node) => {
@@ -1151,7 +1333,12 @@ impl SelectBinder<'_> {
                     (index, 0)
                 }
             };
-            unnest_expr = Expression::column_ref(name, return_type.clone(), ColumnBinding::new(table_index, column_index), depth);
+            unnest_expr = Expression::column_ref(
+                name,
+                return_type.clone(),
+                ColumnBinding::new(table_index, column_index),
+                depth,
+            );
         }
         if struct_unnests > 0 {
             return Err(Error::not_implemented("UNNEST of structs"));

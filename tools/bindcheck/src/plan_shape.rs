@@ -40,7 +40,10 @@ pub fn rust_shape(op: &LogicalOperator) -> String {
     if let LogicalKind::Aggregate(aggregate) = &op.kind
         && !aggregate.groups.is_empty()
     {
-        text.push_str(&format!("g[{}]", join(aggregate.groups.iter().map(rust_expression))));
+        text.push_str(&format!(
+            "g[{}]",
+            join(aggregate.groups.iter().map(rust_expression))
+        ));
     }
     if !op.children.is_empty() {
         text.push_str(&format!("({})", join(op.children.iter().map(rust_shape))));

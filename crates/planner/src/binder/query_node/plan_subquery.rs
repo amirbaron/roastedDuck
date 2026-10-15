@@ -18,8 +18,8 @@ use crate::expression::{
 };
 use crate::function_binder::{FunctionBinder, add_cast_to_type};
 use crate::operator::{
-    BoundLimitNode, JoinCondition, LogicalAggregate, LogicalComparisonJoin, LogicalDependentJoin, LogicalKind,
-    LogicalOperator,
+    BoundLimitNode, JoinCondition, LogicalAggregate, LogicalComparisonJoin, LogicalDependentJoin,
+    LogicalKind, LogicalOperator,
 };
 use crate::{ColumnBinding, ExpressionType, LogicalOperatorType};
 
@@ -52,7 +52,12 @@ fn builtin_scalar(context: &ClientContext, name: &str, children: Vec<Expression>
 }
 
 /// A projection's or aggregate's single row as a new operator on top of `child`.
-fn aggregate(scope: &BindScope<'_>, aggregate_index: u64, expressions: Vec<Expression>, child: LogicalOperator) -> LogicalOperator {
+fn aggregate(
+    scope: &BindScope<'_>,
+    aggregate_index: u64,
+    expressions: Vec<Expression>,
+    child: LogicalOperator,
+) -> LogicalOperator {
     LogicalOperator::new(LogicalKind::Aggregate(Box::new(LogicalAggregate {
         group_index: scope.binder.generate_table_index(),
         aggregate_index,
@@ -66,7 +71,10 @@ fn aggregate(scope: &BindScope<'_>, aggregate_index: u64, expressions: Vec<Expre
 }
 
 /// Replaces `root` by `f(root)`.
-fn replace_root(root: &mut LogicalOperator, f: impl FnOnce(LogicalOperator) -> Result<LogicalOperator>) -> Result<()> {
+fn replace_root(
+    root: &mut LogicalOperator,
+    f: impl FnOnce(LogicalOperator) -> Result<LogicalOperator>,
+) -> Result<()> {
     let placeholder = LogicalOperator::new(LogicalKind::DummyScan { table_index: 0 });
     let previous = std::mem::replace(root, placeholder);
     *root = f(previous)?;
@@ -118,7 +126,8 @@ fn plan_uncorrelated_subquery(
                 .map(|binding| binding.table_index)
                 .ok_or_else(|| Error::internal("scalar subquery without columns"))?;
             let error_on_multiple_rows = context.config.scalar_subquery_error_on_multiple_rows;
-            let first_child = Expression::column_ref("", return_type.clone(), ColumnBinding::new(table_index, 0), 0);
+            let first_child =
+                Expression::column_ref("", return_type.clone(), ColumnBinding::new(table_index, 0), 0);
             let mut expressions = vec![builtin_aggregate(&context, "first", vec![first_child])?];
             if error_on_multiple_rows {
                 expressions.push(builtin_aggregate(&context, "count_star", Vec::new())?);
@@ -129,8 +138,10 @@ fn plan_uncorrelated_subquery(
             let mut plan = aggregate(scope, aggregate_index, expressions, plan);
             if let Some(count_type) = count_type {
                 let projection_index = scope.binder.generate_table_index();
-                let first_ref = Expression::column_ref("", first_type.clone(), ColumnBinding::new(aggregate_index, 0), 0);
-                let count_ref = Expression::column_ref("", count_type, ColumnBinding::new(aggregate_index, 1), 0);
+                let first_ref =
+                    Expression::column_ref("", first_type.clone(), ColumnBinding::new(aggregate_index, 0), 0);
+                let count_ref =
+                    Expression::column_ref("", count_type, ColumnBinding::new(aggregate_index, 1), 0);
                 let count_check = Expression::comparison(
                     ExpressionType::CompareGreaterthan,
                     count_ref,
@@ -158,24 +169,38 @@ fn plan_uncorrelated_subquery(
                 aggregate_index = projection_index;
             }
             replace_root(root, |root| Ok(LogicalOperator::cross_product(root, plan)))?;
-            Ok(Expression::column_ref(name, return_type, ColumnBinding::new(aggregate_index, 0), 0))
+            Ok(Expression::column_ref(
+                name,
+                return_type,
+                ColumnBinding::new(aggregate_index, 0),
+                0,
+            ))
         }
         _ => {
             // ANY: a MARK join, giving TRUE, FALSE or NULL.
             let plan_columns = plan.column_bindings();
             let mark_index = scope.binder.generate_table_index();
-            let mut join = LogicalComparisonJoin::new(JoinType::Mark, LogicalOperatorType::LogicalComparisonJoin);
+            let mut join =
+                LogicalComparisonJoin::new(JoinType::Mark, LogicalOperatorType::LogicalComparisonJoin);
             join.mark_index = mark_index;
             let children = std::mem::take(&mut subquery.children);
             if children.len() == 1 && subquery.child_types.len() > 1 {
                 // `(a, b) < ANY(...)`: compare structs built from the subquery columns.
                 let mut struct_children = Vec::with_capacity(subquery.child_types.len());
-                for (i, (child_type, compare_type)) in subquery.child_types.iter().zip(&subquery.child_targets).enumerate() {
+                for (i, (child_type, compare_type)) in subquery
+                    .child_types
+                    .iter()
+                    .zip(&subquery.child_targets)
+                    .enumerate()
+                {
                     let column = Expression::column_ref("", child_type.clone(), plan_columns[i], 0);
                     struct_children.push(add_cast_to_type(&context, column, compare_type, false)?);
                 }
                 let right = builtin_scalar(&context, "row", struct_children)?;
-                let left = children.into_iter().next().ok_or_else(|| Error::internal("ANY without a child"))?;
+                let left = children
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| Error::internal("ANY without a child"))?;
                 let left_type = left.return_type.clone();
                 let right_type = right.return_type.clone();
                 join.conditions.push(JoinCondition {
@@ -197,9 +222,15 @@ fn plan_uncorrelated_subquery(
                 }
             }
             replace_root(root, |root| {
-                Ok(LogicalOperator::new(LogicalKind::ComparisonJoin(Box::new(join))).with_children(vec![root, plan]))
+                Ok(LogicalOperator::new(LogicalKind::ComparisonJoin(Box::new(join)))
+                    .with_children(vec![root, plan]))
             })?;
-            Ok(Expression::column_ref(name, return_type, ColumnBinding::new(mark_index, 0), 0))
+            Ok(Expression::column_ref(
+                name,
+                return_type,
+                ColumnBinding::new(mark_index, 0),
+                0,
+            ))
         }
     }
 }
@@ -218,7 +249,12 @@ fn create_duplicate_eliminated_join(
     for column in correlated_columns {
         join.join
             .duplicate_eliminated_columns
-            .push(Expression::column_ref("", column.logical_type.clone(), column.binding, 0));
+            .push(Expression::column_ref(
+                "",
+                column.logical_type.clone(),
+                column.binding,
+                0,
+            ));
         join.join.mark_types.push(column.logical_type.clone());
     }
     (join, original_plan)
@@ -241,7 +277,10 @@ fn perform_delim_on_type(ty: &LogicalType) -> bool {
 /// DuckDB's `PerformDuplicateElimination`: when a correlated column cannot be grouped,
 /// a `delim_index` row number column is added and used instead.
 fn perform_duplicate_elimination(scope: &BindScope<'_>, correlated_columns: &mut CorrelatedColumns) -> bool {
-    if correlated_columns.iter().all(|column| perform_delim_on_type(&column.logical_type)) {
+    if correlated_columns
+        .iter()
+        .all(|column| perform_delim_on_type(&column.logical_type))
+    {
         return true;
     }
     correlated_columns.add_column(CorrelatedColumnInfo {
@@ -278,25 +317,40 @@ fn plan_correlated_subquery(
                 .last()
                 .ok_or_else(|| Error::internal("scalar subquery without columns"))?;
             replace_root(root, |root| {
-                let (mut join, root) =
-                    create_duplicate_eliminated_join(&correlated_columns, JoinType::Single, root, perform_delim);
+                let (mut join, root) = create_duplicate_eliminated_join(
+                    &correlated_columns,
+                    JoinType::Single,
+                    root,
+                    perform_delim,
+                );
                 join.subquery_type = SubqueryType::Scalar;
                 join.any_join = false;
-                Ok(LogicalOperator::new(LogicalKind::DependentJoin(Box::new(join))).with_children(vec![root, plan]))
+                Ok(LogicalOperator::new(LogicalKind::DependentJoin(Box::new(join)))
+                    .with_children(vec![root, plan]))
             })?;
             Ok(Expression::column_ref(name, return_type, plan_column, 0))
         }
         SubqueryType::Exists => {
             let mark_index = scope.binder.generate_table_index();
             replace_root(root, |root| {
-                let (mut join, root) =
-                    create_duplicate_eliminated_join(&correlated_columns, JoinType::Mark, root, perform_delim);
+                let (mut join, root) = create_duplicate_eliminated_join(
+                    &correlated_columns,
+                    JoinType::Mark,
+                    root,
+                    perform_delim,
+                );
                 join.subquery_type = SubqueryType::Exists;
                 join.join.mark_index = mark_index;
                 join.any_join = true;
-                Ok(LogicalOperator::new(LogicalKind::DependentJoin(Box::new(join))).with_children(vec![root, plan]))
+                Ok(LogicalOperator::new(LogicalKind::DependentJoin(Box::new(join)))
+                    .with_children(vec![root, plan]))
             })?;
-            Ok(Expression::column_ref(name, return_type, ColumnBinding::new(mark_index, 0), 0))
+            Ok(Expression::column_ref(
+                name,
+                return_type,
+                ColumnBinding::new(mark_index, 0),
+                0,
+            ))
         }
         _ => {
             let mark_index = scope.binder.generate_table_index();
@@ -310,8 +364,12 @@ fn plan_correlated_subquery(
             let child_targets = subquery.child_targets.clone();
             let comparison_type = subquery.comparison_type;
             replace_root(root, |root| {
-                let (mut join, root) =
-                    create_duplicate_eliminated_join(&correlated_columns, JoinType::Mark, root, perform_delim);
+                let (mut join, root) = create_duplicate_eliminated_join(
+                    &correlated_columns,
+                    JoinType::Mark,
+                    root,
+                    perform_delim,
+                );
                 join.subquery_type = SubqueryType::Any;
                 join.join.mark_index = mark_index;
                 join.any_join = true;
@@ -319,15 +377,25 @@ fn plan_correlated_subquery(
                 join.child_types = child_types;
                 join.child_targets = child_targets;
                 join.comparison_type = comparison_type;
-                Ok(LogicalOperator::new(LogicalKind::DependentJoin(Box::new(join))).with_children(vec![root, plan]))
+                Ok(LogicalOperator::new(LogicalKind::DependentJoin(Box::new(join)))
+                    .with_children(vec![root, plan]))
             })?;
-            Ok(Expression::column_ref(name, return_type, ColumnBinding::new(mark_index, 0), 0))
+            Ok(Expression::column_ref(
+                name,
+                return_type,
+                ColumnBinding::new(mark_index, 0),
+                0,
+            ))
         }
     }
 }
 
 /// Plans one subquery below `root` (DuckDB's `Binder::PlanSubquery`).
-fn plan_subquery(scope: &mut BindScope<'_>, expression: Expression, root: &mut LogicalOperator) -> Result<Expression> {
+fn plan_subquery(
+    scope: &mut BindScope<'_>,
+    expression: Expression,
+    root: &mut LogicalOperator,
+) -> Result<Expression> {
     let name = expression.name();
     let return_type = expression.return_type.clone();
     let ExpressionKind::Subquery(mut subquery) = expression.kind else {
@@ -348,7 +416,11 @@ fn plan_subquery(scope: &mut BindScope<'_>, expression: Expression, root: &mut L
 
 /// Plans the subqueries in `expression` as joins below `root` and replaces them with
 /// references to the join's output (DuckDB's `Binder::PlanSubqueries`).
-pub fn plan_subqueries(scope: &mut BindScope<'_>, expression: &mut Expression, root: &mut LogicalOperator) -> Result<()> {
+pub fn plan_subqueries(
+    scope: &mut BindScope<'_>,
+    expression: &mut Expression,
+    root: &mut LogicalOperator,
+) -> Result<()> {
     if !expression.has_subquery() {
         return Ok(());
     }
@@ -375,8 +447,10 @@ pub fn plan_lateral_join(
     let mut arbitrary_expressions = Vec::new();
     if let Some(condition) = condition {
         if condition.has_subquery() {
-            return Err(Error::binder("Subqueries are not supported in LATERAL join conditions")
-                .with_position(condition.query_location));
+            return Err(
+                Error::binder("Subqueries are not supported in LATERAL join conditions")
+                    .with_position(condition.query_location),
+            );
         }
         let context = scope.binder.context.clone();
         extract_join_conditions_from(
@@ -413,7 +487,8 @@ pub fn recursive_dependent_join_planner(scope: &mut BindScope<'_>, op: &mut Logi
             &mut op.children[i],
             LogicalOperator::new(LogicalKind::DummyScan { table_index: 0 }),
         );
-        let planned = op.try_for_each_expression_mut(|expression| plan_subqueries(scope, expression, &mut child));
+        let planned =
+            op.try_for_each_expression_mut(|expression| plan_subqueries(scope, expression, &mut child));
         op.children[i] = child;
         planned?;
     }

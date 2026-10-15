@@ -6,10 +6,10 @@ use rustdb_ast::JoinType;
 use rustdb_common::{Error, Result};
 use rustdb_types::LogicalType;
 
+use crate::ColumnBinding;
 use crate::expression::{Expression, ExpressionKind};
 use crate::generated::enums::LogicalOperatorType;
 use crate::operator::{LogicalKind, LogicalOperator};
-use crate::ColumnBinding;
 
 /// Resolves the column references of a plan.
 #[derive(Debug, Default)]
@@ -82,14 +82,22 @@ impl ColumnBindingResolver {
                 let (delim_index, other_index) = if flipped { (1, 0) } else { (0, 1) };
                 self.visit_operator(&mut op.children[delim_index])?;
                 for condition in &mut join.conditions {
-                    self.visit_expression(if flipped { &mut condition.right } else { &mut condition.left })?;
+                    self.visit_expression(if flipped {
+                        &mut condition.right
+                    } else {
+                        &mut condition.left
+                    })?;
                 }
                 for expr in &mut join.duplicate_eliminated_columns {
                     self.visit_expression(expr)?;
                 }
                 self.visit_operator(&mut op.children[other_index])?;
                 for condition in &mut join.conditions {
-                    self.visit_expression(if flipped { &mut condition.left } else { &mut condition.right })?;
+                    self.visit_expression(if flipped {
+                        &mut condition.left
+                    } else {
+                        &mut condition.right
+                    })?;
                 }
                 self.set_bindings(op);
                 Ok(())
@@ -130,7 +138,11 @@ impl ColumnBindingResolver {
                     expr.alias,
                     binding.table_index,
                     binding.column_index,
-                    self.bindings.iter().map(ToString::to_string).collect::<Vec<_>>().join(" ")
+                    self.bindings
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(" ")
                 )));
             };
             if let Some(ty) = self.types.get(index)

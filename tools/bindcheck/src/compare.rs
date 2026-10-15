@@ -35,7 +35,8 @@ fn guarded<T>(run: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
 /// Runs a statement parsed by DuckDB (`json`) in a fresh in-memory rustdb database.
 pub fn run_rustdb(sql: &str, json: &str) -> RustOutcome {
     let statement = || -> Result<SqlStatement, String> {
-        let mut statements = rustdb_ast::json::deserialize_statements(json).map_err(|error| error.to_string())?;
+        let mut statements =
+            rustdb_ast::json::deserialize_statements(json).map_err(|error| error.to_string())?;
         if statements.len() != 1 {
             return Err(format!("<{} statements>", statements.len()));
         }
@@ -75,7 +76,9 @@ fn render_result(result: &MaterializedResult) -> Result<Table, String> {
             values.push(if value.is_null() {
                 "NULL".to_owned()
             } else {
-                value.to_varchar().map_err(|error| format!("<render failed> {error}"))?
+                value
+                    .to_varchar()
+                    .map_err(|error| format!("<render failed> {error}"))?
             });
         }
         rows.push(values);
@@ -259,14 +262,20 @@ fn environment_gap(expected: &Result<Table, String>, actual: &str) -> Option<Str
         && actual_line.contains("is a table function but it was used as a scalar function")
         && expected_line != Some(actual_line)
     {
-        return Some(format!("missing scalar function {}", rest.split('"').next().unwrap_or(rest)));
+        return Some(format!(
+            "missing scalar function {}",
+            rest.split('"').next().unwrap_or(rest)
+        ));
     }
     if let Some(rest) = actual_line.split("Unimplemented type for cast (").nth(1)
         && expected_line != Some(actual_line)
     {
         return Some(format!("missing cast {}", rest.trim_end_matches(')')));
     }
-    if let Some(rest) = actual_line.split("No function matches the given name and argument types '").nth(1) {
+    if let Some(rest) = actual_line
+        .split("No function matches the given name and argument types '")
+        .nth(1)
+    {
         let call = rest.split("'.").next().unwrap_or(rest);
         let name = call.split('(').next().unwrap_or(call);
         let duckdb_also = expected_line.is_some_and(|line| line.contains("No function matches"));
@@ -279,7 +288,10 @@ fn environment_gap(expected: &Result<Table, String>, actual: &str) -> Option<Str
     if expected.is_ok()
         && let Some(rest) = actual_line.strip_prefix("Catalog Error: Table with name ")
     {
-        return Some(format!("missing system table {}", rest.trim_end_matches(" does not exist!")));
+        return Some(format!(
+            "missing system table {}",
+            rest.trim_end_matches(" does not exist!")
+        ));
     }
     None
 }
@@ -356,8 +368,8 @@ impl Report {
             let _ = writeln!(text, "  {category:>16}: {count}");
         }
         let comparable = total - self.counts.get("needs tables").copied().unwrap_or(0);
-        let passed =
-            self.counts.get("pass").copied().unwrap_or(0) + self.counts.get("pass (plan)").copied().unwrap_or(0);
+        let passed = self.counts.get("pass").copied().unwrap_or(0)
+            + self.counts.get("pass (plan)").copied().unwrap_or(0);
         if comparable > 0 {
             let _ = writeln!(
                 text,
@@ -381,7 +393,13 @@ impl Report {
         for (label, (count, samples)) in buckets {
             let _ = writeln!(text, "=== {label} ({count})");
             for sample in samples {
-                let _ = writeln!(text, "--- #{} {}\n{}", sample.id, sample.location, sample.sql.trim_end());
+                let _ = writeln!(
+                    text,
+                    "--- #{} {}\n{}",
+                    sample.id,
+                    sample.location,
+                    sample.sql.trim_end()
+                );
                 let _ = writeln!(text, "-- duckdb:\n{}", sample.expected.trim_end());
                 let _ = writeln!(text, "-- rustdb:\n{}", sample.actual.trim_end());
             }

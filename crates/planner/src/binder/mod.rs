@@ -26,12 +26,12 @@ use rustdb_ast::{ParsedExpression, SetOperationType};
 use rustdb_common::{Error, Result};
 use rustdb_types::LogicalType;
 
+use crate::ColumnBinding;
 use crate::context::ClientContext;
 use crate::expression::Expression;
 use crate::expression_binder::ExpressionBinder;
 use crate::operator::LogicalOperator;
 use crate::prepared::{BoundParameterMap, StatementProperties};
-use crate::ColumnBinding;
 
 pub use bind_context::{BindContext, UsingColumnSet, UsingSetRef};
 pub use binding::{Binding, BindingAlias, BindingKind, CteBindState, DUMMY_NAME};
@@ -289,7 +289,11 @@ impl Binder {
 
     /// The statement's properties.
     pub fn with_properties<T>(&self, f: impl FnOnce(&mut StatementProperties) -> T) -> T {
-        f(&mut self.global.properties.lock().unwrap_or_else(PoisonError::into_inner))
+        f(&mut self
+            .global
+            .properties
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner))
     }
 
     /// A copy of the statement's properties.
@@ -299,12 +303,20 @@ impl Binder {
 
     /// Installs the parameter map of a statement being prepared or executed.
     pub fn set_parameters(&self, parameters: BoundParameterMap) {
-        *self.global.parameters.lock().unwrap_or_else(PoisonError::into_inner) = Some(parameters);
+        *self
+            .global
+            .parameters
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(parameters);
     }
 
     /// Removes and returns the parameter map.
     pub fn take_parameters(&self) -> Option<BoundParameterMap> {
-        self.global.parameters.lock().unwrap_or_else(PoisonError::into_inner).take()
+        self.global
+            .parameters
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
     }
 
     /// Runs `f` on the parameter map; `None` if the statement cannot have parameters.
@@ -393,7 +405,9 @@ pub struct BindScope<'a> {
 
 impl std::fmt::Debug for BindScope<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BindScope").field("binder", &self.binder).finish_non_exhaustive()
+        f.debug_struct("BindScope")
+            .field("binder", &self.binder)
+            .finish_non_exhaustive()
     }
 }
 

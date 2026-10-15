@@ -17,8 +17,8 @@ mod plan_joinref;
 
 pub use plan_joinref::extract_join_conditions_from;
 
-use super::binding::{Binding, BindingAlias, BindingKind};
 use super::bind_context::alias_column_names;
+use super::binding::{Binding, BindingAlias, BindingKind};
 use super::query_node::{bind_node, plan_subqueries};
 use super::{BindScope, Binder, BinderType, BoundStatement, Scope};
 use crate::expression_binder::{ExpressionBinder, InsertBinder, expression_return_type};
@@ -37,7 +37,9 @@ pub fn bind_table_ref(scope: &mut BindScope<'_>, table_ref: &mut TableRef) -> Re
         )),
         TableRefKind::ExpressionList(list) => bind_expression_list(scope, list, &table_ref.alias),
         TableRefKind::Subquery(subquery) => bind_subquery_ref(scope, subquery, &table_ref.alias),
-        TableRefKind::BaseTable(base) => bind_base_table(scope, base, &table_ref.alias, table_ref.query_location),
+        TableRefKind::BaseTable(base) => {
+            bind_base_table(scope, base, &table_ref.alias, table_ref.query_location)
+        }
         TableRefKind::Join(join) => bind_joinref::bind_join(scope, join, table_ref.query_location),
         TableRefKind::TableFunction(function) => bind_table_function::bind_table_function(
             scope,
@@ -49,13 +51,18 @@ pub fn bind_table_ref(scope: &mut BindScope<'_>, table_ref: &mut TableRef) -> Re
         TableRefKind::Show(show) => bind_showref::bind_show(scope, show),
     }?;
     if let Some(sample_options) = table_ref.sample.take() {
-        result.plan = LogicalOperator::new(LogicalKind::Sample { sample_options }).with_children(vec![result.plan]);
+        result.plan =
+            LogicalOperator::new(LogicalKind::Sample { sample_options }).with_children(vec![result.plan]);
     }
     Ok(result)
 }
 
 /// `VALUES (...), (...)` (DuckDB's `Binder::Bind(ExpressionListRef &)`).
-fn bind_expression_list(scope: &mut BindScope<'_>, list: &mut ExpressionListRef, alias: &str) -> Result<BoundStatement> {
+fn bind_expression_list(
+    scope: &mut BindScope<'_>,
+    list: &mut ExpressionListRef,
+    alias: &str,
+) -> Result<BoundStatement> {
     let mut types = list.expected_types.clone();
     let mut names = list.expected_names.clone();
     let previous_can_contain_nulls = scope.binder.can_contain_nulls;
@@ -90,7 +97,10 @@ fn bind_expression_list(scope: &mut BindScope<'_>, list: &mut ExpressionListRef,
         let context = scope.context.clone();
         for row in &mut values {
             for (i, value) in row.iter_mut().enumerate() {
-                let expression = std::mem::replace(value, crate::expression::Expression::constant(rustdb_types::Value::default()));
+                let expression = std::mem::replace(
+                    value,
+                    crate::expression::Expression::constant(rustdb_types::Value::default()),
+                );
                 *value = add_cast_to_type(&context, expression, &types[i], false)?;
             }
         }
@@ -117,7 +127,11 @@ fn bind_expression_list(scope: &mut BindScope<'_>, list: &mut ExpressionListRef,
 }
 
 /// A subquery in FROM (DuckDB's `Binder::Bind(SubqueryRef &)`).
-pub(crate) fn bind_subquery_ref(scope: &mut BindScope<'_>, subquery: &mut SubqueryRef, alias: &str) -> Result<BoundStatement> {
+pub(crate) fn bind_subquery_ref(
+    scope: &mut BindScope<'_>,
+    subquery: &mut SubqueryRef,
+    alias: &str,
+) -> Result<BoundStatement> {
     let mut binder = scope.binder.child()?;
     binder.can_contain_nulls = true;
     let bound = {
@@ -127,7 +141,11 @@ pub(crate) fn bind_subquery_ref(scope: &mut BindScope<'_>, subquery: &mut Subque
         };
         bind_node(&mut child_scope, &mut subquery.subquery.node)?
     };
-    binder.alias = if alias.is_empty() { "unnamed_subquery".to_owned() } else { alias.to_owned() };
+    binder.alias = if alias.is_empty() {
+        "unnamed_subquery".to_owned()
+    } else {
+        alias.to_owned()
+    };
     let bind_index = bound.plan.root_index()?;
     let subquery_alias = if alias.is_empty() {
         scope.binder.next_unnamed_subquery_name()
@@ -181,7 +199,11 @@ enum CteLookup {
 
 /// Looks up a CTE in `holder` and the binders around it, binding it on first reference
 /// (DuckDB's `Binder::GetCTEBinding` + `CTEBinding::Reference` + `CTEBindState::Bind`).
-fn reference_cte(holder: &mut Binder, defining: Option<&mut dyn Scope>, alias: &BindingAlias) -> Result<CteLookup> {
+fn reference_cte(
+    holder: &mut Binder,
+    defining: Option<&mut dyn Scope>,
+    alias: &BindingAlias,
+) -> Result<CteLookup> {
     let mut circular = false;
     if let Some(binding) = holder.bind_context.cte_binding(alias) {
         if binding.can_be_referenced() {
@@ -193,7 +215,11 @@ fn reference_cte(holder: &mut Binder, defining: Option<&mut dyn Scope>, alias: &
                 .cte_binding_mut(alias)
                 .ok_or_else(|| Error::internal("CTE binding disappeared"))?;
             binding.reference()?;
-            return Ok(CteLookup::Found(binding.index, binding.names.clone(), binding.types.clone()));
+            return Ok(CteLookup::Found(
+                binding.index,
+                binding.names.clone(),
+                binding.types.clone(),
+            ));
         }
         circular = true;
     }
@@ -269,9 +295,15 @@ fn bind_base_table(
     };
     if let CteLookup::Found(cte_index, cte_names, types) = lookup {
         let index = scope.generate_table_index();
-        let alias = if alias.is_empty() { base.table_name.clone() } else { alias.to_owned() };
+        let alias = if alias.is_empty() {
+            base.table_name.clone()
+        } else {
+            alias.to_owned()
+        };
         let names = alias_column_names(&alias, &cte_names, &base.column_name_alias)?;
-        scope.bind_context.add_generic_binding(index, &alias, names.clone(), types.clone())?;
+        scope
+            .bind_context
+            .add_generic_binding(index, &alias, names.clone(), types.clone())?;
         let plan = LogicalOperator::new(LogicalKind::CteRef {
             table_index: index,
             cte_index,
@@ -285,11 +317,20 @@ fn bind_base_table(
     if base.at_clause.is_some() {
         return Err(Error::not_implemented("AT clauses (time travel)"));
     }
-    if !base.schema_name.is_empty() && base.catalog_name.is_empty() && scope.context.catalog(&base.schema_name).is_some() {
+    if !base.schema_name.is_empty()
+        && base.catalog_name.is_empty()
+        && scope.context.catalog(&base.schema_name).is_some()
+    {
         base.catalog_name = std::mem::take(&mut base.schema_name);
     }
     let context = scope.context.clone();
-    let found = context.get_entry(&base.catalog_name, &base.schema_name, CatalogType::Table, &base.table_name, true)?;
+    let found = context.get_entry(
+        &base.catalog_name,
+        &base.schema_name,
+        CatalogType::Table,
+        &base.table_name,
+        true,
+    )?;
     let Some(found) = found else {
         if matches!(lookup, CteLookup::Circular) {
             return Err(Error::binder(format!(
@@ -299,7 +340,13 @@ fn bind_base_table(
             .with_position(location));
         }
         let error = context
-            .get_entry(&base.catalog_name, &base.schema_name, CatalogType::Table, &base.table_name, false)
+            .get_entry(
+                &base.catalog_name,
+                &base.schema_name,
+                CatalogType::Table,
+                &base.table_name,
+                false,
+            )
             .err()
             .unwrap_or_else(|| Error::internal("table lookup"));
         // Missing entries point at the table name; a missing catalog has no position.
@@ -312,7 +359,11 @@ fn bind_base_table(
     match &found.entry.kind {
         EntryKind::Table(table) => {
             let table_index = scope.generate_table_index();
-            let types: Vec<LogicalType> = table.columns.iter().map(|column| column.logical_type.clone()).collect();
+            let types: Vec<LogicalType> = table
+                .columns
+                .iter()
+                .map(|column| column.logical_type.clone())
+                .collect();
             let column_names: Vec<String> = table.columns.iter().map(|column| column.name.clone()).collect();
             let names = alias_column_names(&base.table_name, &column_names, &base.column_name_alias)?;
             let binding_alias = if alias.is_empty() {
@@ -325,7 +376,11 @@ fn bind_base_table(
                 BindingKind::Table {
                     bound_column_ids: Arc::clone(&shared_column_ids),
                     entry: Some(Arc::clone(&found.entry)),
-                    virtual_columns: vec![(crate::operator::COLUMN_IDENTIFIER_ROW_ID, "rowid".to_owned(), LogicalType::BIGINT)],
+                    virtual_columns: vec![(
+                        crate::operator::COLUMN_IDENTIFIER_ROW_ID,
+                        "rowid".to_owned(),
+                        LogicalType::BIGINT,
+                    )],
                 },
                 binding_alias,
                 types.clone(),
@@ -376,7 +431,9 @@ fn bind_base_table(
                 bind_subquery_ref(&mut view_scope, &mut subquery, alias)?
             };
             if !view_binder.correlated_columns.is_empty() {
-                return Err(Error::binder("Contents of view were altered - view bound correlated columns"));
+                return Err(Error::binder(
+                    "Contents of view were altered - view bound correlated columns",
+                ));
             }
             let index = bound.plan.root_index()?;
             let names = alias_column_names(alias, &bound.names, &subquery.column_name_alias)?;

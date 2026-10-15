@@ -278,24 +278,47 @@ pub struct LogicalDependentJoin {
 #[derive(Clone, Debug)]
 pub enum LogicalKind {
     /// Computes `expressions` for each input row.
-    Projection { table_index: u64 },
+    Projection {
+        table_index: u64,
+    },
     /// Keeps rows where all `expressions` are true.
-    Filter { projection_map: Vec<u64> },
+    Filter {
+        projection_map: Vec<u64>,
+    },
     Aggregate(Box<LogicalAggregate>),
     /// Window functions (`expressions`) computed over the input.
-    Window { window_index: u64 },
+    Window {
+        window_index: u64,
+    },
     /// `UNNEST` of list `expressions`.
-    Unnest { unnest_index: u64 },
-    Limit { limit: BoundLimitNode, offset: BoundLimitNode },
-    Order { orders: Vec<BoundOrderByNode>, projection_map: Vec<u64> },
-    TopN { orders: Vec<BoundOrderByNode>, limit: u64, offset: u64 },
+    Unnest {
+        unnest_index: u64,
+    },
+    Limit {
+        limit: BoundLimitNode,
+        offset: BoundLimitNode,
+    },
+    Order {
+        orders: Vec<BoundOrderByNode>,
+        projection_map: Vec<u64>,
+    },
+    TopN {
+        orders: Vec<BoundOrderByNode>,
+        limit: u64,
+        offset: u64,
+    },
     Distinct {
         distinct_type: DistinctType,
         distinct_targets: Vec<Expression>,
         order_by: Option<BoundOrderModifier>,
     },
-    Sample { sample_options: Box<SampleOptions> },
-    Pivot { pivot_index: u64, bound_pivot: Box<BoundPivotInfo> },
+    Sample {
+        sample_options: Box<SampleOptions>,
+    },
+    Pivot {
+        pivot_index: u64,
+        bound_pivot: Box<BoundPivotInfo>,
+    },
     Get(Box<LogicalGet>),
     /// Scans materialised data (DuckDB's `LogicalColumnDataGet`).
     ChunkGet {
@@ -304,7 +327,10 @@ pub enum LogicalKind {
         collection: Arc<[DataChunk]>,
     },
     /// The duplicate-eliminated input of a delim join.
-    DelimGet { table_index: u64, chunk_types: Vec<LogicalType> },
+    DelimGet {
+        table_index: u64,
+        chunk_types: Vec<LogicalType>,
+    },
     /// Rows of expressions (`VALUES`), evaluated against a child row.
     ExpressionGet {
         table_index: u64,
@@ -312,7 +338,9 @@ pub enum LogicalKind {
         expressions: Vec<Vec<Expression>>,
     },
     /// A single row with no columns (`SELECT 42`).
-    DummyScan { table_index: u64 },
+    DummyScan {
+        table_index: u64,
+    },
     /// No rows at all.
     EmptyResult {
         return_types: Vec<LogicalType>,
@@ -329,7 +357,10 @@ pub enum LogicalKind {
     },
     ComparisonJoin(Box<LogicalComparisonJoin>),
     /// A join on an arbitrary condition.
-    AnyJoin { join_type: JoinType, condition: Box<Expression> },
+    AnyJoin {
+        join_type: JoinType,
+        condition: Box<Expression>,
+    },
     CrossProduct,
     PositionalJoin,
     DependentJoin(Box<LogicalDependentJoin>),
@@ -362,18 +393,37 @@ pub enum LogicalKind {
         explain_type: ExplainType,
         explain_format: ExplainFormat,
     },
-    Prepare { name: String, prepared: Arc<PreparedStatementData> },
-    Execute { prepared: Arc<PreparedStatementData> },
+    Prepare {
+        name: String,
+        prepared: Arc<PreparedStatementData>,
+    },
+    Execute {
+        prepared: Arc<PreparedStatementData>,
+    },
     /// `SET name = value`.
-    Set { name: String, value: Value, scope: SetScope },
+    Set {
+        name: String,
+        value: Value,
+        scope: SetScope,
+    },
     /// `RESET name`.
-    Reset { name: String, scope: SetScope },
+    Reset {
+        name: String,
+        scope: SetScope,
+    },
     /// `BEGIN` / `COMMIT` / `ROLLBACK`.
-    Transaction { info: TransactionInfo },
+    Transaction {
+        info: TransactionInfo,
+    },
     /// `DEALLOCATE name`.
-    Deallocate { name: String },
+    Deallocate {
+        name: String,
+    },
     /// A `PRAGMA` call without a result.
-    Pragma { name: String, parameters: Vec<Value> },
+    Pragma {
+        name: String,
+        parameters: Vec<Value>,
+    },
 }
 
 /// What a `PIVOT` computes (DuckDB's `BoundPivotInfo`).
@@ -548,23 +598,34 @@ impl LogicalOperator {
     }
 
     fn child_bindings(&self, index: usize) -> Vec<ColumnBinding> {
-        self.children.get(index).map(Self::column_bindings).unwrap_or_default()
+        self.children
+            .get(index)
+            .map(Self::column_bindings)
+            .unwrap_or_default()
     }
 
     fn child_types(&self, index: usize) -> Vec<LogicalType> {
-        self.children.get(index).map(|child| child.types.clone()).unwrap_or_default()
+        self.children
+            .get(index)
+            .map(|child| child.types.clone())
+            .unwrap_or_default()
     }
 
     /// The bindings of the columns this operator outputs (DuckDB's `GetColumnBindings`).
     pub fn column_bindings(&self) -> Vec<ColumnBinding> {
         match &self.kind {
-            LogicalKind::Projection { table_index } => generate_column_bindings(*table_index, self.expressions.len()),
+            LogicalKind::Projection { table_index } => {
+                generate_column_bindings(*table_index, self.expressions.len())
+            }
             LogicalKind::Filter { projection_map } | LogicalKind::Order { projection_map, .. } => {
                 map_list(self.child_bindings(0), projection_map)
             }
             LogicalKind::Aggregate(aggregate) => {
                 let mut bindings = generate_column_bindings(aggregate.group_index, aggregate.groups.len());
-                bindings.extend(generate_column_bindings(aggregate.aggregate_index, self.expressions.len()));
+                bindings.extend(generate_column_bindings(
+                    aggregate.aggregate_index,
+                    self.expressions.len(),
+                ));
                 bindings.extend(generate_column_bindings(
                     aggregate.groupings_index,
                     aggregate.grouping_functions.len(),
@@ -737,18 +798,25 @@ impl LogicalOperator {
                 get.column_ids.push(ColumnIndex::new(COLUMN_IDENTIFIER_ROW_ID));
             }
         }
-        let expression_types = || self.expressions.iter().map(|e| e.return_type.clone()).collect::<Vec<_>>();
+        let expression_types = || {
+            self.expressions
+                .iter()
+                .map(|e| e.return_type.clone())
+                .collect::<Vec<_>>()
+        };
         self.types = match &self.kind {
-
-
             LogicalKind::Projection { .. } => expression_types(),
             LogicalKind::Filter { projection_map } | LogicalKind::Order { projection_map, .. } => {
                 map_list(self.child_types(0), projection_map)
             }
             LogicalKind::Aggregate(aggregate) => {
-                let mut types: Vec<LogicalType> = aggregate.groups.iter().map(|g| g.return_type.clone()).collect();
+                let mut types: Vec<LogicalType> =
+                    aggregate.groups.iter().map(|g| g.return_type.clone()).collect();
                 types.extend(expression_types());
-                types.extend(std::iter::repeat_n(LogicalType::BIGINT, aggregate.grouping_functions.len()));
+                types.extend(std::iter::repeat_n(
+                    LogicalType::BIGINT,
+                    aggregate.grouping_functions.len(),
+                ));
                 types
             }
             LogicalKind::Window { .. } | LogicalKind::Unnest { .. } => {
@@ -766,7 +834,10 @@ impl LogicalOperator {
             LogicalKind::Pivot { bound_pivot, .. } => bound_pivot.types.clone(),
             LogicalKind::Get(get) => {
                 let mut types: Vec<LogicalType> = if get.projection_ids.is_empty() {
-                    get.column_ids.iter().map(|column| get.column_type(column)).collect()
+                    get.column_ids
+                        .iter()
+                        .map(|column| get.column_type(column))
+                        .collect()
                 } else {
                     get.projection_ids
                         .iter()
@@ -774,7 +845,11 @@ impl LogicalOperator {
                         .map(|column| get.column_type(column))
                         .collect()
                 };
-                let input = self.children.first().map(|child| child.types.clone()).unwrap_or_default();
+                let input = self
+                    .children
+                    .first()
+                    .map(|child| child.types.clone())
+                    .unwrap_or_default();
                 types.extend(
                     get.projected_input
                         .iter()

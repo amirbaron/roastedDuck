@@ -49,7 +49,10 @@ impl<V> ParsedExpressionMap<V> {
     /// The value for an expression equal to `key`.
     pub fn get(&self, key: &ParsedExpression) -> Option<&V> {
         let key = normalized(key);
-        self.entries.iter().find(|(entry, _)| entry == &key).map(|(_, value)| value)
+        self.entries
+            .iter()
+            .find(|(entry, _)| entry == &key)
+            .map(|(_, value)| value)
     }
 
     /// Inserts or replaces the value for `key`.

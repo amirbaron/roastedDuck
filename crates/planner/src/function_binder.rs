@@ -15,7 +15,8 @@ use rustdb_types::{LogicalType, LogicalTypeId, TypeInfo, Value};
 
 use crate::context::ClientContext;
 use crate::expression::{
-    AggregateType, BoundAggregateExpression, BoundCastExpression, BoundOrderModifier, Expression, ExpressionKind,
+    AggregateType, BoundAggregateExpression, BoundCastExpression, BoundOrderModifier, Expression,
+    ExpressionKind,
 };
 use crate::expression_binder::{BindError, collation, expression_return_type, parameter_not_resolved};
 
@@ -33,7 +34,10 @@ pub fn add_cast_to_type(
     try_cast: bool,
 ) -> Result<Expression> {
     if let ExpressionKind::Parameter(parameter) = &expression.kind {
-        let mut data = parameter.parameter_data.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut data = parameter
+            .parameter_data
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         if !is_valid_target(target) {
             data.return_type = LogicalType::INVALID;
         } else if matches!(data.return_type.id(), LogicalTypeId::Invalid) {
@@ -82,7 +86,9 @@ pub fn add_cast_to_type(
 pub fn normalize_type(ty: &LogicalType) -> Result<LogicalType> {
     match ty.id() {
         LogicalTypeId::StringLiteral => Ok(LogicalType::VARCHAR),
-        LogicalTypeId::IntegerLiteral => Ok(ty.integer_literal_type().cloned().unwrap_or(LogicalType::INTEGER)),
+        LogicalTypeId::IntegerLiteral => {
+            Ok(ty.integer_literal_type().cloned().unwrap_or(LogicalType::INTEGER))
+        }
         LogicalTypeId::Unknown => Err(parameter_not_resolved()),
         _ => Ok(ty.clone()),
     }
@@ -170,7 +176,10 @@ pub fn try_bind_comparison(
             };
             let max_scale = left_scale.max(right_scale);
             let max_width_over_scale = (left_width - left_scale).max(right_width - right_scale);
-            let max_width = left_width.max(right_width).max(max_scale + max_width_over_scale).min(38);
+            let max_width = left_width
+                .max(right_width)
+                .max(max_scale + max_width_over_scale)
+                .min(38);
             Ok(Some(LogicalType::decimal(max_width, max_scale)))
         }
         LogicalTypeId::Varchar => {
@@ -270,7 +279,11 @@ impl FunctionSignature for TableFunction {
 
     fn signature(&self) -> String {
         let mut parts: Vec<String> = self.arguments.iter().map(ToString::to_string).collect();
-        parts.extend(self.named_parameters.iter().map(|(name, ty)| format!("{name} : {ty}")));
+        parts.extend(
+            self.named_parameters
+                .iter()
+                .map(|(name, ty)| format!("{name} : {ty}")),
+        );
         format!("{}({})", self.name, parts.join(", "))
     }
 }
@@ -313,8 +326,15 @@ impl<'a> FunctionBinder<'a> {
 
     /// The cost of calling an overload with `arguments`, or `None` if impossible
     /// (DuckDB's `BindFunctionCost`).
-    pub fn function_cost<F: FunctionSignature>(&self, function: &F, arguments: &[LogicalType]) -> Option<u64> {
-        if function.varargs().is_some_and(|varargs| varargs.id() != LogicalTypeId::Invalid) {
+    pub fn function_cost<F: FunctionSignature>(
+        &self,
+        function: &F,
+        arguments: &[LogicalType],
+    ) -> Option<u64> {
+        if function
+            .varargs()
+            .is_some_and(|varargs| varargs.id() != LogicalTypeId::Invalid)
+        {
             return self.varargs_cost(function, arguments);
         }
         if function.arguments().len() != arguments.len() {
@@ -348,7 +368,9 @@ impl<'a> FunctionBinder<'a> {
         let mut candidates: Vec<usize> = Vec::new();
         let mut best = None;
         for (index, function) in functions.iter().enumerate() {
-            let Some(cost) = self.function_cost(function, arguments) else { continue };
+            let Some(cost) = self.function_cost(function, arguments) else {
+                continue;
+            };
             if cost == lowest_cost {
                 candidates.push(index);
                 continue;
@@ -362,7 +384,10 @@ impl<'a> FunctionBinder<'a> {
         }
         let Some(best) = best else {
             let call = call_to_string(name, arguments, None);
-            let list: String = functions.iter().map(|f| format!("\t{}\n", f.signature())).collect();
+            let list: String = functions
+                .iter()
+                .map(|f| format!("\t{}\n", f.signature()))
+                .collect();
             return Ok(Err(Error::binder(format!(
                 "No function matches the given name and argument types '{call}'. You might need to add \
                  explicit type casts.\n\tCandidate functions:\n{list}"
@@ -370,7 +395,10 @@ impl<'a> FunctionBinder<'a> {
         };
         candidates.push(best);
         if candidates.len() > 1 {
-            if arguments.iter().any(|argument| argument.id() == LogicalTypeId::Unknown) {
+            if arguments
+                .iter()
+                .any(|argument| argument.id() == LogicalTypeId::Unknown)
+            {
                 return Err(parameter_not_resolved());
             }
             let call = call_to_string(name, arguments, None);
@@ -420,13 +448,17 @@ impl<'a> FunctionBinder<'a> {
         let mut result = Vec::with_capacity(children.len());
         for (i, child) in children.into_iter().enumerate() {
             let target = arguments.get(i).or(varargs.as_ref()).cloned().unwrap_or_default();
-            if matches!(target.id(), LogicalTypeId::StringLiteral | LogicalTypeId::IntegerLiteral) {
+            if matches!(
+                target.id(),
+                LogicalTypeId::StringLiteral | LogicalTypeId::IntegerLiteral
+            ) {
                 return Err(Error::internal(format!(
                     "Function {name} returned a STRING_LITERAL or INTEGER_LITERAL type - return an explicit type \
                      instead"
                 )));
             }
-            if child.return_type.id() == LogicalTypeId::Lambda || !requires_cast(&child.return_type, &target) {
+            if child.return_type.id() == LogicalTypeId::Lambda || !requires_cast(&child.return_type, &target)
+            {
                 result.push(child);
             } else {
                 result.push(add_cast_to_type(self.context, child, &target, false)?);
@@ -477,7 +509,12 @@ impl<'a> FunctionBinder<'a> {
         children: Vec<Expression>,
         is_operator: bool,
     ) -> Result<Expression> {
-        resolve_template_types(&mut function.arguments, &mut function.varargs, &mut function.return_type, &children)?;
+        resolve_template_types(
+            &mut function.arguments,
+            &mut function.varargs,
+            &mut function.return_type,
+            &children,
+        )?;
         let mut bind_info: Option<Arc<dyn FunctionData>> = None;
         if let Some(bind) = function.bind.clone() {
             let (argument_types, constants) = self.bind_input(&children);
@@ -489,7 +526,12 @@ impl<'a> FunctionBinder<'a> {
                 },
             )?;
         }
-        check_template_types_resolved(&function.name, &function.arguments, function.varargs.as_ref(), &function.return_type)?;
+        check_template_types_resolved(
+            &function.name,
+            &function.arguments,
+            function.varargs.as_ref(),
+            &function.return_type,
+        )?;
         let mut arguments = std::mem::take(&mut function.arguments);
         let mut varargs = function.varargs.take();
         let children = self.cast_to_arguments(&function.name, &mut arguments, &mut varargs, children)?;
@@ -507,7 +549,12 @@ impl<'a> FunctionBinder<'a> {
         aggr_type: AggregateType,
         order_bys: Option<BoundOrderModifier>,
     ) -> Result<Expression> {
-        resolve_template_types(&mut function.arguments, &mut function.varargs, &mut function.return_type, &children)?;
+        resolve_template_types(
+            &mut function.arguments,
+            &mut function.varargs,
+            &mut function.return_type,
+            &children,
+        )?;
         let mut bind_info = None;
         let mut children = children;
         if let Some(bind) = function.bind.clone() {
@@ -522,7 +569,12 @@ impl<'a> FunctionBinder<'a> {
             // The bind may have dropped arguments.
             children.truncate(function.arguments.len());
         }
-        check_template_types_resolved(&function.name, &function.arguments, function.varargs.as_ref(), &function.return_type)?;
+        check_template_types_resolved(
+            &function.name,
+            &function.arguments,
+            function.varargs.as_ref(),
+            &function.return_type,
+        )?;
         let mut arguments = std::mem::take(&mut function.arguments);
         let mut varargs = function.varargs.take();
         let children = self.cast_to_arguments(&function.name, &mut arguments, &mut varargs, children)?;
@@ -619,11 +671,17 @@ fn is_templated(ty: &LogicalType) -> bool {
 
 /// Infers template bindings from an argument (DuckDB's `InferTemplateType`, for top-level
 /// and list/array templates).
-fn infer_template(source: &LogicalType, actual: &LogicalType, bindings: &mut CaseInsensitiveMap<LogicalType>) {
+fn infer_template(
+    source: &LogicalType,
+    actual: &LogicalType,
+    bindings: &mut CaseInsensitiveMap<LogicalType>,
+) {
     if let Some(name) = template_name(source) {
         let new = match bindings.get(name) {
             None => actual.clone(),
-            Some(existing) => LogicalType::try_max_logical_type(existing, actual).unwrap_or_else(|| existing.clone()),
+            Some(existing) => {
+                LogicalType::try_max_logical_type(existing, actual).unwrap_or_else(|| existing.clone())
+            }
         };
         bindings.insert(name.to_owned(), new);
         return;
@@ -638,14 +696,16 @@ fn infer_template(source: &LogicalType, actual: &LogicalType, bindings: &mut Cas
 
 fn substitute_template(ty: &LogicalType, bindings: &CaseInsensitiveMap<LogicalType>) -> LogicalType {
     if let Some(name) = template_name(ty) {
-        return bindings
-            .get(name)
-            .map_or_else(|| ty.clone(), |bound| normalize_type(bound).unwrap_or_else(|_| bound.clone()));
+        return bindings.get(name).map_or_else(
+            || ty.clone(),
+            |bound| normalize_type(bound).unwrap_or_else(|_| bound.clone()),
+        );
     }
     match ty.id() {
-        LogicalTypeId::List => ty
-            .child_type()
-            .map_or_else(|| ty.clone(), |child| LogicalType::list(substitute_template(child, bindings))),
+        LogicalTypeId::List => ty.child_type().map_or_else(
+            || ty.clone(),
+            |child| LogicalType::list(substitute_template(child, bindings)),
+        ),
         LogicalTypeId::Array => match ty.array_child() {
             Some((child, size)) => LogicalType::array(substitute_template(child, bindings), size),
             None => ty.clone(),
@@ -695,7 +755,11 @@ fn check_template_types_resolved(
     varargs: Option<&LogicalType>,
     return_type: &LogicalType,
 ) -> Result<()> {
-    for ty in arguments.iter().chain(varargs).chain(std::iter::once(return_type)) {
+    for ty in arguments
+        .iter()
+        .chain(varargs)
+        .chain(std::iter::once(return_type))
+    {
         if let Some(template) = unresolved_template(ty) {
             return Err(Error::binder(format!(
                 "Function '{name}' has a template parameter type '{template}' that could not be resolved to a \

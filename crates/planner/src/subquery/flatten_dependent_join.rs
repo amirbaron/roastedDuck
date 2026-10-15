@@ -18,7 +18,9 @@ use crate::binder::expression::push_collation;
 use crate::binder::{Binder, CorrelatedColumns};
 use crate::expression::{AggregateType, BoundOrderByNode, BoundWindowExpression, Expression, ExpressionKind};
 use crate::function_binder::{FunctionBinder, add_cast_to_type};
-use crate::operator::{BoundLimitNode, JoinCondition, LogicalComparisonJoin, LogicalDependentJoin, LogicalKind, LogicalOperator};
+use crate::operator::{
+    BoundLimitNode, JoinCondition, LogicalComparisonJoin, LogicalDependentJoin, LogicalKind, LogicalOperator,
+};
 use crate::{ColumnBinding, ExpressionType, LogicalOperatorType};
 
 /// What the flattening knows about a CTE (DuckDB keeps pointers to the CTE operators in
@@ -64,7 +66,12 @@ fn delim_get(table_index: u64, types: &[LogicalType]) -> LogicalOperator {
     })
 }
 
-fn comparison_join(join_type: JoinType, conditions: Vec<JoinCondition>, left: LogicalOperator, right: LogicalOperator) -> LogicalOperator {
+fn comparison_join(
+    join_type: JoinType,
+    conditions: Vec<JoinCondition>,
+    left: LogicalOperator,
+    right: LogicalOperator,
+) -> LogicalOperator {
     let mut join = LogicalComparisonJoin::new(join_type, LogicalOperatorType::LogicalComparisonJoin);
     join.conditions = conditions;
     LogicalOperator::new(LogicalKind::ComparisonJoin(Box::new(join))).with_children(vec![left, right])
@@ -100,7 +107,9 @@ fn row_number(partitions: Vec<Expression>, orders: Vec<BoundOrderByNode>, alias:
 /// DuckDB's `SubqueryDependentFilter`: an (AND of) subquery predicate(s).
 fn subquery_dependent_filter(expression: &Expression) -> bool {
     match &expression.kind {
-        ExpressionKind::Conjunction(conjunction) if expression.expression_type == ExpressionType::ConjunctionAnd => {
+        ExpressionKind::Conjunction(conjunction)
+            if expression.expression_type == ExpressionType::ConjunctionAnd =>
+        {
             conjunction.children.iter().any(subquery_dependent_filter)
         }
         ExpressionKind::Subquery(_) => true,
@@ -114,7 +123,10 @@ fn take_child(op: &mut LogicalOperator, index: usize) -> Result<LogicalOperator>
         .children
         .get_mut(index)
         .ok_or_else(|| Error::internal("operator lacks a child"))?;
-    Ok(std::mem::replace(child, LogicalOperator::new(LogicalKind::DummyScan { table_index: 0 })))
+    Ok(std::mem::replace(
+        child,
+        LogicalOperator::new(LogicalKind::DummyScan { table_index: 0 }),
+    ))
 }
 
 /// The delim join conditions on the correlated columns (DuckDB's
@@ -127,7 +139,11 @@ fn create_delim_join_conditions(
     perform_delim: bool,
 ) -> Result<()> {
     let mut start = 0;
-    let mut end = if perform_delim { correlated_columns.len() } else { 1 };
+    let mut end = if perform_delim {
+        correlated_columns.len()
+    } else {
+        1
+    };
     let delim_index = usize::try_from(correlated_columns.delim_index()).unwrap_or(usize::MAX);
     if !perform_delim && delim_index < correlated_columns.len() {
         start = delim_index;
@@ -137,7 +153,9 @@ fn create_delim_join_conditions(
         let column = correlated_columns
             .get(i)
             .ok_or_else(|| Error::internal("Delim join - correlated column out of range"))?;
-        let binding_index = usize::try_from(base_offset).unwrap_or(usize::MAX).saturating_add(i);
+        let binding_index = usize::try_from(base_offset)
+            .unwrap_or(usize::MAX)
+            .saturating_add(i);
         let right = *bindings
             .get(binding_index)
             .ok_or_else(|| Error::internal("Delim join - binding index out of range"))?;
@@ -165,7 +183,13 @@ fn first_aggregate(binder: &Binder, child: Expression) -> Result<Expression> {
 }
 
 impl<'a> FlattenDependentJoins<'a> {
-    fn new(binder: &'a Binder, correlated: &CorrelatedColumns, perform_delim: bool, any_join: bool, has_parent: bool) -> Self {
+    fn new(
+        binder: &'a Binder,
+        correlated: &CorrelatedColumns,
+        perform_delim: bool,
+        any_join: bool,
+        has_parent: bool,
+    ) -> Self {
         let mut correlated_map = CorrelatedMap::new();
         let mut delim_types = Vec::with_capacity(correlated.len());
         for (i, column) in correlated.iter().enumerate() {
@@ -197,7 +221,12 @@ impl<'a> FlattenDependentJoins<'a> {
     }
 
     /// Flattens the dependent joins in `plan` (DuckDB's `Decorrelate`).
-    fn decorrelate(&mut self, mut plan: LogicalOperator, parent_propagate_null_values: bool, lateral_depth: u64) -> Result<LogicalOperator> {
+    fn decorrelate(
+        &mut self,
+        mut plan: LogicalOperator,
+        parent_propagate_null_values: bool,
+        lateral_depth: u64,
+    ) -> Result<LogicalOperator> {
         if !matches!(plan.kind, LogicalKind::DependentJoin(_)) {
             for index in 0..plan.children.len() {
                 let child = take_child(&mut plan, index)?;
@@ -249,7 +278,14 @@ impl<'a> FlattenDependentJoins<'a> {
             true,
         );
         flatten.ctes = std::mem::take(&mut self.ctes);
-        let result = self.flatten_right_side(&mut plan, &mut flatten, join, parent_propagate_null_values, propagate_null_values, lateral_depth);
+        let result = self.flatten_right_side(
+            &mut plan,
+            &mut flatten,
+            join,
+            parent_propagate_null_values,
+            propagate_null_values,
+            lateral_depth,
+        );
         self.ctes = std::mem::take(&mut flatten.ctes);
         result
     }
@@ -278,7 +314,10 @@ impl<'a> FlattenDependentJoins<'a> {
             // The CTE definition is uncorrelated: push the dependent join below it.
             let mut cte = take_child(plan, 1)?;
             plan.children[1] = take_child(&mut cte, 1)?;
-            let dependent = std::mem::replace(plan, LogicalOperator::new(LogicalKind::DummyScan { table_index: 0 }));
+            let dependent = std::mem::replace(
+                plan,
+                LogicalOperator::new(LogicalKind::DummyScan { table_index: 0 }),
+            );
             cte.children[1] = self.decorrelate(dependent, parent_propagate_null_values, lateral_depth)?;
             return Ok(cte);
         }
@@ -289,7 +328,13 @@ impl<'a> FlattenDependentJoins<'a> {
         if !self.has_parent {
             self.delim_offset = left_offset + flatten.delim_offset;
         }
-        rewrite_correlated_expressions(plan, self.base_binding, &self.correlated_map, lateral_depth, false);
+        rewrite_correlated_expressions(
+            plan,
+            self.base_binding,
+            &self.correlated_map,
+            lateral_depth,
+            false,
+        );
 
         let LogicalKind::DependentJoin(dependent) = &mut plan.kind else {
             return Err(Error::internal("expected a dependent join"));
@@ -297,14 +342,17 @@ impl<'a> FlattenDependentJoins<'a> {
         dependent.join.duplicate_eliminated_columns.clear();
         dependent.join.mark_types.clear();
         for column in &dependent.correlated_columns {
-            dependent
-                .join
-                .duplicate_eliminated_columns
-                .push(column_ref("", &column.logical_type, column.binding));
+            dependent.join.duplicate_eliminated_columns.push(column_ref(
+                "",
+                &column.logical_type,
+                column.binding,
+            ));
             dependent.join.mark_types.push(column.logical_type.clone());
         }
         let mut plan_columns = plan.children[1].column_bindings();
-        let LogicalKind::DependentJoin(dependent) = std::mem::replace(&mut plan.kind, LogicalKind::CrossProduct) else {
+        let LogicalKind::DependentJoin(dependent) =
+            std::mem::replace(&mut plan.kind, LogicalKind::CrossProduct)
+        else {
             return Err(Error::internal("expected a dependent join"));
         };
         let dependent = *dependent;
@@ -333,12 +381,20 @@ impl<'a> FlattenDependentJoins<'a> {
                          side",
                     ));
                 }
-                let input = std::mem::replace(plan, LogicalOperator::new(LogicalKind::DummyScan { table_index: 0 }));
-                return Ok(LogicalOperator::new(LogicalKind::Filter { projection_map: Vec::new() })
-                    .with_expressions(dependent.arbitrary_expressions)
-                    .with_children(vec![input]));
+                let input = std::mem::replace(
+                    plan,
+                    LogicalOperator::new(LogicalKind::DummyScan { table_index: 0 }),
+                );
+                return Ok(LogicalOperator::new(LogicalKind::Filter {
+                    projection_map: Vec::new(),
+                })
+                .with_expressions(dependent.arbitrary_expressions)
+                .with_children(vec![input]));
             }
-            return Ok(std::mem::replace(plan, LogicalOperator::new(LogicalKind::DummyScan { table_index: 0 })));
+            return Ok(std::mem::replace(
+                plan,
+                LogicalOperator::new(LogicalKind::DummyScan { table_index: 0 }),
+            ));
         }
         create_delim_join_conditions(
             &mut delim_join,
@@ -363,12 +419,16 @@ impl<'a> FlattenDependentJoins<'a> {
             }
         }
         plan.kind = LogicalKind::ComparisonJoin(Box::new(delim_join));
-        Ok(std::mem::replace(plan, LogicalOperator::new(LogicalKind::DummyScan { table_index: 0 })))
+        Ok(std::mem::replace(
+            plan,
+            LogicalOperator::new(LogicalKind::DummyScan { table_index: 0 }),
+        ))
     }
 
     /// DuckDB's `DecorrelateIndependent`: a fresh pass without correlated columns.
     fn decorrelate_independent(&mut self, plan: LogicalOperator) -> Result<LogicalOperator> {
-        let mut flatten = FlattenDependentJoins::new(self.binder, &CorrelatedColumns::default(), true, false, false);
+        let mut flatten =
+            FlattenDependentJoins::new(self.binder, &CorrelatedColumns::default(), true, false, false);
         flatten.ctes = std::mem::take(&mut self.ctes);
         let result = flatten.decorrelate(plan, true, 0);
         self.ctes = std::mem::take(&mut flatten.ctes);
@@ -385,7 +445,8 @@ impl<'a> FlattenDependentJoins<'a> {
         parent_is_dependent_join: bool,
     ) -> Result<bool> {
         let is_lateral_join = matches!(op.kind, LogicalKind::DependentJoin(_));
-        let mut has_correlation = has_correlated_expressions(op, &self.correlated_columns, lateral, lateral_depth)?;
+        let mut has_correlation =
+            has_correlated_expressions(op, &self.correlated_columns, lateral, lateral_depth)?;
         let node_id = op.node_id();
         let materialized_index = match &op.kind {
             LogicalKind::MaterializedCte { table_index, .. } => Some(*table_index),
@@ -420,7 +481,9 @@ impl<'a> FlattenDependentJoins<'a> {
             }
         }
         if has_correlation
-            && let LogicalKind::MaterializedCte { correlated_columns, .. } = &mut op.kind
+            && let LogicalKind::MaterializedCte {
+                correlated_columns, ..
+            } = &mut op.kind
         {
             correlated_columns.clone_from(&self.correlated_columns);
         }
@@ -431,7 +494,11 @@ impl<'a> FlattenDependentJoins<'a> {
             return Ok(match self.ctes.get(cte_index).cloned() {
                 Some(cte) if cte.recursive => true,
                 Some(cte) => {
-                    let correlated = self.has_correlated_expressions.get(&cte.node_id).copied().unwrap_or(false);
+                    let correlated = self
+                        .has_correlated_expressions
+                        .get(&cte.node_id)
+                        .copied()
+                        .unwrap_or(false);
                     self.has_correlated_expressions.insert(node_id, correlated);
                     correlated
                 }
@@ -454,7 +521,10 @@ impl<'a> FlattenDependentJoins<'a> {
                 },
             );
             if has_correlation {
-                if let LogicalKind::RecursiveCte { correlated_columns, .. } = &mut op.kind {
+                if let LogicalKind::RecursiveCte {
+                    correlated_columns, ..
+                } = &mut op.kind
+                {
                     correlated_columns.clone_from(&self.correlated_columns);
                 }
                 if let Some(right) = op.children.get_mut(1) {
@@ -473,7 +543,11 @@ impl<'a> FlattenDependentJoins<'a> {
         }
         let node_id = op.node_id();
         if !matches!(op.kind, LogicalKind::Get(_)) || op.children.len() == 1 {
-            if let LogicalKind::CteRef { cte_index: referenced, .. } = &op.kind {
+            if let LogicalKind::CteRef {
+                cte_index: referenced,
+                ..
+            } = &op.kind
+            {
                 if *referenced != cte_index {
                     self.has_correlated_expressions.insert(node_id, has_correlation);
                     return Ok(has_correlation);
@@ -487,7 +561,12 @@ impl<'a> FlattenDependentJoins<'a> {
     }
 
     /// DuckDB's `PushDownDependentJoin`.
-    fn push_down_dependent_join(&mut self, plan: LogicalOperator, propagate_null_values: bool, lateral_depth: u64) -> Result<LogicalOperator> {
+    fn push_down_dependent_join(
+        &mut self,
+        plan: LogicalOperator,
+        propagate_null_values: bool,
+        lateral_depth: u64,
+    ) -> Result<LogicalOperator> {
         let mut propagate_null_values = propagate_null_values;
         let mut result = self.push_down_internal(plan, &mut propagate_null_values, lateral_depth)?;
         if !self.replacement_map.is_empty() {
@@ -497,7 +576,11 @@ impl<'a> FlattenDependentJoins<'a> {
     }
 
     /// Adds the duplicate-eliminated scan to an uncorrelated subtree.
-    fn push_into_uncorrelated(&mut self, mut plan: LogicalOperator, lateral_depth: u64) -> Result<(Option<LogicalOperator>, LogicalOperator)> {
+    fn push_into_uncorrelated(
+        &mut self,
+        mut plan: LogicalOperator,
+        lateral_depth: u64,
+    ) -> Result<(Option<LogicalOperator>, LogicalOperator)> {
         if let LogicalKind::CteRef {
             cte_index,
             correlated_columns,
@@ -507,7 +590,12 @@ impl<'a> FlattenDependentJoins<'a> {
             && *correlated_columns == 0
         {
             let (cte_index, columns) = (*cte_index, cte.correlated_columns.clone());
-            rewrite_cte_scan(&mut plan, cte_index, &columns, CteScanRewriteMode::WithRecursiveDependentJoins);
+            rewrite_cte_scan(
+                &mut plan,
+                cte_index,
+                &columns,
+                CteScanRewriteMode::WithRecursiveDependentJoins,
+            );
         }
         let _ = lateral_depth;
         let delim_index = self.binder.generate_table_index();
@@ -525,7 +613,10 @@ impl<'a> FlattenDependentJoins<'a> {
                 ..
             } => {
                 // A reference to a correlated CTE: join on the correlated columns.
-                let left = ColumnBinding::new(*table_index, (chunk_types.len() as u64).saturating_sub(*correlated_columns));
+                let left = ColumnBinding::new(
+                    *table_index,
+                    (chunk_types.len() as u64).saturating_sub(*correlated_columns),
+                );
                 let mut conditions = Vec::new();
                 for i in 0..*correlated_columns {
                     let column = self
@@ -533,16 +624,26 @@ impl<'a> FlattenDependentJoins<'a> {
                         .get(usize::try_from(i).unwrap_or(usize::MAX))
                         .ok_or_else(|| Error::internal("CTE correlated column out of range"))?;
                     conditions.push(JoinCondition {
-                        left: column_ref("", &column.logical_type, ColumnBinding::new(left.table_index, left.column_index + i)),
+                        left: column_ref(
+                            "",
+                            &column.logical_type,
+                            ColumnBinding::new(left.table_index, left.column_index + i),
+                        ),
                         right: column_ref(
                             "",
                             &column.logical_type,
-                            ColumnBinding::new(self.base_binding.table_index, self.base_binding.column_index + i),
+                            ColumnBinding::new(
+                                self.base_binding.table_index,
+                                self.base_binding.column_index + i,
+                            ),
                         ),
                         comparison: ExpressionType::CompareNotDistinctFrom,
                     });
                 }
-                Ok((None, comparison_join(JoinType::Inner, conditions, plan, delim_scan)))
+                Ok((
+                    None,
+                    comparison_join(JoinType::Inner, conditions, plan, delim_scan),
+                ))
             }
             _ => {
                 let decorrelated = self.decorrelate(plan, true, 0)?;
@@ -553,7 +654,13 @@ impl<'a> FlattenDependentJoins<'a> {
 
     /// Re-points correlated references of `plan`'s own expressions at the delim scan.
     fn rewrite(&self, plan: &mut LogicalOperator, lateral_depth: u64) {
-        rewrite_correlated_expressions(plan, self.base_binding, &self.correlated_map, lateral_depth, false);
+        rewrite_correlated_expressions(
+            plan,
+            self.base_binding,
+            &self.correlated_map,
+            lateral_depth,
+            false,
+        );
     }
 
     /// Correlated column `i` as a reference to the current base binding.
@@ -565,7 +672,10 @@ impl<'a> FlattenDependentJoins<'a> {
         Ok(column_ref(
             if with_name { &column.name } else { "" },
             &column.logical_type,
-            ColumnBinding::new(self.base_binding.table_index, self.base_binding.column_index + i as u64),
+            ColumnBinding::new(
+                self.base_binding.table_index,
+                self.base_binding.column_index + i as u64,
+            ),
         ))
     }
 
@@ -596,7 +706,8 @@ impl<'a> FlattenDependentJoins<'a> {
                     self.any_join |= subquery_dependent_filter(expression);
                 }
                 let child = take_child(&mut plan, 0)?;
-                plan.children[0] = self.push_down_internal(child, parent_propagate_null_values, lateral_depth)?;
+                plan.children[0] =
+                    self.push_down_internal(child, parent_propagate_null_values, lateral_depth)?;
                 self.rewrite(&mut plan, lateral_depth);
                 Ok(plan)
             }
@@ -619,25 +730,30 @@ impl<'a> FlattenDependentJoins<'a> {
                 let LogicalKind::Projection { table_index } = plan.kind else {
                     return Err(Error::internal("expected a projection"));
                 };
-                self.base_binding = ColumnBinding::new(table_index, (plan.expressions.len() - correlated_count) as u64);
+                self.base_binding =
+                    ColumnBinding::new(table_index, (plan.expressions.len() - correlated_count) as u64);
                 self.delim_offset = self.base_binding.column_index;
                 self.data_offset = 0;
                 Ok(plan)
             }
-            LogicalOperatorType::LogicalAggregateAndGroupBy => self.push_into_aggregate(plan, parent_propagate_null_values, lateral_depth),
+            LogicalOperatorType::LogicalAggregateAndGroupBy => {
+                self.push_into_aggregate(plan, parent_propagate_null_values, lateral_depth)
+            }
             LogicalOperatorType::LogicalCrossProduct => {
                 let left_correlated = self.correlation(&plan.children[0])?;
                 let right_correlated = self.correlation(&plan.children[1])?;
                 if !right_correlated {
                     let left = take_child(&mut plan, 0)?;
-                    plan.children[0] = self.push_down_internal(left, parent_propagate_null_values, lateral_depth)?;
+                    plan.children[0] =
+                        self.push_down_internal(left, parent_propagate_null_values, lateral_depth)?;
                     let right = take_child(&mut plan, 1)?;
                     plan.children[1] = self.decorrelate_independent(right)?;
                     return Ok(plan);
                 }
                 if !left_correlated {
                     let right = take_child(&mut plan, 1)?;
-                    plan.children[1] = self.push_down_internal(right, parent_propagate_null_values, lateral_depth)?;
+                    plan.children[1] =
+                        self.push_down_internal(right, parent_propagate_null_values, lateral_depth)?;
                     let left = take_child(&mut plan, 0)?;
                     plan.children[0] = self.decorrelate_independent(left)?;
                     self.delim_offset += plan.children[0].column_bindings().len() as u64;
@@ -651,23 +767,48 @@ impl<'a> FlattenDependentJoins<'a> {
                 let left = self.push_down_internal(left, parent_propagate_null_values, lateral_depth)?;
                 let mut conditions = Vec::with_capacity(correlated_count);
                 for i in 0..correlated_count {
-                    let ty = self.correlated_columns.get(i).map(|c| c.logical_type.clone()).unwrap_or_default();
+                    let ty = self
+                        .correlated_columns
+                        .get(i)
+                        .map(|c| c.logical_type.clone())
+                        .unwrap_or_default();
                     conditions.push(JoinCondition {
-                        left: column_ref("", &ty, ColumnBinding::new(self.base_binding.table_index, self.base_binding.column_index + i as u64)),
-                        right: column_ref("", &ty, ColumnBinding::new(right_binding.table_index, right_binding.column_index + i as u64)),
+                        left: column_ref(
+                            "",
+                            &ty,
+                            ColumnBinding::new(
+                                self.base_binding.table_index,
+                                self.base_binding.column_index + i as u64,
+                            ),
+                        ),
+                        right: column_ref(
+                            "",
+                            &ty,
+                            ColumnBinding::new(
+                                right_binding.table_index,
+                                right_binding.column_index + i as u64,
+                            ),
+                        ),
                         comparison: ExpressionType::CompareNotDistinctFrom,
                     });
                 }
                 Ok(comparison_join(JoinType::Inner, conditions, left, right))
             }
-            LogicalOperatorType::LogicalDependentJoin => self.decorrelate(plan, *parent_propagate_null_values, lateral_depth),
+            LogicalOperatorType::LogicalDependentJoin => {
+                self.decorrelate(plan, *parent_propagate_null_values, lateral_depth)
+            }
             LogicalOperatorType::LogicalAnyJoin
             | LogicalOperatorType::LogicalAsofJoin
-            | LogicalOperatorType::LogicalComparisonJoin => self.push_into_join(plan, parent_propagate_null_values, lateral_depth),
-            LogicalOperatorType::LogicalLimit => self.push_into_limit(plan, parent_propagate_null_values, lateral_depth),
+            | LogicalOperatorType::LogicalComparisonJoin => {
+                self.push_into_join(plan, parent_propagate_null_values, lateral_depth)
+            }
+            LogicalOperatorType::LogicalLimit => {
+                self.push_into_limit(plan, parent_propagate_null_values, lateral_depth)
+            }
             LogicalOperatorType::LogicalWindow => {
                 let child = take_child(&mut plan, 0)?;
-                plan.children[0] = self.push_down_internal(child, parent_propagate_null_values, lateral_depth)?;
+                plan.children[0] =
+                    self.push_down_internal(child, parent_propagate_null_values, lateral_depth)?;
                 self.rewrite(&mut plan, lateral_depth);
                 let mut partitions = Vec::with_capacity(correlated_count);
                 for i in 0..correlated_count {
@@ -680,7 +821,9 @@ impl<'a> FlattenDependentJoins<'a> {
                 }
                 Ok(plan)
             }
-            LogicalOperatorType::LogicalExcept | LogicalOperatorType::LogicalIntersect | LogicalOperatorType::LogicalUnion => {
+            LogicalOperatorType::LogicalExcept
+            | LogicalOperatorType::LogicalIntersect
+            | LogicalOperatorType::LogicalUnion => {
                 for index in 0..plan.children.len() {
                     let child = take_child(&mut plan, index)?;
                     let mut child = self.push_down_dependent_join(child, true, 0)?;
@@ -724,7 +867,8 @@ impl<'a> FlattenDependentJoins<'a> {
             }
             LogicalOperatorType::LogicalExpressionGet => {
                 let child = take_child(&mut plan, 0)?;
-                plan.children[0] = self.push_down_internal(child, parent_propagate_null_values, lateral_depth)?;
+                plan.children[0] =
+                    self.push_down_internal(child, parent_propagate_null_values, lateral_depth)?;
                 self.rewrite(&mut plan, lateral_depth);
                 let mut columns = Vec::with_capacity(correlated_count);
                 for i in 0..correlated_count {
@@ -744,12 +888,15 @@ impl<'a> FlattenDependentJoins<'a> {
                     }
                     expr_types.push(column.return_type.clone());
                 }
-                self.base_binding = ColumnBinding::new(*table_index, (expr_types.len() - correlated_count) as u64);
+                self.base_binding =
+                    ColumnBinding::new(*table_index, (expr_types.len() - correlated_count) as u64);
                 self.delim_offset = self.base_binding.column_index;
                 self.data_offset = 0;
                 Ok(plan)
             }
-            LogicalOperatorType::LogicalPivot => Err(Error::binder("PIVOT is not supported in correlated subqueries yet")),
+            LogicalOperatorType::LogicalPivot => Err(Error::binder(
+                "PIVOT is not supported in correlated subqueries yet",
+            )),
             LogicalOperatorType::LogicalOrderBy => {
                 let child = take_child(&mut plan, 0)?;
                 plan.children[0] = self.push_down_dependent_join(child, true, 0)?;
@@ -787,16 +934,21 @@ impl<'a> FlattenDependentJoins<'a> {
                 else {
                     return Err(Error::internal("expected a CTE reference"));
                 };
-                self.base_binding = ColumnBinding::new(*table_index, (chunk_types.len() as u64).saturating_sub(*correlated_columns));
+                self.base_binding = ColumnBinding::new(
+                    *table_index,
+                    (chunk_types.len() as u64).saturating_sub(*correlated_columns),
+                );
                 Ok(plan)
             }
             LogicalOperatorType::LogicalDelimJoin => Err(Error::binder(
                 "Nested lateral joins or lateral joins in correlated subqueries are not (yet) supported",
             )),
-            LogicalOperatorType::LogicalSample => Err(Error::binder("Sampling in correlated subqueries is not (yet) supported")),
-            LogicalOperatorType::LogicalPositionalJoin => {
-                Err(Error::binder("Positional join in correlated subqueries is not (yet) supported"))
-            }
+            LogicalOperatorType::LogicalSample => Err(Error::binder(
+                "Sampling in correlated subqueries is not (yet) supported",
+            )),
+            LogicalOperatorType::LogicalPositionalJoin => Err(Error::binder(
+                "Positional join in correlated subqueries is not (yet) supported",
+            )),
             other => Err(Error::internal(format!(
                 "Logical operator type \"{}\" for dependent join",
                 other.name()
@@ -806,7 +958,12 @@ impl<'a> FlattenDependentJoins<'a> {
 
     /// The aggregate case of `PushDownDependentJoinInternal`: the correlated columns
     /// become groups; ungrouped aggregates are joined with the delim scan.
-    fn push_into_aggregate(&mut self, mut plan: LogicalOperator, parent_propagate_null_values: &mut bool, lateral_depth: u64) -> Result<LogicalOperator> {
+    fn push_into_aggregate(
+        &mut self,
+        mut plan: LogicalOperator,
+        parent_propagate_null_values: &mut bool,
+        lateral_depth: u64,
+    ) -> Result<LogicalOperator> {
         for expression in &plan.expressions {
             *parent_propagate_null_values &= expression.propagates_null_values();
         }
@@ -849,7 +1006,10 @@ impl<'a> FlattenDependentJoins<'a> {
         let ungrouped_join = if aggregate.grouping_sets.is_empty() {
             aggregate.groups.len() == new_group_count
         } else {
-            aggregate.grouping_sets.iter().any(|set| set.len() == new_group_count)
+            aggregate
+                .grouping_sets
+                .iter()
+                .any(|set| set.len() == new_group_count)
         };
         if !ungrouped_join {
             self.base_binding = ColumnBinding::new(delim_table_index, delim_column_offset);
@@ -863,7 +1023,11 @@ impl<'a> FlattenDependentJoins<'a> {
         } else {
             JoinType::Inner
         };
-        if plan.expressions.iter().any(|expression| !expression.propagates_null_values()) {
+        if plan
+            .expressions
+            .iter()
+            .any(|expression| !expression.propagates_null_values())
+        {
             join_type = JoinType::Left;
         }
         let aggregate_index = aggregate.aggregate_index;
@@ -875,8 +1039,16 @@ impl<'a> FlattenDependentJoins<'a> {
                 .get(i)
                 .ok_or_else(|| Error::internal("correlated column out of range"))?;
             conditions.push(JoinCondition {
-                left: column_ref(&column.name, &column.logical_type, ColumnBinding::new(left_index, i as u64)),
-                right: column_ref("", &column.logical_type, ColumnBinding::new(delim_table_index, delim_column_offset + i as u64)),
+                left: column_ref(
+                    &column.name,
+                    &column.logical_type,
+                    ColumnBinding::new(left_index, i as u64),
+                ),
+                right: column_ref(
+                    "",
+                    &column.logical_type,
+                    ColumnBinding::new(delim_table_index, delim_column_offset + i as u64),
+                ),
                 comparison: ExpressionType::CompareNotDistinctFrom,
             });
         }
@@ -885,18 +1057,31 @@ impl<'a> FlattenDependentJoins<'a> {
             if let ExpressionKind::Aggregate(aggregate) = &expression.kind
                 && matches!(&*aggregate.function.name, "count" | "count_star")
             {
-                self.replacement_map.insert(ColumnBinding::new(aggregate_index, i as u64), i as u64);
+                self.replacement_map
+                    .insert(ColumnBinding::new(aggregate_index, i as u64), i as u64);
             }
         }
         self.base_binding = ColumnBinding::new(left_index, 0);
         self.delim_offset = 0;
         self.data_offset = 0;
-        Ok(comparison_join(join_type, conditions, delim_get(left_index, &self.delim_types), plan))
+        Ok(comparison_join(
+            join_type,
+            conditions,
+            delim_get(left_index, &self.delim_types),
+            plan,
+        ))
     }
 
     /// The join case of `PushDownDependentJoinInternal`.
-    fn push_into_join(&mut self, mut plan: LogicalOperator, parent_propagate_null_values: &mut bool, lateral_depth: u64) -> Result<LogicalOperator> {
-        let join_type = plan.join_type().ok_or_else(|| Error::internal("join without a join type"))?;
+    fn push_into_join(
+        &mut self,
+        mut plan: LogicalOperator,
+        parent_propagate_null_values: &mut bool,
+        lateral_depth: u64,
+    ) -> Result<LogicalOperator> {
+        let join_type = plan
+            .join_type()
+            .ok_or_else(|| Error::internal("join without a join type"))?;
         let left_correlated = self.correlation(&plan.children[0])?;
         let right_correlated = self.correlation(&plan.children[1])?;
         let correlated_count = self.correlated_columns.len();
@@ -904,14 +1089,16 @@ impl<'a> FlattenDependentJoins<'a> {
             JoinType::Inner => {
                 if !right_correlated {
                     let left = take_child(&mut plan, 0)?;
-                    plan.children[0] = self.push_down_internal(left, parent_propagate_null_values, lateral_depth)?;
+                    plan.children[0] =
+                        self.push_down_internal(left, parent_propagate_null_values, lateral_depth)?;
                     let right = take_child(&mut plan, 1)?;
                     plan.children[1] = self.decorrelate_independent(right)?;
                     return Ok(plan);
                 }
                 if !left_correlated {
                     let right = take_child(&mut plan, 1)?;
-                    plan.children[1] = self.push_down_internal(right, parent_propagate_null_values, lateral_depth)?;
+                    plan.children[1] =
+                        self.push_down_internal(right, parent_propagate_null_values, lateral_depth)?;
                     let left = take_child(&mut plan, 0)?;
                     plan.children[0] = self.decorrelate_independent(left)?;
                     self.delim_offset += plan.children[0].column_bindings().len() as u64;
@@ -921,7 +1108,8 @@ impl<'a> FlattenDependentJoins<'a> {
             JoinType::Left => {
                 if !right_correlated {
                     let left = take_child(&mut plan, 0)?;
-                    plan.children[0] = self.push_down_internal(left, parent_propagate_null_values, lateral_depth)?;
+                    plan.children[0] =
+                        self.push_down_internal(left, parent_propagate_null_values, lateral_depth)?;
                     let right = take_child(&mut plan, 1)?;
                     plan.children[1] = self.decorrelate_independent(right)?;
                     return Ok(plan);
@@ -930,7 +1118,8 @@ impl<'a> FlattenDependentJoins<'a> {
             JoinType::Right => {
                 if !left_correlated {
                     let right = take_child(&mut plan, 1)?;
-                    plan.children[1] = self.push_down_internal(right, parent_propagate_null_values, lateral_depth)?;
+                    plan.children[1] =
+                        self.push_down_internal(right, parent_propagate_null_values, lateral_depth)?;
                     let left = take_child(&mut plan, 0)?;
                     plan.children[0] = self.decorrelate_independent(left)?;
                     self.delim_offset += plan.children[0].column_bindings().len() as u64;
@@ -942,17 +1131,37 @@ impl<'a> FlattenDependentJoins<'a> {
                     // Push into the right side, then into the left one too, so that the
                     // correlated columns are available to the join condition.
                     let right = take_child(&mut plan, 1)?;
-                    plan.children[1] = self.push_down_internal(right, parent_propagate_null_values, lateral_depth)?;
+                    plan.children[1] =
+                        self.push_down_internal(right, parent_propagate_null_values, lateral_depth)?;
                     let right_binding = self.base_binding;
                     let left = take_child(&mut plan, 0)?;
-                    plan.children[0] = self.push_down_internal(left, parent_propagate_null_values, lateral_depth)?;
+                    plan.children[0] =
+                        self.push_down_internal(left, parent_propagate_null_values, lateral_depth)?;
                     let left_binding = self.base_binding;
                     let mut conditions = Vec::with_capacity(correlated_count);
                     for i in 0..correlated_count {
-                        let ty = self.correlated_columns.get(i).map(|c| c.logical_type.clone()).unwrap_or_default();
+                        let ty = self
+                            .correlated_columns
+                            .get(i)
+                            .map(|c| c.logical_type.clone())
+                            .unwrap_or_default();
                         conditions.push(JoinCondition {
-                            left: column_ref("", &ty, ColumnBinding::new(left_binding.table_index, left_binding.column_index + i as u64)),
-                            right: column_ref("", &ty, ColumnBinding::new(right_binding.table_index, right_binding.column_index + i as u64)),
+                            left: column_ref(
+                                "",
+                                &ty,
+                                ColumnBinding::new(
+                                    left_binding.table_index,
+                                    left_binding.column_index + i as u64,
+                                ),
+                            ),
+                            right: column_ref(
+                                "",
+                                &ty,
+                                ColumnBinding::new(
+                                    right_binding.table_index,
+                                    right_binding.column_index + i as u64,
+                                ),
+                            ),
                             comparison: ExpressionType::CompareNotDistinctFrom,
                         });
                     }
@@ -962,13 +1171,18 @@ impl<'a> FlattenDependentJoins<'a> {
                     return Ok(plan);
                 }
                 let left = take_child(&mut plan, 0)?;
-                plan.children[0] = self.push_down_internal(left, parent_propagate_null_values, lateral_depth)?;
+                plan.children[0] =
+                    self.push_down_internal(left, parent_propagate_null_values, lateral_depth)?;
                 let right = take_child(&mut plan, 1)?;
                 plan.children[1] = self.decorrelate_independent(right)?;
                 self.rewrite(&mut plan, lateral_depth);
                 return Ok(plan);
             }
-            _ => return Err(Error::not_implemented("Unsupported join type for flattening correlated subquery")),
+            _ => {
+                return Err(Error::not_implemented(
+                    "Unsupported join type for flattening correlated subquery",
+                ));
+            }
         }
         // Both sides are correlated: push into both.
         let left = take_child(&mut plan, 0)?;
@@ -987,9 +1201,21 @@ impl<'a> FlattenDependentJoins<'a> {
             self.delim_offset += plan.children[0].column_bindings().len() as u64;
         }
         for i in 0..correlated_count {
-            let ty = self.correlated_columns.get(i).map(|c| c.logical_type.clone()).unwrap_or_default();
-            let left = column_ref("", &ty, ColumnBinding::new(left_binding.table_index, left_binding.column_index + i as u64));
-            let right = column_ref("", &ty, ColumnBinding::new(right_binding.table_index, right_binding.column_index + i as u64));
+            let ty = self
+                .correlated_columns
+                .get(i)
+                .map(|c| c.logical_type.clone())
+                .unwrap_or_default();
+            let left = column_ref(
+                "",
+                &ty,
+                ColumnBinding::new(left_binding.table_index, left_binding.column_index + i as u64),
+            );
+            let right = column_ref(
+                "",
+                &ty,
+                ColumnBinding::new(right_binding.table_index, right_binding.column_index + i as u64),
+            );
             match &mut plan.kind {
                 LogicalKind::ComparisonJoin(join) => join.conditions.push(JoinCondition {
                     left,
@@ -997,35 +1223,55 @@ impl<'a> FlattenDependentJoins<'a> {
                     comparison: ExpressionType::CompareNotDistinctFrom,
                 }),
                 LogicalKind::AnyJoin { condition, .. } => {
-                    let comparison = Expression::comparison(ExpressionType::CompareNotDistinctFrom, left, right);
-                    let previous = std::mem::replace(&mut **condition, Expression::constant(Value::boolean(true)));
-                    **condition = Expression::conjunction(ExpressionType::ConjunctionAnd, vec![comparison, previous]);
+                    let comparison =
+                        Expression::comparison(ExpressionType::CompareNotDistinctFrom, left, right);
+                    let previous =
+                        std::mem::replace(&mut **condition, Expression::constant(Value::boolean(true)));
+                    **condition =
+                        Expression::conjunction(ExpressionType::ConjunctionAnd, vec![comparison, previous]);
                 }
                 _ => return Err(Error::internal("expected a join")),
             }
         }
-        rewrite_correlated_expressions(&mut plan, right_binding, &self.correlated_map, lateral_depth, false);
+        rewrite_correlated_expressions(
+            &mut plan,
+            right_binding,
+            &self.correlated_map,
+            lateral_depth,
+            false,
+        );
         Ok(plan)
     }
 
     /// The LIMIT case of `PushDownDependentJoinInternal`: a row number per correlated
     /// group, filtered to the limit.
-    fn push_into_limit(&mut self, mut plan: LogicalOperator, parent_propagate_null_values: &mut bool, lateral_depth: u64) -> Result<LogicalOperator> {
+    fn push_into_limit(
+        &mut self,
+        mut plan: LogicalOperator,
+        parent_propagate_null_values: &mut bool,
+        lateral_depth: u64,
+    ) -> Result<LogicalOperator> {
         let LogicalKind::Limit { limit, offset } = &plan.kind else {
             return Err(Error::internal("expected a limit"));
         };
         match limit {
             BoundLimitNode::ConstantPercentage(_) | BoundLimitNode::ExpressionPercentage(_) => {
-                return Err(Error::parser("Limit percent operator not supported in correlated subquery"));
+                return Err(Error::parser(
+                    "Limit percent operator not supported in correlated subquery",
+                ));
             }
             BoundLimitNode::ExpressionValue(_) => {
-                return Err(Error::parser("Non-constant limit not supported in correlated subquery"));
+                return Err(Error::parser(
+                    "Non-constant limit not supported in correlated subquery",
+                ));
             }
             _ => {}
         }
         match offset {
             BoundLimitNode::ExpressionValue(_) => {
-                return Err(Error::parser("Non-constant offset not supported in correlated subquery"));
+                return Err(Error::parser(
+                    "Non-constant offset not supported in correlated subquery",
+                ));
             }
             BoundLimitNode::ConstantPercentage(_) | BoundLimitNode::ExpressionPercentage(_) => {
                 return Err(Error::internal("Percentage offset in FlattenDependentJoin"));
@@ -1045,7 +1291,11 @@ impl<'a> FlattenDependentJoins<'a> {
         };
         let child_column_count = child.column_bindings().len();
         let window_index = self.binder.generate_table_index();
-        let partition_count = if self.perform_delim { self.correlated_columns.len() } else { 1 };
+        let partition_count = if self.perform_delim {
+            self.correlated_columns.len()
+        } else {
+            1
+        };
         let mut partitions = Vec::with_capacity(partition_count);
         for i in 0..partition_count {
             partitions.push(self.base_column(i, true)?);
@@ -1053,12 +1303,21 @@ impl<'a> FlattenDependentJoins<'a> {
         let window = LogicalOperator::new(LogicalKind::Window { window_index })
             .with_expressions(vec![row_number(partitions, orders, "")])
             .with_children(vec![child]);
-        let row_number_ref = || Expression::column_ref("limit_rownum", LogicalType::BIGINT, ColumnBinding::new(window_index, 0), 0);
+        let row_number_ref = || {
+            Expression::column_ref(
+                "limit_rownum",
+                LogicalType::BIGINT,
+                ColumnBinding::new(window_index, 0),
+                0,
+            )
+        };
         let mut condition = None;
         if let BoundLimitNode::ConstantValue(limit) = limit {
             let limit = i64::try_from(limit).unwrap_or(i64::MAX);
             let upper = match offset {
-                BoundLimitNode::ConstantValue(offset) => limit.checked_add(i64::try_from(offset).unwrap_or(i64::MAX)).unwrap_or(i64::MAX),
+                BoundLimitNode::ConstantValue(offset) => limit
+                    .checked_add(i64::try_from(offset).unwrap_or(i64::MAX))
+                    .unwrap_or(i64::MAX),
                 _ => limit,
             };
             condition = Some(Expression::comparison(
@@ -1078,7 +1337,8 @@ impl<'a> FlattenDependentJoins<'a> {
                 None => lower,
             });
         }
-        let condition = condition.ok_or_else(|| Error::internal("LIMIT without a constant limit or offset"))?;
+        let condition =
+            condition.ok_or_else(|| Error::internal("LIMIT without a constant limit or offset"))?;
         // The projection map prunes the row number.
         Ok(LogicalOperator::new(LogicalKind::Filter {
             projection_map: (0..child_column_count as u64).collect(),
@@ -1088,14 +1348,20 @@ impl<'a> FlattenDependentJoins<'a> {
     }
 
     /// The CTE case of `PushDownDependentJoinInternal`.
-    fn push_into_cte(&mut self, mut plan: LogicalOperator, parent_propagate_null_values: &mut bool, lateral_depth: u64) -> Result<LogicalOperator> {
+    fn push_into_cte(
+        &mut self,
+        mut plan: LogicalOperator,
+        parent_propagate_null_values: &mut bool,
+        lateral_depth: u64,
+    ) -> Result<LogicalOperator> {
         let is_recursive = matches!(plan.kind, LogicalKind::RecursiveCte { .. });
         if !is_recursive {
             let left_correlated = self.correlation(&plan.children[0])?;
             let right_correlated = self.correlation(&plan.children[1])?;
             if !left_correlated && right_correlated {
                 let right = take_child(&mut plan, 1)?;
-                plan.children[1] = self.push_down_internal(right, parent_propagate_null_values, lateral_depth)?;
+                plan.children[1] =
+                    self.push_down_internal(right, parent_propagate_null_values, lateral_depth)?;
                 let left = take_child(&mut plan, 0)?;
                 plan.children[0] = self.decorrelate_independent(left)?;
                 return Ok(plan);
@@ -1139,7 +1405,10 @@ impl<'a> FlattenDependentJoins<'a> {
                 key_targets.push(column_ref(
                     "",
                     &column.logical_type,
-                    ColumnBinding::new(self.base_binding.table_index, self.base_binding.column_index + i as u64),
+                    ColumnBinding::new(
+                        self.base_binding.table_index,
+                        self.base_binding.column_index + i as u64,
+                    ),
                 ));
             }
         }
@@ -1152,15 +1421,28 @@ impl<'a> FlattenDependentJoins<'a> {
         *parent_propagate_null_values = false;
         let right = take_child(&mut plan, 1)?;
         plan.children[1] = self.push_down_internal(right, parent_propagate_null_values, lateral_depth)?;
-        rewrite_correlated_expressions(&mut plan, self.base_binding, &self.correlated_map, lateral_depth, false);
+        rewrite_correlated_expressions(
+            &mut plan,
+            self.base_binding,
+            &self.correlated_map,
+            lateral_depth,
+            false,
+        );
         for index in 0..2 {
-            rewrite_correlated_expressions(&mut plan.children[index], self.base_binding, &self.correlated_map, lateral_depth + 1, true);
+            rewrite_correlated_expressions(
+                &mut plan.children[index],
+                self.base_binding,
+                &self.correlated_map,
+                lateral_depth + 1,
+                true,
+            );
         }
         if is_recursive {
             self.base_binding = ColumnBinding::new(table_index, column_count);
         }
         match &mut plan.kind {
-            LogicalKind::MaterializedCte { column_count, .. } | LogicalKind::RecursiveCte { column_count, .. } => {
+            LogicalKind::MaterializedCte { column_count, .. }
+            | LogicalKind::RecursiveCte { column_count, .. } => {
                 *column_count += correlated.len() as u64;
             }
             _ => {}
@@ -1172,5 +1454,6 @@ impl<'a> FlattenDependentJoins<'a> {
 /// Flattens every dependent join of a plan (DuckDB's
 /// `FlattenDependentJoins::DecorrelateIndependent`, run by the planner after binding).
 pub fn decorrelate_independent(binder: &Binder, plan: LogicalOperator) -> Result<LogicalOperator> {
-    FlattenDependentJoins::new(binder, &CorrelatedColumns::default(), true, false, false).decorrelate(plan, true, 0)
+    FlattenDependentJoins::new(binder, &CorrelatedColumns::default(), true, false, false)
+        .decorrelate(plan, true, 0)
 }

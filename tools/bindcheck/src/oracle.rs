@@ -145,7 +145,11 @@ pub fn run_one(duckdb: &Path, id: u64, sql: &str) -> OracleResult {
                 [.., last] if last.len() == 1 => records.pop().and_then(|mut record| record.pop()),
                 _ => None,
             };
-            let columns: Vec<Vec<String>> = records.into_iter().skip(1).filter(|record| record.len() == 6).collect();
+            let columns: Vec<Vec<String>> = records
+                .into_iter()
+                .skip(1)
+                .filter(|record| record.len() == 6)
+                .collect();
             OracleResult {
                 id,
                 error: None,
@@ -175,7 +179,9 @@ pub fn run_all(duckdb: &Path, statements: &[(u64, &str)], jobs: usize) -> Vec<Or
                         *next += 1;
                         index
                     };
-                    let Some(&(id, sql)) = statements.get(index) else { return };
+                    let Some(&(id, sql)) = statements.get(index) else {
+                        return;
+                    };
                     let result = run_one(duckdb, id, sql);
                     if let Ok(mut results) = results.lock() {
                         results.push(result);

@@ -10,10 +10,10 @@ use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_types::{DataChunk, LogicalType, Value};
 
 use super::bind_subquery_ref;
+use crate::ColumnBinding;
 use crate::binder::query_node::bind_node;
 use crate::binder::{BindScope, BoundStatement};
 use crate::operator::{LogicalKind, LogicalOperator};
-use crate::ColumnBinding;
 
 /// The catalog column a query's output column comes from, if it can be traced through
 /// projections and pass-through operators (DuckDB's `FindBaseTableColumn`).
@@ -60,7 +60,9 @@ fn bind_show_query(scope: &mut BindScope<'_>, query: &mut QueryNode) -> Result<B
         bind_node(&mut child_scope, query)?
     };
     crate::operator::sync_column_ids(&mut plan.plan);
-    let names = ["column_name", "column_type", "null", "key", "default", "extra"].map(str::to_owned).to_vec();
+    let names = ["column_name", "column_type", "null", "key", "default", "extra"]
+        .map(str::to_owned)
+        .to_vec();
     let types = vec![LogicalType::VARCHAR; 6];
     let bindings = plan.plan.column_bindings();
     let mut chunks = Vec::new();
@@ -81,12 +83,16 @@ fn bind_show_query(scope: &mut BindScope<'_>, query: &mut QueryNode) -> Result<B
                 [
                     Value::varchar(alias.clone()),
                     Value::varchar(definition.logical_type.to_string()),
-                    Value::varchar(if table.not_null_columns.contains(&column) { "NO" } else { "YES" }),
+                    Value::varchar(if table.not_null_columns.contains(&column) {
+                        "NO"
+                    } else {
+                        "YES"
+                    }),
                     Value::null(LogicalType::VARCHAR),
-                    definition
-                        .default_value
-                        .as_ref()
-                        .map_or_else(|| Value::null(LogicalType::VARCHAR), |default| Value::varchar(default.to_string())),
+                    definition.default_value.as_ref().map_or_else(
+                        || Value::null(LogicalType::VARCHAR),
+                        |default| Value::varchar(default.to_string()),
+                    ),
                     Value::null(LogicalType::VARCHAR),
                 ]
             }
@@ -112,10 +118,12 @@ fn bind_show_query(scope: &mut BindScope<'_>, query: &mut QueryNode) -> Result<B
         chunks.push(chunk);
     }
     let table_index = scope.binder.generate_table_index();
-    scope
-        .binder
-        .bind_context
-        .add_generic_binding(table_index, "__show_select", names.clone(), types.clone())?;
+    scope.binder.bind_context.add_generic_binding(
+        table_index,
+        "__show_select",
+        names.clone(),
+        types.clone(),
+    )?;
     let plan = LogicalOperator::new(LogicalKind::ChunkGet {
         table_index,
         chunk_types: types.clone(),

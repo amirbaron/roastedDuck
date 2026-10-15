@@ -79,7 +79,12 @@ expression_binder_base!(GroupBinder);
 impl ExpressionBinder for GroupBinder<'_> {
     expression_binder_accessors!();
 
-    fn bind_expression(&mut self, expr: &mut ParsedExpression, depth: u64, root_expression: bool) -> Result<BindResult> {
+    fn bind_expression(
+        &mut self,
+        expr: &mut ParsedExpression,
+        depth: u64,
+        root_expression: bool,
+    ) -> Result<BindResult> {
         if root_expression && depth == 0 {
             match &expr.kind {
                 ParsedExpressionKind::ColumnRef(_) => return bind_column_ref(self, expr, 0, true),
@@ -100,12 +105,18 @@ impl ExpressionBinder for GroupBinder<'_> {
             }
         }
         match &expr.kind {
-            ParsedExpressionKind::Default => {
-                bind_unsupported_expression(self, expr, depth, "GROUP BY clause cannot contain DEFAULT clause")
-            }
-            ParsedExpressionKind::Window(_) => {
-                bind_unsupported_expression(self, expr, depth, "GROUP BY clause cannot contain window functions!")
-            }
+            ParsedExpressionKind::Default => bind_unsupported_expression(
+                self,
+                expr,
+                depth,
+                "GROUP BY clause cannot contain DEFAULT clause",
+            ),
+            ParsedExpressionKind::Window(_) => bind_unsupported_expression(
+                self,
+                expr,
+                depth,
+                "GROUP BY clause cannot contain window functions!",
+            ),
             _ => bind_expression_base(self, expr, depth, root_expression),
         }
     }

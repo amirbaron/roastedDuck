@@ -3,7 +3,8 @@
 //! overload is chosen, and the function's bind callback decides the output columns.
 
 use rustdb_ast::{
-    ExpressionType, FunctionExpression, OrdinalityType, ParsedExpression, ParsedExpressionKind, TableFunctionRef,
+    ExpressionType, FunctionExpression, OrdinalityType, ParsedExpression, ParsedExpressionKind,
+    TableFunctionRef,
 };
 use rustdb_catalog::{CatalogType, EntryKind};
 use rustdb_common::{Error, ErrorKind, Result};
@@ -12,7 +13,9 @@ use rustdb_function::{TableFunction, TableFunctionBindInput};
 use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
 use crate::binder::{BindScope, Binding, BindingAlias, BindingKind, BoundStatement};
-use crate::expression_binder::{ExpressionBinder, TableFunctionBinder, parameter_not_resolved, parsed_is_scalar};
+use crate::expression_binder::{
+    ExpressionBinder, TableFunctionBinder, parameter_not_resolved, parsed_is_scalar,
+};
 use crate::function_binder::FunctionBinder;
 use crate::operator::{LogicalGet, LogicalKind, LogicalOperator};
 
@@ -23,7 +26,11 @@ struct NamedParameters(Vec<(String, Value)>);
 
 impl NamedParameters {
     fn insert(&mut self, name: String, value: Value) {
-        match self.0.iter_mut().find(|(existing, _)| existing.eq_ignore_ascii_case(&name)) {
+        match self
+            .0
+            .iter_mut()
+            .find(|(existing, _)| existing.eq_ignore_ascii_case(&name))
+        {
             Some(entry) => entry.1 = value,
             None => self.0.push((name, value)),
         }
@@ -52,7 +59,9 @@ fn bind_parameters(
     location: Option<u64>,
 ) -> Result<(Vec<LogicalType>, Vec<Value>, NamedParameters)> {
     if !children.iter_mut().all(parsed_is_scalar) {
-        return Err(Error::not_implemented("table in-out functions and table parameters"));
+        return Err(Error::not_implemented(
+            "table in-out functions and table parameters",
+        ));
     }
     let mut arguments = Vec::new();
     let mut parameters = Vec::new();
@@ -66,7 +75,10 @@ fn bind_parameters(
                 && column.column_names.len() == 1
             {
                 parameter_name = column.column_names[0].clone();
-                let right = std::mem::replace(&mut *comparison.right, ParsedExpression::constant(Value::default()));
+                let right = std::mem::replace(
+                    &mut *comparison.right,
+                    ParsedExpression::constant(Value::default()),
+                );
                 *child = right;
             }
         } else if !child.alias.is_empty() {
@@ -87,10 +99,17 @@ fn bind_parameters(
         let constant = scope.context.evaluator.evaluate_scalar(&bound)?;
         if parameter_name.is_empty() {
             if !named.is_empty() {
-                return Err(Error::new(ErrorKind::Invalid, "Unnamed parameters cannot come after named parameters")
-                    .with_position(location));
+                return Err(Error::new(
+                    ErrorKind::Invalid,
+                    "Unnamed parameters cannot come after named parameters",
+                )
+                .with_position(location));
             }
-            arguments.push(if constant.is_null() { LogicalType::SQLNULL } else { sql_type });
+            arguments.push(if constant.is_null() {
+                LogicalType::SQLNULL
+            } else {
+                sql_type
+            });
             parameters.push(constant);
         } else {
             named.insert(parameter_name, constant);
@@ -107,10 +126,16 @@ fn bind_named_parameters(
     function_name: &str,
 ) -> Result<()> {
     for (name, value) in &mut values.0 {
-        let Some((_, ty)) = declared.iter().find(|(declared, _)| declared.eq_ignore_ascii_case(name)) else {
+        let Some((_, ty)) = declared
+            .iter()
+            .find(|(declared, _)| declared.eq_ignore_ascii_case(name))
+        else {
             let mut ordered: Vec<&(String, LogicalType)> = declared.iter().collect();
             ordered.sort_by(|a, b| a.0.cmp(&b.0));
-            let named: String = ordered.iter().map(|(name, ty)| format!("    {name} {ty}\n")).collect();
+            let named: String = ordered
+                .iter()
+                .map(|(name, ty)| format!("    {name} {ty}\n"))
+                .collect();
             let message = if named.is_empty() {
                 "Function does not accept any named parameters.".to_owned()
             } else {
@@ -228,9 +253,14 @@ pub fn bind_table_function(
         return Err(Error::not_implemented("WITH ORDINALITY"));
     }
     let ParsedExpressionKind::Function(function) = &mut function_ref.function.kind else {
-        return Err(Error::internal("table function reference without a function call"));
+        return Err(Error::internal(
+            "table function reference without a function call",
+        ));
     };
-    if !function.schema.is_empty() && function.catalog.is_empty() && scope.context.catalog(&function.schema).is_some() {
+    if !function.schema.is_empty()
+        && function.catalog.is_empty()
+        && scope.context.catalog(&function.schema).is_some()
+    {
         function.catalog = std::mem::take(&mut function.schema);
     }
     let context = scope.context.clone();
@@ -258,10 +288,18 @@ pub fn bind_table_function(
     let table_function = function_binder
         .bind_table_function_overload(functions, &arguments)?
         .map_err(|error| error.with_position(location))?;
-    bind_named_parameters(&table_function.named_parameters, &mut named, location, &table_function.name)?;
+    bind_named_parameters(
+        &table_function.named_parameters,
+        &mut named,
+        location,
+        &table_function.name,
+    )?;
     let (input_table_types, input_table_names) = if table_function.in_out {
         // The constant arguments are the input row (typed before the casts below).
-        let types: Vec<LogicalType> = parameters.iter().map(|value| value.logical_type().clone()).collect();
+        let types: Vec<LogicalType> = parameters
+            .iter()
+            .map(|value| value.logical_type().clone())
+            .collect();
         let names = vec![String::new(); types.len()];
         (types, names)
     } else {
@@ -275,15 +313,20 @@ pub fn bind_table_function(
             .or(table_function.varargs.as_ref())
             .cloned()
             .unwrap_or(LogicalType::ANY);
-        if !matches!(target.id(), LogicalTypeId::Any | LogicalTypeId::Pointer | LogicalTypeId::List | LogicalTypeId::Table) {
+        if !matches!(
+            target.id(),
+            LogicalTypeId::Any | LogicalTypeId::Pointer | LogicalTypeId::List | LogicalTypeId::Table
+        ) {
             let mut cast_parameters = CastParameters::new();
-            *parameter = parameter.cast_with(&context.casts, &target, &mut cast_parameters).map_err(|error| {
-                if error.kind() == ErrorKind::Conversion {
-                    Error::invalid_input(format!("Failed to cast value: {}", error.raw_message()))
-                } else {
-                    error
-                }
-            })?;
+            *parameter = parameter
+                .cast_with(&context.casts, &target, &mut cast_parameters)
+                .map_err(|error| {
+                    if error.kind() == ErrorKind::Conversion {
+                        Error::invalid_input(format!("Failed to cast value: {}", error.raw_message()))
+                    } else {
+                        error
+                    }
+                })?;
         }
     }
     let alias = function_alias(alias, function);

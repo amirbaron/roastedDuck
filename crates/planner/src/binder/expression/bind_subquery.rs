@@ -27,7 +27,11 @@ fn is_unnamed_struct(ty: &LogicalType) -> bool {
 
 /// `(a, b) = ANY(...)`: the row's elements compared one by one (DuckDB's
 /// `ExtractSubqueryChildren`).
-fn extract_subquery_children(child: &mut Option<Expression>, types: &[LogicalType], comparison: ExpressionType) -> Vec<Expression> {
+fn extract_subquery_children(
+    child: &mut Option<Expression>,
+    types: &[LogicalType],
+    comparison: ExpressionType,
+) -> Vec<Expression> {
     let Some(expression) = child else {
         return Vec::new();
     };
@@ -145,7 +149,10 @@ pub fn bind_subquery_expression<B: ExpressionBinder + ?Sized>(
     let mut child_types = Vec::new();
     let mut child_targets = Vec::new();
     if pending.subquery_type == SubqueryType::Any {
-        if child_expressions.len() == 1 && types.len() > 1 && is_unnamed_struct(&child_expressions[0].return_type) {
+        if child_expressions.len() == 1
+            && types.len() > 1
+            && is_unnamed_struct(&child_expressions[0].return_type)
+        {
             children.append(&mut child_expressions);
             child_types.clone_from(&types);
             child_targets.clone_from(&types);

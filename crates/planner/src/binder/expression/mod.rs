@@ -69,16 +69,23 @@ pub fn bind_expression_base<B: ExpressionBinder + ?Sized>(
         ParsedExpressionKind::Operator(_) => bind_operator(binder, expr, depth),
         ParsedExpressionKind::Subquery(_) => bind_subquery_expression(binder, expr, depth),
         ParsedExpressionKind::Parameter(_) => bind_parameter(binder, expr),
-        ParsedExpressionKind::PositionalReference(_) => bind_positional_reference(binder, expr, depth, root_expression),
-        ParsedExpressionKind::Star(_) => Ok(BindResult::Unbound(unsupported(expr, "STAR expression is not supported here"))),
+        ParsedExpressionKind::PositionalReference(_) => {
+            bind_positional_reference(binder, expr, depth, root_expression)
+        }
+        ParsedExpressionKind::Star(_) => Ok(BindResult::Unbound(unsupported(
+            expr,
+            "STAR expression is not supported here",
+        ))),
         ParsedExpressionKind::Window(_) => binder.bind_window(expr, depth),
         ParsedExpressionKind::Bound(bound) if bound.payload.is::<bind_subquery::PendingSubquery>() => {
             bind_subquery_expression(binder, expr, depth)
         }
-        ParsedExpressionKind::Default | ParsedExpressionKind::Bound(_) => Err(Error::not_implemented(format!(
-            "Unimplemented expression class in ExpressionBinder::BindExpression: {}",
-            expr.expression_class().name()
-        ))),
+        ParsedExpressionKind::Default | ParsedExpressionKind::Bound(_) => {
+            Err(Error::not_implemented(format!(
+                "Unimplemented expression class in ExpressionBinder::BindExpression: {}",
+                expr.expression_class().name()
+            )))
+        }
     }
 }
 
@@ -134,13 +141,16 @@ pub fn bind_column_ref<B: ExpressionBinder + ?Sized>(
     };
     let qualified_names = qualified_column.column_names.clone();
     let column_name = qualified_names.last().cloned().unwrap_or_default();
-    let table_name = qualified_names.get(qualified_names.len().saturating_sub(2)).cloned().unwrap_or_default();
+    let table_name = qualified_names
+        .get(qualified_names.len().saturating_sub(2))
+        .cloned()
+        .unwrap_or_default();
     let alias = qualified.alias.clone();
     let inner = binder.binder();
     let result = match &mut inner.macro_binding {
-        Some(macro_binding) if macro_binding.alias.alias == table_name => {
-            macro_binding.bind(&column_name, &alias, depth).map_err(BindError::from)
-        }
+        Some(macro_binding) if macro_binding.alias.alias == table_name => macro_binding
+            .bind(&column_name, &alias, depth)
+            .map_err(BindError::from),
         _ => inner
             .bind_context
             .bind_column(qualified_column, &alias, depth)?
@@ -174,7 +184,10 @@ fn bind_lambda_ref<B: ExpressionBinder + ?Sized>(
         return Err(Error::internal("lambda reference out of range"));
     };
     let bound = binding.bind(&name, "", depth)?;
-    let column = bound.as_column_ref().copied().ok_or_else(|| Error::internal("lambda binding"))?;
+    let column = bound
+        .as_column_ref()
+        .copied()
+        .ok_or_else(|| Error::internal("lambda binding"))?;
     Ok(Expression::new(
         ExpressionType::BoundLambdaRef,
         bound.return_type.clone(),
@@ -251,13 +264,22 @@ fn bind_conjunction<B: ExpressionBinder + ?Sized>(
     let context = binder.binder_ref().context.clone();
     let mut children = Vec::with_capacity(conjunction.children.len());
     for child in &mut conjunction.children {
-        children.push(add_cast_to_type(&context, take_bound(child)?, &LogicalType::BOOLEAN, false)?);
+        children.push(add_cast_to_type(
+            &context,
+            take_bound(child)?,
+            &LogicalType::BOOLEAN,
+            false,
+        )?);
     }
     Ok(Expression::conjunction(conjunction_type, children).into())
 }
 
 /// DuckDB's `BindExpression(CastExpression &)`.
-fn bind_cast<B: ExpressionBinder + ?Sized>(binder: &mut B, expr: &mut ParsedExpression, depth: u64) -> Result<BindResult> {
+fn bind_cast<B: ExpressionBinder + ?Sized>(
+    binder: &mut B,
+    expr: &mut ParsedExpression,
+    depth: u64,
+) -> Result<BindResult> {
     let ParsedExpressionKind::Cast(cast) = &mut expr.kind else {
         return Err(Error::internal("expected a cast"));
     };
@@ -305,7 +327,10 @@ pub fn bind_logical_type(ty: &LogicalType) -> Result<LogicalType> {
             Ok(LogicalType::struct_type(children))
         }
         (LogicalTypeId::Map, _) => match ty.map_key_value() {
-            Some((key, value)) => Ok(LogicalType::map(bind_logical_type(key)?, bind_logical_type(value)?)),
+            Some((key, value)) => Ok(LogicalType::map(
+                bind_logical_type(key)?,
+                bind_logical_type(value)?,
+            )),
             None => Ok(ty.clone()),
         },
         _ => Ok(ty.clone()),
@@ -313,7 +338,11 @@ pub fn bind_logical_type(ty: &LogicalType) -> Result<LogicalType> {
 }
 
 /// DuckDB's `BindExpression(CaseExpression &)`.
-fn bind_case<B: ExpressionBinder + ?Sized>(binder: &mut B, expr: &mut ParsedExpression, depth: u64) -> Result<BindResult> {
+fn bind_case<B: ExpressionBinder + ?Sized>(
+    binder: &mut B,
+    expr: &mut ParsedExpression,
+    depth: u64,
+) -> Result<BindResult> {
     let location = expr.query_location;
     let ParsedExpressionKind::Case(case) = &mut expr.kind else {
         return Err(Error::internal("expected a CASE"));
@@ -330,7 +359,10 @@ fn bind_case<B: ExpressionBinder + ?Sized>(binder: &mut B, expr: &mut ParsedExpr
     let else_expr = take_bound(&mut case.else_expr)?;
     let mut checks = Vec::with_capacity(case.case_checks.len());
     for check in &mut case.case_checks {
-        checks.push((take_bound(&mut check.when_expr)?, take_bound(&mut check.then_expr)?));
+        checks.push((
+            take_bound(&mut check.when_expr)?,
+            take_bound(&mut check.then_expr)?,
+        ));
     }
     let mut return_type = crate::expression_binder::expression_return_type(&else_expr);
     for (_, then) in &checks {
@@ -355,7 +387,10 @@ fn bind_case<B: ExpressionBinder + ?Sized>(binder: &mut B, expr: &mut ParsedExpr
     Ok(Expression::new(
         ExpressionType::CaseExpr,
         return_type,
-        ExpressionKind::Case(Box::new(BoundCaseExpression { case_checks, else_expr })),
+        ExpressionKind::Case(Box::new(BoundCaseExpression {
+            case_checks,
+            else_expr,
+        })),
     )
     .into())
 }
@@ -389,7 +424,8 @@ fn bind_between<B: ExpressionBinder + ?Sized>(
     };
     let common = try_bind_comparison(&input_type, &lower_type, between_type)?
         .ok_or_else(|| mismatch(&input_type, &lower_type))?;
-    let common = try_bind_comparison(&common, &upper_type, between_type)?.ok_or_else(|| mismatch(&common, &upper_type))?;
+    let common = try_bind_comparison(&common, &upper_type, between_type)?
+        .ok_or_else(|| mismatch(&common, &upper_type))?;
     let context = binder.binder_ref().context.clone();
     let input = push_collation(add_cast_to_type(&context, input, &common, false)?, &common)?;
     let lower = push_collation(add_cast_to_type(&context, lower, &common, false)?, &common)?;
@@ -431,7 +467,8 @@ fn bind_collate<B: ExpressionBinder + ?Sized>(
         return Err(parameter_not_resolved());
     }
     if child.return_type.id() != LogicalTypeId::Varchar {
-        return Err(Error::binder("collations are only supported for type varchar").with_position(child.query_location));
+        return Err(Error::binder("collations are only supported for type varchar")
+            .with_position(child.query_location));
     }
     let collation_type = LogicalType::with_info(
         LogicalTypeId::Varchar,
@@ -440,7 +477,10 @@ fn bind_collate<B: ExpressionBinder + ?Sized>(
         }),
     );
     // Validates the collation.
-    push_collation(Expression::constant(rustdb_types::Value::null(LogicalType::VARCHAR)), &collation_type)?;
+    push_collation(
+        Expression::constant(rustdb_types::Value::null(LogicalType::VARCHAR)),
+        &collation_type,
+    )?;
     child.return_type = collation_type;
     Ok(child.into())
 }
@@ -464,19 +504,31 @@ fn bind_operator<B: ExpressionBinder + ?Sized>(
     }
     let function_name = match operator_type {
         ExpressionType::OperatorUnpack => {
-            return Ok(BindResult::error("UNPACK not allowed here, should have been resolved earlier"));
+            return Ok(BindResult::error(
+                "UNPACK not allowed here, should have been resolved earlier",
+            ));
         }
         ExpressionType::ArrayExtract => {
             let base_type = crate::expression_binder::peek_bound(&operator.children[0])
                 .map(|e| e.return_type.id())
                 .unwrap_or(LogicalTypeId::Invalid);
-            Some(if base_type == LogicalTypeId::Map { "map_extract_value" } else { "array_extract" })
+            Some(if base_type == LogicalTypeId::Map {
+                "map_extract_value"
+            } else {
+                "array_extract"
+            })
         }
         ExpressionType::ArraySlice => Some("array_slice"),
         ExpressionType::StructExtract => {
             let (Some(base), Some(name)) = (
-                operator.children.first().and_then(crate::expression_binder::peek_bound),
-                operator.children.get(1).and_then(crate::expression_binder::peek_bound),
+                operator
+                    .children
+                    .first()
+                    .and_then(crate::expression_binder::peek_bound),
+                operator
+                    .children
+                    .get(1)
+                    .and_then(crate::expression_binder::peek_bound),
             ) else {
                 return Err(Error::internal("struct extract without two children"));
             };
@@ -499,12 +551,20 @@ fn bind_operator<B: ExpressionBinder + ?Sized>(
         ExpressionType::ArrayConstructor => Some("list_value"),
         ExpressionType::Arrow => Some("json_extract"),
         ExpressionType::OperatorTry => {
-            if let Some(child) = operator.children.first().and_then(crate::expression_binder::peek_bound) {
+            if let Some(child) = operator
+                .children
+                .first()
+                .and_then(crate::expression_binder::peek_bound)
+            {
                 if child.has_subquery() {
-                    return Err(Error::binder("TRY can not be used in combination with a scalar subquery"));
+                    return Err(Error::binder(
+                        "TRY can not be used in combination with a scalar subquery",
+                    ));
                 }
                 if child.is_volatile() {
-                    return Err(Error::binder("TRY can not be used in combination with a volatile function"));
+                    return Err(Error::binder(
+                        "TRY can not be used in combination with a volatile function",
+                    ));
                 }
             }
             None
@@ -524,7 +584,10 @@ fn bind_operator<B: ExpressionBinder + ?Sized>(
     let context = binder.binder_ref().context.clone();
     let result_type = match operator_type {
         ExpressionType::OperatorIsNull | ExpressionType::OperatorIsNotNull => {
-            if matches!(children[0].return_type.id(), LogicalTypeId::Invalid | LogicalTypeId::Unknown) {
+            if matches!(
+                children[0].return_type.id(),
+                LogicalTypeId::Invalid | LogicalTypeId::Unknown
+            ) {
                 return Err(parameter_not_resolved());
             }
             LogicalType::BOOLEAN
@@ -543,10 +606,17 @@ fn bind_operator<B: ExpressionBinder + ?Sized>(
         ExpressionType::OperatorTry => children[0].return_type.clone(),
         ExpressionType::OperatorNot => {
             let child = children.remove(0);
-            children.insert(0, add_cast_to_type(&context, child, &LogicalType::BOOLEAN, false)?);
+            children.insert(
+                0,
+                add_cast_to_type(&context, child, &LogicalType::BOOLEAN, false)?,
+            );
             LogicalType::BOOLEAN
         }
-        _ => return Err(Error::internal("Unrecognized expression type for ResolveOperatorType")),
+        _ => {
+            return Err(Error::internal(
+                "Unrecognized expression type for ResolveOperatorType",
+            ));
+        }
     };
     Ok(Expression::operator(operator_type, result_type, children).into())
 }
@@ -562,7 +632,10 @@ fn resolve_coalesce_type(
     let Some(first) = children.first() else {
         return Err(Error::internal("IN requires at least a single child node"));
     };
-    let is_in = matches!(operator_type, ExpressionType::CompareIn | ExpressionType::CompareNotIn);
+    let is_in = matches!(
+        operator_type,
+        ExpressionType::CompareIn | ExpressionType::CompareNotIn
+    );
     let mut max_type = crate::expression_binder::expression_return_type(first);
     for child in children.iter().skip(1) {
         let child_type = crate::expression_binder::expression_return_type(child);
@@ -590,14 +663,21 @@ fn resolve_coalesce_type(
     let mut cast_children = Vec::with_capacity(children.len());
     for child in children.drain(..) {
         let child = add_cast_to_type(context, child, &max_type, false)?;
-        cast_children.push(if is_in { push_collation(child, &max_type)? } else { child });
+        cast_children.push(if is_in {
+            push_collation(child, &max_type)?
+        } else {
+            child
+        });
     }
     *children = cast_children;
     Ok(max_type)
 }
 
 /// DuckDB's `BindExpression(ParameterExpression &)`.
-fn bind_parameter<B: ExpressionBinder + ?Sized>(binder: &mut B, expr: &mut ParsedExpression) -> Result<BindResult> {
+fn bind_parameter<B: ExpressionBinder + ?Sized>(
+    binder: &mut B,
+    expr: &mut ParsedExpression,
+) -> Result<BindResult> {
     let ParsedExpressionKind::Parameter(parameter) = &expr.kind else {
         return Err(Error::internal("expected a parameter"));
     };
@@ -611,11 +691,16 @@ fn bind_parameter<B: ExpressionBinder + ?Sized>(binder: &mut B, expr: &mut Parse
             .map(|data| (data.value.clone(), parameters.return_type(&identifier)))
     });
     let Some(supplied) = supplied else {
-        return Err(Error::binder("Unexpected prepared parameter. This type of statement can't be prepared!"));
+        return Err(Error::binder(
+            "Unexpected prepared parameter. This type of statement can't be prepared!",
+        ));
     };
     if let Some((value, return_type)) = supplied {
         let constant = Expression::constant(value).with_alias(alias);
-        if matches!(return_type.id(), LogicalTypeId::IntegerLiteral | LogicalTypeId::StringLiteral) {
+        if matches!(
+            return_type.id(),
+            LogicalTypeId::IntegerLiteral | LogicalTypeId::StringLiteral
+        ) {
             return Ok(constant.into());
         }
         let context = inner.context.clone();
@@ -638,7 +723,9 @@ fn bind_positional_reference<B: ExpressionBinder + ?Sized>(
         return Err(Error::internal("expected a positional reference"));
     };
     if depth != 0 {
-        return Err(Error::internal("Positional reference expression could not be bound"));
+        return Err(Error::internal(
+            "Positional reference expression could not be bound",
+        ));
     }
     let mut column = binder.binder_ref().bind_context.position_to_column(reference)?;
     column.alias = std::mem::take(&mut expr.alias);

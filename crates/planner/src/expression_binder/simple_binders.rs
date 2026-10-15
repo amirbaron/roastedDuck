@@ -8,7 +8,9 @@ use rustdb_types::{LogicalType, Value};
 use super::base::{BinderBase, expression_binder_accessors, expression_binder_base};
 use super::base_select_binder::SelectBindState;
 use super::column_alias_binder::ColumnAliasBinder;
-use super::{BindError, BindResult, ExpressionBinder, is_potential_alias, parameter_not_resolved, unsupported};
+use super::{
+    BindError, BindResult, ExpressionBinder, is_potential_alias, parameter_not_resolved, unsupported,
+};
 use crate::binder::expression::{bind_expression_base, bind_unsupported_expression};
 use crate::binder::{Binder, DUMMY_NAME, Scope};
 use crate::expression::Expression;
@@ -68,14 +70,22 @@ expression_binder_base!(WhereBinder {
 impl ExpressionBinder for WhereBinder<'_> {
     expression_binder_accessors!();
 
-    fn bind_expression(&mut self, expr: &mut ParsedExpression, depth: u64, root_expression: bool) -> Result<BindResult> {
+    fn bind_expression(
+        &mut self,
+        expr: &mut ParsedExpression,
+        depth: u64,
+        root_expression: bool,
+    ) -> Result<BindResult> {
         match &expr.kind {
             ParsedExpressionKind::Default => {
                 bind_unsupported_expression(self, expr, depth, "WHERE clause cannot contain DEFAULT clause")
             }
-            ParsedExpressionKind::Window(_) => {
-                bind_unsupported_expression(self, expr, depth, "WHERE clause cannot contain window functions!")
-            }
+            ParsedExpressionKind::Window(_) => bind_unsupported_expression(
+                self,
+                expr,
+                depth,
+                "WHERE clause cannot contain window functions!",
+            ),
             _ => bind_expression_base(self, expr, depth, root_expression),
         }
     }
@@ -123,7 +133,12 @@ expression_binder_base!(ConstantBinder);
 impl ExpressionBinder for ConstantBinder<'_> {
     expression_binder_accessors!();
 
-    fn bind_expression(&mut self, expr: &mut ParsedExpression, depth: u64, root_expression: bool) -> Result<BindResult> {
+    fn bind_expression(
+        &mut self,
+        expr: &mut ParsedExpression,
+        depth: u64,
+        root_expression: bool,
+    ) -> Result<BindResult> {
         match &expr.kind {
             ParsedExpressionKind::ColumnRef(column) => {
                 if let [name] = column.column_names.as_slice()
@@ -134,7 +149,10 @@ impl ExpressionBinder for ConstantBinder<'_> {
                 }
                 Err(unsupported(expr, format!("{} cannot contain column names", self.clause)).error)
             }
-            ParsedExpressionKind::Subquery(_) => Err(Error::binder(format!("{} cannot contain subqueries", self.clause))),
+            ParsedExpressionKind::Subquery(_) => Err(Error::binder(format!(
+                "{} cannot contain subqueries",
+                self.clause
+            ))),
             ParsedExpressionKind::Default => {
                 let message = format!("{} cannot contain DEFAULT clause", self.clause);
                 bind_unsupported_expression(self, expr, depth, &message)
@@ -172,9 +190,18 @@ expression_binder_base!(AggregateBinder);
 impl ExpressionBinder for AggregateBinder<'_> {
     expression_binder_accessors!();
 
-    fn bind_expression(&mut self, expr: &mut ParsedExpression, depth: u64, root_expression: bool) -> Result<BindResult> {
+    fn bind_expression(
+        &mut self,
+        expr: &mut ParsedExpression,
+        depth: u64,
+        root_expression: bool,
+    ) -> Result<BindResult> {
         if let ParsedExpressionKind::Window(_) = expr.kind {
-            return Err(unsupported(expr, "aggregate function calls cannot contain window function calls").error);
+            return Err(unsupported(
+                expr,
+                "aggregate function calls cannot contain window function calls",
+            )
+            .error);
         }
         bind_expression_base(self, expr, depth, root_expression)
     }
@@ -208,9 +235,17 @@ expression_binder_base!(InsertBinder);
 impl ExpressionBinder for InsertBinder<'_> {
     expression_binder_accessors!();
 
-    fn bind_expression(&mut self, expr: &mut ParsedExpression, depth: u64, root_expression: bool) -> Result<BindResult> {
+    fn bind_expression(
+        &mut self,
+        expr: &mut ParsedExpression,
+        depth: u64,
+        root_expression: bool,
+    ) -> Result<BindResult> {
         match &expr.kind {
-            ParsedExpressionKind::Default => Ok(BindResult::Unbound(unsupported(expr, "DEFAULT is not allowed here!"))),
+            ParsedExpressionKind::Default => Ok(BindResult::Unbound(unsupported(
+                expr,
+                "DEFAULT is not allowed here!",
+            ))),
             ParsedExpressionKind::Window(_) => Ok(BindResult::Unbound(unsupported(
                 expr,
                 "INSERT statement cannot contain window functions!",
@@ -251,7 +286,12 @@ impl<'a> TableFunctionBinder<'a> {
     }
 
     /// DuckDB's `TableFunctionBinder::BindColumnReference`.
-    fn bind_column_reference(&mut self, expr: &mut ParsedExpression, depth: u64, root_expression: bool) -> Result<BindResult> {
+    fn bind_column_reference(
+        &mut self,
+        expr: &mut ParsedExpression,
+        depth: u64,
+        root_expression: bool,
+    ) -> Result<BindResult> {
         let ParsedExpressionKind::ColumnRef(column) = &expr.kind else {
             return Err(Error::internal("expected a column reference"));
         };
@@ -282,7 +322,9 @@ impl<'a> TableFunctionBinder<'a> {
         let location = expr.query_location;
         let result_name = names.join(".");
         let placeholder = || BindError::binder("error");
-        if !self.table_function_name.is_empty() && self.bind_correlated_columns(expr, placeholder())?.is_none() {
+        if !self.table_function_name.is_empty()
+            && self.bind_correlated_columns(expr, placeholder())?.is_none()
+        {
             return Err(Error::binder(format!(
                 "Table function \"{}\" does not support lateral join column parameters - cannot use column \"{}\" \
                  in this context.\nThe function only supports literals as parameters.",
@@ -316,14 +358,26 @@ expression_binder_base!(TableFunctionBinder);
 impl ExpressionBinder for TableFunctionBinder<'_> {
     expression_binder_accessors!();
 
-    fn bind_expression(&mut self, expr: &mut ParsedExpression, depth: u64, root_expression: bool) -> Result<BindResult> {
+    fn bind_expression(
+        &mut self,
+        expr: &mut ParsedExpression,
+        depth: u64,
+        root_expression: bool,
+    ) -> Result<BindResult> {
         match &expr.kind {
             ParsedExpressionKind::ColumnRef(_) => self.bind_column_reference(expr, depth, root_expression),
-            ParsedExpressionKind::Subquery(_) => Err(Error::binder(format!("{} cannot contain subqueries", self.clause))),
-            ParsedExpressionKind::Default => Ok(BindResult::error(format!("{} cannot contain DEFAULT clause", self.clause))),
-            ParsedExpressionKind::Window(_) => {
-                Ok(BindResult::error(format!("{} cannot contain window functions!", self.clause)))
-            }
+            ParsedExpressionKind::Subquery(_) => Err(Error::binder(format!(
+                "{} cannot contain subqueries",
+                self.clause
+            ))),
+            ParsedExpressionKind::Default => Ok(BindResult::error(format!(
+                "{} cannot contain DEFAULT clause",
+                self.clause
+            ))),
+            ParsedExpressionKind::Window(_) => Ok(BindResult::error(format!(
+                "{} cannot contain window functions!",
+                self.clause
+            ))),
             _ => bind_expression_base(self, expr, depth, root_expression),
         }
     }

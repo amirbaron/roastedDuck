@@ -1,8 +1,8 @@
 //! Expansion of `*` and `COLUMNS(...)` (DuckDB's `bind_star_expression.cpp`).
 
 use rustdb_ast::{
-    ExpressionClass, ExpressionType, LambdaExpression, LambdaSyntaxType, ParsedExpression, ParsedExpressionKind,
-    StarExpression,
+    ExpressionClass, ExpressionType, LambdaExpression, LambdaSyntaxType, ParsedExpression,
+    ParsedExpressionKind, StarExpression,
 };
 use rustdb_common::string_util::candidates_error_message;
 use rustdb_common::{CaseInsensitiveMap, Error, Result};
@@ -85,18 +85,25 @@ pub fn find_star_expression(
                 ));
             }
             let list = scope.bind_context.generate_all_column_expressions(current)?;
-            let values = list.iter().map(|e| Value::varchar(columns_string_value(e))).collect();
+            let values = list
+                .iter()
+                .map(|e| Value::varchar(columns_string_value(e)))
+                .collect();
             *expr = ParsedExpression::constant(Value::list(LogicalType::VARCHAR, values));
             return Ok(StarExpressionType::Star);
         }
         if in_columns {
-            return Err(Error::binder("COLUMNS expression is not allowed inside another COLUMNS expression"));
+            return Err(Error::binder(
+                "COLUMNS expression is not allowed inside another COLUMNS expression",
+            ));
         }
         in_columns = true;
         if let Some(existing) = star {
             if existing != &**current {
-                return Err(Error::binder("Multiple different STAR/COLUMNS in the same expression are not supported")
-                    .with_position(expr.query_location));
+                return Err(Error::binder(
+                    "Multiple different STAR/COLUMNS in the same expression are not supported",
+                )
+                .with_position(expr.query_location));
             }
             return Ok(StarExpressionType::Star);
         }
@@ -217,13 +224,21 @@ fn try_transform_star_like(root: &mut ParsedExpression) -> Result<()> {
         .with_position(location));
     }
     if function.children[1].expression_class() != ExpressionClass::Constant {
-        return Err(Error::binder("Pattern applied to a star expression must be a constant").with_position(location));
+        return Err(
+            Error::binder("Pattern applied to a star expression must be a constant").with_position(location),
+        );
     }
     if !star.rename_list.is_empty() {
-        return Err(Error::binder("Rename list cannot be combined with a filtering operation").with_position(location));
+        return Err(
+            Error::binder("Rename list cannot be combined with a filtering operation")
+                .with_position(location),
+        );
     }
     if !star.replace_list.is_empty() {
-        return Err(Error::binder("Replace list cannot be combined with a filtering operation").with_position(location));
+        return Err(
+            Error::binder("Replace list cannot be combined with a filtering operation")
+                .with_position(location),
+        );
     }
     let star = (**star).clone();
     let original_alias = root.alias.clone();
@@ -238,9 +253,15 @@ fn try_transform_star_like(root: &mut ParsedExpression) -> Result<()> {
         function_child(root, inverse)?.children.remove(1)
     } else {
         let body = if inverse {
-            std::mem::replace(root, ParsedExpression::constant(Value::null(LogicalType::SQLNULL)))
+            std::mem::replace(
+                root,
+                ParsedExpression::constant(Value::null(LogicalType::SQLNULL)),
+            )
         } else {
-            std::mem::replace(root, ParsedExpression::constant(Value::null(LogicalType::SQLNULL)))
+            std::mem::replace(
+                root,
+                ParsedExpression::constant(Value::null(LogicalType::SQLNULL)),
+            )
         };
         let lambda = ParsedExpression::new(
             ExpressionType::Lambda,
@@ -263,8 +284,11 @@ fn try_transform_star_like(root: &mut ParsedExpression) -> Result<()> {
     if regex_shortcut {
         columns.exclude_list = star.exclude_list;
     }
-    *root = ParsedExpression::new(ExpressionType::Star, ParsedExpressionKind::Star(Box::new(columns)))
-        .with_alias(original_alias);
+    *root = ParsedExpression::new(
+        ExpressionType::Star,
+        ParsedExpressionKind::Star(Box::new(columns)),
+    )
+    .with_alias(original_alias);
     Ok(())
 }
 
@@ -287,7 +311,9 @@ fn function_child(root: &mut ParsedExpression, inverse: bool) -> Result<&mut rus
 fn resolved_column_name(expr: &ParsedExpression) -> Option<String> {
     match &expr.kind {
         ParsedExpressionKind::ColumnRef(column) => column.column_names.last().cloned(),
-        ParsedExpressionKind::Operator(operator) if expr.expression_type == ExpressionType::OperatorCoalesce => {
+        ParsedExpressionKind::Operator(operator)
+            if expr.expression_type == ExpressionType::OperatorCoalesce =>
+        {
             operator.children.first().and_then(resolved_column_name)
         }
         _ => None,
@@ -313,7 +339,10 @@ pub fn expand_star_expression(
     if let Some(columns_expr) = &star.expr {
         let mut child = (**columns_expr).clone();
         let value = {
-            let mut binder = { let (inner, outer) = scope.split(); TableFunctionBinder::new(inner, outer, "", "COLUMNS expression") };
+            let mut binder = {
+                let (inner, outer) = scope.split();
+                TableFunctionBinder::new(inner, outer, "", "COLUMNS expression")
+            };
             let result = binder.bind(&mut child, true)?;
             if !result.is_foldable() {
                 if result.has_parameter() {
@@ -331,12 +360,15 @@ pub fn expand_star_expression(
                 }
                 let pattern = value.to_varchar()?;
                 let compiled = regex::Regex::new(&pattern).map_err(|error| {
-                    Error::binder(format!("Failed to compile regex \"{pattern}\": {error}")).with_position(star_location)
+                    Error::binder(format!("Failed to compile regex \"{pattern}\": {error}"))
+                        .with_position(star_location)
                 })?;
                 let mut candidates = Vec::new();
                 let mut new_list = Vec::new();
                 for expanded in star_list {
-                    let Some(name) = resolved_column_name(&expanded) else { continue };
+                    let Some(name) = resolved_column_name(&expanded) else {
+                        continue;
+                    };
                     if compiled.is_match(&name) {
                         new_list.push(expanded);
                     } else {
@@ -347,7 +379,10 @@ pub fn expand_star_expression(
                     let suggestion = if candidates.is_empty() {
                         String::new()
                     } else {
-                        format!("\n{}", candidates_error_message(&candidates, &pattern, "Did you mean"))
+                        format!(
+                            "\n{}",
+                            candidates_error_message(&candidates, &pattern, "Did you mean")
+                        )
                     };
                     return Err(Error::binder(format!(
                         "No matching columns found that match regex \"{pattern}\"{suggestion}"
@@ -368,10 +403,15 @@ pub fn expand_star_expression(
                 let mut selected: Vec<(String, bool)> = Vec::new();
                 for child in children {
                     if child.is_null() {
-                        return Err(Error::binder("Columns expression does not support NULL input parameters"));
+                        return Err(Error::binder(
+                            "Columns expression does not support NULL input parameters",
+                        ));
                     }
                     let name = child.to_varchar()?;
-                    if !selected.iter().any(|(existing, _)| existing.eq_ignore_ascii_case(&name)) {
+                    if !selected
+                        .iter()
+                        .any(|(existing, _)| existing.eq_ignore_ascii_case(&name))
+                    {
                         selected.push((name, false));
                     }
                 }

@@ -20,7 +20,6 @@ use crate::expression_binder::SelectBindState;
 use crate::generated::enums::DistinctType;
 use crate::operator::{BoundLimitNode, GroupingSet, LogicalKind, LogicalOperator};
 
-
 pub use plan_subquery::{plan_lateral_join, plan_subqueries, recursive_dependent_join_planner};
 
 /// GROUP BY terms and grouping sets (DuckDB's `BoundGroupByNode`).
@@ -45,7 +44,10 @@ pub enum BoundResultModifier {
         targets: Vec<Expression>,
     },
     Order(BoundOrderModifier),
-    Limit { limit: BoundLimitNode, offset: BoundLimitNode },
+    Limit {
+        limit: BoundLimitNode,
+        offset: BoundLimitNode,
+    },
 }
 
 /// A bound SELECT node before planning (DuckDB's `BoundSelectNode`).
@@ -157,7 +159,10 @@ fn finish_cte(
     child: BoundStatement,
 ) -> Result<BoundStatement> {
     let (bound, query_binder) = {
-        let mut state = cte.bind_state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut state = cte
+            .bind_state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         (state.bound.take(), state.query_binder.take())
     };
     let (Some(bound), Some(mut query_binder)) = (bound, query_binder) else {

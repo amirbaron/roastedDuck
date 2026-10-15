@@ -1,22 +1,23 @@
 //! SELECT nodes (DuckDB's `bind_select_node.cpp` and `plan_select_node.cpp`).
 
 use rustdb_ast::{
-    AggregateHandling, ExpressionType, ParsedExpression, ParsedExpressionKind, QueryNode, QueryNodeKind, SelectNode,
+    AggregateHandling, ExpressionType, ParsedExpression, ParsedExpressionKind, QueryNode, QueryNodeKind,
+    SelectNode,
 };
 use rustdb_common::{CaseInsensitiveMap, Error, Result};
 use rustdb_types::LogicalType;
 
 use super::modifiers::{OrderTargets, bind_modifiers, prepare_modifiers, visit_query_node};
 use super::{BoundSelectNode, plan_subqueries};
+use crate::ColumnBinding;
 use crate::binder::expression::expand_star_expression;
 use crate::binder::{BindScope, BoundStatement};
 use crate::expression::{Expression, ExpressionKind};
 use crate::expression_binder::{
-    BoundGroupInformation, ColumnAliasBinder, ExpressionBinder, GroupBinder, SelectBinder, SelectRole, WhereBinder,
-    qualify_column_names,
+    BoundGroupInformation, ColumnAliasBinder, ExpressionBinder, GroupBinder, SelectBinder, SelectRole,
+    WhereBinder, qualify_column_names,
 };
 use crate::operator::{LogicalAggregate, LogicalKind, LogicalOperator};
-use crate::ColumnBinding;
 
 /// Binds a SELECT node: its FROM clause first (DuckDB's `BindNode(SelectNode &)`).
 pub fn bind_select(scope: &mut BindScope<'_>, node: &mut QueryNode) -> Result<BoundStatement> {
@@ -29,7 +30,6 @@ pub fn bind_select(scope: &mut BindScope<'_>, node: &mut QueryNode) -> Result<Bo
         return Err(Error::internal("expected a SELECT node"));
     };
     bind_select_node(scope, select, modifiers, from_table)
-
 }
 
 /// Expands COLUMNS(...) in WHERE into a conjunction (DuckDB's `BindWhereStarExpression`).
@@ -49,12 +49,17 @@ fn bind_where_star_expression(scope: &mut BindScope<'_>, expr: &mut ParsedExpres
             "STAR expression is not allowed in the WHERE clause. Use COLUMNS(*) instead.",
         ));
     }
-    let original = std::mem::replace(expr, ParsedExpression::constant(rustdb_types::Value::boolean(true)));
+    let original = std::mem::replace(
+        expr,
+        ParsedExpression::constant(rustdb_types::Value::boolean(true)),
+    );
     let mut conditions = Vec::new();
     expand_star_expression(scope, original, &mut conditions)?;
     let mut conditions = conditions.into_iter();
     let Some(first) = conditions.next() else {
-        return Err(Error::parser("COLUMNS expansion resulted in empty set of columns"));
+        return Err(Error::parser(
+            "COLUMNS expansion resulted in empty set of columns",
+        ));
     };
     *expr = conditions.fold(first, |left, right| {
         ParsedExpression::new(
@@ -92,7 +97,9 @@ pub fn bind_select_node(
         expand_star_expression(scope, expr, &mut expanded)?;
     }
     if expanded.is_empty() {
-        return Err(Error::binder("SELECT list is empty after resolving * expressions!"));
+        return Err(Error::binder(
+            "SELECT list is empty after resolving * expressions!",
+        ));
     }
     let mut select_list = expanded;
     for (i, expr) in select_list.iter_mut().enumerate() {
@@ -139,8 +146,13 @@ pub fn bind_select_node(
         {
             let (inner, outer) = scope.split();
             let mut group_alias_map = CaseInsensitiveMap::default();
-            let mut group_binder =
-                GroupBinder::new(inner, outer, &mut select_list, &result.bind_state, &mut group_alias_map);
+            let mut group_binder = GroupBinder::new(
+                inner,
+                outer,
+                &mut select_list,
+                &result.bind_state,
+                &mut group_alias_map,
+            );
             for (i, mut group) in groups.into_iter().enumerate() {
                 group_binder.unbound_expression = Some(group.clone());
                 group_binder.bind_index = i;
@@ -186,7 +198,9 @@ pub fn bind_select_node(
     let mut bound_qualify_columns = Vec::new();
     if let Some(mut qualify) = statement.qualify.take() {
         if statement.aggregate_handling == AggregateHandling::ForceAggregates {
-            return Err(Error::binder("Combining QUALIFY with GROUP BY ALL is not supported yet"));
+            return Err(Error::binder(
+                "Combining QUALIFY with GROUP BY ALL is not supported yet",
+            ));
         }
         qualify_column_names(scope.binder, &mut qualify)?;
         let (inner, outer) = scope.split();
@@ -202,7 +216,9 @@ pub fn bind_select_node(
         let bound = qualify_binder.bind(&mut qualify, true)?;
         if qualify_binder.has_bound_columns() {
             if qualify_binder.bound_aggregates() {
-                return Err(Error::binder("Cannot mix aggregates with non-aggregated columns!"));
+                return Err(Error::binder(
+                    "Cannot mix aggregates with non-aggregated columns!",
+                ));
             }
             bound_qualify_columns = qualify_binder.state_ref().bound_columns.clone();
         }
@@ -230,15 +246,22 @@ pub fn bind_select_node(
             select_binder.node_mut().bound_column_count += 1;
             if let ExpressionKind::Expanded(expanded) = bound.kind {
                 if !is_original_column {
-                    return Err(Error::binder("UNNEST of struct cannot be used in ORDER BY/DISTINCT ON clause"));
+                    return Err(Error::binder(
+                        "UNNEST of struct cannot be used in ORDER BY/DISTINCT ON clause",
+                    ));
                 }
                 if statement.aggregate_handling == AggregateHandling::ForceAggregates {
-                    return Err(Error::binder("UNNEST of struct cannot be combined with GROUP BY ALL"));
+                    return Err(Error::binder(
+                        "UNNEST of struct cannot be combined with GROUP BY ALL",
+                    ));
                 }
                 let count = expanded.expanded_expressions.len();
                 for struct_expr in expanded.expanded_expressions {
                     new_names.push(struct_expr.name());
-                    select_binder.node_mut().types.push(struct_expr.return_type.clone());
+                    select_binder
+                        .node_mut()
+                        .types
+                        .push(struct_expr.return_type.clone());
                     internal_types.push(struct_expr.return_type.clone());
                     select_columns.push(struct_expr);
                 }
@@ -246,7 +269,10 @@ pub fn bind_select_node(
                 continue;
             }
             if bound.is_volatile() {
-                select_binder.node_mut().bind_state.set_expression_is_volatile(i)?;
+                select_binder
+                    .node_mut()
+                    .bind_state
+                    .set_expression_is_volatile(i)?;
             }
             if bound.has_subquery() {
                 select_binder.node_mut().bind_state.set_expression_has_subquery(i);
@@ -254,7 +280,9 @@ pub fn bind_select_node(
             select_binder.node_mut().bind_state.add_regular_column();
             if can_group_by_all && select_binder.has_bound_columns() {
                 if select_binder.bound_aggregates() {
-                    return Err(Error::binder("Cannot mix aggregates with non-aggregated columns!"));
+                    return Err(Error::binder(
+                        "Cannot mix aggregates with non-aggregated columns!",
+                    ));
                 }
                 if is_window {
                     return Err(Error::binder("Cannot group on a window clause"));
@@ -305,7 +333,9 @@ pub fn bind_select_node(
         || !result.groups.grouping_sets.is_empty();
     if aggregating {
         if statement.aggregate_handling == AggregateHandling::NoAggregatesAllowed {
-            return Err(Error::binder("Aggregates cannot be present in a Project relation!"));
+            return Err(Error::binder(
+                "Aggregates cannot be present in a Project relation!",
+            ));
         }
         let mut bound_columns = select_bound_columns;
         bound_columns.extend(bound_qualify_columns);
@@ -336,7 +366,13 @@ pub fn bind_select_node(
 
     let names = result.names.clone();
     let mut bound_modifiers = std::mem::take(&mut result.modifiers);
-    bind_modifiers(&mut bound_modifiers, result.projection_index, &names, &internal_types, &result.bind_state)?;
+    bind_modifiers(
+        &mut bound_modifiers,
+        result.projection_index,
+        &names,
+        &internal_types,
+        &result.bind_state,
+    )?;
     result.modifiers = bound_modifiers;
     let original_expressions = std::mem::take(&mut result.bind_state.original_expressions);
 
@@ -350,7 +386,11 @@ pub fn bind_select_node(
 }
 
 /// DuckDB's `Binder::CreatePlan(BoundSelectNode &)`.
-fn create_plan(scope: &mut BindScope<'_>, mut statement: BoundSelectNode, from_table: BoundStatement) -> Result<LogicalOperator> {
+fn create_plan(
+    scope: &mut BindScope<'_>,
+    mut statement: BoundSelectNode,
+    from_table: BoundStatement,
+) -> Result<LogicalOperator> {
     let mut root = from_table.plan;
     if let Some(sample_options) = statement.sample_options.take() {
         root = LogicalOperator::new(LogicalKind::Sample { sample_options }).with_children(vec![root]);
@@ -359,7 +399,10 @@ fn create_plan(scope: &mut BindScope<'_>, mut statement: BoundSelectNode, from_t
         plan_subqueries(scope, &mut condition, &mut root)?;
         root = LogicalOperator::filter(condition, root);
     }
-    if !statement.aggregates.is_empty() || !statement.groups.group_expressions.is_empty() || statement.having.is_some() {
+    if !statement.aggregates.is_empty()
+        || !statement.groups.group_expressions.is_empty()
+        || statement.having.is_some()
+    {
         for group in &mut statement.groups.group_expressions {
             plan_subqueries(scope, group, &mut root)?;
         }

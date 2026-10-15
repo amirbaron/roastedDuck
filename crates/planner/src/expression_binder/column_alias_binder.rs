@@ -21,13 +21,20 @@ pub struct ColumnAliasBinder {
 impl ColumnAliasBinder {
     /// Whether `names` refers to a select-list alias (DuckDB's `DoesColumnAliasExist`).
     pub fn does_column_alias_exist(bind_state: &SelectBindState, names: &[String]) -> bool {
-        is_potential_alias(names) && names.first().is_some_and(|name| bind_state.alias_map.contains_key(name))
+        is_potential_alias(names)
+            && names
+                .first()
+                .is_some_and(|name| bind_state.alias_map.contains_key(name))
     }
 
     /// If `expr` names an alias that is not being expanded already, replaces it by the
     /// aliased expression and returns the alias's select-list index (first half of
     /// DuckDB's `BindAlias`).
-    pub fn begin(&mut self, bind_state: &mut SelectBindState, expr: &mut ParsedExpression) -> Result<Option<usize>> {
+    pub fn begin(
+        &mut self,
+        bind_state: &mut SelectBindState,
+        expr: &mut ParsedExpression,
+    ) -> Result<Option<usize>> {
         let ParsedExpressionKind::ColumnRef(column) = &expr.kind else {
             return Ok(None);
         };

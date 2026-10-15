@@ -50,12 +50,19 @@ expression_binder_base!(LateralBinder);
 impl ExpressionBinder for LateralBinder<'_> {
     expression_binder_accessors!();
 
-    fn bind_expression(&mut self, expr: &mut ParsedExpression, depth: u64, root_expression: bool) -> Result<BindResult> {
+    fn bind_expression(
+        &mut self,
+        expr: &mut ParsedExpression,
+        depth: u64,
+        root_expression: bool,
+    ) -> Result<BindResult> {
         match &expr.kind {
             ParsedExpressionKind::Default => {
                 bind_unsupported_expression(self, expr, depth, "LATERAL join cannot contain DEFAULT clause!")
             }
-            ParsedExpressionKind::Window(_) => Ok(BindResult::error("LATERAL join cannot contain window functions!")),
+            ParsedExpressionKind::Window(_) => {
+                Ok(BindResult::error("LATERAL join cannot contain window functions!"))
+            }
             ParsedExpressionKind::ColumnRef(_) => {
                 if depth == 0 {
                     return Err(Error::internal("Lateral binder can only bind correlated columns"));

@@ -4,8 +4,8 @@
 use std::fmt::{self, Write as _};
 
 use rustdb_ast::{
-    ExpressionType, OrderByNullType, OrderType, WindowBoundary, WindowExcludeMode, expression_type_to_operator,
-    expression_type_to_string, value_to_sql_string,
+    ExpressionType, OrderByNullType, OrderType, WindowBoundary, WindowExcludeMode,
+    expression_type_to_operator, expression_type_to_string, value_to_sql_string,
 };
 
 use super::{BoundOrderByNode, Expression, ExpressionKind};
@@ -93,12 +93,22 @@ fn operator_text(expression: &Expression, children: &[Expression]) -> String {
     }
     match ty {
         ExpressionType::CompareIn | ExpressionType::CompareNotIn => {
-            let keyword = if ty == ExpressionType::CompareIn { " IN " } else { " NOT IN " };
-            format!("({}{keyword}({}))", child(0), join(children.get(1..).unwrap_or_default(), ", "))
+            let keyword = if ty == ExpressionType::CompareIn {
+                " IN "
+            } else {
+                " NOT IN "
+            };
+            format!(
+                "({}{keyword}({}))",
+                child(0),
+                join(children.get(1..).unwrap_or_default(), ", ")
+            )
         }
         ExpressionType::OperatorUnpack => format!("UNPACK({})", child(0)),
         ExpressionType::OperatorTry => format!("TRY({})", child(0)),
-        ExpressionType::OperatorNot => format!("({} {})", expression_type_to_string(ty), join(children, ", ")),
+        ExpressionType::OperatorNot => {
+            format!("({} {})", expression_type_to_string(ty), join(children, ", "))
+        }
         ExpressionType::GroupingFunction | ExpressionType::OperatorCoalesce => {
             format!("{}({})", expression_type_to_string(ty), join(children, ", "))
         }
@@ -128,12 +138,10 @@ fn units(boundary: WindowBoundary, rows: WindowBoundary, range: WindowBoundary) 
 /// DuckDB's `WindowExpression::ToString` template as instantiated for bound windows.
 fn window_text(expression: &Expression, window: &super::BoundWindowExpression) -> String {
     use WindowBoundary as B;
-    let name = window
-        .aggregate
-        .as_ref()
-        .map_or_else(|| expression_type_to_string(expression.expression_type).to_owned(), |aggregate| {
-            aggregate.name.to_string()
-        });
+    let name = window.aggregate.as_ref().map_or_else(
+        || expression_type_to_string(expression.expression_type).to_owned(),
+        |aggregate| aggregate.name.to_string(),
+    );
     let mut result = format!("{name}(");
     for (i, child) in window.children.iter().enumerate() {
         if i > 0 {
@@ -147,7 +155,13 @@ fn window_text(expression: &Expression, window: &super::BoundWindowExpression) -
     for extra in [&window.offset_expr, &window.default_expr].into_iter().flatten() {
         let _ = write!(result, ", {extra}");
     }
-    let orders = |orders: &[BoundOrderByNode]| orders.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+    let orders = |orders: &[BoundOrderByNode]| {
+        orders
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
     if !window.arg_orders.is_empty() {
         let _ = write!(result, " ORDER BY {}", orders(&window.arg_orders));
     }
@@ -253,7 +267,10 @@ impl fmt::Display for Expression {
                 false,
                 aggregate.is_distinct(),
                 aggregate.filter.as_ref(),
-                aggregate.order_bys.as_ref().map_or(&[][..], |order| &order.orders),
+                aggregate
+                    .order_bys
+                    .as_ref()
+                    .map_or(&[][..], |order| &order.orders),
             ),
             ExpressionKind::Between(between) => format!(
                 "({} BETWEEN {} AND {})",

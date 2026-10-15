@@ -39,7 +39,9 @@ fn check_tree_depth(op: &LogicalOperator, max_depth: u64, depth: u64) -> Result<
             "Maximum tree depth of {max_depth} exceeded in logical planner"
         )));
     }
-    op.children.iter().try_for_each(|child| check_tree_depth(child, max_depth, depth + 1))
+    op.children
+        .iter()
+        .try_for_each(|child| check_tree_depth(child, max_depth, depth + 1))
 }
 
 impl Planner {
@@ -62,9 +64,12 @@ impl Planner {
         };
         let (mut plan, names, types, resolved) = match bound {
             Ok(bound) => (Some(bound.plan), bound.names, bound.types, true),
-            Err(error) if error.kind() == ErrorKind::ParameterNotResolved => {
-                (None, vec!["unknown".to_owned()], vec![LogicalType::UNKNOWN], false)
-            }
+            Err(error) if error.kind() == ErrorKind::ParameterNotResolved => (
+                None,
+                vec!["unknown".to_owned()],
+                vec![LogicalType::UNKNOWN],
+                false,
+            ),
             Err(error) => return Err(error),
         };
         if let Some(bound_plan) = plan.take() {
@@ -78,7 +83,9 @@ impl Planner {
         let mut parameters = CaseInsensitiveMap::default();
         for (identifier, data) in parameter_map.parameters {
             let mut locked = data.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            if !locked.return_type.is_valid() || locked.return_type.id() == rustdb_types::LogicalTypeId::Unknown {
+            if !locked.return_type.is_valid()
+                || locked.return_type.id() == rustdb_types::LogicalTypeId::Unknown
+            {
                 properties.bound_all_parameters = false;
                 drop(locked);
                 continue;
@@ -115,7 +122,9 @@ impl Planner {
     ) -> Result<(PreparedStatementData, LogicalOperator)> {
         let planned = self.create_plan_with_values(statement.clone(), values)?;
         let prepared = Self::prepared_data(statement, &planned);
-        let plan = planned.plan.ok_or_else(|| Error::internal("prepared statement without a plan"))?;
+        let plan = planned
+            .plan
+            .ok_or_else(|| Error::internal("prepared statement without a plan"))?;
         Ok((prepared, plan))
     }
 

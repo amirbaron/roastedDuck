@@ -21,8 +21,8 @@ mod qualify;
 mod simple_binders;
 
 use rustdb_ast::{
-    BoundExpression, ExpressionClass, ExpressionType, FunctionExpression, OperatorExpression, ParsedExpression,
-    ParsedExpressionKind,
+    BoundExpression, ExpressionClass, ExpressionType, FunctionExpression, OperatorExpression,
+    ParsedExpression, ParsedExpressionKind,
 };
 use rustdb_common::string_util::top_n_strings;
 use rustdb_common::{Error, ErrorKind, Result};
@@ -44,7 +44,9 @@ pub use qualify::{
     ColumnQualifier, QualifyContext, bind_and_qualify_function, create_struct_extract, for_each_child,
     is_lambda_function, qualify_column_names,
 };
-pub use simple_binders::{AggregateBinder, BaseBinder, ConstantBinder, InsertBinder, TableFunctionBinder, WhereBinder};
+pub use simple_binders::{
+    AggregateBinder, BaseBinder, ConstantBinder, InsertBinder, TableFunctionBinder, WhereBinder,
+};
 
 /// A column-not-found error, kept apart so that errors of several query levels can be
 /// merged into one candidate list (DuckDB's `COLUMN_NOT_FOUND` error subtype).
@@ -123,7 +125,9 @@ impl BindError {
         let mut seen: Vec<String> = Vec::new();
         let mut scores = Vec::new();
         for candidate in current.candidates.iter().chain(&other.candidates) {
-            let Some(column) = candidate.split('.').next_back() else { continue };
+            let Some(column) = candidate.split('.').next_back() else {
+                continue;
+            };
             if seen.contains(candidate) {
                 continue;
             }
@@ -278,9 +282,10 @@ pub fn exchange_type(ty: &LogicalType, target: LogicalTypeId, new_type: &Logical
                 .map(|(name, child)| (name.clone(), exchange_type(child, target, new_type)))
                 .collect(),
         ),
-        LogicalTypeId::List => ty
-            .child_type()
-            .map_or_else(|| ty.clone(), |child| LogicalType::list(exchange_type(child, target, new_type))),
+        LogicalTypeId::List => ty.child_type().map_or_else(
+            || ty.clone(),
+            |child| LogicalType::list(exchange_type(child, target, new_type)),
+        ),
         LogicalTypeId::Map => match ty.map_key_value() {
             Some((key, value)) => LogicalType::map(
                 exchange_type(key, target, new_type),
@@ -298,13 +303,18 @@ pub fn exchange_type(ty: &LogicalType, target: LogicalTypeId, new_type: &Logical
 
 /// "Parameter types could not be resolved" (DuckDB's `ParameterNotResolvedException`).
 pub fn parameter_not_resolved() -> Error {
-    Error::new(ErrorKind::ParameterNotResolved, "Parameter types could not be resolved")
+    Error::new(
+        ErrorKind::ParameterNotResolved,
+        "Parameter types could not be resolved",
+    )
 }
 
 /// The unsupported-construct error at an expression's location (DuckDB's
 /// `BinderException::Unsupported`).
 pub fn unsupported(expr: &ParsedExpression, message: impl Into<String>) -> BindError {
-    Error::binder(message.into()).with_position(expr.query_location).into()
+    Error::binder(message.into())
+        .with_position(expr.query_location)
+        .into()
 }
 
 /// Whether a function name is UNNEST (DuckDB's `IsUnnestFunction`).
@@ -350,7 +360,10 @@ pub fn function_call(name: &str, children: Vec<ParsedExpression>) -> ParsedExpre
 }
 
 /// An operator expression with the given children.
-pub fn operator_expression(expression_type: ExpressionType, children: Vec<ParsedExpression>) -> ParsedExpression {
+pub fn operator_expression(
+    expression_type: ExpressionType,
+    children: Vec<ParsedExpression>,
+) -> ParsedExpression {
     ParsedExpression::new(
         expression_type,
         ParsedExpressionKind::Operator(OperatorExpression { children }),
@@ -370,7 +383,12 @@ pub trait ExpressionBinder: ColumnQualifier {
     fn state_ref(&self) -> &ExpressionBinderState;
 
     /// Binds one parsed node (DuckDB's virtual `BindExpression`).
-    fn bind_expression(&mut self, expr: &mut ParsedExpression, depth: u64, root_expression: bool) -> Result<BindResult> {
+    fn bind_expression(
+        &mut self,
+        expr: &mut ParsedExpression,
+        depth: u64,
+        root_expression: bool,
+    ) -> Result<BindResult> {
         crate::binder::expression::bind_expression_base(self, expr, depth, root_expression)
     }
 
@@ -402,14 +420,24 @@ pub trait ExpressionBinder: ColumnQualifier {
     }
 
     /// `UNNEST(...)` (DuckDB's `BindUnnest`); unsupported by default.
-    fn bind_unnest(&mut self, expr: &mut ParsedExpression, depth: u64, _root_expression: bool) -> Result<BindResult> {
+    fn bind_unnest(
+        &mut self,
+        expr: &mut ParsedExpression,
+        depth: u64,
+        _root_expression: bool,
+    ) -> Result<BindResult> {
         let message = self.unsupported_unnest_message();
         crate::binder::expression::bind_unsupported_expression(self, expr, depth, &message)
     }
 
     /// A window function call; only some binders allow them.
     fn bind_window(&mut self, expr: &mut ParsedExpression, depth: u64) -> Result<BindResult> {
-        crate::binder::expression::bind_unsupported_expression(self, expr, depth, "window functions are not allowed here")
+        crate::binder::expression::bind_unsupported_expression(
+            self,
+            expr,
+            depth,
+            "window functions are not allowed here",
+        )
     }
 
     fn unsupported_aggregate_message(&self) -> String {
@@ -453,7 +481,12 @@ pub trait ExpressionBinder: ColumnQualifier {
     }
 
     /// Binds a child, keeping the first error in `error` (DuckDB's `BindChild`).
-    fn bind_child(&mut self, expr: &mut ParsedExpression, depth: u64, error: &mut Option<BindError>) -> Result<()> {
+    fn bind_child(
+        &mut self,
+        expr: &mut ParsedExpression,
+        depth: u64,
+        error: &mut Option<BindError>,
+    ) -> Result<()> {
         let child_error = self.bind_in_place(expr, depth, false)?;
         if error.is_none() {
             *error = child_error;
@@ -463,7 +496,11 @@ pub trait ExpressionBinder: ColumnQualifier {
 
     /// Retries binding `expr` in the expression binders of enclosing queries, one level
     /// further out each time (DuckDB's `BindCorrelatedColumns`).
-    fn bind_correlated_columns(&mut self, expr: &mut ParsedExpression, error: BindError) -> Result<Option<BindError>> {
+    fn bind_correlated_columns(
+        &mut self,
+        expr: &mut ParsedExpression,
+        error: BindError,
+    ) -> Result<Option<BindError>> {
         let mut bind_error = error;
         let mut depth = 1;
         let mut current = self.outer();
@@ -503,8 +540,11 @@ pub trait ExpressionBinder: ColumnQualifier {
             let context = self.binder_ref().context.clone();
             result = add_cast_to_type(&context, result, &target, false)?;
         } else {
-            if !self.binder_ref().can_contain_nulls && contains_type(&result.return_type, LogicalTypeId::SqlNull) {
-                let exchanged = exchange_type(&result.return_type, LogicalTypeId::SqlNull, &LogicalType::INTEGER);
+            if !self.binder_ref().can_contain_nulls
+                && contains_type(&result.return_type, LogicalTypeId::SqlNull)
+            {
+                let exchanged =
+                    exchange_type(&result.return_type, LogicalTypeId::SqlNull, &LogicalType::INTEGER);
                 let context = self.binder_ref().context.clone();
                 result = add_cast_to_type(&context, result, &exchanged, false)?;
             }

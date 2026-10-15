@@ -5,8 +5,8 @@
 use std::collections::HashSet;
 
 use rustdb_ast::{
-    ExpressionClass, ExpressionType, FunctionExpression, LambdaRefExpression, ParsedExpression, ParsedExpressionKind,
-    lambda_parameters,
+    ExpressionClass, ExpressionType, FunctionExpression, LambdaRefExpression, ParsedExpression,
+    ParsedExpressionKind, lambda_parameters,
 };
 use rustdb_catalog::CatalogType;
 use rustdb_common::{Error, Result};
@@ -292,7 +292,9 @@ pub fn create_struct_extract(base: ParsedExpression, field: &str) -> ParsedExpre
 
 /// A lambda parameter reference if `name` is one (DuckDB's `LambdaRefExpression::FindMatchingBinding`).
 fn lambda_reference(lambda_bindings: &[Binding], name: &str) -> Option<ParsedExpression> {
-    let index = lambda_bindings.iter().rposition(|binding| binding.has_matching_binding(name))?;
+    let index = lambda_bindings
+        .iter()
+        .rposition(|binding| binding.has_matching_binding(name))?;
     Some(ParsedExpression::new(
         ExpressionType::LambdaRef,
         ParsedExpressionKind::LambdaRef(LambdaRefExpression {
@@ -333,16 +335,24 @@ fn qualify_single<Q: ColumnQualifier + ?Sized>(
     let binder = qualifier.binder_ref();
     let context = &binder.bind_context;
     if let Some(set) = context.using_binding(column_name)? {
-        let set = set.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+        let set = set
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         if set.primary_binding.is_set() {
-            return Ok(Ok(context.create_column_reference(&set.primary_binding, column_name)));
+            return Ok(Ok(
+                context.create_column_reference(&set.primary_binding, column_name)
+            ));
         }
         let children = set
             .bindings
             .iter()
             .map(|alias| column_reference(alias, column_name))
             .collect();
-        return Ok(Ok(operator_expression(ExpressionType::OperatorCoalesce, children)));
+        return Ok(Ok(operator_expression(
+            ExpressionType::OperatorCoalesce,
+            children,
+        )));
     }
     if let Some(reference) = lambda_reference(qualifier.lambda_bindings(), column_name) {
         return Ok(Ok(reference));
@@ -352,10 +362,14 @@ fn qualify_single<Q: ColumnQualifier + ?Sized>(
         && macro_binding.has_matching_binding(column_name)
     {
         if table_binding.is_some() {
-            return Err(Error::binder(format!("Conflicting column names for column {column_name}!"))
-                .with_position(location));
+            return Err(
+                Error::binder(format!("Conflicting column names for column {column_name}!"))
+                    .with_position(location),
+            );
         }
-        return Ok(Ok(context.create_column_reference(&macro_binding.alias, column_name)));
+        return Ok(Ok(
+            context.create_column_reference(&macro_binding.alias, column_name)
+        ));
     }
     if let Some(binding) = table_binding {
         return Ok(Ok(context.create_column_reference(&binding.alias, column_name)));
@@ -392,7 +406,9 @@ fn create_struct_pack(binder: &Binder, names: &[String]) -> Result<Option<Parsed
         _ => return Ok(None),
     };
     let Some(alias) = alias else { return Ok(None) };
-    let Some(binding) = context.binding(&alias)? else { return Ok(None) };
+    let Some(binding) = context.binding(&alias)? else {
+        return Ok(None);
+    };
     let children = binding
         .names
         .iter()
@@ -419,17 +435,15 @@ pub fn default_qualify_column_name<Q: ColumnQualifier + ?Sized>(
             Ok(qualified) => Ok(Ok(qualified)),
             Err(error) => Ok(create_struct_pack(binder, names)?.ok_or(error)),
         },
-        [table, column] => {
-            match matching_binding(binder, &BindingAlias::new(table), column)? {
-                Ok(alias) => return Ok(Ok(binder.bind_context.create_column_reference(&alias, column))),
-                Err(error) => {
-                    if let Ok(qualified) = qualify_single(qualifier, table, location)? {
-                        return Ok(Ok(create_struct_extract(qualified, column)));
-                    }
-                    Ok(create_struct_pack(binder, names)?.ok_or_else(|| BindError::from(error)))
+        [table, column] => match matching_binding(binder, &BindingAlias::new(table), column)? {
+            Ok(alias) => return Ok(Ok(binder.bind_context.create_column_reference(&alias, column))),
+            Err(error) => {
+                if let Ok(qualified) = qualify_single(qualifier, table, location)? {
+                    return Ok(Ok(create_struct_extract(qualified, column)));
                 }
+                Ok(create_struct_pack(binder, names)?.ok_or_else(|| BindError::from(error)))
             }
-        }
+        },
         _ => qualify_many_dots(qualifier, names, location),
     }
 }
@@ -447,7 +461,10 @@ fn qualify_many_dots<Q: ColumnQualifier + ?Sized>(
     let mut fully_qualified_error = None;
     let mut resolved: Option<(ParsedExpression, usize)> = None;
     if names.len() > 3 {
-        match attempt(BindingAlias::qualified(&names[0], &names[1], &names[2]), &names[3])? {
+        match attempt(
+            BindingAlias::qualified(&names[0], &names[1], &names[2]),
+            &names[3],
+        )? {
             Ok(alias) => resolved = Some((context.create_column_reference(&alias, &names[3]), 4)),
             Err(error) => fully_qualified_error = Some(error),
         }
@@ -527,7 +544,10 @@ pub fn bind_and_qualify_function<Q: ColumnQualifier + ?Sized>(
 ) -> Result<Option<EntryLookup>> {
     let binder = qualifier.binder_ref();
     let context = binder.context.clone();
-    if !function.schema.is_empty() && function.catalog.is_empty() && context.catalog(&function.schema).is_some() {
+    if !function.schema.is_empty()
+        && function.catalog.is_empty()
+        && context.catalog(&function.schema).is_some()
+    {
         function.catalog = std::mem::take(&mut function.schema);
     }
     let lookup = |catalog: &str, schema: &str, ty: CatalogType| {

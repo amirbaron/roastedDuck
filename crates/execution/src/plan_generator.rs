@@ -7,7 +7,8 @@ use std::sync::Arc;
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_planner::expression::BoundConjunctionExpression;
 use rustdb_planner::{
-    BoundLimitNode, Expression, ExpressionKind, ExpressionType, LogicalKind, LogicalOperator, LogicalOperatorType,
+    BoundLimitNode, Expression, ExpressionKind, ExpressionType, LogicalKind, LogicalOperator,
+    LogicalOperatorType,
 };
 use rustdb_types::{DataChunk, LogicalType};
 
@@ -57,9 +58,18 @@ pub fn create_physical_plan(op: LogicalOperator) -> Result<PhysicalRef> {
         LogicalKind::ChunkGet { collection, .. } => Arc::new(PhysicalColumnDataScan::new(types, collection)),
         LogicalKind::Get(get) if get.function.scan.is_some() && get.projection_ids.is_empty() => {
             let column_ids = get.column_ids.iter().map(|column| column.index).collect();
-            Arc::new(PhysicalTableScan::new(types, get.function, get.bind_data, column_ids))
+            Arc::new(PhysicalTableScan::new(
+                types,
+                get.function,
+                get.bind_data,
+                column_ids,
+            ))
         }
-        LogicalKind::Projection { .. } => Arc::new(PhysicalProjection::new(types, expressions, next_child("projection")?)),
+        LogicalKind::Projection { .. } => Arc::new(PhysicalProjection::new(
+            types,
+            expressions,
+            next_child("projection")?,
+        )),
         LogicalKind::Filter { projection_map } => {
             if !projection_map.is_empty() {
                 return Err(Error::not_implemented("filter with a projection map"));
@@ -72,7 +82,9 @@ pub fn create_physical_plan(op: LogicalOperator) -> Result<PhysicalRef> {
                 Expression::new(
                     ExpressionType::ConjunctionAnd,
                     LogicalType::BOOLEAN,
-                    ExpressionKind::Conjunction(BoundConjunctionExpression { children: expressions }),
+                    ExpressionKind::Conjunction(BoundConjunctionExpression {
+                        children: expressions,
+                    }),
                 )
             };
             Arc::new(PhysicalFilter::new(types, predicate, child))
@@ -113,7 +125,10 @@ pub fn create_physical_plan(op: LogicalOperator) -> Result<PhysicalRef> {
 }
 
 fn not_implemented(operator_type: LogicalOperatorType) -> Error {
-    Error::not_implemented(format!("physical plan for logical operator {}", operator_type.name()))
+    Error::not_implemented(format!(
+        "physical plan for logical operator {}",
+        operator_type.name()
+    ))
 }
 
 /// Evaluates the rows of a `VALUES` list into chunks (DuckDB materialises foldable rows

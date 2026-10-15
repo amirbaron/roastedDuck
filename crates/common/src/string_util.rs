@@ -67,7 +67,10 @@ fn jaro_similarity(p: &[u8], t: &[u8]) -> f64 {
 /// Levenshtein distance after lower-casing, with a configurable substitution cost
 /// (DuckDB's `StringUtil::LevenshteinDistance`).
 pub fn levenshtein_distance(left: &str, right: &str, not_equal_penalty: usize) -> usize {
-    let (s1, s2) = (left.to_lowercase().into_bytes(), right.to_lowercase().into_bytes());
+    let (s1, s2) = (
+        left.to_lowercase().into_bytes(),
+        right.to_lowercase().into_bytes(),
+    );
     if s1.is_empty() {
         return s2.len();
     }
@@ -135,7 +138,10 @@ pub fn top_n_strings(mut scores: Vec<(String, f64)>, n: usize, threshold: f64) -
 fn top_n_distances(scores: Vec<(String, usize)>, n: usize, threshold: usize) -> Vec<String> {
     let max_score = scores.iter().map(|(_, s)| *s).max().unwrap_or(0).max(threshold);
     let normalize = |score: usize| 1.0 - score as f64 / max_score as f64;
-    let normalized = scores.into_iter().map(|(name, score)| (name, normalize(score))).collect();
+    let normalized = scores
+        .into_iter()
+        .map(|(name, score)| (name, normalize(score)))
+        .collect();
     top_n_strings(normalized, n, normalize(threshold))
 }
 
@@ -195,7 +201,11 @@ mod tests {
 
     #[test]
     fn top_n_prefers_scores_then_names() {
-        let scores = vec![("b".to_owned(), 0.9), ("A".to_owned(), 0.9), ("c".to_owned(), 0.1)];
+        let scores = vec![
+            ("b".to_owned(), 0.9),
+            ("A".to_owned(), 0.9),
+            ("c".to_owned(), 0.1),
+        ];
         assert_eq!(top_n_strings(scores, 5, 0.5), vec!["A", "b"]);
         assert_eq!(
             candidates_message(&["x".to_owned(), "y".to_owned()], "Candidate bindings"),

@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use rustdb_ast::{
     CatalogType as AstCatalogType, DropInfo, ExecuteStatement, ExplainStatement, ExpressionType, PragmaInfo,
-    PrepareStatement, SetScope, SetStatement, SqlStatement, SqlStatementKind, TransactionInfo, TransactionType,
+    PrepareStatement, SetScope, SetStatement, SqlStatement, SqlStatementKind, TransactionInfo,
+    TransactionType,
 };
 use rustdb_common::{CaseInsensitiveMap, Error, Result};
 use rustdb_types::{LogicalType, LogicalTypeId};
@@ -97,7 +98,9 @@ fn bind_transaction(scope: &BindScope<'_>, info: &TransactionInfo) -> BoundState
         properties.requires_valid_transaction = info.transaction_type == TransactionType::BeginTransaction;
         properties.return_type = StatementReturnType::Nothing;
     });
-    success(LogicalOperator::new(LogicalKind::Transaction { info: info.clone() }))
+    success(LogicalOperator::new(LogicalKind::Transaction {
+        info: info.clone(),
+    }))
 }
 
 /// `DEALLOCATE name` (DuckDB's `Bind(DropStatement &)` for prepared statements).
@@ -106,7 +109,9 @@ fn bind_deallocate(scope: &BindScope<'_>, drop: &DropInfo) -> BoundStatement {
         properties.requires_valid_transaction = false;
         properties.return_type = StatementReturnType::Nothing;
     });
-    success(LogicalOperator::new(LogicalKind::Deallocate { name: drop.name.clone() }))
+    success(LogicalOperator::new(LogicalKind::Deallocate {
+        name: drop.name.clone(),
+    }))
 }
 
 /// `PRAGMA name(args)` without a result (DuckDB's `Bind(PragmaStatement &)`): the

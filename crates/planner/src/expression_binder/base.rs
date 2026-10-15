@@ -16,7 +16,9 @@ pub struct BinderBase<'a> {
 
 impl std::fmt::Debug for BinderBase<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BinderBase").field("state", &self.state).finish_non_exhaustive()
+        f.debug_struct("BinderBase")
+            .field("state", &self.state)
+            .finish_non_exhaustive()
     }
 }
 

@@ -7,7 +7,9 @@ use rustdb_planner::expression::{
     AggregateType, BoundAggregateExpression, BoundCaseCheck, BoundCaseExpression,
 };
 use rustdb_planner::operator::LogicalAggregate;
-use rustdb_planner::{BoundLimitNode, Expression, ExpressionKind, ExpressionType, LogicalKind, LogicalOperator};
+use rustdb_planner::{
+    BoundLimitNode, Expression, ExpressionKind, ExpressionType, LogicalKind, LogicalOperator,
+};
 use rustdb_types::{LogicalType, Value};
 use std::sync::{Arc, Mutex};
 

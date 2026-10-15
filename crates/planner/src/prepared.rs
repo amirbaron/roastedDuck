@@ -7,7 +7,9 @@ use rustdb_ast::{SqlStatement, StatementType};
 use rustdb_common::{CaseInsensitiveMap, Error, Result};
 use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
-use crate::expression::{BoundParameterData, BoundParameterExpression, Expression, ExpressionKind, SharedParameterData};
+use crate::expression::{
+    BoundParameterData, BoundParameterExpression, Expression, ExpressionKind, SharedParameterData,
+};
 
 /// What kind of result a statement returns (DuckDB's `StatementReturnType`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -115,7 +117,11 @@ impl BoundParameterMap {
                 data
             }
         };
-        let param_type = data.lock().unwrap_or_else(PoisonError::into_inner).return_type.clone();
+        let param_type = data
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .return_type
+            .clone();
         if identifier_type.id() == LogicalTypeId::Unknown && param_type.id() != LogicalTypeId::Unknown {
             self.rebind = true;
         }

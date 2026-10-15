@@ -103,7 +103,8 @@ impl BindContext {
             return Ok(None);
         };
         if sets.len() > 1 {
-            let mut error = format!("Ambiguous column reference: column \"{column_name}\" can refer to either:\n");
+            let mut error =
+                format!("Ambiguous column reference: column \"{column_name}\" can refer to either:\n");
             for set in sets {
                 let set = lock(set);
                 let mut bindings = String::new();
@@ -299,7 +300,10 @@ impl BindContext {
     /// The binding called `alias` (DuckDB's `GetBinding(alias, error)`): `Ok(None)` if there
     /// is none, an error if the alias is ambiguous.
     pub fn binding(&self, alias: &BindingAlias) -> Result<Option<&Binding>> {
-        Ok(self.binding_index_for(alias)?.ok().map(|index| &self.bindings[index]))
+        Ok(self
+            .binding_index_for(alias)?
+            .ok()
+            .map(|index| &self.bindings[index]))
     }
 
     /// Like [`BindContext::binding`], returning the position or the soft not-found error.
@@ -335,7 +339,10 @@ impl BindContext {
     }
 
     /// `(table, column)` for a positional reference `#n` (DuckDB's `BindColumn(PositionalReference)`).
-    pub fn positional_column(&self, reference: &PositionalReferenceExpression) -> std::result::Result<(String, String), String> {
+    pub fn positional_column(
+        &self,
+        reference: &PositionalReferenceExpression,
+    ) -> std::result::Result<(String, String), String> {
         let mut total = 0usize;
         let mut position = reference.index.wrapping_sub(1) as usize;
         for binding in &self.bindings {
@@ -396,7 +403,11 @@ impl BindContext {
         let mut replaced = CaseInsensitiveSet::default();
         let mut excluded = CaseInsensitiveSet::default();
         let mut check_exclusion = |qualified: &QualifiedColumnName| {
-            if star.exclude_list.iter().any(|entry| qualified_matches(entry, qualified)) {
+            if star
+                .exclude_list
+                .iter()
+                .any(|entry| qualified_matches(entry, qualified))
+            {
                 excluded_qualified.push(qualified.clone());
                 return true;
             }
@@ -516,7 +527,10 @@ impl BindContext {
             star.relation_name.clone()
         };
         for entry in &star.exclude_list {
-            if !excluded_qualified.iter().any(|seen| qualified_matches(entry, seen)) {
+            if !excluded_qualified
+                .iter()
+                .any(|seen| qualified_matches(entry, seen))
+            {
                 return Err(Error::binder(format!(
                     "Column \"{entry}\" in EXCLUDE list not found in {location}"
                 )));
@@ -545,7 +559,10 @@ impl BindContext {
 
     /// The aliases of every relation in scope.
     pub fn binding_aliases(&self) -> Vec<BindingAlias> {
-        self.bindings.iter().map(|binding| binding.alias.clone()).collect()
+        self.bindings
+            .iter()
+            .map(|binding| binding.alias.clone())
+            .collect()
     }
 
     /// Adds a relation.
@@ -561,7 +578,13 @@ impl BindContext {
         names: Vec<String>,
         types: Vec<LogicalType>,
     ) -> Result<()> {
-        self.add_binding(Binding::new(BindingKind::Base, BindingAlias::new(alias), types, names, index)?);
+        self.add_binding(Binding::new(
+            BindingKind::Base,
+            BindingAlias::new(alias),
+            types,
+            names,
+            index,
+        )?);
         Ok(())
     }
 
@@ -580,7 +603,11 @@ impl BindContext {
 
     /// Adds a CTE; an error if one with the same name exists (DuckDB's `AddCTEBinding`).
     pub fn add_cte_binding(&mut self, binding: Binding) -> Result<()> {
-        if self.cte_bindings.iter().any(|existing| existing.alias == binding.alias) {
+        if self
+            .cte_bindings
+            .iter()
+            .any(|existing| existing.alias == binding.alias)
+        {
             return Err(Error::binder(format!(
                 "Duplicate CTE binding \"{}\" in query!",
                 binding.alias
@@ -592,12 +619,16 @@ impl BindContext {
 
     /// The CTE called `name`.
     pub fn cte_binding_mut(&mut self, name: &BindingAlias) -> Option<&mut Binding> {
-        self.cte_bindings.iter_mut().find(|binding| binding.alias.matches(name))
+        self.cte_bindings
+            .iter_mut()
+            .find(|binding| binding.alias.matches(name))
     }
 
     /// The CTE called `name`.
     pub fn cte_binding(&self, name: &BindingAlias) -> Option<&Binding> {
-        self.cte_bindings.iter().find(|binding| binding.alias.matches(name))
+        self.cte_bindings
+            .iter()
+            .find(|binding| binding.alias.matches(name))
     }
 
     /// Moves all relations and USING columns of `other` into this context (DuckDB's `AddContext`).
@@ -665,7 +696,11 @@ fn column_ref_with_alias(alias: &BindingAlias, column: &str) -> ParsedExpression
 
 /// Applies column aliases to a relation's names, deduplicating with `_1`, `_2` suffixes
 /// (DuckDB's `BindContext::AliasColumnNames`).
-pub fn alias_column_names(table_name: &str, names: &[String], column_aliases: &[String]) -> Result<Vec<String>> {
+pub fn alias_column_names(
+    table_name: &str,
+    names: &[String],
+    column_aliases: &[String],
+) -> Result<Vec<String>> {
     if column_aliases.len() > names.len() {
         return Err(Error::binder(format!(
             "table \"{table_name}\" has {} columns available but {} columns specified",

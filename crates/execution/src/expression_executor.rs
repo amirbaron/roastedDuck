@@ -17,7 +17,9 @@ use rustdb_planner::expression::{
 use rustdb_planner::{Expression, ExpressionEvaluator, ExpressionKind, ExpressionType};
 use rustdb_types::compare::{CompareOp, compare};
 use rustdb_types::kernels::{scatter, unary};
-use rustdb_types::{DataChunk, LogicalType, SelectionVector, Unified, ValidityMask, Value, Vector, VectorKind};
+use rustdb_types::{
+    DataChunk, LogicalType, SelectionVector, Unified, ValidityMask, Value, Vector, VectorKind,
+};
 
 /// Per-expression execution state, mirroring the expression tree.
 #[derive(Debug, Default)]
@@ -32,7 +34,11 @@ impl ExpressionState {
     fn for_expression(expression: &Expression) -> Self {
         Self {
             function: FunctionState::default(),
-            children: expression.children().into_iter().map(Self::for_expression).collect(),
+            children: expression
+                .children()
+                .into_iter()
+                .map(Self::for_expression)
+                .collect(),
             arguments: DataChunk::default(),
         }
     }
@@ -127,7 +133,8 @@ fn execute(
         ExpressionKind::Constant(constant) => Vector::constant(&constant.value),
         ExpressionKind::Parameter(parameter) => Vector::constant(&parameter.value()),
         ExpressionKind::Reference(reference) => {
-            let index = usize::try_from(reference.index).map_err(|_| Error::internal("reference index overflow"))?;
+            let index =
+                usize::try_from(reference.index).map_err(|_| Error::internal("reference index overflow"))?;
             if index >= input.column_count() {
                 return Err(Error::internal(format!(
                     "reference #{index} out of range of a chunk with {} columns",
@@ -156,7 +163,9 @@ fn execute(
             }
             result.ok_or_else(|| Error::internal("conjunction without children"))
         }
-        ExpressionKind::Operator(operator) => execute_operator(expression, &operator.children, state, input, sel, count),
+        ExpressionKind::Operator(operator) => {
+            execute_operator(expression, &operator.children, state, input, sel, count)
+        }
         ExpressionKind::Case(case) => execute_case(case, &expression.return_type, state, input, sel, count),
         ExpressionKind::Between(between) => execute_between(between, state, input, sel, count),
         ExpressionKind::Cast(cast) => execute_cast(expression, cast, state, input, sel, count),
@@ -168,7 +177,9 @@ fn execute(
             "Attempting to execute expression of unknown type! (aggregate {})",
             aggregate.function.name
         ))),
-        ExpressionKind::Default => Err(Error::internal("Attempting to execute expression of unknown type!")),
+        ExpressionKind::Default => Err(Error::internal(
+            "Attempting to execute expression of unknown type!",
+        )),
         ExpressionKind::Subquery(_)
         | ExpressionKind::Window(_)
         | ExpressionKind::Unnest(_)
@@ -302,7 +313,13 @@ fn execute_case(
             return execute(&case.else_expr, else_state, input, sel, count);
         }
         let remaining = current.unwrap_or_default();
-        let values = execute(&case.else_expr, else_state, input, Some(&remaining), current_count)?;
+        let values = execute(
+            &case.else_expr,
+            else_state,
+            input,
+            Some(&remaining),
+            current_count,
+        )?;
         scatter(&values, &mut result, &remaining)?;
     }
     Ok(compact(result, sel))
@@ -340,7 +357,9 @@ fn execute_operator(
             }
             Ok(intermediate)
         }
-        ExpressionType::OperatorCoalesce => execute_coalesce(&expression.return_type, children, state, input, sel, count),
+        ExpressionType::OperatorCoalesce => {
+            execute_coalesce(&expression.return_type, children, state, input, sel, count)
+        }
         ExpressionType::OperatorTry => execute_try(children, state, input, sel, count),
         ExpressionType::OperatorNot => {
             let value = execute_only_child(children, state, input, sel, count)?;
@@ -358,7 +377,10 @@ fn execute_operator(
             }
             Ok(out)
         }
-        other => Err(Error::not_implemented(format!("Unsupported operator type with 0 children: {}", other.name()))),
+        other => Err(Error::not_implemented(format!(
+            "Unsupported operator type with 0 children: {}",
+            other.name()
+        ))),
     }
 }
 
@@ -416,7 +438,9 @@ fn execute_coalesce(
         }
     }
     for &position in &remaining {
-        result.validity_mut().set_invalid(position as usize, result_len(sel, count));
+        result
+            .validity_mut()
+            .set_invalid(position as usize, result_len(sel, count));
     }
     Ok(compact(result, sel))
 }
@@ -471,15 +495,33 @@ fn select(
         return Ok(0);
     }
     match (&expression.kind, expression.expression_type) {
-        (ExpressionKind::Conjunction(conjunction), ExpressionType::ConjunctionAnd) => {
-            select_and(&conjunction.children, state, input, sel, count, true_sel, false_sel)
-        }
-        (ExpressionKind::Conjunction(conjunction), ExpressionType::ConjunctionOr) => {
-            select_or(&conjunction.children, state, input, sel, count, true_sel, false_sel)
-        }
+        (ExpressionKind::Conjunction(conjunction), ExpressionType::ConjunctionAnd) => select_and(
+            &conjunction.children,
+            state,
+            input,
+            sel,
+            count,
+            true_sel,
+            false_sel,
+        ),
+        (ExpressionKind::Conjunction(conjunction), ExpressionType::ConjunctionOr) => select_or(
+            &conjunction.children,
+            state,
+            input,
+            sel,
+            count,
+            true_sel,
+            false_sel,
+        ),
         _ => {
             let result = execute(expression, state, input, sel, count)?;
-            Ok(partition(&result.unified::<bool>(), sel, count, true_sel, false_sel))
+            Ok(partition(
+                &result.unified::<bool>(),
+                sel,
+                count,
+                true_sel,
+                false_sel,
+            ))
         }
     }
 }
@@ -591,7 +633,12 @@ fn select_or(
 
 /// Compares two vectors row by row (DuckDB's `VectorOperations::Equals` and friends,
 /// plus the NULL-aware `[NOT] DISTINCT FROM`).
-fn compare_vectors(expression_type: ExpressionType, left: &Vector, right: &Vector, count: usize) -> Result<Vector> {
+fn compare_vectors(
+    expression_type: ExpressionType,
+    left: &Vector,
+    right: &Vector,
+    count: usize,
+) -> Result<Vector> {
     let mut result = Vector::flat(LogicalType::BOOLEAN, 0);
     let simple = match expression_type {
         ExpressionType::CompareEqual => Some(CompareOp::Equal),
@@ -601,7 +648,12 @@ fn compare_vectors(expression_type: ExpressionType, left: &Vector, right: &Vecto
         ExpressionType::CompareLessthanorequalto => Some(CompareOp::LessThanOrEqual),
         ExpressionType::CompareGreaterthanorequalto => Some(CompareOp::GreaterThanOrEqual),
         ExpressionType::CompareDistinctFrom | ExpressionType::CompareNotDistinctFrom => None,
-        other => return Err(Error::internal(format!("Unknown comparison type {}", other.name()))),
+        other => {
+            return Err(Error::internal(format!(
+                "Unknown comparison type {}",
+                other.name()
+            )));
+        }
     };
     if let Some(op) = simple {
         compare(op, left, right, count, &mut result)?;
@@ -629,7 +681,12 @@ fn conjoin(expression_type: ExpressionType, left: &Vector, right: &Vector, count
     let is_and = match expression_type {
         ExpressionType::ConjunctionAnd => true,
         ExpressionType::ConjunctionOr => false,
-        other => return Err(Error::internal(format!("Unknown conjunction type {}", other.name()))),
+        other => {
+            return Err(Error::internal(format!(
+                "Unknown conjunction type {}",
+                other.name()
+            )));
+        }
     };
     let (l, r) = (left.unified::<bool>(), right.unified::<bool>());
     let mut out = Vector::flat(LogicalType::BOOLEAN, count);
