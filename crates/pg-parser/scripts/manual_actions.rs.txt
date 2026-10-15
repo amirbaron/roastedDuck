@@ -1,0 +1,693 @@
+// Hand-written Rust for actions `translate_actions.py` cannot convert mechanically.
+// Each block starts with `// rule N` and is the body of that rule's match arm.
+
+// rule 2
+Ok(SemValue::List(rhs.list(1)?))
+
+// rule 3
+let mut stmts = rhs.list(1)?;
+if let Some(Node::RawStmt(last)) = stmts.last_mut() {
+    // the previous statement ends at this semicolon
+    update_raw_stmt_end(last, rhs.loc(2));
+}
+if let Some(stmt) = rhs.node(3)? {
+    stmts.push(make_raw_stmt(Some(stmt), rhs.loc(2) + 1).into());
+}
+Ok(SemValue::List(stmts))
+
+// rule 4
+let stmts = match rhs.node(1)? {
+    Some(stmt) => vec![make_raw_stmt(Some(stmt), 0).into()],
+    None => List::new(),
+};
+Ok(SemValue::List(stmts))
+
+// rule 98
+let mut constraint = Constraint {
+    contype: ConstrType::Foreign, // others not supported, yet
+    conname: rhs.str(3)?,
+    ..Default::default()
+};
+let targets = CasTargets {
+    deferrable: Some(&mut constraint.deferrable),
+    initdeferred: Some(&mut constraint.initdeferred),
+    ..Default::default()
+};
+process_cas_bits(rhs.int(4)?, rhs.loc(4), "ALTER CONSTRAINT statement", targets, rhs.scanner())?;
+Ok(SemValue::node(AlterTableCmd {
+    subtype: AlterTableType::AlterConstraint,
+    def: Some(constraint.into()),
+    ..Default::default()
+}))
+
+// rule 124
+let col_id = rhs.str(1)?;
+let indirection = rhs.list(2)?;
+check_qualified_name(&indirection, rhs.scanner())?;
+let mut range = make_range_var(None, None, rhs.loc(1));
+match indirection.as_slice() {
+    [relname] => {
+        range.schemaname = col_id;
+        range.relname = Some(str_val(relname)?);
+    }
+    [schemaname, relname] => {
+        range.catalogname = col_id;
+        range.schemaname = Some(str_val(schemaname)?);
+        range.relname = Some(str_val(relname)?);
+    }
+    // "improper qualified name (too many dotted names)" is formatted with the
+    // unimplemented NameListToString()
+    _ => return Err(rhs.unimplemented("NameListToString")),
+}
+Ok(SemValue::node(range))
+
+// rule 172
+let mut targets = rhs.list(2)?;
+let source = rhs.node(5)?;
+let ncolumns = i32::try_from(targets.len()).map_err(|_| internal("too many columns"))?;
+// every target gets a MultiAssignRef to the same source
+for (colno, target) in (1..).zip(targets.iter_mut()) {
+    let Node::ResTarget(target) = target else {
+        return Err(internal("set_target_list holds a non-ResTarget"));
+    };
+    target.val = Some(MultiAssignRef { source: source.clone(), colno, ncolumns }.into());
+}
+Ok(SemValue::List(targets))
+
+// rule 206
+let type_name = rhs.take::<TypeName>(1)?;
+let stmt = if type_name.names.last().and_then(Node::str_val) == Some("enum") {
+    CreateTypeStmt { kind: NewTypeKind::Enum, vals: type_name.typmods, ..Default::default() }
+} else {
+    CreateTypeStmt { kind: NewTypeKind::Alias, of_type: Some(type_name), ..Default::default() }
+};
+Ok(SemValue::node(stmt))
+
+// rule 292
+let mut relation = rhs.take::<RangeVar>(4)?;
+relation.relpersistence = rhs.rel_persistence(2)?;
+let (partition_list, sort_list) = partition_and_sort_lists(rhs.list(8)?)?;
+Ok(SemValue::node(CreateStmt {
+    relation: Some(relation),
+    table_elts: rhs.list(6)?,
+    partition_list,
+    sort_list,
+    options: rhs.list(9)?,
+    oncommit: rhs.on_commit_action(10)?,
+    onconflict: OnCreateConflict::Error,
+    ..Default::default()
+}))
+
+// rule 293
+let mut relation = rhs.take::<RangeVar>(7)?;
+relation.relpersistence = rhs.rel_persistence(2)?;
+let (partition_list, sort_list) = partition_and_sort_lists(rhs.list(11)?)?;
+Ok(SemValue::node(CreateStmt {
+    relation: Some(relation),
+    table_elts: rhs.list(9)?,
+    partition_list,
+    sort_list,
+    options: rhs.list(12)?,
+    oncommit: rhs.on_commit_action(13)?,
+    onconflict: OnCreateConflict::Ignore,
+    ..Default::default()
+}))
+
+// rule 294
+let mut relation = rhs.take::<RangeVar>(6)?;
+relation.relpersistence = rhs.rel_persistence(4)?;
+let (partition_list, sort_list) = partition_and_sort_lists(rhs.list(10)?)?;
+Ok(SemValue::node(CreateStmt {
+    relation: Some(relation),
+    table_elts: rhs.list(8)?,
+    partition_list,
+    sort_list,
+    options: rhs.list(11)?,
+    oncommit: rhs.on_commit_action(12)?,
+    onconflict: OnCreateConflict::Replace,
+    ..Default::default()
+}))
+
+// rule 380
+let (constraints, coll_clause) = split_col_qual_list(rhs.list(2)?, rhs.scanner())?;
+Ok(SemValue::node(ColumnDef {
+    category: ColumnCategory::Standard,
+    type_name: rhs.ptr::<TypeName>(1)?,
+    constraints,
+    coll_clause,
+    ..Default::default()
+}))
+
+// rule 381
+// merge the constraints with the generated column constraint
+let mut quals = rhs.list(3)?;
+quals.push(rhs.required_node(2)?);
+let (constraints, coll_clause) = split_col_qual_list(quals, rhs.scanner())?;
+Ok(SemValue::node(ColumnDef {
+    category: ColumnCategory::Generated,
+    type_name: rhs.ptr::<TypeName>(1)?,
+    constraints,
+    coll_clause,
+    ..Default::default()
+}))
+
+// rule 416
+let mut constraint = Constraint {
+    contype: ConstrType::Check,
+    location: rhs.loc(1),
+    raw_expr: rhs.node(3)?,
+    ..Default::default()
+};
+let targets = CasTargets {
+    not_valid: Some(&mut constraint.skip_validation),
+    no_inherit: Some(&mut constraint.is_no_inherit),
+    ..Default::default()
+};
+process_cas_bits(rhs.int(5)?, rhs.loc(5), "CHECK", targets, rhs.scanner())?;
+constraint.initially_valid = !constraint.skip_validation;
+Ok(SemValue::node(constraint))
+
+// rule 417
+let mut constraint = Constraint {
+    contype: ConstrType::Unique,
+    location: rhs.loc(1),
+    keys: rhs.list(3)?,
+    options: rhs.list(5)?,
+    ..Default::default()
+};
+let targets = CasTargets {
+    deferrable: Some(&mut constraint.deferrable),
+    initdeferred: Some(&mut constraint.initdeferred),
+    ..Default::default()
+};
+process_cas_bits(rhs.int(6)?, rhs.loc(6), "UNIQUE", targets, rhs.scanner())?;
+Ok(SemValue::node(constraint))
+
+// rule 418
+let mut constraint = Constraint {
+    contype: ConstrType::Unique,
+    location: rhs.loc(1),
+    indexname: rhs.str(2)?,
+    ..Default::default()
+};
+let targets = CasTargets {
+    deferrable: Some(&mut constraint.deferrable),
+    initdeferred: Some(&mut constraint.initdeferred),
+    ..Default::default()
+};
+process_cas_bits(rhs.int(3)?, rhs.loc(3), "UNIQUE", targets, rhs.scanner())?;
+Ok(SemValue::node(constraint))
+
+// rule 419
+let mut constraint = Constraint {
+    contype: ConstrType::Primary,
+    location: rhs.loc(1),
+    keys: rhs.list(4)?,
+    options: rhs.list(6)?,
+    ..Default::default()
+};
+let targets = CasTargets {
+    deferrable: Some(&mut constraint.deferrable),
+    initdeferred: Some(&mut constraint.initdeferred),
+    ..Default::default()
+};
+process_cas_bits(rhs.int(7)?, rhs.loc(7), "PRIMARY KEY", targets, rhs.scanner())?;
+Ok(SemValue::node(constraint))
+
+// rule 420
+let mut constraint = Constraint {
+    contype: ConstrType::Primary,
+    location: rhs.loc(1),
+    indexname: rhs.str(3)?,
+    ..Default::default()
+};
+let targets = CasTargets {
+    deferrable: Some(&mut constraint.deferrable),
+    initdeferred: Some(&mut constraint.initdeferred),
+    ..Default::default()
+};
+process_cas_bits(rhs.int(4)?, rhs.loc(4), "PRIMARY KEY", targets, rhs.scanner())?;
+Ok(SemValue::node(constraint))
+
+// rule 421
+let key_actions = rhs.int(10)?;
+let mut constraint = Constraint {
+    contype: ConstrType::Foreign,
+    location: rhs.loc(1),
+    pktable: rhs.ptr::<RangeVar>(7)?,
+    fk_attrs: rhs.list(4)?,
+    pk_attrs: rhs.list(8)?,
+    fk_matchtype: rhs.int(9)? as u8,
+    // key_actions packs the ON UPDATE action in the second byte
+    fk_upd_action: (key_actions >> 8) as u8,
+    fk_del_action: (key_actions & 0xFF) as u8,
+    ..Default::default()
+};
+let targets = CasTargets {
+    deferrable: Some(&mut constraint.deferrable),
+    initdeferred: Some(&mut constraint.initdeferred),
+    not_valid: Some(&mut constraint.skip_validation),
+    ..Default::default()
+};
+process_cas_bits(rhs.int(11)?, rhs.loc(11), "FOREIGN KEY", targets, rhs.scanner())?;
+constraint.initially_valid = !constraint.skip_validation;
+Ok(SemValue::node(constraint))
+
+// rule 583
+let mut select = rhs.required_node(1)?;
+insert_select_options(&mut select, rhs.list(2)?, List::new(), SelectLimit::none(), None)?;
+Ok(SemValue::node(select))
+
+// rule 584
+let mut select = rhs.required_node(1)?;
+insert_select_options(&mut select, rhs.list(2)?, rhs.list(3)?, rhs.select_limit(4)?, None)?;
+Ok(SemValue::node(select))
+
+// rule 585
+let mut select = rhs.required_node(1)?;
+insert_select_options(&mut select, rhs.list(2)?, rhs.list(4)?, rhs.select_limit(3)?, None)?;
+Ok(SemValue::node(select))
+
+// rule 586
+let mut select = rhs.required_node(2)?;
+insert_select_options(&mut select, List::new(), List::new(), SelectLimit::none(), rhs.ptr::<WithClause>(1)?)?;
+Ok(SemValue::node(select))
+
+// rule 587
+let mut select = rhs.required_node(2)?;
+insert_select_options(&mut select, rhs.list(3)?, List::new(), SelectLimit::none(), rhs.ptr::<WithClause>(1)?)?;
+Ok(SemValue::node(select))
+
+// rule 588
+let mut select = rhs.required_node(2)?;
+let with = rhs.ptr::<WithClause>(1)?;
+insert_select_options(&mut select, rhs.list(3)?, rhs.list(4)?, rhs.select_limit(5)?, with)?;
+Ok(SemValue::node(select))
+
+// rule 589
+let mut select = rhs.required_node(2)?;
+let with = rhs.ptr::<WithClause>(1)?;
+insert_select_options(&mut select, rhs.list(3)?, rhs.list(5)?, rhs.select_limit(4)?, with)?;
+Ok(SemValue::node(select))
+
+// rule 595
+Ok(SemValue::node(SelectStmt {
+    distinct_clause: rhs.opt_list(2)?,
+    target_list: rhs.list(3)?,
+    into_clause: rhs.ptr::<IntoClause>(4)?,
+    from_clause: rhs.list(5)?,
+    where_clause: rhs.node(6)?,
+    group_clause: rhs.list(7)?,
+    having_clause: rhs.node(8)?,
+    window_clause: rhs.list(9)?,
+    qualify_clause: rhs.node(10)?,
+    sample_options: rhs.node(11)?,
+    ..Default::default()
+}))
+
+// rule 597
+Ok(SemValue::node(SelectStmt {
+    target_list: rhs.list(5)?,
+    distinct_clause: rhs.opt_list(4)?,
+    from_clause: rhs.list(2)?,
+    into_clause: rhs.ptr::<IntoClause>(6)?,
+    where_clause: rhs.node(7)?,
+    group_clause: rhs.list(8)?,
+    having_clause: rhs.node(9)?,
+    window_clause: rhs.list(10)?,
+    qualify_clause: rhs.node(11)?,
+    sample_options: rhs.node(12)?,
+    from_first: true,
+    ..Default::default()
+}))
+
+// rule 633
+Ok(SemValue::List(List::new()))
+
+// rule 658
+Ok(SemValue::OptList(Some(List::new())))
+
+// rule 659
+Ok(SemValue::OptList(Some(rhs.list(4)?)))
+
+// rule 679
+Ok(SemValue::SelectLimit(SelectLimit { offset: rhs.node(2)?, count: rhs.node(1)?, offset_first: false }))
+
+// rule 680
+Ok(SemValue::SelectLimit(SelectLimit { offset: rhs.node(1)?, count: rhs.node(2)?, offset_first: true }))
+
+// rule 681
+Ok(SemValue::SelectLimit(SelectLimit { offset: None, count: rhs.node(1)?, offset_first: true }))
+
+// rule 682
+Ok(SemValue::SelectLimit(SelectLimit { offset: rhs.node(1)?, count: None, offset_first: true }))
+
+// rule 683
+Ok(SemValue::SelectLimit(rhs.select_limit(1)?))
+
+// rule 684
+Ok(SemValue::SelectLimit(SelectLimit::none()))
+
+// rule 702
+Ok(SemValue::node(make_sample_options(rhs.node(3)?, rhs.str(1)?, Some(rhs.int(5)?), rhs.loc(1))))
+
+// rule 703
+Ok(SemValue::node(make_sample_options(rhs.node(1)?, None, None, rhs.loc(1))))
+
+// rule 704
+Ok(SemValue::node(make_sample_options(rhs.node(1)?, rhs.str(3)?, None, rhs.loc(1))))
+
+// rule 705
+Ok(SemValue::node(make_sample_options(rhs.node(1)?, rhs.str(3)?, Some(rhs.int(5)?), rhs.loc(1))))
+
+// rule 782
+let mut function = rhs.take::<RangeFunction>(1)?;
+let FuncAlias { alias, coldeflist } = rhs.func_alias(2)?;
+function.alias = alias;
+function.coldeflist = coldeflist;
+function.sample = rhs.node(3)?;
+Ok(SemValue::node(function))
+
+// rule 785
+let mut function = rhs.take::<RangeFunction>(2)?;
+let FuncAlias { alias, coldeflist } = rhs.func_alias(3)?;
+function.lateral = true;
+function.alias = alias;
+function.coldeflist = coldeflist;
+Ok(SemValue::node(function))
+
+// rule 830
+Ok(SemValue::FuncAlias(FuncAlias { alias: rhs.ptr::<Alias>(1)?, coldeflist: List::new() }))
+
+// rule 831
+Ok(SemValue::FuncAlias(FuncAlias { alias: None, coldeflist: rhs.list(3)? }))
+
+// rule 832
+let alias = Alias { aliasname: rhs.str(2)?, ..Default::default() };
+Ok(SemValue::FuncAlias(FuncAlias { alias: Some(Box::new(alias)), coldeflist: rhs.list(4)? }))
+
+// rule 833
+let alias = Alias { aliasname: rhs.str(1)?, ..Default::default() };
+Ok(SemValue::FuncAlias(FuncAlias { alias: Some(Box::new(alias)), coldeflist: rhs.list(3)? }))
+
+// rule 834
+Ok(SemValue::FuncAlias(FuncAlias::default()))
+
+// rule 849
+// each function is paired with its (here empty) column definition list
+let function = vec![rhs.required_node(1)?, Node::List(List::new())];
+Ok(SemValue::node(RangeFunction {
+    lateral: false,
+    ordinality: rhs.bool(2)?,
+    is_rowsfrom: false,
+    functions: vec![Node::List(function)],
+    sample: None,
+    ..Default::default()
+}))
+
+// rule 921
+let name = if rhs.bool(2)? { "varbit" } else { "bit" };
+let mut type_name = system_type_name(name);
+type_name.typmods = rhs.list(4)?;
+type_name.location = rhs.loc(1);
+Ok(SemValue::node(type_name))
+
+// rule 1091
+let indirection = rhs.list(2)?;
+if indirection.is_empty() {
+    return Ok(SemValue::Node(rhs.node(1)?));
+}
+let indirection = check_indirection(indirection, rhs.scanner())?;
+Ok(SemValue::node(AIndirection { arg: rhs.node(1)?, indirection }))
+
+// rule 1116
+let mut keys = List::new();
+let mut values = List::new();
+for entry in rhs.list(3)? {
+    // each entry is a (key, value) pair; C takes the list's head and tail
+    let Node::List(mut pair) = entry else {
+        return Err(internal("map entry is not a list"));
+    };
+    let value = required(pair.pop())?;
+    let key = if pair.is_empty() { value.clone() } else { pair.swap_remove(0) };
+    keys.push(key);
+    values.push(value);
+}
+let keys = make_func_call(system_func_name("list_value"), keys, rhs.loc(3));
+let values = make_func_call(system_func_name("list_value"), values, rhs.loc(3));
+let map = make_func_call(system_func_name("map"), vec![keys.into(), values.into()], rhs.loc(3));
+Ok(SemValue::node(map))
+
+// rule 1135
+// TREAT(expr AS type) calls the function named like the type
+let type_name = rhs.take::<TypeName>(5)?;
+let name = required(type_name.names.last()).and_then(str_val)?;
+let call = make_func_call(system_func_name(&name), vec![rhs.required_node(3)?], rhs.loc(1));
+Ok(SemValue::node(call))
+
+// rule 1303
+Ok(SemValue::OptList(Some(List::new())))
+
+// rule 1304
+Ok(SemValue::OptList(Some(rhs.list(2)?)))
+
+// rule 1305
+let name = rhs.string(2)?;
+let node = match rhs.opt_list(3)? {
+    Some(args) => make_func_call(vec![Node::string(name)], args, rhs.loc(2)).into(),
+    None => Node::string(name),
+};
+Ok(SemValue::node(node))
+
+// rule 1367
+// generic syntax with a type modifier
+let mut type_name = make_type_name_from_name_list(rhs.list(1)?);
+let args = rhs.list(3)?;
+// func_arg_list and opt_sort_clause avoid grammar conflicts, but parameter names,
+// ORDER BY and IGNORE NULLS are not allowed here
+if let Some(Node::NamedArgExpr(arg)) = args.iter().find(|arg| matches!(arg, Node::NamedArgExpr(_))) {
+    return Err(rhs.error_at("type modifier cannot have parameter name", arg.location));
+}
+if !rhs.list(4)?.is_empty() {
+    return Err(rhs.error_at("type modifier cannot have ORDER BY", rhs.loc(4)));
+}
+if rhs.ignore_nulls(5)? != IgnoreNulls::Default {
+    return Err(rhs.error_at("type modifier cannot have IGNORE NULLS", rhs.loc(5)));
+}
+type_name.typmods = args;
+type_name.location = rhs.loc(1);
+Ok(SemValue::node(make_string_const_cast(rhs.string(7)?, rhs.loc(7), Some(Box::new(type_name)))))
+
+// rule 1369
+Ok(SemValue::node(make_interval_node(IntervalValue::Expr(rhs.node(3)?), rhs.loc(3), rhs.list(5)?)))
+
+// rule 1370
+Ok(SemValue::node(make_interval_node(IntervalValue::Integer(rhs.int(2)?), rhs.loc(2), rhs.list(3)?)))
+
+// rule 1371
+Ok(SemValue::node(make_interval_node(IntervalValue::String(rhs.string(2)?), rhs.loc(2), rhs.list(3)?)))
+
+// rule 1523
+let mut type_name = rhs.take::<TypeName>(1)?;
+let typmods = rhs.list(3)?;
+if let Some(Node::AConst(range)) = typmods.first() {
+    let fields = match range.val {
+        Value::Integer(fields) => fields,
+        _ => 0,
+    };
+    let allowed = i64::from(interval_mask(interval_field::HOUR) | interval_mask(interval_field::MINUTE));
+    if fields & !allowed != 0 {
+        return Err(rhs.error_at("time zone interval must be HOUR or HOUR TO MINUTE", rhs.loc(3)));
+    }
+}
+type_name.typmods = typmods;
+Ok(SemValue::node(make_string_const_cast(rhs.string(2)?, rhs.loc(2), Some(type_name))))
+
+// rule 1628
+let (partition_list, sort_list) = partition_and_sort_lists(rhs.list(3)?)?;
+Ok(SemValue::node(IntoClause {
+    rel: rhs.ptr::<RangeVar>(1)?,
+    col_names: rhs.list(2)?,
+    partition_list,
+    sort_list,
+    options: rhs.list(4)?,
+    on_commit: rhs.on_commit_action(5)?,
+    skip_data: false, // might get changed later
+}))
+
+// rule 1055
+// in_expr returns a SubLink or a list of a_exprs
+let expr = match rhs.node(3)? {
+    Some(Node::SubLink(mut sublink)) => {
+        // generate foo = ANY (subquery)
+        sublink.sub_link_type = SubLinkType::Any;
+        sublink.testexpr = rhs.node(1)?;
+        sublink.oper_name = List::new(); // show it's IN not = ANY
+        sublink.location = rhs.loc(2);
+        Node::SubLink(sublink)
+    }
+    // generate scalar IN expression
+    in_expr => make_simple_a_expr(AExprKind::In, "=", rhs.node(1)?, in_expr, rhs.loc(2)).into(),
+};
+Ok(SemValue::node(expr))
+
+// rule 1056
+// in_expr returns a SubLink or a list of a_exprs
+let expr = match rhs.node(4)? {
+    Some(Node::SubLink(mut sublink)) => {
+        // generate NOT (foo = ANY (subquery))
+        sublink.sub_link_type = SubLinkType::Any;
+        sublink.testexpr = rhs.node(1)?;
+        sublink.oper_name = List::new(); // show it's IN not = ANY
+        sublink.location = rhs.loc(2);
+        // stick a NOT on top; must have same parse location
+        make_not_expr(Some(Node::SubLink(sublink)), rhs.loc(2))?
+    }
+    // generate scalar NOT IN expression
+    in_expr => make_simple_a_expr(AExprKind::In, "<>", rhs.node(1)?, in_expr, rhs.loc(2)).into(),
+};
+Ok(SemValue::node(expr))
+
+// rule 95
+// only these fields of the ColumnDef are used
+let def = ColumnDef {
+    type_name: rhs.ptr::<TypeName>(6)?,
+    coll_clause: rhs.ptr::<CollateClause>(7)?,
+    raw_default: rhs.node(8)?,
+    location: rhs.loc(3),
+    ..Default::default()
+};
+Ok(SemValue::node(AlterTableCmd {
+    subtype: AlterTableType::AlterColumnType,
+    name: rhs.str(3)?,
+    def: Some(def.into()),
+    ..Default::default()
+}))
+
+// rule 235
+let mut into = rhs.take::<IntoClause>(4)?;
+// cram additional flags into the IntoClause
+required_mut(&mut into.rel)?.relpersistence = rhs.rel_persistence(2)?;
+into.skip_data = !rhs.bool(9)?;
+let execute = ExecuteStmt { name: rhs.str(7)?, params: rhs.list(8)? };
+Ok(SemValue::node(CreateTableAsStmt {
+    query: Some(execute.into()),
+    into: Some(into),
+    relkind: ObjectType::Table,
+    is_select_into: false,
+    onconflict: OnCreateConflict::Error,
+}))
+
+// rule 236
+let mut into = rhs.take::<IntoClause>(7)?;
+required_mut(&mut into.rel)?.relpersistence = rhs.rel_persistence(2)?;
+into.skip_data = !rhs.bool(12)?;
+let execute = ExecuteStmt { name: rhs.str(10)?, params: rhs.list(11)? };
+Ok(SemValue::node(CreateTableAsStmt {
+    query: Some(execute.into()),
+    into: Some(into),
+    relkind: ObjectType::Table,
+    is_select_into: false,
+    onconflict: OnCreateConflict::Ignore,
+}))
+
+// rule 1622
+let mut into = rhs.take::<IntoClause>(4)?;
+// cram additional flags into the IntoClause
+required_mut(&mut into.rel)?.relpersistence = rhs.rel_persistence(2)?;
+into.skip_data = !rhs.bool(7)?;
+Ok(SemValue::node(CreateTableAsStmt {
+    query: rhs.node(6)?,
+    into: Some(into),
+    relkind: ObjectType::Table,
+    is_select_into: false,
+    onconflict: OnCreateConflict::Error,
+}))
+
+// rule 1623
+let mut into = rhs.take::<IntoClause>(7)?;
+required_mut(&mut into.rel)?.relpersistence = rhs.rel_persistence(2)?;
+into.skip_data = !rhs.bool(10)?;
+Ok(SemValue::node(CreateTableAsStmt {
+    query: rhs.node(9)?,
+    into: Some(into),
+    relkind: ObjectType::Table,
+    is_select_into: false,
+    onconflict: OnCreateConflict::Ignore,
+}))
+
+// rule 1624
+let mut into = rhs.take::<IntoClause>(6)?;
+required_mut(&mut into.rel)?.relpersistence = rhs.rel_persistence(4)?;
+into.skip_data = !rhs.bool(9)?;
+Ok(SemValue::node(CreateTableAsStmt {
+    query: rhs.node(8)?,
+    into: Some(into),
+    relkind: ObjectType::Table,
+    is_select_into: false,
+    onconflict: OnCreateConflict::Replace,
+}))
+
+// rule 1616
+let mut view = rhs.take::<RangeVar>(5)?;
+view.relpersistence = rhs.rel_persistence(2)?;
+let aliases = rhs.list(7)?;
+// the view's name and column list are also used by the rewritten query
+let query = make_recursive_view_select(required(view.relname.clone())?, aliases.clone(), rhs.node(11)?)?;
+let with_check_option = rhs.view_check_option(12)?;
+if with_check_option != ViewCheckOption::None {
+    return Err(rhs.error_at("WITH CHECK OPTION not supported on recursive views", rhs.loc(12)));
+}
+Ok(SemValue::node(ViewStmt {
+    view: Some(view),
+    aliases,
+    query: Some(query),
+    onconflict: OnCreateConflict::Error,
+    options: rhs.list(9)?,
+    with_check_option,
+}))
+
+// rule 1617
+let mut view = rhs.take::<RangeVar>(7)?;
+view.relpersistence = rhs.rel_persistence(4)?;
+let aliases = rhs.list(9)?;
+let query = make_recursive_view_select(required(view.relname.clone())?, aliases.clone(), rhs.node(13)?)?;
+let with_check_option = rhs.view_check_option(14)?;
+if with_check_option != ViewCheckOption::None {
+    return Err(rhs.error_at("WITH CHECK OPTION not supported on recursive views", rhs.loc(14)));
+}
+Ok(SemValue::node(ViewStmt {
+    view: Some(view),
+    aliases,
+    query: Some(query),
+    onconflict: OnCreateConflict::Replace,
+    options: rhs.list(11)?,
+    with_check_option,
+}))
+
+// rule 1143
+// [result FOR names IN source IF filter] becomes
+// list_apply(list_filter(list_apply(source, names -> {filter: .., result: ..}),
+//                        elem -> elem.filter),
+//            elem -> elem.result)
+let names = rhs.list(4)?;
+let location = rhs.loc(1);
+let filter_expr = NamedArgExpr { arg: rhs.node(8)?, name: Some("filter".to_owned()), argnumber: -1, location: rhs.loc(8) };
+let result_expr = NamedArgExpr { arg: rhs.node(2)?, name: Some("result".to_owned()), argnumber: -1, location: rhs.loc(2) };
+let struct_pack = make_func_call(system_func_name("struct_pack"), vec![filter_expr.into(), result_expr.into()], location);
+let lambda_apply_1 = LambdaFunction { lhs: names, rhs: Some(struct_pack.into()), location };
+let apply_func_1 =
+    make_func_call(system_func_name("list_apply"), vec![rhs.required_node(6)?, lambda_apply_1.into()], location);
+// the C code builds both struct_extract calls on the same `elem` column reference
+let elem = make_column_ref("elem", List::new(), location, rhs.scanner())?;
+let filter_name = make_string_const("filter", location);
+let filter_extract = make_func_call(system_func_name("struct_extract"), vec![elem.clone(), filter_name], location);
+let lambda_filter = LambdaFunction { lhs: vec![Node::string("elem")], rhs: Some(filter_extract.into()), location };
+let filter_func =
+    make_func_call(system_func_name("list_filter"), vec![apply_func_1.into(), lambda_filter.into()], location);
+let result_name = make_string_const("result", location);
+let result_extract = make_func_call(system_func_name("struct_extract"), vec![elem, result_name], location);
+let lambda_apply_2 = LambdaFunction { lhs: vec![Node::string("elem")], rhs: Some(result_extract.into()), location };
+let apply_func_2 =
+    make_func_call(system_func_name("list_apply"), vec![filter_func.into(), lambda_apply_2.into()], location);
+Ok(SemValue::node(apply_func_2))
