@@ -274,6 +274,7 @@ pub fn write_checkpoint(
     storage: &StorageManager,
     transaction: &Transaction,
     on_start: &mut dyn FnMut(MetaBlockPointer) -> Result<()>,
+    replace_in_memory: bool,
 ) -> Result<()> {
     if storage.is_read_only() {
         return Ok(());
@@ -286,6 +287,7 @@ pub fn write_checkpoint(
     on_start(meta_block)?;
     let mut blocks = BlockWriter::new(Arc::clone(storage.block_manager()));
     let catalog_name = catalog.name().to_owned();
+    let mut persisted = Vec::new();
 
     // `GetCatalogEntries`.
     let mut entries: Vec<(String, Arc<CatalogEntry>)> = Vec::new();
@@ -405,6 +407,7 @@ pub fn write_checkpoint(
                         serialize_meta_block_pointer(s, data.table_pointer)
                     })?;
                     serializer.write_property(102, "total_rows", &data.total_rows)?;
+                    persisted.push((Arc::clone(storage_table), data.persisted));
                     let index_infos = serialize_indexes(storage_table, storage, &options, &mut blocks)?;
                     // Empty block pointers for forwards compatibility.
                     serializer.on_property_begin(103, "index_pointers");
@@ -468,7 +471,13 @@ pub fn write_checkpoint(
         serialization_compatibility: block_manager.storage_version(),
     };
     block_manager.write_header(metadata, header, &blocks.used_blocks)?;
-    block_manager.truncate()
+    block_manager.truncate()?;
+    if replace_in_memory {
+        for (table, row_groups) in persisted {
+            rustdb_storage::checkpoint::table_writer::replace_with_checkpointed(&table, row_groups)?;
+        }
+    }
+    Ok(())
 }
 
 /// Writes the data of every index of `table` (`TableIndexList::SerializeToDisk`). Each

@@ -267,6 +267,8 @@ pub struct WriteAheadLog {
     block_manager: Arc<SingleFileBlockManager>,
     options: SerializationOptions,
     state: Mutex<WalState>,
+    /// Held shared by the transactions writing to the database.
+    checkpoint_lock: Arc<crate::checkpoint_lock::CheckpointLock>,
 }
 
 impl WriteAheadLog {
@@ -288,7 +290,13 @@ impl WriteAheadLog {
                 requires_truncate,
                 ..WalState::default()
             }),
+            checkpoint_lock: Arc::default(),
         }
+    }
+
+    /// The database's checkpoint lock (`DuckTransactionManager::checkpoint_lock`).
+    pub fn checkpoint_lock(&self) -> &Arc<crate::checkpoint_lock::CheckpointLock> {
+        &self.checkpoint_lock
     }
 
     pub fn path(&self) -> &str {

@@ -22,6 +22,7 @@
 //! only rows below a column's published count, which appends never touch again.
 
 pub mod checkpoint;
+pub mod checkpoint_lock;
 pub mod compression;
 pub mod index;
 pub mod metadata;

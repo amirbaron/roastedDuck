@@ -125,7 +125,12 @@ impl DatabaseInstance {
             if wal.size() <= threshold || self.transactions.active_count() > 0 {
                 continue;
             }
-            crate::storage::create_checkpoint(&database.catalog, storage, false)?;
+            crate::storage::create_checkpoint(
+                &database.catalog,
+                storage,
+                crate::storage::CheckpointMode::Automatic,
+                Some(&self.transactions),
+            )?;
         }
         Ok(())
     }
@@ -440,7 +445,13 @@ impl Connection {
             let name = database.unwrap_or_else(|| self.default_catalog());
             let attached = instance.database(&name)?;
             let transaction = self.transactions.current();
-            crate::storage::checkpoint(&attached.catalog, attached.storage.as_ref(), &transaction, force)?;
+            crate::storage::checkpoint(
+                &attached.catalog,
+                attached.storage.as_ref(),
+                &transaction,
+                force,
+                &instance.transactions,
+            )?;
         }
         Ok(result)
     }
@@ -613,7 +624,11 @@ impl Connection {
                     database.name
                 )));
             }
-            transaction.modify_database(&database.name, database.catalog.wal())?;
+            transaction.modify_database(
+                &database.name,
+                database.catalog.wal(),
+                needs_checkpoint_lock(plan),
+            )?;
         }
         Ok(())
     }
@@ -855,6 +870,27 @@ fn collect_modified_databases(plan: &LogicalOperator, instance: &DatabaseInstanc
     for child in &plan.children {
         collect_modified_databases(child, instance, out);
     }
+}
+
+/// Whether a plan updates table data or changes the catalog, which keeps checkpoints from
+/// replacing the table data until the transaction ends (DuckDB's `SetModifications`);
+/// inserts and deletes do not.
+fn needs_checkpoint_lock(plan: &LogicalOperator) -> bool {
+    let own = match &plan.kind {
+        LogicalKind::Update(_)
+        | LogicalKind::CreateTable(_)
+        | LogicalKind::Create { .. }
+        | LogicalKind::CreateIndex(_)
+        | LogicalKind::Alter(_)
+        | LogicalKind::Drop(_) => true,
+        LogicalKind::MergeInto(merge) => merge
+            .actions
+            .values()
+            .flatten()
+            .any(|action| action.action_type == rustdb_ast::MergeActionType::MergeUpdate),
+        _ => false,
+    };
+    own || plan.children.iter().any(needs_checkpoint_lock)
 }
 
 /// Pragmas without a result that only tune testing or profiling behaviour.

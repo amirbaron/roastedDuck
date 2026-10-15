@@ -1107,6 +1107,11 @@ impl ColumnData {
                 }
             }
         }
+        // Struct and array columns store no segments of their own: their row count is
+        // their validity's (`StructColumnData::InitializeColumn`).
+        if let ColumnKind::Struct { validity, .. } | ColumnKind::Array { validity, .. } = &self.kind {
+            self.count.store(validity.count(), Ordering::Release);
+        }
         Ok(())
     }
 

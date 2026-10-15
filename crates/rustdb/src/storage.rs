@@ -135,7 +135,8 @@ pub(crate) fn checkpoint(
     catalog: &Catalog,
     storage: Option<&Arc<StorageManager>>,
     current: &Transaction,
-    _force: bool,
+    force: bool,
+    transactions: &rustdb_catalog::TransactionManager,
 ) -> Result<()> {
     let Some(storage) = storage else {
         return Ok(());
@@ -146,34 +147,77 @@ pub(crate) fn checkpoint(
             "Cannot CHECKPOINT: the current transaction has transaction local changes",
         ));
     }
-    create_checkpoint(catalog, storage, false)
+    let mode = if force {
+        CheckpointMode::Force
+    } else {
+        CheckpointMode::Manual
+    };
+    create_checkpoint(catalog, storage, mode, Some(transactions))
 }
 
 /// The checkpoint written when a database is closed (`AttachedDatabase::Close`).
 pub(crate) fn checkpoint_on_close(catalog: &Catalog, storage: &StorageManager) -> Result<()> {
-    create_checkpoint(catalog, storage, false)
+    create_checkpoint(catalog, storage, CheckpointMode::Automatic, None)
 }
 
-/// Writes a checkpoint if the WAL has entries, or `always`
-/// (`SingleFileStorageManager::CreateCheckpoint`). The WAL lock is held throughout, so
-/// commits wait; the WAL records the checkpoint's root before anything is written and is
-/// removed once the new header is in place.
-pub(crate) fn create_checkpoint(catalog: &Catalog, storage: &StorageManager, always: bool) -> Result<()> {
+/// Why a checkpoint is written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CheckpointMode {
+    /// `CHECKPOINT`: fails while other transactions write to the database.
+    Manual,
+    /// `FORCE CHECKPOINT`.
+    Force,
+    /// After a commit or when the database closes.
+    Automatic,
+}
+
+/// Writes a checkpoint if the WAL has entries (`SingleFileStorageManager::CreateCheckpoint`).
+/// The checkpoint lock is taken first (no transaction writes to the database while it is
+/// held), then the WAL lock, so commits wait; the WAL records the checkpoint's root
+/// before anything is written and is removed once the new header is in place. When no
+/// transaction writes to the database or needs data older than the last commit
+/// (`transactions`), the in-memory table data is replaced by the checkpointed data.
+pub(crate) fn create_checkpoint(
+    catalog: &Catalog,
+    storage: &StorageManager,
+    mode: CheckpointMode,
+    transactions: Option<&rustdb_catalog::TransactionManager>,
+) -> Result<()> {
     if storage.is_read_only() {
         return Ok(());
     }
+    let exclusive = storage
+        .wal()
+        .and_then(|wal| wal.checkpoint_lock().try_exclusive());
+    if mode == CheckpointMode::Manual && storage.wal().is_some() && exclusive.is_none() {
+        return Err(Error::new(
+            ErrorKind::Transaction,
+            "Cannot CHECKPOINT: there are other write transactions active. Try using FORCE CHECKPOINT to wait \
+             until all active transactions are finished",
+        ));
+    }
+    let replace_in_memory = exclusive.is_some()
+        && transactions
+            .is_none_or(|transactions| transactions.last_commit() < transactions.lowest_active_start());
     let mut guard = storage.wal().map(|wal| wal.lock());
     let wal_size = guard.as_ref().map_or(0, rustdb_storage::wal::WalGuard::size);
-    if wal_size == 0 && !always {
+    if wal_size == 0 {
         return Ok(());
     }
     let mut has_wal = false;
-    write_checkpoint(catalog, storage, &Transaction::system(), &mut |meta_block| {
-        if let Some(guard) = guard.as_mut() {
-            has_wal = guard.start_checkpoint(meta_block)?;
-        }
-        Ok(())
-    })?;
+    write_checkpoint(
+        catalog,
+        storage,
+        &Transaction::system(),
+        &mut |meta_block| {
+            if let Some(guard) = guard.as_mut() {
+                has_wal = guard.start_checkpoint(meta_block)?;
+            }
+            Ok(())
+        },
+        replace_in_memory,
+    )?;
+    drop(exclusive);
     if has_wal && let Some(guard) = guard.as_mut() {
         guard.finish_checkpoint()?;
     }

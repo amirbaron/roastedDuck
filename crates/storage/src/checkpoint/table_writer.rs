@@ -23,6 +23,7 @@ use crate::data_table::DataTable;
 use crate::metadata::{MetaBlockPointer, MetadataManager, MetadataWriter};
 use crate::single_file_block_manager::SingleFileBlockManager;
 use crate::statistics::{BaseStatistics, serialize_table_statistics};
+use crate::table::RowGroup;
 use crate::table::column_data::{ColumnData, ColumnKind};
 use crate::table::column_segment::{ColumnSegment, Layout};
 
@@ -340,11 +341,61 @@ pub fn write_unit(
     writer.write_data(serializer.bytes())
 }
 
-/// The result of writing a table's data: what the catalog entry stores.
+/// The result of writing a table's data: what the catalog entry stores, and the written
+/// columns of each row group, to replace the in-memory data once the checkpoint is
+/// complete.
 #[derive(Debug)]
 pub struct TableDataPointer {
     pub table_pointer: MetaBlockPointer,
     pub total_rows: u64,
+    pub persisted: Vec<PersistedRowGroup>,
+}
+
+/// The checkpointed columns of one row group.
+#[derive(Debug)]
+pub struct PersistedRowGroup {
+    pub row_group: Arc<RowGroup>,
+    pub count: u64,
+    pub columns: Vec<PersistentColumnData>,
+}
+
+/// Replaces the in-memory columns of the checkpointed row groups by the persistent
+/// segments just written (`RowGroup::Checkpoint` swapping in the `ColumnCheckpointState`
+/// results), freeing the transient data. The caller guarantees that no transaction
+/// writes to the table and none needs an older version of its data; row groups that
+/// changed since they were written are kept.
+pub fn replace_with_checkpointed(table: &DataTable, persisted: Vec<PersistedRowGroup>) -> Result<()> {
+    if persisted.is_empty() {
+        return Ok(());
+    }
+    // Appends to the main table wait (they hold the append lock while they write).
+    let _append = table.append_lock();
+    let collection = table.row_groups();
+    let row_groups = collection.row_groups();
+    let mut nodes = row_groups.tree().nodes();
+    for written in persisted {
+        let Some(node) = nodes
+            .iter_mut()
+            .find(|node| Arc::ptr_eq(&node.node, &written.row_group))
+        else {
+            continue;
+        };
+        if node.node.count() != written.count || node.node.columns().len() != written.columns.len() {
+            continue;
+        }
+        let mut columns = Vec::with_capacity(written.columns.len());
+        for (index, (data, old)) in written.columns.iter().zip(node.node.columns()).enumerate() {
+            columns.push(Arc::new(ColumnData::from_persistent(
+                Arc::clone(collection.io()),
+                index,
+                old.logical_type().clone(),
+                data,
+            )?));
+        }
+        node.node = Arc::new(node.node.with_columns(columns));
+    }
+    row_groups.tree().replace(nodes);
+    Ok(())
 }
 
 /// Writes a table's committed data (`DataTable::Checkpoint` and `FinalizeTable`).
@@ -361,6 +412,7 @@ pub fn write_table_data(
     let mut table_stats: Vec<BaseStatistics> =
         types.iter().cloned().map(BaseStatistics::create_empty).collect();
     let mut row_group_pointers = Vec::new();
+    let mut persisted = Vec::new();
     let row_groups = collection.row_groups();
     let base = row_groups.base_row_id();
     for node in row_groups.tree().nodes() {
@@ -375,6 +427,7 @@ pub fn write_table_data(
             tuple_count: count,
             ..RowGroupPointer::default()
         };
+        let mut written_columns = Vec::with_capacity(row_group.columns().len());
         for (index, column) in row_group.columns().iter().enumerate() {
             let target = column.checkpoint_copy(count)?;
             if let Some(stats) = table_stats.get_mut(index) {
@@ -383,7 +436,13 @@ pub fn write_table_data(
             let persistent = persist_column(&target, row_group_start, blocks)?;
             pointer.data_pointers.push(table_writer.meta_block_pointer()?);
             write_unit(table_writer, options, |s| persistent.serialize_fields(s))?;
+            written_columns.push(persistent);
         }
+        persisted.push(PersistedRowGroup {
+            row_group: Arc::clone(row_group),
+            count,
+            columns: written_columns,
+        });
         if let Some(version_info) = row_group.version_info() {
             let deletes = version_info.checkpoint_deletes(checkpoint_id);
             if !deletes.is_empty() {
@@ -415,6 +474,7 @@ pub fn write_table_data(
     Ok(TableDataPointer {
         table_pointer,
         total_rows,
+        persisted,
     })
 }
 

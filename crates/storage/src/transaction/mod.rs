@@ -75,6 +75,9 @@ pub struct Transaction {
     /// The attached database the transaction writes to, and its WAL
     /// (`MetaTransaction::modified_database`).
     modified_database: Mutex<Option<(String, Option<Arc<WriteAheadLog>>)>>,
+    /// The shared hold of the written database's checkpoint lock, until the transaction
+    /// ends (`DuckTransaction::write_lock`).
+    checkpoint_guard: Mutex<Option<crate::checkpoint_lock::SharedCheckpointGuard>>,
 }
 
 impl Transaction {
@@ -86,13 +89,30 @@ impl Transaction {
             undo: Mutex::default(),
             local_storage: Arc::default(),
             modified_database: Mutex::new(None),
+            checkpoint_guard: Mutex::new(None),
         }
+    }
+
+    /// Releases the checkpoint lock when the transaction ends.
+    fn release_checkpoint_lock(&self) {
+        self.checkpoint_guard
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
     }
 
     /// Records that the transaction writes to the database `name`, whose commits are
     /// logged to `wal` (`MetaTransaction::ModifyDatabase`). A transaction writes to one
     /// attached database only.
-    pub fn modify_database(&self, name: &str, wal: Option<&Arc<WriteAheadLog>>) -> Result<()> {
+    /// With `checkpoint_lock` (updates and catalog changes, DuckDB's
+    /// `SetModifications`), the database's checkpoint lock is held shared until the
+    /// transaction ends.
+    pub fn modify_database(
+        &self,
+        name: &str,
+        wal: Option<&Arc<WriteAheadLog>>,
+        checkpoint_lock: bool,
+    ) -> Result<()> {
         let mut modified = self
             .modified_database
             .lock()
@@ -100,16 +120,27 @@ impl Transaction {
         match &*modified {
             None => {
                 *modified = Some((name.to_owned(), wal.cloned()));
-                Ok(())
             }
-            Some((current, _)) if current.eq_ignore_ascii_case(name) => Ok(()),
+            Some((current, _)) if current.eq_ignore_ascii_case(name) => {}
             Some((current, _)) => Err(Error::new(
                 rustdb_common::ErrorKind::Transaction,
                 format!(
                     "Attempting to write to database \"{name}\" in a transaction that has already modified database \"{current}\" - a single transaction can only write to a single attached database."
                 ),
-            )),
+            ))?,
         }
+        drop(modified);
+        if checkpoint_lock && let Some(wal) = wal {
+            let mut guard = self
+                .checkpoint_guard
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if guard.is_none() {
+                // Waits while a checkpoint replaces the table data.
+                *guard = Some(wal.checkpoint_lock().shared());
+            }
+        }
+        Ok(())
     }
 
     /// The database the transaction writes to (`MetaTransaction::ModifiedDatabase`).
@@ -367,6 +398,7 @@ impl TransactionManager {
         };
         let cleanup = self.remove_transaction(&mut state, transaction.transaction_id);
         drop(state);
+        transaction.release_checkpoint_lock();
         for committed in cleanup {
             committed.undo.cleanup(committed.lowest_active_start);
         }
@@ -383,6 +415,7 @@ impl TransactionManager {
         let _ = undo.rollback();
         let cleanup = self.remove_transaction(&mut state, transaction.transaction_id);
         drop(state);
+        transaction.release_checkpoint_lock();
         for committed in cleanup {
             committed.undo.cleanup(committed.lowest_active_start);
         }
