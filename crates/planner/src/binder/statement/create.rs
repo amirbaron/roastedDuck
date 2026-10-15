@@ -1,0 +1,550 @@
+//! `CREATE SCHEMA`, `CREATE TABLE [AS]`, `CREATE VIEW` and `DROP` (DuckDB's
+//! `bind_create.cpp`, `bind_create_table.cpp` and `bind_drop.cpp`).
+
+use rustdb_ast::{
+    CatalogType as AstCatalogType, ColumnDefinition, CompressionType, Constraint, CreateInfo, CreateInfoKind,
+    DropInfo, ForeignKeyConstraint, ForeignKeyType, NotNullConstraint, OnEntryNotFound, TableColumnType,
+};
+use rustdb_catalog::{CatalogType, EntryKind, TableEntry};
+use rustdb_common::{Error, LogicalIndex, PhysicalIndex, Result};
+use rustdb_types::{LogicalType, LogicalTypeId, Value};
+
+use super::table::{bind_default_value, bind_schema_or_catalog, table_of};
+use super::super::expression::bind_logical_type;
+use super::super::query_node::bind_node;
+use super::super::{BindScope, BoundStatement, Scope};
+use crate::generated::enums::LogicalOperatorType;
+use crate::operator::{BoundCreateTableInfo, LogicalKind, LogicalOperator};
+use crate::prepared::StatementReturnType;
+
+fn count_result(plan: LogicalOperator) -> BoundStatement {
+    BoundStatement::new(plan, vec!["Count".to_owned()], vec![LogicalType::BIGINT])
+}
+
+/// `CREATE ...` (DuckDB's `Binder::Bind(CreateStatement &)`).
+pub fn bind_create(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Result<BoundStatement> {
+    let mut return_type = StatementReturnType::Nothing;
+    let plan = match &info.kind {
+        CreateInfoKind::Schema => {
+            let catalog = bind_catalog(scope, &info.catalog);
+            info.catalog = catalog;
+            LogicalOperator::new(LogicalKind::Create {
+                operator_type: LogicalOperatorType::LogicalCreateSchema,
+                info: Box::new(info.clone()),
+            })
+        }
+        CreateInfoKind::View(_) => {
+            bind_create_schema(scope, info)?;
+            bind_create_view_info(scope, info)?;
+            LogicalOperator::new(LogicalKind::Create {
+                operator_type: LogicalOperatorType::LogicalCreateView,
+                info: Box::new(info.clone()),
+            })
+        }
+        CreateInfoKind::Table(_) => {
+            let (bound, query) = bind_create_table_info(scope, info.clone())?;
+            let mut plan = LogicalOperator::new(LogicalKind::CreateTable(Box::new(bound)));
+            if let Some(query) = query {
+                return_type = StatementReturnType::ChangedRows;
+                plan.add_child(query);
+            }
+            plan
+        }
+        _ => {
+            return Err(Error::not_implemented(format!(
+                "CREATE {}",
+                info.kind.catalog_type().name()
+            )));
+        }
+    };
+    scope.with_properties(|properties| properties.return_type = return_type);
+    Ok(count_result(plan))
+}
+
+/// The catalog a schema is created in (`Binder::BindCatalog`).
+fn bind_catalog(scope: &BindScope<'_>, catalog: &str) -> String {
+    match scope.context.catalog(catalog) {
+        Some(found) if !catalog.is_empty() => found.name().to_owned(),
+        _ => scope.context.default_catalog().to_owned(),
+    }
+}
+
+/// Resolves the catalog and schema an entry is created in, which must exist
+/// (`Binder::BindCreateSchema`).
+pub fn bind_create_schema(scope: &BindScope<'_>, info: &mut CreateInfo) -> Result<()> {
+    let (mut catalog, mut schema) = bind_schema_or_catalog(scope, &info.catalog, &info.schema);
+    if catalog.is_empty() || catalog == "temp" {
+        catalog = scope.context.default_catalog().to_owned();
+    }
+    if schema.is_empty() {
+        rustdb_catalog::DEFAULT_SCHEMA.clone_into(&mut schema);
+    }
+    let Some(found) = scope.context.catalog(&catalog) else {
+        return Err(Error::binder(format!("Catalog \"{catalog}\" does not exist!")));
+    };
+    if found.name().eq_ignore_ascii_case("system") {
+        return Err(Error::binder("Cannot create entry in system catalog"));
+    }
+    let Some(schema_entry) = found.schema(&scope.context.transaction, &schema) else {
+        return Err(Error::catalog(format!(
+            "Schema with name {schema} does not exist!"
+        )));
+    };
+    info.catalog = found.name().to_owned();
+    info.schema = schema_entry.name().to_owned();
+    Ok(())
+}
+
+/// `Binder::BindCreateViewInfo`: binds the view's query for its names and types.
+fn bind_create_view_info(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Result<()> {
+    let CreateInfoKind::View(view) = &mut info.kind else {
+        return Err(Error::internal("expected a view"));
+    };
+    let mut query = view.query.clone();
+    let mut view_binder = super::super::Binder::new(scope.context.clone())?;
+    view_binder.can_contain_nulls = true;
+    let bound = {
+        let mut view_scope = BindScope::root(&mut view_binder);
+        bind_node(&mut view_scope, &mut query.node)?
+    };
+    if view.aliases.len() > bound.names.len() {
+        return Err(Error::binder("More VIEW aliases than columns in query result"));
+    }
+    view.types = bound.types;
+    view.names = bound.names;
+    Ok(())
+}
+
+/// A column definition with `name` and `ty`.
+fn column(name: String, ty: LogicalType) -> ColumnDefinition {
+    ColumnDefinition {
+        name,
+        logical_type: ty,
+        expression: None,
+        category: TableColumnType::Standard,
+        compression_type: CompressionType::CompressionAuto,
+        comment: Value::null(LogicalType::SQLNULL),
+        tags: rustdb_common::OrderedMap::default(),
+    }
+}
+
+/// Adds `definition`, renaming it like DuckDB's `ColumnList` with duplicates allowed
+/// (`a`, `a_1`, ...).
+fn push_deduplicated(columns: &mut Vec<ColumnDefinition>, mut definition: ColumnDefinition) {
+    let base = definition.name.clone();
+    let mut index = 1;
+    while columns.iter().any(|c| c.name.eq_ignore_ascii_case(&definition.name)) {
+        definition.name = format!("{base}_{index}");
+        index += 1;
+    }
+    columns.push(definition);
+}
+
+/// `Binder::BindCreateTableInfo`: binds the column types, constraints and defaults (or the
+/// query of `CREATE TABLE AS`). Returns the bound info and the query's plan.
+pub fn bind_create_table_info(
+    scope: &mut BindScope<'_>,
+    mut info: CreateInfo,
+) -> Result<(BoundCreateTableInfo, Option<LogicalOperator>)> {
+    bind_create_schema(scope, &mut info)?;
+    let catalog = info.catalog.clone();
+    let schema = info.schema.clone();
+    let CreateInfoKind::Table(table) = &mut info.kind else {
+        return Err(Error::internal("expected a table"));
+    };
+    let mut query_plan = None;
+    if let Some(mut query) = table.query.take() {
+        let mut child = scope.binder.child()?;
+        let bound = {
+            let mut child_scope = BindScope {
+                binder: &mut child,
+                outer: Some(scope as &mut dyn Scope),
+            };
+            bind_node(&mut child_scope, &mut query.node)?
+        };
+        let mut target: Vec<String> = table.columns.columns.iter().map(|c| c.name.clone()).collect();
+        if target.len() > bound.types.len() {
+            return Err(Error::binder(
+                "Target table has more colum names than query result.",
+            ));
+        }
+        for name in bound.names.iter().skip(target.len()) {
+            target.push(name.clone());
+        }
+        let mut columns = Vec::with_capacity(target.len());
+        for (name, ty) in target.into_iter().zip(&bound.types) {
+            push_deduplicated(&mut columns, column(name, bind_logical_type(ty)?));
+        }
+        table.columns.columns = columns;
+        query_plan = Some(bound.plan);
+    } else {
+        for column in &mut table.columns.columns {
+            column.logical_type = bind_logical_type(&column.logical_type)?;
+            if column.category == TableColumnType::Generated {
+                return Err(Error::not_implemented("generated columns"));
+            }
+        }
+        bind_create_table_constraints(scope, &table.table, &schema, &mut table.columns.columns, &mut table.constraints)?;
+        bind_new_constraints(&table.table, &table.columns.columns, &mut table.constraints)?;
+        // Validate the default values (`BindDefaultValues`).
+        for column in &table.columns.columns {
+            bind_default_value(scope, column.expression.as_deref(), &column.logical_type)?;
+        }
+    }
+    if !table.columns.columns.iter().any(|c| c.category != TableColumnType::Generated) {
+        return Err(Error::binder(
+            "Creating a table without physical (non-generated) columns is not supported",
+        ));
+    }
+    Ok((BoundCreateTableInfo { catalog, schema, info }, query_plan))
+}
+
+/// The physical index of each column of a column list (`None` for generated columns).
+fn physical_index(columns: &[ColumnDefinition], logical: usize) -> Option<usize> {
+    if columns.get(logical)?.category == TableColumnType::Generated {
+        return None;
+    }
+    Some(
+        columns[..logical]
+            .iter()
+            .filter(|c| c.category != TableColumnType::Generated)
+            .count(),
+    )
+}
+
+/// `Binder::BindNewConstraints`: a PRIMARY KEY makes its columns NOT NULL.
+fn bind_new_constraints(table: &str, columns: &[ColumnDefinition], constraints: &mut Vec<Constraint>) -> Result<()> {
+    let mut primary_keys: Option<Vec<usize>> = None;
+    let mut not_null = Vec::new();
+    for constraint in constraints.iter() {
+        match constraint {
+            Constraint::NotNull(constraint) => not_null.push(constraint.index.0 as usize),
+            Constraint::Unique(unique) if unique.is_primary_key => {
+                if primary_keys.is_some() {
+                    return Err(Error::parser(format!(
+                        "table \"{table}\" has more than one primary key"
+                    )));
+                }
+                let keys = if unique.index.0 == u64::MAX {
+                    let mut keys = Vec::new();
+                    for name in &unique.columns {
+                        let Some(index) = columns.iter().position(|c| c.name.eq_ignore_ascii_case(name)) else {
+                            return Err(Error::catalog(format!(
+                                "table \"{table}\" does not have a column named \"{name}\""
+                            )));
+                        };
+                        if columns[index].category == TableColumnType::Generated {
+                            return Err(Error::binder(format!(
+                                "cannot create a PRIMARY KEY on a generated column: {}",
+                                columns[index].name
+                            )));
+                        }
+                        if keys.contains(&index) {
+                            return Err(Error::parser(format!(
+                                "column \"{name}\" appears twice in primary key constraint"
+                            )));
+                        }
+                        keys.push(index);
+                    }
+                    keys
+                } else {
+                    vec![unique.index.0 as usize]
+                };
+                primary_keys = Some(keys);
+            }
+            Constraint::Unique(unique) if unique.index.0 == u64::MAX => {
+                let mut seen = Vec::new();
+                for name in &unique.columns {
+                    let Some(index) = columns.iter().position(|c| c.name.eq_ignore_ascii_case(name)) else {
+                        return Err(Error::catalog(format!(
+                            "table \"{table}\" does not have a column named \"{name}\""
+                        )));
+                    };
+                    if seen.contains(&index) {
+                        return Err(Error::parser(format!(
+                            "column \"{name}\" appears twice in primary key constraint"
+                        )));
+                    }
+                    seen.push(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(keys) = primary_keys {
+        for logical in keys {
+            if !not_null.contains(&logical) {
+                constraints.push(Constraint::NotNull(NotNullConstraint {
+                    index: LogicalIndex(logical as u64),
+                }));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The key column names of a UNIQUE constraint.
+fn unique_names(columns: &[ColumnDefinition], unique: &rustdb_ast::UniqueConstraint) -> Vec<String> {
+    if unique.index.0 == u64::MAX {
+        unique.columns.clone()
+    } else {
+        columns
+            .get(unique.index.0 as usize)
+            .map(|c| vec![c.name.clone()])
+            .unwrap_or_default()
+    }
+}
+
+/// `FindMatchingPrimaryKeyColumns`.
+fn find_matching_primary_key_columns(
+    columns: &[ColumnDefinition],
+    constraints: &[Constraint],
+    fk: &mut ForeignKeyConstraint,
+) -> Result<()> {
+    let find_primary_key = fk.pk_columns.is_empty();
+    let mut found_constraint = false;
+    for constraint in constraints {
+        let Constraint::Unique(unique) = constraint else {
+            continue;
+        };
+        if find_primary_key && !unique.is_primary_key {
+            continue;
+        }
+        found_constraint = true;
+        let pk_names = unique_names(columns, unique);
+        if find_primary_key {
+            if pk_names.len() != fk.fk_columns.len() {
+                return Err(Error::binder(format!(
+                    "Failed to create foreign key: number of referencing ({}) and referenced columns ({}) differ",
+                    fk.fk_columns.join(","),
+                    pk_names.join(",")
+                )));
+            }
+            fk.pk_columns = pk_names;
+            return Ok(());
+        }
+        if pk_names.len() != fk.fk_columns.len() {
+            continue;
+        }
+        if fk
+            .pk_columns
+            .iter()
+            .zip(&pk_names)
+            .all(|(a, b)| a.eq_ignore_ascii_case(b))
+        {
+            return Ok(());
+        }
+    }
+    if !found_constraint {
+        let search = if find_primary_key {
+            "primary key"
+        } else {
+            "primary key or unique constraint"
+        };
+        return Err(Error::binder(format!(
+            "Failed to create foreign key: there is no {search} for referenced table \"{}\"",
+            fk.table
+        )));
+    }
+    for name in &fk.pk_columns {
+        if !columns.iter().any(|c| c.name.eq_ignore_ascii_case(name)) {
+            return Err(Error::binder(format!(
+                "Failed to create foreign key: referenced table \"{}\" does not have a column named \"{name}\"",
+                fk.table
+            )));
+        }
+    }
+    Err(Error::binder(format!(
+        "Failed to create foreign key: referenced table \"{}\" does not have a primary key or unique constraint on the columns {}",
+        fk.table,
+        fk.pk_columns.join(",")
+    )))
+}
+
+/// `FindForeignKeyIndexes`.
+fn find_foreign_key_indexes(columns: &[ColumnDefinition], names: &[String]) -> Result<Vec<PhysicalIndex>> {
+    let mut indexes = Vec::with_capacity(names.len());
+    for name in names {
+        let Some(logical) = columns.iter().position(|c| c.name.eq_ignore_ascii_case(name)) else {
+            return Err(Error::binder(format!(
+                "column \"{name}\" named in key does not exist"
+            )));
+        };
+        let Some(physical) = physical_index(columns, logical) else {
+            return Err(Error::binder(format!(
+                "Failed to create foreign key: referenced column \"{}\" is a generated column",
+                columns[logical].name
+            )));
+        };
+        indexes.push(PhysicalIndex(physical as u64));
+    }
+    Ok(indexes)
+}
+
+fn physical_column(columns: &[ColumnDefinition], physical: usize) -> Option<&ColumnDefinition> {
+    columns
+        .iter()
+        .filter(|c| c.category != TableColumnType::Generated)
+        .nth(physical)
+}
+
+/// `CheckForeignKeyTypes`.
+fn check_foreign_key_types(
+    pk_columns: &[ColumnDefinition],
+    fk_columns: &[ColumnDefinition],
+    fk: &ForeignKeyConstraint,
+) -> Result<()> {
+    for (pk, fk_key) in fk.pk_keys.iter().zip(&fk.fk_keys) {
+        let (Some(pk_col), Some(fk_col)) = (
+            physical_column(pk_columns, pk.0 as usize),
+            physical_column(fk_columns, fk_key.0 as usize),
+        ) else {
+            continue;
+        };
+        if pk_col.logical_type != fk_col.logical_type {
+            return Err(Error::binder(format!(
+                "Failed to create foreign key: incompatible types between column \"{}\" (\"{}\") and column \"{}\" (\"{}\")",
+                pk_col.name, pk_col.logical_type, fk_col.name, fk_col.logical_type
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The column definitions of an existing table entry.
+fn entry_column_definitions(table: &TableEntry) -> Vec<ColumnDefinition> {
+    table
+        .columns
+        .iter()
+        .map(|c| {
+            let mut definition = column(c.name.clone(), c.logical_type.clone());
+            if c.generated.is_some() {
+                definition.category = TableColumnType::Generated;
+            }
+            definition
+        })
+        .collect()
+}
+
+/// `BindCreateTableConstraints`: resolves the referenced columns of foreign keys.
+fn bind_create_table_constraints(
+    scope: &BindScope<'_>,
+    table_name: &str,
+    schema: &str,
+    columns: &mut [ColumnDefinition],
+    constraints: &mut [Constraint],
+) -> Result<()> {
+    let own_constraints = constraints.to_vec();
+    for constraint in constraints.iter_mut() {
+        let Constraint::ForeignKey(fk) = constraint else {
+            continue;
+        };
+        if fk.fk_type != ForeignKeyType::FkTypeForeignKeyTable {
+            continue;
+        }
+        if !fk.pk_keys.is_empty() && !fk.fk_keys.is_empty() {
+            return Ok(());
+        }
+        fk.fk_keys = find_foreign_key_indexes(columns, &fk.fk_columns)?;
+        if fk.table.eq_ignore_ascii_case(table_name) {
+            fk.fk_type = ForeignKeyType::FkTypeSelfReferenceTable;
+            find_matching_primary_key_columns(columns, &own_constraints, fk)?;
+            fk.pk_keys = find_foreign_key_indexes(columns, &fk.pk_columns)?;
+            check_foreign_key_types(columns, columns, fk)?;
+            continue;
+        }
+        let found = scope
+            .context
+            .get_entry("", &fk.schema, CatalogType::Table, &fk.table, false)?
+            .ok_or_else(|| Error::internal("foreign key table lookup"))?;
+        let EntryKind::Table(pk_table) = &found.entry.kind else {
+            return Err(Error::binder("cannot reference a VIEW with a FOREIGN KEY"));
+        };
+        fk.schema.clone_from(&found.schema);
+        if !found.schema.eq_ignore_ascii_case(schema) {
+            return Err(Error::binder(
+                "Creating foreign keys across different schemas or catalogs is not supported",
+            ));
+        }
+        let pk_columns = entry_column_definitions(pk_table);
+        find_matching_primary_key_columns(&pk_columns, &pk_table.constraints, fk)?;
+        fk.pk_keys = find_foreign_key_indexes(&pk_columns, &fk.pk_columns)?;
+        check_foreign_key_types(&pk_columns, columns, fk)?;
+        if let Some(storage) = &pk_table.storage {
+            let keys: Vec<usize> = fk.pk_keys.iter().map(|k| k.0 as usize).collect();
+            if storage
+                .indexes()
+                .find_foreign_key_index(&keys, rustdb_storage::index::table_index_list::ForeignKeyType::PrimaryKeyTable)
+                .is_none()
+            {
+                return Err(Error::binder(format!(
+                    "Failed to create foreign key on {}({}): no UNIQUE or PRIMARY KEY constraint present on these columns",
+                    found.entry.name(),
+                    fk.pk_columns.join(",")
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `DROP ...` (DuckDB's `Binder::Bind(DropStatement &)`).
+pub fn bind_drop(scope: &mut BindScope<'_>, drop: &mut DropInfo) -> Result<BoundStatement> {
+    scope.with_properties(|properties| properties.return_type = StatementReturnType::Nothing);
+    let ty = match drop.catalog_type {
+        AstCatalogType::SchemaEntry => None,
+        AstCatalogType::TableEntry => Some(CatalogType::Table),
+        AstCatalogType::ViewEntry => Some(CatalogType::View),
+        AstCatalogType::SequenceEntry => Some(CatalogType::Sequence),
+        AstCatalogType::MacroEntry => Some(CatalogType::Macro),
+        AstCatalogType::TableMacroEntry => Some(CatalogType::TableMacro),
+        AstCatalogType::IndexEntry => Some(CatalogType::Index),
+        AstCatalogType::TypeEntry => Some(CatalogType::Type),
+        other => {
+            return Err(Error::binder(format!(
+                "Unknown catalog type for drop statement: '{}'",
+                other.name()
+            )));
+        }
+    };
+    if let Some(ty) = ty {
+        let (catalog, schema) = bind_schema_or_catalog(scope, &drop.catalog, &drop.schema);
+        let if_exists = drop.if_not_found == OnEntryNotFound::ReturnNull;
+        let found = scope
+            .context
+            .get_entry(&catalog, &schema, ty, &drop.name, if_exists)?;
+        if let Some(found) = found {
+            if found.entry.internal {
+                return Err(Error::catalog(format!(
+                    "Cannot drop internal catalog entry \"{}\"!",
+                    found.entry.name()
+                )));
+            }
+            drop.catalog = found.catalog;
+            drop.schema = found.schema;
+        } else {
+            drop.catalog = catalog;
+            drop.schema = schema;
+        }
+    } else if drop.catalog.is_empty() {
+        drop.catalog = scope.context.default_catalog().to_owned();
+    }
+    let plan = LogicalOperator::new(LogicalKind::Drop(Box::new(drop.clone())));
+    Ok(BoundStatement::new(
+        plan,
+        vec!["Success".to_owned()],
+        vec![LogicalType::BOOLEAN],
+    ))
+}
+
+/// Whether the logical type is fully bound.
+#[allow(dead_code, reason = "kept for parity with DuckDB's debug check")]
+fn is_bound(ty: &LogicalType) -> bool {
+    ty.id() != LogicalTypeId::Unbound
+}
+
+/// The table entry of a found catalog entry, for DML on it.
+#[allow(dead_code, reason = "shared helper")]
+pub fn table_entry(entry: &rustdb_catalog::CatalogEntry) -> Result<&TableEntry> {
+    table_of(entry)
+}

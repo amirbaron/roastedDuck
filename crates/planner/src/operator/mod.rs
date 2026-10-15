@@ -122,6 +122,18 @@ pub struct LogicalGet {
     /// The columns bound so far through the scan's table binding, which shares them
     /// (DuckDB's `TableBinding` refers to the scan's `column_ids`).
     pub shared_column_ids: Option<SharedColumnIds>,
+    /// The scanned table of a base table scan (DuckDB's `LogicalGet::GetTable`).
+    pub table: Option<Arc<rustdb_catalog::CatalogEntry>>,
+}
+
+/// The output bindings of INSERT/DELETE/UPDATE: the table's columns with `RETURNING`, the
+/// row count otherwise.
+fn modify_bindings(return_chunk: bool, table_index: u64, table: &rustdb_catalog::CatalogEntry) -> Vec<ColumnBinding> {
+    if return_chunk {
+        generate_column_bindings(table_index, table_types(table).len())
+    } else {
+        vec![ColumnBinding::new(0, 0)]
+    }
 }
 
 /// Splits AND-ed predicates into separate expressions (DuckDB's
@@ -427,6 +439,114 @@ pub enum LogicalKind {
         name: String,
         parameters: Vec<Value>,
     },
+    /// `CREATE TABLE`, with the query of `CREATE TABLE AS` as child.
+    CreateTable(Box<BoundCreateTableInfo>),
+    /// `CREATE SCHEMA` / `CREATE VIEW` (DuckDB's `LogicalCreate`).
+    Create {
+        operator_type: LogicalOperatorType,
+        info: Box<rustdb_ast::CreateInfo>,
+    },
+    /// `DROP ...` (DuckDB's `LogicalSimple` of type `LOGICAL_DROP`).
+    Drop(Box<rustdb_ast::DropInfo>),
+    Insert(Box<LogicalInsert>),
+    Delete(Box<LogicalDelete>),
+    Update(Box<LogicalUpdate>),
+}
+
+/// A bound `CREATE TABLE` (DuckDB's `BoundCreateTableInfo`): the table definition with
+/// its column types bound and its foreign keys resolved.
+#[derive(Clone, Debug)]
+pub struct BoundCreateTableInfo {
+    pub catalog: String,
+    pub schema: String,
+    /// The `CREATE TABLE` info (`CreateInfoKind::Table`).
+    pub info: rustdb_ast::CreateInfo,
+}
+
+/// A foreign key bound to its tables (DuckDB's `BoundForeignKeyConstraint`).
+#[derive(Clone, Debug)]
+pub struct BoundForeignKeyInfo {
+    pub fk_type: rustdb_ast::ForeignKeyType,
+    /// The other table of the constraint.
+    pub schema: String,
+    pub table: String,
+    /// Key columns (physical indexes) of the referenced table.
+    pub pk_keys: Vec<usize>,
+    /// Key columns (physical indexes) of the referencing table.
+    pub fk_keys: Vec<usize>,
+}
+
+/// A constraint bound to the physical columns of its table (DuckDB's `BoundConstraint`).
+#[derive(Clone, Debug)]
+pub enum BoundConstraint {
+    NotNull(usize),
+    /// `CHECK (expression)`; the expression refers to physical columns by index.
+    Check {
+        expression: Expression,
+        bound_columns: Vec<usize>,
+        /// The constraint as written, for error messages.
+        text: String,
+    },
+    Unique {
+        keys: Vec<usize>,
+        is_primary_key: bool,
+    },
+    ForeignKey(BoundForeignKeyInfo),
+}
+
+/// `INSERT` (DuckDB's `LogicalInsert`).
+#[derive(Clone, Debug)]
+pub struct LogicalInsert {
+    pub table: Arc<rustdb_catalog::CatalogEntry>,
+    pub schema: String,
+    pub table_index: u64,
+    /// For each physical column, the input column holding its value, or `None` to use the
+    /// default; empty when the input holds every column in order.
+    pub column_index_map: Vec<Option<usize>>,
+    pub expected_types: Vec<LogicalType>,
+    /// The default of each physical column.
+    pub bound_defaults: Vec<Expression>,
+    pub bound_constraints: Vec<BoundConstraint>,
+    pub return_chunk: bool,
+}
+
+/// `DELETE` (DuckDB's `LogicalDelete`); `expressions` holds the row id reference.
+#[derive(Clone, Debug)]
+pub struct LogicalDelete {
+    pub table: Arc<rustdb_catalog::CatalogEntry>,
+    pub schema: String,
+    pub table_index: u64,
+    pub bound_constraints: Vec<BoundConstraint>,
+    pub return_chunk: bool,
+}
+
+/// `UPDATE` (DuckDB's `LogicalUpdate`); `expressions` holds the new value of each column
+/// in `columns`, and the input's last column is the row id.
+#[derive(Clone, Debug)]
+pub struct LogicalUpdate {
+    pub table: Arc<rustdb_catalog::CatalogEntry>,
+    pub schema: String,
+    pub table_index: u64,
+    /// The updated physical columns.
+    pub columns: Vec<usize>,
+    pub bound_defaults: Vec<Expression>,
+    pub bound_constraints: Vec<BoundConstraint>,
+    pub update_is_del_and_insert: bool,
+    pub return_chunk: bool,
+}
+
+impl LogicalInsert {
+    fn table_types(&self) -> Vec<LogicalType> {
+        table_types(&self.table)
+    }
+}
+
+/// The types of the stored columns of a table entry.
+pub fn table_types(entry: &rustdb_catalog::CatalogEntry) -> Vec<LogicalType> {
+    match &entry.kind {
+        rustdb_catalog::EntryKind::Table(table) => table.physical_types(),
+        _ => Vec::new(),
+    }
 }
 
 /// What a `PIVOT` computes (DuckDB's `BoundPivotInfo`).
@@ -587,6 +707,12 @@ impl LogicalOperator {
             LogicalKind::Transaction { .. } => T::LogicalTransaction,
             LogicalKind::Deallocate { .. } => T::LogicalDrop,
             LogicalKind::Pragma { .. } => T::LogicalPragma,
+            LogicalKind::CreateTable(_) => T::LogicalCreateTable,
+            LogicalKind::Create { operator_type, .. } => *operator_type,
+            LogicalKind::Drop(_) => T::LogicalDrop,
+            LogicalKind::Insert(_) => T::LogicalInsert,
+            LogicalKind::Delete(_) => T::LogicalDelete,
+            LogicalKind::Update(_) => T::LogicalUpdate,
         }
     }
 
@@ -727,7 +853,13 @@ impl LogicalOperator {
             | LogicalKind::Reset { .. }
             | LogicalKind::Transaction { .. }
             | LogicalKind::Deallocate { .. }
-            | LogicalKind::Pragma { .. } => vec![ColumnBinding::new(0, 0)],
+            | LogicalKind::Pragma { .. }
+            | LogicalKind::CreateTable(_)
+            | LogicalKind::Create { .. }
+            | LogicalKind::Drop(_) => vec![ColumnBinding::new(0, 0)],
+            LogicalKind::Insert(insert) => modify_bindings(insert.return_chunk, insert.table_index, &insert.table),
+            LogicalKind::Delete(delete) => modify_bindings(delete.return_chunk, delete.table_index, &delete.table),
+            LogicalKind::Update(update) => modify_bindings(update.return_chunk, update.table_index, &update.table),
         }
     }
 
@@ -898,7 +1030,13 @@ impl LogicalOperator {
             | LogicalKind::Set { .. }
             | LogicalKind::Reset { .. }
             | LogicalKind::Transaction { .. }
-            | LogicalKind::Pragma { .. } => vec![LogicalType::BOOLEAN],
+            | LogicalKind::Pragma { .. }
+            | LogicalKind::Drop(_) => vec![LogicalType::BOOLEAN],
+            LogicalKind::CreateTable(_) | LogicalKind::Create { .. } => vec![LogicalType::BIGINT],
+            LogicalKind::Insert(insert) if insert.return_chunk => insert.table_types(),
+            LogicalKind::Delete(delete) if delete.return_chunk => table_types(&delete.table),
+            LogicalKind::Update(update) if update.return_chunk => table_types(&update.table),
+            LogicalKind::Insert(_) | LogicalKind::Delete(_) | LogicalKind::Update(_) => vec![LogicalType::BIGINT],
         };
     }
 

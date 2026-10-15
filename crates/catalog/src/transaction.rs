@@ -17,6 +17,9 @@ struct CatalogChange {
     set: Arc<CatalogSet>,
     name: String,
     version: Arc<Version>,
+    /// The storage of a dropped table, restored as the main table on rollback
+    /// (`DuckTableEntry::OnDrop` / `SetAsRoot`).
+    dropped_table: Option<Arc<rustdb_storage::DataTable>>,
 }
 
 impl CatalogUndo for CatalogChange {
@@ -30,6 +33,9 @@ impl CatalogUndo for CatalogChange {
 
     fn rollback(&self) {
         self.set.undo(&self.name, &self.version);
+        if let Some(table) = &self.dropped_table {
+            table.set_as_main_table();
+        }
     }
 
     fn is_drop(&self) -> bool {
@@ -39,11 +45,28 @@ impl CatalogUndo for CatalogChange {
 
 /// Registers catalog changes in a transaction's undo log.
 pub(crate) trait TransactionExt {
-    fn push_catalog_change(&self, set: Arc<CatalogSet>, name: String, version: Arc<Version>);
+    fn push_catalog_change(
+        &self,
+        set: Arc<CatalogSet>,
+        name: String,
+        version: Arc<Version>,
+        dropped_table: Option<Arc<rustdb_storage::DataTable>>,
+    );
 }
 
 impl TransactionExt for Transaction {
-    fn push_catalog_change(&self, set: Arc<CatalogSet>, name: String, version: Arc<Version>) {
-        self.push_catalog_undo(Box::new(CatalogChange { set, name, version }));
+    fn push_catalog_change(
+        &self,
+        set: Arc<CatalogSet>,
+        name: String,
+        version: Arc<Version>,
+        dropped_table: Option<Arc<rustdb_storage::DataTable>>,
+    ) {
+        self.push_catalog_undo(Box::new(CatalogChange {
+            set,
+            name,
+            version,
+            dropped_table,
+        }));
     }
 }

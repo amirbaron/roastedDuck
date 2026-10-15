@@ -125,7 +125,36 @@ impl CatalogSet {
                 }
             }
         }
-        transaction.push_catalog_change(Arc::clone(self), name, version);
+        transaction.push_catalog_change(Arc::clone(self), name, version, None);
+        Ok(true)
+    }
+
+    /// Replaces the visible entry called `name` by `entry` (DuckDB's `AlterEntry`).
+    /// Returns `false` if no visible entry exists.
+    pub fn alter(self: &Arc<Self>, transaction: &Transaction, name: &str, entry: CatalogEntry) -> Result<bool> {
+        let name = key(name);
+        let version = Version::new(transaction.transaction_id, Some(Arc::new(entry)));
+        {
+            let mut chains = self.lock();
+            let Some(chain) = chains.get_mut(&name) else {
+                return Ok(false);
+            };
+            let head = &chain[0];
+            if conflicts(transaction, head.timestamp()) {
+                return Err(Error::new(
+                    ErrorKind::Transaction,
+                    format!(
+                        "Catalog write-write conflict on alter with \"{}\"",
+                        display_name(head, &name)
+                    ),
+                ));
+            }
+            if head.entry.is_none() {
+                return Ok(false);
+            }
+            chain.insert(0, Arc::clone(&version));
+        }
+        transaction.push_catalog_change(Arc::clone(self), name, version, None);
         Ok(true)
     }
 
@@ -138,6 +167,7 @@ impl CatalogSet {
     ) -> Result<bool> {
         let name = key(name);
         let version = Version::new(transaction.transaction_id, None);
+        let mut dropped_table = None;
         {
             let mut chains = self.lock();
             let Some(chain) = chains.get_mut(&name) else {
@@ -162,9 +192,17 @@ impl CatalogSet {
                     entry.name()
                 )));
             }
+            if let crate::EntryKind::Table(table) = &entry.kind
+                && let Some(storage) = &table.storage
+            {
+                // Concurrent writers of the table now fail (`DuckTableEntry::OnDrop`).
+                storage.set_as_dropped();
+                transaction.local_storage().drop_table(storage);
+                dropped_table = Some(Arc::clone(storage));
+            }
             chain.insert(0, Arc::clone(&version));
         }
-        transaction.push_catalog_change(Arc::clone(self), name, version);
+        transaction.push_catalog_change(Arc::clone(self), name, version, dropped_table);
         Ok(true)
     }
 

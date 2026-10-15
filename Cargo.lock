@@ -554,6 +554,7 @@ dependencies = [
  "rustdb-function",
  "rustdb-parser",
  "rustdb-serde",
+ "rustdb-storage",
  "rustdb-types",
 ]
 

@@ -402,6 +402,7 @@ fn bind_base_table(
                 projected_input: Vec::new(),
                 ordinality_index: None,
                 shared_column_ids: Some(shared_column_ids),
+                table: Some(Arc::clone(&found.entry)),
             };
             Ok(BoundStatement::new(
                 LogicalOperator::new(LogicalKind::Get(Box::new(get))),

@@ -74,21 +74,98 @@ pub struct TableColumn {
     pub generated: Option<ParsedExpression>,
 }
 
-/// A table's definition (DuckDB's `TableCatalogEntry`). Its data lives in storage.
+/// A table's definition (DuckDB's `TableCatalogEntry` / `DuckTableEntry`). Its data lives
+/// in `storage`.
 #[derive(Clone, Debug, Default)]
 pub struct TableEntry {
+    /// The columns in logical order (generated columns included).
     pub columns: Vec<TableColumn>,
-    /// Columns that may not be NULL, by index.
+    /// Columns that may not be NULL, by logical index.
     pub not_null_columns: Vec<usize>,
+    /// The constraints as written (with column indexes resolved), DuckDB's
+    /// `TableCatalogEntry::constraints`.
+    pub constraints: Vec<rustdb_ast::Constraint>,
+    /// The table's data (`DuckTableEntry::storage`); `None` for tables of other catalogs.
+    pub storage: Option<Arc<rustdb_storage::DataTable>>,
 }
 
 impl TableEntry {
+    /// The definition of a `CREATE TABLE` (without storage).
+    pub fn from_create_info(info: &rustdb_ast::CreateTableInfo) -> Self {
+        let columns = info
+            .columns
+            .columns
+            .iter()
+            .map(|column| {
+                let generated = column.category == rustdb_ast::TableColumnType::Generated;
+                let expression = column.expression.as_deref().cloned();
+                TableColumn {
+                    name: column.name.clone(),
+                    logical_type: column.logical_type.clone(),
+                    default_value: if generated { None } else { expression.clone() },
+                    generated: if generated { expression } else { None },
+                }
+            })
+            .collect();
+        let not_null_columns = info
+            .constraints
+            .iter()
+            .filter_map(|constraint| match constraint {
+                rustdb_ast::Constraint::NotNull(not_null) => Some(not_null.index.0 as usize),
+                _ => None,
+            })
+            .collect();
+        Self {
+            columns,
+            not_null_columns,
+            constraints: info.constraints.clone(),
+            storage: None,
+        }
+    }
+
     /// The column called `name` (case-insensitive), with its index.
     pub fn column(&self, name: &str) -> Option<(usize, &TableColumn)> {
         self.columns
             .iter()
             .enumerate()
             .find(|(_, column)| column.name.eq_ignore_ascii_case(name))
+    }
+
+    /// The stored (non-generated) columns as `(physical index, logical index, column)`
+    /// (DuckDB's `ColumnList::Physical`).
+    pub fn physical_columns(&self) -> impl Iterator<Item = (usize, usize, &TableColumn)> {
+        self.columns
+            .iter()
+            .enumerate()
+            .filter(|(_, column)| column.generated.is_none())
+            .enumerate()
+            .map(|(physical, (logical, column))| (physical, logical, column))
+    }
+
+    /// The physical index of logical column `logical`, if it is stored.
+    pub fn logical_to_physical(&self, logical: usize) -> Option<usize> {
+        self.physical_columns()
+            .find(|&(_, l, _)| l == logical)
+            .map(|(physical, _, _)| physical)
+    }
+
+    /// The logical index of physical column `physical`.
+    pub fn physical_to_logical(&self, physical: usize) -> Option<usize> {
+        self.physical_columns()
+            .find(|&(p, _, _)| p == physical)
+            .map(|(_, logical, _)| logical)
+    }
+
+    /// The types of the stored columns (DuckDB's `GetTypes`).
+    pub fn physical_types(&self) -> Vec<LogicalType> {
+        self.physical_columns()
+            .map(|(_, _, column)| column.logical_type.clone())
+            .collect()
+    }
+
+    /// Whether any column is generated.
+    pub fn has_generated_columns(&self) -> bool {
+        self.columns.iter().any(|column| column.generated.is_some())
     }
 }
 

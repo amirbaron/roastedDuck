@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use rustdb_ast::OnCreateConflict;
 use rustdb_common::{Error, Result};
 use rustdb_function::{AggregateFunctionSet, ScalarFunctionSet, TableFunctionSet};
 
@@ -100,6 +101,199 @@ impl Catalog {
             CatalogType::Schema => return self.schema(transaction, name),
         };
         set.get(transaction, name)
+    }
+
+    /// The set of `schema` holding entries of type `ty` (`DuckSchemaEntry::GetCatalogSet`).
+    fn set_for(schema: &SchemaEntry, ty: CatalogType) -> &Arc<CatalogSet> {
+        match ty {
+            CatalogType::Table | CatalogType::View => &schema.tables,
+            CatalogType::TableFunction | CatalogType::TableMacro => &schema.table_functions,
+            CatalogType::PragmaFunction => &schema.pragma_functions,
+            CatalogType::CopyFunction => &schema.copy_functions,
+            CatalogType::Sequence => &schema.sequences,
+            CatalogType::Type => &schema.types,
+            CatalogType::Collation => &schema.collations,
+            CatalogType::Index => &schema.indexes,
+            CatalogType::Schema
+            | CatalogType::ScalarFunction
+            | CatalogType::AggregateFunction
+            | CatalogType::Macro => &schema.functions,
+        }
+    }
+
+    fn schema_entry(&self, transaction: &Transaction, schema: &str) -> Result<Arc<CatalogEntry>> {
+        self.schema(transaction, schema)
+            .ok_or_else(|| Error::catalog(format!("Schema with name {schema} does not exist!")))
+    }
+
+    /// `CREATE SCHEMA` (DuckDB's `DuckCatalog::CreateSchema`).
+    pub fn create_schema(&self, transaction: &Transaction, name: &str, on_conflict: OnCreateConflict) -> Result<()> {
+        let entry = CatalogEntry::new(name, EntryKind::Schema(SchemaEntry::default()));
+        if self.schemas.create(transaction, entry)? {
+            return Ok(());
+        }
+        match on_conflict {
+            OnCreateConflict::IgnoreOnConflict => Ok(()),
+            _ => Err(Error::catalog(format!(
+                "Schema with name \"{name}\" already exists!"
+            ))),
+        }
+    }
+
+    /// Adds `entry` to `schema` (DuckDB's `DuckSchemaEntry::AddEntryInternal`). Returns
+    /// whether it was created (`IF NOT EXISTS` on an existing entry creates nothing).
+    pub fn create_entry(
+        &self,
+        transaction: &Transaction,
+        schema: &str,
+        entry: CatalogEntry,
+        on_conflict: OnCreateConflict,
+    ) -> Result<bool> {
+        let schema_entry = self.schema_entry(transaction, schema)?;
+        let schema_entry = schema_entry.as_schema().ok_or_else(missing_main)?;
+        let set = Self::set_for(schema_entry, entry.catalog_type());
+        let name = entry.name().to_owned();
+        let ty = entry.catalog_type();
+        if on_conflict == OnCreateConflict::IgnoreOnConflict && set.get(transaction, &name).is_some() {
+            return Ok(false);
+        }
+        if on_conflict == OnCreateConflict::ReplaceOnConflict
+            && let Some(old) = set.get(transaction, &name)
+        {
+            if old.catalog_type() != ty {
+                return Err(Error::catalog(format!(
+                    "Existing object {name} is of type {}, trying to replace with type {}",
+                    old.catalog_type().display_name(),
+                    ty.display_name()
+                )));
+            }
+            set.drop_entry(transaction, &name, entry.internal)?;
+        }
+        if set.create(transaction, entry)? {
+            return Ok(true);
+        }
+        let existing = set
+            .get(transaction, &name)
+            .map_or(ty, |existing| existing.catalog_type());
+        Err(Error::catalog(format!(
+            "{} with name \"{name}\" already exists!",
+            existing.display_name()
+        )))
+    }
+
+    /// Replaces the entry `name` of type `ty` in `schema` by `entry` (DuckDB's `Alter`).
+    pub fn replace_entry(
+        &self,
+        transaction: &Transaction,
+        schema: &str,
+        ty: CatalogType,
+        name: &str,
+        entry: CatalogEntry,
+    ) -> Result<()> {
+        let schema_entry = self.schema_entry(transaction, schema)?;
+        let schema_entry = schema_entry.as_schema().ok_or_else(missing_main)?;
+        let set = Self::set_for(schema_entry, ty);
+        if !set.alter(transaction, name, entry)? {
+            return Err(Error::catalog(format!(
+                "{} with name {name} does not exist!",
+                ty.display_name()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Drops the entry `name` of type `ty` from `schema` (DuckDB's
+    /// `DuckSchemaEntry::DropEntry`); schemas are dropped with their contents only with
+    /// `cascade`. A missing entry is an error unless `if_exists`.
+    pub fn drop_entry(
+        &self,
+        transaction: &Transaction,
+        ty: CatalogType,
+        schema: &str,
+        name: &str,
+        cascade: bool,
+        if_exists: bool,
+    ) -> Result<()> {
+        if ty == CatalogType::Schema {
+            return self.drop_schema(transaction, name, cascade, if_exists);
+        }
+        let schema_entry = self.schema_entry(transaction, schema)?;
+        let schema_entry = schema_entry.as_schema().ok_or_else(missing_main)?;
+        let set = Self::set_for(schema_entry, ty);
+        let Some(existing) = set.get(transaction, name) else {
+            if if_exists {
+                return Ok(());
+            }
+            return Err(Error::catalog(format!(
+                "{} with name {name} does not exist!",
+                ty.display_name()
+            )));
+        };
+        if existing.catalog_type() != ty {
+            return Err(Error::catalog(format!(
+                "Existing object {name} is of type {}, trying to drop type {}",
+                existing.catalog_type().display_name(),
+                ty.display_name()
+            )));
+        }
+        set.drop_entry(transaction, name, false)?;
+        Ok(())
+    }
+
+    fn drop_schema(&self, transaction: &Transaction, name: &str, cascade: bool, if_exists: bool) -> Result<()> {
+        let Some(schema) = self.schema(transaction, name) else {
+            if if_exists {
+                return Ok(());
+            }
+            return Err(Error::catalog(format!(
+                "Schema with name {name} does not exist!"
+            )));
+        };
+        if schema.internal {
+            return Err(Error::catalog(format!(
+                "Cannot drop entry \"{}\" because it is an internal system entry",
+                schema.name()
+            )));
+        }
+        let contents = schema.as_schema().ok_or_else(missing_main)?;
+        let sets = [
+            &contents.tables,
+            &contents.functions,
+            &contents.table_functions,
+            &contents.sequences,
+            &contents.types,
+            &contents.indexes,
+        ];
+        let dependents: Vec<Arc<CatalogEntry>> = sets
+            .iter()
+            .flat_map(|set| set.scan(transaction))
+            .filter(|entry| !entry.internal)
+            .collect();
+        if !dependents.is_empty() && !cascade {
+            let mut message = format!(
+                "Cannot drop entry \"{}\" because there are entries that depend on it.\n",
+                schema.name()
+            );
+            for entry in dependents.iter().rev() {
+                message.push_str(&format!(
+                    "{} \"{}\" depends on schema \"{}\".\n",
+                    entry.catalog_type().display_name().to_lowercase(),
+                    entry.name(),
+                    schema.name()
+                ));
+            }
+            message.push_str("Use DROP...CASCADE to drop all dependents.");
+            return Err(Error::new(rustdb_common::ErrorKind::Dependency, message));
+        }
+        for set in sets {
+            for entry in set.scan(transaction) {
+                if !entry.internal {
+                    set.drop_entry(transaction, entry.name(), false)?;
+                }
+            }
+        }
+        self.schemas.drop_entry(transaction, name, false)?;
+        Ok(())
     }
 }
 

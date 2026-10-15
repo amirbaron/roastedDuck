@@ -12,6 +12,10 @@ use rustdb_ast::{
 use rustdb_common::{CaseInsensitiveMap, Error, Result};
 use rustdb_types::{LogicalType, LogicalTypeId};
 
+mod create;
+mod modify;
+mod table;
+
 use super::query_node::bind_node;
 use super::{BindScope, Binder, BoundStatement};
 use crate::expression::BoundParameterData;
@@ -40,6 +44,11 @@ pub fn bind_statement(scope: &mut BindScope<'_>, statement: &mut SqlStatement) -
             Ok(bind_deallocate(scope, drop))
         }
         SqlStatementKind::Pragma(pragma) => bind_pragma(scope, pragma),
+        SqlStatementKind::Create(info) => create::bind_create(scope, info),
+        SqlStatementKind::Drop(drop) => create::bind_drop(scope, drop),
+        SqlStatementKind::Insert(insert) => modify::bind_insert(scope, insert),
+        SqlStatementKind::Update(update) => modify::bind_update(scope, update),
+        SqlStatementKind::Delete(delete) => modify::bind_delete(scope, delete),
         other => Err(Error::not_implemented(format!(
             "Unimplemented statement type \"{}\" for Bind",
             other.statement_type().name()

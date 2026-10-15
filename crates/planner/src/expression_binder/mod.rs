@@ -14,6 +14,7 @@
 mod base;
 mod base_select_binder;
 mod column_alias_binder;
+mod dml_binders;
 mod group_binder;
 mod lateral_binder;
 mod order_binder;
@@ -37,6 +38,7 @@ pub use base_select_binder::{
     BoundGroupInformation, HavingBinder, QualifyBinder, SelectBindState, SelectBinder, SelectRole,
 };
 pub use column_alias_binder::ColumnAliasBinder;
+pub use dml_binders::{CheckBinder, CheckColumn, ReturningBinder, UpdateBinder};
 pub use group_binder::GroupBinder;
 pub use lateral_binder::{LateralBinder, reduce_expression_depth};
 pub use order_binder::OrderBinder;

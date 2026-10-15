@@ -3,7 +3,7 @@
 
 mod bind_recursive_cte_node;
 mod bind_select_node;
-mod bind_setop_node;
+pub(crate) mod bind_setop_node;
 mod modifiers;
 mod plan_subquery;
 
