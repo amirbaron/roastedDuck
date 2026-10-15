@@ -6,8 +6,8 @@ use rustdb_serde::{DeserializeObject, Deserializer, SerializeObject, Serializer,
 use rustdb_types::{LogicalType, Value};
 
 use crate::{
-    MacroType, ParsedExpression, ParsedExpressionKind, SampleMethod, ScalarMacroFunction, SelectStatement,
-    TableMacroFunction,
+    MacroType, ParsedExpression, ParsedExpressionKind, SampleMethod, ScalarMacroFunction, SecretPersistType,
+    SelectStatement, TableMacroFunction,
 };
 
 /// `USING SAMPLE` / `TABLESAMPLE` options (DuckDB's `SampleOptions`).
@@ -310,4 +310,25 @@ impl DeserializeObject for CreateViewInfo {
             column_comments,
         })
     }
+}
+
+/// `CREATE [PERSISTENT | TEMPORARY] SECRET name [IN storage] (TYPE ..., ...)` (DuckDB's
+/// `CreateSecretInfo`). The options are expressions the binder evaluates; DuckDB never
+/// serializes this info.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CreateSecretInfo {
+    /// `PERSISTENT`, `TEMPORARY`, or the default.
+    pub persist_type: SecretPersistType,
+    /// The secret storage (`IN storage`), lower-cased, or empty.
+    pub storage_type: String,
+    /// The secret's name, lower-cased; empty names are derived from the type.
+    pub name: String,
+    /// `SCOPE ...`
+    pub scope: Option<Box<ParsedExpression>>,
+    /// `TYPE ...`
+    pub secret_type: Option<Box<ParsedExpression>>,
+    /// `PROVIDER ...`
+    pub provider: Option<Box<ParsedExpression>>,
+    /// The other options, by lower-cased name.
+    pub options: CaseInsensitiveMap<ParsedExpression>,
 }

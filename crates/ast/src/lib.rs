@@ -48,7 +48,9 @@ pub use generated::query_node::*;
 pub use generated::result_modifier::*;
 pub use generated::statement::*;
 pub use generated::tableref::*;
-pub use parsed_data::{CreateMacroInfo, CreateViewInfo, MacroFunction, MacroFunctionKind, SampleOptions};
+pub use parsed_data::{
+    CreateMacroInfo, CreateSecretInfo, CreateViewInfo, MacroFunction, MacroFunctionKind, SampleOptions,
+};
 pub use query_node::SetOperationNode;
 pub use sql_statement::{
     CallStatement, CopyDatabaseStatement, CopyDatabaseType, DeleteStatement, ExecuteStatement,

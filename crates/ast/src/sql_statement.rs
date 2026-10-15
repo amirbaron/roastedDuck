@@ -24,6 +24,10 @@ pub struct SqlStatement {
     pub length: u64,
     /// The statement's text.
     pub query: String,
+    /// The prepared-statement parameters by name (positional ones are named `1`, `2`,
+    /// ...), with their indexes, in DuckDB's iteration order (`named_param_map`). For a
+    /// SELECT this equals [`SelectStatement::named_param_map`].
+    pub named_param_map: CaseInsensitiveMap<u64>,
     /// What the statement does.
     pub kind: SqlStatementKind,
 }
@@ -35,6 +39,7 @@ impl SqlStatement {
             location: 0,
             length: 0,
             query: String::new(),
+            named_param_map: CaseInsensitiveMap::default(),
             kind,
         }
     }

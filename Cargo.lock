@@ -519,6 +519,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustdb-parser"
+version = "1.5.6"
+dependencies = [
+ "rustdb-ast",
+ "rustdb-common",
+ "rustdb-function",
+ "rustdb-pg-parser",
+ "rustdb-serde",
+ "rustdb-types",
+]
+
+[[package]]
 name = "rustdb-pg-parser"
 version = "1.5.6"
 dependencies = [
