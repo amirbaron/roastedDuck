@@ -81,6 +81,7 @@ land, following the same table.
 - **Unit tests** next to the code for invariants and edge cases.
 - **Conformance**: `tools/slt` runs DuckDB's sqllogictest corpus against rustdb and the C++
   oracle. `conformance/passing.txt` is a ratchet: a file that passes must keep passing.
+  Run `scripts/conformance.sh [--update] [paths]` after every merge of engine work.
 - **Oracle tests** for value-level behaviour (casts, formatting, functions): generate
   inputs, ask the reference CLI, and compare byte for byte.
 - **Benchmarks**: `tools/bench` runs DuckDB's benchmark suites on both engines;
