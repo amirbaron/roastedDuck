@@ -189,6 +189,9 @@ struct AggregatePartition {
 #[derive(Debug)]
 pub struct HashAggregateLocal {
     tables: Vec<GroupedAggregateHashTable>,
+    /// Per grouping set, per `DISTINCT` aggregate: the thread's distinct tuples, merged
+    /// into the global tables in `combine`.
+    distinct: Vec<Vec<Option<GroupedAggregateHashTable>>>,
     /// Per grouping set: groups taken out of the tables when they outgrew the thread's
     /// memory share, in the external partitions and unpinned so that they can be spilled
     /// (DuckDB's `abandoned_data`).
@@ -207,29 +210,10 @@ impl Sink for PhysicalHashAggregate {
 
     fn global_sink_state(&self, ctx: &ExecutionContext) -> Result<HashAggregateGlobal> {
         let distinct = self
-            .grouping_sets
-            .iter()
-            .map(|set| {
-                self.aggregates
-                    .iter()
-                    .map(|aggregate| {
-                        if !aggregate.is_distinct() {
-                            return Ok(None);
-                        }
-                        let mut types = self.set_group_types(set);
-                        types.extend(aggregate.children.iter().map(|c| c.return_type.clone()));
-                        let table = GroupedAggregateHashTable::new(
-                            ctx.env.buffer_manager.clone(),
-                            types,
-                            &[],
-                            initial_capacity(),
-                            0,
-                        )?;
-                        Ok(Some(Mutex::new(table)))
-                    })
-                    .collect::<Result<Vec<_>>>()
-            })
-            .collect::<Result<Vec<_>>>()?;
+            .distinct_tables(ctx)?
+            .into_iter()
+            .map(|set| set.into_iter().map(|table| table.map(Mutex::new)).collect())
+            .collect();
         Ok(HashAggregateGlobal {
             collected: Mutex::new(self.grouping_sets.iter().map(|_| Vec::new()).collect()),
             distinct,
@@ -252,6 +236,7 @@ impl Sink for PhysicalHashAggregate {
             .map(|set| self.new_table(ctx, set, radix_bits))
             .collect::<Result<_>>()?;
         Ok(HashAggregateLocal {
+            distinct: self.distinct_tables(ctx)?,
             abandoned: self.grouping_sets.iter().map(|_| None).collect(),
             memory_limit: usize::try_from(ctx.env.buffer_manager.max_memory() / threads / 4)
                 .unwrap_or(usize::MAX),
@@ -311,7 +296,7 @@ impl Sink for PhysicalHashAggregate {
                 .collect();
             let groups = DataChunk::new(columns, chunk.len());
             let mut selections = selections.clone();
-            for (index, distinct) in global.distinct[set_index].iter().enumerate() {
+            for (index, distinct) in local.distinct[set_index].iter_mut().enumerate() {
                 let Some(distinct) = distinct else { continue };
                 // The aggregate's rows go to its distinct table; the main table only
                 // creates their groups.
@@ -324,12 +309,7 @@ impl Sink for PhysicalHashAggregate {
                     }
                     None => DataChunk::new(tuples, chunk.len()),
                 };
-                add_tuples(
-                    &mut distinct.lock().unwrap_or_else(PoisonError::into_inner),
-                    &tuples,
-                    &[],
-                    &[],
-                )?;
+                add_tuples(distinct, &tuples, &[], &[])?;
                 selections[index] = Some(Vec::new());
             }
             let hashes = if groups.column_count() == 0 {
@@ -362,6 +342,14 @@ impl Sink for PhysicalHashAggregate {
         global: &HashAggregateGlobal,
         mut local: HashAggregateLocal,
     ) -> Result<()> {
+        for (local_set, global_set) in local.distinct.iter_mut().zip(&global.distinct) {
+            for (local_table, global_table) in local_set.iter_mut().zip(global_set) {
+                if let (Some(local_table), Some(global_table)) = (local_table, global_table) {
+                    let mut global_table = global_table.lock().unwrap_or_else(PoisonError::into_inner);
+                    local_table.finalize_into(|tuples| add_tuples(&mut global_table, &tuples, &[], &[]))?;
+                }
+            }
+        }
         let mut parts = Vec::with_capacity(local.tables.len());
         for (table, abandoned) in local.tables.iter_mut().zip(&mut local.abandoned) {
             let mut data = table.take_partitioned_data()?;
@@ -499,6 +487,36 @@ impl PhysicalHashAggregate {
             target.unpin();
         }
         Ok(())
+    }
+}
+
+impl PhysicalHashAggregate {
+    /// Per grouping set, per aggregate: an empty table of the distinct (groups,
+    /// arguments) tuples of each `DISTINCT` aggregate.
+    fn distinct_tables(&self, ctx: &ExecutionContext) -> Result<Vec<Vec<Option<GroupedAggregateHashTable>>>> {
+        self.grouping_sets
+            .iter()
+            .map(|set| {
+                self.aggregates
+                    .iter()
+                    .map(|aggregate| {
+                        if !aggregate.is_distinct() {
+                            return Ok(None);
+                        }
+                        let mut types = self.set_group_types(set);
+                        types.extend(aggregate.children.iter().map(|c| c.return_type.clone()));
+                        GroupedAggregateHashTable::new(
+                            ctx.env.buffer_manager.clone(),
+                            types,
+                            &[],
+                            initial_capacity(),
+                            0,
+                        )
+                        .map(Some)
+                    })
+                    .collect()
+            })
+            .collect()
     }
 }
 
