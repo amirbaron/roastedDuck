@@ -140,14 +140,17 @@ impl ConstantGlobalState {
                     )
                 }
             };
-            // SAFETY: the state is initialised and owned by this hash group.
-            unsafe {
-                aggregator.function.ops.simple_update(
-                    &inputs,
-                    aggregator.input(),
-                    self.states.state(partition),
-                    count,
-                )?;
+            // No row of the partition passed the FILTER: the state stays as it is.
+            if count > 0 {
+                // SAFETY: the state is initialised and owned by this hash group.
+                unsafe {
+                    aggregator.function.ops.simple_update(
+                        &inputs,
+                        aggregator.input(),
+                        self.states.state(partition),
+                        count,
+                    )?;
+                }
             }
             // Skip filtered rows too.
             row += end - begin;
