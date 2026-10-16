@@ -745,3 +745,53 @@ fn expand_home(path: &str) -> String {
         None => path.to_owned(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn secret(scope: &[&str]) -> KeyValueSecret {
+        KeyValueSecret {
+            name: "s".to_owned(),
+            secret_type: "http".to_owned(),
+            provider: "config".to_owned(),
+            scope: scope.iter().map(|prefix| (*prefix).to_owned()).collect(),
+            map: [
+                ("bearer_token".to_owned(), Value::varchar("t")),
+                ("verify_ssl".to_owned(), Value::boolean(true)),
+            ]
+            .into_iter()
+            .collect(),
+            redact_keys: ["bearer_token".to_owned()].into_iter().collect(),
+        }
+    }
+
+    #[test]
+    fn display_string_redacts_like_duckdb() {
+        assert_eq!(
+            secret(&["a", "b"]).to_display_string(true),
+            "name=s;type=http;provider=config;serializable=true;scope=a,b;bearer_token=redacted;verify_ssl=true"
+        );
+        assert!(
+            secret(&[])
+                .to_display_string(false)
+                .contains("scope;bearer_token=t;")
+        );
+    }
+
+    #[test]
+    fn longest_scope_prefix_wins() {
+        let scoped = secret(&["s3://a", "s3://a/b"]);
+        assert_eq!(scoped.match_score("s3://a/b/c"), Some(8));
+        assert_eq!(scoped.match_score("s3://x"), None);
+        assert_eq!(secret(&[]).match_score("anything"), Some(0));
+    }
+
+    #[test]
+    fn secrets_round_trip_through_the_binary_format() {
+        let original = secret(&["https://x"]);
+        let bytes = BinarySerializer::serialize(&original, SerializationOptions::default()).unwrap();
+        let read: KeyValueSecret = BinaryDeserializer::deserialize(&bytes).unwrap();
+        assert_eq!(read.to_display_string(false), original.to_display_string(false));
+    }
+}
