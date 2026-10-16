@@ -514,7 +514,7 @@ fn select_native<T: SqlOrd + NativeType>(vector: &Vector, op: CompareOp, constan
             select_values(values, data_sel, validity, sel, |&v| !constant.sql_gt(v));
         }
         CompareOp::LessThanOrEqual => {
-            select_values(values, data_sel, validity, sel, |&v| !v.sql_gt(constant))
+            select_values(values, data_sel, validity, sel, |&v| !v.sql_gt(constant));
         }
     }
 }
