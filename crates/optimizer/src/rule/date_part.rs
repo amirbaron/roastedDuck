@@ -10,7 +10,7 @@ use crate::optimizer::bind_scalar_function;
 
 /// The function computing a date part, `None` for parts without one, or an error for an
 /// unknown specifier (DuckDB's `GetDatePartSpecifier` and the rule's switch).
-fn part_function(specifier: &str) -> Result<Option<&'static str>> {
+pub(crate) fn part_function(specifier: &str) -> Result<Option<&'static str>> {
     Ok(match specifier.to_lowercase().as_str() {
         "year" | "yr" | "y" | "years" | "yrs" => Some("year"),
         "month" | "mon" | "months" | "mons" => Some("month"),

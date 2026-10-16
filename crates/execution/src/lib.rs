@@ -16,6 +16,7 @@ mod operator;
 pub mod operators;
 mod pipeline;
 mod plan_generator;
+mod profiler;
 pub mod sample;
 pub mod window;
 
@@ -30,3 +31,4 @@ pub use operator::{
 pub use plan_generator::{
     ExplainOutput, JoinPlanSettings, PlanContext, create_physical_plan, create_physical_plan_with,
 };
+pub use profiler::{OperatorProfile, QueryProfiler};

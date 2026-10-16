@@ -18,6 +18,7 @@ use crate::filter_pullup::FilterPullup;
 use crate::filter_pushdown::FilterPushdown;
 use crate::join_order::JoinOrderOptimizer;
 use crate::remove_unused_columns::remove_unused_columns;
+use crate::statistics_propagator::StatisticsPropagator;
 
 macro_rules! optimizer_types {
     ($($variant:ident => $name:literal,)*) => {
@@ -281,6 +282,19 @@ impl Optimizer {
             optimize_build_probe_side(&mut plan, optimizer.config.prefer_range_joins)?;
             Ok(plan)
         })?;
+        // ORDER BY + LIMIT becomes a Top-N.
+        let plan = self.run(OptimizerType::TopN, plan, |_, plan| {
+            Ok(crate::topn::optimize(plan))
+        })?;
+        let plan = self.run(
+            OptimizerType::StatisticsPropagation,
+            plan,
+            |optimizer, mut plan| {
+                let mut propagator = StatisticsPropagator::new(optimizer, &mut plan)?;
+                propagator.propagate_statistics(&mut plan)?;
+                Ok(plan)
+            },
+        )?;
         let plan = self.run(OptimizerType::ColumnLifetime, plan, |optimizer, mut plan| {
             analyze_column_lifetime(&mut plan, optimizer.config.prefer_range_joins)?;
             Ok(plan)

@@ -25,7 +25,11 @@ impl ReplacementBinding {
     }
 
     /// A replacement that also changes the reference's type.
-    pub const fn with_type(old_binding: ColumnBinding, new_binding: ColumnBinding, new_type: LogicalType) -> Self {
+    pub const fn with_type(
+        old_binding: ColumnBinding,
+        new_binding: ColumnBinding,
+        new_type: LogicalType,
+    ) -> Self {
         Self {
             old_binding,
             new_binding,

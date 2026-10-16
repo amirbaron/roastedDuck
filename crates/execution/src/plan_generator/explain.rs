@@ -13,7 +13,7 @@ use rustdb_types::{DataChunk, LogicalType, Value};
 
 use super::PlanGenerator;
 use crate::operator::{PhysicalOperator, PhysicalRef};
-use crate::operators::PhysicalColumnDataScan;
+use crate::operators::{PhysicalColumnDataScan, PhysicalExplainAnalyze};
 
 /// Which plans `EXPLAIN` shows (DuckDB's `ExplainOutputType`, the `explain_output` setting).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -107,7 +107,17 @@ impl PlanGenerator {
         let logical_plan_opt = child.to_explain_string(explain_format);
         let plan = self.plan(child)?;
         if explain_type == ExplainType::ExplainAnalyze {
-            return Err(Error::not_implemented("EXPLAIN ANALYZE"));
+            let query = self
+                .context
+                .as_ref()
+                .map(|context| context.query.clone())
+                .unwrap_or_default();
+            return Ok(Arc::new(PhysicalExplainAnalyze::new(
+                types,
+                explain_format,
+                query,
+                plan,
+            )));
         }
         let physical_plan = render_physical_plan(plan.as_ref(), &self.estimates, explain_format);
         let output = self

@@ -1185,10 +1185,14 @@ impl Connection {
             catalogs: instance.catalogs(&self.default_catalog()),
             join_settings: self.settings.join_plan_settings(),
             explain_output: self.settings.explain_output(),
+            query: self.function_client.query(),
         };
         let physical = create_physical_plan_with(plan, &context)?;
+        // EXPLAIN ANALYZE profiles the run.
+        let profiler =
+            (physical.name() == "EXPLAIN_ANALYZE").then(|| Arc::new(rustdb_execution::QueryProfiler::new()));
         let root: PhysicalRef = Arc::new(PhysicalResultCollector::new(physical));
-        let state = Executor::execute(&root, Arc::clone(&self.database.instance().env))?;
+        let state = Executor::execute_profiled(&root, Arc::clone(&self.database.instance().env), profiler)?;
         let collected = state
             .downcast_ref::<Mutex<CollectedResult>>()
             .ok_or_else(|| Error::internal("result collector state has an unexpected type"))?;

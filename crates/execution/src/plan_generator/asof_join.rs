@@ -158,7 +158,11 @@ impl PlanGenerator {
             // The predicate was resolved against the projected output.
             if let Some(predicate) = &mut join.predicate {
                 let map: Vec<u64> = (0..left_width as u64)
-                    .chain(right_projection_map.iter().map(|&column| left_width as u64 + column))
+                    .chain(
+                        right_projection_map
+                            .iter()
+                            .map(|&column| left_width as u64 + column),
+                    )
                     .collect();
                 remap_references(predicate, &map);
             }

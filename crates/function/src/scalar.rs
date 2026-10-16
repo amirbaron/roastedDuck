@@ -45,6 +45,19 @@ pub trait FunctionData: Any + Send + Sync + fmt::Debug {
     fn as_any(&self) -> &dyn Any;
 }
 
+/// The bind data of `stats(x)` (DuckDB's `StatsBindData`): the statistics of `x` as
+/// text, filled in by the optimizer's statistics propagation.
+#[derive(Debug, Default)]
+pub struct StatsBindData {
+    pub stats: std::sync::Mutex<String>,
+}
+
+impl FunctionData for StatsBindData {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// Evaluates the bound lambda of a lambda function call (DuckDB's `ExpressionExecutor` over
 /// the lambda expression of `ListLambdaBindData`), supplied by the executor.
 pub trait LambdaExecutor: Send + fmt::Debug {

@@ -21,7 +21,7 @@ pub use copy::{CopyFunction, CopyOption, CopyOptionMode};
 pub use scalar::{
     AggregateResolver, BindInput, BindLambda, BoundAggregateFunction, CollationHandling, FunctionData,
     FunctionState, LambdaExecutor, LambdaInput, NullHandling, ScalarBind, ScalarFunction, ScalarFunctionSet,
-    ScalarKernel, Stability,
+    ScalarKernel, Stability, StatsBindData,
 };
 pub use table::{
     TableFunction, TableFunctionBind, TableFunctionBindInput, TableFunctionBindOutput,

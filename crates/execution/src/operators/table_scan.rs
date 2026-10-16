@@ -69,6 +69,9 @@ impl PhysicalOperator for PhysicalTableScan {
     fn explain_name(&self) -> String {
         self.function.name.to_ascii_uppercase()
     }
+    fn profiler_name(&self) -> String {
+        "TABLE_SCAN".to_owned()
+    }
     fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
         let mut result = RenderParams::new();
         result.insert("Function".to_owned(), self.function.name.to_ascii_uppercase());

@@ -5,6 +5,7 @@
 
 mod aggregate;
 mod get;
+pub use get::supports_filter_pushdown;
 mod join;
 mod projection;
 mod set_operation;

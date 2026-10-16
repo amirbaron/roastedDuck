@@ -22,7 +22,8 @@ use rustdb_ast::JoinType;
 use rustdb_common::{Error, Result};
 use rustdb_planner::operator::{COLUMN_IDENTIFIER_ROW_ID, ColumnIndex, LogicalGet};
 use rustdb_planner::{
-    ColumnBinding, DistinctType, Expression, ExpressionKind, LogicalKind, LogicalOperator, LogicalOperatorType,
+    ColumnBinding, DistinctType, Expression, ExpressionKind, LogicalKind, LogicalOperator,
+    LogicalOperatorType,
 };
 use rustdb_types::{LogicalTypeId, Value};
 
@@ -132,7 +133,11 @@ impl<'a> RemoveUnusedColumns<'a> {
     }
 
     /// Visits `op` in a fresh scope.
-    fn visit_in_child_scope(&self, op: &mut LogicalOperator, everything_referenced: bool) -> Result<Vec<JoinReplacement>> {
+    fn visit_in_child_scope(
+        &self,
+        op: &mut LogicalOperator,
+        everything_referenced: bool,
+    ) -> Result<Vec<JoinReplacement>> {
         self.child(everything_referenced).visit_operator(op)
     }
 
@@ -196,7 +201,10 @@ impl<'a> RemoveUnusedColumns<'a> {
     /// DuckDB's `RemoveUnusedColumns::VisitOperator`; returns the join replacements made
     /// at `op` itself and those made below it.
     #[allow(clippy::too_many_lines)]
-    fn visit_operator_inner(&mut self, op: &mut LogicalOperator) -> Result<(Vec<JoinReplacement>, Vec<JoinReplacement>)> {
+    fn visit_operator_inner(
+        &mut self,
+        op: &mut LogicalOperator,
+    ) -> Result<(Vec<JoinReplacement>, Vec<JoinReplacement>)> {
         let mut own = Vec::new();
         match op.operator_type() {
             LogicalOperatorType::LogicalAggregateAndGroupBy => {
@@ -209,8 +217,11 @@ impl<'a> RemoveUnusedColumns<'a> {
                     if op.expressions.is_empty() && no_groups {
                         // Everything was removed: keep a COUNT(*) so the aggregate still
                         // produces its single row.
-                        op.expressions
-                            .push(bind_aggregate_function(self.optimizer.context(), "count_star", Vec::new())?);
+                        op.expressions.push(bind_aggregate_function(
+                            self.optimizer.context(),
+                            "count_star",
+                            Vec::new(),
+                        )?);
                     }
                 }
                 let mut scope = self.child(self.everything_referenced);
@@ -288,13 +299,21 @@ impl<'a> RemoveUnusedColumns<'a> {
                             .iter()
                             .map(|&column| {
                                 let column = column as usize;
-                                Expression::column_ref(String::new(), child.types[column].clone(), bindings[column], 0)
+                                Expression::column_ref(
+                                    String::new(),
+                                    child.types[column].clone(),
+                                    bindings[column],
+                                    0,
+                                )
                             })
                             .collect();
                         let input = std::mem::replace(child, LogicalOperator::new(LogicalKind::CrossProduct));
                         let estimated_cardinality = input.estimated_cardinality;
-                        let mut projection =
-                            LogicalOperator::projection(self.optimizer.generate_table_index(), expressions, input);
+                        let mut projection = LogicalOperator::projection(
+                            self.optimizer.generate_table_index(),
+                            expressions,
+                            input,
+                        );
                         projection.estimated_cardinality = estimated_cardinality;
                         *child = projection;
                         below.extend(self.visit_in_child_scope(child, true)?);
@@ -416,7 +435,8 @@ impl<'a> RemoveUnusedColumns<'a> {
         );
         // A reader whose columns are all needed by its parent (e.g. directly below a set
         // operation) references the whole CTE.
-        entry.everything_referenced |= self.everything_referenced || column_count == entry.column_references.len();
+        entry.everything_referenced |=
+            self.everything_referenced || column_count == entry.column_references.len();
         Ok(())
     }
 
@@ -578,16 +598,26 @@ pub(crate) fn supports_filter_prune(get: &LogicalGet) -> bool {
 /// The column to scan when no column is needed (DuckDB's `LogicalGet::GetAnyColumn`):
 /// the row id of a base table, the first column otherwise.
 pub(crate) fn any_column(get: &LogicalGet) -> u64 {
-    if get.table.is_some() { COLUMN_IDENTIFIER_ROW_ID } else { 0 }
+    if get.table.is_some() {
+        COLUMN_IDENTIFIER_ROW_ID
+    } else {
+        0
+    }
 }
 
 /// Whether an expression is a FLOAT or DOUBLE (DuckDB's `LogicalType::IsFloating`).
 fn is_floating(expression: &Expression) -> bool {
-    matches!(expression.return_type.id(), LogicalTypeId::Float | LogicalTypeId::Double)
+    matches!(
+        expression.return_type.id(),
+        LogicalTypeId::Float | LogicalTypeId::Double
+    )
 }
 
 /// Rewrites the binding of every column reference in `expression`.
-fn rewrite_column_refs(expression: &mut Expression, rewrite: &mut impl FnMut(ColumnBinding) -> ColumnBinding) {
+fn rewrite_column_refs(
+    expression: &mut Expression,
+    rewrite: &mut impl FnMut(ColumnBinding) -> ColumnBinding,
+) {
     if let ExpressionKind::ColumnRef(column) = &mut expression.kind {
         column.binding = rewrite(column.binding);
         return;

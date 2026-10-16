@@ -34,7 +34,10 @@ pub fn optimize_build_probe_side(plan: &mut LogicalOperator, prefer_range_joins:
 /// which are preferably kept on the probe side (DuckDB's `GetRowidBindings`).
 fn row_id_bindings(op: &LogicalOperator, bindings: &mut Vec<ColumnBinding>) {
     if let LogicalKind::Get(get) = &op.kind
-        && get.column_ids.iter().any(rustdb_planner::operator::ColumnIndex::is_row_id_column)
+        && get
+            .column_ids
+            .iter()
+            .any(rustdb_planner::operator::ColumnIndex::is_row_id_column)
     {
         bindings.extend(op.column_bindings());
     }
@@ -107,9 +110,13 @@ impl BuildProbeSideOptimizer {
             }
             _ => {}
         }
+        // Flipping a join below reorders its output columns: keep the projection maps
+        // of this operator pointing at the same columns.
+        let selected = selected_bindings(op);
         for child in &mut op.children {
             self.visit_operator(child);
         }
+        restore_projection_maps(op, &selected);
     }
 
     /// Swaps the children when the right one is more expensive to build a hash table on
@@ -132,8 +139,10 @@ impl BuildProbeSideOptimizer {
         let mut swap = right_side_build_cost > left_side_build_cost;
         if rhs_cardinality == lhs_cardinality && !self.preferred_on_probe_side.is_empty() {
             // Keep row id bindings on the probe side.
-            let in_left = overlapping_bindings(&op.children[0].column_bindings(), &self.preferred_on_probe_side);
-            let in_right = overlapping_bindings(&op.children[1].column_bindings(), &self.preferred_on_probe_side);
+            let in_left =
+                overlapping_bindings(&op.children[0].column_bindings(), &self.preferred_on_probe_side);
+            let in_right =
+                overlapping_bindings(&op.children[1].column_bindings(), &self.preferred_on_probe_side);
             if (swap && in_left > in_right) || (!swap && in_right > in_left) {
                 swap = !swap;
             }
@@ -150,6 +159,67 @@ fn known_or_estimated_cardinality(op: &mut LogicalOperator) -> u64 {
     match op.estimated_cardinality {
         Some(estimate) => estimate,
         None => op.estimate_cardinality(),
+    }
+}
+
+/// The input columns the projection maps of `op` select, per child (`None`: no map).
+fn selected_bindings(op: &LogicalOperator) -> Vec<Option<Vec<ColumnBinding>>> {
+    let select = |child: usize, map: &[u64]| {
+        if map.is_empty() {
+            return None;
+        }
+        let bindings = op.children.get(child)?.column_bindings();
+        Some(
+            map.iter()
+                .filter_map(|&index| bindings.get(index as usize).copied())
+                .collect(),
+        )
+    };
+    match &op.kind {
+        LogicalKind::Filter { projection_map } | LogicalKind::Order { projection_map, .. } => {
+            vec![select(0, projection_map)]
+        }
+        LogicalKind::ComparisonJoin(join) => vec![
+            select(0, &join.left_projection_map),
+            select(1, &join.right_projection_map),
+        ],
+        _ => Vec::new(),
+    }
+}
+
+/// Recomputes the projection maps of `op` for the columns in `selected`, in the
+/// children's current column order.
+fn restore_projection_maps(op: &mut LogicalOperator, selected: &[Option<Vec<ColumnBinding>>]) {
+    let positions =
+        |child: Option<&LogicalOperator>, selected: Option<&Vec<ColumnBinding>>| -> Option<Vec<u64>> {
+            let selected = selected?;
+            let bindings = child?.column_bindings();
+            Some(
+                bindings
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, binding)| selected.contains(binding))
+                    .map(|(position, _)| position as u64)
+                    .collect(),
+            )
+        };
+    let first = positions(op.children.first(), selected.first().and_then(Option::as_ref));
+    let second = positions(op.children.get(1), selected.get(1).and_then(Option::as_ref));
+    match &mut op.kind {
+        LogicalKind::Filter { projection_map } | LogicalKind::Order { projection_map, .. } => {
+            if let Some(map) = first {
+                *projection_map = map;
+            }
+        }
+        LogicalKind::ComparisonJoin(join) => {
+            if let Some(map) = first {
+                join.left_projection_map = map;
+            }
+            if let Some(map) = second {
+                join.right_projection_map = map;
+            }
+        }
+        _ => {}
     }
 }
 

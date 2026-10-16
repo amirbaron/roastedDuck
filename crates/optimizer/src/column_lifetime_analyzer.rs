@@ -5,7 +5,10 @@
 use std::collections::HashSet;
 
 use rustdb_common::{Error, Result};
-use rustdb_planner::{ColumnBinding, DistinctType, Expression, ExpressionType, LogicalKind, LogicalOperator, LogicalOperatorType};
+use rustdb_planner::{
+    ColumnBinding, DistinctType, Expression, ExpressionType, LogicalKind, LogicalOperator,
+    LogicalOperatorType,
+};
 
 use crate::expression_util::visit_column_refs;
 use crate::topn::can_optimize as topn_can_optimize;
@@ -108,7 +111,8 @@ impl ColumnLifetimeAnalyzer {
                     self.standard_visit_operator(op)?;
                     let map = projection_map(&op.children[0].column_bindings(), &unused);
                     match &mut op.kind {
-                        LogicalKind::Order { projection_map, .. } | LogicalKind::Filter { projection_map } => {
+                        LogicalKind::Order { projection_map, .. }
+                        | LogicalKind::Filter { projection_map } => {
                             *projection_map = map;
                         }
                         _ => return Err(Error::internal("expected an ORDER BY or a filter")),
@@ -131,7 +135,9 @@ impl ColumnLifetimeAnalyzer {
                         }
                         if let Some(order_by) = order_by {
                             for order in &order_by.orders {
-                                visit_column_refs(&order.expression, &mut |column| bindings.push(column.binding));
+                                visit_column_refs(&order.expression, &mut |column| {
+                                    bindings.push(column.binding);
+                                });
                             }
                         }
                         self.column_references.extend(bindings);
@@ -195,5 +201,9 @@ fn projection_map(bindings: &[ColumnBinding], unused: &HashSet<ColumnBinding>) -
         .filter(|(_, binding)| !unused.contains(binding))
         .map(|(position, _)| position as u64)
         .collect();
-    if map.len() == bindings.len() { Vec::new() } else { map }
+    if map.len() == bindings.len() {
+        Vec::new()
+    } else {
+        map
+    }
 }

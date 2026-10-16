@@ -52,7 +52,8 @@ use crate::operators::{
 };
 use crate::operators::{
     PhysicalColumnDataScan, PhysicalDummyScan, PhysicalFilter, PhysicalHashAggregate, PhysicalLimitPercent,
-    PhysicalOrder, PhysicalProjection, PhysicalStreamingLimit, PhysicalTableScan, PhysicalUngroupedAggregate,
+    PhysicalOrder, PhysicalProjection, PhysicalStreamingLimit, PhysicalTableScan, PhysicalTopN,
+    PhysicalUngroupedAggregate,
 };
 use crate::operators::{
     PhysicalExpressionScan, PhysicalPivot, PhysicalReservoirSample, PhysicalStreamingSample, PhysicalUnnest,
@@ -89,6 +90,8 @@ pub struct PlanContext {
     pub join_settings: JoinPlanSettings,
     /// Which plans `EXPLAIN` shows.
     pub explain_output: ExplainOutput,
+    /// The statement's text, shown by `EXPLAIN ANALYZE`.
+    pub query: String,
 }
 
 impl PlanContext {
@@ -958,6 +961,19 @@ impl PlanGenerator {
                     next_child("order")?,
                 ))
             }
+            LogicalKind::TopN {
+                orders,
+                limit,
+                offset,
+                dynamic_filter,
+            } => Arc::new(PhysicalTopN::new(
+                types,
+                orders,
+                limit,
+                offset,
+                dynamic_filter,
+                next_child("top n")?,
+            )),
             LogicalKind::PositionalJoin => {
                 let left = next_child("positional join")?;
                 let right = next_child("positional join")?;

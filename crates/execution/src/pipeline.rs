@@ -50,6 +50,35 @@ pub(crate) struct PipelineExecutor<'a> {
     /// Operators that returned `HaveMoreOutput` and must be called again.
     in_process: Vec<usize>,
     finished: bool,
+    /// Under `EXPLAIN ANALYZE`: the profiler and the source's, operators' and sink's keys.
+    profiling: Option<Profiling>,
+}
+
+/// The operators of a profiled pipeline.
+struct Profiling {
+    profiler: std::sync::Arc<crate::QueryProfiler>,
+    source: usize,
+    operators: Vec<usize>,
+    sink: usize,
+}
+
+/// Starts timing a call when profiling.
+fn start_timer(profiling: Option<&Profiling>) -> Option<std::time::Instant> {
+    profiling.map(|_| std::time::Instant::now())
+}
+
+/// Records a profiled call of operator `key` that produced `rows`.
+fn record(
+    profiling: Option<&Profiling>,
+    key: impl FnOnce(&Profiling) -> usize,
+    rows: usize,
+    started: Option<std::time::Instant>,
+) {
+    if let (Some(profiling), Some(started)) = (profiling, started) {
+        profiling
+            .profiler
+            .record(key(profiling), rows as u64, started.elapsed());
+    }
 }
 
 fn role<'a, T: ?Sized>(
@@ -89,6 +118,16 @@ impl<'a> PipelineExecutor<'a> {
             .iter()
             .map(|op| DataChunk::with_types(op.types(), STANDARD_VECTOR_SIZE))
             .collect();
+        let profiling = ctx.profiler.clone().map(|profiler| Profiling {
+            profiler,
+            source: crate::profiler::operator_key(source_op.as_ref()),
+            operators: pipeline
+                .operators
+                .iter()
+                .map(|op| crate::profiler::operator_key(op.as_ref()))
+                .collect(),
+            sink: crate::profiler::operator_key(pipeline.sink.as_ref()),
+        });
         Ok(Self {
             ctx,
             source,
@@ -101,6 +140,7 @@ impl<'a> PipelineExecutor<'a> {
             outputs,
             in_process: Vec::new(),
             finished: false,
+            profiling,
         })
     }
 
@@ -109,12 +149,14 @@ impl<'a> PipelineExecutor<'a> {
         let mut source_chunk = DataChunk::with_types(source_types, STANDARD_VECTOR_SIZE);
         while !self.finished {
             source_chunk.reset();
+            let started = start_timer(self.profiling.as_ref());
             let source_result = self.source.get_data(
                 &self.ctx,
                 &mut source_chunk,
                 self.states.source_global,
                 self.source_local.as_mut(),
             )?;
+            record(self.profiling.as_ref(), |p| p.source, source_chunk.len(), started);
             if !source_chunk.is_empty() {
                 self.push(&source_chunk)?;
             }
@@ -140,12 +182,19 @@ impl<'a> PipelineExecutor<'a> {
             }
             loop {
                 let mut chunk = DataChunk::default();
+                let started = start_timer(self.profiling.as_ref());
                 let more = self.operators[index].final_execute(
                     &self.ctx,
                     &mut chunk,
                     self.states.operator_globals[index],
                     self.operator_locals[index].as_mut(),
                 )?;
+                record(
+                    self.profiling.as_ref(),
+                    |p| p.operators[index],
+                    chunk.len(),
+                    started,
+                );
                 if !chunk.is_empty() {
                     self.push_from(&chunk, index + 1)?;
                 }
@@ -172,12 +221,14 @@ impl<'a> PipelineExecutor<'a> {
                 None => input,
             };
             if !final_chunk.is_empty() {
+                let started = start_timer(self.profiling.as_ref());
                 let sink_result = self.sink.sink(
                     &self.ctx,
                     final_chunk,
                     self.states.sink_global,
                     self.sink_local.as_mut(),
                 )?;
+                record(self.profiling.as_ref(), |p| p.sink, 0, started);
                 if sink_result == SinkResult::Finished {
                     self.finished = true;
                     return Ok(());
@@ -225,6 +276,7 @@ impl<'a> PipelineExecutor<'a> {
             } else {
                 &before[current - 1]
             };
+            let started = start_timer(self.profiling.as_ref());
             let result = self.operators[current].execute(
                 &self.ctx,
                 op_input,
@@ -232,6 +284,12 @@ impl<'a> PipelineExecutor<'a> {
                 self.states.operator_globals[current],
                 self.operator_locals[current].as_mut(),
             )?;
+            record(
+                self.profiling.as_ref(),
+                |p| p.operators[current],
+                output.len(),
+                started,
+            );
             match result {
                 OperatorResult::HaveMoreOutput => self.in_process.push(current),
                 OperatorResult::Finished => self.finished = true,

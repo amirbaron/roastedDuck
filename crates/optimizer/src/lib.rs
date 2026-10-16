@@ -12,6 +12,7 @@
 //! - [`remove_unused_columns`] and [`column_lifetime_analyzer`]: reading and keeping
 //!   only the columns that are used;
 //! - [`build_probe_side`]: picking the cheaper hash join build side;
+//! - [`statistics_propagator`]: folding what column statistics decide;
 //! - [`topn`]: `ORDER BY` + `LIMIT` as a Top-N;
 //! - [`expression_util`]: helpers on bound expressions shared by the passes.
 
@@ -23,10 +24,12 @@ pub mod expression_util;
 pub mod filter_combiner;
 pub mod filter_pullup;
 pub mod filter_pushdown;
+pub mod join_filter_pushdown;
 pub mod join_order;
 mod optimizer;
 pub mod remove_unused_columns;
 pub mod rule;
+pub mod statistics_propagator;
 pub mod topn;
 
 pub use optimizer::{Optimizer, OptimizerConfig, OptimizerType};

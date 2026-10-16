@@ -175,6 +175,9 @@ impl PhysicalOperator for PhysicalSeqScan {
     fn explain_name(&self) -> String {
         "SEQ_SCAN".to_owned()
     }
+    fn profiler_name(&self) -> String {
+        "TABLE_SCAN".to_owned()
+    }
     fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
         self.explain
             .params(&self.projection, self.filters.as_ref(), estimated_cardinality)

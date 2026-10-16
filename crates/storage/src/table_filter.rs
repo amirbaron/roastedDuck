@@ -53,6 +53,11 @@ impl DynamicFilterData {
     pub fn get(&self) -> Option<(CompareOp, Value)> {
         self.filter.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
+
+    /// Clears the comparison (DuckDB's `DynamicFilterData::Reset`).
+    pub fn reset(&self) {
+        *self.filter.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    }
 }
 
 /// A filter on one column of a table scan (DuckDB's `TableFilter` hierarchy).
@@ -259,11 +264,13 @@ impl TableFilter {
     /// The filter as SQL text over `column_name` (`TableFilter::ToString`).
     pub fn to_sql(&self, column_name: &str) -> String {
         match self {
-            Self::ConstantComparison { op, constant } => format!(
-                "{column_name}{}{}",
-                comparison_name(*op),
-                constant.to_varchar().unwrap_or_default()
-            ),
+            Self::ConstantComparison { op, constant } => {
+                format!(
+                    "{column_name}{}{}",
+                    comparison_name(*op),
+                    constant.to_sql_string()
+                )
+            }
             Self::IsNull => format!("{column_name} IS NULL"),
             Self::IsNotNull => format!("{column_name} IS NOT NULL"),
             Self::Or(children) => children
@@ -293,15 +300,13 @@ impl TableFilter {
             Self::In(values) => {
                 let list = values
                     .iter()
-                    .map(|value| value.to_varchar().unwrap_or_default())
+                    .map(rustdb_types::Value::to_sql_string)
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!("{column_name} IN ({list})")
             }
-            Self::Dynamic(data) => match data.get() {
-                Some((op, constant)) => Self::ConstantComparison { op, constant }.to_sql(column_name),
-                None => "True".to_owned(),
-            },
+            // DuckDB's `DynamicFilter::ToString`.
+            Self::Dynamic(_) => format!("Dynamic Filter ({column_name})"),
             Self::Expression(expression) => expression.to_sql(column_name),
         }
     }

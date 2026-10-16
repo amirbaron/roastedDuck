@@ -84,6 +84,11 @@ pub trait PhysicalOperator: Send + Sync + fmt::Debug + 'static {
     fn explain_name(&self) -> String {
         self.name().to_owned()
     }
+    /// The operator's name in `EXPLAIN ANALYZE` output (DuckDB's `PhysicalOperatorType`
+    /// name in the query profiler).
+    fn profiler_name(&self) -> String {
+        self.explain_name()
+    }
     /// The operator's key-value lines in `EXPLAIN` output (DuckDB's `ParamsToString`);
     /// `estimated_cardinality` is the planner's estimate of the operator's output rows.
     fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {

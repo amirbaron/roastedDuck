@@ -345,6 +345,9 @@ pub enum LogicalKind {
         orders: Vec<BoundOrderByNode>,
         limit: u64,
         offset: u64,
+        /// The run-time filter on the first ORDER BY column pushed into scans, which
+        /// the Top-N tightens as its heap fills (DuckDB's `LogicalTopN::dynamic_filter`).
+        dynamic_filter: Option<Arc<rustdb_storage::table_filter::DynamicFilterData>>,
     },
     Distinct {
         distinct_type: DistinctType,
