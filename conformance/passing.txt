@@ -3116,6 +3116,7 @@ test/sql/types/map/map_const_and_col_combination.test
 test/sql/types/map/map_empty.test
 test/sql/types/map/map_extract_nested_null.test
 test/sql/types/map/map_null.test
+test/sql/types/nested/array/array_aggregate.test
 test/sql/types/nested/array/array_cast.test
 test/sql/types/nested/array/array_compression.test_slow
 test/sql/types/nested/array/array_coverage.test
