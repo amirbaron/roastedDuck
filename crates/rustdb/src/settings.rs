@@ -9,6 +9,7 @@ use rustdb_common::string_util::candidates_error_message;
 use rustdb_common::{Error, ErrorKind, Result};
 use rustdb_execution::{ExplainOutput, JoinPlanSettings};
 use rustdb_function::cast::ValueCast;
+use rustdb_optimizer::{OptimizerConfig, OptimizerType};
 use rustdb_planner::{DefaultNullOrder, PlannerConfig};
 use rustdb_types::{LogicalType, Value};
 
@@ -202,6 +203,8 @@ pub(crate) struct Settings {
     other: HashMap<&'static str, Value>,
     /// Every option set (and not reset since), in the order of the first `SET`.
     assigned: Vec<(&'static str, Value)>,
+    /// `PRAGMA disable_optimizer` (DuckDB's `ClientConfig::enable_optimizer`, negated).
+    pub optimizer_disabled: bool,
 }
 
 impl Settings {
@@ -307,6 +310,10 @@ impl Settings {
                 }
                 self.other.insert(option, value.clone());
             }
+            "disabled_optimizers" => {
+                OptimizerType::parse_list(&value.to_varchar()?)?;
+                self.other.insert(option, value.clone());
+            }
             "explain_output" => {
                 let parameter = value.to_varchar()?;
                 ExplainOutput::parse(&parameter)?;
@@ -318,6 +325,27 @@ impl Settings {
             }
         }
         Ok(())
+    }
+
+    /// The settings that steer the optimizer.
+    pub fn optimizer_config(&self) -> OptimizerConfig {
+        let boolean = |name: &str| {
+            self.other
+                .get(name)
+                .and_then(|value| value.default_cast_as(&LogicalType::BOOLEAN).ok())
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+        };
+        OptimizerConfig {
+            enabled: !self.optimizer_disabled,
+            disabled: self
+                .other
+                .get("disabled_optimizers")
+                .and_then(|value| value.to_varchar().ok())
+                .and_then(|list| OptimizerType::parse_list(&list).ok())
+                .unwrap_or_default(),
+            force_no_cross_product: boolean("debug_force_no_cross_product"),
+        }
     }
 
     /// The `explain_output` setting.

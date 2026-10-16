@@ -6,6 +6,7 @@ use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
 use rustdb_execution::operators::{CollectedResult, PhysicalResultCollector};
 use rustdb_execution::{Executor, PhysicalRef, PlanContext, ScalarEvaluator, create_physical_plan_with};
 use rustdb_function::cast::CastFunctionSet;
+use rustdb_optimizer::Optimizer;
 use rustdb_planner::{
     ClientContext, ColumnBindingResolver, LogicalKind, LogicalOperator, PlannedStatement, Planner,
     PreparedStatementData,
@@ -1149,6 +1150,9 @@ impl Connection {
             }
             LogicalKind::Pragma { name, .. } => {
                 let lower = name.to_ascii_lowercase();
+                if lower == "enable_optimizer" || lower == "disable_optimizer" {
+                    self.settings.optimizer_disabled = lower == "disable_optimizer";
+                }
                 if lower == "disable_checkpoint_on_shutdown" || lower == "enable_checkpoint_on_shutdown" {
                     self.database
                         .instance()
@@ -1170,6 +1174,9 @@ impl Connection {
             }
             _ => {}
         }
+        let transaction = self.transactions.current();
+        let client = self.client_context(transaction);
+        plan = Optimizer::new(client, self.settings.optimizer_config()).optimize(plan)?;
         ColumnBindingResolver::resolve(&mut plan)?;
         seed_samples(&mut plan, &self.function_client);
         let instance = self.database.instance();
