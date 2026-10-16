@@ -3421,6 +3421,7 @@ test/sql/window/test_mode_window.test
 test/sql/window/test_naive_aggregation.test
 test/sql/window/test_negative_range.test
 test/sql/window/test_no_default_window_spec.test
+test/sql/window/test_nthvalue.test
 test/sql/window/test_ntile.test
 test/sql/window/test_order_by_all.test
 test/sql/window/test_parallel_window.test_slow

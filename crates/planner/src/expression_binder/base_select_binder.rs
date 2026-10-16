@@ -1038,7 +1038,8 @@ impl SelectBinder<'_> {
             }
             children.push(bound);
         }
-        let types = FunctionBinder::argument_types(&children);
+        // The children's own types (`bound->return_type`), not their literal types.
+        let types: Vec<LogicalType> = children.iter().map(|child| child.return_type.clone()).collect();
         let (aggregate, bind_info, return_type) = if window_type == ExpressionType::WindowAggregate {
             let functions = match entry.as_ref().map(|entry| &entry.entry.kind) {
                 Some(rustdb_catalog::EntryKind::AggregateFunction(functions)) => functions.clone(),
