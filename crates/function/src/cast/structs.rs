@@ -500,11 +500,18 @@ fn struct_to_union(
             let (converted, _) = cast_child(cast, child, ty, count, params)?;
             children.push(converted.flattened(count));
         }
+        let null_rows: Vec<usize> = (0..count)
+            .filter(|&row| source.is_null(row) || children[0].is_null(row))
+            .collect();
         let mut out = Vector::flat(target.clone(), count.max(1));
-        for row in 0..count {
-            if source.is_null(row) || children[0].is_null(row) {
-                out.validity_mut().set_invalid(row, count);
+        if let Some(slots) = out.struct_children_mut() {
+            for (slot, child) in slots.iter_mut().zip(&children) {
+                *slot = child.clone();
             }
+        }
+        // `FlatVector::SetNull`: the members of a NULL union row are NULL too.
+        for row in null_rows {
+            out.set_null(row);
         }
         // `CheckUnionValidity`.
         let members = children.len() - 1;
@@ -534,11 +541,6 @@ fn struct_to_union(
                         "One or more rows in the produced UNION have tags that don't point to the valid member",
                     ));
                 }
-            }
-        }
-        if let Some(slots) = out.struct_children_mut() {
-            for (slot, child) in slots.iter_mut().zip(children) {
-                *slot = child;
             }
         }
         *result = out;
