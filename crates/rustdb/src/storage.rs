@@ -186,9 +186,16 @@ pub(crate) fn create_checkpoint(
     if storage.is_read_only() {
         return Ok(());
     }
-    let exclusive = storage
-        .wal()
-        .and_then(|wal| wal.checkpoint_lock().try_exclusive());
+    // `FORCE CHECKPOINT` waits until the write transactions finished: a checkpoint
+    // written beside them would store rows they appended but had not committed (as
+    // deleted rows), so the row ids of their WAL entries would no longer match.
+    let exclusive = storage.wal().and_then(|wal| {
+        if mode == CheckpointMode::Force {
+            Some(wal.checkpoint_lock().exclusive())
+        } else {
+            wal.checkpoint_lock().try_exclusive()
+        }
+    });
     if mode == CheckpointMode::Manual && storage.wal().is_some() && exclusive.is_none() {
         return Err(Error::new(
             ErrorKind::Transaction,

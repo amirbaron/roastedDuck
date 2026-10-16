@@ -188,7 +188,7 @@ fn bind_create_view_info(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Re
     };
     if let Some(previous) = previous {
         let recorded = scope.context.stop_recording_dependencies(previous);
-        add_recorded_dependencies(&mut info.dependencies, recorded, &info.catalog);
+        add_recorded_dependencies(&mut info.dependencies, recorded, &info.catalog, info.temporary);
     }
     let bound = bound?;
     if view.aliases.len() > bound.names.len() {
@@ -201,14 +201,17 @@ fn bind_create_view_info(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Re
 
 /// Adds the dependencies the catalog lookups in `recorded` give an entry created in
 /// `catalog` (DuckDB's catalog lookup callbacks): entries of other catalogs and internal
-/// types are no dependencies.
+/// types are no dependencies. Temporary entries belong to DuckDB's `temp` catalog, so a
+/// temporary entry only depends on temporary entries and vice versa.
 pub(crate) fn add_recorded_dependencies(
     dependencies: &mut LogicalDependencyList,
     recorded: Vec<crate::context::EntryLookup>,
     catalog: &str,
+    temporary: bool,
 ) {
     for lookup in recorded {
         if !lookup.catalog.eq_ignore_ascii_case(catalog)
+            || lookup.entry.temporary != temporary
             || (lookup.entry.internal && matches!(lookup.entry.kind, EntryKind::Type(_)))
         {
             continue;
@@ -296,7 +299,7 @@ pub fn bind_create_table_info(
         let previous = scope.context.start_recording_dependencies();
         let result = bind_table_definition(scope, &catalog, &schema, table);
         let recorded = scope.context.stop_recording_dependencies(previous);
-        add_recorded_dependencies(&mut info.dependencies, recorded, &catalog);
+        add_recorded_dependencies(&mut info.dependencies, recorded, &catalog, info.temporary);
         result?;
     }
     if !table

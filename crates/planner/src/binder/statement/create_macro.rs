@@ -84,7 +84,12 @@ pub fn bind_create_function_info(scope: &mut BindScope<'_>, info: &mut CreateInf
         let recorded = scope.context.stop_recording_dependencies(previous);
         result?;
         bind_create_schema(scope, info)?;
-        super::create::add_recorded_dependencies(&mut info.dependencies, recorded, &info.catalog);
+        super::create::add_recorded_dependencies(
+            &mut info.dependencies,
+            recorded,
+            &info.catalog,
+            info.temporary,
+        );
         return Ok(());
     }
     result?;

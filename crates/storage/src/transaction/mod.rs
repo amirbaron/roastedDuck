@@ -304,12 +304,20 @@ impl TransactionManager {
     /// (`DuckTransaction::WriteToWAL` + `UndoBuffer::Commit`). If stamping fails, the
     /// logged entries are cut off again (`RevertCommit`).
     fn log_and_commit(transaction: &Transaction, commit_id: u64, others_active: bool) -> Result<()> {
-        let undo = transaction.undo();
-        let wal = transaction.wal();
-        let Some(wal) = wal.filter(|_| !undo.is_empty()) else {
-            return undo.commit(commit_id, transaction.transaction_id, others_active);
+        let Some(wal) = transaction.wal() else {
+            transaction.local_storage.commit(transaction)?;
+            return transaction
+                .undo()
+                .commit(commit_id, transaction.transaction_id, others_active);
         };
+        // The transaction-local rows reach the table under the WAL lock, so a checkpoint
+        // (which holds it) never sees appended rows whose commit is not logged yet.
         let mut guard = wal.lock();
+        transaction.local_storage.commit(transaction)?;
+        let undo = transaction.undo();
+        if undo.is_empty() {
+            return undo.commit(commit_id, transaction.transaction_id, others_active);
+        }
         let initial_size = guard.size();
         let mut batch = wal.batch();
         undo.write_to_wal(&mut batch, transaction.data())?;
@@ -365,10 +373,7 @@ impl TransactionManager {
         transaction.commit_id.store(commit_id, Ordering::Release);
         // Deleted rows stay in a side index while other transactions may still see them.
         let others_active = state.active.len() > 1;
-        let result = transaction
-            .local_storage
-            .commit(transaction)
-            .and_then(|()| Self::log_and_commit(transaction, commit_id, others_active));
+        let result = Self::log_and_commit(transaction, commit_id, others_active);
         let undo = std::mem::take(&mut *transaction.undo());
         let outcome = match result {
             Ok(()) => {
