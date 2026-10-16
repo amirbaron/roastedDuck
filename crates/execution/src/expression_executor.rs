@@ -19,6 +19,7 @@ use rustdb_types::compare::{CompareOp, compare};
 use rustdb_types::kernels::{scatter, unary};
 use rustdb_types::{
     DataChunk, LogicalType, LogicalTypeId, SelectionVector, Unified, ValidityMask, Value, Vector, VectorKind,
+    partition_rows,
 };
 
 /// Per-expression execution state, mirroring the expression tree.
@@ -550,6 +551,28 @@ fn select(
             true_sel,
             false_sel,
         ),
+        (ExpressionKind::Comparison(comparison), expression_type)
+            if simple_compare_op(expression_type).is_some() =>
+        {
+            let [left_state, right_state] = &mut state.children[..] else {
+                return Err(Error::internal("comparison state must have two children"));
+            };
+            let left = execute(&comparison.left, left_state, input, sel, count)?;
+            let right = execute(&comparison.right, right_state, input, sel, count)?;
+            if left.logical_type().id() == LogicalTypeId::Variant {
+                let result = compare_vectors(expression_type, &left, &right, count)?;
+                return Ok(partition(
+                    &result.unified::<bool>(),
+                    sel,
+                    count,
+                    true_sel,
+                    false_sel,
+                ));
+            }
+            let op = simple_compare_op(expression_type)
+                .ok_or_else(|| Error::internal("comparison without an operator"))?;
+            rustdb_types::compare::select(op, &left, &right, count, sel, true_sel, false_sel)
+        }
         _ => {
             let result = execute(expression, state, input, sel, count)?;
             Ok(partition(
@@ -563,26 +586,30 @@ fn select(
     }
 }
 
+/// The plain comparison an expression type stands for; `None` for `[NOT] DISTINCT FROM`
+/// and non-comparisons.
+fn simple_compare_op(expression_type: ExpressionType) -> Option<CompareOp> {
+    Some(match expression_type {
+        ExpressionType::CompareEqual => CompareOp::Equal,
+        ExpressionType::CompareNotequal => CompareOp::NotEqual,
+        ExpressionType::CompareLessthan => CompareOp::LessThan,
+        ExpressionType::CompareGreaterthan => CompareOp::GreaterThan,
+        ExpressionType::CompareLessthanorequalto => CompareOp::LessThanOrEqual,
+        ExpressionType::CompareGreaterthanorequalto => CompareOp::GreaterThanOrEqual,
+        _ => return None,
+    })
+}
+
+/// Splits rows by a BOOLEAN vector: TRUE rows to `true_sel`, FALSE and NULL rows to
+/// `false_sel`.
 fn partition(
     values: &Unified<'_, bool>,
     sel: Option<&[u32]>,
     count: usize,
-    mut true_sel: Option<&mut Vec<u32>>,
-    mut false_sel: Option<&mut Vec<u32>>,
+    true_sel: Option<&mut Vec<u32>>,
+    false_sel: Option<&mut Vec<u32>>,
 ) -> usize {
-    let mut true_count = 0;
-    for i in 0..count {
-        let position = row(sel, i);
-        if values.get(i) == Some(true) {
-            true_count += 1;
-            if let Some(true_sel) = true_sel.as_deref_mut() {
-                true_sel.push(position);
-            }
-        } else if let Some(false_sel) = false_sel.as_deref_mut() {
-            false_sel.push(position);
-        }
-    }
-    true_count
+    partition_rows(count, sel, true_sel, false_sel, |i| values.get(i) == Some(true))
 }
 
 fn select_and(

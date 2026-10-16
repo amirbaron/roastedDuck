@@ -477,7 +477,7 @@ impl Temporal for TimeTz {
 
 /// `op(value)` per row; infinite dates and timestamps give NULL (DuckDB's `PartOperator`).
 fn part_kernel<T: Temporal, R: NativeType>(
-    op: fn(T) -> Result<R>,
+    op: impl Fn(T) -> Result<R> + Copy + Send + Sync + 'static,
 ) -> impl Fn(&DataChunk, &mut FunctionState, &mut Vector) -> Result<()> + Send + Sync + 'static {
     move |args, _, result| {
         unary::<T, R>(args, result, |value, out| {
@@ -494,7 +494,7 @@ fn overload<T: Temporal, R: NativeType>(
     name: &str,
     argument: LogicalType,
     return_type: LogicalType,
-    op: fn(T) -> Result<R>,
+    op: impl Fn(T) -> Result<R> + Copy + Send + Sync + 'static,
 ) -> ScalarFunction {
     ScalarFunction::new(name, vec![argument], return_type, part_kernel::<T, R>(op))
 }

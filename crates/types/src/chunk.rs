@@ -65,4 +65,18 @@ impl DataChunk {
     pub fn into_columns(self) -> Vec<Vector> {
         self.columns
     }
+
+    /// The chunk's rows in vectors that hold nothing else (see [`Vector::compacted`]),
+    /// for operators that keep chunks after the pipeline moved on.
+    #[must_use]
+    pub fn compacted(&self) -> Self {
+        Self {
+            columns: self
+                .columns
+                .iter()
+                .map(|column| column.compacted(self.len))
+                .collect(),
+            len: self.len,
+        }
+    }
 }

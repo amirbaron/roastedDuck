@@ -1194,14 +1194,17 @@ impl PlanGenerator {
                     )));
                 }
                 if !groups.is_empty() || grouping_sets.len() > 1 {
-                    return Ok(Arc::new(PhysicalHashAggregate::new(
-                        types,
-                        groups,
-                        aggregates,
-                        grouping_sets,
-                        grouping_functions,
-                        child,
-                    )?));
+                    return Ok(Arc::new(
+                        PhysicalHashAggregate::new(
+                            types,
+                            groups,
+                            aggregates,
+                            grouping_sets,
+                            grouping_functions,
+                            child,
+                        )?
+                        .with_group_stats(&group_stats),
+                    ));
                 }
                 Arc::new(PhysicalUngroupedAggregate::new(types, aggregates, child)?)
             }

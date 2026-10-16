@@ -74,7 +74,33 @@ impl<A: UnaryAggregate> AggregateOps for Unary<A> {
         count: usize,
     ) -> Result<()> {
         let values = inputs[0].unified::<A::Input>();
-        for (row, &state) in states.iter().enumerate().take(count) {
+        let states = &states[..count];
+        if values.validity.is_all_valid() {
+            // `UnaryScatterLoop` without NULLs: no per-row validity or selection lookups.
+            match values.sel {
+                Sel::Identity => {
+                    for (&state, &value) in states.iter().zip(&values.values[..count]) {
+                        // SAFETY: per the trait contract each state is initialised and exclusive.
+                        A::update(unsafe { state_mut(state) }, value)?;
+                    }
+                }
+                Sel::Constant => {
+                    let value = values.values[0];
+                    for &state in states {
+                        // SAFETY: as above.
+                        A::update(unsafe { state_mut(state) }, value)?;
+                    }
+                }
+                Sel::Indices(indices) => {
+                    for (&state, &slot) in states.iter().zip(indices) {
+                        // SAFETY: as above.
+                        A::update(unsafe { state_mut(state) }, values.values[slot as usize])?;
+                    }
+                }
+            }
+            return Ok(());
+        }
+        for (row, &state) in states.iter().enumerate() {
             if let Some(value) = values.get(row) {
                 // SAFETY: per the trait contract each state is initialised and exclusive.
                 A::update(unsafe { state_mut(state) }, value)?;

@@ -71,7 +71,7 @@ impl Sink for PhysicalCrossProduct {
                 .chunks
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .push(chunk.clone());
+                .push(chunk.compacted());
         }
         Ok(SinkResult::NeedMoreInput)
     }

@@ -123,7 +123,7 @@ impl Sink for PhysicalCte {
         _: &Self::Global,
         local: &mut Vec<DataChunk>,
     ) -> Result<SinkResult> {
-        local.push(chunk.clone());
+        local.push(chunk.compacted());
         Ok(SinkResult::NeedMoreInput)
     }
 

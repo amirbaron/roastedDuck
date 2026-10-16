@@ -3,10 +3,12 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
 use rustdb_common::Result;
 use rustdb_planner::Expression;
+use rustdb_row::AppendState;
 use rustdb_row::hash::hash_columns;
 use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
 use crate::aggregate_hashtable::{GroupedAggregateHashTable, initial_capacity};
+use crate::column_data_collection::ColumnDataCollection;
 use rustdb_common::tree_renderer::RenderParams;
 
 use crate::operator::{
@@ -84,7 +86,10 @@ pub struct DelimGlobal {
 #[derive(Debug)]
 pub struct DelimLocal {
     groups: ExpressionExecutor,
-    chunks: Vec<DataChunk>,
+    /// The input rows, copied: the chunks themselves may be small selections of large
+    /// vectors that must not be kept alive (DuckDB's `lhs_data` collection).
+    data: ColumnDataCollection,
+    append: AppendState,
     distinct: GroupedAggregateHashTable,
 }
 
@@ -130,9 +135,13 @@ impl Sink for PhysicalDelimJoin {
     }
 
     fn local_sink_state(&self, ctx: &ExecutionContext, _: &DelimGlobal) -> Result<DelimLocal> {
+        let mut data =
+            ColumnDataCollection::new(ctx.env.buffer_manager.clone(), self.children[0].types().to_vec())?;
+        let append = data.initialize_append();
         Ok(DelimLocal {
             groups: ExpressionExecutor::new(self.groups.clone()),
-            chunks: Vec::new(),
+            data,
+            append,
             distinct: self.distinct_table(ctx)?,
         })
     }
@@ -148,17 +157,26 @@ impl Sink for PhysicalDelimJoin {
         local.groups.execute(chunk, &mut keys)?;
         let keys = DataChunk::new(keys.into_columns(), chunk.len());
         add_groups(&mut local.distinct, &keys)?;
-        local.chunks.push(chunk.clone());
+        local.data.append(&mut local.append, chunk)?;
         Ok(SinkResult::NeedMoreInput)
     }
 
     /// Hands the thread's chunks and distinct values to the global state.
     fn combine(&self, _: &ExecutionContext, global: &DelimGlobal, mut local: DelimLocal) -> Result<()> {
+        local.data.finalize_append(&mut local.append);
+        let columns: Vec<usize> = (0..self.children[0].types().len()).collect();
+        let mut chunks = Vec::with_capacity(local.data.chunk_count());
+        for index in 0..local.data.chunk_count() {
+            let mut chunk = DataChunk::default();
+            local.data.fetch_chunk(index, &columns, &mut chunk)?;
+            chunks.push(chunk);
+        }
+        drop(local.data);
         global
             .chunks
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .append(&mut local.chunks);
+            .append(&mut chunks);
         let mut distinct = global.distinct.lock().unwrap_or_else(PoisonError::into_inner);
         local
             .distinct

@@ -17,6 +17,7 @@ use rustdb_row::{
     RowMatcher, RowOperationsState, RowPtr, TupleDataCollection, TupleDataLayout, ValidityType,
     combine_states, destroy_states, finalize_states, initialize_states, update_states,
 };
+use rustdb_storage::statistics::{HLL_REGISTERS, HyperLogLog};
 use rustdb_types::{DataChunk, LogicalType, STANDARD_VECTOR_SIZE, SelectionVector, Vector};
 
 /// Upper 16 bits of an entry: the salt.
@@ -37,6 +38,54 @@ const fn next_offset(offset: u64, salt: u64, bitmask: u64) -> u64 {
     (offset + ((salt >> (64 - INCREMENT_BITS)) | 1)) & bitmask
 }
 
+/// Finds the entry of each row in `remaining` (DuckDB's
+/// `GroupedAggregateHashTableInnerLoop`): rows whose probe reaches an empty entry claim it
+/// with their salt and go to `empty`; rows reaching an entry with their salt go to
+/// `compare`. `offsets[row]` is left at the entry found.
+///
+/// The slices are locals so that their lengths stay in registers, and every probe position
+/// is masked, which lets the compiler drop the bounds checks.
+#[inline]
+fn probe(
+    entries: &mut [u64],
+    bitmask: u64,
+    salts: &[u64],
+    offsets: &mut [u64],
+    remaining: &[u32],
+    empty: &mut Vec<u32>,
+    compare: &mut Vec<u32>,
+) {
+    let mask = (entries.len() - 1) & usize::try_from(bitmask).unwrap_or(usize::MAX);
+    // Written by index like DuckDB's selection vectors; truncated afterwards.
+    empty.resize(remaining.len(), 0);
+    compare.resize(remaining.len(), 0);
+    let (mut empty_count, mut compare_count) = (0, 0);
+    for &index in remaining {
+        let row = index as usize;
+        let salt = salts[row];
+        let mut offset = offsets[row] as usize & mask;
+        loop {
+            let entry = &mut entries[offset & mask];
+            if *entry == 0 {
+                // Unoccupied: claim it with the salt; the pointer follows later.
+                *entry = salt;
+                empty[empty_count] = index;
+                empty_count += 1;
+                break;
+            }
+            if (*entry | POINTER_MASK) == salt {
+                compare[compare_count] = index;
+                compare_count += 1;
+                break;
+            }
+            offset = next_offset(offset as u64, salt, mask as u64) as usize;
+        }
+        offsets[row] = offset as u64;
+    }
+    empty.truncate(empty_count);
+    compare.truncate(compare_count);
+}
+
 /// The number of table entries for `count` groups (`GetCapacityForCount`).
 pub fn capacity_for_count(count: usize) -> usize {
     let count = count.max(initial_capacity());
@@ -46,6 +95,12 @@ pub fn capacity_for_count(count: usize) -> usize {
 /// `InitialCapacity`
 pub const fn initial_capacity() -> usize {
     STANDARD_VECTOR_SIZE * 2
+}
+
+/// The number of groups a pointer table of `capacity` entries takes before it grows
+/// (`ResizeThreshold`).
+pub fn resize_threshold(capacity: usize) -> usize {
+    (capacity as f64 / LOAD_FACTOR) as usize
 }
 
 /// An aggregate to compute per group: its function, bind data and how many input
@@ -78,6 +133,13 @@ pub struct GroupedAggregateHashTable {
     salts: Vec<u64>,
     /// Whether rows still hold aggregate states that need destroying.
     states_live: bool,
+    /// Rows added with `add_chunk` (`sink_count`).
+    sink_count: usize,
+    /// Whether new rows are appended without looking up their groups (`skip_lookups`);
+    /// the duplicates are merged when the partitions are combined.
+    skip_lookups: bool,
+    /// Distinct group hashes seen while enabled (`hll` / `enable_hll`).
+    hll: Option<HyperLogLog>,
 }
 
 impl GroupedAggregateHashTable {
@@ -88,6 +150,27 @@ impl GroupedAggregateHashTable {
         aggregates: &[AggregateObject],
         capacity: usize,
         radix_bits: usize,
+    ) -> Result<Self> {
+        Self::with_validity(
+            buffer_manager,
+            group_types,
+            aggregates,
+            capacity,
+            radix_bits,
+            ValidityType::CanHaveNull,
+        )
+    }
+
+    /// Like [`GroupedAggregateHashTable::new`]; with `ValidityType::CannotHaveNull` the
+    /// rows store no validity for the groups, which must then never be NULL, and groups
+    /// compare with plain equality (DuckDB's `group_validity`).
+    pub fn with_validity(
+        buffer_manager: BufferManager,
+        group_types: Vec<LogicalType>,
+        aggregates: &[AggregateObject],
+        capacity: usize,
+        radix_bits: usize,
+        group_validity: ValidityType,
     ) -> Result<Self> {
         let mut layout_types = group_types.clone();
         layout_types.push(LogicalType::UBIGINT); // the group hash
@@ -107,7 +190,7 @@ impl GroupedAggregateHashTable {
         let layout = Arc::new(TupleDataLayout::with_aggregates(
             layout_types,
             row_aggregates,
-            ValidityType::CanHaveNull,
+            group_validity,
         )?);
         let hash_column = group_types.len();
         let mut partitioned = PartitionedTupleData::new(
@@ -139,6 +222,9 @@ impl GroupedAggregateHashTable {
             ht_offsets: Vec::new(),
             salts: Vec::new(),
             states_live: false,
+            sink_count: 0,
+            skip_lookups: false,
+            hll: None,
         };
         table.resize(capacity.max(initial_capacity()).next_power_of_two())?;
         Ok(table)
@@ -168,7 +254,69 @@ impl GroupedAggregateHashTable {
     }
 
     fn resize_threshold(&self) -> usize {
-        (self.capacity() as f64 / LOAD_FACTOR) as usize
+        resize_threshold(self.capacity())
+    }
+
+    /// Rows added with [`GroupedAggregateHashTable::add_chunk`] (`GetSinkCount`).
+    pub fn sink_count(&self) -> usize {
+        self.sink_count
+    }
+
+    /// Groups materialised in the table's rows, including those of earlier pointer tables
+    /// (`GetMaterializedCount`).
+    pub fn materialized_count(&self) -> usize {
+        self.partitioned.count()
+    }
+
+    /// Radix bits of the table's partitions.
+    pub fn radix_bits(&self) -> usize {
+        self.partitioned.radix_bits()
+    }
+
+    /// From now on, appends rows without looking up their groups (`SkipLookups`).
+    pub fn skip_lookups(&mut self) {
+        self.skip_lookups = true;
+    }
+
+    /// Starts or stops counting the distinct group hashes (`EnableHLL`).
+    pub fn enable_hll(&mut self, enable: bool) {
+        self.hll = enable.then(|| self.hll.unwrap_or_default());
+    }
+
+    /// An upper bound of the distinct groups seen while counting was enabled
+    /// (`GetHLLUpperBound`).
+    pub fn hll_upper_bound(&self) -> usize {
+        // `HyperLogLog::GetErrorRate`: sqrt(pi / 2) / sqrt(M).
+        let error_rate = (std::f64::consts::PI / 2.0).sqrt() / (HLL_REGISTERS as f64).sqrt();
+        let count = self.hll.map_or(0, |hll| hll.count());
+        ((1.0 + error_rate) * count as f64) as usize
+    }
+
+    /// Starts a new, empty pointer table while keeping the rows (`Abandon`): groups seen
+    /// again get new rows, which are merged with the old ones when the partitions are
+    /// combined.
+    pub fn abandon(&mut self) {
+        self.entries.fill(0);
+        self.count = 0;
+    }
+
+    /// Moves the rows into `radix_bits` partitions (`SetRadixBits` + `Repartition`). The
+    /// pointer table no longer points at them, so it starts over.
+    pub fn repartition(&mut self, radix_bits: usize) -> Result<()> {
+        self.partitioned.flush_append_state(&mut self.append);
+        let mut target = self.partitioned.with_radix_bits(radix_bits)?;
+        self.partitioned.repartition(&mut target)?;
+        self.partitioned = target;
+        self.append = self
+            .partitioned
+            .initialize_append_state(PinProperties::KeepEverythingPinned);
+        self.abandon();
+        Ok(())
+    }
+
+    /// Grows (or, when empty, sets) the pointer table to `capacity` entries (`Resize`).
+    pub fn resize_to(&mut self, capacity: usize) -> Result<()> {
+        self.resize(capacity.max(initial_capacity()).next_power_of_two())
     }
 
     /// Grows the pointer table to `capacity` entries and reinserts every group (`Resize`).
@@ -224,16 +372,52 @@ impl GroupedAggregateHashTable {
         let formats = ChunkFormat::new(&group_chunk)?;
 
         let hash_values = hashes.unified::<u64>();
-        self.ht_offsets.clear();
-        self.salts.clear();
-        for row in 0..count {
-            let hash = hash_values.values[hash_values.slot(row)];
-            self.ht_offsets.push(hash & self.bitmask);
-            self.salts.push(extract_salt(hash));
+        if let Some(hll) = &mut self.hll {
+            for row in 0..count {
+                hll.insert_element(hash_values.values[hash_values.slot(row)]);
+            }
         }
         self.addresses.clear();
         self.addresses.resize(count, RowPtr::NULL);
         self.new_group_rows.clear();
+
+        if self.skip_lookups {
+            // Just appending: every row becomes a group of its own.
+            let rows: Vec<u32> = (0..count as u32).collect();
+            self.partitioned
+                .append_formatted(&mut self.append, &formats, Some(&rows), count)?;
+            let locations = self.append.chunk_state.row_locations();
+            // SAFETY: the rows were just appended and are pinned; their states are fresh.
+            unsafe { initialize_states(&self.layout, locations, None, count)? };
+            self.states_live = true;
+            let reverse = self.append.reverse_partition_sel();
+            for row in 0..count {
+                self.addresses[row] = locations[reverse[row] as usize];
+            }
+            self.new_group_rows.extend_from_slice(&rows);
+            self.count += count;
+            return Ok(count);
+        }
+
+        self.ht_offsets.resize(count, 0);
+        self.salts.resize(count, 0);
+        // Looking up every row's first entry in a branchless loop lets the cache misses
+        // overlap before the branchy probing loop below (DuckDB's `occupied_count`).
+        let mut occupied = 0usize;
+        {
+            let entries = self.entries.as_slice();
+            let mask = (entries.len() - 1) & usize::try_from(self.bitmask).unwrap_or(usize::MAX);
+            let offsets = &mut self.ht_offsets[..count];
+            let salts = &mut self.salts[..count];
+            for row in 0..count {
+                let hash = hash_values.values[hash_values.slot(row)];
+                let offset = hash as usize & mask;
+                occupied += usize::from(entries[offset] != 0);
+                offsets[row] = offset as u64;
+                salts[row] = extract_salt(hash);
+            }
+        }
+        std::hint::black_box(occupied);
 
         let mut remaining: Vec<u32> = (0..count as u32).collect();
         let mut new_groups = 0;
@@ -250,26 +434,15 @@ impl GroupedAggregateHashTable {
             }
             empty.clear();
             compare.clear();
-            for &index in &remaining {
-                let index = index as usize;
-                let salt = self.salts[index];
-                let mut offset = self.ht_offsets[index];
-                loop {
-                    let entry = &mut self.entries[offset as usize];
-                    if *entry == 0 {
-                        // Unoccupied: claim it with the salt; the pointer follows below.
-                        *entry = salt;
-                        empty.push(index as u32);
-                        break;
-                    }
-                    if (*entry | POINTER_MASK) == salt {
-                        compare.push(index as u32);
-                        break;
-                    }
-                    offset = next_offset(offset, salt, self.bitmask);
-                }
-                self.ht_offsets[index] = offset;
-            }
+            probe(
+                &mut self.entries,
+                self.bitmask,
+                &self.salts,
+                &mut self.ht_offsets,
+                &remaining,
+                &mut empty,
+                &mut compare,
+            );
             if !empty.is_empty() {
                 self.append_new_groups(&formats, &empty)?;
                 self.new_group_rows.extend_from_slice(&empty);
@@ -332,6 +505,7 @@ impl GroupedAggregateHashTable {
         inputs: &[Vec<Vector>],
         selections: &[Option<Vec<u32>>],
     ) -> Result<usize> {
+        self.sink_count += groups.len();
         let new_groups = self.find_or_create_groups(groups, hashes)?;
         for (index, columns) in inputs.iter().enumerate() {
             match selections.get(index).and_then(Option::as_ref) {
@@ -449,38 +623,91 @@ impl GroupedAggregateHashTable {
     pub fn finalize_into(&mut self, mut emit: impl FnMut(DataChunk) -> Result<()>) -> Result<()> {
         self.partitioned.flush_append_state(&mut self.append);
         let group_count = self.group_types.len();
-        let aggregate_types: Vec<LogicalType> = self
-            .layout
-            .aggregates()
-            .iter()
-            .map(|a| a.function.return_type.clone())
-            .collect();
         for partition in self.partitioned.partitions() {
-            let mut scan =
-                partition.initialize_scan_columns((0..group_count).collect(), PinProperties::AlreadyPinned);
-            let mut groups = DataChunk::default();
-            while partition.scan(&mut scan, &mut groups)? {
-                let count = groups.len();
-                let rows = scan.chunk_state.row_locations();
-                let mut results: Vec<Vector> = aggregate_types
-                    .iter()
-                    .map(|ty| Vector::flat(ty.clone(), count))
-                    .collect();
-                // SAFETY: the rows are pinned rows of this table with live states.
-                unsafe {
-                    finalize_states(&mut self.row_state, &self.layout, rows, count, &mut results, 0)?;
-                    if self.layout.has_destructor() {
-                        destroy_states(&mut self.row_state, &self.layout, rows, count)?;
-                    }
-                }
-                let mut columns = groups.columns().to_vec();
-                columns.extend(results);
-                emit(DataChunk::new(columns, count))?;
+            // SAFETY: the partitions hold this table's rows, pinned, with live states.
+            unsafe {
+                finalize_rows(
+                    &mut self.row_state,
+                    &self.layout,
+                    group_count,
+                    partition,
+                    PinProperties::AlreadyPinned,
+                    &mut emit,
+                )?;
             }
         }
         self.states_live = false;
         Ok(())
     }
+
+    /// Emits the groups of `collection` — rows of a table with this `layout` whose groups
+    /// are all distinct, e.g. everything one thread aggregated into a single table — with
+    /// their finalized aggregates, like [`GroupedAggregateHashTable::finalize_into`], and
+    /// destroys their states.
+    ///
+    /// # Safety
+    /// Every row of `collection` must hold live aggregate states of `layout` that nothing
+    /// else finalizes or destroys.
+    pub unsafe fn finalize_collection(
+        layout: &TupleDataLayout,
+        group_count: usize,
+        collection: &TupleDataCollection,
+        mut emit: impl FnMut(DataChunk) -> Result<()>,
+    ) -> Result<()> {
+        let mut row_state = RowOperationsState::default();
+        // SAFETY: forwarded from the caller.
+        unsafe {
+            finalize_rows(
+                &mut row_state,
+                layout,
+                group_count,
+                collection,
+                PinProperties::DestroyAfterDone,
+                &mut emit,
+            )
+        }
+    }
+}
+
+/// Finalizes (and destroys) the aggregate states of every row of `collection`, emitting
+/// the group columns followed by one column per aggregate.
+///
+/// # Safety
+/// Every row must hold live aggregate states of `layout`.
+unsafe fn finalize_rows(
+    row_state: &mut RowOperationsState,
+    layout: &TupleDataLayout,
+    group_count: usize,
+    collection: &TupleDataCollection,
+    pin: PinProperties,
+    emit: &mut impl FnMut(DataChunk) -> Result<()>,
+) -> Result<()> {
+    let aggregate_types: Vec<LogicalType> = layout
+        .aggregates()
+        .iter()
+        .map(|a| a.function.return_type.clone())
+        .collect();
+    let mut scan = collection.initialize_scan_columns((0..group_count).collect(), pin);
+    let mut groups = DataChunk::default();
+    while collection.scan(&mut scan, &mut groups)? {
+        let count = groups.len();
+        let rows = scan.chunk_state.row_locations();
+        let mut results: Vec<Vector> = aggregate_types
+            .iter()
+            .map(|ty| Vector::flat(ty.clone(), count))
+            .collect();
+        // SAFETY: forwarded from the caller; the scan keeps the rows pinned.
+        unsafe {
+            finalize_states(row_state, layout, rows, count, &mut results, 0)?;
+            if layout.has_destructor() {
+                destroy_states(row_state, layout, rows, count)?;
+            }
+        }
+        let mut columns = groups.columns().to_vec();
+        columns.extend(results);
+        emit(DataChunk::new(columns, count))?;
+    }
+    Ok(())
 }
 
 impl Drop for GroupedAggregateHashTable {

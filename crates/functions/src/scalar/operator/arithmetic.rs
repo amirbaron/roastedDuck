@@ -40,8 +40,9 @@ fn set_kernel(target: &mut ScalarFunction, kernel: Kernel) {
     target.kernel = Arc::new(move |args, _, result| kernel(args, result));
 }
 
-/// `f(left, right)` over two columns of `T` with a fallible operation.
-fn binary_kernel<T: NativeType>(f: fn(T, T) -> Result<T>) -> Kernel {
+/// `f(left, right)` over two columns of `T` with a fallible operation. Generic over the
+/// operation (not a function pointer) so that it is inlined into the row loop.
+fn binary_kernel<T: NativeType>(f: impl Fn(T, T) -> Result<T> + Copy + Send + Sync + 'static) -> Kernel {
     Arc::new(move |args: &DataChunk, result: &mut Vector| {
         try_binary::<T, T, T>(args.column(0), args.column(1), args.len(), result, f)
     })
@@ -441,7 +442,7 @@ fn typed<A: NativeType, B: NativeType, O: NativeType>(
     left: LogicalType,
     right: LogicalType,
     output: LogicalType,
-    op: fn(A, B) -> Result<O>,
+    op: impl Fn(A, B) -> Result<O> + Copy + Send + Sync + 'static,
 ) -> ScalarFunction {
     function(name, vec![left, right], output, move |args, result| {
         binary::<A, B, O>(args, result, |a, b, out| {

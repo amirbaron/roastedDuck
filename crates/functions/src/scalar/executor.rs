@@ -229,10 +229,36 @@ pub(crate) fn binary<A: ScalarArg, B: ScalarArg, O: ScalarOutput>(
     let (rows, constant) = result_shape(&[&a, &b], count);
     let a = Input::<A>::new(&a);
     let b = Input::<B>::new(&b);
-    O::write(result, rows, |row, out| match (a.get(row), b.get(row)) {
-        (Some(a), Some(b)) => f(a, b, out),
-        _ => Ok(false),
-    })?;
+    if a.unified.validity.is_all_valid() && b.unified.validity.is_all_valid() {
+        // No NULLs: no per-row validity checks, and flat or constant inputs index their
+        // values directly.
+        let (av, bv) = (a.unified.values, b.unified.values);
+        match (a.unified.sel, b.unified.sel) {
+            (Sel::Identity, Sel::Identity) => O::write(result, rows, |row, out| {
+                f(A::item(a.vector, &av[row]), B::item(b.vector, &bv[row]), out)
+            })?,
+            (Sel::Identity, Sel::Constant) => {
+                let b = B::item(b.vector, &bv[0]);
+                O::write(result, rows, |row, out| f(A::item(a.vector, &av[row]), b, out))?;
+            }
+            (Sel::Constant, Sel::Identity) => {
+                let a = A::item(a.vector, &av[0]);
+                O::write(result, rows, |row, out| f(a, B::item(b.vector, &bv[row]), out))?;
+            }
+            (sa, sb) => O::write(result, rows, |row, out| {
+                f(
+                    A::item(a.vector, &av[sa.slot(row)]),
+                    B::item(b.vector, &bv[sb.slot(row)]),
+                    out,
+                )
+            })?,
+        }
+    } else {
+        O::write(result, rows, |row, out| match (a.get(row), b.get(row)) {
+            (Some(a), Some(b)) => f(a, b, out),
+            _ => Ok(false),
+        })?;
+    }
     finish(result, constant);
     Ok(())
 }

@@ -7,7 +7,9 @@
 use rustdb_common::{Error, Result};
 
 use crate::kernels::binary;
-use crate::{Interval, LogicalType, NativeType, PhysicalType, StringT, Vector};
+use crate::{
+    Interval, LogicalType, NativeType, PhysicalType, Sel, StringT, Vector, VectorKind, partition_rows,
+};
 
 /// A comparison between two values of the same type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -88,18 +90,6 @@ impl SqlOrd for Interval {
 }
 
 #[inline]
-fn apply<T: SqlOrd>(op: CompareOp, left: T, right: T) -> bool {
-    match op {
-        CompareOp::Equal => left.sql_eq(right),
-        CompareOp::NotEqual => !left.sql_eq(right),
-        CompareOp::GreaterThan => left.sql_gt(right),
-        CompareOp::LessThan => right.sql_gt(left),
-        CompareOp::GreaterThanOrEqual => !right.sql_gt(left),
-        CompareOp::LessThanOrEqual => !left.sql_gt(right),
-    }
-}
-
-#[inline]
 fn apply_bytes(op: CompareOp, left: &[u8], right: &[u8]) -> bool {
     match op {
         CompareOp::Equal => left == right,
@@ -118,7 +108,17 @@ fn compare_native<T: SqlOrd>(
     count: usize,
     result: &mut Vector,
 ) {
-    binary::<T, T, bool>(left, right, count, result, |l, r| apply(op, l, r));
+    // One loop per operator, so that the comparison is not dispatched per row.
+    match op {
+        CompareOp::Equal => binary::<T, T, bool>(left, right, count, result, SqlOrd::sql_eq),
+        CompareOp::NotEqual => binary::<T, T, bool>(left, right, count, result, |l, r| !l.sql_eq(r)),
+        CompareOp::GreaterThan => binary::<T, T, bool>(left, right, count, result, SqlOrd::sql_gt),
+        CompareOp::LessThan => binary::<T, T, bool>(left, right, count, result, |l, r| r.sql_gt(l)),
+        CompareOp::GreaterThanOrEqual => {
+            binary::<T, T, bool>(left, right, count, result, |l, r| !r.sql_gt(l));
+        }
+        CompareOp::LessThanOrEqual => binary::<T, T, bool>(left, right, count, result, |l, r| !l.sql_gt(r)),
+    }
 }
 
 fn compare_strings(op: CompareOp, left: &Vector, right: &Vector, count: usize, result: &mut Vector) {
@@ -211,10 +211,143 @@ pub fn compare(
     Ok(())
 }
 
+/// Splits rows `0..count` by `left <op> right` without materialising a BOOLEAN vector
+/// (DuckDB's `VectorOperations::Equals`/`GreaterThan`/... with selection vectors). NULL
+/// rows go to `false_sel`. The position of row `i` is `positions[i]` (`i` without
+/// positions). Returns the number of matching rows.
+pub fn select(
+    op: CompareOp,
+    left: &Vector,
+    right: &Vector,
+    count: usize,
+    positions: Option<&[u32]>,
+    true_sel: Option<&mut Vec<u32>>,
+    false_sel: Option<&mut Vec<u32>>,
+) -> Result<usize> {
+    let physical = left.logical_type().physical_type();
+    if physical != right.logical_type().physical_type() {
+        return Err(Error::internal(format!(
+            "comparison between different types {} and {}",
+            left.logical_type(),
+            right.logical_type()
+        )));
+    }
+    if left.kind() == VectorKind::Sequence || right.kind() == VectorKind::Sequence {
+        let (left, right) = (left.flattened(count), right.flattened(count));
+        return select(op, &left, &right, count, positions, true_sel, false_sel);
+    }
+    let args = (left, right, count, positions, true_sel, false_sel);
+    Ok(match physical {
+        PhysicalType::Bool => select_native::<bool>(op, args),
+        PhysicalType::Int8 => select_native::<i8>(op, args),
+        PhysicalType::Int16 => select_native::<i16>(op, args),
+        PhysicalType::Int32 => select_native::<i32>(op, args),
+        PhysicalType::Int64 => select_native::<i64>(op, args),
+        PhysicalType::Int128 => select_native::<i128>(op, args),
+        PhysicalType::UInt8 => select_native::<u8>(op, args),
+        PhysicalType::UInt16 => select_native::<u16>(op, args),
+        PhysicalType::UInt32 => select_native::<u32>(op, args),
+        PhysicalType::UInt64 => select_native::<u64>(op, args),
+        PhysicalType::UInt128 => select_native::<u128>(op, args),
+        PhysicalType::Float => select_native::<f32>(op, args),
+        PhysicalType::Double => select_native::<f64>(op, args),
+        PhysicalType::Interval => select_native::<Interval>(op, args),
+        _ => {
+            let (left, right, count, positions, true_sel, false_sel) = args;
+            let mut result = Vector::flat(LogicalType::BOOLEAN, 0);
+            compare(op, left, right, count, &mut result)?;
+            let values = result.unified::<bool>();
+            partition_rows(count, positions, true_sel, false_sel, |row| {
+                values.get(row) == Some(true)
+            })
+        }
+    })
+}
+
+/// The arguments of [`select`] after dispatching on the type.
+type SelectArgs<'a, 'b> = (
+    &'a Vector,
+    &'a Vector,
+    usize,
+    Option<&'a [u32]>,
+    Option<&'b mut Vec<u32>>,
+    Option<&'b mut Vec<u32>>,
+);
+
+fn select_native<T: SqlOrd>(op: CompareOp, args: SelectArgs<'_, '_>) -> usize {
+    // One loop per operator, so that the comparison is not dispatched per row.
+    match op {
+        CompareOp::Equal => select_loop::<T>(args, SqlOrd::sql_eq),
+        CompareOp::NotEqual => select_loop::<T>(args, |l, r| !l.sql_eq(r)),
+        CompareOp::GreaterThan => select_loop::<T>(args, SqlOrd::sql_gt),
+        CompareOp::LessThan => select_loop::<T>(args, |l, r| r.sql_gt(l)),
+        CompareOp::GreaterThanOrEqual => select_loop::<T>(args, |l, r| !r.sql_gt(l)),
+        CompareOp::LessThanOrEqual => select_loop::<T>(args, |l, r| !l.sql_gt(r)),
+    }
+}
+
+#[inline]
+fn select_loop<T: NativeType>(
+    (left, right, count, positions, true_sel, false_sel): SelectArgs<'_, '_>,
+    predicate: impl Fn(T, T) -> bool,
+) -> usize {
+    let (lu, ru) = (left.unified::<T>(), right.unified::<T>());
+    if !(lu.validity.is_all_valid() && ru.validity.is_all_valid()) {
+        return partition_rows(count, positions, true_sel, false_sel, |row| {
+            match (lu.get(row), ru.get(row)) {
+                (Some(l), Some(r)) => predicate(l, r),
+                _ => false,
+            }
+        });
+    }
+    match (lu.sel, ru.sel) {
+        (Sel::Identity, Sel::Identity) => {
+            let (l, r) = (&lu.values[..count], &ru.values[..count]);
+            partition_rows(count, positions, true_sel, false_sel, |row| {
+                predicate(l[row], r[row])
+            })
+        }
+        (Sel::Identity, Sel::Constant) => {
+            let (l, r) = (&lu.values[..count], ru.values[0]);
+            partition_rows(count, positions, true_sel, false_sel, |row| predicate(l[row], r))
+        }
+        (Sel::Constant, Sel::Identity) => {
+            let (l, r) = (lu.values[0], &ru.values[..count]);
+            partition_rows(count, positions, true_sel, false_sel, |row| predicate(l, r[row]))
+        }
+        _ => partition_rows(count, positions, true_sel, false_sel, |row| {
+            predicate(lu.values[lu.slot(row)], ru.values[ru.slot(row)])
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Value;
+
+    #[test]
+    fn select_splits_rows_and_sends_nulls_to_false() {
+        let mut left = Vector::flat(LogicalType::INTEGER, 4);
+        left.values_mut::<i32>().copy_from_slice(&[1, 5, 3, 7]);
+        left.set_null(3);
+        let right = Vector::constant(&Value::integer(3)).unwrap();
+        let (mut yes, mut no) = (Vec::new(), Vec::new());
+        let positions = [10, 11, 12, 13];
+        let matched = select(
+            CompareOp::GreaterThanOrEqual,
+            &left,
+            &right,
+            4,
+            Some(&positions),
+            Some(&mut yes),
+            Some(&mut no),
+        )
+        .unwrap();
+        assert_eq!(matched, 2);
+        assert_eq!(yes, [11, 12]);
+        assert_eq!(no, [10, 13]);
+    }
 
     fn bools(vector: &Vector, count: usize) -> Vec<Option<bool>> {
         (0..count).map(|row| vector.get_value(row).as_bool()).collect()

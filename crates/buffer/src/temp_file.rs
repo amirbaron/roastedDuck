@@ -5,15 +5,20 @@
 //! and files shrink (truncate) when their last slots are freed and disappear when empty.
 //! Every growth is checked against `max_temp_directory_size`.
 //!
-//! DuckDB additionally zstd-compresses buffers into smaller size classes (`S32K` ...
-//! `S224K`); without a pure-Rust zstd encoder buffers are always stored uncompressed in
-//! the `DEFAULT` class (the format is internal to one process).
+//! Like DuckDB, buffers are zstd-compressed into smaller size classes (`S32K` ...
+//! `S224K`) when that pays off: an adaptive choice per write compares how long
+//! compressed and uncompressed writes took (`TemporaryFileCompressionAdaptivity`). The
+//! pure-Rust encoder has a single level (about zstd's level 1), so the choice is between
+//! that level and no compression. A compressed slot holds the compressed length (8 bytes,
+//! little endian) followed by the zstd frame.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{File, OpenOptions};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Instant;
 
 use rustdb_common::{Error, Result};
 
@@ -39,6 +44,22 @@ pub enum TemporaryBufferSize {
 }
 
 impl TemporaryBufferSize {
+    /// The size class of a compressed buffer of `bytes` bytes, rounded up to the 32 KiB
+    /// granularity; `None` if it is larger than the largest compressed class
+    /// (`RoundUpSizeToTemporaryBufferSize`).
+    fn for_compressed(bytes: usize) -> Option<Self> {
+        Some(match bytes.div_ceil(32 << 10) {
+            0 | 1 => Self::S32K,
+            2 => Self::S64K,
+            3 => Self::S96K,
+            4 => Self::S128K,
+            5 => Self::S160K,
+            6 => Self::S192K,
+            7 => Self::S224K,
+            _ => return None,
+        })
+    }
+
     /// Slot size in bytes.
     pub const fn bytes(self) -> u64 {
         match self {
@@ -303,6 +324,139 @@ impl TemporaryFile {
     }
 }
 
+/// Whether recent compressed writes were fast enough, compared to uncompressed ones, to
+/// keep compressing (DuckDB's `TemporaryFileCompressionAdaptivity` with one level).
+#[derive(Debug)]
+struct CompressionAdaptivity {
+    /// Moving averages of the duration of uncompressed and compressed writes.
+    uncompressed_ns: u64,
+    compressed_ns: u64,
+    /// State of the random deviations.
+    random: u64,
+}
+
+impl CompressionAdaptivity {
+    /// `INITIAL_NS`
+    const INITIAL_NS: u64 = 50_000;
+    /// Compress while compressed writes take less than this many times as long
+    /// (`DURATION_RATIO_THRESHOLD`).
+    const DURATION_RATIO_THRESHOLD: f64 = 2.0;
+    /// How often to try the other choice, to keep the averages current
+    /// (`COMPRESSION_DEVIATION`).
+    const COMPRESSION_DEVIATION: f64 = 0.5;
+    /// Weight of the old average (`WEIGHT`).
+    const WEIGHT: u64 = 16;
+
+    fn new(seed: u64) -> Self {
+        Self {
+            uncompressed_ns: Self::INITIAL_NS,
+            compressed_ns: Self::INITIAL_NS,
+            random: seed | 1,
+        }
+    }
+
+    fn next_random(&mut self) -> f64 {
+        // xorshift64*
+        self.random ^= self.random >> 12;
+        self.random ^= self.random << 25;
+        self.random ^= self.random >> 27;
+        (self.random.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 11) as f64 / (1u64 << 53) as f64
+    }
+
+    /// Whether the next write should be compressed (`GetCompressionLevel`).
+    fn should_compress(&mut self) -> bool {
+        let ratio = self.compressed_ns as f64 / self.uncompressed_ns as f64;
+        let compress = ratio < Self::DURATION_RATIO_THRESHOLD;
+        if self.next_random() < Self::COMPRESSION_DEVIATION {
+            !compress
+        } else {
+            compress
+        }
+    }
+
+    /// Records the duration of a write (`Update`).
+    fn update(&mut self, compressed: bool, started: Instant) {
+        let duration = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        let average = if compressed {
+            &mut self.compressed_ns
+        } else {
+            &mut self.uncompressed_ns
+        };
+        *average = (*average * (Self::WEIGHT - 1) + duration) / Self::WEIGHT;
+    }
+}
+
+/// The number of independent adaptivity states, picked by thread
+/// (`COMPRESSION_ADAPTIVITIES`).
+const COMPRESSION_ADAPTIVITIES: usize = 64;
+
+/// The adaptivity state of the calling thread (`TaskScheduler::GetEstimatedCPUId`).
+fn adaptivity_index() -> usize {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = FixedHasher(0);
+    std::thread::current().id().hash(&mut hasher);
+    (hasher.finish() as usize) % COMPRESSION_ADAPTIVITIES
+}
+
+/// FNV-1a, a fixed hash for picking per-thread state.
+struct FixedHasher(u64);
+
+impl std::hash::Hasher for FixedHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        let mut hash = if self.0 == 0 {
+            0xcbf2_9ce4_8422_2325
+        } else {
+            self.0
+        };
+        for &byte in bytes {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x0100_0000_01b3);
+        }
+        self.0 = hash;
+    }
+}
+
+/// `buffer`'s bytes zstd-compressed into a slot image (length word, then the frame), or
+/// `None` if that does not fit a compressed size class (`CompressBuffer`).
+fn compress_buffer(data: &[u8]) -> Option<(TemporaryBufferSize, Vec<u8>)> {
+    if data.len() as u64 <= TemporaryBufferSize::S32K.bytes() {
+        return None; // No point compressing.
+    }
+    let frame = ruzstd::encoding::compress_to_vec(data, ruzstd::encoding::CompressionLevel::Fastest);
+    let size = TemporaryBufferSize::for_compressed(size_of::<u64>() + frame.len())?;
+    let mut slot = Vec::with_capacity(size.bytes() as usize);
+    slot.extend_from_slice(&(frame.len() as u64).to_le_bytes());
+    slot.extend_from_slice(&frame);
+    slot.resize(size.bytes() as usize, 0);
+    Some((size, slot))
+}
+
+/// Decompresses a compressed slot image into `target`, which must receive exactly its
+/// length in bytes.
+fn decompress_slot(slot: &[u8], target: &mut [u8]) -> Result<()> {
+    let corrupt = |message: String| io_error(format!("Corrupt temporary file: {message}"));
+    let (length, frame) = slot
+        .split_first_chunk::<8>()
+        .ok_or_else(|| corrupt("compressed block without a length".to_owned()))?;
+    let length = usize::try_from(u64::from_le_bytes(*length)).unwrap_or(usize::MAX);
+    let frame = frame.get(..length).ok_or_else(|| {
+        corrupt(format!(
+            "compressed block claims {length} bytes but only {} are available",
+            frame.len()
+        ))
+    })?;
+    let mut decoder = ruzstd::decoding::StreamingDecoder::new(frame)
+        .map_err(|error| corrupt(format!("failed to decompress block ({error})")))?;
+    decoder
+        .read_exact(target)
+        .map_err(|error| corrupt(format!("failed to decompress block ({error})")))?;
+    Ok(())
+}
+
 #[derive(Default)]
 struct ManagerState {
     files: HashMap<TemporaryBufferSize, BTreeMap<u64, Arc<TemporaryFile>>>,
@@ -315,6 +469,7 @@ pub(crate) struct TemporaryFileManager {
     directory: PathBuf,
     state: Mutex<ManagerState>,
     pub(crate) disk: DiskUsage,
+    adaptivities: Box<[Mutex<CompressionAdaptivity>]>,
 }
 
 impl TemporaryFileManager {
@@ -326,6 +481,13 @@ impl TemporaryFileManager {
                 size_on_disk,
                 max_swap_space: AtomicU64::new(0),
             },
+            adaptivities: (0..COMPRESSION_ADAPTIVITIES as u64)
+                .map(|index| {
+                    Mutex::new(CompressionAdaptivity::new(
+                        index.wrapping_mul(0x9E37_79B9_7F4A_7C15),
+                    ))
+                })
+                .collect(),
         }
     }
 
@@ -343,7 +505,18 @@ impl TemporaryFileManager {
 
     /// Writes `buffer` (a default-size buffer) and returns the bytes it occupies on disk.
     pub(crate) fn write_buffer(&self, block_id: BlockId, buffer: &FileBuffer) -> Result<u64> {
-        let size = TemporaryBufferSize::Default;
+        // SAFETY: the buffer is being evicted: it has no readers and its lock is held.
+        let data = unsafe { buffer.internal() };
+        let adaptivity = &self.adaptivities[adaptivity_index()];
+        let started = Instant::now();
+        let compress = adaptivity
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .should_compress();
+        let compressed = if compress { compress_buffer(data) } else { None };
+        let size = compressed
+            .as_ref()
+            .map_or(TemporaryBufferSize::Default, |(size, _)| *size);
         let (file, location) = {
             let mut state = self.lock();
             let mut target = None;
@@ -384,13 +557,16 @@ impl TemporaryFileManager {
             state.used_blocks.insert(block_id, location);
             (file, location)
         };
-        // SAFETY: the buffer is being evicted: it has no readers and its lock is held.
-        let data = unsafe { buffer.internal() };
-        if let Err(error) = file.write_slot(location.slot, data) {
+        let slot_data = compressed.as_ref().map_or(data, |(_, slot)| slot.as_slice());
+        if let Err(error) = file.write_slot(location.slot, slot_data) {
             let mut state = self.lock();
             self.erase_used_block(&mut state, block_id)?;
             return Err(error);
         }
+        adaptivity
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .update(compress, started);
         Ok(size.bytes())
     }
 
@@ -420,7 +596,7 @@ impl TemporaryFileManager {
                 .ok_or_else(|| Error::internal("temporary file not found"))?;
             (file, location)
         };
-        let alloc_size = location.file.size.bytes() as usize;
+        let alloc_size = DEFAULT_BLOCK_ALLOC_SIZE;
         let mut buffer = match reusable {
             Some(buffer) if buffer.alloc_size() == alloc_size => {
                 FileBuffer::reuse(buffer, FileBufferType::ManagedBuffer, location.header_size)
@@ -432,7 +608,13 @@ impl TemporaryFileManager {
                 location.header_size,
             )?,
         };
-        file.read_slot(location.slot, buffer.internal_mut())?;
+        if location.file.size == TemporaryBufferSize::Default {
+            file.read_slot(location.slot, buffer.internal_mut())?;
+        } else {
+            let mut slot = vec![0; location.file.size.bytes() as usize];
+            file.read_slot(location.slot, &mut slot)?;
+            decompress_slot(&slot, buffer.internal_mut())?;
+        }
         let mut state = self.lock();
         self.erase_used_block(&mut state, block_id)?;
         Ok((buffer, location.file.size.bytes()))
@@ -628,6 +810,29 @@ mod tests {
         assert!(indexes.remove_index(2, 10, Some(&disk)).unwrap());
         assert_eq!(indexes.max_index, 2);
         assert!(indexes.free_indexes.is_empty());
+    }
+
+    #[test]
+    fn compressed_slots_round_trip() {
+        let data: Vec<u8> = (0..DEFAULT_BLOCK_ALLOC_SIZE).map(|i| (i % 7) as u8).collect();
+        let (size, slot) = super::compress_buffer(&data).expect("repetitive data compresses");
+        assert_eq!(size, TemporaryBufferSize::S32K);
+        assert_eq!(slot.len() as u64, size.bytes());
+        let mut restored = vec![0; data.len()];
+        super::decompress_slot(&slot, &mut restored).unwrap();
+        assert_eq!(restored, data);
+
+        // Incompressible data stays in the default class.
+        let mut state = 0x1234_5678_u64;
+        let noise: Vec<u8> = (0..DEFAULT_BLOCK_ALLOC_SIZE)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state as u8
+            })
+            .collect();
+        assert!(super::compress_buffer(&noise).is_none());
     }
 
     #[test]

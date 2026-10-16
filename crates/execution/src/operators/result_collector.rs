@@ -142,7 +142,7 @@ impl Sink for PhysicalResultCollector {
         _: &Self::Global,
         local: &mut Self::Local,
     ) -> Result<SinkResult> {
-        local.chunks.push(chunk.clone());
+        local.chunks.push(chunk.compacted());
         Ok(SinkResult::NeedMoreInput)
     }
 

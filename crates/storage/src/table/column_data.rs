@@ -693,7 +693,7 @@ impl ColumnData {
     fn prepare_result(result: &mut Vector, count: usize) {
         let capacity = count.max(STANDARD_VECTOR_SIZE);
         if result.kind() != VectorKind::Flat || result.row_capacity() < capacity {
-            *result = Vector::flat(result.logical_type().clone(), capacity);
+            *result = Vector::flat_for_overwrite(result.logical_type().clone(), capacity);
         } else {
             result.reset_flat(capacity);
         }

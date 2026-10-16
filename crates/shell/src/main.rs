@@ -91,10 +91,15 @@ fn run(connection: &mut Connection, sql: &str, mode: Mode) -> bool {
         for statement in statements {
             let query = statement.query.clone();
             let result = connection.execute_statement(&query, statement)?;
-            if result.return_type() == StatementReturnType::QueryResult
-                && render(&result, mode, &mut stdout.lock()).is_err()
-            {
-                return Ok(false);
+            if result.return_type() == StatementReturnType::QueryResult {
+                // Buffered: a line-buffered stdout makes one system call per row.
+                let mut out = io::BufWriter::new(stdout.lock());
+                if render(&result, mode, &mut out)
+                    .and_then(|()| out.flush())
+                    .is_err()
+                {
+                    return Ok(false);
+                }
             }
         }
         Ok(true)
