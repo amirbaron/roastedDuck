@@ -772,15 +772,18 @@ impl JoinHashTable {
         Ok(())
     }
 
-    /// Clears pointer table entries `from..to` (`InitializePointerTable`).
+    /// Clears pointer table entries `from..to` (`InitializePointerTable`). Tasks may
+    /// clear disjoint ranges concurrently; nothing may read the table meanwhile.
     #[allow(
         clippy::cast_ptr_alignment,
         reason = "AllocatedData is 16-byte aligned, more than u64 needs"
     )]
-    pub fn initialize_pointer_table(&mut self, from: usize, to: usize) {
+    pub fn initialize_pointer_table(&self, from: usize, to: usize) {
         if let Some(table) = &self.pointer_table {
-            // SAFETY: the table holds `capacity >= to` entries of plain `u64`s; zero is a
-            // valid (empty) entry, and nothing reads the table during initialization.
+            let to = to.min(table.capacity);
+            // SAFETY: the table holds `capacity >= to` entries of plain `u64`s behind a raw
+            // allocation (no references to them exist while initializing); zero is a valid
+            // (empty) entry; concurrent callers clear disjoint ranges.
             unsafe {
                 std::ptr::write_bytes(
                     table.memory.as_ptr().cast::<u64>().add(from),
@@ -800,6 +803,15 @@ impl JoinHashTable {
     /// (`Finalize`). Entries are updated atomically when `parallel`, so several threads
     /// may insert disjoint chunk ranges.
     pub fn finalize(&mut self, chunks: std::ops::Range<usize>, parallel: bool) -> Result<()> {
+        if self.insert_chunks(chunks, parallel)? {
+            self.chains_longer_than_one = true;
+        }
+        Ok(())
+    }
+
+    /// [`Self::finalize`] through a shared reference, for parallel finalize tasks; returns
+    /// whether some chain got longer than one entry, for [`Self::finish_parallel_finalize`].
+    pub fn insert_chunks(&self, chunks: std::ops::Range<usize>, parallel: bool) -> Result<bool> {
         let table = self
             .pointer_table
             .as_ref()
@@ -833,10 +845,14 @@ impl JoinHashTable {
             iterator.next_chunk()?;
         }
         drop(iterator);
-        if inserter.chains_longer_than_one {
+        Ok(inserter.chains_longer_than_one)
+    }
+
+    /// Records the outcome of the parallel insert tasks.
+    pub fn finish_parallel_finalize(&mut self, chains_longer_than_one: bool) {
+        if chains_longer_than_one {
             self.chains_longer_than_one = true;
         }
-        Ok(())
     }
 
     /// Marks the table ready for probing.

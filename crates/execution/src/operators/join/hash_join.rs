@@ -4,15 +4,24 @@
 
 use rustdb_common::tree_renderer::RenderParams;
 use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
+
+mod source;
+pub use source::{HashJoinGlobalSourceState, HashJoinLocalSourceState};
+
+use super::probe_spill::{LocalProbeSpill, ProbeSpill};
 
 use rustdb_ast::JoinType;
+use rustdb_buffer::{TemporaryMemoryContext, TemporaryMemoryState};
 use rustdb_common::{Error, Result};
 use rustdb_planner::operator::JoinCondition;
 use rustdb_planner::{Expression, ExpressionKind};
-use rustdb_row::PartitionedAppendState;
-use rustdb_types::{DataChunk, LogicalType};
+use rustdb_row::{
+    PartitionedAppendState, RadixPartitioning, TupleDataCollection, TupleDataLayout, ValidityType,
+};
+use rustdb_types::{DataChunk, LogicalType, STANDARD_VECTOR_SIZE};
 
 use super::join_filter::{
     JoinFilterInput, KeyMinMax, clear_join_filters, push_bloom_filter, set_join_filters,
@@ -20,19 +29,14 @@ use super::join_filter::{
 use super::perfect_hash_join::{
     KeyRange, PerfectHashJoinExecutor, PerfectHashJoinState, is_perfect_hash_join_candidate,
 };
-use super::{
-    construct_empty_join_result, empty_result_if_rhs_is_empty, propagates_build_side, reorder_conditions,
-};
+use super::{construct_empty_join_result, empty_result_if_rhs_is_empty, reorder_conditions};
 use crate::join_hashtable::{
-    FullOuterScanState, JoinHashTable, JoinHashTableConditions, ProbeState, ScanStructure, flatten_sequences,
+    JoinHashTable, JoinHashTableConditions, ProbeState, ScanStructure, flatten_sequences,
 };
 use crate::operator::{
     ErasedOperator, ErasedSink, ErasedSource, OrderPreservationType, PhysicalOperator, PhysicalRef, SinkState,
 };
-use crate::{
-    ExecutionContext, ExpressionExecutor, Operator, OperatorResult, Sink, SinkFinalize, SinkResult, Source,
-    SourceResult,
-};
+use crate::{ExecutionContext, ExpressionExecutor, Operator, OperatorResult, Sink, SinkFinalize, SinkResult};
 
 /// An equi-join through a hash table built on the right input; see the module docs.
 #[derive(Debug)]
@@ -229,8 +233,10 @@ impl PhysicalOperator for PhysicalHashJoin {
     fn as_operator(&self) -> Option<&dyn ErasedOperator> {
         Some(self)
     }
+    /// Always a source: RIGHT/FULL joins emit unmatched build rows, and external joins
+    /// probe the rest of their partitions afterwards (DuckDB's `IsSource`).
     fn as_source(&self) -> Option<&dyn ErasedSource> {
-        propagates_build_side(self.join_type).then_some(self as &dyn ErasedSource)
+        Some(self)
     }
     fn parallel_operator(&self) -> bool {
         true
@@ -267,7 +273,47 @@ pub struct HashJoinGlobalSinkState {
     perfect_join_executor: Option<PerfectHashJoinExecutor>,
     /// The range of the build keys of each join filter.
     filter_ranges: Mutex<Vec<KeyMinMax>>,
+    /// The parallel finalize of the pointer table, after `finalize`.
+    table_finalize: TableFinalize,
+    /// Whether the build side does not fit in memory: its partitions are built and probed
+    /// in rounds (DuckDB's `external`).
+    external: AtomicBool,
+    /// The join's share of memory, negotiated with the other operators of the query
+    /// (`temporary_memory_state`).
+    temporary_memory: TemporaryMemoryState,
+    memory_context: TemporaryMemoryContext,
+    /// The memory the probe side needs to spill its rows (`probe_side_requirement`).
+    probe_side_requirement: usize,
+    /// Probe rows of partitions not built yet, for external joins (`probe_spill`).
+    probe_spill: OnceLock<ProbeSpill>,
 }
+
+/// The stages of building the pointer table in parallel (DuckDB's
+/// `HashJoinTableInitEvent` and `HashJoinFinalizeEvent`).
+#[derive(Debug, Default)]
+struct TableFinalize {
+    /// The stage whose tasks are running.
+    stage: AtomicUsize,
+    /// How many tasks each stage has.
+    tasks: AtomicUsize,
+    /// Whether an insert task created a chain longer than one entry.
+    chains_longer_than_one: std::sync::atomic::AtomicBool,
+    /// The join filters to push bloom filters into once the table is complete.
+    bloom_targets: Mutex<Vec<(usize, usize)>>,
+}
+
+impl TableFinalize {
+    const NONE: usize = 0;
+    const INITIALIZE: usize = 1;
+    const INSERT: usize = 2;
+    const DONE: usize = 3;
+}
+
+/// Pointer table entries one initialization task clears.
+const ENTRIES_PER_INIT_TASK: usize = 1 << 20;
+/// Below this many rows the table is built by one task, so chains keep their order
+/// (DuckDB's `PARALLEL_CONSTRUCT_THRESHOLD`).
+const PARALLEL_CONSTRUCT_THRESHOLD: usize = 1_048_576;
 
 /// One thread's build state (DuckDB's `HashJoinLocalSinkState`).
 #[derive(Debug)]
@@ -285,12 +331,26 @@ impl Sink for PhysicalHashJoin {
 
     fn global_sink_state(&self, ctx: &ExecutionContext) -> Result<HashJoinGlobalSinkState> {
         clear_join_filters(&self.join_filters, self.filter_key());
+        let memory_context =
+            ctx.env
+                .buffer_manager
+                .temporary_memory_context(ctx.env.threads().max(1) as u64, 1, false);
         Ok(HashJoinGlobalSinkState {
             hash_table: RwLock::new(self.initialize_hash_table(ctx)?),
             local_hash_tables: Mutex::default(),
             key_range: Mutex::default(),
             perfect_join_executor: None,
             filter_ranges: Mutex::new(vec![KeyMinMax::default(); self.join_filters.len()]),
+            table_finalize: TableFinalize::default(),
+            external: AtomicBool::new(false),
+            temporary_memory: ctx
+                .env
+                .buffer_manager
+                .temporary_memory_manager()
+                .register(&memory_context),
+            memory_context,
+            probe_side_requirement: 0,
+            probe_spill: OnceLock::new(),
         })
     }
 
@@ -372,13 +432,16 @@ impl Sink for PhysicalHashJoin {
         Ok(())
     }
 
-    fn finalize(&self, _: &ExecutionContext, global: &mut HashJoinGlobalSinkState) -> Result<SinkFinalize> {
+    fn finalize(&self, ctx: &ExecutionContext, global: &mut HashJoinGlobalSinkState) -> Result<SinkFinalize> {
         let locals = std::mem::take(
             global
                 .local_hash_tables
                 .get_mut()
                 .unwrap_or_else(PoisonError::into_inner),
         );
+        if self.prepare_external(ctx, global, &locals)? {
+            return self.finalize_external(ctx, global, locals);
+        }
         let table = global
             .hash_table
             .get_mut()
@@ -422,14 +485,248 @@ impl Sink for PhysicalHashJoin {
             })?;
             table.set_build_bloom_filter(!bloom_targets.is_empty());
         }
-        if table.count() > 0 && global.perfect_join_executor.is_none() {
+        let count = table.count();
+        if count > 0 && global.perfect_join_executor.is_none() {
+            // The pointer table is cleared and filled by finalize tasks
+            // (`ScheduleFinalize`).
             table.allocate_pointer_table()?;
-            table.initialize_pointer_table(0, table.capacity());
-            table.finalize(0..table.data_collection().chunk_count(), false)?;
+            *global
+                .table_finalize
+                .bloom_targets
+                .get_mut()
+                .unwrap_or_else(PoisonError::into_inner) = bloom_targets;
+            global
+                .table_finalize
+                .stage
+                .store(TableFinalize::NONE, Ordering::Relaxed);
+        } else {
+            global
+                .table_finalize
+                .stage
+                .store(TableFinalize::DONE, Ordering::Relaxed);
+            table.mark_finalized();
+            self.push_bloom_filters(table, bloom_targets);
         }
-        table.mark_finalized();
-        // The bloom filters are complete once every row is in the table (DuckDB pushes
-        // them in `HashJoinFinalizeEvent::FinishEvent`).
+        if count == 0 && empty_result_if_rhs_is_empty(self.join_type) {
+            return Ok(SinkFinalize::NoOutputPossible);
+        }
+        Ok(SinkFinalize::Ready)
+    }
+
+    /// The parallel stages of the pointer table: clear it in ranges of entries, then
+    /// insert the rows in ranges of chunks (DuckDB's `HashJoinTableInitEvent` and
+    /// `HashJoinFinalizeEvent`); then mark the table finalized.
+    fn finalize_tasks(&self, ctx: &ExecutionContext, global: &HashJoinGlobalSinkState) -> Result<usize> {
+        let finalize = &global.table_finalize;
+        let threads = ctx.env.threads().max(1);
+        let (next, tasks) = match finalize.stage.load(Ordering::Acquire) {
+            TableFinalize::NONE => {
+                let capacity = global
+                    .hash_table
+                    .read()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .capacity();
+                (
+                    TableFinalize::INITIALIZE,
+                    capacity.div_ceil(ENTRIES_PER_INIT_TASK).clamp(1, threads),
+                )
+            }
+            TableFinalize::INITIALIZE => {
+                let table = global.hash_table.read().unwrap_or_else(PoisonError::into_inner);
+                let chunks = table.data_collection().chunk_count();
+                let tasks = if table.count() < PARALLEL_CONSTRUCT_THRESHOLD {
+                    1
+                } else {
+                    threads.min(chunks).max(1)
+                };
+                (TableFinalize::INSERT, tasks)
+            }
+            TableFinalize::INSERT => {
+                let mut table = global.hash_table.write().unwrap_or_else(PoisonError::into_inner);
+                table.finish_parallel_finalize(finalize.chains_longer_than_one.load(Ordering::Acquire));
+                table.mark_finalized();
+                let bloom_targets = std::mem::take(
+                    &mut *finalize
+                        .bloom_targets
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner),
+                );
+                self.push_bloom_filters(&table, bloom_targets);
+                (TableFinalize::DONE, 0)
+            }
+            _ => return Ok(0),
+        };
+        finalize.tasks.store(tasks, Ordering::Release);
+        finalize.stage.store(next, Ordering::Release);
+        Ok(tasks)
+    }
+
+    fn execute_finalize_task(
+        &self,
+        _: &ExecutionContext,
+        global: &HashJoinGlobalSinkState,
+        task: usize,
+    ) -> Result<()> {
+        let finalize = &global.table_finalize;
+        let tasks = finalize.tasks.load(Ordering::Acquire).max(1);
+        let table = global.hash_table.read().unwrap_or_else(PoisonError::into_inner);
+        match finalize.stage.load(Ordering::Acquire) {
+            TableFinalize::INITIALIZE => {
+                let per_task = table.capacity().div_ceil(tasks);
+                table.initialize_pointer_table(task * per_task, (task + 1) * per_task);
+            }
+            TableFinalize::INSERT => {
+                let chunks = table.data_collection().chunk_count();
+                let per_task = chunks.div_ceil(tasks);
+                let range = (task * per_task).min(chunks)..((task + 1) * per_task).min(chunks);
+                if table.insert_chunks(range, tasks > 1)? {
+                    finalize.chains_longer_than_one.store(true, Ordering::Release);
+                }
+            }
+            stage => {
+                return Err(Error::internal(format!(
+                    "hash join finalize task in stage {stage}"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl PhysicalHashJoin {
+    /// The memory a thread needs to spill probe rows over the partitions of `radix_bits`
+    /// bits (`GetPartitioningSpaceRequirement`).
+    fn partitioning_space_requirement(&self, ctx: &ExecutionContext, radix_bits: usize) -> Result<usize> {
+        let layout = TupleDataLayout::new(self.children[0].types().to_vec(), ValidityType::CanHaveNull)?;
+        let tuple_width = layout.row_width();
+        if tuple_width == 0 {
+            return Err(Error::internal(
+                "GetPartitioningSpaceRequirement: tuple width should not be 0",
+            ));
+        }
+        let buffer_manager = &ctx.env.buffer_manager;
+        let tuples_per_block = (buffer_manager.block_size() / tuple_width).max(1);
+        let mut blocks_per_chunk = (STANDARD_VECTOR_SIZE + tuples_per_block) / tuples_per_block + 1;
+        if !layout.all_constant() {
+            blocks_per_chunk += 2;
+        }
+        let size_per_partition = blocks_per_chunk * buffer_manager.block_alloc_size();
+        Ok(ctx.env.threads().max(1)
+            * RadixPartitioning::number_of_partitions(radix_bits)
+            * size_per_partition)
+    }
+
+    /// Sizes the build side and negotiates the join's memory; returns whether the join
+    /// must go external (DuckDB's `PrepareFinalize` and the start of `Finalize`).
+    fn prepare_external(
+        &self,
+        ctx: &ExecutionContext,
+        global: &mut HashJoinGlobalSinkState,
+        locals: &[JoinHashTable],
+    ) -> Result<bool> {
+        let table = global
+            .hash_table
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner);
+        let (total_size, max_partition_size, max_partition_count) = table.total_size_of(locals);
+        let probe_side_requirement = self.partitioning_space_requirement(ctx, table.radix_bits())?;
+        let max_partition_ht_size = max_partition_size + table.pointer_table_size(max_partition_count);
+        let memory = &global.temporary_memory;
+        memory.set_minimum_reservation((max_partition_ht_size + probe_side_requirement) as u64);
+        let probe_layout =
+            TupleDataLayout::new(self.children[0].types().to_vec(), ValidityType::CanHaveNull)?;
+        memory.set_materialization_penalty(probe_layout.row_width() as u64);
+        memory.set_remaining_size(total_size as u64);
+        memory.update_reservation(&global.memory_context);
+        global.probe_side_requirement = probe_side_requirement;
+        Ok(memory.reservation() < total_size as u64)
+    }
+
+    /// Finalizes an external join: repartitions the build side if its largest partition
+    /// does not fit, then puts the first partitions that fit into the table and schedules
+    /// building it; the probe spills the other partitions' rows (DuckDB's external
+    /// `Finalize` and `HashJoinRepartitionEvent`).
+    fn finalize_external(
+        &self,
+        ctx: &ExecutionContext,
+        global: &mut HashJoinGlobalSinkState,
+        locals: Vec<JoinHashTable>,
+    ) -> Result<SinkFinalize> {
+        global.external.store(true, Ordering::Release);
+        global.perfect_join_executor = None;
+        let table = global
+            .hash_table
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner);
+        let (total_size, max_partition_size, max_partition_count) = table.total_size_of(&locals);
+        let max_partition_ht_size = max_partition_size + table.pointer_table_size(max_partition_count);
+        // No point in repartitioning if one partition holds almost everything.
+        let very_very_skewed = max_partition_ht_size as f64 >= 0.8 * total_size as f64;
+        let reservation = usize::try_from(global.temporary_memory.reservation()).unwrap_or(usize::MAX);
+        if !very_very_skewed && max_partition_ht_size + global.probe_side_requirement > reservation {
+            table.set_repartition_radix_bits(reservation, max_partition_size, max_partition_count)?;
+            for local in locals {
+                local.repartition_into(table)?;
+            }
+            let sizes = table
+                .sink_collection()
+                .partitions()
+                .iter()
+                .map(TupleDataCollection::size_in_bytes);
+            let counts = table
+                .sink_collection()
+                .partitions()
+                .iter()
+                .map(TupleDataCollection::count);
+            let (sizes, counts): (Vec<usize>, Vec<usize>) = (sizes.collect(), counts.collect());
+            let (total_size, max_partition_size, max_partition_count) = table.total_size(&sizes, &counts);
+            global.probe_side_requirement = self.partitioning_space_requirement(ctx, table.radix_bits())?;
+            let memory = &global.temporary_memory;
+            memory.set_minimum_reservation(
+                (max_partition_size
+                    + table.pointer_table_size(max_partition_count)
+                    + global.probe_side_requirement) as u64,
+            );
+            memory.set_remaining_size_and_update_reservation(
+                &global.memory_context,
+                (total_size + global.probe_side_requirement) as u64,
+            );
+        } else {
+            for local in locals {
+                table.merge(local)?;
+            }
+        }
+        let budget = usize::try_from(global.temporary_memory.reservation())
+            .unwrap_or(usize::MAX)
+            .saturating_sub(global.probe_side_requirement);
+        table.prepare_external_finalize(budget)?;
+        let mut probe_types = self.children[0].types().to_vec();
+        probe_types.push(LogicalType::UBIGINT);
+        let spill = ProbeSpill::new(ctx.env.buffer_manager.clone(), probe_types, table.radix_bits())?;
+        global
+            .probe_spill
+            .set(spill)
+            .map_err(|_| Error::internal("hash join probe spill initialized twice"))?;
+        // The first round's table is built by the finalize tasks (`ScheduleFinalize`).
+        if table.count() > 0 {
+            table.allocate_pointer_table()?;
+            global
+                .table_finalize
+                .stage
+                .store(TableFinalize::NONE, Ordering::Relaxed);
+        } else {
+            table.mark_finalized();
+            global
+                .table_finalize
+                .stage
+                .store(TableFinalize::DONE, Ordering::Relaxed);
+        }
+        Ok(SinkFinalize::Ready)
+    }
+
+    /// Pushes the build side's bloom filter into the probe side's scans, once every row is
+    /// in the table (DuckDB pushes them in `HashJoinFinalizeEvent::FinishEvent`).
+    fn push_bloom_filters(&self, table: &JoinHashTable, bloom_targets: Vec<(usize, usize)>) {
         if let (Some(bloom_filter), Some(condition)) = (table.bloom_filter(), self.conditions.first()) {
             let key_column_name = condition.right.name();
             for (filter, target) in bloom_targets {
@@ -442,10 +739,63 @@ impl Sink for PhysicalHashJoin {
                 }
             }
         }
-        if table.count() == 0 && empty_result_if_rhs_is_empty(self.join_type) {
-            return Ok(SinkFinalize::NoOutputPossible);
+    }
+}
+
+impl PhysicalHashJoin {
+    /// Probes the input rows of the partitions built in this round and spills the others
+    /// (`ProbeAndSpill`).
+    fn probe_and_spill(
+        global: &HashJoinGlobalSinkState,
+        table: &JoinHashTable,
+        input: &DataChunk,
+        state: &mut HashJoinProbeState,
+    ) -> Result<()> {
+        if state.spill.is_none() {
+            let probe_spill = global
+                .probe_spill
+                .get()
+                .ok_or_else(|| Error::internal("external hash join without a probe spill"))?;
+            state.spill = Some(probe_spill.register_thread()?);
         }
-        Ok(SinkFinalize::Ready)
+        let spill = state
+            .spill
+            .as_ref()
+            .ok_or_else(|| Error::internal("external hash join probe without a spill"))?;
+        let hashes = table.hash_probe_keys(&state.join_keys)?;
+        let (probe_now, spill_rows): (Vec<u32>, Vec<u32>) = {
+            let unified = hashes.unified::<u64>();
+            (0..input.len() as u32).partition(|&row| {
+                table.hash_in_current_partitions(unified.values[unified.slot(row as usize)])
+            })
+        };
+        let slice = |chunk: &DataChunk, rows: &[u32]| {
+            let sel = rustdb_types::SelectionVector::new(rows.to_vec());
+            DataChunk::new(
+                chunk.columns().iter().map(|column| column.slice(&sel)).collect(),
+                rows.len(),
+            )
+        };
+        if !spill_rows.is_empty() {
+            let mut columns = input.columns().to_vec();
+            columns.push(hashes.clone());
+            let spilled = slice(&DataChunk::new(columns, input.len()), &spill_rows);
+            spill
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .append(&spilled)?;
+        }
+        let probe_input = slice(input, &probe_now);
+        state.join_keys = slice(&state.join_keys, &probe_now);
+        let probe_hashes = hashes.slice(&rustdb_types::SelectionVector::new(probe_now));
+        table.probe(
+            &mut state.scan_structure,
+            &state.join_keys,
+            &mut state.probe_state,
+            Some(&probe_hashes),
+        )?;
+        state.probe_input = Some(probe_input);
+        Ok(())
     }
 }
 
@@ -457,6 +807,11 @@ pub struct HashJoinProbeState {
     scan_structure: ScanStructure,
     probe_state: ProbeState,
     perfect_hash_join_state: PerfectHashJoinState,
+    /// External joins: this thread's spilled probe rows (`spill_state`).
+    spill: Option<Arc<Mutex<LocalProbeSpill>>>,
+    /// External joins: the input rows probed in this round, while the scan structure
+    /// walks them.
+    probe_input: Option<DataChunk>,
 }
 
 impl Operator for PhysicalHashJoin {
@@ -483,6 +838,8 @@ impl Operator for PhysicalHashJoin {
             scan_structure: ScanStructure::default(),
             probe_state: ProbeState::default(),
             perfect_hash_join_state: PerfectHashJoinState::default(),
+            spill: None,
+            probe_input: None,
         })
     }
 
@@ -517,17 +874,22 @@ impl Operator for PhysicalHashJoin {
             )?;
             return Ok(OperatorResult::NeedMoreInput);
         }
+        let external = global.external.load(Ordering::Acquire);
         if state.scan_structure.is_null {
             state.probe_executor.execute(input, &mut state.join_keys)?;
             flatten_sequences(&mut state.join_keys);
-            table.probe(
-                &mut state.scan_structure,
-                &state.join_keys,
-                &mut state.probe_state,
-                None,
-            )?;
+            if external {
+                Self::probe_and_spill(global, &table, input, state)?;
+            } else {
+                table.probe(
+                    &mut state.scan_structure,
+                    &state.join_keys,
+                    &mut state.probe_state,
+                    None,
+                )?;
+            }
         }
-        let lhs_output = self.lhs_output(input);
+        let lhs_output = self.lhs_output(state.probe_input.as_ref().filter(|_| external).unwrap_or(input));
         state
             .scan_structure
             .next(&table, &state.join_keys, &lhs_output, &self.types, output)?;
@@ -536,81 +898,5 @@ impl Operator for PhysicalHashJoin {
             return Ok(OperatorResult::NeedMoreInput);
         }
         Ok(OperatorResult::HaveMoreOutput)
-    }
-}
-
-/// The scan of unmatched build rows (DuckDB's `HashJoinGlobalSourceState` in its
-/// `SCAN_HT` stage).
-#[derive(Debug)]
-pub struct HashJoinGlobalSourceState {
-    sink: SinkState,
-    /// The next data collection chunk to hand out.
-    next_chunk: AtomicUsize,
-    chunks_per_thread: usize,
-    chunk_count: usize,
-}
-
-impl Source for PhysicalHashJoin {
-    type Global = HashJoinGlobalSourceState;
-    type Local = Option<FullOuterScanState>;
-
-    fn global_source_state(
-        &self,
-        ctx: &ExecutionContext,
-        sink: Option<&SinkState>,
-    ) -> Result<HashJoinGlobalSourceState> {
-        let sink = sink.ok_or_else(|| Error::internal("hash join source requires its sink state"))?;
-        let global = super::sink_state::<HashJoinGlobalSinkState>(sink, "hash join")?;
-        let chunk_count = global
-            .hash_table
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .data_collection()
-            .chunk_count();
-        let threads = ctx.env.threads().max(1);
-        Ok(HashJoinGlobalSourceState {
-            sink: Arc::clone(sink),
-            next_chunk: AtomicUsize::new(0),
-            chunks_per_thread: chunk_count.div_ceil(threads).max(1),
-            chunk_count,
-        })
-    }
-
-    fn local_source_state(&self, _: &ExecutionContext, _: &HashJoinGlobalSourceState) -> Result<Self::Local> {
-        Ok(None)
-    }
-
-    fn get_data(
-        &self,
-        _: &ExecutionContext,
-        chunk: &mut DataChunk,
-        global: &HashJoinGlobalSourceState,
-        local: &mut Self::Local,
-    ) -> Result<SourceResult> {
-        let sink = super::sink_state::<HashJoinGlobalSinkState>(&global.sink, "hash join")?;
-        let table = sink.hash_table.read().unwrap_or_else(PoisonError::into_inner);
-        loop {
-            if local.is_none() {
-                let from = global
-                    .next_chunk
-                    .fetch_add(global.chunks_per_thread, Ordering::Relaxed);
-                if from >= global.chunk_count {
-                    return Ok(SourceResult::Finished);
-                }
-                let to = (from + global.chunks_per_thread).min(global.chunk_count);
-                *local = Some(table.full_outer_scan_state(from..to));
-            }
-            if let Some(scan) = local.as_mut() {
-                table.scan_full_outer(scan, &self.types, chunk)?;
-            }
-            if !chunk.is_empty() {
-                return Ok(SourceResult::HaveMoreOutput);
-            }
-            *local = None;
-        }
-    }
-
-    fn max_threads(&self, global: &HashJoinGlobalSourceState) -> usize {
-        global.chunk_count.div_ceil(global.chunks_per_thread).max(1)
     }
 }

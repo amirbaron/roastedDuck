@@ -12,12 +12,16 @@ mod outer_join_marker;
 mod perfect_hash_join;
 mod piecewise_merge_join;
 mod positional_join;
+mod probe_spill;
 mod range_join;
 
 pub use asof_join::{AsOfGlobalSinkState, AsOfLocalSinkState, AsOfSourceState, PhysicalAsOfJoin};
 pub use blockwise_nl_join::{BlockwiseNLJoinGlobalState, BlockwiseNLJoinState, PhysicalBlockwiseNLJoin};
 pub use bloom_filter::{BloomFilter, BloomTableFilter};
-pub use hash_join::{HashJoinGlobalSinkState, HashJoinLocalSinkState, HashJoinProbeState, PhysicalHashJoin};
+pub use hash_join::{
+    HashJoinGlobalSinkState, HashJoinGlobalSourceState, HashJoinLocalSinkState, HashJoinLocalSourceState,
+    HashJoinProbeState, PhysicalHashJoin,
+};
 pub use iejoin::{IEJoinGlobalState, IEJoinLocalState, IEJoinSourceState, PhysicalIEJoin};
 pub use nested_loop_join::{
     NestedLoopJoinGlobalState, NestedLoopJoinProbeState, PhysicalNestedLoopJoin, RightOuterScanState,
