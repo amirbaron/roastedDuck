@@ -15,6 +15,11 @@ pub struct PhysicalTableScan {
     function: TableFunction,
     bind_data: Option<Arc<dyn FunctionData>>,
     column_ids: Vec<u64>,
+    /// The positions in `column_ids` that are output; empty for all of them (columns
+    /// read only for pushed-down filters are not output).
+    projection: Vec<usize>,
+    /// The filters the function applies (shown by `EXPLAIN`).
+    filters: Option<rustdb_storage::TableFilterSet>,
     /// What `EXPLAIN` shows about the scan.
     explain: super::ScanExplainInfo,
 }
@@ -40,8 +45,24 @@ impl PhysicalTableScan {
             function,
             bind_data,
             column_ids,
+            projection: Vec::new(),
+            filters: None,
             explain: super::ScanExplainInfo::default(),
         }
+    }
+
+    /// Outputs only the columns at `projection` (positions in the column ids).
+    #[must_use]
+    pub fn with_projection(mut self, projection: Vec<usize>) -> Self {
+        self.projection = projection;
+        self
+    }
+
+    /// Records the filters pushed into the function.
+    #[must_use]
+    pub fn with_filters(mut self, filters: Option<rustdb_storage::TableFilterSet>) -> Self {
+        self.filters = filters;
+        self
     }
 
     /// Sets what `EXPLAIN` shows about the scan.
@@ -76,7 +97,30 @@ impl PhysicalOperator for PhysicalTableScan {
         let mut result = RenderParams::new();
         result.insert("Function".to_owned(), self.function.name.to_ascii_uppercase());
         if self.function.projection_pushdown {
-            result.insert("Projections".to_owned(), self.explain.column_names.join("\n"));
+            let names: Vec<&str> = if self.projection.is_empty() {
+                self.explain.column_names.iter().map(String::as_str).collect()
+            } else {
+                self.projection
+                    .iter()
+                    .filter_map(|&index| self.explain.column_names.get(index).map(String::as_str))
+                    .collect()
+            };
+            result.insert("Projections".to_owned(), names.join("\n"));
+        }
+        if let Some(filters) = &self.filters
+            && self.function.filter_pushdown
+        {
+            let info: Vec<String> = filters
+                .filters
+                .iter()
+                .filter_map(|(&column, filter)| {
+                    self.explain
+                        .column_names
+                        .get(column)
+                        .map(|name| filter.to_sql(name))
+                })
+                .collect();
+            result.insert("Filters".to_owned(), info.join("\n"));
         }
         crate::operator::set_estimated_cardinality(&mut result, estimated_cardinality);
         result
@@ -135,6 +179,16 @@ impl Source for PhysicalTableScan {
                 let ty = self.types.get(position).cloned().unwrap_or(LogicalType::BIGINT);
                 projected.push(Vector::constant_null(ty));
             }
+        }
+        if !self.projection.is_empty() {
+            let mut all: Vec<Option<Vector>> = projected.into_iter().map(Some).collect();
+            projected = self
+                .projection
+                .iter()
+                .map(|&index| all.get_mut(index).and_then(Option::take).ok_or_else(|| {
+                    Error::internal("table scan projection out of range")
+                }))
+                .collect::<Result<Vec<_>>>()?;
         }
         chunk.set_columns(projected, count);
         Ok(if more {

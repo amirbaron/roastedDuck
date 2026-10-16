@@ -592,7 +592,7 @@ pub(crate) fn supports_projection_pushdown(get: &LogicalGet) -> bool {
 /// Whether a scan can drop filter-only columns from its output (DuckDB's
 /// `TableFunction::filter_prune`, set for base table scans).
 pub(crate) fn supports_filter_prune(get: &LogicalGet) -> bool {
-    get.table.is_some()
+    get.table.is_some() || get.function.filter_prune
 }
 
 /// The column to scan when no column is needed (DuckDB's `LogicalGet::GetAnyColumn`):

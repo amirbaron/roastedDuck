@@ -74,6 +74,14 @@ pub type TableFunctionScan = Arc<
 pub type TableFunctionTypePushdown =
     Arc<dyn Fn(&dyn FunctionData, &[(usize, LogicalType)]) -> Result<Arc<dyn FunctionData>> + Send + Sync>;
 
+/// Applies pushed-down table filters (`rustdb_storage::TableFilterSet`, keyed by the
+/// position of the filtered column in the scan's column ids, passed as `Any`) to a table
+/// function's bind data: the scan of the returned bind data only produces rows passing
+/// the filters, so the planner drops the filters themselves.
+pub type TableFunctionPushdownFilters = Arc<
+    dyn Fn(&dyn FunctionData, &[u64], &dyn std::any::Any) -> Result<Arc<dyn FunctionData>> + Send + Sync,
+>;
+
 /// What a [`TableInOutFunction`] call did with its input (DuckDB's `OperatorResultType`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InOutResult {
@@ -119,6 +127,9 @@ pub struct TableFunction {
     pub projection_pushdown: bool,
     /// Whether the scan can apply filters itself.
     pub filter_pushdown: bool,
+    /// Whether the scan can leave out columns read only for its filters (DuckDB's
+    /// `filter_prune`).
+    pub filter_prune: bool,
     /// Whether this is a table-in/table-out function (DuckDB's `in_out_function`):
     /// constant arguments form its input row, and every output column is scanned.
     pub in_out: bool,
@@ -134,6 +145,9 @@ pub struct TableFunction {
     /// Whether the function has DuckDB's empty virtual column (`COLUMN_IDENTIFIER_EMPTY`,
     /// which the multi-file readers provide): a scan needing no column reads it.
     pub empty_column: bool,
+    /// Hands the filters pushed into the scan to the function (DuckDB's table filters of
+    /// a `filter_pushdown` function): returns the bind data that applies them.
+    pub pushdown_filters: Option<TableFunctionPushdownFilters>,
 }
 
 impl TableFunction {
@@ -148,11 +162,13 @@ impl TableFunction {
             scan: None,
             projection_pushdown: false,
             filter_pushdown: false,
+            filter_prune: false,
             in_out: false,
             type_pushdown: None,
             in_out_function: None,
             cardinality: None,
             empty_column: false,
+            pushdown_filters: None,
         }
     }
 

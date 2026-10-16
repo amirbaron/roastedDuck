@@ -13,6 +13,7 @@ pub mod copy;
 pub mod compression;
 pub mod decode;
 pub mod file;
+pub mod filter;
 pub mod metadata;
 pub mod reader;
 pub mod scan;

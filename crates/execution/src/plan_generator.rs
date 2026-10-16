@@ -1081,20 +1081,39 @@ impl PlanGenerator {
                     child,
                 )?)
             }
-            LogicalKind::Get(get) if get.function.scan.is_some() && get.projection_ids.is_empty() => {
-                let column_ids = get.column_ids.iter().map(|column| column.index).collect();
+            LogicalKind::Get(get)
+                if get.function.scan.is_some()
+                    && (get.projection_ids.is_empty() || get.function.pushdown_filters.is_some()) =>
+            {
+                let column_ids: Vec<u64> = get.column_ids.iter().map(|column| column.index).collect();
                 let explain = crate::operators::ScanExplainInfo {
                     table: String::new(),
                     column_names: get
                         .column_ids
                         .iter()
-                        .filter_map(|column| get.names.get(usize::try_from(column.index).ok()?).cloned())
+                        .map(|column| {
+                            usize::try_from(column.index)
+                                .ok()
+                                .and_then(|index| get.names.get(index).cloned())
+                                .unwrap_or_default()
+                        })
                         .collect(),
                     virtual_columns: Vec::new(),
                     sample_method: None,
                 };
+                // Filters pushed into the scan are applied by the function itself.
+                let filters = table_filter_set(&get)?;
+                let mut bind_data = get.bind_data;
+                if let (Some(filters), Some(pushdown), Some(data)) =
+                    (&filters, &get.function.pushdown_filters, &bind_data)
+                {
+                    bind_data = Some(pushdown(data.as_ref(), &column_ids, filters as &dyn std::any::Any)?);
+                }
+                let projection = get.projection_ids.iter().map(|&id| id as usize).collect();
                 Arc::new(
-                    PhysicalTableScan::new(types, get.function, get.bind_data, column_ids)
+                    PhysicalTableScan::new(types, get.function, bind_data, column_ids)
+                        .with_projection(projection)
+                        .with_filters(filters)
                         .with_explain_info(explain),
                 )
             }

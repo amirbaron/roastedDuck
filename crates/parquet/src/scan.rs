@@ -17,6 +17,7 @@ use rustdb_function::{
     FunctionData, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet, TableScanState,
 };
 use rustdb_planner::ClientContext;
+use rustdb_storage::TableFilterSet;
 use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
 use crate::reader::{ColumnDefinition, ParquetReader, ReaderScanState, ScanColumn};
@@ -40,21 +41,12 @@ pub(crate) fn setting_bool(context: &ClientContext, name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// The schema of one file of a `union_by_name` read (`ParquetUnionData`).
-#[derive(Debug, Clone)]
-struct UnionData {
-    names: Vec<String>,
-    types: Vec<LogicalType>,
-}
-
 /// The bind data of `read_parquet` (`MultiFileBindData` with `ParquetReadBindData`).
 #[derive(Debug)]
 pub struct ParquetBindData {
     pub files: FileList,
     pub names: Vec<String>,
     pub types: Vec<LogicalType>,
-    /// The number of leading columns that come from the files.
-    data_columns: usize,
     pub file_options: MultiFileOptions,
     reader_bind: MultiFileBindData,
     pub options: ParquetOptions,
@@ -62,8 +54,9 @@ pub struct ParquetBindData {
     file_row_number_idx: Option<usize>,
     /// The reader of the first file, opened while binding (`initial_reader`).
     initial_reader: Mutex<Option<Arc<ParquetReader>>>,
-    union_data: Vec<UnionData>,
     casts: Arc<CastFunctionSet>,
+    /// The filters pushed into the scan, keyed by position in the scanned column ids.
+    filters: Option<Arc<TableFilterSet>>,
     /// The number of rows of the first file (`initial_file_cardinality`).
     pub initial_file_cardinality: u64,
 }
@@ -75,6 +68,28 @@ impl FunctionData for ParquetBindData {
 }
 
 impl ParquetBindData {
+    /// A copy that applies `filters` (`MultiFileFunction` with pushed-down table filters).
+    fn with_filters(&self, filters: TableFilterSet) -> Self {
+        Self {
+            files: self.files.clone(),
+            names: self.names.clone(),
+            types: self.types.clone(),
+            file_options: self.file_options.clone(),
+            reader_bind: self.reader_bind.clone(),
+            options: self.options.clone(),
+            file_row_number_idx: self.file_row_number_idx,
+            initial_reader: Mutex::new(
+                self.initial_reader
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .clone(),
+            ),
+            casts: Arc::clone(&self.casts),
+            filters: Some(Arc::new(filters)),
+            initial_file_cardinality: self.initial_file_cardinality,
+        }
+    }
+
     /// The reader of file `index`, reusing the one opened while binding.
     fn open_reader(&self, index: usize) -> Result<Arc<ParquetReader>> {
         let path = &self.files.files[index];
@@ -161,7 +176,6 @@ pub fn bind_files(
     file_options.auto_detect_hive_partitioning(&files, casts)?;
     let mut names = Vec::new();
     let mut types = Vec::new();
-    let mut union_data = Vec::new();
     let mut initial_reader = None;
     let mut initial_file_cardinality = 0;
     // The file_row_number column is added by the bind, not by the file schemas.
@@ -178,10 +192,6 @@ pub fn bind_files(
                 .map(|column| column.logical_type.clone())
                 .collect();
             combine_union_types(&file_names, &file_types, &mut types, &mut names, &mut union_names_map);
-            union_data.push(UnionData {
-                names: file_names,
-                types: file_types,
-            });
             if index == 0 {
                 initial_file_cardinality = reader.num_rows();
                 initial_reader = Some(Arc::new(reader));
@@ -199,7 +209,6 @@ pub fn bind_files(
         initial_file_cardinality = reader.num_rows();
         initial_reader = Some(Arc::new(reader));
     }
-    let data_columns = names.len();
     let mut file_row_number_idx = None;
     if options.file_row_number {
         if names.iter().any(|name| name.eq_ignore_ascii_case("file_row_number")) {
@@ -216,14 +225,13 @@ pub fn bind_files(
         files,
         names,
         types,
-        data_columns,
         file_options,
         reader_bind,
         options: file_options_reader,
         file_row_number_idx,
         initial_reader: Mutex::new(initial_reader),
-        union_data,
         casts: Arc::clone(casts),
+        filters: None,
         initial_file_cardinality,
     })
 }
@@ -355,9 +363,37 @@ fn open_file(data: &ParquetBindData, file_index: usize, column_ids: &[u64]) -> R
             target: global_type.clone(),
         });
     }
-    let row_groups: Vec<usize> = (0..reader.num_row_groups()).collect();
+    // Filters on constant columns decide for the whole file; filters on columns read
+    // as stored prune row groups by their statistics.
+    let mut skip_file = false;
+    let mut prune_filters = Vec::new();
+    if let Some(filters) = &data.filters {
+        for (&position, filter) in &filters.filters {
+            match sources.get(position) {
+                Some(ColumnSource::Constant(value)) => {
+                    if !crate::filter::constant_passes(filter, value)? {
+                        skip_file = true;
+                    }
+                }
+                Some(ColumnSource::Reader { index, cast: None, .. }) => {
+                    if let Some(file_column) = scan_columns.get(*index).and_then(|column| column.file_index) {
+                        prune_filters.push((file_column, filter));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut row_groups = Vec::new();
+    if !skip_file {
+        for group in 0..reader.num_row_groups() {
+            if !crate::filter::prune_row_group(&reader, group, &prune_filters, data.options.can_have_nan, &data.casts)? {
+                row_groups.push(group);
+            }
+        }
+    }
     let rows_only = scan_columns.is_empty().then(|| RowsOnly {
-        remaining: reader.num_rows(),
+        remaining: if skip_file { 0 } else { reader.num_rows() },
     });
     let state = reader.initialize_scan(row_groups, &scan_columns)?;
     Ok(FileScan {
@@ -435,16 +471,71 @@ fn read_parquet_scan(
                 ColumnSource::Constant(value) => Vector::constant(value)?,
             });
         }
-        *chunk = DataChunk::new(
-            columns
-                .into_iter()
-                .zip(&data.types)
-                .map(|(column, ty)| column.unwrap_or_else(|| Vector::constant_null(ty.clone())))
-                .collect(),
-            count,
-        );
+        let mut output: Vec<Vector> = columns
+            .into_iter()
+            .zip(&data.types)
+            .map(|(column, ty)| column.unwrap_or_else(|| Vector::constant_null(ty.clone())))
+            .collect();
+        let mut count = count;
+        if let Some(filters) = &data.filters {
+            match apply_filters(filters, column_ids, &mut output, count)? {
+                Some(0) => continue,
+                Some(passed) => count = passed,
+                None => {}
+            }
+        }
+        *chunk = DataChunk::new(output, count);
         return Ok(true);
     }
+}
+
+/// Applies the pushed-down filters to a chunk; returns the number of rows left if any
+/// row was removed (the vectors are then sliced to them).
+fn apply_filters(
+    filters: &TableFilterSet,
+    column_ids: &[u64],
+    output: &mut [Vector],
+    count: usize,
+) -> Result<Option<usize>> {
+    let mut sel: Vec<u32> = (0..count as u32).collect();
+    for (&position, filter) in &filters.filters {
+        let Some(vector) = column_ids
+            .get(position)
+            .and_then(|&id| usize::try_from(id).ok())
+            .and_then(|id| output.get(id))
+        else {
+            continue;
+        };
+        filter.select(vector, count, &mut sel)?;
+        if sel.is_empty() {
+            return Ok(Some(0));
+        }
+    }
+    if sel.len() == count {
+        return Ok(None);
+    }
+    let passed = sel.len();
+    let selection = rustdb_types::SelectionVector::new(sel);
+    for vector in output.iter_mut() {
+        *vector = vector.slice(&selection);
+    }
+    Ok(Some(passed))
+}
+
+/// `MultiFileFunction` with table filters: the bind data that applies them.
+fn read_parquet_pushdown_filters(
+    bind_data: &dyn FunctionData,
+    _: &[u64],
+    filters: &dyn Any,
+) -> Result<Arc<dyn FunctionData>> {
+    let data = bind_data
+        .as_any()
+        .downcast_ref::<ParquetBindData>()
+        .ok_or_else(|| Error::internal("read_parquet filter pushdown without bind data"))?;
+    let filters = filters
+        .downcast_ref::<TableFilterSet>()
+        .ok_or_else(|| Error::internal("read_parquet filter pushdown without a filter set"))?;
+    Ok(Arc::new(data.with_filters(filters.clone())))
 }
 
 /// The named parameters of `read_parquet`.
@@ -486,6 +577,9 @@ fn read_parquet_function(name: &'static str, argument: LogicalType) -> TableFunc
         });
     function.named_parameters = read_parquet_parameters();
     function.projection_pushdown = true;
+    function.filter_pushdown = true;
+    function.filter_prune = true;
+    function.pushdown_filters = Some(Arc::new(read_parquet_pushdown_filters));
     function.empty_column = true;
     function
 }

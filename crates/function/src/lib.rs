@@ -29,6 +29,6 @@ pub use scalar::{
 };
 pub use table::{
     InOutResult, TableFunction, TableFunctionBind, TableFunctionBindInput, TableFunctionBindOutput,
-    TableFunctionBindReplace, TableFunctionReplacement, TableFunctionScan, TableFunctionSet,
+    TableFunctionBindReplace, TableFunctionPushdownFilters, TableFunctionReplacement, TableFunctionScan, TableFunctionSet,
     TableFunctionTypePushdown, TableInOutFunction, TableScanState,
 };
