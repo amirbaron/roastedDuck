@@ -43,6 +43,7 @@ pub enum JoinSide {
 
 impl JoinSide {
     /// DuckDB's `JoinSide::CombineJoinSide`.
+    #[must_use]
     pub fn combine(self, other: Self) -> Self {
         match (self, other) {
             (Self::None, side) | (side, Self::None) => side,

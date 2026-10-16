@@ -120,7 +120,10 @@ fn table_filter_set(get: &LogicalGet) -> Result<Option<rustdb_storage::TableFilt
             .iter()
             .position(|id| id.index == column as u64)
             .ok_or_else(|| Error::internal("Could not find column index for table filter"))?;
-        filters.filters.insert(position, filter.clone());
+        filters.filters.insert(
+            position,
+            crate::operators::bind_expression_filters(filter.clone()),
+        );
     }
     Ok(Some(filters))
 }
@@ -831,11 +834,23 @@ impl PlanGenerator {
                     column_ids,
                 ))
             }
-            LogicalKind::Projection { .. } => Arc::new(PhysicalProjection::new(
-                types,
-                expressions,
-                next_child("projection")?,
-            )),
+            LogicalKind::Projection { .. } => {
+                let child = next_child("projection")?;
+                // A projection of the child's columns in order is omitted (DuckDB's
+                // `CreatePlan(LogicalProjection &)`).
+                let omit = child.types().len() == types.len()
+                    && expressions.iter().enumerate().all(|(i, expression)| {
+                        matches!(&expression.kind, ExpressionKind::Reference(reference) if reference.index == i as u64)
+                    });
+                if omit {
+                    child
+                } else {
+                    Arc::new(PhysicalProjection::new(types, expressions, child))
+                }
+            }
+            LogicalKind::Filter { projection_map } if expressions.is_empty() && projection_map.is_empty() => {
+                next_child("filter")?
+            }
             LogicalKind::Filter { projection_map } => {
                 let child = next_child("filter")?;
                 let mut expressions = expressions;

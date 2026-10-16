@@ -8,6 +8,8 @@ mod cardinality;
 mod copy_to_file;
 mod display;
 mod explain;
+mod expression_filter;
+mod table_index;
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -32,6 +34,7 @@ pub use copy_to_file::{
 };
 pub use display::render_plan;
 pub use explain::{logical_operator_name, renderer_kind};
+pub use expression_filter::ExpressionTableFilter;
 
 /// A LIMIT or OFFSET value (DuckDB's `BoundLimitNode`).
 #[derive(Clone, Debug, Default)]
@@ -237,6 +240,9 @@ pub struct LogicalComparisonJoin {
     pub delim_flipped: bool,
     /// Extra non-comparison predicate.
     pub predicate: Option<Expression>,
+    /// Whether filter pushdown may turn this MARK join into a SEMI or ANTI join (cleared
+    /// when the marker is used above the join).
+    pub convert_mark_to_semi: bool,
 }
 
 impl JoinCondition {
@@ -260,6 +266,7 @@ impl LogicalComparisonJoin {
             duplicate_eliminated_columns: Vec::new(),
             delim_flipped: false,
             predicate: None,
+            convert_mark_to_semi: true,
         }
     }
 }

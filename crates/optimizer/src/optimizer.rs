@@ -1,6 +1,7 @@
 //! The optimizer driver (DuckDB's `optimizer.cpp`): runs the passes in DuckDB's order,
 //! each unless disabled through `disabled_optimizers`.
 
+use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -11,6 +12,9 @@ use rustdb_planner::function_binder::FunctionBinder;
 use rustdb_planner::{ClientContext, Expression, LogicalKind, LogicalOperator, LogicalOperatorType};
 
 use crate::expression_rewriter::ExpressionRewriter;
+use crate::filter_pullup::FilterPullup;
+use crate::filter_pushdown::FilterPushdown;
+use crate::join_order::JoinOrderOptimizer;
 
 macro_rules! optimizer_types {
     ($($variant:ident => $name:literal,)*) => {
@@ -125,7 +129,19 @@ pub struct Optimizer {
     pub(crate) context: Arc<ClientContext>,
     pub(crate) config: OptimizerConfig,
     /// The next unused table index (DuckDB's `Binder::GenerateTableIndex`).
-    next_table_index: u64,
+    next_table_index: Cell<u64>,
+}
+
+/// Fixes the columns of every scan: the binder shares them with its table bindings
+/// while binding; from here on the optimizer owns them.
+fn finalize_column_ids(op: &mut LogicalOperator) {
+    if let LogicalKind::Get(get) = &mut op.kind {
+        get.sync_column_ids();
+        get.shared_column_ids = None;
+    }
+    for child in &mut op.children {
+        finalize_column_ids(child);
+    }
 }
 
 /// The largest table index a plan uses.
@@ -160,14 +176,14 @@ impl Optimizer {
         Self {
             context,
             config,
-            next_table_index: 0,
+            next_table_index: Cell::new(0),
         }
     }
 
     /// A fresh table index (DuckDB's `Binder::GenerateTableIndex`).
-    pub fn generate_table_index(&mut self) -> u64 {
-        let index = self.next_table_index;
-        self.next_table_index += 1;
+    pub fn generate_table_index(&self) -> u64 {
+        let index = self.next_table_index.get();
+        self.next_table_index.set(index + 1);
         index
     }
 
@@ -187,7 +203,10 @@ impl Optimizer {
         if !self.config.enabled || matches!(plan.kind, LogicalKind::Prepare { .. }) {
             return Ok(plan);
         }
-        self.next_table_index = self.next_table_index.max(max_table_index(&plan) + 1);
+        let next = self.next_table_index.get().max(max_table_index(&plan) + 1);
+        self.next_table_index.set(next);
+        let mut plan = plan;
+        finalize_column_ids(&mut plan);
         self.run_built_in_optimizers(plan)
     }
 
@@ -224,6 +243,23 @@ impl Optimizer {
         let plan = self.run(OptimizerType::ExpressionRewriter, plan, |optimizer, mut plan| {
             ExpressionRewriter::new(optimizer).visit_operator(&mut plan)?;
             Ok(plan)
+        })?;
+        let plan = self.run(OptimizerType::FilterPullup, plan, |_, plan| {
+            FilterPullup::default().rewrite(plan)
+        })?;
+        let plan = self.run(OptimizerType::FilterPushdown, plan, |optimizer, mut plan| {
+            FilterPushdown::check_mark_to_semi(&mut plan, &mut BTreeSet::new());
+            FilterPushdown::new(optimizer, true).rewrite(plan)
+        })?;
+        // Join ordering also turns cross products with filters into joins and sets the
+        // estimated cardinalities.
+        let plan = self.run(OptimizerType::JoinOrder, plan, |optimizer, plan| {
+            JoinOrderOptimizer::new(
+                optimizer.context(),
+                optimizer.config.force_no_cross_product,
+                optimizer.context().config.max_expression_depth,
+            )
+            .optimize(plan, None)
         })?;
         Ok(plan)
     }

@@ -16,6 +16,8 @@ mod bind_showref;
 mod bind_table_function;
 mod plan_joinref;
 
+pub use plan_joinref::{JoinSide, create_join, extract_join_conditions};
+
 pub use plan_joinref::extract_join_conditions_from;
 pub(crate) use plan_joinref::table_references;
 

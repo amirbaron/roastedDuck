@@ -30,6 +30,10 @@ pub trait ExpressionFilter: Send + Sync + fmt::Debug {
 
     /// The filter as SQL text over `column_name`.
     fn to_sql(&self, column_name: &str) -> String;
+
+    /// The filter as `Any`, so that layers above storage can recognize their own
+    /// filter types.
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// A comparison whose constant is set at run time, e.g. by a join (DuckDB's
