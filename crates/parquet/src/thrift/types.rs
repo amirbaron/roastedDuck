@@ -384,8 +384,8 @@ thrift_struct! {
 thrift_struct! {
     /// `KeyValue`.
     KeyValue {
-        1: required key: String,
-        2: optional value: String,
+        1: required key: Binary,
+        2: optional value: Binary,
     }
 }
 

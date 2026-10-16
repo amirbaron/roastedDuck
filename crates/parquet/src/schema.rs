@@ -375,6 +375,7 @@ fn leaf_schema(
 }
 
 /// Builds the column tree of a file (`ParquetReader::ParseSchema`).
+#[derive(Debug)]
 pub struct SchemaParser<'a> {
     metadata: &'a FileMetaData,
     options: &'a ParquetOptions,

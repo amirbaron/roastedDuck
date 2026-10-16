@@ -9,6 +9,7 @@
 //! function.
 
 pub mod column_reader;
+pub mod copy;
 pub mod compression;
 pub mod decode;
 pub mod file;
@@ -17,6 +18,7 @@ pub mod scan;
 pub mod schema;
 pub mod thrift;
 pub mod vector_ops;
+pub mod writer;
 
 use rustdb_function::TableFunctionSet;
 
