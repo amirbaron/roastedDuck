@@ -133,8 +133,7 @@ impl Aggregate for BitStringAgg {
             let string = result.add_string(value);
             result.values_mut::<StringT>()[row] = string;
         } else {
-            let capacity = result.capacity();
-            result.validity_mut().set_invalid(row, capacity);
+            result.set_null(row);
         }
         Ok(())
     }

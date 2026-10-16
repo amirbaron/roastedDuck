@@ -141,8 +141,7 @@ impl<T: Coding + 'static> Aggregate for ApproxQuantile<T> {
         row: usize,
     ) -> Result<()> {
         let (Some(digest), true) = (state.digest.as_mut(), state.count > 0) else {
-            let capacity = result.capacity();
-            result.validity_mut().set_invalid(row, capacity);
+            result.set_null(row);
             return Ok(());
         };
         let quantiles = &input.bind_data::<Quantiles>()?.0;

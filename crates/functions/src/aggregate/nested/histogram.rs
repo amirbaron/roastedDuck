@@ -60,8 +60,7 @@ impl<K: StoredKind> Aggregate for Histogram<K> {
         row: usize,
     ) -> Result<()> {
         let Some(counts) = state else {
-            let capacity = result.capacity();
-            result.validity_mut().set_invalid(row, capacity);
+            result.set_null(row);
             return Ok(());
         };
         write_map(result, row, counts.len(), |keys, values, offset| {

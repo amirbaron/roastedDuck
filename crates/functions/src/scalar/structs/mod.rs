@@ -416,7 +416,7 @@ pub fn struct_values_functions() -> ScalarFunctionSet {
             let mut out = build_struct(result.logical_type().clone(), fields, rows, false)?;
             for row in 0..rows {
                 if input.is_null(row) {
-                    out.validity_mut().set_invalid(row, rows);
+                    out.set_null(row);
                 }
             }
             if input.is_constant() {
@@ -522,12 +522,12 @@ fn struct_search(args: &DataChunk, result: &mut Vector, position: bool) -> Resul
     let mut out = Vector::flat(result.logical_type().clone(), rows.max(1));
     for row in 0..rows {
         if input.is_null(row) {
-            out.validity_mut().set_invalid(row, rows);
+            out.set_null(row);
             continue;
         }
         let target_valid = !target.is_null(row);
         if !position && !target_valid {
-            out.validity_mut().set_invalid(row, rows);
+            out.set_null(row);
             continue;
         }
         let mut found = None;

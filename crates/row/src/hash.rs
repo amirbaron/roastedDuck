@@ -178,7 +178,7 @@ pub fn hash_vector(input: &Vector, count: usize, result: &mut Vector) -> Result<
         result.make_constant();
         return Ok(());
     }
-    *result = Vector::flat(result.logical_type().clone(), count.max(1));
+    result.reset_flat(count.max(1));
     let hashes = result.values_mut::<u64>();
     if let (FormatKind::Fixed(8), true, true) = (format.kind, format.sel.is_identity(), format.all_valid())
         && matches!(

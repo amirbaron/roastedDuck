@@ -122,8 +122,7 @@ impl<K: StoredKind, const GREATER: bool> Aggregate for StoredMinMax<K, GREATER> 
         if let Some(value) = state {
             K::write(value, result, row)
         } else {
-            let capacity = result.capacity();
-            result.validity_mut().set_invalid(row, capacity);
+            result.set_null(row);
             Ok(())
         }
     }
@@ -290,8 +289,7 @@ impl<K: StoredKind, const MAX: bool> Aggregate for MinMaxN<K, MAX> {
         row: usize,
     ) -> Result<()> {
         let Some(heap) = state.heap.as_mut().filter(|heap| !heap.is_empty()) else {
-            let capacity = result.capacity();
-            result.validity_mut().set_invalid(row, capacity);
+            result.set_null(row);
             return Ok(());
         };
         let sorted = heap.sorted(&Self::less());

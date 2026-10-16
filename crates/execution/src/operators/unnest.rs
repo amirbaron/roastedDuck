@@ -202,9 +202,8 @@ impl Operator for PhysicalUnnest {
                 let mut result = child.slice(&sel);
                 if !null_rows[column].is_empty() {
                     result.flatten(result_length);
-                    let capacity = result.capacity().max(result_length);
                     for &row in &null_rows[column] {
-                        result.validity_mut().set_invalid(row, capacity);
+                        result.set_null(row);
                     }
                 }
                 columns.push(result);

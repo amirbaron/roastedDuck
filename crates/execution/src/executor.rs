@@ -167,6 +167,16 @@ impl Executor {
         if op.as_sink().is_some() && op.as_operator().is_some() {
             return self.build_join(op, current);
         }
+        if op.as_sink().is_some() && op.sinks_all_children() {
+            // Every child is sunk in its own pipeline, the last child first.
+            self.pipelines[current].source = Some(Arc::clone(op));
+            for child_op in op.children().iter().rev() {
+                let child = self.add_pipeline(Pipeline::new(Arc::clone(op)));
+                self.pipelines[current].dependencies.push(child);
+                self.build(child_op, child)?;
+            }
+            return Ok(());
+        }
         if op.as_sink().is_some() {
             // A sink ends a child pipeline and is the source of the current one.
             self.pipelines[current].source = Some(Arc::clone(op));

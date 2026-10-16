@@ -463,8 +463,7 @@ impl<Q: QuantileKind, const LIST: bool> Aggregate for Quantile<Q, LIST> {
         row: usize,
     ) -> Result<()> {
         if state.is_empty() {
-            let capacity = result.capacity();
-            result.validity_mut().set_invalid(row, capacity);
+            result.set_null(row);
             return Ok(());
         }
         let bind = input.bind_data::<QuantileBindData>()?;
@@ -963,8 +962,7 @@ impl<M: MadKind> Aggregate for Mad<M> {
         row: usize,
     ) -> Result<()> {
         if state.is_empty() {
-            let capacity = result.capacity();
-            result.validity_mut().set_invalid(row, capacity);
+            result.set_null(row);
             return Ok(());
         }
         let bind = input.bind_data::<QuantileBindData>()?;

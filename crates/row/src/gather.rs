@@ -52,7 +52,13 @@ pub(crate) unsafe fn gather_column(
 ) -> Result<()> {
     let offset = base + layout.offsets()[col];
     let check_validity = !layout.all_valid();
-    let end = (0..count).map(|i| index(target_sel, i) + 1).max().unwrap_or(0);
+    let end = target_sel.map_or(count, |sel| {
+        sel[..count]
+            .iter()
+            .map(|&row| row as usize + 1)
+            .max()
+            .unwrap_or(0)
+    });
     ensure_capacity(target, end);
     let mut nulls = Vec::new();
     // SAFETY (whole function): guaranteed by the caller.
@@ -205,12 +211,28 @@ unsafe fn gather_fixed(
                 }
                 return;
             }
-            for i in 0..count {
-                let row = rows[index(scan_sel, i)].as_ptr();
-                let target_row = index(target_sel, i);
+            // One loop per selection shape, so the per-row work has no branches on them.
+            let body = |row: *const u8, target_row: usize, nulls: &mut Vec<usize>| {
                 copy(row.add(offset), data.add(target_row * W), W);
                 if check_validity && !is_valid(row.add(base), col) {
                     nulls.push(target_row);
+                }
+            };
+            match (scan_sel, target_sel) {
+                (Some(scan_sel), None) => {
+                    for (i, &row) in scan_sel[..count].iter().enumerate() {
+                        body(rows[row as usize].as_ptr(), i, nulls);
+                    }
+                }
+                (None, None) => {
+                    for (i, row) in rows[..count].iter().enumerate() {
+                        body(row.as_ptr(), i, nulls);
+                    }
+                }
+                _ => {
+                    for i in 0..count {
+                        body(rows[index(scan_sel, i)].as_ptr(), index(target_sel, i), nulls);
+                    }
                 }
             }
         }

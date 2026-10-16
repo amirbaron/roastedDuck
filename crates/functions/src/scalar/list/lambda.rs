@@ -430,7 +430,7 @@ fn reduce(args: &DataChunk, state: &mut FunctionState, result: &mut Vector) -> R
     let mut first_elements = Vec::new();
     for (row, is_active) in active.iter_mut().enumerate() {
         let Some(entry) = input.get(row) else {
-            output.validity_mut().set_invalid(row, rows);
+            output.set_null(row);
             *is_active = false;
             continue;
         };

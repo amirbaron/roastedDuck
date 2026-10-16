@@ -403,7 +403,7 @@ unsafe fn match_fixed(
     count: usize,
     rhs_rows: &[RowPtr],
     offset: usize,
-    rhs_null: &dyn Fn(usize) -> bool,
+    rhs_null: &impl Fn(usize) -> bool,
     no_match: &mut Option<&mut Vec<u32>>,
 ) -> usize {
     #[allow(
@@ -418,7 +418,7 @@ unsafe fn match_fixed(
         count: usize,
         rhs_rows: &[RowPtr],
         offset: usize,
-        rhs_null: &dyn Fn(usize) -> bool,
+        rhs_null: &impl Fn(usize) -> bool,
         no_match: &mut Option<&mut Vec<u32>>,
     ) -> usize {
         let width = size_of::<T>().max(1);

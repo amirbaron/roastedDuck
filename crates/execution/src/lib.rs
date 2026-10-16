@@ -5,10 +5,13 @@
 //! their state in typed global (shared) and local (per-thread) state objects.
 
 pub mod aggregate_hashtable;
+mod column_data_collection;
 mod constraints;
 mod context;
 mod executor;
 mod expression_executor;
+pub mod join_hashtable;
+mod nested_loop_join;
 mod operator;
 pub mod operators;
 mod pipeline;
@@ -24,4 +27,4 @@ pub use operator::{
     Operator, OperatorResult, PhysicalOperator, PhysicalRef, Sink, SinkFinalize, SinkResult, Source,
     SourceResult,
 };
-pub use plan_generator::{PlanContext, create_physical_plan, create_physical_plan_with};
+pub use plan_generator::{JoinPlanSettings, PlanContext, create_physical_plan, create_physical_plan_with};
