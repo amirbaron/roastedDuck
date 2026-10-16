@@ -322,15 +322,20 @@ fn csv_replacement_scan(base: &BaseTableRef, alias: &str) -> Option<TableRef> {
     } else if lower_name.ends_with(".zst") {
         lower_name.truncate(lower_name.len() - 4);
     }
-    if !lower_name.ends_with(".csv")
-        && !lower_name.contains(".csv?")
-        && !lower_name.ends_with(".tsv")
-        && !lower_name.contains(".tsv?")
-    {
+    // `ReplacementScan::CanReplace` for the CSV reader, then for the Parquet extension's
+    // `ParquetScanReplacement`.
+    let can_replace = |extension: &str| {
+        lower_name.ends_with(&format!(".{extension}")) || lower_name.contains(&format!(".{extension}?"))
+    };
+    let function_name = if can_replace("csv") || can_replace("tsv") {
+        "read_csv_auto"
+    } else if can_replace("parquet") {
+        "parquet_scan"
+    } else {
         return None;
-    }
+    };
     let function = rustdb_ast::FunctionExpression {
-        function_name: "read_csv_auto".to_owned(),
+        function_name: function_name.to_owned(),
         schema: String::new(),
         children: vec![rustdb_ast::ParsedExpression::constant(
             rustdb_types::Value::varchar(&full_path),

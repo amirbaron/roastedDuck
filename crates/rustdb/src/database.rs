@@ -300,6 +300,9 @@ impl Database {
         for set in rustdb_csv::read_csv::read_csv_functions() {
             system_catalog.register_table_functions(set)?;
         }
+        for set in rustdb_parquet::parquet_table_functions() {
+            system_catalog.register_table_functions(set)?;
+        }
         crate::system_functions::register_default_views(&system_catalog)?;
         crate::system_functions::register_default_macros(&system_catalog)?;
         let env = rustdb_execution::ClientEnv::standalone()?;
@@ -425,7 +428,8 @@ impl Database {
     /// Loads a (statically linked) extension, like `LOAD name`.
     pub fn load_extension(&self, name: &str) -> ExtensionLoad {
         match name {
-            "core_functions" | "parquet" | "json" | "icu" | "tpch" | "tpcds" | "autocomplete" | "httpfs"
+            "parquet" => ExtensionLoad::Loaded,
+            "core_functions" | "json" | "icu" | "tpch" | "tpcds" | "autocomplete" | "httpfs"
             | "fts" | "inet" | "excel" | "sqlsmith" | "spatial" | "delta" | "iceberg" | "aws" | "azure"
             | "motherduck" | "postgres_scanner" | "mysql_scanner" | "sqlite_scanner" | "vss" | "ui"
             | "encodings" | "ducklake" | "avro" | "demo_capi" => ExtensionLoad::NotAvailable,

@@ -1,0 +1,23 @@
+[package]
+name = "rustdb-parquet"
+description = "The Parquet extension: read_parquet, the parquet metadata functions and COPY ... (FORMAT parquet) (DuckDB's extension/parquet)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+brotli = "9.0.0"
+flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
+lz4_flex = "0.14.0"
+rustdb-common.workspace = true
+rustdb-csv = { version = "1.5.6", path = "../csv" }
+rustdb-function = { version = "1.5.6", path = "../function" }
+rustdb-planner = { version = "1.5.6", path = "../planner" }
+rustdb-storage = { version = "1.5.6", path = "../storage" }
+rustdb-types.workspace = true
+ruzstd = "0.9"
+snap = "1.1.2"
+
+[lints]
+workspace = true
