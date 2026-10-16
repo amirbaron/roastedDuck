@@ -115,8 +115,7 @@ impl<K: StoredKind, const LAST: bool, const SKIP_NULLS: bool> Aggregate for Firs
         if let (Some(value), true) = (&state.value, state.is_set) {
             K::write(value, result, row)
         } else {
-            let capacity = result.capacity();
-            result.validity_mut().set_invalid(row, capacity);
+            result.set_null(row);
             Ok(())
         }
     }

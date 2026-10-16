@@ -247,8 +247,7 @@ impl Aggregate for ApproxTopK {
         row: usize,
     ) -> Result<()> {
         let Some(state) = state.as_ref().filter(|state| !state.order.is_empty()) else {
-            let capacity = result.capacity();
-            result.validity_mut().set_invalid(row, capacity);
+            result.set_null(row);
             return Ok(());
         };
         let len = state.order.len().min(state.k);

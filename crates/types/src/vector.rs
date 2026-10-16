@@ -229,7 +229,8 @@ impl Vector {
     /// A constant vector that is NULL for every row.
     pub fn constant_null(ty: LogicalType) -> Self {
         let mut vector = Self::flat(ty, 1);
-        vector.validity_mut().set_invalid(0, 1);
+        // Nested children are NULL too (`ConstantVector::SetNull`).
+        vector.set_null(0);
         vector.make_constant();
         vector
     }
@@ -584,6 +585,32 @@ impl Vector {
         match &mut self.storage_mut().aux {
             Aux::Struct(children) => Some(children),
             _ => None,
+        }
+    }
+
+    /// Marks slot `row` of a flat vector NULL, including the fields of a STRUCT and the
+    /// elements of an ARRAY (DuckDB's `FlatVector::SetNull`), so a NULL nested value never
+    /// carries child data that hashing or comparisons would see.
+    pub fn set_null(&mut self, row: usize) {
+        let capacity = self.capacity().max(row + 1);
+        self.validity_mut().set_invalid(row, capacity);
+        match self.ty.physical_type() {
+            PhysicalType::Struct => {
+                if let Some(children) = self.struct_children_mut() {
+                    for child in children {
+                        child.set_null(row);
+                    }
+                }
+            }
+            PhysicalType::Array => {
+                let size = array_size(&self.ty);
+                if let Some(child) = self.array_child_mut() {
+                    for element in row * size..(row + 1) * size {
+                        child.set_null(element);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 

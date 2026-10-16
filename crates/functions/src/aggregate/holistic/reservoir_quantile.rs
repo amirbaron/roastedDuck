@@ -122,8 +122,7 @@ impl<T: Element + 'static> Aggregate for ReservoirQuantile<T> {
         row: usize,
     ) -> Result<()> {
         if state.values.is_empty() {
-            let capacity = result.capacity();
-            result.validity_mut().set_invalid(row, capacity);
+            result.set_null(row);
             return Ok(());
         }
         let quantiles = &input.bind_data::<Bounds>()?.quantiles;

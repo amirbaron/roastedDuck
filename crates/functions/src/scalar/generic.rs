@@ -211,7 +211,7 @@ pub fn constant_or_null_functions() -> ScalarFunctionSet {
             if !nulls.is_empty() {
                 out.flatten(count);
                 for row in nulls {
-                    out.validity_mut().set_invalid(row, count);
+                    out.set_null(row);
                 }
             }
             *result = out;
@@ -319,8 +319,7 @@ fn least_greatest(name: &'static str, greatest: bool) -> ScalarFunctionSet {
                         &[modifiers],
                     )?;
                 } else {
-                    let capacity = out.capacity();
-                    out.validity_mut().set_invalid(row, capacity);
+                    out.set_null(row);
                 }
             }
             if constant {

@@ -505,10 +505,7 @@ fn execute_try(
         match execute(child, child_state, input, Some(&position), 1) {
             Ok(value) => scatter(&value, &mut result, &position)?,
             Err(error) if error.kind() == ErrorKind::Internal => return Err(error),
-            Err(_) => {
-                let len = result_len(sel, count);
-                result.validity_mut().set_invalid(position[0] as usize, len);
-            }
+            Err(_) => result.set_null(position[0] as usize),
         }
     }
     Ok(compact(result, sel))

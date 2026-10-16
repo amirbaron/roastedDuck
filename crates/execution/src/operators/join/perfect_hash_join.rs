@@ -397,7 +397,7 @@ mod tests {
     fn key_range_tracks_min_and_max_of_valid_keys() {
         let mut keys = Vector::flat(LogicalType::INTEGER, 4);
         keys.values_mut::<i32>().copy_from_slice(&[7, -3, 100, 5]);
-        keys.validity_mut().set_invalid(2, 4);
+        keys.set_null(2);
         let mut range = KeyRange::default();
         range.update(&keys, 4);
         assert_eq!(range.bounds, Some((-3, 7)));
