@@ -20,7 +20,9 @@ use rustdb_types::{DataChunk, PhysicalType, Vector};
 use super::algorithm::KeyBlocks;
 use super::encode::{decode_fixed_into, decode_sort_key};
 use super::key::{SortKey, dispatch_sort_key};
+use super::pdqsort::pdqsort_branchless;
 use super::run::SortedRun;
+use super::vergesort::vergesort;
 use super::{ColumnSource, SortLayouts};
 use crate::gather::HeapKeepAlive;
 use crate::row::RowPtr;
@@ -587,8 +589,13 @@ impl SortedRunMerger {
         }
         local.merged_count = merged_count;
         if active_runs > 1 && !self.index_creation {
-            // The ranges are sorted: a run-adaptive stable sort merges them.
-            merged_keys::<K>(local)[..merged_count].sort_by(SortKey::compare);
+            // Re-sorting beats merging: vergesort finds the sorted ranges and merges them,
+            // pdqsort handles the rest (DuckDB's `TemplatedComputeMerge`).
+            let keys = &mut merged_keys::<K>(local)[..merged_count];
+            let less = |a: &K, b: &K| a.less(b);
+            vergesort(keys, 0, merged_count, &less, &mut |keys: &mut [K], begin, end| {
+                pdqsort_branchless(keys, begin, end, &less);
+            });
         }
         Ok(())
     }

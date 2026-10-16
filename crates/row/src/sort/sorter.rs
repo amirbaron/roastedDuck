@@ -209,7 +209,7 @@ impl Sort {
     ) -> Result<()> {
         if local.sorted_run.is_none() {
             // An index sort could be approximate, but (like DuckDB) runs are sorted exactly.
-            local.sorted_run = Some(SortedRun::new(&self.layouts)?);
+            local.sorted_run = Some(SortedRun::new(&self.layouts, self.index_creation)?);
             global.update_local_state(local);
         }
         let count = chunk.len();

@@ -7,7 +7,7 @@ use rustdb_buffer::MemoryTag;
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 
 use super::SortLayouts;
-use super::algorithm::{KeyBlocks, RadixPlan, sort_blocks, sort_slice};
+use super::algorithm::{KeyBlocks, ska_key, sort_keys};
 use super::encode::SortKeyBuffer;
 use super::key::{SortKey, dispatch_sort_key};
 use crate::collection::TupleDataCollection;
@@ -31,6 +31,8 @@ pub struct SortedRun {
     key_append: AppendState,
     payload_append: AppendState,
     pub(crate) finalized: bool,
+    /// Whether this is the approximate sort of an index creation (no full-key tie break).
+    is_index_sort: bool,
 }
 
 impl std::fmt::Debug for SortedRun {
@@ -43,7 +45,8 @@ impl std::fmt::Debug for SortedRun {
 }
 
 impl SortedRun {
-    pub(crate) fn new(layouts: &Arc<SortLayouts>) -> Result<Self> {
+    /// An empty run; `is_index_sort` for the approximate sort of an index creation.
+    pub(crate) fn new(layouts: &Arc<SortLayouts>, is_index_sort: bool) -> Result<Self> {
         let mut key_data = TupleDataCollection::new(
             layouts.buffer_manager.clone(),
             Arc::clone(&layouts.key_layout),
@@ -69,13 +72,15 @@ impl SortedRun {
             key_append,
             payload_append,
             finalized: false,
+            is_index_sort,
         })
     }
 
     /// An empty, finalized run to materialize merged data into
     /// (`CreateRunForMaterialization`).
     pub(crate) fn for_materialization(layouts: &Arc<SortLayouts>) -> Result<Self> {
-        let mut run = Self::new(layouts)?;
+        // Materialized runs are already in order and never sorted again.
+        let mut run = Self::new(layouts, false)?;
         run.key_append.pin_state.properties = PinProperties::UnpinAfterDone;
         run.payload_append.pin_state.properties = PinProperties::UnpinAfterDone;
         run.finalized = true;
@@ -187,7 +192,11 @@ impl SortedRun {
 
     fn sort_typed<K: SortKey>(&mut self) -> Result<()> {
         let layout = self.key_data.layout();
-        let plan = RadixPlan::new::<K>(layout.sort_width(), layout.sort_skippable_bytes());
+        let extract = ska_key::<K>(
+            layout.sort_width(),
+            layout.sort_skippable_bytes(),
+            self.is_index_sort,
+        );
         // SAFETY: every key block is pinned (KeepEverythingPinned) and only this run uses it.
         let mut blocks = unsafe { self.key_blocks::<K>()? };
         let len = blocks.len();
@@ -202,12 +211,12 @@ impl SortedRun {
                     blocks.copy_to(keys);
                     std::slice::from_raw_parts_mut(keys, len)
                 };
-                sort_slice(keys, &plan);
+                sort_keys(keys, &extract);
                 blocks.copy_from(keys);
                 return Ok(());
             }
         }
-        sort_blocks(&mut blocks, &plan);
+        sort_keys(&mut blocks, &extract);
         Ok(())
     }
 

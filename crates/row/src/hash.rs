@@ -205,7 +205,11 @@ hash_native!(
 /// Stores `hash` in `target`, or combines it with the hash already there.
 #[inline]
 fn emit(target: &mut u64, hash: u64, combine: bool) {
-    *target = if combine { combine_hash(*target, hash) } else { hash };
+    *target = if combine {
+        combine_hash(*target, hash)
+    } else {
+        hash
+    };
 }
 
 /// Hashes (or, with `combine`, combines into `out`) rows `0..out.len()` of a fixed-width
