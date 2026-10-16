@@ -18,7 +18,7 @@ use rustdb_planner::{Expression, ExpressionEvaluator, ExpressionKind, Expression
 use rustdb_types::compare::{CompareOp, compare};
 use rustdb_types::kernels::{scatter, unary};
 use rustdb_types::{
-    DataChunk, LogicalType, SelectionVector, Unified, ValidityMask, Value, Vector, VectorKind,
+    DataChunk, LogicalType, LogicalTypeId, SelectionVector, Unified, ValidityMask, Value, Vector, VectorKind,
 };
 
 /// Per-expression execution state, mirroring the expression tree.
@@ -32,7 +32,10 @@ struct ExpressionState {
 
 impl ExpressionState {
     fn for_expression(expression: &Expression) -> Self {
-        let mut function = FunctionState::default();
+        let mut function = FunctionState {
+            alias: expression.alias.clone(),
+            ..FunctionState::default()
+        };
         if let ExpressionKind::Function(bound) = &expression.kind
             && let Some(lambda) = &bound.lambda
         {
@@ -264,6 +267,10 @@ fn execute_cast(
     } else {
         CastParameters::new()
     };
+    // `parameters.cast_source`: errors name the source column when it has an alias.
+    if !cast.child.alias.is_empty() {
+        parameters.source_column = Some(cast.child.alias.clone());
+    }
     let mut result = Vector::flat(expression.return_type.clone(), count);
     cast.bound_cast
         .execute(&child, &mut result, count, &mut parameters)
@@ -669,6 +676,11 @@ pub(crate) fn compare_vectors(
     right: &Vector,
     count: usize,
 ) -> Result<Vector> {
+    if left.logical_type().id() == LogicalTypeId::Variant
+        && right.logical_type().id() == LogicalTypeId::Variant
+    {
+        return compare_variants(expression_type, left, right, count);
+    }
     let mut result = Vector::flat(LogicalType::BOOLEAN, 0);
     let simple = match expression_type {
         ExpressionType::CompareEqual => Some(CompareOp::Equal),
@@ -702,6 +714,58 @@ pub(crate) fn compare_vectors(
             _ => false,
         };
         *value = not_distinct != distinct;
+    }
+    Ok(out)
+}
+
+/// Compares VARIANT vectors by the values they hold (DuckDB's `DistinctSelectVariant`):
+/// NULL rows give NULL, or for `[NOT] DISTINCT FROM` compare equal only to NULL.
+fn compare_variants(
+    expression_type: ExpressionType,
+    left: &Vector,
+    right: &Vector,
+    count: usize,
+) -> Result<Vector> {
+    use std::cmp::Ordering;
+    let mut out = Vector::flat(LogicalType::BOOLEAN, count);
+    for row in 0..count {
+        let (l, r) = (left.get_value(row), right.get_value(row));
+        let distinct_kind = matches!(
+            expression_type,
+            ExpressionType::CompareDistinctFrom | ExpressionType::CompareNotDistinctFrom
+        );
+        if l.is_null() || r.is_null() {
+            if distinct_kind {
+                let not_distinct = l.is_null() && r.is_null();
+                let value = not_distinct != (expression_type == ExpressionType::CompareDistinctFrom);
+                out.values_mut::<bool>()[row] = value;
+            } else {
+                out.set_null(row);
+            }
+            continue;
+        }
+        let order = rustdb_function::cast::variant_order;
+        // `<` and `>=` run as `>` with swapped operands, `<=` as the negated `>`
+        // (`VectorOperations::DistinctLessThan` and friends).
+        let value = match expression_type {
+            ExpressionType::CompareEqual | ExpressionType::CompareNotDistinctFrom => {
+                order(&l, &r)? == Some(Ordering::Equal)
+            }
+            ExpressionType::CompareNotequal | ExpressionType::CompareDistinctFrom => {
+                order(&l, &r)? != Some(Ordering::Equal)
+            }
+            ExpressionType::CompareGreaterthan => order(&l, &r)? == Some(Ordering::Greater),
+            ExpressionType::CompareLessthan => order(&r, &l)? == Some(Ordering::Greater),
+            ExpressionType::CompareLessthanorequalto => order(&l, &r)? != Some(Ordering::Greater),
+            ExpressionType::CompareGreaterthanorequalto => order(&r, &l)? != Some(Ordering::Greater),
+            other => {
+                return Err(Error::internal(format!(
+                    "Unknown comparison type {}",
+                    other.name()
+                )));
+            }
+        };
+        out.values_mut::<bool>()[row] = value;
     }
     Ok(out)
 }

@@ -1168,3 +1168,115 @@ fn show_to_sql(show: &ShowRef) -> String {
     }
     result
 }
+
+impl fmt::Display for crate::InsertStatement {
+    /// DuckDB's `InsertStatement::ToString`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use crate::OnConflictAction;
+        let mut result = self.cte_map.to_sql();
+        result.push_str("INSERT");
+        let or_replace = self
+            .on_conflict_info
+            .as_ref()
+            .is_some_and(|info| info.action_type == OnConflictAction::Replace);
+        if or_replace {
+            result.push_str(" OR REPLACE");
+        }
+        result.push_str(" INTO ");
+        for qualifier in [&self.catalog, &self.schema] {
+            if !qualifier.is_empty() {
+                result.push_str(&write_optionally_quoted(qualifier));
+                result.push('.');
+            }
+        }
+        result.push_str(&write_optionally_quoted(&self.table));
+        if let Some(table_ref) = &self.table_ref
+            && !table_ref.alias.is_empty()
+        {
+            let _ = write!(result, " AS {}", write_optionally_quoted(&table_ref.alias));
+        }
+        if self.column_order == crate::InsertColumnOrder::InsertByName {
+            result.push_str(" BY NAME");
+        }
+        if !self.columns.is_empty() {
+            let columns = join_list(&self.columns, ", ", |column| write_optionally_quoted(column));
+            let _ = write!(result, " ({columns} )");
+        }
+        result.push(' ');
+        if let Some(values) = self.values_list() {
+            result.push_str(&values_to_sql(values));
+        } else if let Some(select) = &self.select_statement {
+            result.push_str(&select.to_string());
+        } else {
+            result.push_str("DEFAULT VALUES");
+        }
+        if !or_replace && let Some(info) = &self.on_conflict_info {
+            result.push_str(" ON CONFLICT ");
+            if !info.indexed_columns.is_empty() {
+                let columns = join_list(&info.indexed_columns, ", ", |column| column.to_lowercase());
+                let _ = write!(result, "({columns} )");
+            }
+            if let Some(condition) = &info.condition {
+                let _ = write!(result, " WHERE {condition}");
+            }
+            result.push(' ');
+            result.push_str(match info.action_type {
+                OnConflictAction::Nothing => "DO NOTHING",
+                OnConflictAction::Update | OnConflictAction::Replace => "DO UPDATE",
+                OnConflictAction::Throw => "",
+            });
+            if let Some(set_info) = &info.set_info {
+                result.push_str(" SET ");
+                let assignments: Vec<String> = set_info
+                    .columns
+                    .iter()
+                    .zip(&set_info.expressions)
+                    .map(|(column, expression)| format!("{} = {expression}", column.to_lowercase()))
+                    .collect();
+                result.push_str(&assignments.join(", "));
+                if let Some(condition) = &set_info.condition {
+                    let _ = write!(result, " WHERE {condition}");
+                }
+            }
+        }
+        if !self.returning_list.is_empty() {
+            result.push_str(" RETURNING ");
+            let columns = join_list(&self.returning_list, ", ", |expression| {
+                if expression.alias.is_empty() {
+                    expression.to_string()
+                } else {
+                    format!("{expression} AS {}", write_optionally_quoted(&expression.alias))
+                }
+            });
+            result.push_str(&columns);
+        }
+        f.write_str(&result)
+    }
+}
+
+impl crate::InsertStatement {
+    /// The `VALUES` list inserted directly (`INSERT INTO tbl VALUES (...)`), if that is the
+    /// source (DuckDB's `InsertStatement::GetValuesList`).
+    pub fn values_list(&self) -> Option<&ExpressionListRef> {
+        let select = self.select_statement.as_ref()?;
+        let QueryNodeKind::Select(node) = &select.node.kind else {
+            return None;
+        };
+        if node.where_clause.is_some()
+            || node.qualify.is_some()
+            || node.having.is_some()
+            || !select.node.cte_map.map.is_empty()
+            || !node.group_sets.is_empty()
+            || node.aggregate_handling != AggregateHandling::StandardHandling
+        {
+            return None;
+        }
+        if node.select_list.len() != 1 || node.select_list[0].expression_type != ExpressionType::Star {
+            return None;
+        }
+        match &node.from_table.kind {
+            TableRefKind::ExpressionList(list) => Some(list),
+            _ => None,
+        }
+    }
+}

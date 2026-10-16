@@ -94,10 +94,9 @@ fn create_suggestions(extension: &str) -> (String, bool) {
     (candidates_message(&closest, "Candidate extensions"), false)
 }
 
-/// The file `LOAD name` reads (`~/.duckdb/extensions/<version>/<platform>/`; the reference build is `v0.0.1`).
-fn extension_path(name: &str) -> String {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let platform = if cfg!(target_os = "macos") {
+/// `DuckDBPlatform()`: the platform name of this build.
+pub(crate) fn platform() -> &'static str {
+    if cfg!(target_os = "macos") {
         if cfg!(target_arch = "aarch64") {
             "osx_arm64"
         } else {
@@ -107,7 +106,13 @@ fn extension_path(name: &str) -> String {
         "linux_arm64"
     } else {
         "linux_amd64"
-    };
+    }
+}
+
+/// The file `LOAD name` reads (`~/.duckdb/extensions/<version>/<platform>/`; the reference build is `v0.0.1`).
+fn extension_path(name: &str) -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let platform = platform();
     format!("{home}/.duckdb/extensions/v0.0.1/{platform}/{name}.duckdb_extension")
 }
 

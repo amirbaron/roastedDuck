@@ -2,7 +2,6 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 
 use rustdb_common::{Error, Result};
-use rustdb_function::cast::ValueCast;
 use rustdb_planner::{BoundLimitNode, Expression};
 use rustdb_types::{DataChunk, LogicalType, SelectionVector, Value};
 
@@ -24,24 +23,37 @@ fn delimiter(input: &DataChunk, expression: &Expression) -> Result<Value> {
     Ok(result.columns()[0].get_value(0))
 }
 
+/// `Value::GetValue<T>`: `value` cast to `target`, failures as Invalid Input errors.
+fn get_value_as(value: &Value, target: &LogicalType) -> Result<Value> {
+    use rustdb_function::cast::ValueCast;
+    // `GetValueInternal` reads a DECIMAL as a DOUBLE first.
+    let value = if value.logical_type().id() == rustdb_types::LogicalTypeId::Decimal {
+        value.try_cast(&LogicalType::DOUBLE)?
+    } else {
+        value.clone()
+    };
+    value.try_cast(target).map_err(|error| {
+        if error.kind() == rustdb_common::ErrorKind::Conversion {
+            Error::invalid_input(error.raw_message().to_owned())
+        } else {
+            error
+        }
+    })
+}
+
 /// A LIMIT or OFFSET value: the BIGINT result as an unsigned count (`GetValue<idx_t>`),
 /// `null` when NULL.
 fn count_value(input: &DataChunk, expression: &Expression, null: u64) -> Result<u64> {
-    let mut value = delimiter(input, expression)?;
+    let value = delimiter(input, expression)?;
     if value.is_null() {
         return Ok(null);
     }
-    if value.as_i128().is_none() {
-        // `GetValue<idx_t>` casts other types (a DOUBLE offset rounds).
-        value = value.default_cast_as(&LogicalType::BIGINT)?;
-    }
-    let signed = value.as_i128().unwrap_or_default();
-    let count = u64::try_from(signed).map_err(|_| {
-        Error::invalid_input(format!(
-            "Type INT64 with value {signed} can't be cast because the value is out of range for the destination \
-             type UINT64"
-        ))
-    })?;
+    // `Value::GetValue<idx_t>`: the value cast to UBIGINT (a LIMIT subquery keeps its own
+    // type).
+    let count = get_value_as(&value, &LogicalType::UBIGINT)?
+        .as_i128()
+        .and_then(|count| u64::try_from(count).ok())
+        .unwrap_or_default();
     if count > MAX_LIMIT_VALUE {
         return Err(Error::binder(format!(
             "Max value {count} for LIMIT/OFFSET is {MAX_LIMIT_VALUE}"
@@ -273,7 +285,10 @@ impl Sink for PhysicalLimitPercent {
             let percent = if value.is_null() {
                 100.0
             } else {
-                value.as_f64().unwrap_or_default()
+                // `Value::GetValue<double>`.
+                get_value_as(&value, &LogicalType::DOUBLE)?
+                    .as_f64()
+                    .unwrap_or_default()
             };
             if percent < 0.0 {
                 return Err(Error::binder(format!(

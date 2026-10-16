@@ -501,7 +501,7 @@ fn list_files(path: &str) -> Vec<(String, bool)> {
 }
 
 /// `LocalGlobResult`: expands a pattern against the local file system.
-fn local_glob(pattern: &str) -> Result<Vec<String>> {
+pub fn local_glob(pattern: &str) -> Result<Vec<String>> {
     let path = expand_home(pattern);
     if path.is_empty() {
         return Ok(Vec::new());

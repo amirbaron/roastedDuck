@@ -569,7 +569,10 @@ fn flag(input: &TableFunctionBindInput<'_>, name: &str) -> Result<bool> {
         Some((_, value)) if value.is_null() => Err(Error::invalid_input(format!(
             "Cannot use NULL as argument for {name}"
         ))),
-        Some((_, value)) => Ok(value.as_i128().is_some_and(|flag| flag != 0)),
+        Some((_, value)) => Ok(value
+            .as_bool()
+            .or_else(|| value.as_i128().map(|flag| flag != 0))
+            .unwrap_or(false)),
     }
 }
 

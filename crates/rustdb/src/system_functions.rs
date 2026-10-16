@@ -207,23 +207,6 @@ fn database_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
             ],
         ));
     }
-    // The temporary database exists in every DuckDB instance.
-    rows.push((
-        "temp".to_owned(),
-        vec![
-            text("temp"),
-            oid(TEMP_OID),
-            null_text(),
-            null_text(),
-            empty_map(),
-            Value::boolean(true),
-            text("duckdb"),
-            Value::boolean(false),
-            Value::boolean(false),
-            null_text(),
-            empty_map(),
-        ],
-    ));
     // `DatabaseManager::GetDatabases`: the attached databases, then `system` and `temp`.
     let rank = |name: &str| match name {
         "system" => 1,
@@ -233,9 +216,6 @@ fn database_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
     rows.sort_by(|a, b| (rank(&a.0), &a.0).cmp(&(rank(&b.0), &b.0)));
     Ok(rows.into_iter().map(|(_, row)| row).collect())
 }
-
-/// The object id shown for the temporary database.
-const TEMP_OID: u64 = 1;
 
 const SCHEMA_COLUMNS: Columns = &[
     ("oid", bigint),
@@ -276,7 +256,6 @@ fn schema_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
             schema.internal,
         );
     }
-    push("temp", TEMP_OID, "main", TEMP_OID + 1, true);
     rows.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
     Ok(rows.into_iter().map(|(_, _, row)| row).collect())
 }
@@ -515,7 +494,14 @@ fn index_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                     rustdb_ast::IndexConstraintType::Unique | rustdb_ast::IndexConstraintType::Primary
                 )),
                 Value::boolean(constraint == rustdb_ast::IndexConstraintType::Primary),
-                text(format!("[{}]", expressions.join(", "))),
+                // `GetIndexExpressions(index).ToString()`: the VARCHAR list's text.
+                text(
+                    Value::list(
+                        LogicalType::VARCHAR,
+                        expressions.iter().map(Value::varchar).collect(),
+                    )
+                    .to_varchar()?,
+                ),
                 info.to_sql().map_or_else(null_text, text),
             ]);
         }
@@ -705,16 +691,21 @@ fn column_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                     }
                 }
                 EntryKind::View(view) => {
-                    for (index, ty) in view.types.iter().enumerate() {
-                        let name = view
-                            .aliases
-                            .get(index)
-                            .or_else(|| view.names.get(index))
-                            .cloned()
-                            .unwrap_or_default();
-                        let comment = view.column_comments.get(&name).cloned().unwrap_or_default();
+                    // `ViewColumnHelper`: the view's column names, deduplicated.
+                    let mut names: Vec<String> = (0..view.types.len())
+                        .map(|index| {
+                            view.aliases
+                                .get(index)
+                                .or_else(|| view.names.get(index))
+                                .cloned()
+                                .unwrap_or_default()
+                        })
+                        .collect();
+                    rustdb_planner::deduplicate_columns(&mut names);
+                    for (index, (ty, name)) in view.types.iter().zip(&names).enumerate() {
+                        let comment = view.column_comments.get(name).cloned().unwrap_or_default();
                         rows.push(column_row(
-                            catalog, &schema, &entry, index, &name, ty, None, true, &comment,
+                            catalog, &schema, &entry, index, name, ty, None, true, &comment,
                         ));
                     }
                 }
@@ -843,6 +834,30 @@ pub(crate) fn catalog_table_functions() -> Vec<TableFunctionSet> {
         rows_function("duckdb_memory", MEMORY_COLUMNS, memory_rows),
         rows_function("duckdb_constraints", CONSTRAINT_COLUMNS, constraint_rows),
         rows_function("duckdb_functions", FUNCTION_COLUMNS, function_rows),
+        rows_function("duckdb_keywords", KEYWORD_COLUMNS, keyword_rows),
+        rows_function("duckdb_settings", SETTING_COLUMNS, setting_rows),
+        rows_function("duckdb_optimizers", OPTIMIZER_COLUMNS, optimizer_rows),
+        rows_function(
+            "duckdb_approx_database_count",
+            DATABASE_COUNT_COLUMNS,
+            database_count_rows,
+        ),
+        rows_function(
+            "duckdb_connection_count",
+            CONNECTION_COUNT_COLUMNS,
+            connection_count_rows,
+        ),
+        rows_function("pragma_collations", COLLATION_COLUMNS, collation_rows),
+        rows_function("duckdb_variables", VARIABLE_COLUMNS, variable_rows),
+        rows_function(
+            "duckdb_prepared_statements",
+            PREPARED_STATEMENT_COLUMNS,
+            prepared_statement_rows,
+        ),
+        rows_function("duckdb_temporary_files", TEMPORARY_FILE_COLUMNS, |_| {
+            Ok(Vec::new())
+        }),
+        rows_function("duckdb_dependencies", DEPENDENCY_COLUMNS, dependency_rows),
         rows_function("duckdb_types", TYPE_COLUMNS, type_rows),
         secrets_function(),
         which_secret_function(),
@@ -901,6 +916,89 @@ impl FunctionData for VariableValue {
     }
 }
 
+/// The type a `make_type` call names.
+#[derive(Debug)]
+struct MadeType(LogicalType);
+
+impl FunctionData for MadeType {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// `make_type(name, [parameters...])` (DuckDB's `MakeTypeFun`): the constant TYPE of the
+/// type `name` with the (named) parameters, bound like a type in SQL text.
+fn make_type_function() -> ScalarFunctionSet {
+    use rustdb_types::{TypeInfo, TypeParameter, TypeParameterValue, UnboundTypeInfo};
+    let mut function = ScalarFunction::new(
+        "make_type",
+        vec![LogicalType::VARCHAR],
+        LogicalType::simple(LogicalTypeId::Type),
+        |_: &DataChunk, _: &mut FunctionState, _: &mut Vector| {
+            Err(Error::invalid_input(
+                "make_type function can only be used in constant expressions",
+            ))
+        },
+    )
+    .with_bind(|_, input| {
+        // `BindMakeTypeFunctionExpression`.
+        let mut arguments = Vec::with_capacity(input.constants.len());
+        for (index, constant) in input.constants.iter().enumerate() {
+            let Some(value) = constant else {
+                return Err(Error::binder(
+                    "make_type function arguments must be constant expressions",
+                ));
+            };
+            arguments.push((
+                input.aliases.get(index).cloned().unwrap_or_default(),
+                value.clone(),
+            ));
+        }
+        let Some((_, name)) = arguments.first() else {
+            return Err(Error::binder("make_type function requires at least one argument"));
+        };
+        if name.logical_type().id() != LogicalTypeId::Varchar {
+            return Err(Error::binder(
+                "make_type function first argument must be the type name as VARCHAR",
+            ));
+        }
+        let (catalog, schema, name) = crate::sequence::parse_qualified_name(&name.to_varchar()?)?;
+        let parameters = arguments[1..]
+            .iter()
+            .map(|(alias, value)| TypeParameter {
+                name: alias.clone(),
+                value: TypeParameterValue::Constant(value.clone()),
+                query_location: None,
+            })
+            .collect();
+        let unbound = LogicalType::with_info(
+            LogicalTypeId::Unbound,
+            TypeInfo::Unbound(UnboundTypeInfo {
+                catalog,
+                schema,
+                name,
+                parameters,
+                query_location: None,
+            }),
+        );
+        let context = input
+            .binder
+            .and_then(|binder| binder.downcast_ref::<ClientContext>())
+            .ok_or_else(|| Error::internal("make_type bound without a client context"))?;
+        let bound = rustdb_planner::bind_logical_type(context, &unbound)?;
+        Ok(Some(Arc::new(MadeType(bound)) as Arc<dyn FunctionData>))
+    })
+    .with_bind_expression(|data, _| {
+        data.and_then(|data| data.as_any().downcast_ref::<MadeType>())
+            .map(|made| Value::type_value(made.0.clone()))
+    });
+    function.varargs = Some(LogicalType::ANY);
+    function.null_handling = rustdb_function::NullHandling::Special;
+    let mut set = ScalarFunctionSet::new("make_type");
+    set.add(function);
+    set
+}
+
 /// `getvariable(name)` (DuckDB's `GetVariableFun`): replaced by the variable's value,
 /// a constant of the value's type, when bound.
 fn getvariable_function() -> ScalarFunctionSet {
@@ -938,7 +1036,7 @@ fn getvariable_function() -> ScalarFunctionSet {
         function.return_type = value.logical_type().clone();
         Ok(Some(Arc::new(VariableValue(value)) as Arc<dyn FunctionData>))
     })
-    .with_bind_expression(|data| {
+    .with_bind_expression(|data, _| {
         data.and_then(|data| data.as_any().downcast_ref::<VariableValue>())
             .map(|variable| variable.0.clone())
     });
@@ -954,6 +1052,7 @@ pub(crate) fn context_scalar_functions() -> Vec<ScalarFunctionSet> {
         context_function("current_schema", |context| context.default_schema().to_owned()),
         in_search_path_function(),
         getvariable_function(),
+        make_type_function(),
     ]
 }
 
@@ -1092,6 +1191,169 @@ fn table_info_rows(context: &ClientContext, name: &str) -> Result<Vec<Vec<Value>
     Ok(rows)
 }
 
+const SHOW_COLUMNS: Columns = &[
+    ("column_name", varchar),
+    ("column_type", varchar),
+    ("null", varchar),
+    ("key", varchar),
+    ("default", varchar),
+    ("extra", varchar),
+];
+
+/// `pragma_show(name)` (`PragmaTableInfoFunction` with `PragmaShowHelper`): the columns of
+/// a table or view in the form of DESCRIBE.
+fn show_rows(context: &ClientContext, name: &str) -> Result<Vec<Vec<Value>>> {
+    let (catalog, schema, table) = crate::sequence::parse_qualified_name(name)?;
+    let found = context
+        .get_entry(
+            &catalog,
+            &schema,
+            rustdb_catalog::CatalogType::Table,
+            &table,
+            false,
+        )?
+        .ok_or_else(|| Error::catalog(format!("Table with name {table} does not exist!")))?;
+    let mut rows = Vec::new();
+    match &found.entry.kind {
+        EntryKind::Table(entry) => {
+            for (index, column) in entry.columns.iter().enumerate() {
+                // `ColumnConstraintInfo`.
+                let (mut pk, mut unique) = (false, false);
+                for constraint in &entry.constraints {
+                    let rustdb_ast::Constraint::Unique(constraint) = constraint else {
+                        continue;
+                    };
+                    let covers = if constraint.index.0 == u64::MAX {
+                        constraint
+                            .columns
+                            .iter()
+                            .any(|c| c.eq_ignore_ascii_case(&column.name))
+                    } else {
+                        constraint.index.0 == index as u64
+                    };
+                    if covers {
+                        if constraint.is_primary_key {
+                            pk = true;
+                        } else {
+                            unique = true;
+                        }
+                    }
+                }
+                let default = column
+                    .generated
+                    .as_ref()
+                    .or(column.default_value.as_ref())
+                    .map_or_else(null_text, |expression| text(expression.to_string()));
+                let key = if pk {
+                    text("PRI")
+                } else if unique {
+                    text("UNI")
+                } else {
+                    null_text()
+                };
+                rows.push(vec![
+                    text(column.name.clone()),
+                    text(column.logical_type.to_string()),
+                    text(if entry.not_null_columns.contains(&index) {
+                        "NO"
+                    } else {
+                        "YES"
+                    }),
+                    key,
+                    default,
+                    null_text(),
+                ]);
+            }
+        }
+        EntryKind::View(view) => {
+            for (index, ty) in view.types.iter().enumerate() {
+                let name = view
+                    .aliases
+                    .get(index)
+                    .or_else(|| view.names.get(index))
+                    .cloned()
+                    .unwrap_or_default();
+                rows.push(vec![
+                    text(name),
+                    text(ty.to_string()),
+                    text("YES"),
+                    null_text(),
+                    null_text(),
+                    null_text(),
+                ]);
+            }
+        }
+        _ => {}
+    }
+    Ok(rows)
+}
+
+const VERSION_COLUMNS: Columns = &[
+    ("library_version", varchar),
+    ("source_id", varchar),
+    ("codename", varchar),
+];
+
+/// `pragma_version()` (`PragmaVersionFunction`): the library version, source id and
+/// release codename (`DuckDB::ReleaseCodename`).
+fn version_rows(_: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    let version = rustdb_storage::storage_info::LIBRARY_VERSION;
+    let codename = if version.contains("-dev") {
+        "Development Version"
+    } else if version.starts_with("v1.2.") {
+        "Histrionicus"
+    } else if version.starts_with("v1.3.") {
+        "Ossivalis"
+    } else if version.starts_with("v1.4.") {
+        "Andium"
+    } else if version.starts_with("v1.5.") {
+        "Variegata"
+    } else {
+        "Unknown Version"
+    };
+    Ok(vec![vec![
+        text(version),
+        text(rustdb_storage::storage_info::SOURCE_ID),
+        text(codename),
+    ]])
+}
+
+const PLATFORM_COLUMNS: Columns = &[("platform", varchar)];
+
+/// `pragma_platform()`.
+fn platform_rows(_: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    Ok(vec![vec![text(crate::extensions::platform())]])
+}
+
+const USER_AGENT_COLUMNS: Columns = &[("user_agent", varchar)];
+
+/// `pragma_user_agent()` (`DBConfig::UserAgent`): `duckdb/<version>(<platform>)` followed
+/// by the `duckdb_api` and `custom_user_agent` settings.
+fn user_agent_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    let mut user_agent = format!(
+        "duckdb/{}({})",
+        rustdb_storage::storage_info::LIBRARY_VERSION,
+        crate::extensions::platform()
+    );
+    let setting = |name: &str| {
+        context
+            .function_client
+            .settings()
+            .and_then(|settings| settings.current_setting(name).ok())
+            .filter(|value| !value.is_null())
+            .and_then(|value| value.to_varchar().ok())
+            .unwrap_or_default()
+    };
+    for name in ["duckdb_api", "custom_user_agent"] {
+        let value = setting(name);
+        if !value.is_empty() {
+            user_agent.push(' ');
+            user_agent.push_str(&value);
+        }
+    }
+    Ok(vec![vec![text(user_agent)]])
+}
+
 const DATABASE_SIZE_COLUMNS: Columns = &[
     ("database_name", varchar),
     ("database_size", varchar),
@@ -1175,6 +1437,273 @@ fn varchar_list() -> LogicalType {
     LogicalType::list(LogicalType::VARCHAR)
 }
 
+const SETTING_COLUMNS: Columns = &[
+    ("name", varchar),
+    ("value", varchar),
+    ("description", varchar),
+    ("input_type", varchar),
+    ("scope", varchar),
+    ("aliases", varchar_list),
+];
+
+/// `duckdb_settings()` (`DuckDBSettingsFunction`): every option with its current value.
+fn setting_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    let settings = context
+        .function_client
+        .settings()
+        .map(|settings| settings.settings())
+        .unwrap_or_default();
+    Ok(settings
+        .into_iter()
+        .map(|setting| {
+            vec![
+                text(setting.name),
+                text(setting.value),
+                text(setting.description),
+                text(setting.input_type),
+                text(if setting.global { "GLOBAL" } else { "LOCAL" }),
+                Value::list(
+                    LogicalType::VARCHAR,
+                    setting.aliases.into_iter().map(text).collect(),
+                ),
+            ]
+        })
+        .collect())
+}
+
+const KEYWORD_COLUMNS: Columns = &[("keyword_name", varchar), ("keyword_category", varchar)];
+
+/// `duckdb_keywords()` (`DuckDBKeywordsFunction`): the grammar's keywords.
+fn keyword_rows(_: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    use rustdb_parser::KeywordCategory;
+    Ok(rustdb_parser::keyword_list()
+        .iter()
+        .map(|keyword| {
+            let category = match keyword.category {
+                KeywordCategory::Reserved => "reserved",
+                KeywordCategory::Unreserved => "unreserved",
+                KeywordCategory::TypeFunc => "type_function",
+                KeywordCategory::ColName => "column_name",
+            };
+            vec![text(keyword.name), text(category)]
+        })
+        .collect())
+}
+
+const OPTIMIZER_COLUMNS: Columns = &[("name", varchar)];
+
+/// `duckdb_optimizers()`: the optimizer names (`ListAllOptimizers`).
+fn optimizer_rows(_: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    const OPTIMIZERS: &[&str] = &[
+        "expression_rewriter",
+        "filter_pullup",
+        "filter_pushdown",
+        "empty_result_pullup",
+        "cte_filter_pusher",
+        "regex_range",
+        "in_clause",
+        "join_order",
+        "deliminator",
+        "unnest_rewriter",
+        "unused_columns",
+        "statistics_propagation",
+        "common_subexpressions",
+        "common_aggregate",
+        "column_lifetime",
+        "limit_pushdown",
+        "row_group_pruner",
+        "top_n",
+        "top_n_window_elimination",
+        "build_side_probe_side",
+        "compressed_materialization",
+        "duplicate_groups",
+        "reorder_filter",
+        "sampling_pushdown",
+        "join_filter_pushdown",
+        "extension",
+        "materialized_cte",
+        "sum_rewriter",
+        "late_materialization",
+        "cte_inlining",
+        "common_subplan",
+        "join_elimination",
+        "window_self_join",
+    ];
+    Ok(OPTIMIZERS.iter().map(|name| vec![text(*name)]).collect())
+}
+
+fn ubigint() -> LogicalType {
+    LogicalType::UBIGINT
+}
+
+const DATABASE_COUNT_COLUMNS: Columns = &[("approx_count", ubigint)];
+
+const CONNECTION_COUNT_COLUMNS: Columns = &[("count", ubigint)];
+
+const COLLATION_COLUMNS: Columns = &[("collname", varchar)];
+
+const VARIABLE_COLUMNS: Columns = &[("name", varchar), ("value", varchar), ("type", varchar)];
+
+/// `duckdb_variables()`: the `SET VARIABLE` values of the connection.
+fn variable_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    context
+        .user_variables
+        .iter()
+        .map(|(name, value)| {
+            Ok(vec![
+                text(name),
+                text(value.to_varchar()?),
+                text(value.logical_type().to_string()),
+            ])
+        })
+        .collect()
+}
+
+const PREPARED_STATEMENT_COLUMNS: Columns = &[
+    ("name", varchar),
+    ("statement", varchar),
+    ("parameter_types", varchar_list),
+    ("result_types", varchar_list),
+];
+
+/// `duckdb_prepared_statements()`: the prepared statements of the connection with their
+/// parameter types (UNKNOWN until executed) and result types (when planned).
+fn prepared_statement_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    use rustdb_planner::StatementReturnType;
+    let names = |types: Vec<String>| {
+        Value::list(
+            LogicalType::VARCHAR,
+            types.into_iter().map(Value::varchar).collect(),
+        )
+    };
+    let null_list = || Value::null(varchar_list());
+    Ok(context
+        .prepared_statements
+        .iter()
+        .map(|(name, prepared)| {
+            let statement = &prepared.unbound_statement;
+            let sql = match &statement.kind {
+                rustdb_ast::SqlStatementKind::Select(select) => select.to_string(),
+                rustdb_ast::SqlStatementKind::Insert(insert) => insert.to_string(),
+                _ => statement.query.clone(),
+            };
+            let parameters = if statement.named_param_map.is_empty() {
+                null_list()
+            } else {
+                names(vec!["UNKNOWN".to_owned(); prepared.properties.parameter_count])
+            };
+            let results = match prepared.properties.return_type {
+                StatementReturnType::QueryResult if prepared.properties.bound_all_parameters => {
+                    names(prepared.types.iter().map(ToString::to_string).collect())
+                }
+                StatementReturnType::ChangedRows => names(vec!["BIGINT".to_owned()]),
+                _ => null_list(),
+            };
+            vec![text(name), text(sql), parameters, results]
+        })
+        .collect())
+}
+
+const TEMPORARY_FILE_COLUMNS: Columns = &[("path", varchar), ("size", bigint)];
+
+const DEPENDENCY_COLUMNS: Columns = &[
+    ("classid", bigint),
+    ("objid", bigint),
+    ("objsubid", integer),
+    ("refclassid", bigint),
+    ("refobjid", bigint),
+    ("refobjsubid", integer),
+    ("deptype", varchar),
+];
+
+/// `duckdb_dependencies()`: for every entry of the default catalog that depends on
+/// another, the depended-on entry (`objid`) and the dependent (`refobjid`)
+/// (`DependencyManager::Scan`).
+fn dependency_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    let mut entries = Vec::new();
+    if let Some(catalog) = context.catalogs.first() {
+        for schema in catalog.schemas().scan(&context.transaction) {
+            let Some(contents) = schema_contents(&schema) else {
+                continue;
+            };
+            for set in [
+                &contents.tables,
+                &contents.functions,
+                &contents.table_functions,
+                &contents.sequences,
+                &contents.types,
+                &contents.indexes,
+            ] {
+                for entry in set.scan(&context.transaction) {
+                    entries.push((schema.name().to_owned(), entry));
+                }
+            }
+        }
+    }
+    let row = |object: u64, dependent: u64, kind: &str| {
+        vec![
+            Value::bigint(0),
+            Value::bigint(object as i64),
+            Value::integer(0),
+            Value::bigint(0),
+            Value::bigint(dependent as i64),
+            Value::integer(0),
+            text(kind),
+        ]
+    };
+    let mut rows = Vec::new();
+    for (_, dependent) in &entries {
+        for dependency in &dependent.dependencies {
+            if let Some((_, object)) = entries
+                .iter()
+                .find(|(schema, entry)| entry.is_described_by(schema, &dependency.entry))
+            {
+                rows.push(row(object.oid, dependent.oid, "n"));
+            }
+        }
+        for owned in &dependent.owned {
+            if let Some((_, object)) = entries
+                .iter()
+                .find(|(schema, entry)| entry.is_described_by(schema, owned))
+            {
+                rows.push(row(dependent.oid, object.oid, "a"));
+            }
+        }
+    }
+    Ok(rows)
+}
+
+/// `pragma_collations()`: the builtin collations (`PragmaCollations`; the ICU collations
+/// come with the ICU extension).
+fn collation_rows(_: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    Ok(["nocase", "noaccent", "nfc"]
+        .into_iter()
+        .map(|name| vec![Value::varchar(name)])
+        .collect())
+}
+
+/// `duckdb_connection_count()`: the number of open connections
+/// (`ConnectionManager::GetConnectionCount`).
+fn connection_count_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    let count = context.function_client.connection_count().unwrap_or(1);
+    Ok(vec![vec![Value::ubigint(count)]])
+}
+
+/// `duckdb_approx_database_count()`: the number of attached database files
+/// (`DatabasePathManager::ApproxDatabaseCount`; in-memory databases have no path).
+fn database_count_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    let count = context
+        .catalogs
+        .iter()
+        .filter(|catalog| {
+            catalog
+                .attach_info()
+                .is_some_and(|info| !info.path.is_empty() && info.path != ":memory:")
+        })
+        .count();
+    Ok(vec![vec![Value::ubigint(count as u64)]])
+}
+
 const FUNCTION_COLUMNS: Columns = &[
     ("database_name", varchar),
     ("database_oid", varchar),
@@ -1210,6 +1739,36 @@ struct FunctionRow {
     macro_definition: Value,
     has_side_effects: Value,
     stability: Value,
+    /// The matching `FunctionDescription` (description, examples, categories).
+    description: Option<rustdb_function::function_descriptions::FunctionDescription>,
+}
+
+/// `GetFunctionDescriptionIndex` and `GetParameterNames`: the description of a built-in
+/// overload with `arguments`, and its parameter names (`col<i>` beyond the described ones).
+fn describe_overload(
+    info: Option<&rustdb_function::function_descriptions::FunctionInfo>,
+    arguments: &[LogicalType],
+) -> (
+    Vec<String>,
+    Option<rustdb_function::function_descriptions::FunctionDescription>,
+) {
+    let description = info.and_then(|info| {
+        rustdb_function::function_descriptions::description_index(&info.descriptions, arguments)
+            .map(|index| info.descriptions[index].clone())
+    });
+    let parameters = match &description {
+        Some(description) if !description.parameter_names.is_empty() => (0..arguments.len())
+            .map(|index| {
+                description
+                    .parameter_names
+                    .get(index)
+                    .cloned()
+                    .unwrap_or_else(|| format!("col{index}"))
+            })
+            .collect(),
+        _ => positional_names(arguments.len()),
+    };
+    (parameters, description)
 }
 
 /// `FunctionStabilityToValue`.
@@ -1261,41 +1820,55 @@ fn macro_rows(entry: &rustdb_catalog::MacroEntry, table: bool) -> Vec<FunctionRo
                 macro_definition,
                 has_side_effects: Value::null(LogicalType::BOOLEAN),
                 stability: null_text(),
+                description: None,
             }
         })
         .collect()
 }
 
-/// The rows of one catalog entry, one per overload.
-fn entry_function_rows(entry: &CatalogEntry) -> Vec<FunctionRow> {
+/// The rows of one catalog entry, one per overload; `info` describes a built-in function.
+fn entry_function_rows(
+    entry: &CatalogEntry,
+    info: Option<&rustdb_function::function_descriptions::FunctionInfo>,
+) -> Vec<FunctionRow> {
     let varargs = |varargs: Option<&LogicalType>| varargs.map_or_else(null_text, |ty| text(ty.to_string()));
     match &entry.kind {
         EntryKind::ScalarFunction(set) => set
             .functions
             .iter()
-            .map(|function| FunctionRow {
-                function_type: "scalar",
-                return_type: text(function.return_type.to_string()),
-                parameters: positional_names(function.arguments.len()),
-                parameter_types: function.arguments.iter().map(|ty| Some(ty.to_string())).collect(),
-                varargs: varargs(function.varargs.as_ref()),
-                macro_definition: null_text(),
-                has_side_effects: Value::boolean(function.stability == rustdb_function::Stability::Volatile),
-                stability: stability_value(function.stability),
+            .map(|function| {
+                let (parameters, description) = describe_overload(info, &function.arguments);
+                FunctionRow {
+                    function_type: "scalar",
+                    return_type: text(function.return_type.to_string()),
+                    parameters,
+                    parameter_types: function.arguments.iter().map(|ty| Some(ty.to_string())).collect(),
+                    varargs: varargs(function.varargs.as_ref()),
+                    macro_definition: null_text(),
+                    has_side_effects: Value::boolean(
+                        function.stability == rustdb_function::Stability::Volatile,
+                    ),
+                    stability: stability_value(function.stability),
+                    description,
+                }
             })
             .collect(),
         EntryKind::AggregateFunction(set) => set
             .functions
             .iter()
-            .map(|function| FunctionRow {
-                function_type: "aggregate",
-                return_type: text(function.return_type.to_string()),
-                parameters: positional_names(function.arguments.len()),
-                parameter_types: function.arguments.iter().map(|ty| Some(ty.to_string())).collect(),
-                varargs: varargs(function.varargs.as_ref()),
-                macro_definition: null_text(),
-                has_side_effects: Value::boolean(false),
-                stability: stability_value(rustdb_function::Stability::Consistent),
+            .map(|function| {
+                let (parameters, description) = describe_overload(info, &function.arguments);
+                FunctionRow {
+                    function_type: "aggregate",
+                    return_type: text(function.return_type.to_string()),
+                    parameters,
+                    parameter_types: function.arguments.iter().map(|ty| Some(ty.to_string())).collect(),
+                    varargs: varargs(function.varargs.as_ref()),
+                    macro_definition: null_text(),
+                    has_side_effects: Value::boolean(false),
+                    stability: stability_value(rustdb_function::Stability::Consistent),
+                    description,
+                }
             })
             .collect(),
         EntryKind::TableFunction(set) => set
@@ -1318,6 +1891,7 @@ fn entry_function_rows(entry: &CatalogEntry) -> Vec<FunctionRow> {
                     macro_definition: null_text(),
                     has_side_effects: Value::null(LogicalType::BOOLEAN),
                     stability: null_text(),
+                    description: None,
                 }
             })
             .collect(),
@@ -1374,18 +1948,26 @@ fn function_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                     catalog_oid: u64,
                     schema_name: &str,
                     name: &str,
+                    alias_of: Option<&str>,
                     internal: bool,
                     function_oid: u64,
                     comment: &Value,
                     row: FunctionRow| {
+        let description = row.description.unwrap_or_default();
         rows.push(vec![
             text(catalog_name),
             text(catalog_oid.to_string()),
             text(schema_name),
             text(name),
-            null_text(),
+            alias_of
+                .filter(|alias_of| *alias_of != name)
+                .map_or_else(null_text, text),
             text(row.function_type),
-            null_text(),
+            if description.description.is_empty() {
+                null_text()
+            } else {
+                text(description.description)
+            },
             comment_text(comment),
             empty_map(),
             row.return_type,
@@ -1402,9 +1984,9 @@ fn function_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
             row.has_side_effects,
             Value::boolean(internal),
             oid(function_oid),
-            list(Vec::new()),
+            list(description.examples),
             row.stability,
-            list(Vec::new()),
+            list(description.categories),
         ]);
     };
     for (catalog, schema) in schemas(context) {
@@ -1423,12 +2005,21 @@ fn function_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
             _ => 99,
         });
         for entry in entries {
-            for row in entry_function_rows(&entry) {
+            // Built-in scalar and aggregate functions carry their function list entry.
+            let info = (entry.internal
+                && matches!(
+                    entry.kind,
+                    EntryKind::ScalarFunction(_) | EntryKind::AggregateFunction(_)
+                ))
+            .then(|| rustdb_function::function_descriptions::function_info(entry.name()))
+            .flatten();
+            for row in entry_function_rows(&entry, info.as_ref()) {
                 push(
                     catalog.name(),
                     catalog.oid(),
                     schema.name(),
                     entry.name(),
+                    info.as_ref().map(|info| info.alias_of.as_str()),
                     entry.internal,
                     entry.oid,
                     &entry.comment,
@@ -1443,6 +2034,7 @@ fn function_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
             0,
             "main",
             name,
+            None,
             true,
             0,
             &Value::default(),
@@ -1455,6 +2047,7 @@ fn function_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 macro_definition: null_text(),
                 has_side_effects: Value::boolean(false),
                 stability: stability_value(rustdb_function::Stability::Consistent),
+                description: None,
             },
         );
     }
@@ -1955,6 +2548,10 @@ pub(crate) fn pragma_table_functions() -> Vec<TableFunctionSet> {
         rows_function_with_name("pragma_table_info", TABLE_INFO_COLUMNS, table_info_rows),
         rows_function_with_name("pragma_storage_info", STORAGE_INFO_COLUMNS, storage_info_rows),
         rows_function("pragma_database_size", DATABASE_SIZE_COLUMNS, database_size_rows),
+        rows_function_with_name("pragma_show", SHOW_COLUMNS, show_rows),
+        rows_function("pragma_version", VERSION_COLUMNS, version_rows),
+        rows_function("pragma_platform", PLATFORM_COLUMNS, platform_rows),
+        rows_function("pragma_user_agent", USER_AGENT_COLUMNS, user_agent_rows),
     ]
 }
 
@@ -2035,6 +2632,15 @@ pub(crate) fn pragma_query(name: &str, parameters: &[Value]) -> Result<Option<St
         "show_databases" => "SELECT database_name FROM duckdb_databases() WHERE NOT internal ORDER BY database_name;".to_owned(),
         "database_list" => "SELECT * FROM pragma_database_list;".to_owned(),
         "database_size" => "SELECT * FROM pragma_database_size();".to_owned(),
+        "collations" => "SELECT * FROM pragma_collations() ORDER BY 1".to_owned(),
+        "show" => format!("SELECT * FROM pragma_show({});", quoted(&first()?)),
+        "version" => "SELECT * FROM pragma_version();".to_owned(),
+        "platform" => "SELECT * FROM pragma_platform();".to_owned(),
+        "user_agent" => "SELECT * FROM pragma_user_agent()".to_owned(),
+        "functions" => "SELECT function_name AS name, upper(function_type) AS type, parameter_types AS parameters, \
+                        varargs, return_type, has_side_effects AS side_effects FROM duckdb_functions() WHERE \
+                        function_type IN ('scalar', 'aggregate') ORDER BY 1;"
+            .to_owned(),
         "copy_database" => {
             let second = parameters
                 .get(1)

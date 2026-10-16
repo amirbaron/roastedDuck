@@ -184,6 +184,9 @@ pub struct ExpressionBinderState {
     /// The nesting depth checked against `max_expression_depth` (DuckDB's
     /// `stack_depth`).
     pub stack_depth: u64,
+    /// Binding the child of `TRY(...)`, where aggregates are not allowed (DuckDB's
+    /// `TryOperatorBinder`).
+    pub inside_try: bool,
 }
 
 /// "The parsed expression was not bound" (an internal invariant violation).
@@ -438,14 +441,15 @@ pub trait ExpressionBinder: ColumnQualifier {
         crate::binder::expression::bind_unsupported_expression(self, expr, depth, &message)
     }
 
-    /// A window function call; only some binders allow them.
-    fn bind_window(&mut self, expr: &mut ParsedExpression, depth: u64) -> Result<BindResult> {
-        crate::binder::expression::bind_unsupported_expression(
-            self,
-            expr,
-            depth,
-            "window functions are not allowed here",
-        )
+    /// A window function call; only some binders allow them. The base binder has no case
+    /// for them (`ExpressionBinder::BindExpression`'s default).
+    fn bind_window(&mut self, _expr: &mut ParsedExpression, _depth: u64) -> Result<BindResult> {
+        Ok(BindResult::Unbound(
+            Error::not_implemented(
+                "Unimplemented expression class in ExpressionBinder::BindExpression: WINDOW",
+            )
+            .into(),
+        ))
     }
 
     fn unsupported_aggregate_message(&self) -> String {
@@ -454,6 +458,12 @@ pub trait ExpressionBinder: ColumnQualifier {
 
     fn unsupported_unnest_message(&self) -> String {
         "UNNEST not supported here".to_owned()
+    }
+
+    /// The `(table index, column count)` of the UNNEST nodes bound so far, which lambda
+    /// bodies may not reference (DuckDB's `SelectBinder::ThrowIfUnnestInLambda`).
+    fn unnest_bindings(&self) -> Vec<(u64, u64)> {
+        Vec::new()
     }
 
     /// The SQL value function a bare name stands for (DuckDB's `GetSQLValueFunction`).

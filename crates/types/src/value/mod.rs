@@ -484,7 +484,16 @@ impl Value {
             PhysicalType::Interval => Payload::Interval(vector.values::<Interval>()[slot]),
             PhysicalType::Varchar => {
                 let value = &vector.values::<StringT>()[slot];
-                Payload::Bytes(Arc::from(vector.string_value(value)))
+                let bytes = vector.string_value(value);
+                if ty.id() == LogicalTypeId::Type {
+                    // TYPE values hold their serialized type (`Value::TYPE(string_t)`).
+                    if let Ok(inner) =
+                        rustdb_serde::binary::BinaryDeserializer::deserialize::<LogicalType>(bytes)
+                    {
+                        return Self::type_value(inner);
+                    }
+                }
+                Payload::Bytes(Arc::from(bytes))
             }
             PhysicalType::List
             | PhysicalType::Struct
@@ -528,11 +537,18 @@ impl Value {
             Payload::Nested(_) => {
                 return Err(Error::internal("nested values are written by Vector::set_value"));
             }
-            Payload::Type(_) => {
-                return Err(Error::not_implemented(format!(
-                    "Writing {} values into vectors",
-                    self.ty
-                )));
+            Payload::Type(ty) => {
+                // `Value::TYPE`: the type in DuckDB's binary serialization.
+                let bytes = rustdb_serde::binary::BinarySerializer::serialize(
+                    ty,
+                    rustdb_serde::SerializationOptions {
+                        compatibility: rustdb_serde::SerializationCompatibility::latest(),
+                        ..rustdb_serde::SerializationOptions::default()
+                    },
+                )
+                .map_err(|error| Error::internal(format!("serializing a TYPE value: {error}")))?;
+                let string: StringT = vector.add_string(&bytes);
+                vector.values_mut::<StringT>()[slot] = string;
             }
         }
         Ok(())
@@ -610,6 +626,17 @@ impl Value {
             }
             (Payload::Nested(entries), L::Map) => self.write_map(entries, out)?,
             (Payload::Nested(fields), L::Struct) => self.write_struct(fields, out)?,
+            (Payload::Nested(_), L::Variant) => {
+                // VARIANT -> VARCHAR: the converted value's text (`CastFromVARIANT`).
+                let data = crate::variant::VariantData::from_value(self)?
+                    .ok_or_else(|| Error::internal("VARIANT value without data"))?;
+                let value = data.to_sql_value(0)?;
+                if value.is_null() {
+                    out.extend_from_slice(b"NULL");
+                } else {
+                    value.write_text(out)?;
+                }
+            }
             (Payload::Nested(_), L::Union) => match self.union_tag_and_value() {
                 Some((_, member)) if !member.is_null() => member.write_text(out)?,
                 _ => out.extend_from_slice(b"NULL"),

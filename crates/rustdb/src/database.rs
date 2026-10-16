@@ -54,6 +54,21 @@ pub(crate) struct DatabaseInstance {
     compression: std::sync::Mutex<rustdb_storage::compression::CompressionConfig>,
     /// The secrets (DuckDB's `DBConfig::secret_manager`).
     pub(crate) secrets: Arc<crate::secrets::SecretManager>,
+    /// The number of open connections (DuckDB's `ConnectionManager`).
+    connections: Arc<std::sync::atomic::AtomicU64>,
+    /// The log manager (DuckDB's `DatabaseInstance::GetLogManager`).
+    pub(crate) log_manager: Arc<crate::logging::LogManager>,
+    /// The options set globally (DuckDB's `DBConfig` user settings), with a version
+    /// that changes on every global `SET` / `RESET`; connections apply them unless they
+    /// set the option themselves.
+    global_settings: Mutex<GlobalSettings>,
+}
+
+/// The globally set options and their version (see `DatabaseInstance::global_settings`).
+#[derive(Debug, Default, Clone)]
+struct GlobalSettings {
+    version: u64,
+    values: Vec<(&'static str, Value)>,
 }
 
 /// The default of `checkpoint_threshold` (16 MiB).
@@ -293,6 +308,12 @@ impl Database {
         for set in crate::system_functions::pragma_table_functions() {
             system_catalog.register_table_functions(set)?;
         }
+        for set in crate::log_functions::log_table_functions() {
+            system_catalog.register_table_functions(set)?;
+        }
+        for set in crate::read_file::read_file_functions() {
+            system_catalog.register_table_functions(set)?;
+        }
         system_catalog.register_copy_function(rustdb_csv::copy_csv::csv_copy_function())?;
         for set in rustdb_csv::multi_file::glob_functions() {
             system_catalog.register_table_functions(set)?;
@@ -319,6 +340,9 @@ impl Database {
             checkpoint_wal_size: std::sync::atomic::AtomicU64::new(DEFAULT_CHECKPOINT_WAL_SIZE),
             compression: std::sync::Mutex::default(),
             secrets: Arc::default(),
+            connections: Arc::default(),
+            log_manager: Arc::default(),
+            global_settings: Mutex::default(),
         };
         for (name, value) in &config.options {
             if is_threads_setting(name) {
@@ -392,11 +416,32 @@ impl Database {
         }
         let function_client = Arc::new(rustdb_function::FunctionClient::default());
         function_client.set_database(self.instance.default_database_name());
+        self.instance
+            .connections
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        function_client.set_connection_counter(Arc::clone(&self.instance.connections));
+        // `ClientContext::ClientContext`: a connection-scoped logger.
+        let logger = Arc::new(crate::logging::ConnectionLogger::new(
+            Arc::clone(&self.instance.log_manager),
+            crate::logging::LoggingContext::new(crate::logging::ContextScope::Connection),
+        ));
+        function_client.set_logger(Arc::clone(&logger) as Arc<dyn rustdb_function::logging::ClientLogger>);
+        // `ClientData::temporary_objects`: the connection's in-memory `temp` database.
+        let temp_catalog = Arc::new(Catalog::new(rustdb_catalog::TEMP_CATALOG)?);
+        temp_catalog.set_io(Arc::new(rustdb_storage::TableIoManager::new(
+            self.instance.env.buffer_manager.clone(),
+            Arc::new(rustdb_buffer::InMemoryBlockManager::default()),
+        )))?;
         Ok(Connection {
+            synced_globals: GlobalSettings::default(),
+            local_overrides: std::collections::HashSet::new(),
+            temp_catalog,
+            logger,
             database: self.clone(),
             transactions,
             settings,
             search_path: Vec::new(),
+            search_path_set: Vec::new(),
             transaction_attaches: Vec::new(),
             prepared_statements: CaseInsensitiveMap::default(),
             function_client,
@@ -426,11 +471,22 @@ impl Database {
 #[derive(Debug)]
 pub struct Connection {
     database: Database,
+    /// The global options as last applied to `settings`.
+    synced_globals: GlobalSettings,
+    /// Options this connection set for itself (`SET SESSION`, or options of local scope):
+    /// global values do not override them.
+    local_overrides: std::collections::HashSet<&'static str>,
+    /// The connection's temporary objects (DuckDB's `ClientData::temporary_objects`, the
+    /// `temp` catalog).
+    temp_catalog: Arc<Catalog>,
     transactions: TransactionContext,
     settings: Settings,
     /// The `(catalog, schema)` entries set by `USE` / `SET search_path` (DuckDB's
     /// `ClientData::catalog_search_path`).
     search_path: Vec<(String, String)>,
+    /// The entries as `CatalogSearchPath::GetSetPaths` keeps them for display: the
+    /// catalog as given (or taken from the previous default), empty if none.
+    search_path_set: Vec<(String, String)>,
     prepared_statements: CaseInsensitiveMap<Arc<PreparedStatementData>>,
     /// Connection state functions use (DuckDB keeps it in the `ClientContext`).
     function_client: Arc<rustdb_function::FunctionClient>,
@@ -439,6 +495,17 @@ pub struct Connection {
     transaction_attaches: Vec<Arc<AttachedDatabase>>,
     /// `SET VARIABLE` values (DuckDB's `ClientConfig::user_variables`).
     user_variables: CaseInsensitiveMap<rustdb_types::Value>,
+    /// The connection's loggers.
+    logger: Arc<crate::logging::ConnectionLogger>,
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        self.database
+            .instance
+            .connections
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 impl Connection {
@@ -457,13 +524,15 @@ impl Connection {
 
     /// Parses `sql` into its statements (DuckDB's `ClientContext::ExtractStatements`).
     pub fn extract_statements(&self, sql: &str) -> Result<Vec<SqlStatement>> {
-        rustdb_parser::parse(sql).map_err(|error| error.with_query_context(sql))
+        rustdb_parser::parse_with_options(sql, &self.settings.parser_options())
+            .map_err(|error| error.with_query_context(sql))
     }
 
     /// Runs every statement in `sql` and returns the result of the last one (DuckDB's
     /// `ClientContext::Query`).
     pub fn query(&mut self, sql: &str) -> Result<MaterializedResult> {
-        let statements = rustdb_parser::parse(sql).map_err(|error| error.with_query_context(sql))?;
+        self.sync_global_settings();
+        let statements = self.extract_statements(sql)?;
         self.execute_statements(statements)
     }
 
@@ -482,7 +551,11 @@ impl Connection {
     /// `ExecutePendingQueryInternal`): bind and plan, resolve column bindings, build the
     /// physical plan and run it, all inside the connection's transaction.
     pub fn execute_statement(&mut self, query: &str, statement: SqlStatement) -> Result<MaterializedResult> {
+        self.sync_global_settings();
         self.function_client.set_query(query);
+        self.function_client
+            .set_settings(Arc::new(self.settings_snapshot()));
+        self.begin_query_logging(query);
         let outcome = self.run_statement(statement);
         let invalidates = outcome
             .as_ref()
@@ -494,6 +567,7 @@ impl Connection {
             None
         };
         let ended = self.transactions.end_statement(outcome.is_ok(), invalidates);
+        self.end_query_logging();
         let mut result = outcome.and_then(|result| ended.map(|()| result));
         if result.is_ok()
             && !self.transactions.has_current()
@@ -503,6 +577,128 @@ impl Connection {
             result = Err(error);
         }
         result.map_err(|error| error.with_query_context(query))
+    }
+
+    /// Applies the options another connection set globally since the last statement
+    /// (DuckDB reads them from the shared `DBConfig`); options this connection set itself
+    /// keep their value.
+    fn sync_global_settings(&mut self) {
+        let current = self
+            .database
+            .instance()
+            .global_settings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if current.version == self.synced_globals.version {
+            return;
+        }
+        for (name, value) in &current.values {
+            let unchanged = self
+                .synced_globals
+                .values
+                .iter()
+                .any(|(synced, synced_value)| synced == name && synced_value == value);
+            if !unchanged && !self.local_overrides.contains(name) {
+                let _ = self.settings.set(name, value);
+            }
+        }
+        for (name, _) in &self.synced_globals.values {
+            let removed = !current
+                .values
+                .iter()
+                .any(|(current_name, _)| current_name == name);
+            if removed && !self.local_overrides.contains(name) {
+                let _ = self.settings.reset(name);
+            }
+        }
+        self.synced_globals = current;
+    }
+
+    /// Records a `SET` / `RESET` (`value` `None`) of option `name` with `scope`: a global
+    /// one is shared with the other connections, a local one overrides the global value.
+    fn record_setting(&mut self, name: &str, value: Option<&Value>, scope: SetScope) {
+        let Some(option) = crate::settings::canonical_option(name) else {
+            return;
+        };
+        let global = match scope {
+            SetScope::Global => true,
+            SetScope::Session | SetScope::Local => false,
+            _ => crate::settings::is_global_option(option),
+        };
+        if !global {
+            if value.is_some() {
+                self.local_overrides.insert(option);
+                return;
+            }
+            self.local_overrides.remove(option);
+            // The global value applies again.
+            if let Some((_, global_value)) = self
+                .synced_globals
+                .values
+                .iter()
+                .find(|(name, _)| *name == option)
+            {
+                let _ = self.settings.set(option, &global_value.clone());
+            }
+            return;
+        }
+        self.local_overrides.remove(option);
+        let mut globals = self
+            .database
+            .instance()
+            .global_settings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        globals.values.retain(|(name, _)| *name != option);
+        if let Some(value) = value {
+            globals.values.push((option, value.clone()));
+        }
+        globals.version += 1;
+        // This connection already applied the change.
+        self.synced_globals = globals.clone();
+    }
+
+    /// `ClientContext::BeginQueryInternal`'s logging: flush, a logger for this query's
+    /// connection, transaction and query, and the `QueryLog` entry.
+    fn begin_query_logging(&mut self, query: &str) {
+        use crate::logging::{ContextScope, LoggingContext};
+        use rustdb_function::logging::{ClientLogger, LogLevel, LogScope};
+        let manager = Arc::clone(&self.logger.manager);
+        let _ = manager.flush();
+        // Like DuckDB, the query's transaction starts first when the query is logged.
+        let transaction_id = if manager.config().enabled || self.transactions.has_current() {
+            let transaction = self.transactions.current();
+            self.function_client
+                .observe_transaction(transaction.transaction_id);
+            Some(transaction.transaction_id)
+        } else {
+            None
+        };
+        self.logger.refresh(LoggingContext {
+            scope: ContextScope::Connection,
+            connection_id: Some(self.function_client.connection_id()),
+            transaction_id,
+            query_id: Some(self.function_client.query_id()),
+        });
+        if self
+            .logger
+            .should_log(LogScope::Connection, "QueryLog", LogLevel::Info)
+        {
+            let _ = self
+                .logger
+                .write_log(LogScope::Connection, "QueryLog", LogLevel::Info, query);
+        }
+    }
+
+    /// `ClientContext::EndQueryInternal`'s logging: flush and a connection-scoped logger.
+    fn end_query_logging(&self) {
+        use crate::logging::{ContextScope, LoggingContext};
+        let _ = self.logger.manager.flush();
+        self.logger.refresh(LoggingContext {
+            connection_id: Some(self.function_client.connection_id()),
+            ..LoggingContext::new(ContextScope::Connection)
+        });
     }
 
     /// The logical plan of a parsed statement of `query`, with column references
@@ -529,13 +725,22 @@ impl Connection {
         self.transactions.current()
     }
 
+    /// The catalogs this connection sees: the attached databases with `default` first,
+    /// its `temp` catalog, then `system`.
+    fn catalogs(&self, default: &str) -> Vec<Arc<Catalog>> {
+        let mut catalogs = self.database.instance().catalogs(default);
+        let system = catalogs.len().saturating_sub(1);
+        catalogs.insert(system, Arc::clone(&self.temp_catalog));
+        catalogs
+    }
+
     /// The planner's view of this connection, in `transaction`.
     fn client_context(&self, transaction: Arc<Transaction>) -> Arc<ClientContext> {
         self.function_client
             .observe_transaction(transaction.transaction_id);
         let instance = self.database.instance();
         Arc::new(ClientContext {
-            catalogs: instance.catalogs(instance.default_database_name()),
+            catalogs: self.catalogs(instance.default_database_name()),
             search_path: self.search_path.clone(),
             transaction,
             casts: Arc::clone(&instance.casts),
@@ -848,7 +1053,14 @@ impl Connection {
         } else {
             "SET search_path"
         };
-        let entries = parse_search_path(&value.to_varchar()?)?;
+        let text = value.to_varchar()?;
+        let entries = parse_search_path(&text)?;
+        if set_schema && entries.len() > 1 {
+            // `CatalogSearchEntry::Parse` reads a single entry.
+            return Err(Error::parser(format!(
+                "Failed to convert entry \"{text}\" to CatalogSearchEntry - expected a single entry"
+            )));
+        }
         if set_schema && entries.len() != 1 {
             return Err(Error::catalog(format!(
                 "{set_name} can set only 1 schema. This has {}",
@@ -858,6 +1070,13 @@ impl Connection {
         let instance = self.database.instance();
         let transaction = self.transactions.current();
         let mut resolved = Vec::with_capacity(entries.len());
+        let mut set_paths = Vec::with_capacity(entries.len());
+        // `GetDefault().catalog`: the catalog of the first entry set before.
+        let previous_default = self
+            .search_path_set
+            .first()
+            .map(|(catalog, _)| catalog.clone())
+            .unwrap_or_default();
         for (catalog, schema) in entries {
             let display = if catalog.is_empty() {
                 schema.clone()
@@ -877,15 +1096,22 @@ impl Connection {
                         .schema(&transaction, rustdb_catalog::DEFAULT_SCHEMA)
                 {
                     resolved.push((database.name.clone(), main.name().to_owned()));
+                    set_paths.push((schema.clone(), main.name().to_owned()));
                     continue;
                 }
                 let default = self.default_catalog();
                 let database = instance.databases.get(&default).ok_or_else(not_found)?;
-                let found = database
-                    .catalog
-                    .schema(&transaction, &schema)
-                    .ok_or_else(not_found)?;
-                resolved.push((database.name.clone(), found.name().to_owned()));
+                if let Some(found) = database.catalog.schema(&transaction, &schema) {
+                    resolved.push((database.name.clone(), found.name().to_owned()));
+                } else {
+                    // `Catalog::GetSchema` without a catalog also finds the system schemas.
+                    let found = instance
+                        .system_catalog
+                        .schema(&transaction, &schema)
+                        .ok_or_else(not_found)?;
+                    resolved.push(("system".to_owned(), found.name().to_owned()));
+                }
+                set_paths.push((previous_default.clone(), schema));
                 continue;
             }
             let database = instance.databases.get(&catalog).ok_or_else(not_found)?;
@@ -894,6 +1120,7 @@ impl Connection {
                 .schema(&transaction, &schema)
                 .ok_or_else(not_found)?;
             resolved.push((database.name.clone(), found.name().to_owned()));
+            set_paths.push((catalog, schema));
         }
         if set_schema
             && let Some((catalog, _)) = resolved.first()
@@ -904,7 +1131,47 @@ impl Connection {
             )));
         }
         self.search_path = resolved;
+        self.search_path_set = set_paths;
         Ok(())
+    }
+
+    /// The configuration functions see while the next statement runs.
+    fn settings_snapshot(&self) -> crate::settings::SettingsSnapshot {
+        // `CatalogSearchEntry::ListToString` of the set paths.
+        let quoted = |part: &str| {
+            if part.contains(['.', ',', '"']) {
+                format!("\"{}\"", part.replace('"', "\"\""))
+            } else {
+                part.to_owned()
+            }
+        };
+        let search_path = self
+            .search_path_set
+            .iter()
+            .map(|(catalog, schema)| {
+                if catalog.is_empty() {
+                    quoted(schema)
+                } else {
+                    format!("{}.{}", quoted(catalog), quoted(schema))
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let schema = self.search_path.first().map_or_else(
+            || rustdb_catalog::DEFAULT_SCHEMA.to_owned(),
+            |(_, schema)| schema.clone(),
+        );
+        let buffer_manager = &self.database.instance().env.buffer_manager;
+        crate::settings::SettingsSnapshot {
+            logging: self.database.instance().log_manager.config(),
+            settings: self.settings.clone(),
+            search_path,
+            schema,
+            memory_limit: buffer_manager.max_memory(),
+            temp_directory: buffer_manager.temporary_directory(),
+            max_swap: buffer_manager.max_swap(),
+            threads: self.database.instance().env.threads() as u64,
+        }
     }
 
     /// The name of the default database of this connection.
@@ -1040,6 +1307,19 @@ impl Connection {
     ) -> Result<MaterializedResult> {
         let nothing =
             || MaterializedResult::new(vec!["Success".to_owned()], vec![LogicalType::BOOLEAN], Vec::new());
+        // `PhysicalSet` / `PhysicalReset`: `DBConfig::CheckLock`, then the checks of options
+        // that cannot change while the database runs.
+        match &plan.kind {
+            LogicalKind::Set { name, value, scope } if *scope != SetScope::Variable => {
+                self.settings.check_lock(name)?;
+                Settings::check_running_set(name, value)?;
+            }
+            LogicalKind::Reset { name, scope } if *scope != SetScope::Variable => {
+                self.settings.check_lock(name)?;
+                Settings::check_running_reset(name)?;
+            }
+            _ => {}
+        }
         match &plan.kind {
             LogicalKind::Transaction { info } => {
                 match info.transaction_type {
@@ -1119,16 +1399,22 @@ impl Connection {
             }
             LogicalKind::Reset { name, .. } if is_search_path_setting(name) => {
                 self.search_path.clear();
+                self.search_path_set.clear();
                 return Ok(nothing());
             }
-            LogicalKind::Set { name, value, .. } => {
+            LogicalKind::Set { name, value, scope } => {
                 if is_secret_setting(name) {
                     self.database.instance().secrets.set_option(name, Some(value))?;
                 }
                 if is_threads_setting(name) {
                     self.database.instance().set_threads(Some(value))?;
                 }
+                if crate::logging::is_logging_setting(name) {
+                    crate::logging::apply_setting(&self.database.instance().log_manager, name, Some(value))?;
+                }
                 self.settings.set(name, value)?;
+                let (option, set_value, set_scope) = (name.clone(), value.clone(), *scope);
+                self.record_setting(&option, Some(&set_value), set_scope);
                 if is_checkpoint_threshold(name) {
                     self.database.instance().set_checkpoint_threshold(value)?;
                 }
@@ -1137,14 +1423,19 @@ impl Connection {
                 }
                 return Ok(nothing());
             }
-            LogicalKind::Reset { name, .. } => {
+            LogicalKind::Reset { name, scope } => {
                 if is_secret_setting(name) {
                     self.database.instance().secrets.set_option(name, None)?;
+                }
+                if crate::logging::is_logging_setting(name) {
+                    crate::logging::apply_setting(&self.database.instance().log_manager, name, None)?;
                 }
                 self.settings.reset(name)?;
                 if is_threads_setting(name) {
                     self.database.instance().set_threads(None)?;
                 }
+                let (option, reset_scope) = (name.clone(), *scope);
+                self.record_setting(&option, None, reset_scope);
                 if is_force_compression(name) {
                     self.database.instance().set_force_compression(None)?;
                 }
@@ -1201,11 +1492,29 @@ impl Connection {
                         .shutdown_checkpoint_disabled
                         .store(lower.starts_with("disable"), std::sync::atomic::Ordering::Relaxed);
                 }
-                return if NO_OP_PRAGMAS.contains(&name.to_ascii_lowercase().as_str()) {
-                    Ok(nothing())
-                } else {
-                    Err(Error::not_implemented(format!("PRAGMA {name}")))
-                };
+                if NO_OP_PRAGMAS.contains(&name.to_ascii_lowercase().as_str()) {
+                    return Ok(nothing());
+                }
+                // `Binder::BindPragma`: a table function of the name is suggested.
+                let transaction = self.transactions.current();
+                if self
+                    .database
+                    .instance()
+                    .system_catalog
+                    .get_entry(
+                        &transaction,
+                        rustdb_catalog::CatalogType::TableFunction,
+                        "main",
+                        name,
+                    )
+                    .is_some()
+                {
+                    return Err(Error::catalog(format!(
+                        "Pragma Function with name {name} does not exist, but a table function with the same name \
+                         exists, try `CALL {name}(...)`"
+                    )));
+                }
+                return Err(Error::not_implemented(format!("PRAGMA {name}")));
             }
             LogicalKind::Execute { .. } => {
                 // The prepared statement was planned again with the values: run that plan.
@@ -1216,6 +1525,37 @@ impl Connection {
             }
             _ => {}
         }
+        // `PhysicalDrop`: dropping the current schema resets the schema to `main`.
+        let dropped_schema = match &plan.kind {
+            LogicalKind::Drop(info) if info.catalog_type == rustdb_ast::CatalogType::SchemaEntry => {
+                Some((info.catalog.clone(), info.name.clone()))
+            }
+            _ => None,
+        };
+        let result = self.execute_plan(plan, names, types)?;
+        if let Some((catalog, schema)) = dropped_schema {
+            let (current_catalog, current_schema) = self
+                .search_path
+                .first()
+                .cloned()
+                .unwrap_or_else(|| (self.default_catalog(), rustdb_catalog::DEFAULT_SCHEMA.to_owned()));
+            if catalog == current_catalog && schema == current_schema {
+                self.set_search_path(
+                    "schema",
+                    &rustdb_types::Value::varchar(rustdb_catalog::DEFAULT_SCHEMA),
+                )?;
+            }
+        }
+        Ok(result)
+    }
+
+    /// Plans and runs a logical plan, collecting its result.
+    fn execute_plan(
+        &mut self,
+        mut plan: LogicalOperator,
+        names: Vec<String>,
+        types: Vec<LogicalType>,
+    ) -> Result<MaterializedResult> {
         let transaction = self.transactions.current();
         let client = self.client_context(transaction);
         let optimizer_config = self.settings.optimizer_config();
@@ -1224,10 +1564,9 @@ impl Connection {
         plan = Optimizer::new(client, optimizer_config).optimize(plan)?;
         ColumnBindingResolver::resolve(&mut plan)?;
         seed_samples(&mut plan, &self.function_client);
-        let instance = self.database.instance();
         let context = PlanContext {
             transaction: self.transactions.current(),
-            catalogs: instance.catalogs(&self.default_catalog()),
+            catalogs: self.catalogs(&self.default_catalog()),
             join_settings: self.settings.join_plan_settings(),
             explain_output: self.settings.explain_output(),
             query: self.function_client.query(),

@@ -1,9 +1,10 @@
 //! `reservoir_quantile(x, q[, sample_size])` (DuckDB's `reservoir_quantile.cpp`): the
 //! quantile of a reservoir sample of at most `sample_size` (default 8192) values.
 //!
-//! While a group has no more values than the sample size the result is exact and matches
-//! DuckDB. Beyond it DuckDB replaces values at random from an unseeded random engine, so
-//! its results are not reproducible; rustdb samples with Algorithm R from a fixed seed.
+//! Like DuckDB, the sample holds the first `sample_size` values: `FillReservoir` only
+//! replaces an entry when `next_index_to_sample` equals `num_entries_to_skip_b4_next_sample`,
+//! and as the skip counter is never advanced (while `SetNextEntry` draws a skip of at least
+//! one) that never happens.
 
 use std::any::Any;
 use std::marker::PhantomData;
@@ -12,7 +13,6 @@ use std::sync::Arc;
 use rustdb_common::{Error, Result};
 use rustdb_function::aggregate::{Aggregate, AggregateInput, States, Typed};
 use rustdb_function::cast::ValueCast;
-use rustdb_function::random::RandomEngine;
 use rustdb_function::{AggregateFunction, AggregateFunctionSet, AggregateOps, BindInput, FunctionData};
 use rustdb_types::{LogicalType, LogicalTypeId, NativeType, PhysicalType, Value, Vector};
 
@@ -31,27 +31,24 @@ impl FunctionData for Bounds {
     }
 }
 
-/// The sample of one group (`ReservoirQuantileState`).
+/// The sample of one group (`ReservoirQuantileState`): `values` is `v[0..pos]`, `len` the
+/// allocated size.
 #[derive(Debug, Default)]
 struct Reservoir<T> {
     values: Vec<T>,
-    seen: u64,
-    random: Option<RandomEngine>,
+    len: usize,
 }
 
 impl<T: Copy> Reservoir<T> {
-    fn add(&mut self, value: T, sample_size: usize) {
-        self.seen += 1;
-        if self.values.len() < sample_size {
+    /// `Resize`: the reservoir only grows.
+    fn resize(&mut self, len: usize) {
+        self.len = self.len.max(len);
+    }
+
+    /// `FillReservoir`: values beyond the sample size are not sampled (see the module docs).
+    fn fill(&mut self, value: T) {
+        if self.values.len() < self.len {
             self.values.push(value);
-            return;
-        }
-        let random = self.random.get_or_insert_with(|| RandomEngine::new(0));
-        let slot = random.next_random_integer64() % self.seen;
-        if let Ok(slot) = usize::try_from(slot)
-            && slot < self.values.len()
-        {
-            self.values[slot] = value;
         }
     }
 }
@@ -79,8 +76,7 @@ impl<T: Element + 'static> Aggregate for ReservoirQuantile<T> {
     fn initialize(&self) -> Reservoir<T> {
         Reservoir {
             values: Vec::new(),
-            seen: 0,
-            random: None,
+            len: 0,
         }
     }
 
@@ -95,7 +91,11 @@ impl<T: Element + 'static> Aggregate for ReservoirQuantile<T> {
         let values = inputs[0].unified::<T>();
         for row in 0..count {
             if let Some(value) = values.get(row) {
-                states.get(row).add(value, sample_size);
+                let state = states.get(row);
+                if state.values.is_empty() {
+                    state.resize(sample_size);
+                }
+                state.fill(value);
             }
         }
         Ok(())
@@ -107,9 +107,15 @@ impl<T: Element + 'static> Aggregate for ReservoirQuantile<T> {
         target: &mut Reservoir<T>,
         input: AggregateInput<'_>,
     ) -> Result<()> {
-        let sample_size = input.bind_data::<Bounds>()?.sample_size;
+        let _ = input;
+        if source.values.is_empty() {
+            return Ok(());
+        }
+        if target.values.is_empty() {
+            target.resize(source.len);
+        }
         for &value in &source.values {
-            target.add(value, sample_size);
+            target.fill(value);
         }
         Ok(())
     }

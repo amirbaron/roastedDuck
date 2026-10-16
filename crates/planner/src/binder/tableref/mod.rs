@@ -516,9 +516,11 @@ fn bind_base_table(
                 column_name_alias: column_aliases,
             };
             let bound = {
+                // A view binder has its own query state (DuckDB's `BinderType::VIEW_BINDER`):
+                // the view cannot see the columns of enclosing queries or LATERAL joins.
                 let mut view_scope = BindScope {
                     binder: &mut view_binder,
-                    outer: Some(&mut *scope),
+                    outer: None,
                 };
                 bind_subquery_ref(&mut view_scope, &mut subquery, alias)?
             };

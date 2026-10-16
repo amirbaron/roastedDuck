@@ -13,6 +13,9 @@ pub(crate) trait CheckedInt: NativeType + Display + Ord {
     fn checked_add_(self, other: Self) -> Option<Self>;
     fn checked_sub_(self, other: Self) -> Option<Self>;
     fn checked_mul_(self, other: Self) -> Option<Self>;
+    /// `NegateOperator`: only the minimum of a signed type cannot be negated; unsigned
+    /// values wrap around.
+    fn negate_(self) -> Option<Self>;
 }
 
 macro_rules! checked_int {
@@ -25,10 +28,49 @@ macro_rules! checked_int {
             fn checked_sub_(self, other: Self) -> Option<Self> { self.checked_sub(other) }
             #[inline]
             fn checked_mul_(self, other: Self) -> Option<Self> { self.checked_mul(other) }
+            #[inline]
+            fn negate_(self) -> Option<Self> {
+                self.checked_neg().or_else(|| (<$ty>::MIN == 0).then(|| self.wrapping_neg()))
+            }
         }
     )*};
 }
-checked_int!(i8, i16, i32, i64, i128, u8, u16, u32, u64, u128);
+checked_int!(i8, i16, i32, i64, u8, u16, u32, u64, u128);
+
+impl CheckedInt for i128 {
+    const ZERO: Self = 0;
+    #[inline]
+    fn negate_(self) -> Option<Self> {
+        self.checked_neg()
+    }
+    #[inline]
+    fn checked_add_(self, other: Self) -> Option<Self> {
+        self.checked_add(other)
+    }
+    #[inline]
+    fn checked_sub_(self, other: Self) -> Option<Self> {
+        self.checked_sub(other)
+    }
+    /// `Hugeint::TryMultiply`: the product of the magnitudes must stay below 2^127, so
+    /// a result of `i128::MIN` overflows unless an operand is the minimum times 1.
+    #[inline]
+    fn checked_mul_(self, other: Self) -> Option<Self> {
+        if self == i128::MIN || other == i128::MIN {
+            return match (self, other) {
+                (0, _) | (_, 0) => Some(0),
+                (1, _) | (_, 1) => Some(i128::MIN),
+                _ => None,
+            };
+        }
+        let magnitude = self.unsigned_abs().checked_mul(other.unsigned_abs())?;
+        let magnitude = i128::try_from(magnitude).ok()?;
+        Some(if (self < 0) == (other < 0) {
+            magnitude
+        } else {
+            -magnitude
+        })
+    }
+}
 
 /// `Overflow in addition of INT32 (2147483647 + 1)!`
 pub(crate) fn add_overflow<T: NativeType + Display>(left: T, right: T) -> Error {

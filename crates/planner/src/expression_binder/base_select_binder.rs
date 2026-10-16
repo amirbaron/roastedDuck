@@ -11,14 +11,16 @@ use rustdb_ast::{
 };
 use rustdb_common::{CaseInsensitiveMap, Error, Result};
 use rustdb_function::AggregateFunctionSet;
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use rustdb_function::cast::ValueCast;
+use rustdb_types::{LogicalType, LogicalTypeId, TypeInfo, Value};
 
 use super::base::{BinderBase, expression_binder_accessors, expression_binder_base};
 use super::column_alias_binder::ColumnAliasBinder;
 use super::qualify::default_qualify_column_name;
 use super::simple_binders::AggregateBinder;
 use super::{
-    BindError, BindResult, ExpressionBinder, is_potential_alias, peek_bound, take_bound, unsupported,
+    BindError, BindResult, ExpressionBinder, is_potential_alias, peek_bound, set_bound, take_bound,
+    unsupported,
 };
 use crate::ColumnBinding;
 use crate::binder::expression::{bind_column_ref, bind_expression_base, push_collation};
@@ -399,18 +401,25 @@ impl<'a> SelectBinder<'a> {
         if let Some(filter) = &mut function.filter {
             aggregate_binder.bind_child(filter, 0, &mut error)?;
         }
+        // Ordered-set aggregates (`quantile_cont(0.5) WITHIN GROUP (ORDER BY x)`): the
+        // ordering expression becomes the first argument when it is missing.
         let ordered_set_agg = match (function.order_bys.orders.len(), function.function_name.as_str()) {
             (1, "mode") => 1,
             (1, "quantile_cont" | "quantile_disc") => 2,
             _ => 0,
         };
-        for child in &mut function.children {
+        let negate_fractions = ordered_set_agg == 2
+            && context
+                .config
+                .resolve_order(function.order_bys.orders[0].order_type)
+                == OrderType::Descending;
+        let child_count = function.children.len();
+        for (index, child) in function.children.iter_mut().enumerate() {
             aggregate_binder.bind_child(child, 0, &mut error)?;
-        }
-        if ordered_set_agg == 2 {
-            return Err(Error::not_implemented(
-                "ordered-set aggregates (quantile WITHIN GROUP)",
-            ));
+            // `PERCENTILE_XXX ... ORDER BY x DESC` negates the fractions.
+            if error.is_none() && ordered_set_agg > 0 && index + 1 == child_count {
+                negate_percentile_fractions(&context, child, negate_fractions)?;
+            }
         }
         for order in &mut function.order_bys.orders {
             if let ParsedExpressionKind::Constant(constant) = &order.expression.kind
@@ -463,11 +472,17 @@ impl<'a> SelectBinder<'a> {
             None => None,
         };
         let mut children = Vec::with_capacity(function.children.len() + 1);
-        if ordered_set_agg == 1 && function.children.is_empty() {
-            for order in &function.order_bys.orders {
-                if let Some(bound) = peek_bound(&order.expression) {
-                    children.push(bound.clone());
+        if ordered_set_agg > 0 {
+            let order_sensitive = function.function_name == "mode";
+            if function.children.len() < ordered_set_agg {
+                for order in &function.order_bys.orders {
+                    if let Some(bound) = peek_bound(&order.expression) {
+                        children.push(bound.clone());
+                    }
                 }
+            }
+            if !order_sensitive {
+                function.order_bys.orders.clear();
             }
         }
         for child in &mut function.children {
@@ -720,6 +735,14 @@ impl ExpressionBinder for SelectBinder<'_> {
         self.bind_select_aggregate(expr, functions, depth)
     }
 
+    fn unnest_bindings(&self) -> Vec<(u64, u64)> {
+        self.node
+            .unnests
+            .values()
+            .map(|node| (node.index, node.expressions.len() as u64))
+            .collect()
+    }
+
     fn bind_unnest(
         &mut self,
         expr: &mut ParsedExpression,
@@ -947,15 +970,21 @@ impl SelectBinder<'_> {
             }
             for order in &mut window.orders {
                 self.bind_child(&mut order.expression, depth, &mut error)?;
+                // A TIME ordering of a RANGE frame becomes epoch + time, a timestamp, so
+                // that the frame boundaries do not wrap around midnight.
                 if is_range
                     && error.is_none()
-                    && let Some(bound) = peek_bound(&order.expression)
-                    && matches!(
-                        bound.return_type.id(),
-                        LogicalTypeId::Time | LogicalTypeId::TimeTz
-                    )
+                    && peek_bound(&order.expression).is_some_and(|bound| {
+                        matches!(
+                            bound.return_type.id(),
+                            LogicalTypeId::Time | LogicalTypeId::TimeTz
+                        )
+                    })
                 {
-                    return Err(Error::not_implemented("RANGE frames over TIME"));
+                    let bound = take_bound(&mut order.expression)?;
+                    let epoch = Expression::constant(Value::date(rustdb_types::Date(0)));
+                    let shifted = bind_range_expression(&context, "+", bound, &epoch)?;
+                    super::set_bound(&mut order.expression, shifted);
                 }
             }
             for child in [
@@ -1009,7 +1038,8 @@ impl SelectBinder<'_> {
             }
             children.push(bound);
         }
-        let types = FunctionBinder::argument_types(&children);
+        // The children's own types (`bound->return_type`), not their literal types.
+        let types: Vec<LogicalType> = children.iter().map(|child| child.return_type.clone()).collect();
         let (aggregate, bind_info, return_type) = if window_type == ExpressionType::WindowAggregate {
             let functions = match entry.as_ref().map(|entry| &entry.entry.kind) {
                 Some(rustdb_catalog::EntryKind::AggregateFunction(functions)) => functions.clone(),
@@ -1238,7 +1268,7 @@ impl SelectBinder<'_> {
                 let value = context.evaluator.evaluate_scalar(bound)?;
                 match name.as_str() {
                     "recursive" => {
-                        if value.as_bool() == Some(true) {
+                        if value_get_bool(&value)? {
                             max_depth = u64::MAX;
                         }
                     }
@@ -1251,7 +1281,7 @@ impl SelectBinder<'_> {
                             return Err(Error::binder("UNNEST cannot have a max depth of 0"));
                         }
                     }
-                    "keep_parent_names" => keep_parent_names = value.as_bool() == Some(true),
+                    "keep_parent_names" => keep_parent_names = value_get_bool(&value)?,
                     "" => break,
                     other => {
                         return Err(Error::binder(format!(
@@ -1441,4 +1471,79 @@ impl SelectBinder<'_> {
             BindResult::Unbound(error) => Err(error.error),
         }
     }
+}
+
+/// `NegatePercentileValue`: the fraction for a descending order (DECIMALs stay DECIMAL,
+/// everything else becomes DOUBLE).
+fn negate_percentile_value(value: &Value, descending: bool) -> Result<Value> {
+    if value.is_null() {
+        return Ok(value.clone());
+    }
+    let fraction = value
+        .default_cast_as(&LogicalType::DOUBLE)?
+        .as_f64()
+        .ok_or_else(|| Error::internal("percentile is not numeric"))?;
+    if !(0.0..=1.0).contains(&fraction) {
+        return Err(Error::binder(
+            "PERCENTILEs can only take parameters in the range [0, 1]",
+        ));
+    }
+    if !descending {
+        return Ok(value.clone());
+    }
+    if let Some(TypeInfo::Decimal(info)) = value.logical_type().info() {
+        let unscaled = value
+            .as_i128()
+            .ok_or_else(|| Error::internal("DECIMAL percentile without a value"))?;
+        return Ok(Value::decimal(-unscaled, info.width, info.scale));
+    }
+    Ok(Value::double(-fraction))
+}
+
+/// `NegatePercentileFractions`: folds the constant fractions of an ordered-set
+/// aggregate, negated for a descending order.
+fn negate_percentile_fractions(
+    context: &ClientContext,
+    fractions: &mut ParsedExpression,
+    descending: bool,
+) -> Result<()> {
+    let Some(bound) = peek_bound(fractions) else {
+        return Ok(());
+    };
+    if !bound.is_foldable() {
+        return Ok(());
+    }
+    let value = context.evaluator.evaluate_scalar(bound)?;
+    let folded = if value.logical_type().id() == LogicalTypeId::List {
+        let elements = value
+            .children()
+            .unwrap_or_default()
+            .iter()
+            .map(|element| negate_percentile_value(element, descending))
+            .collect::<Result<Vec<_>>>()?;
+        if elements.is_empty() {
+            return Err(Error::binder("Empty list in percentile not allowed"));
+        }
+        let child_type = elements[0].logical_type().clone();
+        Value::list(child_type, elements)
+    } else {
+        negate_percentile_value(&value, descending)?
+    };
+    set_bound(fractions, Expression::constant(folded));
+    Ok(())
+}
+
+/// `Value::GetValue<bool>`: a non-boolean value is read as a TINYINT.
+fn value_get_bool(value: &Value) -> Result<bool> {
+    if value.logical_type().id() == LogicalTypeId::Boolean {
+        return Ok(value.as_bool() == Some(true));
+    }
+    let number = value.try_cast(&LogicalType::TINYINT).map_err(|error| {
+        if error.kind() == rustdb_common::ErrorKind::Conversion {
+            Error::invalid_input(error.raw_message().to_owned())
+        } else {
+            error
+        }
+    })?;
+    Ok(number.as_i128().is_some_and(|number| number != 0))
 }

@@ -371,6 +371,42 @@ fn bind_prepare(scope: &mut BindScope<'_>, prepare: &mut PrepareStatement) -> Re
 
 /// `EXECUTE name(values)` (DuckDB's `Bind(ExecuteStatement &)`). The statement is bound
 /// again with the values, so the plan uses them as constants.
+/// `PreparedStatement::VerifyParameters`: the supplied values name exactly the
+/// statement's parameters (`MissingValuesException` / `ExcessValuesException`).
+fn verify_parameters<V, E>(
+    provided: &rustdb_common::CaseInsensitiveMap<V>,
+    expected: &rustdb_common::CaseInsensitiveMap<E>,
+) -> Result<()> {
+    let names = |from: &dyn Fn(&str) -> bool, of: Vec<&str>| {
+        let mut names: Vec<&str> = of.into_iter().filter(|name| !from(name)).collect();
+        names.sort_unstable();
+        names.dedup();
+        names.join(", ")
+    };
+    let missing = || {
+        Error::invalid_input(format!(
+            "Values were not provided for the following prepared statement parameters: {}",
+            names(
+                &|name| provided.contains_key(name),
+                expected.iter().map(|(name, _)| name).collect()
+            )
+        ))
+    };
+    if expected.len() >= provided.len() {
+        if expected.iter().any(|(name, _)| !provided.contains_key(name)) {
+            return Err(missing());
+        }
+        return Ok(());
+    }
+    Err(Error::invalid_input(format!(
+        "Parameter argument/count mismatch, identifiers of the excess parameters: {}",
+        names(
+            &|name| expected.contains_key(name),
+            provided.iter().map(|(name, _)| name).collect()
+        )
+    )))
+}
+
 fn bind_execute(scope: &mut BindScope<'_>, execute: &mut ExecuteStatement) -> Result<BoundStatement> {
     let Some(prepared) = scope.context.prepared_statements.get(&execute.name).cloned() else {
         return Err(Error::binder(format!(
@@ -378,6 +414,7 @@ fn bind_execute(scope: &mut BindScope<'_>, execute: &mut ExecuteStatement) -> Re
             execute.name
         )));
     };
+    verify_parameters(&execute.named_values, &prepared.unbound_statement.named_param_map)?;
     prepared.check_parameter_count(execute.named_values.len())?;
     // DuckDB's `PreparedStatementData::Bind`: every parameter needs a value.
     for (identifier, _) in prepared.value_map.iter() {

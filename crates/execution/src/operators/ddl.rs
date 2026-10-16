@@ -19,7 +19,7 @@ use rustdb_planner::{Expression, ExpressionKind};
 use rustdb_storage::index::IndexConstraintType;
 use rustdb_storage::index::art::{Art, IndexKeyExecutor, IndexKeyExpressions};
 use rustdb_storage::{ColumnDefinition, DataTable, TableIoManager, Transaction};
-use rustdb_types::{DataChunk, LogicalType};
+use rustdb_types::{DataChunk, LogicalType, LogicalTypeId};
 
 use super::insert::TableCreator;
 use crate::expression_executor::ExpressionExecutor;
@@ -158,6 +158,7 @@ impl DdlAction for CreateViewAction {
             }),
         );
         entry.dependencies.clone_from(&self.info.dependencies.set);
+        entry.temporary = self.info.temporary;
         self.catalog
             .create_entry(transaction, &self.info.schema, entry, self.info.on_conflict)?;
         Ok(())
@@ -181,6 +182,57 @@ impl DdlAction for CreateEntryAction {
     }
 }
 
+/// The types nested in `ty`, `ty` first (DuckDB's `TypeVisitor`).
+fn visit_types(ty: &LogicalType, visit: &mut dyn FnMut(&LogicalType) -> Result<()>) -> Result<()> {
+    visit(ty)?;
+    if let Some(child) = ty.child_type() {
+        visit_types(child, visit)?;
+    }
+    if let Some(children) = ty.struct_children() {
+        for (_, child) in children {
+            visit_types(child, visit)?;
+        }
+    }
+    Ok(())
+}
+
+/// `CheckTypeIsSupported` (`DuckTableEntry`): a table cannot hold TYPE values.
+pub(crate) fn check_type_is_supported(ty: &LogicalType) -> Result<()> {
+    visit_types(ty, &mut |ty| {
+        if ty.id() == LogicalTypeId::Type {
+            return Err(Error::invalid_input(
+                "A table cannot be created with a 'TYPE' column",
+            ));
+        }
+        Ok(())
+    })
+}
+
+/// The check of the `StructColumnData` constructor: stored structs (but not UNIONs or
+/// VARIANTs, which have their own column data) need field names.
+pub(crate) fn check_struct_columns(ty: &LogicalType) -> Result<()> {
+    fn check(ty: &LogicalType) -> Result<()> {
+        if ty.id() == LogicalTypeId::Variant {
+            return Ok(());
+        }
+        if ty.id() != LogicalTypeId::Union && ty.is_unnamed_struct() {
+            return Err(Error::invalid_input(
+                "A table cannot be created from an unnamed struct",
+            ));
+        }
+        if let Some(child) = ty.child_type() {
+            check(child)?;
+        }
+        if let Some(children) = ty.struct_children() {
+            for (_, child) in children {
+                check(child)?;
+            }
+        }
+        Ok(())
+    }
+    check(ty)
+}
+
 /// Creates a table's storage and catalog entry (DuckDB's `DuckSchemaEntry::CreateTable`
 /// with the `DuckTableEntry` constructor), for `CREATE TABLE [AS]`.
 #[derive(Debug)]
@@ -197,11 +249,20 @@ impl TableCreator for CatalogTableCreator {
             return Err(Error::internal("expected a table"));
         };
         let mut entry = TableEntry::from_create_info(table);
-        let columns: Vec<ColumnDefinition> = table
-            .columns
-            .columns
-            .iter()
-            .filter(|c| c.category != TableColumnType::Generated)
+        let physical = || {
+            table
+                .columns
+                .columns
+                .iter()
+                .filter(|c| c.category != TableColumnType::Generated)
+        };
+        for column in physical() {
+            check_type_is_supported(&column.logical_type)?;
+        }
+        for column in physical() {
+            check_struct_columns(&column.logical_type)?;
+        }
+        let columns: Vec<ColumnDefinition> = physical()
             .map(|c| ColumnDefinition::new(c.name.clone(), c.logical_type.clone()))
             .collect();
         let storage = DataTable::new(
@@ -238,6 +299,7 @@ impl TableCreator for CatalogTableCreator {
         let name = table.table.clone();
         let mut catalog_entry = CatalogEntry::new(name.clone(), EntryKind::Table(entry));
         catalog_entry.dependencies.clone_from(&self.info.dependencies.set);
+        catalog_entry.temporary = self.info.temporary;
         let created =
             self.catalog
                 .create_entry(transaction, &self.schema, catalog_entry, self.info.on_conflict)?;

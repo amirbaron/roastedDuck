@@ -89,7 +89,21 @@ fn bind_expression_kind<B: ExpressionBinder + ?Sized>(
                 bind_function_expression(binder, expr, depth)
             }
         }
-        ParsedExpressionKind::Lambda(_) => Err(Error::not_implemented("lambda functions")),
+        ParsedExpressionKind::Lambda(lambda) => {
+            // DuckDB's `BindExpression(LambdaExpression &)` outside a lambda function: the
+            // `lambda` keyword is invalid, `->` is the JSON arrow operator.
+            if lambda.syntax_type == rustdb_ast::LambdaSyntaxType::LambdaKeyword {
+                return Ok(BindResult::error("invalid lambda expression"));
+            }
+            let mut arrow = ParsedExpression::new(
+                ExpressionType::Arrow,
+                ParsedExpressionKind::Operator(rustdb_ast::OperatorExpression {
+                    children: vec![(*lambda.lhs).clone(), (*lambda.expr).clone()],
+                }),
+            );
+            arrow.query_location = expr.query_location;
+            bind_operator(binder, &mut arrow, depth)
+        }
         ParsedExpressionKind::Operator(_) => bind_operator(binder, expr, depth),
         ParsedExpressionKind::Subquery(_) => bind_subquery_expression(binder, expr, depth),
         ParsedExpressionKind::Parameter(_) => bind_parameter(binder, expr),
@@ -480,6 +494,31 @@ fn bind_collate<B: ExpressionBinder + ?Sized>(
     Ok(child.into())
 }
 
+/// The path argument of `variant[...]` / `variant.field` (DuckDB's
+/// `BindExpression(OperatorExpression &)`): a numeric constant index becomes UINTEGER,
+/// a constant field name its VARCHAR text.
+fn variant_path_constant(path: &mut ParsedExpression, index: bool) -> Result<()> {
+    use rustdb_function::cast::ValueCast;
+    let Some(value) = crate::expression_binder::peek_bound(path)
+        .and_then(Expression::as_constant)
+        .filter(|value| !value.is_null())
+        .cloned()
+    else {
+        return Ok(());
+    };
+    let value = if index {
+        let ty = value.logical_type();
+        if !(ty.is_numeric() || ty.id() == LogicalTypeId::IntegerLiteral) {
+            return Ok(());
+        }
+        value.default_cast_as(&LogicalType::UINTEGER)?
+    } else {
+        rustdb_types::Value::varchar(value.to_varchar()?)
+    };
+    crate::expression_binder::set_bound(path, Expression::constant(value));
+    Ok(())
+}
+
 /// DuckDB's `BindExpression(OperatorExpression &)`.
 fn bind_operator<B: ExpressionBinder + ?Sized>(
     binder: &mut B,
@@ -494,7 +533,14 @@ fn bind_operator<B: ExpressionBinder + ?Sized>(
     let ParsedExpressionKind::Operator(operator) = &mut expr.kind else {
         return Err(Error::internal("expected an operator"));
     };
-    if let Some(error) = bind_children(binder, operator.children.iter_mut().collect(), depth)? {
+    // The child of TRY is bound by a `TryOperatorBinder`, which rejects aggregates.
+    let previous_try = binder.state_ref().inside_try;
+    if operator_type == ExpressionType::OperatorTry {
+        binder.state().inside_try = true;
+    }
+    let bound_children = bind_children(binder, operator.children.iter_mut().collect(), depth);
+    binder.state().inside_try = previous_try;
+    if let Some(error) = bound_children? {
         return Ok(BindResult::Unbound(error));
     }
     let function_name = match operator_type {
@@ -506,11 +552,16 @@ fn bind_operator<B: ExpressionBinder + ?Sized>(
         ExpressionType::ArrayExtract => {
             let base_type = crate::expression_binder::peek_bound(&operator.children[0])
                 .map_or(LogicalTypeId::Invalid, |e| e.return_type.id());
-            Some(if base_type == LogicalTypeId::Map {
-                "map_extract_value"
+            if base_type == LogicalTypeId::Variant && operator.children.len() == 2 {
+                variant_path_constant(&mut operator.children[1], true)?;
+                Some("variant_extract")
             } else {
-                "array_extract"
-            })
+                Some(if base_type == LogicalTypeId::Map {
+                    "map_extract_value"
+                } else {
+                    "array_extract"
+                })
+            }
         }
         ExpressionType::ArraySlice => Some("array_slice"),
         ExpressionType::StructExtract => {
@@ -532,7 +583,10 @@ fn bind_operator<B: ExpressionBinder + ?Sized>(
             match base.return_type.id() {
                 LogicalTypeId::Union => Some("union_extract"),
                 LogicalTypeId::Map => Some("map_extract_value"),
-                LogicalTypeId::Variant => Some("variant_extract"),
+                LogicalTypeId::Variant => {
+                    variant_path_constant(&mut operator.children[1], false)?;
+                    Some("variant_extract")
+                }
                 LogicalTypeId::Struct | LogicalTypeId::SqlNull => Some("struct_extract"),
                 _ => {
                     return Ok(BindResult::error(format!(

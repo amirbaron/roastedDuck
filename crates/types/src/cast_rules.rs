@@ -488,12 +488,16 @@ fn combine_structs(left: &LogicalType, right: &LogicalType, mode: Unify) -> Opti
         }
         return Some(LogicalType::struct_type(children));
     }
-    // By name: the super-set of both field lists, left fields first.
+    // By name (case-insensitively, the last right field of a name wins): the super-set of
+    // both field lists, left fields first.
     let mut right_used = vec![false; right_children.len()];
     for (name, left_type) in left_children {
         match right_children
             .iter()
-            .position(|(right_name, _)| right_name == name)
+            .enumerate()
+            .rev()
+            .find(|(index, (right_name, _))| !right_used[*index] && right_name.eq_ignore_ascii_case(name))
+            .map(|(index, _)| index)
         {
             Some(index) => {
                 right_used[index] = true;
@@ -556,6 +560,11 @@ fn combine_equal(left: &LogicalType, right: &LogicalType, mode: Unify) -> Option
                 crate::TypeInfo::List(crate::ListTypeInfo { child_type: entry }),
             ))
         }
+        // VARCHAR: the type with a collation, if any.
+        L::Varchar => Some(match right.info() {
+            Some(crate::TypeInfo::String(info)) if !info.collation.is_empty() => right.clone(),
+            _ => left.clone(),
+        }),
         L::Struct => combine_structs(left, right, mode),
         L::Union => {
             let left_count = left.union_members().map_or(0, <[_]>::len);

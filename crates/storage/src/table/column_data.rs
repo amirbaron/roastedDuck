@@ -1245,9 +1245,20 @@ impl ColumnData {
                 let children = vector
                     .struct_children()
                     .ok_or_else(|| Error::internal("struct append of a non-struct vector"))?;
-                let child_stats = stats
-                    .struct_children_mut()
-                    .ok_or_else(|| Error::internal("struct column without struct statistics"))?;
+                // VARIANT columns are stored as their STRUCT layout but keep VARIANT
+                // statistics, which track no field statistics.
+                let mut scratch;
+                let child_stats = if stats.logical_type().id() == LogicalTypeId::Variant {
+                    scratch = fields
+                        .iter()
+                        .map(|field| BaseStatistics::create_empty(field.ty.clone()))
+                        .collect::<Vec<_>>();
+                    scratch.as_mut_slice()
+                } else {
+                    stats
+                        .struct_children_mut()
+                        .ok_or_else(|| Error::internal("struct column without struct statistics"))?
+                };
                 for (((field, field_state), child), field_stats) in
                     fields.iter().zip(field_states).zip(children).zip(child_stats)
                 {

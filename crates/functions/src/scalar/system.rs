@@ -76,6 +76,39 @@ fn connection_function(
 }
 
 /// `current_schemas(include_implicit)`: the schemas of the search path.
+/// The schemas of the connection's set search path (`CatalogSearchPath::GetSetPaths`),
+/// parsed from the `search_path` setting (`CatalogSearchEntry::ParseList`: `"`-quoted
+/// parts, `.` between catalog and schema, `,` between entries).
+fn set_path_schemas(client: &FunctionClient) -> Vec<String> {
+    let Some(text) = client
+        .settings()
+        .and_then(|settings| settings.current_setting("search_path").ok())
+        .and_then(|value| value.as_str().map(str::to_owned))
+    else {
+        return Vec::new();
+    };
+    let mut schemas = Vec::new();
+    let mut part = String::new();
+    let mut quoted = false;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' if quoted && chars.peek() == Some(&'"') => {
+                part.push('"');
+                chars.next();
+            }
+            '"' => quoted = !quoted,
+            '.' if !quoted => part.clear(),
+            ',' if !quoted => schemas.push(std::mem::take(&mut part)),
+            _ => part.push(c),
+        }
+    }
+    if !part.is_empty() {
+        schemas.push(part);
+    }
+    schemas
+}
+
 fn current_schemas_functions() -> ScalarFunctionSet {
     let mut function = ScalarFunction::new(
         "current_schemas",
@@ -86,14 +119,29 @@ fn current_schemas_functions() -> ScalarFunctionSet {
             let include_implicit = args.column(0).get_value(0);
             let value = match include_implicit.as_bool() {
                 None => Value::null(LogicalType::list(LogicalType::VARCHAR)),
-                Some(false) => Value::list(LogicalType::VARCHAR, Vec::new()),
-                Some(true) => Value::list(
+                Some(false) => Value::list(
                     LogicalType::VARCHAR,
-                    search_path(&client.database())
+                    set_path_schemas(&client)
                         .into_iter()
-                        .map(|(_, schema)| Value::varchar(schema))
+                        .map(Value::varchar)
                         .collect(),
                 ),
+                Some(true) => {
+                    // `CatalogSearchPath::Get`: temp.main, the set paths, the default
+                    // schema and system.main / system.pg_catalog.
+                    let mut paths = search_path(&client.database());
+                    let set = set_path_schemas(&client);
+                    let tail = paths.split_off(1);
+                    paths.extend(set.into_iter().map(|schema| (String::new(), schema)));
+                    paths.extend(tail);
+                    Value::list(
+                        LogicalType::VARCHAR,
+                        paths
+                            .into_iter()
+                            .map(|(_, schema)| Value::varchar(schema))
+                            .collect(),
+                    )
+                }
             };
             *result = Vector::constant(&value)?;
             Ok(())

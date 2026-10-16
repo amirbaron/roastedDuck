@@ -3,6 +3,7 @@
 //! `date_part.cpp` and `date_part_specifier.cpp`.
 
 use std::any::Any;
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use rustdb_common::{Error, ErrorKind, Result};
@@ -420,15 +421,20 @@ impl Temporal for Time {
     }
 }
 
+/// `dtime_ns_t::time()`: the microseconds of a `TIME_NS`, truncated (the TIME cast rounds).
+fn time_ns_micros(time: TimeNs) -> Time {
+    Time(time.0 / Interval::NANOS_PER_MICRO)
+}
+
 impl Temporal for TimeNs {
     fn bigint_part(self, part: Part) -> Result<i64> {
-        time_part(self.to_time().0, part)
+        time_part(time_ns_micros(self).0, part)
     }
     fn to_epoch(self) -> Result<f64> {
-        self.to_time().to_epoch()
+        time_ns_micros(self).to_epoch()
     }
     fn to_epoch_us(self) -> Result<i64> {
-        Ok(self.to_time().0)
+        Ok(time_ns_micros(self).0)
     }
     fn to_epoch_ms(self) -> Result<i64> {
         Err(Error::conversion("Unimplemented type for cast (INT64 -> INT64)"))
@@ -660,6 +666,7 @@ fn bind_date_part<T: Temporal>(function: &mut ScalarFunction, input: &BindInput<
                 Arc::new(move |args, state, result| kernel(&second_column(args), state, result));
         }
         _ => {
+            simplified_function_exists(part, &input.argument_types[1])?;
             function.kernel = Arc::new(move |args, _, result| {
                 unary::<T, i64>(&second_column(args), result, |value, out| {
                     if !value.is_finite_value() {
@@ -672,6 +679,60 @@ fn bind_date_part<T: Temporal>(function: &mut ScalarFunction, input: &BindInput<
         }
     }
     Ok(None)
+}
+
+/// DuckDB's `DatePartSimplificationRule` rewrites `date_part('dow', x)` with a constant
+/// specifier into `dayofweek(x)`; binding that call fails for types the named function
+/// does not take (`extract(dow FROM TIME)`), with the usual no-match error.
+fn simplified_function_exists(part: Part, ty: &LogicalType) -> Result<()> {
+    let name = match part {
+        Part::Year => "year",
+        Part::Month => "month",
+        Part::Day => "day",
+        Part::Decade => "decade",
+        Part::Century => "century",
+        Part::Millennium => "millennium",
+        Part::Quarter => "quarter",
+        Part::Week => "week",
+        Part::YearWeek => "yearweek",
+        Part::Dow => "dayofweek",
+        Part::IsoDow => "isodow",
+        Part::Doy => "dayofyear",
+        Part::Microseconds => "microsecond",
+        Part::Milliseconds => "millisecond",
+        Part::Second => "second",
+        Part::Minute => "minute",
+        Part::Hour => "hour",
+        _ => return Ok(()),
+    };
+    let Some((set, _)) = named_part_functions()
+        .into_iter()
+        .find(|(set, _)| &*set.name == name)
+    else {
+        return Ok(());
+    };
+    let matches = set.functions.iter().any(|function| {
+        function.arguments.len() == 1
+            && (function.arguments[0] == *ty
+                || rustdb_types::implicit_cast_cost(ty, &function.arguments[0]) >= 0)
+    });
+    if matches {
+        return Ok(());
+    }
+    let mut candidates = String::new();
+    for function in &set.functions {
+        let arguments: Vec<String> = function.arguments.iter().map(ToString::to_string).collect();
+        let _ = writeln!(
+            candidates,
+            "\t{name}({}) -> {}",
+            arguments.join(", "),
+            function.return_type
+        );
+    }
+    Err(Error::binder(format!(
+        "No function matches the given name and argument types '{name}({ty})'. You might need to add explicit \
+         type casts.\n\tCandidate functions:\n{candidates}"
+    )))
 }
 
 /// The name DuckDB's `EnumUtil::ToString(LogicalTypeId)` gives a temporal type.

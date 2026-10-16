@@ -371,13 +371,21 @@ impl Default for SecretManager {
     }
 }
 
+/// `ExtensionHelper::AddExtensionInstallHintToErrorMsg` under the default settings (known
+/// extensions are neither autoloaded nor autoinstalled).
+fn install_hint(message: &str, extension: &str) -> String {
+    rustdb_function::extension_entries::add_install_hint(message, extension, false, false)
+}
+
 /// `SecretManager::ThrowTypeNotFoundError`.
 fn type_not_found(secret_type: &str) -> Error {
     let lower = secret_type.to_lowercase();
     match EXTENSION_SECRET_TYPES.iter().find(|(name, _)| *name == lower) {
-        Some((_, extension)) => Error::invalid_input(format!(
-            "Secret type '{secret_type}' does not exist, but it exists in the {extension} extension.\n\nPlease try \
-             installing and loading the {extension} extension:\nINSTALL {extension};\nLOAD {extension};\n\n"
+        Some((_, extension)) => Error::invalid_input(install_hint(
+            &format!(
+                "Secret type '{secret_type}' does not exist, but it exists in the {extension} extension."
+            ),
+            extension,
         )),
         None => Error::invalid_input(format!("Secret type '{secret_type}' not found")),
     }
@@ -387,14 +395,16 @@ fn type_not_found(secret_type: &str) -> Error {
 fn provider_not_found(secret_type: &str, provider: &str, was_default: bool) -> Error {
     let key = format!("{}/{}", secret_type.to_lowercase(), provider.to_lowercase());
     match EXTENSION_SECRET_PROVIDERS.iter().find(|(name, _)| *name == key) {
-        Some((_, extension)) => Error::invalid_input(format!(
-            "{} '{provider}' for type '{secret_type}' does not exist, but it exists in the {extension} extension.\n\n\
-             Please try installing and loading the {extension} extension:\nINSTALL {extension};\nLOAD {extension};\n\n",
-            if was_default {
-                "Default secret provider"
-            } else {
-                "Secret provider"
-            }
+        Some((_, extension)) => Error::invalid_input(install_hint(
+            &format!(
+                "{} '{provider}' for type '{secret_type}' does not exist, but it exists in the {extension} extension.",
+                if was_default {
+                    "Default secret provider"
+                } else {
+                    "Secret provider"
+                }
+            ),
+            extension,
         )),
         None => Error::invalid_input(format!(
             "Secret provider '{provider}' not found for type '{secret_type}'"

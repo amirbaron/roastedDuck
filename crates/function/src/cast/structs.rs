@@ -448,11 +448,114 @@ fn from_union(
 
 /// Any non-UNION value -> UNION: the value becomes the member it casts to most cheaply
 /// (DuckDB's `ImplicitToUnionCast`).
+/// `StructToUnionCast::AllowImplicitCastFromStruct`: a STRUCT laid out like the union
+/// (same tag type, member names and types, or VARCHAR members) converts field by field.
+fn struct_matches_union(source: &LogicalType, target: &LogicalType) -> bool {
+    if source.id() != LogicalTypeId::Struct {
+        return false;
+    }
+    let (Some(fields), Some(target_fields)) = (source.struct_children(), target.struct_children()) else {
+        return false;
+    };
+    if fields.len() != target_fields.len() {
+        return false;
+    }
+    fields
+        .iter()
+        .zip(target_fields)
+        .enumerate()
+        .all(|(index, ((name, ty), (target_name, target_ty)))| {
+            if index == 0 {
+                return ty == target_ty;
+            }
+            name.eq_ignore_ascii_case(target_name) && (ty == target_ty || *ty == LogicalType::VARCHAR)
+        })
+}
+
+/// `StructToUnionCast::Cast`: the fields cast one by one, then the union checked
+/// (`UnionVector::CheckUnionValidity`).
+fn struct_to_union(
+    set: &CastFunctionSet,
+    source: &LogicalType,
+    target: &LogicalType,
+) -> Result<BoundCastInfo> {
+    let (Some(fields), Some(target_fields)) = (source.struct_children(), target.struct_children()) else {
+        return Err(missing_child(target));
+    };
+    let child_casts = fields
+        .iter()
+        .zip(target_fields)
+        .map(|((_, from), (_, to))| set.get_cast_function(from, to))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(BoundCastInfo::new(move |source, result, count, params| {
+        let target = result.logical_type().clone();
+        let source = source.flattened(count);
+        let target_fields = target
+            .struct_children()
+            .ok_or_else(|| missing_child(&target))?
+            .to_vec();
+        let source_children = source.struct_children().ok_or_else(|| missing_child(&target))?;
+        let mut children = Vec::with_capacity(child_casts.len());
+        for ((cast, child), (_, ty)) in child_casts.iter().zip(source_children).zip(&target_fields) {
+            let (converted, _) = cast_child(cast, child, ty, count, params)?;
+            children.push(converted.flattened(count));
+        }
+        let null_rows: Vec<usize> = (0..count)
+            .filter(|&row| source.is_null(row) || children[0].is_null(row))
+            .collect();
+        let mut out = Vector::flat(target.clone(), count.max(1));
+        if let Some(slots) = out.struct_children_mut() {
+            for (slot, child) in slots.iter_mut().zip(&children) {
+                *slot = child.clone();
+            }
+        }
+        // `FlatVector::SetNull`: the members of a NULL union row are NULL too.
+        for row in null_rows {
+            out.set_null(row);
+        }
+        // `CheckUnionValidity`.
+        let members = children.len() - 1;
+        for row in 0..count {
+            if out.is_null(row) {
+                continue;
+            }
+            let tag = children[0].get_value(row).as_i128().unwrap_or(-1);
+            if tag < 0 || tag as usize >= members {
+                return Err(Error::conversion(
+                    "One or more of the tags do not point to a valid union member",
+                ));
+            }
+            let mut found = false;
+            for (member, child) in children.iter().enumerate().skip(1) {
+                if child.is_null(row) {
+                    continue;
+                }
+                if found {
+                    return Err(Error::conversion(
+                        "One or more rows in the produced UNION have validity set for more than 1 member",
+                    ));
+                }
+                found = true;
+                if tag as usize != member - 1 {
+                    return Err(Error::conversion(
+                        "One or more rows in the produced UNION have tags that don't point to the valid member",
+                    ));
+                }
+            }
+        }
+        *result = out;
+        Ok(true)
+    }))
+}
+
 pub(super) fn to_union(
     set: &CastFunctionSet,
     source: &LogicalType,
     target: &LogicalType,
 ) -> Result<BoundCastInfo> {
+    if struct_matches_union(source, target) {
+        return struct_to_union(set, source, target);
+    }
     let members = target.union_members().ok_or_else(|| missing_child(target))?;
     let mut candidates: Vec<(i64, usize)> = members
         .iter()

@@ -112,6 +112,8 @@ impl ColumnBindingResolver {
                 op.try_for_each_expression_mut(|expr| self.visit_expression(expr))
             }
             LogicalOperatorType::LogicalGet => {
+                // The input of a table in-out function resolves first.
+                self.visit_children(op)?;
                 self.set_bindings(op);
                 op.try_for_each_expression_mut(|expr| self.visit_expression(expr))
             }

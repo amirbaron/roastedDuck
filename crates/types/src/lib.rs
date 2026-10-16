@@ -36,6 +36,7 @@ mod unbound;
 pub mod uuid;
 mod validity;
 mod value;
+pub mod variant;
 mod vector;
 
 pub use cast_rules::implicit_cast_cost;

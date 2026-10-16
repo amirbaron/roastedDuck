@@ -225,7 +225,13 @@ fn bind_catalog(scope: &BindScope<'_>, catalog: &str) -> String {
 /// (`Binder::BindCreateSchema`).
 pub fn bind_create_schema(scope: &BindScope<'_>, info: &mut CreateInfo) -> Result<()> {
     let (mut catalog, mut schema) = bind_schema_or_catalog(scope, &info.catalog, &info.schema)?;
-    if catalog == "temp" {
+    // `Binder::SearchSchema`: temporary entries go to the connection's `temp` catalog
+    // (without one, to the default database).
+    let has_temp = scope.context.catalog(rustdb_catalog::TEMP_CATALOG).is_some();
+    if catalog.is_empty() && info.temporary && has_temp {
+        rustdb_catalog::TEMP_CATALOG.clone_into(&mut catalog);
+    }
+    if !has_temp && catalog.eq_ignore_ascii_case(rustdb_catalog::TEMP_CATALOG) {
         catalog.clear();
     }
     match (catalog.is_empty(), schema.is_empty()) {
@@ -236,6 +242,19 @@ pub fn bind_create_schema(scope: &BindScope<'_>, info: &mut CreateInfo) -> Resul
         (false, true) => schema = scope.context.default_schema_for(&catalog),
         (true, false) => catalog = scope.context.default_catalog_for(&schema),
         (false, false) => {}
+    }
+    if has_temp {
+        let is_temp = catalog.eq_ignore_ascii_case(rustdb_catalog::TEMP_CATALOG);
+        if !info.temporary && is_temp {
+            return Err(Error::parser(
+                "Only TEMPORARY table names can use the \"temp\" catalog",
+            ));
+        }
+        if info.temporary && !is_temp {
+            return Err(Error::parser(
+                "TEMPORARY table names can *only* use the \"temp\" catalog",
+            ));
+        }
     }
     let Some(found) = scope.context.catalog(&catalog) else {
         return Err(Error::binder(format!("Catalog \"{catalog}\" does not exist!")));
@@ -457,12 +476,15 @@ fn bind_table_definition(
     Ok(())
 }
 
-/// The names of the columns `expression` references (`ColumnDependencyManager`'s
-/// dependency extraction).
-fn referenced_columns(expression: &rustdb_ast::ParsedExpression, out: &mut Vec<String>) {
-    struct Collect<'a>(&'a mut Vec<String>);
+/// The names of the columns `expression` references (`ColumnDefinition::
+/// GetListOfDependencies`); lambdas are rejected.
+fn referenced_columns(expression: &rustdb_ast::ParsedExpression, out: &mut Vec<String>) -> Result<()> {
+    struct Collect<'a>(&'a mut Vec<String>, bool);
     impl rustdb_ast::visit::VisitorMut for Collect<'_> {
         fn visit_expression(&mut self, expression: &mut rustdb_ast::ParsedExpression) {
+            if let rustdb_ast::ParsedExpressionKind::Lambda(_) = &expression.kind {
+                self.1 = true;
+            }
             if let rustdb_ast::ParsedExpressionKind::ColumnRef(column) = &expression.kind
                 && let Some(name) = column.column_names.last()
                 && !self.0.iter().any(|seen| seen.eq_ignore_ascii_case(name))
@@ -473,7 +495,14 @@ fn referenced_columns(expression: &rustdb_ast::ParsedExpression, out: &mut Vec<S
         }
     }
     let mut copy = expression.clone();
-    rustdb_ast::visit::VisitorMut::visit_expression(&mut Collect(out), &mut copy);
+    let mut collect = Collect(out, false);
+    rustdb_ast::visit::VisitorMut::visit_expression(&mut collect, &mut copy);
+    if collect.1 {
+        return Err(Error::not_implemented(
+            "Lambda functions are currently not supported in generated columns.",
+        ));
+    }
+    Ok(())
 }
 
 /// Depth-first visit of the generated columns for their bind order; a column seen again
@@ -523,7 +552,7 @@ fn bind_generated_columns(
             continue;
         };
         let mut names = Vec::new();
-        referenced_columns(expression, &mut names);
+        referenced_columns(expression, &mut names)?;
         for name in names {
             let Some(dependency) = columns.iter().position(|c| c.name.eq_ignore_ascii_case(&name)) else {
                 return Err(Error::binder(format!(
@@ -621,7 +650,8 @@ fn any_constraint_references_generated_column(
     constraints.iter().any(|constraint| match constraint {
         Constraint::Check(check) => {
             let mut names = Vec::new();
-            referenced_columns(&check.expression, &mut names);
+            // Lambdas in CHECK constraints are rejected by the CHECK binder instead.
+            let _ = referenced_columns(&check.expression, &mut names);
             names.iter().any(|name| generated(name))
         }
         Constraint::NotNull(not_null) => generated_index(not_null.index.0),

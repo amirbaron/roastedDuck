@@ -34,6 +34,7 @@ pub fn builtin_table_functions() -> Vec<TableFunctionSet> {
     sets.push(table::repeat::repeat_functions());
     sets.push(table::repeat::repeat_row_functions());
     sets.push(table::unnest::unnest_functions());
+    sets.push(table::summary::summary_functions());
     sets.push(table::test_vector_types::test_vector_types_functions());
     sets.push(table::query_function::query_functions());
     sets.push(table::query_function::query_table_functions());

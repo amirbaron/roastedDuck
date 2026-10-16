@@ -49,6 +49,9 @@ pub fn bind_function_expression<B: ExpressionBinder + ?Sized>(
             let functions = functions.clone();
             bind_scalar_function(binder, expr, &functions, depth, location)
         }
+        EntryKind::AggregateFunction(_) if binder.state_ref().inside_try => Err(Error::binder(
+            "aggregates are not allowed inside the TRY expression",
+        )),
         EntryKind::AggregateFunction(functions) => {
             let functions = functions.clone();
             binder.bind_aggregate(expr, &functions, depth)
@@ -106,17 +109,46 @@ fn try_bind_lambda_or_json<B: ExpressionBinder + ?Sized>(
     functions: &ScalarFunctionSet,
     depth: u64,
 ) -> Result<BindResult> {
-    let keyword_syntax = match &expr.kind {
-        ParsedExpressionKind::Function(function) => function.children.iter().any(|child| {
-            matches!(&child.kind, ParsedExpressionKind::Lambda(lambda) if lambda.syntax_type == rustdb_ast::LambdaSyntaxType::LambdaKeyword)
-        }),
-        _ => false,
+    use rustdb_ast::LambdaSyntaxType;
+    let syntax = match &expr.kind {
+        ParsedExpressionKind::Function(function) => {
+            function.children.iter().find_map(|child| match &child.kind {
+                ParsedExpressionKind::Lambda(lambda) => Some(lambda.syntax_type),
+                _ => None,
+            })
+        }
+        _ => None,
     };
-    let result = bind_lambda_function(binder, expr, functions, depth)?;
+    let keyword_syntax = syntax == Some(LambdaSyntaxType::LambdaKeyword);
+    // The `lambda_syntax` setting may reject the deprecated single arrow.
+    let context = binder.binder_ref().context.clone();
+    let setting = match context.function_client.settings() {
+        Some(settings) if !keyword_syntax => settings
+            .current_setting("lambda_syntax")?
+            .as_str()
+            .map(str::to_uppercase)
+            .unwrap_or_default(),
+        _ => String::new(),
+    };
+    let invalid_syntax = setting == "DISABLE_SINGLE_ARROW" && syntax == Some(LambdaSyntaxType::SingleArrow);
+    let result = match bind_lambda_function(binder, expr, functions, depth) {
+        Err(error) if invalid_syntax && error.kind() == rustdb_common::ErrorKind::ParameterNotResolved => {
+            return Err(Error::binder(DEPRECATED_LAMBDA_ARROW));
+        }
+        result => result?,
+    };
     let BindResult::Unbound(lambda_error) = result else {
+        if invalid_syntax {
+            return Ok(BindResult::error(DEPRECATED_LAMBDA_ARROW));
+        }
         return Ok(result);
     };
-    if keyword_syntax {
+    if keyword_syntax
+        || lambda_error
+            .error
+            .raw_message()
+            .contains("Deprecated lambda arrow (->) detected.")
+    {
         return Ok(BindResult::Unbound(lambda_error));
     }
     // Without the JSON extension the arrow operator only binds its operands; the first
@@ -145,6 +177,12 @@ fn try_bind_lambda_or_json<B: ExpressionBinder + ?Sized>(
         None => BindResult::Unbound(lambda_error),
     })
 }
+
+/// The error for the single arrow under `lambda_syntax = 'DISABLE_SINGLE_ARROW'`.
+const DEPRECATED_LAMBDA_ARROW: &str = "Deprecated lambda arrow (->) detected. Please transition to the new lambda \
+     syntax, i.e.., lambda x, i: x + i, before DuckDB's next release.\nUse SET \
+     lambda_syntax='ENABLE_SINGLE_ARROW' to revert to the deprecated behavior.\nFor more information, see \
+     https://duckdb.org/docs/stable/sql/functions/lambda.html.";
 
 /// DuckDB's `LambdaExpression::InvalidParametersErrorMessage`.
 const INVALID_LAMBDA_PARAMETERS: &str =
@@ -260,6 +298,7 @@ fn bind_lambda_function<B: ExpressionBinder + ?Sized>(
         parameter_count,
     };
     let outer_bindings = binder.state_ref().lambda_bindings.clone();
+    let unnests = binder.unnest_bindings();
     let mut lambda_expr = std::mem::replace(
         &mut bound_lambda.lambda_expr,
         Expression::constant(rustdb_types::Value::null(LogicalType::SQLNULL)),
@@ -267,7 +306,10 @@ fn bind_lambda_function<B: ExpressionBinder + ?Sized>(
     capture_lambda_columns(
         &mut lambda_expr,
         &mut bound_lambda,
-        &outer_bindings,
+        &LambdaScope {
+            outer: &outer_bindings,
+            unnests: &unnests,
+        },
         bind_lambda,
         &child_types,
     )?;
@@ -345,15 +387,31 @@ fn outer_parameter_index(outer: &[Binding], parameter_count: u64, lambda_index: 
     later as u64 + (outer[lambda_index].names.len() as u64 - column - 1) + parameter_count
 }
 
+/// What a lambda body sees around it: the enclosing lambdas' parameters and the UNNEST
+/// nodes it may not reference.
+struct LambdaScope<'a> {
+    outer: &'a [Binding],
+    unnests: &'a [(u64, u64)],
+}
+
 /// DuckDB's `CaptureLambdaColumns`: lambda parameters and captured columns of the body
 /// become references into the lambda's input chunk.
 fn capture_lambda_columns(
     expr: &mut Expression,
     lambda: &mut BoundLambdaExpression,
-    outer: &[Binding],
+    scope: &LambdaScope<'_>,
     bind_lambda: BindLambda,
     child_types: &[LogicalType],
 ) -> Result<()> {
+    let outer = scope.outer;
+    if let ExpressionKind::ColumnRef(column) = &expr.kind
+        && scope
+            .unnests
+            .iter()
+            .any(|&(table, count)| column.binding.table_index == table && column.binding.column_index < count)
+    {
+        return Err(Error::binder("UNNEST in lambda expressions is not supported"));
+    }
     match &expr.kind {
         ExpressionKind::Subquery(_) => Err(Error::binder(
             "subqueries in lambda expressions are not supported",
@@ -393,7 +451,7 @@ fn capture_lambda_columns(
             Ok(())
         }
         _ => expr.try_for_each_child_mut(|child| {
-            capture_lambda_columns(child, lambda, outer, bind_lambda, child_types)
+            capture_lambda_columns(child, lambda, scope, bind_lambda, child_types)
         }),
     }
 }

@@ -99,7 +99,7 @@ pub fn find_star_expression(
         }
         in_columns = true;
         if let Some(existing) = star {
-            if existing != &**current {
+            if !stars_equal(existing, current) {
                 return Err(Error::binder(
                     "Multiple different STAR/COLUMNS in the same expression are not supported",
                 )
@@ -110,6 +110,7 @@ pub fn find_star_expression(
         *star = Some((**current).clone());
         has_star = StarExpressionType::Star;
     }
+    let found_here = has_star == StarExpressionType::Star;
     for_each_child(expr, &mut |child| {
         let result = find_star_expression(scope, child, star, false, in_columns)?;
         if result != StarExpressionType::None {
@@ -117,7 +118,23 @@ pub fn find_star_expression(
         }
         Ok(())
     })?;
+    // DuckDB keeps a pointer to the COLUMNS star, so a `*` replaced inside its expression
+    // (e.g. `COLUMNS(lambda c: ...)`, i.e. `list_filter(*, ...)`) is seen by the caller.
+    if found_here && let ParsedExpressionKind::Star(current) = &expr.kind {
+        *star = Some((**current).clone());
+    }
     Ok(has_star)
+}
+
+/// `StarExpression::Equals`: aliases and query locations are ignored.
+fn stars_equal(left: &StarExpression, right: &StarExpression) -> bool {
+    let wrap = |star: &StarExpression| {
+        ParsedExpression::new(
+            ExpressionType::Star,
+            ParsedExpressionKind::Star(Box::new(star.clone())),
+        )
+    };
+    crate::parsed_equality::parsed_equals(&wrap(left), &wrap(right))
 }
 
 /// Replaces the star in `expr` by `replacement` (DuckDB's `ReplaceStarExpression`).
@@ -431,7 +448,14 @@ pub fn expand_star_expression(
         }
     }
     if star_type == StarExpressionType::Unpacked {
-        return Err(Error::not_implemented("UNPACK of star expressions"));
+        if expr.expression_type == ExpressionType::OperatorUnpack {
+            return Err(Error::binder(
+                "*COLUMNS not allowed at the root level, use COLUMNS instead",
+            ));
+        }
+        replace_unpacked_star_expression(&mut expr, &star_list, &star, regex.as_ref())?;
+        new_select_list.push(expr);
+        return Ok(());
     }
     for replacement in &star_list {
         let mut new_expr = expr.clone();
@@ -448,4 +472,106 @@ pub fn expand_star_expression(
         new_select_list.push(new_expr);
     }
     Ok(())
+}
+
+/// The expressions an unpacked `*COLUMNS(...)` argument stands for (DuckDB's `AddChild`
+/// in `bind_unpacked_star_expression.cpp`); other arguments are kept.
+fn add_unpacked_child(
+    child: ParsedExpression,
+    new_children: &mut Vec<ParsedExpression>,
+    star_list: &[ParsedExpression],
+    star: &StarExpression,
+    regex: Option<&regex::Regex>,
+) -> Result<()> {
+    if child.expression_type != ExpressionType::OperatorUnpack {
+        new_children.push(child);
+        return Ok(());
+    }
+    let ParsedExpressionKind::Operator(operator) = child.kind else {
+        return Err(Error::internal("UNPACK without children"));
+    };
+    let unpack_child = operator
+        .children
+        .into_iter()
+        .next()
+        .ok_or_else(|| Error::internal("UNPACK without children"))?;
+    for replacement in star_list {
+        let mut new_expr = unpack_child.clone();
+        replace_star_expression(&mut new_expr, replacement)?;
+        if star.columns
+            && let Some(column) = resolved_column_name(replacement)
+        {
+            new_expr.alias = if new_expr.alias.is_empty() {
+                column
+            } else {
+                replace_columns_alias(&new_expr.alias, &column, regex)?
+            };
+        }
+        new_children.push(new_expr);
+    }
+    Ok(())
+}
+
+/// Expands `*COLUMNS(...)` arguments of functions and of COALESCE/IN in place (DuckDB's
+/// `Binder::ReplaceUnpackedStarExpression`).
+fn replace_unpacked_star_expression(
+    expr: &mut ParsedExpression,
+    star_list: &[ParsedExpression],
+    star: &StarExpression,
+    regex: Option<&regex::Regex>,
+) -> Result<()> {
+    let expression_type = expr.expression_type;
+    match &mut expr.kind {
+        ParsedExpressionKind::Function(function) => {
+            let mut new_children = Vec::with_capacity(function.children.len());
+            for child in std::mem::take(&mut function.children) {
+                add_unpacked_child(child, &mut new_children, star_list, star, regex)?;
+            }
+            function.children = new_children;
+            let orders = &mut function.order_bys.orders;
+            if !orders.is_empty() {
+                let mut new_orders = Vec::with_capacity(orders.len());
+                for order in orders.iter() {
+                    add_unpacked_child(
+                        (*order.expression).clone(),
+                        &mut new_orders,
+                        star_list,
+                        star,
+                        regex,
+                    )?;
+                }
+                if new_orders.len() != orders.len() {
+                    return Err(Error::not_implemented(
+                        "*COLUMNS(...) is not supported in the order expression",
+                    ));
+                }
+                for (order, expression) in orders.iter_mut().zip(new_orders) {
+                    *order.expression = expression;
+                }
+            }
+        }
+        ParsedExpressionKind::Operator(operator) => {
+            if expression_type == ExpressionType::OperatorUnpack {
+                return Err(Error::binder("*COLUMNS() can not be used in this place"));
+            }
+            if !matches!(
+                expression_type,
+                ExpressionType::OperatorCoalesce | ExpressionType::CompareIn | ExpressionType::CompareNotIn
+            ) {
+                return Err(Error::binder(format!(
+                    "*COLUMNS() can not be used together with the '{}' operator",
+                    expression_type.name()
+                )));
+            }
+            let mut new_children = Vec::with_capacity(operator.children.len());
+            for child in std::mem::take(&mut operator.children) {
+                add_unpacked_child(child, &mut new_children, star_list, star, regex)?;
+            }
+            operator.children = new_children;
+        }
+        _ => {}
+    }
+    for_each_child(expr, &mut |child| {
+        replace_unpacked_star_expression(child, star_list, star, regex)
+    })
 }

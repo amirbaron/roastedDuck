@@ -209,7 +209,6 @@ impl DataTable {
     /// Fills `index` with the table's committed rows. With `reject_nulls` (ALTER TABLE
     /// ADD PRIMARY KEY), a NULL key is an error naming the index.
     pub fn build_index(&self, transaction: &Transaction, index: &mut Art, reject_nulls: bool) -> Result<()> {
-        let _ = transaction;
         let columns = Self::index_columns(index);
         let column_ids: Vec<StorageIndex> = columns
             .iter()
@@ -225,7 +224,7 @@ impl DataTable {
         let mut chunk = DataChunk::with_types(&types, STANDARD_VECTOR_SIZE);
         while self.row_groups.scan_all(
             TableScanType::OmitPermanentlyDeleted,
-            TransactionData::latest_committed(),
+            transaction.oldest_active_snapshot(),
             &mut state,
             &column_ids,
             &mut filters,

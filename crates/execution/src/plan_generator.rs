@@ -934,6 +934,7 @@ impl PlanGenerator {
             }
             _ => {}
         }
+        let has_children = !children.is_empty();
         let mut children = children
             .into_iter()
             .map(|child| self.plan(child))
@@ -1067,6 +1068,19 @@ impl PlanGenerator {
             LogicalKind::Drop(info) => {
                 let catalog = self.context()?.catalog(&info.catalog)?;
                 self.ddl("DROP", types, Arc::new(DropAction { catalog, info: *info }))?
+            }
+            LogicalKind::Get(get) if has_children => {
+                // A table in-out function over its arguments' rows (`CreatePlan(LogicalGet &)`
+                // with children); the binder already cast the input to the function's types.
+                let child = next_child("table in-out function")?;
+                Arc::new(crate::operators::PhysicalTableInOutFunction::new(
+                    types,
+                    get.function,
+                    get.bind_data,
+                    get.projected_input,
+                    get.ordinality_index,
+                    child,
+                )?)
             }
             LogicalKind::Get(get) if get.function.scan.is_some() && get.projection_ids.is_empty() => {
                 let column_ids = get.column_ids.iter().map(|column| column.index).collect();

@@ -12,6 +12,7 @@ pub(crate) mod executor;
 pub mod generic;
 pub mod geometry;
 pub mod list;
+pub mod log;
 pub mod map;
 pub mod math;
 pub(crate) mod nested;
@@ -21,6 +22,7 @@ pub mod string;
 pub mod structs;
 pub mod system;
 pub mod union;
+pub mod variant;
 
 use rustdb_function::ScalarFunctionSet;
 
@@ -113,6 +115,8 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
     sets.push(string::substring::substring_grapheme_functions());
     sets.extend(generic::generic_functions());
     sets.extend(geometry::geometry_functions());
+    sets.extend(variant::variant_functions());
+    sets.extend(log::log_functions());
     sets.extend(system::system_functions());
     sets.extend(compressed_materialization::compressed_materialization_functions());
     sets.extend(date::to_interval::to_interval_functions());

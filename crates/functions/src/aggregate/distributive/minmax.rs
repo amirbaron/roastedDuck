@@ -369,11 +369,10 @@ fn bind_min_max_n<const MAX: bool>(
 
 fn min_max_set<const MAX: bool>(name: &str) -> AggregateFunctionSet {
     let mut set = AggregateFunctionSet::new(name);
-    set.add(AggregateFunction::unbound(
-        vec![LogicalType::ANY],
-        LogicalType::ANY,
-        bind_min_max::<MAX>,
-    ));
+    let mut function =
+        AggregateFunction::unbound(vec![LogicalType::ANY], LogicalType::ANY, bind_min_max::<MAX>);
+    function.collation = rustdb_function::AggregateCollation::MinMax;
+    set.add(function);
     set.add(AggregateFunction::unbound(
         vec![LogicalType::ANY, LogicalType::BIGINT],
         LogicalType::list(LogicalType::ANY),

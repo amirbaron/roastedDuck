@@ -78,6 +78,11 @@ impl<'a> CheckBinder<'a> {
             return Err(Error::internal("expected a column reference"));
         };
         let names = column.column_names.clone();
+        if names.len() == 1 && matching_lambda_binding(&self.state().lambda_bindings, &names[0]).is_some() {
+            return Err(Error::not_implemented(
+                "Lambda functions are currently not supported in CHECK constraints.",
+            ));
+        }
         if names.len() > 1 {
             // `BindQualifiedColumnName`: drop a leading table name, the rest are fields.
             let start = usize::from(names[0] == self.table);
@@ -310,6 +315,19 @@ impl<'a> AlterBinder<'a> {
             return Err(Error::internal("expected a column reference"));
         };
         let names = column.column_names.clone();
+        // A lambda parameter (`AlterBinder::BindLambdaReference`).
+        if names.len() == 1
+            && let Some(index) = matching_lambda_binding(&self.state().lambda_bindings, &names[0])
+        {
+            let lambda_bindings = &mut self.state().lambda_bindings;
+            return Ok(crate::binder::expression::bind_lambda_parameter(
+                lambda_bindings,
+                index,
+                &names[0],
+                depth,
+            )?
+            .into());
+        }
         if names.len() > 1 {
             let start = usize::from(names[0] == self.table);
             let mut result = ParsedExpression::column_ref(vec![names[names.len() - 1].clone()]);
@@ -454,4 +472,18 @@ impl ExpressionBinder for ReturningBinder<'_> {
             _ => bind_expression_base(self, expr, depth, root_expression),
         }
     }
+}
+
+/// The innermost lambda whose parameters include `name` (DuckDB's
+/// `LambdaRefExpression::FindMatchingBinding`).
+fn matching_lambda_binding(lambda_bindings: &[crate::binder::Binding], name: &str) -> Option<u64> {
+    lambda_bindings
+        .iter()
+        .rposition(|binding| {
+            binding
+                .names
+                .iter()
+                .any(|parameter| parameter.eq_ignore_ascii_case(name))
+        })
+        .map(|index| index as u64)
 }

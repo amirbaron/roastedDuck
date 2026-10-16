@@ -99,8 +99,46 @@ fn list_argument(ty: &LogicalType) -> Result<LogicalType> {
     Ok(ty.clone())
 }
 
-/// DuckDB's `ListNormalSortBind`/`ListReverseSortBind`/`ListGradeUpBind` with the default
-/// settings (ascending, NULLS LAST).
+/// The upper-cased text of setting `name`, if the connection has settings.
+fn setting_text(input: &BindInput<'_>, name: &str) -> Result<Option<String>> {
+    let Some(settings) = input.client.settings() else {
+        return Ok(None);
+    };
+    let value = settings.current_setting(name)?;
+    Ok(value.as_str().map(str::to_uppercase))
+}
+
+/// `DBConfig::ResolveOrder`: the `default_order` setting for `ORDER_DEFAULT`.
+fn resolve_order(input: &BindInput<'_>, order: Option<OrderType>) -> Result<OrderType> {
+    if let Some(order) = order {
+        return Ok(order);
+    }
+    Ok(match setting_text(input, "default_order")?.as_deref() {
+        Some("DESC" | "DESCENDING") => OrderType::Descending,
+        _ => OrderType::Ascending,
+    })
+}
+
+/// `DBConfig::ResolveNullOrder`: the `default_null_order` setting for `ORDER_DEFAULT`.
+fn resolve_null_order(
+    input: &BindInput<'_>,
+    order: OrderType,
+    nulls: Option<NullOrder>,
+) -> Result<NullOrder> {
+    if let Some(nulls) = nulls {
+        return Ok(nulls);
+    }
+    let ascending = order == OrderType::Ascending;
+    Ok(match setting_text(input, "default_null_order")?.as_deref() {
+        Some("NULLS_FIRST" | "NULLS FIRST") => NullOrder::NullsFirst,
+        Some("NULLS_FIRST_ON_ASC_LAST_ON_DESC") if ascending => NullOrder::NullsFirst,
+        Some("NULLS_LAST_ON_ASC_FIRST_ON_DESC") if !ascending => NullOrder::NullsFirst,
+        _ => NullOrder::NullsLast,
+    })
+}
+
+/// DuckDB's `ListNormalSortBind`/`ListReverseSortBind`/`ListGradeUpBind`: unspecified
+/// orders come from the `default_order` and `default_null_order` settings.
 fn bind_sort(reverse: bool, grade_up: bool) -> impl Fn(&mut ScalarFunction, &BindInput<'_>) -> BindResult {
     move |function, input| {
         let (order_index, null_index) = if reverse {
@@ -116,14 +154,14 @@ fn bind_sort(reverse: bool, grade_up: bool) -> impl Fn(&mut ScalarFunction, &Bin
         if let Some(index) = null_index.filter(|&index| index < input.argument_types.len()) {
             nulls = parse_null_order(&order_text(input, index)?)?;
         }
-        let mut order = order.unwrap_or(OrderType::Ascending);
+        let mut order = resolve_order(input, order)?;
         if reverse {
             order = match order {
                 OrderType::Ascending => OrderType::Descending,
                 OrderType::Descending => OrderType::Ascending,
             };
         }
-        let nulls = nulls.unwrap_or(NullOrder::NullsLast);
+        let nulls = resolve_null_order(input, order, nulls)?;
         let ty = &input.argument_types[0];
         if ty.id() == LogicalTypeId::Unknown && !grade_up {
             function.arguments[0] = LogicalType::simple(LogicalTypeId::Unknown);
