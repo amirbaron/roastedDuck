@@ -635,6 +635,7 @@ version = "1.5.6"
 dependencies = [
  "rustdb-buffer",
  "rustdb-common",
+ "rustdb-row",
  "rustdb-serde",
  "rustdb-types",
  "ruzstd",

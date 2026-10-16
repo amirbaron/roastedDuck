@@ -12,7 +12,7 @@ use super::pointers::{PersistentColumnData, RowGroupPointer};
 use super::stream::StreamDeserializer;
 use crate::data_table::TableIoManager;
 use crate::metadata::{MetaBlockPointer, MetadataManager, MetadataReader};
-use crate::statistics::{BaseStatistics, deserialize_table_statistics};
+use crate::statistics::{BaseStatistics, DistinctStatistics, deserialize_table_statistics};
 use crate::table::{
     ChunkVectorInfo, ColumnData, RowGroup, RowGroupCollection, RowVersionManager, TableStatistics,
 };
@@ -21,6 +21,8 @@ use crate::table::{
 #[derive(Debug)]
 pub struct PersistentTableData {
     pub statistics: Vec<BaseStatistics>,
+    /// The distinct statistics of each column, if stored.
+    pub distinct: Vec<Option<DistinctStatistics>>,
     pub row_groups: Vec<RowGroupPointer>,
     pub total_rows: u64,
 }
@@ -34,7 +36,7 @@ pub fn read_table_data(
     total_rows: u64,
 ) -> Result<PersistentTableData> {
     let mut reader = MetadataReader::new(metadata, table_pointer, true)?;
-    let statistics = {
+    let (statistics, distinct) = {
         let mut deserializer = StreamDeserializer::new(&mut reader);
         deserializer.begin()?;
         let statistics = deserialize_table_statistics(&mut deserializer, types)?;
@@ -51,6 +53,7 @@ pub fn read_table_data(
     }
     Ok(PersistentTableData {
         statistics,
+        distinct,
         row_groups,
         total_rows,
     })
@@ -180,8 +183,19 @@ pub fn load_row_groups(
         }
         collection.append_existing_row_group(Arc::new(row_group));
     }
+    // Types that keep distinct statistics get empty ones when none were stored
+    // (`ColumnStatistics::CreateEmptyStats` before `SetDistinct`).
+    let distinct = types
+        .iter()
+        .enumerate()
+        .map(|(index, ty)| match data.distinct.get(index).cloned().flatten() {
+            Some(distinct) => Some(distinct),
+            None => DistinctStatistics::type_is_supported(ty).then(DistinctStatistics::default),
+        })
+        .collect();
     collection.set_statistics(TableStatistics {
         columns: data.statistics,
+        distinct,
     });
     Ok(collection)
 }

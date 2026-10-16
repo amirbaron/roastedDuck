@@ -5,15 +5,17 @@
 use rustdb_common::Result;
 use rustdb_planner::{Expression, ExpressionKind};
 use rustdb_storage::statistics::{BaseStatistics, NumericValue};
-use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType};
+use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, Value};
 
-use super::{StatisticsPropagator, has_min_max, numeric_max, numeric_min, set_max, set_min};
+use super::{StatisticsPropagator, greater, has_min_max, numeric_max, numeric_min, set_max, set_min};
+use crate::expression_util::try_evaluate_scalar;
 use crate::optimizer::bind_aggregate_function;
+use rustdb_function::cast::ValueCast;
 
 /// The statistics of a scalar function call, possibly simplifying it.
 #[allow(clippy::unnecessary_wraps)] // callbacks may bind replacement functions
 pub(super) fn propagate_scalar_function(
-    _propagator: &mut StatisticsPropagator<'_>,
+    propagator: &mut StatisticsPropagator<'_>,
     expression: &mut Expression,
     child_stats: &[BaseStatistics],
 ) -> Result<Option<BaseStatistics>> {
@@ -23,6 +25,30 @@ pub(super) fn propagate_scalar_function(
     match &*function.function.name {
         "+" | "-" | "*" if child_stats.len() == 2 => Ok(propagate_arithmetic(expression, child_stats)),
         "abs" | "@" if child_stats.len() == 1 => Ok(propagate_abs(expression, child_stats)),
+        name if child_stats.len() == 1 && date_part_kind(name).is_some() => Ok(date_part_kind(name)
+            .and_then(|kind| propagate_date_part(propagator, expression, kind, 0, child_stats))),
+        // DuckDB binds `date_part('epoch' | 'julian', x)` as `epoch(x)` / `julian(x)`,
+        // which have statistics.
+        "date_part" if child_stats.len() == 2 => {
+            let specifier = function
+                .children
+                .first()
+                .and_then(Expression::as_constant)
+                .and_then(|value| value.as_str().map(str::to_lowercase));
+            Ok(match specifier.as_deref() {
+                Some("epoch" | "julian" | "jd") => propagate_date_part(
+                    propagator,
+                    expression,
+                    DatePartKind::Monotonic { double: true },
+                    1,
+                    child_stats,
+                ),
+                _ => None,
+            })
+        }
+        "date_trunc" if child_stats.len() == 2 => {
+            Ok(propagate_date_trunc(propagator, expression, child_stats))
+        }
         "stats" => {
             // DuckDB's `StatsPropagateStats`: record the argument's statistics.
             if let (Some(data), Some(stats)) = (
@@ -41,6 +67,182 @@ pub(super) fn propagate_scalar_function(
         }
         _ => Ok(None),
     }
+}
+
+/// How a date part function propagates statistics.
+#[derive(Clone, Copy)]
+enum DatePartKind {
+    /// Monotonic in its input (`PropagateDatePartStatistics`): the part of the minimum
+    /// and of the maximum; DOUBLE parts are typed DOUBLE.
+    Monotonic { double: bool },
+    /// Within fixed bounds (`PropagateSimpleDatePartStatistics`); `time` if TIME inputs
+    /// propagate too.
+    Bounded { min: i64, max: i64, time: bool },
+}
+
+/// The statistics behavior of the date part function `name` (DuckDB's
+/// `PropagateStatistics` of each `DatePart` operator).
+fn date_part_kind(name: &str) -> Option<DatePartKind> {
+    use DatePartKind::{Bounded, Monotonic};
+    let bounded = |min, max| Bounded {
+        min,
+        max,
+        time: false,
+    };
+    let time = |min, max| Bounded { min, max, time: true };
+    Some(match name {
+        "year" | "decade" | "century" | "millennium" | "isoyear" | "yearweek" | "epoch_ns" | "epoch_us"
+        | "epoch_ms" => Monotonic { double: false },
+        "epoch" | "julian" => Monotonic { double: true },
+        "month" => bounded(1, 12),
+        "day" | "dayofmonth" => bounded(1, 31),
+        "quarter" => bounded(1, 4),
+        "dayofweek" | "weekday" => bounded(0, 6),
+        "isodow" => bounded(1, 7),
+        "dayofyear" => bounded(1, 366),
+        "week" | "weekofyear" => bounded(1, 54),
+        "era" => bounded(0, 1),
+        "timezone" | "timezone_hour" | "timezone_minute" => bounded(0, 0),
+        "nanosecond" => time(0, 60_000_000_000),
+        "microsecond" => time(0, 60_000_000),
+        "millisecond" => time(0, 60_000),
+        "second" | "minute" => time(0, 60),
+        "hour" => time(0, 24),
+        _ => return None,
+    })
+}
+
+/// Whether a DATE/TIMESTAMP bound is finite (`Value::IsFinite`); TIME bounds always are.
+fn is_finite_bound(value: NumericValue) -> bool {
+    match value {
+        NumericValue::I32(v) => v != i32::MAX && v != -i32::MAX,
+        NumericValue::I64(v) => v != i64::MAX && v != -i64::MAX,
+        _ => true,
+    }
+}
+
+/// DuckDB's date part statistics callbacks, for DATE and TIMESTAMP (and, for time
+/// parts, TIME) inputs with finite bounds; the input is argument `input_index`.
+fn propagate_date_part(
+    propagator: &StatisticsPropagator<'_>,
+    expression: &Expression,
+    kind: DatePartKind,
+    input_index: usize,
+    child_stats: &[BaseStatistics],
+) -> Option<BaseStatistics> {
+    let ExpressionKind::Function(function) = &expression.kind else {
+        return None;
+    };
+    let child = child_stats.get(input_index)?;
+    let input = function.children.get(input_index)?;
+    let temporal = matches!(
+        input.return_type.id(),
+        LogicalTypeId::Date | LogicalTypeId::Timestamp
+    );
+    let time = matches!(
+        input.return_type.id(),
+        LogicalTypeId::Time | LogicalTypeId::TimeNs | LogicalTypeId::TimeTz
+    );
+    if !(temporal || (time && matches!(kind, DatePartKind::Bounded { time: true, .. }))) {
+        return None;
+    }
+    if !has_min_max(child) {
+        return None;
+    }
+    let (min, max) = (numeric_min(child)?, numeric_max(child)?);
+    if greater(min, max) || !is_finite_bound(min) || !is_finite_bound(max) {
+        return None;
+    }
+    let mut result = match kind {
+        DatePartKind::Bounded { min, max, .. } => {
+            let mut stats = BaseStatistics::create_empty(LogicalType::BIGINT);
+            set_min(&mut stats, Some(NumericValue::I64(min)));
+            set_max(&mut stats, Some(NumericValue::I64(max)));
+            stats
+        }
+        DatePartKind::Monotonic { double } => {
+            let part = |bound: NumericValue| {
+                let mut call = expression.clone();
+                if let ExpressionKind::Function(call) = &mut call.kind
+                    && let Some(argument) = call.children.get_mut(input_index)
+                {
+                    *argument = Expression::constant(bound.to_value(&input.return_type));
+                }
+                try_evaluate_scalar(propagator.optimizer.context(), &call).and_then(|value| {
+                    let target = if double {
+                        LogicalType::DOUBLE
+                    } else {
+                        LogicalType::BIGINT
+                    };
+                    value.default_cast_as(&target).ok()
+                })
+            };
+            let (min_part, max_part) = (part(min)?, part(max)?);
+            let stats_type = if double {
+                LogicalType::DOUBLE
+            } else {
+                LogicalType::BIGINT
+            };
+            let mut stats = BaseStatistics::create_empty(stats_type);
+            set_min(&mut stats, NumericValue::from_value(&min_part));
+            set_max(&mut stats, NumericValue::from_value(&max_part));
+            stats
+        }
+    };
+    // `CopyValidity`.
+    result.set_validity(child.can_have_null(), child.can_have_no_null());
+    Some(result)
+}
+
+/// DuckDB's `DateTruncStatistics`: `date_trunc(part, x)` over a DATE or TIMESTAMP with a
+/// constant part (the callback `DateTruncBind` installs) is monotonic, so truncating the
+/// input's bounds bounds the result; infinite bounds pass through the function's cast.
+fn propagate_date_trunc(
+    propagator: &StatisticsPropagator<'_>,
+    expression: &Expression,
+    child_stats: &[BaseStatistics],
+) -> Option<BaseStatistics> {
+    let ExpressionKind::Function(function) = &expression.kind else {
+        return None;
+    };
+    let [part_stats, child] = child_stats else {
+        return None;
+    };
+    let [part, input] = function.children.as_slice() else {
+        return None;
+    };
+    if part.as_constant().is_none_or(Value::is_null)
+        || !matches!(
+            input.return_type.id(),
+            LogicalTypeId::Date | LogicalTypeId::Timestamp
+        )
+        || !has_min_max(child)
+    {
+        return None;
+    }
+    let (min, max) = (numeric_min(child)?, numeric_max(child)?);
+    if greater(min, max) {
+        return None;
+    }
+    let truncate = |bound: NumericValue| {
+        let mut call = expression.clone();
+        if let ExpressionKind::Function(call) = &mut call.kind
+            && let Some(argument) = call.children.get_mut(1)
+        {
+            *argument = Expression::constant(bound.to_value(&input.return_type));
+        }
+        try_evaluate_scalar(propagator.optimizer.context(), &call)
+    };
+    let (min_part, max_part) = (truncate(min)?, truncate(max)?);
+    let mut result = BaseStatistics::create_empty(expression.return_type.clone());
+    set_min(&mut result, NumericValue::from_value(&min_part));
+    set_max(&mut result, NumericValue::from_value(&max_part));
+    // `CombineValidity`.
+    result.set_validity(
+        part_stats.can_have_null() || child.can_have_null(),
+        part_stats.can_have_no_null() || child.can_have_no_null(),
+    );
+    Some(result)
 }
 
 /// Bind data marking an aggregate bound without DuckDB's statistics callback (e.g. the

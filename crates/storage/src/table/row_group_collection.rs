@@ -13,7 +13,7 @@ use super::row_group::{DeleteRecord, RowGroup, RowGroupAppendState, TableScanTyp
 use super::scan_state::{CollectionScanState, ParallelCollectionScanState, ScanFilterInfo, StorageIndex};
 use super::segment_tree::{SegmentNode, SegmentTree};
 use crate::data_table::TableIoManager;
-use crate::statistics::BaseStatistics;
+use crate::statistics::{BaseStatistics, DistinctStatistics};
 use crate::transaction::TransactionData;
 use crate::{MAX_ROW_ID, VECTOR_SIZE};
 
@@ -65,20 +65,43 @@ pub struct TableAppendState {
     pub current_row: u64,
     pub total_append_count: u64,
     pub(crate) transaction: TransactionData,
+    /// The distinct statistics of the appended rows, merged into the collection's when
+    /// the append finishes (DuckDB's thread-local `TableAppendState::stats`).
+    stats: TableStatistics,
 }
 
 /// Per-column statistics of a collection (DuckDB's `TableStatistics`).
 #[derive(Debug, Default, Clone)]
 pub struct TableStatistics {
     pub columns: Vec<BaseStatistics>,
+    /// Per column, the distinct statistics, for types that keep them (DuckDB's
+    /// `ColumnStatistics::distinct_stats`).
+    pub distinct: Vec<Option<DistinctStatistics>>,
 }
 
 impl TableStatistics {
     pub fn empty(types: &[LogicalType]) -> Self {
         Self {
             columns: types.iter().cloned().map(BaseStatistics::create_empty).collect(),
+            distinct: types.iter().map(empty_distinct).collect(),
         }
     }
+
+    /// Merges the distinct statistics of `other` into the columns that keep them
+    /// (`ColumnStatistics::Merge`'s distinct part).
+    fn merge_distinct(&mut self, other: &Self) {
+        for (own, theirs) in self.distinct.iter_mut().zip(&other.distinct) {
+            if let (Some(own), Some(theirs)) = (own, theirs) {
+                own.merge(theirs);
+            }
+        }
+    }
+}
+
+/// Empty distinct statistics for a column of `ty`, if the type keeps them
+/// (`ColumnStatistics::CreateEmptyStats`).
+fn empty_distinct(ty: &LogicalType) -> Option<DistinctStatistics> {
+    DistinctStatistics::type_is_supported(ty).then(DistinctStatistics::default)
 }
 
 /// Whether row ids of a collection starting at `row_start` are transaction-local.
@@ -178,9 +201,20 @@ impl RowGroupCollection {
         self.stats.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// A copy of the statistics of column `column` (`CopyStats`).
+    /// A copy of the statistics of column `column`, with the distinct count its distinct
+    /// statistics estimate (`CopyStats`).
     pub fn column_statistics(&self, column: usize) -> Option<BaseStatistics> {
-        self.stats().columns.get(column).cloned()
+        let stats = self.stats();
+        let mut result = stats.columns.get(column).cloned()?;
+        if let Some(Some(distinct)) = stats.distinct.get(column) {
+            result.set_distinct_count(distinct.count());
+        }
+        Some(result)
+    }
+
+    /// The distinct statistics of every column (for checkpoints).
+    pub fn distinct_statistics(&self) -> Vec<Option<DistinctStatistics>> {
+        self.stats().distinct.clone()
     }
 
     /// Replaces the table statistics.
@@ -486,6 +520,7 @@ impl RowGroupCollection {
             current_row: row_start,
             total_append_count: 0,
             transaction,
+            stats: TableStatistics::empty(&self.types),
         })
     }
 
@@ -494,9 +529,11 @@ impl RowGroupCollection {
     pub fn append(&self, chunk: &DataChunk, state: &mut TableAppendState) -> Result<bool> {
         let mut remaining = chunk.len();
         let mut offset = 0;
+        let mut last_start;
         let mut new_row_group = false;
         state.total_append_count += remaining as u64;
         loop {
+            last_start = offset;
             let available = self.row_group_size - state.row_group_append.offset_in_row_group;
             let append_count = (remaining as u64).min(available) as usize;
             if append_count > 0 {
@@ -531,6 +568,22 @@ impl RowGroupCollection {
             state.current = node;
         }
         state.current_row += chunk.len() as u64;
+        // DuckDB samples the chunk after slicing off the rows that went into a full row
+        // group: the rows of the last piece.
+        let sampled = if last_start == 0 {
+            chunk.clone()
+        } else {
+            let sel = SelectionVector::new((last_start as u32..chunk.len() as u32).collect::<Vec<_>>());
+            DataChunk::new(
+                chunk.columns().iter().map(|column| column.slice(&sel)).collect(),
+                chunk.len() - last_start,
+            )
+        };
+        for (column, distinct) in state.stats.distinct.iter_mut().enumerate() {
+            if let Some(distinct) = distinct {
+                distinct.update_sample(sampled.column(column), sampled.len())?;
+            }
+        }
         Ok(new_row_group)
     }
 
@@ -552,6 +605,8 @@ impl RowGroupCollection {
         self.total_rows
             .fetch_add(state.total_append_count, Ordering::AcqRel);
         state.total_append_count = 0;
+        let local = std::mem::take(&mut state.stats);
+        self.stats().merge_distinct(&local);
     }
 
     /// Marks rows `row_start..row_start + count` as committed (`CommitAppend`).
@@ -632,6 +687,7 @@ impl RowGroupCollection {
             for (own, theirs) in stats.columns.iter_mut().zip(&other_stats.columns) {
                 own.merge(theirs);
             }
+            stats.merge_distinct(&other_stats);
         }
         self.total_rows.fetch_add(other.total_rows(), Ordering::AcqRel);
         Ok(())
@@ -789,6 +845,7 @@ impl RowGroupCollection {
         types.push(ty.clone());
         let mut stats = self.stats().clone();
         stats.columns.push(BaseStatistics::create_empty(ty.clone()));
+        stats.distinct.push(empty_distinct(ty));
         let result = self.derived(types, stats);
         let target = result.row_groups();
         let column_index = self.types.len();
@@ -826,6 +883,9 @@ impl RowGroupCollection {
         types.remove(column);
         let mut stats = self.stats().clone();
         stats.columns.remove(column);
+        if column < stats.distinct.len() {
+            stats.distinct.remove(column);
+        }
         let result = self.derived(types, stats);
         let target = result.row_groups();
         for node in self.row_groups().tree.nodes() {
@@ -852,6 +912,9 @@ impl RowGroupCollection {
         types[changed] = target.clone();
         let mut stats = self.stats().clone();
         stats.columns[changed] = BaseStatistics::create_empty(target.clone());
+        if let Some(distinct) = stats.distinct.get_mut(changed) {
+            *distinct = empty_distinct(target);
+        }
         let result = self.derived(types, stats);
         let target_tree = result.row_groups();
         let options = RowGroup::scan_options(TableScanType::AllRows, transaction);

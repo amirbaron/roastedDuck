@@ -120,7 +120,11 @@ enum PhysicalRenderNode<'a> {
 
 impl<'a> PhysicalRenderNode<'a> {
     const fn operator(op: &'a dyn PhysicalOperator, info: ExplainInfo<'a>) -> Self {
-        Self::Operator { op, info, plain: false }
+        Self::Operator {
+            op,
+            info,
+            plain: false,
+        }
     }
 }
 
@@ -139,7 +143,9 @@ impl RenderSource for PhysicalRenderNode<'_> {
             }
             Self::DelimDistinct { delim } => {
                 let mut params = rustdb_common::tree_renderer::RenderParams::new();
-                let groups: Vec<String> = (0..delim.distinct_groups).map(|index| format!("#{index}")).collect();
+                let groups: Vec<String> = (0..delim.distinct_groups)
+                    .map(|index| format!("#{index}"))
+                    .collect();
                 params.insert("Groups".to_owned(), groups.join("\n"));
                 crate::operator::set_estimated_cardinality(&mut params, delim.distinct_estimate);
                 RenderTreeNode::new("HASH_GROUP_BY".to_owned(), params)
@@ -155,7 +161,11 @@ impl RenderSource for PhysicalRenderNode<'_> {
             // DuckDB's `PhysicalDelimJoin::GetChildren`.
             return vec![
                 Self::operator(delim.input.as_ref(), info),
-                Self::Operator { op, info, plain: true },
+                Self::Operator {
+                    op,
+                    info,
+                    plain: true,
+                },
                 Self::DelimDistinct { delim },
             ];
         }
@@ -173,7 +183,10 @@ fn render_physical_plan(
     delim_joins: &HashMap<usize, DelimExplain>,
     format: ExplainFormat,
 ) -> String {
-    let info = ExplainInfo { estimates, delim_joins };
+    let info = ExplainInfo {
+        estimates,
+        delim_joins,
+    };
     let tree = RenderTree::create(&PhysicalRenderNode::operator(root, info));
     render(renderer_kind(format), tree)
 }
@@ -234,8 +247,12 @@ impl PlanGenerator {
                 plan,
             )));
         }
-        let physical_plan =
-            render_physical_plan(plan.as_ref(), &self.estimates, &self.delim_explain, explain_format);
+        let physical_plan = render_physical_plan(
+            plan.as_ref(),
+            &self.estimates,
+            &self.delim_explain,
+            explain_format,
+        );
         let output = self
             .context
             .as_ref()

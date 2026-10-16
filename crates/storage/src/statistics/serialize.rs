@@ -9,7 +9,7 @@ use rustdb_types::{LogicalType, PhysicalType};
 
 use super::numeric::NumericValue;
 use super::string::MAX_STRING_MINMAX_SIZE;
-use super::{BaseStatistics, StatsData};
+use super::{BaseStatistics, DistinctStatistics, HyperLogLog, StatsData};
 
 /// `SerializeNumericStatsValue`.
 fn write_numeric_value(serializer: &mut dyn Serializer, value: Option<NumericValue>) -> Result<()> {
@@ -166,16 +166,87 @@ impl BaseStatistics {
     }
 }
 
+/// `DistinctStatistics::Serialize` (with `HyperLogLog::Serialize`), as the optional
+/// "distinct" property of a `ColumnStatistics`.
+fn write_distinct(s: &mut dyn Serializer, distinct: Option<&DistinctStatistics>) -> Result<()> {
+    let Some(distinct) = distinct else {
+        s.on_optional_property_begin(101, "distinct", false);
+        s.on_optional_property_end(false);
+        return Ok(());
+    };
+    s.on_optional_property_begin(101, "distinct", true);
+    s.on_nullable_begin(true);
+    s.on_object_begin();
+    s.write_property_with_default(100, "sample_count", &distinct.sample_count)?;
+    s.write_property_with_default(101, "total_count", &distinct.total_count)?;
+    s.on_optional_property_begin(102, "log", true);
+    s.on_nullable_begin(true);
+    s.on_object_begin();
+    let (storage_type, data) = distinct.log.to_storage(s.should_serialize(3));
+    s.write_property(100, "type", &storage_type)?;
+    s.on_property_begin(101, "data");
+    s.write_data(&data);
+    s.on_property_end();
+    s.on_object_end();
+    s.on_nullable_end();
+    s.on_optional_property_end(true);
+    s.on_object_end();
+    s.on_nullable_end();
+    s.on_optional_property_end(true);
+    Ok(())
+}
+
+/// `DistinctStatistics::Deserialize`, from the "distinct" property; `None` if absent or
+/// unreadable.
+fn read_distinct(d: &mut dyn Deserializer) -> Result<Option<DistinctStatistics>> {
+    if !d.on_optional_property_begin(101, "distinct")? {
+        return Ok(None);
+    }
+    let mut result = None;
+    if d.on_nullable_begin()? {
+        d.on_object_begin()?;
+        let sample_count: Option<u64> = d.read_optional(100, "sample_count")?;
+        let total_count: Option<u64> = d.read_optional(101, "total_count")?;
+        let mut log = None;
+        if d.on_optional_property_begin(102, "log")? {
+            if d.on_nullable_begin()? {
+                d.on_object_begin()?;
+                let storage_type: u8 = d.read_property(100, "type")?;
+                let len = HyperLogLog::storage_size(storage_type)
+                    .ok_or_else(|| Error::serialization("Unknown HyperLogLog storage type!"))?;
+                d.on_property_begin(101, "data")?;
+                let data = d.read_data(len)?;
+                d.on_property_end()?;
+                d.on_object_end()?;
+                log = HyperLogLog::from_storage(storage_type, &data);
+            }
+            d.on_nullable_end()?;
+            d.on_optional_property_end(true)?;
+        }
+        d.on_object_end()?;
+        result = log.map(|log| DistinctStatistics {
+            log,
+            sample_count: sample_count.unwrap_or(0),
+            total_count: total_count.unwrap_or(0),
+        });
+    }
+    d.on_nullable_end()?;
+    d.on_optional_property_end(true)?;
+    Ok(result)
+}
+
 /// `TableStatistics::Serialize`: per column a nullable `ColumnStatistics` object holding
-/// the statistics (distinct statistics are not kept), and no sample.
-pub fn serialize_table_statistics(serializer: &mut dyn Serializer, columns: &[BaseStatistics]) -> Result<()> {
+/// the statistics and the distinct statistics, and no sample.
+pub fn serialize_table_statistics(
+    serializer: &mut dyn Serializer,
+    columns: &[BaseStatistics],
+    distinct: &[Option<DistinctStatistics>],
+) -> Result<()> {
     serializer.write_list_property(100, "column_stats", columns.len(), |s, i| {
         s.on_nullable_begin(true);
         s.on_object_begin();
         s.write_object_property(100, "statistics", |s| columns[i].serialize_fields(s))?;
-        // "distinct" (101) is left out: no distinct statistics.
-        s.on_optional_property_begin(101, "distinct", false);
-        s.on_optional_property_end(false);
+        write_distinct(s, distinct.get(i).and_then(Option::as_ref))?;
         s.on_object_end();
         s.on_nullable_end();
         Ok(())
@@ -185,13 +256,14 @@ pub fn serialize_table_statistics(serializer: &mut dyn Serializer, columns: &[Ba
     Ok(())
 }
 
-/// `TableStatistics::Deserialize` for columns of `types`. Distinct statistics are read
-/// and dropped.
+/// `TableStatistics::Deserialize` for columns of `types`: the statistics and distinct
+/// statistics of each column.
 pub fn deserialize_table_statistics(
     d: &mut dyn Deserializer,
     types: &[LogicalType],
-) -> Result<Vec<BaseStatistics>> {
+) -> Result<(Vec<BaseStatistics>, Vec<Option<DistinctStatistics>>)> {
     let mut result = Vec::with_capacity(types.len());
+    let mut distinct = Vec::with_capacity(types.len());
     d.on_property_begin(100, "column_stats")?;
     let count = d.on_list_begin()?;
     for index in 0..count {
@@ -200,35 +272,14 @@ pub fn deserialize_table_statistics(
             .ok_or_else(|| Error::serialization("more column statistics than columns"))?;
         if !d.on_nullable_begin()? {
             result.push(BaseStatistics::create_empty(ty.clone()));
+            distinct.push(None);
             d.on_nullable_end()?;
             continue;
         }
         d.on_object_begin()?;
         let stats =
             d.read_object_property(100, "statistics", |d| BaseStatistics::deserialize_fields(d, ty))?;
-        if d.on_optional_property_begin(101, "distinct")? {
-            // `DistinctStatistics`: nullable object with sample_count, total_count, log.
-            if d.on_nullable_begin()? {
-                d.on_object_begin()?;
-                let _: Option<u64> = d.read_optional(100, "sample_count")?;
-                let _: Option<u64> = d.read_optional(101, "total_count")?;
-                if d.on_optional_property_begin(102, "log")? {
-                    if d.on_nullable_begin()? {
-                        d.on_object_begin()?;
-                        let _: u8 = d.read_property(100, "type")?;
-                        d.on_property_begin(101, "data")?;
-                        skip_blob(d)?;
-                        d.on_property_end()?;
-                        d.on_object_end()?;
-                    }
-                    d.on_nullable_end()?;
-                    d.on_optional_property_end(true)?;
-                }
-                d.on_object_end()?;
-            }
-            d.on_nullable_end()?;
-            d.on_optional_property_end(true)?;
-        }
+        distinct.push(read_distinct(d)?);
         d.on_object_end()?;
         d.on_nullable_end()?;
         result.push(stats);
@@ -239,7 +290,7 @@ pub fn deserialize_table_statistics(
         skip_table_sample(d)?;
         d.on_optional_property_end(true)?;
     }
-    Ok(result)
+    Ok((result, distinct))
 }
 
 /// Reads and drops a `unique_ptr<BlockingSample>` (`BlockingSample::Deserialize`): table
@@ -299,15 +350,4 @@ fn skip_table_sample(d: &mut dyn Deserializer) -> Result<()> {
     }
     d.on_object_end()?;
     d.on_nullable_end()
-}
-
-/// Skips a blob of unknown length (`HyperLogLog` data, whose size depends on its
-/// version): a varint length followed by raw bytes.
-fn skip_blob(deserializer: &mut dyn Deserializer) -> Result<()> {
-    let len = deserializer.read_u64()?;
-    for _ in 0..len {
-        // A boolean is one raw byte in the binary format, so reading one skips a byte.
-        deserializer.read_bool()?;
-    }
-    Ok(())
 }

@@ -361,8 +361,20 @@ pub fn write_table_data(
 ) -> Result<TableDataPointer> {
     let collection = table.row_groups();
     let types = collection.types().to_vec();
-    let mut table_stats: Vec<BaseStatistics> =
-        types.iter().cloned().map(BaseStatistics::create_empty).collect();
+    // DuckDB's `TableStatistics::InitializeEmpty(other)`: empty statistics, the distinct
+    // statistics kept, and their count as the distinct count.
+    let distinct = collection.distinct_statistics();
+    let mut table_stats: Vec<BaseStatistics> = types
+        .iter()
+        .enumerate()
+        .map(|(index, ty)| {
+            let mut stats = BaseStatistics::create_empty(ty.clone());
+            if let Some(Some(distinct)) = distinct.get(index) {
+                stats.set_distinct_count(distinct.count());
+            }
+            stats
+        })
+        .collect();
     let mut row_group_pointers = Vec::new();
     let mut persisted = Vec::new();
     let row_groups = collection.row_groups();
@@ -419,7 +431,7 @@ pub fn write_table_data(
     // `FinalizeTable`.
     let table_pointer = table_writer.meta_block_pointer()?;
     write_unit(table_writer, options, |s| {
-        serialize_table_statistics(s, &table_stats)
+        serialize_table_statistics(s, &table_stats, &distinct)
     })?;
     table_writer.write_u64(row_group_pointers.len() as u64)?;
     let mut total_rows = 0;

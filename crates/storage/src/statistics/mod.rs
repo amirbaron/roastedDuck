@@ -2,10 +2,12 @@
 //! prefixes and nested children. Segments keep them as zone maps for filter pruning; the
 //! optimizer reads them through `DataTable::column_statistics`.
 
+mod distinct;
 mod numeric;
 mod serialize;
 mod string;
 
+pub use distinct::{DistinctStatistics, HLL_REGISTERS, HyperLogLog};
 pub use numeric::{NumericStats, NumericValue, StatsNative, maximum_value, minimum_value};
 pub use serialize::{deserialize_table_statistics, serialize_table_statistics};
 pub use string::{MAX_STRING_MINMAX_SIZE, StringStats};

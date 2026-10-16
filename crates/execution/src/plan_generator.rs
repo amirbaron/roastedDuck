@@ -575,7 +575,11 @@ impl PlanGenerator {
         };
         let Some(first_scan) = delim_scans.first() else {
             // No scan reads the duplicate-eliminated data: a plain join.
-            let (left, right) = if flipped { (subquery, input) } else { (input, subquery) };
+            let (left, right) = if flipped {
+                (subquery, input)
+            } else {
+                (input, subquery)
+            };
             return comparison_join::create_comparison_join(self, join, types, left, right, cardinalities);
         };
         self.delim_index += 1;
@@ -587,13 +591,26 @@ impl PlanGenerator {
         let duplicate_eliminated_columns = std::mem::take(&mut join.duplicate_eliminated_columns);
         let distinct_groups = duplicate_eliminated_columns.len();
         let delim = PhysicalDelimJoin::new(duplicate_eliminated_columns, &shared, Arc::clone(&input));
-        let cached: PhysicalRef = Arc::new(PhysicalDelimScan::buffered_input(input_types, shared, delim, flipped));
-        let (left, right) = if flipped { (subquery, cached) } else { (cached, subquery) };
+        let cached: PhysicalRef = Arc::new(PhysicalDelimScan::buffered_input(
+            input_types,
+            shared,
+            delim,
+            flipped,
+        ));
+        let (left, right) = if flipped {
+            (subquery, cached)
+        } else {
+            (cached, subquery)
+        };
         let plan = comparison_join::create_comparison_join(self, join, types, left, right, cardinalities)?;
         self.delim_explain.insert(
             explain::operator_key(plan.as_ref()),
             explain::DelimExplain {
-                name: if flipped { "RIGHT_DELIM_JOIN" } else { "LEFT_DELIM_JOIN" },
+                name: if flipped {
+                    "RIGHT_DELIM_JOIN"
+                } else {
+                    "LEFT_DELIM_JOIN"
+                },
                 delim_index: self.delim_index,
                 input,
                 distinct_groups,
