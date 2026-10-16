@@ -515,7 +515,14 @@ fn index_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                     rustdb_ast::IndexConstraintType::Unique | rustdb_ast::IndexConstraintType::Primary
                 )),
                 Value::boolean(constraint == rustdb_ast::IndexConstraintType::Primary),
-                text(format!("[{}]", expressions.join(", "))),
+                // `GetIndexExpressions(index).ToString()`: the VARCHAR list's text.
+                text(
+                    Value::list(
+                        LogicalType::VARCHAR,
+                        expressions.iter().map(Value::varchar).collect(),
+                    )
+                    .to_varchar()?,
+                ),
                 info.to_sql().map_or_else(null_text, text),
             ]);
         }
@@ -857,6 +864,16 @@ pub(crate) fn catalog_table_functions() -> Vec<TableFunctionSet> {
             connection_count_rows,
         ),
         rows_function("pragma_collations", COLLATION_COLUMNS, collation_rows),
+        rows_function("duckdb_variables", VARIABLE_COLUMNS, variable_rows),
+        rows_function(
+            "duckdb_prepared_statements",
+            PREPARED_STATEMENT_COLUMNS,
+            prepared_statement_rows,
+        ),
+        rows_function("duckdb_temporary_files", TEMPORARY_FILE_COLUMNS, |_| {
+            Ok(Vec::new())
+        }),
+        rows_function("duckdb_dependencies", DEPENDENCY_COLUMNS, dependency_rows),
         rows_function("duckdb_types", TYPE_COLUMNS, type_rows),
         secrets_function(),
         which_secret_function(),
@@ -1293,6 +1310,137 @@ const DATABASE_COUNT_COLUMNS: Columns = &[("approx_count", ubigint)];
 const CONNECTION_COUNT_COLUMNS: Columns = &[("count", ubigint)];
 
 const COLLATION_COLUMNS: Columns = &[("collname", varchar)];
+
+const VARIABLE_COLUMNS: Columns = &[("name", varchar), ("value", varchar), ("type", varchar)];
+
+/// `duckdb_variables()`: the `SET VARIABLE` values of the connection.
+fn variable_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    context
+        .user_variables
+        .iter()
+        .map(|(name, value)| {
+            Ok(vec![
+                text(name),
+                text(value.to_varchar()?),
+                text(value.logical_type().to_string()),
+            ])
+        })
+        .collect()
+}
+
+const PREPARED_STATEMENT_COLUMNS: Columns = &[
+    ("name", varchar),
+    ("statement", varchar),
+    ("parameter_types", varchar_list),
+    ("result_types", varchar_list),
+];
+
+/// `duckdb_prepared_statements()`: the prepared statements of the connection with their
+/// parameter types (UNKNOWN until executed) and result types (when planned).
+fn prepared_statement_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    use rustdb_planner::StatementReturnType;
+    let names = |types: Vec<String>| {
+        Value::list(
+            LogicalType::VARCHAR,
+            types.into_iter().map(Value::varchar).collect(),
+        )
+    };
+    let null_list = || Value::null(varchar_list());
+    Ok(context
+        .prepared_statements
+        .iter()
+        .map(|(name, prepared)| {
+            let statement = &prepared.unbound_statement;
+            let sql = match &statement.kind {
+                rustdb_ast::SqlStatementKind::Select(select) => select.to_string(),
+                rustdb_ast::SqlStatementKind::Insert(insert) => insert.to_string(),
+                _ => statement.query.clone(),
+            };
+            let parameters = if statement.named_param_map.is_empty() {
+                null_list()
+            } else {
+                names(vec!["UNKNOWN".to_owned(); prepared.properties.parameter_count])
+            };
+            let results = match prepared.properties.return_type {
+                StatementReturnType::QueryResult if prepared.properties.bound_all_parameters => {
+                    names(prepared.types.iter().map(ToString::to_string).collect())
+                }
+                StatementReturnType::ChangedRows => names(vec!["BIGINT".to_owned()]),
+                _ => null_list(),
+            };
+            vec![text(name), text(sql), parameters, results]
+        })
+        .collect())
+}
+
+const TEMPORARY_FILE_COLUMNS: Columns = &[("path", varchar), ("size", bigint)];
+
+const DEPENDENCY_COLUMNS: Columns = &[
+    ("classid", bigint),
+    ("objid", bigint),
+    ("objsubid", integer),
+    ("refclassid", bigint),
+    ("refobjid", bigint),
+    ("refobjsubid", integer),
+    ("deptype", varchar),
+];
+
+/// `duckdb_dependencies()`: for every entry of the default catalog that depends on
+/// another, the depended-on entry (`objid`) and the dependent (`refobjid`)
+/// (`DependencyManager::Scan`).
+fn dependency_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    let mut entries = Vec::new();
+    if let Some(catalog) = context.catalogs.first() {
+        for schema in catalog.schemas().scan(&context.transaction) {
+            let Some(contents) = schema_contents(&schema) else {
+                continue;
+            };
+            for set in [
+                &contents.tables,
+                &contents.functions,
+                &contents.table_functions,
+                &contents.sequences,
+                &contents.types,
+                &contents.indexes,
+            ] {
+                for entry in set.scan(&context.transaction) {
+                    entries.push((schema.name().to_owned(), entry));
+                }
+            }
+        }
+    }
+    let row = |object: u64, dependent: u64, kind: &str| {
+        vec![
+            Value::bigint(0),
+            Value::bigint(object as i64),
+            Value::integer(0),
+            Value::bigint(0),
+            Value::bigint(dependent as i64),
+            Value::integer(0),
+            text(kind),
+        ]
+    };
+    let mut rows = Vec::new();
+    for (_, dependent) in &entries {
+        for dependency in &dependent.dependencies {
+            if let Some((_, object)) = entries
+                .iter()
+                .find(|(schema, entry)| entry.is_described_by(schema, &dependency.entry))
+            {
+                rows.push(row(object.oid, dependent.oid, "n"));
+            }
+        }
+        for owned in &dependent.owned {
+            if let Some((_, object)) = entries
+                .iter()
+                .find(|(schema, entry)| entry.is_described_by(schema, owned))
+            {
+                rows.push(row(dependent.oid, object.oid, "a"));
+            }
+        }
+    }
+    Ok(rows)
+}
 
 /// `pragma_collations()`: the builtin collations (`PragmaCollations`; the ICU collations
 /// come with the ICU extension).

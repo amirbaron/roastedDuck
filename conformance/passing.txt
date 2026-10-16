@@ -2119,9 +2119,11 @@ test/sql/peg_parser/transformer/load_statement.test
 test/sql/pg_catalog/pg_attribute.test
 test/sql/pg_catalog/pg_constraint.test
 test/sql/pg_catalog/pg_database.test
+test/sql/pg_catalog/pg_depend.test
 test/sql/pg_catalog/pg_enum.test
 test/sql/pg_catalog/pg_index.test
 test/sql/pg_catalog/pg_namespace.test
+test/sql/pg_catalog/pg_prepared_statements.test
 test/sql/pg_catalog/pg_privilege.test
 test/sql/pg_catalog/pg_sequence.test
 test/sql/pg_catalog/pg_sequences.test
@@ -2813,11 +2815,14 @@ test/sql/table_function/duckdb_constraints_fk.test
 test/sql/table_function/duckdb_constraints_issue11284.test
 test/sql/table_function/duckdb_constraints_issue12863.test
 test/sql/table_function/duckdb_databases.test
+test/sql/table_function/duckdb_dependencies.test
 test/sql/table_function/duckdb_functions.test_slow
 test/sql/table_function/duckdb_functions_window.test
+test/sql/table_function/duckdb_indexes.test
 test/sql/table_function/duckdb_keywords.test
 test/sql/table_function/duckdb_memory_convert_to_persistent.test
 test/sql/table_function/duckdb_optimizers.test
+test/sql/table_function/duckdb_prepared_statements.test
 test/sql/table_function/duckdb_schemas.test
 test/sql/table_function/duckdb_sequences.test
 test/sql/table_function/duckdb_settings.test
@@ -3342,6 +3347,7 @@ test/sql/upsert/upsert_shorthand.test
 test/sql/upsert/upsert_transaction.test
 test/sql/upsert/upsert_unique_null.test
 test/sql/vacuum/vacuum_nested_types.test
+test/sql/variables/test_variables.test
 test/sql/vector_types/list_vector_types.test_slow
 test/sql/vector_types/struct_vector_types.test_slow
 test/sql/window/test_basic_window.test
