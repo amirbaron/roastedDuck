@@ -7,6 +7,7 @@
 //! The statistics callbacks DuckDB attaches to functions live in [`function`], keyed by
 //! the function name.
 
+mod compressed_materialization;
 mod execute_aggregates;
 mod expression;
 mod function;
@@ -48,6 +49,9 @@ pub struct StatisticsPropagator<'a> {
     statistics_map: HashMap<ColumnBinding, BaseStatistics>,
     /// The cardinality statistics of the current node.
     node_stats: Option<NodeStatistics>,
+    /// The binding rewrites of compressed materialization, in order; every operator
+    /// above the rewritten one applies them when the propagation returns to it.
+    replacements: Vec<crate::column_binding_replacer::ColumnBindingReplacer>,
 }
 
 impl std::fmt::Debug for StatisticsPropagator<'_> {
@@ -66,7 +70,27 @@ impl<'a> StatisticsPropagator<'a> {
             optimizer,
             statistics_map: HashMap::new(),
             node_stats: None,
+            replacements: Vec::new(),
         })
+    }
+
+    /// Propagates statistics through child `index` of `node`, then rewrites the bindings
+    /// in `node`'s expressions that compressed materialization below changed (DuckDB's
+    /// `ColumnBindingReplacer` over the whole plan).
+    fn propagate_child(
+        &mut self,
+        node: &mut LogicalOperator,
+        index: usize,
+    ) -> Result<Option<NodeStatistics>> {
+        let start = self.replacements.len();
+        let Some(child) = node.children.get_mut(index) else {
+            return Ok(None);
+        };
+        let result = self.propagate_statistics(child)?;
+        for replacer in &self.replacements[start..] {
+            node.for_each_expression_mut(|expression| replacer.visit_expression(expression));
+        }
+        Ok(result)
     }
 
     /// The statistics of the column bindings (DuckDB's `GetStatisticsMap`).

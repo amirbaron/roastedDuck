@@ -114,6 +114,14 @@ impl StatisticsPropagator<'_> {
     /// Propagates statistics through `node` and its subtree, possibly replacing it
     /// (DuckDB's `PropagateStatistics`).
     pub fn propagate_statistics(&mut self, node: &mut LogicalOperator) -> Result<Option<NodeStatistics>> {
+        let result = self.propagate_node(node)?;
+        // Materializing operators store their inputs compressed where statistics allow.
+        self.compress_materialization(node)?;
+        Ok(result)
+    }
+
+    /// DuckDB's `PropagateStatistics` dispatch by operator type.
+    fn propagate_node(&mut self, node: &mut LogicalOperator) -> Result<Option<NodeStatistics>> {
         match node.operator_type() {
             LogicalOperatorType::LogicalAggregateAndGroupBy => self.propagate_aggregate(node),
             LogicalOperatorType::LogicalCrossProduct => self.propagate_cross_product(node),
@@ -131,8 +139,8 @@ impl StatisticsPropagator<'_> {
             LogicalOperatorType::LogicalOrderBy => self.propagate_order(node),
             LogicalOperatorType::LogicalWindow => self.propagate_window(node),
             _ => {
-                for child in &mut node.children {
-                    self.propagate_statistics(child)?;
+                for index in 0..node.children.len() {
+                    self.propagate_child(node, index)?;
                 }
                 Ok(None)
             }
@@ -258,7 +266,7 @@ impl StatisticsPropagator<'_> {
 
     /// DuckDB's `PropagateStatistics(LogicalFilter)`.
     fn propagate_filter(&mut self, node: &mut LogicalOperator) -> Result<Option<NodeStatistics>> {
-        self.node_stats = self.propagate_statistics(&mut node.children[0])?;
+        self.node_stats = self.propagate_child(node, 0)?;
         if node.children[0].operator_type() == LogicalOperatorType::LogicalEmptyResult {
             replace_with_empty_result(node)?;
             return Ok(Some(NodeStatistics::new(0, 0)));
@@ -299,12 +307,9 @@ impl StatisticsPropagator<'_> {
         let LogicalKind::Get(get) = &mut node.kind else {
             return Ok(None);
         };
-        let mut node_stats = None;
-        if get.table.is_some()
-            && let Some(rows) = get.table_cardinality()
-        {
-            node_stats = Some(NodeStatistics::new(rows, rows));
-        }
+        let node_stats = get
+            .table_cardinality()
+            .map(|rows| NodeStatistics::new(rows, rows));
         if get.table.is_none() {
             // Only base table scans have column statistics.
             return Ok(node_stats);
@@ -403,7 +408,7 @@ impl StatisticsPropagator<'_> {
 
     /// DuckDB's `PropagateStatistics(LogicalProjection)`.
     fn propagate_projection(&mut self, node: &mut LogicalOperator) -> Result<Option<NodeStatistics>> {
-        self.node_stats = self.propagate_statistics(&mut node.children[0])?;
+        self.node_stats = self.propagate_child(node, 0)?;
         if node.children[0].operator_type() == LogicalOperatorType::LogicalEmptyResult {
             replace_with_empty_result(node)?;
             return Ok(self.node_stats);
@@ -423,7 +428,7 @@ impl StatisticsPropagator<'_> {
 
     /// DuckDB's `PropagateStatistics(LogicalAggregate)`.
     fn propagate_aggregate(&mut self, node: &mut LogicalOperator) -> Result<Option<NodeStatistics>> {
-        self.node_stats = self.propagate_statistics(&mut node.children[0])?;
+        self.node_stats = self.propagate_child(node, 0)?;
         let LogicalKind::Aggregate(aggregate) = &mut node.kind else {
             return Ok(self.node_stats);
         };
@@ -454,8 +459,8 @@ impl StatisticsPropagator<'_> {
 
     /// DuckDB's `PropagateStatistics(LogicalCrossProduct)`.
     fn propagate_cross_product(&mut self, node: &mut LogicalOperator) -> Result<Option<NodeStatistics>> {
-        let left = self.propagate_statistics(&mut node.children[0])?;
-        let right = self.propagate_statistics(&mut node.children[1])?;
+        let left = self.propagate_child(node, 0)?;
+        let right = self.propagate_child(node, 1)?;
         let (Some(left), Some(right)) = (left, right) else {
             return Ok(None);
         };
@@ -464,7 +469,7 @@ impl StatisticsPropagator<'_> {
 
     /// DuckDB's `PropagateStatistics(LogicalOrder)`.
     fn propagate_order(&mut self, node: &mut LogicalOperator) -> Result<Option<NodeStatistics>> {
-        self.node_stats = self.propagate_statistics(&mut node.children[0])?;
+        self.node_stats = self.propagate_child(node, 0)?;
         if let LogicalKind::Order { orders, .. } = &mut node.kind {
             for order in orders {
                 self.propagate_expression(&mut order.expression)?;
@@ -476,7 +481,7 @@ impl StatisticsPropagator<'_> {
     /// DuckDB's `PropagateStatistics(LogicalWindow)`: the partitions, orders and frame
     /// expressions of the window functions.
     fn propagate_window(&mut self, node: &mut LogicalOperator) -> Result<Option<NodeStatistics>> {
-        self.node_stats = self.propagate_statistics(&mut node.children[0])?;
+        self.node_stats = self.propagate_child(node, 0)?;
         for expression in &mut node.expressions {
             let ExpressionKind::Window(window) = &mut expression.kind else {
                 continue;
@@ -517,8 +522,8 @@ impl StatisticsPropagator<'_> {
         };
         let is_union = node.operator_type() == LogicalOperatorType::LogicalUnion;
         let mut child_stats = Vec::with_capacity(node.children.len());
-        for child in &mut node.children {
-            child_stats.push(self.propagate_statistics(child)?);
+        for index in 0..node.children.len() {
+            child_stats.push(self.propagate_child(node, index)?);
         }
         let child_bindings: Vec<Vec<ColumnBinding>> = node
             .children
@@ -582,9 +587,9 @@ impl StatisticsPropagator<'_> {
     /// DuckDB's `PropagateStatistics(LogicalPositionalJoin)`: both sides may be padded
     /// with NULLs.
     fn propagate_positional_join(&mut self, node: &mut LogicalOperator) -> Result<Option<NodeStatistics>> {
-        let mut node_stats = self.propagate_statistics(&mut node.children[0])?;
+        let mut node_stats = self.propagate_child(node, 0)?;
         for index in 1..node.children.len() {
-            let child_stats = self.propagate_statistics(&mut node.children[index])?;
+            let child_stats = self.propagate_child(node, index)?;
             node_stats = match (node_stats, child_stats) {
                 (Some(stats), Some(child)) => match (
                     stats.estimated_cardinality,
@@ -613,9 +618,9 @@ impl StatisticsPropagator<'_> {
 
     /// DuckDB's `PropagateStatistics(LogicalJoin)`.
     fn propagate_join(&mut self, node: &mut LogicalOperator) -> Result<Option<NodeStatistics>> {
-        let mut node_stats = self.propagate_statistics(&mut node.children[0])?;
+        let mut node_stats = self.propagate_child(node, 0)?;
         for index in 1..node.children.len() {
-            let child_stats = self.propagate_statistics(&mut node.children[index])?;
+            let child_stats = self.propagate_child(node, index)?;
             node_stats = match child_stats {
                 None => None,
                 Some(child) => multiply_cardinalities(node_stats, child),
