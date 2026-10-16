@@ -2325,6 +2325,7 @@ test/sql/settings/access_mode.test
 test/sql/settings/allowed_configs.test
 test/sql/settings/connection_local_settings.test
 test/sql/settings/default_null_order_extended.test
+test/sql/settings/drop_set_schema.test
 test/sql/settings/integer_division_setting.test
 test/sql/settings/lock_configuration_schema.test
 test/sql/settings/reset/reset_threads.test

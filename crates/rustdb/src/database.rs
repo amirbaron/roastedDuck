@@ -1355,6 +1355,37 @@ impl Connection {
             }
             _ => {}
         }
+        // `PhysicalDrop`: dropping the current schema resets the schema to `main`.
+        let dropped_schema = match &plan.kind {
+            LogicalKind::Drop(info) if info.catalog_type == rustdb_ast::CatalogType::SchemaEntry => {
+                Some((info.catalog.clone(), info.name.clone()))
+            }
+            _ => None,
+        };
+        let result = self.execute_plan(plan, names, types)?;
+        if let Some((catalog, schema)) = dropped_schema {
+            let (current_catalog, current_schema) = self
+                .search_path
+                .first()
+                .cloned()
+                .unwrap_or_else(|| (self.default_catalog(), rustdb_catalog::DEFAULT_SCHEMA.to_owned()));
+            if catalog == current_catalog && schema == current_schema {
+                self.set_search_path(
+                    "schema",
+                    &rustdb_types::Value::varchar(rustdb_catalog::DEFAULT_SCHEMA),
+                )?;
+            }
+        }
+        Ok(result)
+    }
+
+    /// Plans and runs a logical plan, collecting its result.
+    fn execute_plan(
+        &mut self,
+        mut plan: LogicalOperator,
+        names: Vec<String>,
+        types: Vec<LogicalType>,
+    ) -> Result<MaterializedResult> {
         ColumnBindingResolver::resolve(&mut plan)?;
         seed_samples(&mut plan, &self.function_client);
         let instance = self.database.instance();
