@@ -19,6 +19,7 @@ mod default_views;
 mod extensions;
 mod log_functions;
 mod logging;
+mod read_file;
 mod result;
 mod secrets;
 mod sequence;
