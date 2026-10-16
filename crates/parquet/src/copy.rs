@@ -119,7 +119,7 @@ fn f64_value(context: &ClientContext, value: &Value) -> Result<f64> {
 }
 
 /// `LogicalTypeIdToString` of a type.
-fn type_id_name(ty: &LogicalType) -> String {
+pub(crate) fn type_id_name(ty: &LogicalType) -> String {
     match ty.id() {
         LogicalTypeId::List => "LIST".to_owned(),
         LogicalTypeId::Map => "MAP".to_owned(),

@@ -19,10 +19,10 @@ use rustdb_function::{
 };
 use rustdb_planner::ClientContext;
 use rustdb_storage::{TableFilter, TableFilterSet};
-use rustdb_types::{DataChunk, LogicalType, Value, Vector};
+use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Value, Vector};
 
 use crate::reader::{ColumnDefinition, ParquetReader, ReaderScanState, ScanColumn};
-use crate::schema::ParquetOptions;
+use crate::schema::{ParquetColumnDefinition, ParquetOptions};
 
 /// The binder's client context of a table function call.
 pub(crate) fn client_context<'a>(input: &TableFunctionBindInput<'a>) -> Result<&'a ClientContext> {
@@ -225,7 +225,8 @@ fn parse_options(
                 options.explicit_cardinality = value.as_u64().unwrap_or(0);
             }
             "schema" => {
-                return Err(Error::not_implemented("the read_parquet schema parameter"));
+                options.schema = parse_schema_parameter(value, context)?;
+                file_options.auto_detect_hive_partitioning = false;
             }
             "encryption_config" => {
                 return Err(Error::not_implemented("Parquet encryption"));
@@ -235,6 +236,104 @@ fn parse_options(
         }
     }
     Ok(())
+}
+
+/// `VerifyParquetSchemaParameter` and `ParquetColumnDefinition::FromSchemaValue`: the
+/// columns of the `schema` parameter, a MAP from field id (or name) to
+/// `{name, type, default_value}`.
+fn parse_schema_parameter(value: &Value, context: &ClientContext) -> Result<Vec<ParquetColumnDefinition>> {
+    use rustdb_function::cast::ValueCast as _;
+    let map_type = value.logical_type();
+    if map_type.id() != LogicalTypeId::Map {
+        return Err(Error::invalid_input(format!(
+            "'schema' expects a value of type MAP, not {}",
+            crate::copy::type_id_name(map_type)
+        )));
+    }
+    let (key_type, value_type) = map_type
+        .map_key_value()
+        .ok_or_else(|| Error::internal("MAP type without key/value"))?;
+    if value_type.id() != LogicalTypeId::Struct {
+        return Err(Error::invalid_input(
+            "'schema' expects a STRUCT as the value type of the map",
+        ));
+    }
+    let children = value_type.struct_children().unwrap_or_default();
+    if children.len() < 3 {
+        return Err(Error::invalid_input(
+            "'schema' expects the STRUCT to have 3 children, 'name', 'type' and 'default_value",
+        ));
+    }
+    if !children[0].0.eq_ignore_ascii_case("name") {
+        return Err(Error::invalid_input(
+            "'schema' expects the first field of the struct to be called 'name'",
+        ));
+    }
+    if children[0].1.id() != LogicalTypeId::Varchar {
+        return Err(Error::invalid_input(format!(
+            "'schema' expects the 'name' field to be of type VARCHAR, not {}",
+            crate::copy::type_id_name(&children[0].1)
+        )));
+    }
+    if !children[1].0.eq_ignore_ascii_case("type") {
+        return Err(Error::invalid_input(
+            "'schema' expects the second field of the struct to be called 'type'",
+        ));
+    }
+    if children[1].1.id() != LogicalTypeId::Varchar {
+        return Err(Error::invalid_input(format!(
+            "'schema' expects the 'type' field to be of type VARCHAR, not {}",
+            crate::copy::type_id_name(&children[1].1)
+        )));
+    }
+    if !children[2].0.eq_ignore_ascii_case("default_value") {
+        return Err(Error::invalid_input(
+            "'schema' expects the third field of the struct to be called 'default_value'",
+        ));
+    }
+    if !matches!(key_type.id(), LogicalTypeId::Integer | LogicalTypeId::Varchar) {
+        return Err(Error::invalid_input(format!(
+            "'schema' expects the value type of the map to be either INTEGER or VARCHAR, not {}",
+            crate::copy::type_id_name(key_type)
+        )));
+    }
+    let entries = value.children().unwrap_or_default();
+    if entries.is_empty() {
+        return Err(Error::binder("Parquet schema cannot be empty"));
+    }
+    let mut columns = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let parts = entry.children().unwrap_or_default();
+        let (Some(identifier), Some(definition)) = (parts.first(), parts.get(1)) else {
+            return Err(Error::internal("malformed MAP entry in the Parquet schema"));
+        };
+        let fields = definition.children().unwrap_or_default();
+        let text = |index: usize| {
+            fields
+                .get(index)
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .unwrap_or_default()
+        };
+        let name = text(0);
+        let logical_type = rustdb_csv::read_csv::transform_string_to_logical_type(context, &text(1))?;
+        let default = fields.get(2).cloned().unwrap_or_default();
+        let default_value = default
+            .try_cast_as(&context.casts, &logical_type, false)
+            .map_err(|_| {
+                Error::binder(format!(
+                    "Unable to cast Parquet schema default_value \"{}\" to {logical_type}",
+                    default.to_varchar().unwrap_or_else(|_| "NULL".to_owned())
+                ))
+            })?;
+        columns.push(ParquetColumnDefinition {
+            identifier: identifier.clone(),
+            name,
+            logical_type,
+            default_value,
+        });
+    }
+    Ok(columns)
 }
 
 /// `MultiFileFunction::MultiFileBind` with `ParquetMultiFileInfo`.
@@ -279,7 +378,18 @@ pub fn bind_files(
     // The file_row_number column is added by the bind, not by the file schemas.
     let mut file_options_reader = options.clone();
     file_options_reader.file_row_number = false;
-    if file_options.union_by_name {
+    if !options.schema.is_empty() {
+        // `BindSchema`: the columns come from the parameter, not from the files.
+        if file_options.union_by_name || file_options.hive_partitioning {
+            return Err(Error::binder(
+                "Parquet schema cannot be combined with union_by_name=true or hive_partitioning=true",
+            ));
+        }
+        for column in &options.schema {
+            names.push(column.name.clone());
+            types.push(column.logical_type.clone());
+        }
+    } else if file_options.union_by_name {
         let mut union_names_map = HashMap::new();
         for (index, path) in files.files.iter().enumerate() {
             let reader = Arc::new(ParquetReader::open(path, file_options_reader.clone())?);
@@ -514,8 +624,42 @@ fn open_file(data: &ParquetBindData, file_index: usize, column_ids: &[u64]) -> R
             sources.push(ColumnSource::Constant(constant));
             continue;
         }
-        let name = &data.names[global];
         let global_type = &data.types[global];
+        if let Some(column) = data.options.schema.get(global) {
+            // `MultiFileColumnMapper` with the `schema` parameter: by field id or name.
+            let local = if column.identifier.logical_type().id() == LogicalTypeId::Integer {
+                reader
+                    .columns
+                    .iter()
+                    .position(|local| local.identifier.as_ref() == Some(&column.identifier))
+            } else {
+                let name = column.identifier.as_str().unwrap_or_default();
+                reader
+                    .columns
+                    .iter()
+                    .position(|local| local.name.eq_ignore_ascii_case(name))
+            };
+            let Some(local) = local else {
+                sources.push(ColumnSource::Constant(column.default_value.clone()));
+                continue;
+            };
+            let local_type = reader.columns[local].logical_type.clone();
+            let cast = (&local_type != global_type).then(|| {
+                Box::new(ColumnCast {
+                    cast: data.casts.get_cast_function(&local_type, global_type),
+                    local_name: reader.columns[local].name.clone(),
+                    local_type: local_type.clone(),
+                })
+            });
+            scan_columns.push(ScanColumn::column(local));
+            sources.push(ColumnSource::Reader {
+                index: scan_columns.len() - 1,
+                cast,
+                target: global_type.clone(),
+            });
+            continue;
+        }
+        let name = &data.names[global];
         let Some(local) = reader
             .columns
             .iter()

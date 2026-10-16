@@ -1,6 +1,6 @@
 # rustdb conformance dashboard
 
-Rust passing: **3986 / 4871 files** (3925 pass on both engines). "Passing" means the Rust run passed, or both engines skipped the file for the same reason.
+Rust passing: **3987 / 4871 files** (3926 pass on both engines). "Passing" means the Rust run passed, or both engines skipped the file for the same reason.
 
 | group | files | C++ pass | C++ skip | C++ fail | Rust passing | both pass | Rust fail | Rust crash/timeout | Rust skip (C++ pass) | Rust % |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -32,7 +32,7 @@ Rust passing: **3986 / 4871 files** (3925 pass on both engines). "Passing" means
 | test/optimizer/statistics | 16 | 16 | 0 | 0 | 16 | 16 | 0 | 0 | 0 | 100.0% |
 | test/optimizer/topn | 2 | 2 | 0 | 0 | 2 | 2 | 0 | 0 | 0 | 100.0% |
 | test/optimizer/unused_columns | 3 | 3 | 0 | 0 | 2 | 2 | 1 | 0 | 0 | 66.7% |
-| test/parquet | 26 | 24 | 1 | 1 | 22 | 21 | 3 | 0 | 1 | 84.6% |
+| test/parquet | 26 | 24 | 1 | 1 | 23 | 22 | 2 | 0 | 1 | 88.5% |
 | test/parquet/delta_encoding | 1 | 1 | 0 | 0 | 1 | 1 | 0 | 0 | 0 | 100.0% |
 | test/parquet/variant | 28 | 28 | 0 | 0 | 1 | 1 | 24 | 0 | 3 | 3.6% |
 | test/planner | 1 | 1 | 0 | 0 | 1 | 1 | 0 | 0 | 0 | 100.0% |
@@ -108,4 +108,4 @@ Rust passing: **3986 / 4871 files** (3925 pass on both engines). "Passing" means
 | test/sqlite | 4 | 4 | 0 | 0 | 4 | 4 | 0 | 0 | 0 | 100.0% |
 | test/sqlite/tags | 4 | 0 | 4 | 0 | 4 | 0 | 0 | 0 | 0 | 100.0% |
 | test/sqlserver | 2 | 2 | 0 | 0 | 2 | 2 | 0 | 0 | 0 | 100.0% |
-| **total** | 4871 | 4794 | 75 | 2 | 3986 | 3925 | 418 | 3 | 451 | 81.8% |
+| **total** | 4871 | 4794 | 75 | 2 | 3987 | 3926 | 417 | 3 | 451 | 81.9% |

@@ -609,6 +609,7 @@ test/parquet/test_internal_5021.test
 test/parquet/test_legacy_empty_pandas_parquet.test
 test/parquet/test_parquet_reader.test_slow
 test/parquet/test_parquet_reader_compression.test
+test/parquet/test_parquet_schema.test
 test/parquet/timens_parquet.test
 test/parquet/timetz_parquet.test
 test/parquet/variant/variant_comparison.test
