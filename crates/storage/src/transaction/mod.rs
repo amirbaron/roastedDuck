@@ -78,6 +78,8 @@ pub struct Transaction {
     /// The shared hold of the written database's checkpoint lock, until the transaction
     /// ends (`DuckTransaction::write_lock`).
     checkpoint_guard: Mutex<Option<crate::checkpoint_lock::SharedCheckpointGuard>>,
+    /// The manager's oldest running transaction, for transactions it started.
+    lowest_active: Option<Arc<LowestActive>>,
 }
 
 impl Transaction {
@@ -90,6 +92,21 @@ impl Transaction {
             local_storage: Arc::default(),
             modified_database: Mutex::new(None),
             checkpoint_guard: Mutex::new(None),
+            lowest_active: None,
+        }
+    }
+
+    /// The versions any running transaction may still see (DuckDB's
+    /// `TransactionData(LowestActiveId(), LowestActiveStart())` of
+    /// `TABLE_SCAN_OMIT_PERMANENTLY_DELETED`); the latest committed rows without a
+    /// transaction manager.
+    pub fn oldest_active_snapshot(&self) -> TransactionData {
+        match &self.lowest_active {
+            Some(lowest) => TransactionData::new(
+                lowest.id.load(Ordering::Acquire),
+                lowest.start.load(Ordering::Acquire),
+            ),
+            None => TransactionData::latest_committed(),
         }
     }
 
@@ -273,9 +290,16 @@ struct ManagerState {
 #[derive(Debug)]
 pub struct TransactionManager {
     state: Mutex<ManagerState>,
-    lowest_active_start: AtomicU64,
-    lowest_active_id: AtomicU64,
+    lowest_active: Arc<LowestActive>,
     last_commit: AtomicU64,
+}
+
+/// The start time and id of the oldest running transaction, shared with the
+/// transactions so that scans can see what any running transaction may still see.
+#[derive(Debug)]
+struct LowestActive {
+    start: AtomicU64,
+    id: AtomicU64,
 }
 
 impl Default for TransactionManager {
@@ -287,8 +311,10 @@ impl Default for TransactionManager {
                 active: Vec::new(),
                 recently_committed: VecDeque::new(),
             }),
-            lowest_active_start: AtomicU64::new(MAX_TRANSACTION_ID),
-            lowest_active_id: AtomicU64::new(TRANSACTION_ID_START),
+            lowest_active: Arc::new(LowestActive {
+                start: AtomicU64::new(MAX_TRANSACTION_ID),
+                id: AtomicU64::new(TRANSACTION_ID_START),
+            }),
             last_commit: AtomicU64::new(0),
         }
     }
@@ -337,21 +363,23 @@ impl TransactionManager {
         let transaction_id = state.current_transaction_id;
         state.current_transaction_id += 1;
         if state.active.is_empty() {
-            self.lowest_active_start.store(start_time, Ordering::Release);
-            self.lowest_active_id.store(transaction_id, Ordering::Release);
+            self.lowest_active.start.store(start_time, Ordering::Release);
+            self.lowest_active.id.store(transaction_id, Ordering::Release);
         }
         state.active.push((transaction_id, start_time));
-        Transaction::new(start_time, transaction_id)
+        let mut transaction = Transaction::new(start_time, transaction_id);
+        transaction.lowest_active = Some(Arc::clone(&self.lowest_active));
+        transaction
     }
 
     /// The start time of the oldest running transaction (`LowestActiveStart`).
     pub fn lowest_active_start(&self) -> u64 {
-        self.lowest_active_start.load(Ordering::Acquire)
+        self.lowest_active.start.load(Ordering::Acquire)
     }
 
     /// The id of the oldest running transaction (`LowestActiveId`).
     pub fn lowest_active_id(&self) -> u64 {
-        self.lowest_active_id.load(Ordering::Acquire)
+        self.lowest_active.id.load(Ordering::Acquire)
     }
 
     /// The commit id of the last successful commit.
@@ -442,8 +470,8 @@ impl TransactionManager {
             .map(|&(id, _)| id)
             .min()
             .unwrap_or(MAX_TRANSACTION_ID);
-        self.lowest_active_start.store(lowest_start, Ordering::Release);
-        self.lowest_active_id.store(lowest_id, Ordering::Release);
+        self.lowest_active.start.store(lowest_start, Ordering::Release);
+        self.lowest_active.id.store(lowest_id, Ordering::Release);
         let mut cleanup = Vec::new();
         while state
             .recently_committed
