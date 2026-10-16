@@ -59,7 +59,21 @@ macro_rules! stat_value {
         }
     )*};
 }
-stat_value!(i32, i64, u32, u64, f32, f64);
+stat_value!(i32, i64, u32, u64);
+
+macro_rules! stat_value_float {
+    ($($ty:ty),*) => {$(
+        impl StatValue for $ty {
+            // `NumericLimits` of types with infinities are the infinities.
+            const MAX: Self = <$ty>::INFINITY;
+            const MIN: Self = <$ty>::NEG_INFINITY;
+            fn to_bytes(self) -> Vec<u8> {
+                self.to_le_bytes().to_vec()
+            }
+        }
+    )*};
+}
+stat_value_float!(f32, f64);
 
 /// `NumericStatisticsState<SRC, T>`: min/max of the Parquet values; the deprecated
 /// `min`/`max` are only written for signed source types.

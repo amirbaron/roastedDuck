@@ -49,6 +49,45 @@ pub const COLUMN_IDENTIFIER_FILE_ROW_NUMBER: u64 = (1 << 63) + 1;
 /// The virtual `file_index` column (`COLUMN_IDENTIFIER_FILE_INDEX`).
 pub const COLUMN_IDENTIFIER_FILE_INDEX: u64 = (1 << 63) + 2;
 
+/// `MultiFileScanStats`: the statistics of a column from the metadata already read
+/// while binding: of the single file, or merged over all files with `union_by_name`.
+fn read_parquet_statistics(bind_data: Option<&dyn FunctionData>, column: u64) -> Option<Box<dyn Any + Send>> {
+    let data = bind_data?.as_any().downcast_ref::<ParquetBindData>()?;
+    let reader = data
+        .initial_reader
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone()?;
+    let index = usize::try_from(column)
+        .ok()
+        .filter(|&index| index < data.names.len())?;
+    let name = &data.names[index];
+    let column_statistics = |reader: &ParquetReader| {
+        if data.file_row_number_idx == Some(index) {
+            reader.row_number_statistics()
+        } else {
+            reader.read_statistics(name, &data.casts)
+        }
+    };
+    let stats = if data.files.expand_result() == FileExpandResult::MultipleFiles {
+        if !data.file_options.union_by_name {
+            return None;
+        }
+        let mut merged = column_statistics(&reader)?;
+        for union_reader in data.union_readers.iter().skip(1) {
+            let stats = column_statistics(union_reader)?;
+            if merged.logical_type() != stats.logical_type() {
+                return None;
+            }
+            merged.merge(&stats);
+        }
+        merged
+    } else {
+        column_statistics(&reader)?
+    };
+    Some(Box::new(stats))
+}
+
 /// `MultiFileGetVirtualColumns`: `filename` (unless the `filename` option names a real
 /// column), `file_index` and Parquet's `file_row_number`.
 fn read_parquet_virtual_columns(bind_data: Option<&dyn FunctionData>) -> Vec<(u64, String, LogicalType)> {
@@ -89,6 +128,9 @@ pub struct ParquetBindData {
     file_row_number_idx: Option<usize>,
     /// The reader of the first file, opened while binding (`initial_reader`).
     initial_reader: Mutex<Option<Arc<ParquetReader>>>,
+    /// With `union_by_name`, the readers of all files, opened while binding
+    /// (`union_readers`).
+    union_readers: Vec<Arc<ParquetReader>>,
     casts: Arc<CastFunctionSet>,
     /// The filters pushed into the scan, keyed by position in the scanned column ids.
     filters: Option<Arc<TableFilterSet>>,
@@ -119,6 +161,7 @@ impl ParquetBindData {
                     .unwrap_or_else(PoisonError::into_inner)
                     .clone(),
             ),
+            union_readers: self.union_readers.clone(),
             casts: Arc::clone(&self.casts),
             filters: Some(Arc::new(filters)),
             initial_file_cardinality: self.initial_file_cardinality,
@@ -228,6 +271,7 @@ pub fn bind_files(
     let mut names = Vec::new();
     let mut types = Vec::new();
     let mut initial_reader = None;
+    let mut union_readers = Vec::new();
     let mut initial_file_cardinality = 0;
     // The file_row_number column is added by the bind, not by the file schemas.
     let mut file_options_reader = options.clone();
@@ -235,7 +279,7 @@ pub fn bind_files(
     if file_options.union_by_name {
         let mut union_names_map = HashMap::new();
         for (index, path) in files.files.iter().enumerate() {
-            let reader = ParquetReader::open(path, file_options_reader.clone())?;
+            let reader = Arc::new(ParquetReader::open(path, file_options_reader.clone())?);
             let file_names: Vec<String> = reader.columns.iter().map(|column| column.name.clone()).collect();
             let file_types: Vec<LogicalType> = reader
                 .columns
@@ -251,8 +295,9 @@ pub fn bind_files(
             );
             if index == 0 {
                 initial_file_cardinality = reader.num_rows();
-                initial_reader = Some(Arc::new(reader));
+                initial_reader = Some(Arc::clone(&reader));
             }
+            union_readers.push(reader);
         }
     } else {
         let first = files
@@ -290,6 +335,7 @@ pub fn bind_files(
         options: file_options_reader,
         file_row_number_idx,
         initial_reader: Mutex::new(initial_reader),
+        union_readers,
         casts: Arc::clone(casts),
         filters: None,
         initial_file_cardinality,
@@ -659,6 +705,7 @@ fn read_parquet_function(name: &'static str, argument: LogicalType) -> TableFunc
     function.pushdown_filters = Some(Arc::new(read_parquet_pushdown_filters));
     function.empty_column = true;
     function.get_virtual_columns = Some(Arc::new(read_parquet_virtual_columns));
+    function.statistics = Some(Arc::new(read_parquet_statistics));
     function.projected_output = true;
     function
 }

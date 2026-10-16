@@ -92,6 +92,62 @@ impl ParquetReader {
         self.context.metadata.num_rows.max(0) as u64
     }
 
+    /// The statistics of column `name` over all row groups (`ParquetReader::ReadStatistics`);
+    /// `None` when a row group has none for it.
+    pub fn read_statistics(
+        &self,
+        name: &str,
+        casts: &rustdb_function::cast::CastFunctionSet,
+    ) -> Option<rustdb_storage::statistics::BaseStatistics> {
+        let index = self.columns.iter().position(|column| column.name == name)?;
+        let schema = self.root_schema.children.get(index)?;
+        let mut result: Option<rustdb_storage::statistics::BaseStatistics> = None;
+        for group in &self.context.metadata.row_groups {
+            let stats = crate::statistics::transform_column_statistics(
+                schema,
+                &group.columns,
+                self.options.can_have_nan,
+                casts,
+            )
+            .ok()??;
+            match &mut result {
+                None => result = Some(stats),
+                Some(merged) => merged.merge(&stats),
+            }
+        }
+        result
+    }
+
+    /// The statistics of the `file_row_number` column (`ParquetColumnSchema::Stats` of a
+    /// `FILE_ROW_NUMBER` column): each row group's range of row numbers.
+    pub fn row_number_statistics(&self) -> Option<rustdb_storage::statistics::BaseStatistics> {
+        use rustdb_storage::statistics::BaseStatistics;
+        let mut result: Option<BaseStatistics> = None;
+        let mut offset = 0i64;
+        for group in &self.context.metadata.row_groups {
+            let stats = if group.num_rows == 0 {
+                BaseStatistics::create_empty(LogicalType::BIGINT)
+            } else {
+                let mut stats = BaseStatistics::create_unknown(LogicalType::BIGINT);
+                if let rustdb_storage::statistics::StatsData::Numeric(numeric) = stats.data_mut() {
+                    numeric.min = Some(rustdb_storage::statistics::NumericValue::I64(offset));
+                    numeric.max = Some(rustdb_storage::statistics::NumericValue::I64(
+                        offset + group.num_rows - 1,
+                    ));
+                }
+                // `CANNOT_HAVE_NULL_VALUES`.
+                stats.set_validity(false, true);
+                stats
+            };
+            offset += group.num_rows;
+            match &mut result {
+                None => result = Some(stats),
+                Some(merged) => merged.merge(&stats),
+            }
+        }
+        result
+    }
+
     pub fn num_row_groups(&self) -> usize {
         self.context.metadata.row_groups.len()
     }

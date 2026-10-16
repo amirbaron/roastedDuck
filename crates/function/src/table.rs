@@ -87,6 +87,11 @@ pub type TableFunctionPushdownFilters =
 pub type TableFunctionVirtualColumns =
     Arc<dyn Fn(Option<&dyn FunctionData>) -> Vec<(u64, String, LogicalType)> + Send + Sync>;
 
+/// The statistics of column `column` of a call (DuckDB's `table_statistics_t`):
+/// `rustdb_storage::statistics::BaseStatistics`, boxed as `Any`.
+pub type TableFunctionStatistics =
+    Arc<dyn Fn(Option<&dyn FunctionData>, u64) -> Option<Box<dyn std::any::Any + Send>> + Send + Sync>;
+
 /// What a [`TableInOutFunction`] call did with its input (DuckDB's `OperatorResultType`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InOutResult {
@@ -158,6 +163,8 @@ pub struct TableFunction {
     pub pushdown_filters: Option<TableFunctionPushdownFilters>,
     /// The function's virtual columns (`get_virtual_columns`).
     pub get_virtual_columns: Option<TableFunctionVirtualColumns>,
+    /// Column statistics (`statistics`).
+    pub statistics: Option<TableFunctionStatistics>,
     /// Whether the scan fills one output column per scanned column id, in order
     /// (DuckDB's scan contract), instead of all of the function's columns.
     pub projected_output: bool,
@@ -183,6 +190,7 @@ impl TableFunction {
             empty_column: false,
             pushdown_filters: None,
             get_virtual_columns: None,
+            statistics: None,
             projected_output: false,
         }
     }
