@@ -49,6 +49,9 @@ pub fn bind_function_expression<B: ExpressionBinder + ?Sized>(
             let functions = functions.clone();
             bind_scalar_function(binder, expr, &functions, depth, location)
         }
+        EntryKind::AggregateFunction(_) if binder.state_ref().inside_try => Err(Error::binder(
+            "aggregates are not allowed inside the TRY expression",
+        )),
         EntryKind::AggregateFunction(functions) => {
             let functions = functions.clone();
             binder.bind_aggregate(expr, &functions, depth)

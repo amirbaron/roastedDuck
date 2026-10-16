@@ -533,7 +533,14 @@ fn bind_operator<B: ExpressionBinder + ?Sized>(
     let ParsedExpressionKind::Operator(operator) = &mut expr.kind else {
         return Err(Error::internal("expected an operator"));
     };
-    if let Some(error) = bind_children(binder, operator.children.iter_mut().collect(), depth)? {
+    // The child of TRY is bound by a `TryOperatorBinder`, which rejects aggregates.
+    let previous_try = binder.state_ref().inside_try;
+    if operator_type == ExpressionType::OperatorTry {
+        binder.state().inside_try = true;
+    }
+    let bound_children = bind_children(binder, operator.children.iter_mut().collect(), depth);
+    binder.state().inside_try = previous_try;
+    if let Some(error) = bound_children? {
         return Ok(BindResult::Unbound(error));
     }
     let function_name = match operator_type {

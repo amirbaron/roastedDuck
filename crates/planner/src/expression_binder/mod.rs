@@ -184,6 +184,9 @@ pub struct ExpressionBinderState {
     /// The nesting depth checked against `max_expression_depth` (DuckDB's
     /// `stack_depth`).
     pub stack_depth: u64,
+    /// Binding the child of `TRY(...)`, where aggregates are not allowed (DuckDB's
+    /// `TryOperatorBinder`).
+    pub inside_try: bool,
 }
 
 /// "The parsed expression was not bound" (an internal invariant violation).

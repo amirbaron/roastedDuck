@@ -1357,6 +1357,7 @@ test/sql/error/mix_aggregate_and_non_aggregate.test
 test/sql/error/qualified_column_error.test
 test/sql/error/subquery_single_column.test
 test/sql/error/table_function_as_scalar_function.test
+test/sql/error/test_try_expression.test_slow
 test/sql/error/unknown_window_function.test
 test/sql/export/empty_export.test
 test/sql/export/export_database.test
