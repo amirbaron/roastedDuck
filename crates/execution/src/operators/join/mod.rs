@@ -3,12 +3,14 @@
 
 mod blockwise_nl_join;
 mod hash_join;
+mod iejoin;
 mod nested_loop_join;
 mod outer_join_marker;
 mod piecewise_merge_join;
 mod range_join;
 
 pub use blockwise_nl_join::{BlockwiseNLJoinGlobalState, BlockwiseNLJoinState, PhysicalBlockwiseNLJoin};
+pub use iejoin::{IEJoinGlobalState, IEJoinLocalState, IEJoinSourceState, PhysicalIEJoin};
 pub use hash_join::{HashJoinGlobalSinkState, HashJoinLocalSinkState, HashJoinProbeState, PhysicalHashJoin};
 pub use nested_loop_join::{
     NestedLoopJoinGlobalState, NestedLoopJoinProbeState, PhysicalNestedLoopJoin, RightOuterScanState,

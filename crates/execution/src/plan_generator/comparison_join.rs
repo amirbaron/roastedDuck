@@ -13,7 +13,8 @@ use rustdb_types::LogicalType;
 use super::{PlanGenerator, table_storage};
 use crate::operator::PhysicalRef;
 use crate::operators::{
-    PhysicalBlockwiseNLJoin, PhysicalCrossProduct, PhysicalHashJoin, PhysicalNestedLoopJoin, PhysicalPiecewiseMergeJoin,
+    PhysicalBlockwiseNLJoin, PhysicalCrossProduct, PhysicalHashJoin, PhysicalIEJoin, PhysicalNestedLoopJoin,
+    PhysicalPiecewiseMergeJoin,
 };
 
 /// The settings that steer join planning.
@@ -180,8 +181,15 @@ pub(crate) fn create_comparison_join(
     {
         can_iejoin = false;
     }
-    // TODO(range joins): IEJoin.
-    let _ = can_iejoin;
+    if can_iejoin {
+        return Ok(Arc::new(PhysicalIEJoin::new(
+            types,
+            join.join_type,
+            join.conditions,
+            left,
+            right,
+        )?));
+    }
     if can_merge {
         return Ok(Arc::new(PhysicalPiecewiseMergeJoin::new(
             types,
