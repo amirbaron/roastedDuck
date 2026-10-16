@@ -46,6 +46,7 @@ pub mod prepared;
 pub mod subquery;
 
 pub use binder::expression::bind_logical_type;
+pub use binder::tableref::deduplicate_columns;
 pub use binder::{Binder, BoundStatement};
 pub use column_binding::{ColumnBinding, generate_column_bindings};
 pub use column_binding_resolver::ColumnBindingResolver;

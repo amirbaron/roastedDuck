@@ -925,6 +925,7 @@ test/sql/catalog/view/recursive_view_with_dependencies.test
 test/sql/catalog/view/test_stacked_view.test
 test/sql/catalog/view/test_view_alias.test
 test/sql/catalog/view/test_view_delete_update.test
+test/sql/catalog/view/test_view_duplicate_columns.test
 test/sql/catalog/view/test_view_schema_change.test
 test/sql/catalog/view/test_view_schema_change_with_dependencies.test
 test/sql/catalog/view/test_view_sql.test

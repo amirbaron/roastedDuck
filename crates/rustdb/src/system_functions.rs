@@ -712,16 +712,21 @@ fn column_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                     }
                 }
                 EntryKind::View(view) => {
-                    for (index, ty) in view.types.iter().enumerate() {
-                        let name = view
-                            .aliases
-                            .get(index)
-                            .or_else(|| view.names.get(index))
-                            .cloned()
-                            .unwrap_or_default();
-                        let comment = view.column_comments.get(&name).cloned().unwrap_or_default();
+                    // `ViewColumnHelper`: the view's column names, deduplicated.
+                    let mut names: Vec<String> = (0..view.types.len())
+                        .map(|index| {
+                            view.aliases
+                                .get(index)
+                                .or_else(|| view.names.get(index))
+                                .cloned()
+                                .unwrap_or_default()
+                        })
+                        .collect();
+                    rustdb_planner::deduplicate_columns(&mut names);
+                    for (index, (ty, name)) in view.types.iter().zip(&names).enumerate() {
+                        let comment = view.column_comments.get(name).cloned().unwrap_or_default();
                         rows.push(column_row(
-                            catalog, &schema, &entry, index, &name, ty, None, true, &comment,
+                            catalog, &schema, &entry, index, name, ty, None, true, &comment,
                         ));
                     }
                 }
