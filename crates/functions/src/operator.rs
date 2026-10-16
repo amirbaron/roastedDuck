@@ -28,7 +28,38 @@ macro_rules! checked_int {
         }
     )*};
 }
-checked_int!(i8, i16, i32, i64, i128, u8, u16, u32, u64, u128);
+checked_int!(i8, i16, i32, i64, u8, u16, u32, u64, u128);
+
+impl CheckedInt for i128 {
+    const ZERO: Self = 0;
+    #[inline]
+    fn checked_add_(self, other: Self) -> Option<Self> {
+        self.checked_add(other)
+    }
+    #[inline]
+    fn checked_sub_(self, other: Self) -> Option<Self> {
+        self.checked_sub(other)
+    }
+    /// `Hugeint::TryMultiply`: the product of the magnitudes must stay below 2^127, so
+    /// a result of `i128::MIN` overflows unless an operand is the minimum times 1.
+    #[inline]
+    fn checked_mul_(self, other: Self) -> Option<Self> {
+        if self == i128::MIN || other == i128::MIN {
+            return match (self, other) {
+                (0, _) | (_, 0) => Some(0),
+                (1, _) | (_, 1) => Some(i128::MIN),
+                _ => None,
+            };
+        }
+        let magnitude = self.unsigned_abs().checked_mul(other.unsigned_abs())?;
+        let magnitude = i128::try_from(magnitude).ok()?;
+        Some(if (self < 0) == (other < 0) {
+            magnitude
+        } else {
+            -magnitude
+        })
+    }
+}
 
 /// `Overflow in addition of INT32 (2147483647 + 1)!`
 pub(crate) fn add_overflow<T: NativeType + Display>(left: T, right: T) -> Error {

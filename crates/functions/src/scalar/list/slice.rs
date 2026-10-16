@@ -294,9 +294,13 @@ fn param_is_empty(input: &BindInput<'_>, index: usize) -> Result<bool> {
     if input.argument_types[index].id() != LogicalTypeId::List {
         return Ok(false);
     }
-    let empty = input.constants[index]
-        .as_ref()
-        .is_some_and(|value| !value.is_null() && value.children().is_some_and(<[_]>::is_empty));
+    // Only the `INTEGER[]` empty list the parser puts for an omitted bound counts
+    // (`param->Equals(Value::LIST(INTEGER, {}))`); a written `[]` does not.
+    let empty = input.constants[index].as_ref().is_some_and(|value| {
+        !value.is_null()
+            && value.logical_type() == &LogicalType::list(LogicalType::INTEGER)
+            && value.children().is_some_and(<[_]>::is_empty)
+    });
     if !empty {
         return Err(Error::binder(
             "The upper and lower bounds of the slice must be a BIGINT",

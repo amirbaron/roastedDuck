@@ -338,6 +338,15 @@ fn bind_list_aggregate_function(function: &mut ScalarFunction, input: &BindInput
             input.constants[index].clone(),
         ));
     }
+    // `StringAggBind` meets a NULL separator by replacing the aggregated input with
+    // NULL, which list_aggr does not evaluate: the default separator remains.
+    if name.eq_ignore_ascii_case("string_agg")
+        && let Some((ty, Some(separator))) = arguments.get_mut(1)
+        && separator.is_null()
+    {
+        *ty = LogicalType::VARCHAR;
+        *separator = rustdb_types::Value::varchar(",");
+    }
     let bound = resolver.bind_aggregate(&name, &arguments)?;
     if bound.argument_count > 1 {
         return Err(Error::invalid_input(format!(

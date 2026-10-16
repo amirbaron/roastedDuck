@@ -340,13 +340,29 @@ fn struct_type(names: &[String]) -> LogicalType {
     LogicalType::struct_type(names.iter().map(|name| (name.clone(), varchar())).collect())
 }
 
+/// `Pattern failed to parse: ...`, the binder error of a constant pattern whose group
+/// names are checked while binding.
+#[allow(clippy::needless_pass_by_value, reason = "used with map_err")]
+fn pattern_failed(error: Error) -> Error {
+    Error::binder(format!("Pattern failed to parse: {}", error.raw_message()))
+}
+
 /// DuckDB's `RegexExtractBind`.
 fn bind_extract(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindResult {
     let options = options_from(input, 3, None)?;
     let pattern = constant_pattern(input.constants.get(1));
+    // With a LIST of group names the pattern is checked while binding
+    // (`ParseGroupNameList`): parse errors are binder errors.
+    let names_list = input
+        .argument_types
+        .get(2)
+        .is_some_and(|ty| ty.id() == LogicalTypeId::List);
     let constant = pattern
         .as_ref()
-        .map(|pattern| compile(pattern.as_bytes(), options, false))
+        .map(|pattern| {
+            compile(pattern.as_bytes(), options, false)
+                .map_err(|error| if names_list { pattern_failed(error) } else { error })
+        })
         .transpose()?;
     let mut group = Some(0);
     let mut names = Vec::new();
@@ -654,7 +670,7 @@ fn bind_extract_all_struct(function: &mut ScalarFunction, input: &BindInput<'_>)
         )));
     };
     let options = options_from(input, 3, None)?;
-    let regex = compile(pattern.as_bytes(), options, false)?;
+    let regex = compile(pattern.as_bytes(), options, false).map_err(pattern_failed)?;
     let names = parse_group_names(
         &function.name,
         &input.argument_types[2],

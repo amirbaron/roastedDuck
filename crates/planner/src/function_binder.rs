@@ -1046,9 +1046,15 @@ impl rustdb_function::AggregateResolver for ClientContext {
         let function = binder
             .bind_aggregate_overload(functions, &types)?
             .map_err(|error| Error::binder(format!("No matching aggregate function\n{error}")))?;
+        // Constants stay constants; other arguments are references, which binds see as
+        // non-constant (`ListAggregatesBind` passes the original expressions).
         let children = arguments
             .iter()
-            .map(|(ty, value)| Expression::constant(value.clone().unwrap_or_else(|| Value::null(ty.clone()))))
+            .enumerate()
+            .map(|(index, (ty, value))| match value {
+                Some(value) => Expression::constant(value.clone()),
+                None => Expression::reference("", ty.clone(), index as u64),
+            })
             .collect();
         let bound =
             binder.bind_aggregate_function(function, children, None, AggregateType::NonDistinct, None)?;

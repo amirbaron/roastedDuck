@@ -5,7 +5,7 @@ use std::sync::Arc;
 use rustdb_common::{Error, Result};
 use rustdb_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
 use rustdb_types::kernels::scatter;
-use rustdb_types::{DataChunk, ListEntry, LogicalType, Vector};
+use rustdb_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Vector};
 
 use crate::scalar::executor::addressable;
 use crate::scalar::nested::{all_constant, list_child_type};
@@ -17,8 +17,32 @@ pub(crate) fn list_value(args: &DataChunk, result: &mut Vector) -> Result<()> {
     let columns = args.column_count();
     let constant = all_constant(args.columns());
     let rows = if constant { 1 } else { args.len() };
-    let mut child = Vector::flat(child_type, (rows * columns).max(1));
+    let mut child = Vector::flat(child_type.clone(), (rows * columns).max(1));
     for (column, input) in args.columns().iter().enumerate() {
+        // `PopulateChildFallback`: values of another type (ARRAYs of another size) are
+        // cast with `Value::DefaultCastAs`.
+        let cast;
+        let input =
+            if input.logical_type() == &child_type || input.logical_type().id() == LogicalTypeId::SqlNull {
+                input
+            } else {
+                let mut params = rustdb_function::cast::CastParameters::new();
+                cast = rustdb_function::cast::cast_vector(
+                    &rustdb_function::cast::CastFunctionSet::new(),
+                    input,
+                    &child_type,
+                    args.len(),
+                    &mut params,
+                )
+                .map_err(|error| {
+                    if error.kind() == rustdb_common::ErrorKind::Conversion {
+                        Error::invalid_input(format!("Failed to cast value: {}", error.raw_message()))
+                    } else {
+                        error
+                    }
+                })?;
+                &cast
+            };
         let input = addressable(input, rows);
         let positions: Vec<u32> = (0..rows).map(|row| (row * columns + column) as u32).collect();
         scatter(&input, &mut child, &positions)?;

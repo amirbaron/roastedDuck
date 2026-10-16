@@ -122,7 +122,19 @@ fn re2_error(pattern: &str, translated: &str) -> Option<String> {
         AstErrorKind::EscapeUnrecognized | AstErrorKind::UnsupportedBackreference => {
             format!("invalid escape sequence: {snippet}")
         }
-        AstErrorKind::RepetitionMissing => format!("no argument for repetition operator: {snippet}"),
+        AstErrorKind::RepetitionMissing => {
+            // RE2 names the operator; the span can be empty, so take it from the text.
+            let operator = if snippet.is_empty() {
+                translated
+                    .get(span.start.offset..)
+                    .and_then(|rest| rest.chars().next())
+                    .map(String::from)
+                    .unwrap_or_default()
+            } else {
+                snippet.to_owned()
+            };
+            format!("no argument for repetition operator: {operator}")
+        }
         AstErrorKind::RepetitionCountInvalid
         | AstErrorKind::RepetitionCountUnclosed
         | AstErrorKind::RepetitionCountDecimalEmpty => format!("invalid repetition size: {snippet}"),
