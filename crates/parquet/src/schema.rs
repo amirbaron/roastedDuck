@@ -48,6 +48,8 @@ pub struct ParquetOptions {
     /// The `schema` parameter: (identifier, name, type, default value) per column.
     pub schema: Vec<ParquetColumnDefinition>,
     pub explicit_cardinality: u64,
+    /// Whether `GeoParquet` columns read as GEOMETRY (`enable_geoparquet_conversion`).
+    pub geoparquet_conversion: bool,
 }
 
 /// One column of the `schema` parameter (`ParquetColumnDefinition`).
@@ -384,6 +386,10 @@ pub struct SchemaParser<'a> {
     file_path: &'a str,
     next_schema_index: usize,
     next_file_index: usize,
+    /// The `GeoParquet` metadata of the file, if any.
+    geo: Option<&'a crate::geo::GeoParquetMetadata>,
+    /// The depth of the element being parsed (the root is 0).
+    depth: usize,
 }
 
 impl<'a> SchemaParser<'a> {
@@ -394,7 +400,16 @@ impl<'a> SchemaParser<'a> {
             file_path,
             next_schema_index: 0,
             next_file_index: 0,
+            geo: None,
+            depth: 0,
         }
+    }
+
+    /// Recognizes the `GeoParquet` geometry columns of `geo`.
+    #[must_use]
+    pub fn with_geo(mut self, geo: Option<&'a crate::geo::GeoParquetMetadata>) -> Self {
+        self.geo = geo;
+        self
     }
 
     /// `ParquetReader::ParseSchema`: the root STRUCT whose children are the columns.
@@ -460,7 +475,8 @@ impl<'a> SchemaParser<'a> {
         if repetition == FieldRepetitionType::REPEATED {
             max_repeat = max_repeat.saturating_add(1);
         }
-        if is_geometry_type(element) {
+        if let Some(crs) = self.geometry_crs(element) {
+            let geometry_type = crate::geo::geometry_type(&crs);
             let child = leaf_schema(
                 element,
                 max_define,
@@ -473,7 +489,7 @@ impl<'a> SchemaParser<'a> {
             self.next_file_index += 1;
             return Ok(ColumnSchema::from_children(
                 &element.name,
-                LogicalType::GEOMETRY,
+                geometry_type,
                 max_define,
                 max_repeat,
                 this_index,
@@ -499,10 +515,12 @@ impl<'a> SchemaParser<'a> {
                 None => 0,
             };
             let mut children = Vec::with_capacity(count.min(1024));
+            self.depth += 1;
             for _ in 0..count {
                 self.next_schema_index += 1;
                 children.push(self.parse_recursive(max_define, max_repeat)?);
             }
+            self.depth -= 1;
             // Rename case-insensitive duplicates by appending _1, _2, ...
             let mut collisions: CaseInsensitiveMap<usize> = CaseInsensitiveMap::default();
             for child in &mut children {
@@ -646,13 +664,27 @@ impl<'a> SchemaParser<'a> {
     }
 }
 
-/// `IsGeometryType` for the native GEOMETRY/GEOGRAPHY annotations.
-fn is_geometry_type(element: &SchemaElement) -> bool {
-    element.type_ == Some(Type::BYTE_ARRAY)
-        && element
-            .logical_type
-            .as_ref()
-            .is_some_and(|logical| logical.geometry.is_some() || logical.geography.is_some())
+impl SchemaParser<'_> {
+    /// `IsGeometryType`: the CRS of a geometry column (empty for none), `None` if the
+    /// element is not one: native GEOMETRY/GEOGRAPHY columns, and the top-level columns
+    /// the `GeoParquet` metadata lists.
+    fn geometry_crs(&self, element: &SchemaElement) -> Option<String> {
+        if element.type_ != Some(Type::BYTE_ARRAY) {
+            return None;
+        }
+        if let Some(logical) = &element.logical_type {
+            if let Some(geometry) = &logical.geometry {
+                return Some(geometry.crs.clone().unwrap_or_default());
+            }
+            if let Some(geography) = &logical.geography {
+                return Some(geography.crs.clone().unwrap_or_default());
+            }
+        }
+        if self.depth == 1 {
+            return self.geo?.column_crs(&element.name).map(str::to_owned);
+        }
+        None
+    }
 }
 
 /// `IsVariantType`: the legacy (unannotated) VARIANT layout.

@@ -387,10 +387,26 @@ fn row_group_rows(reader: &ParquetReader, data: &MetadataBindData) -> Result<Vec
             };
             let geo_types = match geo.as_ref().and_then(|geo| geo.geospatial_types.as_ref()) {
                 None => Value::null(LogicalType::list(LogicalType::VARCHAR)),
-                Some(_) => {
-                    return Err(Error::not_implemented(
-                        "geospatial statistics in parquet_metadata",
-                    ));
+                Some(types) => {
+                    let mut set = crate::geo::GeometryTypeSet::default();
+                    for &code in types {
+                        let (geometry_type, vertex_type) = (code % 1000, code / 1000);
+                        if !(1..=7).contains(&geometry_type) {
+                            return Err(Error::invalid_input(
+                                "Unsupported geometry type in Parquet geo metadata",
+                            ));
+                        }
+                        if !(0..=3).contains(&vertex_type) {
+                            return Err(Error::invalid_input(
+                                "Unsupported geometry vertex type in Parquet geo metadata",
+                            ));
+                        }
+                        set.add(geometry_type as u32, vertex_type as u32);
+                    }
+                    Value::list(
+                        LogicalType::VARCHAR,
+                        set.to_strings(true).into_iter().map(Value::varchar).collect(),
+                    )
                 }
             };
             rows.push(vec![

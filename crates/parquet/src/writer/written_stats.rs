@@ -186,6 +186,8 @@ struct Unifier {
     has_nan: bool,
     column_size_bytes: u64,
     num_values: u64,
+    /// The geometry statistics of a GEOMETRY column (`UnifyGeoStats`).
+    geo_stats: Option<crate::geo::GeoStats>,
 }
 
 impl Unifier {
@@ -202,6 +204,7 @@ impl Unifier {
             has_nan: false,
             column_size_bytes: 0,
             num_values: 0,
+            geo_stats: None,
         }
     }
 
@@ -367,6 +370,12 @@ pub fn gather(
             } else {
                 unifier.all_min_max_set = false;
             }
+            if let Some((_, _, geo)) = writer_stats.and_then(|stats| stats.geo.as_ref()) {
+                match &mut unifier.geo_stats {
+                    Some(stats) => stats.merge(geo),
+                    None => unifier.geo_stats = Some(*geo),
+                }
+            }
             match statistics.null_count {
                 Some(count) => unifier.null_count += count.max(0) as u64,
                 None => unifier.all_nulls_set = false,
@@ -398,6 +407,32 @@ pub fn gather(
             }
             if unifier.can_have_nan {
                 stats.push(("has_nan".to_owned(), Value::boolean(unifier.has_nan)));
+            }
+            if let Some(geo) = &unifier.geo_stats {
+                let extent = &geo.extent;
+                if crate::geo::has_xy(extent) {
+                    stats.push(("bbox_xmin".to_owned(), Value::double(extent.x_min)));
+                    stats.push(("bbox_xmax".to_owned(), Value::double(extent.x_max)));
+                    stats.push(("bbox_ymin".to_owned(), Value::double(extent.y_min)));
+                    stats.push(("bbox_ymax".to_owned(), Value::double(extent.y_max)));
+                    if crate::geo::has_z(extent) {
+                        stats.push(("bbox_zmin".to_owned(), Value::double(extent.z_min)));
+                        stats.push(("bbox_zmax".to_owned(), Value::double(extent.z_max)));
+                    }
+                    if crate::geo::has_m(extent) {
+                        stats.push(("bbox_mmin".to_owned(), Value::double(extent.m_min)));
+                        stats.push(("bbox_mmax".to_owned(), Value::double(extent.m_max)));
+                    }
+                }
+                if !geo.types.is_empty() {
+                    let types = geo
+                        .types
+                        .to_strings(true)
+                        .into_iter()
+                        .map(Value::varchar)
+                        .collect();
+                    stats.push(("geo_types".to_owned(), Value::list(LogicalType::VARCHAR, types)));
+                }
             }
             (unifier.column_name.clone(), stats)
         })

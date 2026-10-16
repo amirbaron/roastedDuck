@@ -615,6 +615,8 @@ pub struct FinishedColumn {
     pub can_have_nan: bool,
     /// The min/max of the values when NaNs kept them out of the file.
     pub nan_min_max: Option<(Vec<u8>, Vec<u8>)>,
+    /// The geometry statistics of a GEOMETRY column: its name, type and statistics.
+    pub geo: Option<(String, LogicalType, crate::geo::GeoStats)>,
     pub bloom_filter: Option<super::bloom::BloomFilter>,
 }
 
@@ -995,7 +997,14 @@ impl PrimitiveWriter {
         *total_byte_size += meta.total_uncompressed_size;
         let stats = self.values.stats();
         let has_nan = stats.is_some_and(WriterStatistics::has_nan);
+        let geo = stats.and_then(WriterStatistics::geo_stats).copied();
+        if let Some(geo) = &geo
+            && options.geoparquet_version.native()
+        {
+            meta.geospatial_statistics = Some(geo.to_thrift());
+        }
         output.push(FinishedColumn {
+            geo: geo.map(|geo| (self.schema.name.clone(), self.schema.logical_type.clone(), geo)),
             column_index: self.column_index,
             has_nan,
             can_have_nan: stats.is_some_and(WriterStatistics::can_have_nan),
@@ -1016,7 +1025,18 @@ pub fn set_schema_properties(ty: &LogicalType, element: &mut SchemaElement, opti
         DecimalType, JsonType, LogicalType as ParquetLogicalType, MicroSeconds, MilliSeconds, NanoSeconds,
         TimeType, TimeUnit, TimestampType, UuidType,
     };
-    let _ = options;
+    if ty.id() == LogicalTypeId::Geometry {
+        // Native geometry columns, except for GeoParquet 1 files.
+        if options.geoparquet_version.native() {
+            element.logical_type = Some(ParquetLogicalType {
+                geometry: Some(crate::thrift::GeometryType {
+                    crs: crate::geo::type_crs(ty).map(str::to_owned),
+                }),
+                ..ParquetLogicalType::default()
+            });
+        }
+        return;
+    }
     if ty.alias() == Some("JSON") && ty.id() == LogicalTypeId::Varchar {
         element.converted_type = Some(ConvertedType::JSON);
         element.logical_type = Some(ParquetLogicalType {

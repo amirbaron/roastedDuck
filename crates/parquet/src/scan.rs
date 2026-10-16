@@ -351,6 +351,7 @@ fn read_parquet_bind(
     let mut file_options = MultiFileOptions::default();
     let mut options = ParquetOptions {
         binary_as_string: setting_bool(context, "binary_as_string"),
+        geoparquet_conversion: setting_bool(context, "enable_geoparquet_conversion"),
         ..ParquetOptions::default()
     };
     parse_options(input, &mut file_options, &mut options, context)?;

@@ -61,7 +61,15 @@ impl ParquetReader {
                 "Failed to read Parquet file '{path}': Need at least one non-root column in the file"
             )));
         }
-        let root_schema = SchemaParser::new(&metadata, &options, &path).parse()?;
+        // `GeoParquetFileMetadata::TryRead`.
+        let geo = if options.geoparquet_conversion {
+            crate::geo::GeoParquetMetadata::read(&metadata)?
+        } else {
+            None
+        };
+        let root_schema = SchemaParser::new(&metadata, &options, &path)
+            .with_geo(geo.as_ref())
+            .parse()?;
         let columns = root_schema
             .children
             .iter()

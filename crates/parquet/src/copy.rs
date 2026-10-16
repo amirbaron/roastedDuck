@@ -296,7 +296,10 @@ fn parquet_write_bind(
     types: &[LogicalType],
 ) -> Result<Arc<dyn FunctionData>> {
     let context = client_context(input.binder)?;
-    let mut options = WriterOptions::default();
+    let mut options = WriterOptions {
+        geoparquet_conversion: crate::scan::setting_bool(context, "enable_geoparquet_conversion"),
+        ..WriterOptions::default()
+    };
     let mut row_group_size_bytes_set = false;
     let mut compression_level_set = false;
     for (name, values) in input.options.iter() {
@@ -431,14 +434,18 @@ fn parquet_write_bind(
                 };
             }
             "geoparquet_version" => {
-                if !matches!(
-                    value.to_varchar()?.to_uppercase().as_str(),
-                    "NONE" | "V1" | "V2" | "BOTH"
-                ) {
-                    return Err(Error::binder(
-                        "Expected geoparquet_version 'NONE', 'V1' or 'BOTH'",
-                    ));
-                }
+                use crate::geo::GeoParquetVersion;
+                options.geoparquet_version = match value.to_varchar()?.to_uppercase().as_str() {
+                    "NONE" => GeoParquetVersion::None,
+                    "V1" => GeoParquetVersion::V1,
+                    "V2" => GeoParquetVersion::V2,
+                    "BOTH" => GeoParquetVersion::Both,
+                    _ => {
+                        return Err(Error::binder(
+                            "Expected geoparquet_version 'NONE', 'V1' or 'BOTH'",
+                        ));
+                    }
+                };
             }
             _ => {
                 return Err(Error::internal(format!(
@@ -608,7 +615,10 @@ fn parquet_copy_from_bind(
 ) -> Result<Arc<dyn FunctionData>> {
     let context = client_context(input.binder)?;
     let files = rustdb_csv::multi_file::create_file_list("COPY", &[input.file_path.to_owned()], "parquet")?;
-    let mut options = ParquetOptions::default();
+    let mut options = ParquetOptions {
+        geoparquet_conversion: crate::scan::setting_bool(context, "enable_geoparquet_conversion"),
+        ..ParquetOptions::default()
+    };
     for (name, values) in input.options.iter() {
         let option = name.to_lowercase();
         let boolean = || -> Result<bool> {

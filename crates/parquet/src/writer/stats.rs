@@ -32,6 +32,24 @@ pub trait WriterStatistics: Send {
     fn max_is_exact(&self) -> bool {
         true
     }
+    /// The geometry statistics, once a value was seen (`HasGeoStats` / `GetGeoStats`).
+    fn geo_stats(&self) -> Option<&crate::geo::GeoStats> {
+        None
+    }
+}
+
+/// The statistics of GEOMETRY values (`GeoStatisticsState`): no min/max, but the types
+/// and the bounding box.
+#[derive(Debug, Default)]
+pub struct GeoStatistics {
+    pub has_stats: bool,
+    pub stats: crate::geo::GeoStats,
+}
+
+impl WriterStatistics for GeoStatistics {
+    fn geo_stats(&self) -> Option<&crate::geo::GeoStats> {
+        self.has_stats.then_some(&self.stats)
+    }
 }
 
 /// Statistics that are never written (`ColumnWriterStatistics` itself).

@@ -260,8 +260,12 @@ test/fuzzer/sqlsmith/window-list-value.test
 test/fuzzer/sqlsmith/window-rows-overflow.test
 test/fuzzer/sqlsmith/window_function_error.test
 test/fuzzer/sqlsmith/window_scalar_range.test
+test/geoparquet/disabled.test
 test/geoparquet/geoarrow.test
+test/geoparquet/mixed.test
+test/geoparquet/roundtrip.test
 test/geoparquet/unsupported.test
+test/geoparquet/versions.test
 test/issues/fuzz/argminmax_strings.test
 test/issues/fuzz/bitwise_shift_overflow.test
 test/issues/fuzz/encode_string_data_crash.test

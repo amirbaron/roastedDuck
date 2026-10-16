@@ -14,6 +14,7 @@ pub mod copy;
 pub mod decode;
 pub mod file;
 pub mod filter;
+pub mod geo;
 pub mod metadata;
 pub mod reader;
 pub mod scan;

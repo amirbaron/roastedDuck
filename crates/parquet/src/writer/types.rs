@@ -383,6 +383,52 @@ impl<const BLOB: bool> WriteType for Bytes<BLOB> {
     }
 }
 
+/// GEOMETRY values: their WKB bytes, with geometry statistics (`ParquetGeometryOperator`).
+#[derive(Debug)]
+pub struct Geometry;
+
+impl WriteType for Geometry {
+    type Src<'a> = &'a [u8];
+    type Key = Box<[u8]>;
+    type Stats = super::stats::GeoStatistics;
+    const PARQUET_TYPE: Type = Type::BYTE_ARRAY;
+    const FALLBACK: FallbackEncoding = FallbackEncoding::DeltaLengthByteArray;
+
+    fn new_stats() -> super::stats::GeoStatistics {
+        super::stats::GeoStatistics::default()
+    }
+    #[inline]
+    fn src(vector: &Vector, row: usize) -> &[u8] {
+        vector.string_bytes(row)
+    }
+    fn key(src: &[u8]) -> Box<[u8]> {
+        src.into()
+    }
+    #[inline]
+    fn write_plain(src: &[u8], out: &mut Vec<u8>) -> Result<()> {
+        out.extend_from_slice(&(src.len() as u32).to_le_bytes());
+        out.extend_from_slice(src);
+        Ok(())
+    }
+    fn update_stats(stats: &mut super::stats::GeoStatistics, src: &[u8]) -> Result<()> {
+        stats.stats.update(src);
+        stats.has_stats = true;
+        Ok(())
+    }
+    fn hash(src: &[u8]) -> Result<u64> {
+        Ok(xxhash64(src))
+    }
+    fn row_size(src: &[u8]) -> usize {
+        4 + src.len()
+    }
+    fn string_bytes(src: Self::Src<'_>) -> Option<&[u8]> {
+        Some(src)
+    }
+    fn is_constant_size() -> bool {
+        false
+    }
+}
+
 /// UUIDs as 16 big-endian bytes (`ParquetUUIDOperator`, `BaseUUID::ToBlob`).
 #[derive(Debug)]
 pub struct Uuid;

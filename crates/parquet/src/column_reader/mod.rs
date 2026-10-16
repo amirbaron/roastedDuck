@@ -34,6 +34,53 @@ pub enum ColumnReader {
     Struct(StructReader),
     /// `RowNumberColumnReader`: the row's index in the file.
     RowNumber(RowNumberReader),
+    /// `GeometryColumnReader`: WKB values validated and made little-endian
+    /// (`ST_GeomFromWKB` over a BLOB column).
+    Geometry(Box<GeometryReader>),
+}
+
+/// The reader of a GEOMETRY column (`ExpressionColumnReader` with `ST_GeomFromWKB`).
+#[derive(Debug)]
+pub struct GeometryReader {
+    blob: LeafReader,
+    logical_type: LogicalType,
+    /// The BLOB values of the last read.
+    scratch: Option<Vector>,
+}
+
+impl GeometryReader {
+    fn read(
+        &mut self,
+        num_values: usize,
+        defines: &mut [u8],
+        repeats: &mut [u8],
+        result: &mut Vector,
+    ) -> Result<usize> {
+        let mut blobs = self.scratch.take().unwrap_or_else(|| {
+            Vector::flat(
+                self.blob.logical_type().clone(),
+                rustdb_common::STANDARD_VECTOR_SIZE,
+            )
+        });
+        let read = self.blob.read(num_values, defines, repeats, &mut blobs)?;
+        if result.logical_type() != &self.logical_type || result.kind() != rustdb_types::VectorKind::Flat {
+            *result = Vector::flat(self.logical_type.clone(), rustdb_common::STANDARD_VECTOR_SIZE);
+        }
+        let capacity = result.capacity();
+        for row in 0..read {
+            if blobs.is_null(row) {
+                result.validity_mut().set_invalid(row, capacity);
+                continue;
+            }
+            result.validity_mut().set_valid(row);
+            let converted =
+                rustdb_types::geometry::from_binary(blobs.string_bytes(row), true)?.unwrap_or_default();
+            let stored = result.add_string(&converted);
+            result.values_mut::<rustdb_types::StringT>()[row] = stored;
+        }
+        self.scratch = Some(blobs);
+        Ok(read)
+    }
 }
 
 /// `RowNumberColumnReader`.
@@ -52,7 +99,18 @@ impl ColumnReader {
     ) -> Result<Self> {
         match schema.kind {
             SchemaKind::FileRowNumber => Ok(Self::RowNumber(RowNumberReader::default())),
-            SchemaKind::Geometry | SchemaKind::Variant => Err(Error::not_implemented(format!(
+            SchemaKind::Geometry => {
+                let blob = schema
+                    .children
+                    .first()
+                    .ok_or_else(|| Error::internal("GEOMETRY column without its BLOB child"))?;
+                Ok(Self::Geometry(Box::new(GeometryReader {
+                    blob: LeafReader::new(context, blob)?,
+                    logical_type: schema.logical_type.clone(),
+                    scratch: None,
+                })))
+            }
+            SchemaKind::Variant => Err(Error::not_implemented(format!(
                 "Reading {} columns from Parquet files",
                 schema.logical_type
             ))),
@@ -102,6 +160,7 @@ impl ColumnReader {
             Self::List(list) => list.logical_type().clone(),
             Self::Struct(node) => node.logical_type().clone(),
             Self::RowNumber(_) => LogicalType::BIGINT,
+            Self::Geometry(reader) => reader.logical_type.clone(),
         }
     }
 
@@ -114,6 +173,7 @@ impl ColumnReader {
     ) -> Result<()> {
         match self {
             Self::Leaf(leaf) => leaf.initialize_read(row_group),
+            Self::Geometry(reader) => reader.blob.initialize_read(row_group),
             Self::List(list) => list.initialize_read(row_group_index, row_group, context),
             Self::Struct(node) => node.initialize_read(row_group_index, row_group, context),
             Self::RowNumber(reader) => {
@@ -140,6 +200,7 @@ impl ColumnReader {
     ) -> Result<usize> {
         match self {
             Self::Leaf(leaf) => leaf.read(num_values, defines, repeats, result),
+            Self::Geometry(reader) => reader.read(num_values, defines, repeats, result),
             Self::List(list) => list.read(num_values, defines, repeats, result),
             Self::Struct(node) => node.read(num_values, defines, repeats, result),
             Self::RowNumber(reader) => {
@@ -157,6 +218,7 @@ impl ColumnReader {
     pub fn skip(&mut self, num_values: usize) {
         match self {
             Self::Leaf(leaf) => leaf.skip(num_values),
+            Self::Geometry(reader) => reader.blob.skip(num_values),
             Self::List(list) => list.skip(num_values),
             Self::Struct(node) => node.skip(num_values),
             Self::RowNumber(reader) => reader.row_group_offset += num_values as i64,
@@ -167,6 +229,7 @@ impl ColumnReader {
     pub fn group_rows_available(&self) -> Result<u64> {
         match self {
             Self::Leaf(leaf) => Ok(leaf.group_rows_available()),
+            Self::Geometry(reader) => Ok(reader.blob.group_rows_available()),
             Self::List(list) => list.group_rows_available(),
             Self::Struct(node) => node.group_rows_available(),
             Self::RowNumber(_) => Ok(u64::MAX),
@@ -177,6 +240,7 @@ impl ColumnReader {
     pub fn total_compressed_size(&self) -> u64 {
         match self {
             Self::Leaf(leaf) => leaf.total_compressed_size(),
+            Self::Geometry(reader) => reader.blob.total_compressed_size(),
             Self::List(list) => list.total_compressed_size(),
             Self::Struct(node) => node.total_compressed_size(),
             Self::RowNumber(_) => 0,

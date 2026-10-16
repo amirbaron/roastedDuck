@@ -62,6 +62,10 @@ pub struct WriterOptions {
     pub enable_bloom_filters: bool,
     pub bloom_filter_false_positive_ratio: f64,
     pub version: ParquetVersion,
+    /// The `GeoParquet` metadata and geometry types written (`GEOPARQUET_VERSION`).
+    pub geoparquet_version: crate::geo::GeoParquetVersion,
+    /// Whether `GeoParquet` metadata is written at all (`enable_geoparquet_conversion`).
+    pub geoparquet_conversion: bool,
 }
 
 impl Default for WriterOptions {
@@ -79,6 +83,8 @@ impl Default for WriterOptions {
             enable_bloom_filters: true,
             bloom_filter_false_positive_ratio: 0.01,
             version: ParquetVersion::V1,
+            geoparquet_version: crate::geo::GeoParquetVersion::V1,
+            geoparquet_conversion: true,
         }
     }
 }
@@ -178,6 +184,8 @@ pub struct ParquetWriter {
     pub footer_size: Option<u64>,
     /// The size of the finished file.
     final_size: u64,
+    /// The `GeoParquet` metadata gathered from the geometry columns.
+    geo: crate::geo::GeoParquetMetadata,
 }
 
 /// `ColumnWriter::CreateWriterRecursive`.
@@ -347,7 +355,8 @@ fn primitive_values(ty: &LogicalType) -> Result<Box<dyn ValueWriter>> {
             PhysicalType::Int64 => standard::<Numeric<BigInt>>(false),
             _ => Box::new(FixedDecimalWriter::default()),
         },
-        L::Blob | L::Geometry => standard::<Bytes<true>>(true),
+        L::Blob => standard::<Bytes<true>>(true),
+        L::Geometry => standard::<types::Geometry>(true),
         L::Varchar => standard::<Bytes<false>>(true),
         L::Uuid => standard::<Uuid>(false),
         L::Interval => standard::<IntervalType>(false),
@@ -407,6 +416,7 @@ impl ParquetWriter {
             finished: Vec::new(),
             footer_size: None,
             final_size: 0,
+            geo: crate::geo::GeoParquetMetadata::default(),
         })
     }
 
@@ -529,6 +539,13 @@ impl ParquetWriter {
         row_group.total_byte_size = total_byte_size;
         row_group.total_compressed_size = Some((sink.written() - file_offset) as i64);
         let row_group_index = self.metadata.row_groups.len();
+        if options.geoparquet_version.json() {
+            for column in &finished {
+                if let Some((name, ty, stats)) = &column.geo {
+                    self.geo.add_stats(name, ty, stats, options.geoparquet_version)?;
+                }
+            }
+        }
         for column in &mut finished {
             if let Some(filter) = column.bloom_filter.take() {
                 self.bloom_filters.push(PendingBloomFilter {
@@ -578,6 +595,19 @@ impl ParquetWriter {
                 meta.bloom_filter_offset = Some(offset as i64);
                 meta.bloom_filter_length = Some((header_size + bytes.len() as u64) as i32);
             }
+        }
+        // The GeoParquet metadata follows the user's key/value metadata.
+        if self.options.geoparquet_conversion
+            && self.options.geoparquet_version.json()
+            && let Some(json) = self.geo.to_json(self.options.geoparquet_version)?
+        {
+            self.metadata
+                .key_value_metadata
+                .get_or_insert_with(Vec::new)
+                .push(crate::thrift::KeyValue {
+                    key: crate::thrift::Binary(b"geo".to_vec()),
+                    value: Some(crate::thrift::Binary(json.into_bytes())),
+                });
         }
         let metadata_start = sink.written();
         sink.write_thrift(&self.metadata)?;

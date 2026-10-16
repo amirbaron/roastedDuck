@@ -632,6 +632,7 @@ dependencies = [
  "rustdb-storage",
  "rustdb-types",
  "ruzstd",
+ "serde_json",
  "snap",
  "twox-hash",
 ]
