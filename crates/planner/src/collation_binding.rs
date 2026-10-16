@@ -141,6 +141,13 @@ pub fn push_collation_with(
         LogicalTypeId::Varchar => push_varchar_collation(context, source, ty, kind),
         LogicalTypeId::TimeTz => Ok((wrap(context, "timetz_byte_comparable", source)?, true)),
         LogicalTypeId::Interval => Ok((wrap(context, "normalized_interval", source)?, true)),
+        LogicalTypeId::Variant => {
+            // `PushVariantCollation` keeps the alias of the source.
+            let alias = source.alias.clone();
+            let mut wrapped = wrap(context, "variant_normalize", source)?;
+            wrapped.alias = alias;
+            Ok((wrapped, true))
+        }
         _ => Ok((source, false)),
     }
 }

@@ -14,12 +14,89 @@ use super::{CastFunctionSet, ValueCast};
 /// either cannot be cast to the common type.
 fn unified_order(left: &Value, right: &Value) -> Option<Ordering> {
     if left.logical_type() == right.logical_type() {
-        return left.compare_not_distinct(right);
+        return same_type_order(left, right);
     }
     let common = LogicalType::force_max_logical_type(left.logical_type(), right.logical_type());
     let left = left.try_cast(&common).ok()?;
     let right = right.try_cast(&common).ok()?;
-    left.compare_not_distinct(&right)
+    same_type_order(&left, &right)
+}
+
+/// Whether `ty` is or contains VARIANT.
+fn contains_variant(ty: &LogicalType) -> bool {
+    match ty.id() {
+        LogicalTypeId::Variant => true,
+        LogicalTypeId::List | LogicalTypeId::Map => ty.child_type().is_some_and(contains_variant),
+        LogicalTypeId::Array => ty.array_child().is_some_and(|(child, _)| contains_variant(child)),
+        LogicalTypeId::Struct | LogicalTypeId::Union => ty
+            .struct_children()
+            .is_some_and(|fields| fields.iter().any(|(_, field)| contains_variant(field))),
+        _ => false,
+    }
+}
+
+/// Orders two values of the same type; VARIANTs compare by the values they hold
+/// (`TemplatedBooleanOperation` converts them with `ConvertVariantToValue`).
+fn same_type_order(left: &Value, right: &Value) -> Option<Ordering> {
+    if !contains_variant(left.logical_type()) {
+        return left.compare_not_distinct(right);
+    }
+    match left.logical_type().id() {
+        LogicalTypeId::Variant => {
+            let decode = |value: &Value| -> Option<Value> {
+                rustdb_types::variant::VariantData::from_value(value)
+                    .ok()?
+                    .map_or(Some(Value::null(LogicalType::SQLNULL)), |data| {
+                        data.to_sql_value(0).ok()
+                    })
+            };
+            null_last_order(&decode(left)?, &decode(right)?)
+        }
+        LogicalTypeId::List | LogicalTypeId::Array | LogicalTypeId::Map | LogicalTypeId::Struct => {
+            let (left, right) = (left.children()?, right.children()?);
+            for (left, right) in left.iter().zip(right) {
+                match null_last_order(left, right)? {
+                    Ordering::Equal => {}
+                    other => return Some(other),
+                }
+            }
+            Some(left.len().cmp(&right.len()))
+        }
+        _ => left.compare_not_distinct(right),
+    }
+}
+
+/// [`unified_order`] where NULLs sort after every value and equal each other.
+fn null_last_order(left: &Value, right: &Value) -> Option<Ordering> {
+    match (left.is_null(), right.is_null()) {
+        (true, true) => Some(Ordering::Equal),
+        (true, false) => Some(Ordering::Greater),
+        (false, true) => Some(Ordering::Less),
+        (false, false) => unified_order(left, right),
+    }
+}
+
+/// Compares two non-NULL VARIANT values row-wise (DuckDB's `DistinctSelectVariant`): the
+/// stored values are converted and must have a common type; `None` if they cannot be
+/// cast to it (they then compare neither equal nor ordered).
+pub fn variant_order(left: &Value, right: &Value) -> Result<Option<Ordering>> {
+    let decode = |value: &Value| -> Result<Value> {
+        match rustdb_types::variant::VariantData::from_value(value)? {
+            Some(data) => data.to_sql_value(0),
+            None => Ok(Value::null(LogicalType::SQLNULL)),
+        }
+    };
+    let (left, right) = (decode(left)?, decode(right)?);
+    if LogicalType::try_max_logical_type(left.logical_type(), right.logical_type()).is_none() {
+        return Err(Error::invalid_input(format!(
+            "Can't compare values of type {} ({}) and type {} ({}) - an explicit cast is required",
+            left.logical_type(),
+            left.to_varchar()?,
+            right.logical_type(),
+            right.to_varchar()?
+        )));
+    }
+    Ok(null_last_order(&left, &right))
 }
 
 fn reject_nulls(left: &Value, right: &Value) -> Result<()> {

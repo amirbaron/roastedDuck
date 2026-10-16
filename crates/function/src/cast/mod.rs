@@ -27,6 +27,7 @@ mod structs;
 mod temporal;
 pub mod text_parse;
 mod value;
+mod variant;
 
 use std::fmt;
 use std::sync::Arc;
@@ -36,6 +37,7 @@ use rustdb_types::{LogicalType, LogicalTypeId, Vector};
 
 pub use compare::{
     values_are_equal, values_distinct_greater_than, values_equal, values_greater_than, values_not_distinct,
+    variant_order,
 };
 pub use rustdb_types::implicit_cast_cost;
 pub use value::{ValueCast, cast_vector};
@@ -329,6 +331,9 @@ impl CastFunctionSet {
     /// DuckDB's `DefaultCasts::GetDefaultCastFunction`: dispatch on the source type.
     fn default_cast(&self, source: &LogicalType, target: &LogicalType) -> Result<Option<BoundCastInfo>> {
         use LogicalTypeId as L;
+        if target.id() == L::Variant {
+            return Ok(Some(variant::to_variant()));
+        }
         if target.id() == L::Union && !matches!(source.id(), L::Union | L::SqlNull | L::Variant) {
             return structs::to_union(self, source, target).map(Some);
         }
@@ -368,6 +373,7 @@ impl CastFunctionSet {
             L::Struct | L::Union => structs::cast_switch(self, source, target)?,
             L::SqlNull => Some(BoundCastInfo::null_source()),
             L::Geometry => geometry::cast_switch(source, target)?,
+            L::Variant => variant::cast_switch(target),
             _ => None,
         })
     }

@@ -609,6 +609,17 @@ impl Value {
             }
             (Payload::Nested(entries), L::Map) => self.write_map(entries, out)?,
             (Payload::Nested(fields), L::Struct) => self.write_struct(fields, out)?,
+            (Payload::Nested(_), L::Variant) => {
+                // VARIANT -> VARCHAR: the converted value's text (`CastFromVARIANT`).
+                let data = crate::variant::VariantData::from_value(self)?
+                    .ok_or_else(|| Error::internal("VARIANT value without data"))?;
+                let value = data.to_sql_value(0)?;
+                if value.is_null() {
+                    out.extend_from_slice(b"NULL");
+                } else {
+                    value.write_text(out)?;
+                }
+            }
             (Payload::Nested(_), L::Union) => match self.union_tag_and_value() {
                 Some((_, member)) if !member.is_null() => member.write_text(out)?,
                 _ => out.extend_from_slice(b"NULL"),
