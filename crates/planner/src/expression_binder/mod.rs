@@ -441,14 +441,15 @@ pub trait ExpressionBinder: ColumnQualifier {
         crate::binder::expression::bind_unsupported_expression(self, expr, depth, &message)
     }
 
-    /// A window function call; only some binders allow them.
-    fn bind_window(&mut self, expr: &mut ParsedExpression, depth: u64) -> Result<BindResult> {
-        crate::binder::expression::bind_unsupported_expression(
-            self,
-            expr,
-            depth,
-            "window functions are not allowed here",
-        )
+    /// A window function call; only some binders allow them. The base binder has no case
+    /// for them (`ExpressionBinder::BindExpression`'s default).
+    fn bind_window(&mut self, _expr: &mut ParsedExpression, _depth: u64) -> Result<BindResult> {
+        Ok(BindResult::Unbound(
+            Error::not_implemented(
+                "Unimplemented expression class in ExpressionBinder::BindExpression: WINDOW",
+            )
+            .into(),
+        ))
     }
 
     fn unsupported_aggregate_message(&self) -> String {
