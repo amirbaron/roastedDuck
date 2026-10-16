@@ -752,6 +752,7 @@ test/sql/attach/attach_reserved.test
 test/sql/attach/attach_same_db.test
 test/sql/attach/attach_schema.test
 test/sql/attach/attach_serialize_dependency.test
+test/sql/attach/attach_show_all_tables.test
 test/sql/attach/attach_show_table.test
 test/sql/attach/attach_table_constraints.test
 test/sql/attach/attach_table_ddl.test
@@ -1274,6 +1275,7 @@ test/sql/create/create_table_empty_name.test
 test/sql/create/create_using_index.test
 test/sql/cte/cte_bc.test
 test/sql/cte/cte_colname_issue_10074.test
+test/sql/cte/cte_describe.test
 test/sql/cte/cte_issue_17311.test
 test/sql/cte/cte_null_values.test
 test/sql/cte/cte_on_conflict_issue.test
@@ -2203,6 +2205,7 @@ test/sql/prepared/prepare_list_functions.test
 test/sql/prepared/prepare_maintain_types.test
 test/sql/prepared/prepare_mixed_types.test
 test/sql/prepared/prepare_offset_first.test
+test/sql/prepared/prepare_summarize.test
 test/sql/prepared/prepared_null_binding.test
 test/sql/prepared/prepared_select.test
 test/sql/prepared/prepared_update.test
@@ -2267,6 +2270,7 @@ test/sql/sample/table_samples/test_sample_types.test
 test/sql/sample/table_samples/test_table_sample_errors.test
 test/sql/sample/test_sample.test_slow
 test/sql/sample/test_sample_too_big.test
+test/sql/sample/test_sampling_stats.test_slow
 test/sql/secrets/create_secret_expression.test
 test/sql/secrets/create_secret_hffs_autoload.test
 test/sql/secrets/secret_autoloading_errors.test
@@ -2313,8 +2317,12 @@ test/sql/settings/setting_order.test
 test/sql/show_select/describe_rowid.test
 test/sql/show_select/describe_subquery.test
 test/sql/show_select/show_quote_identifier.test
+test/sql/show_select/summarize_subquery.test
+test/sql/show_select/test_describe_all.test
 test/sql/show_select/test_describe_quoted.test
 test/sql/show_select/test_show_select.test
+test/sql/show_select/test_summarize.test
+test/sql/show_select/test_summarize_quoted.test
 test/sql/storage/alter/alter_add_col_defaultexpr_sequence.test
 test/sql/storage/alter/alter_based_on_unfinished_insert_fails.test
 test/sql/storage/alter/alter_column_constraint.test
@@ -3117,6 +3125,7 @@ test/sql/types/nested/array/array_storage.test_slow
 test/sql/types/nested/array/array_storage_2.test_slow
 test/sql/types/nested/array/array_storage_3.test
 test/sql/types/nested/array/array_string_heap_gather.test_slow
+test/sql/types/nested/array/array_summarize.test
 test/sql/types/nested/array/array_try_cast.test
 test/sql/types/nested/array/array_try_cast_vector_types.test
 test/sql/types/nested/array/array_tupleformat.test
