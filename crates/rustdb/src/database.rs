@@ -51,6 +51,8 @@ pub(crate) struct DatabaseInstance {
     /// How checkpoints compress segments (`force_compression`, a global setting): applied
     /// to the storage of every attached database.
     compression: std::sync::Mutex<rustdb_storage::compression::CompressionConfig>,
+    /// The secrets (DuckDB's `DBConfig::secret_manager`).
+    pub(crate) secrets: Arc<crate::secrets::SecretManager>,
 }
 
 /// The default of `checkpoint_threshold` (16 MiB).
@@ -90,6 +92,17 @@ fn parse_force_compression(
         ))),
         other => Ok(other),
     }
+}
+
+/// Whether `name` is a setting of the secret manager.
+fn is_secret_setting(name: &str) -> bool {
+    [
+        "secret_directory",
+        "allow_persistent_secrets",
+        "default_secret_storage",
+    ]
+    .iter()
+    .any(|setting| setting.eq_ignore_ascii_case(name))
 }
 
 /// Whether `name` is `checkpoint_threshold` or its alias `wal_autocheckpoint`.
@@ -179,30 +192,31 @@ impl DatabaseInstance {
         catalogs
     }
 
-    /// Checkpoints databases whose WAL a commit grew beyond `checkpoint_threshold`,
-    /// unless other transactions are running (`DuckTransactionManager::CanCheckpoint`).
-    fn auto_checkpoint(&self) -> Result<()> {
+    /// Checkpoints the database `name` a commit wrote to when its WAL grew beyond
+    /// `checkpoint_threshold`, unless other transactions are running
+    /// (`DuckTransactionManager::CanCheckpoint`).
+    fn auto_checkpoint(&self, name: &str) -> Result<()> {
         let threshold = self
             .checkpoint_wal_size
             .load(std::sync::atomic::Ordering::Relaxed);
-        for database in self.databases.all() {
-            let Some(storage) = &database.storage else {
-                continue;
-            };
-            let Some(wal) = storage.wal() else {
-                continue;
-            };
-            if wal.size() <= threshold || self.transactions.active_count() > 0 {
-                continue;
-            }
-            crate::storage::create_checkpoint(
-                &database.catalog,
-                storage,
-                crate::storage::CheckpointMode::Automatic,
-                Some(&self.transactions),
-            )?;
+        let Some(database) = self.databases.get(name) else {
+            return Ok(());
+        };
+        let Some(storage) = &database.storage else {
+            return Ok(());
+        };
+        let Some(wal) = storage.wal() else {
+            return Ok(());
+        };
+        if wal.size() <= threshold || self.transactions.active_count() > 0 {
+            return Ok(());
         }
-        Ok(())
+        crate::storage::create_checkpoint(
+            &database.catalog,
+            storage,
+            crate::storage::CheckpointMode::Automatic,
+            Some(&self.transactions),
+        )
     }
 
     /// Whether `checkpoint_on_shutdown` is on (`PRAGMA disable_checkpoint_on_shutdown`).
@@ -279,6 +293,7 @@ impl Database {
             shutdown_checkpoint_disabled: std::sync::atomic::AtomicBool::new(false),
             checkpoint_wal_size: std::sync::atomic::AtomicU64::new(DEFAULT_CHECKPOINT_WAL_SIZE),
             compression: std::sync::Mutex::default(),
+            secrets: Arc::default(),
         };
         for (name, value) in &config.options {
             if is_checkpoint_threshold(name) {
@@ -444,11 +459,18 @@ impl Connection {
         let invalidates = outcome
             .as_ref()
             .is_err_and(|error| invalidates_transaction(error.kind()));
+        // The database the transaction wrote to, which its commit may checkpoint.
+        let modified = if self.transactions.has_current() {
+            self.transactions.current().modified_database()
+        } else {
+            None
+        };
         let ended = self.transactions.end_statement(outcome.is_ok(), invalidates);
         let mut result = outcome.and_then(|result| ended.map(|()| result));
         if result.is_ok()
             && !self.transactions.has_current()
-            && let Err(error) = self.database.instance().auto_checkpoint()
+            && let Some(modified) = modified
+            && let Err(error) = self.database.instance().auto_checkpoint(&modified)
         {
             result = Err(error);
         }
@@ -495,6 +517,7 @@ impl Connection {
             function_client: Arc::clone(&self.function_client),
             user_variables: self.user_variables.clone(),
             dependency_recorder: Arc::default(),
+            database_state: Some(Arc::clone(&instance.secrets) as Arc<dyn rustdb_planner::DatabaseState>),
         })
     }
 
@@ -1062,6 +1085,9 @@ impl Connection {
                 return Ok(nothing());
             }
             LogicalKind::Set { name, value, .. } => {
+                if is_secret_setting(name) {
+                    self.database.instance().secrets.set_option(name, Some(value))?;
+                }
                 self.settings.set(name, value)?;
                 if is_checkpoint_threshold(name) {
                     self.database.instance().set_checkpoint_threshold(value)?;
@@ -1072,6 +1098,9 @@ impl Connection {
                 return Ok(nothing());
             }
             LogicalKind::Reset { name, .. } => {
+                if is_secret_setting(name) {
+                    self.database.instance().secrets.set_option(name, None)?;
+                }
                 self.settings.reset(name)?;
                 if is_force_compression(name) {
                     self.database.instance().set_force_compression(None)?;
@@ -1091,6 +1120,31 @@ impl Connection {
             }
             LogicalKind::Deallocate { name } => {
                 self.prepared_statements.remove(name);
+                return Ok(nothing());
+            }
+            LogicalKind::CreateSecret(input) => {
+                // `PhysicalCreateSecret`: one row with `true`.
+                self.database.instance().secrets.create_secret(input)?;
+                let column = rustdb_types::Vector::constant(&rustdb_types::Value::boolean(true))?;
+                return Ok(MaterializedResult::new(
+                    names,
+                    types,
+                    vec![rustdb_types::DataChunk::new(vec![column], 1)],
+                ));
+            }
+            LogicalKind::Drop(info) if info.catalog_type == rustdb_ast::CatalogType::SecretEntry => {
+                let (persist_type, storage) = match info.extra_drop_info.as_deref() {
+                    Some(rustdb_ast::ExtraDropInfo::Secret(extra)) => {
+                        (extra.persist_mode, extra.secret_storage.clone())
+                    }
+                    None => (rustdb_ast::SecretPersistType::Default, String::new()),
+                };
+                self.database.instance().secrets.drop_secret(
+                    &info.name,
+                    info.if_not_found,
+                    persist_type,
+                    &storage,
+                )?;
                 return Ok(nothing());
             }
             LogicalKind::Pragma { name, .. } => {

@@ -68,15 +68,96 @@ pub fn bind_create(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Result<B
                 info: Box::new(info.clone()),
             })
         }
-        CreateInfoKind::Secret(_) => {
-            return Err(Error::not_implemented(format!(
-                "CREATE {}",
-                info.kind.catalog_type().name()
-            )));
+        CreateInfoKind::Secret(secret) => {
+            let input = bind_create_secret(scope, secret, info.on_conflict)?;
+            scope.with_properties(|properties| properties.return_type = StatementReturnType::QueryResult);
+            return Ok(BoundStatement::new(
+                LogicalOperator::new(LogicalKind::CreateSecret(Box::new(input))),
+                vec!["Success".to_owned()],
+                vec![LogicalType::BOOLEAN],
+            ));
         }
     };
     scope.with_properties(|properties| properties.return_type = return_type);
     Ok(count_result(plan))
+}
+
+/// Evaluates one expression of `CREATE SECRET` (DuckDB binds them with a
+/// `ConstantBinder` and executes them).
+fn evaluate_secret_expression(
+    scope: &mut BindScope<'_>,
+    expression: &rustdb_ast::ParsedExpression,
+) -> Result<Value> {
+    let mut copy = expression.clone();
+    if crate::expression_binder::parsed_has_parameter(&mut copy) {
+        return Err(Error::invalid_input(
+            "Create Secret expressions can not have parameters!",
+        ));
+    }
+    let bound = {
+        let (inner, outer) = scope.split();
+        let mut binder = crate::expression_binder::ConstantBinder::new(inner, outer, "Secret Parameter");
+        binder.bind(&mut copy, false)?
+    };
+    scope.context.evaluator.evaluate_scalar(&bound)
+}
+
+/// The `SECRET_ENTRY` case of DuckDB's `Binder::Bind(CreateStatement &)`: the type,
+/// provider, scope and options are evaluated; the secret manager checks them.
+fn bind_create_secret(
+    scope: &mut BindScope<'_>,
+    info: &rustdb_ast::CreateSecretInfo,
+    on_conflict: rustdb_ast::OnCreateConflict,
+) -> Result<crate::operator::CreateSecretInput> {
+    let mut lowered = |expression: Option<&rustdb_ast::ParsedExpression>| -> Result<String> {
+        match expression {
+            Some(expression) => Ok(evaluate_secret_expression(scope, expression)?
+                .to_varchar()?
+                .to_lowercase()),
+            None => Ok(String::new()),
+        }
+    };
+    let provider = lowered(info.provider.as_deref())?;
+    let secret_type = lowered(info.secret_type.as_deref())?;
+    let mut scope_strings = Vec::new();
+    if let Some(expression) = &info.scope {
+        let value = evaluate_secret_expression(scope, expression)?;
+        let ty = value.logical_type().clone();
+        if ty == LogicalType::VARCHAR {
+            scope_strings.push(value.to_varchar()?);
+        } else if ty.id() == LogicalTypeId::List && ty.child_type() == Some(&LogicalType::VARCHAR) {
+            for item in value.children().unwrap_or_default() {
+                scope_strings.push(item.to_varchar()?);
+            }
+        } else if ty.id() == LogicalTypeId::Struct {
+            for child in value.children().unwrap_or_default() {
+                if *child.logical_type() != LogicalType::VARCHAR {
+                    return Err(Error::invalid_input(
+                        "Invalid input to scope parameter of create secret: only struct of VARCHARs is allowed",
+                    ));
+                }
+                scope_strings.push(child.to_varchar()?);
+            }
+        } else {
+            return Err(Error::invalid_input(
+                "Create Secret scope must be of type VARCHAR or LIST(VARCHAR)",
+            ));
+        }
+    }
+    let mut options = Vec::with_capacity(info.options.len());
+    for (name, expression) in info.options.iter() {
+        options.push((name.to_owned(), evaluate_secret_expression(scope, expression)?));
+    }
+    Ok(crate::operator::CreateSecretInput {
+        secret_type,
+        provider,
+        storage: info.storage_type.clone(),
+        name: info.name.clone(),
+        scope: scope_strings,
+        options,
+        on_conflict,
+        persist_type: info.persist_type,
+    })
 }
 
 /// `CREATE TYPE` (the `TYPE_ENTRY` case of DuckDB's `Binder::Bind(CreateStatement &)`):
@@ -855,6 +936,14 @@ fn bind_create_table_constraints(
 /// `DROP ...` (DuckDB's `Binder::Bind(DropStatement &)`).
 pub fn bind_drop(scope: &mut BindScope<'_>, drop: &mut DropInfo) -> Result<BoundStatement> {
     scope.with_properties(|properties| properties.return_type = StatementReturnType::Nothing);
+    if drop.catalog_type == AstCatalogType::SecretEntry {
+        // `DROP SECRET` is executed by the secret manager (`PhysicalDrop`).
+        return Ok(BoundStatement::new(
+            LogicalOperator::new(LogicalKind::Drop(Box::new(drop.clone()))),
+            vec!["Success".to_owned()],
+            vec![LogicalType::BOOLEAN],
+        ));
+    }
     let ty = match drop.catalog_type {
         AstCatalogType::SchemaEntry => None,
         AstCatalogType::TableEntry => Some(CatalogType::Table),

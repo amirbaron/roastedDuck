@@ -290,15 +290,15 @@ impl Settings {
                 let enabled = value.default_cast_as(&LogicalType::BOOLEAN)?;
                 self.planner.order_by_non_integer_literal = enabled.as_bool().unwrap_or(false);
             }
-            "enable_view_dependencies" | "enable_macro_dependencies" => {
+            "enable_view_dependencies" | "enable_macro_dependencies" | "allow_unredacted_secrets" => {
                 let enabled = value
                     .default_cast_as(&LogicalType::BOOLEAN)?
                     .as_bool()
                     .unwrap_or(false);
-                if option == "enable_view_dependencies" {
-                    self.planner.enable_view_dependencies = enabled;
-                } else {
-                    self.planner.enable_macro_dependencies = enabled;
+                match option {
+                    "enable_view_dependencies" => self.planner.enable_view_dependencies = enabled,
+                    "enable_macro_dependencies" => self.planner.enable_macro_dependencies = enabled,
+                    _ => self.planner.allow_unredacted_secrets = enabled,
                 }
                 self.other.insert(option, value.clone());
             }
@@ -332,6 +332,10 @@ impl Settings {
             }
             "enable_macro_dependencies" => {
                 self.planner.enable_macro_dependencies = defaults.enable_macro_dependencies;
+                self.other.remove(option);
+            }
+            "allow_unredacted_secrets" => {
+                self.planner.allow_unredacted_secrets = defaults.allow_unredacted_secrets;
                 self.other.remove(option);
             }
             "pivot_filter_threshold" => self.planner.pivot_filter_threshold = defaults.pivot_filter_threshold,

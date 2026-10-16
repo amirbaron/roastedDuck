@@ -55,6 +55,8 @@ pub struct PlannerConfig {
     pub enable_view_dependencies: bool,
     /// `enable_macro_dependencies`: macros depend on the entries they reference.
     pub enable_macro_dependencies: bool,
+    /// `allow_unredacted_secrets`: `duckdb_secrets(redact := false)` may show secrets.
+    pub allow_unredacted_secrets: bool,
 }
 
 /// The `default_null_order` setting (DuckDB's `DefaultOrderByNullType`).
@@ -80,6 +82,7 @@ impl Default for PlannerConfig {
             pivot_limit: 100_000,
             enable_view_dependencies: false,
             enable_macro_dependencies: false,
+            allow_unredacted_secrets: false,
         }
     }
 }
@@ -108,6 +111,12 @@ impl PlannerConfig {
     }
 }
 
+/// State of the embedding database that its own functions read through the client
+/// context (DuckDB's `ClientContext::db`).
+pub trait DatabaseState: std::fmt::Debug + Send + Sync {
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+
 /// The context a statement is bound in.
 #[derive(Clone, Debug)]
 pub struct ClientContext {
@@ -127,6 +136,8 @@ pub struct ClientContext {
     /// The entries looked up while recording (DuckDB's catalog lookup callback of the
     /// binder, which collects the dependencies of a created entry).
     pub dependency_recorder: Arc<std::sync::Mutex<Option<Vec<EntryLookup>>>>,
+    /// The embedding database's state, if any.
+    pub database_state: Option<Arc<dyn DatabaseState>>,
     /// `SET VARIABLE` values of the connection (DuckDB's `ClientConfig::user_variables`).
     pub user_variables: rustdb_common::CaseInsensitiveMap<Value>,
 }

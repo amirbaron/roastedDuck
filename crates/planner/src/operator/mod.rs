@@ -464,6 +464,8 @@ pub enum LogicalKind {
     CreateIndex(Box<LogicalCreateIndex>),
     /// `ALTER TABLE` / `ALTER VIEW` (DuckDB's `LogicalSimple` of type `LOGICAL_ALTER`).
     Alter(Box<LogicalAlter>),
+    /// `CREATE SECRET` with its expressions evaluated (DuckDB's `LogicalCreateSecret`).
+    CreateSecret(Box<CreateSecretInput>),
     Insert(Box<LogicalInsert>),
     Delete(Box<LogicalDelete>),
     Update(Box<LogicalUpdate>),
@@ -520,6 +522,22 @@ pub enum BoundConstraint {
         /// `name TYPE AS (expression)`, for the error message.
         text: String,
     },
+}
+
+/// The input of a secret function (DuckDB's `CreateSecretInput`): type, provider and
+/// name lower-cased, the options evaluated.
+#[derive(Clone, Debug)]
+pub struct CreateSecretInput {
+    pub secret_type: String,
+    /// Empty for the type's default provider.
+    pub provider: String,
+    /// `IN storage`, or empty.
+    pub storage: String,
+    pub name: String,
+    pub scope: Vec<String>,
+    pub options: Vec<(String, Value)>,
+    pub on_conflict: rustdb_ast::OnCreateConflict,
+    pub persist_type: rustdb_ast::SecretPersistType,
 }
 
 /// A bound `ALTER TABLE` / `ALTER VIEW`: the checks of DuckDB's
@@ -860,6 +878,7 @@ impl LogicalOperator {
             LogicalKind::Transaction { .. } => T::LogicalTransaction,
             LogicalKind::Deallocate { .. } | LogicalKind::Drop(_) => T::LogicalDrop,
             LogicalKind::Pragma { .. } => T::LogicalPragma,
+            LogicalKind::CreateSecret(_) => T::LogicalCreateSecret,
             LogicalKind::CreateTable(_) => T::LogicalCreateTable,
             LogicalKind::CreateIndex(_) => T::LogicalCreateIndex,
             LogicalKind::Alter(_) => T::LogicalAlter,
@@ -1013,6 +1032,7 @@ impl LogicalOperator {
             | LogicalKind::Transaction { .. }
             | LogicalKind::Deallocate { .. }
             | LogicalKind::Pragma { .. }
+            | LogicalKind::CreateSecret(_)
             | LogicalKind::CreateTable(_)
             | LogicalKind::CreateIndex(_)
             | LogicalKind::Alter(_)
@@ -1209,6 +1229,7 @@ impl LogicalOperator {
             | LogicalKind::Detach(_)
             | LogicalKind::Transaction { .. }
             | LogicalKind::Pragma { .. }
+            | LogicalKind::CreateSecret(_)
             | LogicalKind::Alter(_)
             | LogicalKind::Drop(_) => vec![LogicalType::BOOLEAN],
             LogicalKind::Insert(insert) if insert.return_chunk => insert.table_types(),

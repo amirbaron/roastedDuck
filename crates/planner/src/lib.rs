@@ -49,7 +49,7 @@ pub use binder::expression::bind_logical_type;
 pub use binder::{Binder, BoundStatement};
 pub use column_binding::{ColumnBinding, generate_column_bindings};
 pub use column_binding_resolver::ColumnBindingResolver;
-pub use context::{ClientContext, DefaultNullOrder, ExpressionEvaluator, PlannerConfig};
+pub use context::{ClientContext, DatabaseState, DefaultNullOrder, ExpressionEvaluator, PlannerConfig};
 pub use expression::{Expression, ExpressionKind};
 pub use generated::enums::{DistinctType, LogicalOperatorType};
 pub use operator::{BoundLimitNode, LogicalKind, LogicalOperator, render_plan};
