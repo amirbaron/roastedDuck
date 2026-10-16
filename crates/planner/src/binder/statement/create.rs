@@ -225,7 +225,13 @@ fn bind_catalog(scope: &BindScope<'_>, catalog: &str) -> String {
 /// (`Binder::BindCreateSchema`).
 pub fn bind_create_schema(scope: &BindScope<'_>, info: &mut CreateInfo) -> Result<()> {
     let (mut catalog, mut schema) = bind_schema_or_catalog(scope, &info.catalog, &info.schema)?;
-    if catalog == "temp" {
+    // `Binder::SearchSchema`: temporary entries go to the connection's `temp` catalog
+    // (without one, to the default database).
+    let has_temp = scope.context.catalog(rustdb_catalog::TEMP_CATALOG).is_some();
+    if catalog.is_empty() && info.temporary && has_temp {
+        rustdb_catalog::TEMP_CATALOG.clone_into(&mut catalog);
+    }
+    if !has_temp && catalog.eq_ignore_ascii_case(rustdb_catalog::TEMP_CATALOG) {
         catalog.clear();
     }
     match (catalog.is_empty(), schema.is_empty()) {
@@ -236,6 +242,19 @@ pub fn bind_create_schema(scope: &BindScope<'_>, info: &mut CreateInfo) -> Resul
         (false, true) => schema = scope.context.default_schema_for(&catalog),
         (true, false) => catalog = scope.context.default_catalog_for(&schema),
         (false, false) => {}
+    }
+    if has_temp {
+        let is_temp = catalog.eq_ignore_ascii_case(rustdb_catalog::TEMP_CATALOG);
+        if !info.temporary && is_temp {
+            return Err(Error::parser(
+                "Only TEMPORARY table names can use the \"temp\" catalog",
+            ));
+        }
+        if info.temporary && !is_temp {
+            return Err(Error::parser(
+                "TEMPORARY table names can *only* use the \"temp\" catalog",
+            ));
+        }
     }
     let Some(found) = scope.context.catalog(&catalog) else {
         return Err(Error::binder(format!("Catalog \"{catalog}\" does not exist!")));

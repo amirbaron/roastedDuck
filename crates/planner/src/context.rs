@@ -7,7 +7,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use rustdb_ast::{OrderByNullType, OrderType};
-use rustdb_catalog::{Catalog, CatalogEntry, CatalogType, DEFAULT_SCHEMA, Transaction};
+use rustdb_catalog::{Catalog, CatalogEntry, CatalogType, DEFAULT_SCHEMA, TEMP_CATALOG, Transaction};
 use rustdb_common::string_util::similarity_rating;
 use rustdb_common::{Error, Result};
 use rustdb_function::FunctionClient;
@@ -251,7 +251,12 @@ impl ClientContext {
     /// (`CatalogSearchPath::Get`): the set entries, the default database's `main`, then
     /// `system.main`.
     pub fn full_search_path(&self) -> Vec<(String, String)> {
-        let mut paths = self.search_path.clone();
+        // `CatalogSearchPath::SetPaths`: `temp.main` comes first.
+        let mut paths = Vec::with_capacity(self.search_path.len() + 4);
+        if self.catalog(TEMP_CATALOG).is_some() {
+            paths.push((TEMP_CATALOG.to_owned(), DEFAULT_SCHEMA.to_owned()));
+        }
+        paths.extend(self.search_path.iter().cloned());
         paths.push((self.default_catalog().to_owned(), DEFAULT_SCHEMA.to_owned()));
         paths.push(("system".to_owned(), DEFAULT_SCHEMA.to_owned()));
         paths.push(("system".to_owned(), "pg_catalog".to_owned()));

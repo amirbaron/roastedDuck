@@ -111,6 +111,7 @@ test/fuzzer/pedro/complex_offset_clause_crash.test
 test/fuzzer/pedro/complex_type_all_subquery.test
 test/fuzzer/pedro/concurrent_catalog_usage.test
 test/fuzzer/pedro/concurrent_set_threads.test
+test/fuzzer/pedro/constraints_temp_table.test
 test/fuzzer/pedro/correlated_in_segv.test
 test/fuzzer/pedro/correlated_limit_rowid.test
 test/fuzzer/pedro/correlated_offset_subquery.test
@@ -192,6 +193,9 @@ test/fuzzer/pedro/signed_and_unsigned_comparison.test
 test/fuzzer/pedro/statistics_propagation_set_op.test
 test/fuzzer/pedro/strftime_constant_null.test
 test/fuzzer/pedro/subquery_assertion_error.test
+test/fuzzer/pedro/temp_sequence_durability.test
+test/fuzzer/pedro/temp_sequence_reconnect.test
+test/fuzzer/pedro/temp_table_cleanup.test
 test/fuzzer/pedro/test_segv_argmax.test
 test/fuzzer/pedro/test_truncate_heap_use_after_free.test
 test/fuzzer/pedro/test_window_function_nullptr.test
@@ -658,13 +662,16 @@ test/sql/alter/add_pk/test_add_pk_storage.test
 test/sql/alter/add_pk/test_add_pk_wal.test
 test/sql/alter/add_pk/test_add_pk_with_generated_column.test
 test/sql/alter/add_pk/test_add_same_pk_twice.test
+test/sql/alter/alter_col/test_drop_not_null.test
 test/sql/alter/alter_col/test_not_null_in_tran.test
 test/sql/alter/alter_col/test_not_null_multi_tran.test
+test/sql/alter/alter_col/test_set_not_null.test
 test/sql/alter/alter_table_set_partitioned_by.test
 test/sql/alter/alter_table_set_sorted_by.test
 test/sql/alter/alter_table_set_table_options.test
 test/sql/alter/alter_type/alter_type_struct.test
 test/sql/alter/alter_type/test_alter_type_check.test
+test/sql/alter/alter_type/test_alter_type_dependencies.test
 test/sql/alter/alter_type/test_alter_type_expression.test
 test/sql/alter/alter_type/test_alter_type_index.test
 test/sql/alter/alter_type/test_alter_type_local.test
@@ -675,6 +682,7 @@ test/sql/alter/alter_type/test_alter_type_transactions.test
 test/sql/alter/alter_type/test_alter_type_unique.test
 test/sql/alter/alter_type/test_alter_type_with_generated_column.test
 test/sql/alter/default/drop_default.test
+test/sql/alter/default/test_set_default.test
 test/sql/alter/drop_col/test_drop_col.test
 test/sql/alter/drop_col/test_drop_col_check.test
 test/sql/alter/drop_col/test_drop_col_check_next.test
@@ -697,6 +705,7 @@ test/sql/alter/rename_col/test_rename_col_transactions.test
 test/sql/alter/rename_col/test_rename_col_unique.test
 test/sql/alter/rename_schema/rename_schema.test
 test/sql/alter/rename_table/test_rename_bug4455_schema.test
+test/sql/alter/rename_table/test_rename_table.test
 test/sql/alter/rename_table/test_rename_table_chain_commit.test
 test/sql/alter/rename_table/test_rename_table_chain_rollback.test
 test/sql/alter/rename_table/test_rename_table_collision.test
@@ -773,6 +782,7 @@ test/sql/attach/in_memory_attach.test
 test/sql/attach/reattach_schema.test
 test/sql/attach/remote_file_concurrently.test
 test/sql/attach/show_databases.test
+test/sql/attach/show_schemas.test
 test/sql/binder/alias_error_10057.test
 test/sql/binder/alias_qualification_errors.test
 test/sql/binder/alias_qualification_group_by.test
@@ -838,6 +848,7 @@ test/sql/catalog/case_insensitive_cte.test
 test/sql/catalog/case_insensitive_operations.test
 test/sql/catalog/case_insensitive_using.test
 test/sql/catalog/comment_on.test
+test/sql/catalog/comment_on_column.test
 test/sql/catalog/comment_on_dependencies.test
 test/sql/catalog/comment_on_extended.test
 test/sql/catalog/comment_on_pg_description.test
@@ -924,11 +935,13 @@ test/sql/catalog/test_quoted_column_name.test
 test/sql/catalog/test_schema_conflict.test
 test/sql/catalog/test_set_search_path.test
 test/sql/catalog/test_standard_schema.test
+test/sql/catalog/test_temporary.test
 test/sql/catalog/test_unicode_schema.test
 test/sql/catalog/view/recursive_view_with_dependencies.test
 test/sql/catalog/view/test_stacked_view.test
 test/sql/catalog/view/test_view_alias.test
 test/sql/catalog/view/test_view_delete_update.test
+test/sql/catalog/view/test_view_drop_concurrent.test
 test/sql/catalog/view/test_view_duplicate_columns.test
 test/sql/catalog/view/test_view_schema_change.test
 test/sql/catalog/view/test_view_schema_change_with_dependencies.test
@@ -1576,6 +1589,7 @@ test/sql/function/numeric/test_mod.test
 test/sql/function/numeric/test_nextafter.test
 test/sql/function/numeric/test_pg_math.test
 test/sql/function/numeric/test_pow.test
+test/sql/function/numeric/test_random.test
 test/sql/function/numeric/test_round.test
 test/sql/function/numeric/test_round_even.test
 test/sql/function/numeric/test_round_integers.test
@@ -2112,6 +2126,7 @@ test/sql/parallelism/interquery/repeated_concurrent_checkpoint_wal.test_slow
 test/sql/parallelism/interquery/scan_default_catalog.test_slow
 test/sql/parallelism/interquery/scan_default_macros.test_slow
 test/sql/parallelism/interquery/scan_default_system_tables.test_slow
+test/sql/parallelism/interquery/test_concurrent_sequence.test_slow
 test/sql/parallelism/intraquery/depth_first_evaluation.test_slow
 test/sql/parallelism/intraquery/error_in_pipeline.test
 test/sql/parallelism/intraquery/parallel_materialization.test_slow
@@ -2167,6 +2182,7 @@ test/sql/pg_catalog/pg_tablespace.test
 test/sql/pg_catalog/pg_type.test
 test/sql/pg_catalog/pg_views.test
 test/sql/pg_catalog/sqlalchemy.test
+test/sql/pg_catalog/system_functions.test
 test/sql/pivot/optional_pivots.test
 test/sql/pivot/pivot_15141.test
 test/sql/pivot/pivot_6390.test
@@ -2214,6 +2230,7 @@ test/sql/pragma/test_pragma_functions.test
 test/sql/pragma/test_pragma_parsing.test
 test/sql/pragma/test_pragma_sanitized_inputs.test
 test/sql/pragma/test_show_tables.test
+test/sql/pragma/test_show_tables_temp_views.test
 test/sql/pragma/test_storage_info.test
 test/sql/pragma/test_table_info.test
 test/sql/pragma/test_table_info_many_columns.test_slow
@@ -2371,6 +2388,7 @@ test/sql/storage/buffer_manager/appending_table_exceeding_limit.test_slow
 test/sql/storage/buffer_manager/larger_than_memory_aggregate.test_slow
 test/sql/storage/catalog/generated_columns/virtual/basic.test
 test/sql/storage/catalog/generated_columns/virtual/constraints.test
+test/sql/storage/catalog/store_collate.test
 test/sql/storage/catalog/test_check_constraint.test
 test/sql/storage/catalog/test_drop_table.test
 test/sql/storage/catalog/test_macro_storage.test
@@ -2389,6 +2407,7 @@ test/sql/storage/catalog/test_store_rename_column.test
 test/sql/storage/catalog/test_store_rename_table.test
 test/sql/storage/catalog/test_store_rename_view.test
 test/sql/storage/catalog/test_store_sequences.test
+test/sql/storage/catalog/test_store_temporary.test
 test/sql/storage/catalog/test_table_macro_storage.test
 test/sql/storage/catalog/test_view_explicit_aliases.test
 test/sql/storage/catalog/test_view_storage.test
@@ -2780,6 +2799,7 @@ test/sql/storage/wal/wal_store_rename_column.test
 test/sql/storage/wal/wal_store_rename_table.test
 test/sql/storage/wal/wal_store_rename_view.test
 test/sql/storage/wal/wal_store_sequences.test
+test/sql/storage/wal/wal_store_temporary.test
 test/sql/storage/wal/wal_store_updates_big.test
 test/sql/storage/wal/wal_store_updates_big_varchar.test
 test/sql/storage/wal/wal_test_null_updates.test
@@ -2879,6 +2899,7 @@ test/sql/subquery/table/test_table_subquery.test
 test/sql/subquery/table/test_unnamed_subquery.test
 test/sql/subquery/test_neumann.test
 test/sql/subquery/test_offset.test
+test/sql/table_function/database_oid.test
 test/sql/table_function/duckdb_columns.test
 test/sql/table_function/duckdb_constraints.test
 test/sql/table_function/duckdb_constraints_fk.test
@@ -2896,7 +2917,10 @@ test/sql/table_function/duckdb_prepared_statements.test
 test/sql/table_function/duckdb_schemas.test
 test/sql/table_function/duckdb_sequences.test
 test/sql/table_function/duckdb_settings.test
+test/sql/table_function/duckdb_tables.test
 test/sql/table_function/duckdb_types.test
+test/sql/table_function/duckdb_views.test
+test/sql/table_function/information_schema.test
 test/sql/table_function/information_schema_fkey_constraint_names.test
 test/sql/table_function/information_schema_issue12867.test
 test/sql/table_function/information_schema_types.test
@@ -3049,6 +3073,7 @@ test/sql/types/enum/test_3479.test
 test/sql/types/enum/test_3641.test
 test/sql/types/enum/test_6356.test
 test/sql/types/enum/test_alter_enum.test
+test/sql/types/enum/test_enum.test
 test/sql/types/enum/test_enum_case.test
 test/sql/types/enum/test_enum_cast.test
 test/sql/types/enum/test_enum_comparisons.test

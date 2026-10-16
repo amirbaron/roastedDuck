@@ -82,12 +82,12 @@ fn prepared_statements() {
     assert_eq!(rows(&mut con, "EXECUTE P(41)"), vec![vec!["42"]]);
     assert_eq!(
         error(&mut con, "EXECUTE p(1, 2)"),
-        "Binder Error: Parameter/argument count mismatch for prepared statement. Expected 1, got 2"
+        "Invalid Input Error: Parameter argument/count mismatch, identifiers of the excess parameters: 2"
     );
     con.query("PREPARE q AS SELECT $2::INT").unwrap();
     assert_eq!(
         error(&mut con, "EXECUTE q(0)"),
-        "Binder Error: Could not find parameter with identifier 2"
+        "Invalid Input Error: Values were not provided for the following prepared statement parameters: 2"
     );
     con.query("DEALLOCATE p").unwrap();
     assert_eq!(
@@ -135,7 +135,7 @@ fn transactions_and_settings() {
     con.query("SET max_expression_depth TO 7").unwrap();
     assert_eq!(
         error(&mut con, nested),
-        "Binder Error: Max expression depth limit of 7 exceeded. Use \"SET max_expression_depth TO x\" to increase \
+        "Parser Error: Max expression depth limit of 7 exceeded. Use \"SET max_expression_depth TO x\" to increase \
          the maximum expression depth."
     );
 }

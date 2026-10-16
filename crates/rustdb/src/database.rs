@@ -386,7 +386,14 @@ impl Database {
             crate::logging::LoggingContext::new(crate::logging::ContextScope::Connection),
         ));
         function_client.set_logger(Arc::clone(&logger) as Arc<dyn rustdb_function::logging::ClientLogger>);
+        // `ClientData::temporary_objects`: the connection's in-memory `temp` database.
+        let temp_catalog = Arc::new(Catalog::new(rustdb_catalog::TEMP_CATALOG)?);
+        temp_catalog.set_io(Arc::new(rustdb_storage::TableIoManager::new(
+            self.instance.env.buffer_manager.clone(),
+            Arc::new(rustdb_buffer::InMemoryBlockManager::default()),
+        )))?;
         Ok(Connection {
+            temp_catalog,
             logger,
             database: self.clone(),
             transactions,
@@ -422,6 +429,9 @@ impl Database {
 #[derive(Debug)]
 pub struct Connection {
     database: Database,
+    /// The connection's temporary objects (DuckDB's `ClientData::temporary_objects`, the
+    /// `temp` catalog).
+    temp_catalog: Arc<Catalog>,
     transactions: TransactionContext,
     settings: Settings,
     /// The `(catalog, schema)` entries set by `USE` / `SET search_path` (DuckDB's
@@ -586,13 +596,22 @@ impl Connection {
         self.transactions.current()
     }
 
+    /// The catalogs this connection sees: the attached databases with `default` first,
+    /// its `temp` catalog, then `system`.
+    fn catalogs(&self, default: &str) -> Vec<Arc<Catalog>> {
+        let mut catalogs = self.database.instance().catalogs(default);
+        let system = catalogs.len().saturating_sub(1);
+        catalogs.insert(system, Arc::clone(&self.temp_catalog));
+        catalogs
+    }
+
     /// The planner's view of this connection, in `transaction`.
     fn client_context(&self, transaction: Arc<Transaction>) -> Arc<ClientContext> {
         self.function_client
             .observe_transaction(transaction.transaction_id);
         let instance = self.database.instance();
         Arc::new(ClientContext {
-            catalogs: instance.catalogs(instance.default_database_name()),
+            catalogs: self.catalogs(instance.default_database_name()),
             search_path: self.search_path.clone(),
             transaction,
             casts: Arc::clone(&instance.casts),
@@ -1388,10 +1407,9 @@ impl Connection {
     ) -> Result<MaterializedResult> {
         ColumnBindingResolver::resolve(&mut plan)?;
         seed_samples(&mut plan, &self.function_client);
-        let instance = self.database.instance();
         let context = PlanContext {
             transaction: self.transactions.current(),
-            catalogs: instance.catalogs(&self.default_catalog()),
+            catalogs: self.catalogs(&self.default_catalog()),
             join_settings: self.settings.join_plan_settings(),
         };
         let physical = create_physical_plan_with(plan, &context)?;

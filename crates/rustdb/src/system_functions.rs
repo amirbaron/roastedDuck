@@ -207,23 +207,6 @@ fn database_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
             ],
         ));
     }
-    // The temporary database exists in every DuckDB instance.
-    rows.push((
-        "temp".to_owned(),
-        vec![
-            text("temp"),
-            oid(TEMP_OID),
-            null_text(),
-            null_text(),
-            empty_map(),
-            Value::boolean(true),
-            text("duckdb"),
-            Value::boolean(false),
-            Value::boolean(false),
-            null_text(),
-            empty_map(),
-        ],
-    ));
     // `DatabaseManager::GetDatabases`: the attached databases, then `system` and `temp`.
     let rank = |name: &str| match name {
         "system" => 1,
@@ -233,9 +216,6 @@ fn database_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
     rows.sort_by(|a, b| (rank(&a.0), &a.0).cmp(&(rank(&b.0), &b.0)));
     Ok(rows.into_iter().map(|(_, row)| row).collect())
 }
-
-/// The object id shown for the temporary database.
-const TEMP_OID: u64 = 1;
 
 const SCHEMA_COLUMNS: Columns = &[
     ("oid", bigint),
@@ -276,7 +256,6 @@ fn schema_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
             schema.internal,
         );
     }
-    push("temp", TEMP_OID, "main", TEMP_OID + 1, true);
     rows.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
     Ok(rows.into_iter().map(|(_, _, row)| row).collect())
 }

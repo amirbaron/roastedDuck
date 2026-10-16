@@ -158,6 +158,7 @@ impl DdlAction for CreateViewAction {
             }),
         );
         entry.dependencies.clone_from(&self.info.dependencies.set);
+        entry.temporary = self.info.temporary;
         self.catalog
             .create_entry(transaction, &self.info.schema, entry, self.info.on_conflict)?;
         Ok(())
@@ -298,6 +299,7 @@ impl TableCreator for CatalogTableCreator {
         let name = table.table.clone();
         let mut catalog_entry = CatalogEntry::new(name.clone(), EntryKind::Table(entry));
         catalog_entry.dependencies.clone_from(&self.info.dependencies.set);
+        catalog_entry.temporary = self.info.temporary;
         let created =
             self.catalog
                 .create_entry(transaction, &self.schema, catalog_entry, self.info.on_conflict)?;

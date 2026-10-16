@@ -10,6 +10,8 @@ use crate::{CatalogEntry, CatalogSet, CatalogType, EntryKind, SchemaEntry, Stora
 
 /// The schema new objects go to when none is given.
 pub const DEFAULT_SCHEMA: &str = "main";
+/// The name of a connection's catalog of temporary objects (`TEMP_CATALOG`).
+pub const TEMP_CATALOG: &str = "temp";
 
 /// One attached database's catalog (DuckDB's `DuckCatalog`).
 #[derive(Debug)]
