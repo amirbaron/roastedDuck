@@ -158,6 +158,7 @@ test/fuzzer/pedro/nan_as_seed.test
 test/fuzzer/pedro/natural_join_generated_heap_overflow.test
 test/fuzzer/pedro/natural_join_index_out_of_range.test
 test/fuzzer/pedro/nested_limit_subquery.test
+test/fuzzer/pedro/nested_subquery_table_function.test
 test/fuzzer/pedro/offset_query_allocator_assertion.test
 test/fuzzer/pedro/order_by_all_with_union.test
 test/fuzzer/pedro/overflow_parsing_interval.test
@@ -196,6 +197,7 @@ test/fuzzer/pedro/utf8_invalid_unicode.test
 test/fuzzer/pedro/vacuum_unsupported_type.test
 test/fuzzer/pedro/verify_parallelism_batch_index.test
 test/fuzzer/pedro/view_not_rebound_error.test
+test/fuzzer/pedro/view_not_rebound_error_no_view_dependencies.test
 test/fuzzer/pedro/wal_rename_table.test
 test/fuzzer/pedro/window_function_timeout.test
 test/fuzzer/pedro/window_self_reference.test
@@ -269,6 +271,7 @@ test/issues/general/test_14286.test
 test/issues/general/test_14540.test
 test/issues/general/test_15416.test
 test/issues/general/test_15432.test
+test/issues/general/test_15483.test
 test/issues/general/test_1599.test
 test/issues/general/test_1613.test
 test/issues/general/test_16524.test
@@ -288,6 +291,7 @@ test/issues/general/test_19067.test
 test/issues/general/test_1933.test
 test/issues/general/test_19504.test
 test/issues/general/test_1987.test
+test/issues/general/test_20016.test
 test/issues/general/test_20991.test
 test/issues/general/test_21100.test
 test/issues/general/test_21160.test
@@ -322,6 +326,7 @@ test/issues/general/test_4935.test
 test/issues/general/test_5200.test
 test/issues/general/test_5390.test
 test/issues/general/test_5488.test
+test/issues/general/test_5614.test
 test/issues/general/test_5664.test
 test/issues/general/test_5896.test
 test/issues/general/test_6822.test
@@ -1910,6 +1915,7 @@ test/sql/join/left_outer/left_join_issue_6341.test
 test/sql/join/left_outer/left_join_issue_7905.test
 test/sql/join/left_outer/non_foldable_left_join.test
 test/sql/join/left_outer/test_left_join_filter_pushdown.test
+test/sql/join/left_outer/test_left_join_on_true.test
 test/sql/join/left_outer/test_left_outer.test
 test/sql/join/mark/large_mark_join.test_slow
 test/sql/join/mark/test_mark_join_types.test_slow
@@ -2018,6 +2024,7 @@ test/sql/order/test_order_same_value.test_slow
 test/sql/order/test_order_unnest.test
 test/sql/order/test_order_variable_size_payload.test_slow
 test/sql/order/top_n_limit_zero.test
+test/sql/ordinality/ordinality_inout.test
 test/sql/outofcore/evicted_memory_bytes_updates.test_slow
 test/sql/overflow/bigint_overflow.test
 test/sql/overflow/double_float_overflow.test
@@ -2750,6 +2757,7 @@ test/sql/subquery/exists/test_issue_9308.test
 test/sql/subquery/exists/test_scalar_exists.test
 test/sql/subquery/exists/test_uncorrelated_exists_subquery.test
 test/sql/subquery/lateral/lateral_arrays.test
+test/sql/subquery/lateral/lateral_binding_views.test
 test/sql/subquery/lateral/lateral_fuzzer_1463.test
 test/sql/subquery/lateral/lateral_fuzzer_5984_23.test
 test/sql/subquery/lateral/lateral_grouping_sets.test
@@ -2761,8 +2769,11 @@ test/sql/subquery/lateral/lateral_join_nested.test_slow
 test/sql/subquery/lateral/lateral_large_lists.test
 test/sql/subquery/lateral/lateral_left_join.test
 test/sql/subquery/lateral/lateral_qualify.test
+test/sql/subquery/lateral/lateral_unnest.test_slow
+test/sql/subquery/lateral/lateral_unnest_large.test_slow
 test/sql/subquery/lateral/lateral_values.test
 test/sql/subquery/lateral/pg_lateral.test
+test/sql/subquery/lateral/test_lateral_join.test
 test/sql/subquery/scalar/array_order_subquery.test
 test/sql/subquery/scalar/array_subquery.test
 test/sql/subquery/scalar/coalesce_subquery.test
@@ -2832,10 +2843,12 @@ test/sql/table_function/information_schema_issue12867.test
 test/sql/table_function/information_schema_types.test
 test/sql/table_function/lateral_table_function.test
 test/sql/table_function/range_function_different_iterators.test
+test/sql/table_function/range_timestamp_lateral_empty.test
 test/sql/table_function/sqlite_master.test
 test/sql/table_function/sqlite_master_connections.test
 test/sql/table_function/sqlite_master_quotes.test
 test/sql/table_function/test_information_schema_columns.test
+test/sql/table_function/test_range_function.test
 test/sql/table_function/test_repeat_function.test
 test/sql/table_function/test_table_function.test
 test/sql/topn/concurrent_topn_insert.test_slow
@@ -3064,6 +3077,8 @@ test/sql/types/list/unnest_complex_types.test
 test/sql/types/list/unnest_expand.test
 test/sql/types/list/unnest_having_qualify.test
 test/sql/types/list/unnest_many_empty_lists.test_slow
+test/sql/types/list/unnest_null_empty.test
+test/sql/types/list/unnest_table_function.test
 test/sql/types/list/unnest_types.test
 test/sql/types/map/map_cast.test
 test/sql/types/map/map_const_and_col_combination.test

@@ -24,7 +24,7 @@ pub use scalar::{
     ScalarKernel, Stability,
 };
 pub use table::{
-    TableFunction, TableFunctionBind, TableFunctionBindInput, TableFunctionBindOutput,
+    InOutResult, TableFunction, TableFunctionBind, TableFunctionBindInput, TableFunctionBindOutput,
     TableFunctionBindReplace, TableFunctionReplacement, TableFunctionScan, TableFunctionSet,
-    TableFunctionTypePushdown, TableScanState,
+    TableFunctionTypePushdown, TableInOutFunction, TableScanState,
 };

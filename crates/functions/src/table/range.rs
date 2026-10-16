@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_function::{
-    FunctionData, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet,
-    TableScanState,
+    FunctionData, InOutResult, TableFunction, TableFunctionBindInput, TableFunctionBindOutput,
+    TableFunctionSet, TableScanState,
 };
 use rustdb_types::{DataChunk, Interval, LogicalType, Timestamp, Value, Vector};
 
@@ -139,7 +139,8 @@ fn integer_overload(name: &'static str, arguments: usize, generate_series: bool)
                 bind_data: Some(bind_data),
             })
         })
-        .with_scan(range_scan);
+        .with_scan(range_scan)
+        .with_in_out(range_in_out(generate_series));
     function.in_out = true;
     function
 }
@@ -258,7 +259,8 @@ fn timestamp_overload(name: &'static str, generate_series: bool) -> TableFunctio
                 bind_data: Some(bind_data),
             })
         })
-        .with_scan(timestamp_range_scan);
+        .with_scan(timestamp_range_scan)
+        .with_in_out(timestamp_range_in_out(generate_series));
     function.in_out = true;
     function
 }
@@ -278,6 +280,205 @@ fn timestamp_tz_overload(name: &'static str) -> TableFunction {
         .with_scan(|_, _, _, _| Err(Error::not_implemented("TIMESTAMP WITH TIME ZONE ranges (ICU)")));
     function.in_out = true;
     function
+}
+
+/// The progress of the in-out form of the integer `range` (DuckDB's
+/// `RangeFunctionLocalState`).
+#[derive(Debug, Default)]
+struct RangeInOutState {
+    initialized_row: bool,
+    current_input_row: usize,
+    current_idx: i128,
+    start: i128,
+    end: i128,
+    increment: i128,
+    empty_range: bool,
+}
+
+impl RangeInOutState {
+    /// DuckDB's `GenerateRangeParameters` for input row `row`.
+    fn generate_parameters(&mut self, input: &DataChunk, row: usize, generate_series: bool) -> Result<()> {
+        let values: Vec<Value> = input
+            .columns()
+            .iter()
+            .map(|column| column.get_value(row))
+            .collect();
+        if values.iter().any(Value::is_null) {
+            // Like DuckDB, `empty_range` keeps its value here.
+            self.start = i128::from(generate_series);
+            self.end = 0;
+            self.increment = 1;
+            return Ok(());
+        }
+        let numbers: Vec<i128> = values
+            .iter()
+            .map(|value| {
+                value
+                    .as_i128()
+                    .ok_or_else(|| Error::internal("range argument is not an integer"))
+            })
+            .collect::<Result<_>>()?;
+        (self.start, self.end) = match numbers.as_slice() {
+            [end] => (0, *end),
+            [start, end, ..] => (*start, *end),
+            [] => return Err(Error::internal("Unsupported parameter count for range function")),
+        };
+        self.increment = numbers.get(2).copied().unwrap_or(1);
+        if self.increment == 0 {
+            return Err(Error::binder("interval cannot be 0!"));
+        }
+        self.empty_range =
+            (self.start > self.end && self.increment > 0) || (self.start < self.end && self.increment < 0);
+        if generate_series {
+            self.end = if self.increment < 0 {
+                self.end - 1
+            } else {
+                self.end + 1
+            };
+        }
+        Ok(())
+    }
+}
+
+/// DuckDB's in-out `RangeFunction`: each input row's sequence, in sequence vectors of at
+/// most `STANDARD_VECTOR_SIZE` values.
+fn range_in_out(
+    generate_series: bool,
+) -> impl Fn(Option<&dyn FunctionData>, &mut TableScanState, &DataChunk, &mut DataChunk) -> Result<InOutResult>
++ Send
++ Sync {
+    move |_, scan_state, input, output| {
+        let state = scan_state
+            .local
+            .get_or_insert_with(|| Box::new(RangeInOutState::default()))
+            .downcast_mut::<RangeInOutState>()
+            .ok_or_else(|| Error::internal("range in-out state of another function"))?;
+        loop {
+            if !state.initialized_row {
+                if state.current_input_row >= input.len() {
+                    state.current_input_row = 0;
+                    state.initialized_row = false;
+                    output.set_columns(vec![Vector::flat(LogicalType::BIGINT, 1)], 0);
+                    return Ok(InOutResult::NeedMoreInput);
+                }
+                state.generate_parameters(input, state.current_input_row, generate_series)?;
+                state.initialized_row = true;
+                state.current_idx = 0;
+            }
+            if state.empty_range {
+                output.set_columns(vec![Vector::flat(LogicalType::BIGINT, 1)], 0);
+                state.current_input_row += 1;
+                state.initialized_row = false;
+                return Ok(InOutResult::HaveMoreOutput);
+            }
+            let current = state.start + state.increment * state.current_idx;
+            let Ok(first) = i64::try_from(current) else {
+                state.current_input_row += 1;
+                state.initialized_row = false;
+                continue;
+            };
+            let offset = if state.increment < 0 { 1 } else { -1 };
+            let remaining = ((state.end - current + (state.increment + offset)) / state.increment)
+                .clamp(0, STANDARD_VECTOR_SIZE as i128);
+            if remaining == 0 {
+                state.current_input_row += 1;
+                state.initialized_row = false;
+                continue;
+            }
+            let increment = i64::try_from(state.increment).map_err(|_| Error::internal("range increment"))?;
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "at most STANDARD_VECTOR_SIZE"
+            )]
+            let count = remaining as usize;
+            output.set_columns(
+                vec![Vector::sequence(LogicalType::BIGINT, first, increment)],
+                count,
+            );
+            state.current_idx += remaining;
+            return Ok(InOutResult::HaveMoreOutput);
+        }
+    }
+}
+
+/// The progress of the in-out form of the timestamp `range` (DuckDB's
+/// `RangeDateTimeLocalState`).
+#[derive(Debug, Default)]
+struct TimestampInOutState {
+    initialized_row: bool,
+    current_input_row: usize,
+    current: Timestamp,
+    range: Option<TimestampRange>,
+    empty_range: bool,
+}
+
+/// DuckDB's in-out `RangeDateTimeFunction`.
+fn timestamp_range_in_out(
+    generate_series: bool,
+) -> impl Fn(Option<&dyn FunctionData>, &mut TableScanState, &DataChunk, &mut DataChunk) -> Result<InOutResult>
++ Send
++ Sync {
+    move |_, scan_state, input, output| {
+        let state = scan_state
+            .local
+            .get_or_insert_with(|| Box::new(TimestampInOutState::default()))
+            .downcast_mut::<TimestampInOutState>()
+            .ok_or_else(|| Error::internal("range in-out state of another function"))?;
+        loop {
+            if !state.initialized_row {
+                if state.current_input_row >= input.len() {
+                    state.current_input_row = 0;
+                    state.initialized_row = false;
+                    output.set_columns(vec![Vector::flat(LogicalType::TIMESTAMP, 1)], 0);
+                    return Ok(InOutResult::NeedMoreInput);
+                }
+                let row = state.current_input_row;
+                let values: Vec<Value> = input
+                    .columns()
+                    .iter()
+                    .map(|column| column.get_value(row))
+                    .collect();
+                // `GenerateRangeDateTimeParameters`: a NULL argument gives an empty range.
+                state.empty_range = false;
+                state.range = if values.iter().any(Value::is_null) {
+                    None
+                } else {
+                    let range = timestamp_range(&values, generate_series)?;
+                    state.empty_range = range.is_none();
+                    range
+                };
+                state.initialized_row = true;
+                state.current = state.range.as_ref().map_or(Timestamp(0), |range| range.start);
+            }
+            let Some(range) = state.range.as_ref().filter(|_| !state.empty_range) else {
+                output.set_columns(vec![Vector::flat(LogicalType::TIMESTAMP, 1)], 0);
+                state.current_input_row += 1;
+                state.initialized_row = false;
+                if state.empty_range {
+                    return Ok(InOutResult::HaveMoreOutput);
+                }
+                continue;
+            };
+            let mut column = Vector::flat(LogicalType::TIMESTAMP, STANDARD_VECTOR_SIZE);
+            let mut size = 0;
+            {
+                let values = column.values_mut::<Timestamp>();
+                while size < STANDARD_VECTOR_SIZE && !range.finished(state.current) {
+                    values[size] = state.current;
+                    size += 1;
+                    state.current = timestamp_add_interval(state.current, range.increment)?;
+                }
+            }
+            if size == 0 {
+                state.current_input_row += 1;
+                state.initialized_row = false;
+                continue;
+            }
+            output.set_columns(vec![column], size);
+            return Ok(InOutResult::HaveMoreOutput);
+        }
+    }
 }
 
 /// `range` or `generate_series` with all overloads, in DuckDB's order.

@@ -70,6 +70,26 @@ pub type TableFunctionScan = Arc<
 pub type TableFunctionTypePushdown =
     Arc<dyn Fn(&dyn FunctionData, &[(usize, LogicalType)]) -> Result<Arc<dyn FunctionData>> + Send + Sync>;
 
+/// What a [`TableInOutFunction`] call did with its input (DuckDB's `OperatorResultType`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InOutResult {
+    /// The input chunk is consumed: call again with the next one.
+    NeedMoreInput,
+    /// Call again with the same input for more output.
+    HaveMoreOutput,
+    /// No more output, whatever the input.
+    Finished,
+}
+
+/// A table-in/table-out function (DuckDB's `table_in_out_function_t`): turns the rows of
+/// `input` (one column per argument) into rows of the function's columns, at most
+/// `STANDARD_VECTOR_SIZE` per call, keeping its progress in the state.
+pub type TableInOutFunction = Arc<
+    dyn Fn(Option<&dyn FunctionData>, &mut TableScanState, &DataChunk, &mut DataChunk) -> Result<InOutResult>
+        + Send
+        + Sync,
+>;
+
 /// Per-scan state of a [`TableFunctionScan`] (cursor position and similar).
 #[derive(Debug, Default)]
 pub struct TableScanState {
@@ -99,6 +119,11 @@ pub struct TableFunction {
     pub in_out: bool,
     /// Reads columns directly as the types an INSERT needs (`type_pushdown`).
     pub type_pushdown: Option<TableFunctionTypePushdown>,
+    /// The table-in/table-out form (DuckDB's `in_out_function`): used when the arguments
+    /// are not constants (e.g. LATERAL column references); they are then bound as a
+    /// subquery whose rows are the function's input, and `bind` sees their types in
+    /// `input_table_types` instead of `inputs`.
+    pub in_out_function: Option<TableInOutFunction>,
 }
 
 impl TableFunction {
@@ -115,7 +140,26 @@ impl TableFunction {
             filter_pushdown: false,
             in_out: false,
             type_pushdown: None,
+            in_out_function: None,
         }
+    }
+
+    /// Sets the table-in/table-out callback.
+    #[must_use]
+    pub fn with_in_out(
+        mut self,
+        function: impl Fn(
+            Option<&dyn FunctionData>,
+            &mut TableScanState,
+            &DataChunk,
+            &mut DataChunk,
+        ) -> Result<InOutResult>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        self.in_out_function = Some(Arc::new(function));
+        self
     }
 
     /// Sets the scan callback.

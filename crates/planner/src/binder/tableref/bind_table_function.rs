@@ -71,6 +71,66 @@ fn table_argument_is_scalar(expr: &mut ParsedExpression) -> bool {
     }
 }
 
+/// DuckDB's `ParsedExpression::IsScalar`: no column, positional or DEFAULT references
+/// and no subqueries.
+fn is_scalar_expression(expr: &mut ParsedExpression) -> bool {
+    match &expr.kind {
+        ParsedExpressionKind::ColumnRef(_)
+        | ParsedExpressionKind::Subquery(_)
+        | ParsedExpressionKind::Default
+        | ParsedExpressionKind::PositionalReference(_) => false,
+        ParsedExpressionKind::Parameter(_) => true,
+        _ => {
+            let mut scalar = true;
+            let _ = crate::expression_binder::for_each_child(expr, &mut |child| {
+                scalar &= is_scalar_expression(child);
+                Ok(())
+            });
+            scalar
+        }
+    }
+}
+
+/// `Binder::BindTableInTableOutFunction`: the arguments as the select list of a subquery
+/// without FROM, whose rows feed the function (`UNNEST([1, 2])` reads
+/// `UNNEST((SELECT [1, 2]))`); its correlated columns move to this binder.
+fn bind_in_out_arguments(scope: &mut BindScope<'_>, children: &[ParsedExpression]) -> Result<BoundStatement> {
+    let mut node = rustdb_ast::QueryNode {
+        modifiers: Vec::new(),
+        cte_map: rustdb_ast::CommonTableExpressionMap::default(),
+        kind: rustdb_ast::QueryNodeKind::Select(Box::new(rustdb_ast::SelectNode {
+            select_list: children.to_vec(),
+            from_table: Box::new(rustdb_ast::TableRef {
+                alias: String::new(),
+                sample: None,
+                query_location: None,
+                kind: rustdb_ast::TableRefKind::Empty,
+            }),
+            where_clause: None,
+            group_expressions: Vec::new(),
+            group_sets: Vec::new(),
+            aggregate_handling: rustdb_ast::AggregateHandling::StandardHandling,
+            having: None,
+            sample: None,
+            qualify: None,
+        })),
+    };
+    let mut binder = scope.binder.child()?;
+    binder.can_contain_nulls = true;
+    let bound = {
+        let mut child_scope = BindScope {
+            binder: &mut binder,
+            outer: Some(&mut *scope),
+        };
+        crate::binder::query_node::bind_node(&mut child_scope, &mut node)?
+    };
+    if binder.has_unplanned_dependent_joins {
+        scope.binder.has_unplanned_dependent_joins = true;
+    }
+    scope.binder.move_correlated_expressions(&mut binder);
+    Ok(bound)
+}
+
 /// Binds the arguments: positional argument types and values, and named parameters
 /// (DuckDB's `BindTableFunctionParameters` for standard table functions).
 fn bind_parameters(
@@ -376,6 +436,31 @@ pub fn bind_table_function(
         )));
     };
     let function_name = functions.name.to_string();
+    // `GetTableFunctionBindType`: non-constant arguments of a function with an in-out form
+    // are bound as a subquery feeding it (`TABLE_IN_OUT_FUNCTION`).
+    let has_table_parameter = functions.functions.iter().any(|candidate| {
+        candidate
+            .arguments
+            .iter()
+            .any(|argument| argument.id() == LogicalTypeId::Table)
+    });
+    if !has_table_parameter
+        && scope.binder.macro_binding.is_none()
+        && functions
+            .functions
+            .iter()
+            .any(|candidate| candidate.in_out_function.is_some())
+        && !function.children.iter_mut().all(is_scalar_expression)
+    {
+        return bind_in_out_function(
+            scope,
+            functions,
+            &function.children.clone(),
+            function_ref,
+            alias,
+            location,
+        );
+    }
     // DuckDB's `TableFunctionBindType`: in-out and table-parameter functions take
     // subqueries; other functions bind their arguments as constants.
     let table_parameters = functions.functions.iter().any(|candidate| {
@@ -474,6 +559,94 @@ pub fn bind_table_function(
         input_table,
     )
     .map_err(|error| error.with_position(location))
+}
+
+/// The `TABLE_IN_OUT_FUNCTION` binding of `Binder::Bind(TableFunctionRef &)`: the
+/// arguments' subquery becomes the input of the function's scan.
+fn bind_in_out_function(
+    scope: &mut BindScope<'_>,
+    functions: &rustdb_function::TableFunctionSet,
+    children: &[ParsedExpression],
+    function_ref: &TableFunctionRef,
+    alias: &str,
+    location: Option<u64>,
+) -> Result<BoundStatement> {
+    let mut subquery =
+        bind_in_out_arguments(scope, children).map_err(|error| error.with_position(location))?;
+    let context = std::sync::Arc::clone(&scope.context);
+    let table_function = FunctionBinder::new(&context)
+        .bind_table_function_overload(functions, &subquery.types)?
+        .map_err(|error| error.with_position(location))?;
+    // The input columns take the overload's types (DuckDB casts them in a projection when
+    // planning; here the arguments' projection casts them).
+    let types: Vec<LogicalType> = subquery
+        .types
+        .iter()
+        .enumerate()
+        .map(|(i, ty)| {
+            let target = table_function
+                .arguments
+                .get(i)
+                .or(table_function.varargs.as_ref())
+                .cloned()
+                .unwrap_or(LogicalType::ANY);
+            if matches!(
+                target.id(),
+                LogicalTypeId::Any | LogicalTypeId::Pointer | LogicalTypeId::List
+            ) {
+                ty.clone()
+            } else {
+                target
+            }
+        })
+        .collect();
+    if subquery.plan.operator_type() == crate::LogicalOperatorType::LogicalProjection {
+        for (index, target) in types.iter().enumerate() {
+            if let Some(expression) = subquery.plan.expressions.get_mut(index)
+                && &expression.return_type != target
+            {
+                let original = std::mem::replace(
+                    expression,
+                    crate::expression::Expression::constant(Value::null(LogicalType::SQLNULL)),
+                );
+                *expression = crate::function_binder::add_cast_to_type(&context, original, target, false)?;
+            }
+        }
+        subquery.plan.types.clone_from(&types);
+        subquery.types.clone_from(&types);
+    }
+    let input_table = InputTable {
+        types,
+        names: subquery.names.clone(),
+    };
+    let ParsedExpressionKind::Function(function) = &function_ref.function.kind else {
+        return Err(Error::internal(
+            "table function reference without a function call",
+        ));
+    };
+    let alias = function_alias(alias, function);
+    let mut get = bind_table_function_internal(
+        scope,
+        table_function,
+        &alias,
+        function_ref,
+        Vec::new(),
+        Vec::new(),
+        input_table,
+    )
+    .map_err(|error| error.with_position(location))?;
+    // The subquery is the input of the scan at the bottom of the (linear) plan.
+    let mut node = &mut get.plan;
+    while !node.children.is_empty() {
+        if node.children.len() != 1 {
+            return Err(Error::internal(
+                "Binder::CreatePlan<BoundTableFunction>: linear path expected",
+            ));
+        }
+        node = &mut node.children[0];
+    }
+    node.children.push(subquery.plan);
+    Ok(get)
 }
 
 /// The query of a table macro call with the parameters replaced by the arguments
