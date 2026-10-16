@@ -689,8 +689,15 @@ impl Expression {
     /// Whether the expression can produce different results for the same input
     /// (DuckDB's `IsVolatile`).
     pub fn is_volatile(&self) -> bool {
+        // The body of a lambda function counts too (`BoundFunctionExpression::IsVolatile`).
         self.any(&|expression| match &expression.kind {
-            ExpressionKind::Function(function) => function.function.stability == Stability::Volatile,
+            ExpressionKind::Function(function) => {
+                function.function.stability == Stability::Volatile
+                    || function
+                        .lambda
+                        .as_ref()
+                        .is_some_and(|lambda| lambda.is_volatile())
+            }
             _ => false,
         })
     }
@@ -717,7 +724,15 @@ impl Expression {
             | ExpressionKind::Subquery(_)
             | ExpressionKind::Unnest(_)
             | ExpressionKind::Window(_) => false,
-            ExpressionKind::Function(function) => function.function.stability != Stability::Volatile,
+            // A lambda function with a volatile body cannot be folded
+            // (`BoundFunctionExpression::IsFoldable`).
+            ExpressionKind::Function(function) => {
+                function.function.stability != Stability::Volatile
+                    && !function
+                        .lambda
+                        .as_ref()
+                        .is_some_and(|lambda| lambda.is_volatile())
+            }
             _ => true,
         };
         foldable_node && self.children().into_iter().all(Self::is_foldable)
