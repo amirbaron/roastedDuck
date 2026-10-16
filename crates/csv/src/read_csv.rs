@@ -788,6 +788,7 @@ fn read_csv_function(name: &'static str, argument: LogicalType) -> TableFunction
         .with_scan(read_csv_scan);
     function.named_parameters = read_csv_parameters();
     function.projection_pushdown = true;
+    function.empty_column = true;
     function.type_pushdown = Some(Arc::new(read_csv_type_pushdown));
     function
 }

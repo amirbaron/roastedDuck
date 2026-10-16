@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 
 use rustdb_ast::JoinType;
 use rustdb_common::{Error, Result};
-use rustdb_planner::operator::{COLUMN_IDENTIFIER_ROW_ID, ColumnIndex, LogicalGet};
+use rustdb_planner::operator::{COLUMN_IDENTIFIER_EMPTY, COLUMN_IDENTIFIER_ROW_ID, ColumnIndex, LogicalGet};
 use rustdb_planner::{
     ColumnBinding, DistinctType, Expression, ExpressionKind, LogicalKind, LogicalOperator,
     LogicalOperatorType,
@@ -596,9 +596,12 @@ pub(crate) fn supports_filter_prune(get: &LogicalGet) -> bool {
 }
 
 /// The column to scan when no column is needed (DuckDB's `LogicalGet::GetAnyColumn`):
-/// the row id of a base table, the first column otherwise.
+/// the empty column of a multi-file reader, the row id of a base table, the first
+/// column otherwise.
 pub(crate) fn any_column(get: &LogicalGet) -> u64 {
-    if get.table.is_some() {
+    if get.function.empty_column {
+        COLUMN_IDENTIFIER_EMPTY
+    } else if get.table.is_some() {
         COLUMN_IDENTIFIER_ROW_ID
     } else {
         0

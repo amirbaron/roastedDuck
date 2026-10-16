@@ -83,6 +83,10 @@ pub struct ColumnIndex {
 /// The pseudo column id of `rowid` (DuckDB's `COLUMN_IDENTIFIER_ROW_ID`).
 pub const COLUMN_IDENTIFIER_ROW_ID: u64 = u64::MAX;
 
+/// The pseudo column id of a scan that needs no column (DuckDB's
+/// `COLUMN_IDENTIFIER_EMPTY`).
+pub const COLUMN_IDENTIFIER_EMPTY: u64 = u64::MAX - 1;
+
 impl ColumnIndex {
     pub const fn new(index: u64) -> Self {
         Self {
@@ -215,6 +219,9 @@ impl LogicalGet {
     pub fn column_type(&self, column: &ColumnIndex) -> LogicalType {
         if column.is_row_id_column() {
             return LogicalType::BIGINT;
+        }
+        if column.index == COLUMN_IDENTIFIER_EMPTY {
+            return LogicalType::BOOLEAN;
         }
         self.returned_types
             .get(column.index as usize)

@@ -83,6 +83,7 @@ pub struct TableScanState {
 
 /// One overload of a table function.
 #[derive(Clone)]
+#[allow(clippy::struct_excessive_bools, reason = "DuckDB's TableFunction capability flags")]
 pub struct TableFunction {
     pub name: Arc<str>,
     pub arguments: Vec<LogicalType>,
@@ -105,6 +106,9 @@ pub struct TableFunction {
     pub type_pushdown: Option<TableFunctionTypePushdown>,
     /// The estimated row count of a call (`cardinality`).
     pub cardinality: Option<TableFunctionCardinality>,
+    /// Whether the function has DuckDB's empty virtual column (`COLUMN_IDENTIFIER_EMPTY`,
+    /// which the multi-file readers provide): a scan needing no column reads it.
+    pub empty_column: bool,
 }
 
 impl TableFunction {
@@ -122,6 +126,7 @@ impl TableFunction {
             in_out: false,
             type_pushdown: None,
             cardinality: None,
+            empty_column: false,
         }
     }
 

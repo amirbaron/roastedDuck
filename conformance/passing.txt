@@ -1831,6 +1831,7 @@ test/sql/index/art/scan/test_art_null_bytes.test
 test/sql/index/art/scan/test_art_range_scan.test
 test/sql/index/art/scan/test_art_scan_coverage.test
 test/sql/index/art/scan/test_art_scan_duplicate_filters.test
+test/sql/index/art/scan/test_art_scan_filter_column.test
 test/sql/index/art/scan/test_art_scan_normal_to_nested.test
 test/sql/index/art/scan/test_random_uuid.test
 test/sql/index/art/storage/test_art_checkpoint.test
