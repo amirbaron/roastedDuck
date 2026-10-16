@@ -30,8 +30,11 @@ fn normalize_column_ref_aliases(expression: &mut Expression, get: &LogicalGet) {
         };
         if column.index == COLUMN_IDENTIFIER_ROW_ID {
             "rowid".clone_into(&mut expression.alias);
-        } else if let Some(name) = get.names.get(column.index as usize) {
-            expression.alias.clone_from(name);
+        } else {
+            let name = get.column_name(column);
+            if !name.is_empty() {
+                expression.alias = name;
+            }
         }
         return;
     }

@@ -81,6 +81,12 @@ pub type TableFunctionTypePushdown =
 pub type TableFunctionPushdownFilters =
     Arc<dyn Fn(&dyn FunctionData, &[u64], &dyn std::any::Any) -> Result<Arc<dyn FunctionData>> + Send + Sync>;
 
+/// The virtual columns of a call (DuckDB's `table_function_get_virtual_columns_t`):
+/// `(column id, name, type)` for columns such as `filename` that can be selected by name
+/// without being part of the function's columns.
+pub type TableFunctionVirtualColumns =
+    Arc<dyn Fn(Option<&dyn FunctionData>) -> Vec<(u64, String, LogicalType)> + Send + Sync>;
+
 /// What a [`TableInOutFunction`] call did with its input (DuckDB's `OperatorResultType`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InOutResult {
@@ -150,6 +156,11 @@ pub struct TableFunction {
     /// Hands the filters pushed into the scan to the function (DuckDB's table filters of
     /// a `filter_pushdown` function): returns the bind data that applies them.
     pub pushdown_filters: Option<TableFunctionPushdownFilters>,
+    /// The function's virtual columns (`get_virtual_columns`).
+    pub get_virtual_columns: Option<TableFunctionVirtualColumns>,
+    /// Whether the scan fills one output column per scanned column id, in order
+    /// (DuckDB's scan contract), instead of all of the function's columns.
+    pub projected_output: bool,
 }
 
 impl TableFunction {
@@ -171,6 +182,8 @@ impl TableFunction {
             cardinality: None,
             empty_column: false,
             pushdown_filters: None,
+            get_virtual_columns: None,
+            projected_output: false,
         }
     }
 

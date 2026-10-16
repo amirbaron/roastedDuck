@@ -148,7 +148,7 @@ fn get_expression(op: &LogicalOperator, column_index: u64) -> Result<Expression>
             let name = if column.is_row_id_column() {
                 ROW_ID_NAME.to_owned()
             } else {
-                get.names.get(column.index as usize).cloned().unwrap_or_default()
+                get.column_name(column)
             };
             Ok(Expression::column_ref(
                 name,

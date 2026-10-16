@@ -97,13 +97,16 @@ impl PhysicalOperator for PhysicalTableScan {
         let mut result = RenderParams::new();
         result.insert("Function".to_owned(), self.function.name.to_ascii_uppercase());
         if self.function.projection_pushdown {
+            // Virtual columns are not listed (`column_id >= names.size()`).
+            let name = |index: usize| {
+                (!self.explain.virtual_columns.contains(&index))
+                    .then(|| self.explain.column_names.get(index).map(String::as_str))
+                    .flatten()
+            };
             let names: Vec<&str> = if self.projection.is_empty() {
-                self.explain.column_names.iter().map(String::as_str).collect()
+                (0..self.explain.column_names.len()).filter_map(name).collect()
             } else {
-                self.projection
-                    .iter()
-                    .filter_map(|&index| self.explain.column_names.get(index).map(String::as_str))
-                    .collect()
+                self.projection.iter().filter_map(|&index| name(index)).collect()
             };
             result.insert("Projections".to_owned(), names.join("\n"));
         }
@@ -169,17 +172,23 @@ impl Source for PhysicalTableScan {
         *finished = !more;
         let count = output.len();
         let mut columns = output.into_columns();
-        let mut projected = Vec::with_capacity(self.column_ids.len());
-        for (position, &id) in self.column_ids.iter().enumerate() {
-            // A virtual column (such as `rowid`) of a function without one is NULL
-            // (DuckDB's `PlanGet` projects a constant for it).
-            if let Some(column) = usize::try_from(id).ok().and_then(|index| columns.get_mut(index)) {
-                projected.push(column.clone());
-            } else {
-                let ty = self.types.get(position).cloned().unwrap_or(LogicalType::BIGINT);
-                projected.push(Vector::constant_null(ty));
+        let mut projected = if self.function.projected_output {
+            // One column per scanned column id already.
+            columns
+        } else {
+            let mut projected = Vec::with_capacity(self.column_ids.len());
+            for (position, &id) in self.column_ids.iter().enumerate() {
+                // A virtual column (such as `rowid`) of a function without one is NULL
+                // (DuckDB's `PlanGet` projects a constant for it).
+                if let Some(column) = usize::try_from(id).ok().and_then(|index| columns.get_mut(index)) {
+                    projected.push(column.clone());
+                } else {
+                    let ty = self.types.get(position).cloned().unwrap_or(LogicalType::BIGINT);
+                    projected.push(Vector::constant_null(ty));
+                }
             }
-        }
+            projected
+        };
         if !self.projection.is_empty() {
             let mut all: Vec<Option<Vector>> = projected.into_iter().map(Some).collect();
             projected = self

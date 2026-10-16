@@ -1091,14 +1091,15 @@ impl PlanGenerator {
                     column_names: get
                         .column_ids
                         .iter()
-                        .map(|column| {
-                            usize::try_from(column.index)
-                                .ok()
-                                .and_then(|index| get.names.get(index).cloned())
-                                .unwrap_or_default()
-                        })
+                        .map(|column| get.column_name(column))
                         .collect(),
-                    virtual_columns: Vec::new(),
+                    virtual_columns: get
+                        .column_ids
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, column)| column.index >= get.names.len() as u64)
+                        .map(|(position, _)| position)
+                        .collect(),
                     sample_method: None,
                 };
                 // Filters pushed into the scan are applied by the function itself.

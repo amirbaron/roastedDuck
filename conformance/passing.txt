@@ -307,6 +307,7 @@ test/issues/general/test_18803.test
 test/issues/general/test_1881.test
 test/issues/general/test_1890.test
 test/issues/general/test_19067.test
+test/issues/general/test_19221.test
 test/issues/general/test_1933.test
 test/issues/general/test_19504.test
 test/issues/general/test_19575.test
@@ -600,6 +601,7 @@ test/parquet/parquet_combine.test
 test/parquet/parquet_fuzzer_issues.test
 test/parquet/parquet_long_string_stats.test
 test/parquet/parquet_version.test
+test/parquet/test_18470.test
 test/parquet/test_filename_column.test
 test/parquet/test_internal_5021.test
 test/parquet/test_legacy_empty_pandas_parquet.test
@@ -1482,6 +1484,7 @@ test/sql/copy/parquet/parquet_encryption.test
 test/sql/copy/parquet/parquet_enum_test.test
 test/sql/copy/parquet/parquet_expression_filter.test
 test/sql/copy/parquet/parquet_filename.test
+test/sql/copy/parquet/parquet_filename_filter.test
 test/sql/copy/parquet/parquet_filter_bug1391.test
 test/sql/copy/parquet/parquet_fixed_length_blob_dict.test
 test/sql/copy/parquet/parquet_glob.test_slow
@@ -1505,6 +1508,8 @@ test/sql/copy/parquet/parquet_schema_num_children_fix.test
 test/sql/copy/parquet/parquet_silly.test
 test/sql/copy/parquet/parquet_stats.test
 test/sql/copy/parquet/parquet_union_by_name.test
+test/sql/copy/parquet/parquet_virtual_columns.test
+test/sql/copy/parquet/parquet_virtual_file_row_number.test
 test/sql/copy/parquet/parquet_write_codecs.test
 test/sql/copy/parquet/parquet_write_repeated_lists.test
 test/sql/copy/parquet/parquet_zstd.test

@@ -995,7 +995,9 @@ mod tests {
         assert!(i16::read(&[0x01, 0x00, 0x00], 0).is_err());
         // Like DuckDB, every 8-byte group is read as a big-endian integer.
         assert!((f64::read(&[0, 0, 0, 0, 0, 0, 0x04, 0xd2], 2).unwrap() - 12.34).abs() < 1e-9);
-        assert!((f64::read(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfb, 0x2e], 2).unwrap() + 12.34).abs() < 1e-9);
+        assert!(
+            (f64::read(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfb, 0x2e], 2).unwrap() + 12.34).abs() < 1e-9
+        );
     }
 
     #[test]

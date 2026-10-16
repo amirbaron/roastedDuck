@@ -42,6 +42,40 @@ pub(crate) fn setting_bool(context: &ClientContext, name: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// The virtual `filename` column (`MultiFileReader::COLUMN_IDENTIFIER_FILENAME`).
+pub const COLUMN_IDENTIFIER_FILENAME: u64 = 1 << 63;
+/// The virtual `file_row_number` column (`COLUMN_IDENTIFIER_FILE_ROW_NUMBER`).
+pub const COLUMN_IDENTIFIER_FILE_ROW_NUMBER: u64 = (1 << 63) + 1;
+/// The virtual `file_index` column (`COLUMN_IDENTIFIER_FILE_INDEX`).
+pub const COLUMN_IDENTIFIER_FILE_INDEX: u64 = (1 << 63) + 2;
+
+/// `MultiFileGetVirtualColumns`: `filename` (unless the `filename` option names a real
+/// column), `file_index` and Parquet's `file_row_number`.
+fn read_parquet_virtual_columns(bind_data: Option<&dyn FunctionData>) -> Vec<(u64, String, LogicalType)> {
+    let filename_option = bind_data
+        .and_then(|data| data.as_any().downcast_ref::<ParquetBindData>())
+        .is_some_and(|data| data.reader_bind.filename_idx.is_some());
+    let mut result = Vec::with_capacity(3);
+    if !filename_option {
+        result.push((
+            COLUMN_IDENTIFIER_FILENAME,
+            "filename".to_owned(),
+            LogicalType::VARCHAR,
+        ));
+    }
+    result.push((
+        COLUMN_IDENTIFIER_FILE_INDEX,
+        "file_index".to_owned(),
+        LogicalType::UBIGINT,
+    ));
+    result.push((
+        COLUMN_IDENTIFIER_FILE_ROW_NUMBER,
+        "file_row_number".to_owned(),
+        LogicalType::BIGINT,
+    ));
+    result
+}
+
 /// The bind data of `read_parquet` (`MultiFileBindData` with `ParquetReadBindData`).
 #[derive(Debug)]
 pub struct ParquetBindData {
@@ -88,6 +122,19 @@ impl ParquetBindData {
             casts: Arc::clone(&self.casts),
             filters: Some(Arc::new(filters)),
             initial_file_cardinality: self.initial_file_cardinality,
+        }
+    }
+
+    /// The type of scanned column `id`, virtual columns included.
+    fn column_type(&self, id: u64) -> LogicalType {
+        match id {
+            COLUMN_IDENTIFIER_FILENAME => LogicalType::VARCHAR,
+            COLUMN_IDENTIFIER_FILE_INDEX => LogicalType::UBIGINT,
+            COLUMN_IDENTIFIER_FILE_ROW_NUMBER => LogicalType::BIGINT,
+            _ => usize::try_from(id)
+                .ok()
+                .and_then(|index| self.types.get(index).cloned())
+                .unwrap_or(LogicalType::BOOLEAN),
         }
     }
 
@@ -312,14 +359,40 @@ fn open_file(data: &ParquetBindData, file_index: usize, column_ids: &[u64]) -> R
     let mut sources = Vec::with_capacity(column_ids.len());
     let mut row_number_column = None;
     for &global_id in column_ids {
-        let Ok(global) = usize::try_from(global_id) else {
+        let is_row_number = match global_id {
+            COLUMN_IDENTIFIER_FILENAME => {
+                sources.push(ColumnSource::Constant(Value::varchar(&path)));
+                continue;
+            }
+            COLUMN_IDENTIFIER_FILE_INDEX => {
+                sources.push(ColumnSource::Constant(Value::ubigint(file_index as u64)));
+                continue;
+            }
+            COLUMN_IDENTIFIER_FILE_ROW_NUMBER => true,
+            _ => usize::try_from(global_id).is_ok_and(|global| data.file_row_number_idx == Some(global)),
+        };
+        if is_row_number {
+            let index = if let Some(index) = row_number_column {
+                index
+            } else {
+                scan_columns.push(ScanColumn::file_row_number());
+                row_number_column = Some(scan_columns.len() - 1);
+                scan_columns.len() - 1
+            };
+            sources.push(ColumnSource::Reader {
+                index,
+                cast: None,
+                target: LogicalType::BIGINT,
+            });
+            continue;
+        }
+        let Some(global) = usize::try_from(global_id)
+            .ok()
+            .filter(|&global| global < data.names.len())
+        else {
             sources.push(ColumnSource::Constant(Value::null(LogicalType::BOOLEAN)));
             continue;
         };
-        if global >= data.names.len() {
-            sources.push(ColumnSource::Constant(Value::null(LogicalType::BOOLEAN)));
-            continue;
-        }
         if data.reader_bind.filename_idx == Some(global) {
             sources.push(ColumnSource::Constant(Value::varchar(&path)));
             continue;
@@ -333,21 +406,6 @@ fn open_file(data: &ParquetBindData, file_index: usize, column_ids: &[u64]) -> R
             let value = hive_partitions.get(key).cloned().unwrap_or_default();
             let constant = data.file_options.hive_partition_value(&value, key, &data.casts)?;
             sources.push(ColumnSource::Constant(constant));
-            continue;
-        }
-        if data.file_row_number_idx == Some(global) {
-            let index = if let Some(index) = row_number_column {
-                index
-            } else {
-                scan_columns.push(ScanColumn::file_row_number());
-                row_number_column = Some(scan_columns.len() - 1);
-                scan_columns.len() - 1
-            };
-            sources.push(ColumnSource::Reader {
-                index,
-                cast: None,
-                target: LogicalType::BIGINT,
-            });
             continue;
         }
         let name = &data.names[global];
@@ -446,9 +504,9 @@ fn read_parquet_scan(
         let Some(file) = state.current.as_mut() else {
             if state.file_index >= data.files.files.len() {
                 *chunk = DataChunk::new(
-                    data.types
+                    column_ids
                         .iter()
-                        .map(|ty| Vector::constant_null(ty.clone()))
+                        .map(|&id| Vector::constant_null(data.column_type(id)))
                         .collect(),
                     0,
                 );
@@ -469,15 +527,10 @@ fn read_parquet_scan(
             state.file_index += 1;
             continue;
         }
-        let mut columns: Vec<Option<Vector>> = vec![None; data.types.len()];
-        for (position, &global_id) in column_ids.iter().enumerate() {
-            let Ok(global) = usize::try_from(global_id) else {
-                continue;
-            };
-            if global >= columns.len() || columns[global].is_some() {
-                continue;
-            }
-            columns[global] = Some(match &file.sources[position] {
+        // One output column per scanned column id (`projected_output`).
+        let mut output = Vec::with_capacity(column_ids.len());
+        for source in &file.sources {
+            output.push(match source {
                 ColumnSource::Reader { index, cast, target } => {
                     let vector = state.scan_output[*index].clone();
                     match cast {
@@ -492,14 +545,9 @@ fn read_parquet_scan(
                 ColumnSource::Constant(value) => Vector::constant(value)?,
             });
         }
-        let mut output: Vec<Vector> = columns
-            .into_iter()
-            .zip(&data.types)
-            .map(|(column, ty)| column.unwrap_or_else(|| Vector::constant_null(ty.clone())))
-            .collect();
         let mut count = count;
         if let Some(filters) = &data.filters {
-            match apply_filters(filters, column_ids, &mut output, count)? {
+            match apply_filters(filters, &mut output, count)? {
                 Some(0) => continue,
                 Some(passed) => count = passed,
                 None => {}
@@ -512,19 +560,10 @@ fn read_parquet_scan(
 
 /// Applies the pushed-down filters to a chunk; returns the number of rows left if any
 /// row was removed (the vectors are then sliced to them).
-fn apply_filters(
-    filters: &TableFilterSet,
-    column_ids: &[u64],
-    output: &mut [Vector],
-    count: usize,
-) -> Result<Option<usize>> {
+fn apply_filters(filters: &TableFilterSet, output: &mut [Vector], count: usize) -> Result<Option<usize>> {
     let mut sel: Vec<u32> = (0..count as u32).collect();
     for (&position, filter) in &filters.filters {
-        let Some(vector) = column_ids
-            .get(position)
-            .and_then(|&id| usize::try_from(id).ok())
-            .and_then(|id| output.get(id))
-        else {
+        let Some(vector) = output.get(position) else {
             continue;
         };
         filter.select(vector, count, &mut sel)?;
@@ -602,6 +641,8 @@ fn read_parquet_function(name: &'static str, argument: LogicalType) -> TableFunc
     function.filter_prune = true;
     function.pushdown_filters = Some(Arc::new(read_parquet_pushdown_filters));
     function.empty_column = true;
+    function.get_virtual_columns = Some(Arc::new(read_parquet_virtual_columns));
+    function.projected_output = true;
     function
 }
 

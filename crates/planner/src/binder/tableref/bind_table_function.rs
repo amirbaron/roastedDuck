@@ -394,6 +394,12 @@ fn bind_table_function_internal(
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .extend((0..return_types.len() as u64).map(crate::operator::ColumnIndex::new));
     }
+    // DuckDB's `get_virtual_columns`: `filename` and similar columns of the call.
+    let virtual_columns = function
+        .get_virtual_columns
+        .as_ref()
+        .map(|virtual_columns| virtual_columns(output.bind_data.as_deref()))
+        .unwrap_or_default();
     let get = LogicalGet {
         table_index: bind_index,
         function,
@@ -420,7 +426,7 @@ fn bind_table_function_internal(
         BindingKind::Table {
             bound_column_ids: shared_column_ids,
             entry: None,
-            virtual_columns: Vec::new(),
+            virtual_columns,
         },
         BindingAlias::new(function_name),
         return_types.clone(),

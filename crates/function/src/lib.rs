@@ -30,5 +30,6 @@ pub use scalar::{
 pub use table::{
     InOutResult, TableFunction, TableFunctionBind, TableFunctionBindInput, TableFunctionBindOutput,
     TableFunctionBindReplace, TableFunctionPushdownFilters, TableFunctionReplacement, TableFunctionScan,
-    TableFunctionSet, TableFunctionTypePushdown, TableInOutFunction, TableScanState,
+    TableFunctionSet, TableFunctionTypePushdown, TableFunctionVirtualColumns, TableInOutFunction,
+    TableScanState,
 };
