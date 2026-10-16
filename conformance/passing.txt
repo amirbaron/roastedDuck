@@ -337,6 +337,7 @@ test/issues/general/test_9380.test
 test/issues/general/test_9399.test_slow
 test/issues/general/test_9456.test
 test/issues/general/test_9738.test
+test/issues/general/test_9795.test
 test/issues/internal/test_9415.test
 test/issues/monetdb/analytics10.test
 test/issues/monetdb/analytics11.test

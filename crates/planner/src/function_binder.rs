@@ -659,6 +659,7 @@ impl<'a> FunctionBinder<'a> {
         )?;
         let mut bind_info = None;
         let mut children = children;
+        self.push_aggregate_collations(&mut function, &mut children)?;
         if let Some(bind) = function.bind.clone() {
             let (argument_types, constants) = self.bind_input(&children);
             let aliases: Vec<String> = children.iter().map(|child| child.alias.clone()).collect();
@@ -703,6 +704,83 @@ impl<'a> FunctionBinder<'a> {
                 order_bys,
             })),
         ))
+    }
+
+    /// The collation handling of DuckDB's aggregate binds (`BindMinMax` and
+    /// `ArgMinMaxBase::Bind`): see [`rustdb_function::AggregateCollation`].
+    fn push_aggregate_collations(
+        &self,
+        function: &mut AggregateFunction,
+        children: &mut Vec<Expression>,
+    ) -> Result<()> {
+        use crate::collation_binding::{CollationType, push_collation_with};
+        match function.collation {
+            rustdb_function::AggregateCollation::None => {}
+            rustdb_function::AggregateCollation::Argument(index) => {
+                if let Some(child) = children.get_mut(index)
+                    && child.return_type.physical_type() == rustdb_types::PhysicalType::Varchar
+                {
+                    let ty = child.return_type.clone();
+                    let original =
+                        std::mem::replace(child, Expression::constant(Value::null(LogicalType::SQLNULL)));
+                    *child =
+                        push_collation_with(self.context, original, &ty, CollationType::AllCollations)?.0;
+                }
+            }
+            rustdb_function::AggregateCollation::MinMax => {
+                let Some(first) = children.first() else {
+                    return Ok(());
+                };
+                // Only VARCHAR is collated here (DuckDB's internal #8704).
+                if first.return_type.id() != LogicalTypeId::Varchar
+                    || (collation_of(&first.return_type).is_empty()
+                        && self.context.config.default_collation.is_empty())
+                {
+                    return Ok(());
+                }
+                let ty = first.return_type.clone();
+                let (collated, pushed) =
+                    push_collation_with(self.context, first.clone(), &ty, CollationType::AllCollations)?;
+                if !pushed {
+                    return Ok(());
+                }
+                let name = if &*function.name == "min" {
+                    "arg_min"
+                } else {
+                    "arg_max"
+                };
+                let lookup = self.context.get_entry(
+                    "system",
+                    "main",
+                    rustdb_catalog::CatalogType::AggregateFunction,
+                    name,
+                    true,
+                )?;
+                let Some(rustdb_catalog::EntryKind::AggregateFunction(functions)) =
+                    lookup.as_ref().map(|lookup| &lookup.entry.kind)
+                else {
+                    return Err(Error::not_implemented(format!(
+                        "Failure while binding function \"{}\" using collations - arg_min/arg_max do not exist in \
+                         the catalog - load the core_functions module to fix this issue",
+                        function.name
+                    )));
+                };
+                let types = [ty.clone(), collated.return_type.clone()];
+                let mut replacement = self
+                    .bind_aggregate_overload(functions, &types)?
+                    .map_err(|error| {
+                        Error::binder(format!(
+                            "Fail to find corresponding function for collation min/max: {}",
+                            error.raw_message()
+                        ))
+                    })?;
+                children.push(collated);
+                replacement.arguments[0] = ty.clone();
+                replacement.return_type = ty;
+                *function = replacement;
+            }
+        }
+        Ok(())
     }
 
     /// Resolves an aggregate overload (DuckDB's `BindFunction(AggregateFunctionSet)`).

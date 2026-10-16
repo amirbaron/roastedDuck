@@ -16,7 +16,8 @@ mod scalar;
 mod table;
 
 pub use aggregate::{
-    AggregateFunction, AggregateFunctionSet, AggregateOps, OwnedStates, StatePtr, UnaryAggregate,
+    AggregateCollation, AggregateFunction, AggregateFunctionSet, AggregateOps, OwnedStates, StatePtr,
+    UnaryAggregate,
 };
 pub use client::{FunctionClient, SettingInfo, SettingsSource};
 pub use copy::{CopyFunction, CopyOption, CopyOptionMode};

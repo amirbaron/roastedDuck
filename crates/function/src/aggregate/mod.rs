@@ -297,6 +297,20 @@ pub type AggregateBind = Arc<
     dyn Fn(&mut AggregateFunction, &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>> + Send + Sync,
 >;
 
+/// How the binder applies collations to an aggregate's arguments (the
+/// `ExpressionBinder::PushCollation` calls of DuckDB's aggregate binds).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AggregateCollation {
+    /// Arguments are used as they are.
+    #[default]
+    None,
+    /// A VARCHAR argument at this index is compared collated (`arg_min`/`arg_max`).
+    Argument(usize),
+    /// `BindMinMax`: a collated VARCHAR input turns `min(x)`/`max(x)` into
+    /// `arg_min(x, collated x)`/`arg_max(x, collated x)`.
+    MinMax,
+}
+
 /// One overload of an aggregate function.
 #[derive(Clone)]
 pub struct AggregateFunction {
@@ -310,6 +324,8 @@ pub struct AggregateFunction {
     pub distinct_dependence: DistinctDependence,
     /// Called once per call site after overload resolution.
     pub bind: Option<AggregateBind>,
+    /// How collations of the arguments are applied before `bind`.
+    pub collation: AggregateCollation,
 }
 
 impl AggregateFunction {
@@ -329,6 +345,7 @@ impl AggregateFunction {
             order_dependence: OrderDependence::default(),
             distinct_dependence: DistinctDependence::default(),
             bind: None,
+            collation: AggregateCollation::None,
         }
     }
 

@@ -255,6 +255,16 @@ fn bind_decimal<const MAX: bool>(
 
 /// DuckDB's `AddArgMinMaxFunctions`.
 fn add_arg_min_max<const MAX: bool>(set: &mut AggregateFunctionSet, null_handling: NullHandling) {
+    let first = set.functions.len();
+    add_arg_min_max_overloads::<MAX>(set, null_handling);
+    // `ArgMinMaxBase::Bind` / `VectorArgMinMaxBase::Bind`: a VARCHAR ordering argument is
+    // compared collated.
+    for function in &mut set.functions[first..] {
+        function.collation = rustdb_function::AggregateCollation::Argument(1);
+    }
+}
+
+fn add_arg_min_max_overloads<const MAX: bool>(set: &mut AggregateFunctionSet, null_handling: NullHandling) {
     let arg_types = [
         LogicalType::INTEGER,
         LogicalType::BIGINT,
