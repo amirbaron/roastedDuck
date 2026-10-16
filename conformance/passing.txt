@@ -912,6 +912,7 @@ test/sql/catalog/test_if_not_exists.test
 test/sql/catalog/test_incorrect_table_creation.test
 test/sql/catalog/test_quoted_column_name.test
 test/sql/catalog/test_schema_conflict.test
+test/sql/catalog/test_set_search_path.test
 test/sql/catalog/test_standard_schema.test
 test/sql/catalog/test_unicode_schema.test
 test/sql/catalog/view/recursive_view_with_dependencies.test

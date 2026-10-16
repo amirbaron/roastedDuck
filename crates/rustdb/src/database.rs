@@ -389,6 +389,7 @@ impl Database {
             transactions,
             settings,
             search_path: Vec::new(),
+            search_path_set: Vec::new(),
             transaction_attaches: Vec::new(),
             prepared_statements: CaseInsensitiveMap::default(),
             function_client,
@@ -423,6 +424,9 @@ pub struct Connection {
     /// The `(catalog, schema)` entries set by `USE` / `SET search_path` (DuckDB's
     /// `ClientData::catalog_search_path`).
     search_path: Vec<(String, String)>,
+    /// The entries as `CatalogSearchPath::GetSetPaths` keeps them for display: the
+    /// catalog as given (or taken from the previous default), empty if none.
+    search_path_set: Vec<(String, String)>,
     prepared_statements: CaseInsensitiveMap<Arc<PreparedStatementData>>,
     /// Connection state functions use (DuckDB keeps it in the `ClientContext`).
     function_client: Arc<rustdb_function::FunctionClient>,
@@ -888,7 +892,14 @@ impl Connection {
         } else {
             "SET search_path"
         };
-        let entries = parse_search_path(&value.to_varchar()?)?;
+        let text = value.to_varchar()?;
+        let entries = parse_search_path(&text)?;
+        if set_schema && entries.len() > 1 {
+            // `CatalogSearchEntry::Parse` reads a single entry.
+            return Err(Error::parser(format!(
+                "Failed to convert entry \"{text}\" to CatalogSearchEntry - expected a single entry"
+            )));
+        }
         if set_schema && entries.len() != 1 {
             return Err(Error::catalog(format!(
                 "{set_name} can set only 1 schema. This has {}",
@@ -898,6 +909,13 @@ impl Connection {
         let instance = self.database.instance();
         let transaction = self.transactions.current();
         let mut resolved = Vec::with_capacity(entries.len());
+        let mut set_paths = Vec::with_capacity(entries.len());
+        // `GetDefault().catalog`: the catalog of the first entry set before.
+        let previous_default = self
+            .search_path_set
+            .first()
+            .map(|(catalog, _)| catalog.clone())
+            .unwrap_or_default();
         for (catalog, schema) in entries {
             let display = if catalog.is_empty() {
                 schema.clone()
@@ -917,15 +935,22 @@ impl Connection {
                         .schema(&transaction, rustdb_catalog::DEFAULT_SCHEMA)
                 {
                     resolved.push((database.name.clone(), main.name().to_owned()));
+                    set_paths.push((schema.clone(), main.name().to_owned()));
                     continue;
                 }
                 let default = self.default_catalog();
                 let database = instance.databases.get(&default).ok_or_else(not_found)?;
-                let found = database
-                    .catalog
-                    .schema(&transaction, &schema)
-                    .ok_or_else(not_found)?;
-                resolved.push((database.name.clone(), found.name().to_owned()));
+                if let Some(found) = database.catalog.schema(&transaction, &schema) {
+                    resolved.push((database.name.clone(), found.name().to_owned()));
+                } else {
+                    // `Catalog::GetSchema` without a catalog also finds the system schemas.
+                    let found = instance
+                        .system_catalog
+                        .schema(&transaction, &schema)
+                        .ok_or_else(not_found)?;
+                    resolved.push(("system".to_owned(), found.name().to_owned()));
+                }
+                set_paths.push((previous_default.clone(), schema));
                 continue;
             }
             let database = instance.databases.get(&catalog).ok_or_else(not_found)?;
@@ -934,6 +959,7 @@ impl Connection {
                 .schema(&transaction, &schema)
                 .ok_or_else(not_found)?;
             resolved.push((database.name.clone(), found.name().to_owned()));
+            set_paths.push((catalog, schema));
         }
         if set_schema
             && let Some((catalog, _)) = resolved.first()
@@ -944,21 +970,28 @@ impl Connection {
             )));
         }
         self.search_path = resolved;
+        self.search_path_set = set_paths;
         Ok(())
     }
 
     /// The configuration functions see while the next statement runs.
     fn settings_snapshot(&self) -> crate::settings::SettingsSnapshot {
-        let default_catalog = self.default_catalog();
+        // `CatalogSearchEntry::ListToString` of the set paths.
+        let quoted = |part: &str| {
+            if part.contains(['.', ',', '"']) {
+                format!("\"{}\"", part.replace('"', "\"\""))
+            } else {
+                part.to_owned()
+            }
+        };
         let search_path = self
-            .search_path
+            .search_path_set
             .iter()
             .map(|(catalog, schema)| {
-                let schema = rustdb_types::identifier::sql_identifier(schema);
-                if catalog.eq_ignore_ascii_case(&default_catalog) {
-                    schema.into_owned()
+                if catalog.is_empty() {
+                    quoted(schema)
                 } else {
-                    format!("{}.{schema}", rustdb_types::identifier::sql_identifier(catalog))
+                    format!("{}.{}", quoted(catalog), quoted(schema))
                 }
             })
             .collect::<Vec<_>>()
@@ -1192,6 +1225,7 @@ impl Connection {
             }
             LogicalKind::Reset { name, .. } if is_search_path_setting(name) => {
                 self.search_path.clear();
+                self.search_path_set.clear();
                 return Ok(nothing());
             }
             LogicalKind::Set { name, value, .. } => {
