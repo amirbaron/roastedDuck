@@ -57,6 +57,29 @@ pub struct CopyFromBindInput<'a> {
     pub binder: Option<&'a dyn Any>,
 }
 
+/// What a write is part of (DuckDB's `CopyToType`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CopyToType {
+    CopyToFile,
+    ExportDatabase,
+}
+
+/// What `copy_to_select` receives (DuckDB's `CopyToSelectInput`): the columns of the
+/// query being written.
+#[derive(Debug)]
+pub struct CopyToSelectInput<'a> {
+    pub names: &'a [String],
+    pub types: &'a [LogicalType],
+    pub options: &'a CaseInsensitiveMap<Vec<Value>>,
+    pub copy_to_type: CopyToType,
+    /// The binder's client context (the planner's `ClientContext`).
+    pub binder: Option<&'a dyn Any>,
+}
+
+/// `copy_to_select`: the types the format wants the written columns cast to, or `None`
+/// to write them as they are (the binder adds the casts in a projection).
+pub type CopyToSelect = Arc<dyn Fn(&CopyToSelectInput<'_>) -> Result<Option<Vec<LogicalType>>> + Send + Sync>;
+
 /// The state of one written file (DuckDB's `GlobalFunctionData`); the function keeps
 /// its writer behind interior mutability.
 pub type CopyGlobalState = Box<dyn Any + Send + Sync>;
@@ -90,6 +113,8 @@ pub struct CopyFunction {
     pub extension: String,
     /// The options the format accepts (`copy_options`).
     pub options: Vec<(String, CopyOption)>,
+    /// Casts the written columns to types the format supports (`copy_to_select`).
+    pub copy_to_select: Option<CopyToSelect>,
     pub copy_to_bind: Option<CopyToBind>,
     pub copy_to_initialize_global: Option<CopyToInitializeGlobal>,
     pub copy_to_sink: Option<CopyToSink>,
@@ -106,6 +131,7 @@ impl CopyFunction {
             name: name.into(),
             extension: String::new(),
             options: Vec::new(),
+            copy_to_select: None,
             copy_to_bind: None,
             copy_to_initialize_global: None,
             copy_to_sink: None,

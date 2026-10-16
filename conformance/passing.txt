@@ -1699,7 +1699,13 @@ test/sql/export/export_quoted_enum.test
 test/sql/export/export_quoted_structs.test
 test/sql/export/export_quoted_union.test
 test/sql/export/export_types.test
+test/sql/export/parquet/export_parquet_bit.test
 test/sql/export/parquet/export_parquet_enum.test
+test/sql/export/parquet/export_parquet_hugeint.test
+test/sql/export/parquet/export_parquet_list.test
+test/sql/export/parquet/export_parquet_map.test
+test/sql/export/parquet/export_parquet_struct.test
+test/sql/export/parquet/export_parquet_union.test
 test/sql/export/parquet_export.test
 test/sql/extensions/attach_type_alias_conflict.test
 test/sql/extensions/checked_load.test

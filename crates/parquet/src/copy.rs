@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use rustdb_common::{CaseInsensitiveMap, Error, Result};
 use rustdb_function::copy::{
-    CopyFromBindInput, CopyFunctionBindInput, CopyGlobalState, CopyOption, CopyOptionMode,
+    CopyFromBindInput, CopyFunctionBindInput, CopyGlobalState, CopyOption, CopyOptionMode, CopyToSelectInput,
+    CopyToType,
 };
 use rustdb_function::{CopyFunction, FunctionData};
 use rustdb_planner::ClientContext;
@@ -629,10 +630,99 @@ fn parquet_copy_from_bind(
 }
 
 /// The `parquet` copy function.
+/// `TypeVisitor::Contains`: whether `ty` or a type nested in it satisfies `predicate`.
+fn type_contains(ty: &LogicalType, predicate: &impl Fn(&LogicalType) -> bool) -> bool {
+    if predicate(ty) {
+        return true;
+    }
+    match ty.id() {
+        LogicalTypeId::Struct => ty
+            .struct_children()
+            .is_some_and(|children| children.iter().any(|(_, child)| type_contains(child, predicate))),
+        LogicalTypeId::Union => ty
+            .union_members()
+            .is_some_and(|members| members.iter().any(|(_, member)| type_contains(member, predicate))),
+        LogicalTypeId::List | LogicalTypeId::Array => ty
+            .child_type()
+            .is_some_and(|child| type_contains(child, predicate)),
+        LogicalTypeId::Map => ty
+            .map_key_value()
+            .is_some_and(|(key, value)| type_contains(key, predicate) || type_contains(value, predicate)),
+        _ => false,
+    }
+}
+
+/// `TypeVisitor::VisitReplace`: `ty` with `replace` applied bottom-up to every type in it
+/// (rebuilt nested types lose their alias, like DuckDB's).
+fn type_replace(ty: &LogicalType, replace: &impl Fn(&LogicalType) -> LogicalType) -> LogicalType {
+    let rebuilt = match ty.id() {
+        LogicalTypeId::Struct => ty.struct_children().map(|children| {
+            LogicalType::struct_type(
+                children
+                    .iter()
+                    .map(|(name, child)| (name.clone(), type_replace(child, replace)))
+                    .collect(),
+            )
+        }),
+        LogicalTypeId::Union => ty.union_members().map(|members| {
+            LogicalType::union_type(
+                members
+                    .iter()
+                    .map(|(name, member)| (name.clone(), type_replace(member, replace)))
+                    .collect(),
+            )
+        }),
+        LogicalTypeId::List => ty
+            .child_type()
+            .map(|child| LogicalType::list(type_replace(child, replace))),
+        LogicalTypeId::Array => ty
+            .array_child()
+            .map(|(child, size)| LogicalType::array(type_replace(child, replace), size)),
+        LogicalTypeId::Map => ty
+            .map_key_value()
+            .map(|(key, value)| LogicalType::map(type_replace(key, replace), type_replace(value, replace))),
+        _ => None,
+    };
+    replace(rebuilt.as_ref().unwrap_or(ty))
+}
+
+/// `ParquetWriteSelect`: EXPORT DATABASE writes HUGEINT/UHUGEINT (which Parquet stores as
+/// lossy doubles) as VARCHAR, and types Parquet has no representation for are written
+/// as VARCHAR.
+fn parquet_write_select(input: &CopyToSelectInput<'_>) -> Option<Vec<LogicalType>> {
+    let is_lossy = |ty: &LogicalType| matches!(ty.id(), LogicalTypeId::HugeInt | LogicalTypeId::UHugeInt);
+    let is_not_supported =
+        |ty: &LogicalType| !ty.is_nested() && crate::writer::column::try_parquet_type(ty).is_none();
+    let mut any_change = false;
+    let mut result = Vec::with_capacity(input.types.len());
+    for ty in input.types {
+        let replace_with_varchar = |predicate: &dyn Fn(&LogicalType) -> bool| {
+            type_replace(ty, &|ty: &LogicalType| {
+                if predicate(ty) {
+                    LogicalType::VARCHAR
+                } else {
+                    ty.clone()
+                }
+            })
+        };
+        if input.copy_to_type == CopyToType::ExportDatabase && type_contains(ty, &is_lossy) {
+            result.push(replace_with_varchar(&is_lossy));
+            any_change = true;
+        } else if type_contains(ty, &is_not_supported) {
+            result.push(replace_with_varchar(&is_not_supported));
+            any_change = true;
+        } else {
+            result.push(ty.clone());
+        }
+    }
+    any_change.then_some(result)
+}
+
 pub fn parquet_copy_function() -> CopyFunction {
     let mut function = CopyFunction::new("parquet");
     "parquet".clone_into(&mut function.extension);
     function.options = parquet_copy_options();
+    function.copy_to_select = Some(Arc::new(|input| Ok(parquet_write_select(input))));
     function.copy_to_bind = Some(Arc::new(parquet_write_bind));
     function.copy_to_initialize_global = Some(Arc::new(parquet_write_initialize_global));
     function.copy_to_sink = Some(Arc::new(parquet_write_sink));

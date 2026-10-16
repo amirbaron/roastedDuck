@@ -9,7 +9,7 @@ use rustdb_catalog::{CatalogType, EntryKind};
 use rustdb_common::string_util::candidates_message;
 use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
 use rustdb_function::cast::{ValueCast, implicit_cast_cost};
-use rustdb_function::copy::{CopyFromBindInput, CopyFunctionBindInput};
+use rustdb_function::copy::{CopyFromBindInput, CopyFunctionBindInput, CopyToSelectInput, CopyToType};
 use rustdb_function::{CopyFunction, CopyOption, CopyOptionMode};
 use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
@@ -391,6 +391,15 @@ fn table_select(info: &CopyInfo) -> QueryNode {
 
 /// `Binder::Bind(CopyStatement &)`.
 pub fn bind_copy(scope: &mut BindScope<'_>, info: &mut CopyInfo) -> Result<BoundStatement> {
+    bind_copy_as(scope, info, CopyToType::CopyToFile)
+}
+
+/// `Binder::Bind(CopyStatement &, CopyToType)`: a COPY, or a table of EXPORT DATABASE.
+pub fn bind_copy_as(
+    scope: &mut BindScope<'_>,
+    info: &mut CopyInfo,
+    copy_to_type: CopyToType,
+) -> Result<BoundStatement> {
     bind_copy_options(scope, info)?;
     if !info.is_from && info.select_statement.is_none() {
         info.select_statement = Some(Box::new(table_select(info)));
@@ -409,7 +418,7 @@ pub fn bind_copy(scope: &mut BindScope<'_>, info: &mut CopyInfo) -> Result<Bound
     if info.is_from {
         bind_copy_from(scope, info, &function)
     } else {
-        bind_copy_to(scope, info, &function)
+        bind_copy_to(scope, info, &function, copy_to_type)
     }
 }
 
@@ -419,12 +428,13 @@ fn bind_copy_to(
     scope: &mut BindScope<'_>,
     info: &mut CopyInfo,
     function: &CopyFunction,
+    copy_to_type: CopyToType,
 ) -> Result<BoundStatement> {
     let mut node = info
         .select_statement
         .clone()
         .ok_or_else(|| Error::internal("COPY TO without a query"))?;
-    let select_node = bind_node(scope, &mut node)?;
+    let mut select_node = bind_node(scope, &mut node)?;
     let Some(copy_to_bind) = function.copy_to_bind.clone() else {
         return Err(Error::not_implemented(format!(
             "COPY TO is not supported for FORMAT \"{}\"",
@@ -566,6 +576,41 @@ fn bind_copy_to(
     let is_stdout = info.file_path == "/dev/stdout";
     if !user_set_use_tmp_file {
         use_tmp_file = is_file_and_exists && !per_thread_output && partition_cols.is_empty() && !is_stdout;
+    }
+    // The format may cast columns it cannot write (`copy_to_select`): a projection on
+    // top of the query.
+    if let Some(copy_to_select) = &function.copy_to_select {
+        let input = CopyToSelectInput {
+            names: &select_node.names,
+            types: &select_node.types,
+            options: &info.options,
+            copy_to_type,
+            binder: Some(scope.context.as_ref() as &dyn std::any::Any),
+        };
+        if let Some(new_types) = copy_to_select(&input)? {
+            let bindings = select_node.plan.column_bindings();
+            let mut select_list = Vec::with_capacity(new_types.len());
+            for (((name, source), target), binding) in select_node
+                .names
+                .iter()
+                .zip(&select_node.types)
+                .zip(&new_types)
+                .zip(bindings)
+            {
+                let column =
+                    crate::expression::Expression::column_ref(name.clone(), source.clone(), binding, 0);
+                select_list.push(
+                    crate::function_binder::add_cast_to_type(&scope.context, column, target, false)?
+                        .with_alias(name.clone()),
+                );
+            }
+            let plan = std::mem::replace(
+                &mut select_node.plan,
+                LogicalOperator::new(LogicalKind::DummyScan { table_index: 0 }),
+            );
+            select_node.plan = LogicalOperator::projection(scope.generate_table_index(), select_list, plan);
+            select_node.types = new_types;
+        }
     }
     let mut unique_column_names = select_node.names.clone();
     deduplicate_columns(&mut unique_column_names);
