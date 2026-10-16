@@ -4,6 +4,7 @@ use rustdb_serde::{DeserializeObject, Deserializer, Result, SerializeObject, Ser
 
 /// DuckDB's `interval_t`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Copy, Default)]
+#[repr(C)]
 pub struct Interval {
     /// `months` (property 1).
     pub months: i32,

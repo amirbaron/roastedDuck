@@ -20,6 +20,7 @@ pub mod date;
 mod fmt_float;
 pub mod format;
 mod generated;
+pub mod geometry;
 pub mod identifier;
 pub mod interval;
 pub mod kernels;

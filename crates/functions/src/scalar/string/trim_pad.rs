@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 
 use rustdb_common::{Error, Result};
-use rustdb_function::{ScalarFunction, ScalarFunctionSet};
+use rustdb_function::{CollationHandling, ScalarFunction, ScalarFunctionSet};
 use rustdb_types::LogicalType;
 
 use crate::scalar::executor::{Str, StrOut, binary, ternary, unary};
@@ -237,7 +237,7 @@ pub fn trim_functions() -> Vec<ScalarFunctionSet> {
 /// `instr(haystack, needle)`: the 1-based character position, 0 if absent.
 pub fn instr_functions() -> ScalarFunctionSet {
     let mut set = ScalarFunctionSet::new("instr");
-    set.add(ScalarFunction::new(
+    let mut function = ScalarFunction::new(
         "instr",
         vec![LogicalType::VARCHAR, LogicalType::VARCHAR],
         LogicalType::BIGINT,
@@ -248,7 +248,9 @@ pub fn instr_functions() -> ScalarFunctionSet {
                 Ok(true)
             })
         },
-    ));
+    );
+    function.collation_handling = CollationHandling::PushCombinableCollations;
+    set.add(function);
     set
 }
 

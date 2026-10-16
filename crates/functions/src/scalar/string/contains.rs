@@ -1,7 +1,7 @@
 //! `contains` (DuckDB's `contains.cpp`), `prefix` (`prefix.cpp`), `suffix`/`ends_with`
 //! (`suffix.cpp`) and `starts_with`/`^@` (`starts_with.cpp`).
 
-use rustdb_function::{ScalarFunction, ScalarFunctionSet};
+use rustdb_function::{CollationHandling, ScalarFunction, ScalarFunctionSet};
 use rustdb_types::LogicalType;
 
 use crate::scalar::executor::{Str, binary};
@@ -39,9 +39,9 @@ fn string_predicate(name: &str, op: fn(&[u8], &[u8]) -> bool) -> ScalarFunction 
 /// `nested` (DuckDB's `ContainsFun`).
 pub fn contains_functions(nested: impl IntoIterator<Item = ScalarFunction>) -> ScalarFunctionSet {
     let mut set = ScalarFunctionSet::new("contains");
-    set.add(string_predicate("contains", |haystack, needle| {
-        find(haystack, needle).is_some()
-    }));
+    let mut string = string_predicate("contains", |haystack, needle| find(haystack, needle).is_some());
+    string.collation_handling = CollationHandling::PushCombinableCollations;
+    set.add(string);
     for mut function in nested {
         function.name = set.name.clone();
         set.add(function);
@@ -61,5 +61,9 @@ pub fn suffix_functions() -> ScalarFunctionSet {
 
 /// `^@`/`starts_with` (DuckDB's `StartsWithOperatorFun`).
 pub fn starts_with_functions() -> ScalarFunctionSet {
-    predicate_set("^@", <[u8]>::starts_with)
+    let mut set = predicate_set("^@", <[u8]>::starts_with);
+    for function in &mut set.functions {
+        function.collation_handling = CollationHandling::PushCombinableCollations;
+    }
+    set
 }

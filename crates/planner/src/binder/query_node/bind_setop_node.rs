@@ -350,7 +350,15 @@ pub fn bind_set_operation(scope: &mut BindScope<'_>, node: &mut QueryNode) -> Re
             &mut bound_modifiers,
         )?;
     }
-    bind_modifiers(&mut bound_modifiers, setop_index, &names, &types, &bind_state)?;
+    let context = scope.binder.context.clone();
+    bind_modifiers(
+        &context,
+        &mut bound_modifiers,
+        setop_index,
+        &names,
+        &types,
+        &bind_state,
+    )?;
 
     // Plan: cast every operand to the result types.
     let operator_type = match setop_type {

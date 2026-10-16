@@ -438,6 +438,31 @@ pub fn bind_table_function(
                 })?;
         }
     }
+    if let Some(bind_replace) = table_function.bind_replace.clone() {
+        let replacement = bind_replace(&TableFunctionBindInput {
+            inputs: &parameters,
+            named_parameters: &named.0,
+            input_table_types: &input_table.types,
+            input_table_names: &input_table.names,
+            binder: Some(context.as_ref() as &dyn std::any::Any),
+        })
+        .map_err(|error| error.with_position(location))?;
+        if let Some(replacement) = replacement {
+            // The query replaces the call, keeping the reference's aliases.
+            let mut statements = rustdb_parser::parse(&replacement.query)?;
+            let (Some(statement), true) = (statements.pop(), statements.is_empty()) else {
+                return Err(Error::parser(replacement.error));
+            };
+            let rustdb_ast::SqlStatementKind::Select(select) = statement.kind else {
+                return Err(Error::parser(replacement.error));
+            };
+            let mut subquery = rustdb_ast::SubqueryRef {
+                subquery: Box::new(select),
+                column_name_alias: function_ref.column_name_alias.clone(),
+            };
+            return super::bind_subquery_ref(scope, &mut subquery, alias);
+        }
+    }
     let alias = function_alias(alias, function);
     bind_table_function_internal(
         scope,

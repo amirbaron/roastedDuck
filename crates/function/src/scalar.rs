@@ -18,6 +18,19 @@ pub enum NullHandling {
     Special,
 }
 
+/// What binding does with VARCHAR collations of the arguments (DuckDB's
+/// `FunctionCollationHandling`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CollationHandling {
+    /// Collations are ignored.
+    IgnoreCollations,
+    /// A VARCHAR result carries the collation of the arguments.
+    #[default]
+    PropagateCollations,
+    /// The combinable collations are applied to the arguments (`like`, `contains`, ...).
+    PushCombinableCollations,
+}
+
 /// Whether a function's result may change for the same input (DuckDB's `FunctionStability`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Stability {
@@ -153,6 +166,8 @@ pub struct ScalarFunction {
     /// Set by the bind of a lambda function: the type the lambda body is cast to (DuckDB
     /// wraps the lambda expression in a cast, e.g. to BOOLEAN for `list_filter`).
     pub lambda_cast: Option<LogicalType>,
+    /// How argument collations are handled.
+    pub collation_handling: CollationHandling,
     /// Replaces the bound call by a constant computed from its bind data (DuckDB's
     /// `bind_expression` callback, for functions such as `getvariable` that resolve
     /// completely while binding).
@@ -180,6 +195,7 @@ impl ScalarFunction {
             bind: None,
             bind_lambda: None,
             lambda_cast: None,
+            collation_handling: CollationHandling::PropagateCollations,
             bind_expression: None,
         }
     }

@@ -1,5 +1,6 @@
 //! STRUCT functions (DuckDB's `function/scalar/struct` and `core_functions/scalar/struct`).
 
+pub mod remap_struct;
 pub mod struct_extract;
 
 use std::collections::HashSet;

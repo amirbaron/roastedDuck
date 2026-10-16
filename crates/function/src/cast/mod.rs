@@ -16,6 +16,7 @@ mod compare;
 mod decimal;
 mod enums;
 mod executor;
+mod geometry;
 mod nested;
 pub mod numeric;
 mod parse;
@@ -366,6 +367,7 @@ impl CastFunctionSet {
             L::List | L::Array | L::Map => nested::cast_switch(self, source, target)?,
             L::Struct | L::Union => structs::cast_switch(self, source, target)?,
             L::SqlNull => Some(BoundCastInfo::null_source()),
+            L::Geometry => geometry::cast_switch(source, target)?,
             _ => None,
         })
     }

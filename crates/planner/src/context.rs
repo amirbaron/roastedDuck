@@ -44,6 +44,8 @@ pub struct PlannerConfig {
     /// `scalar_subquery_error_on_multiple_rows`: scalar subqueries returning several rows
     /// raise an error (instead of returning one of them).
     pub scalar_subquery_error_on_multiple_rows: bool,
+    /// `default_collation`: the collation of VARCHAR values without one, lowercase.
+    pub default_collation: String,
     /// `pivot_filter_threshold`: up to this many pivot columns, PIVOT uses filtered
     /// aggregates instead of the LIST-based plan.
     pub pivot_filter_threshold: u64,
@@ -73,6 +75,7 @@ impl Default for PlannerConfig {
             order_by_non_integer_literal: false,
             catalog_error_max_schemas: 100,
             scalar_subquery_error_on_multiple_rows: true,
+            default_collation: String::new(),
             pivot_filter_threshold: 20,
             pivot_limit: 100_000,
             enable_view_dependencies: false,

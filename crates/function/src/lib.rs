@@ -19,11 +19,12 @@ pub use aggregate::{
 pub use client::FunctionClient;
 pub use copy::{CopyFunction, CopyOption, CopyOptionMode};
 pub use scalar::{
-    AggregateResolver, BindInput, BindLambda, BoundAggregateFunction, FunctionData, FunctionState,
-    LambdaExecutor, LambdaInput, NullHandling, ScalarBind, ScalarFunction, ScalarFunctionSet, ScalarKernel,
-    Stability,
+    AggregateResolver, BindInput, BindLambda, BoundAggregateFunction, CollationHandling, FunctionData,
+    FunctionState, LambdaExecutor, LambdaInput, NullHandling, ScalarBind, ScalarFunction, ScalarFunctionSet,
+    ScalarKernel, Stability,
 };
 pub use table::{
-    TableFunction, TableFunctionBind, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionScan,
-    TableFunctionSet, TableFunctionTypePushdown, TableScanState,
+    TableFunction, TableFunctionBind, TableFunctionBindInput, TableFunctionBindOutput,
+    TableFunctionBindReplace, TableFunctionReplacement, TableFunctionScan, TableFunctionSet,
+    TableFunctionTypePushdown, TableScanState,
 };

@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use rustdb_common::{Error, Result};
 use rustdb_function::{FunctionData, TableFunction, TableScanState};
-use rustdb_types::{DataChunk, LogicalType};
+use rustdb_types::{DataChunk, LogicalType, Vector};
 
 use crate::operator::{ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
 use crate::{ExecutionContext, Source, SourceResult};
@@ -100,13 +100,13 @@ impl Source for PhysicalTableScan {
         let mut columns = output.into_columns();
         let mut projected = Vec::with_capacity(self.column_ids.len());
         for (position, &id) in self.column_ids.iter().enumerate() {
-            match usize::try_from(id).ok().and_then(|index| columns.get_mut(index)) {
-                Some(column) => projected.push(column.clone()),
-                // A column the function does not produce (the empty projection of
-                // `count(*)`): constant NULL.
-                None => projected.push(rustdb_types::Vector::constant_null(
-                    self.types.get(position).cloned().unwrap_or(LogicalType::BOOLEAN),
-                )),
+            // A virtual column (such as `rowid`) of a function without one is NULL
+            // (DuckDB's `PlanGet` projects a constant for it).
+            if let Some(column) = usize::try_from(id).ok().and_then(|index| columns.get_mut(index)) {
+                projected.push(column.clone());
+            } else {
+                let ty = self.types.get(position).cloned().unwrap_or(LogicalType::BIGINT);
+                projected.push(Vector::constant_null(ty));
             }
         }
         chunk.set_columns(projected, count);

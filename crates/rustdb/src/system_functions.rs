@@ -750,6 +750,86 @@ pub(crate) fn register_default_views(system: &Catalog) -> Result<()> {
     Ok(())
 }
 
+/// One overload of a default macro (`DefaultFunctionGenerator::CreateInternalMacroInfo`
+/// and its table counterpart): the parameters as column references, the defaults and
+/// the parsed body.
+fn default_macro_function(
+    default: &crate::default_functions::DefaultMacro,
+    table: bool,
+) -> Result<rustdb_ast::MacroFunction> {
+    let kind = if table {
+        let mut statements = rustdb_parser::parse(default.body)?;
+        let Some(rustdb_ast::SqlStatementKind::Select(select)) = statements.pop().map(|s| s.kind) else {
+            return Err(Error::internal("default table macro is not a SELECT"));
+        };
+        rustdb_ast::MacroFunctionKind::Table(rustdb_ast::TableMacroFunction {
+            query_node: select.node,
+        })
+    } else {
+        let mut expressions =
+            rustdb_parser::parse_expression_list(default.body, &rustdb_parser::ParserOptions::default())?;
+        let (Some(expression), true) = (expressions.pop(), expressions.is_empty()) else {
+            return Err(Error::internal("Expected a single expression"));
+        };
+        rustdb_ast::MacroFunctionKind::Scalar(rustdb_ast::ScalarMacroFunction {
+            expression: Box::new(expression),
+        })
+    };
+    let mut parameters: Vec<rustdb_ast::ParsedExpression> = default
+        .parameters
+        .iter()
+        .map(|name| rustdb_ast::ParsedExpression::column_ref([*name]))
+        .collect();
+    let mut default_parameters = CaseInsensitiveMap::default();
+    for (name, value) in default.named_parameters {
+        let mut expressions =
+            rustdb_parser::parse_expression_list(value, &rustdb_parser::ParserOptions::default())?;
+        let (Some(expression), true) = (expressions.pop(), expressions.is_empty()) else {
+            return Err(Error::internal("Expected a single expression"));
+        };
+        parameters.push(rustdb_ast::ParsedExpression::column_ref([*name]));
+        default_parameters.insert(*name, expression);
+    }
+    let types = vec![LogicalType::UNKNOWN; parameters.len()];
+    Ok(rustdb_ast::MacroFunction {
+        parameters,
+        default_parameters,
+        types,
+        kind,
+    })
+}
+
+/// Registers the default scalar and table macros in the system catalog (DuckDB's
+/// `DefaultFunctionGenerator` and `DefaultTableFunctionGenerator`, created eagerly).
+/// Consecutive entries with the same schema and name are the overloads of one macro.
+pub(crate) fn register_default_macros(system: &Catalog) -> Result<()> {
+    use crate::default_functions::{DEFAULT_MACROS, DEFAULT_TABLE_MACROS};
+    for (defaults, table) in [(DEFAULT_MACROS, false), (DEFAULT_TABLE_MACROS, true)] {
+        let mut index = 0;
+        while index < defaults.len() {
+            let first = &defaults[index];
+            let mut macros = Vec::new();
+            while index < defaults.len()
+                && defaults[index].schema == first.schema
+                && defaults[index].name == first.name
+            {
+                macros.push(default_macro_function(&defaults[index], table)?);
+                index += 1;
+            }
+            let entry = rustdb_catalog::MacroEntry { macros };
+            let kind = if table {
+                EntryKind::TableMacro(entry)
+            } else {
+                EntryKind::Macro(entry)
+            };
+            let mut entry = CatalogEntry::new(first.name, kind);
+            entry.internal = true;
+            system.create_entry_committed(first.schema, entry)?;
+        }
+    }
+    Ok(())
+}
+
 /// The catalog table functions.
 pub(crate) fn catalog_table_functions() -> Vec<TableFunctionSet> {
     vec![
@@ -760,6 +840,9 @@ pub(crate) fn catalog_table_functions() -> Vec<TableFunctionSet> {
         rows_function("duckdb_indexes", INDEX_COLUMNS, index_rows),
         rows_function("duckdb_sequences", SEQUENCE_COLUMNS, sequence_rows),
         rows_function("duckdb_columns", COLUMN_COLUMNS, column_rows),
+        rows_function("duckdb_memory", MEMORY_COLUMNS, memory_rows),
+        rows_function("duckdb_constraints", CONSTRAINT_COLUMNS, constraint_rows),
+        rows_function("duckdb_functions", FUNCTION_COLUMNS, function_rows),
     ]
 }
 
@@ -1060,8 +1143,475 @@ fn database_size_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
     Ok(rows)
 }
 
+const MEMORY_COLUMNS: Columns = &[
+    ("tag", varchar),
+    ("memory_usage_bytes", bigint),
+    ("temporary_storage_bytes", bigint),
+];
+
+/// `duckdb_memory()` (`DuckDBMemoryFunction`): memory and spilled bytes per memory tag,
+/// clamped to 0 beyond BIGINT (`ClampReportedMemory`).
+fn memory_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    let Some(io) = context.catalogs.iter().find_map(|catalog| catalog.io().ok()) else {
+        return Ok(Vec::new());
+    };
+    let clamp = |bytes: u64| Value::bigint(i64::try_from(bytes).unwrap_or(0));
+    Ok(io
+        .buffer_manager()
+        .memory_usage_info()
+        .into_iter()
+        .map(|info| vec![text(info.tag.name()), clamp(info.size), clamp(info.evicted_data)])
+        .collect())
+}
+
 fn bigint_list() -> LogicalType {
     LogicalType::list(LogicalType::BIGINT)
+}
+
+fn varchar_list() -> LogicalType {
+    LogicalType::list(LogicalType::VARCHAR)
+}
+
+const FUNCTION_COLUMNS: Columns = &[
+    ("database_name", varchar),
+    ("database_oid", varchar),
+    ("schema_name", varchar),
+    ("function_name", varchar),
+    ("alias_of", varchar),
+    ("function_type", varchar),
+    ("description", varchar),
+    ("comment", varchar),
+    ("tags", string_map),
+    ("return_type", varchar),
+    ("parameters", varchar_list),
+    ("parameter_types", varchar_list),
+    ("varargs", varchar),
+    ("macro_definition", varchar),
+    ("has_side_effects", boolean),
+    ("internal", boolean),
+    ("function_oid", bigint),
+    ("examples", varchar_list),
+    ("stability", varchar),
+    ("categories", varchar_list),
+];
+
+/// One overload as `duckdb_functions()` lists it (the `*Extractor` structs of DuckDB's
+/// `duckdb_functions.cpp`).
+struct FunctionRow {
+    function_type: &'static str,
+    return_type: Value,
+    parameters: Vec<String>,
+    /// `None` for untyped macro parameters (NULL).
+    parameter_types: Vec<Option<String>>,
+    varargs: Value,
+    macro_definition: Value,
+    has_side_effects: Value,
+    stability: Value,
+}
+
+/// `FunctionStabilityToValue`.
+fn stability_value(stability: rustdb_function::Stability) -> Value {
+    text(match stability {
+        rustdb_function::Stability::Volatile => "VOLATILE",
+        rustdb_function::Stability::ConsistentWithinQuery => "CONSISTENT_WITHIN_QUERY",
+        rustdb_function::Stability::Consistent => "CONSISTENT",
+    })
+}
+
+/// `col0, col1, ...`: the parameter names of built-in functions.
+fn positional_names(count: usize) -> Vec<String> {
+    (0..count).map(|index| format!("col{index}")).collect()
+}
+
+/// The rows of a macro's overloads (`MacroExtractor` / `TableMacroExtractor`).
+fn macro_rows(entry: &rustdb_catalog::MacroEntry, table: bool) -> Vec<FunctionRow> {
+    entry
+        .macros
+        .iter()
+        .map(|function| {
+            let parameters: Vec<String> = function
+                .parameters
+                .iter()
+                .map(|parameter| match &parameter.kind {
+                    rustdb_ast::ParsedExpressionKind::ColumnRef(column) => {
+                        column.column_names.last().cloned().unwrap_or_default()
+                    }
+                    _ => parameter.to_string(),
+                })
+                .collect();
+            let parameter_types = (0..parameters.len())
+                .map(|index| match function.types.get(index) {
+                    Some(ty) if ty.id() != LogicalTypeId::Unknown => Some(ty.to_string()),
+                    _ => None,
+                })
+                .collect();
+            let macro_definition = match &function.kind {
+                rustdb_ast::MacroFunctionKind::Scalar(scalar) => text(scalar.expression.to_string()),
+                rustdb_ast::MacroFunctionKind::Table(table) => text(table.query_node.to_string()),
+            };
+            FunctionRow {
+                function_type: if table { "table_macro" } else { "macro" },
+                return_type: null_text(),
+                parameters,
+                parameter_types,
+                varargs: null_text(),
+                macro_definition,
+                has_side_effects: Value::null(LogicalType::BOOLEAN),
+                stability: null_text(),
+            }
+        })
+        .collect()
+}
+
+/// The rows of one catalog entry, one per overload.
+fn entry_function_rows(entry: &CatalogEntry) -> Vec<FunctionRow> {
+    let varargs = |varargs: Option<&LogicalType>| varargs.map_or_else(null_text, |ty| text(ty.to_string()));
+    match &entry.kind {
+        EntryKind::ScalarFunction(set) => set
+            .functions
+            .iter()
+            .map(|function| FunctionRow {
+                function_type: "scalar",
+                return_type: text(function.return_type.to_string()),
+                parameters: positional_names(function.arguments.len()),
+                parameter_types: function.arguments.iter().map(|ty| Some(ty.to_string())).collect(),
+                varargs: varargs(function.varargs.as_ref()),
+                macro_definition: null_text(),
+                has_side_effects: Value::boolean(function.stability == rustdb_function::Stability::Volatile),
+                stability: stability_value(function.stability),
+            })
+            .collect(),
+        EntryKind::AggregateFunction(set) => set
+            .functions
+            .iter()
+            .map(|function| FunctionRow {
+                function_type: "aggregate",
+                return_type: text(function.return_type.to_string()),
+                parameters: positional_names(function.arguments.len()),
+                parameter_types: function.arguments.iter().map(|ty| Some(ty.to_string())).collect(),
+                varargs: varargs(function.varargs.as_ref()),
+                macro_definition: null_text(),
+                has_side_effects: Value::boolean(false),
+                stability: stability_value(rustdb_function::Stability::Consistent),
+            })
+            .collect(),
+        EntryKind::TableFunction(set) => set
+            .functions
+            .iter()
+            .map(|function| {
+                let mut parameters = positional_names(function.arguments.len());
+                let mut parameter_types: Vec<Option<String>> =
+                    function.arguments.iter().map(|ty| Some(ty.to_string())).collect();
+                for (name, ty) in &function.named_parameters {
+                    parameters.push(name.clone());
+                    parameter_types.push(Some(ty.to_string()));
+                }
+                FunctionRow {
+                    function_type: "table",
+                    return_type: null_text(),
+                    parameters,
+                    parameter_types,
+                    varargs: varargs(function.varargs.as_ref()),
+                    macro_definition: null_text(),
+                    has_side_effects: Value::null(LogicalType::BOOLEAN),
+                    stability: null_text(),
+                }
+            })
+            .collect(),
+        EntryKind::Macro(macro_entry) => macro_rows(macro_entry, false),
+        EntryKind::TableMacro(macro_entry) => macro_rows(macro_entry, true),
+        _ => Vec::new(),
+    }
+}
+
+/// The window functions (`WindowExpression::WindowFunctions`) with their signatures
+/// (`ExtractWindowFunctionData`).
+fn window_function_rows() -> Vec<(&'static str, Vec<LogicalType>, LogicalType)> {
+    let template = || {
+        LogicalType::with_info(
+            LogicalTypeId::Template,
+            rustdb_types::TypeInfo::Template(rustdb_types::TemplateTypeInfo { name: "T".to_owned() }),
+        )
+    };
+    vec![
+        ("rank", Vec::new(), LogicalType::BIGINT),
+        ("rank_dense", Vec::new(), LogicalType::BIGINT),
+        ("dense_rank", Vec::new(), LogicalType::BIGINT),
+        ("percent_rank", Vec::new(), LogicalType::DOUBLE),
+        ("row_number", Vec::new(), LogicalType::BIGINT),
+        ("first_value", vec![template()], template()),
+        ("first", vec![template()], template()),
+        ("last_value", vec![template()], template()),
+        ("last", vec![template()], template()),
+        ("nth_value", vec![template(), LogicalType::BIGINT], template()),
+        ("cume_dist", Vec::new(), LogicalType::DOUBLE),
+        (
+            "lead",
+            vec![template(), LogicalType::BIGINT, template()],
+            template(),
+        ),
+        (
+            "lag",
+            vec![template(), LogicalType::BIGINT, template()],
+            template(),
+        ),
+        ("ntile", vec![LogicalType::BIGINT], LogicalType::BIGINT),
+        ("fill", vec![template()], template()),
+    ]
+}
+
+/// `duckdb_functions()` (`DuckDBFunctionsFunction`): every function overload of every
+/// schema, then the window functions. Descriptions, examples and categories are not
+/// recorded by the function sets, so they are empty.
+fn function_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    let list =
+        |values: Vec<String>| Value::list(LogicalType::VARCHAR, values.into_iter().map(text).collect());
+    let mut rows = Vec::new();
+    let mut push = |catalog_name: &str,
+                    catalog_oid: u64,
+                    schema_name: &str,
+                    name: &str,
+                    internal: bool,
+                    function_oid: u64,
+                    row: FunctionRow| {
+        rows.push(vec![
+            text(catalog_name),
+            text(catalog_oid.to_string()),
+            text(schema_name),
+            text(name),
+            null_text(),
+            text(row.function_type),
+            null_text(),
+            null_text(),
+            empty_map(),
+            row.return_type,
+            list(row.parameters),
+            Value::list(
+                LogicalType::VARCHAR,
+                row.parameter_types
+                    .into_iter()
+                    .map(|ty| ty.map_or_else(null_text, text))
+                    .collect(),
+            ),
+            row.varargs,
+            row.macro_definition,
+            row.has_side_effects,
+            Value::boolean(internal),
+            oid(function_oid),
+            list(Vec::new()),
+            row.stability,
+            list(Vec::new()),
+        ]);
+    };
+    for (catalog, schema) in schemas(context) {
+        let Some(contents) = schema_contents(&schema) else {
+            continue;
+        };
+        let mut entries = contents.functions.scan(&context.transaction);
+        entries.extend(contents.table_functions.scan(&context.transaction));
+        // `std::sort` by DuckDB's `CatalogType` value; a stable sort keeps the scan order.
+        entries.sort_by_key(|entry| match entry.catalog_type() {
+            rustdb_catalog::CatalogType::TableFunction => 25,
+            rustdb_catalog::CatalogType::ScalarFunction => 26,
+            rustdb_catalog::CatalogType::AggregateFunction => 27,
+            rustdb_catalog::CatalogType::Macro => 30,
+            rustdb_catalog::CatalogType::TableMacro => 31,
+            _ => 99,
+        });
+        for entry in entries {
+            for row in entry_function_rows(&entry) {
+                push(
+                    catalog.name(),
+                    catalog.oid(),
+                    schema.name(),
+                    entry.name(),
+                    entry.internal,
+                    entry.oid,
+                    row,
+                );
+            }
+        }
+    }
+    for (name, arguments, return_type) in window_function_rows() {
+        push(
+            "system",
+            0,
+            "main",
+            name,
+            true,
+            0,
+            FunctionRow {
+                function_type: "aggregate",
+                return_type: text(return_type.to_string()),
+                parameters: positional_names(arguments.len()),
+                parameter_types: arguments.iter().map(|ty| Some(ty.to_string())).collect(),
+                varargs: null_text(),
+                macro_definition: null_text(),
+                has_side_effects: Value::boolean(false),
+                stability: stability_value(rustdb_function::Stability::Consistent),
+            },
+        );
+    }
+    Ok(rows)
+}
+
+const CONSTRAINT_COLUMNS: Columns = &[
+    ("database_name", varchar),
+    ("database_oid", bigint),
+    ("schema_name", varchar),
+    ("schema_oid", bigint),
+    ("table_name", varchar),
+    ("table_oid", bigint),
+    ("constraint_index", bigint),
+    ("constraint_type", varchar),
+    ("constraint_text", varchar),
+    ("expression", varchar),
+    ("constraint_column_indexes", bigint_list),
+    ("constraint_column_names", varchar_list),
+    ("constraint_name", varchar),
+    ("referenced_table", varchar),
+    ("referenced_column_names", varchar_list),
+];
+
+/// The column names a CHECK expression references (`ExtractReferencedColumns`).
+struct ColumnNames(Vec<String>);
+
+impl rustdb_ast::visit::VisitorMut for ColumnNames {
+    fn visit_expression(&mut self, expression: &mut rustdb_ast::ParsedExpression) {
+        if let rustdb_ast::ParsedExpressionKind::ColumnRef(column) = &expression.kind {
+            self.0.extend(column.column_names.last().cloned());
+        }
+        rustdb_ast::visit::walk_expression(self, expression);
+    }
+}
+
+/// `duckdb_constraints()` (`DuckDBConstraintsFunction`): the constraints of every table,
+/// tables ordered by name within each schema.
+fn constraint_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    use rustdb_ast::Constraint;
+    let mut rows = Vec::new();
+    let mut constraint_index = 0i64;
+    let list = |ty: LogicalType, values: Vec<Value>| Value::list(ty, values);
+    for (catalog, schema) in schemas(context) {
+        let Some(contents) = schema_contents(&schema) else {
+            continue;
+        };
+        let mut tables: Vec<_> = contents
+            .tables
+            .scan(&context.transaction)
+            .into_iter()
+            .filter(|entry| matches!(entry.kind, EntryKind::Table(_)))
+            .collect();
+        tables.sort_by(|left, right| left.name().cmp(right.name()));
+        for entry in tables {
+            let EntryKind::Table(table) = &entry.kind else {
+                continue;
+            };
+            let column_index = |name: &str| {
+                table
+                    .columns
+                    .iter()
+                    .position(|column| column.name.eq_ignore_ascii_case(name))
+                    .ok_or_else(|| Error::internal(format!("Column with name {name} does not exist")))
+            };
+            for constraint in &table.constraints {
+                // `GetExtraConstraintInfo`.
+                let mut indexes: Vec<usize> = Vec::new();
+                let mut names: Vec<String> = Vec::new();
+                let mut referenced_table = String::new();
+                let mut referenced_columns: Vec<String> = Vec::new();
+                let (constraint_type, suffix) = match constraint {
+                    Constraint::Check(check) => {
+                        let mut visitor = ColumnNames(Vec::new());
+                        let mut expression = (*check.expression).clone();
+                        rustdb_ast::visit::VisitorMut::visit_expression(&mut visitor, &mut expression);
+                        names = visitor.0;
+                        ("CHECK", "check")
+                    }
+                    Constraint::NotNull(not_null) => {
+                        indexes.push(usize::try_from(not_null.index.0).unwrap_or(usize::MAX));
+                        ("NOT NULL", "not_null")
+                    }
+                    Constraint::Unique(unique) => {
+                        if unique.index.0 == u64::MAX {
+                            names.clone_from(&unique.columns);
+                        } else {
+                            indexes.push(usize::try_from(unique.index.0).unwrap_or(usize::MAX));
+                        }
+                        if unique.is_primary_key {
+                            ("PRIMARY KEY", "pkey")
+                        } else {
+                            ("UNIQUE", "key")
+                        }
+                    }
+                    Constraint::ForeignKey(fk) => {
+                        if fk.fk_type == rustdb_ast::ForeignKeyType::FkTypePrimaryKeyTable {
+                            // Covered by the PRIMARY KEY and UNIQUE entries.
+                            continue;
+                        }
+                        referenced_columns.clone_from(&fk.pk_columns);
+                        referenced_table.clone_from(&fk.table);
+                        names.clone_from(&fk.fk_columns);
+                        ("FOREIGN KEY", "fkey")
+                    }
+                };
+                if indexes.is_empty() {
+                    indexes = names
+                        .iter()
+                        .map(|name| column_index(name))
+                        .collect::<Result<_>>()?;
+                } else {
+                    names = indexes
+                        .iter()
+                        .map(|&index| {
+                            table
+                                .columns
+                                .get(index)
+                                .map(|column| column.name.clone())
+                                .unwrap_or_default()
+                        })
+                        .collect();
+                }
+                // `GetConstraintName`.
+                let mut constraint_name = format!("{}_", entry.name());
+                for column in names.iter().chain(&referenced_columns) {
+                    constraint_name.push_str(&column.to_lowercase());
+                    constraint_name.push('_');
+                }
+                constraint_name.push_str(suffix);
+                let expression = match constraint {
+                    Constraint::Check(check) => text(check.expression.to_string()),
+                    _ => null_text(),
+                };
+                rows.push(vec![
+                    text(catalog.name()),
+                    oid(catalog.oid()),
+                    text(schema.name()),
+                    oid(schema.oid),
+                    text(entry.name()),
+                    oid(entry.oid),
+                    Value::bigint(constraint_index),
+                    text(constraint_type),
+                    text(constraint.to_sql()),
+                    expression,
+                    list(LogicalType::BIGINT, indexes.into_iter().map(count).collect()),
+                    list(LogicalType::VARCHAR, names.into_iter().map(text).collect()),
+                    text(constraint_name),
+                    if referenced_table.is_empty() {
+                        null_text()
+                    } else {
+                        text(referenced_table)
+                    },
+                    list(
+                        LogicalType::VARCHAR,
+                        referenced_columns.into_iter().map(text).collect(),
+                    ),
+                ]);
+                constraint_index += 1;
+            }
+        }
+    }
+    Ok(rows)
 }
 
 const STORAGE_INFO_COLUMNS: Columns = &[

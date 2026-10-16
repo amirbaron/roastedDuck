@@ -271,6 +271,9 @@ impl Settings {
                     .and_then(|count| usize::try_from(count).ok())
                     .ok_or_else(|| Error::internal("catalog_error_max_schemas is not a UBIGINT"))?;
             }
+            "default_collation" => {
+                self.planner.default_collation = value.to_varchar()?.to_lowercase();
+            }
             "pivot_filter_threshold" | "pivot_limit" => {
                 let count = value.default_cast_as(&LogicalType::UBIGINT)?;
                 let count = count
@@ -321,6 +324,7 @@ impl Settings {
             "order_by_non_integer_literal" => {
                 self.planner.order_by_non_integer_literal = defaults.order_by_non_integer_literal;
             }
+            "default_collation" => self.planner.default_collation = defaults.default_collation,
             "pivot_limit" => self.planner.pivot_limit = defaults.pivot_limit,
             "enable_view_dependencies" => {
                 self.planner.enable_view_dependencies = defaults.enable_view_dependencies;

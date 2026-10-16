@@ -542,6 +542,15 @@ fn test_types(use_large_enum: bool, use_large_bignum: bool) -> Result<Vec<TestTy
     Ok(result)
 }
 
+/// The type id, minimum and maximum of every `test_all_types` column, in column order
+/// (`TestAllTypesFun::GetTestTypes`, used by `test_vector_types`).
+pub(crate) fn test_type_limits() -> Result<Vec<(rustdb_types::LogicalTypeId, Value, Value)>> {
+    Ok(test_types(false, false)?
+        .into_iter()
+        .map(|test| (test.ty.id(), test.min, test.max))
+        .collect())
+}
+
 #[derive(Debug)]
 struct TestAllTypesBindData {
     types: Vec<TestType>,
