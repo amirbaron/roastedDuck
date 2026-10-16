@@ -102,9 +102,13 @@ impl LogicalOperator {
 }
 
 impl super::LogicalGet {
-    /// The row count of a base table scan (DuckDB's `TableScanCardinality`).
+    /// The estimated row count of the scan (DuckDB's `function.cardinality`): the row
+    /// count of a base table (`TableScanCardinality`), or the function's estimate.
     pub fn table_cardinality(&self) -> Option<u64> {
-        let entry = self.table.as_ref()?;
+        let Some(entry) = self.table.as_ref() else {
+            let cardinality = self.function.cardinality.as_ref()?;
+            return cardinality(self.bind_data.as_deref());
+        };
         match &entry.kind {
             rustdb_catalog::EntryKind::Table(table) => {
                 table.storage.as_ref().map(|storage| storage.total_rows())

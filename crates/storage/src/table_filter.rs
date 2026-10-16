@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rustdb_common::{Error, Result};
@@ -60,6 +61,135 @@ impl DynamicFilterData {
     }
 }
 
+/// The selectivity a [`SelectivityOptionalFilter`] measured in one scan (DuckDB's
+/// `SelectivityOptionalFilterState::SelectivityStats`). Each scan has its own: cloning
+/// the filter for a scan starts fresh statistics.
+#[derive(Debug, Default)]
+pub struct SelectivityStats {
+    tuples_accepted: AtomicU64,
+    tuples_processed: AtomicU64,
+    vectors_processed: AtomicU64,
+    paused: AtomicBool,
+}
+
+impl Clone for SelectivityStats {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+/// A filter evaluated on rows only while it removes enough of them (DuckDB's
+/// `SelectivityOptionalFilter`): after `check_n` vectors with a selectivity of at least
+/// `threshold` (the fraction of rows kept), the scan stops evaluating it.
+#[derive(Clone, Debug)]
+pub struct SelectivityOptionalFilter {
+    pub child: TableFilter,
+    pub threshold: f32,
+    pub check_n: u64,
+    stats: SelectivityStats,
+}
+
+impl SelectivityOptionalFilter {
+    /// DuckDB's `MIN_MAX_THRESHOLD` and `MIN_MAX_CHECK_N` for join min/max filters.
+    pub const MIN_MAX_THRESHOLD: f32 = 0.75;
+    pub const MIN_MAX_CHECK_N: u64 = 30;
+    /// DuckDB's `BF_THRESHOLD` and `BF_CHECK_N` for join bloom filters.
+    pub const BF_THRESHOLD: f32 = 0.25;
+    pub const BF_CHECK_N: u64 = 75;
+
+    pub fn new(child: TableFilter, threshold: f32, check_n: u64) -> Self {
+        Self {
+            child,
+            threshold,
+            check_n,
+            stats: SelectivityStats::default(),
+        }
+    }
+
+    /// DuckDB's `SelectivityOptionalFilter::FilterSelection` with `SelectivityStats::Update`.
+    fn select(&self, vector: &Vector, count: usize, sel: &mut Vec<u32>) -> Result<()> {
+        let stats = &self.stats;
+        if stats.paused.load(AtomicOrdering::Relaxed) {
+            return Ok(());
+        }
+        let before = sel.len() as u64;
+        self.child.select(vector, count, sel)?;
+        let vectors = stats.vectors_processed.load(AtomicOrdering::Relaxed);
+        if vectors < self.check_n {
+            let accepted = stats
+                .tuples_accepted
+                .fetch_add(sel.len() as u64, AtomicOrdering::Relaxed)
+                + sel.len() as u64;
+            let processed = stats.tuples_processed.fetch_add(before, AtomicOrdering::Relaxed) + before;
+            stats
+                .vectors_processed
+                .store(vectors + 1, AtomicOrdering::Relaxed);
+            if vectors + 1 == self.check_n {
+                #[allow(clippy::cast_precision_loss, reason = "a selectivity ratio")]
+                let selectivity = if processed == 0 {
+                    1.0
+                } else {
+                    accepted as f64 / processed as f64
+                };
+                if selectivity >= f64::from(self.threshold) {
+                    stats.paused.store(true, AtomicOrdering::Relaxed);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The filters operators set on a scan during execution, by operator (DuckDB's
+/// `DynamicTableFilterSet`); keyed by position in the scanned columns.
+#[derive(Debug, Default)]
+pub struct DynamicTableFilterSet {
+    filters: Mutex<Vec<(usize, TableFilterSet)>>,
+}
+
+impl DynamicTableFilterSet {
+    /// Drops the filters operator `op` set (`ClearFilters`).
+    pub fn clear_filters(&self, op: usize) {
+        self.filters
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|(key, _)| *key != op);
+    }
+
+    /// Adds a filter of operator `op` on scan column `column` (`PushFilter`).
+    pub fn push_filter(&self, op: usize, column: usize, filter: TableFilter) {
+        let mut filters = self.filters.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((_, set)) = filters.iter_mut().find(|(key, _)| *key == op) {
+            set.push_filter(column, filter);
+            return;
+        }
+        let mut set = TableFilterSet::default();
+        set.push_filter(column, filter);
+        filters.push((op, set));
+    }
+
+    /// Whether any operator set a filter (`HasFilters`).
+    pub fn has_filters(&self) -> bool {
+        !self
+            .filters
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_empty()
+    }
+
+    /// `existing` with every operator's filters AND-ed in, or `None` without any filter
+    /// (`GetFinalTableFilters`).
+    pub fn final_table_filters(&self, existing: Option<&TableFilterSet>) -> Option<TableFilterSet> {
+        let mut result = existing.cloned().unwrap_or_default();
+        for (_, set) in self.filters.lock().unwrap_or_else(PoisonError::into_inner).iter() {
+            for (&column, filter) in &set.filters {
+                result.push_filter(column, filter.clone());
+            }
+        }
+        (!result.is_empty()).then_some(result)
+    }
+}
+
 /// A filter on one column of a table scan (DuckDB's `TableFilter` hierarchy).
 #[derive(Clone, Debug)]
 pub enum TableFilter {
@@ -82,6 +212,9 @@ pub enum TableFilter {
     },
     /// Only used to skip row groups and segments; rows are not filtered by it.
     Optional(Option<Box<TableFilter>>),
+    /// An optional filter that also filters rows while it is selective (inside an AND;
+    /// on its own, like any optional filter, it only prunes).
+    SelectivityOptional(Box<SelectivityOptionalFilter>),
     /// `column IN (constants...)`.
     In(Vec<Value>),
     /// A comparison filled in during execution.
@@ -179,6 +312,7 @@ impl TableFilter {
             Self::Optional(child) => child
                 .as_ref()
                 .map_or(NoPruningPossible, |child| child.check_statistics(stats)),
+            Self::SelectivityOptional(filter) => filter.child.check_statistics(stats),
             Self::Dynamic(data) => match data.get() {
                 Some((op, constant)) => Self::ConstantComparison { op, constant }.check_statistics(stats),
                 None => NoPruningPossible,
@@ -189,7 +323,7 @@ impl TableFilter {
 
     /// Whether this filter is only used for pruning (`OPTIONAL_FILTER`).
     pub fn is_optional(&self) -> bool {
-        matches!(self, Self::Optional(_))
+        matches!(self, Self::Optional(_) | Self::SelectivityOptional(_))
     }
 
     /// Keeps the rows of `sel` (positions into the first `count` rows of `vector`) that
@@ -241,6 +375,7 @@ impl TableFilter {
                 child_filter.select(&child, count, sel)
             }
             Self::Optional(_) => Ok(()),
+            Self::SelectivityOptional(filter) => filter.select(vector, count, sel),
             Self::In(values) => {
                 let mut passed = vec![false; count];
                 for value in values {
@@ -297,6 +432,7 @@ impl TableFilter {
             Self::Optional(child) => child.as_ref().map_or_else(String::new, |child| {
                 format!("optional: {}", child.to_sql(column_name))
             }),
+            Self::SelectivityOptional(filter) => format!("optional: {}", filter.child.to_sql(column_name)),
             Self::In(values) => {
                 let list = values
                     .iter()

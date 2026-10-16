@@ -140,9 +140,9 @@ pub struct LogicalGet {
     /// Filters pushed into the scan, keyed by the filtered column's index in
     /// `returned_types` (DuckDB's `LogicalGet::table_filters`).
     pub table_filters: rustdb_storage::TableFilterSet,
-    /// Filters that joins above set at run time, keyed like `table_filters` (DuckDB's
-    /// `LogicalGet::dynamic_filters`); not shown by `EXPLAIN`.
-    pub dynamic_filters: rustdb_storage::TableFilterSet,
+    /// Filters that joins above set at run time, keyed by position in `column_ids`
+    /// (DuckDB's `LogicalGet::dynamic_filters`).
+    pub dynamic_filters: Option<Arc<rustdb_storage::table_filter::DynamicTableFilterSet>>,
 }
 
 /// The output bindings of INSERT/DELETE/UPDATE: the table's columns with `RETURNING`, the
@@ -252,23 +252,28 @@ pub struct LogicalComparisonJoin {
 }
 
 /// The run-time filters of one join condition (DuckDB's `JoinFilterPushdownInfo` for a
-/// condition): `probe >= min(build)` and `probe <= max(build)` on each target scan.
+/// condition): filters on the probe keys derived from the build keys, set on each target
+/// scan.
 #[derive(Clone, Debug)]
 pub struct JoinFilter {
     /// The condition, by position after equalities were moved first.
     pub condition: usize,
     pub targets: Vec<JoinFilterTarget>,
+    /// Whether the build side filters its input, so a bloom filter of its keys is likely
+    /// selective (`build_side_has_filter`).
+    pub build_side_has_filter: bool,
 }
 
-/// One scan column receiving a join filter.
+/// One scan column receiving a join filter (DuckDB's `JoinFilterPushdownFilter` with its
+/// `JoinFilterPushdownColumn` for the condition).
 #[derive(Clone, Debug)]
 pub struct JoinFilterTarget {
-    /// The scanned column's type, which the build key range is cast to.
+    /// The scan's run-time filters.
+    pub dynamic_filters: Arc<rustdb_storage::table_filter::DynamicTableFilterSet>,
+    /// The filtered column, by position in the scan's `column_ids`.
+    pub column_index: usize,
+    /// The scanned column's type, which the build key values are cast to.
     pub storage_type: LogicalType,
-    /// The lower bound (`>= min`).
-    pub min: Arc<rustdb_storage::table_filter::DynamicFilterData>,
-    /// The upper bound (`<= max`).
-    pub max: Arc<rustdb_storage::table_filter::DynamicFilterData>,
 }
 
 impl JoinCondition {

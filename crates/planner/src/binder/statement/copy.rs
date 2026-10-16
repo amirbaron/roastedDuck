@@ -727,7 +727,7 @@ fn bind_copy_from(
         table: None,
         table_schema: None,
         table_filters: rustdb_storage::TableFilterSet::default(),
-        dynamic_filters: rustdb_storage::TableFilterSet::default(),
+        dynamic_filters: None,
     };
     bound
         .plan

@@ -259,7 +259,7 @@ impl PlanGenerator {
                 filters,
                 projection,
             )
-            .with_dynamic_filters(scan_filter_set(get, &get.dynamic_filters)?)
+            .with_dynamic_filters(get.dynamic_filters.clone())
             .with_explain_info(explain),
         ))
     }

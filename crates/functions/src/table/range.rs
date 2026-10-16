@@ -125,6 +125,68 @@ fn range_scan(
     Ok(count == STANDARD_VECTOR_SIZE)
 }
 
+/// The bind data of a range call.
+fn range_bind_data(bind_data: Option<&dyn FunctionData>) -> Option<&RangeBindData> {
+    bind_data.and_then(|data| data.as_any().downcast_ref::<RangeBindData>())
+}
+
+/// DuckDB's `RangeCardinality`: `ceil((end - start) / increment)`, 0 when negative or
+/// an argument is NULL.
+fn range_cardinality(bind_data: Option<&dyn FunctionData>) -> Option<u64> {
+    let bind_data = range_bind_data(bind_data)?;
+    if bind_data.inputs.iter().any(Value::is_null) {
+        return Some(0);
+    }
+    let values: Vec<i128> = bind_data
+        .inputs
+        .iter()
+        .map(Value::as_i128)
+        .collect::<Option<_>>()?;
+    let (start, mut end) = match values.as_slice() {
+        [end] => (0, *end),
+        [start, end, ..] => (*start, *end),
+        [] => return None,
+    };
+    let increment = values.get(2).copied().unwrap_or(1);
+    if increment == 0 {
+        return Some(0);
+    }
+    if bind_data.generate_series {
+        end += 1;
+    }
+    // `Hugeint::Cast<idx_t>` yields 0 for values outside idx_t.
+    let mut cardinality = u64::try_from((end - start) / increment).unwrap_or(0);
+    if (end - start) % increment != 0 {
+        cardinality += 1;
+    }
+    Some(cardinality)
+}
+
+/// DuckDB's `RangeDateTimeCardinality`: the span divided by the step in microseconds
+/// (a month counting 30 days), truncated.
+fn timestamp_range_cardinality(bind_data: Option<&dyn FunctionData>) -> Option<u64> {
+    let bind_data = range_bind_data(bind_data)?;
+    if bind_data.inputs.len() != 3 || bind_data.inputs.iter().any(Value::is_null) {
+        return Some(0);
+    }
+    let (Some(start), Some(end), Some(step)) = (
+        bind_data.inputs[0].as_timestamp(),
+        bind_data.inputs[1].as_timestamp(),
+        bind_data.inputs[2].as_interval(),
+    ) else {
+        return Some(0);
+    };
+    let Some(increment) = step.total_micros().filter(|&micros| micros != 0) else {
+        return Some(0);
+    };
+    let Some(delta) = end.0.checked_sub(start.0) else {
+        return Some(0);
+    };
+    // `idx_t(delta / increment)`: a negative quotient wraps.
+    #[allow(clippy::cast_sign_loss, reason = "DuckDB converts the quotient to idx_t")]
+    Some((delta / increment) as u64)
+}
+
 /// One integer overload of `range` / `generate_series`.
 fn integer_overload(name: &'static str, arguments: usize, generate_series: bool) -> TableFunction {
     let mut function = TableFunction::new(name, vec![LogicalType::BIGINT; arguments])
@@ -139,7 +201,8 @@ fn integer_overload(name: &'static str, arguments: usize, generate_series: bool)
                 bind_data: Some(bind_data),
             })
         })
-        .with_scan(range_scan);
+        .with_scan(range_scan)
+        .with_cardinality(range_cardinality);
     function.in_out = true;
     function
 }
@@ -258,7 +321,8 @@ fn timestamp_overload(name: &'static str, generate_series: bool) -> TableFunctio
                 bind_data: Some(bind_data),
             })
         })
-        .with_scan(timestamp_range_scan);
+        .with_scan(timestamp_range_scan)
+        .with_cardinality(timestamp_range_cardinality);
     function.in_out = true;
     function
 }

@@ -513,7 +513,16 @@ impl Connection {
             transaction,
             casts: Arc::clone(&instance.casts),
             evaluator: Arc::new(ScalarEvaluator),
-            config: self.settings.planner.clone(),
+            config: {
+                let optimizer = self.settings.optimizer_config();
+                rustdb_planner::PlannerConfig {
+                    flip_right_joins: optimizer.enabled
+                        && !optimizer
+                            .disabled
+                            .contains(&rustdb_optimizer::OptimizerType::BuildSideProbeSide),
+                    ..self.settings.planner.clone()
+                }
+            },
             prepared_statements: self.prepared_statements.clone(),
             function_client: Arc::clone(&self.function_client),
             user_variables: self.user_variables.clone(),

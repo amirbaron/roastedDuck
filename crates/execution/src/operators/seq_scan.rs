@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rustdb_common::{Result, STANDARD_VECTOR_SIZE};
+use rustdb_storage::table_filter::DynamicTableFilterSet;
 use rustdb_storage::{
     DataTable, ParallelTableScanState, StorageIndex, TableFilterSet, TableScanState, Transaction,
 };
@@ -30,9 +31,9 @@ pub struct PhysicalSeqScan {
     transaction: Arc<Transaction>,
     column_ids: Vec<StorageIndex>,
     filters: Option<TableFilterSet>,
-    /// `filters` with the run-time filters joins set (DuckDB's `dynamic_filters`), which
-    /// the scan applies.
-    scan_filters: Option<TableFilterSet>,
+    /// The filters operators set while the query runs (DuckDB's `dynamic_filters`),
+    /// applied with `filters` by scans starting after they were set.
+    dynamic_filters: Option<Arc<DynamicTableFilterSet>>,
     /// Positions (into `column_ids`) of the output columns; empty = all, in order
     /// (DuckDB's `projection_ids`).
     projection: Vec<usize>,
@@ -59,6 +60,7 @@ impl ScanExplainInfo {
         &self,
         projection: &[usize],
         filters: Option<&TableFilterSet>,
+        dynamic_filters: Option<&TableFilterSet>,
         estimated_cardinality: u64,
     ) -> RenderParams {
         let mut result = RenderParams::new();
@@ -75,13 +77,20 @@ impl ScanExplainInfo {
                 .collect()
         };
         result.insert("Projections".to_owned(), projected.join("\n"));
-        if let Some(filters) = filters {
-            let filters: Vec<String> = filters
+        // DuckDB's `GetFilterInfo`.
+        let filter_info = |filters: &TableFilterSet| {
+            filters
                 .filters
                 .iter()
                 .filter_map(|(&column, filter)| self.column_names.get(column).map(|name| filter.to_sql(name)))
-                .collect();
-            result.insert("Filters".to_owned(), filters.join("\n"));
+                .collect::<Vec<String>>()
+                .join("\n")
+        };
+        if let Some(filters) = filters {
+            result.insert("Filters".to_owned(), filter_info(filters));
+        }
+        if let Some(dynamic_filters) = dynamic_filters {
+            result.insert("Dynamic Filters".to_owned(), filter_info(dynamic_filters));
         }
         set_estimated_cardinality(&mut result, estimated_cardinality);
         result
@@ -109,7 +118,7 @@ impl PhysicalSeqScan {
             table,
             transaction,
             column_ids,
-            scan_filters: filters.clone(),
+            dynamic_filters: None,
             filters,
             projection,
             index_scan: Some((DEFAULT_INDEX_SCAN_MAX_COUNT, DEFAULT_INDEX_SCAN_PERCENTAGE)),
@@ -117,18 +126,21 @@ impl PhysicalSeqScan {
         }
     }
 
-    /// Adds the run-time filters joins above set (DuckDB's `dynamic_filters`), keyed by
-    /// position in the scanned columns.
+    /// Sets the run-time filters operators above set (DuckDB's `dynamic_filters`), keyed
+    /// by position in the scanned columns.
     #[must_use]
-    pub fn with_dynamic_filters(mut self, dynamic: Option<TableFilterSet>) -> Self {
-        if let Some(dynamic) = dynamic {
-            let mut merged = self.filters.clone().unwrap_or_default();
-            for (column, filter) in dynamic.filters {
-                merged.push_filter(column, filter);
-            }
-            self.scan_filters = Some(merged);
-        }
+    pub fn with_dynamic_filters(mut self, dynamic: Option<Arc<DynamicTableFilterSet>>) -> Self {
+        self.dynamic_filters = dynamic;
         self
+    }
+
+    /// The filters a scan starting now applies: `filters` with the run-time filters set
+    /// so far (`TableScanGlobalSourceState`'s `GetFinalTableFilters`).
+    fn scan_filters(&self) -> Option<TableFilterSet> {
+        match &self.dynamic_filters {
+            Some(dynamic) if dynamic.has_filters() => dynamic.final_table_filters(self.filters.as_ref()),
+            _ => self.filters.clone(),
+        }
     }
 
     /// Sets what `EXPLAIN` shows about the scan.
@@ -146,9 +158,10 @@ impl PhysicalSeqScan {
         self
     }
 
-    /// The row ids an index scan yields, if one applies (`TableScanInitGlobal`).
-    fn index_scan_row_ids(&self) -> Result<Option<Vec<i64>>> {
-        let (Some((max_count, percentage)), Some(filters)) = (self.index_scan, &self.filters) else {
+    /// The row ids an index scan applying `filters` yields, if one applies
+    /// (`TableScanInitGlobal`).
+    fn index_scan_row_ids(&self, filters: Option<&TableFilterSet>) -> Result<Option<Vec<i64>>> {
+        let (Some((max_count, percentage)), Some(filters)) = (self.index_scan, filters) else {
             return Ok(None);
         };
         if filters.filters.len() != 1 || !self.table.has_indexes() {
@@ -197,8 +210,17 @@ impl PhysicalOperator for PhysicalSeqScan {
         "TABLE_SCAN".to_owned()
     }
     fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
-        self.explain
-            .params(&self.projection, self.filters.as_ref(), estimated_cardinality)
+        let dynamic = self
+            .dynamic_filters
+            .as_ref()
+            .filter(|dynamic| dynamic.has_filters())
+            .and_then(|dynamic| dynamic.final_table_filters(None));
+        self.explain.params(
+            &self.projection,
+            self.filters.as_ref(),
+            dynamic.as_ref(),
+            estimated_cardinality,
+        )
     }
 }
 
@@ -209,6 +231,8 @@ pub struct SeqScanGlobal {
     parallel: ParallelTableScanState,
     index_rows: Option<Vec<i64>>,
     next_index_row: AtomicUsize,
+    /// The filters the scan applies, with the run-time filters set when it started.
+    filters: Option<TableFilterSet>,
 }
 
 /// A thread's scan: its storage scan state and, with a projection, the scanned chunk.
@@ -224,24 +248,27 @@ impl Source for PhysicalSeqScan {
     type Local = SeqScanLocal;
 
     fn global_source_state(&self, _: &ExecutionContext, _: Option<&SinkState>) -> Result<Self::Global> {
-        if let Some(row_ids) = self.index_scan_row_ids()? {
+        let filters = self.scan_filters();
+        if let Some(row_ids) = self.index_scan_row_ids(filters.as_ref())? {
             // Fetch the indexed rows, then scan only the transaction-local rows.
             return Ok(SeqScanGlobal {
                 parallel: self.table.initialize_local_parallel_scan(&self.transaction),
                 index_rows: Some(row_ids),
                 next_index_row: AtomicUsize::new(0),
+                filters,
             });
         }
         Ok(SeqScanGlobal {
             parallel: self.table.initialize_parallel_scan(&self.transaction),
             index_rows: None,
             next_index_row: AtomicUsize::new(0),
+            filters,
         })
     }
 
-    fn local_source_state(&self, _: &ExecutionContext, _: &Self::Global) -> Result<Self::Local> {
+    fn local_source_state(&self, _: &ExecutionContext, global: &Self::Global) -> Result<Self::Local> {
         let mut state = TableScanState::default();
-        state.initialize(self.column_ids.clone(), self.scan_filters.as_ref());
+        state.initialize(self.column_ids.clone(), global.filters.as_ref());
         Ok(SeqScanLocal {
             state,
             has_morsel: false,

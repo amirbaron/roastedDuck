@@ -385,6 +385,10 @@ impl Settings {
             prefer_range_joins: boolean("prefer_range_joins", defaults.prefer_range_joins),
             scalar_subquery_error_on_multiple_rows: self.planner.scalar_subquery_error_on_multiple_rows,
             asof_loop_join_threshold: unsigned("asof_loop_join_threshold", defaults.asof_loop_join_threshold),
+            dynamic_or_filter_threshold: unsigned(
+                "dynamic_or_filter_threshold",
+                defaults.dynamic_or_filter_threshold,
+            ),
         }
     }
 

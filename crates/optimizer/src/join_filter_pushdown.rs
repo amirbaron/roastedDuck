@@ -10,8 +10,7 @@ use std::sync::Arc;
 
 use rustdb_ast::{ExpressionType, JoinType};
 use rustdb_planner::operator::{JoinFilter, JoinFilterTarget};
-use rustdb_storage::TableFilter;
-use rustdb_storage::table_filter::DynamicFilterData;
+use rustdb_storage::table_filter::DynamicTableFilterSet;
 
 use crate::filter_pushdown::supports_filter_pushdown;
 
@@ -273,10 +272,14 @@ const fn join_type_allows_filters(join_type: JoinType) -> bool {
     )
 }
 
-/// A filter used to skip row groups and segments only (DuckDB pushes join filters as
-/// `SelectivityOptionalFilter`s, which stop filtering rows when they are not selective).
-fn optional(filter: TableFilter) -> TableFilter {
-    TableFilter::Optional(Some(Box::new(filter)))
+/// Whether `op` drops rows of its input somewhere: a filter, a Top-N, or a scan with
+/// table filters (DuckDB's `IsFiltering`).
+fn is_filtering(op: &LogicalOperator) -> bool {
+    match &op.kind {
+        LogicalKind::Get(get) => !get.table_filters.is_empty(),
+        LogicalKind::Filter { .. } | LogicalKind::TopN { .. } => true,
+        _ => op.children.iter().any(is_filtering),
+    }
 }
 
 /// DuckDB's `GenerateJoinFilters`.
@@ -337,11 +340,17 @@ fn generate_join_filters(op: &mut LogicalOperator) {
     if targets.is_empty() {
         return;
     }
+    let build_side = match op.children.get(1) {
+        Some(build) if build.operator_type() == LogicalOperatorType::LogicalDelimGet => op.children.first(),
+        build => build,
+    };
+    let build_side_has_filter = build_side.is_some_and(is_filtering);
     let mut join_filters: Vec<JoinFilter> = conditions
         .iter()
         .map(|&(condition, _)| JoinFilter {
             condition,
             targets: Vec::new(),
+            build_side_has_filter,
         })
         .collect();
     for target in targets {
@@ -349,36 +358,19 @@ fn generate_join_filters(op: &mut LogicalOperator) {
         else {
             continue;
         };
+        // The scan's run-time filter set, shared by every join filtering it.
+        let dynamic_filters = Arc::clone(
+            get.dynamic_filters
+                .get_or_insert_with(|| Arc::new(DynamicTableFilterSet::default())),
+        );
         for (filter_index, column) in target.columns.iter().enumerate() {
             let Some(storage_type) = column.storage_type.clone() else {
                 continue;
             };
-            let Some(column_id) = get.column_ids.get(column.binding.column_index as usize) else {
-                continue;
-            };
-            let key = usize::try_from(column_id.index).unwrap_or(usize::MAX);
-            let min = Arc::new(DynamicFilterData::default());
-            let max = Arc::new(DynamicFilterData::default());
-            let comparison = conditions[filter_index].1;
-            // `probe > build` needs only the lower bound, `probe < build` only the upper.
-            if !matches!(
-                comparison,
-                ExpressionType::CompareLessthan | ExpressionType::CompareLessthanorequalto
-            ) {
-                get.dynamic_filters
-                    .push_filter(key, optional(TableFilter::Dynamic(Arc::clone(&min))));
-            }
-            if !matches!(
-                comparison,
-                ExpressionType::CompareGreaterthan | ExpressionType::CompareGreaterthanorequalto
-            ) {
-                get.dynamic_filters
-                    .push_filter(key, optional(TableFilter::Dynamic(Arc::clone(&max))));
-            }
             join_filters[filter_index].targets.push(JoinFilterTarget {
+                dynamic_filters: Arc::clone(&dynamic_filters),
+                column_index: column.binding.column_index as usize,
                 storage_type,
-                min,
-                max,
             });
         }
     }

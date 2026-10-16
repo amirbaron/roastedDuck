@@ -55,6 +55,10 @@ pub struct TableFunctionReplacement {
 pub type TableFunctionBindReplace =
     Arc<dyn Fn(&TableFunctionBindInput<'_>) -> Result<Option<TableFunctionReplacement>> + Send + Sync>;
 
+/// The estimated row count of a call from its bind data (DuckDB's
+/// `table_function_cardinality_t`, whose estimate and maximum are the same here).
+pub type TableFunctionCardinality = Arc<dyn Fn(Option<&dyn FunctionData>) -> Option<u64> + Send + Sync>;
+
 /// Produces the function's rows: called repeatedly with the bind data and the projected
 /// column ids, it fills the chunk (all of the function's columns, at most
 /// `STANDARD_VECTOR_SIZE` rows) and returns whether more rows may follow (a
@@ -99,6 +103,8 @@ pub struct TableFunction {
     pub in_out: bool,
     /// Reads columns directly as the types an INSERT needs (`type_pushdown`).
     pub type_pushdown: Option<TableFunctionTypePushdown>,
+    /// The estimated row count of a call (`cardinality`).
+    pub cardinality: Option<TableFunctionCardinality>,
 }
 
 impl TableFunction {
@@ -115,7 +121,18 @@ impl TableFunction {
             filter_pushdown: false,
             in_out: false,
             type_pushdown: None,
+            cardinality: None,
         }
+    }
+
+    /// Sets the cardinality callback.
+    #[must_use]
+    pub fn with_cardinality(
+        mut self,
+        cardinality: impl Fn(Option<&dyn FunctionData>) -> Option<u64> + Send + Sync + 'static,
+    ) -> Self {
+        self.cardinality = Some(Arc::new(cardinality));
+        self
     }
 
     /// Sets the scan callback.

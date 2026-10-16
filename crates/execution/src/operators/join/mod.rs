@@ -3,6 +3,7 @@
 
 mod asof_join;
 mod blockwise_nl_join;
+mod bloom_filter;
 mod hash_join;
 mod iejoin;
 mod join_filter;
@@ -15,6 +16,7 @@ mod range_join;
 
 pub use asof_join::{AsOfGlobalSinkState, AsOfLocalSinkState, AsOfSourceState, PhysicalAsOfJoin};
 pub use blockwise_nl_join::{BlockwiseNLJoinGlobalState, BlockwiseNLJoinState, PhysicalBlockwiseNLJoin};
+pub use bloom_filter::{BloomFilter, BloomTableFilter};
 pub use hash_join::{HashJoinGlobalSinkState, HashJoinLocalSinkState, HashJoinProbeState, PhysicalHashJoin};
 pub use iejoin::{IEJoinGlobalState, IEJoinLocalState, IEJoinSourceState, PhysicalIEJoin};
 pub use nested_loop_join::{

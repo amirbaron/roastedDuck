@@ -32,6 +32,9 @@ pub struct JoinPlanSettings {
     pub scalar_subquery_error_on_multiple_rows: bool,
     /// `asof_loop_join_threshold`: ASOF joins with fewer left rows use a nested loop join.
     pub asof_loop_join_threshold: u64,
+    /// `dynamic_or_filter_threshold`: up to this many build rows, a hash join also
+    /// filters its probe scans on the IN list of its keys.
+    pub dynamic_or_filter_threshold: u64,
 }
 
 impl Default for JoinPlanSettings {
@@ -42,6 +45,7 @@ impl Default for JoinPlanSettings {
             prefer_range_joins: false,
             scalar_subquery_error_on_multiple_rows: true,
             asof_loop_join_threshold: 64,
+            dynamic_or_filter_threshold: 50,
         }
     }
 }
@@ -170,7 +174,11 @@ pub(crate) fn create_comparison_join(
                 left,
                 right,
             )?
-            .with_join_filters(join.join_filters),
+            .with_join_filters(
+                join.join_filters,
+                settings.dynamic_or_filter_threshold,
+                cardinalities.0,
+            ),
         ));
     }
     if !join.left_projection_map.is_empty() || !join.right_projection_map.is_empty() {
