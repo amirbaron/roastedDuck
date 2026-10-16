@@ -1,10 +1,16 @@
 //! Join operators (DuckDB's `execution/operator/join`) and the helpers they share
 //! (`PhysicalJoin`, `PhysicalComparisonJoin`, `OuterJoinMarker`).
 
+mod blockwise_nl_join;
 mod hash_join;
+mod nested_loop_join;
 mod outer_join_marker;
 
+pub use blockwise_nl_join::{BlockwiseNLJoinGlobalState, BlockwiseNLJoinState, PhysicalBlockwiseNLJoin};
 pub use hash_join::{HashJoinGlobalSinkState, HashJoinLocalSinkState, HashJoinProbeState, PhysicalHashJoin};
+pub use nested_loop_join::{
+    NestedLoopJoinGlobalState, NestedLoopJoinProbeState, PhysicalNestedLoopJoin, RightOuterScanState,
+};
 pub use outer_join_marker::OuterJoinMarker;
 
 use rustdb_ast::{ExpressionType, JoinType};

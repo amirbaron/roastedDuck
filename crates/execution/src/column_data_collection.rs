@@ -39,11 +39,6 @@ impl ColumnDataCollection {
         })
     }
 
-    /// The column types.
-    pub fn types(&self) -> &[LogicalType] {
-        &self.types
-    }
-
     /// A state for appending chunks.
     pub fn initialize_append(&mut self) -> AppendState {
         self.rows.initialize_append(PinProperties::UnpinAfterDone)
@@ -84,11 +79,6 @@ impl ColumnDataCollection {
         Ok(())
     }
 
-    /// Moves all rows of `other` behind the rows of this collection.
-    pub fn combine(&mut self, other: ColumnDataCollection) -> Result<()> {
-        self.rows.combine(other.rows)
-    }
-
     /// Number of rows.
     pub fn count(&self) -> usize {
         self.rows.count()
@@ -119,9 +109,4 @@ impl ColumnDataCollection {
         Ok(())
     }
 
-    /// Reads every column of chunk `index` into `result`.
-    pub fn fetch_all(&self, index: usize, result: &mut DataChunk) -> Result<()> {
-        let columns: Vec<usize> = (0..self.types.len()).collect();
-        self.fetch_chunk(index, &columns, result)
-    }
 }

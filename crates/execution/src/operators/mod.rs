@@ -20,7 +20,6 @@ pub mod join;
 mod limit;
 mod merge_into;
 mod modify;
-mod nested_loop_join;
 mod order;
 mod pivot;
 mod projection;
@@ -54,15 +53,12 @@ pub use expression_scan::{ExpressionScanState, PhysicalExpressionScan};
 pub use filter::{FilterState, PhysicalFilter};
 pub use hash_aggregate::{HashAggregateGlobal, HashAggregateLocal, PhysicalHashAggregate};
 pub use insert::{InsertGlobal, InsertTarget, PhysicalInsert, TableCreator};
-pub use join::PhysicalHashJoin;
+pub use join::{PhysicalBlockwiseNLJoin, PhysicalHashJoin, PhysicalNestedLoopJoin};
 pub use limit::{
     LimitBounds, LimitPercentGlobal, LimitPercentSource, PhysicalLimitPercent, PhysicalStreamingLimit,
 };
 pub use merge_into::{MergeGlobal, MergeIntoOperator, PhysicalMergeInto};
 pub use modify::{ModifyResult, SharedAppend};
-pub use nested_loop_join::{
-    NestedLoopJoinGlobal, NestedLoopJoinProbe, NestedLoopJoinSinkLocal, PhysicalNestedLoopJoin,
-};
 pub use order::{OrderGlobalState, OrderLocalState, OrderSourceState, PhysicalOrder};
 pub use pivot::PhysicalPivot;
 pub use projection::PhysicalProjection;

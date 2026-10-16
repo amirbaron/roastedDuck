@@ -12,7 +12,7 @@ use rustdb_types::LogicalType;
 
 use super::{PlanGenerator, table_storage};
 use crate::operator::PhysicalRef;
-use crate::operators::{PhysicalCrossProduct, PhysicalHashJoin, PhysicalNestedLoopJoin};
+use crate::operators::{PhysicalBlockwiseNLJoin, PhysicalCrossProduct, PhysicalHashJoin, PhysicalNestedLoopJoin};
 
 /// The settings that steer join planning.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -178,12 +178,32 @@ pub(crate) fn create_comparison_join(
     {
         can_iejoin = false;
     }
-    let _ = (can_iejoin, can_merge, rewrite_join_condition as fn(&mut Expression, u64));
-    Ok(Arc::new(PhysicalNestedLoopJoin::new(
+    // TODO(range joins): IEJoin and piecewise merge join.
+    let _ = (can_iejoin, can_merge);
+    if PhysicalNestedLoopJoin::is_supported(&join.conditions, join.join_type) {
+        return Ok(Arc::new(PhysicalNestedLoopJoin::new(
+            types,
+            join.join_type,
+            join.conditions,
+            join.predicate,
+            left,
+            right,
+        )));
+    }
+    let offset = left.types().len() as u64;
+    let mut conditions = join.conditions;
+    for condition in &mut conditions {
+        rewrite_join_condition(&mut condition.right, offset);
+    }
+    let condition = conditions
+        .into_iter()
+        .map(JoinCondition::into_expression)
+        .reduce(|left, right| Expression::conjunction(ExpressionType::ConjunctionAnd, vec![left, right]))
+        .ok_or_else(|| Error::internal("blockwise join without conditions"))?;
+    Ok(Arc::new(PhysicalBlockwiseNLJoin::new(
         types,
         join.join_type,
-        join.conditions,
-        join.predicate,
+        condition,
         left,
         right,
     )?))
