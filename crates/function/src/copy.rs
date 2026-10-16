@@ -114,6 +114,13 @@ pub type CopyToGetWrittenStatistics =
     Arc<dyn Fn(&dyn FunctionData, &CopyGlobalState) -> Result<CopyFunctionFileStatistics> + Send + Sync>;
 /// The bytes written to a file so far (for `FILE_SIZE_BYTES` rotation).
 pub type CopyToFileSize = Arc<dyn Fn(&CopyGlobalState) -> u64 + Send + Sync>;
+/// `rotate_files`: whether a write with this bind data and `FILE_SIZE_BYTES` limit is
+/// split into several files.
+pub type CopyRotateFiles = Arc<dyn Fn(&dyn FunctionData, Option<u64>) -> bool + Send + Sync>;
+/// `rotate_next_file`: whether the current file is complete and the next chunk goes to
+/// a new one.
+pub type CopyRotateNextFile =
+    Arc<dyn Fn(&CopyGlobalState, &dyn FunctionData, Option<u64>) -> bool + Send + Sync>;
 /// `copy_from_bind`: the bind data of the reader for the target columns.
 pub type CopyFromBind = Arc<
     dyn Fn(&CopyFromBindInput<'_>, &[String], &[LogicalType]) -> Result<Arc<dyn FunctionData>> + Send + Sync,
@@ -137,6 +144,11 @@ pub struct CopyFunction {
     pub copy_to_get_written_statistics: Option<CopyToGetWrittenStatistics>,
     /// Whether the format can split its output by size (`rotate_files`), and the size.
     pub copy_to_file_size: Option<CopyToFileSize>,
+    /// Splits writes into several files (`rotate_files`); without it, writes rotate on
+    /// `FILE_SIZE_BYTES` alone.
+    pub rotate_files: Option<CopyRotateFiles>,
+    /// When to start the next file (`rotate_next_file`).
+    pub rotate_next_file: Option<CopyRotateNextFile>,
     pub copy_from_bind: Option<CopyFromBind>,
     pub copy_from_function: Option<TableFunction>,
 }
@@ -154,6 +166,8 @@ impl CopyFunction {
             copy_to_finalize: None,
             copy_to_get_written_statistics: None,
             copy_to_file_size: None,
+            rotate_files: None,
+            rotate_next_file: None,
             copy_from_bind: None,
             copy_from_function: None,
         }

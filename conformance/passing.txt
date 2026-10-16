@@ -1596,6 +1596,8 @@ test/sql/copy/partitioned/skip_partition_column_writes.test
 test/sql/copy/return_files.test
 test/sql/copy/return_stats.test
 test/sql/copy/return_stats_truncate.test
+test/sql/copy/row_groups_per_file.test
+test/sql/copy/row_groups_per_file_large.test_slow
 test/sql/copy/tmp_file.test
 test/sql/copy_database/copy_database_different_types.test
 test/sql/copy_database/copy_database_errors.test

@@ -616,10 +616,18 @@ impl Sink for PhysicalCopyToFile {
             return Ok(SinkResult::NeedMoreInput);
         }
         if options.per_thread_output || options.rotate {
-            let rotate_now = match (&inner.global_state, &self.function.copy_to_file_size) {
-                (Some(file), Some(file_size)) if options.rotate => options
-                    .file_size_bytes
-                    .is_some_and(|limit| file_size(&file.state) > limit),
+            let rotate_now = match &inner.global_state {
+                Some(file) if options.rotate => {
+                    match (&self.function.rotate_next_file, &self.function.copy_to_file_size) {
+                        (Some(rotate_next_file), _) => {
+                            rotate_next_file(&file.state, self.bind_data.as_ref(), options.file_size_bytes)
+                        }
+                        (None, Some(file_size)) => options
+                            .file_size_bytes
+                            .is_some_and(|limit| file_size(&file.state) > limit),
+                        (None, None) => false,
+                    }
+                }
                 _ => false,
             };
             if rotate_now && let Some(file) = inner.global_state.take() {

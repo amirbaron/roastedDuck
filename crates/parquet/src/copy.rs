@@ -570,6 +570,36 @@ fn parquet_write_file_size(state: &CopyGlobalState) -> u64 {
     })
 }
 
+/// `ParquetWriteRotateFiles`.
+fn parquet_write_rotate_files(bind_data: &dyn FunctionData, file_size_bytes: Option<u64>) -> bool {
+    file_size_bytes.is_some()
+        || bind_data
+            .as_any()
+            .downcast_ref::<ParquetWriteBindData>()
+            .is_some_and(|data| data.options.row_groups_per_file.is_some())
+}
+
+/// `ParquetWriteRotateNextFile`.
+fn parquet_write_rotate_next_file(
+    state: &CopyGlobalState,
+    bind_data: &dyn FunctionData,
+    file_size_bytes: Option<u64>,
+) -> bool {
+    let Ok(global) = global_state(state) else {
+        return false;
+    };
+    let inner = global.inner.lock().unwrap_or_else(PoisonError::into_inner);
+    let writer = &inner.0;
+    if file_size_bytes.is_some_and(|limit| writer.file_size() > limit) {
+        return true;
+    }
+    bind_data
+        .as_any()
+        .downcast_ref::<ParquetWriteBindData>()
+        .and_then(|data| data.options.row_groups_per_file)
+        .is_some_and(|limit| writer.row_group_count() as u64 >= limit)
+}
+
 /// `MultiFileBindCopy` for Parquet.
 fn parquet_copy_from_bind(
     input: &CopyFromBindInput<'_>,
@@ -745,6 +775,8 @@ pub fn parquet_copy_function() -> CopyFunction {
     function.copy_to_finalize = Some(Arc::new(parquet_write_finalize));
     function.copy_to_get_written_statistics = Some(Arc::new(parquet_write_get_written_statistics));
     function.copy_to_file_size = Some(Arc::new(parquet_write_file_size));
+    function.rotate_files = Some(Arc::new(parquet_write_rotate_files));
+    function.rotate_next_file = Some(Arc::new(parquet_write_rotate_next_file));
     function.copy_from_bind = Some(Arc::new(parquet_copy_from_bind));
     function.copy_from_function = crate::scan::read_parquet_functions()
         .into_iter()

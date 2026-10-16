@@ -627,7 +627,10 @@ fn bind_copy_to(
     };
     let bind_data = copy_to_bind(&mut bind_input, &names_to_write, &types_to_write)?;
     let file_extension = bind_input.file_extension;
-    let rotate = file_size_bytes.is_some() && function.copy_to_file_size.is_some();
+    let rotate = match &function.rotate_files {
+        Some(rotate_files) => rotate_files(bind_data.as_ref(), file_size_bytes),
+        None => file_size_bytes.is_some() && function.copy_to_file_size.is_some(),
+    };
     if rotate {
         if user_set_use_tmp_file {
             return Err(Error::not_implemented(
