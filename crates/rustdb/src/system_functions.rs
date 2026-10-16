@@ -1760,6 +1760,36 @@ struct FunctionRow {
     macro_definition: Value,
     has_side_effects: Value,
     stability: Value,
+    /// The matching `FunctionDescription` (description, examples, categories).
+    description: Option<rustdb_function::function_descriptions::FunctionDescription>,
+}
+
+/// `GetFunctionDescriptionIndex` and `GetParameterNames`: the description of a built-in
+/// overload with `arguments`, and its parameter names (`col<i>` beyond the described ones).
+fn describe_overload(
+    info: Option<&rustdb_function::function_descriptions::FunctionInfo>,
+    arguments: &[LogicalType],
+) -> (
+    Vec<String>,
+    Option<rustdb_function::function_descriptions::FunctionDescription>,
+) {
+    let description = info.and_then(|info| {
+        rustdb_function::function_descriptions::description_index(&info.descriptions, arguments)
+            .map(|index| info.descriptions[index].clone())
+    });
+    let parameters = match &description {
+        Some(description) if !description.parameter_names.is_empty() => (0..arguments.len())
+            .map(|index| {
+                description
+                    .parameter_names
+                    .get(index)
+                    .cloned()
+                    .unwrap_or_else(|| format!("col{index}"))
+            })
+            .collect(),
+        _ => positional_names(arguments.len()),
+    };
+    (parameters, description)
 }
 
 /// `FunctionStabilityToValue`.
@@ -1811,41 +1841,55 @@ fn macro_rows(entry: &rustdb_catalog::MacroEntry, table: bool) -> Vec<FunctionRo
                 macro_definition,
                 has_side_effects: Value::null(LogicalType::BOOLEAN),
                 stability: null_text(),
+                description: None,
             }
         })
         .collect()
 }
 
-/// The rows of one catalog entry, one per overload.
-fn entry_function_rows(entry: &CatalogEntry) -> Vec<FunctionRow> {
+/// The rows of one catalog entry, one per overload; `info` describes a built-in function.
+fn entry_function_rows(
+    entry: &CatalogEntry,
+    info: Option<&rustdb_function::function_descriptions::FunctionInfo>,
+) -> Vec<FunctionRow> {
     let varargs = |varargs: Option<&LogicalType>| varargs.map_or_else(null_text, |ty| text(ty.to_string()));
     match &entry.kind {
         EntryKind::ScalarFunction(set) => set
             .functions
             .iter()
-            .map(|function| FunctionRow {
-                function_type: "scalar",
-                return_type: text(function.return_type.to_string()),
-                parameters: positional_names(function.arguments.len()),
-                parameter_types: function.arguments.iter().map(|ty| Some(ty.to_string())).collect(),
-                varargs: varargs(function.varargs.as_ref()),
-                macro_definition: null_text(),
-                has_side_effects: Value::boolean(function.stability == rustdb_function::Stability::Volatile),
-                stability: stability_value(function.stability),
+            .map(|function| {
+                let (parameters, description) = describe_overload(info, &function.arguments);
+                FunctionRow {
+                    function_type: "scalar",
+                    return_type: text(function.return_type.to_string()),
+                    parameters,
+                    parameter_types: function.arguments.iter().map(|ty| Some(ty.to_string())).collect(),
+                    varargs: varargs(function.varargs.as_ref()),
+                    macro_definition: null_text(),
+                    has_side_effects: Value::boolean(
+                        function.stability == rustdb_function::Stability::Volatile,
+                    ),
+                    stability: stability_value(function.stability),
+                    description,
+                }
             })
             .collect(),
         EntryKind::AggregateFunction(set) => set
             .functions
             .iter()
-            .map(|function| FunctionRow {
-                function_type: "aggregate",
-                return_type: text(function.return_type.to_string()),
-                parameters: positional_names(function.arguments.len()),
-                parameter_types: function.arguments.iter().map(|ty| Some(ty.to_string())).collect(),
-                varargs: varargs(function.varargs.as_ref()),
-                macro_definition: null_text(),
-                has_side_effects: Value::boolean(false),
-                stability: stability_value(rustdb_function::Stability::Consistent),
+            .map(|function| {
+                let (parameters, description) = describe_overload(info, &function.arguments);
+                FunctionRow {
+                    function_type: "aggregate",
+                    return_type: text(function.return_type.to_string()),
+                    parameters,
+                    parameter_types: function.arguments.iter().map(|ty| Some(ty.to_string())).collect(),
+                    varargs: varargs(function.varargs.as_ref()),
+                    macro_definition: null_text(),
+                    has_side_effects: Value::boolean(false),
+                    stability: stability_value(rustdb_function::Stability::Consistent),
+                    description,
+                }
             })
             .collect(),
         EntryKind::TableFunction(set) => set
@@ -1868,6 +1912,7 @@ fn entry_function_rows(entry: &CatalogEntry) -> Vec<FunctionRow> {
                     macro_definition: null_text(),
                     has_side_effects: Value::null(LogicalType::BOOLEAN),
                     stability: null_text(),
+                    description: None,
                 }
             })
             .collect(),
@@ -1924,18 +1969,26 @@ fn function_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                     catalog_oid: u64,
                     schema_name: &str,
                     name: &str,
+                    alias_of: Option<&str>,
                     internal: bool,
                     function_oid: u64,
                     comment: &Value,
                     row: FunctionRow| {
+        let description = row.description.unwrap_or_default();
         rows.push(vec![
             text(catalog_name),
             text(catalog_oid.to_string()),
             text(schema_name),
             text(name),
-            null_text(),
+            alias_of
+                .filter(|alias_of| *alias_of != name)
+                .map_or_else(null_text, text),
             text(row.function_type),
-            null_text(),
+            if description.description.is_empty() {
+                null_text()
+            } else {
+                text(description.description)
+            },
             comment_text(comment),
             empty_map(),
             row.return_type,
@@ -1952,9 +2005,9 @@ fn function_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
             row.has_side_effects,
             Value::boolean(internal),
             oid(function_oid),
-            list(Vec::new()),
+            list(description.examples),
             row.stability,
-            list(Vec::new()),
+            list(description.categories),
         ]);
     };
     for (catalog, schema) in schemas(context) {
@@ -1973,12 +2026,21 @@ fn function_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
             _ => 99,
         });
         for entry in entries {
-            for row in entry_function_rows(&entry) {
+            // Built-in scalar and aggregate functions carry their function list entry.
+            let info = (entry.internal
+                && matches!(
+                    entry.kind,
+                    EntryKind::ScalarFunction(_) | EntryKind::AggregateFunction(_)
+                ))
+            .then(|| rustdb_function::function_descriptions::function_info(entry.name()))
+            .flatten();
+            for row in entry_function_rows(&entry, info.as_ref()) {
                 push(
                     catalog.name(),
                     catalog.oid(),
                     schema.name(),
                     entry.name(),
+                    info.as_ref().map(|info| info.alias_of.as_str()),
                     entry.internal,
                     entry.oid,
                     &entry.comment,
@@ -1993,6 +2055,7 @@ fn function_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
             0,
             "main",
             name,
+            None,
             true,
             0,
             &Value::default(),
@@ -2005,6 +2068,7 @@ fn function_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 macro_definition: null_text(),
                 has_side_effects: Value::boolean(false),
                 stability: stability_value(rustdb_function::Stability::Consistent),
+                description: None,
             },
         );
     }

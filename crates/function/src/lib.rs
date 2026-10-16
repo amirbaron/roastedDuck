@@ -10,6 +10,7 @@ pub mod cast;
 pub mod client;
 pub mod copy;
 pub mod extension_entries;
+pub mod function_descriptions;
 pub mod logging;
 pub mod random;
 mod scalar;
