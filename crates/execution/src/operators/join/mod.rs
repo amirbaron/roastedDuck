@@ -7,6 +7,7 @@ mod hash_join;
 mod iejoin;
 mod nested_loop_join;
 mod outer_join_marker;
+mod perfect_hash_join;
 mod piecewise_merge_join;
 mod positional_join;
 mod range_join;

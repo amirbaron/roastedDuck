@@ -93,7 +93,10 @@ impl FirstRound<'_> {
     /// Resolves each probing row's first salt-matching entry and compares its key;
     /// `row_of(i)` is the `i`th probing row and `key_of(row)` its key. Returns the
     /// number of matching and of mismatching rows.
-    #[allow(clippy::inline_always, reason = "one copy of the hot loop per selection shape")]
+    #[allow(
+        clippy::inline_always,
+        reason = "one copy of the hot loop per selection shape"
+    )]
     #[inline(always)]
     fn run<T: rustdb_types::NativeType + PartialEq>(
         &self,
@@ -1162,6 +1165,49 @@ impl JoinHashTable {
         }
         result.set_columns(columns, count);
         Ok(())
+    }
+
+    /// Calls `f` with the rows of every data collection chunk and their first key column
+    /// (of type `key_type`), stopping early when `f` returns `false` (`ScanKeyColumn`).
+    /// Returns whether every chunk was scanned.
+    pub(crate) fn scan_key_column(
+        &self,
+        key_type: &LogicalType,
+        mut f: impl FnMut(&[RowPtr], &Vector) -> Result<bool>,
+    ) -> Result<bool> {
+        let mut scan = self
+            .data_collection
+            .initialize_scan_columns(Vec::new(), PinProperties::AlreadyPinned);
+        let mut keys = Vector::flat(key_type.clone(), STANDARD_VECTOR_SIZE);
+        for chunk in 0..self.data_collection.chunk_count() {
+            let count = self.data_collection.fetch_chunk(&mut scan, chunk, false)?;
+            let rows = &scan.chunk_state.row_locations()[..count];
+            keys.reset_flat(count);
+            // SAFETY: the rows were just fetched from this table's pinned blocks.
+            unsafe { self.gather(rows, None, count, 0, &mut keys, None)? };
+            if !f(rows, &keys)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Gathers build output column `index` of `rows[..count]` into the slots `target_sel`
+    /// of `target`.
+    ///
+    /// # Safety
+    /// The rows must be pinned rows of this table.
+    pub(crate) unsafe fn gather_output_column(
+        &self,
+        rows: &[RowPtr],
+        count: usize,
+        index: usize,
+        target: &mut Vector,
+        target_sel: &[u32],
+    ) -> Result<()> {
+        let column = self.output_columns[index];
+        // SAFETY: forwarded from the caller.
+        unsafe { self.gather(rows, None, count, column, target, Some(target_sel)) }
     }
 
     /// A scan of data collection chunks `chunks` for [`Self::scan_full_outer`].

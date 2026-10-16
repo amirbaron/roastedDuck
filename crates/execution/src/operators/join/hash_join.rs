@@ -13,6 +13,9 @@ use rustdb_planner::{Expression, ExpressionKind};
 use rustdb_row::PartitionedAppendState;
 use rustdb_types::{DataChunk, LogicalType};
 
+use super::perfect_hash_join::{
+    KeyRange, PerfectHashJoinExecutor, PerfectHashJoinState, is_perfect_hash_join_candidate,
+};
 use super::{
     construct_empty_join_result, empty_result_if_rhs_is_empty, propagates_build_side, reorder_conditions,
 };
@@ -43,6 +46,8 @@ pub struct PhysicalHashJoin {
     /// Types of the correlated columns of a correlated MARK join (`delim_types`).
     delim_types: Vec<LogicalType>,
     single_join_error_on_multiple_rows: bool,
+    /// Whether the join may use a perfect hash table, depending on its build keys.
+    perfect_hash_candidate: bool,
     children: [PhysicalRef; 2],
 }
 
@@ -101,6 +106,14 @@ impl PhysicalHashJoin {
                 }
             }
         }
+        let perfect_hash_candidate = conditions.first().is_some_and(|condition| {
+            is_perfect_hash_join_candidate(
+                join_type,
+                &hash_conditions.comparisons,
+                &condition.left.return_type,
+                right.types(),
+            )
+        });
         Ok(Self {
             types,
             join_type,
@@ -112,6 +125,7 @@ impl PhysicalHashJoin {
             rhs_output_columns,
             delim_types,
             single_join_error_on_multiple_rows,
+            perfect_hash_candidate,
             children: [left, right],
         })
     }
@@ -190,6 +204,11 @@ pub struct HashJoinGlobalSinkState {
     hash_table: RwLock<JoinHashTable>,
     /// Tables built by each thread, merged when finalizing.
     local_hash_tables: Mutex<Vec<JoinHashTable>>,
+    /// The range of the build keys, for the perfect hash join decision.
+    key_range: Mutex<KeyRange>,
+    /// The perfect hash table, used instead of the hash table's pointer table when the
+    /// build keys allow it (`perfect_join_executor`).
+    perfect_join_executor: Option<PerfectHashJoinExecutor>,
 }
 
 /// One thread's build state (DuckDB's `HashJoinLocalSinkState`).
@@ -198,6 +217,7 @@ pub struct HashJoinLocalSinkState {
     join_key_executor: ExpressionExecutor,
     hash_table: JoinHashTable,
     append_state: PartitionedAppendState,
+    key_range: KeyRange,
 }
 
 impl Sink for PhysicalHashJoin {
@@ -208,6 +228,8 @@ impl Sink for PhysicalHashJoin {
         Ok(HashJoinGlobalSinkState {
             hash_table: RwLock::new(self.initialize_hash_table(ctx)?),
             local_hash_tables: Mutex::default(),
+            key_range: Mutex::default(),
+            perfect_join_executor: None,
         })
     }
 
@@ -222,6 +244,7 @@ impl Sink for PhysicalHashJoin {
             join_key_executor: ExpressionExecutor::new(self.right_expressions()),
             hash_table,
             append_state,
+            key_range: KeyRange::default(),
         })
     }
 
@@ -235,6 +258,9 @@ impl Sink for PhysicalHashJoin {
         let mut keys = DataChunk::default();
         local.join_key_executor.execute(chunk, &mut keys)?;
         flatten_sequences(&mut keys);
+        if self.perfect_hash_candidate {
+            local.key_range.update(keys.column(0), keys.len());
+        }
         let mut payload = DataChunk::new(
             self.payload_columns
                 .iter()
@@ -258,6 +284,11 @@ impl Sink for PhysicalHashJoin {
             .sink_collection_mut()
             .flush_append_state(&mut local.append_state);
         global
+            .key_range
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .merge(local.key_range);
+        global
             .local_hash_tables
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -280,7 +311,12 @@ impl Sink for PhysicalHashJoin {
             table.merge(local)?;
         }
         table.unpartition()?;
-        if table.count() > 0 {
+        if table.count() > 0 && self.perfect_hash_candidate {
+            let range = *global.key_range.get_mut().unwrap_or_else(PoisonError::into_inner);
+            let rhs_types = &self.types[self.lhs_output_columns.len()..];
+            global.perfect_join_executor = PerfectHashJoinExecutor::try_build(table, range, rhs_types)?;
+        }
+        if table.count() > 0 && global.perfect_join_executor.is_none() {
             table.allocate_pointer_table()?;
             table.initialize_pointer_table(0, table.capacity());
             table.finalize(0..table.data_collection().chunk_count(), false)?;
@@ -300,6 +336,7 @@ pub struct HashJoinProbeState {
     join_keys: DataChunk,
     scan_structure: ScanStructure,
     probe_state: ProbeState,
+    perfect_hash_join_state: PerfectHashJoinState,
 }
 
 impl Operator for PhysicalHashJoin {
@@ -325,6 +362,7 @@ impl Operator for PhysicalHashJoin {
             join_keys: DataChunk::default(),
             scan_structure: ScanStructure::default(),
             probe_state: ProbeState::default(),
+            perfect_hash_join_state: PerfectHashJoinState::default(),
         })
     }
 
@@ -345,6 +383,18 @@ impl Operator for PhysicalHashJoin {
             let lhs_output = self.lhs_output(input);
             let right_types = &self.types[self.lhs_output_columns.len().min(self.types.len())..];
             construct_empty_join_result(self.join_type, table.has_null, &lhs_output, right_types, output)?;
+            return Ok(OperatorResult::NeedMoreInput);
+        }
+        if let Some(perfect) = &global.perfect_join_executor {
+            state.probe_executor.execute(input, &mut state.join_keys)?;
+            flatten_sequences(&mut state.join_keys);
+            let lhs_output = self.lhs_output(input);
+            perfect.probe(
+                &state.join_keys,
+                &lhs_output,
+                &mut state.perfect_hash_join_state,
+                output,
+            )?;
             return Ok(OperatorResult::NeedMoreInput);
         }
         if state.scan_structure.is_null {
