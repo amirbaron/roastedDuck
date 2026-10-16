@@ -25,7 +25,11 @@ use crate::{ColumnBinding, ExpressionType, LogicalOperatorType};
 
 /// A built-in aggregate the planner adds itself (DuckDB uses e.g. `CountStarFun` and
 /// `FirstFunctionGetter` directly), bound to `children`.
-fn builtin_aggregate(context: &ClientContext, name: &str, children: Vec<Expression>) -> Result<Expression> {
+pub(crate) fn builtin_aggregate(
+    context: &ClientContext,
+    name: &str,
+    children: Vec<Expression>,
+) -> Result<Expression> {
     let entry = context
         .get_entry("system", "main", CatalogType::AggregateFunction, name, true)?
         .ok_or_else(|| Error::not_implemented(format!("aggregate function {name}")))?;
@@ -204,8 +208,8 @@ fn plan_uncorrelated_subquery(
                 let left_type = left.return_type.clone();
                 let right_type = right.return_type.clone();
                 join.conditions.push(JoinCondition {
-                    left: push_collation(left, &left_type)?,
-                    right: push_collation(right, &right_type)?,
+                    left: push_collation(&context, left, &left_type)?,
+                    right: push_collation(&context, right, &right_type)?,
                     comparison: subquery.comparison_type,
                 });
             } else {
@@ -215,8 +219,8 @@ fn plan_uncorrelated_subquery(
                     let column = Expression::column_ref("", child_type.clone(), plan_columns[i], 0);
                     let right = add_cast_to_type(&context, column, compare_type, false)?;
                     join.conditions.push(JoinCondition {
-                        left: push_collation(left, compare_type)?,
-                        right: push_collation(right, compare_type)?,
+                        left: push_collation(&context, left, compare_type)?,
+                        right: push_collation(&context, right, compare_type)?,
                         comparison: subquery.comparison_type,
                     });
                 }

@@ -1,7 +1,7 @@
 //! Attached databases (DuckDB's `AttachedDatabase` and `DatabaseManager`): the database
 //! opened first and every `ATTACH`ed one, each with its own catalog, storage and WAL.
 
-use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use rustdb_ast::{AttachInfo, OnCreateConflict};
 use rustdb_catalog::Catalog;
@@ -128,6 +128,10 @@ fn value_as_bool(value: &Value) -> Result<bool> {
 #[derive(Debug, Default)]
 pub(crate) struct DatabaseManager {
     databases: RwLock<Vec<Arc<AttachedDatabase>>>,
+    /// Serializes attaching and detaching, so that a file is never opened while another
+    /// attach or detach of it is under way (DuckDB reserves the path in its
+    /// `DatabaseFilePathManager` for the same reason).
+    attach_lock: Mutex<()>,
 }
 
 impl DatabaseManager {
@@ -152,6 +156,26 @@ impl DatabaseManager {
         self.read().clone()
     }
 
+    /// Detaches the database called `name`: removes it and closes it, writing a
+    /// checkpoint (`DatabaseManager::DetachDatabase`).
+    pub fn detach(&self, name: &str) -> Option<Arc<AttachedDatabase>> {
+        let _guard = self.attach_lock.lock().unwrap_or_else(PoisonError::into_inner);
+        let database = self.remove(name)?;
+        database.close(true);
+        Some(database)
+    }
+
+    /// Detaches `database` if it is still attached (`ptr_eq`) under its name.
+    pub fn detach_if_current(&self, database: &Arc<AttachedDatabase>) {
+        let _guard = self.attach_lock.lock().unwrap_or_else(PoisonError::into_inner);
+        let current = self.get(&database.name);
+        if current.is_some_and(|current| Arc::ptr_eq(&current, database))
+            && let Some(removed) = self.remove(&database.name)
+        {
+            removed.close(true);
+        }
+    }
+
     /// Removes the database called `name`.
     pub fn remove(&self, name: &str) -> Option<Arc<AttachedDatabase>> {
         let mut databases = self.write();
@@ -172,6 +196,7 @@ impl DatabaseManager {
         on_conflict: OnCreateConflict,
         buffer_manager: &rustdb_buffer::BufferManager,
     ) -> Result<Option<Arc<AttachedDatabase>>> {
+        let _guard = self.attach_lock.lock().unwrap_or_else(PoisonError::into_inner);
         let path = if path == ":memory:" || path.starts_with(":memory:") {
             String::new()
         } else {

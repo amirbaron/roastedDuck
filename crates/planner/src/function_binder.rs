@@ -201,6 +201,17 @@ pub fn try_bind_comparison(
     }
 }
 
+/// Whether `ty` takes part in collation propagation: a VARCHAR without an alias
+/// (`RequiresCollationPropagation`).
+fn requires_collation_propagation(ty: &LogicalType) -> bool {
+    ty.id() == LogicalTypeId::Varchar && ty.alias().is_none()
+}
+
+/// The collation of a VARCHAR type, empty without one (`StringType::GetCollation`).
+fn collation_of(ty: &LogicalType) -> &str {
+    collation(ty).unwrap_or("")
+}
+
 /// A function signature for overload resolution (DuckDB's `SimpleFunction`).
 pub trait FunctionSignature {
     fn name(&self) -> &str;
@@ -516,6 +527,61 @@ impl<'a> FunctionBinder<'a> {
         self.bind_scalar_overload(function, children, is_operator).map(Ok)
     }
 
+    /// DuckDB's `HandleCollations`: a VARCHAR result inherits the arguments' collation,
+    /// and functions such as `like` apply the combinable collations to their arguments.
+    fn handle_collations(
+        &self,
+        function: &mut ScalarFunction,
+        children: Vec<Expression>,
+    ) -> Result<Vec<Expression>> {
+        use rustdb_function::CollationHandling;
+        if function.collation_handling == CollationHandling::IgnoreCollations {
+            return Ok(children);
+        }
+        // `ExtractCollation`.
+        let mut collation = String::new();
+        for child in &children {
+            if !requires_collation_propagation(&child.return_type) {
+                continue;
+            }
+            let child_collation = collation_of(&child.return_type);
+            if collation.is_empty() {
+                child_collation.clone_into(&mut collation);
+            } else if !child_collation.is_empty() && collation != child_collation {
+                return Err(Error::binder("Cannot combine types with different collation!"));
+            }
+        }
+        if collation.is_empty() {
+            return Ok(children);
+        }
+        let collation_type = LogicalType::with_info(
+            LogicalTypeId::Varchar,
+            rustdb_types::TypeInfo::String(rustdb_types::StringTypeInfo { collation }),
+        );
+        if requires_collation_propagation(&function.return_type) {
+            function.return_type = collation_type.clone();
+        }
+        if function.collation_handling == CollationHandling::PropagateCollations {
+            return Ok(children);
+        }
+        children
+            .into_iter()
+            .map(|mut child| {
+                if requires_collation_propagation(&child.return_type) {
+                    child.return_type = collation_type.clone();
+                }
+                let ty = child.return_type.clone();
+                crate::collation_binding::push_collation_with(
+                    self.context,
+                    child,
+                    &ty,
+                    crate::collation_binding::CollationType::CombinableCollations,
+                )
+                .map(|(child, _)| child)
+            })
+            .collect()
+    }
+
     /// Binds a call to one chosen overload (DuckDB's `BindScalarFunction(ScalarFunction, ...)`).
     pub fn bind_scalar_overload(
         &self,
@@ -524,11 +590,12 @@ impl<'a> FunctionBinder<'a> {
         is_operator: bool,
     ) -> Result<Expression> {
         resolve_template_types(
+            &function.name,
             &mut function.arguments,
             &mut function.varargs,
             &mut function.return_type,
             &children,
-        );
+        )?;
         let mut bind_info: Option<Arc<dyn FunctionData>> = None;
         if let Some(bind) = function.bind.clone() {
             let (argument_types, constants) = self.bind_input(&children);
@@ -563,6 +630,7 @@ impl<'a> FunctionBinder<'a> {
         {
             return Ok(Expression::constant(value));
         }
+        let children = self.handle_collations(&mut function, children)?;
         let mut arguments = std::mem::take(&mut function.arguments);
         let mut varargs = function.varargs.take();
         let children = self.cast_to_arguments(&function.name, &mut arguments, &mut varargs, children)?;
@@ -581,11 +649,12 @@ impl<'a> FunctionBinder<'a> {
         order_bys: Option<BoundOrderModifier>,
     ) -> Result<Expression> {
         resolve_template_types(
+            &function.name,
             &mut function.arguments,
             &mut function.varargs,
             &mut function.return_type,
             &children,
-        );
+        )?;
         let mut bind_info = None;
         let mut children = children;
         if let Some(bind) = function.bind.clone() {
@@ -713,16 +782,22 @@ fn is_templated(ty: &LogicalType) -> bool {
             .is_some_and(|children| children.iter().any(|(_, child)| is_templated(child)))
 }
 
+/// The inference steps of each template (DuckDB's `bindings`): the first type, then
+/// pairs of (argument type, promoted type).
+type TemplateBindings = CaseInsensitiveMap<Vec<LogicalType>>;
+
+/// What a failed inference reports: the function and the argument being inferred.
+struct TemplateContext<'a> {
+    signature: &'a str,
+    location: Option<u64>,
+}
+
 /// Binds every unbound template inside `source` to `actual` (DuckDB's handling of
 /// UNKNOWN/SQLNULL arguments in `InferTemplateType`).
-fn bind_remaining_templates(
-    source: &LogicalType,
-    actual: &LogicalType,
-    bindings: &mut CaseInsensitiveMap<LogicalType>,
-) {
+fn bind_remaining_templates(source: &LogicalType, actual: &LogicalType, bindings: &mut TemplateBindings) {
     if let Some(name) = template_name(source) {
         if bindings.get(name).is_none() {
-            bindings.insert(name.to_owned(), LogicalType::simple(actual.id()));
+            bindings.insert(name.to_owned(), vec![LogicalType::simple(actual.id())]);
         }
         return;
     }
@@ -739,42 +814,73 @@ fn bind_remaining_templates(
     }
 }
 
-/// Infers template bindings from an argument (DuckDB's `InferTemplateType`, for top-level
-/// and list/array templates).
+/// Infers template bindings from an argument (DuckDB's `InferTemplateType`): a template
+/// takes the argument's type, promoted with earlier bindings; incompatible types fail.
 fn infer_template(
     source: &LogicalType,
     actual: &LogicalType,
-    bindings: &mut CaseInsensitiveMap<LogicalType>,
-) {
+    bindings: &mut TemplateBindings,
+    context: &TemplateContext<'_>,
+) -> Result<()> {
     if matches!(actual.id(), LogicalTypeId::Unknown | LogicalTypeId::SqlNull) {
         bind_remaining_templates(source, actual, bindings);
-        return;
+        return Ok(());
     }
     if let Some(name) = template_name(source) {
-        let new = match bindings.get(name) {
-            None => actual.clone(),
-            Some(existing) => {
-                LogicalType::try_max_logical_type(existing, actual).unwrap_or_else(|| existing.clone())
-            }
+        let Some(steps) = bindings.get_mut(name) else {
+            bindings.insert(name.to_owned(), vec![actual.clone()]);
+            return Ok(());
         };
-        bindings.insert(name.to_owned(), new);
-        return;
+        let Some(last) = steps.last().cloned() else {
+            return Ok(());
+        };
+        if &last == actual {
+            return Ok(());
+        }
+        if let Some(promoted) = LogicalType::try_max_logical_type(&last, actual) {
+            if promoted != last {
+                steps.push(actual.clone());
+                steps.push(promoted);
+            }
+            return Ok(());
+        }
+        let mut message = format!(
+            "Cannot deduce template type '{name}' in function: '{}'\nType '{name}' was inferred to be:\n",
+            context.signature
+        );
+        for index in (0..steps.len()).step_by(2) {
+            if index == 0 {
+                let _ = writeln!(message, " - '{}', from first occurrence", steps[index]);
+            } else {
+                let _ = writeln!(
+                    message,
+                    " - '{}', by promoting '{}' + '{}'",
+                    steps[index],
+                    steps[index - 2],
+                    steps[index - 1]
+                );
+            }
+        }
+        let _ = write!(
+            message,
+            " - '{actual}', which is incompatible with previously inferred type!"
+        );
+        return Err(Error::binder(message).with_position(context.location));
     }
     if matches!(source.id(), LogicalTypeId::List | LogicalTypeId::Array)
         && matches!(actual.id(), LogicalTypeId::List | LogicalTypeId::Array)
         && let (Some(source_child), Some(actual_child)) = (source.child_type(), actual.child_type())
     {
-        infer_template(source_child, actual_child, bindings);
-        return;
+        return infer_template(source_child, actual_child, bindings, context);
     }
     if source.id() == LogicalTypeId::Map && actual.id() == LogicalTypeId::Map {
         if let (Some((source_key, source_value)), Some((actual_key, actual_value))) =
             (source.map_key_value(), actual.map_key_value())
         {
-            infer_template(source_key, actual_key, bindings);
-            infer_template(source_value, actual_value, bindings);
+            infer_template(source_key, actual_key, bindings, context)?;
+            infer_template(source_value, actual_value, bindings, context)?;
         }
-        return;
+        return Ok(());
     }
     if source.id() == LogicalTypeId::Struct
         && actual.id() == LogicalTypeId::Struct
@@ -783,14 +889,15 @@ fn infer_template(
         && source_children.iter().all(|(name, _)| name.is_empty())
     {
         for ((_, source_child), (_, actual_child)) in source_children.iter().zip(actual_children) {
-            infer_template(source_child, actual_child, bindings);
+            infer_template(source_child, actual_child, bindings, context)?;
         }
     }
+    Ok(())
 }
 
-fn substitute_template(ty: &LogicalType, bindings: &CaseInsensitiveMap<LogicalType>) -> LogicalType {
+fn substitute_template(ty: &LogicalType, bindings: &TemplateBindings) -> LogicalType {
     if let Some(name) = template_name(ty) {
-        return bindings.get(name).map_or_else(
+        return bindings.get(name).and_then(|steps| steps.last()).map_or_else(
             || ty.clone(),
             |bound| normalize_type(bound).unwrap_or_else(|_| bound.clone()),
         );
@@ -826,26 +933,39 @@ fn substitute_template(ty: &LogicalType, bindings: &CaseInsensitiveMap<LogicalTy
 
 /// DuckDB's `FunctionBinder::ResolveTemplateTypes`.
 fn resolve_template_types(
+    name: &str,
     arguments: &mut [LogicalType],
     varargs: &mut Option<LogicalType>,
     return_type: &mut LogicalType,
     children: &[Expression],
-) {
+) -> Result<()> {
     let templated = arguments.iter().any(is_templated)
         || varargs.as_ref().is_some_and(is_templated)
         || is_templated(return_type);
     if !templated {
-        return;
+        return Ok(());
     }
-    let mut bindings = CaseInsensitiveMap::default();
+    let signature = format!(
+        "{} -> {return_type}",
+        call_to_string(name, arguments, varargs.as_ref())
+    );
+    let mut bindings = TemplateBindings::default();
     for (argument, child) in arguments.iter().zip(children) {
         if is_templated(argument) {
-            infer_template(argument, &expression_return_type(child), &mut bindings);
+            let context = TemplateContext {
+                signature: &signature,
+                location: child.query_location,
+            };
+            infer_template(argument, &expression_return_type(child), &mut bindings, &context)?;
         }
     }
     if let Some(varargs) = varargs.as_ref().filter(|varargs| is_templated(varargs)) {
         for child in children.iter().skip(arguments.len()) {
-            infer_template(varargs, &expression_return_type(child), &mut bindings);
+            let context = TemplateContext {
+                signature: &signature,
+                location: child.query_location,
+            };
+            infer_template(varargs, &expression_return_type(child), &mut bindings, &context)?;
         }
     }
     for argument in arguments.iter_mut() {
@@ -855,6 +975,7 @@ fn resolve_template_types(
         *varargs = substitute_template(varargs, &bindings);
     }
     *return_type = substitute_template(return_type, &bindings);
+    Ok(())
 }
 
 /// DuckDB's `FunctionBinder::CheckTemplateTypesResolved`.

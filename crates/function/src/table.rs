@@ -40,6 +40,21 @@ pub struct TableFunctionBindOutput {
 pub type TableFunctionBind =
     Arc<dyn Fn(&TableFunctionBindInput<'_>) -> Result<TableFunctionBindOutput> + Send + Sync>;
 
+/// What a `bind_replace` callback substitutes for the call: a query the binder parses
+/// and binds as a subquery in place of the function (DuckDB returns the parsed
+/// `TableRef`; the function library only builds the SQL).
+#[derive(Clone, Debug)]
+pub struct TableFunctionReplacement {
+    /// The SQL of a single SELECT statement.
+    pub query: String,
+    /// The parser error raised when `query` is not a single SELECT statement.
+    pub error: String,
+}
+
+/// A table function's `bind_replace` callback: `Some` replaces the call by a subquery.
+pub type TableFunctionBindReplace =
+    Arc<dyn Fn(&TableFunctionBindInput<'_>) -> Result<Option<TableFunctionReplacement>> + Send + Sync>;
+
 /// Produces the function's rows: called repeatedly with the bind data and the projected
 /// column ids, it fills the chunk (all of the function's columns, at most
 /// `STANDARD_VECTOR_SIZE` rows) and returns whether more rows may follow (a
@@ -49,6 +64,11 @@ pub type TableFunctionScan = Arc<
         + Send
         + Sync,
 >;
+
+/// Makes the function produce other types for some of its columns (DuckDB's
+/// `table_function_type_pushdown_t`): the bind data with column index -> type applied.
+pub type TableFunctionTypePushdown =
+    Arc<dyn Fn(&dyn FunctionData, &[(usize, LogicalType)]) -> Result<Arc<dyn FunctionData>> + Send + Sync>;
 
 /// Per-scan state of a [`TableFunctionScan`] (cursor position and similar).
 #[derive(Debug, Default)]
@@ -67,6 +87,8 @@ pub struct TableFunction {
     /// The accepted `name := value` parameters and their types.
     pub named_parameters: Vec<(String, LogicalType)>,
     pub bind: Option<TableFunctionBind>,
+    /// Replaces the call by a subquery before `bind` (DuckDB's `bind_replace`).
+    pub bind_replace: Option<TableFunctionBindReplace>,
     pub scan: Option<TableFunctionScan>,
     /// Whether the scan can produce only the requested columns.
     pub projection_pushdown: bool,
@@ -75,6 +97,8 @@ pub struct TableFunction {
     /// Whether this is a table-in/table-out function (DuckDB's `in_out_function`):
     /// constant arguments form its input row, and every output column is scanned.
     pub in_out: bool,
+    /// Reads columns directly as the types an INSERT needs (`type_pushdown`).
+    pub type_pushdown: Option<TableFunctionTypePushdown>,
 }
 
 impl TableFunction {
@@ -85,10 +109,12 @@ impl TableFunction {
             varargs: None,
             named_parameters: Vec::new(),
             bind: None,
+            bind_replace: None,
             scan: None,
             projection_pushdown: false,
             filter_pushdown: false,
             in_out: false,
+            type_pushdown: None,
         }
     }
 

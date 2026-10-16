@@ -2,8 +2,9 @@
 //! `bind_create.cpp`, `bind_create_table.cpp` and `bind_drop.cpp`).
 
 use rustdb_ast::{
-    CatalogType as AstCatalogType, ColumnDefinition, CompressionType, Constraint, CreateInfo, CreateInfoKind,
-    DropInfo, ForeignKeyConstraint, ForeignKeyType, NotNullConstraint, OnEntryNotFound, TableColumnType,
+    CatalogEntryInfo, CatalogType as AstCatalogType, ColumnDefinition, CompressionType, Constraint,
+    CreateInfo, CreateInfoKind, DropInfo, ForeignKeyConstraint, ForeignKeyType, LogicalDependency,
+    LogicalDependencyList, NotNullConstraint, OnEntryNotFound, TableColumnType,
 };
 use rustdb_catalog::{CatalogType, EntryKind, TableEntry};
 use rustdb_common::{Error, LogicalIndex, PhysicalIndex, Result};
@@ -179,16 +180,51 @@ fn bind_create_view_info(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Re
     let mut query = view.query.clone();
     let mut view_binder = super::super::Binder::new(scope.context.clone())?;
     view_binder.can_contain_nulls = true;
+    let record = scope.context.config.enable_view_dependencies;
+    let previous = record.then(|| scope.context.start_recording_dependencies());
     let bound = {
         let mut view_scope = BindScope::root(&mut view_binder);
-        bind_node(&mut view_scope, &mut query.node)?
+        bind_node(&mut view_scope, &mut query.node)
     };
+    if let Some(previous) = previous {
+        let recorded = scope.context.stop_recording_dependencies(previous);
+        add_recorded_dependencies(&mut info.dependencies, recorded, &info.catalog);
+    }
+    let bound = bound?;
     if view.aliases.len() > bound.names.len() {
         return Err(Error::binder("More VIEW aliases than columns in query result"));
     }
     view.types = bound.types;
     view.names = bound.names;
     Ok(())
+}
+
+/// Adds the dependencies the catalog lookups in `recorded` give an entry created in
+/// `catalog` (DuckDB's catalog lookup callbacks): entries of other catalogs and internal
+/// types are no dependencies.
+pub(crate) fn add_recorded_dependencies(
+    dependencies: &mut LogicalDependencyList,
+    recorded: Vec<crate::context::EntryLookup>,
+    catalog: &str,
+) {
+    for lookup in recorded {
+        if !lookup.catalog.eq_ignore_ascii_case(catalog)
+            || (lookup.entry.internal && matches!(lookup.entry.kind, EntryKind::Type(_)))
+        {
+            continue;
+        }
+        let dependency = LogicalDependency {
+            entry: CatalogEntryInfo {
+                catalog_type: lookup.entry.dependency_type(),
+                schema: lookup.schema,
+                name: lookup.entry.name().to_owned(),
+            },
+            catalog: lookup.catalog,
+        };
+        if !dependencies.set.contains(&dependency) {
+            dependencies.set.push(dependency);
+        }
+    }
 }
 
 /// A column definition with `name` and `ty`.
@@ -257,32 +293,11 @@ pub fn bind_create_table_info(
         table.columns.columns = columns;
         query_plan = Some(bound.plan);
     } else {
-        for column in &mut table.columns.columns {
-            if column.logical_type.id() != rustdb_types::LogicalTypeId::Any {
-                column.logical_type =
-                    bind_logical_type_in_schema(&scope.context, &column.logical_type, &catalog, &schema)?;
-            }
-        }
-        bind_generated_columns(scope, &table.table, &mut table.columns.columns)?;
-        bind_create_table_constraints(
-            scope,
-            &table.table,
-            &schema,
-            &mut table.columns.columns,
-            &mut table.constraints,
-        )?;
-        if any_constraint_references_generated_column(&table.columns.columns, &table.constraints) {
-            return Err(Error::binder(
-                "Constraints on generated columns are not supported yet",
-            ));
-        }
-        bind_new_constraints(&table.table, &table.columns.columns, &mut table.constraints)?;
-        // Validate the default values (`BindDefaultValues`).
-        for column in &table.columns.columns {
-            if column.category != TableColumnType::Generated {
-                bind_default_value(scope, column.expression.as_deref(), &column.logical_type)?;
-            }
-        }
+        let previous = scope.context.start_recording_dependencies();
+        let result = bind_table_definition(scope, &catalog, &schema, table);
+        let recorded = scope.context.stop_recording_dependencies(previous);
+        add_recorded_dependencies(&mut info.dependencies, recorded, &catalog);
+        result?;
     }
     if !table
         .columns
@@ -302,6 +317,53 @@ pub fn bind_create_table_info(
         },
         query_plan,
     ))
+}
+
+/// Binds the column types, generated columns, constraints and defaults of a `CREATE
+/// TABLE` without a query.
+fn bind_table_definition(
+    scope: &mut BindScope<'_>,
+    catalog: &str,
+    schema: &str,
+    table: &mut rustdb_ast::CreateTableInfo,
+) -> Result<()> {
+    for column in &mut table.columns.columns {
+        if column.logical_type.id() != rustdb_types::LogicalTypeId::Any {
+            column.logical_type =
+                bind_logical_type_in_schema(&scope.context, &column.logical_type, catalog, schema)?;
+        }
+    }
+    bind_generated_columns(scope, &table.table, &mut table.columns.columns)?;
+    bind_create_table_constraints(
+        scope,
+        &table.table,
+        schema,
+        &mut table.columns.columns,
+        &mut table.constraints,
+    )?;
+    if any_constraint_references_generated_column(&table.columns.columns, &table.constraints) {
+        return Err(Error::binder(
+            "Constraints on generated columns are not supported yet",
+        ));
+    }
+    // `BindNewConstraints` binds the CHECK expressions first.
+    let check_columns = generated_check_columns(&table.columns.columns);
+    for constraint in &table.constraints {
+        if let Constraint::Check(check) = constraint {
+            let mut expression = (*check.expression).clone();
+            let mut binder = scope.binder.child()?;
+            crate::expression_binder::CheckBinder::new(&mut binder, None, &table.table, &check_columns)
+                .bind(&mut expression, true)?;
+        }
+    }
+    bind_new_constraints(&table.table, &table.columns.columns, &mut table.constraints)?;
+    // Validate the default values (`BindDefaultValues`).
+    for column in &table.columns.columns {
+        if column.category != TableColumnType::Generated {
+            bind_default_value(scope, column.expression.as_deref(), &column.logical_type)?;
+        }
+    }
+    Ok(())
 }
 
 /// The names of the columns `expression` references (`ColumnDependencyManager`'s

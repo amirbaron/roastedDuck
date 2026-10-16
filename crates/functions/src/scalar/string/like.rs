@@ -4,8 +4,8 @@
 use std::sync::Arc;
 
 use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_function::{BindInput, FunctionData, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::LogicalType;
+use rustdb_function::{BindInput, CollationHandling, FunctionData, ScalarFunction, ScalarFunctionSet};
+use rustdb_types::{LogicalType, LogicalTypeId, TypeInfo};
 
 use crate::scalar::executor::{Str, binary, ternary, unary};
 use crate::scalar::string::caseconvert::case_convert;
@@ -251,6 +251,14 @@ fn bind_like(
     invert: bool,
 ) -> impl Fn(&mut ScalarFunction, &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>> {
     move |function, input| {
+        // Collated arguments are rewritten after the bind, so the pattern is not final.
+        let collated = input.argument_types.iter().any(|ty| {
+            ty.id() == LogicalTypeId::Varchar
+                && matches!(ty.info(), Some(TypeInfo::String(info)) if !info.collation.is_empty())
+        });
+        if collated {
+            return Ok(None);
+        }
         let Some(Some(pattern)) = input.constants.get(1) else {
             return Ok(None);
         };
@@ -322,9 +330,9 @@ fn single(function: ScalarFunction) -> ScalarFunctionSet {
     set
 }
 
-/// Every LIKE/GLOB function set.
+/// Every LIKE/GLOB function set; all apply the combinable collations of their arguments.
 pub fn like_functions() -> Vec<ScalarFunctionSet> {
-    vec![
+    let mut sets = vec![
         single(binary_like("~~", like, false).with_bind(bind_like(false))),
         single(binary_like("!~~", like, true).with_bind(bind_like(true))),
         single(binary_like(
@@ -338,5 +346,9 @@ pub fn like_functions() -> Vec<ScalarFunctionSet> {
         escape_like("not_like_escape", like, true),
         escape_like("ilike_escape", ilike, false),
         escape_like("not_ilike_escape", ilike, true),
-    ]
+    ];
+    for function in sets.iter_mut().flat_map(|set| set.functions.iter_mut()) {
+        function.collation_handling = CollationHandling::PushCombinableCollations;
+    }
+    sets
 }

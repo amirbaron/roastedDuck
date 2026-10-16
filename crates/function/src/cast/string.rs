@@ -69,6 +69,7 @@ pub(super) fn cast_switch(
         L::Uuid => parse_kernel::<Uuid>(Uuid::parse),
         L::Blob => string_kernel(blob::parse_text),
         L::Bit => string_kernel(bit::parse_text),
+        L::Geometry => super::geometry::from_string(),
         L::Varchar => BoundCastInfo::reinterpret(),
         L::Enum => return Ok(super::enums::string_to_enum(target)),
         L::Date

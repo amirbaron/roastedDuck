@@ -161,6 +161,56 @@ fn build_union_by_name_info(
 }
 
 /// Casts an operand's output to the result types (DuckDB's `CastLogicalOperatorToTypes`).
+/// A projection of plain column references over a table function scan whose
+/// function can read the target types directly: the scan, reading them (DuckDB's
+/// `type_pushdown` in `CastLogicalOperatorToTypes`).
+fn try_type_pushdown(op: &mut LogicalOperator, target: &[LogicalType]) -> Result<Option<LogicalOperator>> {
+    if op.children.len() != 1 {
+        return Ok(None);
+    }
+    let LogicalKind::Get(get) = &op.children[0].kind else {
+        return Ok(None);
+    };
+    let (Some(pushdown), Some(bind_data)) = (get.function.type_pushdown.clone(), get.bind_data.clone())
+    else {
+        return Ok(None);
+    };
+    let column_ids = match &get.shared_column_ids {
+        Some(shared) => shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone(),
+        None => get.column_ids.clone(),
+    };
+    let mut new_types: Vec<(usize, LogicalType)> = Vec::new();
+    for (expression, ty) in op.expressions.iter().zip(target) {
+        let Some(column) = expression.as_column_ref() else {
+            return Ok(None);
+        };
+        let Some(column_id) = column_ids.get(column.binding.column_index as usize) else {
+            return Ok(None);
+        };
+        let Ok(column_id) = usize::try_from(column_id.index) else {
+            return Ok(None);
+        };
+        if new_types.iter().any(|(existing, _)| *existing == column_id) {
+            return Ok(None);
+        }
+        new_types.push((column_id, ty.clone()));
+    }
+    let new_bind_data = pushdown(bind_data.as_ref(), &new_types)?;
+    let mut child = op.children.remove(0);
+    if let LogicalKind::Get(get) = &mut child.kind {
+        get.bind_data = Some(new_bind_data);
+        for (column, ty) in new_types {
+            if let Some(slot) = get.returned_types.get_mut(column) {
+                *slot = ty;
+            }
+        }
+    }
+    Ok(Some(child))
+}
+
 pub(crate) fn cast_operator_to_types(
     binder: &Binder,
     source: &[LogicalType],
@@ -172,6 +222,9 @@ pub(crate) fn cast_operator_to_types(
     }
     let context = binder.context.clone();
     if let LogicalKind::Projection { .. } = op.kind {
+        if let Some(get) = try_type_pushdown(&mut op, target)? {
+            return Ok(get);
+        }
         for (i, (source_type, target_type)) in source.iter().zip(target).enumerate() {
             if source_type != target_type {
                 let expression =
@@ -297,7 +350,15 @@ pub fn bind_set_operation(scope: &mut BindScope<'_>, node: &mut QueryNode) -> Re
             &mut bound_modifiers,
         )?;
     }
-    bind_modifiers(&mut bound_modifiers, setop_index, &names, &types, &bind_state)?;
+    let context = scope.binder.context.clone();
+    bind_modifiers(
+        &context,
+        &mut bound_modifiers,
+        setop_index,
+        &names,
+        &types,
+        &bind_state,
+    )?;
 
     // Plan: cast every operand to the result types.
     let operator_type = match setop_type {

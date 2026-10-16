@@ -204,8 +204,39 @@ impl CreateInfo {
                 self.create_prefix("SCHEMA"),
                 write_optionally_quoted(&self.schema)
             )),
-            _ => None,
+            CreateInfoKind::Type(info) => Some(self.type_to_sql(info)),
+            CreateInfoKind::Macro(info) | CreateInfoKind::TableMacro(info) => {
+                let definitions: Vec<String> = info.macros.iter().map(macro_to_sql).collect();
+                Some(format!(
+                    "{}{} {};",
+                    self.create_prefix("MACRO"),
+                    self.qualified(&info.name),
+                    definitions.join(", ")
+                ))
+            }
+            CreateInfoKind::Secret(_) => None,
         }
+    }
+
+    /// `CreateTypeInfo::ToString`.
+    fn type_to_sql(&self, info: &crate::CreateTypeInfo) -> String {
+        let mut result = self.create_prefix("TYPE");
+        result.push_str(&self.qualified(&info.name));
+        if let Some(values) = info.logical_type.enum_values() {
+            result.push_str(" AS ENUM ( ");
+            let quoted: Vec<String> = values.iter().map(|value| format!("'{value}'")).collect();
+            result.push_str(&quoted.join(", "));
+            result.push_str(" );");
+        } else if info.logical_type.id() == rustdb_types::LogicalTypeId::Invalid {
+            if let Some(query) = &info.query {
+                let _ = write!(result, " AS ENUM ({query})");
+            }
+        } else {
+            result.push_str(" AS ");
+            result.push_str(&logical_type_to_string(&info.logical_type));
+        }
+        result.push(';');
+        result
     }
 
     /// `CreateTableInfo::ToString`.
@@ -343,4 +374,33 @@ pub fn sequence_to_sql(sequence: &CreateSequenceInfo) -> String {
         sequence.start_value,
         if sequence.cycle { "CYCLE" } else { "NO CYCLE" }
     )
+}
+
+/// `MacroFunction::ToSQL` with the body (`ScalarMacroFunction` / `TableMacroFunction`).
+fn macro_to_sql(function: &crate::MacroFunction) -> String {
+    let mut parameters = Vec::with_capacity(function.parameters.len());
+    for (index, parameter) in function.parameters.iter().enumerate() {
+        let name = match &parameter.kind {
+            ParsedExpressionKind::ColumnRef(column) => {
+                column.column_names.last().cloned().unwrap_or_default()
+            }
+            _ => parameter.to_string(),
+        };
+        let mut text = name.clone();
+        if let Some(ty) = function.types.get(index)
+            && ty.id() != rustdb_types::LogicalTypeId::Unknown
+        {
+            text.push(' ');
+            text.push_str(&logical_type_to_string(ty));
+        }
+        if let Some(default) = function.default_parameters.get(&name) {
+            let _ = write!(text, " := {default}");
+        }
+        parameters.push(text);
+    }
+    let head = format!("({}) AS ", parameters.join(", "));
+    match &function.kind {
+        crate::MacroFunctionKind::Scalar(scalar) => format!("{head}({})", scalar.expression),
+        crate::MacroFunctionKind::Table(table) => format!("{head}TABLE ({})", table.query_node),
+    }
 }

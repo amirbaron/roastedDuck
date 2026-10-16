@@ -173,21 +173,24 @@ pub fn bind_insert(scope: &mut BindScope<'_>, stmt: &mut InsertStatement) -> Res
         bound_constraints,
         return_chunk: !stmt.returning_list.is_empty(),
     })));
-    let root = if let Some(select) = &mut stmt.select_statement {
+    if let Some(select) = &mut stmt.select_statement {
         let bound = match root_select {
             Some(bound) => bound,
             None => bind_child_select(scope, &mut select.node)?,
         };
         check_column_count(expected_columns, bound.types.len(), columns_provided, &table_name)?;
-        cast_operator_to_types(scope.binder, &bound.types, &expected_types, bound.plan)?
+        insert.add_child(cast_operator_to_types(
+            scope.binder,
+            &bound.types,
+            &expected_types,
+            bound.plan,
+        )?);
     } else if stmt.default_values {
-        LogicalOperator::new(LogicalKind::DummyScan {
+        insert.add_child(LogicalOperator::new(LogicalKind::DummyScan {
             table_index: scope.generate_table_index(),
-        })
-    } else {
-        return Err(Error::internal("INSERT without a source"));
-    };
-    insert.add_child(root);
+        }));
+    }
+    // Without a source (COPY FROM) the caller adds the child.
     if !stmt.returning_list.is_empty() {
         let alias = stmt
             .table_ref

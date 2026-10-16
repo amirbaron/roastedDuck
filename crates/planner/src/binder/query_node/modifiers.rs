@@ -10,6 +10,7 @@ use super::BoundResultModifier;
 use crate::ColumnBinding;
 use crate::binder::expression::{expand_star_expression, push_collation};
 use crate::binder::{BindScope, Binder};
+use crate::context::ClientContext;
 use crate::expression::{BoundOrderByNode, BoundOrderModifier, Expression, ExpressionKind};
 use crate::expression_binder::{BaseBinder, ExpressionBinder, OrderBinder, SelectBindState};
 use crate::generated::enums::DistinctType;
@@ -328,6 +329,7 @@ fn finalize_order_expression(
 
 /// Gives modifier terms their result types (DuckDB's `Binder::BindModifiers`).
 pub fn bind_modifiers(
+    context: &ClientContext,
     modifiers: &mut [BoundResultModifier],
     table_index: u64,
     names: &[String],
@@ -342,7 +344,7 @@ pub fn bind_modifiers(
                     let target = finalize_order_expression(&target, table_index, names, types, bind_state)?
                         .ok_or_else(|| Error::internal("DISTINCT ON ORDER BY ALL not supported"))?;
                     let ty = target.return_type.clone();
-                    finalized.push(push_collation(target, &ty)?);
+                    finalized.push(push_collation(context, target, &ty)?);
                 }
                 *targets = finalized;
             }
@@ -403,7 +405,7 @@ pub fn bind_modifiers(
                     let ty = node.expression.return_type.clone();
                     let expression =
                         std::mem::replace(&mut node.expression, Expression::constant(Value::default()));
-                    node.expression = push_collation(expression, &ty)?;
+                    node.expression = push_collation(context, expression, &ty)?;
                 }
                 order.orders = finalized;
             }

@@ -10,7 +10,7 @@ use rustdb_planner::{
     ClientContext, ColumnBindingResolver, LogicalKind, LogicalOperator, PlannedStatement, Planner,
     PreparedStatementData,
 };
-use rustdb_types::LogicalType;
+use rustdb_types::{LogicalType, Value};
 
 use crate::attached::{AttachOptions, AttachedDatabase, DatabaseManager};
 use crate::settings::Settings;
@@ -254,6 +254,10 @@ impl Database {
         for set in crate::system_functions::pragma_table_functions() {
             system_catalog.register_table_functions(set)?;
         }
+        system_catalog.register_copy_function(rustdb_csv::copy_csv::csv_copy_function())?;
+        for set in rustdb_csv::multi_file::glob_functions() {
+            system_catalog.register_table_functions(set)?;
+        }
         for set in rustdb_csv::sniff_csv::sniff_csv_functions() {
             system_catalog.register_table_functions(set)?;
         }
@@ -261,6 +265,7 @@ impl Database {
             system_catalog.register_table_functions(set)?;
         }
         crate::system_functions::register_default_views(&system_catalog)?;
+        crate::system_functions::register_default_macros(&system_catalog)?;
         let env = rustdb_execution::ClientEnv::standalone()?;
         let instance = DatabaseInstance {
             path: path.clone(),
@@ -394,6 +399,15 @@ pub struct Connection {
 }
 
 impl Connection {
+    /// The options set on this connection (and not reset since), by canonical name,
+    /// like the values DuckDB's `RestartCommand` carries over to the restarted database.
+    pub fn assigned_settings(&self) -> Vec<(String, Value)> {
+        self.settings
+            .assigned()
+            .map(|(name, value)| (name.to_owned(), value.clone()))
+            .collect()
+    }
+
     pub fn database(&self) -> &Database {
         &self.database
     }
@@ -480,12 +494,65 @@ impl Connection {
             prepared_statements: self.prepared_statements.clone(),
             function_client: Arc::clone(&self.function_client),
             user_variables: self.user_variables.clone(),
+            dependency_recorder: Arc::default(),
         })
+    }
+
+    /// `IMPORT DATABASE 'dir'` (DuckDB's `PragmaImportDatabase`): runs the directory's
+    /// `schema.sql`, then its `load.sql` with the files taken from the directory.
+    fn import_database(&mut self, parameters: &[rustdb_types::Value]) -> Result<MaterializedResult> {
+        let directory = parameters
+            .first()
+            .map(rustdb_types::Value::to_varchar)
+            .transpose()?
+            .unwrap_or_default();
+        let join = |name: &str| {
+            if directory.ends_with('/') {
+                format!("{directory}{name}")
+            } else {
+                format!("{directory}/{name}")
+            }
+        };
+        let mut statements = Vec::new();
+        for file in ["schema.sql", "load.sql"] {
+            let path = join(file);
+            let query = std::fs::read_to_string(&path).map_err(|error| {
+                let reason = if error.kind() == std::io::ErrorKind::NotFound {
+                    "No such file or directory".to_owned()
+                } else {
+                    error.to_string()
+                };
+                Error::new(ErrorKind::Io, format!("Cannot open file \"{path}\": {reason}"))
+            })?;
+            for mut statement in rustdb_parser::parse(&query)? {
+                if file == "load.sql"
+                    && let rustdb_ast::SqlStatementKind::Copy(info) = &mut statement.kind
+                {
+                    let name = info
+                        .file_path
+                        .rsplit(['/', '\\'])
+                        .next()
+                        .unwrap_or_default()
+                        .to_owned();
+                    info.file_path = join(&name);
+                }
+                statements.push(statement);
+            }
+        }
+        let mut result = MaterializedResult::default();
+        for statement in statements {
+            result = self.run_statement(statement)?;
+        }
+        Ok(result)
     }
 
     fn run_statement(&mut self, statement: SqlStatement) -> Result<MaterializedResult> {
         if let rustdb_ast::SqlStatementKind::Multi(statements) = statement.kind {
             return self.run_multi_statement(statements);
+        }
+        if let rustdb_ast::SqlStatementKind::Load(info) = &statement.kind {
+            crate::extensions::load_extension(info)?;
+            return Ok(MaterializedResult::default());
         }
         // Pragmas that stand for a query run that query (DuckDB's `PragmaHandler`).
         let statement = statement;
@@ -501,6 +568,11 @@ impl Connection {
                     _ => None,
                 })
                 .collect();
+            if let Some(constants) = &constants
+                && pragma.name.eq_ignore_ascii_case("import_database")
+            {
+                return self.import_database(constants);
+            }
             if let Some(constants) = constants
                 && let Some(query) = crate::system_functions::pragma_query(&pragma.name, &constants)?
             {
@@ -565,12 +637,7 @@ impl Connection {
         }
         let instance = self.database.instance();
         for attached in attaches {
-            let current = instance.databases.get(&attached.name);
-            if current.is_some_and(|current| Arc::ptr_eq(&current, &attached))
-                && let Some(database) = instance.databases.remove(&attached.name)
-            {
-                database.close(true);
-            }
+            instance.databases.detach_if_current(&attached);
         }
     }
 
@@ -601,11 +668,8 @@ impl Connection {
             )));
         }
         let instance = self.database.instance();
-        match instance.databases.remove(&info.name) {
-            Some(database) => {
-                database.close(true);
-                Ok(())
-            }
+        match instance.databases.detach(&info.name) {
+            Some(_) => Ok(()),
             None if info.if_not_found == rustdb_ast::OnEntryNotFound::ReturnNull => Ok(()),
             None => Err(Error::binder(format!(
                 "Failed to detach database with name \"{}\": database not found",

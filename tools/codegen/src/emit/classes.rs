@@ -83,6 +83,9 @@ impl<'m> Emitter<'m> {
     pub(super) fn emit_struct(&mut self, class: &Class) -> Result<()> {
         let _ = writeln!(self.body, "/// DuckDB's `{}`.", class.spec.class);
         let _ = writeln!(self.body, "{}", self.derives(class));
+        if class.config.repr_c {
+            let _ = writeln!(self.body, "#[repr(C)]");
+        }
         let _ = writeln!(self.body, "pub struct {} {{", class.rust_name);
         self.emit_fields(class)?;
         let _ = writeln!(self.body, "}}\n");
@@ -360,6 +363,9 @@ impl<'m> Emitter<'m> {
             class.spec.class
         );
         let _ = writeln!(self.body, "{}", self.derives(class));
+        if class.config.repr_c {
+            let _ = writeln!(self.body, "#[repr(C)]");
+        }
         let _ = writeln!(self.body, "pub struct {} {{", class.rust_name);
         self.emit_fields(class)?;
         let _ = writeln!(
