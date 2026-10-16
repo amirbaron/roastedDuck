@@ -55,6 +55,7 @@ pub use hash_aggregate::{HashAggregateGlobal, HashAggregateLocal, PhysicalHashAg
 pub use insert::{InsertGlobal, InsertTarget, PhysicalInsert, TableCreator};
 pub use join::{
     PhysicalAsOfJoin, PhysicalBlockwiseNLJoin, PhysicalHashJoin, PhysicalIEJoin, PhysicalNestedLoopJoin, PhysicalPiecewiseMergeJoin,
+    PhysicalPositionalJoin,
 };
 pub use limit::{
     LimitBounds, LimitPercentGlobal, LimitPercentSource, PhysicalLimitPercent, PhysicalStreamingLimit,

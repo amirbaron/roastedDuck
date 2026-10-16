@@ -8,6 +8,7 @@ mod iejoin;
 mod nested_loop_join;
 mod outer_join_marker;
 mod piecewise_merge_join;
+mod positional_join;
 mod range_join;
 
 pub use asof_join::{AsOfGlobalSinkState, AsOfLocalSinkState, AsOfSourceState, PhysicalAsOfJoin};
@@ -18,6 +19,7 @@ pub use nested_loop_join::{
     NestedLoopJoinGlobalState, NestedLoopJoinProbeState, PhysicalNestedLoopJoin, RightOuterScanState,
 };
 pub use outer_join_marker::OuterJoinMarker;
+pub use positional_join::{PhysicalPositionalJoin, PositionalJoinGlobalState};
 pub use piecewise_merge_join::{
     MergeJoinGlobalState, MergeJoinProbeState, MergeJoinSourceState, PhysicalPiecewiseMergeJoin,
 };

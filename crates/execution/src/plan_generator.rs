@@ -861,6 +861,11 @@ impl PlanGenerator {
                     next_child("order")?,
                 ))
             }
+            LogicalKind::PositionalJoin => {
+                let left = next_child("positional join")?;
+                let right = next_child("positional join")?;
+                Arc::new(crate::operators::PhysicalPositionalJoin::new(types, left, right))
+            }
             LogicalKind::CrossProduct => {
                 let left = next_child("cross product")?;
                 let right = next_child("cross product")?;
