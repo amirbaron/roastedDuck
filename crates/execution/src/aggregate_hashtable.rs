@@ -365,6 +365,35 @@ impl GroupedAggregateHashTable {
         Ok(new_groups)
     }
 
+    /// The finalized aggregates of the group of every row of `groups` (with precomputed
+    /// `hashes`), one vector per aggregate (`FetchAggregates`). Like DuckDB, groups that
+    /// do not exist yet are created.
+    pub fn fetch_aggregates(&mut self, groups: &DataChunk, hashes: &Vector) -> Result<Vec<Vector>> {
+        let count = groups.len();
+        let mut results: Vec<Vector> = self
+            .layout
+            .aggregates()
+            .iter()
+            .map(|aggregate| Vector::flat(aggregate.function.return_type.clone(), count.max(1)))
+            .collect();
+        if count == 0 {
+            return Ok(results);
+        }
+        self.find_or_create_groups(groups, hashes)?;
+        // SAFETY: the addresses are pinned rows of this table with live states.
+        unsafe {
+            finalize_states(
+                &mut self.row_state,
+                &self.layout,
+                &self.addresses,
+                count,
+                &mut results,
+                0,
+            )?;
+        }
+        Ok(results)
+    }
+
     /// Merges every group of `other` (a collection with this table's layout) into this
     /// table, consuming `other`'s states (`Combine`).
     pub fn combine(&mut self, other: &TupleDataCollection) -> Result<()> {

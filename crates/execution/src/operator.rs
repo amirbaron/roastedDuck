@@ -69,6 +69,11 @@ pub trait PhysicalOperator: Send + Sync + fmt::Debug + 'static {
     fn is_cte(&self) -> bool {
         false
     }
+    /// Whether every child (not only the first) feeds this sink, each in its own
+    /// pipeline, the last child first (DuckDB's `PhysicalIEJoin::BuildPipelines`).
+    fn sinks_all_children(&self) -> bool {
+        false
+    }
     /// Sinks outside this source's subtree whose pipelines must finish first (delim
     /// scans read the data of their delim join, CTE scans that of their CTE).
     fn source_dependencies(&self) -> Vec<PhysicalRef> {

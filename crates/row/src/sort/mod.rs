@@ -39,7 +39,7 @@ pub use sorter::{
     Sort, SortColumn, SortColumnStats, SortConfig, SortGlobalSinkState, SortLocalSinkState, SortSource,
 };
 pub use strategy::{
-    FullSort, HashedSort, NaturalSort, SortStrategy, StrategyGlobalState, StrategyLocalState,
+    ChunkRow, FullSort, HashedSort, NaturalSort, SortStrategy, StrategyGlobalState, StrategyLocalState,
 };
 
 use crate::layout::TupleDataLayout;
