@@ -31,10 +31,16 @@ pub struct ExecutionContext {
     pub env: Arc<ClientEnv>,
     /// Index of the worker thread running the current task.
     pub thread_index: usize,
+    /// Collects per-operator rows and timings under `EXPLAIN ANALYZE`.
+    pub profiler: Option<Arc<crate::QueryProfiler>>,
 }
 
 impl ExecutionContext {
     pub fn new(env: Arc<ClientEnv>) -> Self {
-        Self { env, thread_index: 0 }
+        Self {
+            env,
+            thread_index: 0,
+            profiler: None,
+        }
     }
 }

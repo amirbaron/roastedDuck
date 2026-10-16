@@ -433,6 +433,11 @@ pub struct JoinHashTable {
     current_partitions: Vec<bool>,
     /// Partitions already built (`completed_partitions`).
     completed_partitions: Vec<bool>,
+    /// Whether the pointer table comes with a bloom filter of the key hashes
+    /// (`should_build_bloom_filter`).
+    build_bloom_filter: bool,
+    /// The bloom filter, filled while the rows are inserted (`bloom_filter`).
+    bloom_filter: Option<Arc<crate::operators::join::BloomFilter>>,
 }
 
 impl JoinHashTable {
@@ -546,7 +551,20 @@ impl JoinHashTable {
             load_factor: Self::DEFAULT_LOAD_FACTOR,
             current_partitions: vec![false; partitions],
             completed_partitions: vec![false; partitions],
+            build_bloom_filter: false,
+            bloom_filter: None,
         })
+    }
+
+    /// Makes the next pointer table come with a bloom filter (`SetBuildBloomFilter`).
+    pub fn set_build_bloom_filter(&mut self, build: bool) {
+        self.build_bloom_filter = build;
+    }
+
+    /// The bloom filter of the key hashes, once the pointer table was built with one
+    /// (`GetBloomFilter`).
+    pub fn bloom_filter(&self) -> Option<&Arc<crate::operators::join::BloomFilter>> {
+        self.bloom_filter.as_ref()
     }
 
     /// Turns this into the table of a correlated MARK join whose first
@@ -736,6 +754,11 @@ impl JoinHashTable {
                 "Hashtable capacity exceeds 48-bit limit (2^48 - 1)",
             ));
         }
+        if self.build_bloom_filter {
+            self.bloom_filter = Some(Arc::new(crate::operators::join::BloomFilter::new(
+                self.count() as u64
+            )));
+        }
         match &self.pointer_table {
             Some(table) if table.capacity >= capacity => capacity = table.capacity,
             _ => {
@@ -797,6 +820,11 @@ impl JoinHashTable {
                 rows.iter()
                     .map(|&row| unsafe { load_hash(row, self.pointer_offset) }),
             );
+            if let Some(bloom_filter) = &self.bloom_filter {
+                for &hash in &hashes {
+                    bloom_filter.insert(hash);
+                }
+            }
             if parallel {
                 inserter.insert_hashes::<true>(table.entries(), rows, &hashes)?;
             } else {
@@ -1173,6 +1201,16 @@ impl JoinHashTable {
     pub(crate) fn scan_key_column(
         &self,
         key_type: &LogicalType,
+        f: impl FnMut(&[RowPtr], &Vector) -> Result<bool>,
+    ) -> Result<bool> {
+        self.scan_key_column_at(0, key_type, f)
+    }
+
+    /// [`Self::scan_key_column`] for key column `column`.
+    pub(crate) fn scan_key_column_at(
+        &self,
+        column: usize,
+        key_type: &LogicalType,
         mut f: impl FnMut(&[RowPtr], &Vector) -> Result<bool>,
     ) -> Result<bool> {
         let mut scan = self
@@ -1184,7 +1222,7 @@ impl JoinHashTable {
             let rows = &scan.chunk_state.row_locations()[..count];
             keys.reset_flat(count);
             // SAFETY: the rows were just fetched from this table's pinned blocks.
-            unsafe { self.gather(rows, None, count, 0, &mut keys, None)? };
+            unsafe { self.gather(rows, None, count, column, &mut keys, None)? };
             if !f(rows, &keys)? {
                 return Ok(false);
             }

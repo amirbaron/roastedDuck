@@ -16,6 +16,8 @@ mod bind_showref;
 mod bind_table_function;
 mod plan_joinref;
 
+pub use plan_joinref::{JoinSide, create_join, extract_join_conditions};
+
 pub use plan_joinref::extract_join_conditions_from;
 pub(crate) use plan_joinref::table_references;
 
@@ -488,6 +490,10 @@ fn bind_base_table(
                 ordinality_index: None,
                 shared_column_ids: Some(shared_column_ids),
                 table: Some(Arc::clone(&found.entry)),
+                table_schema: Some((found.catalog.clone(), found.schema.clone())),
+                table_filters: rustdb_storage::TableFilterSet::default(),
+                dynamic_filters: None,
+                sample_options: None,
             };
             Ok(BoundStatement::new(
                 LogicalOperator::new(LogicalKind::Get(Box::new(get))),

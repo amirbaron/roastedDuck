@@ -7,7 +7,11 @@ use rustdb_row::hash::hash_columns;
 use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
 use crate::aggregate_hashtable::{GroupedAggregateHashTable, initial_capacity};
-use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkData, SinkState};
+use rustdb_common::tree_renderer::RenderParams;
+
+use crate::operator::{
+    ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkData, SinkState, set_estimated_cardinality,
+};
 use crate::{ExecutionContext, ExpressionExecutor, Sink, SinkFinalize, SinkResult, Source, SourceResult};
 
 /// Data produced by a delim join's sink and read by its scans: the buffered left input
@@ -173,6 +177,11 @@ pub struct PhysicalDelimScan {
     /// recursive CTE then waits for the delim join, and re-running the scan must not
     /// re-run the join.
     external: bool,
+    /// The delim join's number in the plan, shown by `EXPLAIN` (DuckDB's `delim_index`).
+    delim_index: OnceLock<u64>,
+    /// For the buffered input of a flipped (right) delim join: `EXPLAIN` shows it as
+    /// DuckDB's `PhysicalDummyScan`.
+    shown_as_dummy_scan: bool,
 }
 
 impl PhysicalDelimScan {
@@ -184,14 +193,18 @@ impl PhysicalDelimScan {
             data: DelimData::Distinct,
             owner: None,
             external,
+            delim_index: OnceLock::new(),
+            shown_as_dummy_scan: false,
         }
     }
 
-    /// The scan of the delim join's buffered left input, owning the delim sink.
+    /// The scan of the delim join's buffered input, owning the delim sink; `flipped` for
+    /// a right delim join.
     pub fn buffered_input(
         types: Vec<LogicalType>,
         shared: Arc<DelimShared>,
         owner: Arc<PhysicalDelimJoin>,
+        flipped: bool,
     ) -> Self {
         Self {
             types,
@@ -199,16 +212,37 @@ impl PhysicalDelimScan {
             data: DelimData::Cached,
             owner: Some(owner),
             external: false,
+            delim_index: OnceLock::new(),
+            shown_as_dummy_scan: flipped,
         }
+    }
+
+    /// Records the number of the delim join this scan reads (DuckDB's
+    /// `GatherDelimScans`).
+    pub fn set_delim_index(&self, delim_index: u64) {
+        let _ = self.delim_index.set(delim_index);
     }
 }
 
 impl PhysicalOperator for PhysicalDelimScan {
     fn name(&self) -> &'static str {
         match self.data {
+            DelimData::Cached if self.shown_as_dummy_scan => "DUMMY_SCAN",
             DelimData::Cached => "COLUMN_DATA_SCAN",
             DelimData::Distinct => "DELIM_SCAN",
         }
+    }
+    /// DuckDB's `PhysicalColumnDataScan::ParamsToString` (`PhysicalDummyScan` has none).
+    fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
+        let mut result = RenderParams::new();
+        if self.shown_as_dummy_scan {
+            return result;
+        }
+        if let (DelimData::Distinct, Some(index)) = (&self.data, self.delim_index.get()) {
+            result.insert("Delim Index".to_owned(), index.to_string());
+        }
+        set_estimated_cardinality(&mut result, estimated_cardinality);
+        result
     }
     fn types(&self) -> &[LogicalType] {
         &self.types

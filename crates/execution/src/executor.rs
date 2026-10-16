@@ -26,6 +26,8 @@ pub struct Executor {
     remaining: HashMap<usize, usize>,
     /// Finalized sink states, keyed by operator address.
     sink_states: HashMap<usize, SinkState>,
+    /// The profiler of an `EXPLAIN ANALYZE` run.
+    profiler: Option<Arc<crate::QueryProfiler>>,
 }
 
 fn key(op: &PhysicalRef) -> usize {
@@ -36,6 +38,15 @@ impl Executor {
     /// Runs the plan rooted at `root` (a sink, e.g. a result collector) to completion and
     /// returns the root's finalized sink state.
     pub fn execute(root: &PhysicalRef, env: Arc<ClientEnv>) -> Result<SinkState> {
+        Self::execute_profiled(root, env, None)
+    }
+
+    /// [`Self::execute`], recording every operator's rows and time in `profiler`.
+    pub fn execute_profiled(
+        root: &PhysicalRef,
+        env: Arc<ClientEnv>,
+        profiler: Option<Arc<crate::QueryProfiler>>,
+    ) -> Result<SinkState> {
         let mut executor = Self {
             env,
             pipelines: Vec::new(),
@@ -43,6 +54,7 @@ impl Executor {
             operator_globals: HashMap::new(),
             remaining: HashMap::new(),
             sink_states: HashMap::new(),
+            profiler,
         };
         let root_pipeline = executor.add_pipeline(Pipeline::new(Arc::clone(root)));
         let input = root
@@ -241,7 +253,8 @@ impl Executor {
     }
 
     fn run_pipeline(&mut self, index: usize) -> Result<()> {
-        let ctx = ExecutionContext::new(Arc::clone(&self.env));
+        let mut ctx = ExecutionContext::new(Arc::clone(&self.env));
+        ctx.profiler.clone_from(&self.profiler);
         let no_role = |name: &str| Error::internal(format!("operator {name} lacks its pipeline role"));
         let (source_op, sink_op, operators) = {
             let pipeline = &self.pipelines[index];

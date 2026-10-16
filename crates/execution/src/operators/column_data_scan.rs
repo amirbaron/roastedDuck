@@ -1,3 +1,5 @@
+use crate::operator::set_estimated_cardinality;
+use rustdb_common::tree_renderer::RenderParams;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -12,11 +14,26 @@ use crate::{ExecutionContext, Source, SourceResult};
 pub struct PhysicalColumnDataScan {
     types: Vec<LogicalType>,
     chunks: Arc<[DataChunk]>,
+    /// Whether this stands for an empty result (DuckDB's `PhysicalEmptyResult`).
+    empty_result: bool,
 }
 
 impl PhysicalColumnDataScan {
     pub fn new(types: Vec<LogicalType>, chunks: Arc<[DataChunk]>) -> Self {
-        Self { types, chunks }
+        Self {
+            types,
+            chunks,
+            empty_result: false,
+        }
+    }
+
+    /// A scan without rows planned for a `LOGICAL_EMPTY_RESULT`.
+    pub fn empty_result(types: Vec<LogicalType>) -> Self {
+        Self {
+            types,
+            chunks: Arc::from([]),
+            empty_result: true,
+        }
     }
 }
 
@@ -32,6 +49,24 @@ impl PhysicalOperator for PhysicalColumnDataScan {
     }
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
+    }
+
+    fn explain_name(&self) -> String {
+        if self.empty_result {
+            "EMPTY_RESULT"
+        } else {
+            self.name()
+        }
+        .to_owned()
+    }
+
+    fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
+        let mut result = RenderParams::new();
+        if self.empty_result {
+            return result;
+        }
+        set_estimated_cardinality(&mut result, estimated_cardinality);
+        result
     }
 }
 

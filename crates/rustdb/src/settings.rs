@@ -7,8 +7,9 @@ use std::collections::HashMap;
 use rustdb_ast::OrderType;
 use rustdb_common::string_util::candidates_error_message;
 use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_execution::JoinPlanSettings;
+use rustdb_execution::{ExplainOutput, JoinPlanSettings};
 use rustdb_function::cast::ValueCast;
+use rustdb_optimizer::{OptimizerConfig, OptimizerType};
 use rustdb_planner::{DefaultNullOrder, PlannerConfig};
 use rustdb_types::{LogicalType, Value};
 
@@ -220,6 +221,8 @@ pub(crate) struct Settings {
     /// The options that stay changeable under `lock_configuration`, by canonical name
     /// (`DBConfigOptions::allowed_configs`).
     allowed_configs: Vec<&'static str>,
+    /// `PRAGMA disable_optimizer` (DuckDB's `ClientConfig::enable_optimizer`, negated).
+    pub optimizer_disabled: bool,
 }
 
 /// The canonical option `name` stands for, resolving aliases (`DBConfig::GetOptionByName`).
@@ -794,11 +797,79 @@ impl Settings {
                 }
                 self.other.insert(option, value.clone());
             }
+            "perfect_ht_threshold" => {
+                // DuckDB's `PerfectHtThresholdSetting::OnSet`.
+                let bits = value
+                    .default_cast_as(&LogicalType::UBIGINT)?
+                    .as_i128()
+                    .unwrap_or(0);
+                if bits > 32 {
+                    return Err(Error::new(
+                        ErrorKind::Parser,
+                        "Perfect HT threshold out of range: should be within range 0 - 32",
+                    ));
+                }
+                self.other.insert(option, value.clone());
+            }
+            "disabled_optimizers" => {
+                OptimizerType::parse_list(&value.to_varchar()?)?;
+                self.other.insert(option, value.clone());
+            }
+            "explain_output" => {
+                let parameter = value.to_varchar()?;
+                ExplainOutput::parse(&parameter)?;
+                self.other
+                    .insert(option, Value::varchar(parameter.to_ascii_lowercase()));
+            }
             other => {
                 self.other.insert(other, value.clone());
             }
         }
         Ok(())
+    }
+
+    /// The settings that steer the optimizer.
+    pub fn optimizer_config(&self) -> OptimizerConfig {
+        let boolean = |name: &str| {
+            self.other
+                .get(name)
+                .and_then(|value| value.default_cast_as(&LogicalType::BOOLEAN).ok())
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+        };
+        OptimizerConfig {
+            enabled: !self.optimizer_disabled,
+            disabled: self
+                .other
+                .get("disabled_optimizers")
+                .and_then(|value| value.to_varchar().ok())
+                .and_then(|list| OptimizerType::parse_list(&list).ok())
+                .unwrap_or_default(),
+            force_no_cross_product: boolean("debug_force_no_cross_product"),
+            prefer_range_joins: boolean("prefer_range_joins"),
+            preserve_insertion_order: self
+                .other
+                .get("preserve_insertion_order")
+                .and_then(|value| value.default_cast_as(&LogicalType::BOOLEAN).ok())
+                .and_then(|value| value.as_bool())
+                .unwrap_or(true),
+            late_materialization_max_rows: self
+                .other
+                .get("late_materialization_max_rows")
+                .and_then(|value| value.default_cast_as(&LogicalType::UBIGINT).ok())
+                .and_then(|value| value.as_i128())
+                .and_then(|value| u64::try_from(value).ok())
+                .unwrap_or(50),
+        }
+    }
+
+    /// The `explain_output` setting.
+    pub fn explain_output(&self) -> ExplainOutput {
+        self.other
+            .get("explain_output")
+            .and_then(|value| value.to_varchar().ok())
+            .and_then(|value| ExplainOutput::parse(&value).ok())
+            .unwrap_or_default()
     }
 
     /// The settings that steer physical join planning.
@@ -828,6 +899,11 @@ impl Settings {
             prefer_range_joins: boolean("prefer_range_joins", defaults.prefer_range_joins),
             scalar_subquery_error_on_multiple_rows: self.planner.scalar_subquery_error_on_multiple_rows,
             asof_loop_join_threshold: unsigned("asof_loop_join_threshold", defaults.asof_loop_join_threshold),
+            dynamic_or_filter_threshold: unsigned(
+                "dynamic_or_filter_threshold",
+                defaults.dynamic_or_filter_threshold,
+            ),
+            perfect_ht_threshold: unsigned("perfect_ht_threshold", defaults.perfect_ht_threshold),
         }
     }
 

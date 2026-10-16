@@ -4,8 +4,12 @@
 //! output types, cardinality estimate) and its operator-specific data in [`LogicalKind`].
 //! The generic members let plan rewrites traverse any operator uniformly.
 
+mod cardinality;
 mod copy_to_file;
 mod display;
+mod explain;
+mod expression_filter;
+mod table_index;
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -29,6 +33,8 @@ pub use copy_to_file::{
     LogicalExport,
 };
 pub use display::render_plan;
+pub use explain::{logical_operator_name, renderer_kind};
+pub use expression_filter::ExpressionTableFilter;
 
 /// A LIMIT or OFFSET value (DuckDB's `BoundLimitNode`).
 #[derive(Clone, Debug, Default)]
@@ -101,6 +107,9 @@ pub struct LogicalAggregate {
     pub grouping_sets: Vec<GroupingSet>,
     /// For each `GROUPING(...)` call: the group indexes it inspects.
     pub grouping_functions: Vec<Vec<u64>>,
+    /// The statistics of each group, set by statistics propagation (DuckDB's
+    /// `group_stats`); they decide on perfect hash aggregation.
+    pub group_stats: Vec<Option<rustdb_storage::statistics::BaseStatistics>>,
 }
 
 /// A table or table function scan (DuckDB's `LogicalGet`).
@@ -129,6 +138,16 @@ pub struct LogicalGet {
     pub shared_column_ids: Option<SharedColumnIds>,
     /// The scanned table of a base table scan (DuckDB's `LogicalGet::GetTable`).
     pub table: Option<Arc<rustdb_catalog::CatalogEntry>>,
+    /// The catalog and schema of the scanned table, for `EXPLAIN`.
+    pub table_schema: Option<(String, String)>,
+    /// Filters pushed into the scan, keyed by the filtered column's index in
+    /// `returned_types` (DuckDB's `LogicalGet::table_filters`).
+    pub table_filters: rustdb_storage::TableFilterSet,
+    /// Filters that joins above set at run time, keyed by position in `column_ids`
+    /// (DuckDB's `LogicalGet::dynamic_filters`).
+    pub dynamic_filters: Option<Arc<rustdb_storage::table_filter::DynamicTableFilterSet>>,
+    /// SYSTEM sampling pushed into the scan (DuckDB's `extra_info.sample_options`).
+    pub sample_options: Option<Box<rustdb_ast::SampleOptions>>,
 }
 
 /// The output bindings of INSERT/DELETE/UPDATE: the table's columns with `RETURNING`, the
@@ -229,6 +248,37 @@ pub struct LogicalComparisonJoin {
     pub delim_flipped: bool,
     /// Extra non-comparison predicate.
     pub predicate: Option<Expression>,
+    /// Whether filter pushdown may turn this MARK join into a SEMI or ANTI join (cleared
+    /// when the marker is used above the join).
+    pub convert_mark_to_semi: bool,
+    /// The run-time filters this join sets on the scans of its probe side from the range
+    /// of its build keys (DuckDB's `LogicalComparisonJoin::filter_pushdown`).
+    pub join_filters: Vec<JoinFilter>,
+}
+
+/// The run-time filters of one join condition (DuckDB's `JoinFilterPushdownInfo` for a
+/// condition): filters on the probe keys derived from the build keys, set on each target
+/// scan.
+#[derive(Clone, Debug)]
+pub struct JoinFilter {
+    /// The condition, by position after equalities were moved first.
+    pub condition: usize,
+    pub targets: Vec<JoinFilterTarget>,
+    /// Whether the build side filters its input, so a bloom filter of its keys is likely
+    /// selective (`build_side_has_filter`).
+    pub build_side_has_filter: bool,
+}
+
+/// One scan column receiving a join filter (DuckDB's `JoinFilterPushdownFilter` with its
+/// `JoinFilterPushdownColumn` for the condition).
+#[derive(Clone, Debug)]
+pub struct JoinFilterTarget {
+    /// The scan's run-time filters.
+    pub dynamic_filters: Arc<rustdb_storage::table_filter::DynamicTableFilterSet>,
+    /// The filtered column, by position in the scan's `column_ids`.
+    pub column_index: usize,
+    /// The scanned column's type, which the build key values are cast to.
+    pub storage_type: LogicalType,
 }
 
 impl JoinCondition {
@@ -252,6 +302,8 @@ impl LogicalComparisonJoin {
             duplicate_eliminated_columns: Vec::new(),
             delim_flipped: false,
             predicate: None,
+            convert_mark_to_semi: true,
+            join_filters: Vec::new(),
         }
     }
 }
@@ -330,6 +382,9 @@ pub enum LogicalKind {
         orders: Vec<BoundOrderByNode>,
         limit: u64,
         offset: u64,
+        /// The run-time filter on the first ORDER BY column pushed into scans, which
+        /// the Top-N tightens as its heap fills (DuckDB's `LogicalTopN::dynamic_filter`).
+        dynamic_filter: Option<Arc<rustdb_storage::table_filter::DynamicFilterData>>,
     },
     Distinct {
         distinct_type: DistinctType,
@@ -416,6 +471,8 @@ pub enum LogicalKind {
     Explain {
         explain_type: ExplainType,
         explain_format: ExplainFormat,
+        /// The plan before optimization, rendered when it was bound.
+        logical_plan_unopt: String,
     },
     Prepare {
         name: String,

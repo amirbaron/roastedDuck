@@ -57,6 +57,9 @@ pub struct PlannerConfig {
     pub enable_macro_dependencies: bool,
     /// `allow_unredacted_secrets`: `duckdb_secrets(redact := false)` may show secrets.
     pub allow_unredacted_secrets: bool,
+    /// Whether RIGHT joins are planned as LEFT joins with the sides swapped: the optimizer
+    /// is enabled and `build_side_probe_side` is not disabled.
+    pub flip_right_joins: bool,
 }
 
 /// The `default_null_order` setting (DuckDB's `DefaultOrderByNullType`).
@@ -83,6 +86,7 @@ impl Default for PlannerConfig {
             enable_view_dependencies: false,
             enable_macro_dependencies: false,
             allow_unredacted_secrets: false,
+            flip_right_joins: true,
         }
     }
 }

@@ -6,6 +6,7 @@ use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
 use rustdb_execution::operators::{CollectedResult, PhysicalResultCollector};
 use rustdb_execution::{Executor, PhysicalRef, PlanContext, ScalarEvaluator, create_physical_plan_with};
 use rustdb_function::cast::CastFunctionSet;
+use rustdb_optimizer::Optimizer;
 use rustdb_planner::{
     ClientContext, ColumnBindingResolver, LogicalKind, LogicalOperator, PlannedStatement, Planner,
     PreparedStatementData,
@@ -717,7 +718,16 @@ impl Connection {
             transaction,
             casts: Arc::clone(&instance.casts),
             evaluator: Arc::new(ScalarEvaluator),
-            config: self.settings.planner.clone(),
+            config: {
+                let optimizer = self.settings.optimizer_config();
+                rustdb_planner::PlannerConfig {
+                    flip_right_joins: optimizer.enabled
+                        && !optimizer
+                            .disabled
+                            .contains(&rustdb_optimizer::OptimizerType::BuildSideProbeSide),
+                    ..self.settings.planner.clone()
+                }
+            },
             prepared_statements: self.prepared_statements.clone(),
             function_client: Arc::clone(&self.function_client),
             user_variables: self.user_variables.clone(),
@@ -1440,6 +1450,9 @@ impl Connection {
             }
             LogicalKind::Pragma { name, .. } => {
                 let lower = name.to_ascii_lowercase();
+                if lower == "enable_optimizer" || lower == "disable_optimizer" {
+                    self.settings.optimizer_disabled = lower == "disable_optimizer";
+                }
                 if lower == "disable_checkpoint_on_shutdown" || lower == "enable_checkpoint_on_shutdown" {
                     self.database
                         .instance()
@@ -1510,16 +1523,27 @@ impl Connection {
         names: Vec<String>,
         types: Vec<LogicalType>,
     ) -> Result<MaterializedResult> {
+        let transaction = self.transactions.current();
+        let client = self.client_context(transaction);
+        let optimizer_config = self.settings.optimizer_config();
+        let optimizer_client = optimizer_config.enabled.then(|| Arc::clone(&client));
+        plan = Optimizer::new(client, optimizer_config).optimize(plan)?;
         ColumnBindingResolver::resolve(&mut plan)?;
         seed_samples(&mut plan, &self.function_client);
         let context = PlanContext {
             transaction: self.transactions.current(),
             catalogs: self.catalogs(&self.default_catalog()),
             join_settings: self.settings.join_plan_settings(),
+            explain_output: self.settings.explain_output(),
+            query: self.function_client.query(),
+            optimizer_client,
         };
         let physical = create_physical_plan_with(plan, &context)?;
+        // EXPLAIN ANALYZE profiles the run.
+        let profiler =
+            (physical.name() == "EXPLAIN_ANALYZE").then(|| Arc::new(rustdb_execution::QueryProfiler::new()));
         let root: PhysicalRef = Arc::new(PhysicalResultCollector::new(physical));
-        let state = Executor::execute(&root, Arc::clone(&self.database.instance().env))?;
+        let state = Executor::execute_profiled(&root, Arc::clone(&self.database.instance().env), profiler)?;
         let collected = state
             .downcast_ref::<Mutex<CollectedResult>>()
             .ok_or_else(|| Error::internal("result collector state has an unexpected type"))?;

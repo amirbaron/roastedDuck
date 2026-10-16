@@ -434,6 +434,7 @@ dependencies = [
  "rustdb-execution",
  "rustdb-function",
  "rustdb-functions",
+ "rustdb-optimizer",
  "rustdb-parser",
  "rustdb-planner",
  "rustdb-serde",
@@ -524,6 +525,7 @@ dependencies = [
  "rustdb-common",
  "rustdb-function",
  "rustdb-functions",
+ "rustdb-optimizer",
  "rustdb-planner",
  "rustdb-row",
  "rustdb-storage",
@@ -553,6 +555,20 @@ dependencies = [
  "rustdb-types",
  "unicode-normalization",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "rustdb-optimizer"
+version = "1.5.6"
+dependencies = [
+ "regex-syntax",
+ "rustdb-ast",
+ "rustdb-catalog",
+ "rustdb-common",
+ "rustdb-function",
+ "rustdb-planner",
+ "rustdb-storage",
+ "rustdb-types",
 ]
 
 [[package]]
@@ -620,6 +636,7 @@ version = "1.5.6"
 dependencies = [
  "rustdb-buffer",
  "rustdb-common",
+ "rustdb-row",
  "rustdb-serde",
  "rustdb-types",
  "ruzstd",

@@ -2,6 +2,7 @@
 //! is built into a [`JoinHashTable`], the left input probes it, and RIGHT/FULL joins scan
 //! the table for unmatched rows afterwards.
 
+use rustdb_common::tree_renderer::RenderParams;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
@@ -13,6 +14,9 @@ use rustdb_planner::{Expression, ExpressionKind};
 use rustdb_row::PartitionedAppendState;
 use rustdb_types::{DataChunk, LogicalType};
 
+use super::join_filter::{
+    JoinFilterInput, KeyMinMax, clear_join_filters, push_bloom_filter, set_join_filters,
+};
 use super::perfect_hash_join::{
     KeyRange, PerfectHashJoinExecutor, PerfectHashJoinState, is_perfect_hash_join_candidate,
 };
@@ -48,6 +52,12 @@ pub struct PhysicalHashJoin {
     single_join_error_on_multiple_rows: bool,
     /// Whether the join may use a perfect hash table, depending on its build keys.
     perfect_hash_candidate: bool,
+    /// The run-time filters set on the probe side's scans from the build keys.
+    join_filters: Vec<rustdb_planner::operator::JoinFilter>,
+    /// `dynamic_or_filter_threshold`.
+    dynamic_or_filter_threshold: u64,
+    /// The probe side's estimated cardinality, which decides on bloom filters.
+    probe_cardinality: u64,
     children: [PhysicalRef; 2],
 }
 
@@ -126,8 +136,33 @@ impl PhysicalHashJoin {
             delim_types,
             single_join_error_on_multiple_rows,
             perfect_hash_candidate,
+            join_filters: Vec::new(),
+            dynamic_or_filter_threshold: 0,
+            probe_cardinality: 0,
             children: [left, right],
         })
+    }
+
+    /// Sets the run-time filters on the probe side (DuckDB's `filter_pushdown`); the
+    /// conditions are referenced by their position with equalities first. Up to
+    /// `dynamic_or_filter_threshold` build rows, they include the IN list of the keys;
+    /// against a probe side of `probe_cardinality` rows, a bloom filter.
+    #[must_use]
+    pub fn with_join_filters(
+        mut self,
+        join_filters: Vec<rustdb_planner::operator::JoinFilter>,
+        dynamic_or_filter_threshold: u64,
+        probe_cardinality: u64,
+    ) -> Self {
+        self.join_filters = join_filters;
+        self.dynamic_or_filter_threshold = dynamic_or_filter_threshold;
+        self.probe_cardinality = probe_cardinality;
+        self
+    }
+
+    /// The key identifying this join's filters in the scans' run-time filter sets.
+    fn filter_key(&self) -> usize {
+        std::ptr::from_ref(self).addr()
     }
 
     /// A hash table for this join (`InitializeHashTable`).
@@ -195,6 +230,10 @@ impl PhysicalOperator for PhysicalHashJoin {
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         propagates_build_side(self.join_type).then_some(self as &dyn ErasedSource)
     }
+
+    fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
+        super::comparison_join_params(self.join_type, &self.conditions, estimated_cardinality)
+    }
 }
 
 /// The shared build state (DuckDB's `HashJoinGlobalSinkState`).
@@ -209,6 +248,8 @@ pub struct HashJoinGlobalSinkState {
     /// The perfect hash table, used instead of the hash table's pointer table when the
     /// build keys allow it (`perfect_join_executor`).
     perfect_join_executor: Option<PerfectHashJoinExecutor>,
+    /// The range of the build keys of each join filter.
+    filter_ranges: Mutex<Vec<KeyMinMax>>,
 }
 
 /// One thread's build state (DuckDB's `HashJoinLocalSinkState`).
@@ -218,6 +259,7 @@ pub struct HashJoinLocalSinkState {
     hash_table: JoinHashTable,
     append_state: PartitionedAppendState,
     key_range: KeyRange,
+    filter_ranges: Vec<KeyMinMax>,
 }
 
 impl Sink for PhysicalHashJoin {
@@ -225,11 +267,13 @@ impl Sink for PhysicalHashJoin {
     type Local = HashJoinLocalSinkState;
 
     fn global_sink_state(&self, ctx: &ExecutionContext) -> Result<HashJoinGlobalSinkState> {
+        clear_join_filters(&self.join_filters, self.filter_key());
         Ok(HashJoinGlobalSinkState {
             hash_table: RwLock::new(self.initialize_hash_table(ctx)?),
             local_hash_tables: Mutex::default(),
             key_range: Mutex::default(),
             perfect_join_executor: None,
+            filter_ranges: Mutex::new(vec![KeyMinMax::default(); self.join_filters.len()]),
         })
     }
 
@@ -245,6 +289,7 @@ impl Sink for PhysicalHashJoin {
             hash_table,
             append_state,
             key_range: KeyRange::default(),
+            filter_ranges: vec![KeyMinMax::default(); self.join_filters.len()],
         })
     }
 
@@ -260,6 +305,11 @@ impl Sink for PhysicalHashJoin {
         flatten_sequences(&mut keys);
         if self.perfect_hash_candidate {
             local.key_range.update(keys.column(0), keys.len());
+        }
+        for (filter, range) in self.join_filters.iter().zip(&mut local.filter_ranges) {
+            if filter.condition < keys.column_count() {
+                range.update(keys.column(filter.condition), keys.len());
+            }
         }
         let mut payload = DataChunk::new(
             self.payload_columns
@@ -288,6 +338,15 @@ impl Sink for PhysicalHashJoin {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .merge(local.key_range);
+        if !self.join_filters.is_empty() {
+            let mut ranges = global
+                .filter_ranges
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            for (range, local) in ranges.iter_mut().zip(local.filter_ranges) {
+                range.merge(local);
+            }
+        }
         global
             .local_hash_tables
             .lock()
@@ -316,12 +375,56 @@ impl Sink for PhysicalHashJoin {
             let rhs_types = &self.types[self.lhs_output_columns.len()..];
             global.perfect_join_executor = PerfectHashJoinExecutor::try_build(table, range, rhs_types)?;
         }
+        let mut bloom_targets = Vec::new();
+        if !self.join_filters.is_empty() && table.count() > 0 {
+            let ranges = global
+                .filter_ranges
+                .get_mut()
+                .unwrap_or_else(PoisonError::into_inner);
+            let key_types: Vec<LogicalType> = self
+                .conditions
+                .iter()
+                .map(|condition| condition.right.return_type.clone())
+                .collect();
+            let probe_types: Vec<LogicalType> = self
+                .conditions
+                .iter()
+                .map(|condition| condition.left.return_type.clone())
+                .collect();
+            bloom_targets = set_join_filters(&JoinFilterInput {
+                key: self.filter_key(),
+                filters: &self.join_filters,
+                ranges,
+                comparisons: &self.hash_conditions.comparisons,
+                key_types: &key_types,
+                probe_types: &probe_types,
+                table,
+                in_filter_threshold: self.dynamic_or_filter_threshold,
+                probe_cardinality: self.probe_cardinality,
+                is_perfect_hashtable: global.perfect_join_executor.is_some(),
+            })?;
+            table.set_build_bloom_filter(!bloom_targets.is_empty());
+        }
         if table.count() > 0 && global.perfect_join_executor.is_none() {
             table.allocate_pointer_table()?;
             table.initialize_pointer_table(0, table.capacity());
             table.finalize(0..table.data_collection().chunk_count(), false)?;
         }
         table.mark_finalized();
+        // The bloom filters are complete once every row is in the table (DuckDB pushes
+        // them in `HashJoinFinalizeEvent::FinishEvent`).
+        if let (Some(bloom_filter), Some(condition)) = (table.bloom_filter(), self.conditions.first()) {
+            let key_column_name = condition.right.name();
+            for (filter, target) in bloom_targets {
+                if let Some(target) = self
+                    .join_filters
+                    .get(filter)
+                    .and_then(|filter| filter.targets.get(target))
+                {
+                    push_bloom_filter(target, self.filter_key(), bloom_filter, &key_column_name);
+                }
+            }
+        }
         if table.count() == 0 && empty_result_if_rhs_is_empty(self.join_type) {
             return Ok(SinkFinalize::NoOutputPossible);
         }

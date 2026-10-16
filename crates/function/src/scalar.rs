@@ -44,13 +44,24 @@ pub enum Stability {
 pub trait FunctionData: Any + Send + Sync + fmt::Debug {
     fn as_any(&self) -> &dyn Any;
 
-    /// Whether this bind data is equal to `other` (DuckDB's `FunctionData::Equals`); by
-    /// default only the same data is.
+    /// Whether `other` is the same bind data (DuckDB's `FunctionData::Equals`); by
+    /// default only data that is shared is known to be equal.
     fn equals(&self, other: &dyn FunctionData) -> bool {
-        std::ptr::addr_eq(
-            std::ptr::from_ref(self.as_any()),
-            std::ptr::from_ref(other.as_any()),
-        )
+        let _ = other;
+        false
+    }
+}
+
+/// The bind data of `stats(x)` (DuckDB's `StatsBindData`): the statistics of `x` as
+/// text, filled in by the optimizer's statistics propagation.
+#[derive(Debug, Default)]
+pub struct StatsBindData {
+    pub stats: std::sync::Mutex<String>,
+}
+
+impl FunctionData for StatsBindData {
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

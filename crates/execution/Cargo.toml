@@ -12,6 +12,7 @@ rustdb-types.workspace = true
 rustdb-ast.workspace = true
 rustdb-function = { path = "../function" }
 rustdb-planner = { path = "../planner" }
+rustdb-optimizer = { path = "../optimizer" }
 rustdb-buffer = { path = "../buffer" }
 rustdb-row = { path = "../row" }
 rustdb-storage = { path = "../storage" }

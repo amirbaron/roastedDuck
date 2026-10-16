@@ -41,7 +41,8 @@ fn order_modifiers_equal(left: Option<&BoundOrderModifier>, right: Option<&Bound
     }
 }
 
-/// Bind data equality (`FunctionData::Equals`).
+/// Bind data equality (DuckDB's `FunctionData::Equals`): shared data, or data the
+/// function compares equal.
 fn bind_data_equal(left: Option<&Arc<dyn FunctionData>>, right: Option<&Arc<dyn FunctionData>>) -> bool {
     match (left, right) {
         (Some(l), Some(r)) => Arc::ptr_eq(l, r) || l.equals(r.as_ref()),

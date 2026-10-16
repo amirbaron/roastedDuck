@@ -569,6 +569,40 @@ fn sleep_ms_functions() -> ScalarFunctionSet {
     set("sleep_ms", vec![function])
 }
 
+/// `stats(x) -> VARCHAR`: the statistics the optimizer derived for `x` (DuckDB's
+/// `StatsFun`).
+pub fn stats_functions() -> ScalarFunctionSet {
+    let mut function = ScalarFunction::new(
+        "stats",
+        vec![LogicalType::ANY],
+        LogicalType::VARCHAR,
+        |_, state, result| {
+            let stats = state
+                .bind_data
+                .as_ref()
+                .and_then(|data| data.as_any().downcast_ref::<rustdb_function::StatsBindData>())
+                .map(|data| {
+                    data.stats
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .clone()
+                })
+                .unwrap_or_default();
+            let text = if stats.is_empty() {
+                "No statistics".to_owned()
+            } else {
+                stats
+            };
+            *result = Vector::constant(&Value::varchar(text))?;
+            Ok(())
+        },
+    )
+    .with_bind(|_, _| Ok(Some(Arc::new(rustdb_function::StatsBindData::default()))));
+    function.null_handling = NullHandling::Special;
+    function.stability = Stability::Volatile;
+    set("stats", vec![function])
+}
+
 /// Every generic function set with its aliases.
 /// The value of `current_setting`, computed when binding.
 #[derive(Debug)]
@@ -649,6 +683,7 @@ pub fn generic_functions() -> Vec<ScalarFunctionSet> {
         replace_type_functions(),
         vector_type_functions(),
         sleep_ms_functions(),
+        stats_functions(),
     ]
 }
 

@@ -69,6 +69,7 @@ fn aggregate(
         groups: Vec::new(),
         grouping_sets: Vec::new(),
         grouping_functions: Vec::new(),
+        group_stats: Vec::new(),
     })))
     .with_expressions(expressions)
     .with_children(vec![child])

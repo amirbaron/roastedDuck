@@ -1,4 +1,5 @@
 mod serialization;
+mod sql;
 
 use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};

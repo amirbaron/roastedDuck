@@ -1,5 +1,7 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
+use crate::operator::{aggregate_names, expression_names, set_estimated_cardinality};
+use rustdb_common::tree_renderer::RenderParams;
 use rustdb_common::{Error, Result};
 use rustdb_planner::Expression;
 use rustdb_planner::expression::BoundAggregateExpression;
@@ -126,6 +128,14 @@ impl PhysicalOperator for PhysicalHashAggregate {
     }
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
+    }
+
+    fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
+        let mut result = RenderParams::new();
+        result.insert("Groups".to_owned(), expression_names(&self.groups));
+        result.insert("Aggregates".to_owned(), aggregate_names(&self.aggregates));
+        set_estimated_cardinality(&mut result, estimated_cardinality);
+        result
     }
 }
 

@@ -2,6 +2,7 @@
 //! without an equality by comparing every left row with every right row, right rows of a
 //! right chunk outer and left rows inner.
 
+use rustdb_common::tree_renderer::RenderParams;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -234,6 +235,10 @@ impl PhysicalOperator for PhysicalNestedLoopJoin {
     }
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         propagates_build_side(self.join_type).then_some(self as &dyn ErasedSource)
+    }
+
+    fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
+        super::comparison_join_params(self.join_type, &self.conditions, estimated_cardinality)
     }
 }
 

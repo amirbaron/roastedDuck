@@ -243,6 +243,7 @@ fn aggregate(child: LogicalOperator, aggregates: Vec<Expression>) -> LogicalOper
         groups: vec![],
         grouping_sets: vec![],
         grouping_functions: vec![],
+        group_stats: vec![],
     })))
     .with_expressions(aggregates)
     .with_children(vec![child])
@@ -315,6 +316,7 @@ fn group_by(child: LogicalOperator, sets: Vec<Vec<u64>>, aggregates: Vec<Express
         groups: vec![Expression::reference("g", LogicalType::INTEGER, 0)],
         grouping_sets: sets.into_iter().map(|set| set.into_iter().collect()).collect(),
         grouping_functions: vec![],
+        group_stats: vec![],
     })))
     .with_expressions(aggregates)
     .with_children(vec![child])

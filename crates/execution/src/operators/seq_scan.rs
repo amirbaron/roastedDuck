@@ -1,7 +1,12 @@
+use crate::operator::set_estimated_cardinality;
+use rustdb_common::tree_renderer::RenderParams;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rustdb_common::{Result, STANDARD_VECTOR_SIZE};
+use rustdb_function::random::RandomEngine;
+use rustdb_storage::table::{ScanRandom, ScanSampling};
+use rustdb_storage::table_filter::DynamicTableFilterSet;
 use rustdb_storage::{
     DataTable, ParallelTableScanState, StorageIndex, TableFilterSet, TableScanState, Transaction,
 };
@@ -28,11 +33,96 @@ pub struct PhysicalSeqScan {
     transaction: Arc<Transaction>,
     column_ids: Vec<StorageIndex>,
     filters: Option<TableFilterSet>,
+    /// The filters operators set while the query runs (DuckDB's `dynamic_filters`),
+    /// applied with `filters` by scans starting after they were set.
+    dynamic_filters: Option<Arc<DynamicTableFilterSet>>,
     /// Positions (into `column_ids`) of the output columns; empty = all, in order
     /// (DuckDB's `projection_ids`).
     projection: Vec<usize>,
     /// `index_scan_max_count` and `index_scan_percentage`; `None` disables index scans.
     index_scan: Option<(u64, f64)>,
+    /// What `EXPLAIN` shows about the scan.
+    explain: ScanExplainInfo,
+    /// SYSTEM sampling pushed into the scan: the fraction of vectors to keep and the
+    /// `REPEATABLE` seed (DuckDB's `extra_info.sample_options`).
+    sampling: Option<(f64, Option<u64>)>,
+}
+
+/// [`RandomEngine`] as the storage's sampling random source.
+#[derive(Debug)]
+struct SamplingRandom(RandomEngine);
+
+impl ScanRandom for SamplingRandom {
+    fn next_random(&mut self) -> f64 {
+        self.0.next_random()
+    }
+}
+
+/// The names `EXPLAIN` shows for a table scan (the bind data and `names` DuckDB's
+/// `PhysicalTableScan` keeps).
+#[derive(Clone, Debug, Default)]
+pub struct ScanExplainInfo {
+    /// The qualified table name (`TableScanToString`); empty for table functions.
+    pub table: String,
+    /// The name of each scanned column, by position in the scan's column list.
+    pub column_names: Vec<String>,
+    /// Positions of virtual columns (`rowid`), which DuckDB does not list as projections
+    /// (`AddProjectionNames` skips ids past the table's columns).
+    pub virtual_columns: Vec<usize>,
+    /// The pushed-down sampling (`System: 10%`).
+    pub sample_method: Option<String>,
+}
+
+impl ScanExplainInfo {
+    /// DuckDB's `PhysicalTableScan::ParamsToString` for a scan with projection and filter
+    /// pushdown.
+    pub fn params(
+        &self,
+        projection: &[usize],
+        filters: Option<&TableFilterSet>,
+        dynamic_filters: Option<&TableFilterSet>,
+        estimated_cardinality: u64,
+    ) -> RenderParams {
+        let mut result = RenderParams::new();
+        if !self.table.is_empty() {
+            result.insert("Table".to_owned(), self.table.clone());
+            result.insert("Type".to_owned(), "Sequential Scan".to_owned());
+        }
+        let projected_name = |index: usize| {
+            (!self.virtual_columns.contains(&index))
+                .then(|| self.column_names.get(index).map(String::as_str))
+                .flatten()
+        };
+        let projected: Vec<&str> = if projection.is_empty() {
+            (0..self.column_names.len()).filter_map(projected_name).collect()
+        } else {
+            projection
+                .iter()
+                .filter_map(|&index| projected_name(index))
+                .collect()
+        };
+        result.insert("Projections".to_owned(), projected.join("\n"));
+        // DuckDB's `GetFilterInfo`.
+        let filter_info = |filters: &TableFilterSet| {
+            filters
+                .filters
+                .iter()
+                .filter_map(|(&column, filter)| self.column_names.get(column).map(|name| filter.to_sql(name)))
+                .collect::<Vec<String>>()
+                .join("\n")
+        };
+        if let Some(filters) = filters {
+            result.insert("Filters".to_owned(), filter_info(filters));
+        }
+        if let Some(dynamic_filters) = dynamic_filters {
+            result.insert("Dynamic Filters".to_owned(), filter_info(dynamic_filters));
+        }
+        if let Some(sample) = &self.sample_method {
+            result.insert("Sample Method".to_owned(), sample.clone());
+        }
+        set_estimated_cardinality(&mut result, estimated_cardinality);
+        result
+    }
 }
 
 /// DuckDB's default `index_scan_max_count`.
@@ -56,10 +146,45 @@ impl PhysicalSeqScan {
             table,
             transaction,
             column_ids,
+            dynamic_filters: None,
             filters,
             projection,
             index_scan: Some((DEFAULT_INDEX_SCAN_MAX_COUNT, DEFAULT_INDEX_SCAN_PERCENTAGE)),
+            explain: ScanExplainInfo::default(),
+            sampling: None,
         }
+    }
+
+    /// Sets the run-time filters operators above set (DuckDB's `dynamic_filters`), keyed
+    /// by position in the scanned columns.
+    #[must_use]
+    pub fn with_dynamic_filters(mut self, dynamic: Option<Arc<DynamicTableFilterSet>>) -> Self {
+        self.dynamic_filters = dynamic;
+        self
+    }
+
+    /// The filters a scan starting now applies: `filters` with the run-time filters set
+    /// so far (`TableScanGlobalSourceState`'s `GetFinalTableFilters`).
+    fn scan_filters(&self) -> Option<TableFilterSet> {
+        match &self.dynamic_filters {
+            Some(dynamic) if dynamic.has_filters() => dynamic.final_table_filters(self.filters.as_ref()),
+            _ => self.filters.clone(),
+        }
+    }
+
+    /// Sets what `EXPLAIN` shows about the scan.
+    #[must_use]
+    pub fn with_explain_info(mut self, explain: ScanExplainInfo) -> Self {
+        self.explain = explain;
+        self
+    }
+
+    /// Pushes SYSTEM sampling into the scan: each vector is kept with probability
+    /// `sample_rate`, drawn from an engine seeded with `seed` if given.
+    #[must_use]
+    pub fn with_sampling(mut self, sample_rate: f64, seed: Option<u64>) -> Self {
+        self.sampling = Some((sample_rate, seed));
+        self
     }
 
     /// Sets the index scan thresholds (`index_scan_max_count`, `index_scan_percentage`),
@@ -70,9 +195,10 @@ impl PhysicalSeqScan {
         self
     }
 
-    /// The row ids an index scan yields, if one applies (`TableScanInitGlobal`).
-    fn index_scan_row_ids(&self) -> Result<Option<Vec<i64>>> {
-        let (Some((max_count, percentage)), Some(filters)) = (self.index_scan, &self.filters) else {
+    /// The row ids an index scan applying `filters` yields, if one applies
+    /// (`TableScanInitGlobal`).
+    fn index_scan_row_ids(&self, filters: Option<&TableFilterSet>) -> Result<Option<Vec<i64>>> {
+        let (Some((max_count, percentage)), Some(filters)) = (self.index_scan, filters) else {
             return Ok(None);
         };
         if filters.filters.len() != 1 || !self.table.has_indexes() {
@@ -113,6 +239,26 @@ impl PhysicalOperator for PhysicalSeqScan {
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
     }
+
+    fn explain_name(&self) -> String {
+        "SEQ_SCAN".to_owned()
+    }
+    fn profiler_name(&self) -> String {
+        "TABLE_SCAN".to_owned()
+    }
+    fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
+        let dynamic = self
+            .dynamic_filters
+            .as_ref()
+            .filter(|dynamic| dynamic.has_filters())
+            .and_then(|dynamic| dynamic.final_table_filters(None));
+        self.explain.params(
+            &self.projection,
+            self.filters.as_ref(),
+            dynamic.as_ref(),
+            estimated_cardinality,
+        )
+    }
 }
 
 /// The shared state of a scan: the parallel table scan, and for an index scan the row
@@ -122,6 +268,8 @@ pub struct SeqScanGlobal {
     parallel: ParallelTableScanState,
     index_rows: Option<Vec<i64>>,
     next_index_row: AtomicUsize,
+    /// The filters the scan applies, with the run-time filters set when it started.
+    filters: Option<TableFilterSet>,
 }
 
 /// A thread's scan: its storage scan state and, with a projection, the scanned chunk.
@@ -137,24 +285,39 @@ impl Source for PhysicalSeqScan {
     type Local = SeqScanLocal;
 
     fn global_source_state(&self, _: &ExecutionContext, _: Option<&SinkState>) -> Result<Self::Global> {
-        if let Some(row_ids) = self.index_scan_row_ids()? {
+        let filters = self.scan_filters();
+        if let Some(row_ids) = self.index_scan_row_ids(filters.as_ref())? {
             // Fetch the indexed rows, then scan only the transaction-local rows.
             return Ok(SeqScanGlobal {
                 parallel: self.table.initialize_local_parallel_scan(&self.transaction),
                 index_rows: Some(row_ids),
                 next_index_row: AtomicUsize::new(0),
+                filters,
             });
         }
         Ok(SeqScanGlobal {
             parallel: self.table.initialize_parallel_scan(&self.transaction),
             index_rows: None,
             next_index_row: AtomicUsize::new(0),
+            filters,
         })
     }
 
-    fn local_source_state(&self, _: &ExecutionContext, _: &Self::Global) -> Result<Self::Local> {
+    fn local_source_state(&self, _: &ExecutionContext, global: &Self::Global) -> Result<Self::Local> {
         let mut state = TableScanState::default();
-        state.initialize(self.column_ids.clone(), self.filters.as_ref());
+        state.initialize(self.column_ids.clone(), global.filters.as_ref());
+        if let Some((sample_rate, seed)) = self.sampling {
+            // DuckDB seeds the committed data's engine only.
+            let table_random = seed.map_or_else(RandomEngine::default, RandomEngine::new);
+            state.table_state.sampling = Some(ScanSampling {
+                sample_rate,
+                random: Box::new(SamplingRandom(table_random)),
+            });
+            state.local_state.sampling = Some(ScanSampling {
+                sample_rate,
+                random: Box::new(SamplingRandom(RandomEngine::default())),
+            });
+        }
         Ok(SeqScanLocal {
             state,
             has_morsel: false,

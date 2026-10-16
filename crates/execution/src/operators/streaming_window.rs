@@ -2,6 +2,7 @@
 //! `PhysicalStreamingWindow`): functions over `OVER ()` whose value for a row only
 //! depends on the rows before it (or a bounded number after it, for `LEAD`).
 
+use rustdb_common::tree_renderer::RenderParams;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Mutex, PoisonError};
 
@@ -552,6 +553,13 @@ impl PhysicalOperator for PhysicalStreamingWindow {
     }
     fn as_operator(&self) -> Option<&dyn ErasedOperator> {
         Some(self)
+    }
+
+    fn params_to_string(&self, _: u64) -> RenderParams {
+        let mut result = RenderParams::new();
+        let projections: Vec<&str> = self.select_list.iter().map(|w| w.alias.as_str()).collect();
+        result.insert("Projections".to_owned(), projections.join("\n"));
+        result
     }
 }
 

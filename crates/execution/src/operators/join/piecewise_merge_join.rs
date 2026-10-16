@@ -2,6 +2,7 @@
 //! condition (plus optional further conditions) by sorting the right side once and each
 //! input chunk on the range key, then merging.
 
+use rustdb_common::tree_renderer::RenderParams;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -373,6 +374,10 @@ impl PhysicalOperator for PhysicalPiecewiseMergeJoin {
     }
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         propagates_build_side(self.join_type).then_some(self as &dyn ErasedSource)
+    }
+
+    fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
+        super::comparison_join_params(self.join_type, &self.conditions, estimated_cardinality)
     }
 }
 

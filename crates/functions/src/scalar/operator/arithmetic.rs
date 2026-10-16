@@ -146,6 +146,10 @@ impl FunctionData for DecimalArithmetic {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    fn equals(&self, other: &dyn FunctionData) -> bool {
+        other.as_any().downcast_ref::<Self>() == Some(self)
+    }
 }
 
 /// The DECIMAL `(width, scale)` of an argument type.

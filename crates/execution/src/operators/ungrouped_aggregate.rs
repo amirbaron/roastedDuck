@@ -1,3 +1,5 @@
+use crate::operator::aggregate_names;
+use rustdb_common::tree_renderer::RenderParams;
 use std::alloc::{Layout, alloc_zeroed, dealloc, handle_alloc_error};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -127,6 +129,12 @@ impl PhysicalOperator for PhysicalUngroupedAggregate {
     }
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
+    }
+
+    fn params_to_string(&self, _: u64) -> RenderParams {
+        let mut result = RenderParams::new();
+        result.insert("Aggregates".to_owned(), aggregate_names(&self.aggregates));
+        result
     }
 }
 

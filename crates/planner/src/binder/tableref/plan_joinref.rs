@@ -43,6 +43,7 @@ pub enum JoinSide {
 
 impl JoinSide {
     /// DuckDB's `JoinSide::CombineJoinSide`.
+    #[must_use]
     pub fn combine(self, other: Self) -> Self {
         match (self, other) {
             (Self::None, side) | (side, Self::None) => side,
@@ -495,8 +496,10 @@ pub fn create_join_plan(scope: &mut BindScope<'_>, bound: BoundJoinRef) -> Resul
     if !lateral && !correlated_columns.is_empty() {
         reduce_expression_depth(&mut right, &correlated_columns);
     }
-    if join_type == JoinType::Right && ref_type != JoinRefType::Asof {
-        // Right outer joins become left outer joins with the sides swapped.
+    if join_type == JoinType::Right && ref_type != JoinRefType::Asof && scope.context.config.flip_right_joins
+    {
+        // Right outer joins become left outer joins with the sides swapped (for the
+        // build/probe side optimizer).
         join_type = JoinType::Left;
         std::mem::swap(&mut left, &mut right);
     }

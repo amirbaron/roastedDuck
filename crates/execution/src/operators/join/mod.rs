@@ -3,8 +3,10 @@
 
 mod asof_join;
 mod blockwise_nl_join;
+mod bloom_filter;
 mod hash_join;
 mod iejoin;
+mod join_filter;
 mod nested_loop_join;
 mod outer_join_marker;
 mod perfect_hash_join;
@@ -14,6 +16,7 @@ mod range_join;
 
 pub use asof_join::{AsOfGlobalSinkState, AsOfLocalSinkState, AsOfSourceState, PhysicalAsOfJoin};
 pub use blockwise_nl_join::{BlockwiseNLJoinGlobalState, BlockwiseNLJoinState, PhysicalBlockwiseNLJoin};
+pub use bloom_filter::{BloomFilter, BloomTableFilter};
 pub use hash_join::{HashJoinGlobalSinkState, HashJoinLocalSinkState, HashJoinProbeState, PhysicalHashJoin};
 pub use iejoin::{IEJoinGlobalState, IEJoinLocalState, IEJoinSourceState, PhysicalIEJoin};
 pub use nested_loop_join::{
@@ -27,6 +30,7 @@ pub use positional_join::{PhysicalPositionalJoin, PositionalJoinGlobalState};
 
 use rustdb_ast::{ExpressionType, JoinType};
 use rustdb_common::Result;
+use rustdb_common::tree_renderer::RenderParams;
 use rustdb_planner::operator::JoinCondition;
 use rustdb_types::{DataChunk, LogicalType, SelectionVector, Value, Vector};
 
@@ -197,4 +201,28 @@ pub(crate) fn construct_mark_join_result(
     let mut columns = left.columns().to_vec();
     columns.push(mark);
     result.set_columns(columns, count);
+}
+
+/// The `EXPLAIN` lines of a comparison join (DuckDB's `PhysicalComparisonJoin::ParamsToString`).
+fn comparison_join_params(
+    join_type: JoinType,
+    conditions: &[JoinCondition],
+    estimated_cardinality: u64,
+) -> RenderParams {
+    let mut result = RenderParams::new();
+    result.insert("Join Type".to_owned(), join_type.name().to_owned());
+    let conditions: Vec<String> = conditions
+        .iter()
+        .map(|condition| {
+            format!(
+                "{} {} {}",
+                condition.left.name(),
+                rustdb_ast::expression_type_to_operator(condition.comparison),
+                condition.right.name()
+            )
+        })
+        .collect();
+    result.insert("Conditions".to_owned(), conditions.join("\n"));
+    crate::operator::set_estimated_cardinality(&mut result, estimated_cardinality);
+    result
 }

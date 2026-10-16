@@ -1,0 +1,20 @@
+[package]
+name = "rustdb-optimizer"
+description = "The logical plan optimizer (DuckDB's src/optimizer)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rustdb-common.workspace = true
+rustdb-types.workspace = true
+rustdb-ast.workspace = true
+rustdb-planner = { path = "../planner" }
+rustdb-function = { path = "../function" }
+rustdb-catalog = { path = "../catalog" }
+rustdb-storage = { path = "../storage" }
+regex-syntax = "0.8"
+
+[lints]
+workspace = true

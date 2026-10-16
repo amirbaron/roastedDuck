@@ -32,6 +32,11 @@ pub struct JoinPlanSettings {
     pub scalar_subquery_error_on_multiple_rows: bool,
     /// `asof_loop_join_threshold`: ASOF joins with fewer left rows use a nested loop join.
     pub asof_loop_join_threshold: u64,
+    /// `dynamic_or_filter_threshold`: up to this many build rows, a hash join also
+    /// filters its probe scans on the IN list of its keys.
+    pub dynamic_or_filter_threshold: u64,
+    /// `perfect_ht_threshold`: the slot index bits a perfect hash aggregate may use.
+    pub perfect_ht_threshold: u64,
 }
 
 impl Default for JoinPlanSettings {
@@ -42,6 +47,8 @@ impl Default for JoinPlanSettings {
             prefer_range_joins: false,
             scalar_subquery_error_on_multiple_rows: true,
             asof_loop_join_threshold: 64,
+            dynamic_or_filter_threshold: 50,
+            perfect_ht_threshold: 12,
         }
     }
 }
@@ -158,17 +165,24 @@ pub(crate) fn create_comparison_join(
     }
     let prefer_range_joins = settings.prefer_range_joins && can_iejoin;
     if equality && !prefer_range_joins {
-        return Ok(Arc::new(PhysicalHashJoin::new(
-            types,
-            join.join_type,
-            join.conditions,
-            &join.left_projection_map,
-            &join.right_projection_map,
-            join.mark_types,
-            settings.scalar_subquery_error_on_multiple_rows,
-            left,
-            right,
-        )?));
+        return Ok(Arc::new(
+            PhysicalHashJoin::new(
+                types,
+                join.join_type,
+                join.conditions,
+                &join.left_projection_map,
+                &join.right_projection_map,
+                join.mark_types,
+                settings.scalar_subquery_error_on_multiple_rows,
+                left,
+                right,
+            )?
+            .with_join_filters(
+                join.join_filters,
+                settings.dynamic_or_filter_threshold,
+                cardinalities.0,
+            ),
+        ));
     }
     if !join.left_projection_map.is_empty() || !join.right_projection_map.is_empty() {
         return Err(Error::not_implemented("join projection maps for range joins"));
@@ -249,6 +263,12 @@ impl PlanGenerator {
         let cardinalities = (estimate_cardinality(&left), estimate_cardinality(&right));
         let left = self.plan(left)?;
         let right = self.plan(right)?;
+        // The children's plans carry the estimates computed here (DuckDB sets
+        // `left.estimated_cardinality = lhs_cardinality`).
+        self.estimates
+            .insert(super::explain::operator_key(left.as_ref()), cardinalities.0);
+        self.estimates
+            .insert(super::explain::operator_key(right.as_ref()), cardinalities.1);
         create_comparison_join(self, join, types, left, right, cardinalities)
     }
 }
