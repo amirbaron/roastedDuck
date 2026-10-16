@@ -187,7 +187,11 @@ impl<'a> PipelineExecutor<'a> {
                 OperatorResult::NeedMoreInput => return Ok(()),
                 OperatorResult::Finished => {
                     self.finished = true;
-                    return Ok(());
+                    // Operators above the one that finished may still hold output for
+                    // its last chunk (e.g. a join probing the rows a LIMIT let through).
+                    if self.in_process.is_empty() {
+                        return Ok(());
+                    }
                 }
                 OperatorResult::HaveMoreOutput => {}
             }

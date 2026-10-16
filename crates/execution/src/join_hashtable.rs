@@ -257,8 +257,6 @@ pub struct JoinHashTable {
     pub(crate) join_type: JoinType,
     /// Number of leading equality conditions (`equality_predicate_columns`).
     equality_count: usize,
-    /// Columns of the non-equality conditions (`non_equality_predicate_columns`).
-    non_equality_columns: Vec<usize>,
     condition_types: Vec<LogicalType>,
     /// Layout columns emitted for the build side (`output_columns`).
     output_columns: Vec<usize>,
@@ -384,7 +382,6 @@ impl JoinHashTable {
             buffer_manager,
             join_type,
             equality_count: equality_predicates.len(),
-            non_equality_columns,
             condition_types,
             output_columns,
             layout,
