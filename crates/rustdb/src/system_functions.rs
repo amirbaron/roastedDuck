@@ -829,6 +829,13 @@ pub(crate) fn catalog_table_functions() -> Vec<TableFunctionSet> {
         rows_function("duckdb_memory", MEMORY_COLUMNS, memory_rows),
         rows_function("duckdb_constraints", CONSTRAINT_COLUMNS, constraint_rows),
         rows_function("duckdb_functions", FUNCTION_COLUMNS, function_rows),
+        rows_function("duckdb_keywords", KEYWORD_COLUMNS, keyword_rows),
+        rows_function("duckdb_optimizers", OPTIMIZER_COLUMNS, optimizer_rows),
+        rows_function(
+            "duckdb_approx_database_count",
+            DATABASE_COUNT_COLUMNS,
+            database_count_rows,
+        ),
     ]
 }
 
@@ -1156,6 +1163,88 @@ fn bigint_list() -> LogicalType {
 
 fn varchar_list() -> LogicalType {
     LogicalType::list(LogicalType::VARCHAR)
+}
+
+const KEYWORD_COLUMNS: Columns = &[("keyword_name", varchar), ("keyword_category", varchar)];
+
+/// `duckdb_keywords()` (`DuckDBKeywordsFunction`): the grammar's keywords.
+fn keyword_rows(_: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    use rustdb_parser::KeywordCategory;
+    Ok(rustdb_parser::keyword_list()
+        .iter()
+        .map(|keyword| {
+            let category = match keyword.category {
+                KeywordCategory::Reserved => "reserved",
+                KeywordCategory::Unreserved => "unreserved",
+                KeywordCategory::TypeFunc => "type_function",
+                KeywordCategory::ColName => "column_name",
+            };
+            vec![text(keyword.name), text(category)]
+        })
+        .collect())
+}
+
+const OPTIMIZER_COLUMNS: Columns = &[("name", varchar)];
+
+/// `duckdb_optimizers()`: the optimizer names (`ListAllOptimizers`).
+fn optimizer_rows(_: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    const OPTIMIZERS: &[&str] = &[
+        "expression_rewriter",
+        "filter_pullup",
+        "filter_pushdown",
+        "empty_result_pullup",
+        "cte_filter_pusher",
+        "regex_range",
+        "in_clause",
+        "join_order",
+        "deliminator",
+        "unnest_rewriter",
+        "unused_columns",
+        "statistics_propagation",
+        "common_subexpressions",
+        "common_aggregate",
+        "column_lifetime",
+        "limit_pushdown",
+        "row_group_pruner",
+        "top_n",
+        "top_n_window_elimination",
+        "build_side_probe_side",
+        "compressed_materialization",
+        "duplicate_groups",
+        "reorder_filter",
+        "sampling_pushdown",
+        "join_filter_pushdown",
+        "extension",
+        "materialized_cte",
+        "sum_rewriter",
+        "late_materialization",
+        "cte_inlining",
+        "common_subplan",
+        "join_elimination",
+        "window_self_join",
+    ];
+    Ok(OPTIMIZERS.iter().map(|name| vec![text(*name)]).collect())
+}
+
+fn ubigint() -> LogicalType {
+    LogicalType::UBIGINT
+}
+
+const DATABASE_COUNT_COLUMNS: Columns = &[("approx_count", ubigint)];
+
+/// `duckdb_approx_database_count()`: the number of attached database files
+/// (`DatabasePathManager::ApproxDatabaseCount`; in-memory databases have no path).
+fn database_count_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    let count = context
+        .catalogs
+        .iter()
+        .filter(|catalog| {
+            catalog
+                .attach_info()
+                .is_some_and(|info| !info.path.is_empty() && info.path != ":memory:")
+        })
+        .count();
+    Ok(vec![vec![Value::ubigint(count as u64)]])
 }
 
 const FUNCTION_COLUMNS: Columns = &[
