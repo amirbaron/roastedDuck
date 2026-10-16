@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::operator::{aggregate_names, expression_names, set_estimated_cardinality};
@@ -6,8 +8,8 @@ use rustdb_common::{Error, Result};
 use rustdb_planner::Expression;
 use rustdb_planner::expression::BoundAggregateExpression;
 use rustdb_planner::operator::GroupingSet;
-use rustdb_row::{PartitionedTupleData, RadixPartitioning, hash::hash_columns};
-use rustdb_types::{DataChunk, LogicalType, STANDARD_VECTOR_SIZE, Value, Vector};
+use rustdb_row::{PartitionedTupleData, RadixPartitioning, TupleDataCollection, hash::hash_columns};
+use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
 use crate::aggregate_hashtable::{AggregateObject, GroupedAggregateHashTable, initial_capacity};
 use crate::operator::{
@@ -160,7 +162,19 @@ pub struct HashAggregateGlobal {
     distinct: Vec<Vec<Option<Mutex<GroupedAggregateHashTable>>>>,
     /// Whether any input row arrived (for empty grouping sets).
     saw_input: std::sync::atomic::AtomicBool,
+    /// After finalisation: the groups still to combine and emit, one unit per grouping
+    /// set and radix partition (DuckDB's `RadixHTGlobalSourceState` partitions).
+    partitions: Vec<AggregatePartition>,
+    /// The row an empty grouping set produces without input.
     results: Vec<DataChunk>,
+}
+
+/// The rows of one radix partition of one grouping set, from every thread, which a
+/// source task merges and emits.
+#[derive(Debug)]
+struct AggregatePartition {
+    set_index: usize,
+    data: Mutex<Vec<TupleDataCollection>>,
 }
 
 /// Per-thread state: one hash table per grouping set plus expression executors.
@@ -321,6 +335,9 @@ impl Sink for PhysicalHashAggregate {
         Ok(())
     }
 
+    /// Merges the threads' partitions per grouping set; the source combines and emits
+    /// them partition by partition, in parallel (DuckDB's `RadixPartitionedHashTable`
+    /// finalizes partitions in its source tasks).
     fn finalize(
         &self,
         ctx: &ExecutionContext,
@@ -329,36 +346,33 @@ impl Sink for PhysicalHashAggregate {
         self.finalize_distinct(ctx, global)?;
         let collected = std::mem::take(global.collected.get_mut().unwrap_or_else(PoisonError::into_inner));
         let objects = self.aggregate_objects();
-        let mut results = Vec::new();
         for (set_index, (set, mut parts)) in self.grouping_sets.iter().zip(collected).enumerate() {
             let partition_count = parts
                 .iter()
                 .map(PartitionedTupleData::partition_count)
                 .max()
                 .unwrap_or(1);
-            let mut set_rows = 0;
-            for partition in 0..partition_count {
-                let mut table = GroupedAggregateHashTable::new(
-                    ctx.env.buffer_manager.clone(),
-                    self.set_group_types(set),
-                    &objects,
-                    initial_capacity(),
-                    0,
-                )?;
-                for part in &mut parts {
-                    if let Some(collection) = part.partitions_mut().get_mut(partition) {
-                        table.combine(collection)?;
+            let rows: usize = parts.iter().map(PartitionedTupleData::count).sum();
+            let mut taken: Vec<Vec<TupleDataCollection>> = (0..partition_count).map(|_| Vec::new()).collect();
+            for part in &mut parts {
+                for (partition, collection) in part.take_partitions().into_iter().enumerate() {
+                    if collection.count() > 0 {
+                        taken[partition].push(collection);
                     }
                 }
-                table.finalize_into(|chunk| {
-                    set_rows += chunk.len();
-                    results.push(self.output_chunk(set_index, set, chunk)?);
-                    Ok(())
-                })?;
             }
+            global.partitions.extend(
+                taken
+                    .into_iter()
+                    .filter(|data| !data.is_empty())
+                    .map(|data| AggregatePartition {
+                        set_index,
+                        data: Mutex::new(data),
+                    }),
+            );
             // An empty grouping set yields one row even without input (like an ungrouped
             // aggregate).
-            if set.is_empty() && set_rows == 0 {
+            if set.is_empty() && rows == 0 {
                 let mut table = GroupedAggregateHashTable::new(
                     ctx.env.buffer_manager.clone(),
                     Vec::new(),
@@ -374,12 +388,11 @@ impl Sink for PhysicalHashAggregate {
                     &[],
                 )?;
                 table.finalize_into(|chunk| {
-                    results.push(self.output_chunk(set_index, set, chunk)?);
+                    global.results.push(self.output_chunk(set_index, set, chunk)?);
                     Ok(())
                 })?;
             }
         }
-        global.results = results;
         Ok(crate::SinkFinalize::Ready)
     }
 }
@@ -463,43 +476,94 @@ impl PhysicalHashAggregate {
     }
 }
 
+/// The source's shared state: the finalized sink and the next unit (partition, then
+/// empty-set row) to hand out.
+#[derive(Debug)]
+pub struct HashAggregateSourceState {
+    sink: SinkState,
+    next: AtomicUsize,
+}
+
+/// A source task's emitted partition: its finalized chunks, in order.
+#[derive(Debug, Default)]
+pub struct HashAggregateSourceLocal {
+    pending: VecDeque<DataChunk>,
+}
+
+impl PhysicalHashAggregate {
+    /// Merges partition `partition` of the threads' groups into one table and returns
+    /// its rows in output layout.
+    fn finalize_partition(&self, ctx: &ExecutionContext, partition: &AggregatePartition) -> Result<Vec<DataChunk>> {
+        let data = std::mem::take(&mut *partition.data.lock().unwrap_or_else(PoisonError::into_inner));
+        let set = &self.grouping_sets[partition.set_index];
+        let mut table = GroupedAggregateHashTable::new(
+            ctx.env.buffer_manager.clone(),
+            self.set_group_types(set),
+            &self.aggregate_objects(),
+            initial_capacity(),
+            0,
+        )?;
+        for collection in &data {
+            table.combine(collection)?;
+        }
+        drop(data);
+        let mut chunks = Vec::new();
+        table.finalize_into(|chunk| {
+            chunks.push(self.output_chunk(partition.set_index, set, chunk)?);
+            Ok(())
+        })?;
+        Ok(chunks)
+    }
+}
+
 impl Source for PhysicalHashAggregate {
-    type Global = (SinkState, std::sync::atomic::AtomicUsize);
-    type Local = ();
+    type Global = HashAggregateSourceState;
+    type Local = HashAggregateSourceLocal;
 
     fn global_source_state(&self, _: &ExecutionContext, sink: Option<&SinkState>) -> Result<Self::Global> {
         let sink = sink.ok_or_else(|| Error::internal("hash aggregate source requires its sink state"))?;
-        Ok((Arc::clone(sink), std::sync::atomic::AtomicUsize::new(0)))
+        Ok(HashAggregateSourceState {
+            sink: Arc::clone(sink),
+            next: AtomicUsize::new(0),
+        })
     }
 
-    fn local_source_state(&self, _: &ExecutionContext, _: &Self::Global) -> Result<()> {
-        Ok(())
+    fn local_source_state(&self, _: &ExecutionContext, _: &Self::Global) -> Result<Self::Local> {
+        Ok(HashAggregateSourceLocal::default())
     }
 
     fn get_data(
         &self,
-        _: &ExecutionContext,
+        ctx: &ExecutionContext,
         chunk: &mut DataChunk,
-        (sink, next): &Self::Global,
-        (): &mut (),
+        global: &Self::Global,
+        local: &mut Self::Local,
     ) -> Result<SourceResult> {
-        let state = sink
+        let state = global
+            .sink
             .downcast_ref::<HashAggregateGlobal>()
             .ok_or_else(|| Error::internal("hash aggregate sink state has the wrong type"))?;
-        let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        if let Some(result) = state.results.get(index) {
-            chunk.set_columns(result.columns().to_vec(), result.len());
+        loop {
+            if let Some(result) = local.pending.pop_front() {
+                chunk.set_columns(result.columns().to_vec(), result.len());
+                return Ok(SourceResult::HaveMoreOutput);
+            }
+            let index = global.next.fetch_add(1, Ordering::Relaxed);
+            if let Some(partition) = state.partitions.get(index) {
+                local.pending = self.finalize_partition(ctx, partition)?.into();
+            } else if let Some(result) = state.results.get(index - state.partitions.len()) {
+                chunk.set_columns(result.columns().to_vec(), result.len());
+                return Ok(SourceResult::HaveMoreOutput);
+            } else {
+                return Ok(SourceResult::Finished);
+            }
         }
-        debug_assert!(state.results.iter().all(|c| c.len() <= STANDARD_VECTOR_SIZE));
-        Ok(if index + 1 < state.results.len() {
-            SourceResult::HaveMoreOutput
-        } else {
-            SourceResult::Finished
-        })
     }
 
-    fn max_threads(&self, (sink, _): &Self::Global) -> usize {
-        sink.downcast_ref::<HashAggregateGlobal>()
-            .map_or(1, |state| state.results.len().max(1))
+    fn max_threads(&self, global: &Self::Global) -> usize {
+        global
+            .sink
+            .downcast_ref::<HashAggregateGlobal>()
+            .map_or(1, |state| (state.partitions.len() + state.results.len()).max(1))
     }
 }
