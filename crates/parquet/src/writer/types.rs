@@ -9,7 +9,9 @@ use std::marker::PhantomData;
 use rustdb_common::{Error, ErrorKind, Result};
 use rustdb_types::{NativeType, Vector};
 
-use super::stats::{BytesStatistics, NoStatistics, NumericStatistics, StatValue, StringStatistics, WriterStatistics};
+use super::stats::{
+    BytesStatistics, NoStatistics, NumericStatistics, StatValue, StringStatistics, WriterStatistics,
+};
 use crate::thrift::Type;
 
 /// The encodings a column type can use when it is not dictionary encoded (V2 files).
@@ -46,11 +48,11 @@ pub trait WriteType: Send + std::fmt::Debug + 'static {
     /// The estimated plain size of a value (`GetRowSize`).
     fn row_size(src: Self::Src<'_>) -> usize;
     /// The bytes of a string value (`DlbaEncoder::GetStringSize` uses their length).
-    fn string_bytes<'a>(src: Self::Src<'a>) -> Option<&'a [u8]> {
+    fn string_bytes(src: Self::Src<'_>) -> Option<&[u8]> {
         let _ = src;
         None
     }
-    /// The Parquet value as an integer for DELTA_BINARY_PACKED.
+    /// The Parquet value as an integer for `DELTA_BINARY_PACKED`.
     fn delta_value(src: Self::Src<'_>) -> Result<i64> {
         let _ = src;
         Err(Error::internal("DbpEncoder should only be used with integers"))
@@ -199,7 +201,7 @@ numeric_cast!(
     UBigInt, u64 => u64, INT64, DeltaBinaryPacked, false, |value| Ok(value)
 );
 numeric_cast!(
-    /// TIMESTAMP_S as INT64 microseconds (`ParquetTimestampSOperator`).
+    /// `TIMESTAMP_S` as INT64 microseconds (`ParquetTimestampSOperator`).
     TimestampSec, i64 => i64, INT64, DeltaBinaryPacked, true, |value| {
         // `FromEpochSecondsPossiblyInfinite` scales infinities too (and so rejects them).
         value
@@ -373,7 +375,7 @@ impl<const BLOB: bool> WriteType for Bytes<BLOB> {
     fn row_size(src: &[u8]) -> usize {
         4 + src.len()
     }
-    fn string_bytes<'a>(src: Self::Src<'a>) -> Option<&'a [u8]> {
+    fn string_bytes(src: Self::Src<'_>) -> Option<&[u8]> {
         Some(src)
     }
     fn is_constant_size() -> bool {

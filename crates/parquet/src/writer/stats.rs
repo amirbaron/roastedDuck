@@ -112,10 +112,18 @@ impl<T: StatValue> WriterStatistics for NumericStatistics<T> {
         if self.signed { self.max_value() } else { Vec::new() }
     }
     fn min_value(&self) -> Vec<u8> {
-        if self.has_stats() { self.min.to_bytes() } else { Vec::new() }
+        if self.has_stats() {
+            self.min.to_bytes()
+        } else {
+            Vec::new()
+        }
     }
     fn max_value(&self) -> Vec<u8> {
-        if self.has_stats() { self.max.to_bytes() } else { Vec::new() }
+        if self.has_stats() {
+            self.max.to_bytes()
+        } else {
+            Vec::new()
+        }
     }
     fn can_have_nan(&self) -> bool {
         self.floating
@@ -130,6 +138,10 @@ const MAX_STRING_STATISTICS_SIZE: usize = 256;
 
 /// `StringStatisticsState`.
 #[derive(Debug, Default)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "the flags of DuckDB's StringStatisticsState"
+)]
 pub struct StringStatistics {
     pub is_blob: bool,
     has_stats: bool,
@@ -221,10 +233,18 @@ impl WriterStatistics for StringStatistics {
         self.max_value()
     }
     fn min_value(&self) -> Vec<u8> {
-        if self.has_stats { self.min.clone() } else { Vec::new() }
+        if self.has_stats {
+            self.min.clone()
+        } else {
+            Vec::new()
+        }
     }
     fn max_value(&self) -> Vec<u8> {
-        if self.has_stats { self.max.clone() } else { Vec::new() }
+        if self.has_stats {
+            self.max.clone()
+        } else {
+            Vec::new()
+        }
     }
     fn min_is_exact(&self) -> bool {
         !self.inexact && !self.min_truncated
@@ -265,10 +285,18 @@ impl WriterStatistics for BytesStatistics {
         self.max_value()
     }
     fn min_value(&self) -> Vec<u8> {
-        if self.has_stats { self.min.clone() } else { Vec::new() }
+        if self.has_stats {
+            self.min.clone()
+        } else {
+            Vec::new()
+        }
     }
     fn max_value(&self) -> Vec<u8> {
-        if self.has_stats { self.max.clone() } else { Vec::new() }
+        if self.has_stats {
+            self.max.clone()
+        } else {
+            Vec::new()
+        }
     }
 }
 
@@ -281,13 +309,16 @@ pub struct BooleanStatistics {
 
 impl Default for BooleanStatistics {
     fn default() -> Self {
-        Self { min: true, max: false }
+        Self {
+            min: true,
+            max: false,
+        }
     }
 }
 
 impl WriterStatistics for BooleanStatistics {
     fn has_stats(&self) -> bool {
-        !(self.min && !self.max)
+        !self.min || self.max
     }
     fn min(&self) -> Vec<u8> {
         self.min_value()
@@ -296,10 +327,18 @@ impl WriterStatistics for BooleanStatistics {
         self.max_value()
     }
     fn min_value(&self) -> Vec<u8> {
-        if self.has_stats() { vec![u8::from(self.min)] } else { Vec::new() }
+        if self.has_stats() {
+            vec![u8::from(self.min)]
+        } else {
+            Vec::new()
+        }
     }
     fn max_value(&self) -> Vec<u8> {
-        if self.has_stats() { vec![u8::from(self.max)] } else { Vec::new() }
+        if self.has_stats() {
+            vec![u8::from(self.max)]
+        } else {
+            Vec::new()
+        }
     }
 }
 
@@ -335,10 +374,18 @@ impl WriterStatistics for DecimalStatistics {
         self.max_value()
     }
     fn min_value(&self) -> Vec<u8> {
-        if self.has_stats() { decimal_to_bytes(self.min).to_vec() } else { Vec::new() }
+        if self.has_stats() {
+            decimal_to_bytes(self.min).to_vec()
+        } else {
+            Vec::new()
+        }
     }
     fn max_value(&self) -> Vec<u8> {
-        if self.has_stats() { decimal_to_bytes(self.max).to_vec() } else { Vec::new() }
+        if self.has_stats() {
+            decimal_to_bytes(self.max).to_vec()
+        } else {
+            Vec::new()
+        }
     }
 }
 

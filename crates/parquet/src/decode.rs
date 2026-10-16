@@ -1,6 +1,6 @@
 //! Low-level decoding (DuckDB's `ByteBuffer`, `ParquetDecodeUtils`, `RleBpDecoder`,
 //! `DbpDecoder` and `BssDecoder`): a bounds-checked byte cursor, varints, bit unpacking,
-//! the RLE/bit-packing hybrid, DELTA_BINARY_PACKED and BYTE_STREAM_SPLIT.
+//! the RLE/bit-packing hybrid, `DELTA_BINARY_PACKED` and `BYTE_STREAM_SPLIT`.
 
 use rustdb_common::{Error, ErrorKind, Result};
 
@@ -257,7 +257,11 @@ pub fn unpack_bits<T: UnpackTarget>(data: &[u8], bit_offset: usize, dst: &mut [T
         return;
     }
     let width = usize::from(width);
-    let mask = if width == 64 { u64::MAX } else { (1u64 << width) - 1 };
+    let mask = if width == 64 {
+        u64::MAX
+    } else {
+        (1u64 << width) - 1
+    };
     let mut bit = bit_offset;
     if width <= 56 {
         for value in dst {
@@ -332,7 +336,9 @@ impl RleBpDecoder {
                 .enumerate()
                 .fold(0, |value, (i, &byte)| value | (u64::from(byte) << (i * 8)));
             if self.repeat_count > 0 && self.current_value > self.max_value {
-                return Err(runtime_error("Payload value bigger than allowed. Corrupted file?"));
+                return Err(runtime_error(
+                    "Payload value bigger than allowed. Corrupted file?",
+                ));
             }
         }
         let consumed = before - buffer.len();
@@ -418,7 +424,7 @@ impl RleBpDecoder {
 /// The number of values per bit-packing group (`BITPACKING_ALGORITHM_GROUP_SIZE`).
 const GROUP_SIZE: usize = 32;
 
-/// The DELTA_BINARY_PACKED decoder (`DbpDecoder`).
+/// The `DELTA_BINARY_PACKED` decoder (`DbpDecoder`).
 #[derive(Debug)]
 pub struct DbpDecoder {
     cursor: BlockCursor,
@@ -575,7 +581,7 @@ impl DbpDecoder {
     }
 }
 
-/// An integer type DELTA_BINARY_PACKED values are decoded into.
+/// An integer type `DELTA_BINARY_PACKED` values are decoded into.
 pub trait DbpTarget: Copy + Default {
     fn from_i64(value: i64) -> Self;
     /// The value truncated to this type (the C++ `static_cast<T>`).
@@ -604,7 +610,7 @@ macro_rules! dbp_target {
 }
 dbp_target!(i32, i64, u32, u64);
 
-/// The BYTE_STREAM_SPLIT decoder (`BssDecoder`): byte `k` of value `i` is at
+/// The `BYTE_STREAM_SPLIT` decoder (`BssDecoder`): byte `k` of value `i` is at
 /// `k * count + i`.
 #[derive(Debug)]
 pub struct BssDecoder {
@@ -622,7 +628,7 @@ impl BssDecoder {
 
     fn check(&self, width: usize, count: usize) -> Result<usize> {
         let data = self.cursor.remaining();
-        if data.len() % width != 0 {
+        if !data.len().is_multiple_of(width) {
             return Err(runtime_error(format!(
                 "Data buffer size for the BYTE_STREAM_SPLIT encoding ({}) should be a multiple of the type size ({width})",
                 data.len()

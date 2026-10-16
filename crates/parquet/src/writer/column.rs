@@ -10,6 +10,7 @@ use rustdb_common::{Error, ErrorKind, Result};
 use rustdb_types::{ListEntry, LogicalType, LogicalTypeId, SelectionVector, Vector};
 
 use super::encoders::RleBpEncoder;
+use super::stats::WriterStatistics;
 use super::values::ValueWriter;
 use super::{FileSink, WriterOptions};
 use crate::compression::compress;
@@ -111,13 +112,13 @@ fn handle_define_levels(
         return Ok(());
     }
     if validity.is_all_valid() {
-        levels
-            .definition
-            .extend(std::iter::repeat_n(define_value, count));
+        levels.definition.extend(std::iter::repeat_n(define_value, count));
     } else {
         for row in 0..count {
             let is_null = !validity.is_valid(row);
-            levels.definition.push(if is_null { null_value } else { define_value });
+            levels
+                .definition
+                .push(if is_null { null_value } else { define_value });
             levels.null_count += u64::from(is_null);
         }
     }
@@ -137,7 +138,11 @@ impl ColumnWriter {
     }
 
     /// `FinalizeSchema`: appends the schema elements; returns the number of leaves.
-    pub fn finalize_schema(&mut self, schemas: &mut Vec<SchemaElement>, options: &WriterOptions) -> Result<usize> {
+    pub fn finalize_schema(
+        &mut self,
+        schemas: &mut Vec<SchemaElement>,
+        options: &WriterOptions,
+    ) -> Result<usize> {
         match self {
             Self::Primitive(writer) => {
                 let schema = &writer.schema;
@@ -196,7 +201,12 @@ impl ColumnWriter {
     }
 
     /// `InitializeWriteState`: starts a row group; registers the column chunks.
-    pub fn initialize_write(&mut self, columns: &mut Vec<ColumnChunk>, num_rows: usize, options: &WriterOptions) {
+    pub fn initialize_write(
+        &mut self,
+        columns: &mut Vec<ColumnChunk>,
+        num_rows: usize,
+        options: &WriterOptions,
+    ) {
         match self {
             Self::Primitive(writer) => writer.initialize_write(columns, num_rows, options),
             Self::List(writer) => {
@@ -660,8 +670,16 @@ impl PrimitiveWriter {
     }
 
     /// `PrimitiveColumnWriter::Prepare`.
-    fn prepare(&mut self, parent: Option<&Levels>, vector: &Vector, count: usize, can_span_pages: bool) -> Result<()> {
-        let vcount = parent.map_or(count, |parent| parent.definition.len() - self.levels.definition.len());
+    fn prepare(
+        &mut self,
+        parent: Option<&Levels>,
+        vector: &Vector,
+        count: usize,
+        can_span_pages: bool,
+    ) -> Result<()> {
+        let vcount = parent.map_or(count, |parent| {
+            parent.definition.len() - self.levels.definition.len()
+        });
         let parent_index = self.levels.definition.len();
         let can_have_nulls = self.can_have_nulls();
         let max_define = self.schema.max_define;
@@ -750,7 +768,14 @@ impl PrimitiveWriter {
     }
 
     /// `WriteLevels`: RLE/bit-packed levels with their byte length in front.
-    fn write_levels(out: &mut Vec<u8>, levels: &[u16], max_value: u16, offset: usize, count: usize, no_nulls: bool) {
+    fn write_levels(
+        out: &mut Vec<u8>,
+        levels: &[u16],
+        max_value: u16,
+        offset: usize,
+        count: usize,
+        no_nulls: bool,
+    ) {
         if levels.is_empty() || count == 0 {
             return;
         }
@@ -818,7 +843,12 @@ impl PrimitiveWriter {
         }
         page.header.uncompressed_page_size = uncompressed as i32;
         let mut compressed = Vec::new();
-        compress(options.codec, &page.buffer, options.compression_level, &mut compressed)?;
+        compress(
+            options.codec,
+            &page.buffer,
+            options.compression_level,
+            &mut compressed,
+        )?;
         page.header.compressed_page_size = compressed.len() as i32;
         page.compressed = compressed;
         page.buffer = Vec::new();
@@ -917,7 +947,12 @@ impl PrimitiveWriter {
             let dictionary = self.values.flush_dictionary(options)?;
             bloom_filter = dictionary.bloom_filter;
             let mut compressed = Vec::new();
-            compress(options.codec, &dictionary.page, options.compression_level, &mut compressed)?;
+            compress(
+                options.codec,
+                &dictionary.page,
+                options.compression_level,
+                &mut compressed,
+            )?;
             self.pages.insert(
                 0,
                 PageWrite {
@@ -959,11 +994,11 @@ impl PrimitiveWriter {
         meta.total_uncompressed_size = total_uncompressed as i64;
         *total_byte_size += meta.total_uncompressed_size;
         let stats = self.values.stats();
-        let has_nan = stats.is_some_and(|stats| stats.has_nan());
+        let has_nan = stats.is_some_and(WriterStatistics::has_nan);
         output.push(FinishedColumn {
             column_index: self.column_index,
             has_nan,
-            can_have_nan: stats.is_some_and(|stats| stats.can_have_nan()),
+            can_have_nan: stats.is_some_and(WriterStatistics::can_have_nan),
             nan_min_max: stats
                 .filter(|stats| has_nan && stats.has_stats())
                 .map(|stats| (stats.min(), stats.max())),
@@ -1098,12 +1133,15 @@ pub fn try_parquet_type(ty: &LogicalType) -> Option<Type> {
     use LogicalTypeId as L;
     Some(match ty.id() {
         L::Boolean => Type::BOOLEAN,
-        L::TinyInt | L::SmallInt | L::Integer | L::Date => Type::INT32,
-        L::BigInt => Type::INT64,
+        L::TinyInt | L::SmallInt | L::Integer | L::Date | L::UTinyInt | L::USmallInt | L::UInteger => {
+            Type::INT32
+        }
         L::Float => Type::FLOAT,
         L::Double | L::UHugeInt | L::HugeInt => Type::DOUBLE,
         L::Enum | L::Blob | L::Varchar | L::Geometry => Type::BYTE_ARRAY,
-        L::Time
+        L::BigInt
+        | L::UBigInt
+        | L::Time
         | L::TimeNs
         | L::TimeTz
         | L::Timestamp
@@ -1111,8 +1149,6 @@ pub fn try_parquet_type(ty: &LogicalType) -> Option<Type> {
         | L::TimestampMs
         | L::TimestampNs
         | L::TimestampSec => Type::INT64,
-        L::UTinyInt | L::USmallInt | L::UInteger => Type::INT32,
-        L::UBigInt => Type::INT64,
         L::Interval | L::Uuid => Type::FIXED_LEN_BYTE_ARRAY,
         L::Decimal => match ty.physical_type() {
             rustdb_types::PhysicalType::Int16 | rustdb_types::PhysicalType::Int32 => Type::INT32,

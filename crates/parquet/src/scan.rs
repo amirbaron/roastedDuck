@@ -14,7 +14,8 @@ use rustdb_csv::multi_file::{
 };
 use rustdb_function::cast::{CastFunctionSet, CastParameters};
 use rustdb_function::{
-    FunctionData, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet, TableScanState,
+    FunctionData, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet,
+    TableScanState,
 };
 use rustdb_planner::ClientContext;
 use rustdb_storage::TableFilterSet;
@@ -130,13 +131,13 @@ fn parse_options(
             "explicit_cardinality" => {
                 options.explicit_cardinality = value.as_u64().unwrap_or(0);
             }
-            "compression" | "debug_use_openssl" => {}
             "schema" => {
                 return Err(Error::not_implemented("the read_parquet schema parameter"));
             }
             "encryption_config" => {
                 return Err(Error::not_implemented("Parquet encryption"));
             }
+            // `compression` and `debug_use_openssl` are accepted and ignored.
             _ => {}
         }
     }
@@ -144,7 +145,10 @@ fn parse_options(
 }
 
 /// `MultiFileFunction::MultiFileBind` with `ParquetMultiFileInfo`.
-fn read_parquet_bind(function_name: &str, input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBindOutput> {
+fn read_parquet_bind(
+    function_name: &str,
+    input: &TableFunctionBindInput<'_>,
+) -> Result<TableFunctionBindOutput> {
     let context = client_context(input)?;
     let first = input
         .inputs
@@ -158,7 +162,7 @@ fn read_parquet_bind(function_name: &str, input: &TableFunctionBindInput<'_>) ->
         ..ParquetOptions::default()
     };
     parse_options(input, &mut file_options, &mut options, context)?;
-    let data = bind_files(&context.casts, files, file_options, options)?;
+    let data = bind_files(&context.casts, files, file_options, &options)?;
     Ok(TableFunctionBindOutput {
         return_types: data.types.clone(),
         names: data.names.clone(),
@@ -171,7 +175,7 @@ pub fn bind_files(
     casts: &Arc<CastFunctionSet>,
     files: FileList,
     mut file_options: MultiFileOptions,
-    options: ParquetOptions,
+    options: &ParquetOptions,
 ) -> Result<ParquetBindData> {
     file_options.auto_detect_hive_partitioning(&files, casts)?;
     let mut names = Vec::new();
@@ -191,7 +195,13 @@ pub fn bind_files(
                 .iter()
                 .map(|column| column.logical_type.clone())
                 .collect();
-            combine_union_types(&file_names, &file_types, &mut types, &mut names, &mut union_names_map);
+            combine_union_types(
+                &file_names,
+                &file_types,
+                &mut types,
+                &mut names,
+                &mut union_names_map,
+            );
             if index == 0 {
                 initial_file_cardinality = reader.num_rows();
                 initial_reader = Some(Arc::new(reader));
@@ -211,7 +221,10 @@ pub fn bind_files(
     }
     let mut file_row_number_idx = None;
     if options.file_row_number {
-        if names.iter().any(|name| name.eq_ignore_ascii_case("file_row_number")) {
+        if names
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case("file_row_number"))
+        {
             return Err(Error::binder(
                 "Using file_row_number option on file with column named file_row_number is not supported",
             ));
@@ -375,7 +388,9 @@ fn open_file(data: &ParquetBindData, file_index: usize, column_ids: &[u64]) -> R
                         skip_file = true;
                     }
                 }
-                Some(ColumnSource::Reader { index, cast: None, .. }) => {
+                Some(ColumnSource::Reader {
+                    index, cast: None, ..
+                }) => {
                     if let Some(file_column) = scan_columns.get(*index).and_then(|column| column.file_index) {
                         prune_filters.push((file_column, filter));
                     }
@@ -387,7 +402,13 @@ fn open_file(data: &ParquetBindData, file_index: usize, column_ids: &[u64]) -> R
     let mut row_groups = Vec::new();
     if !skip_file {
         for group in 0..reader.num_row_groups() {
-            if !crate::filter::prune_row_group(&reader, group, &prune_filters, data.options.can_have_nan, &data.casts)? {
+            if !crate::filter::prune_row_group(
+                &reader,
+                group,
+                &prune_filters,
+                data.options.can_have_nan,
+                &data.casts,
+            )? {
                 row_groups.push(group);
             }
         }
@@ -591,7 +612,10 @@ pub fn read_parquet_functions() -> Vec<TableFunctionSet> {
         .map(|name| {
             let mut set = TableFunctionSet::new(name);
             set.add(read_parquet_function(name, LogicalType::VARCHAR));
-            set.add(read_parquet_function(name, LogicalType::list(LogicalType::VARCHAR)));
+            set.add(read_parquet_function(
+                name,
+                LogicalType::list(LogicalType::VARCHAR),
+            ));
             set
         })
         .collect()
@@ -599,5 +623,7 @@ pub fn read_parquet_functions() -> Vec<TableFunctionSet> {
 
 #[allow(dead_code, reason = "used by the schema mapping of nested columns")]
 fn find_column<'a>(columns: &'a [ColumnDefinition], name: &str) -> Option<&'a ColumnDefinition> {
-    columns.iter().find(|column| column.name.eq_ignore_ascii_case(name))
+    columns
+        .iter()
+        .find(|column| column.name.eq_ignore_ascii_case(name))
 }

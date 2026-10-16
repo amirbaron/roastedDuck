@@ -38,6 +38,7 @@ pub enum ExtraTypeInfo {
 
 /// The reader options that affect the schema and the scan (`ParquetOptions`).
 #[derive(Clone, Debug, Default)]
+#[allow(clippy::struct_excessive_bools, reason = "DuckDB's ParquetOptions flags")]
 pub struct ParquetOptions {
     pub binary_as_string: bool,
     pub variant_legacy_encoding: bool,
@@ -82,6 +83,10 @@ pub struct ColumnSchema {
 
 impl ColumnSchema {
     /// `ParquetColumnSchema::FromChildSchemas`.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the fields of ParquetColumnSchema::FromChildSchemas"
+    )]
     fn from_children(
         name: &str,
         logical_type: LogicalType,
@@ -310,10 +315,7 @@ pub fn derive_logical_type(
             }
             ConvertedType::INTERVAL => Ok(LogicalType::INTERVAL),
             ConvertedType::JSON => Ok(LogicalType::VARCHAR.with_alias("JSON")),
-            _ => Err(io_error(format!(
-                "Unsupported converted type ({})",
-                converted.0
-            ))),
+            _ => Err(io_error(format!("Unsupported converted type ({})", converted.0))),
         };
     }
     Ok(match physical {
@@ -408,7 +410,7 @@ impl<'a> SchemaParser<'a> {
                 "Failed to read Parquet file \"{path}\": root schema element has no children"
             )));
         }
-        let mut root = self.parse_recursive(0, 0, 0)?;
+        let mut root = self.parse_recursive(0, 0)?;
         if root.logical_type.id() != LogicalTypeId::Struct {
             return Err(Error::invalid_input(format!(
                 "Failed to read Parquet file \"{path}\": Root element of Parquet file must be a struct"
@@ -437,7 +439,7 @@ impl<'a> SchemaParser<'a> {
     }
 
     /// `ParquetReader::ParseSchemaRecursive`.
-    fn parse_recursive(&mut self, depth: usize, mut max_define: u8, mut max_repeat: u8) -> Result<ColumnSchema> {
+    fn parse_recursive(&mut self, mut max_define: u8, mut max_repeat: u8) -> Result<ColumnSchema> {
         let metadata = self.metadata;
         let this_index = self.next_schema_index;
         let Some(element) = metadata.schema.get(this_index) else {
@@ -499,7 +501,7 @@ impl<'a> SchemaParser<'a> {
             let mut children = Vec::with_capacity(count.min(1024));
             for _ in 0..count {
                 self.next_schema_index += 1;
-                children.push(self.parse_recursive(depth + 1, max_define, max_repeat)?);
+                children.push(self.parse_recursive(max_define, max_repeat)?);
             }
             // Rename case-insensitive duplicates by appending _1, _2, ...
             let mut collisions: CaseInsensitiveMap<usize> = CaseInsensitiveMap::default();
@@ -537,10 +539,8 @@ impl<'a> SchemaParser<'a> {
                 if !is_repeated {
                     return Err(io_error("MAP_KEY_VALUE needs to be repeated"));
                 }
-                let map_type = LogicalType::map(
-                    children[0].logical_type.clone(),
-                    children[1].logical_type.clone(),
-                );
+                let map_type =
+                    LogicalType::map(children[0].logical_type.clone(), children[1].logical_type.clone());
                 let entry_type = map_type
                     .child_type()
                     .cloned()

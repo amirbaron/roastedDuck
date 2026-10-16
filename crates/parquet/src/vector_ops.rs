@@ -6,7 +6,13 @@ use rustdb_types::{ListEntry, PhysicalType, StringT, Vector, VectorKind};
 
 /// Copies rows `src_start..src_start + count` of `src` into `dst` starting at row
 /// `dst_start`; `dst` must be flat and large enough.
-pub fn copy_rows(src: &Vector, src_start: usize, count: usize, dst: &mut Vector, dst_start: usize) -> Result<()> {
+pub fn copy_rows(
+    src: &Vector,
+    src_start: usize,
+    count: usize,
+    dst: &mut Vector,
+    dst_start: usize,
+) -> Result<()> {
     if count == 0 {
         return Ok(());
     }
@@ -101,7 +107,13 @@ pub fn copy_rows(src: &Vector, src_start: usize, count: usize, dst: &mut Vector,
             let dst_child = dst
                 .array_child_mut()
                 .ok_or_else(|| Error::internal("ARRAY vector without a child"))?;
-            copy_rows(&src_child, src_start * size, count * size, dst_child, dst_start * size)?;
+            copy_rows(
+                &src_child,
+                src_start * size,
+                count * size,
+                dst_child,
+                dst_start * size,
+            )?;
         }
         physical => {
             let width = physical.size();
@@ -141,10 +153,7 @@ mod tests {
         let value = |text: &str| {
             Value::list(
                 LogicalType::struct_type(vec![("a".to_owned(), LogicalType::VARCHAR)]),
-                vec![Value::struct_value(vec![(
-                    "a".to_owned(),
-                    Value::varchar(text),
-                )])],
+                vec![Value::struct_value(vec![("a".to_owned(), Value::varchar(text))])],
             )
         };
         let mut src = Vector::flat(ty.clone(), 3);

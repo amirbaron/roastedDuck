@@ -45,7 +45,11 @@ pub struct RowNumberReader {
 impl ColumnReader {
     /// `ColumnReader::CreateReader` / `ParquetReader::CreateReaderRecursive`: readers for
     /// `schema`; `projection` lists the (struct) children to read, empty for all.
-    pub fn create(context: &ReaderContext, schema: &ColumnSchema, projection: &[ChildProjection]) -> Result<Self> {
+    pub fn create(
+        context: &ReaderContext,
+        schema: &ColumnSchema,
+        projection: &[ChildProjection],
+    ) -> Result<Self> {
         match schema.kind {
             SchemaKind::FileRowNumber => Ok(Self::RowNumber(RowNumberReader::default())),
             SchemaKind::Geometry | SchemaKind::Variant => Err(Error::not_implemented(format!(
@@ -64,9 +68,10 @@ impl ColumnReader {
                 } else {
                     children.resize_with(schema.children.len(), || None);
                     for child in projection {
-                        let child_schema = schema.children.get(child.index).ok_or_else(|| {
-                            Error::internal("projected struct field out of range")
-                        })?;
+                        let child_schema = schema
+                            .children
+                            .get(child.index)
+                            .ok_or_else(|| Error::internal("projected struct field out of range"))?;
                         children[child.index] = Some(Self::create(context, child_schema, &child.children)?);
                     }
                 }
@@ -79,8 +84,12 @@ impl ColumnReader {
                             .ok_or_else(|| Error::internal("LIST reader without a child"))?;
                         Ok(Self::List(Box::new(ListReader::new(schema, child))))
                     }
-                    rustdb_types::LogicalTypeId::Struct => Ok(Self::Struct(StructReader::new(schema, children))),
-                    _ => Err(Error::internal("Unsupported schema type for schema with children")),
+                    rustdb_types::LogicalTypeId::Struct => {
+                        Ok(Self::Struct(StructReader::new(schema, children)))
+                    }
+                    _ => Err(Error::internal(
+                        "Unsupported schema type for schema with children",
+                    )),
                 }
             }
         }
@@ -97,7 +106,12 @@ impl ColumnReader {
     }
 
     /// `InitializeRead`: positions the reader at row group `row_group_index`.
-    pub fn initialize_read(&mut self, row_group_index: usize, row_group: &RowGroup, context: &ReaderContext) -> Result<()> {
+    pub fn initialize_read(
+        &mut self,
+        row_group_index: usize,
+        row_group: &RowGroup,
+        context: &ReaderContext,
+    ) -> Result<()> {
         match self {
             Self::Leaf(leaf) => leaf.initialize_read(row_group),
             Self::List(list) => list.initialize_read(row_group_index, row_group, context),
@@ -117,7 +131,13 @@ impl ColumnReader {
 
     /// Reads `num_values` entries into `result`, writing their levels to
     /// `defines`/`repeats` (`Read`). Returns the number of entries read.
-    pub fn read(&mut self, num_values: usize, defines: &mut [u8], repeats: &mut [u8], result: &mut Vector) -> Result<usize> {
+    pub fn read(
+        &mut self,
+        num_values: usize,
+        defines: &mut [u8],
+        repeats: &mut [u8],
+        result: &mut Vector,
+    ) -> Result<usize> {
         match self {
             Self::Leaf(leaf) => leaf.read(num_values, defines, repeats, result),
             Self::List(list) => list.read(num_values, defines, repeats, result),

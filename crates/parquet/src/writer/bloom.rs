@@ -37,10 +37,8 @@ impl BloomFilter {
 
     /// A filter read from a file.
     pub fn from_bytes(bytes: &[u8]) -> Self {
-        let words = bytes
-            .chunks_exact(4)
-            .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-            .collect();
+        let (chunks, _) = bytes.as_chunks::<4>();
+        let words = chunks.iter().map(|chunk| u32::from_le_bytes(*chunk)).collect();
         Self { words }
     }
 

@@ -23,7 +23,7 @@ pub fn varint_encode(mut value: u64, out: &mut Vec<u8>) {
 /// bit first (`BitpackingPrimitives::PackBuffer`), appending `values.len() * width / 8`
 /// bytes.
 pub fn bit_pack(values: &[u64], width: u8, out: &mut Vec<u8>) {
-    debug_assert!(values.len() % GROUP_SIZE == 0);
+    debug_assert!(values.len().is_multiple_of(GROUP_SIZE));
     let width = usize::from(width);
     if width == 0 {
         return;
@@ -31,7 +31,11 @@ pub fn bit_pack(values: &[u64], width: u8, out: &mut Vec<u8>) {
     let start = out.len();
     out.resize(start + values.len() * width / 8, 0);
     let packed = &mut out[start..];
-    let mask = if width == 64 { u64::MAX } else { (1u64 << width) - 1 };
+    let mask = if width == 64 {
+        u64::MAX
+    } else {
+        (1u64 << width) - 1
+    };
     let mut bit = 0usize;
     for &value in values {
         let mut value = value & mask;
@@ -162,7 +166,7 @@ impl RleBpEncoder {
     }
 }
 
-/// The DELTA_BINARY_PACKED encoder (`DbpEncoder`): blocks of 2048 values in 8 miniblocks.
+/// The `DELTA_BINARY_PACKED` encoder (`DbpEncoder`): blocks of 2048 values in 8 miniblocks.
 #[derive(Debug)]
 pub struct DbpEncoder {
     total_value_count: u64,
@@ -243,7 +247,7 @@ impl DbpEncoder {
     }
 }
 
-/// The DELTA_LENGTH_BYTE_ARRAY encoder (`DlbaEncoder`): DELTA_BINARY_PACKED lengths,
+/// The `DELTA_LENGTH_BYTE_ARRAY` encoder (`DlbaEncoder`): `DELTA_BINARY_PACKED` lengths,
 /// then the concatenated bytes.
 #[derive(Debug)]
 pub struct DlbaEncoder {
@@ -275,7 +279,7 @@ impl DlbaEncoder {
     }
 }
 
-/// The BYTE_STREAM_SPLIT encoder (`BssEncoder`).
+/// The `BYTE_STREAM_SPLIT` encoder (`BssEncoder`).
 #[derive(Debug)]
 pub struct BssEncoder {
     total_value_count: usize,

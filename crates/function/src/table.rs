@@ -78,9 +78,8 @@ pub type TableFunctionTypePushdown =
 /// position of the filtered column in the scan's column ids, passed as `Any`) to a table
 /// function's bind data: the scan of the returned bind data only produces rows passing
 /// the filters, so the planner drops the filters themselves.
-pub type TableFunctionPushdownFilters = Arc<
-    dyn Fn(&dyn FunctionData, &[u64], &dyn std::any::Any) -> Result<Arc<dyn FunctionData>> + Send + Sync,
->;
+pub type TableFunctionPushdownFilters =
+    Arc<dyn Fn(&dyn FunctionData, &[u64], &dyn std::any::Any) -> Result<Arc<dyn FunctionData>> + Send + Sync>;
 
 /// What a [`TableInOutFunction`] call did with its input (DuckDB's `OperatorResultType`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -111,7 +110,10 @@ pub struct TableScanState {
 
 /// One overload of a table function.
 #[derive(Clone)]
-#[allow(clippy::struct_excessive_bools, reason = "DuckDB's TableFunction capability flags")]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "DuckDB's TableFunction capability flags"
+)]
 pub struct TableFunction {
     pub name: Arc<str>,
     pub arguments: Vec<LogicalType>,

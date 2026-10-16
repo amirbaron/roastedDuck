@@ -42,7 +42,12 @@ impl StructReader {
             })
     }
 
-    pub fn initialize_read(&mut self, row_group_index: usize, row_group: &RowGroup, context: &ReaderContext) -> Result<()> {
+    pub fn initialize_read(
+        &mut self,
+        row_group_index: usize,
+        row_group: &RowGroup,
+        context: &ReaderContext,
+    ) -> Result<()> {
         for child in self.children.iter_mut().flatten() {
             child.initialize_read(row_group_index, row_group, context)?;
         }
@@ -50,7 +55,13 @@ impl StructReader {
     }
 
     /// `StructColumnReader::Read`.
-    pub fn read(&mut self, num_values: usize, defines: &mut [u8], repeats: &mut [u8], result: &mut Vector) -> Result<usize> {
+    pub fn read(
+        &mut self,
+        num_values: usize,
+        defines: &mut [u8],
+        repeats: &mut [u8],
+        result: &mut Vector,
+    ) -> Result<usize> {
         defines[..num_values].fill(self.max_define);
         if result.kind() != VectorKind::Flat || result.row_capacity() < num_values {
             *result = Vector::flat(self.logical_type.clone(), num_values.max(STANDARD_VECTOR_SIZE));
@@ -77,8 +88,8 @@ impl StructReader {
             }
         }
         let read_count = read_count.unwrap_or(num_values);
-        for row in 0..read_count {
-            if defines[row] < self.max_define {
+        for (row, &level) in defines[..read_count].iter().enumerate() {
+            if level < self.max_define {
                 result.set_null(row);
             }
         }
@@ -98,14 +109,20 @@ impl StructReader {
                 return child.group_rows_available();
             }
         }
-        for child in self.children.iter().flatten() {
-            return child.group_rows_available();
-        }
-        Err(Error::internal("No projected columns in struct?"))
+        self.children
+            .iter()
+            .flatten()
+            .next()
+            .ok_or_else(|| Error::internal("No projected columns in struct?"))?
+            .group_rows_available()
     }
 
     pub fn total_compressed_size(&self) -> u64 {
-        self.children.iter().flatten().map(ColumnReader::total_compressed_size).sum()
+        self.children
+            .iter()
+            .flatten()
+            .map(ColumnReader::total_compressed_size)
+            .sum()
     }
 }
 
@@ -161,7 +178,12 @@ impl ListReader {
         &self.logical_type
     }
 
-    pub fn initialize_read(&mut self, row_group_index: usize, row_group: &RowGroup, context: &ReaderContext) -> Result<()> {
+    pub fn initialize_read(
+        &mut self,
+        row_group_index: usize,
+        row_group: &RowGroup,
+        context: &ReaderContext,
+    ) -> Result<()> {
         self.child.initialize_read(row_group_index, row_group, context)
     }
 
@@ -178,7 +200,13 @@ impl ListReader {
     }
 
     /// `ListColumnReader::Read`.
-    pub fn read(&mut self, num_values: usize, defines: &mut [u8], repeats: &mut [u8], result: &mut Vector) -> Result<usize> {
+    pub fn read(
+        &mut self,
+        num_values: usize,
+        defines: &mut [u8],
+        repeats: &mut [u8],
+        result: &mut Vector,
+    ) -> Result<usize> {
         if self.pending_skips > 0 {
             let skips = std::mem::take(&mut self.pending_skips);
             self.read_internal(skips, None, None, None)?;
@@ -209,9 +237,12 @@ impl ListReader {
                 self.child_repeats.fill(0);
                 let request = (STANDARD_VECTOR_SIZE as u64).min(self.child.group_rows_available()?) as usize;
                 let mut vector = Vector::flat(self.child_type.clone(), STANDARD_VECTOR_SIZE);
-                let count = self
-                    .child
-                    .read(request, &mut self.child_defines, &mut self.child_repeats, &mut vector)?;
+                let count = self.child.read(
+                    request,
+                    &mut self.child_defines,
+                    &mut self.child_repeats,
+                    &mut vector,
+                )?;
                 self.read_vector = vector;
                 count
             } else {
@@ -220,9 +251,9 @@ impl ListReader {
             if child_count == 0 {
                 break;
             }
-            let chunk_offset = result.as_ref().map_or(0, |result| {
-                result.list_child().map_or(0, |(_, size)| size)
-            });
+            let chunk_offset = result
+                .as_ref()
+                .map_or(0, |result| result.list_child().map_or(0, |(_, size)| size));
             let mut child_index = 0;
             while child_index < child_count {
                 if self.child_repeats[child_index] == self.max_repeat {

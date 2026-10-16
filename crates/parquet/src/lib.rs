@@ -9,8 +9,8 @@
 //! function.
 
 pub mod column_reader;
-pub mod copy;
 pub mod compression;
+pub mod copy;
 pub mod decode;
 pub mod file;
 pub mod filter;

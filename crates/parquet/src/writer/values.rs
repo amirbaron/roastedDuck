@@ -9,7 +9,9 @@ use rustdb_types::{Vector, VectorKind};
 
 use super::bloom::BloomFilter;
 use super::encoders::{BssEncoder, DbpEncoder, DlbaEncoder, RleBpEncoder};
-use super::stats::{BooleanStatistics, DecimalStatistics, StringStatistics, WriterStatistics, decimal_to_bytes};
+use super::stats::{
+    BooleanStatistics, DecimalStatistics, StringStatistics, WriterStatistics, decimal_to_bytes,
+};
 use super::types::{FallbackEncoding, WriteType, xxhash64};
 use super::{ParquetVersion, WriterOptions};
 use crate::decode::compute_bit_width;
@@ -82,12 +84,12 @@ pub trait ValueWriter: Send + std::fmt::Debug {
 enum PageEncoder {
     Plain,
     Dictionary {
-        encoder: RleBpEncoder,
+        encoder: Box<RleBpEncoder>,
         bit_width: u8,
         written_value: bool,
     },
     DeltaBinaryPacked {
-        encoder: DbpEncoder,
+        encoder: Box<DbpEncoder>,
         initialized: bool,
     },
     DeltaLengthByteArray {
@@ -311,13 +313,13 @@ where
             Encoding::PLAIN_DICTIONARY | Encoding::RLE_DICTIONARY => {
                 let bit_width = compute_bit_width(self.dictionary.len() as u64);
                 PageEncoder::Dictionary {
-                    encoder: RleBpEncoder::new(bit_width),
+                    encoder: Box::new(RleBpEncoder::new(bit_width)),
                     bit_width,
                     written_value: false,
                 }
             }
             Encoding::DELTA_BINARY_PACKED => PageEncoder::DeltaBinaryPacked {
-                encoder: DbpEncoder::new(value_count as u64),
+                encoder: Box::new(DbpEncoder::new(value_count as u64)),
                 initialized: false,
             },
             Encoding::DELTA_LENGTH_BYTE_ARRAY => PageEncoder::DeltaLengthByteArray {
@@ -358,11 +360,10 @@ where
                             *written_value = true;
                         }
                         let key = T::key(T::src(vector, row));
-                        let index = *self
-                            .dictionary
-                            .indexes
-                            .get(&key)
-                            .ok_or_else(|| Error::internal("value missing from the Parquet dictionary"))?;
+                        let index =
+                            *self.dictionary.indexes.get(&key).ok_or_else(|| {
+                                Error::internal("value missing from the Parquet dictionary")
+                            })?;
                         encoder.write_value(out, index);
                     }
                 }
@@ -471,7 +472,10 @@ where
     }
 
     fn has_dictionary(&self) -> bool {
-        matches!(self.encoding, Encoding::RLE_DICTIONARY | Encoding::PLAIN_DICTIONARY)
+        matches!(
+            self.encoding,
+            Encoding::RLE_DICTIONARY | Encoding::PLAIN_DICTIONARY
+        )
     }
 
     fn dictionary_size(&self) -> usize {
@@ -480,7 +484,8 @@ where
 
     fn flush_dictionary(&mut self, options: &WriterOptions) -> Result<DictionaryPage> {
         let bloom_filter = options.enable_bloom_filters.then(|| {
-            let mut filter = BloomFilter::new(self.dictionary.len(), options.bloom_filter_false_positive_ratio);
+            let mut filter =
+                BloomFilter::new(self.dictionary.len(), options.bloom_filter_false_positive_ratio);
             for &hash in &self.dictionary.hashes {
                 filter.insert(hash);
             }
@@ -529,12 +534,10 @@ impl ValueWriter for BooleanWriter {
     }
     fn write_vector(&mut self, out: &mut Vec<u8>, vector: &Vector, start: usize, end: usize) -> Result<()> {
         let validity = vector.validity();
-        let values = vector.values::<bool>();
-        for row in start..end {
+        for (row, &value) in vector.values::<bool>().iter().enumerate().take(end).skip(start) {
             if !validity.is_valid(row) {
                 continue;
             }
-            let value = values[row];
             self.stats.max |= value;
             self.stats.min &= value;
             self.byte |= u8::from(value) << self.byte_position;
@@ -583,12 +586,10 @@ impl ValueWriter for FixedDecimalWriter {
     fn begin_page(&mut self, _: usize) {}
     fn write_vector(&mut self, out: &mut Vec<u8>, vector: &Vector, start: usize, end: usize) -> Result<()> {
         let validity = vector.validity();
-        let values = vector.values::<i128>();
-        for row in start..end {
+        for (row, &value) in vector.values::<i128>().iter().enumerate().take(end).skip(start) {
             if !validity.is_valid(row) {
                 continue;
             }
-            let value = values[row];
             self.stats.min = self.stats.min.min(value);
             self.stats.max = self.stats.max.max(value);
             out.extend_from_slice(&decimal_to_bytes(value));
@@ -711,7 +712,9 @@ pub fn deep_flatten(vector: &Vector, count: usize) -> Result<Vector> {
 
 fn children_flat(vector: &Vector) -> bool {
     if let Some(children) = vector.struct_children() {
-        return children.iter().all(|child| child.kind() == VectorKind::Flat && children_flat(child));
+        return children
+            .iter()
+            .all(|child| child.kind() == VectorKind::Flat && children_flat(child));
     }
     if let Some((child, _)) = vector.list_child() {
         return child.kind() == VectorKind::Flat && children_flat(child);

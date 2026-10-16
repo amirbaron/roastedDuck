@@ -1107,7 +1107,11 @@ impl PlanGenerator {
                 if let (Some(filters), Some(pushdown), Some(data)) =
                     (&filters, &get.function.pushdown_filters, &bind_data)
                 {
-                    bind_data = Some(pushdown(data.as_ref(), &column_ids, filters as &dyn std::any::Any)?);
+                    bind_data = Some(pushdown(
+                        data.as_ref(),
+                        &column_ids,
+                        filters as &dyn std::any::Any,
+                    )?);
                 }
                 let projection = get.projection_ids.iter().map(|&id| id as usize).collect();
                 Arc::new(

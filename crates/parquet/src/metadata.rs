@@ -8,7 +8,9 @@ use std::sync::Arc;
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_csv::multi_file::{FileList, glob_file_list, parse_paths};
 use rustdb_function::cast::{CastFunctionSet, ValueCast as _};
-use rustdb_function::{FunctionData, TableFunction, TableFunctionBindOutput, TableFunctionSet, TableScanState};
+use rustdb_function::{
+    FunctionData, TableFunction, TableFunctionBindOutput, TableFunctionSet, TableScanState,
+};
 use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
 use crate::reader::ParquetReader;
@@ -115,11 +117,7 @@ fn schema_of(kind: MetadataKind) -> Vec<(&'static str, LogicalType)> {
             ("duckdb_type", T::VARCHAR),
             ("column_id", T::BIGINT),
         ],
-        MetadataKind::KeyValue => vec![
-            ("file_name", T::VARCHAR),
-            ("key", T::BLOB),
-            ("value", T::BLOB),
-        ],
+        MetadataKind::KeyValue => vec![("file_name", T::VARCHAR), ("key", T::BLOB), ("value", T::BLOB)],
         MetadataKind::File => vec![
             ("file_name", T::VARCHAR),
             ("created_by", T::VARCHAR),
@@ -198,7 +196,10 @@ fn logical_type_text(logical: &ParquetLogicalType) -> Option<String> {
     } else if logical.enum_.is_some() {
         "EnumType()".to_owned()
     } else if let Some(decimal) = &logical.decimal {
-        format!("DecimalType(scale={}, precision={})", decimal.scale, decimal.precision)
+        format!(
+            "DecimalType(scale={}, precision={})",
+            decimal.scale, decimal.precision
+        )
     } else if logical.date.is_some() {
         "DateType()".to_owned()
     } else if let Some(time) = &logical.time {
@@ -239,9 +240,10 @@ fn logical_type_text(logical: &ParquetLogicalType) -> Option<String> {
         format!(
             "GeographyType(crs={}, algorithm={})",
             geography.crs.as_deref().unwrap_or("<null>"),
-            geography
-                .algorithm
-                .map_or_else(|| "<null>".to_owned(), |algorithm| enum_text(algorithm.name(), algorithm.0))
+            geography.algorithm.map_or_else(
+                || "<null>".to_owned(),
+                |algorithm| enum_text(algorithm.name(), algorithm.0)
+            )
         )
     } else {
         return None;
@@ -266,9 +268,10 @@ fn encryption_text(algorithm: &EncryptionAlgorithm) -> String {
                unique: &Option<crate::thrift::Binary>,
                supply: Option<bool>| {
         let binary = |value: &Option<crate::thrift::Binary>| {
-            value
-                .as_ref()
-                .map_or_else(|| "<null>".to_owned(), |value| String::from_utf8_lossy(value).into_owned())
+            value.as_ref().map_or_else(
+                || "<null>".to_owned(),
+                |value| String::from_utf8_lossy(value).into_owned(),
+            )
         };
         format!(
             "(aad_prefix={}, aad_file_unique={}, supply_aad_prefix={})",
@@ -283,14 +286,22 @@ fn encryption_text(algorithm: &EncryptionAlgorithm) -> String {
             || "<null>".to_owned(),
             |aes_gcm| format!(
                 "AesGcmV1{}",
-                aes(&aes_gcm.aad_prefix, &aes_gcm.aad_file_unique, aes_gcm.supply_aad_prefix)
+                aes(
+                    &aes_gcm.aad_prefix,
+                    &aes_gcm.aad_file_unique,
+                    aes_gcm.supply_aad_prefix
+                )
             )
         ),
         algorithm.aes_gcm_ctr_v1.as_ref().map_or_else(
             || "<null>".to_owned(),
             |aes_gcm| format!(
                 "AesGcmCtrV1{}",
-                aes(&aes_gcm.aad_prefix, &aes_gcm.aad_file_unique, aes_gcm.supply_aad_prefix)
+                aes(
+                    &aes_gcm.aad_prefix,
+                    &aes_gcm.aad_file_unique,
+                    aes_gcm.supply_aad_prefix
+                )
             )
         )
     )
@@ -425,7 +436,13 @@ fn schema_rows(reader: &ParquetReader, data: &MetadataBindData) -> Result<Vec<Ve
     let metadata = reader.metadata();
     let mut rows = Vec::new();
     let varchar = |value: Option<String>| optional(value, Value::varchar, &LogicalType::VARCHAR);
-    let bigint = |value: Option<i32>| optional(value, |value| Value::bigint(i64::from(value)), &LogicalType::BIGINT);
+    let bigint = |value: Option<i32>| {
+        optional(
+            value,
+            |value| Value::bigint(i64::from(value)),
+            &LogicalType::BIGINT,
+        )
+    };
     for (index, element) in metadata.schema.iter().enumerate() {
         let duckdb_type = match element.type_ {
             Some(_) => {
@@ -480,7 +497,10 @@ fn file_rows(reader: &ParquetReader) -> Vec<Vec<Value>> {
         None => Value::null(LogicalType::list(LogicalType::VARCHAR)),
         Some(orders) => Value::list(
             LogicalType::VARCHAR,
-            orders.iter().map(|order| Value::varchar(column_order_text(order))).collect(),
+            orders
+                .iter()
+                .map(|order| Value::varchar(column_order_text(order)))
+                .collect(),
         ),
     };
     vec![vec![
@@ -514,7 +534,11 @@ fn bloom_probe_rows(reader: &ParquetReader, data: &MetadataBindData) -> Result<V
         .probe
         .as_ref()
         .ok_or_else(|| Error::internal("parquet_bloom_probe without a probe"))?;
-    let Some(column_index) = reader.columns.iter().position(|definition| &definition.name == column) else {
+    let Some(column_index) = reader
+        .columns
+        .iter()
+        .position(|definition| &definition.name == column)
+    else {
         return Err(Error::invalid_input(format!(
             "Column {column} not found in {}",
             reader.file_name()
@@ -567,7 +591,10 @@ pub fn value_hash(constant: &Value) -> u64 {
 }
 
 /// Reads the bloom filter of a column chunk, if it has a usable one.
-pub fn read_bloom_filter(reader: &ParquetReader, meta: &crate::thrift::ColumnMetaData) -> Result<Option<BloomFilter>> {
+pub fn read_bloom_filter(
+    reader: &ParquetReader,
+    meta: &crate::thrift::ColumnMetaData,
+) -> Result<Option<BloomFilter>> {
     let Some(offset) = meta.bloom_filter_offset.filter(|&offset| offset > 0) else {
         return Ok(None);
     };
@@ -576,11 +603,16 @@ pub fn read_bloom_filter(reader: &ParquetReader, meta: &crate::thrift::ColumnMet
     let len = meta
         .bloom_filter_length
         .filter(|&length| length > 0)
-        .map_or(available, |length| u64::from(length.unsigned_abs()).min(available));
+        .map_or(available, |length| {
+            u64::from(length.unsigned_abs()).min(available)
+        });
     let bytes = file.read_range(offset as u64, len as usize)?;
     let mut thrift = crate::thrift::CompactReader::new(&bytes);
     let header = <crate::thrift::BloomFilterHeader as crate::thrift::ThriftValue>::read(&mut thrift)?;
-    if header.algorithm.block.is_none() || header.compression.uncompressed.is_none() || header.hash.xxhash.is_none() {
+    if header.algorithm.block.is_none()
+        || header.compression.uncompressed.is_none()
+        || header.hash.xxhash.is_none()
+    {
         return Ok(None);
     }
     let start = thrift.position();
@@ -594,7 +626,11 @@ pub fn read_bloom_filter(reader: &ParquetReader, meta: &crate::thrift::ColumnMet
 }
 
 /// `BloomFilterExcludes` for an equality with `constant`.
-fn bloom_filter_excludes(reader: &ParquetReader, meta: &crate::thrift::ColumnMetaData, constant: &Value) -> Result<bool> {
+fn bloom_filter_excludes(
+    reader: &ParquetReader,
+    meta: &crate::thrift::ColumnMetaData,
+    constant: &Value,
+) -> Result<bool> {
     if constant.is_null() {
         return Ok(false);
     }
@@ -696,7 +732,10 @@ fn metadata_scan(
         }
     }
     let count = output.len();
-    let mut columns: Vec<Vector> = types.iter().map(|ty| Vector::flat(ty.clone(), count.max(1))).collect();
+    let mut columns: Vec<Vector> = types
+        .iter()
+        .map(|ty| Vector::flat(ty.clone(), count.max(1)))
+        .collect();
     for (row, values) in output.iter().enumerate() {
         for (column, value) in columns.iter_mut().zip(values) {
             column.set_value(row, value)?;
@@ -707,7 +746,9 @@ fn metadata_scan(
 }
 
 /// The options of the metadata functions (`ParquetOptions(context)`).
-fn context_options(input: &rustdb_function::TableFunctionBindInput<'_>) -> Result<(ParquetOptions, Arc<CastFunctionSet>)> {
+fn context_options(
+    input: &rustdb_function::TableFunctionBindInput<'_>,
+) -> Result<(ParquetOptions, Arc<CastFunctionSet>)> {
     let context = crate::scan::client_context(input)?;
     Ok((
         ParquetOptions {
@@ -736,7 +777,9 @@ fn metadata_function(name: &'static str, kind: MetadataKind, argument: LogicalTy
                     return Err(Error::internal("parquet_bloom_probe expects three arguments"));
                 };
                 if column.is_null() || constant.is_null() {
-                    return Err(Error::invalid_input("Can't have NULL parameters for parquet_bloom_probe"));
+                    return Err(Error::invalid_input(
+                        "Can't have NULL parameters for parquet_bloom_probe",
+                    ));
                 }
                 probe = Some((column.to_varchar()?, constant.clone()));
             }
@@ -776,7 +819,11 @@ pub fn metadata_functions() -> Vec<TableFunctionSet> {
     .map(|(name, kind)| {
         let mut set = TableFunctionSet::new(name);
         set.add(metadata_function(name, kind, LogicalType::VARCHAR));
-        set.add(metadata_function(name, kind, LogicalType::list(LogicalType::VARCHAR)));
+        set.add(metadata_function(
+            name,
+            kind,
+            LogicalType::list(LogicalType::VARCHAR),
+        ));
         set
     })
     .collect()

@@ -6,7 +6,9 @@ use std::any::Any;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rustdb_common::{CaseInsensitiveMap, Error, Result};
-use rustdb_function::copy::{CopyFromBindInput, CopyFunctionBindInput, CopyGlobalState, CopyOption, CopyOptionMode};
+use rustdb_function::copy::{
+    CopyFromBindInput, CopyFunctionBindInput, CopyGlobalState, CopyOption, CopyOptionMode,
+};
 use rustdb_function::{CopyFunction, FunctionData};
 use rustdb_planner::ClientContext;
 use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Value};
@@ -56,7 +58,8 @@ fn client_context(binder: Option<&dyn Any>) -> Result<&ClientContext> {
 /// `ParquetListCopyOptions`.
 fn parquet_copy_options() -> Vec<(String, CopyOption)> {
     use CopyOptionMode::{ReadOnly, ReadWrite, WriteOnly};
-    let option = |name: &str, ty: LogicalType, mode: CopyOptionMode| (name.to_owned(), CopyOption::new(ty, mode));
+    let option =
+        |name: &str, ty: LogicalType, mode: CopyOptionMode| (name.to_owned(), CopyOption::new(ty, mode));
     vec![
         option("row_group_size", LogicalType::UBIGINT, ReadWrite),
         option("chunk_size", LogicalType::UBIGINT, WriteOnly),
@@ -67,10 +70,22 @@ fn parquet_copy_options() -> Vec<(String, CopyOption)> {
         option("field_ids", LogicalType::ANY, WriteOnly),
         option("kv_metadata", LogicalType::ANY, WriteOnly),
         option("encryption_config", LogicalType::ANY, ReadWrite),
-        option("dictionary_compression_ratio_threshold", LogicalType::ANY, WriteOnly),
+        option(
+            "dictionary_compression_ratio_threshold",
+            LogicalType::ANY,
+            WriteOnly,
+        ),
         option("dictionary_size_limit", LogicalType::BIGINT, WriteOnly),
-        option("string_dictionary_page_size_limit", LogicalType::UBIGINT, WriteOnly),
-        option("bloom_filter_false_positive_ratio", LogicalType::DOUBLE, WriteOnly),
+        option(
+            "string_dictionary_page_size_limit",
+            LogicalType::UBIGINT,
+            WriteOnly,
+        ),
+        option(
+            "bloom_filter_false_positive_ratio",
+            LogicalType::DOUBLE,
+            WriteOnly,
+        ),
         option("debug_use_openssl", LogicalType::BOOLEAN, ReadWrite),
         option("write_bloom_filter", LogicalType::BOOLEAN, WriteOnly),
         option("compression_level", LogicalType::BIGINT, WriteOnly),
@@ -120,7 +135,10 @@ fn child_name_to_type(ty: &LogicalType) -> Result<CaseInsensitiveMap<LogicalType
     let mut map = CaseInsensitiveMap::default();
     match ty.id() {
         LogicalTypeId::List => {
-            map.insert("element", ty.child_type().cloned().unwrap_or(LogicalType::SQLNULL));
+            map.insert(
+                "element",
+                ty.child_type().cloned().unwrap_or(LogicalType::SQLNULL),
+            );
         }
         LogicalTypeId::Map => {
             if let Some((key, value)) = ty.map_key_value() {
@@ -152,7 +170,12 @@ fn child_names_and_types(ty: &LogicalType) -> Vec<(String, LogicalType)> {
         )],
         LogicalTypeId::Map => ty
             .map_key_value()
-            .map(|(key, value)| vec![("key".to_owned(), key.clone()), ("value".to_owned(), value.clone())])
+            .map(|(key, value)| {
+                vec![
+                    ("key".to_owned(), key.clone()),
+                    ("value".to_owned(), value.clone()),
+                ]
+            })
             .unwrap_or_default(),
         LogicalTypeId::Struct => ty.struct_children().map(<[_]>::to_vec).unwrap_or_default(),
         _ => Vec::new(),
@@ -160,14 +183,21 @@ fn child_names_and_types(ty: &LogicalType) -> Vec<(String, LogicalType)> {
 }
 
 /// `FieldID::GenerateFieldIDs`: sequential ids in depth-first order.
-fn generate_field_ids(ids: &mut CaseInsensitiveMap<FieldId>, next: &mut i32, columns: &[(String, LogicalType)]) {
+fn generate_field_ids(
+    ids: &mut CaseInsensitiveMap<FieldId>,
+    next: &mut i32,
+    columns: &[(String, LogicalType)],
+) {
     for (name, ty) in columns {
         let mut field = FieldId {
             field_id: Some(*next),
             children: CaseInsensitiveMap::default(),
         };
         *next += 1;
-        if matches!(ty.id(), LogicalTypeId::List | LogicalTypeId::Map | LogicalTypeId::Struct) {
+        if matches!(
+            ty.id(),
+            LogicalTypeId::List | LogicalTypeId::Map | LogicalTypeId::Struct
+        ) {
             generate_field_ids(&mut field.children, next, &child_names_and_types(ty));
         }
         ids.insert(name.clone(), field);
@@ -211,7 +241,9 @@ fn parse_field_ids(
         let mut nested = None;
         if child.logical_type().id() == LogicalTypeId::Struct {
             let nested_names = child.logical_type().struct_children().unwrap_or_default();
-            for ((nested_name, _), nested_value) in nested_names.iter().zip(child.children().unwrap_or_default()) {
+            for ((nested_name, _), nested_value) in
+                nested_names.iter().zip(child.children().unwrap_or_default())
+            {
                 if nested_name == DUCKDB_FIELD_ID {
                     field_id_value = Some(nested_value.clone());
                 } else {
@@ -227,7 +259,9 @@ fn parse_field_ids(
             let id_value = id_value.try_cast_as(&context.casts, &LogicalType::INTEGER, false)?;
             let id = id_value.as_i64().unwrap_or(0) as i32;
             if !unique.insert(id) {
-                return Err(Error::binder(format!("Duplicate field_id {id} found in FIELD_IDS")));
+                return Err(Error::binder(format!(
+                    "Duplicate field_id {id} found in FIELD_IDS"
+                )));
             }
             field.field_id = Some(id);
         }
@@ -401,7 +435,9 @@ fn parquet_write_bind(
                 }
             }
             _ => {
-                return Err(Error::internal(format!("Unrecognized option for PARQUET: {name}")));
+                return Err(Error::internal(format!(
+                    "Unrecognized option for PARQUET: {name}"
+                )));
             }
         }
     }
@@ -530,10 +566,10 @@ fn parquet_copy_from_bind(
     for (name, values) in input.options.iter() {
         let option = name.to_lowercase();
         let boolean = || -> Result<bool> {
+            use rustdb_function::cast::ValueCast as _;
             let Some(value) = values.first() else {
                 return Ok(true);
             };
-            use rustdb_function::cast::ValueCast as _;
             value
                 .try_cast_as(&context.casts, &LogicalType::BOOLEAN, false)
                 .map(|value| value.as_bool().unwrap_or(false))
@@ -566,7 +602,7 @@ fn parquet_copy_from_bind(
         auto_detect_hive_partitioning: false,
         ..rustdb_csv::multi_file::MultiFileOptions::default()
     };
-    let mut data: ParquetBindData = bind_files(&context.casts, files, file_options, options)?;
+    let mut data: ParquetBindData = bind_files(&context.casts, files, file_options, &options)?;
     if expected_types.len() != data.types.len() {
         let table: Vec<String> = expected_names
             .iter()

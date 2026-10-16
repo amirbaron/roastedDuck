@@ -36,7 +36,10 @@ const MAX_RECURSION_DEPTH: u32 = 64;
 /// The error thrown by the C++ protocol for malformed input
 /// (`TProtocolException::INVALID_DATA`).
 fn invalid_data() -> Error {
-    Error::new(rustdb_common::ErrorKind::Invalid, "TProtocolException: Invalid data")
+    Error::new(
+        rustdb_common::ErrorKind::Invalid,
+        "TProtocolException: Invalid data",
+    )
 }
 
 /// Reading past the end of the input (`TTransportException::END_OF_FILE`).
@@ -548,16 +551,28 @@ macro_rules! thrift_field_type {
 
 /// The default value of a field.
 macro_rules! thrift_field_default {
-    (required) => { Default::default() };
-    (required, $default:expr) => { $default };
-    (optional) => { None };
-    (optional, $default:expr) => { Some($default) };
+    (required) => {
+        Default::default()
+    };
+    (required, $default:expr) => {
+        $default
+    };
+    (optional) => {
+        None
+    };
+    (optional, $default:expr) => {
+        Some($default)
+    };
 }
 
 /// Stores a read field value.
 macro_rules! thrift_field_store {
-    (required, $slot:expr, $value:expr) => { $slot = $value };
-    (optional, $slot:expr, $value:expr) => { $slot = Some($value) };
+    (required, $slot:expr, $value:expr) => {
+        $slot = $value
+    };
+    (optional, $slot:expr, $value:expr) => {
+        $slot = Some($value)
+    };
 }
 
 /// Whether a field is required.
@@ -709,7 +724,7 @@ mod tests {
         writer.write_binary(b"k");
         writer.write_struct_end();
         let (value, _): (KeyValue, usize) = read_from(&writer.into_bytes()).unwrap();
-        assert_eq!(value.key, "k");
+        assert_eq!(&value.key[..], b"k");
         assert!(read_from::<KeyValue>(&[0]).is_err());
     }
 }

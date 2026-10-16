@@ -95,9 +95,9 @@ pub fn convert_value_internal(ty: &LogicalType, schema: &ColumnSchema, bytes: &[
         L::Time => {
             let value = int_of_either(bytes, "TIME")?;
             Value::time(Time(match schema.type_info {
-                ExtraTypeInfo::UnitMs => value.checked_mul(1000).ok_or_else(|| {
-                    Error::conversion("Could not convert Time(MS) to Time(US)")
-                })?,
+                ExtraTypeInfo::UnitMs => value
+                    .checked_mul(1000)
+                    .ok_or_else(|| Error::conversion("Could not convert Time(MS) to Time(US)"))?,
                 ExtraTypeInfo::UnitNs => value / 1000,
                 _ => value,
             }))
@@ -161,7 +161,12 @@ pub fn convert_value_internal(ty: &LogicalType, schema: &ColumnSchema, bytes: &[
 
 /// `ParquetStatisticsUtils::ConvertValue`: the value cast to the column type, NULL if
 /// that fails.
-pub fn convert_value(ty: &LogicalType, schema: &ColumnSchema, bytes: &[u8], casts: &CastFunctionSet) -> Result<Value> {
+pub fn convert_value(
+    ty: &LogicalType,
+    schema: &ColumnSchema,
+    bytes: &[u8],
+    casts: &CastFunctionSet,
+) -> Result<Value> {
     let value = convert_value_internal(ty, schema, bytes)?;
     Ok(value
         .try_cast_as(casts, ty, false)
@@ -190,8 +195,16 @@ fn numeric_stats(
         }
     };
     if let StatsData::Numeric(numeric) = result.data_mut() {
-        numeric.min = if min.is_null() { None } else { NumericValue::from_value(&min) };
-        numeric.max = if max.is_null() { None } else { NumericValue::from_value(&max) };
+        numeric.min = if min.is_null() {
+            None
+        } else {
+            NumericValue::from_value(&min)
+        };
+        numeric.max = if max.is_null() {
+            None
+        } else {
+            NumericValue::from_value(&max)
+        };
     }
     Ok(result)
 }
@@ -209,6 +222,7 @@ pub fn transform_column_statistics(
     can_have_nan: bool,
     casts: &CastFunctionSet,
 ) -> Result<Option<BaseStatistics>> {
+    use LogicalTypeId as L;
     let ty = &schema.logical_type;
     match ty.id() {
         LogicalTypeId::Array | LogicalTypeId::Map => return Ok(None),
@@ -246,7 +260,6 @@ pub fn transform_column_statistics(
     let Some(parquet_stats) = &meta.statistics else {
         return Ok(None);
     };
-    use LogicalTypeId as L;
     let mut stats = match ty.id() {
         L::UTinyInt
         | L::USmallInt

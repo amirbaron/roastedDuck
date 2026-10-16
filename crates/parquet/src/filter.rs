@@ -6,8 +6,8 @@ use std::cmp::Ordering;
 
 use rustdb_common::Result;
 use rustdb_function::cast::CastFunctionSet;
-use rustdb_storage::statistics::{BaseStatistics, FilterPropagateResult, NumericValue, StatsData};
 use rustdb_storage::TableFilter;
+use rustdb_storage::statistics::{BaseStatistics, FilterPropagateResult, NumericValue, StatsData};
 use rustdb_types::compare::CompareOp;
 use rustdb_types::{LogicalTypeId, Value, Vector};
 
@@ -69,7 +69,11 @@ fn check_string_zonemap(min: &[u8], max: &[u8], op: CompareOp, constant: &[u8]) 
 }
 
 /// `CheckParquetStringFilter`: string comparisons use the full-length statistics.
-fn check_string_filter(stats: &BaseStatistics, parquet: &Statistics, filter: &TableFilter) -> FilterPropagateResult {
+fn check_string_filter(
+    stats: &BaseStatistics,
+    parquet: &Statistics,
+    filter: &TableFilter,
+) -> FilterPropagateResult {
     use FilterPropagateResult::{FilterAlwaysFalse, FilterAlwaysTrue, NoPruningPossible};
     match filter {
         TableFilter::And(children) => {
@@ -114,7 +118,9 @@ fn check_float_filter(
     }
     let nan_prune = filter.check_statistics(&nan_stats);
     let prune = filter.check_statistics(stats);
-    if prune == FilterPropagateResult::NoPruningPossible || nan_prune == FilterPropagateResult::NoPruningPossible {
+    if prune == FilterPropagateResult::NoPruningPossible
+        || nan_prune == FilterPropagateResult::NoPruningPossible
+    {
         return FilterPropagateResult::NoPruningPossible;
     }
     if prune == nan_prune {
@@ -167,7 +173,11 @@ fn bloom_filter_supported(id: LogicalTypeId) -> bool {
 }
 
 /// `BloomFilterExcludes`.
-fn bloom_filter_excludes(reader: &ParquetReader, filter: &TableFilter, meta: &ColumnMetaData) -> Result<bool> {
+fn bloom_filter_excludes(
+    reader: &ParquetReader,
+    filter: &TableFilter,
+    meta: &ColumnMetaData,
+) -> Result<bool> {
     if !has_filter_constants(filter) {
         return Ok(false);
     }
@@ -203,7 +213,8 @@ pub fn prune_row_group(
             .get(schema.column_index)
             .and_then(|column| column.meta_data.as_ref());
         let parquet_stats = meta.and_then(|meta| meta.statistics.as_ref());
-        let has_min_max = parquet_stats.is_some_and(|stats| stats.min_value.is_some() && stats.max_value.is_some());
+        let has_min_max =
+            parquet_stats.is_some_and(|stats| stats.min_value.is_some() && stats.max_value.is_some());
         let type_id = schema.logical_type.id();
         let mut result = match parquet_stats {
             Some(parquet) if is_leaf && has_min_max && type_id == LogicalTypeId::Varchar => {

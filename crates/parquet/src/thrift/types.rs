@@ -162,43 +162,43 @@ thrift_struct! {
 }
 
 thrift_struct! { /// `StringType`.
-    StringType {} }
+StringType {} }
 thrift_struct! { /// `UUIDType`.
-    UuidType {} }
+UuidType {} }
 thrift_struct! { /// `MapType`.
-    MapType {} }
+MapType {} }
 thrift_struct! { /// `ListType`.
-    ListType {} }
+ListType {} }
 thrift_struct! { /// `EnumType`.
-    EnumType {} }
+EnumType {} }
 thrift_struct! { /// `DateType`.
-    DateType {} }
+DateType {} }
 thrift_struct! { /// `Float16Type`.
-    Float16Type {} }
+Float16Type {} }
 thrift_struct! { /// `NullType`.
-    NullType {} }
+NullType {} }
 thrift_struct! { /// `JsonType`.
-    JsonType {} }
+JsonType {} }
 thrift_struct! { /// `BsonType`.
-    BsonType {} }
+BsonType {} }
 thrift_struct! { /// `MilliSeconds`.
-    MilliSeconds {} }
+MilliSeconds {} }
 thrift_struct! { /// `MicroSeconds`.
-    MicroSeconds {} }
+MicroSeconds {} }
 thrift_struct! { /// `NanoSeconds`.
-    NanoSeconds {} }
+NanoSeconds {} }
 thrift_struct! { /// `SplitBlockAlgorithm`.
-    SplitBlockAlgorithm {} }
+SplitBlockAlgorithm {} }
 thrift_struct! { /// `XxHash`.
-    XxHash {} }
+XxHash {} }
 thrift_struct! { /// `Uncompressed`.
-    Uncompressed {} }
+Uncompressed {} }
 thrift_struct! { /// `TypeDefinedOrder`.
-    TypeDefinedOrder {} }
+TypeDefinedOrder {} }
 thrift_struct! { /// `IndexPageHeader`.
-    IndexPageHeader {} }
+IndexPageHeader {} }
 thrift_struct! { /// `EncryptionWithFooterKey`.
-    EncryptionWithFooterKey {} }
+EncryptionWithFooterKey {} }
 
 thrift_struct! {
     /// `DecimalType`.

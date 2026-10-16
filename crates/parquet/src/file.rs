@@ -34,9 +34,7 @@ impl ParquetFile {
             .metadata()
             .map_err(|error| io_error(format!("Could not get file size of \"{path}\": {error}")))?;
         if metadata.is_dir() {
-            return Err(io_error(format!(
-                "Cannot open file \"{path}\": Is a directory"
-            )));
+            return Err(io_error(format!("Cannot open file \"{path}\": Is a directory")));
         }
         Ok(Self {
             path: path.to_owned(),

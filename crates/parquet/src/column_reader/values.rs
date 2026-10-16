@@ -50,8 +50,13 @@ pub trait PlainDecoder: Send {
     ) -> Result<()>;
 
     /// Skips the values of `num_values` rows (`PlainSkip`); `defines` starts at row 0.
-    fn skip(&mut self, source: &mut PlainSource<'_>, defines: Option<&[u8]>, max_define: u8, num_values: usize)
-    -> Result<()>;
+    fn skip(
+        &mut self,
+        source: &mut PlainSource<'_>,
+        defines: Option<&[u8]>,
+        max_define: u8,
+        num_values: usize,
+    ) -> Result<()>;
 
     /// Called when a new page starts (`ResetPage`).
     fn reset_page(&mut self) {}
@@ -66,15 +71,18 @@ pub trait PlainDecoder: Send {
 #[inline]
 pub fn valid_count(defines: Option<&[u8]>, max_define: u8, count: usize) -> usize {
     defines.map_or(count, |defines| {
-        defines[..count].iter().filter(|&&level| level == max_define).count()
+        defines[..count]
+            .iter()
+            .map(|&level| usize::from(level == max_define))
+            .sum()
     })
 }
 
 /// Marks `rows` of `result` NULL where the definition level is below the maximum.
 fn set_nulls(result: &mut Vector, defines: &[u8], max_define: u8, offset: usize, num_values: usize) {
     let capacity = result.capacity().max(offset + num_values);
-    for row in offset..offset + num_values {
-        if defines[row] != max_define {
+    for (row, &level) in defines.iter().enumerate().skip(offset).take(num_values) {
+        if level != max_define {
             result.validity_mut().set_invalid(row, capacity);
         }
     }
@@ -175,7 +183,11 @@ where
         return raw;
     }
     let modulus = raw % day;
-    if modulus < T::default() { modulus + day } else { modulus }
+    if modulus < T::default() {
+        modulus + day
+    } else {
+        modulus
+    }
 }
 
 fn conversion_error(message: &'static str) -> Error {
@@ -351,6 +363,12 @@ impl<C> FixedDecoder<C> {
     }
 }
 
+impl<C> Default for FixedDecoder<C> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<C: FixedConversion> PlainDecoder for FixedDecoder<C> {
     fn plain(
         &mut self,
@@ -390,8 +408,13 @@ impl<C: FixedConversion> PlainDecoder for FixedDecoder<C> {
         Ok(())
     }
 
-    fn skip(&mut self, source: &mut PlainSource<'_>, defines: Option<&[u8]>, max_define: u8, num_values: usize)
-    -> Result<()> {
+    fn skip(
+        &mut self,
+        source: &mut PlainSource<'_>,
+        defines: Option<&[u8]>,
+        max_define: u8,
+        num_values: usize,
+    ) -> Result<()> {
         let count = valid_count(defines, max_define, num_values);
         source.buffer.inc(count * C::WIDTH)
     }
@@ -444,8 +467,13 @@ impl PlainDecoder for BooleanDecoder {
         Ok(())
     }
 
-    fn skip(&mut self, source: &mut PlainSource<'_>, defines: Option<&[u8]>, max_define: u8, num_values: usize)
-    -> Result<()> {
+    fn skip(
+        &mut self,
+        source: &mut PlainSource<'_>,
+        defines: Option<&[u8]>,
+        max_define: u8,
+        num_values: usize,
+    ) -> Result<()> {
         for _ in 0..valid_count(defines, max_define, num_values) {
             self.read(&mut source.buffer)?;
         }
@@ -484,8 +512,13 @@ impl PlainDecoder for ByteBooleanDecoder {
         Ok(())
     }
 
-    fn skip(&mut self, source: &mut PlainSource<'_>, defines: Option<&[u8]>, max_define: u8, num_values: usize)
-    -> Result<()> {
+    fn skip(
+        &mut self,
+        source: &mut PlainSource<'_>,
+        defines: Option<&[u8]>,
+        max_define: u8,
+        num_values: usize,
+    ) -> Result<()> {
         source.buffer.inc(valid_count(defines, max_define, num_values))
     }
 }
@@ -502,7 +535,7 @@ pub enum StringKind {
 /// place in the page.
 #[derive(Debug)]
 pub struct StringDecoder {
-    /// The length of FIXED_LEN_BYTE_ARRAY values; 0 for length-prefixed ones.
+    /// The length of `FIXED_LEN_BYTE_ARRAY` values; 0 for length-prefixed ones.
     pub fixed_length: usize,
     pub kind: StringKind,
     pub file_name: Arc<str>,
@@ -532,8 +565,8 @@ impl StringDecoder {
     pub fn verify(&self, bytes: &[u8]) -> Result<()> {
         match self.kind {
             StringKind::Varchar => verify_utf8(bytes, &self.file_name),
-            StringKind::Json => verify_json(bytes),
-            StringKind::Other => Ok(()),
+            // Gap: JSON values are not validated (DuckDB's `StringUtil::ValidateJSON`).
+            StringKind::Json | StringKind::Other => Ok(()),
         }
     }
 
@@ -566,12 +599,6 @@ pub fn blob_text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Fails unless `bytes` is valid JSON (`StringUtil::ValidateJSON`).
-fn verify_json(bytes: &[u8]) -> Result<()> {
-    let _ = bytes;
-    Ok(())
-}
-
 /// Stores `bytes` (which live in the source's block) in `values[row]`.
 #[inline]
 fn store_string(values: &mut [StringT], row: usize, bytes: &[u8]) {
@@ -590,9 +617,9 @@ impl PlainDecoder for StringDecoder {
         offset: usize,
         result: &mut Vector,
     ) -> Result<()> {
-        let owner = source
-            .owner
-            .ok_or_else(|| Error::not_implemented("StringColumnReader can only read plain data from a shared buffer"))?;
+        let owner = source.owner.ok_or_else(|| {
+            Error::not_implemented("StringColumnReader can only read plain data from a shared buffer")
+        })?;
         result.add_keep_alive(Arc::clone(owner) as Arc<dyn std::any::Any + Send + Sync>);
         if let Some(defines) = defines {
             set_nulls(result, defines, max_define, offset, num_values);
@@ -609,8 +636,13 @@ impl PlainDecoder for StringDecoder {
         Ok(())
     }
 
-    fn skip(&mut self, source: &mut PlainSource<'_>, defines: Option<&[u8]>, max_define: u8, num_values: usize)
-    -> Result<()> {
+    fn skip(
+        &mut self,
+        source: &mut PlainSource<'_>,
+        defines: Option<&[u8]>,
+        max_define: u8,
+        num_values: usize,
+    ) -> Result<()> {
         for _ in 0..valid_count(defines, max_define, num_values) {
             self.next(&mut source.buffer)?;
         }
@@ -628,10 +660,10 @@ macro_rules! decimal_target {
     ($($ty:ty),*) => {$(
         impl DecimalTarget for $ty {
             fn read(bytes: &[u8], _scale: u32) -> Result<Self> {
+                const SIZE: usize = size_of::<$ty>();
                 if bytes.is_empty() {
                     return Ok(0);
                 }
-                const SIZE: usize = size_of::<$ty>();
                 let positive = bytes[0] & 0x80 == 0;
                 let mut le = [0u8; SIZE];
                 let size = bytes.len();
@@ -687,7 +719,7 @@ impl DecimalTarget for f64 {
 /// `DecimalColumnReader`: decimals stored as (fixed-length) byte arrays.
 #[derive(Debug)]
 pub struct DecimalBytesDecoder<T> {
-    /// The FIXED_LEN_BYTE_ARRAY length; 0 for length-prefixed values.
+    /// The `FIXED_LEN_BYTE_ARRAY` length; 0 for length-prefixed values.
     fixed_length: usize,
     scale: u32,
     target: PhantomData<T>,
@@ -741,8 +773,13 @@ impl<T: DecimalTarget> PlainDecoder for DecimalBytesDecoder<T> {
         Ok(())
     }
 
-    fn skip(&mut self, source: &mut PlainSource<'_>, defines: Option<&[u8]>, max_define: u8, num_values: usize)
-    -> Result<()> {
+    fn skip(
+        &mut self,
+        source: &mut PlainSource<'_>,
+        defines: Option<&[u8]>,
+        max_define: u8,
+        num_values: usize,
+    ) -> Result<()> {
         for _ in 0..valid_count(defines, max_define, num_values) {
             self.next(&mut source.buffer)?;
         }
@@ -787,8 +824,13 @@ impl PlainDecoder for IntervalDecoder {
         Ok(())
     }
 
-    fn skip(&mut self, source: &mut PlainSource<'_>, defines: Option<&[u8]>, max_define: u8, num_values: usize)
-    -> Result<()> {
+    fn skip(
+        &mut self,
+        source: &mut PlainSource<'_>,
+        defines: Option<&[u8]>,
+        max_define: u8,
+        num_values: usize,
+    ) -> Result<()> {
         source
             .buffer
             .inc(valid_count(defines, max_define, num_values) * PARQUET_INTERVAL_SIZE)
@@ -910,14 +952,22 @@ pub fn create_decoder(schema: &ColumnSchema, file_name: &Arc<str>) -> Result<Box
                     P::Int32 => fixed::<Copy<i32>>(),
                     P::Int64 => fixed::<Convert<i32, i64>>(),
                     P::Int128 => fixed::<Convert<i32, i128>>(),
-                    _ => return Err(Error::not_implemented("Unimplemented internal type for CreateDecimalReader")),
+                    _ => {
+                        return Err(Error::not_implemented(
+                            "Unimplemented internal type for CreateDecimalReader",
+                        ));
+                    }
                 },
                 ExtraTypeInfo::DecimalInt64 => match physical {
                     P::Int16 => fixed::<Convert<i64, i16>>(),
                     P::Int32 => fixed::<Convert<i64, i32>>(),
                     P::Int64 => fixed::<Copy<i64>>(),
                     P::Int128 => fixed::<Convert<i64, i128>>(),
-                    _ => return Err(Error::not_implemented("Unimplemented internal type for CreateDecimalReader")),
+                    _ => {
+                        return Err(Error::not_implemented(
+                            "Unimplemented internal type for CreateDecimalReader",
+                        ));
+                    }
                 },
                 ExtraTypeInfo::DecimalByteArray => decimal_bytes(schema)?,
                 _ => return Err(Error::not_implemented("Unrecognized Parquet type for Decimal")),
@@ -938,10 +988,14 @@ mod tests {
     fn decimals_from_big_endian_bytes() {
         assert_eq!(i32::read(&[0x01, 0x00], 0).unwrap(), 256);
         assert_eq!(i32::read(&[0xff, 0xfe], 0).unwrap(), -2);
-        assert_eq!(i64::read(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05], 0).unwrap(), 5);
+        assert_eq!(
+            i64::read(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05], 0).unwrap(),
+            5
+        );
         assert!(i16::read(&[0x01, 0x00, 0x00], 0).is_err());
-        assert!((f64::read(&[0x04, 0xd2], 2).unwrap() - 12.34).abs() < 1e-9);
-        assert!((f64::read(&[0xfb, 0x2e], 2).unwrap() + 12.34).abs() < 1e-9);
+        // Like DuckDB, every 8-byte group is read as a big-endian integer.
+        assert!((f64::read(&[0, 0, 0, 0, 0, 0, 0x04, 0xd2], 2).unwrap() - 12.34).abs() < 1e-9);
+        assert!((f64::read(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfb, 0x2e], 2).unwrap() + 12.34).abs() < 1e-9);
     }
 
     #[test]

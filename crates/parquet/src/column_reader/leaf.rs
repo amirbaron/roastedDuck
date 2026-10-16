@@ -9,10 +9,13 @@ use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_types::{LogicalType, SelectionVector, StringT, Vector, VectorKind};
 
 use super::ReaderContext;
-use super::values::{ByteBooleanDecoder, PlainDecoder, PlainSource, StringDecoder, create_decoder, valid_count};
+use super::values::{
+    ByteBooleanDecoder, PlainDecoder, PlainSource, StringDecoder, create_decoder, valid_count,
+};
 use crate::compression::decompress;
 use crate::decode::{
-    BlockCursor, BssDecoder, ByteBuffer, DbpDecoder, PageBlock, RleBpDecoder, compute_bit_width, runtime_error,
+    BlockCursor, BssDecoder, ByteBuffer, DbpDecoder, PageBlock, RleBpDecoder, compute_bit_width,
+    runtime_error,
 };
 use crate::file::ParquetFile;
 use crate::schema::ColumnSchema;
@@ -88,11 +91,17 @@ enum PageDecoding {
     Dictionary(RleBpDecoder),
     /// RLE-encoded booleans.
     Rle(RleBpDecoder),
-    DeltaBinaryPacked(DbpDecoder),
+    DeltaBinaryPacked(Box<DbpDecoder>),
     /// The value lengths and the next one; the bytes follow in the block.
-    DeltaLengthByteArray { lengths: Vec<u32>, next: usize },
+    DeltaLengthByteArray {
+        lengths: Vec<u32>,
+        next: usize,
+    },
     /// The values re-encoded as plain values in their own block.
-    DeltaByteArray { block: PageBlock, position: usize },
+    DeltaByteArray {
+        block: PageBlock,
+        position: usize,
+    },
     ByteStreamSplit(BssDecoder),
 }
 
@@ -103,11 +112,11 @@ pub struct LeafReader {
     max_repeat: u8,
     column_index: usize,
     parquet_type: Type,
-    /// The length of FIXED_LEN_BYTE_ARRAY values.
+    /// The length of `FIXED_LEN_BYTE_ARRAY` values.
     type_length: usize,
     decoder: Box<dyn PlainDecoder>,
     context: ReaderContext,
-    /// Validation of DELTA_LENGTH_BYTE_ARRAY strings.
+    /// Validation of `DELTA_LENGTH_BYTE_ARRAY` strings.
     strings: Option<StringDecoder>,
 
     codec: CompressionCodec,
@@ -290,9 +299,15 @@ impl LeafReader {
             }
             PageType::DICTIONARY_PAGE => {
                 self.prepare_page_v1(&header)?;
-                let size = header.dictionary_page_header.as_ref().map_or(0, |dict| dict.num_values);
+                let size = header
+                    .dictionary_page_header
+                    .as_ref()
+                    .map_or(0, |dict| dict.num_values);
                 let size = usize::try_from(size).map_err(|_| {
-                    read_failure(self.file_name(), "Invalid dictionary page header (num_values < 0)")
+                    read_failure(
+                        self.file_name(),
+                        "Invalid dictionary page header (num_values < 0)",
+                    )
                 })?;
                 self.initialize_dictionary(size)?;
             }
@@ -360,7 +375,8 @@ impl LeafReader {
                 "header inconsistency, repetition_levels_byte_length and definition_levels_byte_length must be >= 0",
             ));
         }
-        let level_bytes = v2.repetition_levels_byte_length as usize + v2.definition_levels_byte_length as usize;
+        let level_bytes =
+            v2.repetition_levels_byte_length as usize + v2.definition_levels_byte_length as usize;
         if level_bytes > uncompressed_size {
             return Err(read_failure(
                 self.file_name(),
@@ -386,7 +402,12 @@ impl LeafReader {
             let codec = self.codec;
             let file_name = Arc::clone(&self.context.file_name);
             let bytes = self.read_page_bytes(compressed_bytes)?;
-            decompress(codec, bytes, &mut block[level_bytes..uncompressed_size], &file_name)?;
+            decompress(
+                codec,
+                bytes,
+                &mut block[level_bytes..uncompressed_size],
+                &file_name,
+            )?;
         }
         self.set_block(block);
         Ok(())
@@ -414,16 +435,28 @@ impl LeafReader {
     fn prepare_data_page(&mut self, header: &PageHeader) -> Result<()> {
         let is_v1 = header.type_ == PageType::DATA_PAGE;
         if is_v1 && header.data_page_header.is_none() {
-            return Err(read_failure(self.file_name(), "Missing data page header from data page"));
+            return Err(read_failure(
+                self.file_name(),
+                "Missing data page header from data page",
+            ));
         }
         if !is_v1 && header.data_page_header_v2.is_none() {
-            return Err(read_failure(self.file_name(), "Missing data page header from data page v2"));
+            return Err(read_failure(
+                self.file_name(),
+                "Missing data page header from data page v2",
+            ));
         }
         let (num_values, encoding, v2_lengths) = if is_v1 {
-            let v1 = header.data_page_header.as_ref().map_or_else(Default::default, Clone::clone);
+            let v1 = header
+                .data_page_header
+                .as_ref()
+                .map_or_else(Default::default, Clone::clone);
             (v1.num_values, v1.encoding, None)
         } else {
-            let v2 = header.data_page_header_v2.as_ref().map_or_else(Default::default, Clone::clone);
+            let v2 = header
+                .data_page_header_v2
+                .as_ref()
+                .map_or_else(Default::default, Clone::clone);
             (
                 v2.num_values,
                 v2.encoding,
@@ -438,7 +471,10 @@ impl LeafReader {
             };
             ByteBuffer::new(&self.block[self.block_position..self.block_end]).available(len)?;
             let cursor = self.cursor(self.block_position, len);
-            self.repeats = Some(RleBpDecoder::new(cursor, compute_bit_width(u64::from(self.max_repeat)))?);
+            self.repeats = Some(RleBpDecoder::new(
+                cursor,
+                compute_bit_width(u64::from(self.max_repeat)),
+            )?);
             self.block_position += len;
         } else if let Some((repetition, _)) = v2_lengths
             && repetition > 0
@@ -452,7 +488,10 @@ impl LeafReader {
             };
             ByteBuffer::new(&self.block[self.block_position..self.block_end]).available(len)?;
             let cursor = self.cursor(self.block_position, len);
-            self.defines = Some(RleBpDecoder::new(cursor, compute_bit_width(u64::from(self.max_define)))?);
+            self.defines = Some(RleBpDecoder::new(
+                cursor,
+                compute_bit_width(u64::from(self.max_define)),
+            )?);
             self.block_position += len;
         } else if let Some((_, definition)) = v2_lengths
             && definition > 0
@@ -478,7 +517,7 @@ impl LeafReader {
             Encoding::DELTA_BINARY_PACKED => {
                 let cursor = self.cursor(self.block_position, self.block_end - self.block_position);
                 self.block_position = self.block_end;
-                PageDecoding::DeltaBinaryPacked(DbpDecoder::new(cursor)?)
+                PageDecoding::DeltaBinaryPacked(Box::new(DbpDecoder::new(cursor)?))
             }
             Encoding::DELTA_LENGTH_BYTE_ARRAY => self.initialize_delta_length_byte_array()?,
             Encoding::DELTA_BYTE_ARRAY => self.initialize_delta_byte_array()?,
@@ -500,7 +539,7 @@ impl LeafReader {
         Ok(())
     }
 
-    /// `DeltaByteArrayDecoder::ReadDbpData`: a DELTA_BINARY_PACKED run of `u32`s at the
+    /// `DeltaByteArrayDecoder::ReadDbpData`: a `DELTA_BINARY_PACKED` run of `u32`s at the
     /// block position.
     fn read_dbp_lengths(&mut self) -> Result<Vec<u32>> {
         let cursor = self.cursor(self.block_position, self.block_end - self.block_position);
@@ -542,11 +581,7 @@ impl LeafReader {
             ));
         }
         let is_fixed = self.parquet_type == Type::FIXED_LEN_BYTE_ARRAY;
-        let fixed_len = if is_fixed {
-            self.type_length
-        } else {
-            0
-        };
+        let fixed_len = if is_fixed { self.type_length } else { 0 };
         let mut total = 0usize;
         for (&prefix, &suffix) in prefixes.iter().zip(&suffixes) {
             let len = prefix as usize + suffix as usize;
@@ -567,7 +602,9 @@ impl LeafReader {
         for (&prefix, &suffix) in prefixes.iter().zip(&suffixes) {
             let (prefix, suffix) = (prefix as usize, suffix as usize);
             if prefix > previous.len() {
-                return Err(runtime_error("DELTA_BYTE_ARRAY - prefix is out of range - corrupt file?"));
+                return Err(runtime_error(
+                    "DELTA_BYTE_ARRAY - prefix is out of range - corrupt file?",
+                ));
             }
             if !is_fixed {
                 output.extend_from_slice(&((prefix + suffix) as u32).to_le_bytes());
@@ -598,7 +635,8 @@ impl LeafReader {
         let block = Arc::clone(&self.block);
         let mut source = PlainSource::new(&block[self.block_position..self.block_end], Some(&block));
         self.decoder.reset_page();
-        self.decoder.plain(&mut source, None, 0, size, 0, &mut dictionary)?;
+        self.decoder
+            .plain(&mut source, None, 0, size, 0, &mut dictionary)?;
         self.dictionary = Some(dictionary);
         self.dictionary_size = size;
         Ok(())
@@ -610,12 +648,20 @@ impl LeafReader {
         while self.page_rows_available == 0 {
             self.prepare_page()?;
         }
-        Ok(max_read.min(self.page_rows_available).min(STANDARD_VECTOR_SIZE as u64) as usize)
+        Ok(max_read
+            .min(self.page_rows_available)
+            .min(STANDARD_VECTOR_SIZE as u64) as usize)
     }
 
     /// `PrepareRead`: decodes the levels of `count` values at `offset`; returns whether all
     /// of them are valid (without writing the definition levels).
-    fn read_levels(&mut self, count: usize, defines: &mut [u8], repeats: &mut [u8], offset: usize) -> Result<bool> {
+    fn read_levels(
+        &mut self,
+        count: usize,
+        defines: &mut [u8],
+        repeats: &mut [u8],
+        offset: usize,
+    ) -> Result<bool> {
         if self.has_repeats() {
             let decoder = self
                 .repeats
@@ -658,7 +704,9 @@ impl LeafReader {
             match &mut self.decoding {
                 PageDecoding::Dictionary(decoder) => {
                     if self.dictionary.is_none() {
-                        return Err(runtime_error("Parquet file is likely corrupted, missing dictionary"));
+                        return Err(runtime_error(
+                            "Parquet file is likely corrupted, missing dictionary",
+                        ));
                     }
                     decoder.skip(count)?;
                 }
@@ -672,7 +720,10 @@ impl LeafReader {
                     if *next + count > lengths.len() {
                         return Err(dlba_mismatch(*next + count, lengths.len()));
                     }
-                    let bytes: usize = lengths[*next..*next + count].iter().map(|&len| len as usize).sum();
+                    let bytes: usize = lengths[*next..*next + count]
+                        .iter()
+                        .map(|&len| len as usize)
+                        .sum();
                     *next += count;
                     ByteBuffer::new(&self.block[self.block_position..self.block_end]).available(bytes)?;
                     self.block_position += bytes;
@@ -680,7 +731,8 @@ impl LeafReader {
                 PageDecoding::DeltaByteArray { block, position } => {
                     let mut source = PlainSource::new(&block[*position..], Some(block));
                     let before = source.buffer.len();
-                    self.decoder.skip(&mut source, defines, self.max_define, skip_now)?;
+                    self.decoder
+                        .skip(&mut source, defines, self.max_define, skip_now)?;
                     *position += before - source.buffer.len();
                 }
                 PageDecoding::ByteStreamSplit(decoder) => {
@@ -689,9 +741,11 @@ impl LeafReader {
                 }
                 PageDecoding::Plain | PageDecoding::Invalid => {
                     let block = Arc::clone(&self.block);
-                    let mut source = PlainSource::new(&block[self.block_position..self.block_end], Some(&block));
+                    let mut source =
+                        PlainSource::new(&block[self.block_position..self.block_end], Some(&block));
                     let before = source.buffer.len();
-                    self.decoder.skip(&mut source, defines, self.max_define, skip_now)?;
+                    self.decoder
+                        .skip(&mut source, defines, self.max_define, skip_now)?;
                     self.block_position += before - source.buffer.len();
                 }
             }
@@ -708,7 +762,13 @@ impl LeafReader {
     }
 
     /// `ColumnReader::Read`: reads `num_values` values into `result`.
-    pub fn read(&mut self, num_values: usize, defines: &mut [u8], repeats: &mut [u8], result: &mut Vector) -> Result<usize> {
+    pub fn read(
+        &mut self,
+        num_values: usize,
+        defines: &mut [u8],
+        repeats: &mut [u8],
+        result: &mut Vector,
+    ) -> Result<usize> {
         self.apply_pending_skips()?;
         let mut offset = 0;
         let mut to_read = num_values as u64;
@@ -748,18 +808,21 @@ impl LeafReader {
                         let mut values = vec![0i32; valid];
                         decoder.get_batch(&mut values)?;
                         self.scratch.clear();
-                        self.scratch.extend(values.iter().flat_map(|value| value.to_le_bytes()));
+                        self.scratch
+                            .extend(values.iter().flat_map(|value| value.to_le_bytes()));
                     }
                     Type::INT64 => {
                         let mut values = vec![0i64; valid];
                         decoder.get_batch(&mut values)?;
                         self.scratch.clear();
-                        self.scratch.extend(values.iter().flat_map(|value| value.to_le_bytes()));
+                        self.scratch
+                            .extend(values.iter().flat_map(|value| value.to_le_bytes()));
                     }
                     _ => return Err(runtime_error("DELTA_BINARY_PACKED should only be INT32 or INT64")),
                 }
                 let mut source = PlainSource::new(&self.scratch, None);
-                self.decoder.plain(&mut source, defines, max_define, count, offset, result)?;
+                self.decoder
+                    .plain(&mut source, defines, max_define, count, offset, result)?;
             }
             PageDecoding::Rle(decoder) => {
                 let valid = valid_defines(defines, max_define, offset, count);
@@ -791,7 +854,8 @@ impl LeafReader {
             PageDecoding::DeltaByteArray { block, position } => {
                 let mut source = PlainSource::new(&block[*position..], Some(block));
                 let before = source.buffer.len();
-                self.decoder.plain(&mut source, defines, max_define, count, offset, result)?;
+                self.decoder
+                    .plain(&mut source, defines, max_define, count, offset, result)?;
                 *position += before - source.buffer.len();
             }
             PageDecoding::ByteStreamSplit(decoder) => {
@@ -799,13 +863,15 @@ impl LeafReader {
                 let width = bss_width(self.parquet_type)?;
                 decoder.get_batch(width, valid, &mut self.scratch)?;
                 let mut source = PlainSource::new(&self.scratch, None);
-                self.decoder.plain(&mut source, defines, max_define, count, offset, result)?;
+                self.decoder
+                    .plain(&mut source, defines, max_define, count, offset, result)?;
             }
             PageDecoding::Plain | PageDecoding::Invalid => {
                 let block = Arc::clone(&self.block);
                 let mut source = PlainSource::new(&block[self.block_position..self.block_end], Some(&block));
                 let before = source.buffer.len();
-                self.decoder.plain(&mut source, defines, max_define, count, offset, result)?;
+                self.decoder
+                    .plain(&mut source, defines, max_define, count, offset, result)?;
                 self.block_position += before - source.buffer.len();
             }
         }
@@ -814,9 +880,17 @@ impl LeafReader {
     }
 
     /// `DictionaryDecoder::Read`.
-    fn read_dictionary(&mut self, defines: Option<&[u8]>, count: usize, result: &mut Vector, offset: usize) -> Result<()> {
+    fn read_dictionary(
+        &mut self,
+        defines: Option<&[u8]>,
+        count: usize,
+        result: &mut Vector,
+        offset: usize,
+    ) -> Result<()> {
         let Some(dictionary) = &self.dictionary else {
-            return Err(runtime_error("Parquet file is likely corrupted, missing dictionary"));
+            return Err(runtime_error(
+                "Parquet file is likely corrupted, missing dictionary",
+            ));
         };
         let PageDecoding::Dictionary(decoder) = &mut self.decoding else {
             return Err(Error::internal("dictionary read without a dictionary page"));
@@ -828,12 +902,17 @@ impl LeafReader {
             None => {
                 decoder.get_batch(&mut self.indices[..])?;
                 if self.indices.iter().any(|&index| index as usize >= size) {
-                    return Err(runtime_error("Parquet file is likely corrupted, dictionary offset out of range"));
+                    return Err(runtime_error(
+                        "Parquet file is likely corrupted, dictionary offset out of range",
+                    ));
                 }
             }
             Some(defines) => {
                 let rows = &defines[offset..offset + count];
-                let valid = rows.iter().filter(|&&level| level == self.max_define).count();
+                let valid: usize = rows
+                    .iter()
+                    .map(|&level| usize::from(level == self.max_define))
+                    .sum();
                 let mut offsets = vec![0u32; valid];
                 decoder.get_batch(&mut offsets)?;
                 let mut next = offsets.iter();
@@ -876,12 +955,12 @@ fn valid_defines(defines: Option<&[u8]>, max_define: u8, offset: usize, count: u
     defines.map_or(count, |defines| {
         defines[offset..offset + count]
             .iter()
-            .filter(|&&level| level == max_define)
-            .count()
+            .map(|&level| usize::from(level == max_define))
+            .sum()
     })
 }
 
-/// The value width of a BYTE_STREAM_SPLIT column.
+/// The value width of a `BYTE_STREAM_SPLIT` column.
 fn bss_width(parquet_type: Type) -> Result<usize> {
     match parquet_type {
         Type::FLOAT => Ok(4),
@@ -893,7 +972,10 @@ fn bss_width(parquet_type: Type) -> Result<usize> {
 }
 
 /// `DeltaLengthByteArrayDecoder::Read`.
-#[allow(clippy::too_many_arguments, reason = "the decoder state is split across the leaf reader")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the decoder state is split across the leaf reader"
+)]
 fn read_delta_length_byte_array(
     block: &PageBlock,
     position: &mut usize,

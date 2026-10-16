@@ -17,11 +17,13 @@ use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, PhysicalType};
 
 use self::column::{ColumnWriter, FinishedColumn, ListWriter, PrimitiveWriter, StructWriter, WriterSchema};
 use self::types::{Bytes, Float, HugeIntAsDouble, IntervalType, Numeric, Uuid};
-use self::values::{BooleanWriter, EnumWriter, FixedDecimalWriter, StandardWriter, ValueWriter, deep_flatten};
+use self::values::{
+    BooleanWriter, EnumWriter, FixedDecimalWriter, StandardWriter, ValueWriter, deep_flatten,
+};
 use crate::thrift::{
     BloomFilterAlgorithm, BloomFilterCompression, BloomFilterHash, BloomFilterHeader, ColumnOrder,
-    CompressionCodec, FieldRepetitionType, FileMetaData, KeyValue, RowGroup, SchemaElement, SplitBlockAlgorithm,
-    ThriftValue, TypeDefinedOrder, Uncompressed, XxHash,
+    CompressionCodec, FieldRepetitionType, FileMetaData, KeyValue, RowGroup, SchemaElement,
+    SplitBlockAlgorithm, ThriftValue, TypeDefinedOrder, Uncompressed, XxHash,
 };
 
 /// The format version written (`ParquetVersion`).
@@ -246,15 +248,33 @@ fn create_writer(
                 max_define + 2,
                 true,
             )?;
-            Ok(ColumnWriter::List(Box::new(ListWriter::new(schema, child, !is_list))))
+            Ok(ColumnWriter::List(Box::new(ListWriter::new(
+                schema, child, !is_list,
+            ))))
         }
         LogicalTypeId::Map => {
             path.push("key_value".to_owned());
             let (key, value) = ty
                 .map_key_value()
                 .ok_or_else(|| Error::internal("MAP type without key/value"))?;
-            let key_writer = create_writer(&path, key, "key", child_ids, max_repeat + 1, max_define + 2, false)?;
-            let value_writer = create_writer(&path, value, "value", child_ids, max_repeat + 1, max_define + 2, true)?;
+            let key_writer = create_writer(
+                &path,
+                key,
+                "key",
+                child_ids,
+                max_repeat + 1,
+                max_define + 2,
+                false,
+            )?;
+            let value_writer = create_writer(
+                &path,
+                value,
+                "value",
+                child_ids,
+                max_repeat + 1,
+                max_define + 2,
+                true,
+            )?;
             let key_value_type = LogicalType::struct_type(vec![
                 ("key".to_owned(), key.clone()),
                 ("value".to_owned(), value.clone()),
@@ -272,12 +292,18 @@ fn create_writer(
                 key_value_schema,
                 vec![key_writer, value_writer],
             ));
-            Ok(ColumnWriter::List(Box::new(ListWriter::new(schema, struct_writer, false))))
+            Ok(ColumnWriter::List(Box::new(ListWriter::new(
+                schema,
+                struct_writer,
+                false,
+            ))))
         }
         LogicalTypeId::Variant => Err(Error::not_implemented("Writing VARIANT columns to Parquet")),
         _ => {
             let values = primitive_values(ty)?;
-            Ok(ColumnWriter::Primitive(Box::new(PrimitiveWriter::new(schema, values))))
+            Ok(ColumnWriter::Primitive(Box::new(PrimitiveWriter::new(
+                schema, values,
+            ))))
         }
     }
 }
@@ -340,7 +366,15 @@ impl ParquetWriter {
         sink.write_all(b"PAR1")?;
         let mut columns = Vec::with_capacity(types.len());
         for (name, ty) in names.iter().zip(types) {
-            columns.push(create_writer(&[], ty, name, Some(&options.field_ids), 0, 1, true)?);
+            columns.push(create_writer(
+                &[],
+                ty,
+                name,
+                Some(&options.field_ids),
+                0,
+                1,
+                true,
+            )?);
         }
         let key_value_metadata = (!options.kv_metadata.is_empty()).then(|| {
             options

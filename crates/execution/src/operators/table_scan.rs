@@ -185,9 +185,11 @@ impl Source for PhysicalTableScan {
             projected = self
                 .projection
                 .iter()
-                .map(|&index| all.get_mut(index).and_then(Option::take).ok_or_else(|| {
-                    Error::internal("table scan projection out of range")
-                }))
+                .map(|&index| {
+                    all.get_mut(index)
+                        .and_then(Option::take)
+                        .ok_or_else(|| Error::internal("table scan projection out of range"))
+                })
                 .collect::<Result<Vec<_>>>()?;
         }
         chunk.set_columns(projected, count);
