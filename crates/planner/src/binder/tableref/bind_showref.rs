@@ -42,10 +42,81 @@ fn find_base_table_column(
             .children
             .iter()
             .find_map(|child| find_base_table_column(child, binding)),
-        // Scans (`LogicalKind::Get`) do not carry their catalog table yet, so table
-        // columns are described like computed ones.
+        LogicalKind::Get(get) => {
+            if get.table_index != binding.table_index {
+                return None;
+            }
+            let table = get.table.as_ref()?;
+            let EntryKind::Table(entry) = &table.kind else {
+                return None;
+            };
+            let column = get.column_ids.get(usize::try_from(binding.column_index).ok()?)?;
+            // Virtual columns (like `rowid`) have no column definition.
+            let index = usize::try_from(column.index).ok()?;
+            (index < entry.columns.len()).then(|| (Arc::clone(table), index))
+        }
         _ => None,
     }
+}
+
+/// `PragmaTableInfo::GetColumnInfo` in the form of `pragma_show`: name, type, nullability,
+/// key (`PRI` / `UNI`), default and extra of a table column.
+fn table_column_info(table: &rustdb_catalog::TableEntry, column: usize) -> Result<[Value; 6]> {
+    let definition = table
+        .columns
+        .get(column)
+        .ok_or_else(|| Error::internal("traced column out of range"))?;
+    // `ColumnConstraintInfo`: the UNIQUE / PRIMARY KEY constraints on the column.
+    let (mut pk, mut unique) = (false, false);
+    for constraint in &table.constraints {
+        let rustdb_ast::Constraint::Unique(constraint) = constraint else {
+            continue;
+        };
+        let covers = if constraint.index.0 == u64::MAX {
+            constraint
+                .columns
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(&definition.name))
+        } else {
+            constraint.index.0 == column as u64
+        };
+        if covers {
+            if constraint.is_primary_key {
+                pk = true;
+            } else {
+                unique = true;
+            }
+        }
+    }
+    let null = Value::null(LogicalType::VARCHAR);
+    let key = if pk {
+        Value::varchar("PRI")
+    } else if unique {
+        Value::varchar("UNI")
+    } else {
+        null.clone()
+    };
+    // `DefaultValue`: the generated expression or the default.
+    let default = definition
+        .generated
+        .as_ref()
+        .or(definition.default_value.as_ref())
+        .map_or_else(
+            || null.clone(),
+            |expression| Value::varchar(expression.to_string()),
+        );
+    Ok([
+        Value::varchar(definition.name.clone()),
+        Value::varchar(definition.logical_type.to_string()),
+        Value::varchar(if table.not_null_columns.contains(&column) {
+            "NO"
+        } else {
+            "YES"
+        }),
+        key,
+        default,
+        null,
+    ])
 }
 
 /// `DESCRIBE query` (DuckDB's `Binder::BindShowQuery`).
@@ -75,25 +146,10 @@ fn bind_show_query(scope: &mut BindScope<'_>, query: &mut QueryNode) -> Result<B
                 let EntryKind::Table(table) = &entry.kind else {
                     return Err(Error::internal("traced column is not a table column"));
                 };
-                let definition = table
-                    .columns
-                    .get(column)
-                    .ok_or_else(|| Error::internal("traced column out of range"))?;
-                [
-                    Value::varchar(alias.clone()),
-                    Value::varchar(definition.logical_type.to_string()),
-                    Value::varchar(if table.not_null_columns.contains(&column) {
-                        "NO"
-                    } else {
-                        "YES"
-                    }),
-                    Value::null(LogicalType::VARCHAR),
-                    definition.default_value.as_ref().map_or_else(
-                        || Value::null(LogicalType::VARCHAR),
-                        |default| Value::varchar(default.to_string()),
-                    ),
-                    Value::null(LogicalType::VARCHAR),
-                ]
+                let mut row = table_column_info(table, column)?;
+                // The alias replaces the base column's name.
+                row[0] = Value::varchar(alias.clone());
+                row
             }
             None => [
                 Value::varchar(alias.clone()),

@@ -2193,7 +2193,10 @@ test/sql/pragma/profiling/test_no_reset_setting.test
 test/sql/pragma/test_force_compression.test
 test/sql/pragma/test_pragma_database_list.test
 test/sql/pragma/test_pragma_database_size.test
+test/sql/pragma/test_pragma_functions.test
 test/sql/pragma/test_pragma_parsing.test
+test/sql/pragma/test_pragma_sanitized_inputs.test
+test/sql/pragma/test_show_tables.test
 test/sql/pragma/test_storage_info.test
 test/sql/pragma/test_table_info.test
 test/sql/pragma/test_table_info_many_columns.test_slow
@@ -2321,6 +2324,7 @@ test/sql/settings/setting_order.test
 test/sql/show_select/describe_rowid.test
 test/sql/show_select/describe_subquery.test
 test/sql/show_select/show_quote_identifier.test
+test/sql/show_select/show_select_constraints.test
 test/sql/show_select/summarize_subquery.test
 test/sql/show_select/test_describe_all.test
 test/sql/show_select/test_describe_quoted.test

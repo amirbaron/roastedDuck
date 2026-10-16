@@ -1207,6 +1207,169 @@ fn table_info_rows(context: &ClientContext, name: &str) -> Result<Vec<Vec<Value>
     Ok(rows)
 }
 
+const SHOW_COLUMNS: Columns = &[
+    ("column_name", varchar),
+    ("column_type", varchar),
+    ("null", varchar),
+    ("key", varchar),
+    ("default", varchar),
+    ("extra", varchar),
+];
+
+/// `pragma_show(name)` (`PragmaTableInfoFunction` with `PragmaShowHelper`): the columns of
+/// a table or view in the form of DESCRIBE.
+fn show_rows(context: &ClientContext, name: &str) -> Result<Vec<Vec<Value>>> {
+    let (catalog, schema, table) = crate::sequence::parse_qualified_name(name)?;
+    let found = context
+        .get_entry(
+            &catalog,
+            &schema,
+            rustdb_catalog::CatalogType::Table,
+            &table,
+            false,
+        )?
+        .ok_or_else(|| Error::catalog(format!("Table with name {table} does not exist!")))?;
+    let mut rows = Vec::new();
+    match &found.entry.kind {
+        EntryKind::Table(entry) => {
+            for (index, column) in entry.columns.iter().enumerate() {
+                // `ColumnConstraintInfo`.
+                let (mut pk, mut unique) = (false, false);
+                for constraint in &entry.constraints {
+                    let rustdb_ast::Constraint::Unique(constraint) = constraint else {
+                        continue;
+                    };
+                    let covers = if constraint.index.0 == u64::MAX {
+                        constraint
+                            .columns
+                            .iter()
+                            .any(|c| c.eq_ignore_ascii_case(&column.name))
+                    } else {
+                        constraint.index.0 == index as u64
+                    };
+                    if covers {
+                        if constraint.is_primary_key {
+                            pk = true;
+                        } else {
+                            unique = true;
+                        }
+                    }
+                }
+                let default = column
+                    .generated
+                    .as_ref()
+                    .or(column.default_value.as_ref())
+                    .map_or_else(null_text, |expression| text(expression.to_string()));
+                let key = if pk {
+                    text("PRI")
+                } else if unique {
+                    text("UNI")
+                } else {
+                    null_text()
+                };
+                rows.push(vec![
+                    text(column.name.clone()),
+                    text(column.logical_type.to_string()),
+                    text(if entry.not_null_columns.contains(&index) {
+                        "NO"
+                    } else {
+                        "YES"
+                    }),
+                    key,
+                    default,
+                    null_text(),
+                ]);
+            }
+        }
+        EntryKind::View(view) => {
+            for (index, ty) in view.types.iter().enumerate() {
+                let name = view
+                    .aliases
+                    .get(index)
+                    .or_else(|| view.names.get(index))
+                    .cloned()
+                    .unwrap_or_default();
+                rows.push(vec![
+                    text(name),
+                    text(ty.to_string()),
+                    text("YES"),
+                    null_text(),
+                    null_text(),
+                    null_text(),
+                ]);
+            }
+        }
+        _ => {}
+    }
+    Ok(rows)
+}
+
+const VERSION_COLUMNS: Columns = &[
+    ("library_version", varchar),
+    ("source_id", varchar),
+    ("codename", varchar),
+];
+
+/// `pragma_version()` (`PragmaVersionFunction`): the library version, source id and
+/// release codename (`DuckDB::ReleaseCodename`).
+fn version_rows(_: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    let version = rustdb_storage::storage_info::LIBRARY_VERSION;
+    let codename = if version.contains("-dev") {
+        "Development Version"
+    } else if version.starts_with("v1.2.") {
+        "Histrionicus"
+    } else if version.starts_with("v1.3.") {
+        "Ossivalis"
+    } else if version.starts_with("v1.4.") {
+        "Andium"
+    } else if version.starts_with("v1.5.") {
+        "Variegata"
+    } else {
+        "Unknown Version"
+    };
+    Ok(vec![vec![
+        text(version),
+        text(rustdb_storage::storage_info::SOURCE_ID),
+        text(codename),
+    ]])
+}
+
+const PLATFORM_COLUMNS: Columns = &[("platform", varchar)];
+
+/// `pragma_platform()`.
+fn platform_rows(_: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    Ok(vec![vec![text(crate::extensions::platform())]])
+}
+
+const USER_AGENT_COLUMNS: Columns = &[("user_agent", varchar)];
+
+/// `pragma_user_agent()` (`DBConfig::UserAgent`): `duckdb/<version>(<platform>)` followed
+/// by the `duckdb_api` and `custom_user_agent` settings.
+fn user_agent_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    let mut user_agent = format!(
+        "duckdb/{}({})",
+        rustdb_storage::storage_info::LIBRARY_VERSION,
+        crate::extensions::platform()
+    );
+    let setting = |name: &str| {
+        context
+            .function_client
+            .settings()
+            .and_then(|settings| settings.current_setting(name).ok())
+            .filter(|value| !value.is_null())
+            .and_then(|value| value.to_varchar().ok())
+            .unwrap_or_default()
+    };
+    for name in ["duckdb_api", "custom_user_agent"] {
+        let value = setting(name);
+        if !value.is_empty() {
+            user_agent.push(' ');
+            user_agent.push_str(&value);
+        }
+    }
+    Ok(vec![vec![text(user_agent)]])
+}
+
 const DATABASE_SIZE_COLUMNS: Columns = &[
     ("database_name", varchar),
     ("database_size", varchar),
@@ -2337,6 +2500,10 @@ pub(crate) fn pragma_table_functions() -> Vec<TableFunctionSet> {
         rows_function_with_name("pragma_table_info", TABLE_INFO_COLUMNS, table_info_rows),
         rows_function_with_name("pragma_storage_info", STORAGE_INFO_COLUMNS, storage_info_rows),
         rows_function("pragma_database_size", DATABASE_SIZE_COLUMNS, database_size_rows),
+        rows_function_with_name("pragma_show", SHOW_COLUMNS, show_rows),
+        rows_function("pragma_version", VERSION_COLUMNS, version_rows),
+        rows_function("pragma_platform", PLATFORM_COLUMNS, platform_rows),
+        rows_function("pragma_user_agent", USER_AGENT_COLUMNS, user_agent_rows),
     ]
 }
 
@@ -2418,6 +2585,14 @@ pub(crate) fn pragma_query(name: &str, parameters: &[Value]) -> Result<Option<St
         "database_list" => "SELECT * FROM pragma_database_list;".to_owned(),
         "database_size" => "SELECT * FROM pragma_database_size();".to_owned(),
         "collations" => "SELECT * FROM pragma_collations() ORDER BY 1".to_owned(),
+        "show" => format!("SELECT * FROM pragma_show({});", quoted(&first()?)),
+        "version" => "SELECT * FROM pragma_version();".to_owned(),
+        "platform" => "SELECT * FROM pragma_platform();".to_owned(),
+        "user_agent" => "SELECT * FROM pragma_user_agent()".to_owned(),
+        "functions" => "SELECT function_name AS name, upper(function_type) AS type, parameter_types AS parameters, \
+                        varargs, return_type, has_side_effects AS side_effects FROM duckdb_functions() WHERE \
+                        function_type IN ('scalar', 'aggregate') ORDER BY 1;"
+            .to_owned(),
         "copy_database" => {
             let second = parameters
                 .get(1)
