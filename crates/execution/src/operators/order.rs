@@ -12,7 +12,9 @@ use rustdb_row::sort::{
 };
 use rustdb_types::{DataChunk, LogicalType};
 
-use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
+use crate::operator::{
+    ErasedSink, ErasedSource, OrderPreservationType, PhysicalOperator, PhysicalRef, SinkState,
+};
 use crate::{ExecutionContext, ExpressionExecutor, Sink, SinkFinalize, SinkResult, Source, SourceResult};
 
 /// `ORDER BY` (DuckDB's `PhysicalOrder`): sinks its input into sorted runs, then emits
@@ -121,6 +123,18 @@ impl PhysicalOperator for PhysicalOrder {
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
     }
+    fn parallel_sink(&self) -> bool {
+        true
+    }
+    fn parallel_source(&self) -> bool {
+        true
+    }
+    fn supports_batch_index(&self) -> bool {
+        true
+    }
+    fn source_order(&self) -> OrderPreservationType {
+        OrderPreservationType::FixedOrder
+    }
 
     fn params_to_string(&self, _: u64) -> RenderParams {
         let mut result = RenderParams::new();
@@ -151,7 +165,7 @@ impl Sink for PhysicalOrder {
     fn global_sink_state(&self, ctx: &ExecutionContext) -> Result<OrderGlobalState> {
         let sort = self.create_sort(ctx)?;
         let config = SortConfig {
-            threads: ctx.env.threads,
+            threads: ctx.env.threads(),
             connections: 1,
             ..SortConfig::default()
         };
@@ -266,5 +280,22 @@ impl Source for PhysicalOrder {
         } else {
             SourceResult::Finished
         })
+    }
+
+    fn max_threads(&self, global: &OrderSourceState) -> usize {
+        global
+            .sink
+            .downcast_ref::<OrderGlobalState>()
+            .and_then(|state| state.source.as_ref())
+            .map_or(1, SortSource::max_threads)
+    }
+
+    fn batch_index(&self, _: &OrderSourceState, local: &Self::Local) -> Result<u64> {
+        let local = local.lock().unwrap_or_else(PoisonError::into_inner);
+        local
+            .as_ref()
+            .and_then(MergerLocalState::partition_index)
+            .map(|partition| partition as u64)
+            .ok_or_else(|| Error::internal("ORDER BY batch index requested before any output"))
     }
 }

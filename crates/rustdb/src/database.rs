@@ -5,7 +5,7 @@ use rustdb_catalog::{Catalog, Transaction, TransactionManager};
 use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
 use rustdb_execution::operators::{CollectedResult, PhysicalResultCollector};
 use rustdb_execution::{Executor, PhysicalRef, PlanContext, ScalarEvaluator, create_physical_plan_with};
-use rustdb_function::cast::CastFunctionSet;
+use rustdb_function::cast::{CastFunctionSet, ValueCast};
 use rustdb_optimizer::Optimizer;
 use rustdb_planner::{
     ClientContext, ColumnBindingResolver, LogicalKind, LogicalOperator, PlannedStatement, Planner,
@@ -106,6 +106,11 @@ fn is_secret_setting(name: &str) -> bool {
     .any(|setting| setting.eq_ignore_ascii_case(name))
 }
 
+/// Whether `name` is `threads` or its alias `worker_threads`.
+fn is_threads_setting(name: &str) -> bool {
+    name.eq_ignore_ascii_case("threads") || name.eq_ignore_ascii_case("worker_threads")
+}
+
 /// Whether `name` is `checkpoint_threshold` or its alias `wal_autocheckpoint`.
 fn is_checkpoint_threshold(name: &str) -> bool {
     name.eq_ignore_ascii_case("checkpoint_threshold") || name.eq_ignore_ascii_case("wal_autocheckpoint")
@@ -123,6 +128,25 @@ impl Drop for DatabaseInstance {
 }
 
 impl DatabaseInstance {
+    /// `SET threads` (`ThreadsSetting::SetGlobal`), or the default thread count for
+    /// `RESET threads` (`None`).
+    fn set_threads(&self, value: Option<&rustdb_types::Value>) -> Result<()> {
+        let threads = match value {
+            Some(value) => {
+                let threads = ValueCast::default_cast_as(value, &LogicalType::BIGINT)?
+                    .as_i128()
+                    .unwrap_or(0);
+                if threads < 1 {
+                    return Err(Error::new(ErrorKind::Syntax, "Must have at least 1 thread!"));
+                }
+                usize::try_from(threads).unwrap_or(usize::MAX)
+            }
+            None => rustdb_execution::default_threads(),
+        };
+        self.env.scheduler.set_threads(threads);
+        Ok(())
+    }
+
     /// `SET checkpoint_threshold` (`CheckpointThresholdSetting::SetGlobal`).
     fn set_checkpoint_threshold(&self, value: &rustdb_types::Value) -> Result<()> {
         let limit = rustdb_buffer::parse_memory_limit(&value.to_varchar()?)?;
@@ -297,6 +321,9 @@ impl Database {
             secrets: Arc::default(),
         };
         for (name, value) in &config.options {
+            if is_threads_setting(name) {
+                instance.set_threads(Some(value))?;
+            }
             if is_checkpoint_threshold(name) {
                 instance.set_checkpoint_threshold(value)?;
             }
@@ -1098,6 +1125,9 @@ impl Connection {
                 if is_secret_setting(name) {
                     self.database.instance().secrets.set_option(name, Some(value))?;
                 }
+                if is_threads_setting(name) {
+                    self.database.instance().set_threads(Some(value))?;
+                }
                 self.settings.set(name, value)?;
                 if is_checkpoint_threshold(name) {
                     self.database.instance().set_checkpoint_threshold(value)?;
@@ -1112,6 +1142,9 @@ impl Connection {
                     self.database.instance().secrets.set_option(name, None)?;
                 }
                 self.settings.reset(name)?;
+                if is_threads_setting(name) {
+                    self.database.instance().set_threads(None)?;
+                }
                 if is_force_compression(name) {
                     self.database.instance().set_force_compression(None)?;
                 }
@@ -1187,6 +1220,7 @@ impl Connection {
         let client = self.client_context(transaction);
         let optimizer_config = self.settings.optimizer_config();
         let optimizer_client = optimizer_config.enabled.then(|| Arc::clone(&client));
+        let preserve_insertion_order = optimizer_config.preserve_insertion_order;
         plan = Optimizer::new(client, optimizer_config).optimize(plan)?;
         ColumnBindingResolver::resolve(&mut plan)?;
         seed_samples(&mut plan, &self.function_client);
@@ -1203,8 +1237,17 @@ impl Connection {
         // EXPLAIN ANALYZE profiles the run.
         let profiler =
             (physical.name() == "EXPLAIN_ANALYZE").then(|| Arc::new(rustdb_execution::QueryProfiler::new()));
-        let root: PhysicalRef = Arc::new(PhysicalResultCollector::new(physical));
-        let state = Executor::execute_profiled(&root, Arc::clone(&self.database.instance().env), profiler)?;
+        let env = Arc::clone(&self.database.instance().env);
+        let root: PhysicalRef = Arc::new(PhysicalResultCollector::for_plan(
+            physical,
+            env.threads(),
+            preserve_insertion_order,
+        ));
+        let options = rustdb_execution::QueryOptions {
+            profiler,
+            preserve_insertion_order,
+        };
+        let state = Executor::execute_with(&root, env, &options)?;
         let collected = state
             .downcast_ref::<Mutex<CollectedResult>>()
             .ok_or_else(|| Error::internal("result collector state has an unexpected type"))?;

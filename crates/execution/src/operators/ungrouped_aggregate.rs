@@ -130,6 +130,14 @@ impl PhysicalOperator for PhysicalUngroupedAggregate {
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
     }
+    fn parallel_sink(&self) -> bool {
+        true
+    }
+    fn sink_order_dependent(&self) -> bool {
+        self.aggregates.iter().any(|aggregate| {
+            aggregate.function.order_dependence == rustdb_function::aggregate::OrderDependence::OrderDependent
+        })
+    }
 
     fn params_to_string(&self, _: u64) -> RenderParams {
         let mut result = RenderParams::new();

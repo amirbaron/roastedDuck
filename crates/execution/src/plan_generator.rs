@@ -32,6 +32,7 @@ use crate::constraints::table_constraints;
 mod asof_join;
 mod comparison_join;
 pub(crate) mod explain;
+pub mod order_preservation;
 mod window;
 
 pub use comparison_join::JoinPlanSettings;

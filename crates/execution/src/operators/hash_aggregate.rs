@@ -10,7 +10,9 @@ use rustdb_row::{PartitionedTupleData, RadixPartitioning, hash::hash_columns};
 use rustdb_types::{DataChunk, LogicalType, STANDARD_VECTOR_SIZE, Value, Vector};
 
 use crate::aggregate_hashtable::{AggregateObject, GroupedAggregateHashTable, initial_capacity};
-use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
+use crate::operator::{
+    ErasedSink, ErasedSource, OrderPreservationType, PhysicalOperator, PhysicalRef, SinkState,
+};
 use crate::{ExecutionContext, ExpressionExecutor, Sink, SinkResult, Source, SourceResult};
 
 /// `GROUP BY` aggregation (DuckDB's `PhysicalHashAggregate` with one radix-partitioned hash
@@ -70,7 +72,7 @@ impl PhysicalHashAggregate {
     /// Radix bits of the thread-local tables, so threads can merge partitions
     /// independently.
     fn radix_bits(ctx: &ExecutionContext) -> usize {
-        RadixPartitioning::radix_bits(ctx.env.threads.next_power_of_two()).min(4)
+        RadixPartitioning::radix_bits(ctx.env.threads().next_power_of_two()).min(4)
     }
 
     /// A table for grouping set `set` with every aggregate's state.
@@ -128,6 +130,15 @@ impl PhysicalOperator for PhysicalHashAggregate {
     }
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
+    }
+    fn parallel_sink(&self) -> bool {
+        true
+    }
+    fn parallel_source(&self) -> bool {
+        true
+    }
+    fn source_order(&self) -> OrderPreservationType {
+        OrderPreservationType::NoOrder
     }
 
     fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
@@ -485,5 +496,10 @@ impl Source for PhysicalHashAggregate {
         } else {
             SourceResult::Finished
         })
+    }
+
+    fn max_threads(&self, (sink, _): &Self::Global) -> usize {
+        sink.downcast_ref::<HashAggregateGlobal>()
+            .map_or(1, |state| state.results.len().max(1))
     }
 }

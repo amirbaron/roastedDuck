@@ -19,7 +19,9 @@ use rustdb_storage::table_filter::DynamicFilterData;
 use rustdb_types::compare::CompareOp;
 use rustdb_types::{DataChunk, LogicalType, PhysicalType, SelectionVector, StringT, Vector};
 
-use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState, order_names};
+use crate::operator::{
+    ErasedSink, ErasedSource, OrderPreservationType, PhysicalOperator, PhysicalRef, SinkState, order_names,
+};
 use crate::{ExecutionContext, ExpressionExecutor, Sink, SinkFinalize, SinkResult, Source, SourceResult};
 
 /// `ORDER BY` with a constant `LIMIT` (and `OFFSET`) (DuckDB's `PhysicalTopN`).
@@ -141,6 +143,12 @@ impl PhysicalOperator for PhysicalTopN {
     }
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
+    }
+    fn parallel_sink(&self) -> bool {
+        true
+    }
+    fn source_order(&self) -> OrderPreservationType {
+        OrderPreservationType::FixedOrder
     }
 
     fn params_to_string(&self, _: u64) -> RenderParams {

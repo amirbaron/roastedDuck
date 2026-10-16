@@ -10,8 +10,10 @@ use crate::aggregate_hashtable::{GroupedAggregateHashTable, initial_capacity};
 use rustdb_common::tree_renderer::RenderParams;
 
 use crate::operator::{
-    ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkData, SinkState, set_estimated_cardinality,
+    ErasedSink, ErasedSource, OrderPreservationType, PhysicalOperator, PhysicalRef, SinkData, SinkState,
+    set_estimated_cardinality,
 };
+use crate::plan_generator::order_preservation::order_preservation_recursive;
 use crate::{ExecutionContext, ExpressionExecutor, Sink, SinkFinalize, SinkResult, Source, SourceResult};
 
 /// Data produced by a delim join's sink and read by its scans: the buffered left input
@@ -66,6 +68,9 @@ impl PhysicalOperator for PhysicalDelimJoin {
     fn as_sink(&self) -> Option<&dyn ErasedSink> {
         Some(self)
     }
+    fn parallel_sink(&self) -> bool {
+        true
+    }
 }
 
 /// Buffered chunks and the distinct-value table.
@@ -75,63 +80,89 @@ pub struct DelimGlobal {
     distinct: Mutex<GroupedAggregateHashTable>,
 }
 
-impl Sink for PhysicalDelimJoin {
-    type Global = DelimGlobal;
-    type Local = ExpressionExecutor;
+/// One thread's buffered input and distinct values.
+#[derive(Debug)]
+pub struct DelimLocal {
+    groups: ExpressionExecutor,
+    chunks: Vec<DataChunk>,
+    distinct: GroupedAggregateHashTable,
+}
 
-    fn global_sink_state(&self, ctx: &ExecutionContext) -> Result<DelimGlobal> {
+impl PhysicalDelimJoin {
+    /// An empty table of the distinct duplicate-eliminated values.
+    fn distinct_table(&self, ctx: &ExecutionContext) -> Result<GroupedAggregateHashTable> {
         let group_types = self
             .groups
             .iter()
             .map(|group| group.return_type.clone())
             .collect();
-        let distinct = GroupedAggregateHashTable::new(
+        GroupedAggregateHashTable::new(
             ctx.env.buffer_manager.clone(),
             group_types,
             &[],
             initial_capacity(),
             0,
-        )?;
+        )
+    }
+}
+
+/// Adds the groups `keys` to `table`.
+fn add_groups(table: &mut GroupedAggregateHashTable, keys: &DataChunk) -> Result<()> {
+    let hashes = if keys.column_count() == 0 {
+        Vector::constant(&Value::ubigint(0))?
+    } else {
+        let columns: Vec<&Vector> = keys.columns().iter().collect();
+        hash_columns(&columns, keys.len())?
+    };
+    table.add_chunk(keys, &hashes, &[], &[])?;
+    Ok(())
+}
+
+impl Sink for PhysicalDelimJoin {
+    type Global = DelimGlobal;
+    type Local = DelimLocal;
+
+    fn global_sink_state(&self, ctx: &ExecutionContext) -> Result<DelimGlobal> {
         Ok(DelimGlobal {
             chunks: Mutex::default(),
-            distinct: Mutex::new(distinct),
+            distinct: Mutex::new(self.distinct_table(ctx)?),
         })
     }
 
-    fn local_sink_state(&self, _: &ExecutionContext, _: &DelimGlobal) -> Result<ExpressionExecutor> {
-        Ok(ExpressionExecutor::new(self.groups.clone()))
+    fn local_sink_state(&self, ctx: &ExecutionContext, _: &DelimGlobal) -> Result<DelimLocal> {
+        Ok(DelimLocal {
+            groups: ExpressionExecutor::new(self.groups.clone()),
+            chunks: Vec::new(),
+            distinct: self.distinct_table(ctx)?,
+        })
     }
 
     fn sink(
         &self,
         _: &ExecutionContext,
         chunk: &DataChunk,
-        global: &DelimGlobal,
-        groups: &mut ExpressionExecutor,
+        _: &DelimGlobal,
+        local: &mut DelimLocal,
     ) -> Result<SinkResult> {
         let mut keys = DataChunk::default();
-        groups.execute(chunk, &mut keys)?;
-        let hashes = if keys.column_count() == 0 {
-            Vector::constant(&Value::ubigint(0))?
-        } else {
-            let columns: Vec<&Vector> = keys.columns().iter().collect();
-            hash_columns(&columns, chunk.len())?
-        };
-        global
-            .distinct
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .add_chunk(&keys, &hashes, &[], &[])?;
+        local.groups.execute(chunk, &mut keys)?;
+        let keys = DataChunk::new(keys.into_columns(), chunk.len());
+        add_groups(&mut local.distinct, &keys)?;
+        local.chunks.push(chunk.clone());
+        Ok(SinkResult::NeedMoreInput)
+    }
+
+    /// Hands the thread's chunks and distinct values to the global state.
+    fn combine(&self, _: &ExecutionContext, global: &DelimGlobal, mut local: DelimLocal) -> Result<()> {
         global
             .chunks
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .push(chunk.clone());
-        Ok(SinkResult::NeedMoreInput)
-    }
-
-    fn combine(&self, _: &ExecutionContext, _: &DelimGlobal, _: ExpressionExecutor) -> Result<()> {
-        Ok(())
+            .append(&mut local.chunks);
+        let mut distinct = global.distinct.lock().unwrap_or_else(PoisonError::into_inner);
+        local
+            .distinct
+            .finalize_into(|groups| add_groups(&mut distinct, &groups))
     }
 
     fn finalize(&self, _: &ExecutionContext, global: &mut DelimGlobal) -> Result<SinkFinalize> {
@@ -253,6 +284,22 @@ impl PhysicalOperator for PhysicalDelimScan {
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
     }
+    fn parallel_source(&self) -> bool {
+        true
+    }
+    /// The buffered input keeps the order of the delim join's input (DuckDB's plan
+    /// reaches the delim join's input there).
+    fn source_order(&self) -> OrderPreservationType {
+        match (&self.data, &self.owner) {
+            (DelimData::Cached, Some(owner)) => owner
+                .children()
+                .first()
+                .map_or(OrderPreservationType::InsertionOrder, |input| {
+                    order_preservation_recursive(input.as_ref())
+                }),
+            _ => OrderPreservationType::InsertionOrder,
+        }
+    }
     fn source_dependencies(&self) -> Vec<PhysicalRef> {
         if let Some(owner) = &self.owner {
             return vec![Arc::clone(owner) as PhysicalRef];
@@ -307,5 +354,9 @@ impl Source for PhysicalDelimScan {
         } else {
             SourceResult::Finished
         })
+    }
+
+    fn max_threads(&self, (chunks, _): &Self::Global) -> usize {
+        chunks.len().max(1)
     }
 }

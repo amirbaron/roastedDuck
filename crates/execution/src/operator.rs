@@ -45,8 +45,35 @@ pub enum SinkFinalize {
     NoOutputPossible,
 }
 
+/// The row order an operator produces (DuckDB's `OrderPreservationType`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OrderPreservationType {
+    /// The rows come in no particular order.
+    NoOrder,
+    /// The rows keep the order of the operator's input (the default).
+    InsertionOrder,
+    /// The rows come in an order that must be kept (e.g. `ORDER BY`).
+    FixedOrder,
+}
+
+/// The batch a sink's current input belongs to (DuckDB's `OperatorPartitionInfo` in the
+/// local sink state): sinks that require batch indices see their input split into batches
+/// numbered in source order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PartitionInfo {
+    /// The batch the next chunks belong to.
+    pub batch_index: u64,
+    /// The lowest batch index any thread of the pipeline is still working on: every batch
+    /// below it is complete.
+    pub min_batch_index: u64,
+}
+
 /// A node of a physical plan. Its roles (source, streaming operator, sink) are exposed
 /// through the typed traits below and erased for the executor.
+///
+/// The `parallel_*`, `*_order` and batch index methods tell the executor how a pipeline
+/// may be split across threads; their defaults are DuckDB's `PhysicalOperator` defaults
+/// (sequential, insertion order, no batch indices).
 pub trait PhysicalOperator: Send + Sync + fmt::Debug + 'static {
     fn name(&self) -> &'static str;
     fn types(&self) -> &[LogicalType];
@@ -60,6 +87,41 @@ pub trait PhysicalOperator: Send + Sync + fmt::Debug + 'static {
     }
     fn as_sink(&self) -> Option<&dyn ErasedSink> {
         None
+    }
+    /// Whether several threads may read from the source role at once, each with its own
+    /// local state (DuckDB's `ParallelSource`).
+    fn parallel_source(&self) -> bool {
+        false
+    }
+    /// Whether several threads may run the operator role at once (`ParallelOperator`).
+    fn parallel_operator(&self) -> bool {
+        false
+    }
+    /// Whether several threads may feed the sink role at once (`ParallelSink`).
+    fn parallel_sink(&self) -> bool {
+        false
+    }
+    /// The order of the rows the source role emits (`SourceOrder`).
+    fn source_order(&self) -> OrderPreservationType {
+        OrderPreservationType::InsertionOrder
+    }
+    /// The order of the rows the operator role emits relative to its input
+    /// (`OperatorOrder`).
+    fn operator_order(&self) -> OrderPreservationType {
+        OrderPreservationType::InsertionOrder
+    }
+    /// Whether the sink's result depends on the order of its input (`SinkOrderDependent`).
+    fn sink_order_dependent(&self) -> bool {
+        false
+    }
+    /// Whether the source role numbers its output in batches that follow its row order
+    /// (`SupportsPartitioning(OperatorPartitionInfo::BatchIndex())`).
+    fn supports_batch_index(&self) -> bool {
+        false
+    }
+    /// Whether the sink role needs the batch index of its input (`RequiredPartitionInfo`).
+    fn requires_batch_index(&self) -> bool {
+        false
     }
     /// Whether this is a `UNION ALL`, whose children feed the same pipeline sink.
     fn is_union(&self) -> bool {
@@ -182,6 +244,24 @@ pub trait Source: PhysicalOperator {
         global: &Self::Global,
         local: &mut Self::Local,
     ) -> Result<SourceResult>;
+
+    /// How many threads can usefully read the source at once
+    /// (`GlobalSourceState::MaxThreads`); only consulted for parallel sources.
+    fn max_threads(&self, global: &Self::Global) -> usize {
+        let _ = global;
+        1
+    }
+
+    /// The batch index of the chunk `get_data` just returned, counted from 0 in the
+    /// source's row order (DuckDB's `GetPartitionData`); only called on sources that
+    /// [support batch indices](PhysicalOperator::supports_batch_index).
+    fn batch_index(&self, global: &Self::Global, local: &Self::Local) -> Result<u64> {
+        let _ = (global, local);
+        Err(Error::internal(format!(
+            "{} does not support batch indices",
+            self.name()
+        )))
+    }
 }
 
 /// A streaming operator in the middle of a pipeline.
@@ -252,6 +332,50 @@ pub trait Sink: PhysicalOperator {
         let _ = (ctx, global);
         Ok(SinkFinalize::Ready)
     }
+
+    /// How many threads may feed the sink at once, given that the source allows
+    /// `source_max` (`GlobalSinkState::MaxThreads`).
+    fn max_threads(&self, global: &Self::Global, source_max: usize) -> usize {
+        let _ = global;
+        source_max
+    }
+
+    /// The input moves on to the batch `partition.batch_index` (DuckDB's `NextBatch`);
+    /// only called on sinks that [require batch indices](PhysicalOperator::requires_batch_index),
+    /// once before the first chunk and whenever the batch changes.
+    fn next_batch(
+        &self,
+        ctx: &ExecutionContext,
+        global: &Self::Global,
+        local: &mut Self::Local,
+        partition: PartitionInfo,
+    ) -> Result<()> {
+        let _ = (ctx, global, local, partition);
+        Ok(())
+    }
+
+    /// The number of tasks of the sink's next parallel finalize stage, or 0 once the sink
+    /// is completely finalized. Called after [`Sink::finalize`] and after every stage;
+    /// each stage's tasks run concurrently (DuckDB's sink-specific finalize events such as
+    /// `HashJoinFinalizeEvent`).
+    fn finalize_tasks(&self, ctx: &ExecutionContext, global: &Self::Global) -> Result<usize> {
+        let _ = (ctx, global);
+        Ok(0)
+    }
+
+    /// Runs task `task` of the current finalize stage.
+    fn execute_finalize_task(
+        &self,
+        ctx: &ExecutionContext,
+        global: &Self::Global,
+        task: usize,
+    ) -> Result<()> {
+        let _ = (ctx, global, task);
+        Err(Error::internal(format!(
+            "{} has no parallel finalize tasks",
+            self.name()
+        )))
+    }
 }
 
 /// A sink's global state after finalisation, shared with the operator's source role.
@@ -291,6 +415,8 @@ pub trait ErasedSource {
         global: &(dyn Any + Send + Sync),
         local: &mut (dyn Any + Send),
     ) -> Result<SourceResult>;
+    fn max_threads(&self, global: &(dyn Any + Send + Sync)) -> Result<usize>;
+    fn batch_index(&self, global: &(dyn Any + Send + Sync), local: &(dyn Any + Send)) -> Result<u64>;
 }
 
 impl<T: Source> ErasedSource for T {
@@ -327,6 +453,16 @@ impl<T: Source> ErasedSource for T {
             downcast(global, name)?,
             downcast_local(local, name)?,
         )
+    }
+    fn max_threads(&self, global: &(dyn Any + Send + Sync)) -> Result<usize> {
+        Ok(Source::max_threads(self, downcast(global, self.name())?))
+    }
+    fn batch_index(&self, global: &(dyn Any + Send + Sync), local: &(dyn Any + Send)) -> Result<u64> {
+        let name = self.name();
+        let local = local
+            .downcast_ref::<T::Local>()
+            .ok_or_else(|| state_type_error(name))?;
+        Source::batch_index(self, downcast(global, name)?, local)
     }
 }
 
@@ -438,6 +574,21 @@ pub trait ErasedSink {
         local: AnyLocal,
     ) -> Result<()>;
     fn finalize(&self, ctx: &ExecutionContext, global: &mut (dyn Any + Send + Sync)) -> Result<SinkFinalize>;
+    fn max_threads(&self, global: &(dyn Any + Send + Sync), source_max: usize) -> Result<usize>;
+    fn next_batch(
+        &self,
+        ctx: &ExecutionContext,
+        global: &(dyn Any + Send + Sync),
+        local: &mut (dyn Any + Send),
+        partition: PartitionInfo,
+    ) -> Result<()>;
+    fn finalize_tasks(&self, ctx: &ExecutionContext, global: &(dyn Any + Send + Sync)) -> Result<usize>;
+    fn execute_finalize_task(
+        &self,
+        ctx: &ExecutionContext,
+        global: &(dyn Any + Send + Sync),
+        task: usize,
+    ) -> Result<()>;
 }
 
 impl<T: Sink> ErasedSink for T {
@@ -484,5 +635,39 @@ impl<T: Sink> ErasedSink for T {
             .downcast_mut::<T::Global>()
             .ok_or_else(|| state_type_error(name))?;
         Sink::finalize(self, ctx, global)
+    }
+    fn max_threads(&self, global: &(dyn Any + Send + Sync), source_max: usize) -> Result<usize> {
+        Ok(Sink::max_threads(
+            self,
+            downcast(global, self.name())?,
+            source_max,
+        ))
+    }
+    fn next_batch(
+        &self,
+        ctx: &ExecutionContext,
+        global: &(dyn Any + Send + Sync),
+        local: &mut (dyn Any + Send),
+        partition: PartitionInfo,
+    ) -> Result<()> {
+        let name = self.name();
+        Sink::next_batch(
+            self,
+            ctx,
+            downcast(global, name)?,
+            downcast_local(local, name)?,
+            partition,
+        )
+    }
+    fn finalize_tasks(&self, ctx: &ExecutionContext, global: &(dyn Any + Send + Sync)) -> Result<usize> {
+        Sink::finalize_tasks(self, ctx, downcast(global, self.name())?)
+    }
+    fn execute_finalize_task(
+        &self,
+        ctx: &ExecutionContext,
+        global: &(dyn Any + Send + Sync),
+        task: usize,
+    ) -> Result<()> {
+        Sink::execute_finalize_task(self, ctx, downcast(global, self.name())?, task)
     }
 }

@@ -50,6 +50,9 @@ impl PhysicalOperator for PhysicalColumnDataScan {
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
     }
+    fn parallel_source(&self) -> bool {
+        true
+    }
 
     fn explain_name(&self) -> String {
         if self.empty_result {
@@ -99,5 +102,9 @@ impl Source for PhysicalColumnDataScan {
         } else {
             SourceResult::Finished
         })
+    }
+
+    fn max_threads(&self, _: &AtomicUsize) -> usize {
+        self.chunks.len().max(1)
     }
 }

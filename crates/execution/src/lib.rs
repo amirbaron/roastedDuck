@@ -8,26 +8,25 @@ pub mod aggregate_hashtable;
 mod column_data_collection;
 mod constraints;
 mod context;
-mod executor;
 mod expression_executor;
 pub mod join_hashtable;
 mod nested_loop_join;
 mod operator;
 pub mod operators;
-mod pipeline;
+pub mod parallel;
 mod plan_generator;
 mod profiler;
 pub mod sample;
 pub mod window;
 
 pub use constraints::table_constraints;
-pub use context::{ClientEnv, ExecutionContext};
-pub use executor::Executor;
+pub use context::{ClientEnv, ExecutionContext, default_threads};
 pub use expression_executor::{ExpressionExecutor, ScalarEvaluator};
 pub use operator::{
-    Operator, OperatorResult, PhysicalOperator, PhysicalRef, Sink, SinkFinalize, SinkResult, Source,
-    SourceResult,
+    Operator, OperatorResult, OrderPreservationType, PartitionInfo, PhysicalOperator, PhysicalRef, Sink,
+    SinkFinalize, SinkResult, Source, SourceResult,
 };
+pub use parallel::{Executor, QueryOptions, TaskScheduler};
 pub use plan_generator::{
     ExplainOutput, JoinPlanSettings, PlanContext, create_physical_plan, create_physical_plan_with,
 };

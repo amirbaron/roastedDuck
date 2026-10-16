@@ -26,7 +26,9 @@ use super::{
 use crate::join_hashtable::{
     FullOuterScanState, JoinHashTable, JoinHashTableConditions, ProbeState, ScanStructure, flatten_sequences,
 };
-use crate::operator::{ErasedOperator, ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
+use crate::operator::{
+    ErasedOperator, ErasedSink, ErasedSource, OrderPreservationType, PhysicalOperator, PhysicalRef, SinkState,
+};
 use crate::{
     ExecutionContext, ExpressionExecutor, Operator, OperatorResult, Sink, SinkFinalize, SinkResult, Source,
     SourceResult,
@@ -229,6 +231,21 @@ impl PhysicalOperator for PhysicalHashJoin {
     }
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         propagates_build_side(self.join_type).then_some(self as &dyn ErasedSource)
+    }
+    fn parallel_operator(&self) -> bool {
+        true
+    }
+    fn parallel_sink(&self) -> bool {
+        true
+    }
+    fn parallel_source(&self) -> bool {
+        true
+    }
+    fn source_order(&self) -> OrderPreservationType {
+        OrderPreservationType::NoOrder
+    }
+    fn operator_order(&self) -> OrderPreservationType {
+        OrderPreservationType::NoOrder
     }
 
     fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
@@ -550,7 +567,7 @@ impl Source for PhysicalHashJoin {
             .unwrap_or_else(PoisonError::into_inner)
             .data_collection()
             .chunk_count();
-        let threads = ctx.env.threads.max(1);
+        let threads = ctx.env.threads().max(1);
         Ok(HashJoinGlobalSourceState {
             sink: Arc::clone(sink),
             next_chunk: AtomicUsize::new(0),
@@ -591,5 +608,9 @@ impl Source for PhysicalHashJoin {
             }
             *local = None;
         }
+    }
+
+    fn max_threads(&self, global: &HashJoinGlobalSourceState) -> usize {
+        global.chunk_count.div_ceil(global.chunks_per_thread).max(1)
     }
 }
