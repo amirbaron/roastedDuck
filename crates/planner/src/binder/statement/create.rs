@@ -2,8 +2,9 @@
 //! `bind_create.cpp`, `bind_create_table.cpp` and `bind_drop.cpp`).
 
 use rustdb_ast::{
-    CatalogType as AstCatalogType, ColumnDefinition, CompressionType, Constraint, CreateInfo, CreateInfoKind,
-    DropInfo, ForeignKeyConstraint, ForeignKeyType, NotNullConstraint, OnEntryNotFound, TableColumnType,
+    CatalogEntryInfo, CatalogType as AstCatalogType, ColumnDefinition, CompressionType, Constraint,
+    CreateInfo, CreateInfoKind, DropInfo, ForeignKeyConstraint, ForeignKeyType, LogicalDependency,
+    LogicalDependencyList, NotNullConstraint, OnEntryNotFound, TableColumnType,
 };
 use rustdb_catalog::{CatalogType, EntryKind, TableEntry};
 use rustdb_common::{Error, LogicalIndex, PhysicalIndex, Result};
@@ -12,7 +13,7 @@ use rustdb_types::{LogicalType, LogicalTypeId, Value};
 use super::super::expression::{bind_logical_type, bind_logical_type_in_schema};
 use super::super::query_node::bind_node;
 use super::super::{BindScope, BoundStatement, Scope};
-use super::table::{bind_default_value, bind_schema_or_catalog, table_of};
+use super::table::{bind_default_value_in, bind_schema_or_catalog, table_of};
 use crate::expression_binder::{CheckColumn, ExpressionBinder};
 use crate::generated::enums::LogicalOperatorType;
 use crate::operator::{BoundCreateTableInfo, LogicalKind, LogicalOperator};
@@ -67,15 +68,96 @@ pub fn bind_create(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Result<B
                 info: Box::new(info.clone()),
             })
         }
-        CreateInfoKind::Secret(_) => {
-            return Err(Error::not_implemented(format!(
-                "CREATE {}",
-                info.kind.catalog_type().name()
-            )));
+        CreateInfoKind::Secret(secret) => {
+            let input = bind_create_secret(scope, secret, info.on_conflict)?;
+            scope.with_properties(|properties| properties.return_type = StatementReturnType::QueryResult);
+            return Ok(BoundStatement::new(
+                LogicalOperator::new(LogicalKind::CreateSecret(Box::new(input))),
+                vec!["Success".to_owned()],
+                vec![LogicalType::BOOLEAN],
+            ));
         }
     };
     scope.with_properties(|properties| properties.return_type = return_type);
     Ok(count_result(plan))
+}
+
+/// Evaluates one expression of `CREATE SECRET` (DuckDB binds them with a
+/// `ConstantBinder` and executes them).
+fn evaluate_secret_expression(
+    scope: &mut BindScope<'_>,
+    expression: &rustdb_ast::ParsedExpression,
+) -> Result<Value> {
+    let mut copy = expression.clone();
+    if crate::expression_binder::parsed_has_parameter(&mut copy) {
+        return Err(Error::invalid_input(
+            "Create Secret expressions can not have parameters!",
+        ));
+    }
+    let bound = {
+        let (inner, outer) = scope.split();
+        let mut binder = crate::expression_binder::ConstantBinder::new(inner, outer, "Secret Parameter");
+        binder.bind(&mut copy, false)?
+    };
+    scope.context.evaluator.evaluate_scalar(&bound)
+}
+
+/// The `SECRET_ENTRY` case of DuckDB's `Binder::Bind(CreateStatement &)`: the type,
+/// provider, scope and options are evaluated; the secret manager checks them.
+fn bind_create_secret(
+    scope: &mut BindScope<'_>,
+    info: &rustdb_ast::CreateSecretInfo,
+    on_conflict: rustdb_ast::OnCreateConflict,
+) -> Result<crate::operator::CreateSecretInput> {
+    let mut lowered = |expression: Option<&rustdb_ast::ParsedExpression>| -> Result<String> {
+        match expression {
+            Some(expression) => Ok(evaluate_secret_expression(scope, expression)?
+                .to_varchar()?
+                .to_lowercase()),
+            None => Ok(String::new()),
+        }
+    };
+    let provider = lowered(info.provider.as_deref())?;
+    let secret_type = lowered(info.secret_type.as_deref())?;
+    let mut scope_strings = Vec::new();
+    if let Some(expression) = &info.scope {
+        let value = evaluate_secret_expression(scope, expression)?;
+        let ty = value.logical_type().clone();
+        if ty == LogicalType::VARCHAR {
+            scope_strings.push(value.to_varchar()?);
+        } else if ty.id() == LogicalTypeId::List && ty.child_type() == Some(&LogicalType::VARCHAR) {
+            for item in value.children().unwrap_or_default() {
+                scope_strings.push(item.to_varchar()?);
+            }
+        } else if ty.id() == LogicalTypeId::Struct {
+            for child in value.children().unwrap_or_default() {
+                if *child.logical_type() != LogicalType::VARCHAR {
+                    return Err(Error::invalid_input(
+                        "Invalid input to scope parameter of create secret: only struct of VARCHARs is allowed",
+                    ));
+                }
+                scope_strings.push(child.to_varchar()?);
+            }
+        } else {
+            return Err(Error::invalid_input(
+                "Create Secret scope must be of type VARCHAR or LIST(VARCHAR)",
+            ));
+        }
+    }
+    let mut options = Vec::with_capacity(info.options.len());
+    for (name, expression) in info.options.iter() {
+        options.push((name.to_owned(), evaluate_secret_expression(scope, expression)?));
+    }
+    Ok(crate::operator::CreateSecretInput {
+        secret_type,
+        provider,
+        storage: info.storage_type.clone(),
+        name: info.name.clone(),
+        scope: scope_strings,
+        options,
+        on_conflict,
+        persist_type: info.persist_type,
+    })
 }
 
 /// `CREATE TYPE` (the `TYPE_ENTRY` case of DuckDB's `Binder::Bind(CreateStatement &)`):
@@ -142,7 +224,7 @@ fn bind_catalog(scope: &BindScope<'_>, catalog: &str) -> String {
 /// Resolves the catalog and schema an entry is created in, which must exist
 /// (`Binder::BindCreateSchema`).
 pub fn bind_create_schema(scope: &BindScope<'_>, info: &mut CreateInfo) -> Result<()> {
-    let (mut catalog, mut schema) = bind_schema_or_catalog(scope, &info.catalog, &info.schema);
+    let (mut catalog, mut schema) = bind_schema_or_catalog(scope, &info.catalog, &info.schema)?;
     if catalog == "temp" {
         catalog.clear();
     }
@@ -179,16 +261,54 @@ fn bind_create_view_info(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Re
     let mut query = view.query.clone();
     let mut view_binder = super::super::Binder::new(scope.context.clone())?;
     view_binder.can_contain_nulls = true;
+    let record = scope.context.config.enable_view_dependencies;
+    let previous = record.then(|| scope.context.start_recording_dependencies());
     let bound = {
         let mut view_scope = BindScope::root(&mut view_binder);
-        bind_node(&mut view_scope, &mut query.node)?
+        bind_node(&mut view_scope, &mut query.node)
     };
+    if let Some(previous) = previous {
+        let recorded = scope.context.stop_recording_dependencies(previous);
+        add_recorded_dependencies(&mut info.dependencies, recorded, &info.catalog, info.temporary);
+    }
+    let bound = bound?;
     if view.aliases.len() > bound.names.len() {
         return Err(Error::binder("More VIEW aliases than columns in query result"));
     }
     view.types = bound.types;
     view.names = bound.names;
     Ok(())
+}
+
+/// Adds the dependencies the catalog lookups in `recorded` give an entry created in
+/// `catalog` (DuckDB's catalog lookup callbacks): entries of other catalogs and internal
+/// types are no dependencies. Temporary entries belong to DuckDB's `temp` catalog, so a
+/// temporary entry only depends on temporary entries and vice versa.
+pub(crate) fn add_recorded_dependencies(
+    dependencies: &mut LogicalDependencyList,
+    recorded: Vec<crate::context::EntryLookup>,
+    catalog: &str,
+    temporary: bool,
+) {
+    for lookup in recorded {
+        if !lookup.catalog.eq_ignore_ascii_case(catalog)
+            || lookup.entry.temporary != temporary
+            || (lookup.entry.internal && matches!(lookup.entry.kind, EntryKind::Type(_)))
+        {
+            continue;
+        }
+        let dependency = LogicalDependency {
+            entry: CatalogEntryInfo {
+                catalog_type: lookup.entry.dependency_type(),
+                schema: lookup.schema,
+                name: lookup.entry.name().to_owned(),
+            },
+            catalog: lookup.catalog,
+        };
+        if !dependencies.set.contains(&dependency) {
+            dependencies.set.push(dependency);
+        }
+    }
 }
 
 /// A column definition with `name` and `ty`.
@@ -257,32 +377,11 @@ pub fn bind_create_table_info(
         table.columns.columns = columns;
         query_plan = Some(bound.plan);
     } else {
-        for column in &mut table.columns.columns {
-            if column.logical_type.id() != rustdb_types::LogicalTypeId::Any {
-                column.logical_type =
-                    bind_logical_type_in_schema(&scope.context, &column.logical_type, &catalog, &schema)?;
-            }
-        }
-        bind_generated_columns(scope, &table.table, &mut table.columns.columns)?;
-        bind_create_table_constraints(
-            scope,
-            &table.table,
-            &schema,
-            &mut table.columns.columns,
-            &mut table.constraints,
-        )?;
-        if any_constraint_references_generated_column(&table.columns.columns, &table.constraints) {
-            return Err(Error::binder(
-                "Constraints on generated columns are not supported yet",
-            ));
-        }
-        bind_new_constraints(&table.table, &table.columns.columns, &mut table.constraints)?;
-        // Validate the default values (`BindDefaultValues`).
-        for column in &table.columns.columns {
-            if column.category != TableColumnType::Generated {
-                bind_default_value(scope, column.expression.as_deref(), &column.logical_type)?;
-            }
-        }
+        let previous = scope.context.start_recording_dependencies();
+        let result = bind_table_definition(scope, &catalog, &schema, table);
+        let recorded = scope.context.stop_recording_dependencies(previous);
+        add_recorded_dependencies(&mut info.dependencies, recorded, &catalog, info.temporary);
+        result?;
     }
     if !table
         .columns
@@ -302,6 +401,60 @@ pub fn bind_create_table_info(
         },
         query_plan,
     ))
+}
+
+/// Binds the column types, generated columns, constraints and defaults of a `CREATE
+/// TABLE` without a query.
+fn bind_table_definition(
+    scope: &mut BindScope<'_>,
+    catalog: &str,
+    schema: &str,
+    table: &mut rustdb_ast::CreateTableInfo,
+) -> Result<()> {
+    for column in &mut table.columns.columns {
+        if column.logical_type.id() != rustdb_types::LogicalTypeId::Any {
+            column.logical_type =
+                bind_logical_type_in_schema(&scope.context, &column.logical_type, catalog, schema)?;
+        }
+    }
+    bind_generated_columns(scope, &table.table, &mut table.columns.columns)?;
+    bind_create_table_constraints(
+        scope,
+        &table.table,
+        schema,
+        &mut table.columns.columns,
+        &mut table.constraints,
+    )?;
+    if any_constraint_references_generated_column(&table.columns.columns, &table.constraints) {
+        return Err(Error::binder(
+            "Constraints on generated columns are not supported yet",
+        ));
+    }
+    // `BindNewConstraints` binds the CHECK expressions first.
+    let check_columns = generated_check_columns(&table.columns.columns);
+    for constraint in &table.constraints {
+        if let Constraint::Check(check) = constraint {
+            let mut expression = (*check.expression).clone();
+            let mut binder = scope.binder.child()?;
+            crate::expression_binder::CheckBinder::new(&mut binder, None, &table.table, &check_columns)
+                .bind(&mut expression, true)?;
+        }
+    }
+    bind_new_constraints(&table.table, &table.columns.columns, &mut table.constraints)?;
+    // Validate the default values (`BindDefaultValues`); names resolve in the table's
+    // catalog and schema.
+    let path = (catalog.to_owned(), schema.to_owned());
+    for column in &table.columns.columns {
+        if column.category != TableColumnType::Generated {
+            bind_default_value_in(
+                scope,
+                column.expression.as_deref(),
+                &column.logical_type,
+                Some(&path),
+            )?;
+        }
+    }
+    Ok(())
 }
 
 /// The names of the columns `expression` references (`ColumnDependencyManager`'s
@@ -783,6 +936,14 @@ fn bind_create_table_constraints(
 /// `DROP ...` (DuckDB's `Binder::Bind(DropStatement &)`).
 pub fn bind_drop(scope: &mut BindScope<'_>, drop: &mut DropInfo) -> Result<BoundStatement> {
     scope.with_properties(|properties| properties.return_type = StatementReturnType::Nothing);
+    if drop.catalog_type == AstCatalogType::SecretEntry {
+        // `DROP SECRET` is executed by the secret manager (`PhysicalDrop`).
+        return Ok(BoundStatement::new(
+            LogicalOperator::new(LogicalKind::Drop(Box::new(drop.clone()))),
+            vec!["Success".to_owned()],
+            vec![LogicalType::BOOLEAN],
+        ));
+    }
     let ty = match drop.catalog_type {
         AstCatalogType::SchemaEntry => None,
         AstCatalogType::TableEntry => Some(CatalogType::Table),
@@ -800,7 +961,7 @@ pub fn bind_drop(scope: &mut BindScope<'_>, drop: &mut DropInfo) -> Result<Bound
         }
     };
     if let Some(ty) = ty {
-        let (catalog, schema) = bind_schema_or_catalog(scope, &drop.catalog, &drop.schema);
+        let (catalog, schema) = bind_schema_or_catalog(scope, &drop.catalog, &drop.schema)?;
         let if_exists = drop.if_not_found == OnEntryNotFound::ReturnNull;
         if ty == CatalogType::Type
             && (schema.is_empty() || schema.eq_ignore_ascii_case(rustdb_catalog::DEFAULT_SCHEMA))

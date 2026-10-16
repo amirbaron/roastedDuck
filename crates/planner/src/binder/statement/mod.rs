@@ -13,9 +13,11 @@ use rustdb_common::{CaseInsensitiveMap, Error, Result};
 use rustdb_types::{LogicalType, LogicalTypeId};
 
 mod alter;
+mod copy;
 mod create;
 mod create_index;
 mod create_macro;
+mod export;
 mod merge_into;
 mod modify;
 mod table;
@@ -72,11 +74,69 @@ pub fn bind_statement(scope: &mut BindScope<'_>, statement: &mut SqlStatement) -
         SqlStatementKind::Alter(info) => alter::bind_alter(scope, info),
         SqlStatementKind::Attach(info) => bind_attach(scope, info),
         SqlStatementKind::Detach(info) => Ok(bind_detach(scope, info)),
+        SqlStatementKind::Copy(info) => copy::bind_copy(scope, info),
+        SqlStatementKind::Export(export) => export::bind_export(scope, export),
+        SqlStatementKind::Vacuum(info) => bind_vacuum(scope, info),
         other => Err(Error::not_implemented(format!(
             "Unimplemented statement type \"{}\" for Bind",
             other.statement_type().name()
         ))),
     }
+}
+
+/// `VACUUM` / `ANALYZE` (DuckDB's `Binder::Bind(VacuumStatement &)`): the table and
+/// columns are checked; the statistics DuckDB recomputes are not kept here.
+fn bind_vacuum(scope: &mut BindScope<'_>, info: &mut rustdb_ast::VacuumInfo) -> Result<BoundStatement> {
+    if info.has_table
+        && let Some(table_ref) = info.table_ref.as_mut()
+    {
+        let bound = super::tableref::bind_table_ref(scope, table_ref)?;
+        let base_tables = || Error::binder("Can only vacuum or analyze base tables");
+        let LogicalKind::Get(get) = &bound.plan.kind else {
+            return Err(base_tables());
+        };
+        let Some(entry) = &get.table else {
+            return Err(base_tables());
+        };
+        let rustdb_catalog::EntryKind::Table(table) = &entry.kind else {
+            return Err(base_tables());
+        };
+        if info.columns.is_empty() {
+            info.columns = table
+                .physical_columns()
+                .map(|(_, _, column)| column.name.clone())
+                .collect();
+        }
+        let mut seen: Vec<String> = Vec::new();
+        for name in &info.columns {
+            if seen.iter().any(|existing| existing.eq_ignore_ascii_case(name)) {
+                return Err(Error::binder(
+                    "cannot vacuum or analyze the same column twice, i.e., there is a duplicate entry in the list of column names",
+                ));
+            }
+            seen.push(name.clone());
+            let Some((_, column)) = table.column(name) else {
+                return Err(Error::binder(format!(
+                    "Column with name \"{name}\" does not exist"
+                )));
+            };
+            if column.generated.is_some() {
+                return Err(Error::binder(format!(
+                    "cannot vacuum or analyze generated column \"{}\" - specify non-generated columns to vacuum or analyze",
+                    column.name
+                )));
+            }
+        }
+    }
+    scope.with_properties(|properties| properties.return_type = StatementReturnType::Nothing);
+    Ok(BoundStatement::new(
+        LogicalOperator::new(LogicalKind::EmptyResult {
+            return_types: vec![LogicalType::BOOLEAN],
+            bindings: vec![crate::ColumnBinding::new(0, 0)],
+        }),
+        vec!["Success".to_owned()],
+        vec![LogicalType::BOOLEAN],
+    ))
 }
 
 /// `CALL function(...)` (DuckDB's `Binder::Bind(CallStatement &)`): bound as

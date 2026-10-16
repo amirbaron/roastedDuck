@@ -364,6 +364,64 @@ pub fn create_file_list(function_name: &str, paths: &[String], extension: &str) 
     Ok(list)
 }
 
+/// The bind data of `glob`: the matching files.
+#[derive(Debug)]
+struct GlobData {
+    files: Vec<String>,
+}
+
+impl rustdb_function::FunctionData for GlobData {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// The `glob(pattern)` table function (DuckDB's `GlobTableFunction`): the files matching
+/// the patterns, none being no error.
+pub fn glob_functions() -> Vec<rustdb_function::TableFunctionSet> {
+    use rustdb_function::{TableFunction, TableFunctionBindOutput, TableFunctionSet};
+    let function = |argument: LogicalType| {
+        TableFunction::new("glob", vec![argument])
+            .with_bind(|input| {
+                let first = input
+                    .inputs
+                    .first()
+                    .ok_or_else(|| Error::internal("glob without a pattern"))?;
+                let mut files = Vec::new();
+                for path in parse_paths("glob", first)? {
+                    let mut expanded = local_glob(&path)?;
+                    expanded.sort();
+                    files.extend(expanded);
+                }
+                Ok(TableFunctionBindOutput {
+                    return_types: vec![LogicalType::VARCHAR],
+                    names: vec!["file".to_owned()],
+                    bind_data: Some(std::sync::Arc::new(GlobData { files })),
+                })
+            })
+            .with_scan(|bind_data, _, state, chunk| {
+                let data = bind_data
+                    .and_then(|data| data.as_any().downcast_ref::<GlobData>())
+                    .ok_or_else(|| Error::internal("glob scan without bind data"))?;
+                let start = usize::try_from(state.position)
+                    .unwrap_or(usize::MAX)
+                    .min(data.files.len());
+                let end = (start + rustdb_common::STANDARD_VECTOR_SIZE).min(data.files.len());
+                let mut column = rustdb_types::Vector::flat(LogicalType::VARCHAR, (end - start).max(1));
+                for (row, file) in data.files[start..end].iter().enumerate() {
+                    column.set_value(row, &Value::varchar(file))?;
+                }
+                *chunk = rustdb_types::DataChunk::new(vec![column], end - start);
+                state.position = end as u64;
+                Ok(end < data.files.len())
+            })
+    };
+    let mut set = TableFunctionSet::new("glob");
+    set.add(function(LogicalType::VARCHAR));
+    set.add(function(LogicalType::list(LogicalType::VARCHAR)));
+    vec![set]
+}
+
 /// `FileSystem::HasGlob`.
 pub fn has_glob(path: &str) -> bool {
     path.bytes().any(|byte| matches!(byte, b'*' | b'?' | b'['))

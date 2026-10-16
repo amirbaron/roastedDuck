@@ -354,6 +354,22 @@ impl CatalogSet {
             .collect()
     }
 
+    /// Drops the versions older than the committed `version`, which no transaction can
+    /// see any more (`CatalogSet::CleanupEntry`); a drop that is the newest version
+    /// removes the whole chain. Old versions hold the storage of altered tables.
+    pub(crate) fn cleanup(&self, name: &str, version: &Arc<Version>) {
+        let mut chains = self.lock();
+        let Some(chain) = chains.get_mut(name) else { return };
+        let Some(position) = chain.iter().position(|v| Arc::ptr_eq(v, version)) else {
+            return;
+        };
+        if position == 0 && version.is_tombstone() {
+            chains.remove(name);
+            return;
+        }
+        chain.truncate(position + 1);
+    }
+
     /// Removes an uncommitted version (rollback).
     pub(crate) fn undo(&self, name: &str, version: &Arc<Version>) {
         let mut chains = self.lock();

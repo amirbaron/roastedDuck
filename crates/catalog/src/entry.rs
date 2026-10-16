@@ -26,6 +26,49 @@ pub enum CatalogType {
 }
 
 impl CatalogType {
+    /// The serialized catalog type (DuckDB's `CatalogType` enum).
+    pub const fn to_ast(self) -> rustdb_ast::CatalogType {
+        use rustdb_ast::CatalogType as A;
+        match self {
+            Self::Schema => A::SchemaEntry,
+            Self::Table => A::TableEntry,
+            Self::View => A::ViewEntry,
+            Self::Index => A::IndexEntry,
+            Self::Sequence => A::SequenceEntry,
+            Self::Type => A::TypeEntry,
+            Self::Collation => A::CollationEntry,
+            Self::ScalarFunction => A::ScalarFunctionEntry,
+            Self::AggregateFunction => A::AggregateFunctionEntry,
+            Self::TableFunction => A::TableFunctionEntry,
+            Self::PragmaFunction => A::PragmaFunctionEntry,
+            Self::CopyFunction => A::CopyFunctionEntry,
+            Self::Macro => A::MacroEntry,
+            Self::TableMacro => A::TableMacroEntry,
+        }
+    }
+
+    /// The catalog type of a serialized one (`None` for types without entries here).
+    pub const fn from_ast(ty: rustdb_ast::CatalogType) -> Option<Self> {
+        use rustdb_ast::CatalogType as A;
+        Some(match ty {
+            A::SchemaEntry => Self::Schema,
+            A::TableEntry => Self::Table,
+            A::ViewEntry => Self::View,
+            A::IndexEntry => Self::Index,
+            A::SequenceEntry => Self::Sequence,
+            A::TypeEntry => Self::Type,
+            A::CollationEntry => Self::Collation,
+            A::ScalarFunctionEntry => Self::ScalarFunction,
+            A::AggregateFunctionEntry => Self::AggregateFunction,
+            A::TableFunctionEntry => Self::TableFunction,
+            A::PragmaFunctionEntry => Self::PragmaFunction,
+            A::CopyFunctionEntry => Self::CopyFunction,
+            A::MacroEntry => Self::Macro,
+            A::TableMacroEntry => Self::TableMacro,
+            _ => return None,
+        })
+    }
+
     /// The name DuckDB uses in messages (`CatalogTypeToString`).
     pub const fn display_name(self) -> &'static str {
         match self {
@@ -90,6 +133,8 @@ pub struct TableColumn {
     pub default_value: Option<ParsedExpression>,
     /// `GENERATED ALWAYS AS (expr)`: the column is computed, not stored.
     pub generated: Option<ParsedExpression>,
+    /// `COMMENT ON COLUMN` (NULL without one).
+    pub comment: rustdb_types::Value,
 }
 
 /// A table's definition (DuckDB's `TableCatalogEntry` / `DuckTableEntry`). Its data lives
@@ -122,6 +167,7 @@ impl TableEntry {
                     logical_type: column.logical_type.clone(),
                     default_value: if generated { None } else { expression.clone() },
                     generated: if generated { expression } else { None },
+                    comment: column.comment.clone(),
                 }
             })
             .collect();
@@ -326,6 +372,8 @@ pub struct ViewEntry {
     /// The result types and names of the query when the view was created.
     pub types: Vec<LogicalType>,
     pub names: Vec<String>,
+    /// `COMMENT ON COLUMN` values, by column name.
+    pub column_comments: rustdb_common::OrderedMap<String, rustdb_types::Value>,
 }
 
 /// A user-defined type (DuckDB's `TypeCatalogEntry`): `CREATE TYPE name AS ...`.
@@ -350,6 +398,8 @@ pub enum EntryKind {
     ScalarFunction(ScalarFunctionSet),
     AggregateFunction(AggregateFunctionSet),
     TableFunction(TableFunctionSet),
+    /// A COPY file format (`CopyFunctionCatalogEntry`).
+    CopyFunction(rustdb_function::CopyFunction),
     Table(TableEntry),
     View(ViewEntry),
     Index(IndexEntry),
@@ -384,6 +434,14 @@ pub struct CatalogEntry {
     pub internal: bool,
     pub temporary: bool,
     pub kind: EntryKind,
+    /// The entries this one depends on (DuckDB's dependency manager subjects); dropping
+    /// one of them requires CASCADE.
+    pub dependencies: Vec<rustdb_ast::LogicalDependency>,
+    /// The entries this one owns (`ALTER SEQUENCE ... OWNED BY`): they depend on it and
+    /// are dropped along with it.
+    pub owned: Vec<rustdb_ast::CatalogEntryInfo>,
+    /// `COMMENT ON` (NULL without one).
+    pub comment: rustdb_types::Value,
 }
 
 impl CatalogEntry {
@@ -394,7 +452,45 @@ impl CatalogEntry {
             internal: false,
             temporary: false,
             kind,
+            dependencies: Vec::new(),
+            owned: Vec::new(),
+            comment: rustdb_types::Value::default(),
         }
+    }
+
+    /// A copy of this entry under the same name (`CatalogEntry::Copy`), for alters that
+    /// only change metadata; `None` for entries that cannot be copied.
+    pub fn try_copy(&self) -> Option<Self> {
+        let kind = match &self.kind {
+            EntryKind::Table(table) => EntryKind::Table(table.clone()),
+            EntryKind::View(view) => EntryKind::View(view.clone()),
+            EntryKind::Sequence(sequence) => EntryKind::Sequence(sequence.clone()),
+            EntryKind::Type(ty) => EntryKind::Type(ty.clone()),
+            EntryKind::Macro(function) => EntryKind::Macro(function.clone()),
+            EntryKind::TableMacro(function) => EntryKind::TableMacro(function.clone()),
+            EntryKind::Index(index) => EntryKind::Index(index.clone()),
+            _ => return None,
+        };
+        let mut copy = Self::new(self.name.clone(), kind);
+        copy.inherit_links(self);
+        copy.internal = self.internal;
+        Some(copy)
+    }
+
+    /// Carries the catalog links of `previous` (the version this one replaces) over:
+    /// temporariness, dependencies, owned entries and the comment.
+    pub fn inherit_links(&mut self, previous: &Self) {
+        self.temporary = previous.temporary;
+        self.dependencies.clone_from(&previous.dependencies);
+        self.owned.clone_from(&previous.owned);
+        self.comment.clone_from(&previous.comment);
+    }
+
+    /// Whether `info` names this entry of `schema`.
+    pub fn is_described_by(&self, schema: &str, info: &rustdb_ast::CatalogEntryInfo) -> bool {
+        info.catalog_type == self.dependency_type()
+            && info.schema.eq_ignore_ascii_case(schema)
+            && info.name.eq_ignore_ascii_case(&self.name)
     }
 
     pub fn name(&self) -> &str {
@@ -407,6 +503,7 @@ impl CatalogEntry {
             EntryKind::ScalarFunction(_) => CatalogType::ScalarFunction,
             EntryKind::AggregateFunction(_) => CatalogType::AggregateFunction,
             EntryKind::TableFunction(_) => CatalogType::TableFunction,
+            EntryKind::CopyFunction(_) => CatalogType::CopyFunction,
             EntryKind::Table(_) => CatalogType::Table,
             EntryKind::View(_) => CatalogType::View,
             EntryKind::Index(_) => CatalogType::Index,
@@ -415,6 +512,11 @@ impl CatalogEntry {
             EntryKind::Macro(_) => CatalogType::Macro,
             EntryKind::TableMacro(_) => CatalogType::TableMacro,
         }
+    }
+
+    /// The type a dependency on this entry records (`CatalogEntryInfo::type`).
+    pub fn dependency_type(&self) -> rustdb_ast::CatalogType {
+        self.catalog_type().to_ast()
     }
 
     pub fn as_schema(&self) -> Option<&SchemaEntry> {

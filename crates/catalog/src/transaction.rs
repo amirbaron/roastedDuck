@@ -67,6 +67,10 @@ impl CatalogUndo for CatalogChange {
         }
     }
 
+    fn cleanup(&self) {
+        self.set.cleanup(&self.name, &self.version);
+    }
+
     fn is_drop(&self) -> bool {
         self.version.is_tombstone()
     }

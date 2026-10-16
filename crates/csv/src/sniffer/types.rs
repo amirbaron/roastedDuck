@@ -115,7 +115,11 @@ pub fn can_you_cast_it(
         LogicalTypeId::Timestamp => {
             let format = dialect_options.date_format(FormatType::Timestamp).get();
             if format.is_empty() {
-                Timestamp::parse(value, false).is_ok()
+                // `TryConvertTimestamp(..., strict = true)`: offsets fail (`STRICT_UTC`).
+                Timestamp::parse_parts(value, false).is_ok_and(|parsed| {
+                    (parsed.time_zone.is_empty() || parsed.time_zone.eq_ignore_ascii_case(b"utc"))
+                        && !parsed.has_offset
+                })
             } else {
                 format.try_parse_timestamp(value).is_some()
             }

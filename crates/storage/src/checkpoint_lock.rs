@@ -42,6 +42,17 @@ impl CheckpointLock {
         state.exclusive = true;
         Some(ExclusiveCheckpointGuard(Arc::clone(self)))
     }
+
+    /// Takes the lock exclusively, waiting until every holder released it (the wait
+    /// loop of `FORCE CHECKPOINT` in `DuckTransactionManager::Checkpoint`).
+    pub fn exclusive(self: &Arc<Self>) -> ExclusiveCheckpointGuard {
+        let mut state = self.lock();
+        while state.exclusive || state.shared > 0 {
+            state = self.released.wait(state).unwrap_or_else(PoisonError::into_inner);
+        }
+        state.exclusive = true;
+        ExclusiveCheckpointGuard(Arc::clone(self))
+    }
 }
 
 /// A shared hold of a [`CheckpointLock`], released on drop.
@@ -52,6 +63,9 @@ impl Drop for SharedCheckpointGuard {
     fn drop(&mut self) {
         let mut state = self.0.lock();
         state.shared = state.shared.saturating_sub(1);
+        if state.shared == 0 {
+            self.0.released.notify_all();
+        }
     }
 }
 

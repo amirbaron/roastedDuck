@@ -27,16 +27,21 @@ use crate::prepared::StatementReturnType;
 pub fn bind_alter(scope: &mut BindScope<'_>, info: &mut AlterInfo) -> Result<BoundStatement> {
     scope.with_properties(|properties| properties.return_type = StatementReturnType::Nothing);
     let ty = match &info.kind {
-        AlterInfoKind::AlterTable(_) => CatalogType::Table,
+        // `SetColumnCommentInfo::TryResolveCatalogEntry` looks up a table or a view.
+        AlterInfoKind::AlterTable(_) | AlterInfoKind::SetColumnComment(_) => CatalogType::Table,
         AlterInfoKind::AlterView(_) => CatalogType::View,
-        other => {
+        AlterInfoKind::ChangeOwnership(change) => CatalogType::from_ast(change.entry_catalog_type)
+            .ok_or_else(|| Error::internal("ALTER OWNED BY of an unexpected entry"))?,
+        AlterInfoKind::SetComment(comment) => CatalogType::from_ast(comment.entry_catalog_type)
+            .ok_or_else(|| Error::internal("COMMENT ON an unexpected entry"))?,
+        other @ AlterInfoKind::AlterDatabase(_) => {
             return Err(Error::not_implemented(format!(
                 "ALTER {}",
                 other.alter_type().name()
             )));
         }
     };
-    let (catalog, schema) = bind_schema_or_catalog(scope, &info.catalog, &info.schema);
+    let (catalog, schema) = bind_schema_or_catalog(scope, &info.catalog, &info.schema)?;
     let if_exists = info.if_not_found == OnEntryNotFound::ReturnNull;
     let found = scope
         .context
@@ -61,6 +66,15 @@ pub fn bind_alter(scope: &mut BindScope<'_>, info: &mut AlterInfo) -> Result<Bou
                     }
                     AlterAction::Rename(rename.new_view_name.clone())
                 }
+                AlterInfoKind::SetComment(comment) => AlterAction::SetComment(comment.comment_value.clone()),
+                AlterInfoKind::SetColumnComment(comment) => AlterAction::SetColumnComment {
+                    column: comment.column_name.clone(),
+                    comment: comment.comment_value.clone(),
+                },
+                AlterInfoKind::ChangeOwnership(change) => AlterAction::ChangeOwnership {
+                    owner_schema: change.owner_schema.clone(),
+                    owner_name: change.owner_name.clone(),
+                },
                 AlterInfoKind::AlterTable(alter) => {
                     let EntryKind::Table(table) = &found.entry.kind else {
                         return Err(Error::catalog("Can only modify view with ALTER VIEW statement"));
@@ -390,6 +404,7 @@ fn add_column(
         logical_type: logical_type.clone(),
         default_value,
         generated: None,
+        comment: column.comment.clone(),
     });
     Ok(AlterAction::AddColumn {
         definition: definition(columns, table.constraints.clone()),

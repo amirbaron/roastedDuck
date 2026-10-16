@@ -7,6 +7,7 @@
 mod catalog;
 mod catalog_set;
 pub mod checkpoint;
+pub mod dependencies;
 mod entry;
 mod transaction;
 mod wal;

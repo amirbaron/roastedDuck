@@ -10,7 +10,7 @@ use rustdb_planner::{
     ClientContext, ColumnBindingResolver, LogicalKind, LogicalOperator, PlannedStatement, Planner,
     PreparedStatementData,
 };
-use rustdb_types::LogicalType;
+use rustdb_types::{LogicalType, Value};
 
 use crate::attached::{AttachOptions, AttachedDatabase, DatabaseManager};
 use crate::settings::Settings;
@@ -51,6 +51,8 @@ pub(crate) struct DatabaseInstance {
     /// How checkpoints compress segments (`force_compression`, a global setting): applied
     /// to the storage of every attached database.
     compression: std::sync::Mutex<rustdb_storage::compression::CompressionConfig>,
+    /// The secrets (DuckDB's `DBConfig::secret_manager`).
+    pub(crate) secrets: Arc<crate::secrets::SecretManager>,
 }
 
 /// The default of `checkpoint_threshold` (16 MiB).
@@ -90,6 +92,17 @@ fn parse_force_compression(
         ))),
         other => Ok(other),
     }
+}
+
+/// Whether `name` is a setting of the secret manager.
+fn is_secret_setting(name: &str) -> bool {
+    [
+        "secret_directory",
+        "allow_persistent_secrets",
+        "default_secret_storage",
+    ]
+    .iter()
+    .any(|setting| setting.eq_ignore_ascii_case(name))
 }
 
 /// Whether `name` is `checkpoint_threshold` or its alias `wal_autocheckpoint`.
@@ -179,30 +192,31 @@ impl DatabaseInstance {
         catalogs
     }
 
-    /// Checkpoints databases whose WAL a commit grew beyond `checkpoint_threshold`,
-    /// unless other transactions are running (`DuckTransactionManager::CanCheckpoint`).
-    fn auto_checkpoint(&self) -> Result<()> {
+    /// Checkpoints the database `name` a commit wrote to when its WAL grew beyond
+    /// `checkpoint_threshold`, unless other transactions are running
+    /// (`DuckTransactionManager::CanCheckpoint`).
+    fn auto_checkpoint(&self, name: &str) -> Result<()> {
         let threshold = self
             .checkpoint_wal_size
             .load(std::sync::atomic::Ordering::Relaxed);
-        for database in self.databases.all() {
-            let Some(storage) = &database.storage else {
-                continue;
-            };
-            let Some(wal) = storage.wal() else {
-                continue;
-            };
-            if wal.size() <= threshold || self.transactions.active_count() > 0 {
-                continue;
-            }
-            crate::storage::create_checkpoint(
-                &database.catalog,
-                storage,
-                crate::storage::CheckpointMode::Automatic,
-                Some(&self.transactions),
-            )?;
+        let Some(database) = self.databases.get(name) else {
+            return Ok(());
+        };
+        let Some(storage) = &database.storage else {
+            return Ok(());
+        };
+        let Some(wal) = storage.wal() else {
+            return Ok(());
+        };
+        if wal.size() <= threshold || self.transactions.active_count() > 0 {
+            return Ok(());
         }
-        Ok(())
+        crate::storage::create_checkpoint(
+            &database.catalog,
+            storage,
+            crate::storage::CheckpointMode::Automatic,
+            Some(&self.transactions),
+        )
     }
 
     /// Whether `checkpoint_on_shutdown` is on (`PRAGMA disable_checkpoint_on_shutdown`).
@@ -254,6 +268,10 @@ impl Database {
         for set in crate::system_functions::pragma_table_functions() {
             system_catalog.register_table_functions(set)?;
         }
+        system_catalog.register_copy_function(rustdb_csv::copy_csv::csv_copy_function())?;
+        for set in rustdb_csv::multi_file::glob_functions() {
+            system_catalog.register_table_functions(set)?;
+        }
         for set in rustdb_csv::sniff_csv::sniff_csv_functions() {
             system_catalog.register_table_functions(set)?;
         }
@@ -275,6 +293,7 @@ impl Database {
             shutdown_checkpoint_disabled: std::sync::atomic::AtomicBool::new(false),
             checkpoint_wal_size: std::sync::atomic::AtomicU64::new(DEFAULT_CHECKPOINT_WAL_SIZE),
             compression: std::sync::Mutex::default(),
+            secrets: Arc::default(),
         };
         for (name, value) in &config.options {
             if is_checkpoint_threshold(name) {
@@ -395,6 +414,15 @@ pub struct Connection {
 }
 
 impl Connection {
+    /// The options set on this connection (and not reset since), by canonical name,
+    /// like the values DuckDB's `RestartCommand` carries over to the restarted database.
+    pub fn assigned_settings(&self) -> Vec<(String, Value)> {
+        self.settings
+            .assigned()
+            .map(|(name, value)| (name.to_owned(), value.clone()))
+            .collect()
+    }
+
     pub fn database(&self) -> &Database {
         &self.database
     }
@@ -431,11 +459,18 @@ impl Connection {
         let invalidates = outcome
             .as_ref()
             .is_err_and(|error| invalidates_transaction(error.kind()));
+        // The database the transaction wrote to, which its commit may checkpoint.
+        let modified = if self.transactions.has_current() {
+            self.transactions.current().modified_database()
+        } else {
+            None
+        };
         let ended = self.transactions.end_statement(outcome.is_ok(), invalidates);
         let mut result = outcome.and_then(|result| ended.map(|()| result));
         if result.is_ok()
             && !self.transactions.has_current()
-            && let Err(error) = self.database.instance().auto_checkpoint()
+            && let Some(modified) = modified
+            && let Err(error) = self.database.instance().auto_checkpoint(&modified)
         {
             result = Err(error);
         }
@@ -481,12 +516,167 @@ impl Connection {
             prepared_statements: self.prepared_statements.clone(),
             function_client: Arc::clone(&self.function_client),
             user_variables: self.user_variables.clone(),
+            dependency_recorder: Arc::default(),
+            database_state: Some(Arc::clone(&instance.secrets) as Arc<dyn rustdb_planner::DatabaseState>),
         })
+    }
+
+    /// `IMPORT DATABASE 'dir'` (DuckDB's `PragmaImportDatabase`): runs the directory's
+    /// `schema.sql`, then its `load.sql` with the files taken from the directory.
+    fn import_database(&mut self, parameters: &[rustdb_types::Value]) -> Result<MaterializedResult> {
+        let directory = parameters
+            .first()
+            .map(rustdb_types::Value::to_varchar)
+            .transpose()?
+            .unwrap_or_default();
+        let join = |name: &str| {
+            if directory.ends_with('/') {
+                format!("{directory}{name}")
+            } else {
+                format!("{directory}/{name}")
+            }
+        };
+        let mut statements = Vec::new();
+        for file in ["schema.sql", "load.sql"] {
+            let path = join(file);
+            let query = std::fs::read_to_string(&path).map_err(|error| {
+                let reason = if error.kind() == std::io::ErrorKind::NotFound {
+                    "No such file or directory".to_owned()
+                } else {
+                    error.to_string()
+                };
+                Error::new(ErrorKind::Io, format!("Cannot open file \"{path}\": {reason}"))
+            })?;
+            for mut statement in rustdb_parser::parse(&query)? {
+                if file == "load.sql"
+                    && let rustdb_ast::SqlStatementKind::Copy(info) = &mut statement.kind
+                {
+                    let name = info
+                        .file_path
+                        .rsplit(['/', '\\'])
+                        .next()
+                        .unwrap_or_default()
+                        .to_owned();
+                    info.file_path = join(&name);
+                }
+                statements.push(statement);
+            }
+        }
+        let mut result = MaterializedResult::default();
+        for statement in statements {
+            result = self.run_statement(statement)?;
+        }
+        Ok(result)
+    }
+
+    /// `COPY FROM DATABASE source TO target (SCHEMA | DATA)` (DuckDB's
+    /// `Binder::Bind(CopyDatabaseStatement &)`): the source's entries are created in the
+    /// target (in export order), or every source table's rows are inserted into the
+    /// target's table of the same name.
+    fn copy_database(&mut self, stmt: &rustdb_ast::CopyDatabaseStatement) -> Result<MaterializedResult> {
+        let instance = self.database.instance();
+        let source = instance.database(&stmt.from_database)?;
+        let target = instance.database(&stmt.to_database)?;
+        if Arc::ptr_eq(&source.catalog, &target.catalog) {
+            return Err(Error::binder(format!(
+                "Cannot copy from \"{}\" to \"{}\" - FROM and TO databases are the same",
+                stmt.from_database, stmt.to_database
+            )));
+        }
+        let target_name = target.name.clone();
+        // Read the source in the open transaction, or in a snapshot of its own.
+        let (snapshot, temporary) = if self.transactions.has_current() {
+            (self.transactions.current(), false)
+        } else {
+            (Arc::new(instance.transactions.begin()), true)
+        };
+        // The statements to run; `queries` are SQL texts to run before `statements[i]`.
+        let mut statements: Vec<SqlStatement> = Vec::new();
+        let mut queries: Vec<(usize, String)> = Vec::new();
+        if stmt.copy_type == rustdb_ast::CopyDatabaseType::CopySchema {
+            for mut info in rustdb_catalog::checkpoint::export_create_infos(&source.catalog, &snapshot) {
+                info.catalog.clone_from(&target_name);
+                info.on_conflict = if matches!(info.kind, rustdb_ast::CreateInfoKind::Schema) {
+                    rustdb_ast::OnCreateConflict::IgnoreOnConflict
+                } else {
+                    rustdb_ast::OnCreateConflict::ErrorOnConflict
+                };
+                // Schemas and sequences are created from their infos: their SQL names no
+                // catalog, and a sequence's SQL loses its usage.
+                if matches!(
+                    info.kind,
+                    rustdb_ast::CreateInfoKind::Schema | rustdb_ast::CreateInfoKind::Sequence(_)
+                ) {
+                    statements.push(SqlStatement::new(rustdb_ast::SqlStatementKind::Create(Box::new(
+                        info,
+                    ))));
+                } else if let Some(sql) = info.to_sql() {
+                    queries.push((statements.len(), sql));
+                }
+            }
+        } else {
+            let mut tables = Vec::new();
+            for schema in source.catalog.schemas().scan(&snapshot) {
+                let Some(contents) = schema.as_schema() else {
+                    continue;
+                };
+                for entry in contents.tables.scan(&snapshot) {
+                    if matches!(entry.kind, rustdb_catalog::EntryKind::Table(_)) && !entry.internal {
+                        tables.push((schema.name().to_owned(), entry));
+                    }
+                }
+            }
+            for (schema, entry) in rustdb_catalog::checkpoint::reorder_table_entries(tables) {
+                let rustdb_catalog::EntryKind::Table(table) = &entry.kind else {
+                    continue;
+                };
+                let columns: Vec<String> = table
+                    .physical_columns()
+                    .map(|(_, _, column)| rustdb_ast::keyword::write_optionally_quoted(&column.name))
+                    .collect();
+                let columns = columns.join(", ");
+                queries.push((
+                    statements.len(),
+                    format!(
+                        "INSERT INTO {} ({columns}) SELECT {columns} FROM {}",
+                        rustdb_ast::qualifier_to_string(&target_name, &schema, entry.name()),
+                        rustdb_ast::qualifier_to_string(&source.name, &schema, entry.name()),
+                    ),
+                ));
+            }
+        }
+        if temporary {
+            instance.transactions.rollback(&snapshot);
+        }
+        let mut queries = queries.into_iter().peekable();
+        for (index, statement) in statements
+            .into_iter()
+            .map(Some)
+            .chain(std::iter::once(None))
+            .enumerate()
+        {
+            while let Some((_, query)) = queries.next_if(|(before, _)| *before == index) {
+                for parsed in rustdb_parser::parse(&query)? {
+                    self.run_statement(parsed)?;
+                }
+            }
+            if let Some(statement) = statement {
+                self.run_statement(statement)?;
+            }
+        }
+        Ok(MaterializedResult::default())
     }
 
     fn run_statement(&mut self, statement: SqlStatement) -> Result<MaterializedResult> {
         if let rustdb_ast::SqlStatementKind::Multi(statements) = statement.kind {
             return self.run_multi_statement(statements);
+        }
+        if let rustdb_ast::SqlStatementKind::CopyDatabase(copy) = &statement.kind {
+            return self.copy_database(copy);
+        }
+        if let rustdb_ast::SqlStatementKind::Load(info) = &statement.kind {
+            crate::extensions::load_extension(info)?;
+            return Ok(MaterializedResult::default());
         }
         // Pragmas that stand for a query run that query (DuckDB's `PragmaHandler`).
         let statement = statement;
@@ -502,6 +692,11 @@ impl Connection {
                     _ => None,
                 })
                 .collect();
+            if let Some(constants) = &constants
+                && pragma.name.eq_ignore_ascii_case("import_database")
+            {
+                return self.import_database(constants);
+            }
             if let Some(constants) = constants
                 && let Some(query) = crate::system_functions::pragma_query(&pragma.name, &constants)?
             {
@@ -566,12 +761,7 @@ impl Connection {
         }
         let instance = self.database.instance();
         for attached in attaches {
-            let current = instance.databases.get(&attached.name);
-            if current.is_some_and(|current| Arc::ptr_eq(&current, &attached))
-                && let Some(database) = instance.databases.remove(&attached.name)
-            {
-                database.close(true);
-            }
+            instance.databases.detach_if_current(&attached);
         }
     }
 
@@ -602,11 +792,8 @@ impl Connection {
             )));
         }
         let instance = self.database.instance();
-        match instance.databases.remove(&info.name) {
-            Some(database) => {
-                database.close(true);
-                Ok(())
-            }
+        match instance.databases.detach(&info.name) {
+            Some(_) => Ok(()),
             None if info.if_not_found == rustdb_ast::OnEntryNotFound::ReturnNull => Ok(()),
             None => Err(Error::binder(format!(
                 "Failed to detach database with name \"{}\": database not found",
@@ -898,6 +1085,9 @@ impl Connection {
                 return Ok(nothing());
             }
             LogicalKind::Set { name, value, .. } => {
+                if is_secret_setting(name) {
+                    self.database.instance().secrets.set_option(name, Some(value))?;
+                }
                 self.settings.set(name, value)?;
                 if is_checkpoint_threshold(name) {
                     self.database.instance().set_checkpoint_threshold(value)?;
@@ -908,6 +1098,9 @@ impl Connection {
                 return Ok(nothing());
             }
             LogicalKind::Reset { name, .. } => {
+                if is_secret_setting(name) {
+                    self.database.instance().secrets.set_option(name, None)?;
+                }
                 self.settings.reset(name)?;
                 if is_force_compression(name) {
                     self.database.instance().set_force_compression(None)?;
@@ -927,6 +1120,31 @@ impl Connection {
             }
             LogicalKind::Deallocate { name } => {
                 self.prepared_statements.remove(name);
+                return Ok(nothing());
+            }
+            LogicalKind::CreateSecret(input) => {
+                // `PhysicalCreateSecret`: one row with `true`.
+                self.database.instance().secrets.create_secret(input)?;
+                let column = rustdb_types::Vector::constant(&rustdb_types::Value::boolean(true))?;
+                return Ok(MaterializedResult::new(
+                    names,
+                    types,
+                    vec![rustdb_types::DataChunk::new(vec![column], 1)],
+                ));
+            }
+            LogicalKind::Drop(info) if info.catalog_type == rustdb_ast::CatalogType::SecretEntry => {
+                let (persist_type, storage) = match info.extra_drop_info.as_deref() {
+                    Some(rustdb_ast::ExtraDropInfo::Secret(extra)) => {
+                        (extra.persist_mode, extra.secret_storage.clone())
+                    }
+                    None => (rustdb_ast::SecretPersistType::Default, String::new()),
+                };
+                self.database.instance().secrets.drop_secret(
+                    &info.name,
+                    info.if_not_found,
+                    persist_type,
+                    &storage,
+                )?;
                 return Ok(nothing());
             }
             LogicalKind::Pragma { name, .. } => {

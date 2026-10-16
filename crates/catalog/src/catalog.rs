@@ -4,6 +4,7 @@ use std::sync::{Arc, OnceLock};
 use rustdb_ast::OnCreateConflict;
 use rustdb_common::{Error, Result};
 use rustdb_function::{AggregateFunctionSet, ScalarFunctionSet, TableFunctionSet};
+use rustdb_types::Value;
 
 use crate::{CatalogEntry, CatalogSet, CatalogType, EntryKind, SchemaEntry, StorageHook, Transaction};
 
@@ -133,6 +134,12 @@ impl Catalog {
         self.register_builtin(name, EntryKind::TableFunction(set))
     }
 
+    /// Registers a built-in COPY file format in `main`.
+    pub fn register_copy_function(&self, function: rustdb_function::CopyFunction) -> Result<()> {
+        let name = function.name.to_string();
+        self.register_builtin(name, EntryKind::CopyFunction(function))
+    }
+
     /// Registers a built-in view in `main` (DuckDB's `DefaultViewGenerator`).
     pub fn register_view(&self, name: &str, view: crate::ViewEntry) -> Result<()> {
         self.register_builtin(name.to_owned(), EntryKind::View(view))
@@ -163,6 +170,7 @@ impl Catalog {
         let set = match entry.catalog_type() {
             CatalogType::TableFunction => &schema.table_functions,
             CatalogType::Table | CatalogType::View => &schema.tables,
+            CatalogType::CopyFunction => &schema.copy_functions,
             _ => &schema.functions,
         };
         set.create_committed(entry)
@@ -288,6 +296,15 @@ impl Catalog {
         if on_conflict == OnCreateConflict::ReplaceOnConflict
             && let Some(old) = set.get(transaction, &name)
         {
+            if entry
+                .dependencies
+                .iter()
+                .any(|dependency| old.is_described_by(schema, &dependency.entry))
+            {
+                return Err(Error::catalog(
+                    "CREATE OR REPLACE is not allowed to depend on itself",
+                ));
+            }
             if old.catalog_type() != ty {
                 return Err(Error::catalog(format!(
                     "Existing object {name} is of type {}, trying to replace with type {}",
@@ -295,6 +312,7 @@ impl Catalog {
                     ty.display_name()
                 )));
             }
+            self.check_drop_dependencies(transaction, schema, &old, false)?;
             set.drop_entry(transaction, &name, entry.internal)?;
         }
         if set.create(transaction, entry)? {
@@ -454,6 +472,11 @@ impl Catalog {
                 existing.name()
             )));
         }
+        self.check_drop_dependencies(transaction, schema, &existing, cascade)?;
+        if set.get(transaction, name).is_none() {
+            // Dropped along with a dependent that owned it.
+            return Ok(());
+        }
         if ty == CatalogType::Table {
             // The table's indexes depend on it automatically and are dropped first
             // (`DependencyManager::DropObject`), so the WAL drops them before the table.
@@ -466,7 +489,294 @@ impl Catalog {
             }
         }
         set.drop_entry(transaction, name, false)?;
+        // The entries it owns go with it (`DependencyManager::CheckDropDependencies`).
+        for owned in &existing.owned {
+            if let Some(owned_type) = CatalogType::from_ast(owned.catalog_type) {
+                self.drop_entry(transaction, owned_type, &owned.schema, &owned.name, cascade, true)?;
+            }
+        }
         Ok(())
+    }
+
+    /// The tables and sequences of this catalog that own `entry` of `schema`.
+    fn owners(
+        &self,
+        transaction: &Transaction,
+        schema: &str,
+        entry: &CatalogEntry,
+    ) -> Vec<Arc<CatalogEntry>> {
+        let mut result = Vec::new();
+        for schema_entry in self.schemas.scan(transaction) {
+            let Some(contents) = schema_entry.as_schema() else {
+                continue;
+            };
+            for set in [&contents.tables, &contents.sequences] {
+                result.extend(set.scan(transaction).into_iter().filter(|candidate| {
+                    candidate
+                        .owned
+                        .iter()
+                        .any(|owned| entry.is_described_by(schema, owned))
+                }));
+            }
+        }
+        result
+    }
+
+    /// `CatalogSet::AlterOwnership` and `DependencyManager::AddOwnership`: `entry` of
+    /// `schema` becomes owned by the table or sequence `owner_name` of `owner_schema`,
+    /// which then drops it along with itself. `info` is the logged ALTER.
+    pub fn change_ownership(
+        &self,
+        transaction: &Transaction,
+        schema: &str,
+        entry: &CatalogEntry,
+        (owner_schema, owner_name): (&str, &str),
+        info: Option<rustdb_ast::AlterInfo>,
+    ) -> Result<()> {
+        let missing = || {
+            Error::catalog(format!(
+                "CatalogElement \"{owner_schema}.{owner_name}\" does not exist!"
+            ))
+        };
+        let owner_schema_entry = self.schema(transaction, owner_schema).ok_or_else(missing)?;
+        let contents = owner_schema_entry.as_schema().ok_or_else(missing)?;
+        let owner = contents
+            .tables
+            .get(transaction, owner_name)
+            .or_else(|| contents.sequences.get(transaction, owner_name))
+            .ok_or_else(missing)?;
+        let owner_schema = owner_schema_entry.name().to_owned();
+        let dependency_error = |message: String| Error::new(rustdb_common::ErrorKind::Dependency, message);
+        if let Some(other) = self.owners(transaction, &owner_schema, &owner).first() {
+            return Err(dependency_error(format!(
+                "{} can not become the owner, it is already owned by {}",
+                owner.name(),
+                other.name()
+            )));
+        }
+        if let Some(owned) = entry.owned.first() {
+            return Err(dependency_error(format!(
+                "{} already owns {}. Cannot have circular dependencies",
+                entry.name(),
+                owned.name
+            )));
+        }
+        let mut already_owned = false;
+        for other in self.owners(transaction, schema, entry) {
+            if Arc::ptr_eq(&other, &owner) {
+                already_owned = true;
+            } else {
+                return Err(dependency_error(format!(
+                    "{} is already owned by {}",
+                    entry.name(),
+                    other.name()
+                )));
+            }
+        }
+        if already_owned {
+            return Ok(());
+        }
+        let kind = match &owner.kind {
+            EntryKind::Table(table) => EntryKind::Table(table.clone()),
+            EntryKind::View(view) => EntryKind::View(view.clone()),
+            EntryKind::Sequence(sequence) => EntryKind::Sequence(sequence.clone()),
+            _ => return Err(missing()),
+        };
+        let mut new_owner = CatalogEntry::new(owner.name(), kind);
+        new_owner.inherit_links(&owner);
+        new_owner.owned.push(rustdb_ast::CatalogEntryInfo {
+            catalog_type: entry.dependency_type(),
+            schema: schema.to_owned(),
+            name: entry.name().to_owned(),
+        });
+        self.alter_entry(
+            transaction,
+            &owner_schema,
+            owner.catalog_type(),
+            owner.name(),
+            new_owner,
+            StorageHook::None,
+            info,
+        )
+    }
+
+    /// `COMMENT ON`: a copy of `entry` with `comment` replaces it (the `SET_COMMENT` case
+    /// of `CatalogSet::AlterEntry`). `info` is the logged ALTER.
+    pub fn set_comment(
+        &self,
+        transaction: &Transaction,
+        schema: &str,
+        entry: &CatalogEntry,
+        comment: Value,
+        info: Option<rustdb_ast::AlterInfo>,
+    ) -> Result<()> {
+        let mut copy = entry
+            .try_copy()
+            .ok_or_else(|| Error::internal("COMMENT ON an entry that cannot be copied"))?;
+        copy.comment = comment;
+        self.alter_entry(
+            transaction,
+            schema,
+            entry.catalog_type(),
+            entry.name(),
+            copy,
+            StorageHook::None,
+            info,
+        )
+    }
+
+    /// `COMMENT ON COLUMN` of a table (`DuckTableEntry::SetColumnComment`) or a view
+    /// (`ViewCatalogEntry::AlterEntry`). `info` is the logged ALTER.
+    pub fn set_column_comment(
+        &self,
+        transaction: &Transaction,
+        schema: &str,
+        entry: &CatalogEntry,
+        (column, comment): (&str, Value),
+        info: Option<rustdb_ast::AlterInfo>,
+    ) -> Result<()> {
+        let mut copy = entry
+            .try_copy()
+            .ok_or_else(|| Error::internal("COMMENT ON COLUMN of an entry that cannot be copied"))?;
+        match &mut copy.kind {
+            EntryKind::Table(table) => {
+                let Some(target) = table
+                    .columns
+                    .iter_mut()
+                    .find(|candidate| candidate.name.eq_ignore_ascii_case(column))
+                else {
+                    return Err(Error::binder(format!(
+                        "Table \"{}\" does not have a column with name \"{column}\"",
+                        entry.name()
+                    )));
+                };
+                target.comment = comment;
+            }
+            EntryKind::View(view) => {
+                let exists = (0..view.types.len()).any(|index| {
+                    view.aliases
+                        .get(index)
+                        .or_else(|| view.names.get(index))
+                        .is_some_and(|name| name == column)
+                });
+                if !exists {
+                    return Err(Error::binder(format!(
+                        "View \"{}\" does not have a column with name \"{column}\"",
+                        entry.name()
+                    )));
+                }
+                match view.column_comments.get_mut(column) {
+                    Some(existing) => *existing = comment,
+                    None => view.column_comments.push(column.to_owned(), comment),
+                }
+            }
+            _ => return Err(Error::internal("COMMENT ON COLUMN of an unexpected entry")),
+        }
+        self.alter_entry(
+            transaction,
+            schema,
+            entry.catalog_type(),
+            entry.name(),
+            copy,
+            StorageHook::None,
+            info,
+        )
+    }
+
+    /// The entries of this catalog that depend on `entry` of `schema` (DuckDB's
+    /// `DependencyManager::ScanDependents`).
+    pub fn dependents(
+        &self,
+        transaction: &Transaction,
+        schema: &str,
+        entry: &CatalogEntry,
+    ) -> Vec<(String, Arc<CatalogEntry>)> {
+        let mut result = Vec::new();
+        for schema_entry in self.schemas.scan(transaction) {
+            let Some(contents) = schema_entry.as_schema() else {
+                continue;
+            };
+            for set in [
+                &contents.tables,
+                &contents.functions,
+                &contents.table_functions,
+                &contents.sequences,
+                &contents.types,
+                &contents.indexes,
+            ] {
+                for candidate in set.scan(transaction) {
+                    if candidate
+                        .dependencies
+                        .iter()
+                        .any(|dependency| entry.is_described_by(schema, &dependency.entry))
+                        || candidate
+                            .owned
+                            .iter()
+                            .any(|owned| entry.is_described_by(schema, owned))
+                    {
+                        result.push((schema_entry.name().to_owned(), candidate));
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    /// `DependencyManager::CheckDropDependencies` / `DropObject`: without CASCADE the
+    /// dependents block the drop; with it they are dropped first.
+    fn check_drop_dependencies(
+        &self,
+        transaction: &Transaction,
+        schema: &str,
+        entry: &CatalogEntry,
+        cascade: bool,
+    ) -> Result<()> {
+        let dependents = self.dependents(transaction, schema, entry);
+        if dependents.is_empty() {
+            return Ok(());
+        }
+        if !cascade {
+            let mut message = format!(
+                "Cannot drop entry \"{}\" because there are entries that depend on it.\n",
+                entry.name()
+            );
+            self.collect_dependents(transaction, &dependents, entry, &mut message);
+            message.push_str("Use DROP...CASCADE to drop all dependents.");
+            return Err(Error::new(rustdb_common::ErrorKind::Dependency, message));
+        }
+        for (dependent_schema, dependent) in dependents {
+            self.drop_entry(
+                transaction,
+                dependent.catalog_type(),
+                &dependent_schema,
+                dependent.name(),
+                true,
+                true,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// `DependencyManager::CollectDependents`.
+    fn collect_dependents(
+        &self,
+        transaction: &Transaction,
+        dependents: &[(String, Arc<CatalogEntry>)],
+        subject: &CatalogEntry,
+        message: &mut String,
+    ) {
+        for (schema, dependent) in dependents {
+            let _ = writeln!(
+                message,
+                "{} depends on {}.",
+                entry_to_string(dependent),
+                entry_to_string(subject)
+            );
+            let nested = self.dependents(transaction, schema, dependent);
+            if !nested.is_empty() {
+                self.collect_dependents(transaction, &nested, dependent, message);
+            }
+        }
     }
 
     fn drop_schema(
@@ -529,6 +839,26 @@ impl Catalog {
         self.schemas.drop_entry(transaction, name, false)?;
         Ok(())
     }
+}
+
+/// `EntryToString` of the dependency manager (sequences print as indexes, like DuckDB).
+fn entry_to_string(entry: &CatalogEntry) -> String {
+    let kind = match entry.catalog_type() {
+        CatalogType::Table => "table",
+        CatalogType::Schema => "schema",
+        CatalogType::View => "view",
+        CatalogType::Index | CatalogType::Sequence => "index",
+        CatalogType::Collation => "collation",
+        CatalogType::Type => "type",
+        CatalogType::TableFunction => "table function",
+        CatalogType::ScalarFunction => "scalar function",
+        CatalogType::AggregateFunction => "aggregate function",
+        CatalogType::PragmaFunction => "pragma function",
+        CatalogType::CopyFunction => "copy function",
+        CatalogType::Macro => "macro function",
+        CatalogType::TableMacro => "table macro function",
+    };
+    format!("{kind} \"{}\"", entry.name())
 }
 
 /// Whether `name` is one of the builtin types every `main` schema holds (DuckDB's

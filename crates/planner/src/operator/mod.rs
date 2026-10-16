@@ -4,6 +4,7 @@
 //! output types, cardinality estimate) and its operator-specific data in [`LogicalKind`].
 //! The generic members let plan rewrites traverse any operator uniformly.
 
+mod copy_to_file;
 mod display;
 
 use std::sync::{Arc, Mutex, PoisonError};
@@ -23,6 +24,10 @@ use crate::generated::enums::{DistinctType, LogicalOperatorType};
 use crate::prepared::PreparedStatementData;
 use crate::{ColumnBinding, SubqueryType};
 
+pub use copy_to_file::{
+    CopyFunctionReturnType, CopyOverwriteMode, ExportedTable, FilenamePattern, LogicalCopyToFile,
+    LogicalExport,
+};
 pub use display::render_plan;
 
 /// A LIMIT or OFFSET value (DuckDB's `BoundLimitNode`).
@@ -459,10 +464,16 @@ pub enum LogicalKind {
     CreateIndex(Box<LogicalCreateIndex>),
     /// `ALTER TABLE` / `ALTER VIEW` (DuckDB's `LogicalSimple` of type `LOGICAL_ALTER`).
     Alter(Box<LogicalAlter>),
+    /// `CREATE SECRET` with its expressions evaluated (DuckDB's `LogicalCreateSecret`).
+    CreateSecret(Box<CreateSecretInput>),
     Insert(Box<LogicalInsert>),
     Delete(Box<LogicalDelete>),
     Update(Box<LogicalUpdate>),
     MergeInto(Box<LogicalMergeInto>),
+    /// `COPY ... TO`.
+    CopyToFile(Box<LogicalCopyToFile>),
+    /// `EXPORT DATABASE`.
+    Export(Box<LogicalExport>),
 }
 
 /// A bound `CREATE TABLE` (DuckDB's `BoundCreateTableInfo`): the table definition with
@@ -513,6 +524,22 @@ pub enum BoundConstraint {
     },
 }
 
+/// The input of a secret function (DuckDB's `CreateSecretInput`): type, provider and
+/// name lower-cased, the options evaluated.
+#[derive(Clone, Debug)]
+pub struct CreateSecretInput {
+    pub secret_type: String,
+    /// Empty for the type's default provider.
+    pub provider: String,
+    /// `IN storage`, or empty.
+    pub storage: String,
+    pub name: String,
+    pub scope: Vec<String>,
+    pub options: Vec<(String, Value)>,
+    pub on_conflict: rustdb_ast::OnCreateConflict,
+    pub persist_type: rustdb_ast::SecretPersistType,
+}
+
 /// A bound `ALTER TABLE` / `ALTER VIEW`: the checks of DuckDB's
 /// `DuckTableEntry::AlterEntry` are done while binding; what is left changes storage
 /// and the catalog.
@@ -537,6 +564,18 @@ pub enum AlterAction {
     Nothing,
     /// `RENAME TO`.
     Rename(String),
+    /// `COMMENT ON <entry> IS value`.
+    SetComment(rustdb_types::Value),
+    /// `COMMENT ON COLUMN <table or view>.column IS value`.
+    SetColumnComment {
+        column: String,
+        comment: rustdb_types::Value,
+    },
+    /// `ALTER SEQUENCE ... OWNED BY schema.name`.
+    ChangeOwnership {
+        owner_schema: String,
+        owner_name: String,
+    },
     /// A new definition over the same data (rename column, defaults, drop NOT NULL).
     Definition(rustdb_catalog::TableEntry),
     /// `ADD COLUMN`, filled with `default`.
@@ -839,6 +878,7 @@ impl LogicalOperator {
             LogicalKind::Transaction { .. } => T::LogicalTransaction,
             LogicalKind::Deallocate { .. } | LogicalKind::Drop(_) => T::LogicalDrop,
             LogicalKind::Pragma { .. } => T::LogicalPragma,
+            LogicalKind::CreateSecret(_) => T::LogicalCreateSecret,
             LogicalKind::CreateTable(_) => T::LogicalCreateTable,
             LogicalKind::CreateIndex(_) => T::LogicalCreateIndex,
             LogicalKind::Alter(_) => T::LogicalAlter,
@@ -846,6 +886,8 @@ impl LogicalOperator {
             LogicalKind::Delete(_) => T::LogicalDelete,
             LogicalKind::Update(_) => T::LogicalUpdate,
             LogicalKind::MergeInto(_) => T::LogicalMergeInto,
+            LogicalKind::CopyToFile(_) => T::LogicalCopyToFile,
+            LogicalKind::Export(_) => T::LogicalExport,
         }
     }
 
@@ -982,6 +1024,7 @@ impl LogicalOperator {
             LogicalKind::Explain { .. } => vec![ColumnBinding::new(0, 0), ColumnBinding::new(0, 1)],
             LogicalKind::Execute { prepared } => generate_column_bindings(0, prepared.types.len()),
             LogicalKind::Prepare { .. }
+            | LogicalKind::Export(_)
             | LogicalKind::Set { .. }
             | LogicalKind::Reset { .. }
             | LogicalKind::Attach(_)
@@ -989,6 +1032,7 @@ impl LogicalOperator {
             | LogicalKind::Transaction { .. }
             | LogicalKind::Deallocate { .. }
             | LogicalKind::Pragma { .. }
+            | LogicalKind::CreateSecret(_)
             | LogicalKind::CreateTable(_)
             | LogicalKind::CreateIndex(_)
             | LogicalKind::Alter(_)
@@ -1003,6 +1047,7 @@ impl LogicalOperator {
             LogicalKind::Update(update) => {
                 modify_bindings(update.return_chunk, update.table_index, &update.table)
             }
+            LogicalKind::CopyToFile(copy) => generate_column_bindings(0, copy.return_type.types().len()),
             LogicalKind::MergeInto(merge) => {
                 if merge.return_chunk {
                     generate_column_bindings(merge.table_index, table_types(&merge.table).len() + 1)
@@ -1176,6 +1221,7 @@ impl LogicalOperator {
             LogicalKind::Explain { .. } => vec![LogicalType::VARCHAR, LogicalType::VARCHAR],
             LogicalKind::Execute { prepared } => prepared.types.clone(),
             LogicalKind::Prepare { .. }
+            | LogicalKind::Export(_)
             | LogicalKind::Deallocate { .. }
             | LogicalKind::Set { .. }
             | LogicalKind::Reset { .. }
@@ -1183,11 +1229,13 @@ impl LogicalOperator {
             | LogicalKind::Detach(_)
             | LogicalKind::Transaction { .. }
             | LogicalKind::Pragma { .. }
+            | LogicalKind::CreateSecret(_)
             | LogicalKind::Alter(_)
             | LogicalKind::Drop(_) => vec![LogicalType::BOOLEAN],
             LogicalKind::Insert(insert) if insert.return_chunk => insert.table_types(),
             LogicalKind::Delete(delete) if delete.return_chunk => table_types(&delete.table),
             LogicalKind::Update(update) if update.return_chunk => table_types(&update.table),
+            LogicalKind::CopyToFile(copy) => copy.return_type.types(),
             LogicalKind::MergeInto(merge) if merge.return_chunk => {
                 // The RETURNING input ends with the `merge_action` column.
                 let mut types = table_types(&merge.table);

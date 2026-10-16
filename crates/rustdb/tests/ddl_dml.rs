@@ -272,6 +272,11 @@ fn sequences() {
     con.query("SELECT nextval('seq')").unwrap();
     con.query("ROLLBACK").unwrap();
     assert_eq!(rows(&mut con, "SELECT nextval('seq')"), vec![vec!["6"]]);
+    // The table's DEFAULT depends on the sequence (DuckDB's dependency manager).
+    assert!(error(&mut con, "DROP SEQUENCE seq").starts_with(
+        "Dependency Error: Cannot drop entry \"seq\" because there are entries that depend on it."
+    ));
+    con.query("DROP TABLE t").unwrap();
     con.query("DROP SEQUENCE seq").unwrap();
     assert!(
         error(&mut con, "SELECT nextval('seq')")

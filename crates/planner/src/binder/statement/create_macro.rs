@@ -74,6 +74,36 @@ pub fn bind_create_function_info(scope: &mut BindScope<'_>, info: &mut CreateInf
         return Err(Error::internal("expected a macro"));
     };
     let name = base.name.clone();
+    let previous = scope
+        .context
+        .config
+        .enable_macro_dependencies
+        .then(|| scope.context.start_recording_dependencies());
+    let result = verify_macro_functions(scope, &name, base, store_types);
+    if let Some(previous) = previous {
+        let recorded = scope.context.stop_recording_dependencies(previous);
+        result?;
+        bind_create_schema(scope, info)?;
+        super::create::add_recorded_dependencies(
+            &mut info.dependencies,
+            recorded,
+            &info.catalog,
+            info.temporary,
+        );
+        return Ok(());
+    }
+    result?;
+    bind_create_schema(scope, info)
+}
+
+/// Checks the overloads of a macro: parameter types, constant defaults and a body that
+/// binds.
+fn verify_macro_functions(
+    scope: &mut BindScope<'_>,
+    name: &str,
+    base: &mut rustdb_ast::CreateMacroInfo,
+    store_types: bool,
+) -> Result<()> {
     let mut type_overloads: Vec<Vec<LogicalType>> = Vec::new();
     for function in &mut base.macros {
         if !store_types && function.types.iter().any(|ty| ty.id() != LogicalTypeId::Unknown) {
@@ -166,7 +196,7 @@ pub fn bind_create_function_info(scope: &mut BindScope<'_>, info: &mut CreateInf
             scope
                 .binder
                 .macro_binding
-                .replace(Binding::dummy(dummy_types, dummy_names, &name)?);
+                .replace(Binding::dummy(dummy_types, dummy_names, name)?);
         let result = verify_macro_body(scope, &function.kind);
         scope.binder.macro_binding = saved_binding;
         if let Err(error) = result
@@ -175,7 +205,7 @@ pub fn bind_create_function_info(scope: &mut BindScope<'_>, info: &mut CreateInf
             return Err(error);
         }
     }
-    bind_create_schema(scope, info)
+    Ok(())
 }
 
 /// Binds a copy of a macro body with the binder's macro binding in scope.

@@ -287,8 +287,16 @@ impl Engine for RustEngine {
         crate::result_file::load(path, names.len()).map(|values| (values, names.len()))
     }
 
-    /// Gap: `rustdb` has no settings, client config or search path to carry over yet.
-    fn save_session(&self, _main: &Connection, _config: &mut Config) {}
+    /// Carries the options set on the main connection over to the restarted database.
+    /// Gap: the search path is not carried over yet.
+    fn save_session(&self, main: &Connection, config: &mut Config) {
+        for (name, value) in main.assigned_settings() {
+            config
+                .options
+                .retain(|(existing, _)| !existing.eq_ignore_ascii_case(&name));
+            config.options.push((name, value));
+        }
+    }
 
     fn restore_session(&self, _main: &mut Connection, (): ()) -> Result<(), String> {
         Ok(())
