@@ -132,6 +132,8 @@ pub struct ParquetBindData {
     /// (`union_readers`).
     union_readers: Vec<Arc<ParquetReader>>,
     casts: Arc<CastFunctionSet>,
+    /// The columns of the table a `COPY ... FROM` loads (`table_columns`).
+    pub(crate) table_columns: Vec<String>,
     /// The filters pushed into the scan, keyed by position in the scanned column ids.
     filters: Option<Arc<TableFilterSet>>,
     /// The number of rows of the first file (`initial_file_cardinality`).
@@ -162,6 +164,7 @@ impl ParquetBindData {
                     .clone(),
             ),
             union_readers: self.union_readers.clone(),
+            table_columns: self.table_columns.clone(),
             casts: Arc::clone(&self.casts),
             filters: Some(Arc::new(filters)),
             initial_file_cardinality: self.initial_file_cardinality,
@@ -336,6 +339,7 @@ pub fn bind_files(
         file_row_number_idx,
         initial_reader: Mutex::new(initial_reader),
         union_readers,
+        table_columns: Vec::new(),
         casts: Arc::clone(casts),
         filters: None,
         initial_file_cardinality,
@@ -349,11 +353,65 @@ enum ColumnSource {
     /// Output `index` of the reader scan, cast to the global type if needed.
     Reader {
         index: usize,
-        cast: Option<rustdb_function::cast::BoundCastInfo>,
+        cast: Option<Box<ColumnCast>>,
         target: LogicalType,
     },
     /// The same value for every row (filename, hive partitions, missing columns).
     Constant(Value),
+}
+
+/// The cast of a file column to the type the scan produces (an expression of the
+/// `MultiFileColumnMapper`); casts that do not exist fail when they would run.
+#[derive(Debug)]
+struct ColumnCast {
+    cast: Result<rustdb_function::cast::BoundCastInfo>,
+    /// The column's name and type in the file.
+    local_name: String,
+    local_type: LogicalType,
+}
+
+impl ColumnCast {
+    /// Casts a chunk of the column (`MultiFileReader::FinalizeChunk`), explaining a
+    /// failure like `GetExtendedMultiFileError`.
+    fn execute(
+        &self,
+        data: &ParquetBindData,
+        file_name: &str,
+        position: usize,
+        vector: &Vector,
+        target: &LogicalType,
+        count: usize,
+    ) -> Result<Vector> {
+        let result = self.cast.as_ref().map_err(Clone::clone).and_then(|cast| {
+            let mut result = Vector::flat(target.clone(), count);
+            cast.execute(vector, &mut result, count, &mut CastParameters::new())?;
+            Ok(result)
+        });
+        result.map_err(|error| {
+            if error.kind() == rustdb_common::ErrorKind::Internal {
+                return error;
+            }
+            let (local_name, local_type) = (&self.local_name, &self.local_type);
+            let extended = if data.table_columns.is_empty() {
+                format!(
+                    "In file \"{file_name}\" the column \"{local_name}\" has type {local_type}, but we are trying to read it as type {target}.\nThis can happen when reading multiple Parquet files. The schema information is taken from the first Parquet file by default. Possible solutions:\n* Enable the union_by_name=True option to combine the schema of all Parquet files (https://duckdb.org/docs/stable/data/multiple_files/combining_schemas)\n* Use a COPY statement to automatically derive types from an existing table."
+                )
+            } else {
+                let target_column = data
+                    .table_columns
+                    .get(position)
+                    .map(|name| format!("\"{name}\" "))
+                    .unwrap_or_default();
+                format!(
+                    "In file \"{file_name}\" the column \"{local_name}\" has type {local_type}, but we are trying to load it into column {target_column}with type {target}.\nThis means the Parquet schema does not match the schema of the table.\nPossible solutions:\n* Insert by name instead of by position using \"INSERT INTO tbl BY NAME SELECT * FROM read_parquet(...)\"\n* Manually specify which columns to insert using \"INSERT INTO tbl SELECT ... FROM read_parquet(...)\""
+                )
+            };
+            Error::conversion(format!(
+                "Error while reading file \"{file_name}\": failed to cast column \"{local_name}\" from type {local_type} to {target}: : {}\n\n{extended}",
+                error.raw_message()
+            ))
+        })
+    }
 }
 
 /// The scan of one file.
@@ -470,11 +528,13 @@ fn open_file(data: &ParquetBindData, file_index: usize, column_ids: &[u64]) -> R
             return Err(column_not_found(data, &reader, name));
         };
         let local_type = reader.columns[local].logical_type.clone();
-        let cast = if &local_type == global_type {
-            None
-        } else {
-            Some(data.casts.get_cast_function(&local_type, global_type)?)
-        };
+        let cast = (&local_type != global_type).then(|| {
+            Box::new(ColumnCast {
+                cast: data.casts.get_cast_function(&local_type, global_type),
+                local_name: reader.columns[local].name.clone(),
+                local_type: local_type.clone(),
+            })
+        });
         scan_columns.push(ScanColumn::column(local));
         sources.push(ColumnSource::Reader {
             index: scan_columns.len() - 1,
@@ -587,17 +647,20 @@ fn read_parquet_scan(
         }
         // One output column per scanned column id (`projected_output`).
         let mut output = Vec::with_capacity(column_ids.len());
-        for source in &file.sources {
+        for (position, source) in file.sources.iter().enumerate() {
             output.push(match source {
                 ColumnSource::Reader { index, cast, target } => {
                     let vector = state.scan_output[*index].clone();
                     match cast {
                         None => vector,
-                        Some(cast) => {
-                            let mut result = Vector::flat(target.clone(), count);
-                            cast.execute(&vector, &mut result, count, &mut CastParameters::new())?;
-                            result
-                        }
+                        Some(cast) => cast.execute(
+                            data,
+                            &data.files.files[state.file_index],
+                            position,
+                            &vector,
+                            target,
+                            count,
+                        )?,
                     }
                 }
                 ColumnSource::Constant(value) => Vector::constant(value)?,

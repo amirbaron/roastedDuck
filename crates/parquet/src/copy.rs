@@ -626,10 +626,10 @@ fn parquet_copy_from_bind(
         )));
     }
     data.types = expected_types.to_vec();
+    data.table_columns = expected_names.to_vec();
     Ok(Arc::new(data))
 }
 
-/// The `parquet` copy function.
 /// `TypeVisitor::Contains`: whether `ty` or a type nested in it satisfies `predicate`.
 fn type_contains(ty: &LogicalType, predicate: &impl Fn(&LogicalType) -> bool) -> bool {
     if predicate(ty) {
@@ -718,6 +718,7 @@ fn parquet_write_select(input: &CopyToSelectInput<'_>) -> Option<Vec<LogicalType
     any_change.then_some(result)
 }
 
+/// The `parquet` copy function.
 pub fn parquet_copy_function() -> CopyFunction {
     let mut function = CopyFunction::new("parquet");
     "parquet".clone_into(&mut function.extension);

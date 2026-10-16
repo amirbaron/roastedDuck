@@ -1422,6 +1422,7 @@ test/sql/copy/parquet/batched_write/parquet_verify_row_group_size.test_slow
 test/sql/copy/parquet/batched_write/parquet_write_mixed_batches.test_slow
 test/sql/copy/parquet/batched_write/varying_source_target_row_groups.test_slow
 test/sql/copy/parquet/bigdecimal.test
+test/sql/copy/parquet/bloom_filters.test
 test/sql/copy/parquet/broken_parquet.test
 test/sql/copy/parquet/byte_stream_split.test
 test/sql/copy/parquet/case_insensitive_replacement.test
@@ -1449,6 +1450,7 @@ test/sql/copy/parquet/metadata_full.test
 test/sql/copy/parquet/multi_file/multi_file_filter_integer_types.test
 test/sql/copy/parquet/multi_file/multi_file_filter_mixed.test
 test/sql/copy/parquet/multi_file/multi_file_filter_struct.test
+test/sql/copy/parquet/multi_file_conversion_error.test
 test/sql/copy/parquet/parallel_parquet_glob.test
 test/sql/copy/parquet/parquet2.test
 test/sql/copy/parquet/parquet2strings.test
@@ -1479,6 +1481,7 @@ test/sql/copy/parquet/parquet_arrow_timestamp.test
 test/sql/copy/parquet/parquet_blob.test
 test/sql/copy/parquet/parquet_blob_string.test
 test/sql/copy/parquet/parquet_copy_failure_cleans_up.test
+test/sql/copy/parquet/parquet_copy_type_mismatch.test
 test/sql/copy/parquet/parquet_corrupt_stats.test
 test/sql/copy/parquet/parquet_count_star.test
 test/sql/copy/parquet/parquet_debug_use_openssl.test

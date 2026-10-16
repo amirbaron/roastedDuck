@@ -545,7 +545,10 @@ fn bloom_probe_rows(reader: &ParquetReader, data: &MetadataBindData) -> Result<V
         )));
     };
     let column_type = reader.columns[column_index].logical_type.clone();
-    let constant = constant.try_cast_as(&data.casts, &column_type, false)?;
+    // `Value::DefaultCastAs`.
+    let constant = constant
+        .try_cast_as(&data.casts, &column_type, false)
+        .map_err(|error| Error::invalid_input(format!("Failed to cast value: {}", error.raw_message())))?;
     let mut rows = Vec::new();
     for (group_index, group) in reader.metadata().row_groups.iter().enumerate() {
         let meta = group
