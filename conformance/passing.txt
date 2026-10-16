@@ -70,6 +70,7 @@ test/fuzzer/duckfuzz/regex_syntax_2889.test
 test/fuzzer/duckfuzz/regexp_replace_constant.test
 test/fuzzer/duckfuzz/repeat_row_null.test
 test/fuzzer/duckfuzz/repeat_wrong_number.test
+test/fuzzer/duckfuzz/semi_join_has_correct_left_right_relations.test
 test/fuzzer/duckfuzz/string_to_nested_cast_sample.test
 test/fuzzer/duckfuzz/strptime_const_arg.test
 test/fuzzer/duckfuzz/temporal_avg.test
@@ -131,6 +132,7 @@ test/fuzzer/pedro/first_value_window_crash.test
 test/fuzzer/pedro/floating_point_conversion_overflow.test
 test/fuzzer/pedro/floating_point_inequality.test
 test/fuzzer/pedro/force_external_blob.test
+test/fuzzer/pedro/force_no_cross_product.test
 test/fuzzer/pedro/forced_parallelism_empty_select.test
 test/fuzzer/pedro/foreign_key_type_mismatch.test
 test/fuzzer/pedro/gcol_stack_overflow.test
@@ -192,6 +194,7 @@ test/fuzzer/pedro/setop_type_mismatch.test
 test/fuzzer/pedro/signed_and_unsigned_comparison.test
 test/fuzzer/pedro/statistics_propagation_set_op.test
 test/fuzzer/pedro/strftime_constant_null.test
+test/fuzzer/pedro/strptime_null_argument.test
 test/fuzzer/pedro/subquery_assertion_error.test
 test/fuzzer/pedro/temp_sequence_durability.test
 test/fuzzer/pedro/temp_sequence_reconnect.test
@@ -300,6 +303,7 @@ test/issues/general/test_1890.test
 test/issues/general/test_19067.test
 test/issues/general/test_1933.test
 test/issues/general/test_19504.test
+test/issues/general/test_19575.test
 test/issues/general/test_1987.test
 test/issues/general/test_20016.test
 test/issues/general/test_20991.test
@@ -333,6 +337,8 @@ test/issues/general/test_4704.test
 test/issues/general/test_4753.test
 test/issues/general/test_4766.test
 test/issues/general/test_4935.test
+test/issues/general/test_4950.test
+test/issues/general/test_5072.test
 test/issues/general/test_5200.test
 test/issues/general/test_5390.test
 test/issues/general/test_5488.test
@@ -372,6 +378,7 @@ test/issues/rigger/double_bigint_cast_overflow.test
 test/issues/rigger/expression_equality_bug.test
 test/issues/rigger/hugeint_div_by_zero.test
 test/issues/rigger/instr_crash.test
+test/issues/rigger/overflow_filter_pushdown.test
 test/issues/rigger/rowid_conjunction.test
 test/issues/rigger/rowid_in_clause.test
 test/issues/rigger/string_comparison_bug.test
@@ -522,6 +529,7 @@ test/optimizer/pushdown/issue_17042.test
 test/optimizer/pushdown/issue_18202.test
 test/optimizer/pushdown/issue_18603.test
 test/optimizer/pushdown/join_filter_pushdown.test
+test/optimizer/pushdown/join_filter_pushdown_cast.test
 test/optimizer/pushdown/no_mark_to_semi_if_mark_index_is_projected.test
 test/optimizer/pushdown/pushdown_after_statistics.test
 test/optimizer/pushdown/pushdown_filter_on_coalesced_equal_outer_join_keys.test
@@ -884,6 +892,7 @@ test/sql/binder/string_literal_binding.test
 test/sql/binder/table_alias_single_quotes.test
 test/sql/binder/test_alias.test
 test/sql/binder/test_case_insensitive_binding.test
+test/sql/binder/test_duplicate_in_set_operation.test
 test/sql/binder/test_function_chaining_alias.test
 test/sql/binder/test_having_alias.test
 test/sql/binder/test_implicit_struct_pack.test
@@ -1543,6 +1552,8 @@ test/sql/function/generic/test_large_in.test_slow
 test/sql/function/generic/test_least_greatest.test
 test/sql/function/generic/test_null_if.test
 test/sql/function/generic/test_set.test
+test/sql/function/generic/test_stats.test
+test/sql/function/generic/test_table_param.test
 test/sql/function/interval/test_date_part.test
 test/sql/function/interval/test_extract.test
 test/sql/function/interval/test_interval_muldiv.test
@@ -1587,6 +1598,7 @@ test/sql/function/list/array_length.test
 test/sql/function/list/array_to_string.test
 test/sql/function/list/array_to_string_comma_default.test
 test/sql/function/list/flatten.test
+test/sql/function/list/generate_series.test
 test/sql/function/list/generate_series_timestamp.test
 test/sql/function/list/generate_subscripts.test
 test/sql/function/list/lambda_constant_null.test
@@ -1689,6 +1701,7 @@ test/sql/function/operator/test_arithmetic_sqllogic.test
 test/sql/function/operator/test_bitwise_ops.test
 test/sql/function/operator/test_bitwise_ops_types.test
 test/sql/function/operator/test_comparison.test
+test/sql/function/operator/test_conjunction.test
 test/sql/function/operator/test_date_arithmetic.test
 test/sql/function/operator/test_division_overflow.test
 test/sql/function/operator/test_in_empty_table.test
@@ -2134,6 +2147,7 @@ test/sql/optimizer/expression/test_in_clause_simplification.test
 test/sql/optimizer/expression/test_indistinct_aggregates.test
 test/sql/optimizer/expression/test_move_constants.test
 test/sql/optimizer/expression/test_negation_limits.test
+test/sql/optimizer/expression/test_nop_arithmetic.test
 test/sql/optimizer/expression/test_timestamp_offset.test
 test/sql/optimizer/plan/table_filter_pushdown_large_strings.test_slow
 test/sql/optimizer/plan/test_anti_join_empty_child.test
@@ -2474,6 +2488,7 @@ test/sql/setops/union_all_projection_pushdown.test
 test/sql/setops/union_limit.test
 test/sql/setops/union_pipeline.test
 test/sql/setops/union_shared_scan.test
+test/sql/setops/union_single_dedup.test
 test/sql/setops/value_union.test
 test/sql/settings/access_mode.test
 test/sql/settings/allowed_configs.test
@@ -3052,6 +3067,7 @@ test/sql/table_function/information_schema_issue12867.test
 test/sql/table_function/information_schema_types.test
 test/sql/table_function/lateral_table_function.test
 test/sql/table_function/range_function_different_iterators.test
+test/sql/table_function/range_timestamp.test
 test/sql/table_function/range_timestamp_lateral_empty.test
 test/sql/table_function/sqlite_master.test
 test/sql/table_function/sqlite_master_connections.test
@@ -3214,6 +3230,7 @@ test/sql/types/enum/test_enum_storage.test
 test/sql/types/enum/test_enum_structs.test
 test/sql/types/enum/test_enum_table.test
 test/sql/types/enum/test_enum_temp_tbl.test
+test/sql/types/enum/test_enum_to_numbers.test
 test/sql/types/enum/test_enums_and_built_in_types.test
 test/sql/types/float/ieee_floating_points.test
 test/sql/types/float/infinity_test.test
@@ -3409,6 +3426,7 @@ test/sql/types/numeric/uinteger_try_cast.test
 test/sql/types/numeric/usmallint_try_cast.test
 test/sql/types/numeric/utinyint_try_cast.test
 test/sql/types/string/test_big_strings.test
+test/sql/types/string/test_scan_big_varchar.test_slow
 test/sql/types/string/test_unicode.test
 test/sql/types/struct/create_qualified_type_array.test
 test/sql/types/struct/create_type_struct.test
