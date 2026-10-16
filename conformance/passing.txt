@@ -3239,6 +3239,7 @@ test/sql/types/struct/struct_comparison.test
 test/sql/types/struct/struct_concat.test
 test/sql/types/struct/struct_contains.test
 test/sql/types/struct/struct_cross_product.test
+test/sql/types/struct/struct_different_names.test
 test/sql/types/struct/struct_distinct.test
 test/sql/types/struct/struct_equality_bug.test
 test/sql/types/struct/struct_index.test
@@ -3288,6 +3289,7 @@ test/sql/types/timestamp/test_timestamp_tz.test
 test/sql/types/timestamp/timestamp_limits.test
 test/sql/types/timestamp/timestamp_precision.test
 test/sql/types/timestamp/timestamp_try_cast.test
+test/sql/types/type/test_type_storage.test
 test/sql/types/uhugeint/test_uhugeint_aggregates.test
 test/sql/types/uhugeint/test_uhugeint_arithmetic.test
 test/sql/types/uhugeint/test_uhugeint_auto_cast.test
