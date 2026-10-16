@@ -200,21 +200,26 @@ impl SortedRun {
         // SAFETY: every key block is pinned (KeepEverythingPinned) and only this run uses it.
         let mut blocks = unsafe { self.key_blocks::<K>()? };
         let len = blocks.len();
-        if len > self.key_data.tuples_per_block() {
-            // Sorting a contiguous copy is several times faster than sorting across blocks;
-            // without memory for the copy, sort in place.
-            if let Ok(buffer) = self.layouts.buffer_manager.allocate_data(len * size_of::<K>()) {
-                let keys = buffer.as_ptr().cast::<K>();
-                // SAFETY: `buffer` holds `len` keys, is 16-byte aligned (enough for `K`)
-                // and owned here; after `copy_to` every key is initialized.
-                let keys = unsafe {
-                    blocks.copy_to(keys);
-                    std::slice::from_raw_parts_mut(keys, len)
-                };
-                sort_keys(keys, &extract);
-                blocks.copy_from(keys);
-                return Ok(());
-            }
+        let copy_size = len * size_of::<K>();
+        let buffer_manager = &self.layouts.buffer_manager;
+        // Sorting a contiguous copy is several times faster than sorting across blocks; the
+        // copy is not worth evicting other data for (other threads' runs are still being
+        // built), so under memory pressure sort in place like DuckDB.
+        let copy_fits = buffer_manager.used_memory() + copy_size as u64 <= buffer_manager.max_memory() / 2;
+        if len > self.key_data.tuples_per_block()
+            && copy_fits
+            && let Ok(buffer) = buffer_manager.allocate_data(copy_size)
+        {
+            let keys = buffer.as_ptr().cast::<K>();
+            // SAFETY: `buffer` holds `len` keys, is 16-byte aligned (enough for `K`) and
+            // owned here; after `copy_to` every key is initialized.
+            let keys = unsafe {
+                blocks.copy_to(keys);
+                std::slice::from_raw_parts_mut(keys, len)
+            };
+            sort_keys(keys, &extract);
+            blocks.copy_from(keys);
+            return Ok(());
         }
         sort_keys(&mut blocks, &extract);
         Ok(())

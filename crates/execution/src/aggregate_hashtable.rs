@@ -153,6 +153,11 @@ impl GroupedAggregateHashTable {
         self.count
     }
 
+    /// Bytes held by the groups and the pointer table.
+    pub fn size_in_bytes(&self) -> usize {
+        self.partitioned.size_in_bytes() + self.entries.len() * size_of::<u64>()
+    }
+
     /// The input rows of the last `find_or_create_groups` that created a new group.
     pub fn new_group_rows(&self) -> &[u32] {
         &self.new_group_rows

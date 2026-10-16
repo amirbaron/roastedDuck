@@ -162,6 +162,12 @@ pub struct HashAggregateGlobal {
     distinct: Vec<Vec<Option<Mutex<GroupedAggregateHashTable>>>>,
     /// Whether any input row arrived (for empty grouping sets).
     saw_input: std::sync::atomic::AtomicBool,
+    /// The radix bits every thread's data ends up with; raised to
+    /// `external_radix_bits` once a thread runs out of its memory share (DuckDB's
+    /// `RadixHTConfig::SetRadixBitsToExternal`).
+    radix_bits: AtomicUsize,
+    /// The radix bits of an out-of-core aggregation.
+    external_radix_bits: usize,
     /// After finalisation: the groups still to combine and emit, one unit per grouping
     /// set and radix partition (DuckDB's `RadixHTGlobalSourceState` partitions).
     partitions: Vec<AggregatePartition>,
@@ -175,12 +181,21 @@ pub struct HashAggregateGlobal {
 struct AggregatePartition {
     set_index: usize,
     data: Mutex<Vec<TupleDataCollection>>,
+    /// Bytes of the partition's rows.
+    size: usize,
 }
 
 /// Per-thread state: one hash table per grouping set plus expression executors.
 #[derive(Debug)]
 pub struct HashAggregateLocal {
     tables: Vec<GroupedAggregateHashTable>,
+    /// Per grouping set: groups taken out of the tables when they outgrew the thread's
+    /// memory share, in the external partitions and unpinned so that they can be spilled
+    /// (DuckDB's `abandoned_data`).
+    abandoned: Vec<Option<PartitionedTupleData>>,
+    /// The size above which the thread's tables are set aside under memory pressure: a
+    /// quarter of its share of the memory limit (DuckDB's `GetMaxThreadMemory`).
+    memory_limit: usize,
     groups: ExpressionExecutor,
     arguments: Vec<ExpressionExecutor>,
     filters: Vec<Option<ExpressionExecutor>>,
@@ -218,6 +233,8 @@ impl Sink for PhysicalHashAggregate {
         Ok(HashAggregateGlobal {
             collected: Mutex::new(self.grouping_sets.iter().map(|_| Vec::new()).collect()),
             distinct,
+            radix_bits: AtomicUsize::new(Self::radix_bits(ctx)),
+            external_radix_bits: external_radix_bits(ctx, Self::radix_bits(ctx)),
             ..HashAggregateGlobal::default()
         })
     }
@@ -225,15 +242,19 @@ impl Sink for PhysicalHashAggregate {
     fn local_sink_state(
         &self,
         ctx: &ExecutionContext,
-        _: &HashAggregateGlobal,
+        global: &HashAggregateGlobal,
     ) -> Result<HashAggregateLocal> {
-        let radix_bits = Self::radix_bits(ctx);
+        let radix_bits = global.radix_bits.load(Ordering::Acquire);
+        let threads = ctx.env.threads().max(1) as u64;
         let tables = self
             .grouping_sets
             .iter()
             .map(|set| self.new_table(ctx, set, radix_bits))
             .collect::<Result<_>>()?;
         Ok(HashAggregateLocal {
+            abandoned: self.grouping_sets.iter().map(|_| None).collect(),
+            memory_limit: usize::try_from(ctx.env.buffer_manager.max_memory() / threads / 4)
+                .unwrap_or(usize::MAX),
             tables,
             groups: ExpressionExecutor::new(self.groups.clone()),
             arguments: self
@@ -255,7 +276,7 @@ impl Sink for PhysicalHashAggregate {
 
     fn sink(
         &self,
-        _: &ExecutionContext,
+        ctx: &ExecutionContext,
         chunk: &DataChunk,
         global: &HashAggregateGlobal,
         local: &mut HashAggregateLocal,
@@ -319,6 +340,19 @@ impl Sink for PhysicalHashAggregate {
             };
             table.add_chunk(&groups, &hashes, &inputs, &selections)?;
         }
+        // Under memory pressure, a thread whose tables hold more than a quarter of its
+        // share of the memory limit sets their groups aside so that they can be spilled.
+        let size: usize = local
+            .tables
+            .iter()
+            .map(GroupedAggregateHashTable::size_in_bytes)
+            .sum();
+        if size > local.memory_limit {
+            let buffer_manager = &ctx.env.buffer_manager;
+            if buffer_manager.used_memory() > buffer_manager.max_memory() / 4 * 3 {
+                Self::abandon(global, local)?;
+            }
+        }
         Ok(SinkResult::NeedMoreInput)
     }
 
@@ -328,9 +362,19 @@ impl Sink for PhysicalHashAggregate {
         global: &HashAggregateGlobal,
         mut local: HashAggregateLocal,
     ) -> Result<()> {
+        let mut parts = Vec::with_capacity(local.tables.len());
+        for (table, abandoned) in local.tables.iter_mut().zip(&mut local.abandoned) {
+            let mut data = table.take_partitioned_data()?;
+            if let Some(mut abandoned) = abandoned.take() {
+                data.repartition(&mut abandoned)?;
+                data = abandoned;
+            }
+            data.unpin();
+            parts.push(data);
+        }
         let mut collected = global.collected.lock().unwrap_or_else(PoisonError::into_inner);
-        for (set, table) in local.tables.iter_mut().enumerate() {
-            collected[set].push(table.take_partitioned_data()?);
+        for (set, data) in parts.into_iter().enumerate() {
+            collected[set].push(data);
         }
         Ok(())
     }
@@ -346,7 +390,13 @@ impl Sink for PhysicalHashAggregate {
         self.finalize_distinct(ctx, global)?;
         let collected = std::mem::take(global.collected.get_mut().unwrap_or_else(PoisonError::into_inner));
         let objects = self.aggregate_objects();
-        for (set_index, (set, mut parts)) in self.grouping_sets.iter().zip(collected).enumerate() {
+        let radix_bits = global.radix_bits.load(Ordering::Acquire);
+        for (set_index, (set, parts)) in self.grouping_sets.iter().zip(collected).enumerate() {
+            // Threads that combined before the sink went external have fewer partitions.
+            let mut parts = parts
+                .into_iter()
+                .map(|part| repartitioned(part, radix_bits))
+                .collect::<Result<Vec<_>>>()?;
             let partition_count = parts
                 .iter()
                 .map(PartitionedTupleData::partition_count)
@@ -369,6 +419,7 @@ impl Sink for PhysicalHashAggregate {
                         .filter(|data| !data.is_empty())
                         .map(|data| AggregatePartition {
                             set_index,
+                            size: data.iter().map(TupleDataCollection::size_in_bytes).sum(),
                             data: Mutex::new(data),
                         }),
                 );
@@ -396,6 +447,58 @@ impl Sink for PhysicalHashAggregate {
             }
         }
         Ok(crate::SinkFinalize::Ready)
+    }
+}
+
+/// The most radix bits of an out-of-core aggregation (DuckDB's
+/// `MAXIMUM_FINAL_SINK_RADIX_BITS` is 8; at 7 a partition's blocks still fill well).
+const MAXIMUM_EXTERNAL_RADIX_BITS: usize = 7;
+
+/// The radix bits of an out-of-core aggregation: as many partitions (so that each can be
+/// finalized on its own) as the threads can append to at once within half the memory
+/// limit, every partition pinning a row and a heap block while appending; at least
+/// `minimum`.
+fn external_radix_bits(ctx: &ExecutionContext, minimum: usize) -> usize {
+    let buffer_manager = &ctx.env.buffer_manager;
+    let per_thread = buffer_manager.max_memory() / 2 / ctx.env.threads().max(1) as u64;
+    let partitions = per_thread / (2 * buffer_manager.block_alloc_size() as u64).max(1);
+    let bits = (u64::BITS - 1).saturating_sub(partitions.max(1).leading_zeros()) as usize;
+    bits.clamp(minimum, MAXIMUM_EXTERNAL_RADIX_BITS.max(minimum))
+}
+
+/// `data` with at least `radix_bits` radix bits, unpinned so it can be spilled.
+fn repartitioned(mut data: PartitionedTupleData, radix_bits: usize) -> Result<PartitionedTupleData> {
+    if data.radix_bits() < radix_bits {
+        let mut target = data.with_radix_bits(radix_bits)?;
+        data.repartition(&mut target)?;
+        data = target;
+    }
+    data.unpin();
+    Ok(data)
+}
+
+impl PhysicalHashAggregate {
+    /// The thread's tables outgrew its memory share: their groups are set aside (unpinned,
+    /// so they can be spilled) and the tables start over, and the aggregation switches to
+    /// enough partitions to finalize them one at a time (DuckDB's `MaybeRepartition`
+    /// abandoning the hash table when going external).
+    fn abandon(global: &HashAggregateGlobal, local: &mut HashAggregateLocal) -> Result<()> {
+        global
+            .radix_bits
+            .fetch_max(global.external_radix_bits, Ordering::AcqRel);
+        // The tables keep their few partitions (every partition pins a block while
+        // appending); the data set aside goes to the external partitions while it is
+        // still in memory.
+        for (table, abandoned) in local.tables.iter_mut().zip(&mut local.abandoned) {
+            let mut data = table.take_partitioned_data()?;
+            let target = match abandoned {
+                Some(target) => target,
+                None => abandoned.insert(data.with_radix_bits(global.external_radix_bits)?),
+            };
+            data.repartition(target)?;
+            target.unpin();
+        }
+        Ok(())
     }
 }
 
@@ -484,6 +587,8 @@ impl PhysicalHashAggregate {
 pub struct HashAggregateSourceState {
     sink: SinkState,
     next: AtomicUsize,
+    /// The memory limit, which bounds how many partitions are finalized at once.
+    max_memory: u64,
 }
 
 /// A source task's emitted partition: its finalized chunks, in order.
@@ -526,11 +631,12 @@ impl Source for PhysicalHashAggregate {
     type Global = HashAggregateSourceState;
     type Local = HashAggregateSourceLocal;
 
-    fn global_source_state(&self, _: &ExecutionContext, sink: Option<&SinkState>) -> Result<Self::Global> {
+    fn global_source_state(&self, ctx: &ExecutionContext, sink: Option<&SinkState>) -> Result<Self::Global> {
         let sink = sink.ok_or_else(|| Error::internal("hash aggregate source requires its sink state"))?;
         Ok(HashAggregateSourceState {
             sink: Arc::clone(sink),
             next: AtomicUsize::new(0),
+            max_memory: ctx.env.buffer_manager.max_memory(),
         })
     }
 
@@ -566,10 +672,20 @@ impl Source for PhysicalHashAggregate {
         }
     }
 
+    /// One thread per partition, as many as fit in memory: finalizing a partition takes
+    /// about twice its size (DuckDB limits the threads through the partitions' temporary
+    /// memory reservation).
     fn max_threads(&self, global: &Self::Global) -> usize {
-        global
-            .sink
-            .downcast_ref::<HashAggregateGlobal>()
-            .map_or(1, |state| (state.partitions.len() + state.results.len()).max(1))
+        let Some(state) = global.sink.downcast_ref::<HashAggregateGlobal>() else {
+            return 1;
+        };
+        let largest = state
+            .partitions
+            .iter()
+            .map(|partition| partition.size)
+            .max()
+            .unwrap_or(0) as u64;
+        let fitting = usize::try_from(global.max_memory / (2 * largest).max(1)).unwrap_or(usize::MAX);
+        (state.partitions.len() + state.results.len()).min(fitting).max(1)
     }
 }

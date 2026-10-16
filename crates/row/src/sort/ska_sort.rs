@@ -348,7 +348,7 @@ mod tests {
                         .wrapping_add(1_442_695_040_888_963_407);
                     // Few distinct leading bytes, so partitions tie and recurse.
                     (
-                        (state >> 60) << 56 | (state >> 20) % 1000,
+                        ((state >> 60) << 56) | ((state >> 20) % 1000),
                         (state >> 33) as u32 % 50,
                     )
                 })

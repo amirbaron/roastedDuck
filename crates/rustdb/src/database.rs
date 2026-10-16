@@ -121,6 +121,15 @@ fn is_secret_setting(name: &str) -> bool {
     .any(|setting| setting.eq_ignore_ascii_case(name))
 }
 
+/// DuckDB's default `temp_directory`: `<database>.tmp`, or `.tmp` in memory.
+fn default_temp_directory(path: &str) -> String {
+    if path.is_empty() {
+        ".tmp".to_owned()
+    } else {
+        format!("{path}.tmp")
+    }
+}
+
 /// Whether `name` is `threads` or its alias `worker_threads`.
 fn is_threads_setting(name: &str) -> bool {
     name.eq_ignore_ascii_case("threads") || name.eq_ignore_ascii_case("worker_threads")
@@ -160,6 +169,37 @@ impl DatabaseInstance {
         };
         self.env.scheduler.set_threads(threads);
         Ok(())
+    }
+
+    /// `SET`/`RESET` (`None`) of the buffer manager's options: `memory_limit` (alias
+    /// `max_memory`), `temp_directory` and `max_temp_directory_size`; other names are
+    /// ignored.
+    fn set_buffer_setting(&self, name: &str, value: Option<&rustdb_types::Value>) -> Result<()> {
+        let buffer_manager = &self.env.buffer_manager;
+        let name = name.to_ascii_lowercase();
+        match name.as_str() {
+            "memory_limit" | "max_memory" => {
+                let limit = match value {
+                    Some(value) => rustdb_buffer::parse_memory_limit(&value.to_varchar()?)?,
+                    None => rustdb_buffer::default_memory_limit(),
+                };
+                buffer_manager.set_memory_limit(limit)
+            }
+            "temp_directory" => {
+                let directory = match value {
+                    Some(value) => value.to_varchar()?,
+                    None => default_temp_directory(&self.path),
+                };
+                buffer_manager.set_temporary_directory(&directory)
+            }
+            "max_temp_directory_size" => {
+                let limit = value
+                    .map(|value| rustdb_buffer::parse_memory_limit(&value.to_varchar()?))
+                    .transpose()?;
+                buffer_manager.set_swap_limit(limit)
+            }
+            _ => Ok(()),
+        }
     }
 
     /// `SET checkpoint_threshold` (`CheckpointThresholdSetting::SetGlobal`).
@@ -326,7 +366,11 @@ impl Database {
         }
         crate::system_functions::register_default_views(&system_catalog)?;
         crate::system_functions::register_default_macros(&system_catalog)?;
-        let env = rustdb_execution::ClientEnv::standalone()?;
+        let buffer_manager = rustdb_buffer::BufferManager::new(rustdb_buffer::BufferManagerConfig {
+            temp_directory: Some(default_temp_directory(&path).into()),
+            ..rustdb_buffer::BufferManagerConfig::default()
+        })?;
+        let env = Arc::new(rustdb_execution::ClientEnv::new(buffer_manager));
         let instance = DatabaseInstance {
             path: path.clone(),
             config: config.clone(),
@@ -348,6 +392,7 @@ impl Database {
             if is_threads_setting(name) {
                 instance.set_threads(Some(value))?;
             }
+            instance.set_buffer_setting(name, Some(value))?;
             if is_checkpoint_threshold(name) {
                 instance.set_checkpoint_threshold(value)?;
             }
@@ -1409,6 +1454,7 @@ impl Connection {
                 if is_threads_setting(name) {
                     self.database.instance().set_threads(Some(value))?;
                 }
+                self.database.instance().set_buffer_setting(name, Some(value))?;
                 if crate::logging::is_logging_setting(name) {
                     crate::logging::apply_setting(&self.database.instance().log_manager, name, Some(value))?;
                 }
@@ -1434,6 +1480,7 @@ impl Connection {
                 if is_threads_setting(name) {
                     self.database.instance().set_threads(None)?;
                 }
+                self.database.instance().set_buffer_setting(name, None)?;
                 let (option, reset_scope) = (name.clone(), *scope);
                 self.record_setting(&option, None, reset_scope);
                 if is_force_compression(name) {
