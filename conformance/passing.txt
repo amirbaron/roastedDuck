@@ -13,6 +13,7 @@ test/extension/load_error.test
 test/extension/test_loadable_optimizer.test
 test/extension/update_extensions.test
 test/extension/update_extensions_ci.test
+test/extension/wrong_function_type.test
 test/fuzzer/afl/alter_if_exists.test
 test/fuzzer/afl/analyze_empty_table.test
 test/fuzzer/afl/case_map_cast.test
@@ -909,6 +910,7 @@ test/sql/catalog/table/test_many_columns_group.test_slow
 test/sql/catalog/table/test_table_drop_concurrent.test_slow
 test/sql/catalog/test_catalog_errors.test
 test/sql/catalog/test_create_from_select.test
+test/sql/catalog/test_extension_suggestion.test
 test/sql/catalog/test_if_not_exists.test
 test/sql/catalog/test_incorrect_table_creation.test
 test/sql/catalog/test_quoted_column_name.test

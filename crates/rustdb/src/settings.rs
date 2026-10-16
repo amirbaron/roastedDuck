@@ -187,8 +187,21 @@ fn canonical_name(name: &str) -> Option<&'static str> {
     OPTION_NAMES.iter().copied().find(|option| *option == lower)
 }
 
-/// DuckDB's `Catalog::UnrecognizedConfigurationError`.
-fn unrecognized(name: &str) -> Error {
+/// DuckDB's `Catalog::UnrecognizedConfigurationError`; `enabled` reads the boolean
+/// options `autoload_known_extensions` and `autoinstall_known_extensions`.
+fn unrecognized(name: &str, enabled: impl Fn(&str) -> bool) -> Error {
+    use rustdb_function::extension_entries::{EXTENSION_SETTINGS, add_install_hint, find_extension};
+    if let Some(extension) = find_extension(name, EXTENSION_SETTINGS) {
+        let message = format!(
+            "Setting with name \"{name}\" is not in the catalog, but it exists in the {extension} extension."
+        );
+        return Error::catalog(add_install_hint(
+            &message,
+            extension,
+            enabled("autoload_known_extensions"),
+            enabled("autoinstall_known_extensions"),
+        ));
+    }
     let names: Vec<String> = OPTION_NAMES.iter().map(|name| (*name).to_owned()).collect();
     Error::catalog(format!(
         "unrecognized configuration parameter \"{name}\"\n{}",
@@ -212,9 +225,19 @@ impl Settings {
         self.assigned.iter().map(|(name, value)| (*name, value))
     }
 
+    /// Whether boolean option `option` was set to true.
+    fn enabled(&self, option: &str) -> bool {
+        self.assigned.iter().any(|(name, value)| {
+            *name == option
+                && value
+                    .to_varchar()
+                    .is_ok_and(|text| text.eq_ignore_ascii_case("true") || text == "1")
+        })
+    }
+
     /// `SET name = value`.
     pub fn set(&mut self, name: &str, value: &Value) -> Result<()> {
-        let option = canonical_name(name).ok_or_else(|| unrecognized(name))?;
+        let option = canonical_name(name).ok_or_else(|| unrecognized(name, |option| self.enabled(option)))?;
         self.apply(option, value)?;
         match self.assigned.iter_mut().find(|(name, _)| *name == option) {
             Some((_, assigned)) => *assigned = value.clone(),
@@ -351,7 +374,7 @@ impl Settings {
 
     /// `RESET name`.
     pub fn reset(&mut self, name: &str) -> Result<()> {
-        let option = canonical_name(name).ok_or_else(|| unrecognized(name))?;
+        let option = canonical_name(name).ok_or_else(|| unrecognized(name, |option| self.enabled(option)))?;
         self.assigned.retain(|(name, _)| *name != option);
         let defaults = PlannerConfig::default();
         match option {
@@ -507,7 +530,14 @@ impl rustdb_function::SettingsSource for SettingsSnapshot {
         let definition = SETTINGS
             .iter()
             .find(|definition| definition.name.eq_ignore_ascii_case(name))
-            .ok_or_else(|| unrecognized(name))?;
+            .ok_or_else(|| {
+                unrecognized(name, |option| {
+                    self.current_setting(option)
+                        .ok()
+                        .and_then(|value| value.as_bool())
+                        .unwrap_or(false)
+                })
+            })?;
         self.value(definition)
     }
 

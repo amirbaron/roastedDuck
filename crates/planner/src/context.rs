@@ -432,9 +432,80 @@ impl ClientContext {
         }
     }
 
+    /// The part of `Catalog::CreateMissingEntryException` that points at the extension
+    /// providing a missing function, type, copy function or collation.
+    fn extension_entry_error(&self, ty: CatalogType, name: &str) -> Option<Error> {
+        use rustdb_function::extension_entries::{self as entries, ExtensionFunctionType as F};
+        let extension = match ty {
+            CatalogType::TableFunction
+            | CatalogType::ScalarFunction
+            | CatalogType::AggregateFunction
+            | CatalogType::PragmaFunction => {
+                // `CompareCatalogTypes`: scalar functions, aggregates and macros match each
+                // other, as do table functions, table macros and pragmas.
+                let is_scalar = |ty: F| matches!(ty, F::Scalar | F::Aggregate | F::Macro);
+                let is_table = |ty: F| matches!(ty, F::Table | F::TableMacro | F::Pragma);
+                let wanted_scalar =
+                    matches!(ty, CatalogType::ScalarFunction | CatalogType::AggregateFunction);
+                let found = entries::find_extension_functions(name);
+                if found.is_empty() {
+                    return None;
+                }
+                let mut other_types = Vec::new();
+                let mut extension_for_error = "";
+                let mut matched = None;
+                for (extension, function_type) in found {
+                    if (wanted_scalar && is_scalar(function_type))
+                        || (!wanted_scalar && is_table(function_type))
+                    {
+                        matched = Some(extension);
+                        break;
+                    }
+                    extension_for_error = extension;
+                    other_types.push(function_type.display_name());
+                }
+                match matched {
+                    Some(extension) => extension,
+                    None if other_types.len() == 1 => {
+                        return Some(Error::catalog(format!(
+                            "{} with name \"{name}\" is not in the catalog, a function by this name exists in the \
+                             {extension_for_error} extension, but it's of a different type, namely {}",
+                            ty.display_name(),
+                            other_types[0]
+                        )));
+                    }
+                    None => {
+                        return Some(Error::catalog(format!(
+                            "{} with name \"{name}\" is not in the catalog, functions with this name exist in the \
+                             {extension_for_error} extension, but they are of different types, namely {}",
+                            ty.display_name(),
+                            other_types.join(", ")
+                        )));
+                    }
+                }
+            }
+            CatalogType::Type => entries::find_extension(name, entries::EXTENSION_TYPES)?,
+            CatalogType::CopyFunction => entries::find_extension(name, entries::EXTENSION_COPY_FUNCTIONS)?,
+            CatalogType::Collation => entries::find_extension(name, entries::EXTENSION_COLLATIONS)?,
+            _ => return None,
+        };
+        let message = format!(
+            "{} with name \"{name}\" is not in the catalog, but it exists in the {extension} extension.",
+            ty.display_name()
+        );
+        Some(Error::catalog(entries::add_client_install_hint(
+            &self.function_client,
+            &message,
+            extension,
+        )))
+    }
+
     /// DuckDB's `Catalog::CreateMissingEntryException`.
     fn missing_entry_error(&self, searched: &[(String, String)], ty: CatalogType, name: &str) -> Error {
         const UNSEEN_PENALTY: f64 = 0.2;
+        if let Some(error) = self.extension_entry_error(ty, name) {
+            return error;
+        }
         let (seen_score, seen) = self.similar_entries(searched, ty, name);
         let mut unseen_schemas = Vec::new();
         for catalog in &self.catalogs {
