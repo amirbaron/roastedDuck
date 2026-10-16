@@ -53,6 +53,8 @@ pub(crate) struct DatabaseInstance {
     compression: std::sync::Mutex<rustdb_storage::compression::CompressionConfig>,
     /// The secrets (DuckDB's `DBConfig::secret_manager`).
     pub(crate) secrets: Arc<crate::secrets::SecretManager>,
+    /// The number of open connections (DuckDB's `ConnectionManager`).
+    connections: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// The default of `checkpoint_threshold` (16 MiB).
@@ -294,6 +296,7 @@ impl Database {
             checkpoint_wal_size: std::sync::atomic::AtomicU64::new(DEFAULT_CHECKPOINT_WAL_SIZE),
             compression: std::sync::Mutex::default(),
             secrets: Arc::default(),
+            connections: Arc::default(),
         };
         for (name, value) in &config.options {
             if is_checkpoint_threshold(name) {
@@ -364,6 +367,10 @@ impl Database {
         }
         let function_client = Arc::new(rustdb_function::FunctionClient::default());
         function_client.set_database(self.instance.default_database_name());
+        self.instance
+            .connections
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        function_client.set_connection_counter(Arc::clone(&self.instance.connections));
         Ok(Connection {
             database: self.clone(),
             transactions,
@@ -411,6 +418,15 @@ pub struct Connection {
     transaction_attaches: Vec<Arc<AttachedDatabase>>,
     /// `SET VARIABLE` values (DuckDB's `ClientConfig::user_variables`).
     user_variables: CaseInsensitiveMap<rustdb_types::Value>,
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        self.database
+            .instance
+            .connections
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 impl Connection {

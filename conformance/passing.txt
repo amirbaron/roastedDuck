@@ -1402,6 +1402,7 @@ test/sql/function/generic/test_approx_database_count.test
 test/sql/function/generic/test_between.test
 test/sql/function/generic/test_boolean_test.test
 test/sql/function/generic/test_case.test_slow
+test/sql/function/generic/test_connection_count.test
 test/sql/function/generic/test_if.test
 test/sql/function/generic/test_if_null.test
 test/sql/function/generic/test_in.test

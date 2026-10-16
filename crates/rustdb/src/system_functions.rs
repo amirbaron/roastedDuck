@@ -851,6 +851,11 @@ pub(crate) fn catalog_table_functions() -> Vec<TableFunctionSet> {
             DATABASE_COUNT_COLUMNS,
             database_count_rows,
         ),
+        rows_function(
+            "duckdb_connection_count",
+            CONNECTION_COUNT_COLUMNS,
+            connection_count_rows,
+        ),
         rows_function("duckdb_types", TYPE_COLUMNS, type_rows),
         secrets_function(),
         which_secret_function(),
@@ -1283,6 +1288,15 @@ fn ubigint() -> LogicalType {
 }
 
 const DATABASE_COUNT_COLUMNS: Columns = &[("approx_count", ubigint)];
+
+const CONNECTION_COUNT_COLUMNS: Columns = &[("count", ubigint)];
+
+/// `duckdb_connection_count()`: the number of open connections
+/// (`ConnectionManager::GetConnectionCount`).
+fn connection_count_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    let count = context.function_client.connection_count().unwrap_or(1);
+    Ok(vec![vec![Value::ubigint(count)]])
+}
 
 /// `duckdb_approx_database_count()`: the number of attached database files
 /// (`DatabasePathManager::ApproxDatabaseCount`; in-memory databases have no path).

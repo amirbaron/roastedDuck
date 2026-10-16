@@ -52,6 +52,9 @@ pub struct FunctionClient {
     connection_id: u64,
     /// The configuration of the statement being run.
     settings: Mutex<Option<Arc<dyn SettingsSource>>>,
+    /// The number of open connections of the database (DuckDB's
+    /// `ConnectionManager::GetConnectionCount`), shared by its connections.
+    connections: Mutex<Option<Arc<AtomicU64>>>,
 }
 
 impl Default for FunctionClient {
@@ -64,6 +67,7 @@ impl Default for FunctionClient {
             database: Mutex::new("memory".to_owned()),
             connection_id: NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed),
             settings: Mutex::default(),
+            connections: Mutex::default(),
         }
     }
 }
@@ -126,6 +130,20 @@ impl FunctionClient {
     /// Sets the configuration seen by the next statements.
     pub fn set_settings(&self, settings: Arc<dyn SettingsSource>) {
         *self.settings.lock().unwrap_or_else(PoisonError::into_inner) = Some(settings);
+    }
+
+    /// Shares the database's open-connection counter with this connection.
+    pub fn set_connection_counter(&self, counter: Arc<AtomicU64>) {
+        *self.connections.lock().unwrap_or_else(PoisonError::into_inner) = Some(counter);
+    }
+
+    /// The number of open connections of the database, if it is tracked.
+    pub fn connection_count(&self) -> Option<u64> {
+        self.connections
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(|counter| counter.load(Ordering::Relaxed))
     }
 
     /// The configuration of the current statement, if the connection provided one.
