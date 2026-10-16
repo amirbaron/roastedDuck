@@ -4,7 +4,8 @@
 use std::sync::Arc;
 
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::{LogicalType, Value, Vector};
+use rustdb_storage::TableFilter;
+use rustdb_types::{LogicalType, Sel, SelectionVector, Value, Vector, VectorKind};
 
 use crate::column_reader::{ChildProjection, ColumnReader, ReaderContext, RowNumberReader, StructReader};
 use crate::file::{ParquetFile, load_metadata};
@@ -97,7 +98,15 @@ impl ParquetReader {
 
     /// Prepares a scan of `row_groups` reading the file columns `columns`
     /// (`InitializeScan`).
-    pub fn initialize_scan(&self, row_groups: Vec<usize>, columns: &[ScanColumn]) -> Result<ReaderScanState> {
+    ///
+    /// `filters` are applied while reading, keyed by position in `columns`: the rows a
+    /// scan returns pass all of them.
+    pub fn initialize_scan(
+        &self,
+        row_groups: Vec<usize>,
+        columns: &[ScanColumn],
+        filters: Vec<(usize, TableFilter)>,
+    ) -> Result<ReaderScanState> {
         let file_columns = self.root_schema.children.len();
         let mut children: Vec<Option<ColumnReader>> = Vec::new();
         // One more slot for the `file_row_number` reader.
@@ -128,6 +137,8 @@ impl ParquetReader {
             finished: false,
             root: StructReader::new(&self.root_schema, children),
             column_ids,
+            filters,
+            columns: Vec::new(),
             defines: vec![0; STANDARD_VECTOR_SIZE],
             repeats: vec![0; STANDARD_VECTOR_SIZE],
         })
@@ -205,6 +216,11 @@ pub struct ReaderScanState {
     root: StructReader,
     /// The file column of each output column.
     column_ids: Vec<usize>,
+    /// The filters to apply, by output column (`ScanFilter`s); evaluated first, so the
+    /// other columns are skipped when no row passes.
+    filters: Vec<(usize, TableFilter)>,
+    /// The columns of the chunk being read.
+    columns: Vec<Option<Vector>>,
     defines: Vec<u8>,
     repeats: Vec<u8>,
 }
@@ -239,22 +255,100 @@ impl ReaderScanState {
                 continue;
             }
             let count = (STANDARD_VECTOR_SIZE as u64).min(self.group_rows - self.offset_in_group) as usize;
-            output.clear();
-            for &column in &self.column_ids {
-                self.defines[..count].fill(0);
-                self.repeats[..count].fill(0);
-                let reader = self.root.child_mut(column)?;
-                let mut vector = Vector::flat(reader.logical_type(), STANDARD_VECTOR_SIZE);
-                let read = reader.read(count, &mut self.defines, &mut self.repeats, &mut vector)?;
-                if read != count {
-                    return Err(Error::invalid_input(format!(
-                        "Mismatch in parquet read for column {column}, expected {count} rows, got {read}"
-                    )));
-                }
-                output.push(vector);
-            }
             self.offset_in_group += count as u64;
-            return Ok(count);
+            self.columns.clear();
+            self.columns.resize(self.column_ids.len(), None);
+            // `ParquetReader::Scan`: the filtered columns first.
+            let mut selection: Option<Vec<u32>> = None;
+            for filter_index in 0..self.filters.len() {
+                let position = self.filters[filter_index].0;
+                let vector = self.read_column(position, count)?;
+                let rows = selection.get_or_insert_with(|| (0..count as u32).collect());
+                let reader = self.root.child_mut(self.column_ids[position])?;
+                filter_rows(
+                    reader,
+                    filter_index,
+                    &self.filters[filter_index].1,
+                    &vector,
+                    count,
+                    rows,
+                )?;
+                self.columns[position] = Some(vector);
+                if rows.is_empty() {
+                    break;
+                }
+            }
+            if selection.as_ref().is_some_and(Vec::is_empty) {
+                // No row passes: skip the columns not read yet.
+                for (position, column) in self.columns.iter().enumerate() {
+                    if column.is_none() {
+                        self.root.child_mut(self.column_ids[position])?.skip(count);
+                    }
+                }
+                continue;
+            }
+            for position in 0..self.column_ids.len() {
+                if self.columns[position].is_none() {
+                    let vector = self.read_column(position, count)?;
+                    self.columns[position] = Some(vector);
+                }
+            }
+            let selection = selection
+                .filter(|rows| rows.len() < count)
+                .map(SelectionVector::new);
+            output.clear();
+            for column in &mut self.columns {
+                let vector = column
+                    .take()
+                    .ok_or_else(|| Error::internal("unread scan column"))?;
+                output.push(match &selection {
+                    Some(selection) => vector.slice(selection),
+                    None => vector,
+                });
+            }
+            return Ok(selection.map_or(count, |selection| selection.len()));
         }
     }
+
+    /// Reads the next `count` rows of output column `position`.
+    fn read_column(&mut self, position: usize, count: usize) -> Result<Vector> {
+        let column = self.column_ids[position];
+        self.defines[..count].fill(0);
+        self.repeats[..count].fill(0);
+        let reader = self.root.child_mut(column)?;
+        let mut vector = Vector::flat(reader.logical_type(), STANDARD_VECTOR_SIZE);
+        let read = reader.read(count, &mut self.defines, &mut self.repeats, &mut vector)?;
+        if read != count {
+            return Err(Error::invalid_input(format!(
+                "Mismatch in parquet read for column {column}, expected {count} rows, got {read}"
+            )));
+        }
+        Ok(vector)
+    }
+}
+
+/// Keeps the rows of `rows` whose value in `vector` passes `filter` (`ColumnReader::Filter`):
+/// through the dictionary's filter result when the read was dictionary-encoded.
+fn filter_rows(
+    reader: &mut ColumnReader,
+    filter_index: usize,
+    filter: &TableFilter,
+    vector: &Vector,
+    count: usize,
+    rows: &mut Vec<u32>,
+) -> Result<()> {
+    if let (ColumnReader::Leaf(leaf), VectorKind::Dictionary, Sel::Indices(indexes)) =
+        (reader, vector.kind(), vector.sel())
+        && let Some(mask) = leaf.dictionary_filter(filter_index, filter)?
+    {
+        let mut kept = 0;
+        for index in 0..rows.len() {
+            let row = rows[index];
+            rows[kept] = row;
+            kept += usize::from(mask.get(indexes[row as usize] as usize).copied().unwrap_or(false));
+        }
+        rows.truncate(kept);
+        return Ok(());
+    }
+    filter.select(vector, count, rows)
 }

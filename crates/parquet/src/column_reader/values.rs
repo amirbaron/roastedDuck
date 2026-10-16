@@ -625,15 +625,34 @@ impl PlainDecoder for StringDecoder {
             set_nulls(result, defines, max_define, offset, num_values);
         }
         let values = result.values_mut::<StringT>();
+        let start = source.buffer.remaining();
+        let mut read = Ok(());
         for row in offset..offset + num_values {
             if defines.is_some_and(|defines| defines[row] != max_define) {
                 continue;
             }
-            let bytes = self.next(&mut source.buffer)?;
-            self.verify(bytes)?;
-            store_string(values, row, bytes);
+            match self.next(&mut source.buffer) {
+                Ok(bytes) => store_string(values, row, bytes),
+                Err(error) => {
+                    read = Err(error);
+                    break;
+                }
+            }
         }
-        Ok(())
+        if self.kind == StringKind::Varchar {
+            // The bytes just read (values and their lengths) are mostly ASCII, which is
+            // valid UTF-8: check them at once, and the strings one by one otherwise.
+            let consumed = &start[..start.len() - source.buffer.remaining().len()];
+            if !consumed.is_ascii() {
+                let mut again = ByteBuffer::new(consumed);
+                while !again.is_empty() {
+                    let bytes = self.next(&mut again)?;
+                    self.verify(bytes)?;
+                }
+            }
+        }
+        // A truncated page fails after the strings before the truncation are checked.
+        read
     }
 
     fn skip(

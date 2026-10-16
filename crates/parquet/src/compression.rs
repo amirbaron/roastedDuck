@@ -1,5 +1,5 @@
 //! Page compression codecs (`ColumnReader::DecompressInternal` and the writer's
-//! `ColumnWriter::CompressPage`), all in pure Rust: snappy (`snap`), gzip (`miniz_oxide`
+//! `ColumnWriter::CompressPage`), all in pure Rust: snappy (our own decoder, `snap` to compress), gzip (`miniz_oxide`
 //! through `flate2`), zstd (`ruzstd`), LZ4 raw blocks (`lz4_flex`) and brotli (`brotli`).
 
 use std::io::{Read as _, Write as _};
@@ -38,20 +38,13 @@ pub fn decompress(codec: CompressionCodec, src: &[u8], dst: &mut [u8], file_name
             }
             Ok(())
         }
-        CompressionCodec::SNAPPY => {
-            let size = snap::raw::decompress_len(src)
-                .map_err(|_| read_failure(file_name, "Snappy decompression failure"))?;
-            if size != dst.len() {
-                return Err(read_failure(
-                    file_name,
-                    "Snappy decompression failure: Uncompressed data size mismatch",
-                ));
-            }
-            snap::raw::Decoder::new()
-                .decompress(src, dst)
-                .map_err(|_| read_failure(file_name, "Snappy decompression failure"))?;
-            Ok(())
-        }
+        CompressionCodec::SNAPPY => crate::snappy::decompress(src, dst).map_err(|error| match error {
+            crate::snappy::SnappyError::LengthMismatch => read_failure(
+                file_name,
+                "Snappy decompression failure: Uncompressed data size mismatch",
+            ),
+            crate::snappy::SnappyError::Corrupt => read_failure(file_name, "Snappy decompression failure"),
+        }),
         CompressionCodec::ZSTD => {
             let failure = || read_failure(file_name, "ZSTD Decompression failure");
             let mut decoder = ruzstd::decoding::FrameDecoder::new();
@@ -105,6 +98,8 @@ fn gzip_decompress(mut src: &[u8], dst: &mut [u8]) -> Result<()> {
         src = &src[skip..];
         out_position = (out_position + produced).min(dst.len());
     }
+    // Bytes no member produced read as zero.
+    dst[out_position..].fill(0);
     Ok(())
 }
 

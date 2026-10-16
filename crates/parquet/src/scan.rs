@@ -18,7 +18,7 @@ use rustdb_function::{
     TableScanState,
 };
 use rustdb_planner::ClientContext;
-use rustdb_storage::TableFilterSet;
+use rustdb_storage::{TableFilter, TableFilterSet};
 use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
 use crate::reader::{ColumnDefinition, ParquetReader, ReaderScanState, ScanColumn};
@@ -317,6 +317,8 @@ struct FileScan {
     sources: Vec<ColumnSource>,
     /// Whether no column is read from the file (only its row count matters).
     rows_only: Option<RowsOnly>,
+    /// The filters the reader does not apply, by output column.
+    filters: Vec<(usize, TableFilter)>,
 }
 
 /// Emitting the row count of a file without reading any column.
@@ -436,8 +438,12 @@ fn open_file(data: &ParquetBindData, file_index: usize, column_ids: &[u64]) -> R
     }
     // Filters on constant columns decide for the whole file; filters on columns read
     // as stored prune row groups by their statistics.
+    // Filters on columns read as stored are evaluated by the reader, the others (on cast
+    // columns) on the chunks it returns.
     let mut skip_file = false;
     let mut prune_filters = Vec::new();
+    let mut reader_filters = TableFilterSet::default();
+    let mut chunk_filters = Vec::new();
     if let Some(filters) = &data.filters {
         for (&position, filter) in &filters.filters {
             match sources.get(position) {
@@ -452,8 +458,9 @@ fn open_file(data: &ParquetBindData, file_index: usize, column_ids: &[u64]) -> R
                     if let Some(file_column) = scan_columns.get(*index).and_then(|column| column.file_index) {
                         prune_filters.push((file_column, filter));
                     }
+                    reader_filters.push_filter(*index, filter.clone());
                 }
-                _ => {}
+                _ => chunk_filters.push((position, filter.clone())),
             }
         }
     }
@@ -474,11 +481,16 @@ fn open_file(data: &ParquetBindData, file_index: usize, column_ids: &[u64]) -> R
     let rows_only = scan_columns.is_empty().then(|| RowsOnly {
         remaining: if skip_file { 0 } else { reader.num_rows() },
     });
-    let state = reader.initialize_scan(row_groups, &scan_columns)?;
+    let state = reader.initialize_scan(
+        row_groups,
+        &scan_columns,
+        reader_filters.filters.into_iter().collect(),
+    )?;
     Ok(FileScan {
         state,
         sources,
         rows_only,
+        filters: chunk_filters,
     })
 }
 
@@ -546,12 +558,10 @@ fn read_parquet_scan(
             });
         }
         let mut count = count;
-        if let Some(filters) = &data.filters {
-            match apply_filters(filters, &mut output, count)? {
-                Some(0) => continue,
-                Some(passed) => count = passed,
-                None => {}
-            }
+        match apply_filters(&file.filters, &mut output, count)? {
+            Some(0) => continue,
+            Some(passed) => count = passed,
+            None => {}
         }
         *chunk = DataChunk::new(output, count);
         return Ok(true);
@@ -560,9 +570,16 @@ fn read_parquet_scan(
 
 /// Applies the pushed-down filters to a chunk; returns the number of rows left if any
 /// row was removed (the vectors are then sliced to them).
-fn apply_filters(filters: &TableFilterSet, output: &mut [Vector], count: usize) -> Result<Option<usize>> {
+fn apply_filters(
+    filters: &[(usize, TableFilter)],
+    output: &mut [Vector],
+    count: usize,
+) -> Result<Option<usize>> {
+    if filters.is_empty() {
+        return Ok(None);
+    }
     let mut sel: Vec<u32> = (0..count as u32).collect();
-    for (&position, filter) in &filters.filters {
+    for &(position, ref filter) in filters {
         let Some(vector) = output.get(position) else {
             continue;
         };

@@ -257,6 +257,11 @@ pub fn unpack_bits<T: UnpackTarget>(data: &[u8], bit_offset: usize, dst: &mut [T
         return;
     }
     let width = usize::from(width);
+    // With 8 readable bytes past the last value, every value is one unaligned load.
+    if width <= 32 && (bit_offset + dst.len() * width) / 8 + 8 <= data.len() {
+        unpack_bits_padded(data, bit_offset, dst, width);
+        return;
+    }
     let mask = if width == 64 {
         u64::MAX
     } else {
@@ -281,6 +286,38 @@ pub fn unpack_bits<T: UnpackTarget>(data: &[u8], bit_offset: usize, dst: &mut [T
             *value = T::from_u64((low | high) & mask);
             bit += width;
         }
+    }
+}
+
+/// [`unpack_bits`] for `width <= 32` when `data` holds 8 bytes past the last value: one
+/// loop per width, so shifts and masks are constants.
+fn unpack_bits_padded<T: UnpackTarget>(data: &[u8], bit_offset: usize, dst: &mut [T], width: usize) {
+    macro_rules! dispatch {
+        ($($width:literal)*) => {
+            match width {
+                $($width => unpack_bits_width::<T, $width>(data, bit_offset, dst),)*
+                _ => debug_assert!(false, "unpack width {width} out of range"),
+            }
+        };
+    }
+    dispatch!(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32);
+}
+
+#[inline]
+fn unpack_bits_width<T: UnpackTarget, const WIDTH: usize>(data: &[u8], bit_offset: usize, dst: &mut [T]) {
+    let mask = (1u64 << WIDTH) - 1;
+    let last_byte = (bit_offset + dst.len() * WIDTH) / 8;
+    if last_byte + 8 > data.len() {
+        return;
+    }
+    let base = data.as_ptr();
+    let mut bit = bit_offset;
+    for value in dst {
+        // SAFETY: `bit / 8 <= last_byte` and `last_byte + 8 <= data.len()` (checked
+        // above), so the 8 bytes read are in bounds.
+        let word = u64::from_le(unsafe { base.add(bit / 8).cast::<u64>().read_unaligned() });
+        *value = T::from_u64((word >> (bit % 8)) & mask);
+        bit += WIDTH;
     }
 }
 

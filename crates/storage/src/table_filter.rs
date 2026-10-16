@@ -469,25 +469,40 @@ fn check_constants(stats: &BaseStatistics, op: CompareOp, constants: &[Value]) -
 }
 
 #[inline]
-fn compare<T: SqlOrd>(op: CompareOp, left: T, right: T) -> bool {
+fn select_native<T: SqlOrd + NativeType>(vector: &Vector, op: CompareOp, constant: T, sel: &mut Vec<u32>) {
+    // One loop per operator, so the comparison is not re-dispatched for every row.
     match op {
-        CompareOp::Equal => left.sql_eq(right),
-        CompareOp::NotEqual => !left.sql_eq(right),
-        CompareOp::GreaterThan => left.sql_gt(right),
-        CompareOp::LessThan => right.sql_gt(left),
-        CompareOp::GreaterThanOrEqual => !right.sql_gt(left),
-        CompareOp::LessThanOrEqual => !left.sql_gt(right),
+        CompareOp::Equal => select_native_with(vector, sel, |value: T| value.sql_eq(constant)),
+        CompareOp::NotEqual => select_native_with(vector, sel, |value: T| !value.sql_eq(constant)),
+        CompareOp::GreaterThan => select_native_with(vector, sel, |value: T| value.sql_gt(constant)),
+        CompareOp::LessThan => select_native_with(vector, sel, |value: T| constant.sql_gt(value)),
+        CompareOp::GreaterThanOrEqual => select_native_with(vector, sel, |value: T| !constant.sql_gt(value)),
+        CompareOp::LessThanOrEqual => select_native_with(vector, sel, |value: T| !value.sql_gt(constant)),
     }
 }
 
-fn select_native<T: SqlOrd + NativeType>(vector: &Vector, op: CompareOp, constant: T, sel: &mut Vec<u32>) {
+/// Keeps the rows of `sel` whose valid value satisfies `predicate`.
+#[inline]
+fn select_native_with<T: NativeType>(vector: &Vector, sel: &mut Vec<u32>, predicate: impl Fn(T) -> bool) {
     let data = vector.unified::<T>();
     if data.validity.is_all_valid() {
-        sel.retain(|&row| compare(op, data.values[data.sel.slot(row as usize)], constant));
+        if let rustdb_types::Sel::Identity = data.sel {
+            let values = data.values;
+            // Branch-free compaction of the selected rows.
+            let mut kept = 0;
+            for index in 0..sel.len() {
+                let row = sel[index];
+                sel[kept] = row;
+                kept += usize::from(predicate(values[row as usize]));
+            }
+            sel.truncate(kept);
+        } else {
+            sel.retain(|&row| predicate(data.values[data.sel.slot(row as usize)]));
+        }
     } else {
         sel.retain(|&row| {
             let slot = data.sel.slot(row as usize);
-            data.validity.is_valid(slot) && compare(op, data.values[slot], constant)
+            data.validity.is_valid(slot) && predicate(data.values[slot])
         });
     }
 }

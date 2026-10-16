@@ -18,6 +18,7 @@ pub mod metadata;
 pub mod reader;
 pub mod scan;
 pub mod schema;
+pub mod snappy;
 pub mod statistics;
 pub mod thrift;
 pub mod vector_ops;

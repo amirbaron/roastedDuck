@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use rustdb_storage::TableFilter;
 use rustdb_types::{LogicalType, SelectionVector, StringT, Vector, VectorKind};
 
 use super::ReaderContext;
@@ -36,6 +37,17 @@ struct ChunkBuffer {
 }
 
 impl ChunkBuffer {
+    /// Loads `len` bytes at `offset`, reusing the buffer's allocation.
+    fn load(&mut self, file: &ParquetFile, offset: u64, len: usize) -> Result<()> {
+        resize_uninitialized(&mut self.data, len);
+        self.start = offset;
+        let result = file.read_exact_at(&mut self.data, offset);
+        if result.is_err() {
+            self.data.clear();
+        }
+        result
+    }
+
     /// The bytes `offset..offset + len`, loading them if needed.
     fn bytes(&mut self, file: &ParquetFile, offset: u64, len: usize) -> Result<&[u8]> {
         let end = offset.checked_add(len as u64);
@@ -49,8 +61,7 @@ impl ChunkBuffer {
                     file.path()
                 )));
             }
-            self.data = file.read_range(offset, fetch as usize)?;
-            self.start = offset;
+            self.load(file, offset, fetch as usize)?;
         }
         let begin = (offset - self.start) as usize;
         Ok(&self.data[begin..begin + len])
@@ -138,6 +149,9 @@ pub struct LeafReader {
     /// definition levels.
     dictionary: Option<Vector>,
     dictionary_size: usize,
+    /// For each filter of the scan, which dictionary entries pass it (computed on first
+    /// use; `DictionaryDecoder`'s `filter_result`).
+    dictionary_filters: Vec<Option<Vec<bool>>>,
     pending_skips: u64,
     /// Scratch space for decoded values and dictionary indices.
     scratch: Vec<u8>,
@@ -186,6 +200,7 @@ impl LeafReader {
             repeats: None,
             dictionary: None,
             dictionary_size: 0,
+            dictionary_filters: Vec::new(),
             pending_skips: 0,
             scratch: Vec::new(),
             indices: Vec::new(),
@@ -246,10 +261,9 @@ impl LeafReader {
         if let Some(offset) = meta.index_page_offset {
             start = start.min(offset as u64);
         }
-        self.chunk = ChunkBuffer {
-            start,
-            data: Vec::new(),
-        };
+        // Keep the allocation of the previous chunk.
+        self.chunk.start = start;
+        self.chunk.data.clear();
         self.pending_skips = 0;
         self.page_rows_available = 0;
         self.dictionary = None;
@@ -272,15 +286,19 @@ impl LeafReader {
             .saturating_add(self.chunk_read_offset.saturating_sub(start))
             .min(available) as usize;
         if len > 0 {
-            self.chunk.data = file.read_range(start, len)?;
+            let file = Arc::clone(file);
+            self.chunk.load(&file, start, len)?;
         }
         Ok(())
     }
 
     /// `PrepareRead`: reads the next page header and prepares its page.
     fn prepare_page(&mut self) -> Result<()> {
+        // Drop the decoders of the previous page first: they share its block, which can
+        // then be reused for the next one.
         self.decoding = PageDecoding::Invalid;
         self.defines = None;
+        self.repeats = None;
         self.ensure_chunk_loaded()?;
         let file = Arc::clone(&self.context.file);
         let (header, header_len) = self.chunk.page_header(&file, self.chunk_read_offset)?;
@@ -333,7 +351,7 @@ impl LeafReader {
         let uncompressed = header.uncompressed_page_size as usize;
         let compressed = header.compressed_page_size as usize;
         let codec = self.codec;
-        let mut block = vec![0u8; uncompressed + 1];
+        let mut block = self.take_block(uncompressed + 1);
         if codec == CompressionCodec::UNCOMPRESSED {
             if compressed != uncompressed {
                 return Err(runtime_error("Page size mismatch"));
@@ -354,7 +372,7 @@ impl LeafReader {
         let v2 = header.data_page_header_v2.clone().unwrap_or_default();
         let uncompressed_size = header.uncompressed_page_size as usize;
         let compressed_size = header.compressed_page_size as usize;
-        let mut block = vec![0u8; uncompressed_size + 1];
+        let mut block = self.take_block(uncompressed_size + 1);
         let mut is_uncompressed = v2.is_compressed == Some(false);
         if self.codec == CompressionCodec::UNCOMPRESSED {
             if compressed_size != uncompressed_size {
@@ -366,6 +384,7 @@ impl LeafReader {
             let bytes = self.read_page_bytes(compressed_size)?;
             let len = bytes.len().min(uncompressed_size);
             block[..len].copy_from_slice(&bytes[..len]);
+            block[len..].fill(0);
             self.set_block(block);
             return Ok(());
         }
@@ -411,6 +430,20 @@ impl LeafReader {
         }
         self.set_block(block);
         Ok(())
+    }
+
+    /// A buffer of `len` bytes for the next page, reusing the current page's when no
+    /// vector references it any more (DuckDB's `ResizeableBuffer`). Its content is
+    /// unspecified, except for the last byte (the padding), which is zero.
+    fn take_block(&mut self, len: usize) -> Vec<u8> {
+        let mut block = Arc::try_unwrap(std::mem::take(&mut self.block)).unwrap_or_default();
+        self.block_position = 0;
+        self.block_end = 0;
+        resize_uninitialized(&mut block, len);
+        if let Some(last) = block.last_mut() {
+            *last = 0;
+        }
+        block
     }
 
     fn set_block(&mut self, block: Vec<u8>) {
@@ -639,7 +672,36 @@ impl LeafReader {
             .plain(&mut source, None, 0, size, 0, &mut dictionary)?;
         self.dictionary = Some(dictionary);
         self.dictionary_size = size;
+        self.dictionary_filters.clear();
         Ok(())
+    }
+
+    /// Which entries of the current dictionary pass `filter`, the scan's filter number
+    /// `filter_index` (`DictionaryDecoder::Filter`): a dictionary-encoded read is then
+    /// filtered by looking up its dictionary indexes instead of comparing every value.
+    pub fn dictionary_filter(
+        &mut self,
+        filter_index: usize,
+        filter: &TableFilter,
+    ) -> Result<Option<&[bool]>> {
+        let Some(dictionary) = &self.dictionary else {
+            return Ok(None);
+        };
+        if self.dictionary_filters.len() <= filter_index {
+            self.dictionary_filters.resize(filter_index + 1, None);
+        }
+        let slot = &mut self.dictionary_filters[filter_index];
+        if slot.is_none() {
+            let entries = dictionary.capacity();
+            let mut passing: Vec<u32> = (0..entries as u32).collect();
+            filter.select(dictionary, entries, &mut passing)?;
+            let mut mask = vec![false; entries];
+            for entry in passing {
+                mask[entry as usize] = true;
+            }
+            *slot = Some(mask);
+        }
+        Ok(slot.as_deref())
     }
 
     /// `ReadPageHeaders`: makes sure a page with values is ready; returns how many of
@@ -901,7 +963,8 @@ impl LeafReader {
         match defines {
             None => {
                 decoder.get_batch(&mut self.indices[..])?;
-                if self.indices.iter().any(|&index| index as usize >= size) {
+                // A branch-free maximum (vectorized) instead of an early-exit search.
+                if self.indices.iter().copied().max().unwrap_or(0) as usize >= size && count > 0 {
                     return Err(runtime_error(
                         "Parquet file is likely corrupted, dictionary offset out of range",
                     ));
@@ -931,13 +994,23 @@ impl LeafReader {
                 }
             }
         }
-        let sliced = dictionary.slice(&SelectionVector::new(self.indices.clone()));
+        let sliced = dictionary.slice(&SelectionVector::new(std::mem::take(&mut self.indices)));
         if offset == 0 {
             *result = sliced;
         } else {
             copy_rows(&sliced, 0, count, result, offset)?;
         }
         Ok(())
+    }
+}
+
+/// Sets the length of `buffer` to `len` without clearing the bytes it keeps (only new
+/// bytes are zeroed): callers overwrite the content.
+fn resize_uninitialized(buffer: &mut Vec<u8>, len: usize) {
+    if buffer.len() >= len {
+        buffer.truncate(len);
+    } else {
+        buffer.resize(len, 0);
     }
 }
 
