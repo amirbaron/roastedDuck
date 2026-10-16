@@ -13,9 +13,11 @@ pub mod copy;
 pub mod compression;
 pub mod decode;
 pub mod file;
+pub mod metadata;
 pub mod reader;
 pub mod scan;
 pub mod schema;
+pub mod statistics;
 pub mod thrift;
 pub mod vector_ops;
 pub mod writer;
@@ -24,5 +26,7 @@ use rustdb_function::TableFunctionSet;
 
 /// The table functions of the extension.
 pub fn parquet_table_functions() -> Vec<TableFunctionSet> {
-    scan::read_parquet_functions()
+    let mut functions = scan::read_parquet_functions();
+    functions.extend(metadata::metadata_functions());
+    functions
 }
