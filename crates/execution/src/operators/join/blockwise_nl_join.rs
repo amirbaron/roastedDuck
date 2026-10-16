@@ -2,6 +2,7 @@
 //! arbitrary condition by evaluating it over the cross product of each input chunk with
 //! each right row (or of each input row with each right chunk).
 
+use rustdb_common::tree_renderer::RenderParams;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rustdb_ast::JoinType;
@@ -83,6 +84,13 @@ impl PhysicalOperator for PhysicalBlockwiseNLJoin {
     }
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         propagates_build_side(self.join_type).then_some(self as &dyn ErasedSource)
+    }
+
+    fn params_to_string(&self, _: u64) -> RenderParams {
+        let mut result = RenderParams::new();
+        result.insert("Join Type".to_owned(), self.join_type.name().to_owned());
+        result.insert("Condition".to_owned(), self.condition.name());
+        result
     }
 }
 

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use rustdb_ast::OrderType;
 use rustdb_common::string_util::candidates_error_message;
 use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_execution::JoinPlanSettings;
+use rustdb_execution::{ExplainOutput, JoinPlanSettings};
 use rustdb_function::cast::ValueCast;
 use rustdb_planner::{DefaultNullOrder, PlannerConfig};
 use rustdb_types::{LogicalType, Value};
@@ -307,11 +307,26 @@ impl Settings {
                 }
                 self.other.insert(option, value.clone());
             }
+            "explain_output" => {
+                let parameter = value.to_varchar()?;
+                ExplainOutput::parse(&parameter)?;
+                self.other
+                    .insert(option, Value::varchar(parameter.to_ascii_lowercase()));
+            }
             other => {
                 self.other.insert(other, value.clone());
             }
         }
         Ok(())
+    }
+
+    /// The `explain_output` setting.
+    pub fn explain_output(&self) -> ExplainOutput {
+        self.other
+            .get("explain_output")
+            .and_then(|value| value.to_varchar().ok())
+            .and_then(|value| ExplainOutput::parse(&value).ok())
+            .unwrap_or_default()
     }
 
     /// The settings that steer physical join planning.

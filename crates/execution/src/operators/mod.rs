@@ -67,7 +67,7 @@ pub use pivot::PhysicalPivot;
 pub use projection::PhysicalProjection;
 pub use result_collector::{CollectedResult, PhysicalResultCollector};
 pub use sample::{BlockingSample, PhysicalReservoirSample, PhysicalStreamingSample};
-pub use seq_scan::{PhysicalSeqScan, SeqScanLocal};
+pub use seq_scan::{PhysicalSeqScan, ScanExplainInfo, SeqScanLocal};
 pub use streaming_window::{PhysicalStreamingWindow, StreamingWindowGlobalState, StreamingWindowState};
 pub use table_scan::{PhysicalTableScan, TableScanGlobal};
 pub use ungrouped_aggregate::{AggregateStates, PhysicalUngroupedAggregate, UngroupedGlobal, UngroupedLocal};

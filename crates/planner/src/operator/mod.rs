@@ -4,8 +4,10 @@
 //! output types, cardinality estimate) and its operator-specific data in [`LogicalKind`].
 //! The generic members let plan rewrites traverse any operator uniformly.
 
+mod cardinality;
 mod copy_to_file;
 mod display;
+mod explain;
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -29,6 +31,7 @@ pub use copy_to_file::{
     LogicalExport,
 };
 pub use display::render_plan;
+pub use explain::{logical_operator_name, renderer_kind};
 
 /// A LIMIT or OFFSET value (DuckDB's `BoundLimitNode`).
 #[derive(Clone, Debug, Default)]
@@ -129,6 +132,11 @@ pub struct LogicalGet {
     pub shared_column_ids: Option<SharedColumnIds>,
     /// The scanned table of a base table scan (DuckDB's `LogicalGet::GetTable`).
     pub table: Option<Arc<rustdb_catalog::CatalogEntry>>,
+    /// The catalog and schema of the scanned table, for `EXPLAIN`.
+    pub table_schema: Option<(String, String)>,
+    /// Filters pushed into the scan, keyed by the filtered column's index in
+    /// `returned_types` (DuckDB's `LogicalGet::table_filters`).
+    pub table_filters: rustdb_storage::TableFilterSet,
 }
 
 /// The output bindings of INSERT/DELETE/UPDATE: the table's columns with `RETURNING`, the
@@ -416,6 +424,8 @@ pub enum LogicalKind {
     Explain {
         explain_type: ExplainType,
         explain_format: ExplainFormat,
+        /// The plan before optimization, rendered when it was bound.
+        logical_plan_unopt: String,
     },
     Prepare {
         name: String,

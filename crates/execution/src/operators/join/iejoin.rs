@@ -2,6 +2,7 @@
 //! range conditions by sorting both inputs on the first, ranking all rows on the second,
 //! and scanning a bit array of the rows that already passed the first condition.
 
+use rustdb_common::tree_renderer::RenderParams;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -107,6 +108,10 @@ impl PhysicalOperator for PhysicalIEJoin {
     }
     fn sinks_all_children(&self) -> bool {
         true
+    }
+
+    fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
+        super::comparison_join_params(self.join_type, &self.conditions, estimated_cardinality)
     }
 }
 

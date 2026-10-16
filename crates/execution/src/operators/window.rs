@@ -11,6 +11,7 @@
 //! (sort, materialize, mask, sink, finalize, get data) run back to back here; each group's
 //! state is self-contained so groups can be spread over threads later.
 
+use rustdb_common::tree_renderer::RenderParams;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -183,6 +184,13 @@ impl PhysicalOperator for PhysicalWindow {
     }
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
+    }
+
+    fn params_to_string(&self, _: u64) -> RenderParams {
+        let mut result = RenderParams::new();
+        let projections: Vec<&str> = self.select_list.iter().map(|w| w.alias.as_str()).collect();
+        result.insert("Projections".to_owned(), projections.join("\n"));
+        result
     }
 }
 

@@ -189,9 +189,11 @@ fn bind_call(scope: &mut BindScope<'_>, call: &mut rustdb_ast::CallStatement) ->
 /// `EXPLAIN statement` (DuckDB's `Binder::Bind(ExplainStatement &)`).
 fn bind_explain(scope: &mut BindScope<'_>, explain: &mut ExplainStatement) -> Result<BoundStatement> {
     let bound = bind_statement(scope, &mut explain.statement)?;
+    let logical_plan_unopt = bound.plan.to_explain_string(explain.explain_format);
     let plan = LogicalOperator::new(LogicalKind::Explain {
         explain_type: explain.explain_type,
         explain_format: explain.explain_format,
+        logical_plan_unopt,
     })
     .with_children(vec![bound.plan]);
     scope.with_properties(|properties| properties.return_type = StatementReturnType::QueryResult);

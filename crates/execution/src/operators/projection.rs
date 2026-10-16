@@ -1,4 +1,6 @@
+use crate::operator::{expression_names, set_estimated_cardinality};
 use rustdb_common::Result;
+use rustdb_common::tree_renderer::RenderParams;
 use rustdb_planner::Expression;
 use rustdb_types::{DataChunk, LogicalType};
 
@@ -35,6 +37,13 @@ impl PhysicalOperator for PhysicalProjection {
     }
     fn as_operator(&self) -> Option<&dyn ErasedOperator> {
         Some(self)
+    }
+
+    fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
+        let mut result = RenderParams::new();
+        result.insert("__projections__".to_owned(), expression_names(&self.expressions));
+        set_estimated_cardinality(&mut result, estimated_cardinality);
+        result
     }
 }
 

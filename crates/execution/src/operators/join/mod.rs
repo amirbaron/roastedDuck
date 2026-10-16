@@ -27,6 +27,7 @@ pub use positional_join::{PhysicalPositionalJoin, PositionalJoinGlobalState};
 
 use rustdb_ast::{ExpressionType, JoinType};
 use rustdb_common::Result;
+use rustdb_common::tree_renderer::RenderParams;
 use rustdb_planner::operator::JoinCondition;
 use rustdb_types::{DataChunk, LogicalType, SelectionVector, Value, Vector};
 
@@ -197,4 +198,28 @@ pub(crate) fn construct_mark_join_result(
     let mut columns = left.columns().to_vec();
     columns.push(mark);
     result.set_columns(columns, count);
+}
+
+/// The `EXPLAIN` lines of a comparison join (DuckDB's `PhysicalComparisonJoin::ParamsToString`).
+fn comparison_join_params(
+    join_type: JoinType,
+    conditions: &[JoinCondition],
+    estimated_cardinality: u64,
+) -> RenderParams {
+    let mut result = RenderParams::new();
+    result.insert("Join Type".to_owned(), join_type.name().to_owned());
+    let conditions: Vec<String> = conditions
+        .iter()
+        .map(|condition| {
+            format!(
+                "{} {} {}",
+                condition.left.name(),
+                rustdb_ast::expression_type_to_operator(condition.comparison),
+                condition.right.name()
+            )
+        })
+        .collect();
+    result.insert("Conditions".to_owned(), conditions.join("\n"));
+    crate::operator::set_estimated_cardinality(&mut result, estimated_cardinality);
+    result
 }

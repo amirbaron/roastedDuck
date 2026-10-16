@@ -2,6 +2,7 @@
 //! is built into a [`JoinHashTable`], the left input probes it, and RIGHT/FULL joins scan
 //! the table for unmatched rows afterwards.
 
+use rustdb_common::tree_renderer::RenderParams;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
@@ -194,6 +195,10 @@ impl PhysicalOperator for PhysicalHashJoin {
     }
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         propagates_build_side(self.join_type).then_some(self as &dyn ErasedSource)
+    }
+
+    fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
+        super::comparison_join_params(self.join_type, &self.conditions, estimated_cardinality)
     }
 }
 

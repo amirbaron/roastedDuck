@@ -1,6 +1,8 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
+use crate::operator::order_names;
 use rustdb_ast::{OrderByNullType, OrderType};
+use rustdb_common::tree_renderer::RenderParams;
 use rustdb_common::{Error, Result};
 use rustdb_planner::expression::BoundOrderByNode;
 use rustdb_planner::{Expression, ExpressionKind};
@@ -118,6 +120,12 @@ impl PhysicalOperator for PhysicalOrder {
     }
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
+    }
+
+    fn params_to_string(&self, _: u64) -> RenderParams {
+        let mut result = RenderParams::new();
+        result.insert("__order_by__".to_owned(), order_names(&self.orders));
+        result
     }
 }
 

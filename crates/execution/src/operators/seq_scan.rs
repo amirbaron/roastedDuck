@@ -1,3 +1,5 @@
+use crate::operator::set_estimated_cardinality;
+use rustdb_common::tree_renderer::RenderParams;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -33,6 +35,54 @@ pub struct PhysicalSeqScan {
     projection: Vec<usize>,
     /// `index_scan_max_count` and `index_scan_percentage`; `None` disables index scans.
     index_scan: Option<(u64, f64)>,
+    /// What `EXPLAIN` shows about the scan.
+    explain: ScanExplainInfo,
+}
+
+/// The names `EXPLAIN` shows for a table scan (the bind data and `names` DuckDB's
+/// `PhysicalTableScan` keeps).
+#[derive(Clone, Debug, Default)]
+pub struct ScanExplainInfo {
+    /// The qualified table name (`TableScanToString`); empty for table functions.
+    pub table: String,
+    /// The name of each scanned column, by position in the scan's column list.
+    pub column_names: Vec<String>,
+}
+
+impl ScanExplainInfo {
+    /// DuckDB's `PhysicalTableScan::ParamsToString` for a scan with projection and filter
+    /// pushdown.
+    pub fn params(
+        &self,
+        projection: &[usize],
+        filters: Option<&TableFilterSet>,
+        estimated_cardinality: u64,
+    ) -> RenderParams {
+        let mut result = RenderParams::new();
+        if !self.table.is_empty() {
+            result.insert("Table".to_owned(), self.table.clone());
+            result.insert("Type".to_owned(), "Sequential Scan".to_owned());
+        }
+        let projected: Vec<&str> = if projection.is_empty() {
+            self.column_names.iter().map(String::as_str).collect()
+        } else {
+            projection
+                .iter()
+                .filter_map(|&index| self.column_names.get(index).map(String::as_str))
+                .collect()
+        };
+        result.insert("Projections".to_owned(), projected.join("\n"));
+        if let Some(filters) = filters {
+            let filters: Vec<String> = filters
+                .filters
+                .iter()
+                .filter_map(|(&column, filter)| self.column_names.get(column).map(|name| filter.to_sql(name)))
+                .collect();
+            result.insert("Filters".to_owned(), filters.join("\n"));
+        }
+        set_estimated_cardinality(&mut result, estimated_cardinality);
+        result
+    }
 }
 
 /// DuckDB's default `index_scan_max_count`.
@@ -59,7 +109,15 @@ impl PhysicalSeqScan {
             filters,
             projection,
             index_scan: Some((DEFAULT_INDEX_SCAN_MAX_COUNT, DEFAULT_INDEX_SCAN_PERCENTAGE)),
+            explain: ScanExplainInfo::default(),
         }
+    }
+
+    /// Sets what `EXPLAIN` shows about the scan.
+    #[must_use]
+    pub fn with_explain_info(mut self, explain: ScanExplainInfo) -> Self {
+        self.explain = explain;
+        self
     }
 
     /// Sets the index scan thresholds (`index_scan_max_count`, `index_scan_percentage`),
@@ -112,6 +170,14 @@ impl PhysicalOperator for PhysicalSeqScan {
     }
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
+    }
+
+    fn explain_name(&self) -> String {
+        "SEQ_SCAN".to_owned()
+    }
+    fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
+        self.explain
+            .params(&self.projection, self.filters.as_ref(), estimated_cardinality)
     }
 }
 

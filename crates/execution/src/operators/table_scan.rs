@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
+use rustdb_common::tree_renderer::RenderParams;
 use rustdb_common::{Error, Result};
 use rustdb_function::{FunctionData, TableFunction, TableScanState};
 use rustdb_types::{DataChunk, LogicalType, Vector};
@@ -14,6 +15,8 @@ pub struct PhysicalTableScan {
     function: TableFunction,
     bind_data: Option<Arc<dyn FunctionData>>,
     column_ids: Vec<u64>,
+    /// What `EXPLAIN` shows about the scan.
+    explain: super::ScanExplainInfo,
 }
 
 impl std::fmt::Debug for PhysicalTableScan {
@@ -37,7 +40,15 @@ impl PhysicalTableScan {
             function,
             bind_data,
             column_ids,
+            explain: super::ScanExplainInfo::default(),
         }
+    }
+
+    /// Sets what `EXPLAIN` shows about the scan.
+    #[must_use]
+    pub fn with_explain_info(mut self, explain: super::ScanExplainInfo) -> Self {
+        self.explain = explain;
+        self
     }
 }
 
@@ -53,6 +64,19 @@ impl PhysicalOperator for PhysicalTableScan {
     }
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
+    }
+
+    fn explain_name(&self) -> String {
+        self.function.name.to_ascii_uppercase()
+    }
+    fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
+        let mut result = RenderParams::new();
+        result.insert("Function".to_owned(), self.function.name.to_ascii_uppercase());
+        if self.function.projection_pushdown {
+            result.insert("Projections".to_owned(), self.explain.column_names.join("\n"));
+        }
+        crate::operator::set_estimated_cardinality(&mut result, estimated_cardinality);
+        result
     }
 }
 

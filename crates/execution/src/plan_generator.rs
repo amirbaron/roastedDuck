@@ -31,16 +31,18 @@ use rustdb_types::{DataChunk, LogicalType};
 use crate::constraints::table_constraints;
 mod asof_join;
 mod comparison_join;
+mod explain;
 mod window;
 
 pub use comparison_join::JoinPlanSettings;
+pub use explain::ExplainOutput;
 
 use crate::expression_executor::ExpressionExecutor;
 use crate::operator::{PhysicalRef, SinkData};
 use crate::operators::{
     AlterEntryAction, CatalogTableCreator, CreateIndexAction, CreateSchemaAction, CreateSequenceAction,
     CreateViewAction, DdlAction, DropAction, InsertTarget, PhysicalCreateTable, PhysicalDdl, PhysicalDelete,
-    PhysicalInsert, PhysicalSeqScan, PhysicalUpdate,
+    PhysicalInsert, PhysicalSeqScan, PhysicalUpdate, ScanExplainInfo,
 };
 use crate::operators::{CreateEntryAction, PhysicalCreateType, PhysicalCrossProduct};
 use crate::operators::{CteData, PhysicalCte, PhysicalCteScan, PhysicalRecursiveCte};
@@ -58,12 +60,16 @@ use crate::operators::{
 
 /// Converts a logical plan whose column references are resolved into a physical plan.
 /// Plans that read or change tables or the catalog need [`create_physical_plan_with`].
-pub fn create_physical_plan(op: LogicalOperator) -> Result<PhysicalRef> {
+pub fn create_physical_plan(mut op: LogicalOperator) -> Result<PhysicalRef> {
+    op.estimate_cardinality();
     PlanGenerator::default().plan(op)
 }
 
-/// Converts a logical plan into a physical plan running in `context`'s transaction.
-pub fn create_physical_plan_with(op: LogicalOperator, context: &PlanContext) -> Result<PhysicalRef> {
+/// Converts a logical plan into a physical plan running in `context`'s transaction
+/// (DuckDB's `PhysicalPlanGenerator::PlanInternal`).
+pub fn create_physical_plan_with(mut op: LogicalOperator, context: &PlanContext) -> Result<PhysicalRef> {
+    let estimate = op.estimate_cardinality();
+    op.estimated_cardinality = Some(estimate);
     PlanGenerator {
         context: Some(context.clone()),
         ..PlanGenerator::default()
@@ -81,6 +87,8 @@ pub struct PlanContext {
     pub catalogs: Vec<Arc<Catalog>>,
     /// The settings that steer join planning.
     pub join_settings: JoinPlanSettings,
+    /// Which plans `EXPLAIN` shows.
+    pub explain_output: ExplainOutput,
 }
 
 impl PlanContext {
@@ -97,6 +105,24 @@ impl PlanContext {
             .cloned()
             .ok_or_else(|| Error::catalog(format!("Catalog with name {name} does not exist!")))
     }
+}
+
+/// The scan's filters keyed by position in its column list instead of by table column
+/// (DuckDB's `CreateTableFilterSet`).
+fn table_filter_set(get: &LogicalGet) -> Result<Option<rustdb_storage::TableFilterSet>> {
+    if get.table_filters.is_empty() {
+        return Ok(None);
+    }
+    let mut filters = rustdb_storage::TableFilterSet::default();
+    for (&column, filter) in &get.table_filters.filters {
+        let position = get
+            .column_ids
+            .iter()
+            .position(|id| id.index == column as u64)
+            .ok_or_else(|| Error::internal("Could not find column index for table filter"))?;
+        filters.filters.insert(position, filter.clone());
+    }
+    Ok(Some(filters))
 }
 
 /// The storage of a table entry (`DuckTableEntry::GetStorage`).
@@ -127,6 +153,9 @@ struct PlanGenerator {
     external: Vec<Vec<Arc<dyn SinkData>>>,
     /// The transaction and catalogs for plans on tables.
     context: Option<PlanContext>,
+    /// The estimated cardinality of each planned operator, by operator address (DuckDB
+    /// keeps it in `PhysicalOperator::estimated_cardinality`), for `EXPLAIN`.
+    estimates: HashMap<usize, u64>,
 }
 
 impl PlanGenerator {
@@ -188,14 +217,36 @@ impl PlanGenerator {
             types = vec![LogicalType::BIGINT];
         }
         let projection = get.projection_ids.iter().map(|&id| id as usize).collect();
-        Ok(Arc::new(PhysicalSeqScan::new(
-            types,
-            storage,
-            Arc::clone(&context.transaction),
-            column_ids,
-            None,
-            projection,
-        )))
+        let filters = table_filter_set(get)?;
+        let explain = ScanExplainInfo {
+            table: get
+                .table_schema
+                .as_ref()
+                .map(|(catalog, schema)| rustdb_ast::qualifier_to_string(catalog, schema, entry.name()))
+                .unwrap_or_default(),
+            column_names: get
+                .column_ids
+                .iter()
+                .map(|column| {
+                    if column.is_row_id_column() {
+                        "rowid".to_owned()
+                    } else {
+                        get.names.get(column.index as usize).cloned().unwrap_or_default()
+                    }
+                })
+                .collect(),
+        };
+        Ok(Arc::new(
+            PhysicalSeqScan::new(
+                types,
+                storage,
+                Arc::clone(&context.transaction),
+                column_ids,
+                filters,
+                projection,
+            )
+            .with_explain_info(explain),
+        ))
     }
 
     /// `INSERT` (DuckDB's `CreatePlan(LogicalInsert&)`); the defaults of columns missing
@@ -497,7 +548,15 @@ impl PlanGenerator {
         comparison_join::create_comparison_join(self, join, types, cached, right, cardinalities)
     }
 
+    /// Plans `op` and records its estimated cardinality for the planned operators.
     fn plan(&mut self, op: LogicalOperator) -> Result<PhysicalRef> {
+        let estimate = op.estimated_cardinality.unwrap_or(0);
+        let plan = self.plan_operator(op)?;
+        self.record_estimate(&plan, estimate);
+        Ok(plan)
+    }
+
+    fn plan_operator(&mut self, op: LogicalOperator) -> Result<PhysicalRef> {
         let operator_type = op.operator_type();
         let LogicalOperator {
             kind,
@@ -543,6 +602,16 @@ impl PlanGenerator {
                 unreachable!("matched above")
             };
             return self.plan_asof_join(*join, children, types);
+        }
+        if let LogicalKind::Explain {
+            explain_type,
+            explain_format,
+            logical_plan_unopt,
+        } = kind
+        {
+            let [child] = <[LogicalOperator; 1]>::try_from(children)
+                .map_err(|_| Error::internal("EXPLAIN must have one child"))?;
+            return self.plan_explain(explain_type, explain_format, logical_plan_unopt, child, types);
         }
         if let LogicalKind::DelimGet { .. } = &kind {
             let (shared, depth) = self
@@ -631,7 +700,7 @@ impl PlanGenerator {
         };
         let plan: PhysicalRef = match kind {
             LogicalKind::DummyScan { .. } => Arc::new(PhysicalDummyScan::new(types)),
-            LogicalKind::EmptyResult { .. } => Arc::new(PhysicalColumnDataScan::new(types, Arc::from([]))),
+            LogicalKind::EmptyResult { .. } => Arc::new(PhysicalColumnDataScan::empty_result(types)),
             LogicalKind::ChunkGet { collection, .. } => {
                 Arc::new(PhysicalColumnDataScan::new(types, collection))
             }

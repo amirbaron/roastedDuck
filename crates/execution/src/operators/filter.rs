@@ -1,4 +1,6 @@
+use crate::operator::set_estimated_cardinality;
 use rustdb_common::Result;
+use rustdb_common::tree_renderer::RenderParams;
 use rustdb_planner::Expression;
 use rustdb_types::{DataChunk, LogicalType, SelectionVector};
 
@@ -36,6 +38,13 @@ impl PhysicalOperator for PhysicalFilter {
     }
     fn as_operator(&self) -> Option<&dyn ErasedOperator> {
         Some(self)
+    }
+
+    fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
+        let mut result = RenderParams::new();
+        result.insert("__expression__".to_owned(), self.predicate.name());
+        set_estimated_cardinality(&mut result, estimated_cardinality);
+        result
     }
 }
 

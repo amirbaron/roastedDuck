@@ -488,6 +488,8 @@ fn bind_base_table(
                 ordinality_index: None,
                 shared_column_ids: Some(shared_column_ids),
                 table: Some(Arc::clone(&found.entry)),
+                table_schema: Some((found.catalog.clone(), found.schema.clone())),
+                table_filters: rustdb_storage::TableFilterSet::default(),
             };
             Ok(BoundStatement::new(
                 LogicalOperator::new(LogicalKind::Get(Box::new(get))),

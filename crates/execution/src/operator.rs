@@ -2,6 +2,7 @@ use std::any::Any;
 use std::fmt;
 use std::sync::Arc;
 
+use rustdb_common::tree_renderer::{RenderParams, RenderTreeNode};
 use rustdb_common::{Error, Result};
 use rustdb_types::{DataChunk, LogicalType};
 
@@ -79,6 +80,71 @@ pub trait PhysicalOperator: Send + Sync + fmt::Debug + 'static {
     fn source_dependencies(&self) -> Vec<PhysicalRef> {
         Vec::new()
     }
+    /// The operator's name in `EXPLAIN` output (DuckDB's `PhysicalOperator::GetName`).
+    fn explain_name(&self) -> String {
+        self.name().to_owned()
+    }
+    /// The operator's key-value lines in `EXPLAIN` output (DuckDB's `ParamsToString`);
+    /// `estimated_cardinality` is the planner's estimate of the operator's output rows.
+    fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
+        let _ = estimated_cardinality;
+        RenderParams::new()
+    }
+}
+
+/// Adds the estimated cardinality to `EXPLAIN` lines (DuckDB's
+/// `PhysicalOperator::SetEstimatedCardinality`).
+pub fn set_estimated_cardinality(result: &mut RenderParams, estimated_cardinality: u64) {
+    result.insert(
+        RenderTreeNode::ESTIMATED_CARDINALITY.to_owned(),
+        estimated_cardinality.to_string(),
+    );
+}
+
+/// The names of aggregates with their filters, one per line (the aggregate loops of
+/// DuckDB's aggregate `ParamsToString`).
+pub fn aggregate_names(aggregates: &[rustdb_planner::expression::BoundAggregateExpression]) -> String {
+    aggregates
+        .iter()
+        .map(|aggregate| {
+            let filter = aggregate.filter.as_ref().map(rustdb_planner::Expression::name);
+            let expression = rustdb_planner::Expression::new(
+                rustdb_planner::ExpressionType::BoundAggregate,
+                aggregate.function.return_type.clone(),
+                rustdb_planner::ExpressionKind::Aggregate(Box::new(aggregate.clone())),
+            );
+            match filter {
+                Some(filter) => format!("{} Filter: {filter}", expression.name()),
+                None => expression.name(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Sort keys as `expression ASC|DESC`, one per line (DuckDB's `PhysicalOrder::ParamsToString`).
+pub fn order_names(orders: &[rustdb_planner::expression::BoundOrderByNode]) -> String {
+    orders
+        .iter()
+        .map(|order| {
+            let direction = if order.order_type == rustdb_ast::OrderType::Descending {
+                "DESC"
+            } else {
+                "ASC"
+            };
+            format!("{} {direction}", order.expression)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The names of expressions, one per line (the `GetName` loops of `ParamsToString`).
+pub fn expression_names(expressions: &[rustdb_planner::Expression]) -> String {
+    expressions
+        .iter()
+        .map(rustdb_planner::Expression::name)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Data materialised by a sink and read by scans elsewhere in the plan.

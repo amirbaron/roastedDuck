@@ -1,6 +1,7 @@
 use std::sync::{Mutex, PoisonError};
 
 use rustdb_ast::{SampleMethod, SampleOptions};
+use rustdb_common::tree_renderer::RenderParams;
 use rustdb_common::{Error, Result};
 use rustdb_function::random::RandomEngine;
 use rustdb_types::{DataChunk, LogicalType, SelectionVector};
@@ -99,6 +100,14 @@ impl PhysicalOperator for PhysicalReservoirSample {
     }
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
+    }
+
+    fn params_to_string(&self, _: u64) -> RenderParams {
+        let mut result = RenderParams::new();
+        let size = self.options.sample_size.to_varchar().unwrap_or_default();
+        let unit = if self.options.is_percentage { "%" } else { " rows" };
+        result.insert("Sample Size".to_owned(), format!("{size}{unit}"));
+        result
     }
 }
 
@@ -210,6 +219,15 @@ impl PhysicalOperator for PhysicalStreamingSample {
     }
     fn as_operator(&self) -> Option<&dyn ErasedOperator> {
         Some(self)
+    }
+
+    fn params_to_string(&self, _: u64) -> RenderParams {
+        let mut result = RenderParams::new();
+        result.insert(
+            "Sample Method".to_owned(),
+            format!("{}: {:.6}%", self.method.name(), 100.0 * self.percentage),
+        );
+        result
     }
 }
 

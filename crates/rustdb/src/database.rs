@@ -1177,6 +1177,7 @@ impl Connection {
             transaction: self.transactions.current(),
             catalogs: instance.catalogs(&self.default_catalog()),
             join_settings: self.settings.join_plan_settings(),
+            explain_output: self.settings.explain_output(),
         };
         let physical = create_physical_plan_with(plan, &context)?;
         let root: PhysicalRef = Arc::new(PhysicalResultCollector::new(physical));
