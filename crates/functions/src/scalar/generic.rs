@@ -74,18 +74,23 @@ pub fn get_type_functions() -> ScalarFunctionSet {
     set("get_type", vec![function])
 }
 
-/// `alias(x) -> VARCHAR`: the name of the argument expression.
+/// `alias(x) -> VARCHAR`: the alias of the call, else the name of the argument
+/// expression (`AliasFunction`).
 pub fn alias_functions() -> ScalarFunctionSet {
     let mut function = ScalarFunction::new(
         "alias",
         vec![LogicalType::ANY],
         LogicalType::VARCHAR,
         |_, state, result| {
-            let name = state
-                .bind_data
-                .as_ref()
-                .and_then(|data| data.as_any().downcast_ref::<ConstantValue>())
-                .map_or_else(|| Value::varchar(""), |data| data.0.clone());
+            let name = if state.alias.is_empty() {
+                state
+                    .bind_data
+                    .as_ref()
+                    .and_then(|data| data.as_any().downcast_ref::<ConstantValue>())
+                    .map_or_else(|| Value::varchar(""), |data| data.0.clone())
+            } else {
+                Value::varchar(&state.alias)
+            };
             constant(result, &name)
         },
     )

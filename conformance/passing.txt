@@ -807,8 +807,10 @@ test/sql/binder/separate_schema_tables.test
 test/sql/binder/similar_to.test
 test/sql/binder/string_literal_binding.test
 test/sql/binder/table_alias_single_quotes.test
+test/sql/binder/test_alias.test
 test/sql/binder/test_case_insensitive_binding.test
 test/sql/binder/test_function_chaining_alias.test
+test/sql/binder/test_having_alias.test
 test/sql/binder/test_implicit_struct_pack.test
 test/sql/binder/test_in_with_collate.test
 test/sql/binder/test_select_clause_alias.test

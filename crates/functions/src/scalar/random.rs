@@ -25,6 +25,15 @@ impl FunctionData for ClientBindData {
     fn as_any(&self) -> &dyn Any {
         self
     }
+
+    /// The generators of one connection have equal bind data (DuckDB's random functions
+    /// carry none).
+    fn equals(&self, other: &dyn FunctionData) -> bool {
+        other
+            .as_any()
+            .downcast_ref::<Self>()
+            .is_some_and(|other| Arc::ptr_eq(&self.client, &other.client))
+    }
 }
 
 fn client(state: &FunctionState) -> Result<&Arc<FunctionClient>> {

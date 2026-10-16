@@ -32,7 +32,10 @@ struct ExpressionState {
 
 impl ExpressionState {
     fn for_expression(expression: &Expression) -> Self {
-        let mut function = FunctionState::default();
+        let mut function = FunctionState {
+            alias: expression.alias.clone(),
+            ..FunctionState::default()
+        };
         if let ExpressionKind::Function(bound) = &expression.kind
             && let Some(lambda) = &bound.lambda
         {

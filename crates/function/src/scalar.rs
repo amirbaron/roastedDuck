@@ -43,6 +43,15 @@ pub enum Stability {
 /// Data computed when a function is bound, shared by every execution of that expression.
 pub trait FunctionData: Any + Send + Sync + fmt::Debug {
     fn as_any(&self) -> &dyn Any;
+
+    /// Whether this bind data is equal to `other` (DuckDB's `FunctionData::Equals`); by
+    /// default only the same data is.
+    fn equals(&self, other: &dyn FunctionData) -> bool {
+        std::ptr::addr_eq(
+            std::ptr::from_ref(self.as_any()),
+            std::ptr::from_ref(other.as_any()),
+        )
+    }
 }
 
 /// Evaluates the bound lambda of a lambda function call (DuckDB's `ExpressionExecutor` over
@@ -62,6 +71,8 @@ pub trait LambdaExecutor: Send + fmt::Debug {
 #[derive(Debug, Default)]
 pub struct FunctionState {
     pub bind_data: Option<Arc<dyn FunctionData>>,
+    /// The alias of the call (DuckDB's `state.expr.GetAlias()`), empty if none.
+    pub alias: String,
     /// Thread-local state created on first use by the kernel.
     pub local: Option<Box<dyn Any + Send>>,
     /// The lambda of a lambda function call (`list_transform(l, x -> ...)`).
