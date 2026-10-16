@@ -467,13 +467,14 @@ impl Connection {
 
     /// Parses `sql` into its statements (DuckDB's `ClientContext::ExtractStatements`).
     pub fn extract_statements(&self, sql: &str) -> Result<Vec<SqlStatement>> {
-        rustdb_parser::parse(sql).map_err(|error| error.with_query_context(sql))
+        rustdb_parser::parse_with_options(sql, &self.settings.parser_options())
+            .map_err(|error| error.with_query_context(sql))
     }
 
     /// Runs every statement in `sql` and returns the result of the last one (DuckDB's
     /// `ClientContext::Query`).
     pub fn query(&mut self, sql: &str) -> Result<MaterializedResult> {
-        let statements = rustdb_parser::parse(sql).map_err(|error| error.with_query_context(sql))?;
+        let statements = self.extract_statements(sql)?;
         self.execute_statements(statements)
     }
 
@@ -1149,6 +1150,19 @@ impl Connection {
     ) -> Result<MaterializedResult> {
         let nothing =
             || MaterializedResult::new(vec!["Success".to_owned()], vec![LogicalType::BOOLEAN], Vec::new());
+        // `PhysicalSet` / `PhysicalReset`: `DBConfig::CheckLock`, then the checks of options
+        // that cannot change while the database runs.
+        match &plan.kind {
+            LogicalKind::Set { name, value, scope } if *scope != SetScope::Variable => {
+                self.settings.check_lock(name)?;
+                Settings::check_running_set(name, value)?;
+            }
+            LogicalKind::Reset { name, scope } if *scope != SetScope::Variable => {
+                self.settings.check_lock(name)?;
+                Settings::check_running_reset(name)?;
+            }
+            _ => {}
+        }
         match &plan.kind {
             LogicalKind::Transaction { info } => {
                 match info.transaction_type {
