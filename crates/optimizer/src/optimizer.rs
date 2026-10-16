@@ -317,6 +317,11 @@ impl Optimizer {
             crate::join_elimination::eliminate_joins(&mut plan);
             Ok(plan)
         })?;
+        // A lateral UNNEST runs on the outer rows instead of through a delim join.
+        let plan = self.run(OptimizerType::UnnestRewriter, plan, |_, mut plan| {
+            crate::unnest_rewriter::rewrite_unnests(&mut plan)?;
+            Ok(plan)
+        })?;
         let plan = self.run(OptimizerType::UnusedColumns, plan, |optimizer, mut plan| {
             remove_unused_columns(optimizer, &mut plan)?;
             Ok(plan)
@@ -342,6 +347,11 @@ impl Optimizer {
         // With the column lifetimes known, the cheaper side of each join is built.
         let plan = self.run(OptimizerType::BuildSideProbeSide, plan, |optimizer, mut plan| {
             optimize_build_probe_side(&mut plan, optimizer.config.prefer_range_joins)?;
+            Ok(plan)
+        })?;
+        // Identical subplans are computed once, as a CTE.
+        let plan = self.run(OptimizerType::CommonSubplan, plan, |optimizer, mut plan| {
+            crate::common_subplan::optimize_common_subplans(optimizer, &mut plan)?;
             Ok(plan)
         })?;
         // LIMIT below projections.

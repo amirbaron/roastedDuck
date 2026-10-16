@@ -31,7 +31,7 @@ use rustdb_types::{DataChunk, LogicalType, PhysicalType, Value};
 use crate::constraints::table_constraints;
 mod asof_join;
 mod comparison_join;
-mod explain;
+pub(crate) mod explain;
 mod window;
 
 pub use comparison_join::JoinPlanSettings;
@@ -58,6 +58,7 @@ use crate::operators::{
 use crate::operators::{
     PhysicalExpressionScan, PhysicalPivot, PhysicalReservoirSample, PhysicalStreamingSample, PhysicalUnnest,
 };
+use rustdb_optimizer::rule::{RuleOutcome, apply_ordered_aggregate};
 
 /// Converts a logical plan whose column references are resolved into a physical plan.
 /// Plans that read or change tables or the catalog need [`create_physical_plan_with`].
@@ -92,6 +93,9 @@ pub struct PlanContext {
     pub explain_output: ExplainOutput,
     /// The statement's text, shown by `EXPLAIN ANALYZE`.
     pub query: String,
+    /// The client for the rewrites DuckDB's planner makes when the optimizer is enabled
+    /// (the ordered aggregates of DISTINCT ON); `None` with the optimizer disabled.
+    pub optimizer_client: Option<Arc<rustdb_planner::ClientContext>>,
 }
 
 impl PlanContext {
@@ -690,6 +694,89 @@ impl PlanGenerator {
         projection
     }
 
+    /// `DISTINCT` / `DISTINCT ON` (DuckDB's `CreatePlan(LogicalDistinct&)`): a hash
+    /// aggregate grouped by the targets, with a `first` (ordered, for DISTINCT ON) of every
+    /// other column, which the optimizer rewrites into `arg_min_null` of a sort key.
+    fn plan_distinct(
+        &mut self,
+        mut groups: Vec<Expression>,
+        order_by: Option<&BoundOrderModifier>,
+        child: PhysicalRef,
+    ) -> Result<PhysicalRef> {
+        let types = child.types().to_vec();
+        let group_count = groups.len();
+        let mut group_by_references = HashMap::new();
+        let mut aggregate_types = Vec::with_capacity(types.len());
+        for (index, target) in groups.iter().enumerate() {
+            if let ExpressionKind::Reference(reference) = &target.kind {
+                group_by_references.insert(reference.index as usize, index);
+            }
+            aggregate_types.push(target.return_type.clone());
+        }
+        let client = self
+            .context
+            .as_ref()
+            .and_then(|context| context.optimizer_client.clone());
+        let mut requires_projection = types.len() != group_count;
+        let mut aggregates = Vec::new();
+        let mut projections = Vec::with_capacity(types.len());
+        for (index, ty) in types.iter().enumerate() {
+            if let Some(&group) = group_by_references.get(&index) {
+                projections.push(Expression::reference("", ty.clone(), group as u64));
+                requires_projection |= group != index;
+                continue;
+            }
+            let mut first = Expression::new(
+                ExpressionType::BoundAggregate,
+                ty.clone(),
+                ExpressionKind::Aggregate(Box::new(BoundAggregateExpression {
+                    function: first_function::<false, false>(ty),
+                    children: vec![Expression::reference("", ty.clone(), index as u64)],
+                    bind_info: None,
+                    aggr_type: AggregateType::NonDistinct,
+                    filter: None,
+                    order_bys: order_by.cloned(),
+                })),
+            );
+            if let Some(client) = &client {
+                // DuckDB's `OrderedAggregateOptimizer::Apply`.
+                if let RuleOutcome::Replaced(rewritten) =
+                    apply_ordered_aggregate(client, &mut first, &groups, None)?
+                {
+                    first = rewritten;
+                }
+            }
+            let ExpressionKind::Aggregate(first) = first.kind else {
+                return Err(Error::internal("DISTINCT ON aggregate is not an aggregate"));
+            };
+            projections.push(Expression::reference(
+                "",
+                ty.clone(),
+                (group_count + aggregates.len()) as u64,
+            ));
+            aggregate_types.push(ty.clone());
+            aggregates.push(bind_sorted_aggregate(*first)?);
+            requires_projection = true;
+        }
+        let child = self.extract_aggregate_expressions(child, &mut aggregates, &mut groups);
+        let estimate = self.recorded_estimate(&child);
+        let group_by: PhysicalRef = Arc::new(PhysicalHashAggregate::new(
+            aggregate_types,
+            groups,
+            aggregates,
+            Vec::new(),
+            Vec::new(),
+            child,
+        )?);
+        self.record_estimate(&group_by, estimate);
+        if !requires_projection {
+            return Ok(group_by);
+        }
+        let projection: PhysicalRef = Arc::new(PhysicalProjection::new(types, projections, group_by));
+        self.record_estimate(&projection, estimate);
+        Ok(projection)
+    }
+
     /// Plans `op` and records its estimated cardinality for the planned operators.
     fn plan(&mut self, op: LogicalOperator) -> Result<PhysicalRef> {
         let estimate = op.estimated_cardinality.unwrap_or(0);
@@ -1232,7 +1319,7 @@ impl PlanGenerator {
                 distinct_targets,
                 order_by,
                 ..
-            } => plan_distinct(distinct_targets, order_by.as_ref(), next_child("distinct")?)?,
+            } => self.plan_distinct(distinct_targets, order_by.as_ref(), next_child("distinct")?)?,
             _ => return Err(not_implemented(operator_type)),
         };
         Ok(plan)
@@ -1310,61 +1397,6 @@ fn except_or_intersect(
 /// `DISTINCT` / `DISTINCT ON` (DuckDB's `CreatePlan(LogicalDistinct&)`): one group per
 /// distinct target; every other column becomes a `first` aggregate (ordered by the
 /// `ORDER BY` of a `DISTINCT ON`), and a projection restores the column order.
-fn plan_distinct(
-    groups: Vec<Expression>,
-    order_by: Option<&BoundOrderModifier>,
-    child: PhysicalRef,
-) -> Result<PhysicalRef> {
-    let types = child.types().to_vec();
-    let group_count = groups.len();
-    let mut group_by_references = HashMap::new();
-    let mut aggregate_types = Vec::with_capacity(types.len());
-    for (index, target) in groups.iter().enumerate() {
-        if let ExpressionKind::Reference(reference) = &target.kind {
-            group_by_references.insert(reference.index as usize, index);
-        }
-        aggregate_types.push(target.return_type.clone());
-    }
-    let mut requires_projection = types.len() != group_count;
-    let mut aggregates = Vec::new();
-    let mut projections = Vec::with_capacity(types.len());
-    for (index, ty) in types.iter().enumerate() {
-        if let Some(&group) = group_by_references.get(&index) {
-            projections.push(Expression::reference("", ty.clone(), group as u64));
-            requires_projection |= group != index;
-            continue;
-        }
-        let first = BoundAggregateExpression {
-            function: first_function::<false, false>(ty),
-            children: vec![Expression::reference("", ty.clone(), index as u64)],
-            bind_info: None,
-            aggr_type: AggregateType::NonDistinct,
-            filter: None,
-            order_bys: order_by.cloned(),
-        };
-        projections.push(Expression::reference(
-            "",
-            ty.clone(),
-            (group_count + aggregates.len()) as u64,
-        ));
-        aggregate_types.push(ty.clone());
-        aggregates.push(bind_sorted_aggregate(first)?);
-        requires_projection = true;
-    }
-    let group_by: PhysicalRef = Arc::new(PhysicalHashAggregate::new(
-        aggregate_types,
-        groups,
-        aggregates,
-        Vec::new(),
-        Vec::new(),
-        child,
-    )?);
-    if !requires_projection {
-        return Ok(group_by);
-    }
-    Ok(Arc::new(PhysicalProjection::new(types, projections, group_by)))
-}
-
 fn two_children(children: Vec<LogicalOperator>, what: &str) -> Result<[LogicalOperator; 2]> {
     <[LogicalOperator; 2]>::try_from(children)
         .map_err(|_| Error::internal(format!("{what} must have two inputs")))

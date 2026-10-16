@@ -77,7 +77,7 @@ fn utility_name(op: &LogicalOperator) -> Option<&'static str> {
 }
 
 /// The address identifying a physical operator in the estimates map.
-pub(super) fn operator_key(op: &dyn PhysicalOperator) -> usize {
+pub(crate) fn operator_key(op: &dyn PhysicalOperator) -> usize {
     std::ptr::from_ref(op).cast::<()>().addr()
 }
 
@@ -86,8 +86,8 @@ pub(super) fn operator_key(op: &dyn PhysicalOperator) -> usize {
 /// duplicate-eliminated input, the join itself and the DISTINCT computing the
 /// duplicate-eliminated values. Here the delim sink is a dependency of the join's cached
 /// input instead of a node above the join.
-#[derive(Debug)]
-pub(super) struct DelimExplain {
+#[derive(Clone, Debug)]
+pub(crate) struct DelimExplain {
     pub name: &'static str,
     pub delim_index: u64,
     pub input: PhysicalRef,
@@ -247,6 +247,7 @@ impl PlanGenerator {
                 explain_format,
                 query,
                 plan,
+                self.delim_explain.clone(),
             )));
         }
         let physical_plan = render_physical_plan(

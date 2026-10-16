@@ -2,6 +2,7 @@
 //! runs the plan, discarding its rows, then returns the plan annotated with the rows
 //! and time of every operator.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -12,6 +13,7 @@ use rustdb_planner::operator::renderer_kind;
 use rustdb_types::{DataChunk, LogicalType, Value};
 
 use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
+use crate::plan_generator::explain::{DelimExplain, operator_key};
 use crate::{ExecutionContext, QueryProfiler, Sink, SinkFinalize, SinkResult, Source, SourceResult};
 
 /// The root of an `EXPLAIN ANALYZE` plan (DuckDB's `PhysicalExplainAnalyze`).
@@ -22,15 +24,24 @@ pub struct PhysicalExplainAnalyze {
     /// The statement's text, shown above the profile.
     query: String,
     children: [PhysicalRef; 1],
+    /// How the delim joins of the plan are shown, by operator.
+    delim_joins: HashMap<usize, DelimExplain>,
 }
 
 impl PhysicalExplainAnalyze {
-    pub fn new(types: Vec<LogicalType>, format: ExplainFormat, query: String, child: PhysicalRef) -> Self {
+    pub(crate) fn new(
+        types: Vec<LogicalType>,
+        format: ExplainFormat,
+        query: String,
+        child: PhysicalRef,
+        delim_joins: HashMap<usize, DelimExplain>,
+    ) -> Self {
         Self {
             types,
             format,
             query,
             children: [child],
+            delim_joins,
         }
     }
 
@@ -40,7 +51,11 @@ impl PhysicalExplainAnalyze {
         if self.format == ExplainFormat::Json {
             return self.render_json(profiler);
         }
-        let tree = RenderTree::create(&ProfileNode::Query { root: self, profiler });
+        let tree = RenderTree::create(&ProfileNode::Query {
+            root: self,
+            profiler,
+            delim_joins: &self.delim_joins,
+        });
         let plan = render(renderer_kind(self.format), tree);
         if !matches!(self.format, ExplainFormat::Default | ExplainFormat::Text) {
             return plan;
@@ -205,45 +220,112 @@ enum ProfileNode<'a> {
     Query {
         root: &'a PhysicalExplainAnalyze,
         profiler: &'a QueryProfiler,
+        delim_joins: &'a HashMap<usize, DelimExplain>,
     },
+    /// An operator; `plain` shows a delim join's join as itself.
     Operator {
         op: &'a dyn PhysicalOperator,
         profiler: &'a QueryProfiler,
+        delim_joins: &'a HashMap<usize, DelimExplain>,
+        plain: bool,
     },
+    /// The DISTINCT of a delim join.
+    DelimDistinct { delim: &'a DelimExplain },
+}
+
+impl<'a> ProfileNode<'a> {
+    const fn operator(
+        op: &'a dyn PhysicalOperator,
+        profiler: &'a QueryProfiler,
+        delim_joins: &'a HashMap<usize, DelimExplain>,
+    ) -> Self {
+        Self::Operator {
+            op,
+            profiler,
+            delim_joins,
+            plain: false,
+        }
+    }
+}
+
+/// The rows and time lines of a profiled node.
+fn add_profile(params: &mut RenderParams, rows: u64, seconds: f64) {
+    params.insert(RenderTreeNode::CARDINALITY.to_owned(), rows.to_string());
+    params.insert(RenderTreeNode::TIMING.to_owned(), format!("{seconds:.2}s"));
 }
 
 impl RenderSource for ProfileNode<'_> {
     fn render_node(&self) -> RenderTreeNode {
         match *self {
             ProfileNode::Query { .. } => RenderTreeNode::new("QUERY".to_owned(), RenderParams::new()),
-            ProfileNode::Operator { op, profiler } => {
+            ProfileNode::Operator {
+                op,
+                profiler,
+                delim_joins,
+                plain,
+            } => {
+                if !plain && let Some(delim) = delim_joins.get(&operator_key(op)) {
+                    // DuckDB's delim join: a sink producing no rows itself.
+                    let mut params = op.params_to_string(0);
+                    params.insert("Delim Index".to_owned(), delim.delim_index.to_string());
+                    add_profile(&mut params, 0, 0.0);
+                    return RenderTreeNode::new(delim.name.to_owned(), params);
+                }
                 let mut profile = profiler.profile(op);
                 if op.name() == "EXPLAIN_ANALYZE" {
                     // Its own result is produced after the profile is rendered.
                     profile.rows = 0;
                 }
                 let mut params = op.params_to_string(0);
-                params.insert(RenderTreeNode::CARDINALITY.to_owned(), profile.rows.to_string());
-                params.insert(
-                    RenderTreeNode::TIMING.to_owned(),
-                    format!("{:.2}s", profile.time.as_secs_f64()),
-                );
+                add_profile(&mut params, profile.rows, profile.time.as_secs_f64());
                 RenderTreeNode::new(op.profiler_name(), params)
+            }
+            ProfileNode::DelimDistinct { delim } => {
+                let mut params = RenderParams::new();
+                let groups: Vec<String> = delim
+                    .distinct_groups
+                    .iter()
+                    .map(|index| format!("#{index}"))
+                    .collect();
+                params.insert("Groups".to_owned(), groups.join("\n"));
+                add_profile(&mut params, 0, 0.0);
+                RenderTreeNode::new("HASH_GROUP_BY".to_owned(), params)
             }
         }
     }
 
     fn render_children(&self) -> Vec<Self> {
         match *self {
-            ProfileNode::Query { root, profiler } => vec![ProfileNode::Operator { op: root, profiler }],
-            ProfileNode::Operator { op, profiler } => op
-                .children()
-                .iter()
-                .map(|child| ProfileNode::Operator {
-                    op: child.as_ref(),
-                    profiler,
-                })
-                .collect(),
+            ProfileNode::Query {
+                root,
+                profiler,
+                delim_joins,
+            } => vec![ProfileNode::operator(root, profiler, delim_joins)],
+            ProfileNode::Operator {
+                op,
+                profiler,
+                delim_joins,
+                plain,
+            } => {
+                if !plain && let Some(delim) = delim_joins.get(&operator_key(op)) {
+                    // DuckDB's `PhysicalDelimJoin::GetChildren`.
+                    return vec![
+                        ProfileNode::operator(delim.input.as_ref(), profiler, delim_joins),
+                        ProfileNode::Operator {
+                            op,
+                            profiler,
+                            delim_joins,
+                            plain: true,
+                        },
+                        ProfileNode::DelimDistinct { delim },
+                    ];
+                }
+                op.children()
+                    .iter()
+                    .map(|child| ProfileNode::operator(child.as_ref(), profiler, delim_joins))
+                    .collect()
+            }
+            ProfileNode::DelimDistinct { .. } => Vec::new(),
         }
     }
 }

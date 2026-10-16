@@ -11,7 +11,7 @@ use rustdb_function::aggregate::{DistinctDependence, OrderDependence};
 use rustdb_planner::expression::{AggregateType, BoundOrderByNode};
 use rustdb_planner::function_binder::FunctionBinder;
 use rustdb_planner::operator::GroupingSet;
-use rustdb_planner::{Expression, ExpressionKind};
+use rustdb_planner::{ClientContext, Expression, ExpressionKind};
 use rustdb_types::Value;
 
 use super::RuleOutcome;
@@ -67,6 +67,24 @@ pub fn ordered_aggregate_optimizer(
     expression: &mut Expression,
     _: bool,
 ) -> Result<RuleOutcome> {
+    let (groups, grouping_sets) = context
+        .aggregate
+        .as_ref()
+        .map_or((&[][..], None), |(groups, sets)| {
+            (groups.as_slice(), Some(sets.as_slice()))
+        });
+    apply_ordered_aggregate(context.client, expression, groups, grouping_sets)
+}
+
+/// DuckDB's `OrderedAggregateOptimizer::Apply`: drops the ORDER BY an aggregate does not
+/// need, and turns `first`/`last`/`any_value` with one into `arg_min_null`/`arg_max_null`/
+/// `arg_min` of a `create_sort_key`. Also used when planning DISTINCT ON.
+pub fn apply_ordered_aggregate(
+    client: &ClientContext,
+    expression: &mut Expression,
+    groups: &[Expression],
+    grouping_sets: Option<&[GroupingSet]>,
+) -> Result<RuleOutcome> {
     let ExpressionKind::Aggregate(aggregate) = &mut expression.kind else {
         return Ok(RuleOutcome::Unchanged);
     };
@@ -77,12 +95,6 @@ pub fn ordered_aggregate_optimizer(
         aggregate.order_bys = None;
         return Ok(RuleOutcome::Changed);
     }
-    let (groups, grouping_sets) = context
-        .aggregate
-        .as_ref()
-        .map_or((&[][..], None), |(groups, sets)| {
-            (groups.as_slice(), Some(sets.as_slice()))
-        });
     if simplify_orders(&mut order_bys.orders, groups, grouping_sets) {
         aggregate.order_bys = None;
         return Ok(RuleOutcome::Changed);
@@ -100,11 +112,10 @@ pub fn ordered_aggregate_optimizer(
         sort_children.push(Expression::constant(Value::varchar(modifier)));
     }
     aggregate.order_bys = None;
-    let sort_key = bind_scalar_function(context.client, "create_sort_key", sort_children, false)?;
+    let sort_key = bind_scalar_function(client, "create_sort_key", sort_children, false)?;
     let mut children = std::mem::take(&mut aggregate.children);
     children.push(sort_key);
-    let entry = context
-        .client
+    let entry = client
         .get_entry("system", "main", CatalogType::AggregateFunction, arg_name, false)?
         .ok_or_else(|| Error::internal(format!("aggregate function {arg_name} not found")))?;
     let EntryKind::AggregateFunction(functions) = &entry.entry.kind else {
@@ -112,7 +123,7 @@ pub fn ordered_aggregate_optimizer(
             "{arg_name} is not an aggregate function"
         )));
     };
-    let binder = FunctionBinder::new(context.client);
+    let binder = FunctionBinder::new(client);
     let types = FunctionBinder::argument_types(&children);
     let function = binder.bind_aggregate_overload(functions, &types)??;
     let aggr_type = if aggregate.is_distinct() {

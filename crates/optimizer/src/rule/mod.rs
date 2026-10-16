@@ -11,6 +11,7 @@
 )]
 
 mod aggregate;
+pub use aggregate::apply_ordered_aggregate;
 mod arithmetic;
 mod case;
 mod comparison;

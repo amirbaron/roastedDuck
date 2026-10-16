@@ -1185,7 +1185,9 @@ impl Connection {
         }
         let transaction = self.transactions.current();
         let client = self.client_context(transaction);
-        plan = Optimizer::new(client, self.settings.optimizer_config()).optimize(plan)?;
+        let optimizer_config = self.settings.optimizer_config();
+        let optimizer_client = optimizer_config.enabled.then(|| Arc::clone(&client));
+        plan = Optimizer::new(client, optimizer_config).optimize(plan)?;
         ColumnBindingResolver::resolve(&mut plan)?;
         seed_samples(&mut plan, &self.function_client);
         let instance = self.database.instance();
@@ -1195,6 +1197,7 @@ impl Connection {
             join_settings: self.settings.join_plan_settings(),
             explain_output: self.settings.explain_output(),
             query: self.function_client.query(),
+            optimizer_client,
         };
         let physical = create_physical_plan_with(plan, &context)?;
         // EXPLAIN ANALYZE profiles the run.

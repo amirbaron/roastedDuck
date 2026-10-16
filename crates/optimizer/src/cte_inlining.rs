@@ -152,7 +152,7 @@ fn contains_limit(op: &LogicalOperator) -> bool {
 
 /// Whether the definition ends in an aggregate, DISTINCT or window along its
 /// single-child path (DuckDB's `EndsInAggregateOrDistinct`).
-fn ends_in_aggregate_or_distinct(op: &LogicalOperator) -> bool {
+pub(crate) fn ends_in_aggregate_or_distinct(op: &LogicalOperator) -> bool {
     if matches!(
         op.operator_type(),
         LogicalOperatorType::LogicalAggregateAndGroupBy

@@ -262,6 +262,11 @@ impl StatisticsPropagator<'_> {
                     update_filter_statistics_pair(stats, &mut copy, comparison);
                     return;
                 }
+                if !self.statistics_map.contains_key(&left.binding)
+                    || !self.statistics_map.contains_key(&right.binding)
+                {
+                    return;
+                }
                 let (Some(mut lstats), Some(mut rstats)) = (
                     self.statistics_map.remove(&left.binding),
                     self.statistics_map.remove(&right.binding),

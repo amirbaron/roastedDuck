@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 
 use rustdb_common::{Error, Result};
+use rustdb_function::cast::ValueCast;
 use rustdb_planner::{BoundLimitNode, Expression};
 use rustdb_types::{DataChunk, LogicalType, SelectionVector, Value};
 
@@ -26,9 +27,13 @@ fn delimiter(input: &DataChunk, expression: &Expression) -> Result<Value> {
 /// A LIMIT or OFFSET value: the BIGINT result as an unsigned count (`GetValue<idx_t>`),
 /// `null` when NULL.
 fn count_value(input: &DataChunk, expression: &Expression, null: u64) -> Result<u64> {
-    let value = delimiter(input, expression)?;
+    let mut value = delimiter(input, expression)?;
     if value.is_null() {
         return Ok(null);
+    }
+    if value.as_i128().is_none() {
+        // `GetValue<idx_t>` casts other types (a DOUBLE offset rounds).
+        value = value.default_cast_as(&LogicalType::BIGINT)?;
     }
     let signed = value.as_i128().unwrap_or_default();
     let count = u64::try_from(signed).map_err(|_| {

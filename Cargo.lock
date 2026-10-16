@@ -525,6 +525,7 @@ dependencies = [
  "rustdb-common",
  "rustdb-function",
  "rustdb-functions",
+ "rustdb-optimizer",
  "rustdb-planner",
  "rustdb-row",
  "rustdb-storage",

@@ -20,6 +20,7 @@ pub mod build_probe_side;
 pub mod column_binding_replacer;
 pub mod column_lifetime_analyzer;
 pub mod common_aggregate;
+pub mod common_subplan;
 pub mod cse_optimizer;
 pub mod cte_filter_pusher;
 pub mod cte_inlining;
@@ -48,6 +49,7 @@ pub mod statistics_propagator;
 pub mod sum_rewriter;
 pub mod topn;
 pub mod topn_window_elimination;
+pub mod unnest_rewriter;
 pub mod window_self_join;
 
 pub use optimizer::{Optimizer, OptimizerConfig, OptimizerType};
