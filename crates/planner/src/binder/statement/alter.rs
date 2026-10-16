@@ -29,6 +29,8 @@ pub fn bind_alter(scope: &mut BindScope<'_>, info: &mut AlterInfo) -> Result<Bou
     let ty = match &info.kind {
         AlterInfoKind::AlterTable(_) => CatalogType::Table,
         AlterInfoKind::AlterView(_) => CatalogType::View,
+        AlterInfoKind::ChangeOwnership(change) => CatalogType::from_ast(change.entry_catalog_type)
+            .ok_or_else(|| Error::internal("ALTER OWNED BY of an unexpected entry"))?,
         other => {
             return Err(Error::not_implemented(format!(
                 "ALTER {}",
@@ -61,6 +63,10 @@ pub fn bind_alter(scope: &mut BindScope<'_>, info: &mut AlterInfo) -> Result<Bou
                     }
                     AlterAction::Rename(rename.new_view_name.clone())
                 }
+                AlterInfoKind::ChangeOwnership(change) => AlterAction::ChangeOwnership {
+                    owner_schema: change.owner_schema.clone(),
+                    owner_name: change.owner_name.clone(),
+                },
                 AlterInfoKind::AlterTable(alter) => {
                     let EntryKind::Table(table) = &found.entry.kind else {
                         return Err(Error::catalog("Can only modify view with ALTER VIEW statement"));

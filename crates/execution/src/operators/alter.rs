@@ -44,13 +44,19 @@ impl AlterEntryAction {
     /// `DependencyManager::AlterObject`: a table with indexes can only get new columns
     /// and defaults.
     fn check_dependents(&self, transaction: &Transaction, entry: &CatalogEntry) -> Result<()> {
-        if self.dependents_allowed || !matches!(entry.kind, EntryKind::Table(_)) {
+        if self.dependents_allowed {
             return Ok(());
         }
-        if self
-            .catalog
-            .table_indexes(transaction, &self.schema, entry.name())
-            .is_empty()
+        let has_indexes = matches!(entry.kind, EntryKind::Table(_))
+            && !self
+                .catalog
+                .table_indexes(transaction, &self.schema, entry.name())
+                .is_empty();
+        if !has_indexes
+            && self
+                .catalog
+                .dependents(transaction, &self.schema, entry)
+                .is_empty()
         {
             return Ok(());
         }
@@ -73,8 +79,14 @@ impl AlterEntryAction {
         hook: StorageHook,
     ) -> Result<()> {
         definition.storage = storage;
+        let dependencies = rustdb_catalog::dependencies::altered_table_dependencies(
+            &definition,
+            &entry.dependencies,
+            "main",
+        );
         let mut new_entry = CatalogEntry::new(entry.name(), EntryKind::Table(definition));
-        new_entry.temporary = entry.temporary;
+        new_entry.inherit_links(entry);
+        new_entry.dependencies = dependencies;
         self.catalog.alter_entry(
             transaction,
             &self.schema,
@@ -122,6 +134,16 @@ impl DdlAction for AlterEntryAction {
         };
         match &self.action {
             AlterAction::Nothing => Ok(()),
+            AlterAction::ChangeOwnership {
+                owner_schema,
+                owner_name,
+            } => self.catalog.change_ownership(
+                transaction,
+                &self.schema,
+                entry,
+                (owner_schema, owner_name),
+                self.info.as_deref().cloned(),
+            ),
             AlterAction::Rename(new_name) => {
                 self.check_dependents(transaction, entry)?;
                 let kind = match &entry.kind {
@@ -130,7 +152,7 @@ impl DdlAction for AlterEntryAction {
                     _ => return Err(Error::internal("rename of an unexpected entry")),
                 };
                 let mut renamed = CatalogEntry::new(new_name.clone(), kind);
-                renamed.temporary = entry.temporary;
+                renamed.inherit_links(entry);
                 let hook = match &storage {
                     Some(storage) => {
                         StorageHook::RenamedTable(Arc::clone(storage.info()), entry.name().to_owned())

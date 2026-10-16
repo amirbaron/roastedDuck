@@ -121,6 +121,9 @@ impl TypeBinder<'_> {
         }
         let qualified_in_main =
             info.schema.is_empty() || info.schema.eq_ignore_ascii_case(rustdb_catalog::DEFAULT_SCHEMA);
+        if qualified_in_main && info.name.eq_ignore_ascii_case("enum") {
+            return bind_enum_parameters(info);
+        }
         if qualified_in_main {
             let bound = info.default_bind()?;
             if bound.id() != LogicalTypeId::Unbound {
@@ -140,6 +143,39 @@ impl TypeBinder<'_> {
             .ok_or_else(|| Error::internal("type lookup returned nothing"))?;
         user_type(info, &found.entry)
     }
+}
+
+/// `ENUM(...)` through the binder (`BindEnumType` with the modifiers named by their
+/// aliases, as `BindExpression(TypeExpression &)` passes them).
+fn bind_enum_parameters(info: &UnboundTypeInfo) -> Result<LogicalType> {
+    use rustdb_types::TypeParameterValue;
+    if info.parameters.is_empty() {
+        return Err(Error::binder("ENUM type requires at least one argument"));
+    }
+    let mut values = Vec::with_capacity(info.parameters.len());
+    for (index, parameter) in info.parameters.iter().enumerate() {
+        if !parameter.name.is_empty() {
+            return Err(Error::binder(format!(
+                "ENUM type arguments cannot have names (argument {} has name \"{}\")",
+                index + 1,
+                parameter.name
+            )));
+        }
+        let TypeParameterValue::Constant(value) = &parameter.value else {
+            return Err(Error::binder("ENUM type requires a set of VARCHAR arguments"));
+        };
+        if value.logical_type().id() != LogicalTypeId::Varchar {
+            return Err(Error::binder("ENUM type requires a set of VARCHAR arguments"));
+        }
+        let Some(text) = value.as_str() else {
+            return Err(Error::binder(format!(
+                "ENUM type arguments cannot be NULL (argument {} is NULL)",
+                index + 1
+            )));
+        };
+        values.push(text.to_owned());
+    }
+    Ok(LogicalType::enum_type(values))
 }
 
 /// The type of a user type entry; user types take no modifiers.

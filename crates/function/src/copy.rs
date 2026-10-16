@@ -1,0 +1,127 @@
+//! Copy functions (DuckDB's `CopyFunction`): the file formats of `COPY ... TO` and
+//! `COPY ... FROM` (and `EXPORT DATABASE`). A format provides the options it accepts,
+//! a writer (bind, global state per file, sink, finalize) and a reader (a table function
+//! bound with the target table's columns).
+
+use std::any::Any;
+use std::fmt;
+use std::sync::Arc;
+
+use rustdb_common::{CaseInsensitiveMap, Result};
+use rustdb_types::{DataChunk, LogicalType, Value};
+
+use crate::{FunctionData, TableFunction};
+
+/// Whether a copy option applies to reading, writing or both (DuckDB's
+/// `CopyOptionMode`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CopyOptionMode {
+    WriteOnly,
+    ReadOnly,
+    ReadWrite,
+}
+
+/// An option a copy function accepts (DuckDB's `CopyOption`).
+#[derive(Clone, Debug)]
+pub struct CopyOption {
+    pub ty: LogicalType,
+    pub mode: CopyOptionMode,
+}
+
+impl CopyOption {
+    pub fn new(ty: LogicalType, mode: CopyOptionMode) -> Self {
+        Self { ty, mode }
+    }
+}
+
+/// What `copy_to_bind` receives (DuckDB's `CopyFunctionBindInput`).
+#[derive(Debug)]
+pub struct CopyFunctionBindInput<'a> {
+    /// The options of the statement that are not generic COPY options.
+    pub options: &'a CaseInsensitiveMap<Vec<Value>>,
+    pub file_path: &'a str,
+    pub format: &'a str,
+    /// The extension of written files; the function may extend it (e.g. `.gz`).
+    pub file_extension: String,
+    /// The binder's client context (the planner's `ClientContext`).
+    pub binder: Option<&'a dyn Any>,
+}
+
+/// What `copy_from_bind` receives (DuckDB's `CopyFromFunctionBindInput`).
+#[derive(Debug)]
+pub struct CopyFromBindInput<'a> {
+    pub options: &'a CaseInsensitiveMap<Vec<Value>>,
+    pub file_path: &'a str,
+    pub format: &'a str,
+    /// The binder's client context (the planner's `ClientContext`).
+    pub binder: Option<&'a dyn Any>,
+}
+
+/// The state of one written file (DuckDB's `GlobalFunctionData`); the function keeps
+/// its writer behind interior mutability.
+pub type CopyGlobalState = Box<dyn Any + Send + Sync>;
+
+/// `copy_to_bind`: the bind data of a write of `names` / `types`.
+pub type CopyToBind = Arc<
+    dyn Fn(&mut CopyFunctionBindInput<'_>, &[String], &[LogicalType]) -> Result<Arc<dyn FunctionData>>
+        + Send
+        + Sync,
+>;
+/// `copy_to_initialize_global`: opens the file at the path.
+pub type CopyToInitializeGlobal =
+    Arc<dyn Fn(&dyn FunctionData, &str) -> Result<CopyGlobalState> + Send + Sync>;
+/// `copy_to_sink`: writes a chunk.
+pub type CopyToSink =
+    Arc<dyn Fn(&dyn FunctionData, &CopyGlobalState, &DataChunk) -> Result<()> + Send + Sync>;
+/// `copy_to_finalize`: completes and closes the file.
+pub type CopyToFinalize = Arc<dyn Fn(&dyn FunctionData, &CopyGlobalState) -> Result<()> + Send + Sync>;
+/// The bytes written to a file so far (for `FILE_SIZE_BYTES` rotation).
+pub type CopyToFileSize = Arc<dyn Fn(&CopyGlobalState) -> u64 + Send + Sync>;
+/// `copy_from_bind`: the bind data of the reader for the target columns.
+pub type CopyFromBind = Arc<
+    dyn Fn(&CopyFromBindInput<'_>, &[String], &[LogicalType]) -> Result<Arc<dyn FunctionData>> + Send + Sync,
+>;
+
+/// A file format of COPY (DuckDB's `CopyFunction`).
+#[derive(Clone)]
+pub struct CopyFunction {
+    pub name: Arc<str>,
+    /// The default file extension.
+    pub extension: String,
+    /// The options the format accepts (`copy_options`).
+    pub options: Vec<(String, CopyOption)>,
+    pub copy_to_bind: Option<CopyToBind>,
+    pub copy_to_initialize_global: Option<CopyToInitializeGlobal>,
+    pub copy_to_sink: Option<CopyToSink>,
+    pub copy_to_finalize: Option<CopyToFinalize>,
+    /// Whether the format can split its output by size (`rotate_files`), and the size.
+    pub copy_to_file_size: Option<CopyToFileSize>,
+    pub copy_from_bind: Option<CopyFromBind>,
+    pub copy_from_function: Option<TableFunction>,
+}
+
+impl CopyFunction {
+    pub fn new(name: impl Into<Arc<str>>) -> Self {
+        Self {
+            name: name.into(),
+            extension: String::new(),
+            options: Vec::new(),
+            copy_to_bind: None,
+            copy_to_initialize_global: None,
+            copy_to_sink: None,
+            copy_to_finalize: None,
+            copy_to_file_size: None,
+            copy_from_bind: None,
+            copy_from_function: None,
+        }
+    }
+}
+
+impl fmt::Debug for CopyFunction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CopyFunction")
+            .field("name", &self.name)
+            .field("extension", &self.extension)
+            .finish_non_exhaustive()
+    }
+}

@@ -8,6 +8,7 @@ pub mod aggregate;
 pub mod bignum;
 pub mod cast;
 pub mod client;
+pub mod copy;
 pub mod random;
 mod scalar;
 mod table;
@@ -16,6 +17,7 @@ pub use aggregate::{
     AggregateFunction, AggregateFunctionSet, AggregateOps, OwnedStates, StatePtr, UnaryAggregate,
 };
 pub use client::FunctionClient;
+pub use copy::{CopyFunction, CopyOption, CopyOptionMode};
 pub use scalar::{
     AggregateResolver, BindInput, BindLambda, BoundAggregateFunction, CollationHandling, FunctionData,
     FunctionState, LambdaExecutor, LambdaInput, NullHandling, ScalarBind, ScalarFunction, ScalarFunctionSet,
@@ -23,5 +25,6 @@ pub use scalar::{
 };
 pub use table::{
     TableFunction, TableFunctionBind, TableFunctionBindInput, TableFunctionBindOutput,
-    TableFunctionBindReplace, TableFunctionReplacement, TableFunctionScan, TableFunctionSet, TableScanState,
+    TableFunctionBindReplace, TableFunctionReplacement, TableFunctionScan, TableFunctionSet,
+    TableFunctionTypePushdown, TableScanState,
 };

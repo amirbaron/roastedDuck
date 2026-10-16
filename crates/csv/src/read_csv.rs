@@ -84,6 +84,46 @@ impl ReadCsvData {
     fn view(&self) -> MultiFileOptionsView {
         options_view(&self.file_options)
     }
+
+    /// A copy reading `types` (sharing the first file's buffers).
+    fn with_types(&self, types: Vec<LogicalType>) -> Self {
+        Self {
+            files: self.files.clone(),
+            options: self.options.clone(),
+            file_options: self.file_options.clone(),
+            names: self.names.clone(),
+            types,
+            reader_bind: self.reader_bind.clone(),
+            csv_schema: self.csv_schema.clone(),
+            union_readers: self.union_readers.clone(),
+            buffer_manager: Mutex::new(
+                self.buffer_manager
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .clone(),
+            ),
+            casts: Arc::clone(&self.casts),
+            threads: self.threads,
+        }
+    }
+}
+
+/// `MultiFileFunction::PushdownType`: reads columns as other types.
+fn read_csv_type_pushdown(
+    bind_data: &dyn FunctionData,
+    new_types: &[(usize, LogicalType)],
+) -> Result<Arc<dyn FunctionData>> {
+    let data = bind_data
+        .as_any()
+        .downcast_ref::<ReadCsvData>()
+        .ok_or_else(|| Error::internal("read_csv type pushdown without bind data"))?;
+    let mut types = data.types.clone();
+    for (column, ty) in new_types {
+        if let Some(slot) = types.get_mut(*column) {
+            slot.clone_from(ty);
+        }
+    }
+    Ok(Arc::new(data.with_types(types)))
 }
 
 fn options_view(file_options: &MultiFileOptions) -> MultiFileOptionsView {
@@ -748,6 +788,7 @@ fn read_csv_function(name: &'static str, argument: LogicalType) -> TableFunction
         .with_scan(read_csv_scan);
     function.named_parameters = read_csv_parameters();
     function.projection_pushdown = true;
+    function.type_pushdown = Some(Arc::new(read_csv_type_pushdown));
     function
 }
 

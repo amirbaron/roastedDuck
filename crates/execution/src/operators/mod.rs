@@ -2,6 +2,7 @@
 
 mod alter;
 mod column_data_scan;
+mod copy_to_file;
 mod create_table;
 mod create_type;
 mod cross_product;
@@ -10,6 +11,7 @@ mod ddl;
 mod delete;
 mod delim;
 mod dummy_scan;
+mod export;
 mod expression_scan;
 mod filter;
 mod hash_aggregate;
@@ -34,6 +36,7 @@ mod window;
 
 pub use alter::AlterEntryAction;
 pub use column_data_scan::PhysicalColumnDataScan;
+pub use copy_to_file::{CopyGlobal, CopyToFileOptions, PhysicalCopyToFile};
 pub use create_table::PhysicalCreateTable;
 pub use create_type::{CreateTypeGlobal, PhysicalCreateType};
 pub use cross_product::{CrossProductExecutor, CrossProductGlobal, PhysicalCrossProduct};
@@ -45,6 +48,7 @@ pub use ddl::{
 pub use delete::PhysicalDelete;
 pub use delim::{DelimData, DelimGlobal, DelimShared, PhysicalDelimJoin, PhysicalDelimScan};
 pub use dummy_scan::PhysicalDummyScan;
+pub use export::PhysicalExport;
 pub use expression_scan::{ExpressionScanState, PhysicalExpressionScan};
 pub use filter::{FilterState, PhysicalFilter};
 pub use hash_aggregate::{HashAggregateGlobal, HashAggregateLocal, PhysicalHashAggregate};

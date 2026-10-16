@@ -17,9 +17,7 @@ use rustdb_types::{LogicalType, LogicalTypeId, Value};
 use crate::binder::expression::bind_macro;
 use crate::binder::query_node::bind_node;
 use crate::binder::{BindScope, Binding, BindingAlias, BindingKind, BoundStatement};
-use crate::expression_binder::{
-    ExpressionBinder, TableFunctionBinder, parameter_not_resolved, parsed_is_scalar,
-};
+use crate::expression_binder::{ExpressionBinder, TableFunctionBinder, parameter_not_resolved};
 use crate::function_binder::FunctionBinder;
 use crate::operator::{LogicalGet, LogicalKind, LogicalOperator};
 
@@ -54,6 +52,25 @@ fn function_alias(alias: &str, function: &FunctionExpression) -> String {
     }
 }
 
+/// Whether a table function argument binds to a constant: no subqueries (table
+/// parameters); column references are names.
+fn table_argument_is_scalar(expr: &mut ParsedExpression) -> bool {
+    match &expr.kind {
+        ParsedExpressionKind::ColumnRef(_) => true,
+        ParsedExpressionKind::Subquery(_)
+        | ParsedExpressionKind::Default
+        | ParsedExpressionKind::PositionalReference(_) => false,
+        _ => {
+            let mut scalar = true;
+            let _ = crate::expression_binder::for_each_child(expr, &mut |child| {
+                scalar &= table_argument_is_scalar(child);
+                Ok(())
+            });
+            scalar
+        }
+    }
+}
+
 /// Binds the arguments: positional argument types and values, and named parameters
 /// (DuckDB's `BindTableFunctionParameters` for standard table functions).
 fn bind_parameters(
@@ -61,21 +78,26 @@ fn bind_parameters(
     function_name: &str,
     children: &mut [ParsedExpression],
     location: Option<u64>,
+    table_parameters: bool,
 ) -> Result<(Vec<LogicalType>, Vec<Value>, NamedParameters)> {
     // While a macro definition is verified its parameters stand for constants; binding
     // them reports that their types are unknown.
-    // `name = value` names a parameter: only its value has to be a constant.
+    // `name = value` names a parameter: only its value has to be a constant. Column
+    // references bind as their names (`TableFunctionBinder`).
     let argument_is_scalar = |child: &mut ParsedExpression| {
         if child.expression_type == ExpressionType::CompareEqual
             && let ParsedExpressionKind::Comparison(comparison) = &mut child.kind
             && let ParsedExpressionKind::ColumnRef(column) = &comparison.left.kind
             && column.column_names.len() == 1
         {
-            return parsed_is_scalar(&mut comparison.right);
+            return table_argument_is_scalar(&mut comparison.right);
         }
-        parsed_is_scalar(child)
+        table_argument_is_scalar(child)
     };
-    if scope.binder.macro_binding.is_none() && !children.iter_mut().all(argument_is_scalar) {
+    if table_parameters
+        && scope.binder.macro_binding.is_none()
+        && !children.iter_mut().all(argument_is_scalar)
+    {
         return Err(Error::not_implemented(
             "table in-out functions and table parameters",
         ));
@@ -354,9 +376,23 @@ pub fn bind_table_function(
         )));
     };
     let function_name = functions.name.to_string();
-    let (arguments, mut parameters, mut named) =
-        bind_parameters(scope, &function_name, &mut function.children, location)
-            .map_err(|error| error.with_position(location))?;
+    // DuckDB's `TableFunctionBindType`: in-out and table-parameter functions take
+    // subqueries; other functions bind their arguments as constants.
+    let table_parameters = functions.functions.iter().any(|candidate| {
+        candidate.in_out
+            || candidate
+                .arguments
+                .iter()
+                .any(|argument| argument.id() == LogicalTypeId::Table)
+    });
+    let (arguments, mut parameters, mut named) = bind_parameters(
+        scope,
+        &function_name,
+        &mut function.children,
+        location,
+        table_parameters,
+    )
+    .map_err(|error| error.with_position(location))?;
     let function_binder = FunctionBinder::new(&context);
     let table_function = function_binder
         .bind_table_function_overload(functions, &arguments)?
