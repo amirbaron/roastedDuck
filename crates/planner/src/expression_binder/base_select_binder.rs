@@ -735,6 +735,14 @@ impl ExpressionBinder for SelectBinder<'_> {
         self.bind_select_aggregate(expr, functions, depth)
     }
 
+    fn unnest_bindings(&self) -> Vec<(u64, u64)> {
+        self.node
+            .unnests
+            .values()
+            .map(|node| (node.index, node.expressions.len() as u64))
+            .collect()
+    }
+
     fn bind_unnest(
         &mut self,
         expr: &mut ParsedExpression,

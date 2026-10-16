@@ -456,6 +456,12 @@ pub trait ExpressionBinder: ColumnQualifier {
         "UNNEST not supported here".to_owned()
     }
 
+    /// The `(table index, column count)` of the UNNEST nodes bound so far, which lambda
+    /// bodies may not reference (DuckDB's `SelectBinder::ThrowIfUnnestInLambda`).
+    fn unnest_bindings(&self) -> Vec<(u64, u64)> {
+        Vec::new()
+    }
+
     /// The SQL value function a bare name stands for (DuckDB's `GetSQLValueFunction`).
     fn sql_value_function(&self, column_name: &str) -> Option<ParsedExpression> {
         sql_value_function_name(column_name).map(|name| function_call(name, Vec::new()))

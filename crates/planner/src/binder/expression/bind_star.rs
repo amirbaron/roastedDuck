@@ -99,7 +99,7 @@ pub fn find_star_expression(
         }
         in_columns = true;
         if let Some(existing) = star {
-            if existing != &**current {
+            if !stars_equal(existing, current) {
                 return Err(Error::binder(
                     "Multiple different STAR/COLUMNS in the same expression are not supported",
                 )
@@ -110,6 +110,7 @@ pub fn find_star_expression(
         *star = Some((**current).clone());
         has_star = StarExpressionType::Star;
     }
+    let found_here = has_star == StarExpressionType::Star;
     for_each_child(expr, &mut |child| {
         let result = find_star_expression(scope, child, star, false, in_columns)?;
         if result != StarExpressionType::None {
@@ -117,7 +118,23 @@ pub fn find_star_expression(
         }
         Ok(())
     })?;
+    // DuckDB keeps a pointer to the COLUMNS star, so a `*` replaced inside its expression
+    // (e.g. `COLUMNS(lambda c: ...)`, i.e. `list_filter(*, ...)`) is seen by the caller.
+    if found_here && let ParsedExpressionKind::Star(current) = &expr.kind {
+        *star = Some((**current).clone());
+    }
     Ok(has_star)
+}
+
+/// `StarExpression::Equals`: aliases and query locations are ignored.
+fn stars_equal(left: &StarExpression, right: &StarExpression) -> bool {
+    let wrap = |star: &StarExpression| {
+        ParsedExpression::new(
+            ExpressionType::Star,
+            ParsedExpressionKind::Star(Box::new(star.clone())),
+        )
+    };
+    crate::parsed_equality::parsed_equals(&wrap(left), &wrap(right))
 }
 
 /// Replaces the star in `expr` by `replacement` (DuckDB's `ReplaceStarExpression`).

@@ -766,6 +766,7 @@ test/sql/binder/group_by_incremental_alias.test
 test/sql/binder/group_by_qualification.test
 test/sql/binder/integer_literal_binding.test
 test/sql/binder/missing_column_error.test
+test/sql/binder/not_similar_to.test
 test/sql/binder/old_implicit_cast_template.test
 test/sql/binder/order_by_view.test
 test/sql/binder/separate_schema_tables.test
@@ -854,6 +855,7 @@ test/sql/catalog/function/test_macro_default_arg.test
 test/sql/catalog/function/test_macro_default_arg.test_slow
 test/sql/catalog/function/test_macro_default_arg_with_dependencies.test
 test/sql/catalog/function/test_macro_issue_13104.test
+test/sql/catalog/function/test_macro_issue_14276.test
 test/sql/catalog/function/test_macro_issue_18927.test
 test/sql/catalog/function/test_macro_issue_19119.test
 test/sql/catalog/function/test_macro_overloads.test
@@ -1454,6 +1456,7 @@ test/sql/function/list/flatten.test
 test/sql/function/list/generate_series_timestamp.test
 test/sql/function/list/generate_subscripts.test
 test/sql/function/list/lambda_constant_null.test
+test/sql/function/list/lambdas/arrow/expression_iterator_cases_deprecated.test
 test/sql/function/list/lambdas/arrow/filter_deprecated.test
 test/sql/function/list/lambdas/arrow/lambda_scope_deprecated.test
 test/sql/function/list/lambdas/arrow/lambdas_and_group_by_deprecated.test
@@ -1463,10 +1466,13 @@ test/sql/function/list/lambdas/arrow/reduce_deprecated.test
 test/sql/function/list/lambdas/arrow/reduce_initial_deprecated.test
 test/sql/function/list/lambdas/arrow/rhs_parameters_deprecated.test
 test/sql/function/list/lambdas/arrow/storage_deprecated.test
+test/sql/function/list/lambdas/arrow/test_deprecated_lambda.test
 test/sql/function/list/lambdas/arrow/test_lambda_arrow_storage_deprecated.test
 test/sql/function/list/lambdas/arrow/transform_deprecated.test
 test/sql/function/list/lambdas/arrow/transform_with_index_deprecated.test
+test/sql/function/list/lambdas/expression_iterator_cases.test
 test/sql/function/list/lambdas/filter.test
+test/sql/function/list/lambdas/incorrect.test
 test/sql/function/list/lambdas/lambda_scope.test
 test/sql/function/list/lambdas/lambdas_and_group_by.test
 test/sql/function/list/lambdas/lambdas_and_macros.test
@@ -1496,6 +1502,7 @@ test/sql/function/list/list_resize.test
 test/sql/function/list/list_resize.test_slow
 test/sql/function/list/list_resize_error.test
 test/sql/function/list/list_resize_types.test_slow
+test/sql/function/list/list_reverse.test
 test/sql/function/list/list_reverse.test_slow
 test/sql/function/list/list_reverse_all_types.test_slow
 test/sql/function/list/list_select.test_slow
@@ -1510,6 +1517,7 @@ test/sql/function/list/list_value_structs.test
 test/sql/function/list/list_where.test
 test/sql/function/list/list_zip.test
 test/sql/function/list/repeat_list.test
+test/sql/function/list/test_lambda_with_struct_aliases.test
 test/sql/function/nested/array_extract_unnamed_struct.test
 test/sql/function/nested/test_issue_5437.test
 test/sql/function/nested/test_struct_insert.test
@@ -1656,6 +1664,7 @@ test/sql/generated_columns/virtual/cascading_delete.test
 test/sql/generated_columns/virtual/casting.test
 test/sql/generated_columns/virtual/check.test
 test/sql/generated_columns/virtual/circular_dependency_stresstest.test
+test/sql/generated_columns/virtual/collate.test
 test/sql/generated_columns/virtual/default.test
 test/sql/generated_columns/virtual/drop.test
 test/sql/generated_columns/virtual/drop_dependency.test
@@ -2080,7 +2089,10 @@ test/sql/parser/pg_err_pos_reset.test
 test/sql/parser/position_prepare.test
 test/sql/parser/star_expression.test
 test/sql/parser/test_columns.test
+test/sql/parser/test_columns_lists.test
+test/sql/parser/test_columns_order.test
 test/sql/parser/test_columns_prepared.test
+test/sql/parser/test_columns_unpacked.test
 test/sql/parser/test_columns_where.test
 test/sql/parser/test_long_error.test
 test/sql/parser/test_operator_precedence.test
@@ -2180,6 +2192,7 @@ test/sql/prepared/test_prepare_unused_cte.test
 test/sql/projection/coalesce_error.test
 test/sql/projection/coalesce_rowid.test
 test/sql/projection/select_star_exclude.test
+test/sql/projection/select_star_like.test
 test/sql/projection/select_star_rename.test
 test/sql/projection/select_star_replace.test
 test/sql/projection/select_struct_star.test
@@ -2954,6 +2967,7 @@ test/sql/types/enum/test_enum_structs.test
 test/sql/types/enum/test_enum_table.test
 test/sql/types/enum/test_enum_temp_tbl.test
 test/sql/types/enum/test_enums_and_built_in_types.test
+test/sql/types/float/ieee_floating_points.test
 test/sql/types/float/infinity_test.test
 test/sql/types/float/nan_aggregate.test
 test/sql/types/float/nan_aggregates.test
@@ -3120,6 +3134,7 @@ test/sql/types/nested/struct/test_struct_values.test
 test/sql/types/nested/unnest_range_plan.test
 test/sql/types/null/test_boolean_null.test
 test/sql/types/null/test_is_null.test
+test/sql/types/null/test_null.test
 test/sql/types/null/test_null_aggr.test
 test/sql/types/null/test_null_cast.test
 test/sql/types/numeric/arithmetic_vector_types.test
@@ -3163,6 +3178,7 @@ test/sql/types/struct/struct_null_members.test
 test/sql/types/struct/struct_operations.test
 test/sql/types/struct/struct_pack_list.test
 test/sql/types/struct/struct_position.test
+test/sql/types/struct/struct_projection_pushdown_index.test_slow
 test/sql/types/struct/struct_projection_pushdown_optimizer_bug.test
 test/sql/types/struct/struct_projection_pushdown_unnamed.test
 test/sql/types/struct/struct_subquery.test

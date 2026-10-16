@@ -89,7 +89,21 @@ fn bind_expression_kind<B: ExpressionBinder + ?Sized>(
                 bind_function_expression(binder, expr, depth)
             }
         }
-        ParsedExpressionKind::Lambda(_) => Err(Error::not_implemented("lambda functions")),
+        ParsedExpressionKind::Lambda(lambda) => {
+            // DuckDB's `BindExpression(LambdaExpression &)` outside a lambda function: the
+            // `lambda` keyword is invalid, `->` is the JSON arrow operator.
+            if lambda.syntax_type == rustdb_ast::LambdaSyntaxType::LambdaKeyword {
+                return Ok(BindResult::error("invalid lambda expression"));
+            }
+            let mut arrow = ParsedExpression::new(
+                ExpressionType::Arrow,
+                ParsedExpressionKind::Operator(rustdb_ast::OperatorExpression {
+                    children: vec![(*lambda.lhs).clone(), (*lambda.expr).clone()],
+                }),
+            );
+            arrow.query_location = expr.query_location;
+            bind_operator(binder, &mut arrow, depth)
+        }
         ParsedExpressionKind::Operator(_) => bind_operator(binder, expr, depth),
         ParsedExpressionKind::Subquery(_) => bind_subquery_expression(binder, expr, depth),
         ParsedExpressionKind::Parameter(_) => bind_parameter(binder, expr),
