@@ -124,6 +124,22 @@ impl TypeBinder<'_> {
         if qualified_in_main && info.name.eq_ignore_ascii_case("enum") {
             return bind_enum_parameters(info);
         }
+        if qualified_in_main
+            && rustdb_types::builtin_type_id(&info.name) == Some(LogicalTypeId::Varchar)
+            && let Some(collation) = varchar_collation(info)
+        {
+            // `BindVarcharType`: a valid collation names a collated VARCHAR.
+            let ty = LogicalType::with_info(
+                LogicalTypeId::Varchar,
+                rustdb_types::TypeInfo::String(rustdb_types::StringTypeInfo { collation }),
+            );
+            crate::collation_binding::push_collation(
+                self.context,
+                crate::expression::Expression::constant(rustdb_types::Value::varchar("")),
+                &ty,
+            )?;
+            return Ok(ty);
+        }
         if qualified_in_main {
             let bound = info.default_bind()?;
             if bound.id() != LogicalTypeId::Unbound {
@@ -190,4 +206,24 @@ fn user_type(info: &UnboundTypeInfo, entry: &rustdb_catalog::CatalogEntry) -> Re
         );
     }
     Ok(ty.user_type.clone())
+}
+
+/// The collation of `VARCHAR COLLATE name`: a named, non-NULL VARCHAR `collation`
+/// modifier among at most two (`BindVarcharType`).
+fn varchar_collation(info: &UnboundTypeInfo) -> Option<String> {
+    if info.parameters.is_empty() || info.parameters.len() > 2 {
+        return None;
+    }
+    info.parameters
+        .iter()
+        .find_map(|parameter| match &parameter.value {
+            rustdb_types::TypeParameterValue::Constant(value)
+                if parameter.name.eq_ignore_ascii_case("collation")
+                    && value.logical_type().id() == LogicalTypeId::Varchar
+                    && !value.is_null() =>
+            {
+                value.to_varchar().ok()
+            }
+            _ => None,
+        })
 }
