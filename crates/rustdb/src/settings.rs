@@ -456,10 +456,15 @@ impl SettingsSnapshot {
                     DefaultNullOrder::NullsLastOnAscFirstOnDesc => "NULLS_LAST_ON_ASC_FIRST_ON_DESC",
                 })
             }
-            "default_order" => Value::varchar(match self.settings.planner.default_order {
-                OrderType::Descending => "DESCENDING",
-                _ => "ASCENDING",
-            }),
+            // The default reads `ASCENDING`; assigned values are stored as `ASC`/`DESC`.
+            "default_order" => {
+                Value::varchar(match (self.settings.planner.default_order, assigned.is_some()) {
+                    (OrderType::Descending, true) => "DESC",
+                    (OrderType::Descending, false) => "DESCENDING",
+                    (_, true) => "ASC",
+                    (_, false) => "ASCENDING",
+                })
+            }
             "search_path" => Value::varchar(&self.search_path),
             "schema" => Value::varchar(&self.schema),
             "threads" | "worker_threads" => match assigned {

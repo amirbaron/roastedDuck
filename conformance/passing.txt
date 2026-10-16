@@ -1508,6 +1508,7 @@ test/sql/function/list/list_value_nested_lists.test
 test/sql/function/list/list_value_primitive.test_slow
 test/sql/function/list/list_value_structs.test
 test/sql/function/list/list_where.test
+test/sql/function/list/list_zip.test
 test/sql/function/list/repeat_list.test
 test/sql/function/nested/array_extract_unnamed_struct.test
 test/sql/function/nested/test_issue_5437.test
@@ -1520,6 +1521,7 @@ test/sql/function/numeric/test_arithmetic_aliases.test
 test/sql/function/numeric/test_bit_count.test
 test/sql/function/numeric/test_even.test
 test/sql/function/numeric/test_factorial.test
+test/sql/function/numeric/test_fdiv_fmod.test
 test/sql/function/numeric/test_floor_ceil.test
 test/sql/function/numeric/test_gamma.test
 test/sql/function/numeric/test_gcd_lcm.test
@@ -1558,11 +1560,13 @@ test/sql/function/string/parse_path_windows.test
 test/sql/function/string/regex_capture.test
 test/sql/function/string/regex_escape.test
 test/sql/function/string/regex_extract.test
+test/sql/function/string/regex_extract_all.test
 test/sql/function/string/regex_extract_all_struct.test
 test/sql/function/string/regex_filter_pushdown.test
 test/sql/function/string/regex_replace.test
 test/sql/function/string/regex_search.test
 test/sql/function/string/regexp_split_to_table.test
+test/sql/function/string/regexp_unicode_literal.test
 test/sql/function/string/sha1.test
 test/sql/function/string/sha256.test
 test/sql/function/string/strip_accents.test

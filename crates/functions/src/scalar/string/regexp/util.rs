@@ -9,6 +9,7 @@
 //! messages for the common cases.
 
 use std::borrow::Cow;
+use std::fmt::Write as _;
 
 use regex::bytes::{Captures, Regex, RegexBuilder};
 use regex_syntax::ast::ErrorKind as AstErrorKind;
@@ -119,7 +120,25 @@ fn re2_error(pattern: &str, translated: &str) -> Option<String> {
             )
         }
         AstErrorKind::EscapeUnexpectedEof => "trailing \\".to_owned(),
-        AstErrorKind::EscapeUnrecognized | AstErrorKind::UnsupportedBackreference => {
+        AstErrorKind::EscapeHexInvalid => {
+            // RE2 stops at the digit that takes the code point past U+10FFFF.
+            let mut code = 0u32;
+            let mut digits = String::new();
+            for c in snippet.chars() {
+                digits.push(c);
+                code = code
+                    .saturating_mul(16)
+                    .saturating_add(c.to_digit(16).unwrap_or_default());
+                if code > 0x0010_FFFF {
+                    break;
+                }
+            }
+            format!("invalid escape sequence: \\x{{{digits}")
+        }
+        AstErrorKind::EscapeUnrecognized
+        | AstErrorKind::UnsupportedBackreference
+        | AstErrorKind::EscapeHexInvalidDigit
+        | AstErrorKind::EscapeHexEmpty => {
             format!("invalid escape sequence: {snippet}")
         }
         AstErrorKind::RepetitionMissing => {
@@ -201,6 +220,32 @@ fn translate(pattern: &str) -> String {
                         }
                         out.push_str(&regex::escape(&literal));
                     }
+                    // `\x{...}` is one escape: its braces are not a repetition.
+                    'x' if chars.get(i) == Some(&'{') => {
+                        out.push_str("\\x");
+                        while i < chars.len() {
+                            out.push(chars[i]);
+                            i += 1;
+                            if chars[i - 1] == '}' {
+                                break;
+                            }
+                        }
+                    }
+                    // RE2's octal escapes: `\0` plus up to two octal digits, or `\1`-`\7`
+                    // followed by an octal digit (a lone `\1` is a backreference).
+                    '0'..='7' if next == '0' || chars.get(i).is_some_and(|c| ('0'..='7').contains(c)) => {
+                        let mut code = next.to_digit(8).unwrap_or_default();
+                        for _ in 0..2 {
+                            match chars.get(i).and_then(|c| c.to_digit(8)) {
+                                Some(digit) => {
+                                    code = code * 8 + digit;
+                                    i += 1;
+                                }
+                                None => break,
+                            }
+                        }
+                        let _ = write!(out, "\\x{{{code:X}}}");
+                    }
                     other => {
                         out.push('\\');
                         out.push(other);
@@ -247,6 +292,70 @@ fn translate(pattern: &str) -> String {
     out
 }
 
+/// RE2's error for stacked repetition operators (`a**`, `a++`, `a{2}*`): Perl syntax
+/// does not allow them.
+fn stacked_repetition(pattern: &str) -> Option<String> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut last_repeat: Option<usize> = None;
+    let mut in_class = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let mut repeat = None;
+        match c {
+            '\\' => {
+                if chars.get(i + 1) == Some(&'Q') {
+                    i += 2;
+                    while i < chars.len() && !(chars[i] == '\\' && chars.get(i + 1) == Some(&'E')) {
+                        i += 1;
+                    }
+                }
+                i += 2;
+                last_repeat = None;
+                continue;
+            }
+            '[' if !in_class => {
+                in_class = true;
+                i += 1;
+                if chars.get(i) == Some(&'^') {
+                    i += 1;
+                }
+                if chars.get(i) == Some(&']') {
+                    i += 1;
+                }
+                last_repeat = None;
+                continue;
+            }
+            ']' if in_class => in_class = false,
+            _ if in_class => {}
+            '*' | '+' | '?' => repeat = Some(i + 1),
+            '{' if starts_repetition(&chars[i + 1..]) => {
+                let close = chars[i..]
+                    .iter()
+                    .position(|&c| c == '}')
+                    .map_or(chars.len(), |p| i + p + 1);
+                repeat = Some(close);
+            }
+            _ => {}
+        }
+        let Some(mut end) = repeat else {
+            last_repeat = None;
+            i += 1;
+            continue;
+        };
+        if chars.get(end) == Some(&'?') {
+            end += 1;
+        }
+        if let Some(start) = last_repeat {
+            let text: String = chars[start..end].iter().collect();
+            return Some(format!("bad repetition operator: {text}"));
+        }
+        last_repeat = Some(i);
+        i = end;
+    }
+    None
+}
+
 /// Whether `rest` (after a `{`) is a counted repetition `n}`, `n,}` or `n,m}`.
 fn starts_repetition(rest: &[char]) -> bool {
     let digits = rest.iter().take_while(|c| c.is_ascii_digit()).count();
@@ -273,6 +382,9 @@ pub(crate) fn compile(pattern: &[u8], options: RegexOptions, full: bool) -> Resu
     let source: Cow<'_, str> = if options.literal {
         Cow::Owned(regex::escape(&text))
     } else {
+        if let Some(message) = stacked_repetition(&text) {
+            return Err(Error::invalid_input(message));
+        }
         let translated = translate(&text);
         if let Some(message) = re2_error(&text, &translated) {
             return Err(Error::invalid_input(message));

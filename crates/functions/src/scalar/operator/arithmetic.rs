@@ -785,6 +785,30 @@ where
     }
 }
 
+/// DuckDB's `BindBinaryFloatingPoint`: without `ieee_floating_point_ops`, division and
+/// modulo by zero give NULL.
+fn bind_float_division(
+    remainder: bool,
+) -> impl Fn(&mut ScalarFunction, &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>> + Send + Sync {
+    move |function, input| {
+        let ieee = match input.client.settings() {
+            Some(settings) => settings
+                .current_setting("ieee_floating_point_ops")?
+                .as_bool()
+                .unwrap_or(true),
+            None => true,
+        };
+        if !ieee {
+            let kernel = match function.return_type.physical_type() {
+                PhysicalType::Float => zero_is_null_float::<f32>(remainder),
+                _ => zero_is_null_float::<f64>(remainder),
+            };
+            set_kernel(function, kernel);
+        }
+        Ok(None)
+    }
+}
+
 fn division_kernel(physical: PhysicalType, remainder: bool) -> Kernel {
     match physical {
         PhysicalType::Float => float_division::<f32>(remainder),
@@ -816,12 +840,12 @@ pub fn divide_functions() -> ScalarFunctionSet {
     let mut set = ScalarFunctionSet::new("/");
     for ty in [T::FLOAT, T::DOUBLE] {
         let kernel = division_kernel(ty.physical_type(), false);
-        set.add(function(
-            "/",
-            vec![ty.clone(), ty.clone()],
-            ty,
-            move |args, result| kernel(args, result),
-        ));
+        set.add(
+            function("/", vec![ty.clone(), ty.clone()], ty, move |args, result| {
+                kernel(args, result)
+            })
+            .with_bind(bind_float_division(false)),
+        );
     }
     set.add(function(
         "/",
@@ -887,8 +911,14 @@ pub fn modulo_functions() -> ScalarFunctionSet {
             set.add(function("%", args, ty, |_, _| Err(unbound())).with_bind(bind_decimal_modulo));
             continue;
         }
+        let float = matches!(ty.id(), LogicalTypeId::Float | LogicalTypeId::Double);
         let kernel = division_kernel(ty.physical_type(), true);
-        set.add(function("%", args, ty, move |args, result| kernel(args, result)));
+        let modulo = function("%", args, ty, move |args, result| kernel(args, result));
+        set.add(if float {
+            modulo.with_bind(bind_float_division(true))
+        } else {
+            modulo
+        });
     }
     set
 }
