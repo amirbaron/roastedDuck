@@ -576,6 +576,7 @@ test/optimizer/using_optimizer.test
 test/optimizer/zonemaps.test
 test/parquet/encrypted_parquet.test
 test/parquet/parquet_long_string_stats.test
+test/planner/projection_binding.test
 test/sakila/test_sakila.test_slow
 test/sql/aggregate/aggregates/aggregate_limit.test_slow
 test/sql/aggregate/aggregates/approx_top_k.test
@@ -728,6 +729,7 @@ test/sql/alter/add_col/test_add_col_incorrect.test
 test/sql/alter/add_col/test_add_col_index.test
 test/sql/alter/add_col/test_add_col_index_rollback.test
 test/sql/alter/add_col/test_add_col_local_storage.test
+test/sql/alter/add_col/test_add_col_stats.test
 test/sql/alter/add_col/test_add_col_transactions.test
 test/sql/alter/add_col/test_add_col_user_type.test
 test/sql/alter/add_pk/test_add_multi_column_pk.test
@@ -753,6 +755,7 @@ test/sql/alter/alter_table_set_partitioned_by.test
 test/sql/alter/alter_table_set_sorted_by.test
 test/sql/alter/alter_table_set_table_options.test
 test/sql/alter/alter_type/alter_type_struct.test
+test/sql/alter/alter_type/test_alter_type.test
 test/sql/alter/alter_type/test_alter_type_check.test
 test/sql/alter/alter_type/test_alter_type_dependencies.test
 test/sql/alter/alter_type/test_alter_type_expression.test
@@ -1041,6 +1044,7 @@ test/sql/collate/collate_non_varchar.test
 test/sql/collate/collate_order_by_alias.test
 test/sql/collate/collate_ordered_aggregate.test
 test/sql/collate/collate_subquery.test
+test/sql/collate/nop_collation_join_filter_pushdown.test
 test/sql/collate/test_collate_accent_insensitive.test
 test/sql/collate/test_collate_between.test
 test/sql/collate/test_collate_case_insensitive.test
@@ -1179,6 +1183,7 @@ test/sql/copy/csv/csv_glob_fallback.test
 test/sql/copy/csv/csv_hive_filename_union.test
 test/sql/copy/csv/csv_limit_copy.test
 test/sql/copy/csv/csv_line_too_long.test
+test/sql/copy/csv/csv_memory_management.test_slow
 test/sql/copy/csv/csv_names.test
 test/sql/copy/csv/csv_null_byte.test
 test/sql/copy/csv/csv_null_padding.test
@@ -2229,6 +2234,7 @@ test/sql/parallelism/interquery/concurrent_checkpoint_index_single_inserter.test
 test/sql/parallelism/interquery/concurrent_checkpoint_insert.test
 test/sql/parallelism/interquery/concurrent_checkpoint_multiple_updater.test_slow
 test/sql/parallelism/interquery/concurrent_checkpoint_single_updater.test_slow
+test/sql/parallelism/interquery/concurrent_checkpoint_wal.test
 test/sql/parallelism/interquery/concurrent_checkpoint_wal_fk.test_slow
 test/sql/parallelism/interquery/concurrent_checkpoint_wal_index.test_slow
 test/sql/parallelism/interquery/concurrent_checkpoint_wal_optimistic.test_slow
@@ -2722,6 +2728,7 @@ test/sql/storage/delete/store_deletes_large.test_slow
 test/sql/storage/delete/test_store_deletes.test
 test/sql/storage/delete/test_unchanged_deletes.test
 test/sql/storage/delete/test_unchanged_deletes_large.test
+test/sql/storage/distinct_statistics_storage.test
 test/sql/storage/encryption/temp_files/encrypt_asof_join_merge.test_slow
 test/sql/storage/encryption/temp_files/encrypted_offloading_block_files.test_slow
 test/sql/storage/encryption/temp_files/encrypted_tmp_file_setting.test
@@ -3069,6 +3076,7 @@ test/sql/table_function/lateral_table_function.test
 test/sql/table_function/range_function_different_iterators.test
 test/sql/table_function/range_timestamp.test
 test/sql/table_function/range_timestamp_lateral_empty.test
+test/sql/table_function/read_text_and_blob.test
 test/sql/table_function/sqlite_master.test
 test/sql/table_function/sqlite_master_connections.test
 test/sql/table_function/sqlite_master_quotes.test
@@ -3685,6 +3693,7 @@ test/sql/window/window_valid_end.test_slow
 test/sqlite/select1.test_slow
 test/sqlite/select2.test_slow
 test/sqlite/select3.test_slow
+test/sqlite/select4.test_slow
 test/sqlite/tags/tags-1-2-3.test_slow
 test/sqlite/tags/tags-1-2.test
 test/sqlite/tags/tags-1.test
