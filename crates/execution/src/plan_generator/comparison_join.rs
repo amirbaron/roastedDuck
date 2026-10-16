@@ -12,7 +12,9 @@ use rustdb_types::LogicalType;
 
 use super::{PlanGenerator, table_storage};
 use crate::operator::PhysicalRef;
-use crate::operators::{PhysicalBlockwiseNLJoin, PhysicalCrossProduct, PhysicalHashJoin, PhysicalNestedLoopJoin};
+use crate::operators::{
+    PhysicalBlockwiseNLJoin, PhysicalCrossProduct, PhysicalHashJoin, PhysicalNestedLoopJoin, PhysicalPiecewiseMergeJoin,
+};
 
 /// The settings that steer join planning.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -178,8 +180,17 @@ pub(crate) fn create_comparison_join(
     {
         can_iejoin = false;
     }
-    // TODO(range joins): IEJoin and piecewise merge join.
-    let _ = (can_iejoin, can_merge);
+    // TODO(range joins): IEJoin.
+    let _ = can_iejoin;
+    if can_merge {
+        return Ok(Arc::new(PhysicalPiecewiseMergeJoin::new(
+            types,
+            join.join_type,
+            join.conditions,
+            left,
+            right,
+        )?));
+    }
     if PhysicalNestedLoopJoin::is_supported(&join.conditions, join.join_type) {
         return Ok(Arc::new(PhysicalNestedLoopJoin::new(
             types,

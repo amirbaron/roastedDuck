@@ -5,6 +5,8 @@ mod blockwise_nl_join;
 mod hash_join;
 mod nested_loop_join;
 mod outer_join_marker;
+mod piecewise_merge_join;
+mod range_join;
 
 pub use blockwise_nl_join::{BlockwiseNLJoinGlobalState, BlockwiseNLJoinState, PhysicalBlockwiseNLJoin};
 pub use hash_join::{HashJoinGlobalSinkState, HashJoinLocalSinkState, HashJoinProbeState, PhysicalHashJoin};
@@ -12,6 +14,9 @@ pub use nested_loop_join::{
     NestedLoopJoinGlobalState, NestedLoopJoinProbeState, PhysicalNestedLoopJoin, RightOuterScanState,
 };
 pub use outer_join_marker::OuterJoinMarker;
+pub use piecewise_merge_join::{
+    MergeJoinGlobalState, MergeJoinProbeState, MergeJoinSourceState, PhysicalPiecewiseMergeJoin,
+};
 
 use rustdb_ast::{ExpressionType, JoinType};
 use rustdb_common::Result;
