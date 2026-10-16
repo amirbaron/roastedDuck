@@ -2224,6 +2224,8 @@ test/sql/prepared/prepare_maintain_types.test
 test/sql/prepared/prepare_mixed_types.test
 test/sql/prepared/prepare_offset_first.test
 test/sql/prepared/prepare_summarize.test
+test/sql/prepared/prepare_window_functions.test
+test/sql/prepared/prepared_named_param.test
 test/sql/prepared/prepared_null_binding.test
 test/sql/prepared/prepared_select.test
 test/sql/prepared/prepared_update.test
