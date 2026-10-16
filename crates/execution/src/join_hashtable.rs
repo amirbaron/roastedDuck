@@ -20,7 +20,7 @@ use rustdb_row::{
     PinProperties, RadixPartitioning, RowMatcher, RowPtr, ScanState, TupleDataCollection, TupleDataLayout,
     ValidityType,
 };
-use rustdb_types::{DataChunk, LogicalType, PhysicalType, ValidityMask, Value, Vector, VectorKind};
+use rustdb_types::{DataChunk, LogicalType, PhysicalType, Sel, ValidityMask, Value, Vector, VectorKind};
 
 use crate::aggregate_hashtable::{AggregateObject, GroupedAggregateHashTable, initial_capacity};
 use crate::operators::join::{self, propagates_build_side};
@@ -35,8 +35,108 @@ const SALT_MASK: u64 = 0xFFFF_0000_0000_0000;
 /// Lower 48 bits of an entry: the row pointer.
 const POINTER_MASK: u64 = 0x0000_FFFF_FFFF_FFFF;
 
+/// Loads the pointer table entry at each of `hashes` into `first_entries`, prefetching
+/// entries a few rows ahead so their cache misses overlap, and prefetching the rows the
+/// loaded entries point to for the key comparisons that follow.
+#[inline]
+fn load_first_entries(entries: &[AtomicU64], bitmask: u64, hashes: &[u64], first_entries: &mut [u64]) {
+    let count = hashes.len().min(first_entries.len());
+    let slot = |hash: u64| &entries[(hash & bitmask) as usize];
+    for &hash in &hashes[..count.min(PREFETCH_DISTANCE)] {
+        prefetch_read(slot(hash).as_ptr().cast_const().cast());
+    }
+    for i in 0..count {
+        if i + PREFETCH_DISTANCE < count {
+            prefetch_read(slot(hashes[i + PREFETCH_DISTANCE]).as_ptr().cast_const().cast());
+        }
+        first_entries[i] = slot(hashes[i]).load(Ordering::Relaxed);
+        // The entry loaded `PREFETCH_DISTANCE` rows ago has arrived by now.
+        if i >= PREFETCH_DISTANCE {
+            let behind = first_entries[i - PREFETCH_DISTANCE];
+            if behind != 0 {
+                prefetch_read(HtEntry(behind).pointer().as_ptr());
+            }
+        }
+    }
+    for &entry in &first_entries[count.saturating_sub(PREFETCH_DISTANCE)..count] {
+        if entry != 0 {
+            prefetch_read(HtEntry(entry).pointer().as_ptr());
+        }
+    }
+}
+
+/// The inputs of the first probing round for a single integer key
+/// (`JoinHashTable::probe_typed_keys`).
+struct FirstRound<'a> {
+    entries: &'a [AtomicU64],
+    bitmask: u64,
+    use_salts: bool,
+    /// The key's offset in the row layout.
+    key_offset: usize,
+    /// The hashes of the probing rows.
+    hashes: &'a [u64],
+    /// The pointer table entry at each probing row's hash.
+    first_entries: &'a [u64],
+}
+
+/// Where the first probing round writes (`JoinHashTable::probe_typed_keys`).
+struct FirstRoundOutputs<'a> {
+    pointers: &'a mut [RowPtr],
+    offsets_and_salts: &'a mut [u64],
+    /// The rows whose candidate matched, in order.
+    matches: &'a mut [u32],
+    /// The rows whose candidate has another key, in order.
+    no_match: &'a mut [u32],
+}
+
+impl FirstRound<'_> {
+    /// Resolves each probing row's first salt-matching entry and compares its key;
+    /// `row_of(i)` is the `i`th probing row and `key_of(row)` its key. Returns the
+    /// number of matching and of mismatching rows.
+    #[allow(clippy::inline_always, reason = "one copy of the hot loop per selection shape")]
+    #[inline(always)]
+    fn run<T: rustdb_types::NativeType + PartialEq>(
+        &self,
+        row_of: impl Fn(usize) -> u32,
+        key_of: impl Fn(u32) -> T,
+        out: &mut FirstRoundOutputs<'_>,
+    ) -> (usize, usize) {
+        let mut matched = 0;
+        let mut no_match = 0;
+        for (i, (&row_hash, &first)) in self.hashes.iter().zip(self.first_entries).enumerate() {
+            let mut offset = row_hash & self.bitmask;
+            let mut entry = HtEntry(first);
+            if self.use_salts {
+                let row_salt = HtEntry::extract_salt(row_hash);
+                while entry.is_occupied() && entry.salt() != row_salt {
+                    offset = increment_and_wrap(offset, self.bitmask);
+                    entry = HtEntry(self.entries[offset as usize].load(Ordering::Relaxed));
+                }
+            }
+            if !entry.is_occupied() {
+                continue;
+            }
+            let row_index = row_of(i);
+            let row = entry.pointer();
+            // SAFETY: the entry points to a pinned row of this table whose first column
+            // holds a `T` key.
+            let build_key = unsafe { row.as_ptr().add(self.key_offset).cast::<T>().read_unaligned() };
+            out.pointers[row_index as usize] = row;
+            if key_of(row_index) == build_key {
+                out.matches[matched] = row_index;
+                matched += 1;
+            } else {
+                out.offsets_and_salts[row_index as usize] = offset | entry.salt_with_nulls();
+                out.no_match[no_match] = row_index;
+                no_match += 1;
+            }
+        }
+        (matched, no_match)
+    }
+}
+
 /// How many rows ahead probes prefetch pointer table entries and rows.
-const PREFETCH_DISTANCE: usize = 16;
+const PREFETCH_DISTANCE: usize = 96;
 
 /// Salts are only compared for tables that do not fit in the CPU cache.
 const USE_SALT_THRESHOLD: usize = 8192;
@@ -168,11 +268,17 @@ fn match_predicate(comparison: ExpressionType) -> Result<MatchPredicate> {
 /// never looked at.
 fn hash_keys(keys: &DataChunk, equality_count: usize) -> Result<Vector> {
     let mut hashes = Vector::flat(LogicalType::UBIGINT, keys.len().max(1));
-    hash_vector(keys.column(0), keys.len(), &mut hashes)?;
-    for column in &keys.columns()[1..equality_count] {
-        combine_hash_vector(&mut hashes, column, keys.len())?;
-    }
+    hash_keys_into(keys, equality_count, &mut hashes)?;
     Ok(hashes)
+}
+
+/// [`hash_keys`] into `hashes`, reusing its buffer when possible.
+fn hash_keys_into(keys: &DataChunk, equality_count: usize, hashes: &mut Vector) -> Result<()> {
+    hash_vector(keys.column(0), keys.len(), hashes)?;
+    for column in &keys.columns()[1..equality_count] {
+        combine_hash_vector(hashes, column, keys.len())?;
+    }
+    Ok(())
 }
 
 /// Flattens sequence vectors, which the row format cannot read.
@@ -729,15 +835,24 @@ impl JoinHashTable {
         if scan.count == 0 {
             return Ok(());
         }
-        let computed;
+        let mut computed = None;
         let hashes = if let Some(hashes) = precomputed_hashes {
             hashes
         } else {
-            computed = hash_keys(keys, self.equality_count)?;
-            &computed
+            let mut hashes = state
+                .hashes
+                .take()
+                .unwrap_or_else(|| Vector::flat(LogicalType::UBIGINT, STANDARD_VECTOR_SIZE));
+            hash_keys_into(keys, self.equality_count, &mut hashes)?;
+            &*computed.insert(hashes)
         };
         let has_sel = scan.has_null_value_filter;
-        self.get_row_pointers(keys, state, hashes, current_sel.as_deref(), has_sel, scan)
+        self.get_row_pointers(keys, state, hashes, current_sel.as_deref(), has_sel, scan)?;
+        // Keep the hash buffer for the next chunk.
+        if computed.is_some() {
+            state.hashes = computed;
+        }
+        Ok(())
     }
 
     /// Resets `scan` for a new probe chunk and filters NULL keys
@@ -812,28 +927,17 @@ impl JoinHashTable {
             // Load the first entry of every row, prefetching a few rows ahead so the
             // cache misses overlap, then prefetch the rows the entries point to.
             state.first_entries.clear();
-            let hashes = &state.hashes_dense[..elements];
-            for (i, &hash) in hashes.iter().enumerate() {
-                if let Some(&ahead) = hashes.get(i + PREFETCH_DISTANCE) {
-                    prefetch_read(entries[(ahead & self.bitmask) as usize].as_ptr().cast_const().cast());
-                }
-                let entry = entries[(hash & self.bitmask) as usize].load(Ordering::Relaxed);
-                if i >= PREFETCH_DISTANCE {
-                    let behind = state.first_entries[i - PREFETCH_DISTANCE];
-                    if behind != 0 {
-                        prefetch_read(HtEntry(behind).pointer().as_ptr());
-                    }
-                }
-                state.first_entries.push(entry);
-            }
-            for &entry in &state.first_entries[elements.saturating_sub(PREFETCH_DISTANCE)..] {
-                if entry != 0 {
-                    prefetch_read(HtEntry(entry).pointer().as_ptr());
-                }
-            }
+            state.first_entries.resize(elements, 0);
+            load_first_entries(
+                entries,
+                self.bitmask,
+                &state.hashes_dense[..elements],
+                &mut state.first_entries,
+            );
             if first_round {
                 first_round = false;
-                if let Some(matched) = self.probe_integer_keys(entries, keys, state, scan, probing.as_deref(), elements)
+                if let Some(matched) =
+                    self.probe_integer_keys(entries, keys, state, scan, probing.as_deref(), elements)
                 {
                     match_count += matched;
                     let no_match = state.keys_no_match.len();
@@ -964,39 +1068,43 @@ impl JoinHashTable {
         elements: usize,
     ) -> usize {
         let values = key.unified::<T>();
-        let key_offset = self.layout.offsets()[0];
-        let use_salts = self.use_salt();
+        let round = FirstRound {
+            entries,
+            bitmask: self.bitmask,
+            use_salts: self.use_salt(),
+            key_offset: self.layout.offsets()[0],
+            hashes: &state.hashes_dense[..elements],
+            first_entries: &state.first_entries[..elements],
+        };
+        let base = scan.sel_vector.len();
+        scan.sel_vector.resize(base + elements, 0);
         state.keys_no_match.clear();
-        let mut matched = 0;
-        for i in 0..elements {
-            let row_hash = state.hashes_dense[i];
-            let mut offset = row_hash & self.bitmask;
-            let row_index = probing.map_or(i as u32, |sel| sel[i]);
-            let mut entry = HtEntry(state.first_entries[i]);
-            if use_salts {
-                let row_salt = HtEntry::extract_salt(row_hash);
-                while entry.is_occupied() && entry.salt() != row_salt {
-                    offset = increment_and_wrap(offset, self.bitmask);
-                    entry = HtEntry(entries[offset as usize].load(Ordering::Relaxed));
-                }
+        state.keys_no_match.resize(elements, 0);
+        let mut outputs = FirstRoundOutputs {
+            pointers: &mut scan.pointers,
+            offsets_and_salts: &mut state.ht_offsets_and_salts,
+            matches: &mut scan.sel_vector[base..],
+            no_match: &mut state.keys_no_match,
+        };
+        // Monomorphise the loop for the common shapes: all rows of a flat key vector.
+        let (matched, no_match) = match (probing, values.sel) {
+            (None, Sel::Identity) => round.run(|i| i as u32, |row| values.values[row as usize], &mut outputs),
+            (Some(rows), Sel::Identity) => {
+                round.run(|i| rows[i], |row| values.values[row as usize], &mut outputs)
             }
-            if !entry.is_occupied() {
-                continue;
-            }
-            let row = entry.pointer();
-            let probe_key = values.values[values.slot(row_index as usize)];
-            // SAFETY: the entry points to a pinned row of this table whose first column
-            // holds a `T` key.
-            let build_key = unsafe { row.as_ptr().add(key_offset).cast::<T>().read_unaligned() };
-            scan.pointers[row_index as usize] = row;
-            if probe_key == build_key {
-                scan.sel_vector.push(row_index);
-                matched += 1;
-            } else {
-                state.ht_offsets_and_salts[row_index as usize] = offset | entry.salt_with_nulls();
-                state.keys_no_match.push(row_index);
-            }
-        }
+            (None, sel) => round.run(
+                |i| i as u32,
+                |row| values.values[sel.slot(row as usize)],
+                &mut outputs,
+            ),
+            (Some(rows), sel) => round.run(
+                |i| rows[i],
+                |row| values.values[sel.slot(row as usize)],
+                &mut outputs,
+            ),
+        };
+        scan.sel_vector.truncate(base + matched);
+        state.keys_no_match.truncate(no_match);
         matched
     }
 
@@ -1528,6 +1636,8 @@ fn insert_row_to_entry<const PARALLEL: bool, const EXPECT_EMPTY: bool>(
 /// Per-thread scratch space of probes (DuckDB's `ProbeState`).
 #[derive(Debug, Default)]
 pub struct ProbeState {
+    /// The hashes of the last probe chunk, kept to reuse the buffer.
+    hashes: Option<Vector>,
     hashes_dense: Vec<u64>,
     /// The entry each row's probe starts at.
     first_entries: Vec<u64>,
@@ -1749,10 +1859,20 @@ impl ScanStructure {
         count: usize,
         result_types: &[LogicalType],
         left_columns: usize,
+        previous: &mut [Vector],
         columns: &mut Vec<Vector>,
     ) -> Result<()> {
         for (index, &column) in ht.output_columns.iter().enumerate() {
-            let mut vector = Vector::flat(result_types[left_columns + index].clone(), count);
+            let mut vector = match previous.get_mut(left_columns + index) {
+                // Reuse the buffer of the last output chunk's column when nothing else
+                // holds it.
+                Some(vector) if vector.logical_type() == &result_types[left_columns + index] => {
+                    let mut vector = std::mem::replace(vector, Vector::sequence(LogicalType::BIGINT, 0, 0));
+                    vector.reset_flat(count);
+                    vector
+                }
+                _ => Vector::flat(result_types[left_columns + index].clone(), count),
+            };
             // SAFETY: the selected rows are pinned rows of `ht`.
             unsafe { ht.gather(rows, scan_sel, count, column, &mut vector, None)? };
             columns.push(vector);
@@ -1799,6 +1919,7 @@ impl ScanStructure {
                     if !ht.chains_longer_than_one {
                         // Every key has one row: emit the matches directly.
                         let mut columns = join::slice_columns(left, &self.chain_match_sel);
+                        let mut previous = std::mem::take(result).into_columns();
                         Self::gather_build_columns(
                             ht,
                             &self.pointers,
@@ -1806,6 +1927,7 @@ impl ScanStructure {
                             result_count,
                             result_types,
                             left.column_count(),
+                            &mut previous,
                             &mut columns,
                         )?;
                         result.set_columns(columns, result_count);
@@ -1824,6 +1946,7 @@ impl ScanStructure {
         }
         if base_count > 0 {
             let mut columns = join::slice_columns(left, &self.lhs_sel);
+            let mut previous = std::mem::take(result).into_columns();
             Self::gather_build_columns(
                 ht,
                 &self.rhs_pointers,
@@ -1831,6 +1954,7 @@ impl ScanStructure {
                 base_count,
                 result_types,
                 left.column_count(),
+                &mut previous,
                 &mut columns,
             )?;
             result.set_columns(columns, base_count);
