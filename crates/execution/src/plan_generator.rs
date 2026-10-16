@@ -29,7 +29,10 @@ use rustdb_storage::{DataTable, StorageIndex, TableConstraints};
 use rustdb_types::{DataChunk, LogicalType};
 
 use crate::constraints::table_constraints;
+mod comparison_join;
 mod window;
+
+pub use comparison_join::JoinPlanSettings;
 
 use crate::expression_executor::ExpressionExecutor;
 use crate::operator::{PhysicalRef, SinkData};
@@ -41,7 +44,7 @@ use crate::operators::{
 use crate::operators::{CreateEntryAction, PhysicalCreateType, PhysicalCrossProduct};
 use crate::operators::{CteData, PhysicalCte, PhysicalCteScan, PhysicalRecursiveCte};
 use crate::operators::{
-    DelimShared, PhysicalDelimJoin, PhysicalDelimScan, PhysicalNestedLoopJoin, PhysicalUnion,
+    DelimShared, PhysicalDelimJoin, PhysicalDelimScan, PhysicalHashJoin, PhysicalNestedLoopJoin, PhysicalUnion,
 };
 use crate::operators::{
     PhysicalColumnDataScan, PhysicalDummyScan, PhysicalFilter, PhysicalHashAggregate, PhysicalLimitPercent,
@@ -74,6 +77,8 @@ pub struct PlanContext {
     pub transaction: Arc<Transaction>,
     /// The attached catalogs, the default one first.
     pub catalogs: Vec<Arc<Catalog>>,
+    /// The settings that steer join planning.
+    pub join_settings: JoinPlanSettings,
 }
 
 impl PlanContext {
@@ -133,6 +138,13 @@ impl PlanGenerator {
             level.push(Arc::clone(data));
         }
         !levels.is_empty()
+    }
+
+    /// The join planning settings of the client (defaults without a plan context).
+    fn join_settings(&self) -> JoinPlanSettings {
+        self.context
+            .as_ref()
+            .map_or_else(JoinPlanSettings::default, |context| context.join_settings)
     }
 
     fn context(&self) -> Result<&PlanContext> {
@@ -455,7 +467,7 @@ impl PlanGenerator {
     /// (DuckDB's `PlanDelimJoin` + `PhysicalLeftDelimJoin`).
     fn plan_delim_join(
         &mut self,
-        join: LogicalComparisonJoin,
+        mut join: LogicalComparisonJoin,
         children: Vec<LogicalOperator>,
         types: Vec<LogicalType>,
     ) -> Result<PhysicalRef> {
@@ -466,6 +478,10 @@ impl PlanGenerator {
         let (Some(left), Some(right)) = (children.next(), children.next()) else {
             return Err(Error::internal("delim join must have two inputs"));
         };
+        let cardinalities = (
+            comparison_join::estimate_cardinality(&left),
+            comparison_join::estimate_cardinality(&right),
+        );
         let left = self.plan(left)?;
         let shared = Arc::new(DelimShared::default());
         self.delim.push((Arc::clone(&shared), self.external.len()));
@@ -473,16 +489,10 @@ impl PlanGenerator {
         self.delim.pop();
         let right = right?;
         let left_types = left.types().to_vec();
-        let delim = PhysicalDelimJoin::new(join.duplicate_eliminated_columns, &shared, left);
+        let duplicate_eliminated_columns = std::mem::take(&mut join.duplicate_eliminated_columns);
+        let delim = PhysicalDelimJoin::new(duplicate_eliminated_columns, &shared, left);
         let cached: PhysicalRef = Arc::new(PhysicalDelimScan::buffered_input(left_types, shared, delim));
-        Ok(Arc::new(PhysicalNestedLoopJoin::new(
-            types,
-            join.join_type,
-            join.conditions,
-            join.predicate,
-            cached,
-            right,
-        )?))
+        comparison_join::create_comparison_join(self, join, types, cached, right, cardinalities)
     }
 
     fn plan(&mut self, op: LogicalOperator) -> Result<PhysicalRef> {
@@ -515,6 +525,14 @@ impl PlanGenerator {
                 unreachable!("matched above")
             };
             return self.plan_delim_join(*join, children, types);
+        }
+        if let LogicalKind::ComparisonJoin(join) = &kind
+            && join.operator_type == LogicalOperatorType::LogicalComparisonJoin
+        {
+            let LogicalKind::ComparisonJoin(join) = kind else {
+                unreachable!("matched above")
+            };
+            return self.plan_comparison_join(*join, children, types);
         }
         if let LogicalKind::DelimGet { .. } = &kind {
             let (shared, depth) = self
@@ -822,24 +840,6 @@ impl PlanGenerator {
                     next_child("order")?,
                 ))
             }
-            LogicalKind::ComparisonJoin(join)
-                if join.operator_type == LogicalOperatorType::LogicalComparisonJoin =>
-            {
-                let left = next_child("join")?;
-                let right = next_child("join")?;
-                let join = *join;
-                if !join.left_projection_map.is_empty() || !join.right_projection_map.is_empty() {
-                    return Err(Error::not_implemented("join projection maps"));
-                }
-                Arc::new(PhysicalNestedLoopJoin::new(
-                    types,
-                    join.join_type,
-                    join.conditions,
-                    join.predicate,
-                    left,
-                    right,
-                )?)
-            }
             LogicalKind::CrossProduct => {
                 let left = next_child("cross product")?;
                 let right = next_child("cross product")?;
@@ -985,8 +985,16 @@ fn except_or_intersect(
     } else {
         JoinType::Semi
     };
-    let join: PhysicalRef = Arc::new(PhysicalNestedLoopJoin::new(
-        join_types, join_type, conditions, None, left, right,
+    let join: PhysicalRef = Arc::new(PhysicalHashJoin::new(
+        join_types,
+        join_type,
+        conditions,
+        &[],
+        &[],
+        Vec::new(),
+        true,
+        left,
+        right,
     )?);
     if setop_all {
         // Drop the row numbers again.

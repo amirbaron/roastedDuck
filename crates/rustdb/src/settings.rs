@@ -8,6 +8,7 @@ use rustdb_ast::OrderType;
 use rustdb_common::string_util::candidates_error_message;
 use rustdb_common::{Error, ErrorKind, Result};
 use rustdb_function::cast::ValueCast;
+use rustdb_execution::JoinPlanSettings;
 use rustdb_planner::{DefaultNullOrder, PlannerConfig};
 use rustdb_types::{LogicalType, Value};
 
@@ -270,11 +271,41 @@ impl Settings {
                 let enabled = value.default_cast_as(&LogicalType::BOOLEAN)?;
                 self.planner.order_by_non_integer_literal = enabled.as_bool().unwrap_or(false);
             }
+            "scalar_subquery_error_on_multiple_rows" => {
+                let enabled = value.default_cast_as(&LogicalType::BOOLEAN)?;
+                self.planner.scalar_subquery_error_on_multiple_rows = enabled.as_bool().unwrap_or(true);
+            }
             other => {
                 self.other.insert(other, value.clone());
             }
         }
         Ok(())
+    }
+
+    /// The settings that steer physical join planning.
+    pub fn join_plan_settings(&self) -> JoinPlanSettings {
+        let defaults = JoinPlanSettings::default();
+        let unsigned = |name: &str, default: u64| {
+            self.other
+                .get(name)
+                .and_then(|value| value.default_cast_as(&LogicalType::UBIGINT).ok())
+                .and_then(|value| value.as_i128())
+                .and_then(|value| u64::try_from(value).ok())
+                .unwrap_or(default)
+        };
+        let boolean = |name: &str, default: bool| {
+            self.other
+                .get(name)
+                .and_then(|value| value.default_cast_as(&LogicalType::BOOLEAN).ok())
+                .and_then(|value| value.as_bool())
+                .unwrap_or(default)
+        };
+        JoinPlanSettings {
+            nested_loop_join_threshold: unsigned("nested_loop_join_threshold", defaults.nested_loop_join_threshold),
+            merge_join_threshold: unsigned("merge_join_threshold", defaults.merge_join_threshold),
+            prefer_range_joins: boolean("prefer_range_joins", defaults.prefer_range_joins),
+            scalar_subquery_error_on_multiple_rows: self.planner.scalar_subquery_error_on_multiple_rows,
+        }
     }
 
     /// `RESET name`.
@@ -290,6 +321,9 @@ impl Settings {
             }
             "order_by_non_integer_literal" => {
                 self.planner.order_by_non_integer_literal = defaults.order_by_non_integer_literal;
+            }
+            "scalar_subquery_error_on_multiple_rows" => {
+                self.planner.scalar_subquery_error_on_multiple_rows = defaults.scalar_subquery_error_on_multiple_rows;
             }
             "pivot_limit" => self.planner.pivot_limit = defaults.pivot_limit,
             "pivot_filter_threshold" => self.planner.pivot_filter_threshold = defaults.pivot_filter_threshold,

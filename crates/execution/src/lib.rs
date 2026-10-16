@@ -9,6 +9,7 @@ mod constraints;
 mod context;
 mod executor;
 mod expression_executor;
+pub mod join_hashtable;
 mod operator;
 pub mod operators;
 mod pipeline;
@@ -24,4 +25,4 @@ pub use operator::{
     Operator, OperatorResult, PhysicalOperator, PhysicalRef, Sink, SinkFinalize, SinkResult, Source,
     SourceResult,
 };
-pub use plan_generator::{PlanContext, create_physical_plan, create_physical_plan_with};
+pub use plan_generator::{JoinPlanSettings, PlanContext, create_physical_plan, create_physical_plan_with};

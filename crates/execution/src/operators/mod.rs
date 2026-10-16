@@ -14,6 +14,7 @@ mod expression_scan;
 mod filter;
 mod hash_aggregate;
 mod insert;
+pub mod join;
 mod limit;
 mod merge_into;
 mod modify;
@@ -49,6 +50,7 @@ pub use expression_scan::{ExpressionScanState, PhysicalExpressionScan};
 pub use filter::{FilterState, PhysicalFilter};
 pub use hash_aggregate::{HashAggregateGlobal, HashAggregateLocal, PhysicalHashAggregate};
 pub use insert::{InsertGlobal, InsertTarget, PhysicalInsert, TableCreator};
+pub use join::PhysicalHashJoin;
 pub use limit::{
     LimitBounds, LimitPercentGlobal, LimitPercentSource, PhysicalLimitPercent, PhysicalStreamingLimit,
 };
