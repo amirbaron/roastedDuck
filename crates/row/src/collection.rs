@@ -120,6 +120,13 @@ impl TupleDataCollection {
         self.segments.iter().map(|segment| segment.chunks.len()).sum()
     }
 
+    /// The number of rows of every chunk, in scan order.
+    pub fn chunk_row_counts(&self) -> impl Iterator<Item = usize> + '_ {
+        self.segments
+            .iter()
+            .flat_map(|segment| segment.chunks.iter().map(|chunk| chunk.count as usize))
+    }
+
     /// Bytes of row and heap data plus metadata.
     pub fn size_in_bytes(&self) -> usize {
         let metadata: usize = self

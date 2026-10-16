@@ -121,6 +121,25 @@ unsafe fn found_flag<'a>(row: RowPtr, offset: usize) -> &'a AtomicU8 {
     unsafe { AtomicU8::from_ptr(row.as_ptr().add(offset)) }
 }
 
+/// Hints the CPU to start loading the cache line at `address` (no effect on
+/// correctness; probes issue these for rows they are about to compare).
+#[inline]
+fn prefetch_read(address: *const u8) {
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: `prfm` is a hint: it never faults, even for invalid addresses, and has no
+    // architectural side effects.
+    unsafe {
+        std::arch::asm!("prfm pldl1keep, [{0}]", in(reg) address, options(nostack, readonly, preserves_flags));
+    }
+    #[cfg(target_arch = "x86_64")]
+    // SAFETY: `prefetcht0` is a hint that never faults.
+    unsafe {
+        std::arch::x86_64::_mm_prefetch::<{ std::arch::x86_64::_MM_HINT_T0 }>(address.cast::<i8>());
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    let _ = address;
+}
+
 /// The row matcher predicate of a join comparison.
 fn match_predicate(comparison: ExpressionType) -> Result<MatchPredicate> {
     Ok(match comparison {
@@ -763,15 +782,29 @@ impl JoinHashTable {
         };
         let mut elements = count;
         loop {
+            // Load the first entry of every row in one pass: the loads are independent,
+            // so their cache misses overlap.
+            state.first_entries.clear();
+            state.first_entries.extend(
+                state.hashes_dense[..elements]
+                    .iter()
+                    .map(|&hash| entries[(hash & self.bitmask) as usize].load(Ordering::Relaxed)),
+            );
+            // Start loading the rows the entries point to, so the key comparisons hit.
+            for &entry in &state.first_entries {
+                if entry != 0 {
+                    prefetch_read(HtEntry(entry).pointer().as_ptr());
+                }
+            }
             state.keys_to_compare.clear();
             for i in 0..elements {
                 let row_hash = state.hashes_dense[i];
                 let mut offset = row_hash & self.bitmask;
                 let row_index = probing.as_ref().map_or(i as u32, |sel| sel[i]);
+                let mut entry = HtEntry(state.first_entries[i]);
                 if use_salts {
                     let row_salt = HtEntry::extract_salt(row_hash);
                     loop {
-                        let entry = HtEntry(entries[offset as usize].load(Ordering::Relaxed));
                         if !entry.is_occupied() {
                             break;
                         }
@@ -780,12 +813,10 @@ impl JoinHashTable {
                             break;
                         }
                         offset = increment_and_wrap(offset, self.bitmask);
+                        entry = HtEntry(entries[offset as usize].load(Ordering::Relaxed));
                     }
-                } else {
-                    let entry = HtEntry(entries[offset as usize].load(Ordering::Relaxed));
-                    if entry.is_occupied() {
-                        state.add_pointer_to_compare(scan, entry, offset, row_index);
-                    }
+                } else if entry.is_occupied() {
+                    state.add_pointer_to_compare(scan, entry, offset, row_index);
                 }
             }
             let compare_count = state.keys_to_compare.len();
@@ -1339,6 +1370,8 @@ fn insert_row_to_entry<const PARALLEL: bool, const EXPECT_EMPTY: bool>(
 #[derive(Debug, Default)]
 pub struct ProbeState {
     hashes_dense: Vec<u64>,
+    /// The entry each row's probe starts at.
+    first_entries: Vec<u64>,
     ht_offsets_and_salts: Vec<u64>,
     keys_to_compare: Vec<u32>,
     keys_no_match: Vec<u32>,
