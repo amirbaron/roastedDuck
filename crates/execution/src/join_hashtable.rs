@@ -20,7 +20,7 @@ use rustdb_row::{
     PinProperties, RadixPartitioning, RowMatcher, RowPtr, ScanState, TupleDataCollection, TupleDataLayout,
     ValidityType,
 };
-use rustdb_types::{DataChunk, LogicalType, Value, ValidityMask, Vector, VectorKind};
+use rustdb_types::{DataChunk, LogicalType, PhysicalType, Value, ValidityMask, Vector, VectorKind};
 
 use crate::aggregate_hashtable::{AggregateObject, GroupedAggregateHashTable, initial_capacity};
 use crate::operators::join::{self, propagates_build_side};
@@ -899,11 +899,7 @@ impl JoinHashTable {
         } else {
             result_types.len() - self.output_columns.len()
         };
-        let mut columns: Vec<Vector> = result_types[..left_column_count]
-            .iter()
-            .cloned()
-            .map(Vector::constant_null)
-            .collect();
+        let mut columns = join::null_columns(&result_types[..left_column_count]);
         for (index, &column) in self.output_columns.iter().enumerate() {
             let mut vector = Vector::flat(result_types[left_column_count + index].clone(), count);
             // SAFETY: the rows are pinned rows of this table.
@@ -1886,6 +1882,13 @@ impl ScanStructure {
                     &mut vector,
                     Some(&result_sel),
                 )?;
+            }
+            if matches!(vector.logical_type().physical_type(), PhysicalType::Struct | PhysicalType::Array) {
+                // NULL nested values have NULL children (`FlatVector::SetNull`).
+                let null = Value::null(vector.logical_type().clone());
+                for row in (0..count).filter(|&row| !self.found_match[row]) {
+                    vector.set_value(row, &null)?;
+                }
             }
             columns.push(vector);
         }

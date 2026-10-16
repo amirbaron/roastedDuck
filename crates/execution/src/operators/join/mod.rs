@@ -21,7 +21,7 @@ pub use piecewise_merge_join::{
 use rustdb_ast::{ExpressionType, JoinType};
 use rustdb_common::Result;
 use rustdb_planner::operator::JoinCondition;
-use rustdb_types::{DataChunk, LogicalType, SelectionVector, Vector};
+use rustdb_types::{DataChunk, LogicalType, SelectionVector, Value, Vector};
 
 /// Whether unmatched left rows are emitted with NULLs on the right (DuckDB's
 /// `IsLeftOuterJoin`).
@@ -77,9 +77,13 @@ pub fn has_null_values(chunk: &DataChunk) -> bool {
     })
 }
 
-/// Constant NULL columns of `types`.
+/// Constant NULL columns of `types` (`ConstantVector::SetNull`, which also makes the
+/// children of nested values NULL, so sort keys of the NULLs are equal).
 pub(crate) fn null_columns(types: &[LogicalType]) -> Vec<Vector> {
-    types.iter().cloned().map(Vector::constant_null).collect()
+    types
+        .iter()
+        .map(|ty| Vector::constant(&Value::null(ty.clone())).unwrap_or_else(|_| Vector::constant_null(ty.clone())))
+        .collect()
 }
 
 /// The rows of `left` selected by `sel`.
