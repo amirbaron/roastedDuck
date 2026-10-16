@@ -397,6 +397,8 @@ impl Settings {
 #[derive(Debug)]
 pub(crate) struct SettingsSnapshot {
     pub settings: Settings,
+    /// The log manager's configuration, which the logging options read.
+    pub logging: crate::logging::LogConfig,
     /// `search_path`, rendered like `CatalogSearchPath::SetPathsToString`.
     pub search_path: String,
     /// The schema unqualified names resolve in (`schema`).
@@ -450,6 +452,9 @@ impl SettingsSnapshot {
             names.push(primary.name);
         }
         let assigned = self.assigned(&names);
+        if let Some(value) = crate::logging::setting_value(&self.logging, definition.name) {
+            return Ok(value);
+        }
         let value = match definition.name {
             "default_null_order" | "null_order" => {
                 Value::varchar(match self.settings.planner.default_null_order {

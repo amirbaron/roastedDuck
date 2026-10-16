@@ -55,6 +55,8 @@ pub struct FunctionClient {
     /// The number of open connections of the database (DuckDB's
     /// `ConnectionManager::GetConnectionCount`), shared by its connections.
     connections: Mutex<Option<Arc<AtomicU64>>>,
+    /// The connection's loggers (DuckDB's `ClientContext::GetLogger`).
+    logger: Mutex<Option<Arc<dyn crate::logging::ClientLogger>>>,
 }
 
 impl Default for FunctionClient {
@@ -68,6 +70,7 @@ impl Default for FunctionClient {
             connection_id: NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed),
             settings: Mutex::default(),
             connections: Mutex::default(),
+            logger: Mutex::default(),
         }
     }
 }
@@ -130,6 +133,16 @@ impl FunctionClient {
     /// Sets the configuration seen by the next statements.
     pub fn set_settings(&self, settings: Arc<dyn SettingsSource>) {
         *self.settings.lock().unwrap_or_else(PoisonError::into_inner) = Some(settings);
+    }
+
+    /// Sets the connection's loggers.
+    pub fn set_logger(&self, logger: Arc<dyn crate::logging::ClientLogger>) {
+        *self.logger.lock().unwrap_or_else(PoisonError::into_inner) = Some(logger);
+    }
+
+    /// The connection's loggers, if the database logs.
+    pub fn logger(&self) -> Option<Arc<dyn crate::logging::ClientLogger>> {
+        self.logger.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
     /// Shares the database's open-connection counter with this connection.

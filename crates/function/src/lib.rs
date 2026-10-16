@@ -9,6 +9,7 @@ pub mod bignum;
 pub mod cast;
 pub mod client;
 pub mod copy;
+pub mod logging;
 pub mod random;
 mod scalar;
 mod table;

@@ -55,6 +55,8 @@ pub(crate) struct DatabaseInstance {
     pub(crate) secrets: Arc<crate::secrets::SecretManager>,
     /// The number of open connections (DuckDB's `ConnectionManager`).
     connections: Arc<std::sync::atomic::AtomicU64>,
+    /// The log manager (DuckDB's `DatabaseInstance::GetLogManager`).
+    pub(crate) log_manager: Arc<crate::logging::LogManager>,
 }
 
 /// The default of `checkpoint_threshold` (16 MiB).
@@ -270,6 +272,9 @@ impl Database {
         for set in crate::system_functions::pragma_table_functions() {
             system_catalog.register_table_functions(set)?;
         }
+        for set in crate::log_functions::log_table_functions() {
+            system_catalog.register_table_functions(set)?;
+        }
         system_catalog.register_copy_function(rustdb_csv::copy_csv::csv_copy_function())?;
         for set in rustdb_csv::multi_file::glob_functions() {
             system_catalog.register_table_functions(set)?;
@@ -297,6 +302,7 @@ impl Database {
             compression: std::sync::Mutex::default(),
             secrets: Arc::default(),
             connections: Arc::default(),
+            log_manager: Arc::default(),
         };
         for (name, value) in &config.options {
             if is_checkpoint_threshold(name) {
@@ -371,7 +377,14 @@ impl Database {
             .connections
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         function_client.set_connection_counter(Arc::clone(&self.instance.connections));
+        // `ClientContext::ClientContext`: a connection-scoped logger.
+        let logger = Arc::new(crate::logging::ConnectionLogger::new(
+            Arc::clone(&self.instance.log_manager),
+            crate::logging::LoggingContext::new(crate::logging::ContextScope::Connection),
+        ));
+        function_client.set_logger(Arc::clone(&logger) as Arc<dyn rustdb_function::logging::ClientLogger>);
         Ok(Connection {
+            logger,
             database: self.clone(),
             transactions,
             settings,
@@ -418,6 +431,8 @@ pub struct Connection {
     transaction_attaches: Vec<Arc<AttachedDatabase>>,
     /// `SET VARIABLE` values (DuckDB's `ClientConfig::user_variables`).
     user_variables: CaseInsensitiveMap<rustdb_types::Value>,
+    /// The connection's loggers.
+    logger: Arc<crate::logging::ConnectionLogger>,
 }
 
 impl Drop for Connection {
@@ -473,6 +488,7 @@ impl Connection {
         self.function_client.set_query(query);
         self.function_client
             .set_settings(Arc::new(self.settings_snapshot()));
+        self.begin_query_logging(query);
         let outcome = self.run_statement(statement);
         let invalidates = outcome
             .as_ref()
@@ -484,6 +500,7 @@ impl Connection {
             None
         };
         let ended = self.transactions.end_statement(outcome.is_ok(), invalidates);
+        self.end_query_logging();
         let mut result = outcome.and_then(|result| ended.map(|()| result));
         if result.is_ok()
             && !self.transactions.has_current()
@@ -493,6 +510,48 @@ impl Connection {
             result = Err(error);
         }
         result.map_err(|error| error.with_query_context(query))
+    }
+
+    /// `ClientContext::BeginQueryInternal`'s logging: flush, a logger for this query's
+    /// connection, transaction and query, and the `QueryLog` entry.
+    fn begin_query_logging(&mut self, query: &str) {
+        use crate::logging::{ContextScope, LoggingContext};
+        use rustdb_function::logging::{ClientLogger, LogLevel, LogScope};
+        let manager = Arc::clone(&self.logger.manager);
+        let _ = manager.flush();
+        // Like DuckDB, the query's transaction starts first when the query is logged.
+        let transaction_id = if manager.config().enabled || self.transactions.has_current() {
+            let transaction = self.transactions.current();
+            self.function_client
+                .observe_transaction(transaction.transaction_id);
+            Some(transaction.transaction_id)
+        } else {
+            None
+        };
+        self.logger.refresh(LoggingContext {
+            scope: ContextScope::Connection,
+            connection_id: Some(self.function_client.connection_id()),
+            transaction_id,
+            query_id: Some(self.function_client.query_id()),
+        });
+        if self
+            .logger
+            .should_log(LogScope::Connection, "QueryLog", LogLevel::Info)
+        {
+            let _ = self
+                .logger
+                .write_log(LogScope::Connection, "QueryLog", LogLevel::Info, query);
+        }
+    }
+
+    /// `ClientContext::EndQueryInternal`'s logging: flush and a connection-scoped logger.
+    fn end_query_logging(&self) {
+        use crate::logging::{ContextScope, LoggingContext};
+        let _ = self.logger.manager.flush();
+        self.logger.refresh(LoggingContext {
+            connection_id: Some(self.function_client.connection_id()),
+            ..LoggingContext::new(ContextScope::Connection)
+        });
     }
 
     /// The logical plan of a parsed statement of `query`, with column references
@@ -910,6 +969,7 @@ impl Connection {
         );
         let buffer_manager = &self.database.instance().env.buffer_manager;
         crate::settings::SettingsSnapshot {
+            logging: self.database.instance().log_manager.config(),
             settings: self.settings.clone(),
             search_path,
             schema,
@@ -1138,6 +1198,9 @@ impl Connection {
                 if is_secret_setting(name) {
                     self.database.instance().secrets.set_option(name, Some(value))?;
                 }
+                if crate::logging::is_logging_setting(name) {
+                    crate::logging::apply_setting(&self.database.instance().log_manager, name, Some(value))?;
+                }
                 self.settings.set(name, value)?;
                 if is_checkpoint_threshold(name) {
                     self.database.instance().set_checkpoint_threshold(value)?;
@@ -1150,6 +1213,9 @@ impl Connection {
             LogicalKind::Reset { name, .. } => {
                 if is_secret_setting(name) {
                     self.database.instance().secrets.set_option(name, None)?;
+                }
+                if crate::logging::is_logging_setting(name) {
+                    crate::logging::apply_setting(&self.database.instance().log_manager, name, None)?;
                 }
                 self.settings.reset(name)?;
                 if is_force_compression(name) {
@@ -1205,11 +1271,29 @@ impl Connection {
                         .shutdown_checkpoint_disabled
                         .store(lower.starts_with("disable"), std::sync::atomic::Ordering::Relaxed);
                 }
-                return if NO_OP_PRAGMAS.contains(&name.to_ascii_lowercase().as_str()) {
-                    Ok(nothing())
-                } else {
-                    Err(Error::not_implemented(format!("PRAGMA {name}")))
-                };
+                if NO_OP_PRAGMAS.contains(&name.to_ascii_lowercase().as_str()) {
+                    return Ok(nothing());
+                }
+                // `Binder::BindPragma`: a table function of the name is suggested.
+                let transaction = self.transactions.current();
+                if self
+                    .database
+                    .instance()
+                    .system_catalog
+                    .get_entry(
+                        &transaction,
+                        rustdb_catalog::CatalogType::TableFunction,
+                        "main",
+                        name,
+                    )
+                    .is_some()
+                {
+                    return Err(Error::catalog(format!(
+                        "Pragma Function with name {name} does not exist, but a table function with the same name \
+                         exists, try `CALL {name}(...)`"
+                    )));
+                }
+                return Err(Error::not_implemented(format!("PRAGMA {name}")));
             }
             LogicalKind::Execute { .. } => {
                 // The prepared statement was planned again with the values: run that plan.

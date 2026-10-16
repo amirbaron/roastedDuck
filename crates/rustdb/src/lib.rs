@@ -17,6 +17,8 @@ mod default_functions;
 mod default_settings;
 mod default_views;
 mod extensions;
+mod log_functions;
+mod logging;
 mod result;
 mod secrets;
 mod sequence;

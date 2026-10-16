@@ -58,6 +58,7 @@ test/fuzzer/duckfuzz/limit_offset_macro_subquery.test
 test/fuzzer/duckfuzz/limit_percent_subquery.test
 test/fuzzer/duckfuzz/list_try_cast.test
 test/fuzzer/duckfuzz/list_zip_no_args.test
+test/fuzzer/duckfuzz/logger_null.test
 test/fuzzer/duckfuzz/map_concat_type_mismatch.test
 test/fuzzer/duckfuzz/null_checkpoint.test
 test/fuzzer/duckfuzz/ordagg_nargs.test
@@ -1957,7 +1958,15 @@ test/sql/limit/test_parallel_limit_nested_null.test_slow
 test/sql/limit/test_parallel_limit_nulls.test_slow
 test/sql/limit/test_parallel_limit_strings.test_slow
 test/sql/limit/test_preserve_insertion_order.test
+test/sql/logging/enable_logging_file_no_path.test
 test/sql/logging/http_log_timing.test
+test/sql/logging/logging.test
+test/sql/logging/logging_buffer_size.test
+test/sql/logging/logging_call_functions.test
+test/sql/logging/logging_context_ids.test
+test/sql/logging/logging_file_bind_replace.test
+test/sql/logging/test_logging_function.test
+test/sql/logging/test_logging_function_large.test_slow
 test/sql/merge/merge_into.test
 test/sql/merge/merge_into_bind_matching_columns.test
 test/sql/merge/merge_into_by_source.test
@@ -2293,9 +2302,11 @@ test/sql/setops/union_pipeline.test
 test/sql/setops/union_shared_scan.test
 test/sql/setops/value_union.test
 test/sql/settings/connection_local_settings.test
+test/sql/settings/default_null_order_extended.test
 test/sql/settings/lock_configuration_schema.test
 test/sql/settings/reset/reset_threads.test
 test/sql/settings/setting_alias.test
+test/sql/settings/setting_collation.test
 test/sql/settings/setting_null_order.test
 test/sql/settings/setting_order.test
 test/sql/show_select/describe_rowid.test
