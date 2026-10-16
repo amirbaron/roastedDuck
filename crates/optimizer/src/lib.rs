@@ -35,6 +35,7 @@ pub mod in_clause_rewriter;
 pub mod join_elimination;
 pub mod join_filter_pushdown;
 pub mod join_order;
+pub mod late_materialization;
 pub mod limit_pushdown;
 pub mod logical_operator_deep_copy;
 mod optimizer;
@@ -44,5 +45,6 @@ pub mod rule;
 pub mod statistics_propagator;
 pub mod sum_rewriter;
 pub mod topn;
+pub mod window_self_join;
 
 pub use optimizer::{Optimizer, OptimizerConfig, OptimizerType};

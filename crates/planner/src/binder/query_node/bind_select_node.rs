@@ -437,6 +437,7 @@ fn create_plan(
             groups: std::mem::take(&mut statement.groups.group_expressions),
             grouping_sets: std::mem::take(&mut statement.groups.grouping_sets),
             grouping_functions: std::mem::take(&mut statement.grouping_functions),
+            group_stats: Vec::new(),
         };
         root = LogicalOperator::new(LogicalKind::Aggregate(Box::new(aggregate)))
             .with_expressions(std::mem::take(&mut statement.aggregates))

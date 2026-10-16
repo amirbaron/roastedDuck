@@ -138,6 +138,18 @@ impl StatisticsPropagator<'_> {
             | LogicalOperatorType::LogicalIntersect => self.propagate_set_operation(node),
             LogicalOperatorType::LogicalOrderBy => self.propagate_order(node),
             LogicalOperatorType::LogicalWindow => self.propagate_window(node),
+            LogicalOperatorType::LogicalLimit => {
+                // DuckDB's `PropagateStatistics(LogicalLimit)`: a constant limit bounds the
+                // rows.
+                self.propagate_child(node, 0)?;
+                Ok(match &node.kind {
+                    LogicalKind::Limit {
+                        limit: rustdb_planner::BoundLimitNode::ConstantValue(limit),
+                        ..
+                    } => Some(NodeStatistics::new(*limit, *limit)),
+                    _ => None,
+                })
+            }
             _ => {
                 for index in 0..node.children.len() {
                     self.propagate_child(node, index)?;
@@ -298,7 +310,7 @@ impl StatisticsPropagator<'_> {
                 _ => index += 1,
             }
         }
-        Ok(self.node_stats)
+        Ok(self.node_stats.take())
     }
 
     /// DuckDB's `PropagateStatistics(LogicalGet)`: the table's column statistics,
@@ -307,12 +319,13 @@ impl StatisticsPropagator<'_> {
         let LogicalKind::Get(get) = &mut node.kind else {
             return Ok(None);
         };
-        let node_stats = get
-            .table_cardinality()
-            .map(|rows| NodeStatistics::new(rows, rows));
+        // Like DuckDB's member `node_stats`, only set when the function has a cardinality.
+        if let Some(rows) = get.table_cardinality() {
+            self.node_stats = Some(NodeStatistics::new(rows, rows));
+        }
         if get.table.is_none() {
             // Only base table scans have column statistics.
-            return Ok(node_stats);
+            return Ok(self.node_stats.take());
         }
         for (index, column) in get.column_ids.iter().enumerate() {
             if let Some(stats) = table_column_statistics(self.optimizer.context(), get, column.index) {
@@ -359,7 +372,7 @@ impl StatisticsPropagator<'_> {
             }
             self.statistics_map.insert(stats_binding, stats);
         }
-        Ok(node_stats)
+        Ok(self.node_stats.take())
     }
 
     /// DuckDB's `PropagateTableFilter`: expression filters are propagated as
@@ -411,10 +424,10 @@ impl StatisticsPropagator<'_> {
         self.node_stats = self.propagate_child(node, 0)?;
         if node.children[0].operator_type() == LogicalOperatorType::LogicalEmptyResult {
             replace_with_empty_result(node)?;
-            return Ok(self.node_stats);
+            return Ok(self.node_stats.take());
         }
         let LogicalKind::Projection { table_index } = node.kind else {
-            return Ok(self.node_stats);
+            return Ok(self.node_stats.take());
         };
         for (index, expression) in node.expressions.iter_mut().enumerate() {
             if let Some(stats) = self.propagate_expression(expression)? {
@@ -423,22 +436,24 @@ impl StatisticsPropagator<'_> {
                     .or_insert(stats);
             }
         }
-        Ok(self.node_stats)
+        Ok(self.node_stats.take())
     }
 
     /// DuckDB's `PropagateStatistics(LogicalAggregate)`.
     fn propagate_aggregate(&mut self, node: &mut LogicalOperator) -> Result<Option<NodeStatistics>> {
         self.node_stats = self.propagate_child(node, 0)?;
         let LogicalKind::Aggregate(aggregate) = &mut node.kind else {
-            return Ok(self.node_stats);
+            return Ok(self.node_stats.take());
         };
         let multiple_grouping_sets = aggregate.grouping_sets.len() > 1;
         let group_index = aggregate.group_index;
         let aggregate_index = aggregate.aggregate_index;
+        aggregate.group_stats = vec![None; aggregate.groups.len()];
         for (index, group) in aggregate.groups.iter_mut().enumerate() {
             let Some(stats) = self.propagate_expression(group)? else {
                 continue;
             };
+            aggregate.group_stats[index] = Some(stats.clone());
             if multiple_grouping_sets {
                 // Grouping sets can introduce NULLs into the groups.
                 continue;
@@ -454,7 +469,7 @@ impl StatisticsPropagator<'_> {
         }
         // Whole-table count/min/max may be answered by the row group statistics.
         self.try_execute_aggregates(node);
-        Ok(self.node_stats)
+        Ok(self.node_stats.take())
     }
 
     /// DuckDB's `PropagateStatistics(LogicalCrossProduct)`.
@@ -475,7 +490,7 @@ impl StatisticsPropagator<'_> {
                 self.propagate_expression(&mut order.expression)?;
             }
         }
-        Ok(self.node_stats)
+        Ok(self.node_stats.take())
     }
 
     /// DuckDB's `PropagateStatistics(LogicalWindow)`: the partitions, orders and frame
@@ -507,7 +522,7 @@ impl StatisticsPropagator<'_> {
                 self.propagate_expression(&mut order.expression)?;
             }
         }
-        Ok(self.node_stats)
+        Ok(self.node_stats.take())
     }
 
     /// DuckDB's `PropagateUnion` / `PropagateStatistics(LogicalSetOperation)`.
@@ -587,10 +602,12 @@ impl StatisticsPropagator<'_> {
     /// DuckDB's `PropagateStatistics(LogicalPositionalJoin)`: both sides may be padded
     /// with NULLs.
     fn propagate_positional_join(&mut self, node: &mut LogicalOperator) -> Result<Option<NodeStatistics>> {
-        let mut node_stats = self.propagate_child(node, 0)?;
+        // As in DuckDB, the cardinality lives in the member `node_stats`, which the
+        // propagation of the other children moves out (so it is usually gone).
+        self.node_stats = self.propagate_child(node, 0)?;
         for index in 1..node.children.len() {
             let child_stats = self.propagate_child(node, index)?;
-            node_stats = match (node_stats, child_stats) {
+            self.node_stats = match (self.node_stats, child_stats) {
                 (Some(stats), Some(child)) => match (
                     stats.estimated_cardinality,
                     stats.max_cardinality,
@@ -612,23 +629,26 @@ impl StatisticsPropagator<'_> {
                 }
             }
         }
-        self.node_stats = node_stats;
-        Ok(node_stats)
+        Ok(self.node_stats.take())
     }
 
     /// DuckDB's `PropagateStatistics(LogicalJoin)`.
     fn propagate_join(&mut self, node: &mut LogicalOperator) -> Result<Option<NodeStatistics>> {
-        let mut node_stats = self.propagate_child(node, 0)?;
+        // As in DuckDB, the cardinality lives in the member `node_stats`, which the
+        // propagation of the right child moves out (so join cardinalities are usually
+        // unknown).
+        self.node_stats = self.propagate_child(node, 0)?;
         for index in 1..node.children.len() {
             let child_stats = self.propagate_child(node, index)?;
-            node_stats = match child_stats {
+            self.node_stats = match child_stats {
                 None => None,
-                Some(child) => multiply_cardinalities(node_stats, child),
+                Some(child) => self
+                    .node_stats
+                    .and_then(|stats| multiply_cardinalities(Some(stats), child)),
             };
         }
-        self.node_stats = node_stats;
         let Some(join_type) = node.join_type() else {
-            return Ok(node_stats);
+            return Ok(self.node_stats.take());
         };
         let adds_null_on_left = is_right_outer_join(join_type);
         let adds_null_on_right = is_left_outer_join(join_type) || join_type == JoinType::Single;
@@ -652,7 +672,7 @@ impl StatisticsPropagator<'_> {
                 set_can_have_null(stats, true);
             }
         }
-        Ok(self.node_stats)
+        Ok(self.node_stats.take())
     }
 
     /// DuckDB's `PropagateStatistics(LogicalComparisonJoin)`: conditions the statistics

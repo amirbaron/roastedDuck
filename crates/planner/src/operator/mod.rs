@@ -107,6 +107,9 @@ pub struct LogicalAggregate {
     pub grouping_sets: Vec<GroupingSet>,
     /// For each `GROUPING(...)` call: the group indexes it inspects.
     pub grouping_functions: Vec<Vec<u64>>,
+    /// The statistics of each group, set by statistics propagation (DuckDB's
+    /// `group_stats`); they decide on perfect hash aggregation.
+    pub group_stats: Vec<Option<rustdb_storage::statistics::BaseStatistics>>,
 }
 
 /// A table or table function scan (DuckDB's `LogicalGet`).

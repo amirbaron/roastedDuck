@@ -23,6 +23,7 @@ mod limit;
 mod merge_into;
 mod modify;
 mod order;
+mod perfect_hash_aggregate;
 mod pivot;
 mod projection;
 mod result_collector;
@@ -68,6 +69,9 @@ pub use limit::{
 pub use merge_into::{MergeGlobal, MergeIntoOperator, PhysicalMergeInto};
 pub use modify::{ModifyResult, SharedAppend};
 pub use order::{OrderGlobalState, OrderLocalState, OrderSourceState, PhysicalOrder};
+pub use perfect_hash_aggregate::{
+    PerfectHashAggregateGlobal, PerfectHashAggregateLocal, PhysicalPerfectHashAggregate,
+};
 pub use pivot::PhysicalPivot;
 pub use projection::PhysicalProjection;
 pub use result_collector::{CollectedResult, PhysicalResultCollector};

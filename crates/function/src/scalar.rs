@@ -43,6 +43,13 @@ pub enum Stability {
 /// Data computed when a function is bound, shared by every execution of that expression.
 pub trait FunctionData: Any + Send + Sync + fmt::Debug {
     fn as_any(&self) -> &dyn Any;
+
+    /// Whether `other` is the same bind data (DuckDB's `FunctionData::Equals`); by
+    /// default only data that is shared is known to be equal.
+    fn equals(&self, other: &dyn FunctionData) -> bool {
+        let _ = other;
+        false
+    }
 }
 
 /// The bind data of `stats(x)` (DuckDB's `StatsBindData`): the statistics of `x` as

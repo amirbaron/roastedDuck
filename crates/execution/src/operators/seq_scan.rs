@@ -51,6 +51,9 @@ pub struct ScanExplainInfo {
     pub table: String,
     /// The name of each scanned column, by position in the scan's column list.
     pub column_names: Vec<String>,
+    /// Positions of virtual columns (`rowid`), which DuckDB does not list as projections
+    /// (`AddProjectionNames` skips ids past the table's columns).
+    pub virtual_columns: Vec<usize>,
 }
 
 impl ScanExplainInfo {
@@ -68,12 +71,17 @@ impl ScanExplainInfo {
             result.insert("Table".to_owned(), self.table.clone());
             result.insert("Type".to_owned(), "Sequential Scan".to_owned());
         }
+        let projected_name = |index: usize| {
+            (!self.virtual_columns.contains(&index))
+                .then(|| self.column_names.get(index).map(String::as_str))
+                .flatten()
+        };
         let projected: Vec<&str> = if projection.is_empty() {
-            self.column_names.iter().map(String::as_str).collect()
+            (0..self.column_names.len()).filter_map(projected_name).collect()
         } else {
             projection
                 .iter()
-                .filter_map(|&index| self.column_names.get(index).map(String::as_str))
+                .filter_map(|&index| projected_name(index))
                 .collect()
         };
         result.insert("Projections".to_owned(), projected.join("\n"));

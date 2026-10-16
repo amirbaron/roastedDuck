@@ -509,6 +509,7 @@ impl RelationManager {
             groups,
             grouping_sets: vec![grouping_set],
             grouping_functions: Vec::new(),
+            group_stats: Vec::new(),
         };
         let dummy = LogicalOperator::new(LogicalKind::Aggregate(Box::new(dummy_aggregate)));
         let bindings = dummy.column_bindings();

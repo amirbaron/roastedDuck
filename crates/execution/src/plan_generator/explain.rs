@@ -77,46 +77,116 @@ fn utility_name(op: &LogicalOperator) -> Option<&'static str> {
 }
 
 /// The address identifying a physical operator in the estimates map.
-fn operator_key(op: &dyn PhysicalOperator) -> usize {
+pub(super) fn operator_key(op: &dyn PhysicalOperator) -> usize {
     std::ptr::from_ref(op).cast::<()>().addr()
 }
 
-/// A physical operator with the planner's estimates, as the tree renderer walks it.
+/// How `EXPLAIN` shows a delim join (DuckDB's `PhysicalLeftDelimJoin` /
+/// `PhysicalRightDelimJoin`): the join's node, renamed and with its delim index, over the
+/// duplicate-eliminated input, the join itself and the DISTINCT computing the
+/// duplicate-eliminated values. Here the delim sink is a dependency of the join's cached
+/// input instead of a node above the join.
+#[derive(Debug)]
+pub(super) struct DelimExplain {
+    pub name: &'static str,
+    pub delim_index: u64,
+    pub input: PhysicalRef,
+    /// The number of duplicate-eliminated columns (the DISTINCT's groups).
+    pub distinct_groups: usize,
+    /// The DISTINCT's estimate: that of the first delim scan.
+    pub distinct_estimate: u64,
+}
+
+/// What `EXPLAIN` knows about the planned operators.
 #[derive(Clone, Copy)]
-struct PhysicalRenderNode<'a> {
-    op: &'a dyn PhysicalOperator,
+struct ExplainInfo<'a> {
     estimates: &'a HashMap<usize, u64>,
+    delim_joins: &'a HashMap<usize, DelimExplain>,
+}
+
+/// A node of the rendered physical plan, as the tree renderer walks it.
+#[derive(Clone, Copy)]
+enum PhysicalRenderNode<'a> {
+    /// A physical operator; `plain` renders a delim join's join as itself.
+    Operator {
+        op: &'a dyn PhysicalOperator,
+        info: ExplainInfo<'a>,
+        plain: bool,
+    },
+    /// The DISTINCT of a delim join (DuckDB's `PhysicalHashAggregate` over the
+    /// duplicate-eliminated columns).
+    DelimDistinct { delim: &'a DelimExplain },
+}
+
+impl<'a> PhysicalRenderNode<'a> {
+    const fn operator(op: &'a dyn PhysicalOperator, info: ExplainInfo<'a>) -> Self {
+        Self::Operator { op, info, plain: false }
+    }
 }
 
 impl RenderSource for PhysicalRenderNode<'_> {
     fn render_node(&self) -> RenderTreeNode {
-        let estimate = self.estimates.get(&operator_key(self.op)).copied().unwrap_or(0);
-        RenderTreeNode::new(self.op.explain_name(), self.op.params_to_string(estimate))
+        match *self {
+            Self::Operator { op, info, plain } => {
+                let estimate = info.estimates.get(&operator_key(op)).copied().unwrap_or(0);
+                let mut params = op.params_to_string(estimate);
+                if !plain && let Some(delim) = info.delim_joins.get(&operator_key(op)) {
+                    // DuckDB's `PhysicalDelimJoin::ParamsToString`.
+                    params.insert("Delim Index".to_owned(), delim.delim_index.to_string());
+                    return RenderTreeNode::new(delim.name.to_owned(), params);
+                }
+                RenderTreeNode::new(op.explain_name(), params)
+            }
+            Self::DelimDistinct { delim } => {
+                let mut params = rustdb_common::tree_renderer::RenderParams::new();
+                let groups: Vec<String> = (0..delim.distinct_groups).map(|index| format!("#{index}")).collect();
+                params.insert("Groups".to_owned(), groups.join("\n"));
+                crate::operator::set_estimated_cardinality(&mut params, delim.distinct_estimate);
+                RenderTreeNode::new("HASH_GROUP_BY".to_owned(), params)
+            }
+        }
     }
 
     fn render_children(&self) -> Vec<Self> {
-        self.op
-            .explain_children()
+        let Self::Operator { op, info, plain } = *self else {
+            return Vec::new();
+        };
+        if !plain && let Some(delim) = info.delim_joins.get(&operator_key(op)) {
+            // DuckDB's `PhysicalDelimJoin::GetChildren`.
+            return vec![
+                Self::operator(delim.input.as_ref(), info),
+                Self::Operator { op, info, plain: true },
+                Self::DelimDistinct { delim },
+            ];
+        }
+        op.explain_children()
             .iter()
-            .map(|child| PhysicalRenderNode {
-                op: child.as_ref(),
-                estimates: self.estimates,
-            })
+            .map(|child| Self::operator(child.as_ref(), info))
             .collect()
     }
 }
 
 /// A physical plan rendered for `EXPLAIN` (DuckDB's `PhysicalOperator::ToString(format)`).
-pub fn render_physical_plan(
+fn render_physical_plan(
     root: &dyn PhysicalOperator,
     estimates: &HashMap<usize, u64>,
+    delim_joins: &HashMap<usize, DelimExplain>,
     format: ExplainFormat,
 ) -> String {
-    let tree = RenderTree::create(&PhysicalRenderNode { op: root, estimates });
+    let info = ExplainInfo { estimates, delim_joins };
+    let tree = RenderTree::create(&PhysicalRenderNode::operator(root, info));
     render(renderer_kind(format), tree)
 }
 
 impl PlanGenerator {
+    /// The estimate recorded for `op`, 0 if none.
+    pub(super) fn recorded_estimate(&self, op: &PhysicalRef) -> u64 {
+        self.estimates
+            .get(&operator_key(op.as_ref()))
+            .copied()
+            .unwrap_or(0)
+    }
+
     /// Records `estimate` for `op` and the operators below it that have none yet: the
     /// operators planned for one logical operator share its estimate.
     pub(super) fn record_estimate(&mut self, op: &PhysicalRef, estimate: u64) {
@@ -164,7 +234,8 @@ impl PlanGenerator {
                 plan,
             )));
         }
-        let physical_plan = render_physical_plan(plan.as_ref(), &self.estimates, explain_format);
+        let physical_plan =
+            render_physical_plan(plan.as_ref(), &self.estimates, &self.delim_explain, explain_format);
         let output = self
             .context
             .as_ref()

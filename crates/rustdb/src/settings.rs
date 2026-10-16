@@ -346,6 +346,19 @@ impl Settings {
                 .unwrap_or_default(),
             force_no_cross_product: boolean("debug_force_no_cross_product"),
             prefer_range_joins: boolean("prefer_range_joins"),
+            preserve_insertion_order: self
+                .other
+                .get("preserve_insertion_order")
+                .and_then(|value| value.default_cast_as(&LogicalType::BOOLEAN).ok())
+                .and_then(|value| value.as_bool())
+                .unwrap_or(true),
+            late_materialization_max_rows: self
+                .other
+                .get("late_materialization_max_rows")
+                .and_then(|value| value.default_cast_as(&LogicalType::UBIGINT).ok())
+                .and_then(|value| value.as_i128())
+                .and_then(|value| u64::try_from(value).ok())
+                .unwrap_or(50),
         }
     }
 
@@ -389,6 +402,7 @@ impl Settings {
                 "dynamic_or_filter_threshold",
                 defaults.dynamic_or_filter_threshold,
             ),
+            perfect_ht_threshold: unsigned("perfect_ht_threshold", defaults.perfect_ht_threshold),
         }
     }
 

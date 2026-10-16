@@ -35,6 +35,8 @@ pub struct JoinPlanSettings {
     /// `dynamic_or_filter_threshold`: up to this many build rows, a hash join also
     /// filters its probe scans on the IN list of its keys.
     pub dynamic_or_filter_threshold: u64,
+    /// `perfect_ht_threshold`: the slot index bits a perfect hash aggregate may use.
+    pub perfect_ht_threshold: u64,
 }
 
 impl Default for JoinPlanSettings {
@@ -46,6 +48,7 @@ impl Default for JoinPlanSettings {
             scalar_subquery_error_on_multiple_rows: true,
             asof_loop_join_threshold: 64,
             dynamic_or_filter_threshold: 50,
+            perfect_ht_threshold: 12,
         }
     }
 }

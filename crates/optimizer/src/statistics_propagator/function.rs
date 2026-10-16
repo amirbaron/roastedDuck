@@ -81,7 +81,68 @@ pub(super) fn propagate_aggregate_function(
             aggregate.children.clear();
         }
     }
+    // DuckDB's `SumPropagateStats`: a sum of 32/64-bit integers that cannot leave the
+    // BIGINT range is summed in 64 bits.
+    if &*aggregate.function.name == "sum"
+        && let Some(max_cardinality) = propagator.node_stats.and_then(|stats| stats.max_cardinality)
+        && let Some(stats) = child_stats.first()
+        && let Some(argument) = sum_no_overflow_argument(stats, max_cardinality)
+    {
+        // The sum keeps its result type (DECIMAL sums store their HUGEINT as a DECIMAL).
+        let return_type = aggregate.function.return_type.clone();
+        aggregate.function = sum_no_overflow(propagator, &argument)?;
+        aggregate.function.return_type = return_type;
+    }
     Ok(None)
+}
+
+/// The argument type of the `sum_no_overflow` overload replacing a sum over values with
+/// statistics `stats` and at most `max_cardinality` rows, if the sum fits in a BIGINT.
+fn sum_no_overflow_argument(stats: &BaseStatistics, max_cardinality: u64) -> Option<LogicalType> {
+    let numeric = stats.numeric().filter(|numeric| numeric.has_min_max())?;
+    let (min, max, argument) = match (numeric.min?, numeric.max?) {
+        (NumericValue::I32(min), NumericValue::I32(max)) => {
+            (i128::from(min), i128::from(max), LogicalType::INTEGER)
+        }
+        (NumericValue::I64(min), NumericValue::I64(max)) => {
+            (i128::from(min), i128::from(max), LogicalType::BIGINT)
+        }
+        _ => return None,
+    };
+    let rows = i128::from(max_cardinality);
+    let max_sum_negative = min.checked_mul(rows)?;
+    let max_sum_positive = max.checked_mul(rows)?;
+    (max_sum_positive < i128::from(i64::MAX) && max_sum_negative > i128::from(i64::MIN)).then_some(argument)
+}
+
+/// The `sum_no_overflow` overload for `argument` (DuckDB's `GetSumAggregateNoOverflow`;
+/// it refuses to bind from SQL).
+fn sum_no_overflow(
+    propagator: &StatisticsPropagator<'_>,
+    argument: &LogicalType,
+) -> Result<rustdb_function::AggregateFunction> {
+    let entry = propagator
+        .optimizer
+        .context()
+        .get_entry(
+            "system",
+            "main",
+            rustdb_catalog::CatalogType::AggregateFunction,
+            "sum_no_overflow",
+            true,
+        )?
+        .ok_or_else(|| rustdb_common::Error::internal("aggregate function sum_no_overflow not found"))?;
+    let rustdb_catalog::EntryKind::AggregateFunction(functions) = &entry.entry.kind else {
+        return Err(rustdb_common::Error::internal(
+            "sum_no_overflow is not an aggregate function",
+        ));
+    };
+    functions
+        .functions
+        .iter()
+        .find(|function| function.arguments.as_slice() == std::slice::from_ref(argument))
+        .cloned()
+        .ok_or_else(|| rustdb_common::Error::internal("Unsupported internal type for sum_no_overflow"))
 }
 
 /// The value of an integer bound.

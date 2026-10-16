@@ -106,8 +106,12 @@ impl OptimizerType {
     }
 }
 
-/// The settings that steer the optimizer.
+/// The settings that steer the optimizer (one field per DuckDB setting).
 #[derive(Clone, Debug)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "mirrors independent boolean settings"
+)]
 pub struct OptimizerConfig {
     /// `enable_optimizer` (`PRAGMA enable_optimizer` / `disable_optimizer`).
     pub enabled: bool,
@@ -117,6 +121,11 @@ pub struct OptimizerConfig {
     pub force_no_cross_product: bool,
     /// `prefer_range_joins`: no projection maps on joins that may become range joins.
     pub prefer_range_joins: bool,
+    /// `preserve_insertion_order`.
+    pub preserve_insertion_order: bool,
+    /// `late_materialization_max_rows`: the largest LIMIT/SAMPLE late materialization
+    /// rewrites.
+    pub late_materialization_max_rows: u64,
 }
 
 impl Default for OptimizerConfig {
@@ -126,6 +135,8 @@ impl Default for OptimizerConfig {
             disabled: BTreeSet::new(),
             force_no_cross_product: false,
             prefer_range_joins: false,
+            preserve_insertion_order: true,
+            late_materialization_max_rows: 50,
         }
     }
 }
@@ -287,6 +298,11 @@ impl Optimizer {
         let plan = self.run(OptimizerType::EmptyResultPullup, plan, |_, plan| {
             crate::empty_result_pullup::pull_up_empty_results(plan)
         })?;
+        // Whole-partition window aggregates become a join with a grouped aggregate.
+        let plan = self.run(OptimizerType::WindowSelfJoin, plan, |optimizer, mut plan| {
+            crate::window_self_join::optimize_window_self_joins(optimizer, &mut plan)?;
+            Ok(plan)
+        })?;
         // Join ordering also turns cross products with filters into joins and sets the
         // estimated cardinalities.
         let plan = self.run(OptimizerType::JoinOrder, plan, |optimizer, plan| {
@@ -335,6 +351,12 @@ impl Optimizer {
         // ORDER BY + LIMIT becomes a Top-N.
         let plan = self.run(OptimizerType::TopN, plan, |_, plan| {
             Ok(crate::topn::optimize(plan))
+        })?;
+        // Top-N / LIMIT / SAMPLE pick their rows on few columns, then fetch the rest by
+        // row id.
+        let plan = self.run(OptimizerType::LateMaterialization, plan, |optimizer, mut plan| {
+            crate::late_materialization::late_materialize(optimizer, &mut plan)?;
+            Ok(plan)
         })?;
         let plan = self.run(
             OptimizerType::StatisticsPropagation,

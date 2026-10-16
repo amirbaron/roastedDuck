@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::operators::{MergeIntoOperator, PhysicalMergeInto, SharedAppend};
+use crate::operators::{MergeIntoOperator, PhysicalMergeInto, PhysicalPerfectHashAggregate, SharedAppend};
 use rustdb_ast::MergeActionType;
 use rustdb_ast::{JoinType, OrderByNullType, OrderType};
 use rustdb_catalog::{Catalog, CatalogEntry, EntryKind, Transaction};
@@ -26,7 +26,7 @@ use rustdb_planner::{
     LogicalOperatorType,
 };
 use rustdb_storage::{DataTable, StorageIndex, TableConstraints};
-use rustdb_types::{DataChunk, LogicalType};
+use rustdb_types::{DataChunk, LogicalType, PhysicalType, Value};
 
 use crate::constraints::table_constraints;
 mod asof_join;
@@ -156,6 +156,12 @@ struct PlanGenerator {
     /// The delim joins being planned, innermost last; their delim gets read the data of
     /// the innermost one.
     delim: Vec<(Arc<DelimShared>, usize)>,
+    /// The delim scans of each delim join being planned (DuckDB's `GatherDelimScans`).
+    delim_scans: Vec<Vec<Arc<PhysicalDelimScan>>>,
+    /// The number of the last planned delim join (DuckDB's `delim_index`).
+    delim_index: u64,
+    /// How `EXPLAIN` shows the delim joins, by the address of their join.
+    delim_explain: HashMap<usize, explain::DelimExplain>,
     /// Materialised CTEs by table index (`materialized_ctes`), with the recursion depth
     /// they were planned at.
     materialized: HashMap<u64, (Arc<CteData>, usize)>,
@@ -248,6 +254,13 @@ impl PlanGenerator {
                         get.names.get(column.index as usize).cloned().unwrap_or_default()
                     }
                 })
+                .collect(),
+            virtual_columns: get
+                .column_ids
+                .iter()
+                .enumerate()
+                .filter(|(_, column)| column.is_row_id_column())
+                .map(|(position, _)| position)
                 .collect(),
         };
         Ok(Arc::new(
@@ -547,32 +560,101 @@ impl PlanGenerator {
             comparison_join::estimate_cardinality(&left),
             comparison_join::estimate_cardinality(&right),
         );
-        if join.delim_flipped {
-            // DuckDB's `PhysicalRightDelimJoin`: the duplicate-eliminated input is the
-            // right (build) side and the subquery side probes.
-            let input = self.plan(right)?;
-            let shared = Arc::new(DelimShared::default());
-            self.delim.push((Arc::clone(&shared), self.external.len()));
-            let probe = self.plan(left);
-            self.delim.pop();
-            let probe = probe?;
-            let input_types = input.types().to_vec();
-            let duplicate_eliminated_columns = std::mem::take(&mut join.duplicate_eliminated_columns);
-            let delim = PhysicalDelimJoin::new(duplicate_eliminated_columns, &shared, input);
-            let cached: PhysicalRef = Arc::new(PhysicalDelimScan::buffered_input(input_types, shared, delim));
-            return comparison_join::create_comparison_join(self, join, types, probe, cached, cardinalities);
-        }
-        let left = self.plan(left)?;
+        // DuckDB's `PhysicalRightDelimJoin` (flipped): the duplicate-eliminated input is
+        // the right (build) side and the subquery side probes; else the left input is
+        // duplicate eliminated and the subquery side builds.
+        // The children are planned left to right, like DuckDB's `PlanComparisonJoin`.
+        let flipped = join.delim_flipped;
         let shared = Arc::new(DelimShared::default());
-        self.delim.push((Arc::clone(&shared), self.external.len()));
-        let right = self.plan(right);
-        self.delim.pop();
-        let right = right?;
-        let left_types = left.types().to_vec();
+        let (input, (subquery, delim_scans)) = if flipped {
+            let subquery = self.plan_delim_side(left, &shared)?;
+            (self.plan(right)?, subquery)
+        } else {
+            let input = self.plan(left)?;
+            (input, self.plan_delim_side(right, &shared)?)
+        };
+        let Some(first_scan) = delim_scans.first() else {
+            // No scan reads the duplicate-eliminated data: a plain join.
+            let (left, right) = if flipped { (subquery, input) } else { (input, subquery) };
+            return comparison_join::create_comparison_join(self, join, types, left, right, cardinalities);
+        };
+        self.delim_index += 1;
+        for scan in &delim_scans {
+            scan.set_delim_index(self.delim_index);
+        }
+        let distinct_estimate = self.recorded_estimate(&(Arc::clone(first_scan) as PhysicalRef));
+        let input_types = input.types().to_vec();
         let duplicate_eliminated_columns = std::mem::take(&mut join.duplicate_eliminated_columns);
-        let delim = PhysicalDelimJoin::new(duplicate_eliminated_columns, &shared, left);
-        let cached: PhysicalRef = Arc::new(PhysicalDelimScan::buffered_input(left_types, shared, delim));
-        comparison_join::create_comparison_join(self, join, types, cached, right, cardinalities)
+        let distinct_groups = duplicate_eliminated_columns.len();
+        let delim = PhysicalDelimJoin::new(duplicate_eliminated_columns, &shared, Arc::clone(&input));
+        let cached: PhysicalRef = Arc::new(PhysicalDelimScan::buffered_input(input_types, shared, delim, flipped));
+        let (left, right) = if flipped { (subquery, cached) } else { (cached, subquery) };
+        let plan = comparison_join::create_comparison_join(self, join, types, left, right, cardinalities)?;
+        self.delim_explain.insert(
+            explain::operator_key(plan.as_ref()),
+            explain::DelimExplain {
+                name: if flipped { "RIGHT_DELIM_JOIN" } else { "LEFT_DELIM_JOIN" },
+                delim_index: self.delim_index,
+                input,
+                distinct_groups,
+                distinct_estimate,
+            },
+        );
+        Ok(plan)
+    }
+
+    /// Plans the side of a delim join whose delim gets read `shared`; returns it with
+    /// its delim scans.
+    fn plan_delim_side(
+        &mut self,
+        op: LogicalOperator,
+        shared: &Arc<DelimShared>,
+    ) -> Result<(PhysicalRef, Vec<Arc<PhysicalDelimScan>>)> {
+        self.delim.push((Arc::clone(shared), self.external.len()));
+        self.delim_scans.push(Vec::new());
+        let plan = self.plan(op);
+        self.delim.pop();
+        let scans = self.delim_scans.pop().unwrap_or_default();
+        Ok((plan?, scans))
+    }
+
+    /// Computes the groups, aggregate arguments and aggregate filters in a projection
+    /// below the aggregate, which then reads them by reference (DuckDB's
+    /// `ExtractAggregateExpressions`).
+    fn extract_aggregate_expressions(
+        &mut self,
+        child: PhysicalRef,
+        aggregates: &mut [BoundAggregateExpression],
+        groups: &mut [Expression],
+    ) -> PhysicalRef {
+        let mut expressions = Vec::new();
+        let mut extract = |expression: &mut Expression| {
+            let reference =
+                Expression::reference("", expression.return_type.clone(), expressions.len() as u64);
+            expressions.push(std::mem::replace(expression, reference));
+        };
+        for group in groups.iter_mut() {
+            extract(group);
+        }
+        for aggregate in aggregates.iter_mut() {
+            for argument in &mut aggregate.children {
+                extract(argument);
+            }
+            if let Some(filter) = &mut aggregate.filter {
+                extract(filter);
+            }
+        }
+        if expressions.is_empty() {
+            return child;
+        }
+        let types = expressions
+            .iter()
+            .map(|expression| expression.return_type.clone())
+            .collect();
+        let estimate = self.recorded_estimate(&child);
+        let projection: PhysicalRef = Arc::new(PhysicalProjection::new(types, expressions, child));
+        self.record_estimate(&projection, estimate);
+        projection
     }
 
     /// Plans `op` and records its estimated cardinality for the planned operators.
@@ -651,7 +733,11 @@ impl PlanGenerator {
                 .cloned()
                 .ok_or_else(|| Error::internal("delim get outside a delim join"))?;
             let external = self.read_from(&(Arc::clone(&shared) as Arc<dyn SinkData>), depth);
-            return Ok(Arc::new(PhysicalDelimScan::new(types, shared, external)));
+            let scan = Arc::new(PhysicalDelimScan::new(types, shared, external));
+            if let Some(scans) = self.delim_scans.last_mut() {
+                scans.push(Arc::clone(&scan));
+            }
+            return Ok(scan);
         }
         match kind {
             LogicalKind::MaterializedCte {
@@ -870,6 +956,7 @@ impl PlanGenerator {
                         .iter()
                         .filter_map(|column| get.names.get(usize::try_from(column.index).ok()?).cloned())
                         .collect(),
+                    virtual_columns: Vec::new(),
                 };
                 Arc::new(
                     PhysicalTableScan::new(types, get.function, get.bind_data, column_ids)
@@ -895,6 +982,7 @@ impl PlanGenerator {
             }
             LogicalKind::Filter { projection_map } => {
                 let child = next_child("filter")?;
+                let is_empty_filter = expressions.is_empty();
                 let mut expressions = expressions;
                 let predicate = if expressions.len() == 1 {
                     expressions.remove(0)
@@ -913,8 +1001,12 @@ impl PlanGenerator {
                     // The filter keeps its input's columns; a projection then selects the
                     // mapped ones (DuckDB's `CreatePlan(LogicalFilter&)`).
                     let input_types = child.types().to_vec();
-                    let filter: PhysicalRef =
-                        Arc::new(PhysicalFilter::new(input_types.clone(), predicate, child));
+                    // Without predicates only the projection remains.
+                    let filter: PhysicalRef = if is_empty_filter {
+                        child
+                    } else {
+                        Arc::new(PhysicalFilter::new(input_types.clone(), predicate, child))
+                    };
                     let select_list = projection_map
                         .iter()
                         .map(|&index| {
@@ -929,22 +1021,43 @@ impl PlanGenerator {
             }
             LogicalKind::Aggregate(aggregate) => {
                 let child = next_child("aggregate")?;
-                if !aggregate.groups.is_empty() || aggregate.grouping_sets.len() > 1 {
-                    let aggregates = expressions
-                        .into_iter()
-                        .map(|expression| match expression.kind {
-                            ExpressionKind::Aggregate(aggregate) => bind_sorted_aggregate(*aggregate),
-                            _ => Err(Error::internal(format!(
-                                "non-aggregate {expression} in an aggregate operator"
-                            ))),
-                        })
-                        .collect::<Result<Vec<_>>>()?;
-                    let LogicalAggregate {
+                let mut aggregates = expressions
+                    .into_iter()
+                    .map(|expression| match expression.kind {
+                        ExpressionKind::Aggregate(aggregate) => bind_sorted_aggregate(*aggregate),
+                        _ => Err(Error::internal(format!(
+                            "non-aggregate {expression} in an aggregate operator"
+                        ))),
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let LogicalAggregate {
+                    mut groups,
+                    grouping_sets,
+                    grouping_functions,
+                    group_stats,
+                    ..
+                } = *aggregate;
+                let child = self.extract_aggregate_expressions(child, &mut aggregates, &mut groups);
+                if !groups.is_empty()
+                    && grouping_sets.len() <= 1
+                    && grouping_functions.is_empty()
+                    && let Some((minima, required_bits)) = perfect_hash_groups(
+                        &groups,
+                        &group_stats,
+                        &aggregates,
+                        self.join_settings().perfect_ht_threshold,
+                    )
+                {
+                    return Ok(Arc::new(PhysicalPerfectHashAggregate::new(
+                        types,
                         groups,
-                        grouping_sets,
-                        grouping_functions,
-                        ..
-                    } = *aggregate;
+                        aggregates,
+                        minima,
+                        required_bits,
+                        child,
+                    )));
+                }
+                if !groups.is_empty() || grouping_sets.len() > 1 {
                     return Ok(Arc::new(PhysicalHashAggregate::new(
                         types,
                         groups,
@@ -954,15 +1067,6 @@ impl PlanGenerator {
                         child,
                     )?));
                 }
-                let aggregates = expressions
-                    .into_iter()
-                    .map(|expression| match expression.kind {
-                        ExpressionKind::Aggregate(aggregate) => bind_sorted_aggregate(*aggregate),
-                        _ => Err(Error::internal(format!(
-                            "non-aggregate {expression} in an aggregate operator"
-                        ))),
-                    })
-                    .collect::<Result<Vec<_>>>()?;
                 Arc::new(PhysicalUngroupedAggregate::new(types, aggregates, child)?)
             }
             LogicalKind::Limit { limit, offset } => {
@@ -1252,6 +1356,77 @@ fn distinct_on_all_columns(types: Vec<LogicalType>, child: PhysicalRef) -> Resul
 
 /// Replaces an aggregate with `ORDER BY` arguments by its sorted wrapper (DuckDB's
 /// `FunctionBinder::BindSortedAggregate`, called from `ExtractAggregateExpressions`).
+/// The minimum and slot index bits of every group, if a perfect hash aggregate can
+/// compute the aggregate (DuckDB's `CanUsePerfectHashAggregate`): every group is an
+/// integer whose statistics bound it (small types are bounded by their type), the bits
+/// stay within `threshold`, and no aggregate is DISTINCT.
+fn perfect_hash_groups(
+    groups: &[Expression],
+    group_stats: &[Option<rustdb_storage::statistics::BaseStatistics>],
+    aggregates: &[BoundAggregateExpression],
+    threshold: u64,
+) -> Option<(Vec<Value>, Vec<usize>)> {
+    use rustdb_storage::statistics::BaseStatistics;
+    let mut minima = Vec::with_capacity(groups.len());
+    let mut required_bits = Vec::with_capacity(groups.len());
+    let mut perfect_hash_bits = 0;
+    for (index, group) in groups.iter().enumerate() {
+        let ty = &group.return_type;
+        let physical = ty.physical_type();
+        if !matches!(
+            physical,
+            PhysicalType::Int8
+                | PhysicalType::Int16
+                | PhysicalType::Int32
+                | PhysicalType::Int64
+                | PhysicalType::UInt8
+                | PhysicalType::UInt16
+                | PhysicalType::UInt32
+                | PhysicalType::UInt64
+        ) {
+            return None;
+        }
+        let stats = if let Some(stats) = group_stats.get(index).cloned().flatten() {
+            stats
+        } else {
+            // Small types are bounded by the type itself.
+            if !matches!(
+                physical,
+                PhysicalType::Int8 | PhysicalType::Int16 | PhysicalType::UInt8 | PhysicalType::UInt16
+            ) {
+                return None;
+            }
+            let mut stats = BaseStatistics::create_unknown(ty.clone());
+            if let Some(numeric) = stats.numeric_mut() {
+                numeric.min = rustdb_storage::statistics::minimum_value(ty);
+                numeric.max = rustdb_storage::statistics::maximum_value(ty);
+            }
+            stats
+        };
+        stats.numeric().filter(|numeric| numeric.has_min_max())?;
+        let (min, max) = (stats.numeric_min()?, stats.numeric_max()?);
+        // A maximum below the minimum (no rows) fails here too.
+        let range = u64::try_from(max.as_i128()? - min.as_i128()?).ok()?;
+        // Bail out on any range of 2^31 or more.
+        if range >= u64::from(i32::MAX.unsigned_abs()) {
+            return None;
+        }
+        // One more for NULL, one more to count from one (`RequiredBitsForValue`).
+        let range = range + 2;
+        let bits = range.bit_width() as usize;
+        perfect_hash_bits += bits;
+        if perfect_hash_bits as u64 > threshold {
+            return None;
+        }
+        minima.push(min);
+        required_bits.push(bits);
+    }
+    if aggregates.iter().any(BoundAggregateExpression::is_distinct) {
+        return None;
+    }
+    Some((minima, required_bits))
+}
+
 fn bind_sorted_aggregate(mut aggregate: BoundAggregateExpression) -> Result<BoundAggregateExpression> {
     let Some(order_bys) = aggregate.order_bys.take() else {
         return Ok(aggregate);

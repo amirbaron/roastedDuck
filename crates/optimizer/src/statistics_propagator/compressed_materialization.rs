@@ -14,6 +14,7 @@ use std::collections::{HashMap, HashSet};
 use rustdb_ast::JoinType;
 use rustdb_common::{Error, Result};
 use rustdb_function::ScalarFunction;
+use rustdb_planner::operator::LogicalAggregate;
 use rustdb_planner::{
     ColumnBinding, Expression, ExpressionKind, LogicalKind, LogicalOperator, LogicalOperatorType,
 };
@@ -252,10 +253,9 @@ impl StatisticsPropagator<'_> {
                 return Ok(());
             }
         }
-        if aggregate.groups.is_empty() {
+        if aggregate.groups.is_empty() || aggregate.group_stats.is_empty() {
             return Ok(());
         }
-        let group_index = aggregate.group_index;
         let group_count = aggregate.groups.len();
         let mut referenced_bindings = HashSet::new();
         let mut group_bindings: Vec<Option<ColumnBinding>> = vec![None; group_count];
@@ -272,14 +272,14 @@ impl StatisticsPropagator<'_> {
             }
             // Non-column groups are compressed directly; their inputs stay as they are.
             referenced_bindings_of(group, &mut referenced_bindings);
-            let group_binding = ColumnBinding::new(group_index, group_idx as u64);
-            let Some(group_stats) = self.statistics_map.get(&group_binding).cloned() else {
+            let Some(group_stats) = aggregate.group_stats.get(group_idx).cloned().flatten() else {
                 continue;
             };
             if let Some(compressed) = self.compress_expression(group.clone(), &group_stats)? {
                 needs_decompression[group_idx] = true;
                 stored_group_stats[group_idx] = Some(group_stats);
                 aggregate.groups[group_idx] = compressed.expression;
+                aggregate.group_stats[group_idx] = compressed.stats;
             }
         }
         // Anything the aggregates reference is not compressed either.
@@ -315,7 +315,38 @@ impl StatisticsPropagator<'_> {
                 info.binding_map.entry(binding).or_insert(binding_info);
             }
         }
-        self.create_projections(op, &mut info)
+        self.create_projections(op, &mut info)?;
+        self.update_aggregate_stats(op);
+        Ok(())
+    }
+
+    /// The group statistics of a compressed aggregate are those of the compressed
+    /// columns (DuckDB's `UpdateAggregateStats`).
+    fn update_aggregate_stats(&self, op: &mut LogicalOperator) {
+        if op.operator_type() != LogicalOperatorType::LogicalProjection {
+            return;
+        }
+        let Some(LogicalKind::Aggregate(aggregate)) = op.children.first_mut().map(|child| &mut child.kind)
+        else {
+            return;
+        };
+        let LogicalAggregate {
+            groups, group_stats, ..
+        } = &mut **aggregate;
+        for (group, stats) in groups.iter().zip(group_stats.iter_mut()) {
+            let Some(binding) = column_binding(group) else {
+                continue;
+            };
+            let Some(current) = stats.as_ref() else {
+                continue;
+            };
+            if &group.return_type == current.logical_type() {
+                continue;
+            }
+            if let Some(compressed) = self.statistics_map.get(&binding) {
+                *stats = Some(compressed.clone());
+            }
+        }
     }
 
     /// DuckDB's `CompressComparisonJoin`.
@@ -830,8 +861,10 @@ impl StatisticsPropagator<'_> {
             expression.return_type = result_type.clone();
             Ok(expression)
         } else if result_type.id() == LogicalTypeId::Varchar {
-            let function =
-                self.internal_function("__internal_decompress_string", std::slice::from_ref(&input.return_type))?;
+            let function = self.internal_function(
+                "__internal_decompress_string",
+                std::slice::from_ref(&input.return_type),
+            )?;
             let mut expression = Expression::function(function, vec![input], None, false);
             expression.return_type = result_type.clone();
             Ok(expression)
