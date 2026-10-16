@@ -57,6 +57,17 @@ pub(crate) struct DatabaseInstance {
     connections: Arc<std::sync::atomic::AtomicU64>,
     /// The log manager (DuckDB's `DatabaseInstance::GetLogManager`).
     pub(crate) log_manager: Arc<crate::logging::LogManager>,
+    /// The options set globally (DuckDB's `DBConfig` user settings), with a version
+    /// that changes on every global `SET` / `RESET`; connections apply them unless they
+    /// set the option themselves.
+    global_settings: Mutex<GlobalSettings>,
+}
+
+/// The globally set options and their version (see `DatabaseInstance::global_settings`).
+#[derive(Debug, Default, Clone)]
+struct GlobalSettings {
+    version: u64,
+    values: Vec<(&'static str, Value)>,
 }
 
 /// The default of `checkpoint_threshold` (16 MiB).
@@ -306,6 +317,7 @@ impl Database {
             secrets: Arc::default(),
             connections: Arc::default(),
             log_manager: Arc::default(),
+            global_settings: Mutex::default(),
         };
         for (name, value) in &config.options {
             if is_checkpoint_threshold(name) {
@@ -393,6 +405,8 @@ impl Database {
             Arc::new(rustdb_buffer::InMemoryBlockManager::default()),
         )))?;
         Ok(Connection {
+            synced_globals: GlobalSettings::default(),
+            local_overrides: std::collections::HashSet::new(),
             temp_catalog,
             logger,
             database: self.clone(),
@@ -429,6 +443,11 @@ impl Database {
 #[derive(Debug)]
 pub struct Connection {
     database: Database,
+    /// The global options as last applied to `settings`.
+    synced_globals: GlobalSettings,
+    /// Options this connection set for itself (`SET SESSION`, or options of local scope):
+    /// global values do not override them.
+    local_overrides: std::collections::HashSet<&'static str>,
     /// The connection's temporary objects (DuckDB's `ClientData::temporary_objects`, the
     /// `temp` catalog).
     temp_catalog: Arc<Catalog>,
@@ -484,6 +503,7 @@ impl Connection {
     /// Runs every statement in `sql` and returns the result of the last one (DuckDB's
     /// `ClientContext::Query`).
     pub fn query(&mut self, sql: &str) -> Result<MaterializedResult> {
+        self.sync_global_settings();
         let statements = self.extract_statements(sql)?;
         self.execute_statements(statements)
     }
@@ -503,6 +523,7 @@ impl Connection {
     /// `ExecutePendingQueryInternal`): bind and plan, resolve column bindings, build the
     /// physical plan and run it, all inside the connection's transaction.
     pub fn execute_statement(&mut self, query: &str, statement: SqlStatement) -> Result<MaterializedResult> {
+        self.sync_global_settings();
         self.function_client.set_query(query);
         self.function_client
             .set_settings(Arc::new(self.settings_snapshot()));
@@ -528,6 +549,86 @@ impl Connection {
             result = Err(error);
         }
         result.map_err(|error| error.with_query_context(query))
+    }
+
+    /// Applies the options another connection set globally since the last statement
+    /// (DuckDB reads them from the shared `DBConfig`); options this connection set itself
+    /// keep their value.
+    fn sync_global_settings(&mut self) {
+        let current = self
+            .database
+            .instance()
+            .global_settings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if current.version == self.synced_globals.version {
+            return;
+        }
+        for (name, value) in &current.values {
+            let unchanged = self
+                .synced_globals
+                .values
+                .iter()
+                .any(|(synced, synced_value)| synced == name && synced_value == value);
+            if !unchanged && !self.local_overrides.contains(name) {
+                let _ = self.settings.set(name, value);
+            }
+        }
+        for (name, _) in &self.synced_globals.values {
+            let removed = !current
+                .values
+                .iter()
+                .any(|(current_name, _)| current_name == name);
+            if removed && !self.local_overrides.contains(name) {
+                let _ = self.settings.reset(name);
+            }
+        }
+        self.synced_globals = current;
+    }
+
+    /// Records a `SET` / `RESET` (`value` `None`) of option `name` with `scope`: a global
+    /// one is shared with the other connections, a local one overrides the global value.
+    fn record_setting(&mut self, name: &str, value: Option<&Value>, scope: SetScope) {
+        let Some(option) = crate::settings::canonical_option(name) else {
+            return;
+        };
+        let global = match scope {
+            SetScope::Global => true,
+            SetScope::Session | SetScope::Local => false,
+            _ => crate::settings::is_global_option(option),
+        };
+        if !global {
+            if value.is_some() {
+                self.local_overrides.insert(option);
+                return;
+            }
+            self.local_overrides.remove(option);
+            // The global value applies again.
+            if let Some((_, global_value)) = self
+                .synced_globals
+                .values
+                .iter()
+                .find(|(name, _)| *name == option)
+            {
+                let _ = self.settings.set(option, &global_value.clone());
+            }
+            return;
+        }
+        self.local_overrides.remove(option);
+        let mut globals = self
+            .database
+            .instance()
+            .global_settings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        globals.values.retain(|(name, _)| *name != option);
+        if let Some(value) = value {
+            globals.values.push((option, value.clone()));
+        }
+        globals.version += 1;
+        // This connection already applied the change.
+        self.synced_globals = globals.clone();
     }
 
     /// `ClientContext::BeginQueryInternal`'s logging: flush, a logger for this query's
@@ -1264,7 +1365,7 @@ impl Connection {
                 self.search_path_set.clear();
                 return Ok(nothing());
             }
-            LogicalKind::Set { name, value, .. } => {
+            LogicalKind::Set { name, value, scope } => {
                 if is_secret_setting(name) {
                     self.database.instance().secrets.set_option(name, Some(value))?;
                 }
@@ -1272,6 +1373,8 @@ impl Connection {
                     crate::logging::apply_setting(&self.database.instance().log_manager, name, Some(value))?;
                 }
                 self.settings.set(name, value)?;
+                let (option, set_value, set_scope) = (name.clone(), value.clone(), *scope);
+                self.record_setting(&option, Some(&set_value), set_scope);
                 if is_checkpoint_threshold(name) {
                     self.database.instance().set_checkpoint_threshold(value)?;
                 }
@@ -1280,7 +1383,7 @@ impl Connection {
                 }
                 return Ok(nothing());
             }
-            LogicalKind::Reset { name, .. } => {
+            LogicalKind::Reset { name, scope } => {
                 if is_secret_setting(name) {
                     self.database.instance().secrets.set_option(name, None)?;
                 }
@@ -1288,6 +1391,8 @@ impl Connection {
                     crate::logging::apply_setting(&self.database.instance().log_manager, name, None)?;
                 }
                 self.settings.reset(name)?;
+                let (option, reset_scope) = (name.clone(), *scope);
+                self.record_setting(&option, None, reset_scope);
                 if is_force_compression(name) {
                     self.database.instance().set_force_compression(None)?;
                 }

@@ -240,6 +240,19 @@ fn option_by_name(name: &str) -> Option<&'static str> {
         .map(|definition| definition.name)
 }
 
+/// The canonical name of option `name` (resolving aliases), if it is one.
+pub(crate) fn canonical_option(name: &str) -> Option<&'static str> {
+    option_by_name(name).or_else(|| canonical_name(name))
+}
+
+/// Whether a `SET` of option `name` without a scope sets it for the whole database
+/// (DuckDB's `GetSettingScope`: the option's scope is global).
+pub(crate) fn is_global_option(name: &str) -> bool {
+    option_by_name(name)
+        .and_then(|canonical| SETTINGS.iter().find(|definition| definition.name == canonical))
+        .is_some_and(|definition| definition.global)
+}
+
 /// `StringUtil::StringToEnum`'s error for an unknown value of enum `enum_name`.
 fn enum_value_error(value: &str, enum_name: &str, values: &[&str]) -> Error {
     let candidates: Vec<String> = values.iter().map(|&value| value.to_owned()).collect();
