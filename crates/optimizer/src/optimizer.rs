@@ -11,10 +11,13 @@ use rustdb_common::{Error, Result};
 use rustdb_planner::function_binder::FunctionBinder;
 use rustdb_planner::{ClientContext, Expression, LogicalKind, LogicalOperator, LogicalOperatorType};
 
+use crate::build_probe_side::optimize_build_probe_side;
+use crate::column_lifetime_analyzer::analyze_column_lifetime;
 use crate::expression_rewriter::ExpressionRewriter;
 use crate::filter_pullup::FilterPullup;
 use crate::filter_pushdown::FilterPushdown;
 use crate::join_order::JoinOrderOptimizer;
+use crate::remove_unused_columns::remove_unused_columns;
 
 macro_rules! optimizer_types {
     ($($variant:ident => $name:literal,)*) => {
@@ -111,6 +114,8 @@ pub struct OptimizerConfig {
     pub disabled: BTreeSet<OptimizerType>,
     /// `debug_force_no_cross_product`.
     pub force_no_cross_product: bool,
+    /// `prefer_range_joins`: no projection maps on joins that may become range joins.
+    pub prefer_range_joins: bool,
 }
 
 impl Default for OptimizerConfig {
@@ -119,6 +124,7 @@ impl Default for OptimizerConfig {
             enabled: true,
             disabled: BTreeSet::new(),
             force_no_cross_product: false,
+            prefer_range_joins: false,
         }
     }
 }
@@ -261,6 +267,24 @@ impl Optimizer {
             )
             .optimize(plan, None)
         })?;
+        let plan = self.run(OptimizerType::UnusedColumns, plan, |optimizer, mut plan| {
+            remove_unused_columns(optimizer, &mut plan)?;
+            Ok(plan)
+        })?;
+        // Projection maps drop columns as soon as they are no longer needed.
+        let plan = self.run(OptimizerType::ColumnLifetime, plan, |optimizer, mut plan| {
+            analyze_column_lifetime(&mut plan, optimizer.config.prefer_range_joins)?;
+            Ok(plan)
+        })?;
+        // With the column lifetimes known, the cheaper side of each join is built.
+        let plan = self.run(OptimizerType::BuildSideProbeSide, plan, |optimizer, mut plan| {
+            optimize_build_probe_side(&mut plan, optimizer.config.prefer_range_joins)?;
+            Ok(plan)
+        })?;
+        let plan = self.run(OptimizerType::ColumnLifetime, plan, |optimizer, mut plan| {
+            analyze_column_lifetime(&mut plan, optimizer.config.prefer_range_joins)?;
+            Ok(plan)
+        })?;
         Ok(plan)
     }
 
@@ -300,4 +324,35 @@ pub(crate) fn bind_scalar_function(
     FunctionBinder::new(context)
         .bind_scalar_function(functions, children, is_operator)?
         .map_err(|error| error.error)
+}
+
+/// Binds a call to a built-in aggregate function by name, without DISTINCT, filter or
+/// ordering (DuckDB's `FunctionBinder::BindAggregateFunction` on e.g. `CountStarFun`).
+pub(crate) fn bind_aggregate_function(
+    context: &ClientContext,
+    name: &str,
+    children: Vec<Expression>,
+) -> Result<Expression> {
+    let entry = context
+        .get_entry(
+            "system",
+            "main",
+            rustdb_catalog::CatalogType::AggregateFunction,
+            name,
+            true,
+        )?
+        .ok_or_else(|| Error::internal(format!("aggregate function {name} not found")))?;
+    let EntryKind::AggregateFunction(functions) = &entry.entry.kind else {
+        return Err(Error::internal(format!("{name} is not an aggregate function")));
+    };
+    let binder = FunctionBinder::new(context);
+    let types = FunctionBinder::argument_types(&children);
+    let function = binder.bind_aggregate_overload(functions, &types)??;
+    binder.bind_aggregate_function(
+        function,
+        children,
+        None,
+        rustdb_planner::expression::AggregateType::NonDistinct,
+        None,
+    )
 }

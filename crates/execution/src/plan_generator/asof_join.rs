@@ -135,10 +135,36 @@ impl PlanGenerator {
     /// Plans a `LOGICAL_ASOF_JOIN` (`PlanAsOfJoin`).
     pub(crate) fn plan_asof_join(
         &mut self,
-        join: LogicalComparisonJoin,
+        mut join: LogicalComparisonJoin,
         children: Vec<LogicalOperator>,
         types: Vec<LogicalType>,
     ) -> Result<PhysicalRef> {
+        let right_projection_map = std::mem::take(&mut join.right_projection_map);
+        if !right_projection_map.is_empty()
+            && !matches!(join.join_type, JoinType::Semi | JoinType::Anti | JoinType::Mark)
+            && let [left, right] = children.as_slice()
+        {
+            // The as-of join outputs all right columns: project the kept ones on top.
+            let left_width = left.types.len();
+            let mut full_types = left.types.clone();
+            full_types.extend(right.types.iter().cloned());
+            let mut select_list: Vec<Expression> = (0..left_width)
+                .map(|index| Expression::reference("", full_types[index].clone(), index as u64))
+                .collect();
+            for &column in &right_projection_map {
+                let index = left_width + column as usize;
+                select_list.push(Expression::reference("", full_types[index].clone(), index as u64));
+            }
+            // The predicate was resolved against the projected output.
+            if let Some(predicate) = &mut join.predicate {
+                let map: Vec<u64> = (0..left_width as u64)
+                    .chain(right_projection_map.iter().map(|&column| left_width as u64 + column))
+                    .collect();
+                remap_references(predicate, &map);
+            }
+            let plan = self.plan_asof_join(join, children, full_types)?;
+            return Ok(Arc::new(PhysicalProjection::new(types, select_list, plan)));
+        }
         let mut children = children.into_iter();
         let (Some(left), Some(right)) = (children.next(), children.next()) else {
             return Err(Error::internal("ASOF join must have two inputs"));

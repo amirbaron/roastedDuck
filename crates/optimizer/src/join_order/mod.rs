@@ -9,7 +9,7 @@ mod query_graph;
 mod query_graph_manager;
 mod relation_manager;
 mod relation_set;
-mod relation_statistics;
+pub(crate) mod relation_statistics;
 
 use std::collections::{HashMap, HashSet};
 

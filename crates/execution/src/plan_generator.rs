@@ -527,9 +527,6 @@ impl PlanGenerator {
         children: Vec<LogicalOperator>,
         types: Vec<LogicalType>,
     ) -> Result<PhysicalRef> {
-        if join.delim_flipped {
-            return Err(Error::not_implemented("RIGHT_DELIM_JOIN"));
-        }
         let mut children = children.into_iter();
         let (Some(left), Some(right)) = (children.next(), children.next()) else {
             return Err(Error::internal("delim join must have two inputs"));
@@ -538,6 +535,21 @@ impl PlanGenerator {
             comparison_join::estimate_cardinality(&left),
             comparison_join::estimate_cardinality(&right),
         );
+        if join.delim_flipped {
+            // DuckDB's `PhysicalRightDelimJoin`: the duplicate-eliminated input is the
+            // right (build) side and the subquery side probes.
+            let input = self.plan(right)?;
+            let shared = Arc::new(DelimShared::default());
+            self.delim.push((Arc::clone(&shared), self.external.len()));
+            let probe = self.plan(left);
+            self.delim.pop();
+            let probe = probe?;
+            let input_types = input.types().to_vec();
+            let duplicate_eliminated_columns = std::mem::take(&mut join.duplicate_eliminated_columns);
+            let delim = PhysicalDelimJoin::new(duplicate_eliminated_columns, &shared, input);
+            let cached: PhysicalRef = Arc::new(PhysicalDelimScan::buffered_input(input_types, shared, delim));
+            return comparison_join::create_comparison_join(self, join, types, probe, cached, cardinalities);
+        }
         let left = self.plan(left)?;
         let shared = Arc::new(DelimShared::default());
         self.delim.push((Arc::clone(&shared), self.external.len()));

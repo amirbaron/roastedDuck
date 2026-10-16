@@ -345,6 +345,7 @@ impl Settings {
                 .and_then(|list| OptimizerType::parse_list(&list).ok())
                 .unwrap_or_default(),
             force_no_cross_product: boolean("debug_force_no_cross_product"),
+            prefer_range_joins: boolean("prefer_range_joins"),
         }
     }
 
