@@ -11,6 +11,8 @@ use rustdb_function::cast::ValueCast;
 use rustdb_planner::{DefaultNullOrder, PlannerConfig};
 use rustdb_types::{LogicalType, Value};
 
+use crate::default_settings::{SETTINGS, SettingDefinition};
+
 /// DuckDB's built-in option names (`internal_options`), followed by the aliases.
 const OPTION_NAMES: &[&str] = &[
     "__delta_only_variant_encoding_enabled",
@@ -200,7 +202,7 @@ pub(crate) struct Settings {
     /// Values of options the engine does not interpret yet.
     other: HashMap<&'static str, Value>,
     /// Every option set (and not reset since), in the order of the first `SET`.
-    assigned: Vec<(&'static str, Value)>,
+    pub(crate) assigned: Vec<(&'static str, Value)>,
 }
 
 impl Settings {
@@ -344,6 +346,144 @@ impl Settings {
             }
         }
         Ok(())
+    }
+}
+
+/// The configuration a statement sees (the values `current_setting` and
+/// `duckdb_settings()` report): the connection's options, its search path and the
+/// database's limits.
+#[derive(Debug)]
+pub(crate) struct SettingsSnapshot {
+    pub settings: Settings,
+    /// `search_path`, rendered like `CatalogSearchPath::SetPathsToString`.
+    pub search_path: String,
+    /// The schema unqualified names resolve in (`schema`).
+    pub schema: String,
+    pub memory_limit: u64,
+    pub temp_directory: String,
+    pub max_swap: Option<u64>,
+    pub threads: u64,
+}
+
+/// The SQL type an option's value has (its `input_type`).
+fn input_type(definition: &SettingDefinition) -> LogicalType {
+    match definition.input_type {
+        "BOOLEAN" => LogicalType::BOOLEAN,
+        "BIGINT" => LogicalType::BIGINT,
+        "UBIGINT" => LogicalType::UBIGINT,
+        "INTEGER" => LogicalType::INTEGER,
+        "DOUBLE" => LogicalType::DOUBLE,
+        "FLOAT" => LogicalType::FLOAT,
+        "VARCHAR[]" => LogicalType::list(LogicalType::VARCHAR),
+        _ => LogicalType::VARCHAR,
+    }
+}
+
+/// Byte sizes are shown normalised (`1GB` reads back as `953.6 MiB`).
+fn normalized_bytes(value: &Value) -> Result<Value> {
+    let limit = rustdb_buffer::parse_memory_limit(&value.to_varchar()?)?;
+    Ok(Value::varchar(rustdb_buffer::format_bytes(limit)))
+}
+
+impl SettingsSnapshot {
+    /// The value assigned to `name` (or an alias of it) by `SET`, if any.
+    fn assigned(&self, names: &[&str]) -> Option<&Value> {
+        self.settings
+            .assigned
+            .iter()
+            .find(|(option, _)| names.iter().any(|name| option.eq_ignore_ascii_case(name)))
+            .map(|(_, value)| value)
+    }
+
+    /// The current value of `definition` (`ConfigurationOption::get_setting`).
+    fn value(&self, definition: &SettingDefinition) -> Result<Value> {
+        let ty = input_type(definition);
+        let mut names = vec![definition.name];
+        names.extend(definition.aliases.iter().copied());
+        // Options that are aliases of another share its value.
+        if let Some(primary) = SETTINGS
+            .iter()
+            .find(|other| other.aliases.contains(&definition.name))
+        {
+            names.push(primary.name);
+        }
+        let assigned = self.assigned(&names);
+        let value = match definition.name {
+            "default_null_order" | "null_order" => {
+                Value::varchar(match self.settings.planner.default_null_order {
+                    DefaultNullOrder::NullsFirst => "NULLS_FIRST",
+                    DefaultNullOrder::NullsLast => "NULLS_LAST",
+                    DefaultNullOrder::NullsFirstOnAscLastOnDesc => "NULLS_FIRST_ON_ASC_LAST_ON_DESC",
+                    DefaultNullOrder::NullsLastOnAscFirstOnDesc => "NULLS_LAST_ON_ASC_FIRST_ON_DESC",
+                })
+            }
+            "default_order" => Value::varchar(match self.settings.planner.default_order {
+                OrderType::Descending => "DESCENDING",
+                _ => "ASCENDING",
+            }),
+            "search_path" => Value::varchar(&self.search_path),
+            "schema" => Value::varchar(&self.schema),
+            "threads" | "worker_threads" => match assigned {
+                Some(value) => value.default_cast_as(&ty)?,
+                None => Value::bigint(i64::try_from(self.threads).unwrap_or(i64::MAX)),
+            },
+            "memory_limit" | "max_memory" => match assigned {
+                Some(value) => normalized_bytes(value)?,
+                None => Value::varchar(rustdb_buffer::format_bytes(self.memory_limit)),
+            },
+            "max_temp_directory_size" => match (assigned, self.max_swap) {
+                (Some(value), _) => normalized_bytes(value)?,
+                (None, Some(limit)) => Value::varchar(rustdb_buffer::format_bytes(limit)),
+                (None, None) => Value::varchar("90% of available disk space"),
+            },
+            "temp_directory" => match assigned {
+                Some(value) => value.default_cast_as(&ty)?,
+                None => Value::varchar(&self.temp_directory),
+            },
+            _ => match (assigned, definition.default_value) {
+                (Some(value), _) => value.default_cast_as(&ty)?,
+                (None, Some(default)) => Value::varchar(default).default_cast_as(&ty)?,
+                (None, None) => Value::null(ty),
+            },
+        };
+        Ok(value)
+    }
+}
+
+impl rustdb_function::SettingsSource for SettingsSnapshot {
+    fn current_setting(&self, name: &str) -> Result<Value> {
+        let definition = SETTINGS
+            .iter()
+            .find(|definition| definition.name.eq_ignore_ascii_case(name))
+            .ok_or_else(|| unrecognized(name))?;
+        self.value(definition)
+    }
+
+    fn settings(&self) -> Vec<rustdb_function::SettingInfo> {
+        SETTINGS
+            .iter()
+            .map(|definition| rustdb_function::SettingInfo {
+                name: definition.name.to_owned(),
+                value: self
+                    .value(definition)
+                    .and_then(|value| {
+                        if value.is_null() {
+                            Ok(String::new())
+                        } else {
+                            value.to_varchar()
+                        }
+                    })
+                    .unwrap_or_default(),
+                description: definition.description.to_owned(),
+                input_type: definition.input_type.to_owned(),
+                global: definition.global,
+                aliases: definition
+                    .aliases
+                    .iter()
+                    .map(|alias| (*alias).to_owned())
+                    .collect(),
+            })
+            .collect()
     }
 }
 

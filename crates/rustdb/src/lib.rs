@@ -14,6 +14,7 @@ mod checkpoint;
 mod config;
 mod database;
 mod default_functions;
+mod default_settings;
 mod default_views;
 mod extensions;
 mod result;

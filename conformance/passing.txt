@@ -679,6 +679,7 @@ test/sql/attach/attach_copy.test
 test/sql/attach/attach_create_index.test
 test/sql/attach/attach_cross_catalog.test
 test/sql/attach/attach_database_size.test
+test/sql/attach/attach_dbname_quotes.test
 test/sql/attach/attach_default_database_case.test
 test/sql/attach/attach_defaults.test
 test/sql/attach/attach_dependencies.test
@@ -1363,6 +1364,7 @@ test/sql/function/generic/least_greatest_enum.test
 test/sql/function/generic/least_greatest_types.test
 test/sql/function/generic/replace_type.test
 test/sql/function/generic/table_func_varargs.test
+test/sql/function/generic/test_approx_database_count.test
 test/sql/function/generic/test_between.test
 test/sql/function/generic/test_boolean_test.test
 test/sql/function/generic/test_case.test_slow
@@ -1372,6 +1374,7 @@ test/sql/function/generic/test_in.test
 test/sql/function/generic/test_large_in.test_slow
 test/sql/function/generic/test_least_greatest.test
 test/sql/function/generic/test_null_if.test
+test/sql/function/generic/test_set.test
 test/sql/function/interval/test_date_part.test
 test/sql/function/interval/test_extract.test
 test/sql/function/interval/test_interval_muldiv.test
@@ -2007,13 +2010,17 @@ test/sql/peg_parser/transformer/load_statement.test
 test/sql/pg_catalog/pg_attribute.test
 test/sql/pg_catalog/pg_constraint.test
 test/sql/pg_catalog/pg_database.test
+test/sql/pg_catalog/pg_enum.test
 test/sql/pg_catalog/pg_index.test
 test/sql/pg_catalog/pg_namespace.test
 test/sql/pg_catalog/pg_privilege.test
 test/sql/pg_catalog/pg_sequence.test
 test/sql/pg_catalog/pg_sequences.test
+test/sql/pg_catalog/pg_settings.test
 test/sql/pg_catalog/pg_tablespace.test
+test/sql/pg_catalog/pg_type.test
 test/sql/pg_catalog/pg_views.test
+test/sql/pg_catalog/sqlalchemy.test
 test/sql/pivot/optional_pivots.test
 test/sql/pivot/pivot_15141.test
 test/sql/pivot/pivot_6390.test
@@ -2164,6 +2171,8 @@ test/sql/setops/union_shared_scan.test
 test/sql/setops/value_union.test
 test/sql/settings/connection_local_settings.test
 test/sql/settings/lock_configuration_schema.test
+test/sql/settings/reset/reset_threads.test
+test/sql/settings/setting_alias.test
 test/sql/settings/setting_null_order.test
 test/sql/settings/setting_order.test
 test/sql/show_select/describe_rowid.test
@@ -2471,6 +2480,10 @@ test/sql/storage/storage_exceeds_single_block_types.test
 test/sql/storage/storage_types.test
 test/sql/storage/store_group_order_all.test
 test/sql/storage/struct_default_entries.test_slow
+test/sql/storage/temp_directory/max_swap_space_explicit.test
+test/sql/storage/temp_directory/max_swap_space_inmemory.test
+test/sql/storage/temp_directory/max_swap_space_unlimited.test
+test/sql/storage/temp_directory/temp_directory_null.test
 test/sql/storage/temp_directory/test_default_temp_directory.test
 test/sql/storage/test_big_strings.test_slow
 test/sql/storage/test_empty_shutdown.test
@@ -2656,9 +2669,12 @@ test/sql/table_function/duckdb_constraints_issue12863.test
 test/sql/table_function/duckdb_databases.test
 test/sql/table_function/duckdb_functions.test_slow
 test/sql/table_function/duckdb_functions_window.test
+test/sql/table_function/duckdb_keywords.test
 test/sql/table_function/duckdb_memory_convert_to_persistent.test
+test/sql/table_function/duckdb_optimizers.test
 test/sql/table_function/duckdb_schemas.test
 test/sql/table_function/duckdb_sequences.test
+test/sql/table_function/duckdb_settings.test
 test/sql/table_function/duckdb_types.test
 test/sql/table_function/information_schema_fkey_constraint_names.test
 test/sql/table_function/information_schema_issue12867.test

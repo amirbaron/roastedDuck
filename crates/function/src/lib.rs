@@ -16,7 +16,7 @@ mod table;
 pub use aggregate::{
     AggregateFunction, AggregateFunctionSet, AggregateOps, OwnedStates, StatePtr, UnaryAggregate,
 };
-pub use client::FunctionClient;
+pub use client::{FunctionClient, SettingInfo, SettingsSource};
 pub use copy::{CopyFunction, CopyOption, CopyOptionMode};
 pub use scalar::{
     AggregateResolver, BindInput, BindLambda, BoundAggregateFunction, CollationHandling, FunctionData,

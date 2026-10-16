@@ -2,10 +2,36 @@
 //! `ClientContext` that functions use).
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use rustdb_common::Result;
+use rustdb_types::Value;
+
 use crate::random::RandomEngine;
+
+/// One configuration option as `duckdb_settings()` lists it.
+#[derive(Clone, Debug)]
+pub struct SettingInfo {
+    pub name: String,
+    /// The current value (`Value::ToString`).
+    pub value: String,
+    pub description: String,
+    pub input_type: String,
+    /// `GLOBAL` (else `LOCAL`) scope.
+    pub global: bool,
+    pub aliases: Vec<String>,
+}
+
+/// The connection's configuration as functions see it (DuckDB's
+/// `ClientContext::TryGetCurrentSetting` and `DBConfig::GetOptions`).
+pub trait SettingsSource: Send + Sync + std::fmt::Debug {
+    /// The current value of option `name` (case-insensitive), or DuckDB's unrecognized
+    /// option error.
+    fn current_setting(&self, name: &str) -> Result<Value>;
+    /// Every option with its current value.
+    fn settings(&self) -> Vec<SettingInfo>;
+}
 
 /// Connection ids handed out so far (DuckDB's `ConnectionManager` counter).
 static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(0);
@@ -24,6 +50,8 @@ pub struct FunctionClient {
     /// The default database (DuckDB's `DatabaseManager::GetDefaultDatabase`).
     database: Mutex<String>,
     connection_id: u64,
+    /// The configuration of the statement being run.
+    settings: Mutex<Option<Arc<dyn SettingsSource>>>,
 }
 
 impl Default for FunctionClient {
@@ -35,6 +63,7 @@ impl Default for FunctionClient {
             query_id: AtomicU64::new(0),
             database: Mutex::new("memory".to_owned()),
             connection_id: NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed),
+            settings: Mutex::default(),
         }
     }
 }
@@ -89,6 +118,19 @@ impl FunctionClient {
     /// The default database (`current_database()`).
     pub fn database(&self) -> String {
         self.database
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Sets the configuration seen by the next statements.
+    pub fn set_settings(&self, settings: Arc<dyn SettingsSource>) {
+        *self.settings.lock().unwrap_or_else(PoisonError::into_inner) = Some(settings);
+    }
+
+    /// The configuration of the current statement, if the connection provided one.
+    pub fn settings(&self) -> Option<Arc<dyn SettingsSource>> {
+        self.settings
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()

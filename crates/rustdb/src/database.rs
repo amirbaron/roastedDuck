@@ -455,6 +455,8 @@ impl Connection {
     /// physical plan and run it, all inside the connection's transaction.
     pub fn execute_statement(&mut self, query: &str, statement: SqlStatement) -> Result<MaterializedResult> {
         self.function_client.set_query(query);
+        self.function_client
+            .set_settings(Arc::new(self.settings_snapshot()));
         let outcome = self.run_statement(statement);
         let invalidates = outcome
             .as_ref()
@@ -868,6 +870,38 @@ impl Connection {
         }
         self.search_path = resolved;
         Ok(())
+    }
+
+    /// The configuration functions see while the next statement runs.
+    fn settings_snapshot(&self) -> crate::settings::SettingsSnapshot {
+        let default_catalog = self.default_catalog();
+        let search_path = self
+            .search_path
+            .iter()
+            .map(|(catalog, schema)| {
+                let schema = rustdb_types::identifier::sql_identifier(schema);
+                if catalog.eq_ignore_ascii_case(&default_catalog) {
+                    schema.into_owned()
+                } else {
+                    format!("{}.{schema}", rustdb_types::identifier::sql_identifier(catalog))
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let schema = self.search_path.first().map_or_else(
+            || rustdb_catalog::DEFAULT_SCHEMA.to_owned(),
+            |(_, schema)| schema.clone(),
+        );
+        let buffer_manager = &self.database.instance().env.buffer_manager;
+        crate::settings::SettingsSnapshot {
+            settings: self.settings.clone(),
+            search_path,
+            schema,
+            memory_limit: buffer_manager.max_memory(),
+            temp_directory: buffer_manager.temporary_directory(),
+            max_swap: buffer_manager.max_swap(),
+            threads: std::thread::available_parallelism().map_or(1, |threads| threads.get() as u64),
+        }
     }
 
     /// The name of the default database of this connection.

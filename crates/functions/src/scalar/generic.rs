@@ -554,8 +554,70 @@ fn sleep_ms_functions() -> ScalarFunctionSet {
 }
 
 /// Every generic function set with its aliases.
+/// The value of `current_setting`, computed when binding.
+#[derive(Debug)]
+struct SettingValue(Value);
+
+impl FunctionData for SettingValue {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// `current_setting(name)` (DuckDB's `CurrentSettingFun`): the option's current value,
+/// typed like the option.
+pub fn current_setting_functions() -> ScalarFunctionSet {
+    let mut function = ScalarFunction::new(
+        "current_setting",
+        vec![LogicalType::VARCHAR],
+        LogicalType::ANY,
+        |_, state, result| {
+            let value = state
+                .bind_data
+                .as_ref()
+                .and_then(|data| data.as_any().downcast_ref::<SettingValue>())
+                .map(|value| value.0.clone())
+                .ok_or_else(|| Error::internal("current_setting without bind data"))?;
+            *result = Vector::constant(&value)?;
+            Ok(())
+        },
+    )
+    .with_bind(|function, input| {
+        let key = &input.argument_types[0];
+        if key.id() == LogicalTypeId::Unknown {
+            return Err(crate::parameter_not_resolved());
+        }
+        let constant = input.constants.first().cloned().flatten();
+        let (LogicalTypeId::Varchar, Some(key)) = (key.id(), constant) else {
+            return Err(Error::parser(
+                "Key name for current_setting needs to be a constant string",
+            ));
+        };
+        let name = if key.is_null() {
+            String::new()
+        } else {
+            key.to_varchar()?
+        };
+        if name.is_empty() {
+            return Err(Error::parser(
+                "Key name for current_setting needs to be neither NULL nor empty",
+            ));
+        }
+        let settings = input
+            .client
+            .settings()
+            .ok_or_else(|| Error::internal("current_setting without connection settings"))?;
+        let value = settings.current_setting(&name.to_lowercase())?;
+        function.return_type = value.logical_type().clone();
+        Ok(Some(Arc::new(SettingValue(value)) as Arc<dyn FunctionData>))
+    });
+    function.null_handling = NullHandling::Special;
+    set("current_setting", vec![function])
+}
+
 pub fn generic_functions() -> Vec<ScalarFunctionSet> {
     vec![
+        current_setting_functions(),
         typeof_functions(),
         get_type_functions(),
         alias_functions(),

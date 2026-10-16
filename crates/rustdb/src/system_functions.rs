@@ -844,6 +844,7 @@ pub(crate) fn catalog_table_functions() -> Vec<TableFunctionSet> {
         rows_function("duckdb_constraints", CONSTRAINT_COLUMNS, constraint_rows),
         rows_function("duckdb_functions", FUNCTION_COLUMNS, function_rows),
         rows_function("duckdb_keywords", KEYWORD_COLUMNS, keyword_rows),
+        rows_function("duckdb_settings", SETTING_COLUMNS, setting_rows),
         rows_function("duckdb_optimizers", OPTIMIZER_COLUMNS, optimizer_rows),
         rows_function(
             "duckdb_approx_database_count",
@@ -1180,6 +1181,40 @@ fn bigint_list() -> LogicalType {
 
 fn varchar_list() -> LogicalType {
     LogicalType::list(LogicalType::VARCHAR)
+}
+
+const SETTING_COLUMNS: Columns = &[
+    ("name", varchar),
+    ("value", varchar),
+    ("description", varchar),
+    ("input_type", varchar),
+    ("scope", varchar),
+    ("aliases", varchar_list),
+];
+
+/// `duckdb_settings()` (`DuckDBSettingsFunction`): every option with its current value.
+fn setting_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    let settings = context
+        .function_client
+        .settings()
+        .map(|settings| settings.settings())
+        .unwrap_or_default();
+    Ok(settings
+        .into_iter()
+        .map(|setting| {
+            vec![
+                text(setting.name),
+                text(setting.value),
+                text(setting.description),
+                text(setting.input_type),
+                text(if setting.global { "GLOBAL" } else { "LOCAL" }),
+                Value::list(
+                    LogicalType::VARCHAR,
+                    setting.aliases.into_iter().map(text).collect(),
+                ),
+            ]
+        })
+        .collect())
 }
 
 const KEYWORD_COLUMNS: Columns = &[("keyword_name", varchar), ("keyword_category", varchar)];
