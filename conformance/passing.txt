@@ -48,6 +48,7 @@ test/fuzzer/duckfuzz/create_sort_key_strings.test
 test/fuzzer/duckfuzz/enum_const_cast.test
 test/fuzzer/duckfuzz/filter_combiner_assert.test
 test/fuzzer/duckfuzz/fuzzer_issue_2980.test
+test/fuzzer/duckfuzz/fuzzer_issue_4325.test
 test/fuzzer/duckfuzz/generate_null_timestamp.test
 test/fuzzer/duckfuzz/group_by_all_positional_ref.test
 test/fuzzer/duckfuzz/hash_constant.test
@@ -106,6 +107,7 @@ test/fuzzer/pedro/buffer_manager_resize_issue.test
 test/fuzzer/pedro/cardinality_estimator_assertion_error.test
 test/fuzzer/pedro/cardinality_estimator_runtime_issue.test
 test/fuzzer/pedro/comparison_to_string.test
+test/fuzzer/pedro/complex_offset_clause_crash.test
 test/fuzzer/pedro/complex_type_all_subquery.test
 test/fuzzer/pedro/concurrent_catalog_usage.test
 test/fuzzer/pedro/concurrent_set_threads.test
@@ -161,6 +163,7 @@ test/fuzzer/pedro/natural_join_generated_heap_overflow.test
 test/fuzzer/pedro/natural_join_index_out_of_range.test
 test/fuzzer/pedro/nested_limit_subquery.test
 test/fuzzer/pedro/nested_subquery_table_function.test
+test/fuzzer/pedro/non_boolean_aggregate_filter.test
 test/fuzzer/pedro/offset_query_allocator_assertion.test
 test/fuzzer/pedro/order_by_all_with_union.test
 test/fuzzer/pedro/overflow_parsing_interval.test
@@ -243,6 +246,7 @@ test/fuzzer/sqlsmith/subquery_binding_error.test
 test/fuzzer/sqlsmith/test_abs_overflow.test
 test/fuzzer/sqlsmith/timestamp_diff_overflow.test
 test/fuzzer/sqlsmith/validity_mask_out_of_bounds.test
+test/fuzzer/sqlsmith/window-leadlag-overflow.test
 test/fuzzer/sqlsmith/window-list-value.test
 test/fuzzer/sqlsmith/window-rows-overflow.test
 test/fuzzer/sqlsmith/window_function_error.test

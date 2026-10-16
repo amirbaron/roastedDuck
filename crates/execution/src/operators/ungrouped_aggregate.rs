@@ -215,6 +215,11 @@ impl Sink for PhysicalUngroupedAggregate {
                 let passed = filter.select(chunk, &mut local.selection)?;
                 let sel = rustdb_types::SelectionVector::new(std::mem::take(&mut local.selection));
                 input = DataChunk::new(chunk.columns().iter().map(|c| c.slice(&sel)).collect(), passed);
+                if passed == 0 {
+                    // No row passed the FILTER: the state stays as it is (constant
+                    // arguments must not be counted for zero rows).
+                    continue;
+                }
             }
             let mut arguments = DataChunk::default();
             local.arguments[index].execute(&input, &mut arguments)?;
