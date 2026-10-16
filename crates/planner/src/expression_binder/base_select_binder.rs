@@ -970,15 +970,21 @@ impl SelectBinder<'_> {
             }
             for order in &mut window.orders {
                 self.bind_child(&mut order.expression, depth, &mut error)?;
+                // A TIME ordering of a RANGE frame becomes epoch + time, a timestamp, so
+                // that the frame boundaries do not wrap around midnight.
                 if is_range
                     && error.is_none()
-                    && let Some(bound) = peek_bound(&order.expression)
-                    && matches!(
-                        bound.return_type.id(),
-                        LogicalTypeId::Time | LogicalTypeId::TimeTz
-                    )
+                    && peek_bound(&order.expression).is_some_and(|bound| {
+                        matches!(
+                            bound.return_type.id(),
+                            LogicalTypeId::Time | LogicalTypeId::TimeTz
+                        )
+                    })
                 {
-                    return Err(Error::not_implemented("RANGE frames over TIME"));
+                    let bound = take_bound(&mut order.expression)?;
+                    let epoch = Expression::constant(Value::date(rustdb_types::Date(0)));
+                    let shifted = bind_range_expression(&context, "+", bound, &epoch)?;
+                    super::set_bound(&mut order.expression, shifted);
                 }
             }
             for child in [

@@ -3455,6 +3455,7 @@ test/sql/window/test_window_fusion.test
 test/sql/window/test_window_groups.test_slow
 test/sql/window/test_window_interval.test
 test/sql/window/test_window_order_collate.test
+test/sql/window/test_window_range.test_slow
 test/sql/window/test_window_repartition.test_slow
 test/sql/window/test_window_rows.test
 test/sql/window/test_window_string_agg.test
