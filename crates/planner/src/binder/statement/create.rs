@@ -13,7 +13,7 @@ use rustdb_types::{LogicalType, LogicalTypeId, Value};
 use super::super::expression::{bind_logical_type, bind_logical_type_in_schema};
 use super::super::query_node::bind_node;
 use super::super::{BindScope, BoundStatement, Scope};
-use super::table::{bind_default_value, bind_schema_or_catalog, table_of};
+use super::table::{bind_default_value_in, bind_schema_or_catalog, table_of};
 use crate::expression_binder::{CheckColumn, ExpressionBinder};
 use crate::generated::enums::LogicalOperatorType;
 use crate::operator::{BoundCreateTableInfo, LogicalKind, LogicalOperator};
@@ -143,7 +143,7 @@ fn bind_catalog(scope: &BindScope<'_>, catalog: &str) -> String {
 /// Resolves the catalog and schema an entry is created in, which must exist
 /// (`Binder::BindCreateSchema`).
 pub fn bind_create_schema(scope: &BindScope<'_>, info: &mut CreateInfo) -> Result<()> {
-    let (mut catalog, mut schema) = bind_schema_or_catalog(scope, &info.catalog, &info.schema);
+    let (mut catalog, mut schema) = bind_schema_or_catalog(scope, &info.catalog, &info.schema)?;
     if catalog == "temp" {
         catalog.clear();
     }
@@ -357,10 +357,17 @@ fn bind_table_definition(
         }
     }
     bind_new_constraints(&table.table, &table.columns.columns, &mut table.constraints)?;
-    // Validate the default values (`BindDefaultValues`).
+    // Validate the default values (`BindDefaultValues`); names resolve in the table's
+    // catalog and schema.
+    let path = (catalog.to_owned(), schema.to_owned());
     for column in &table.columns.columns {
         if column.category != TableColumnType::Generated {
-            bind_default_value(scope, column.expression.as_deref(), &column.logical_type)?;
+            bind_default_value_in(
+                scope,
+                column.expression.as_deref(),
+                &column.logical_type,
+                Some(&path),
+            )?;
         }
     }
     Ok(())
@@ -862,7 +869,7 @@ pub fn bind_drop(scope: &mut BindScope<'_>, drop: &mut DropInfo) -> Result<Bound
         }
     };
     if let Some(ty) = ty {
-        let (catalog, schema) = bind_schema_or_catalog(scope, &drop.catalog, &drop.schema);
+        let (catalog, schema) = bind_schema_or_catalog(scope, &drop.catalog, &drop.schema)?;
         let if_exists = drop.if_not_found == OnEntryNotFound::ReturnNull;
         if ty == CatalogType::Type
             && (schema.is_empty() || schema.eq_ignore_ascii_case(rustdb_catalog::DEFAULT_SCHEMA))

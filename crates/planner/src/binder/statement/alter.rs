@@ -41,7 +41,7 @@ pub fn bind_alter(scope: &mut BindScope<'_>, info: &mut AlterInfo) -> Result<Bou
             )));
         }
     };
-    let (catalog, schema) = bind_schema_or_catalog(scope, &info.catalog, &info.schema);
+    let (catalog, schema) = bind_schema_or_catalog(scope, &info.catalog, &info.schema)?;
     let if_exists = info.if_not_found == OnEntryNotFound::ReturnNull;
     let found = scope
         .context

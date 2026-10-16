@@ -1789,6 +1789,19 @@ pub(crate) fn pragma_query(name: &str, parameters: &[Value]) -> Result<Option<St
         "show_databases" => "SELECT database_name FROM duckdb_databases() WHERE NOT internal ORDER BY database_name;".to_owned(),
         "database_list" => "SELECT * FROM pragma_database_list;".to_owned(),
         "database_size" => "SELECT * FROM pragma_database_size();".to_owned(),
+        "copy_database" => {
+            let second = parameters
+                .get(1)
+                .map(Value::to_varchar)
+                .transpose()?
+                .ok_or_else(|| Error::invalid_input("PRAGMA copy_database requires two arguments"))?;
+            let copy = format!(
+                "COPY FROM DATABASE {} TO {}",
+                rustdb_ast::keyword::write_optionally_quoted(&first()?),
+                rustdb_ast::keyword::write_optionally_quoted(&second)
+            );
+            format!("{copy} (SCHEMA);\n{copy} (DATA);")
+        }
         _ => return Ok(None),
     }))
 }

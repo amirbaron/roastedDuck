@@ -546,9 +546,110 @@ impl Connection {
         Ok(result)
     }
 
+    /// `COPY FROM DATABASE source TO target (SCHEMA | DATA)` (DuckDB's
+    /// `Binder::Bind(CopyDatabaseStatement &)`): the source's entries are created in the
+    /// target (in export order), or every source table's rows are inserted into the
+    /// target's table of the same name.
+    fn copy_database(&mut self, stmt: &rustdb_ast::CopyDatabaseStatement) -> Result<MaterializedResult> {
+        let instance = self.database.instance();
+        let source = instance.database(&stmt.from_database)?;
+        let target = instance.database(&stmt.to_database)?;
+        if Arc::ptr_eq(&source.catalog, &target.catalog) {
+            return Err(Error::binder(format!(
+                "Cannot copy from \"{}\" to \"{}\" - FROM and TO databases are the same",
+                stmt.from_database, stmt.to_database
+            )));
+        }
+        let target_name = target.name.clone();
+        // Read the source in the open transaction, or in a snapshot of its own.
+        let (snapshot, temporary) = if self.transactions.has_current() {
+            (self.transactions.current(), false)
+        } else {
+            (Arc::new(instance.transactions.begin()), true)
+        };
+        // The statements to run; `queries` are SQL texts to run before `statements[i]`.
+        let mut statements: Vec<SqlStatement> = Vec::new();
+        let mut queries: Vec<(usize, String)> = Vec::new();
+        if stmt.copy_type == rustdb_ast::CopyDatabaseType::CopySchema {
+            for mut info in rustdb_catalog::checkpoint::export_create_infos(&source.catalog, &snapshot) {
+                info.catalog.clone_from(&target_name);
+                info.on_conflict = if matches!(info.kind, rustdb_ast::CreateInfoKind::Schema) {
+                    rustdb_ast::OnCreateConflict::IgnoreOnConflict
+                } else {
+                    rustdb_ast::OnCreateConflict::ErrorOnConflict
+                };
+                // Schemas and sequences are created from their infos: their SQL names no
+                // catalog, and a sequence's SQL loses its usage.
+                if matches!(
+                    info.kind,
+                    rustdb_ast::CreateInfoKind::Schema | rustdb_ast::CreateInfoKind::Sequence(_)
+                ) {
+                    statements.push(SqlStatement::new(rustdb_ast::SqlStatementKind::Create(Box::new(
+                        info,
+                    ))));
+                } else if let Some(sql) = info.to_sql() {
+                    queries.push((statements.len(), sql));
+                }
+            }
+        } else {
+            let mut tables = Vec::new();
+            for schema in source.catalog.schemas().scan(&snapshot) {
+                let Some(contents) = schema.as_schema() else {
+                    continue;
+                };
+                for entry in contents.tables.scan(&snapshot) {
+                    if matches!(entry.kind, rustdb_catalog::EntryKind::Table(_)) && !entry.internal {
+                        tables.push((schema.name().to_owned(), entry));
+                    }
+                }
+            }
+            for (schema, entry) in rustdb_catalog::checkpoint::reorder_table_entries(tables) {
+                let rustdb_catalog::EntryKind::Table(table) = &entry.kind else {
+                    continue;
+                };
+                let columns: Vec<String> = table
+                    .physical_columns()
+                    .map(|(_, _, column)| rustdb_ast::keyword::write_optionally_quoted(&column.name))
+                    .collect();
+                let columns = columns.join(", ");
+                queries.push((
+                    statements.len(),
+                    format!(
+                        "INSERT INTO {} ({columns}) SELECT {columns} FROM {}",
+                        rustdb_ast::qualifier_to_string(&target_name, &schema, entry.name()),
+                        rustdb_ast::qualifier_to_string(&source.name, &schema, entry.name()),
+                    ),
+                ));
+            }
+        }
+        if temporary {
+            instance.transactions.rollback(&snapshot);
+        }
+        let mut queries = queries.into_iter().peekable();
+        for (index, statement) in statements
+            .into_iter()
+            .map(Some)
+            .chain(std::iter::once(None))
+            .enumerate()
+        {
+            while let Some((_, query)) = queries.next_if(|(before, _)| *before == index) {
+                for parsed in rustdb_parser::parse(&query)? {
+                    self.run_statement(parsed)?;
+                }
+            }
+            if let Some(statement) = statement {
+                self.run_statement(statement)?;
+            }
+        }
+        Ok(MaterializedResult::default())
+    }
+
     fn run_statement(&mut self, statement: SqlStatement) -> Result<MaterializedResult> {
         if let rustdb_ast::SqlStatementKind::Multi(statements) = statement.kind {
             return self.run_multi_statement(statements);
+        }
+        if let rustdb_ast::SqlStatementKind::CopyDatabase(copy) = &statement.kind {
+            return self.copy_database(copy);
         }
         if let rustdb_ast::SqlStatementKind::Load(info) = &statement.kind {
             crate::extensions::load_extension(info)?;

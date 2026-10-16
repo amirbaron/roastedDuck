@@ -96,10 +96,8 @@ fn bind_sequence(input: &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>>
         .binder
         .and_then(|client| client.downcast_ref::<ClientContext>())
         .ok_or_else(|| Error::internal("nextval bound without a client context"))?;
-    let (mut catalog, mut schema, name) = parse_qualified_name(&name.to_varchar()?)?;
-    if !schema.is_empty() && catalog.is_empty() && context.catalog(&schema).is_some() {
-        catalog = std::mem::take(&mut schema);
-    }
+    let (catalog, schema, name) = parse_qualified_name(&name.to_varchar()?)?;
+    let (catalog, schema) = context.bind_schema_or_catalog(&catalog, &schema)?;
     let found = context
         .get_entry(&catalog, &schema, CatalogType::Sequence, &name, false)?
         .ok_or_else(|| Error::internal("sequence lookup"))?;

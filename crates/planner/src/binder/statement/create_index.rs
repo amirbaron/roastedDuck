@@ -95,9 +95,25 @@ pub fn bind_create_index(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Re
         |storage| storage.info().schema_name(),
     );
     let names = table.columns.iter().map(|column| column.name.clone()).collect();
+    // The index lives in the catalog of its table (`old.items` may name a catalog).
+    let table_catalog = match &table_ref.kind {
+        TableRefKind::BaseTable(base) => scope
+            .context
+            .get_entry(
+                &base.catalog_name,
+                &base.schema_name,
+                rustdb_catalog::CatalogType::Table,
+                &base.table_name,
+                true,
+            )?
+            .map(|lookup| lookup.catalog),
+        _ => None,
+    };
     let mut info = info.clone();
     info.schema = schema;
-    if info.catalog.is_empty() {
+    if let Some(catalog) = table_catalog {
+        info.catalog = catalog;
+    } else if info.catalog.is_empty() {
         scope.context.default_catalog().clone_into(&mut info.catalog);
     }
     if let CreateInfoKind::Index(index) = &mut info.kind {

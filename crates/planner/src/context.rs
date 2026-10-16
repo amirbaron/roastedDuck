@@ -179,6 +179,35 @@ impl ClientContext {
         }
     }
 
+    /// `Binder::BindSchemaOrCatalog`: a lone `schema` that names an attached database
+    /// stands for that database, unless the default catalog also has a schema of that
+    /// name (an ambiguous reference).
+    pub fn bind_schema_or_catalog(&self, catalog: &str, schema: &str) -> Result<(String, String)> {
+        if !catalog.is_empty() || schema.is_empty() || self.catalog(schema).is_none() {
+            return Ok((catalog.to_owned(), schema.to_owned()));
+        }
+        let mut catalog_names: Vec<String> = self
+            .search_path
+            .iter()
+            .filter(|(_, path_schema)| path_schema.eq_ignore_ascii_case(schema))
+            .map(|(path_catalog, _)| path_catalog.clone())
+            .collect();
+        if catalog_names.is_empty() {
+            catalog_names.push(self.default_catalog().to_owned());
+        }
+        for catalog_name in catalog_names {
+            if self
+                .catalog(&catalog_name)
+                .is_some_and(|found| found.schema(&self.transaction, schema).is_some())
+            {
+                return Err(Error::binder(format!(
+                    "Ambiguous reference to catalog or schema \"{schema}\" - use a fully qualified path like \"{catalog_name}.{schema}\""
+                )));
+            }
+        }
+        Ok((schema.to_owned(), String::new()))
+    }
+
     /// The default schema (`CatalogSearchPath::GetDefault`).
     pub fn default_schema(&self) -> &str {
         self.search_path

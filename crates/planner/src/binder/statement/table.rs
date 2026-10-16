@@ -35,7 +35,7 @@ pub struct FoundTable {
 
 /// `Catalog::GetEntry<TableCatalogEntry>`: the table called `name`; a view is an error.
 pub fn find_table(scope: &BindScope<'_>, catalog: &str, schema: &str, name: &str) -> Result<FoundTable> {
-    let (catalog, schema) = bind_schema_or_catalog(scope, catalog, schema);
+    let (catalog, schema) = bind_schema_or_catalog(scope, catalog, schema)?;
     let found = scope
         .context
         .get_entry(&catalog, &schema, CatalogType::Table, name, false)?
@@ -52,12 +52,14 @@ pub fn find_table(scope: &BindScope<'_>, catalog: &str, schema: &str, name: &str
     })
 }
 
-/// `Binder::BindSchemaOrCatalog`: a schema name that names a catalog becomes the catalog.
-pub fn bind_schema_or_catalog(scope: &BindScope<'_>, catalog: &str, schema: &str) -> (String, String) {
-    if !schema.is_empty() && catalog.is_empty() && scope.context.catalog(schema).is_some() {
-        return (schema.to_owned(), String::new());
-    }
-    (catalog.to_owned(), schema.to_owned())
+/// `Binder::BindSchemaOrCatalog`: a schema name that names a catalog becomes the
+/// catalog (see [`crate::ClientContext::bind_schema_or_catalog`]).
+pub fn bind_schema_or_catalog(
+    scope: &BindScope<'_>,
+    catalog: &str,
+    schema: &str,
+) -> Result<(String, String)> {
+    scope.context.bind_schema_or_catalog(catalog, schema)
 }
 
 /// "Table "t" does not have a column with name "x"" (`TableCatalogEntry::GetColumnIndex`).
