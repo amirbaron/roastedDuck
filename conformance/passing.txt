@@ -3112,6 +3112,7 @@ test/sql/types/uhugeint/test_uhugeint_ops.test
 test/sql/types/uhugeint/uhugeint_literal.test
 test/sql/types/uhugeint/uhugeint_multiply.test
 test/sql/types/uhugeint/uhugeint_try_cast.test
+test/sql/types/union/struct_to_union.test
 test/sql/types/union/union_aggregate.test
 test/sql/types/union/union_ambiguous.test
 test/sql/types/union/union_cast.test
