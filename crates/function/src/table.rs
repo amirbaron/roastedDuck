@@ -103,7 +103,10 @@ pub struct TableScanState {
 
 /// One overload of a table function.
 #[derive(Clone)]
-#[allow(clippy::struct_excessive_bools, reason = "DuckDB's TableFunction capability flags")]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "DuckDB's TableFunction capability flags"
+)]
 pub struct TableFunction {
     pub name: Arc<str>,
     pub arguments: Vec<LogicalType>,

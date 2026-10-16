@@ -13,7 +13,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use rustdb_common::{Error, Result};
 use rustdb_types::compare::{CompareOp, SqlOrd};
-use rustdb_types::{NativeType, PhysicalType, StringT, Value, Vector};
+
+use rustdb_types::{NativeType, PhysicalType, Sel, StringT, ValidityMask, Value, Vector};
 
 use crate::statistics::{BaseStatistics, FilterPropagateResult, NumericValue, StatsData};
 
@@ -468,47 +469,81 @@ fn check_constants(stats: &BaseStatistics, op: CompareOp, constants: &[Value]) -
     }
 }
 
+/// Keeps the rows of `sel` for which `keep(row)` holds, without branching on the
+/// outcome (DuckDB's `SelectFlatLoop` writes true matches the same way).
 #[inline]
-fn compare<T: SqlOrd>(op: CompareOp, left: T, right: T) -> bool {
-    match op {
-        CompareOp::Equal => left.sql_eq(right),
-        CompareOp::NotEqual => !left.sql_eq(right),
-        CompareOp::GreaterThan => left.sql_gt(right),
-        CompareOp::LessThan => right.sql_gt(left),
-        CompareOp::GreaterThanOrEqual => !right.sql_gt(left),
-        CompareOp::LessThanOrEqual => !left.sql_gt(right),
+fn retain_rows(sel: &mut Vec<u32>, keep: impl Fn(usize) -> bool) {
+    let mut kept = 0;
+    for index in 0..sel.len() {
+        let row = sel[index];
+        sel[kept] = row;
+        kept += usize::from(keep(row as usize));
+    }
+    sel.truncate(kept);
+}
+
+/// Keeps the rows whose value satisfies `matches`, monomorphised per comparison.
+#[inline]
+fn select_values<T>(
+    values: &[T],
+    data_sel: Sel<'_>,
+    validity: &ValidityMask,
+    sel: &mut Vec<u32>,
+    matches: impl Fn(&T) -> bool,
+) {
+    let all_valid = validity.is_all_valid();
+    match (data_sel, all_valid) {
+        (Sel::Identity, true) => retain_rows(sel, |row| matches(&values[row])),
+        (_, true) => retain_rows(sel, |row| matches(&values[data_sel.slot(row)])),
+        (_, false) => retain_rows(sel, |row| {
+            let slot = data_sel.slot(row);
+            validity.is_valid(slot) && matches(&values[slot])
+        }),
     }
 }
 
 fn select_native<T: SqlOrd + NativeType>(vector: &Vector, op: CompareOp, constant: T, sel: &mut Vec<u32>) {
     let data = vector.unified::<T>();
-    if data.validity.is_all_valid() {
-        sel.retain(|&row| compare(op, data.values[data.sel.slot(row as usize)], constant));
-    } else {
-        sel.retain(|&row| {
-            let slot = data.sel.slot(row as usize);
-            data.validity.is_valid(slot) && compare(op, data.values[slot], constant)
-        });
+    let (values, data_sel, validity) = (data.values, data.sel, data.validity);
+    match op {
+        CompareOp::Equal => select_values(values, data_sel, validity, sel, |&v| v.sql_eq(constant)),
+        CompareOp::NotEqual => select_values(values, data_sel, validity, sel, |&v| !v.sql_eq(constant)),
+        CompareOp::GreaterThan => select_values(values, data_sel, validity, sel, |&v| v.sql_gt(constant)),
+        CompareOp::LessThan => select_values(values, data_sel, validity, sel, |&v| constant.sql_gt(v)),
+        CompareOp::GreaterThanOrEqual => {
+            select_values(values, data_sel, validity, sel, |&v| !constant.sql_gt(v));
+        }
+        CompareOp::LessThanOrEqual => {
+            select_values(values, data_sel, validity, sel, |&v| !v.sql_gt(constant))
+        }
     }
 }
 
 fn select_strings(vector: &Vector, op: CompareOp, constant: &[u8], sel: &mut Vec<u32>) {
     let data = vector.unified::<StringT>();
-    sel.retain(|&row| {
-        let slot = data.sel.slot(row as usize);
-        if !data.validity.is_valid(slot) {
-            return false;
+    let (values, data_sel, validity) = (data.values, data.sel, data.validity);
+    match op {
+        CompareOp::Equal => select_values(values, data_sel, validity, sel, |v| {
+            vector.string_value(v) == constant
+        }),
+        CompareOp::NotEqual => select_values(values, data_sel, validity, sel, |v| {
+            vector.string_value(v) != constant
+        }),
+        CompareOp::LessThan => select_values(values, data_sel, validity, sel, |v| {
+            vector.string_value(v) < constant
+        }),
+        CompareOp::LessThanOrEqual => select_values(values, data_sel, validity, sel, |v| {
+            vector.string_value(v) <= constant
+        }),
+        CompareOp::GreaterThan => select_values(values, data_sel, validity, sel, |v| {
+            vector.string_value(v) > constant
+        }),
+        CompareOp::GreaterThanOrEqual => {
+            select_values(values, data_sel, validity, sel, |v| {
+                vector.string_value(v) >= constant
+            });
         }
-        let bytes = vector.string_value(&data.values[slot]);
-        match op {
-            CompareOp::Equal => bytes == constant,
-            CompareOp::NotEqual => bytes != constant,
-            CompareOp::LessThan => bytes < constant,
-            CompareOp::LessThanOrEqual => bytes <= constant,
-            CompareOp::GreaterThan => bytes > constant,
-            CompareOp::GreaterThanOrEqual => bytes >= constant,
-        }
-    });
+    }
 }
 
 fn select_constant(vector: &Vector, op: CompareOp, constant: &Value, sel: &mut Vec<u32>) -> Result<()> {

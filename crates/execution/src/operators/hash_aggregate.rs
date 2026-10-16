@@ -361,15 +361,17 @@ impl Sink for PhysicalHashAggregate {
                     }
                 }
             }
-            global.partitions.extend(
-                taken
-                    .into_iter()
-                    .filter(|data| !data.is_empty())
-                    .map(|data| AggregatePartition {
-                        set_index,
-                        data: Mutex::new(data),
-                    }),
-            );
+            global
+                .partitions
+                .extend(
+                    taken
+                        .into_iter()
+                        .filter(|data| !data.is_empty())
+                        .map(|data| AggregatePartition {
+                            set_index,
+                            data: Mutex::new(data),
+                        }),
+                );
             // An empty grouping set yields one row even without input (like an ungrouped
             // aggregate).
             if set.is_empty() && rows == 0 {
@@ -493,7 +495,11 @@ pub struct HashAggregateSourceLocal {
 impl PhysicalHashAggregate {
     /// Merges partition `partition` of the threads' groups into one table and returns
     /// its rows in output layout.
-    fn finalize_partition(&self, ctx: &ExecutionContext, partition: &AggregatePartition) -> Result<Vec<DataChunk>> {
+    fn finalize_partition(
+        &self,
+        ctx: &ExecutionContext,
+        partition: &AggregatePartition,
+    ) -> Result<Vec<DataChunk>> {
         let data = std::mem::take(&mut *partition.data.lock().unwrap_or_else(PoisonError::into_inner));
         let set = &self.grouping_sets[partition.set_index];
         let mut table = GroupedAggregateHashTable::new(
