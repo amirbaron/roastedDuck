@@ -154,6 +154,7 @@ impl DdlAction for CreateViewAction {
                 aliases: view.aliases.clone(),
                 types: view.types.clone(),
                 names: view.names.clone(),
+                column_comments: view.column_comments.clone(),
             }),
         );
         entry.dependencies.clone_from(&self.info.dependencies.set);

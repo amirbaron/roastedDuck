@@ -118,6 +118,14 @@ fn null_text() -> Value {
     Value::null(LogicalType::VARCHAR)
 }
 
+/// A `comment` column value: NULL without a comment.
+fn comment_text(comment: &Value) -> Value {
+    if comment.is_null() {
+        return null_text();
+    }
+    comment.to_varchar().map_or_else(|_| null_text(), text)
+}
+
 fn oid(value: u64) -> Value {
     Value::bigint(i64::try_from(value).unwrap_or(i64::MAX))
 }
@@ -289,7 +297,7 @@ fn table_create_info(catalog: &str, schema: &str, entry: &CatalogEntry, table: &
                 expression,
                 category,
                 compression_type: CompressionType::CompressionAuto,
-                comment: Value::default(),
+                comment: column.comment.clone(),
                 tags: OrderedMap::default(),
             }
         })
@@ -375,7 +383,7 @@ fn table_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 oid(schema.oid),
                 text(entry.name()),
                 oid(entry.oid),
-                null_text(),
+                comment_text(&entry.comment),
                 empty_map(),
                 Value::boolean(entry.internal),
                 Value::boolean(entry.temporary),
@@ -428,7 +436,7 @@ fn view_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                     types: view.types.clone(),
                     query: Box::new(view.query.clone()),
                     names: view.names.clone(),
-                    column_comments: OrderedMap::default(),
+                    column_comments: view.column_comments.clone(),
                 })),
             );
             rows.push(vec![
@@ -438,7 +446,7 @@ fn view_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 oid(schema.oid),
                 text(entry.name()),
                 oid(entry.oid),
-                null_text(),
+                comment_text(&entry.comment),
                 empty_map(),
                 Value::boolean(entry.internal),
                 Value::boolean(entry.temporary),
@@ -500,7 +508,7 @@ fn index_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 oid(entry.oid),
                 text(index.info.table.clone()),
                 table_oid,
-                null_text(),
+                comment_text(&entry.comment),
                 empty_map(),
                 Value::boolean(matches!(
                     constraint,
@@ -562,7 +570,7 @@ fn sequence_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 oid(schema.oid),
                 text(entry.name()),
                 oid(entry.oid),
-                null_text(),
+                comment_text(&entry.comment),
                 empty_map(),
                 Value::boolean(entry.temporary),
                 Value::bigint(data.start_value),
@@ -641,6 +649,7 @@ fn column_row(
     ty: &LogicalType,
     default: Option<String>,
     nullable: bool,
+    comment: &Value,
 ) -> Vec<Value> {
     let [precision, radix, scale] = numeric_properties(ty);
     vec![
@@ -652,7 +661,7 @@ fn column_row(
         oid(entry.oid),
         text(name),
         Value::integer(i32::try_from(index + 1).unwrap_or(i32::MAX)),
-        null_text(),
+        comment_text(comment),
         Value::boolean(entry.internal),
         default.map_or_else(null_text, text),
         Value::boolean(nullable),
@@ -691,6 +700,7 @@ fn column_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                             &column.logical_type,
                             default,
                             nullable,
+                            &column.comment,
                         ));
                     }
                 }
@@ -702,7 +712,10 @@ fn column_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                             .or_else(|| view.names.get(index))
                             .cloned()
                             .unwrap_or_default();
-                        rows.push(column_row(catalog, &schema, &entry, index, &name, ty, None, true));
+                        let comment = view.column_comments.get(&name).cloned().unwrap_or_default();
+                        rows.push(column_row(
+                            catalog, &schema, &entry, index, &name, ty, None, true, &comment,
+                        ));
                     }
                 }
                 _ => {}
@@ -730,6 +743,7 @@ pub(crate) fn register_default_views(system: &Catalog) -> Result<()> {
                 aliases: Vec::new(),
                 types: Vec::new(),
                 names: Vec::new(),
+                column_comments: rustdb_common::OrderedMap::default(),
             },
         )?;
     }

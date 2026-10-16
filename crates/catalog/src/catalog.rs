@@ -4,6 +4,7 @@ use std::sync::{Arc, OnceLock};
 use rustdb_ast::OnCreateConflict;
 use rustdb_common::{Error, Result};
 use rustdb_function::{AggregateFunctionSet, ScalarFunctionSet, TableFunctionSet};
+use rustdb_types::Value;
 
 use crate::{CatalogEntry, CatalogSet, CatalogType, EntryKind, SchemaEntry, StorageHook, Transaction};
 
@@ -594,6 +595,89 @@ impl Catalog {
             owner.catalog_type(),
             owner.name(),
             new_owner,
+            StorageHook::None,
+            info,
+        )
+    }
+
+    /// `COMMENT ON`: a copy of `entry` with `comment` replaces it (the `SET_COMMENT` case
+    /// of `CatalogSet::AlterEntry`). `info` is the logged ALTER.
+    pub fn set_comment(
+        &self,
+        transaction: &Transaction,
+        schema: &str,
+        entry: &CatalogEntry,
+        comment: Value,
+        info: Option<rustdb_ast::AlterInfo>,
+    ) -> Result<()> {
+        let mut copy = entry
+            .try_copy()
+            .ok_or_else(|| Error::internal("COMMENT ON an entry that cannot be copied"))?;
+        copy.comment = comment;
+        self.alter_entry(
+            transaction,
+            schema,
+            entry.catalog_type(),
+            entry.name(),
+            copy,
+            StorageHook::None,
+            info,
+        )
+    }
+
+    /// `COMMENT ON COLUMN` of a table (`DuckTableEntry::SetColumnComment`) or a view
+    /// (`ViewCatalogEntry::AlterEntry`). `info` is the logged ALTER.
+    pub fn set_column_comment(
+        &self,
+        transaction: &Transaction,
+        schema: &str,
+        entry: &CatalogEntry,
+        (column, comment): (&str, Value),
+        info: Option<rustdb_ast::AlterInfo>,
+    ) -> Result<()> {
+        let mut copy = entry
+            .try_copy()
+            .ok_or_else(|| Error::internal("COMMENT ON COLUMN of an entry that cannot be copied"))?;
+        match &mut copy.kind {
+            EntryKind::Table(table) => {
+                let Some(target) = table
+                    .columns
+                    .iter_mut()
+                    .find(|candidate| candidate.name.eq_ignore_ascii_case(column))
+                else {
+                    return Err(Error::binder(format!(
+                        "Table \"{}\" does not have a column with name \"{column}\"",
+                        entry.name()
+                    )));
+                };
+                target.comment = comment;
+            }
+            EntryKind::View(view) => {
+                let exists = (0..view.types.len()).any(|index| {
+                    view.aliases
+                        .get(index)
+                        .or_else(|| view.names.get(index))
+                        .is_some_and(|name| name == column)
+                });
+                if !exists {
+                    return Err(Error::binder(format!(
+                        "View \"{}\" does not have a column with name \"{column}\"",
+                        entry.name()
+                    )));
+                }
+                match view.column_comments.get_mut(column) {
+                    Some(existing) => *existing = comment,
+                    None => view.column_comments.push(column.to_owned(), comment),
+                }
+            }
+            _ => return Err(Error::internal("COMMENT ON COLUMN of an unexpected entry")),
+        }
+        self.alter_entry(
+            transaction,
+            schema,
+            entry.catalog_type(),
+            entry.name(),
+            copy,
             StorageHook::None,
             info,
         )

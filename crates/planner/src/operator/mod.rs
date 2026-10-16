@@ -546,6 +546,13 @@ pub enum AlterAction {
     Nothing,
     /// `RENAME TO`.
     Rename(String),
+    /// `COMMENT ON <entry> IS value`.
+    SetComment(rustdb_types::Value),
+    /// `COMMENT ON COLUMN <table or view>.column IS value`.
+    SetColumnComment {
+        column: String,
+        comment: rustdb_types::Value,
+    },
     /// `ALTER SEQUENCE ... OWNED BY schema.name`.
     ChangeOwnership {
         owner_schema: String,

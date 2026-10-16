@@ -134,6 +134,20 @@ impl DdlAction for AlterEntryAction {
         };
         match &self.action {
             AlterAction::Nothing => Ok(()),
+            AlterAction::SetComment(comment) => self.catalog.set_comment(
+                transaction,
+                &self.schema,
+                entry,
+                comment.clone(),
+                self.info.as_deref().cloned(),
+            ),
+            AlterAction::SetColumnComment { column, comment } => self.catalog.set_column_comment(
+                transaction,
+                &self.schema,
+                entry,
+                (column, comment.clone()),
+                self.info.as_deref().cloned(),
+            ),
             AlterAction::ChangeOwnership {
                 owner_schema,
                 owner_name,

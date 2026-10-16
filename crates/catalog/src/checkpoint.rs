@@ -70,6 +70,7 @@ fn entry_info(
 ) -> CreateInfo {
     let mut info = base_info(catalog, schema, temporary, kind);
     info.dependencies.set.clone_from(&entry.dependencies);
+    info.comment.clone_from(&entry.comment);
     info
 }
 
@@ -94,7 +95,7 @@ pub(crate) fn table_create_info(
                 expression,
                 category,
                 compression_type: CompressionType::CompressionAuto,
-                comment: Value::default(),
+                comment: column.comment.clone(),
                 tags: OrderedMap::default(),
             }
         })
@@ -134,7 +135,7 @@ pub(crate) fn view_create_info(
             types: view.types.clone(),
             query: Box::new(view.query.clone()),
             names: view.names.clone(),
-            column_comments: OrderedMap::default(),
+            column_comments: view.column_comments.clone(),
         })),
     )
 }
@@ -230,6 +231,7 @@ pub fn entry_from_create_info(info: &CreateInfo) -> Result<CatalogEntry> {
     entry.temporary = info.temporary;
     entry.internal = info.internal;
     entry.dependencies.clone_from(&info.dependencies.set);
+    entry.comment.clone_from(&info.comment);
     Ok(entry)
 }
 
@@ -378,9 +380,10 @@ pub fn export_create_infos(catalog: &Catalog, transaction: &Transaction) -> Vec<
         }
         for entry in schema_entry.indexes.scan(transaction) {
             if let (false, EntryKind::Index(index)) = (entry.internal, &entry.kind) {
-                indexes.push(base_info(
+                indexes.push(entry_info(
                     "",
                     &schema_name,
+                    &entry,
                     entry.temporary,
                     CreateInfoKind::Index(Box::new(index.info.clone())),
                 ));
@@ -638,9 +641,10 @@ pub fn write_checkpoint(
                 }
                 EntryKind::Index(index) => {
                     serializer.write_property(99, "catalog_type", &AstCatalogType::IndexEntry)?;
-                    let info = base_info(
+                    let info = entry_info(
                         &catalog_name,
                         schema,
+                        entry,
                         entry.temporary,
                         CreateInfoKind::Index(Box::new(index.info.clone())),
                     );
@@ -815,6 +819,7 @@ pub fn load_checkpoint(
                     EntryKind::Sequence(SequenceEntry::new(sequence)),
                 );
                 entry.temporary = info.temporary;
+                entry.comment.clone_from(&info.comment);
                 catalog.create_entry_committed(&info.schema, entry)?;
             }
             AstCatalogType::TableEntry => {
@@ -890,6 +895,7 @@ pub fn load_checkpoint(
                 let mut catalog_entry = CatalogEntry::new(create.table.clone(), EntryKind::Table(entry));
                 catalog_entry.temporary = info.temporary;
                 catalog_entry.dependencies.clone_from(&info.dependencies.set);
+                catalog_entry.comment.clone_from(&info.comment);
                 catalog.create_entry_committed(&info.schema, catalog_entry)?;
             }
             AstCatalogType::ViewEntry => {
@@ -904,10 +910,12 @@ pub fn load_checkpoint(
                         aliases: view.aliases.clone(),
                         types: view.types.clone(),
                         names: view.names.clone(),
+                        column_comments: view.column_comments.clone(),
                     }),
                 );
                 entry.temporary = info.temporary;
                 entry.dependencies.clone_from(&info.dependencies.set);
+                entry.comment.clone_from(&info.comment);
                 catalog.create_entry_committed(&info.schema, entry)?;
             }
             AstCatalogType::IndexEntry => {
@@ -972,7 +980,8 @@ fn load_index(
     info: &CreateInfo,
     index_loader: &dyn IndexExpressionLoader,
 ) -> Result<()> {
-    let (entry, _) = build_index_entry(catalog, transaction, info, index_loader)?;
+    let (mut entry, _) = build_index_entry(catalog, transaction, info, index_loader)?;
+    entry.comment.clone_from(&info.comment);
     catalog.create_entry_committed(&info.schema, entry)
 }
 

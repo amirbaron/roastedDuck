@@ -133,6 +133,8 @@ pub struct TableColumn {
     pub default_value: Option<ParsedExpression>,
     /// `GENERATED ALWAYS AS (expr)`: the column is computed, not stored.
     pub generated: Option<ParsedExpression>,
+    /// `COMMENT ON COLUMN` (NULL without one).
+    pub comment: rustdb_types::Value,
 }
 
 /// A table's definition (DuckDB's `TableCatalogEntry` / `DuckTableEntry`). Its data lives
@@ -165,6 +167,7 @@ impl TableEntry {
                     logical_type: column.logical_type.clone(),
                     default_value: if generated { None } else { expression.clone() },
                     generated: if generated { expression } else { None },
+                    comment: column.comment.clone(),
                 }
             })
             .collect();
@@ -369,6 +372,8 @@ pub struct ViewEntry {
     /// The result types and names of the query when the view was created.
     pub types: Vec<LogicalType>,
     pub names: Vec<String>,
+    /// `COMMENT ON COLUMN` values, by column name.
+    pub column_comments: rustdb_common::OrderedMap<String, rustdb_types::Value>,
 }
 
 /// A user-defined type (DuckDB's `TypeCatalogEntry`): `CREATE TYPE name AS ...`.
@@ -435,6 +440,8 @@ pub struct CatalogEntry {
     /// The entries this one owns (`ALTER SEQUENCE ... OWNED BY`): they depend on it and
     /// are dropped along with it.
     pub owned: Vec<rustdb_ast::CatalogEntryInfo>,
+    /// `COMMENT ON` (NULL without one).
+    pub comment: rustdb_types::Value,
 }
 
 impl CatalogEntry {
@@ -447,15 +454,36 @@ impl CatalogEntry {
             kind,
             dependencies: Vec::new(),
             owned: Vec::new(),
+            comment: rustdb_types::Value::default(),
         }
     }
 
+    /// A copy of this entry under the same name (`CatalogEntry::Copy`), for alters that
+    /// only change metadata; `None` for entries that cannot be copied.
+    pub fn try_copy(&self) -> Option<Self> {
+        let kind = match &self.kind {
+            EntryKind::Table(table) => EntryKind::Table(table.clone()),
+            EntryKind::View(view) => EntryKind::View(view.clone()),
+            EntryKind::Sequence(sequence) => EntryKind::Sequence(sequence.clone()),
+            EntryKind::Type(ty) => EntryKind::Type(ty.clone()),
+            EntryKind::Macro(function) => EntryKind::Macro(function.clone()),
+            EntryKind::TableMacro(function) => EntryKind::TableMacro(function.clone()),
+            EntryKind::Index(index) => EntryKind::Index(index.clone()),
+            _ => return None,
+        };
+        let mut copy = Self::new(self.name.clone(), kind);
+        copy.inherit_links(self);
+        copy.internal = self.internal;
+        Some(copy)
+    }
+
     /// Carries the catalog links of `previous` (the version this one replaces) over:
-    /// temporariness, dependencies and owned entries.
+    /// temporariness, dependencies, owned entries and the comment.
     pub fn inherit_links(&mut self, previous: &Self) {
         self.temporary = previous.temporary;
         self.dependencies.clone_from(&previous.dependencies);
         self.owned.clone_from(&previous.owned);
+        self.comment.clone_from(&previous.comment);
     }
 
     /// Whether `info` names this entry of `schema`.
