@@ -30,6 +30,9 @@ pub struct PhysicalSeqScan {
     transaction: Arc<Transaction>,
     column_ids: Vec<StorageIndex>,
     filters: Option<TableFilterSet>,
+    /// `filters` with the run-time filters joins set (DuckDB's `dynamic_filters`), which
+    /// the scan applies.
+    scan_filters: Option<TableFilterSet>,
     /// Positions (into `column_ids`) of the output columns; empty = all, in order
     /// (DuckDB's `projection_ids`).
     projection: Vec<usize>,
@@ -106,11 +109,26 @@ impl PhysicalSeqScan {
             table,
             transaction,
             column_ids,
+            scan_filters: filters.clone(),
             filters,
             projection,
             index_scan: Some((DEFAULT_INDEX_SCAN_MAX_COUNT, DEFAULT_INDEX_SCAN_PERCENTAGE)),
             explain: ScanExplainInfo::default(),
         }
+    }
+
+    /// Adds the run-time filters joins above set (DuckDB's `dynamic_filters`), keyed by
+    /// position in the scanned columns.
+    #[must_use]
+    pub fn with_dynamic_filters(mut self, dynamic: Option<TableFilterSet>) -> Self {
+        if let Some(dynamic) = dynamic {
+            let mut merged = self.filters.clone().unwrap_or_default();
+            for (column, filter) in dynamic.filters {
+                merged.push_filter(column, filter);
+            }
+            self.scan_filters = Some(merged);
+        }
+        self
     }
 
     /// Sets what `EXPLAIN` shows about the scan.
@@ -223,7 +241,7 @@ impl Source for PhysicalSeqScan {
 
     fn local_source_state(&self, _: &ExecutionContext, _: &Self::Global) -> Result<Self::Local> {
         let mut state = TableScanState::default();
-        state.initialize(self.column_ids.clone(), self.filters.as_ref());
+        state.initialize(self.column_ids.clone(), self.scan_filters.as_ref());
         Ok(SeqScanLocal {
             state,
             has_morsel: false,

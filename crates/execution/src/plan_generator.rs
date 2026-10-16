@@ -113,11 +113,19 @@ impl PlanContext {
 /// The scan's filters keyed by position in its column list instead of by table column
 /// (DuckDB's `CreateTableFilterSet`).
 fn table_filter_set(get: &LogicalGet) -> Result<Option<rustdb_storage::TableFilterSet>> {
-    if get.table_filters.is_empty() {
+    scan_filter_set(get, &get.table_filters)
+}
+
+/// `filter_set` (keyed by column index) keyed by position in the scanned columns.
+fn scan_filter_set(
+    get: &LogicalGet,
+    filter_set: &rustdb_storage::TableFilterSet,
+) -> Result<Option<rustdb_storage::TableFilterSet>> {
+    if filter_set.is_empty() {
         return Ok(None);
     }
     let mut filters = rustdb_storage::TableFilterSet::default();
-    for (&column, filter) in &get.table_filters.filters {
+    for (&column, filter) in &filter_set.filters {
         let position = get
             .column_ids
             .iter()
@@ -251,6 +259,7 @@ impl PlanGenerator {
                 filters,
                 projection,
             )
+            .with_dynamic_filters(scan_filter_set(get, &get.dynamic_filters)?)
             .with_explain_info(explain),
         ))
     }
@@ -594,8 +603,12 @@ impl PlanGenerator {
                 .first()
                 .is_some_and(|child| matches!(child.kind, LogicalKind::DummyScan { .. }))
         {
+            let row_count = rows.len() as u64;
             let chunks = evaluate_rows(expr_types, rows)?;
-            return Ok(Arc::new(PhysicalColumnDataScan::new(types, chunks.into())));
+            let scan: PhysicalRef = Arc::new(PhysicalColumnDataScan::new(types, chunks.into()));
+            // DuckDB's chunk scan of a folded VALUES list estimates its row count.
+            self.record_estimate(&scan, row_count);
+            return Ok(scan);
         }
         if let LogicalKind::ComparisonJoin(join) = &kind
             && join.operator_type == LogicalOperatorType::LogicalDelimJoin
@@ -641,16 +654,19 @@ impl PlanGenerator {
             return Ok(Arc::new(PhysicalDelimScan::new(types, shared, external)));
         }
         match kind {
-            LogicalKind::MaterializedCte { table_index, .. } => {
+            LogicalKind::MaterializedCte {
+                table_index, ctename, ..
+            } => {
                 let [definition, query] = two_children(children, "CTE")?;
                 let definition = self.plan(definition)?;
                 let data = Arc::new(CteData::default());
                 self.materialized
                     .insert(table_index, (Arc::clone(&data), self.external.len()));
                 let query = self.plan(query)?;
-                return Ok(PhysicalCte::new(&data, definition, query));
+                return Ok(PhysicalCte::new(ctename, table_index, &data, definition, query));
             }
             LogicalKind::RecursiveCte {
+                ctename,
                 table_index,
                 union_all,
                 key_targets,
@@ -671,11 +687,11 @@ impl PlanGenerator {
                 let external = self.external.pop().unwrap_or_default();
                 let (anchor, recursive) = parts?;
                 return Ok(Arc::new(PhysicalRecursiveCte::new(
+                    (ctename, table_index),
                     types,
                     union_all,
                     working_table,
-                    anchor,
-                    recursive,
+                    [anchor, recursive],
                     external,
                 )));
             }
@@ -687,7 +703,12 @@ impl PlanGenerator {
             } => {
                 if let Some((data, depth)) = self.materialized.get(&cte_index).cloned() {
                     let external = self.read_from(&(Arc::clone(&data) as Arc<dyn SinkData>), depth);
-                    return Ok(Arc::new(PhysicalCteScan::new(chunk_types, data, external)));
+                    return Ok(Arc::new(PhysicalCteScan::new(
+                        chunk_types,
+                        data,
+                        external,
+                        cte_index,
+                    )));
                 }
                 if is_recurring {
                     return Err(Error::invalid_input(
@@ -698,10 +719,10 @@ impl PlanGenerator {
                     .working_tables
                     .get(&cte_index)
                     .ok_or_else(|| Error::invalid_input("Referenced recursive CTE does not exist."))?;
-                return Ok(Arc::new(PhysicalCteScan::new(
+                return Ok(Arc::new(PhysicalCteScan::working_table(
                     types.clone(),
                     Arc::clone(data),
-                    false,
+                    cte_index,
                 )));
             }
             _ => {}
@@ -842,12 +863,18 @@ impl PlanGenerator {
             }
             LogicalKind::Get(get) if get.function.scan.is_some() && get.projection_ids.is_empty() => {
                 let column_ids = get.column_ids.iter().map(|column| column.index).collect();
-                Arc::new(PhysicalTableScan::new(
-                    types,
-                    get.function,
-                    get.bind_data,
-                    column_ids,
-                ))
+                let explain = crate::operators::ScanExplainInfo {
+                    table: String::new(),
+                    column_names: get
+                        .column_ids
+                        .iter()
+                        .filter_map(|column| get.names.get(usize::try_from(column.index).ok()?).cloned())
+                        .collect(),
+                };
+                Arc::new(
+                    PhysicalTableScan::new(types, get.function, get.bind_data, column_ids)
+                        .with_explain_info(explain),
+                )
             }
             LogicalKind::Projection { .. } => {
                 let child = next_child("projection")?;

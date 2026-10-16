@@ -447,6 +447,8 @@ impl StatisticsPropagator<'_> {
                     .insert(ColumnBinding::new(aggregate_index, index as u64), stats);
             }
         }
+        // Whole-table count/min/max may be answered by the row group statistics.
+        self.try_execute_aggregates(node);
         Ok(self.node_stats)
     }
 

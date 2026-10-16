@@ -14,7 +14,11 @@ use crate::generated::enums::LogicalOperatorType;
 pub fn renderer_kind(format: ExplainFormat) -> RendererKind {
     match format {
         ExplainFormat::Json => RendererKind::Json,
-        _ => RendererKind::Text,
+        ExplainFormat::Html => RendererKind::Html,
+        ExplainFormat::Graphviz => RendererKind::Graphviz,
+        ExplainFormat::Yaml => RendererKind::Yaml,
+        ExplainFormat::Mermaid => RendererKind::Mermaid,
+        ExplainFormat::Default | ExplainFormat::Text => RendererKind::Text,
     }
 }
 

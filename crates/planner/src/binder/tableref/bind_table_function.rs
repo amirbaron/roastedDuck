@@ -299,6 +299,7 @@ fn bind_table_function_internal(
         table: None,
         table_schema: None,
         table_filters: rustdb_storage::TableFilterSet::default(),
+        dynamic_filters: rustdb_storage::TableFilterSet::default(),
     };
     // DuckDB's `AddTableFunction`: a table binding tracking the columns used.
     scope.binder.bind_context.add_binding(Binding::new(

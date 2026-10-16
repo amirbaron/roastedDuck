@@ -7,6 +7,7 @@
 //! The statistics callbacks DuckDB attaches to functions live in [`function`], keyed by
 //! the function name.
 
+mod execute_aggregates;
 mod expression;
 mod function;
 

@@ -5,6 +5,8 @@
 //! plan or a profiling tree; a renderer turns the grid into text. The box-drawing text
 //! renderer and the JSON renderer reproduce DuckDB's output byte for byte.
 
+mod formats;
+
 use std::fmt::Write as _;
 
 use unicode_segmentation::UnicodeSegmentation;
@@ -180,6 +182,10 @@ fn tree_width_height<T: RenderSource>(op: &T) -> (usize, usize) {
 pub enum RendererKind {
     Text,
     Json,
+    Html,
+    Graphviz,
+    Yaml,
+    Mermaid,
 }
 
 /// Renders a tree in the given format (DuckDB's `TreeRenderer::CreateRenderer` +
@@ -190,6 +196,22 @@ pub fn render(kind: RendererKind, mut tree: RenderTree) -> String {
         RendererKind::Json => {
             tree.sanitize_key_names();
             render_json(&tree)
+        }
+        RendererKind::Html => {
+            tree.sanitize_key_names();
+            formats::render_html(&tree)
+        }
+        RendererKind::Graphviz => {
+            tree.sanitize_key_names();
+            formats::render_graphviz(&tree)
+        }
+        RendererKind::Yaml => {
+            tree.sanitize_key_names();
+            formats::render_yaml(&tree)
+        }
+        RendererKind::Mermaid => {
+            tree.sanitize_key_names();
+            formats::render_mermaid(&tree)
         }
     }
 }

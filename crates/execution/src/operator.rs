@@ -89,6 +89,11 @@ pub trait PhysicalOperator: Send + Sync + fmt::Debug + 'static {
     fn profiler_name(&self) -> String {
         self.explain_name()
     }
+    /// The operator's children in `EXPLAIN` output: its children, plus inputs that run
+    /// as nested executions rather than pipelines (a recursive CTE's parts).
+    fn explain_children(&self) -> &[PhysicalRef] {
+        self.children()
+    }
     /// The operator's key-value lines in `EXPLAIN` output (DuckDB's `ParamsToString`);
     /// `estimated_cardinality` is the planner's estimate of the operator's output rows.
     fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {

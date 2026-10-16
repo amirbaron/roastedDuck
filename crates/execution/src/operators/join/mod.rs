@@ -5,6 +5,7 @@ mod asof_join;
 mod blockwise_nl_join;
 mod hash_join;
 mod iejoin;
+mod join_filter;
 mod nested_loop_join;
 mod outer_join_marker;
 mod perfect_hash_join;

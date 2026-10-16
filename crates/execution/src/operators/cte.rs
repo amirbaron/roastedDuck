@@ -6,7 +6,11 @@ use rustdb_row::hash::hash_columns;
 use rustdb_types::{DataChunk, LogicalType, SelectionVector, Value, Vector};
 
 use crate::aggregate_hashtable::{GroupedAggregateHashTable, initial_capacity};
-use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkData, SinkState};
+use rustdb_common::tree_renderer::RenderParams;
+
+use crate::operator::{
+    ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkData, SinkState, set_estimated_cardinality,
+};
 use crate::operators::{CollectedResult, PhysicalResultCollector};
 use crate::{ClientEnv, ExecutionContext, Executor, Sink, SinkFinalize, SinkResult, Source, SourceResult};
 
@@ -47,14 +51,24 @@ pub struct PhysicalCte {
     types: Vec<LogicalType>,
     data: Arc<CteData>,
     children: [PhysicalRef; 2],
+    ctename: String,
+    table_index: u64,
 }
 
 impl PhysicalCte {
-    pub fn new(data: &Arc<CteData>, definition: PhysicalRef, query: PhysicalRef) -> Arc<Self> {
+    pub fn new(
+        ctename: String,
+        table_index: u64,
+        data: &Arc<CteData>,
+        definition: PhysicalRef,
+        query: PhysicalRef,
+    ) -> Arc<Self> {
         let cte = Arc::new(Self {
             types: query.types().to_vec(),
             data: Arc::clone(data),
             children: [definition, query],
+            ctename,
+            table_index,
         });
         let _ = data.sink.set(Arc::downgrade(&cte));
         cte
@@ -76,6 +90,13 @@ impl PhysicalOperator for PhysicalCte {
     }
     fn is_cte(&self) -> bool {
         true
+    }
+    fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
+        let mut result = RenderParams::new();
+        result.insert("CTE Name".to_owned(), self.ctename.clone());
+        result.insert("Table Index".to_owned(), self.table_index.to_string());
+        set_estimated_cardinality(&mut result, estimated_cardinality);
+        result
     }
 }
 
@@ -125,21 +146,44 @@ pub struct PhysicalCteScan {
     /// Whether the scan is inside a recursive CTE that the CTE it reads is outside of
     /// (the recursive CTE then waits for the materialisation instead).
     external: bool,
+    cte_index: u64,
+    /// Whether it reads a recursive CTE's working table (`RECURSIVE_CTE_SCAN`).
+    recursive: bool,
 }
 
 impl PhysicalCteScan {
-    pub fn new(types: Vec<LogicalType>, data: Arc<CteData>, external: bool) -> Self {
+    pub fn new(types: Vec<LogicalType>, data: Arc<CteData>, external: bool, cte_index: u64) -> Self {
         Self {
             types,
             data,
             external,
+            cte_index,
+            recursive: false,
+        }
+    }
+
+    /// A scan of a recursive CTE's working table.
+    pub fn working_table(types: Vec<LogicalType>, data: Arc<CteData>, cte_index: u64) -> Self {
+        Self {
+            recursive: true,
+            ..Self::new(types, data, false, cte_index)
         }
     }
 }
 
 impl PhysicalOperator for PhysicalCteScan {
     fn name(&self) -> &'static str {
-        "CTE_SCAN"
+        if self.recursive {
+            "REC_CTE_SCAN"
+        } else {
+            "CTE_SCAN"
+        }
+    }
+    fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
+        let mut result = RenderParams::new();
+        result.insert("CTE Index".to_owned(), self.cte_index.to_string());
+        set_estimated_cardinality(&mut result, estimated_cardinality);
+        result
     }
     fn types(&self) -> &[LogicalType] {
         &self.types
@@ -202,27 +246,30 @@ pub struct PhysicalRecursiveCte {
     types: Vec<LogicalType>,
     union_all: bool,
     working_table: Arc<CteData>,
-    anchor: PhysicalRef,
-    recursive: PhysicalRef,
+    /// The anchor and the recursive part.
+    parts: [PhysicalRef; 2],
     external: Vec<Arc<dyn SinkData>>,
+    ctename: String,
+    table_index: u64,
 }
 
 impl PhysicalRecursiveCte {
     pub fn new(
+        (ctename, table_index): (String, u64),
         types: Vec<LogicalType>,
         union_all: bool,
         working_table: Arc<CteData>,
-        anchor: PhysicalRef,
-        recursive: PhysicalRef,
+        parts: [PhysicalRef; 2],
         external: Vec<Arc<dyn SinkData>>,
     ) -> Self {
         Self {
             types,
             union_all,
             working_table,
-            anchor,
-            recursive,
+            parts,
             external,
+            ctename,
+            table_index,
         }
     }
 
@@ -268,7 +315,17 @@ impl PhysicalRecursiveCte {
 
 impl PhysicalOperator for PhysicalRecursiveCte {
     fn name(&self) -> &'static str {
-        "RECURSIVE_CTE"
+        "REC_CTE"
+    }
+    fn explain_children(&self) -> &[PhysicalRef] {
+        &self.parts
+    }
+    fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
+        let mut result = RenderParams::new();
+        result.insert("CTE Name".to_owned(), self.ctename.clone());
+        result.insert("Table Index".to_owned(), self.table_index.to_string());
+        set_estimated_cardinality(&mut result, estimated_cardinality);
+        result
     }
     fn types(&self) -> &[LogicalType] {
         &self.types
@@ -320,14 +377,14 @@ impl Source for PhysicalRecursiveCte {
                 initial_capacity(),
                 0,
             )?;
-            let mut working = Self::run(&self.anchor, &ctx.env)?;
+            let mut working = Self::run(&self.parts[0], &ctx.env)?;
             if !self.union_all {
                 working = Self::new_rows(&mut seen, working)?;
             }
             while working.iter().any(|chunk| !chunk.is_empty()) {
                 chunks.extend(working.iter().cloned());
                 self.working_table.set(working);
-                let produced = Self::run(&self.recursive, &ctx.env)?;
+                let produced = Self::run(&self.parts[1], &ctx.env)?;
                 working = if self.union_all {
                     produced
                 } else {

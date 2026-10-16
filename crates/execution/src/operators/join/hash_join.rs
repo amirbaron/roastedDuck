@@ -14,6 +14,7 @@ use rustdb_planner::{Expression, ExpressionKind};
 use rustdb_row::PartitionedAppendState;
 use rustdb_types::{DataChunk, LogicalType};
 
+use super::join_filter::{KeyMinMax, reset_join_filters, set_join_filters};
 use super::perfect_hash_join::{
     KeyRange, PerfectHashJoinExecutor, PerfectHashJoinState, is_perfect_hash_join_candidate,
 };
@@ -49,6 +50,8 @@ pub struct PhysicalHashJoin {
     single_join_error_on_multiple_rows: bool,
     /// Whether the join may use a perfect hash table, depending on its build keys.
     perfect_hash_candidate: bool,
+    /// The run-time filters set on the probe side's scans from the build keys.
+    join_filters: Vec<rustdb_planner::operator::JoinFilter>,
     children: [PhysicalRef; 2],
 }
 
@@ -127,8 +130,17 @@ impl PhysicalHashJoin {
             delim_types,
             single_join_error_on_multiple_rows,
             perfect_hash_candidate,
+            join_filters: Vec::new(),
             children: [left, right],
         })
+    }
+
+    /// Sets the run-time filters on the probe side (DuckDB's `filter_pushdown`); the
+    /// conditions are referenced by their position with equalities first.
+    #[must_use]
+    pub fn with_join_filters(mut self, join_filters: Vec<rustdb_planner::operator::JoinFilter>) -> Self {
+        self.join_filters = join_filters;
+        self
     }
 
     /// A hash table for this join (`InitializeHashTable`).
@@ -214,6 +226,8 @@ pub struct HashJoinGlobalSinkState {
     /// The perfect hash table, used instead of the hash table's pointer table when the
     /// build keys allow it (`perfect_join_executor`).
     perfect_join_executor: Option<PerfectHashJoinExecutor>,
+    /// The range of the build keys of each join filter.
+    filter_ranges: Mutex<Vec<KeyMinMax>>,
 }
 
 /// One thread's build state (DuckDB's `HashJoinLocalSinkState`).
@@ -223,6 +237,7 @@ pub struct HashJoinLocalSinkState {
     hash_table: JoinHashTable,
     append_state: PartitionedAppendState,
     key_range: KeyRange,
+    filter_ranges: Vec<KeyMinMax>,
 }
 
 impl Sink for PhysicalHashJoin {
@@ -230,11 +245,13 @@ impl Sink for PhysicalHashJoin {
     type Local = HashJoinLocalSinkState;
 
     fn global_sink_state(&self, ctx: &ExecutionContext) -> Result<HashJoinGlobalSinkState> {
+        reset_join_filters(&self.join_filters);
         Ok(HashJoinGlobalSinkState {
             hash_table: RwLock::new(self.initialize_hash_table(ctx)?),
             local_hash_tables: Mutex::default(),
             key_range: Mutex::default(),
             perfect_join_executor: None,
+            filter_ranges: Mutex::new(vec![KeyMinMax::default(); self.join_filters.len()]),
         })
     }
 
@@ -250,6 +267,7 @@ impl Sink for PhysicalHashJoin {
             hash_table,
             append_state,
             key_range: KeyRange::default(),
+            filter_ranges: vec![KeyMinMax::default(); self.join_filters.len()],
         })
     }
 
@@ -265,6 +283,11 @@ impl Sink for PhysicalHashJoin {
         flatten_sequences(&mut keys);
         if self.perfect_hash_candidate {
             local.key_range.update(keys.column(0), keys.len());
+        }
+        for (filter, range) in self.join_filters.iter().zip(&mut local.filter_ranges) {
+            if filter.condition < keys.column_count() {
+                range.update(keys.column(filter.condition), keys.len());
+            }
         }
         let mut payload = DataChunk::new(
             self.payload_columns
@@ -293,6 +316,15 @@ impl Sink for PhysicalHashJoin {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .merge(local.key_range);
+        if !self.join_filters.is_empty() {
+            let mut ranges = global
+                .filter_ranges
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            for (range, local) in ranges.iter_mut().zip(local.filter_ranges) {
+                range.merge(local);
+            }
+        }
         global
             .local_hash_tables
             .lock()
@@ -316,6 +348,23 @@ impl Sink for PhysicalHashJoin {
             table.merge(local)?;
         }
         table.unpartition()?;
+        if !self.join_filters.is_empty() {
+            let ranges = global
+                .filter_ranges
+                .get_mut()
+                .unwrap_or_else(PoisonError::into_inner);
+            let key_types: Vec<LogicalType> = self
+                .conditions
+                .iter()
+                .map(|condition| condition.right.return_type.clone())
+                .collect();
+            set_join_filters(
+                &self.join_filters,
+                ranges,
+                &self.hash_conditions.comparisons,
+                &key_types,
+            );
+        }
         if table.count() > 0 && self.perfect_hash_candidate {
             let range = *global.key_range.get_mut().unwrap_or_else(PoisonError::into_inner);
             let rhs_types = &self.types[self.lhs_output_columns.len()..];

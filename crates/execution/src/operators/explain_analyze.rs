@@ -37,6 +37,9 @@ impl PhysicalExplainAnalyze {
     /// The profile as DuckDB's text output (`QueryProfiler::QueryTreeToStream`).
     fn render_profile(&self, profiler: &QueryProfiler) -> String {
         const TOTAL_BOX_WIDTH: usize = 50;
+        if self.format == ExplainFormat::Json {
+            return self.render_json(profiler);
+        }
         let tree = RenderTree::create(&ProfileNode::Query { root: self, profiler });
         let plan = render(renderer_kind(self.format), tree);
         if !matches!(self.format, ExplainFormat::Default | ExplainFormat::Text) {
@@ -59,6 +62,117 @@ impl PhysicalExplainAnalyze {
         out.push_str(&plan);
         out
     }
+}
+
+impl PhysicalExplainAnalyze {
+    /// The profile as DuckDB's JSON profiling output (`QueryProfiler::ToJSON`).
+    fn render_json(&self, profiler: &QueryProfiler) -> String {
+        let mut out = String::from("{\n");
+        let cumulative = cumulative_cardinality(self, profiler);
+        let _ = writeln!(out, "    \"latency\": {},", profiler.elapsed().as_secs_f64());
+        let _ = writeln!(out, "    \"query_name\": \"{}\",", json_escape(&self.query));
+        let _ = writeln!(out, "    \"cumulative_cardinality\": {cumulative},");
+        out.push_str("    \"children\": [\n");
+        render_json_operator(self, profiler, 2, &mut out);
+        out.push_str("\n    ]\n}");
+        out
+    }
+}
+
+/// The rows an operator produced (none for `EXPLAIN_ANALYZE` itself, whose result is
+/// produced after the profile is rendered).
+fn operator_rows(op: &dyn PhysicalOperator, profiler: &QueryProfiler) -> u64 {
+    if op.name() == "EXPLAIN_ANALYZE" {
+        0
+    } else {
+        profiler.profile(op).rows
+    }
+}
+
+/// The rows produced by `op` and every operator below it.
+fn cumulative_cardinality(op: &dyn PhysicalOperator, profiler: &QueryProfiler) -> u64 {
+    operator_rows(op, profiler)
+        + op.children()
+            .iter()
+            .map(|child| cumulative_cardinality(child.as_ref(), profiler))
+            .sum::<u64>()
+}
+
+/// Escapes text for a JSON string.
+fn json_escape(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            '"' => result.push_str("\\\""),
+            '\\' => result.push_str("\\\\"),
+            c if u32::from(c) < 0x20 => {
+                let _ = write!(result, "\\u{:04x}", u32::from(c));
+            }
+            c => result.push(c),
+        }
+    }
+    result
+}
+
+/// One operator of the JSON profile, indented by `level` steps of four spaces.
+fn render_json_operator(op: &dyn PhysicalOperator, profiler: &QueryProfiler, level: usize, out: &mut String) {
+    let indent = "    ".repeat(level);
+    let inner = "    ".repeat(level + 1);
+    let profile = profiler.profile(op);
+    let _ = writeln!(out, "{indent}{{");
+    let _ = writeln!(
+        out,
+        "{inner}\"operator_type\": \"{}\",",
+        json_escape(&op.profiler_name())
+    );
+    let _ = writeln!(out, "{inner}\"operator_timing\": {},", profile.time.as_secs_f64());
+    let _ = writeln!(
+        out,
+        "{inner}\"operator_name\": \"{}\",",
+        json_escape(&op.explain_name())
+    );
+    let params = op.params_to_string(0);
+    let entries: Vec<String> = params
+        .iter()
+        .filter(|(key, _)| !key.starts_with("__"))
+        .map(|(key, value)| format!("{inner}    \"{}\": \"{}\"", json_escape(key), json_escape(value)))
+        .collect();
+    if entries.is_empty() {
+        let _ = writeln!(out, "{inner}\"extra_info\": {{}},");
+    } else {
+        let _ = writeln!(
+            out,
+            "{inner}\"extra_info\": {{\n{}\n{inner}}},",
+            entries.join(",\n")
+        );
+    }
+    let _ = writeln!(
+        out,
+        "{inner}\"operator_cardinality\": {},",
+        operator_rows(op, profiler)
+    );
+    let _ = writeln!(
+        out,
+        "{inner}\"cumulative_cardinality\": {},",
+        cumulative_cardinality(op, profiler)
+    );
+    let children = op.children();
+    if children.is_empty() {
+        let _ = writeln!(out, "{inner}\"children\": []");
+    } else {
+        let _ = writeln!(out, "{inner}\"children\": [");
+        for (index, child) in children.iter().enumerate() {
+            if index > 0 {
+                out.push_str(",\n");
+            }
+            render_json_operator(child.as_ref(), profiler, level + 2, out);
+        }
+        let _ = writeln!(out, "\n{inner}]");
+    }
+    let _ = write!(out, "{indent}}}");
 }
 
 /// A timing in seconds as DuckDB prints it (`RenderTiming`).

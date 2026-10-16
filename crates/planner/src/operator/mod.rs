@@ -140,6 +140,9 @@ pub struct LogicalGet {
     /// Filters pushed into the scan, keyed by the filtered column's index in
     /// `returned_types` (DuckDB's `LogicalGet::table_filters`).
     pub table_filters: rustdb_storage::TableFilterSet,
+    /// Filters that joins above set at run time, keyed like `table_filters` (DuckDB's
+    /// `LogicalGet::dynamic_filters`); not shown by `EXPLAIN`.
+    pub dynamic_filters: rustdb_storage::TableFilterSet,
 }
 
 /// The output bindings of INSERT/DELETE/UPDATE: the table's columns with `RETURNING`, the
@@ -243,6 +246,29 @@ pub struct LogicalComparisonJoin {
     /// Whether filter pushdown may turn this MARK join into a SEMI or ANTI join (cleared
     /// when the marker is used above the join).
     pub convert_mark_to_semi: bool,
+    /// The run-time filters this join sets on the scans of its probe side from the range
+    /// of its build keys (DuckDB's `LogicalComparisonJoin::filter_pushdown`).
+    pub join_filters: Vec<JoinFilter>,
+}
+
+/// The run-time filters of one join condition (DuckDB's `JoinFilterPushdownInfo` for a
+/// condition): `probe >= min(build)` and `probe <= max(build)` on each target scan.
+#[derive(Clone, Debug)]
+pub struct JoinFilter {
+    /// The condition, by position after equalities were moved first.
+    pub condition: usize,
+    pub targets: Vec<JoinFilterTarget>,
+}
+
+/// One scan column receiving a join filter.
+#[derive(Clone, Debug)]
+pub struct JoinFilterTarget {
+    /// The scanned column's type, which the build key range is cast to.
+    pub storage_type: LogicalType,
+    /// The lower bound (`>= min`).
+    pub min: Arc<rustdb_storage::table_filter::DynamicFilterData>,
+    /// The upper bound (`<= max`).
+    pub max: Arc<rustdb_storage::table_filter::DynamicFilterData>,
 }
 
 impl JoinCondition {
@@ -267,6 +293,7 @@ impl LogicalComparisonJoin {
             delim_flipped: false,
             predicate: None,
             convert_mark_to_semi: true,
+            join_filters: Vec::new(),
         }
     }
 }

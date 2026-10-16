@@ -8,7 +8,9 @@ use rustdb_storage::TableFilter;
 use rustdb_storage::table_filter::DynamicFilterData;
 use rustdb_types::{LogicalTypeId, PhysicalType};
 
-use crate::join_filter_pushdown::{PushdownColumn, get_pushdown_filter_targets, operator_at_path};
+use crate::join_filter_pushdown::{
+    PushdownColumn, PushdownOptions, get_pushdown_filter_targets, operator_at_path,
+};
 
 /// Whether `op` is a constant LIMIT (with an optional constant OFFSET) over an ORDER BY,
 /// possibly through projections, that is cheaper as a Top-N (DuckDB's
@@ -149,7 +151,11 @@ fn pushdown_dynamic_filters(op: &mut LogicalOperator) {
             binding: column.binding,
             storage_type: None,
         }];
-        get_pushdown_filter_targets(child, columns, false, &mut path, &mut targets);
+        let options = PushdownOptions {
+            allow_casts: false,
+            through_limits: true,
+        };
+        get_pushdown_filter_targets(child, columns, options, &mut path, &mut targets);
     }
     if targets.is_empty() {
         return;

@@ -158,17 +158,20 @@ pub(crate) fn create_comparison_join(
     }
     let prefer_range_joins = settings.prefer_range_joins && can_iejoin;
     if equality && !prefer_range_joins {
-        return Ok(Arc::new(PhysicalHashJoin::new(
-            types,
-            join.join_type,
-            join.conditions,
-            &join.left_projection_map,
-            &join.right_projection_map,
-            join.mark_types,
-            settings.scalar_subquery_error_on_multiple_rows,
-            left,
-            right,
-        )?));
+        return Ok(Arc::new(
+            PhysicalHashJoin::new(
+                types,
+                join.join_type,
+                join.conditions,
+                &join.left_projection_map,
+                &join.right_projection_map,
+                join.mark_types,
+                settings.scalar_subquery_error_on_multiple_rows,
+                left,
+                right,
+            )?
+            .with_join_filters(join.join_filters),
+        ));
     }
     if !join.left_projection_map.is_empty() || !join.right_projection_map.is_empty() {
         return Err(Error::not_implemented("join projection maps for range joins"));

@@ -41,6 +41,41 @@ impl ExplainOutput {
     }
 }
 
+/// A statement the executor runs outside the physical plan (PRAGMA, SET, PREPARE, ...),
+/// shown by `EXPLAIN` under DuckDB's physical operator name.
+#[derive(Debug)]
+struct PhysicalUtility {
+    name: &'static str,
+}
+
+impl PhysicalOperator for PhysicalUtility {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+    fn types(&self) -> &[LogicalType] {
+        &[]
+    }
+    fn children(&self) -> &[PhysicalRef] {
+        &[]
+    }
+}
+
+/// The physical operator name of statements without a physical plan here.
+fn utility_name(op: &LogicalOperator) -> Option<&'static str> {
+    use rustdb_planner::LogicalKind as K;
+    Some(match &op.kind {
+        K::Pragma { .. } => "PRAGMA",
+        K::Set { .. } => "SET",
+        K::Reset { .. } => "RESET",
+        K::Prepare { .. } => "PREPARE",
+        K::Transaction { .. } => "TRANSACTION",
+        K::Attach(_) => "ATTACH",
+        K::Detach(_) => "DETACH",
+        K::Deallocate { .. } => "DEALLOCATE",
+        _ => return None,
+    })
+}
+
 /// The address identifying a physical operator in the estimates map.
 fn operator_key(op: &dyn PhysicalOperator) -> usize {
     std::ptr::from_ref(op).cast::<()>().addr()
@@ -61,7 +96,7 @@ impl RenderSource for PhysicalRenderNode<'_> {
 
     fn render_children(&self) -> Vec<Self> {
         self.op
-            .children()
+            .explain_children()
             .iter()
             .map(|child| PhysicalRenderNode {
                 op: child.as_ref(),
@@ -105,7 +140,17 @@ impl PlanGenerator {
         types: Vec<LogicalType>,
     ) -> Result<PhysicalRef> {
         let logical_plan_opt = child.to_explain_string(explain_format);
-        let plan = self.plan(child)?;
+        let mut child = child;
+        if let rustdb_planner::LogicalKind::Execute { .. } = &child.kind
+            && let Some(prepared) = child.children.pop()
+        {
+            // EXPLAIN EXECUTE shows the plan of the prepared statement.
+            child = prepared;
+        }
+        let plan: PhysicalRef = match utility_name(&child) {
+            Some(name) => Arc::new(PhysicalUtility { name }),
+            None => self.plan(child)?,
+        };
         if explain_type == ExplainType::ExplainAnalyze {
             let query = self
                 .context

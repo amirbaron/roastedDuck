@@ -251,12 +251,41 @@ impl Optimizer {
             ExpressionRewriter::new(optimizer).visit_operator(&mut plan)?;
             Ok(plan)
         })?;
+        // Try to inline CTEs instead of materializing them.
+        let plan = self.run(OptimizerType::CteInlining, plan, |optimizer, plan| {
+            Ok(crate::cte_inlining::inline_ctes(optimizer, plan))
+        })?;
+        // SUM(x + C) as SUM(x) + C * COUNT(x).
+        let plan = self.run(OptimizerType::SumRewriter, plan, |optimizer, mut plan| {
+            crate::sum_rewriter::rewrite_sums(optimizer, &mut plan)?;
+            Ok(plan)
+        })?;
         let plan = self.run(OptimizerType::FilterPullup, plan, |_, plan| {
             FilterPullup::default().rewrite(plan)
         })?;
         let plan = self.run(OptimizerType::FilterPushdown, plan, |optimizer, mut plan| {
             FilterPushdown::check_mark_to_semi(&mut plan, &mut BTreeSet::new());
             FilterPushdown::new(optimizer, true).rewrite(plan)
+        })?;
+        // Filters on every reference of a materialized CTE also filter its definition.
+        let plan = self.run(OptimizerType::CteFilterPusher, plan, |optimizer, plan| {
+            crate::cte_filter_pusher::push_cte_filters(optimizer, plan)
+        })?;
+        // IN lists as comparisons or MARK joins.
+        let plan = self.run(OptimizerType::InClause, plan, |optimizer, mut plan| {
+            crate::in_clause_rewriter::rewrite_in_clauses(optimizer, &mut plan)?;
+            Ok(plan)
+        })?;
+        // Redundant joins with duplicate-eliminated scans.
+        let plan = self.run(OptimizerType::Deliminator, plan, |_, mut plan| {
+            crate::deliminator::deliminate(&mut plan);
+            Ok(plan)
+        })?;
+        let plan = self.run(OptimizerType::CteInlining, plan, |optimizer, plan| {
+            Ok(crate::cte_inlining::inline_ctes(optimizer, plan))
+        })?;
+        let plan = self.run(OptimizerType::EmptyResultPullup, plan, |_, plan| {
+            crate::empty_result_pullup::pull_up_empty_results(plan)
         })?;
         // Join ordering also turns cross products with filters into joins and sets the
         // estimated cardinalities.
@@ -268,10 +297,27 @@ impl Optimizer {
             )
             .optimize(plan, None)
         })?;
+        let plan = self.run(OptimizerType::JoinElimination, plan, |_, mut plan| {
+            crate::join_elimination::eliminate_joins(&mut plan);
+            Ok(plan)
+        })?;
         let plan = self.run(OptimizerType::UnusedColumns, plan, |optimizer, mut plan| {
             remove_unused_columns(optimizer, &mut plan)?;
             Ok(plan)
         })?;
+        let plan = self.run(OptimizerType::DuplicateGroups, plan, |_, mut plan| {
+            crate::remove_duplicate_groups::remove_duplicate_groups(&mut plan);
+            Ok(plan)
+        })?;
+        // Repeated subexpressions are computed once.
+        let plan = self.run(
+            OptimizerType::CommonSubexpressions,
+            plan,
+            |optimizer, mut plan| {
+                crate::cse_optimizer::extract_common_subexpressions(optimizer, &mut plan);
+                Ok(plan)
+            },
+        )?;
         // Projection maps drop columns as soon as they are no longer needed.
         let plan = self.run(OptimizerType::ColumnLifetime, plan, |optimizer, mut plan| {
             analyze_column_lifetime(&mut plan, optimizer.config.prefer_range_joins)?;
@@ -281,6 +327,10 @@ impl Optimizer {
         let plan = self.run(OptimizerType::BuildSideProbeSide, plan, |optimizer, mut plan| {
             optimize_build_probe_side(&mut plan, optimizer.config.prefer_range_joins)?;
             Ok(plan)
+        })?;
+        // LIMIT below projections.
+        let plan = self.run(OptimizerType::LimitPushdown, plan, |_, plan| {
+            Ok(crate::limit_pushdown::optimize(plan))
         })?;
         // ORDER BY + LIMIT becomes a Top-N.
         let plan = self.run(OptimizerType::TopN, plan, |_, plan| {
@@ -295,8 +345,22 @@ impl Optimizer {
                 Ok(plan)
             },
         )?;
+        let plan = self.run(OptimizerType::CommonAggregate, plan, |_, mut plan| {
+            crate::common_aggregate::extract_common_aggregates(&mut plan);
+            Ok(plan)
+        })?;
         let plan = self.run(OptimizerType::ColumnLifetime, plan, |optimizer, mut plan| {
             analyze_column_lifetime(&mut plan, optimizer.config.prefer_range_joins)?;
+            Ok(plan)
+        })?;
+        // Cheap predicates first.
+        let plan = self.run(OptimizerType::ReorderFilter, plan, |_, mut plan| {
+            crate::expression_heuristics::reorder_filters(&mut plan);
+            Ok(plan)
+        })?;
+        // Hash joins filter their probe side scans by the range of their build keys.
+        let plan = self.run(OptimizerType::JoinFilterPushdown, plan, |_, mut plan| {
+            crate::join_filter_pushdown::push_join_filters(&mut plan);
             Ok(plan)
         })?;
         Ok(plan)
