@@ -55,8 +55,7 @@ impl Aggregate for List {
         row: usize,
     ) -> Result<()> {
         if state.is_empty() {
-            let capacity = result.capacity();
-            result.validity_mut().set_invalid(row, capacity);
+            result.set_null(row);
             return Ok(());
         }
         append_list(

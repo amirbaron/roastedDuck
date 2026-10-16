@@ -162,8 +162,7 @@ impl<A: StoredKind, B: StoredKind, const GREATER: bool> Aggregate for ArgMinMax<
         match &state.arg {
             Some(arg) if state.initialized => A::write(arg, result, row),
             _ => {
-                let capacity = result.capacity();
-                result.validity_mut().set_invalid(row, capacity);
+                result.set_null(row);
                 Ok(())
             }
         }
@@ -422,8 +421,7 @@ impl<const MAX: bool> Aggregate for ArgMinMaxN<MAX> {
         row: usize,
     ) -> Result<()> {
         let Some(heap) = state.heap.as_mut().filter(|heap| !heap.is_empty()) else {
-            let capacity = result.capacity();
-            result.validity_mut().set_invalid(row, capacity);
+            result.set_null(row);
             return Ok(());
         };
         let sorted = heap.sorted(&Self::less());
@@ -440,8 +438,7 @@ impl<const MAX: bool> Aggregate for ArgMinMaxN<MAX> {
                             &[ASC_NULLS_LAST],
                         )?;
                     } else {
-                        let capacity = child.capacity();
-                        child.validity_mut().set_invalid(offset + index, capacity);
+                        child.set_null(offset + index);
                     }
                 }
                 Ok(())

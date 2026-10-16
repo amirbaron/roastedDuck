@@ -146,8 +146,7 @@ impl<K: StoredKind, const EXACT: bool> Aggregate for BinnedHistogram<K, EXACT> {
         row: usize,
     ) -> Result<()> {
         let Some(state) = state else {
-            let capacity = result.capacity();
-            result.validity_mut().set_invalid(row, capacity);
+            result.set_null(row);
             return Ok(());
         };
         let key_type = result
@@ -330,8 +329,7 @@ pub fn is_histogram_other_bin_function() -> ScalarFunction {
             for row in 0..count {
                 let value = input.get_value(row);
                 if value.is_null() {
-                    let capacity = result.capacity();
-                    result.validity_mut().set_invalid(row, capacity);
+                    result.set_null(row);
                 } else {
                     result.values_mut::<bool>()[row] = values_not_distinct(&value, &other);
                 }

@@ -145,8 +145,7 @@ impl<K: StoredKind, const ENTROPY: bool> Aggregate for Frequencies<K, ENTROPY> {
         if let Some(value) = state.mode() {
             K::write(value, result, row)
         } else {
-            let capacity = result.capacity();
-            result.validity_mut().set_invalid(row, capacity);
+            result.set_null(row);
             Ok(())
         }
     }

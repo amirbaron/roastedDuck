@@ -397,8 +397,7 @@ impl rustdb_function::aggregate::Aggregate for BignumSum {
             let string = result.add_string(&value.to_bignum());
             result.values_mut::<rustdb_types::StringT>()[row] = string;
         } else {
-            let capacity = result.capacity();
-            result.validity_mut().set_invalid(row, capacity);
+            result.set_null(row);
         }
         Ok(())
     }
