@@ -447,6 +447,7 @@ test/issues/rigger/timestamp_overflow.test
 test/issues/rigger/zonemap_column_out_of_range.test
 test/ldbc/ldbc-empty.test
 test/optimizer/column_lifetime_analyzer/must_visit_operator_expressions_first.test
+test/optimizer/column_lifetime_analyzer/summary_column_lifetime.test
 test/optimizer/compare_blob.test
 test/optimizer/expression_rewriter/functions_that_error_are_not_reordered.test
 test/optimizer/expression_rewriter/ordered_aggregate_incorrectly_remove_order.test
@@ -466,6 +467,7 @@ test/optimizer/joins/join_on_floats.test
 test/optimizer/joins/joins_with_correlated_subqueries.test
 test/optimizer/joins/lateral_cross_join.test
 test/optimizer/joins/many_joins_and_one_non_reorderable_join.test_slow
+test/optimizer/joins/order_optimizer_bindings.test
 test/optimizer/joins/test_delim_join_with_cross_product_in_rhs.test
 test/optimizer/joins/test_tpcds_pushdown.test
 test/optimizer/misc/test_count_and_sum.test

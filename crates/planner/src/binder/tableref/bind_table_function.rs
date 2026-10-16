@@ -139,7 +139,8 @@ fn bind_parameters(
     children: &mut [ParsedExpression],
     location: Option<u64>,
     table_parameters: bool,
-) -> Result<(Vec<LogicalType>, Vec<Value>, NamedParameters)> {
+    table_parameter_function: Option<&rustdb_function::TableFunctionSet>,
+) -> Result<BoundParameters> {
     // While a macro definition is verified its parameters stand for constants; binding
     // them reports that their types are unknown.
     // `name = value` names a parameter: only its value has to be a constant. Column
@@ -155,6 +156,7 @@ fn bind_parameters(
         table_argument_is_scalar(child)
     };
     if table_parameters
+        && table_parameter_function.is_none()
         && scope.binder.macro_binding.is_none()
         && !children.iter_mut().all(argument_is_scalar)
     {
@@ -165,6 +167,7 @@ fn bind_parameters(
     let mut arguments = Vec::new();
     let mut parameters = Vec::new();
     let mut named = NamedParameters::default();
+    let mut subquery: Option<BoundStatement> = None;
     for child in children.iter_mut() {
         let mut parameter_name = String::new();
         // `name = value` and `name := value` both name a parameter.
@@ -182,6 +185,42 @@ fn bind_parameters(
             }
         } else if !child.alias.is_empty() {
             parameter_name.clone_from(&child.alias);
+        }
+        // `TABLE_PARAMETER_FUNCTION`: a subquery argument is the function's input table.
+        if let Some(functions) = table_parameter_function
+            && let ParsedExpressionKind::Subquery(subquery_expression) = &mut child.kind
+        {
+            let only = functions.functions.first();
+            if functions.functions.len() != 1 || only.is_none_or(|function| function.arguments.is_empty()) {
+                return Err(Error::binder(format!(
+                    "Only table-in-out functions can have subquery parameters - {} only accepts constant parameters",
+                    only.map_or(function_name, |function| &*function.name)
+                )));
+            }
+            if subquery.is_some() {
+                return Err(Error::new(
+                    ErrorKind::Invalid,
+                    "Table function can have at most one subquery parameter",
+                )
+                .with_position(location));
+            }
+            let mut binder = scope.binder.child()?;
+            binder.can_contain_nulls = true;
+            let bound = {
+                let mut child_scope = BindScope {
+                    binder: &mut binder,
+                    outer: Some(&mut *scope),
+                };
+                bind_node(&mut child_scope, &mut subquery_expression.subquery.node)?
+            };
+            if binder.has_unplanned_dependent_joins {
+                scope.binder.has_unplanned_dependent_joins = true;
+            }
+            scope.binder.move_correlated_expressions(&mut binder);
+            subquery = Some(bound);
+            arguments.push(LogicalType::simple(LogicalTypeId::Table));
+            parameters.push(Value::default());
+            continue;
         }
         let bound = {
             let (inner, outer) = scope.split();
@@ -214,7 +253,21 @@ fn bind_parameters(
             named.insert(parameter_name, constant);
         }
     }
-    Ok((arguments, parameters, named))
+    Ok(BoundParameters {
+        arguments,
+        parameters,
+        named,
+        subquery,
+    })
+}
+
+/// The bound arguments of a table function call (`BindTableFunctionParameters`); a
+/// table parameter function also has the subquery of its `TABLE` argument.
+struct BoundParameters {
+    arguments: Vec<LogicalType>,
+    parameters: Vec<Value>,
+    named: NamedParameters,
+    subquery: Option<BoundStatement>,
 }
 
 /// Checks and casts named parameters (DuckDB's `Binder::BindNamedParameters`).
@@ -470,12 +523,18 @@ pub fn bind_table_function(
                 .iter()
                 .any(|argument| argument.id() == LogicalTypeId::Table)
     });
-    let (arguments, mut parameters, mut named) = bind_parameters(
+    let BoundParameters {
+        arguments,
+        mut parameters,
+        mut named,
+        subquery,
+    } = bind_parameters(
         scope,
         &function_name,
         &mut function.children,
         location,
         table_parameters,
+        has_table_parameter.then_some(functions),
     )
     .map_err(|error| error.with_position(location))?;
     let function_binder = FunctionBinder::new(&context);
@@ -488,7 +547,12 @@ pub fn bind_table_function(
         location,
         &table_function.name,
     )?;
-    let input_table = if table_function.in_out {
+    let input_table = if let Some(subquery) = &subquery {
+        InputTable {
+            types: subquery.types.clone(),
+            names: subquery.names.clone(),
+        }
+    } else if table_function.in_out {
         // The constant arguments are the input row (typed before the casts below).
         let types: Vec<LogicalType> = parameters
             .iter()
@@ -549,7 +613,7 @@ pub fn bind_table_function(
         }
     }
     let alias = function_alias(alias, function);
-    bind_table_function_internal(
+    let mut get = bind_table_function_internal(
         scope,
         table_function,
         &alias,
@@ -558,7 +622,27 @@ pub fn bind_table_function(
         named.0,
         input_table,
     )
-    .map_err(|error| error.with_position(location))
+    .map_err(|error| error.with_position(location))?;
+    if let Some(subquery) = subquery {
+        attach_input(&mut get, subquery)?;
+    }
+    Ok(get)
+}
+
+/// Makes `input` the child of the scan at the bottom of the (linear) plan of `get`
+/// (`Binder::CreatePlan(BoundTableFunction &)`).
+fn attach_input(get: &mut BoundStatement, input: BoundStatement) -> Result<()> {
+    let mut node = &mut get.plan;
+    while !node.children.is_empty() {
+        if node.children.len() != 1 {
+            return Err(Error::internal(
+                "Binder::CreatePlan<BoundTableFunction>: linear path expected",
+            ));
+        }
+        node = &mut node.children[0];
+    }
+    node.children.push(input.plan);
+    Ok(())
 }
 
 /// The `TABLE_IN_OUT_FUNCTION` binding of `Binder::Bind(TableFunctionRef &)`: the
@@ -636,16 +720,7 @@ fn bind_in_out_function(
     )
     .map_err(|error| error.with_position(location))?;
     // The subquery is the input of the scan at the bottom of the (linear) plan.
-    let mut node = &mut get.plan;
-    while !node.children.is_empty() {
-        if node.children.len() != 1 {
-            return Err(Error::internal(
-                "Binder::CreatePlan<BoundTableFunction>: linear path expected",
-            ));
-        }
-        node = &mut node.children[0];
-    }
-    node.children.push(subquery.plan);
+    attach_input(&mut get, subquery)?;
     Ok(get)
 }
 
