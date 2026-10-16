@@ -68,6 +68,7 @@ test/fuzzer/duckfuzz/regexp_replace_constant.test
 test/fuzzer/duckfuzz/repeat_row_null.test
 test/fuzzer/duckfuzz/repeat_wrong_number.test
 test/fuzzer/duckfuzz/string_to_nested_cast_sample.test
+test/fuzzer/duckfuzz/strptime_const_arg.test
 test/fuzzer/duckfuzz/temporal_avg.test
 test/fuzzer/duckfuzz/to_weeks_overflow.test
 test/fuzzer/duckfuzz/union_dict_tag.test
@@ -79,6 +80,7 @@ test/fuzzer/duckfuzz/window_negate_stats.test
 test/fuzzer/duckfuzz/window_null_range.test
 test/fuzzer/duckfuzz/window_order_bind_failure.test
 test/fuzzer/fuzz_not_operator.test
+test/fuzzer/fuzz_not_unpacked_columns.test
 test/fuzzer/issue4298.test
 test/fuzzer/pedro/C_C++_API_query_verification.test
 test/fuzzer/pedro/aggregate_assertion_errors.test
@@ -303,6 +305,7 @@ test/issues/general/test_3127.test
 test/issues/general/test_3140.test
 test/issues/general/test_3518.test
 test/issues/general/test_3611.test
+test/issues/general/test_3821.test
 test/issues/general/test_3822.test
 test/issues/general/test_3878.test
 test/issues/general/test_3997.test
@@ -342,10 +345,13 @@ test/issues/monetdb/test_round_bug.test
 test/issues/monetdb/test_simple_round.test
 test/issues/rigger/assertion_scale.test
 test/issues/rigger/big_sum_cast_bug.test
+test/issues/rigger/collate_union.test
+test/issues/rigger/complex_division.test
 test/issues/rigger/date_get_value.test
 test/issues/rigger/decimal_int_between.test
 test/issues/rigger/delete_empty_result.test
 test/issues/rigger/division_by_rowid.test
+test/issues/rigger/division_by_zero_null.test
 test/issues/rigger/double_bigint_cast_overflow.test
 test/issues/rigger/expression_equality_bug.test
 test/issues/rigger/hugeint_div_by_zero.test
@@ -413,6 +419,7 @@ test/issues/rigger/test_591.test
 test/issues/rigger/test_592.test
 test/issues/rigger/test_596.test
 test/issues/rigger/test_599.test
+test/issues/rigger/test_602.test
 test/issues/rigger/test_603.test
 test/issues/rigger/test_609.test
 test/issues/rigger/test_618.test
@@ -528,6 +535,7 @@ test/sql/aggregate/aggregates/test_kahan_sum.test
 test/sql/aggregate/aggregates/test_kurtosis.test
 test/sql/aggregate/aggregates/test_last.test
 test/sql/aggregate/aggregates/test_last_noninlined.test
+test/sql/aggregate/aggregates/test_list_aggregate.test_slow
 test/sql/aggregate/aggregates/test_mad.test
 test/sql/aggregate/aggregates/test_median.test
 test/sql/aggregate/aggregates/test_minmax.test
@@ -780,6 +788,7 @@ test/sql/binder/test_in_with_collate.test
 test/sql/binder/test_select_clause_alias.test
 test/sql/binder/test_string_alias.test
 test/sql/cast/boolean_autocast.test
+test/sql/cast/cast_error_location.test
 test/sql/cast/decimal_cast.test
 test/sql/cast/decimal_float_cast.test
 test/sql/cast/decimal_integer_cast.test
@@ -797,6 +806,7 @@ test/sql/cast/string_to_nested_types_cast.test_slow
 test/sql/cast/string_to_struct_escapes.test
 test/sql/cast/string_to_struct_roundtrip.test
 test/sql/cast/string_to_unnamed_struct.test
+test/sql/cast/struct_to_map.test
 test/sql/cast/test_bit_cast.test
 test/sql/cast/test_boolean_cast.test
 test/sql/cast/test_exponent_in_cast.test
@@ -914,13 +924,17 @@ test/sql/collate/collate_order_by_alias.test
 test/sql/collate/collate_ordered_aggregate.test
 test/sql/collate/collate_subquery.test
 test/sql/collate/test_collate_accent_insensitive.test
+test/sql/collate/test_collate_between.test
 test/sql/collate/test_collate_case_insensitive.test
+test/sql/collate/test_collate_expression.test
+test/sql/collate/test_collate_list.test
 test/sql/collate/test_collate_orderby_column_number.test
 test/sql/collate/test_collate_pivot.test
 test/sql/collate/test_collation_propagation.test
 test/sql/collate/test_combined_collation.test
 test/sql/collate/test_default_collations.test
 test/sql/collate/test_strpos_collate.test
+test/sql/collate/test_unsupported_collations.test
 test/sql/conjunction/or_between.test
 test/sql/conjunction/or_comparison.test
 test/sql/constraints/check/check_struct.test

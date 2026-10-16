@@ -856,6 +856,7 @@ pub(crate) fn catalog_table_functions() -> Vec<TableFunctionSet> {
             CONNECTION_COUNT_COLUMNS,
             connection_count_rows,
         ),
+        rows_function("pragma_collations", COLLATION_COLUMNS, collation_rows),
         rows_function("duckdb_types", TYPE_COLUMNS, type_rows),
         secrets_function(),
         which_secret_function(),
@@ -1290,6 +1291,17 @@ fn ubigint() -> LogicalType {
 const DATABASE_COUNT_COLUMNS: Columns = &[("approx_count", ubigint)];
 
 const CONNECTION_COUNT_COLUMNS: Columns = &[("count", ubigint)];
+
+const COLLATION_COLUMNS: Columns = &[("collname", varchar)];
+
+/// `pragma_collations()`: the builtin collations (`PragmaCollations`; the ICU collations
+/// come with the ICU extension).
+fn collation_rows(_: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    Ok(["nocase", "noaccent", "nfc"]
+        .into_iter()
+        .map(|name| vec![Value::varchar(name)])
+        .collect())
+}
 
 /// `duckdb_connection_count()`: the number of open connections
 /// (`ConnectionManager::GetConnectionCount`).
@@ -2173,6 +2185,7 @@ pub(crate) fn pragma_query(name: &str, parameters: &[Value]) -> Result<Option<St
         "show_databases" => "SELECT database_name FROM duckdb_databases() WHERE NOT internal ORDER BY database_name;".to_owned(),
         "database_list" => "SELECT * FROM pragma_database_list;".to_owned(),
         "database_size" => "SELECT * FROM pragma_database_size();".to_owned(),
+        "collations" => "SELECT * FROM pragma_collations() ORDER BY 1".to_owned(),
         "copy_database" => {
             let second = parameters
                 .get(1)

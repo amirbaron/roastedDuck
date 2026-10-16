@@ -264,6 +264,10 @@ fn execute_cast(
     } else {
         CastParameters::new()
     };
+    // `parameters.cast_source`: errors name the source column when it has an alias.
+    if !cast.child.alias.is_empty() {
+        parameters.source_column = Some(cast.child.alias.clone());
+    }
     let mut result = Vector::flat(expression.return_type.clone(), count);
     cast.bound_cast
         .execute(&child, &mut result, count, &mut parameters)

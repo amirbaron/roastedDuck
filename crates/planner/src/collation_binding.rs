@@ -91,10 +91,33 @@ fn push_varchar_collation(
         collation => collation,
     }
     .to_lowercase();
-    if collation.is_empty() || matches!(collation.as_str(), "binary" | "c" | "posix") {
+    let entries = resolve_collations(&collation)?;
+    if entries.is_empty() {
         return Ok((source, false));
     }
-    let mut entries: Vec<&Collation> = Vec::new();
+    let mut source = source;
+    for entry in entries {
+        if !entry.combinable && kind == CollationType::CombinableCollations {
+            return Ok((source, false));
+        }
+        source = wrap(context, entry.function, source)?;
+    }
+    Ok((source, true))
+}
+
+/// Checks that `collation` names builtin collations that can be combined (the check
+/// `ExpressionBinder::TestCollation` makes for `SET default_collation`).
+pub fn test_collation(collation: &str) -> Result<()> {
+    resolve_collations(&collation.to_lowercase()).map(|_| ())
+}
+
+/// The collations a lowercase `a.b.c` collation applies, combinable ones first;
+/// none for the binary collations.
+fn resolve_collations(collation: &str) -> Result<Vec<&'static Collation>> {
+    if collation.is_empty() || matches!(collation, "binary" | "c" | "posix") {
+        return Ok(Vec::new());
+    }
+    let mut entries: Vec<&'static Collation> = Vec::new();
     let mut seen: Vec<&str> = Vec::new();
     for argument in collation.split('.') {
         if seen.contains(&argument) {
@@ -119,14 +142,7 @@ fn push_varchar_collation(
         }
         seen.push(argument);
     }
-    let mut source = source;
-    for entry in entries {
-        if !entry.combinable && kind == CollationType::CombinableCollations {
-            return Ok((source, false));
-        }
-        source = wrap(context, entry.function, source)?;
-    }
-    Ok((source, true))
+    Ok(entries)
 }
 
 /// Applies the collation `ty` calls for to `source` (DuckDB's

@@ -275,7 +275,10 @@ impl Settings {
                     .ok_or_else(|| Error::internal("catalog_error_max_schemas is not a UBIGINT"))?;
             }
             "default_collation" => {
-                self.planner.default_collation = value.to_varchar()?.to_lowercase();
+                let collation = value.to_varchar()?.to_lowercase();
+                // `DefaultCollationSetting::OnSet` binds a dummy collation.
+                rustdb_planner::collation_binding::test_collation(&collation)?;
+                self.planner.default_collation = collation;
             }
             "pivot_filter_threshold" | "pivot_limit" => {
                 let count = value.default_cast_as(&LogicalType::UBIGINT)?;
