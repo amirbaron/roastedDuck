@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use rustdb_ast::OrderType;
 use rustdb_common::string_util::candidates_error_message;
 use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_function::cast::ValueCast;
 use rustdb_execution::JoinPlanSettings;
+use rustdb_function::cast::ValueCast;
 use rustdb_planner::{DefaultNullOrder, PlannerConfig};
 use rustdb_types::{LogicalType, Value};
 
@@ -333,7 +333,10 @@ impl Settings {
                 .unwrap_or(default)
         };
         JoinPlanSettings {
-            nested_loop_join_threshold: unsigned("nested_loop_join_threshold", defaults.nested_loop_join_threshold),
+            nested_loop_join_threshold: unsigned(
+                "nested_loop_join_threshold",
+                defaults.nested_loop_join_threshold,
+            ),
             merge_join_threshold: unsigned("merge_join_threshold", defaults.merge_join_threshold),
             prefer_range_joins: boolean("prefer_range_joins", defaults.prefer_range_joins),
             scalar_subquery_error_on_multiple_rows: self.planner.scalar_subquery_error_on_multiple_rows,
@@ -357,7 +360,8 @@ impl Settings {
                 self.planner.order_by_non_integer_literal = defaults.order_by_non_integer_literal;
             }
             "scalar_subquery_error_on_multiple_rows" => {
-                self.planner.scalar_subquery_error_on_multiple_rows = defaults.scalar_subquery_error_on_multiple_rows;
+                self.planner.scalar_subquery_error_on_multiple_rows =
+                    defaults.scalar_subquery_error_on_multiple_rows;
             }
             "default_collation" => self.planner.default_collation = defaults.default_collation,
             "pivot_limit" => self.planner.pivot_limit = defaults.pivot_limit,

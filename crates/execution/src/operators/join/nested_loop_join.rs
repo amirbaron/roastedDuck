@@ -13,9 +13,9 @@ use rustdb_row::AppendState;
 use rustdb_types::{DataChunk, LogicalType, PhysicalType};
 
 use super::{
-    OuterJoinMarker, construct_empty_join_result, construct_mark_join_result, construct_semi_or_anti_join_result,
-    empty_result_if_rhs_is_empty, has_null_values, is_left_outer_join, propagates_build_side, reorder_conditions,
-    slice_columns,
+    OuterJoinMarker, construct_empty_join_result, construct_mark_join_result,
+    construct_semi_or_anti_join_result, empty_result_if_rhs_is_empty, has_null_values, is_left_outer_join,
+    propagates_build_side, reorder_conditions, slice_columns,
 };
 use crate::column_data_collection::ColumnDataCollection;
 use crate::join_hashtable::flatten_sequences;
@@ -86,7 +86,10 @@ impl PhysicalNestedLoopJoin {
     }
 
     fn left_expressions(&self) -> Vec<Expression> {
-        self.conditions.iter().map(|condition| condition.left.clone()).collect()
+        self.conditions
+            .iter()
+            .map(|condition| condition.left.clone())
+            .collect()
     }
 
     fn right_expressions(&self) -> Vec<Expression> {
@@ -103,12 +106,6 @@ impl PhysicalNestedLoopJoin {
 
     fn payload_columns(&self) -> Vec<usize> {
         (self.conditions.len()..self.conditions.len() + self.right_types.len()).collect()
-    }
-
-    fn sink_state<'a>(&self, state: &'a SinkState) -> Result<&'a NestedLoopJoinGlobalState> {
-        state
-            .downcast_ref::<NestedLoopJoinGlobalState>()
-            .ok_or_else(|| Error::internal("nested loop join sink state has the wrong type"))
     }
 
     /// SEMI, ANTI and MARK joins: at most one output row per input row
@@ -139,7 +136,11 @@ impl PhysicalNestedLoopJoin {
             ),
             JoinType::Semi => construct_semi_or_anti_join_result(input, output, &found_match, true),
             JoinType::Anti => construct_semi_or_anti_join_result(input, output, &found_match, false),
-            _ => return Err(Error::not_implemented("Unimplemented type for simple nested loop join!")),
+            _ => {
+                return Err(Error::not_implemented(
+                    "Unimplemented type for simple nested loop join!",
+                ));
+            }
         }
         Ok(())
     }
@@ -270,7 +271,11 @@ impl Sink for PhysicalNestedLoopJoin {
         })
     }
 
-    fn local_sink_state(&self, _: &ExecutionContext, _: &NestedLoopJoinGlobalState) -> Result<ExpressionExecutor> {
+    fn local_sink_state(
+        &self,
+        _: &ExecutionContext,
+        _: &NestedLoopJoinGlobalState,
+    ) -> Result<ExpressionExecutor> {
         Ok(ExpressionExecutor::new(self.right_expressions()))
     }
 
@@ -298,13 +303,18 @@ impl Sink for PhysicalNestedLoopJoin {
         Ok(SinkResult::NeedMoreInput)
     }
 
-    fn combine(&self, _: &ExecutionContext, _: &NestedLoopJoinGlobalState, _: ExpressionExecutor) -> Result<()> {
+    fn combine(
+        &self,
+        _: &ExecutionContext,
+        _: &NestedLoopJoinGlobalState,
+        _: ExpressionExecutor,
+    ) -> Result<()> {
         Ok(())
     }
 
     fn finalize(&self, _: &ExecutionContext, global: &mut NestedLoopJoinGlobalState) -> Result<SinkFinalize> {
         let (collection, append) = global.sink.get_mut().unwrap_or_else(PoisonError::into_inner);
-        collection.finalize_append(append)?;
+        collection.finalize_append(append);
         std::mem::swap(&mut global.data, collection);
         global.right_outer.initialize(global.data.count());
         if global.data.count() == 0 && empty_result_if_rhs_is_empty(self.join_type) {
@@ -343,8 +353,12 @@ impl NestedLoopJoinProbeState {
         payload_columns: &[usize],
     ) -> Result<()> {
         let chunk = self.next_right_chunk;
-        global.data.fetch_chunk(chunk, condition_columns, &mut self.right_condition)?;
-        global.data.fetch_chunk(chunk, payload_columns, &mut self.right_payload)?;
+        global
+            .data
+            .fetch_chunk(chunk, condition_columns, &mut self.right_condition)?;
+        global
+            .data
+            .fetch_chunk(chunk, payload_columns, &mut self.right_payload)?;
         self.right_base = global.data.chunk_start(chunk);
         self.next_right_chunk += 1;
         Ok(())
@@ -359,7 +373,11 @@ impl Operator for PhysicalNestedLoopJoin {
         Err(Error::internal("nested loop join probe requires its sink state"))
     }
 
-    fn global_operator_state_with_sink(&self, _: &ExecutionContext, sink: Option<&SinkState>) -> Result<SinkState> {
+    fn global_operator_state_with_sink(
+        &self,
+        _: &ExecutionContext,
+        sink: Option<&SinkState>,
+    ) -> Result<SinkState> {
         sink.map(Arc::clone)
             .ok_or_else(|| Error::internal("nested loop join probe requires its sink state"))
     }
@@ -395,7 +413,7 @@ impl Operator for PhysicalNestedLoopJoin {
         sink: &SinkState,
         state: &mut NestedLoopJoinProbeState,
     ) -> Result<OperatorResult> {
-        let global = self.sink_state(sink)?;
+        let global = super::sink_state::<NestedLoopJoinGlobalState>(sink, "nested loop join")?;
         if global.data.count() == 0 {
             if empty_result_if_rhs_is_empty(self.join_type) {
                 return Ok(OperatorResult::Finished);
@@ -477,7 +495,11 @@ impl Source for PhysicalNestedLoopJoin {
     type Global = RightOuterScanState;
     type Local = ();
 
-    fn global_source_state(&self, _: &ExecutionContext, sink: Option<&SinkState>) -> Result<RightOuterScanState> {
+    fn global_source_state(
+        &self,
+        _: &ExecutionContext,
+        sink: Option<&SinkState>,
+    ) -> Result<RightOuterScanState> {
         let sink = sink.ok_or_else(|| Error::internal("nested loop join source requires its sink state"))?;
         Ok(RightOuterScanState::new(Arc::clone(sink)))
     }
@@ -493,7 +515,7 @@ impl Source for PhysicalNestedLoopJoin {
         global: &RightOuterScanState,
         (): &mut (),
     ) -> Result<SourceResult> {
-        let sink = self.sink_state(&global.sink)?;
+        let sink = super::sink_state::<NestedLoopJoinGlobalState>(&global.sink, "nested loop join")?;
         scan_right_outer(
             &sink.data,
             &sink.right_outer,

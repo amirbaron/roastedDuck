@@ -13,7 +13,9 @@ use rustdb_planner::{Expression, ExpressionKind};
 use rustdb_row::PartitionedAppendState;
 use rustdb_types::{DataChunk, LogicalType};
 
-use super::{construct_empty_join_result, empty_result_if_rhs_is_empty, propagates_build_side, reorder_conditions};
+use super::{
+    construct_empty_join_result, empty_result_if_rhs_is_empty, propagates_build_side, reorder_conditions,
+};
 use crate::join_hashtable::{
     FullOuterScanState, JoinHashTable, JoinHashTableConditions, ProbeState, ScanStructure, flatten_sequences,
 };
@@ -119,7 +121,7 @@ impl PhysicalHashJoin {
         let mut table = JoinHashTable::new(
             ctx.env.buffer_manager.clone(),
             &self.hash_conditions,
-            self.payload_types.clone(),
+            &self.payload_types,
             self.join_type,
             self.rhs_output_columns.clone(),
             self.single_join_error_on_multiple_rows,
@@ -157,12 +159,6 @@ impl PhysicalHashJoin {
             .map(|&column| input.column(column).clone())
             .collect();
         DataChunk::new(columns, input.len())
-    }
-
-    fn sink_state<'a>(&self, state: &'a SinkState) -> Result<&'a HashJoinGlobalSinkState> {
-        state
-            .downcast_ref::<HashJoinGlobalSinkState>()
-            .ok_or_else(|| Error::internal("hash join sink state has the wrong type"))
     }
 }
 
@@ -276,7 +272,10 @@ impl Sink for PhysicalHashJoin {
                 .get_mut()
                 .unwrap_or_else(PoisonError::into_inner),
         );
-        let table = global.hash_table.get_mut().unwrap_or_else(PoisonError::into_inner);
+        let table = global
+            .hash_table
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner);
         for local in locals {
             table.merge(local)?;
         }
@@ -337,7 +336,7 @@ impl Operator for PhysicalHashJoin {
         sink: &SinkState,
         state: &mut HashJoinProbeState,
     ) -> Result<OperatorResult> {
-        let global = self.sink_state(sink)?;
+        let global = super::sink_state::<HashJoinGlobalSinkState>(sink, "hash join")?;
         let table = global.hash_table.read().unwrap_or_else(PoisonError::into_inner);
         if table.count() == 0 {
             if empty_result_if_rhs_is_empty(self.join_type) {
@@ -391,7 +390,7 @@ impl Source for PhysicalHashJoin {
         sink: Option<&SinkState>,
     ) -> Result<HashJoinGlobalSourceState> {
         let sink = sink.ok_or_else(|| Error::internal("hash join source requires its sink state"))?;
-        let global = self.sink_state(sink)?;
+        let global = super::sink_state::<HashJoinGlobalSinkState>(sink, "hash join")?;
         let chunk_count = global
             .hash_table
             .read()
@@ -418,7 +417,7 @@ impl Source for PhysicalHashJoin {
         global: &HashJoinGlobalSourceState,
         local: &mut Self::Local,
     ) -> Result<SourceResult> {
-        let sink = self.sink_state(&global.sink)?;
+        let sink = super::sink_state::<HashJoinGlobalSinkState>(&global.sink, "hash join")?;
         let table = sink.hash_table.read().unwrap_or_else(PoisonError::into_inner);
         loop {
             if local.is_none() {

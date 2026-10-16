@@ -34,12 +34,6 @@ impl PhysicalPositionalJoin {
         }
     }
 
-    fn sink_state<'a>(&self, state: &'a SinkState) -> Result<&'a PositionalJoinGlobalState> {
-        state
-            .downcast_ref::<PositionalJoinGlobalState>()
-            .ok_or_else(|| Error::internal("positional join sink state has the wrong type"))
-    }
-
     /// Right rows `start..start + count` (NULL past the end) as columns.
     fn right_rows(&self, rows: &SortedRows, start: usize, count: usize) -> Result<Vec<Vector>> {
         let available = rows.count().saturating_sub(start).min(count);
@@ -52,8 +46,14 @@ impl PhysicalPositionalJoin {
         if available == count {
             return Ok(chunk.into_columns());
         }
-        let padded: Vec<Option<u32>> = (0..count as u32).map(|row| (row < available as u32).then_some(row)).collect();
-        Ok(chunk.columns().iter().map(|column| column.select_rows(&padded)).collect())
+        let padded: Vec<Option<u32>> = (0..count as u32)
+            .map(|row| (row < available as u32).then_some(row))
+            .collect();
+        Ok(chunk
+            .columns()
+            .iter()
+            .map(|column| column.select_rows(&padded))
+            .collect())
     }
 }
 
@@ -126,7 +126,11 @@ impl Sink for PhysicalPositionalJoin {
         Ok(())
     }
 
-    fn finalize(&self, ctx: &ExecutionContext, global: &mut PositionalJoinGlobalState) -> Result<SinkFinalize> {
+    fn finalize(
+        &self,
+        ctx: &ExecutionContext,
+        global: &mut PositionalJoinGlobalState,
+    ) -> Result<SinkFinalize> {
         let chunks = std::mem::take(global.chunks.get_mut().unwrap_or_else(PoisonError::into_inner));
         let columns: Vec<usize> = (0..self.right_types.len()).collect();
         global.rows = Some(SortedRows::materialize(
@@ -149,7 +153,11 @@ impl Operator for PhysicalPositionalJoin {
         Err(Error::internal("positional join requires its sink state"))
     }
 
-    fn global_operator_state_with_sink(&self, _: &ExecutionContext, sink: Option<&SinkState>) -> Result<SinkState> {
+    fn global_operator_state_with_sink(
+        &self,
+        _: &ExecutionContext,
+        sink: Option<&SinkState>,
+    ) -> Result<SinkState> {
         sink.map(Arc::clone)
             .ok_or_else(|| Error::internal("positional join requires its sink state"))
     }
@@ -167,12 +175,15 @@ impl Operator for PhysicalPositionalJoin {
         sink: &SinkState,
         (): &mut (),
     ) -> Result<OperatorResult> {
-        let global = self.sink_state(sink)?;
+        let global = super::sink_state::<PositionalJoinGlobalState>(sink, "positional join")?;
         let rows = global
             .rows
             .as_ref()
             .ok_or_else(|| Error::internal("positional join probed before its sink finished"))?;
-        let mut offset = global.source_offset.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut offset = global
+            .source_offset
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let count = input.len();
         let mut columns = input.columns().to_vec();
         columns.extend(self.right_rows(rows, *offset, count)?);
@@ -197,13 +208,22 @@ impl Source for PhysicalPositionalJoin {
 
     /// The right rows past the end of the left input, with NULL left columns
     /// (`PositionalJoinGlobalState::GetData`).
-    fn get_data(&self, _: &ExecutionContext, chunk: &mut DataChunk, sink: &SinkState, (): &mut ()) -> Result<SourceResult> {
-        let global = self.sink_state(sink)?;
+    fn get_data(
+        &self,
+        _: &ExecutionContext,
+        chunk: &mut DataChunk,
+        sink: &SinkState,
+        (): &mut (),
+    ) -> Result<SourceResult> {
+        let global = super::sink_state::<PositionalJoinGlobalState>(sink, "positional join")?;
         let rows = global
             .rows
             .as_ref()
             .ok_or_else(|| Error::internal("positional join scanned before its sink finished"))?;
-        let mut offset = global.source_offset.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut offset = global
+            .source_offset
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let count = rows.count().saturating_sub(*offset).min(STANDARD_VECTOR_SIZE);
         if count == 0 {
             return Ok(SourceResult::Finished);

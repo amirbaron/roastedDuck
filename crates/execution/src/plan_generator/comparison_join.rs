@@ -24,7 +24,7 @@ pub struct JoinPlanSettings {
     /// use a nested loop join.
     pub nested_loop_join_threshold: u64,
     /// `merge_join_threshold`: below this many rows on either side, a piecewise merge
-    /// join is preferred over an IEJoin.
+    /// join is preferred over an `IEJoin`.
     pub merge_join_threshold: u64,
     /// `prefer_range_joins`: plan range joins even with an equality condition.
     pub prefer_range_joins: bool,
@@ -80,7 +80,11 @@ pub(crate) fn estimate_cardinality(op: &LogicalOperator) -> u64 {
             if sample_options.is_percentage {
                 let percentage = sample_options.sample_size.as_f64().unwrap_or(100.0);
                 let sampled = child as f64 * (percentage / 100.0);
-                if sampled > child as f64 { child } else { sampled as u64 }
+                if sampled > child as f64 {
+                    child
+                } else {
+                    sampled as u64
+                }
             } else {
                 let size = sample_options
                     .sample_size
@@ -89,9 +93,6 @@ pub(crate) fn estimate_cardinality(op: &LogicalOperator) -> u64 {
                     .unwrap_or(u64::MAX);
                 child.min(size)
             }
-        }
-        LogicalKind::Insert(_) | LogicalKind::Delete(_) | LogicalKind::Update(_) | LogicalKind::MergeInto(_) => {
-            children_max()
         }
         LogicalKind::Set { .. }
         | LogicalKind::Reset { .. }
@@ -173,14 +174,16 @@ pub(crate) fn create_comparison_join(
         return Err(Error::not_implemented("join projection maps for range joins"));
     }
     let (lhs_cardinality, rhs_cardinality) = cardinalities;
-    if lhs_cardinality < settings.nested_loop_join_threshold || rhs_cardinality < settings.nested_loop_join_threshold
+    if lhs_cardinality < settings.nested_loop_join_threshold
+        || rhs_cardinality < settings.nested_loop_join_threshold
     {
         can_iejoin = false;
         can_merge = false;
     }
     if can_merge
         && can_iejoin
-        && (lhs_cardinality < settings.merge_join_threshold || rhs_cardinality < settings.merge_join_threshold)
+        && (lhs_cardinality < settings.merge_join_threshold
+            || rhs_cardinality < settings.merge_join_threshold)
     {
         can_iejoin = false;
     }

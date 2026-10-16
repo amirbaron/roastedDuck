@@ -88,7 +88,10 @@ impl<'a> KeyColumn<'a> for StringColumn<'a> {
     fn get(&self, row: usize) -> (Bytes<'a>, bool) {
         let slot = self.values.slot(row);
         let value = &self.values.values[slot];
-        (Bytes(self.vector.string_value(value)), !self.values.validity.is_valid(slot))
+        (
+            Bytes(self.vector.string_value(value)),
+            !self.values.validity.is_valid(slot),
+        )
     }
 }
 
@@ -167,14 +170,14 @@ macro_rules! dispatch {
         macro_rules! with_op {
             ($column:ty) => {
                 match $comparison {
-                    ExpressionType::CompareEqual => $func::<$column, Equals>(<$column>::new($left), <$column>::new($right), $($arg),*),
-                    ExpressionType::CompareNotequal => $func::<$column, NotEquals>(<$column>::new($left), <$column>::new($right), $($arg),*),
-                    ExpressionType::CompareLessthan => $func::<$column, LessThan>(<$column>::new($left), <$column>::new($right), $($arg),*),
-                    ExpressionType::CompareGreaterthan => $func::<$column, GreaterThan>(<$column>::new($left), <$column>::new($right), $($arg),*),
-                    ExpressionType::CompareLessthanorequalto => $func::<$column, LessThanEquals>(<$column>::new($left), <$column>::new($right), $($arg),*),
-                    ExpressionType::CompareGreaterthanorequalto => $func::<$column, GreaterThanEquals>(<$column>::new($left), <$column>::new($right), $($arg),*),
-                    ExpressionType::CompareDistinctFrom => $func::<$column, DistinctFrom>(<$column>::new($left), <$column>::new($right), $($arg),*),
-                    ExpressionType::CompareNotDistinctFrom => $func::<$column, NotDistinctFrom>(<$column>::new($left), <$column>::new($right), $($arg),*),
+                    ExpressionType::CompareEqual => $func::<$column, Equals>(&<$column>::new($left), &<$column>::new($right), $($arg),*),
+                    ExpressionType::CompareNotequal => $func::<$column, NotEquals>(&<$column>::new($left), &<$column>::new($right), $($arg),*),
+                    ExpressionType::CompareLessthan => $func::<$column, LessThan>(&<$column>::new($left), &<$column>::new($right), $($arg),*),
+                    ExpressionType::CompareGreaterthan => $func::<$column, GreaterThan>(&<$column>::new($left), &<$column>::new($right), $($arg),*),
+                    ExpressionType::CompareLessthanorequalto => $func::<$column, LessThanEquals>(&<$column>::new($left), &<$column>::new($right), $($arg),*),
+                    ExpressionType::CompareGreaterthanorequalto => $func::<$column, GreaterThanEquals>(&<$column>::new($left), &<$column>::new($right), $($arg),*),
+                    ExpressionType::CompareDistinctFrom => $func::<$column, DistinctFrom>(&<$column>::new($left), &<$column>::new($right), $($arg),*),
+                    ExpressionType::CompareNotDistinctFrom => $func::<$column, NotDistinctFrom>(&<$column>::new($left), &<$column>::new($right), $($arg),*),
                     _ => return Err(Error::not_implemented("Unimplemented comparison type for join!")),
                 }
             };
@@ -212,8 +215,8 @@ pub struct NestedLoopPosition {
 /// Finds matching (left, right) pairs of the first condition, right rows outer, until
 /// `STANDARD_VECTOR_SIZE` matches (`InitialNestedLoopJoin`).
 fn initial_join<'a, C: KeyColumn<'a>, O: JoinComparison>(
-    left: C,
-    right: C,
+    left: &C,
+    right: &C,
     left_size: usize,
     right_size: usize,
     position: &mut NestedLoopPosition,
@@ -241,8 +244,8 @@ fn initial_join<'a, C: KeyColumn<'a>, O: JoinComparison>(
 
 /// Keeps the pairs that also satisfy a further condition (`RefineNestedLoopJoin`).
 fn refine_join<'a, C: KeyColumn<'a>, O: JoinComparison>(
-    left: C,
-    right: C,
+    left: &C,
+    right: &C,
     lvector: &mut Vec<u32>,
     rvector: &mut Vec<u32>,
 ) -> usize {
@@ -306,8 +309,8 @@ pub fn perform_inner(
 
 /// Marks the left rows with a matching right row (`TemplatedMarkJoin`).
 fn mark_join<'a, C: KeyColumn<'a>, O: JoinComparison>(
-    left: C,
-    right: C,
+    left: &C,
+    right: &C,
     left_count: usize,
     right_count: usize,
     found_match: &mut [bool],

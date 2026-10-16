@@ -68,7 +68,7 @@ impl ColumnDataCollection {
     }
 
     /// Releases the pins of an append and indexes the chunks; call before scanning.
-    pub fn finalize_append(&mut self, state: &mut AppendState) -> Result<()> {
+    pub fn finalize_append(&mut self, state: &mut AppendState) {
         self.rows.finalize_pin_state(&mut state.pin_state);
         self.chunk_starts = vec![0];
         let mut total = 0;
@@ -76,7 +76,6 @@ impl ColumnDataCollection {
             total += count;
             self.chunk_starts.push(total);
         }
-        Ok(())
     }
 
     /// Number of rows.
@@ -108,5 +107,4 @@ impl ColumnDataCollection {
         self.rows.scan(&mut scan, result)?;
         Ok(())
     }
-
 }

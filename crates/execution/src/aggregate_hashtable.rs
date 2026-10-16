@@ -382,7 +382,14 @@ impl GroupedAggregateHashTable {
         self.find_or_create_groups(groups, hashes)?;
         // SAFETY: the addresses are pinned rows of this table with live states.
         unsafe {
-            finalize_states(&mut self.row_state, &self.layout, &self.addresses, count, &mut results, 0)?;
+            finalize_states(
+                &mut self.row_state,
+                &self.layout,
+                &self.addresses,
+                count,
+                &mut results,
+                0,
+            )?;
         }
         Ok(results)
     }

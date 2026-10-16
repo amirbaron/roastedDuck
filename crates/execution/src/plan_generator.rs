@@ -45,7 +45,8 @@ use crate::operators::{
 use crate::operators::{CreateEntryAction, PhysicalCreateType, PhysicalCrossProduct};
 use crate::operators::{CteData, PhysicalCte, PhysicalCteScan, PhysicalRecursiveCte};
 use crate::operators::{
-    DelimShared, PhysicalDelimJoin, PhysicalDelimScan, PhysicalBlockwiseNLJoin, PhysicalHashJoin, PhysicalUnion,
+    DelimShared, PhysicalBlockwiseNLJoin, PhysicalDelimJoin, PhysicalDelimScan, PhysicalHashJoin,
+    PhysicalUnion,
 };
 use crate::operators::{
     PhysicalColumnDataScan, PhysicalDummyScan, PhysicalFilter, PhysicalHashAggregate, PhysicalLimitPercent,
@@ -874,7 +875,9 @@ impl PlanGenerator {
             LogicalKind::AnyJoin { join_type, condition } => {
                 let left = next_child("join")?;
                 let right = next_child("join")?;
-                Arc::new(PhysicalBlockwiseNLJoin::new(types, join_type, *condition, left, right)?)
+                Arc::new(PhysicalBlockwiseNLJoin::new(
+                    types, join_type, *condition, left, right,
+                )?)
             }
             LogicalKind::SetOperation {
                 operator_type,

@@ -13,16 +13,16 @@ mod range_join;
 
 pub use asof_join::{AsOfGlobalSinkState, AsOfLocalSinkState, AsOfSourceState, PhysicalAsOfJoin};
 pub use blockwise_nl_join::{BlockwiseNLJoinGlobalState, BlockwiseNLJoinState, PhysicalBlockwiseNLJoin};
-pub use iejoin::{IEJoinGlobalState, IEJoinLocalState, IEJoinSourceState, PhysicalIEJoin};
 pub use hash_join::{HashJoinGlobalSinkState, HashJoinLocalSinkState, HashJoinProbeState, PhysicalHashJoin};
+pub use iejoin::{IEJoinGlobalState, IEJoinLocalState, IEJoinSourceState, PhysicalIEJoin};
 pub use nested_loop_join::{
     NestedLoopJoinGlobalState, NestedLoopJoinProbeState, PhysicalNestedLoopJoin, RightOuterScanState,
 };
 pub use outer_join_marker::OuterJoinMarker;
-pub use positional_join::{PhysicalPositionalJoin, PositionalJoinGlobalState};
 pub use piecewise_merge_join::{
     MergeJoinGlobalState, MergeJoinProbeState, MergeJoinSourceState, PhysicalPiecewiseMergeJoin,
 };
+pub use positional_join::{PhysicalPositionalJoin, PositionalJoinGlobalState};
 
 use rustdb_ast::{ExpressionType, JoinType};
 use rustdb_common::Result;
@@ -83,12 +83,21 @@ pub fn has_null_values(chunk: &DataChunk) -> bool {
     })
 }
 
+/// The finalized sink state of a join operator, as its concrete type.
+pub(crate) fn sink_state<'a, T: 'static>(state: &'a crate::operator::SinkState, name: &str) -> Result<&'a T> {
+    state
+        .downcast_ref::<T>()
+        .ok_or_else(|| rustdb_common::Error::internal(format!("{name} sink state has the wrong type")))
+}
+
 /// Constant NULL columns of `types` (`ConstantVector::SetNull`, which also makes the
 /// children of nested values NULL, so sort keys of the NULLs are equal).
 pub(crate) fn null_columns(types: &[LogicalType]) -> Vec<Vector> {
     types
         .iter()
-        .map(|ty| Vector::constant(&Value::null(ty.clone())).unwrap_or_else(|_| Vector::constant_null(ty.clone())))
+        .map(|ty| {
+            Vector::constant(&Value::null(ty.clone())).unwrap_or_else(|_| Vector::constant_null(ty.clone()))
+        })
         .collect()
 }
 
@@ -176,8 +185,8 @@ pub(crate) fn construct_mark_join_result(
             None => values[..count].fill(false),
         }
         if has_null {
-            for row in 0..count {
-                if !values[row] {
+            for (row, &matched) in values[..count].iter().enumerate() {
+                if !matched {
                     validity.set_invalid(row, count);
                 }
             }

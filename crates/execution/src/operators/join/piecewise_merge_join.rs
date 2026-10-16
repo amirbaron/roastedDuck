@@ -2,8 +2,8 @@
 //! condition (plus optional further conditions) by sorting the right side once and each
 //! input chunk on the range key, then merging.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rustdb_ast::{ExpressionType, JoinType};
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
@@ -16,8 +16,9 @@ use super::range_join::{
     select_join_tail, sorts_before,
 };
 use super::{
-    OuterJoinMarker, construct_empty_join_result, construct_mark_join_result, construct_semi_or_anti_join_result,
-    empty_result_if_rhs_is_empty, is_left_outer_join, null_columns, propagates_build_side, slice_columns,
+    OuterJoinMarker, construct_empty_join_result, construct_mark_join_result,
+    construct_semi_or_anti_join_result, empty_result_if_rhs_is_empty, is_left_outer_join, null_columns,
+    propagates_build_side, slice_columns,
 };
 use crate::operator::{ErasedOperator, ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
 use crate::{
@@ -79,7 +80,10 @@ impl PhysicalPiecewiseMergeJoin {
     }
 
     fn left_expressions(&self) -> Vec<Expression> {
-        self.conditions.iter().map(|condition| condition.left.clone()).collect()
+        self.conditions
+            .iter()
+            .map(|condition| condition.left.clone())
+            .collect()
     }
 
     fn right_expressions(&self) -> Vec<Expression> {
@@ -87,12 +91,6 @@ impl PhysicalPiecewiseMergeJoin {
             .iter()
             .map(|condition| condition.right.clone())
             .collect()
-    }
-
-    fn sink_state<'a>(&self, state: &'a SinkState) -> Result<&'a MergeJoinGlobalState> {
-        state
-            .downcast_ref::<MergeJoinGlobalState>()
-            .ok_or_else(|| Error::internal("merge join sink state has the wrong type"))
     }
 
     /// A sorted table of one side: key type of the first condition, the side's columns.
@@ -107,7 +105,12 @@ impl PhysicalPiecewiseMergeJoin {
 
     /// Sorts an input chunk on the first condition and recomputes its keys
     /// (`PiecewiseMergeJoinState::ResolveJoinKeys`).
-    fn resolve_join_keys(&self, ctx: &ExecutionContext, input: &DataChunk, state: &mut MergeJoinProbeState) -> Result<()> {
+    fn resolve_join_keys(
+        &self,
+        ctx: &ExecutionContext,
+        input: &DataChunk,
+        state: &mut MergeJoinProbeState,
+    ) -> Result<()> {
         let mut table = self.sorted_table(ctx, &self.left_types)?;
         let mut local = LocalSortedTable::new(&table, self.left_expressions());
         local.sink(&table, input, &self.conditions)?;
@@ -115,7 +118,9 @@ impl PhysicalPiecewiseMergeJoin {
         table.finalize()?;
         let all: Vec<u32> = (0..table.count() as u32).collect();
         table.gather(&all, &mut state.lhs_payload)?;
-        state.lhs_executor.execute(&state.lhs_payload, &mut state.lhs_keys)?;
+        state
+            .lhs_executor
+            .execute(&state.lhs_payload, &mut state.lhs_keys)?;
         state.lhs_table = Some(table);
         Ok(())
     }
@@ -215,9 +220,11 @@ impl PhysicalPiecewiseMergeJoin {
             }
             if state.finished {
                 if state.left_outer.enabled() {
-                    state
-                        .left_outer
-                        .construct_left_join_result(&state.lhs_payload, &self.right_types, output);
+                    state.left_outer.construct_left_join_result(
+                        &state.lhs_payload,
+                        &self.right_types,
+                        output,
+                    );
                     state.left_outer.reset();
                 }
                 state.first_fetch = true;
@@ -253,11 +260,7 @@ impl PhysicalPiecewiseMergeJoin {
                 }
                 continue;
             }
-            let absolute: Vec<u32> = state
-                .rsel
-                .iter()
-                .map(|&row| (block_start as u32) + row)
-                .collect();
+            let absolute: Vec<u32> = state.rsel.iter().map(|&row| (block_start as u32) + row).collect();
             let mut rhs_input = DataChunk::default();
             rhs.gather(&absolute, &mut rhs_input)?;
             let mut sel: Vec<u32> = (0..result_count as u32).collect();
@@ -270,7 +273,8 @@ impl PhysicalPiecewiseMergeJoin {
                     let tail = SelectionVector::new(sel.clone());
                     let left = state.lhs_keys.column(index).slice(&lsel).slice(&tail);
                     let right = rhs_keys.column(index).slice(&tail);
-                    let passing = select_join_tail(self.conditions[index].comparison, &left, &right, sel.len())?;
+                    let passing =
+                        select_join_tail(self.conditions[index].comparison, &left, &right, sel.len())?;
                     sel = passing.iter().map(|&i| sel[i as usize]).collect();
                 }
             }
@@ -329,7 +333,8 @@ fn merge_join_complex_blocks(
     let l_not_null = lhs.not_null();
     loop {
         let matches = *l_entry < *prev_left_index
-            || (*l_entry < l_not_null && sorts_before(lhs.key(*l_entry), rhs.key(block_start + *r_entry), strict));
+            || (*l_entry < l_not_null
+                && sorts_before(lhs.key(*l_entry), rhs.key(block_start + *r_entry), strict));
         if matches {
             lsel.push(*l_entry as u32);
             rsel.push(*r_entry as u32);
@@ -448,7 +453,11 @@ impl Operator for PhysicalPiecewiseMergeJoin {
         Err(Error::internal("merge join probe requires its sink state"))
     }
 
-    fn global_operator_state_with_sink(&self, _: &ExecutionContext, sink: Option<&SinkState>) -> Result<SinkState> {
+    fn global_operator_state_with_sink(
+        &self,
+        _: &ExecutionContext,
+        sink: Option<&SinkState>,
+    ) -> Result<SinkState> {
         sink.map(Arc::clone)
             .ok_or_else(|| Error::internal("merge join probe requires its sink state"))
     }
@@ -483,7 +492,7 @@ impl Operator for PhysicalPiecewiseMergeJoin {
         sink: &SinkState,
         state: &mut MergeJoinProbeState,
     ) -> Result<OperatorResult> {
-        let global = self.sink_state(sink)?;
+        let global = super::sink_state::<MergeJoinGlobalState>(sink, "merge join")?;
         if global.table.count() == 0 {
             if empty_result_if_rhs_is_empty(self.join_type) {
                 return Ok(OperatorResult::Finished);
@@ -518,7 +527,11 @@ impl Source for PhysicalPiecewiseMergeJoin {
     type Global = MergeJoinSourceState;
     type Local = ();
 
-    fn global_source_state(&self, _: &ExecutionContext, sink: Option<&SinkState>) -> Result<MergeJoinSourceState> {
+    fn global_source_state(
+        &self,
+        _: &ExecutionContext,
+        sink: Option<&SinkState>,
+    ) -> Result<MergeJoinSourceState> {
         let sink = sink.ok_or_else(|| Error::internal("merge join source requires its sink state"))?;
         Ok(MergeJoinSourceState {
             sink: Arc::clone(sink),
@@ -537,7 +550,7 @@ impl Source for PhysicalPiecewiseMergeJoin {
         global: &MergeJoinSourceState,
         (): &mut (),
     ) -> Result<SourceResult> {
-        let table = &self.sink_state(&global.sink)?.table;
+        let table = &super::sink_state::<MergeJoinGlobalState>(&global.sink, "merge join")?.table;
         loop {
             let start = global.next_row.fetch_add(STANDARD_VECTOR_SIZE, Ordering::Relaxed);
             if start >= table.count() {

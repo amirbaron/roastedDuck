@@ -71,7 +71,12 @@ impl OuterJoinMarker {
 
     /// The rows of `left` that found no match, with NULL right columns of
     /// `right_types` (`ConstructLeftJoinResult`). Leaves `result` empty if there are none.
-    pub fn construct_left_join_result(&self, left: &DataChunk, right_types: &[LogicalType], result: &mut DataChunk) {
+    pub fn construct_left_join_result(
+        &self,
+        left: &DataChunk,
+        right_types: &[LogicalType],
+        result: &mut DataChunk,
+    ) {
         if !self.enabled {
             return;
         }

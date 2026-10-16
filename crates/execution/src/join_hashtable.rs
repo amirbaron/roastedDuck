@@ -20,7 +20,7 @@ use rustdb_row::{
     PinProperties, RadixPartitioning, RowMatcher, RowPtr, ScanState, TupleDataCollection, TupleDataLayout,
     ValidityType,
 };
-use rustdb_types::{DataChunk, LogicalType, PhysicalType, Value, ValidityMask, Vector, VectorKind};
+use rustdb_types::{DataChunk, LogicalType, PhysicalType, ValidityMask, Value, Vector, VectorKind};
 
 use crate::aggregate_hashtable::{AggregateObject, GroupedAggregateHashTable, initial_capacity};
 use crate::operators::join::{self, propagates_build_side};
@@ -205,6 +205,10 @@ struct PointerTable {
 }
 
 impl PointerTable {
+    #[allow(
+        clippy::cast_ptr_alignment,
+        reason = "AllocatedData is 16-byte aligned, more than AtomicU64 needs"
+    )]
     fn entries(&self) -> &[AtomicU64] {
         // SAFETY: `memory` is 16-byte aligned, holds `capacity * 8` bytes that were
         // initialised (zeroed) after allocation, and lives as long as `self`. `AtomicU64`
@@ -270,6 +274,10 @@ pub struct JoinHashTableConditions {
 }
 
 /// The join hash table; see the module documentation.
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "mirrors DuckDB's JoinHashTable flags"
+)]
 #[derive(Debug)]
 pub struct JoinHashTable {
     buffer_manager: BufferManager,
@@ -330,7 +338,7 @@ impl JoinHashTable {
     pub fn new(
         buffer_manager: BufferManager,
         conditions: &JoinHashTableConditions,
-        build_types: Vec<LogicalType>,
+        build_types: &[LogicalType],
         join_type: JoinType,
         output_columns: Vec<usize>,
         single_join_error_on_multiple_rows: bool,
@@ -412,7 +420,8 @@ impl JoinHashTable {
             finalized: false,
             has_null: false,
             bitmask: 0,
-            single_join_error_on_multiple_rows: join_type != JoinType::Single || single_join_error_on_multiple_rows,
+            single_join_error_on_multiple_rows: join_type != JoinType::Single
+                || single_join_error_on_multiple_rows,
             insert_duplicate_keys,
             null_values_are_equal,
             correlated: None,
@@ -608,10 +617,12 @@ impl JoinHashTable {
 
     /// Allocates the pointer table for the current rows (`AllocatePointerTable`).
     pub fn allocate_pointer_table(&mut self) -> Result<()> {
-        let mut capacity = self.pointer_table_capacity(self.count());
         const MAX_HASHTABLE_CAPACITY: usize = (1 << 48) - 1;
+        let mut capacity = self.pointer_table_capacity(self.count());
         if capacity >= MAX_HASHTABLE_CAPACITY {
-            return Err(Error::internal("Hashtable capacity exceeds 48-bit limit (2^48 - 1)"));
+            return Err(Error::internal(
+                "Hashtable capacity exceeds 48-bit limit (2^48 - 1)",
+            ));
         }
         match &self.pointer_table {
             Some(table) if table.capacity >= capacity => capacity = table.capacity,
@@ -627,6 +638,10 @@ impl JoinHashTable {
     }
 
     /// Clears pointer table entries `from..to` (`InitializePointerTable`).
+    #[allow(
+        clippy::cast_ptr_alignment,
+        reason = "AllocatedData is 16-byte aligned, more than u64 needs"
+    )]
     pub fn initialize_pointer_table(&mut self, from: usize, to: usize) {
         if let Some(table) = &self.pointer_table {
             // SAFETY: the table holds `capacity >= to` entries of plain `u64`s; zero is a
@@ -666,7 +681,10 @@ impl JoinHashTable {
             let rows = iterator.row_locations();
             hashes.clear();
             // SAFETY: the rows are pinned rows of this layout whose hash column holds a u64.
-            hashes.extend(rows.iter().map(|&row| unsafe { load_hash(row, self.pointer_offset) }));
+            hashes.extend(
+                rows.iter()
+                    .map(|&row| unsafe { load_hash(row, self.pointer_offset) }),
+            );
             if parallel {
                 inserter.insert_hashes::<true>(table.entries(), rows, &hashes)?;
             } else {
@@ -759,17 +777,22 @@ impl JoinHashTable {
             let unified = hashes.unified::<u64>();
             if has_row_sel {
                 let row_sel = row_sel.unwrap_or_default();
-                state
-                    .hashes_dense
-                    .extend(row_sel[..count].iter().map(|&row| unified.values[unified.slot(row as usize)]));
+                state.hashes_dense.extend(
+                    row_sel[..count]
+                        .iter()
+                        .map(|&row| unified.values[unified.slot(row as usize)]),
+                );
             } else {
                 state
                     .hashes_dense
                     .extend((0..count).map(|row| unified.values[unified.slot(row)]));
             }
         }
-        state.ht_offsets_and_salts.resize(keys.len().max(STANDARD_VECTOR_SIZE), 0);
-        scan.pointers.resize(keys.len().max(STANDARD_VECTOR_SIZE), RowPtr::NULL);
+        state
+            .ht_offsets_and_salts
+            .resize(keys.len().max(STANDARD_VECTOR_SIZE), 0);
+        scan.pointers
+            .resize(keys.len().max(STANDARD_VECTOR_SIZE), RowPtr::NULL);
 
         let use_salts = self.use_salt();
         let mut match_count = 0;
@@ -835,7 +858,8 @@ impl JoinHashTable {
                     Some(&mut state.keys_no_match),
                 )?
             };
-            scan.sel_vector.extend_from_slice(&state.keys_to_compare[..matched]);
+            scan.sel_vector
+                .extend_from_slice(&state.keys_to_compare[..matched]);
             match_count += matched;
             // Keep probing the rows whose keys differ, one entry further.
             let no_match = state.keys_no_match.len();
@@ -960,7 +984,9 @@ impl JoinHashTable {
         let mut sizes = vec![0; partitions];
         let mut counts = vec![0; partitions];
         for table in local_tables {
-            table.sink_collection.add_sizes_and_counts(&mut sizes, &mut counts);
+            table
+                .sink_collection
+                .add_sizes_and_counts(&mut sizes, &mut counts);
         }
         self.total_size(&sizes, &counts)
     }
@@ -997,7 +1023,12 @@ impl JoinHashTable {
     pub fn remaining_size(&self) -> usize {
         let mut count = 0;
         let mut size = 0;
-        for (partition, &completed) in self.sink_collection.partitions().iter().zip(&self.completed_partitions) {
+        for (partition, &completed) in self
+            .sink_collection
+            .partitions()
+            .iter()
+            .zip(&self.completed_partitions)
+        {
             if !completed {
                 count += partition.count();
                 size += partition.size_in_bytes();
@@ -1091,7 +1122,12 @@ impl JoinHashTable {
         let mut indices: Vec<usize> = (0..sizes.len())
             .filter(|&index| !self.completed_partitions[index])
             .collect();
-        let min_partition_size = indices.iter().map(|&index| ht_size(index)).min().unwrap_or(1).max(1);
+        let min_partition_size = indices
+            .iter()
+            .map(|&index| ht_size(index))
+            .min()
+            .unwrap_or(1)
+            .max(1);
         // Sort by size, rounded down to multiples of the smallest partition, keeping the
         // original order otherwise (partition order determines eviction order).
         indices.sort_by_key(|&index| ht_size(index) / min_partition_size);
@@ -1298,7 +1334,12 @@ impl<'a> Inserter<'a> {
             for &position in &self.key_match {
                 let row_index = self.keys_to_compare[position as usize] as usize;
                 let entry = &entries[self.ht_offsets[row_index] as usize];
-                insert_row_to_entry::<PARALLEL, false>(entry, rows[row_index], self.salts[row_index], ht.pointer_offset);
+                insert_row_to_entry::<PARALLEL, false>(
+                    entry,
+                    rows[row_index],
+                    self.salts[row_index],
+                    ht.pointer_offset,
+                );
             }
         }
         for position in &mut self.keys_no_match {
@@ -1377,7 +1418,13 @@ impl ProbeState {
     /// Queues probe row `row_index` for a key comparison with `entry`'s row
     /// (`AddPointerToCompare`).
     #[inline]
-    fn add_pointer_to_compare(&mut self, scan: &mut ScanStructure, entry: HtEntry, offset: u64, row_index: u32) {
+    fn add_pointer_to_compare(
+        &mut self,
+        scan: &mut ScanStructure,
+        entry: HtEntry,
+        offset: u64,
+        row_index: u32,
+    ) {
         self.keys_to_compare.push(row_index);
         scan.pointers[row_index as usize] = entry.pointer();
         self.ht_offsets_and_salts[row_index as usize] = offset | entry.salt_with_nulls();
@@ -1463,7 +1510,9 @@ impl ScanStructure {
         }
         let formats = ChunkFormat::new(keys)?;
         match ht.join_type {
-            JoinType::Inner | JoinType::Right => self.next_inner_join(ht, &formats, left, result_types, result),
+            JoinType::Inner | JoinType::Right => {
+                self.next_inner_join(ht, &formats, left, result_types, result)
+            }
             JoinType::Semi => {
                 self.scan_key_matches(ht, &formats)?;
                 join::construct_semi_or_anti_join_result(left, result, &self.found_match, true);
@@ -1494,7 +1543,8 @@ impl ScanStructure {
         with_no_match: bool,
     ) -> Result<usize> {
         self.chain_match_sel.clear();
-        self.chain_match_sel.extend_from_slice(&self.sel_vector[..self.count]);
+        self.chain_match_sel
+            .extend_from_slice(&self.sel_vector[..self.count]);
         self.chain_no_match_sel.clear();
         let Some(matcher) = &ht.row_matcher_probe else {
             return Ok(self.count);
@@ -1569,8 +1619,8 @@ impl ScanStructure {
 
     /// Gathers the build output columns for the probe rows `scan_sel` (or the buffered
     /// matches) into columns `left.column_count()..` of the result.
+    #[allow(clippy::too_many_arguments, reason = "mirrors DuckDB's GatherResult")]
     fn gather_build_columns(
-        &self,
         ht: &JoinHashTable,
         rows: &[RowPtr],
         scan_sel: Option<&[u32]>,
@@ -1627,7 +1677,7 @@ impl ScanStructure {
                     if !ht.chains_longer_than_one {
                         // Every key has one row: emit the matches directly.
                         let mut columns = join::slice_columns(left, &self.chain_match_sel);
-                        self.gather_build_columns(
+                        Self::gather_build_columns(
                             ht,
                             &self.pointers,
                             Some(&self.chain_match_sel),
@@ -1652,7 +1702,7 @@ impl ScanStructure {
         }
         if base_count > 0 {
             let mut columns = join::slice_columns(left, &self.lhs_sel);
-            self.gather_build_columns(
+            Self::gather_build_columns(
                 ht,
                 &self.rhs_pointers,
                 None,
@@ -1883,7 +1933,10 @@ impl ScanStructure {
                     Some(&result_sel),
                 )?;
             }
-            if matches!(vector.logical_type().physical_type(), PhysicalType::Struct | PhysicalType::Array) {
+            if matches!(
+                vector.logical_type().physical_type(),
+                PhysicalType::Struct | PhysicalType::Array
+            ) {
                 // NULL nested values have NULL children (`FlatVector::SetNull`).
                 let null = Value::null(vector.logical_type().clone());
                 for row in (0..count).filter(|&row| !self.found_match[row]) {

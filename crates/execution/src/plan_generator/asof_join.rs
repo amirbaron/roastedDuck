@@ -7,7 +7,9 @@ use std::sync::Arc;
 use rustdb_ast::{ExpressionType, JoinType, WindowBoundary, WindowExcludeMode};
 use rustdb_common::{Error, Result};
 use rustdb_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionClient, FunctionData};
-use rustdb_functions::aggregate::distributive::arg_min_max::{arg_max_null_functions, arg_min_null_functions};
+use rustdb_functions::aggregate::distributive::arg_min_max::{
+    arg_max_null_functions, arg_min_null_functions,
+};
 use rustdb_functions::aggregate::distributive::first_last_any::first_function;
 use rustdb_planner::expression::{AggregateType, BoundAggregateExpression, BoundWindowExpression};
 use rustdb_planner::operator::{JoinCondition, LogicalComparisonJoin};
@@ -18,7 +20,8 @@ use super::PlanGenerator;
 use super::comparison_join::estimate_cardinality;
 use crate::operator::PhysicalRef;
 use crate::operators::{
-    PhysicalAsOfJoin, PhysicalHashAggregate, PhysicalNestedLoopJoin, PhysicalProjection, PhysicalStreamingWindow,
+    PhysicalAsOfJoin, PhysicalHashAggregate, PhysicalNestedLoopJoin, PhysicalProjection,
+    PhysicalStreamingWindow,
 };
 
 /// The join type with the inputs swapped (`InverseJoinType`).
@@ -76,8 +79,18 @@ fn bind_arg_min_max(
         .functions
         .iter()
         .find(|function| matches(function, false, false))
-        .or_else(|| functions.functions.iter().find(|function| matches(function, true, false)))
-        .or_else(|| functions.functions.iter().find(|function| matches(function, true, true)))
+        .or_else(|| {
+            functions
+                .functions
+                .iter()
+                .find(|function| matches(function, true, false))
+        })
+        .or_else(|| {
+            functions
+                .functions
+                .iter()
+                .find(|function| matches(function, true, true))
+        })
         .cloned()
         .ok_or_else(|| Error::internal(format!("no {} overload for ASOF loop join", functions.name)))?;
     let mut bind_info = None;
@@ -153,12 +166,10 @@ impl PlanGenerator {
             return Err(Error::internal("Invalid ASOF JOIN comparison"));
         }
         let threshold = self.join_settings().asof_loop_join_threshold;
-        if join.predicate.is_some() || (cardinalities[0] as u64) < threshold {
-            if let Some(plan) =
-                plan_asof_loop_join(&join, &types, &left_types, &right_types, &left, &right)?
-            {
-                return Ok(plan);
-            }
+        if (join.predicate.is_some() || (cardinalities[0] as u64) < threshold)
+            && let Some(plan) = plan_asof_loop_join(&join, &types, &left_types, &right_types, &left, &right)?
+        {
+            return Ok(plan);
         }
         if join.predicate.is_some() {
             return Err(Error::not_implemented("ASOF join with an arbitrary predicate"));
@@ -218,7 +229,9 @@ fn plan_asof_loop_join(
                 asof_index = Some(index);
                 maximum = false;
             }
-            ExpressionType::CompareEqual | ExpressionType::CompareNotequal | ExpressionType::CompareDistinctFrom => {}
+            ExpressionType::CompareEqual
+            | ExpressionType::CompareNotequal
+            | ExpressionType::CompareDistinctFrom => {}
             _ => return Ok(None),
         }
     }

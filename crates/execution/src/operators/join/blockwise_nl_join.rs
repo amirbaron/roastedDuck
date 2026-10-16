@@ -12,8 +12,8 @@ use rustdb_types::{DataChunk, LogicalType, Vector};
 
 use super::nested_loop_join::{RightOuterScanState, scan_right_outer};
 use super::{
-    OuterJoinMarker, construct_empty_join_result, construct_semi_or_anti_join_result, empty_result_if_rhs_is_empty,
-    is_left_outer_join, propagates_build_side, slice_columns,
+    OuterJoinMarker, construct_empty_join_result, construct_semi_or_anti_join_result,
+    empty_result_if_rhs_is_empty, is_left_outer_join, propagates_build_side, slice_columns,
 };
 use crate::column_data_collection::ColumnDataCollection;
 use crate::operator::{ErasedOperator, ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
@@ -60,12 +60,6 @@ impl PhysicalBlockwiseNLJoin {
         })
     }
 
-    fn sink_state<'a>(&self, state: &'a SinkState) -> Result<&'a BlockwiseNLJoinGlobalState> {
-        state
-            .downcast_ref::<BlockwiseNLJoinGlobalState>()
-            .ok_or_else(|| Error::internal("blockwise nested loop join sink state has the wrong type"))
-    }
-
     fn right_columns(&self) -> Vec<usize> {
         (0..self.right_types.len()).collect()
     }
@@ -105,11 +99,15 @@ impl Sink for PhysicalBlockwiseNLJoin {
     type Local = ();
 
     fn global_sink_state(&self, ctx: &ExecutionContext) -> Result<BlockwiseNLJoinGlobalState> {
-        let mut collection = ColumnDataCollection::new(ctx.env.buffer_manager.clone(), self.right_types.clone())?;
+        let mut collection =
+            ColumnDataCollection::new(ctx.env.buffer_manager.clone(), self.right_types.clone())?;
         let append = collection.initialize_append();
         Ok(BlockwiseNLJoinGlobalState {
             sink: Mutex::new((collection, append)),
-            right_chunks: ColumnDataCollection::new(ctx.env.buffer_manager.clone(), self.right_types.clone())?,
+            right_chunks: ColumnDataCollection::new(
+                ctx.env.buffer_manager.clone(),
+                self.right_types.clone(),
+            )?,
             right_outer: OuterJoinMarker::new(propagates_build_side(self.join_type)),
         })
     }
@@ -135,9 +133,13 @@ impl Sink for PhysicalBlockwiseNLJoin {
         Ok(())
     }
 
-    fn finalize(&self, _: &ExecutionContext, global: &mut BlockwiseNLJoinGlobalState) -> Result<SinkFinalize> {
+    fn finalize(
+        &self,
+        _: &ExecutionContext,
+        global: &mut BlockwiseNLJoinGlobalState,
+    ) -> Result<SinkFinalize> {
         let (collection, append) = global.sink.get_mut().unwrap_or_else(PoisonError::into_inner);
-        collection.finalize_append(append)?;
+        collection.finalize_append(append);
         std::mem::swap(&mut global.right_chunks, collection);
         global.right_outer.initialize(global.right_chunks.count());
         if global.right_chunks.count() == 0 && empty_result_if_rhs_is_empty(self.join_type) {
@@ -166,7 +168,12 @@ struct CrossProductExecutor {
 impl CrossProductExecutor {
     /// Moves to the next row of the scanned side; `false` once every right chunk was
     /// combined with the input (`NextValue`).
-    fn next_value(&mut self, rhs: &ColumnDataCollection, columns: &[usize], input: &DataChunk) -> Result<bool> {
+    fn next_value(
+        &mut self,
+        rhs: &ColumnDataCollection,
+        columns: &[usize],
+        input: &DataChunk,
+    ) -> Result<bool> {
         if !self.initialized {
             self.initialized = true;
             self.scan_input_chunk = false;
@@ -247,10 +254,16 @@ impl Operator for PhysicalBlockwiseNLJoin {
     type Local = BlockwiseNLJoinState;
 
     fn global_operator_state(&self, _: &ExecutionContext) -> Result<SinkState> {
-        Err(Error::internal("blockwise nested loop join probe requires its sink state"))
+        Err(Error::internal(
+            "blockwise nested loop join probe requires its sink state",
+        ))
     }
 
-    fn global_operator_state_with_sink(&self, _: &ExecutionContext, sink: Option<&SinkState>) -> Result<SinkState> {
+    fn global_operator_state_with_sink(
+        &self,
+        _: &ExecutionContext,
+        sink: Option<&SinkState>,
+    ) -> Result<SinkState> {
         sink.map(Arc::clone)
             .ok_or_else(|| Error::internal("blockwise nested loop join probe requires its sink state"))
     }
@@ -280,7 +293,7 @@ impl Operator for PhysicalBlockwiseNLJoin {
         sink: &SinkState,
         state: &mut BlockwiseNLJoinState,
     ) -> Result<OperatorResult> {
-        let global = self.sink_state(sink)?;
+        let global = super::sink_state::<BlockwiseNLJoinGlobalState>(sink, "blockwise nested loop join")?;
         if global.right_chunks.count() == 0 {
             if empty_result_if_rhs_is_empty(self.join_type) {
                 return Ok(OperatorResult::Finished);
@@ -290,10 +303,12 @@ impl Operator for PhysicalBlockwiseNLJoin {
         }
         let semi_or_anti = matches!(self.join_type, JoinType::Semi | JoinType::Anti);
         let mut intermediate = DataChunk::default();
-        let result =
-            state
-                .cross_product
-                .execute(&global.right_chunks, &self.right_columns(), input, &mut intermediate)?;
+        let result = state.cross_product.execute(
+            &global.right_chunks,
+            &self.right_columns(),
+            input,
+            &mut intermediate,
+        )?;
         if result == OperatorResult::NeedMoreInput {
             // The input chunk is done: emit its unmatched rows (LEFT/FULL) or the
             // SEMI/ANTI result.
@@ -326,7 +341,9 @@ impl Operator for PhysicalBlockwiseNLJoin {
             } else {
                 if cross.scan_input_chunk {
                     state.left_outer.set_match(cross.position_in_chunk);
-                    global.right_outer.set_matches(&state.match_sel, cross.scan_position);
+                    global
+                        .right_outer
+                        .set_matches(&state.match_sel, cross.scan_position);
                 } else {
                     state.left_outer.set_matches(&state.match_sel, 0);
                     global
@@ -344,8 +361,13 @@ impl Source for PhysicalBlockwiseNLJoin {
     type Global = RightOuterScanState;
     type Local = ();
 
-    fn global_source_state(&self, _: &ExecutionContext, sink: Option<&SinkState>) -> Result<RightOuterScanState> {
-        let sink = sink.ok_or_else(|| Error::internal("blockwise nested loop join source requires its sink state"))?;
+    fn global_source_state(
+        &self,
+        _: &ExecutionContext,
+        sink: Option<&SinkState>,
+    ) -> Result<RightOuterScanState> {
+        let sink =
+            sink.ok_or_else(|| Error::internal("blockwise nested loop join source requires its sink state"))?;
         Ok(RightOuterScanState::new(Arc::clone(sink)))
     }
 
@@ -360,7 +382,8 @@ impl Source for PhysicalBlockwiseNLJoin {
         global: &RightOuterScanState,
         (): &mut (),
     ) -> Result<SourceResult> {
-        let sink = self.sink_state(global.sink())?;
+        let sink =
+            super::sink_state::<BlockwiseNLJoinGlobalState>(global.sink(), "blockwise nested loop join")?;
         scan_right_outer(
             &sink.right_chunks,
             &sink.right_outer,

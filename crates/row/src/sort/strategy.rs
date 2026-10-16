@@ -177,8 +177,11 @@ impl SortStrategy {
     /// partitions on, and keeps them fixed, so both have the same hash groups
     /// (`HashedSort::Synchronize`).
     pub fn synchronize(&self, source: &StrategyGlobalState, target: &StrategyGlobalState) -> Result<()> {
-        if let (Self::Hashed(hashed), StrategyGlobalState::Hashed(source), StrategyGlobalState::Hashed(target)) =
-            (self, source, target)
+        if let (
+            Self::Hashed(hashed),
+            StrategyGlobalState::Hashed(source),
+            StrategyGlobalState::Hashed(target),
+        ) = (self, source, target)
         {
             let bits = lock(&source.inner)
                 .grouping

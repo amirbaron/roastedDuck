@@ -15,14 +15,16 @@ use rustdb_ast::{ExpressionType, JoinType};
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_planner::Expression;
 use rustdb_planner::operator::JoinCondition;
-use rustdb_row::sort::{ChunkRow, NullOrder, OrderModifiers, OrderType, SortColumn, SortConfig, SortStrategy};
+use rustdb_row::sort::{
+    ChunkRow, NullOrder, OrderModifiers, OrderType, SortColumn, SortConfig, SortStrategy,
+};
 use rustdb_row::sort::{StrategyGlobalState, StrategyLocalState};
 use rustdb_types::{DataChunk, LogicalType, ValidityMask};
 
 use super::range_join::{KeyBytes, SortedRows, order_modifiers, sorts_before};
 use super::{
-    OuterJoinMarker, construct_semi_or_anti_join_result, is_left_outer_join, null_columns, reorder_conditions,
-    slice_columns,
+    OuterJoinMarker, construct_semi_or_anti_join_result, is_left_outer_join, null_columns,
+    reorder_conditions, slice_columns,
 };
 use crate::join_hashtable::flatten_sequences;
 use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
@@ -110,7 +112,11 @@ impl PhysicalAsOfJoin {
     }
 
     fn side_types(&self, child: usize) -> &[LogicalType] {
-        if child == 0 { &self.left_types } else { &self.right_types }
+        if child == 0 {
+            &self.left_types
+        } else {
+            &self.right_types
+        }
     }
 
     /// The partition values and then the ordering value of one side.
@@ -131,7 +137,8 @@ impl PhysicalAsOfJoin {
 
     /// The modifiers of the full sort key: partitions ASC NULLS FIRST, then the order.
     fn key_modifiers(&self) -> Vec<OrderModifiers> {
-        let mut modifiers = vec![OrderModifiers::new(OrderType::Ascending, NullOrder::NullsFirst); self.partitions.len()];
+        let mut modifiers =
+            vec![OrderModifiers::new(OrderType::Ascending, NullOrder::NullsFirst); self.partitions.len()];
         modifiers.push(order_modifiers(self.descending));
         modifiers
     }
@@ -141,7 +148,11 @@ impl PhysicalAsOfJoin {
     fn sort_strategy(&self, ctx: &ExecutionContext, child: usize) -> Result<SortStrategy> {
         let input_width = self.side_types(child).len();
         let mut input_types = self.side_types(child).to_vec();
-        input_types.extend(self.key_expressions(child).iter().map(|key| key.return_type.clone()));
+        input_types.extend(
+            self.key_expressions(child)
+                .iter()
+                .map(|key| key.return_type.clone()),
+        );
         let partition_columns = (input_width..input_width + self.partitions.len()).collect();
         let orders = vec![SortColumn {
             column: input_width + self.partitions.len(),
@@ -157,12 +168,6 @@ impl PhysicalAsOfJoin {
             self.estimated_cardinality[child],
             true,
         )
-    }
-
-    fn sink_state<'a>(&self, state: &'a SinkState) -> Result<&'a AsOfGlobalSinkState> {
-        state
-            .downcast_ref::<AsOfGlobalSinkState>()
-            .ok_or_else(|| Error::internal("ASOF join sink state has the wrong type"))
     }
 }
 
@@ -226,7 +231,11 @@ impl Sink for PhysicalAsOfJoin {
         })
     }
 
-    fn local_sink_state(&self, _: &ExecutionContext, global: &AsOfGlobalSinkState) -> Result<AsOfLocalSinkState> {
+    fn local_sink_state(
+        &self,
+        _: &ExecutionContext,
+        global: &AsOfGlobalSinkState,
+    ) -> Result<AsOfLocalSinkState> {
         let child = global.child.load(Ordering::Acquire);
         Ok(AsOfLocalSinkState {
             child,
@@ -252,7 +261,12 @@ impl Sink for PhysicalAsOfJoin {
         Ok(SinkResult::NeedMoreInput)
     }
 
-    fn combine(&self, _: &ExecutionContext, global: &AsOfGlobalSinkState, local: AsOfLocalSinkState) -> Result<()> {
+    fn combine(
+        &self,
+        _: &ExecutionContext,
+        global: &AsOfGlobalSinkState,
+        local: AsOfLocalSinkState,
+    ) -> Result<()> {
         let child = local.child;
         global.strategies[child].combine(&global.states[child], local.state)?;
         if child == 1 {
@@ -347,7 +361,12 @@ pub struct AsOfSourceState {
 
 impl PhysicalAsOfJoin {
     /// Sorts both sides of hash group `group` (stages `SORT`, `MATERIALIZE` and `GET`).
-    fn prepare_group(&self, ctx: &ExecutionContext, sink: &AsOfGlobalSinkState, group: usize) -> Result<AsOfHashGroup> {
+    fn prepare_group(
+        &self,
+        ctx: &ExecutionContext,
+        sink: &AsOfGlobalSinkState,
+        group: usize,
+    ) -> Result<AsOfHashGroup> {
         let mut sides = [None, None];
         for (child, side) in sides.iter_mut().enumerate() {
             let strategy = &sink.strategies[child];
@@ -446,7 +465,12 @@ impl PhysicalAsOfJoin {
     }
 
     /// Reads the next left block and drops matches of rows with NULL keys (`ScanLeft`).
-    fn scan_left(&self, group: &AsOfHashGroup, probe: &mut AsOfProbe, executor: &mut ExpressionExecutor) -> Result<()> {
+    fn scan_left(
+        &self,
+        group: &AsOfHashGroup,
+        probe: &mut AsOfProbe,
+        executor: &mut ExpressionExecutor,
+    ) -> Result<()> {
         let left = group
             .left
             .as_ref()
@@ -509,13 +533,15 @@ impl PhysicalAsOfJoin {
                 for &row in &probe.lhs_match_sel {
                     found[row as usize] = true;
                 }
-                construct_semi_or_anti_join_result(&probe.lhs_payload, chunk, &found, self.join_type == JoinType::Semi);
+                construct_semi_or_anti_join_result(
+                    &probe.lhs_payload,
+                    chunk,
+                    &found,
+                    self.join_type == JoinType::Semi,
+                );
             }
             JoinType::Left | JoinType::Inner | JoinType::Right | JoinType::Outer => {
-                let right = group
-                    .right
-                    .as_ref()
-                    .map(|right| &right.rows);
+                let right = group.right.as_ref().map(|right| &right.rows);
                 let matched: Vec<u32> = probe
                     .lhs_match_sel
                     .iter()
@@ -546,7 +572,13 @@ impl PhysicalAsOfJoin {
     }
 
     /// The unmatched right rows of the next block of a right task (`ExecuteRightTask`).
-    fn right_next(&self, group: &AsOfHashGroup, begin: &mut usize, end: usize, chunk: &mut DataChunk) -> Result<()> {
+    fn right_next(
+        &self,
+        group: &AsOfHashGroup,
+        begin: &mut usize,
+        end: usize,
+        chunk: &mut DataChunk,
+    ) -> Result<()> {
         let Some(right) = &group.right else {
             *begin = end;
             return Ok(());
@@ -576,9 +608,13 @@ impl Source for PhysicalAsOfJoin {
     type Global = AsOfSourceState;
     type Local = ();
 
-    fn global_source_state(&self, ctx: &ExecutionContext, sink: Option<&SinkState>) -> Result<AsOfSourceState> {
+    fn global_source_state(
+        &self,
+        ctx: &ExecutionContext,
+        sink: Option<&SinkState>,
+    ) -> Result<AsOfSourceState> {
         let sink = sink.ok_or_else(|| Error::internal("ASOF join source requires its sink state"))?;
-        let global = self.sink_state(sink)?;
+        let global = super::sink_state::<AsOfGlobalSinkState>(sink, "ASOF join")?;
         let left_rows = global.strategies[0].hash_groups(&global.states[0]);
         let right_rows = global.strategies[1].hash_groups(&global.states[1]);
         let group_count = left_rows.len().max(right_rows.len());
@@ -586,7 +622,9 @@ impl Source for PhysicalAsOfJoin {
         // Largest groups first (`CreateTaskList`).
         let mut blocks: Vec<(usize, usize)> = (0..group_count)
             .map(|group| {
-                let chunks = stats(&left_rows, group).chunks.max(stats(&right_rows, group).chunks);
+                let chunks = stats(&left_rows, group)
+                    .chunks
+                    .max(stats(&right_rows, group).chunks);
                 (chunks, group)
             })
             .collect();
@@ -623,7 +661,11 @@ impl Source for PhysicalAsOfJoin {
                 }
             }
         }
-        let lhs_expressions = self.conditions.iter().map(|condition| condition.left.clone()).collect();
+        let lhs_expressions = self
+            .conditions
+            .iter()
+            .map(|condition| condition.left.clone())
+            .collect();
         Ok(AsOfSourceState {
             sink: Arc::clone(sink),
             inner: Mutex::new(AsOfSourceInner {
@@ -652,7 +694,7 @@ impl Source for PhysicalAsOfJoin {
         global: &AsOfSourceState,
         (): &mut (),
     ) -> Result<SourceResult> {
-        let sink = self.sink_state(&global.sink)?;
+        let sink = super::sink_state::<AsOfGlobalSinkState>(&global.sink, "ASOF join")?;
         let mut guard = global.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let state = &mut *guard;
         loop {

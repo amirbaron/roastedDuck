@@ -40,7 +40,7 @@ pub struct PhysicalIEJoin {
 }
 
 impl PhysicalIEJoin {
-    /// An IEJoin of `left` and `right`; the first two (reordered) conditions must be range
+    /// An `IEJoin` of `left` and `right`; the first two (reordered) conditions must be range
     /// comparisons.
     pub fn new(
         types: Vec<LogicalType>,
@@ -57,7 +57,9 @@ impl PhysicalIEJoin {
         for (index, condition) in conditions.iter().take(2).enumerate() {
             // L1 sorts descending for `>`, L2 ascending for `>` (and vice versa for `<`).
             descending[index] = match condition.comparison {
-                ExpressionType::CompareGreaterthan | ExpressionType::CompareGreaterthanorequalto => index == 0,
+                ExpressionType::CompareGreaterthan | ExpressionType::CompareGreaterthanorequalto => {
+                    index == 0
+                }
                 ExpressionType::CompareLessthan | ExpressionType::CompareLessthanorequalto => index != 0,
                 _ => return Err(Error::not_implemented("Unimplemented join type for IEJoin")),
             };
@@ -84,12 +86,6 @@ impl PhysicalIEJoin {
                 }
             })
             .collect()
-    }
-
-    fn sink_state<'a>(&self, state: &'a SinkState) -> Result<&'a IEJoinGlobalState> {
-        state
-            .downcast_ref::<IEJoinGlobalState>()
-            .ok_or_else(|| Error::internal("IEJoin sink state has the wrong type"))
     }
 }
 
@@ -170,7 +166,12 @@ impl Sink for PhysicalIEJoin {
         Ok(SinkResult::NeedMoreInput)
     }
 
-    fn combine(&self, _: &ExecutionContext, global: &IEJoinGlobalState, local: IEJoinLocalState) -> Result<()> {
+    fn combine(
+        &self,
+        _: &ExecutionContext,
+        global: &IEJoinGlobalState,
+        local: IEJoinLocalState,
+    ) -> Result<()> {
         global.tables[local.child].combine(local.table)?;
         // The right input is sunk completely before the left one.
         global.child.store(0, Ordering::Release);
@@ -310,15 +311,20 @@ impl IEJoinUnion {
 
     /// The next (left row, right row) pairs, as row indexes of the sorted inputs
     /// (`JoinComplexBlocks`).
-    fn join_complex_blocks(&mut self, ranking: &IEJoinRanking, lsel: &mut Vec<u32>, rsel: &mut Vec<u32>) -> usize {
+    fn join_complex_blocks(
+        &mut self,
+        ranking: &IEJoinRanking,
+        lsel: &mut Vec<u32>,
+        rsel: &mut Vec<u32>,
+    ) -> usize {
         lsel.clear();
         rsel.clear();
         while self.i < self.n {
             loop {
                 // The bloom filter skips empty stretches of the bit array.
                 while self.j < self.n_j {
-                    let bloom_begin =
-                        next_valid(&self.bloom, self.j / BLOOM_CHUNK_BITS, self.bloom_count) * BLOOM_CHUNK_BITS;
+                    let bloom_begin = next_valid(&self.bloom, self.j / BLOOM_CHUNK_BITS, self.bloom_count)
+                        * BLOOM_CHUNK_BITS;
                     let bloom_end = self.n_j.min(bloom_begin + BLOOM_CHUNK_BITS);
                     self.j = self.j.max(bloom_begin);
                     self.j = next_valid(&self.bits, self.j, bloom_end);
@@ -359,7 +365,11 @@ enum IEJoinTask {
 #[derive(Debug)]
 enum ActiveTask {
     Inner(Box<IEJoinUnion>),
-    Outer { left: bool, block: usize, position: usize },
+    Outer {
+        left: bool,
+        block: usize,
+        position: usize,
+    },
 }
 
 /// The source's progress (DuckDB's `IEJoinGlobalSourceState`, run as one sequence of
@@ -477,7 +487,11 @@ impl PhysicalIEJoin {
             let mut columns: Vec<Vector>;
             if count < result_count {
                 let tail = SelectionVector::new(sel.clone());
-                columns = lpayload.columns().iter().map(|column| column.slice(&tail)).collect();
+                columns = lpayload
+                    .columns()
+                    .iter()
+                    .map(|column| column.slice(&tail))
+                    .collect();
                 columns.extend(rpayload.columns().iter().map(|column| column.slice(&tail)));
             } else {
                 columns = lpayload.into_columns();
@@ -582,7 +596,9 @@ fn append_keys(
         let mut keys = DataChunk::default();
         executor.execute(&scanned, &mut keys)?;
         let mut columns = keys.into_columns();
-        let second = columns.pop().ok_or_else(|| Error::internal("IEJoin key missing"))?;
+        let second = columns
+            .pop()
+            .ok_or_else(|| Error::internal("IEJoin key missing"))?;
         columns.push(Vector::constant(&Value::boolean(from_left))?);
         columns.push(second);
         columns.push(sequence(rid, increment, count));
@@ -598,7 +614,9 @@ fn extract_column<T: rustdb_types::NativeType>(table: &SortedTable, column: usiz
     let mut values = Vec::with_capacity(table.count());
     for block in 0..table.block_count() {
         let start = table.block_start(block);
-        let rows: Vec<u32> = (start..start + table.block_size(block)).map(|row| row as u32).collect();
+        let rows: Vec<u32> = (start..start + table.block_size(block))
+            .map(|row| row as u32)
+            .collect();
         let mut chunk = DataChunk::default();
         table.gather(&rows, &mut chunk)?;
         let unified = chunk.column(column).unified::<T>();
@@ -611,9 +629,13 @@ impl Source for PhysicalIEJoin {
     type Global = IEJoinSourceState;
     type Local = ();
 
-    fn global_source_state(&self, ctx: &ExecutionContext, sink: Option<&SinkState>) -> Result<IEJoinSourceState> {
+    fn global_source_state(
+        &self,
+        ctx: &ExecutionContext,
+        sink: Option<&SinkState>,
+    ) -> Result<IEJoinSourceState> {
         let sink = sink.ok_or_else(|| Error::internal("IEJoin source requires its sink state"))?;
-        let global = self.sink_state(sink)?;
+        let global = super::sink_state::<IEJoinGlobalState>(sink, "IEJoin")?;
         let [left, right] = &global.tables;
         let mut tasks = VecDeque::new();
         let ranking = if left.count() > 0 && right.count() > 0 {
@@ -636,7 +658,10 @@ impl Source for PhysicalIEJoin {
         if !right.found_match.is_empty() {
             tasks.extend((0..right.block_count()).map(|block| IEJoinTask::Outer { left: false, block }));
         }
-        let tail_expressions = |child: usize| self.side_expressions(child).split_off(2.min(self.conditions.len()));
+        let tail_expressions = |child: usize| {
+            self.side_expressions(child)
+                .split_off(2.min(self.conditions.len()))
+        };
         Ok(IEJoinSourceState {
             sink: Arc::clone(sink),
             inner: Mutex::new(IEJoinSourceInner {
@@ -662,7 +687,7 @@ impl Source for PhysicalIEJoin {
         global: &IEJoinSourceState,
         (): &mut (),
     ) -> Result<SourceResult> {
-        let sink = self.sink_state(&global.sink)?;
+        let sink = super::sink_state::<IEJoinGlobalState>(&global.sink, "IEJoin")?;
         let mut guard = global.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let state = &mut *guard;
         let strict2 = is_strict_comparison(self.conditions[1].comparison)?;
@@ -675,7 +700,11 @@ impl Source for PhysicalIEJoin {
                             .ranking
                             .as_ref()
                             .ok_or_else(|| Error::internal("IEJoin task without ranking"))?;
-                        Some(ActiveTask::Inner(Box::new(IEJoinUnion::new(ranking, (first, last), strict2))))
+                        Some(ActiveTask::Inner(Box::new(IEJoinUnion::new(
+                            ranking,
+                            (first, last),
+                            strict2,
+                        ))))
                     }
                     Some(IEJoinTask::Outer { left, block }) => Some(ActiveTask::Outer {
                         left,
@@ -698,9 +727,11 @@ impl Source for PhysicalIEJoin {
                     };
                     self.resolve_complex_join(sink, ranking, union, &mut executors, chunk)?
                 }
-                Some(ActiveTask::Outer { left, block, position }) => {
-                    self.resolve_outer(sink, *left, *block, position, chunk)?
-                }
+                Some(ActiveTask::Outer {
+                    left,
+                    block,
+                    position,
+                }) => self.resolve_outer(sink, *left, *block, position, chunk)?,
                 None => false,
             };
             if produced {

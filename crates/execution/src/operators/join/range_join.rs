@@ -9,8 +9,8 @@ use rustdb_buffer::{BufferManager, MemoryTag};
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_planner::operator::JoinCondition;
 use rustdb_row::sort::{
-    NullOrder, OrderModifiers, OrderType, Sort, SortColumn, SortConfig, SortGlobalSinkState, SortLocalSinkState,
-    create_sort_keys,
+    NullOrder, OrderModifiers, OrderType, Sort, SortColumn, SortConfig, SortGlobalSinkState,
+    SortLocalSinkState, create_sort_keys,
 };
 use rustdb_row::{
     ChunkIterator, HeapKeepAlive, PinProperties, RowPtr, TupleDataCollection, TupleDataLayout, ValidityType,
@@ -166,7 +166,12 @@ impl LocalSortedTable {
     }
 
     /// Sinks `input` sorted on its first condition key (`LocalSortedTable::Sink`).
-    pub(crate) fn sink(&mut self, table: &SortedTable, input: &DataChunk, conditions: &[JoinCondition]) -> Result<()> {
+    pub(crate) fn sink(
+        &mut self,
+        table: &SortedTable,
+        input: &DataChunk,
+        conditions: &[JoinCondition],
+    ) -> Result<()> {
         self.executor.execute(input, &mut self.keys)?;
         let (primary, nulls) = merge_nulls(&self.keys, conditions);
         self.has_null += nulls;
@@ -389,7 +394,8 @@ impl SortedTable {
             Some(source) => source.collect()?,
             None => Vec::new(),
         };
-        let payload_columns: Vec<usize> = (self.key_count..self.key_count + self.payload_types.len()).collect();
+        let payload_columns: Vec<usize> =
+            (self.key_count..self.key_count + self.payload_types.len()).collect();
         let sorted = SortedRows::materialize(
             &self.buffer_manager,
             &chunks,
