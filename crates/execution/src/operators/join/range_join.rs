@@ -41,8 +41,14 @@ pub(crate) struct KeyBytes {
 }
 
 impl KeyBytes {
-    fn push_column(&mut self, column: &Vector, modifiers: OrderModifiers, count: usize) -> Result<()> {
-        let keys = create_sort_keys(&[column], &[modifiers], count)?;
+    /// Appends the keys of the first `count` rows of `columns` sorted with `modifiers`.
+    pub(crate) fn push_columns(
+        &mut self,
+        columns: &[&Vector],
+        modifiers: &[OrderModifiers],
+        count: usize,
+    ) -> Result<()> {
+        let keys = create_sort_keys(columns, modifiers, count)?;
         if self.offsets.is_empty() {
             self.offsets.push(0);
         }
@@ -193,14 +199,112 @@ pub struct SortedTable {
     pub(crate) found_match: Vec<AtomicBool>,
 }
 
-/// The materialized, sorted rows.
+/// Sorted rows with random access by position: their normalized keys and their payload
+/// columns, kept pinned (DuckDB's materialized `SortedRun` with its block iterators).
 #[derive(Debug)]
-struct SortedRows {
+pub struct SortedRows {
     keys: KeyBytes,
-    /// Payload rows, all pinned.
+    payload_types: Vec<LogicalType>,
     payload: TupleDataCollection,
     rows: Vec<RowPtr>,
     keep_alive: HeapKeepAlive,
+}
+
+impl SortedRows {
+    /// Materializes sorted `chunks`: the keys of columns `key_columns` sorted with
+    /// `modifiers`, and payload columns `payload_columns`.
+    pub(crate) fn materialize(
+        buffer_manager: &BufferManager,
+        chunks: &[DataChunk],
+        key_columns: &[usize],
+        modifiers: &[OrderModifiers],
+        payload_columns: &[usize],
+        payload_types: Vec<LogicalType>,
+    ) -> Result<Self> {
+        let layout_types = if payload_types.is_empty() {
+            vec![LogicalType::BOOLEAN]
+        } else {
+            payload_types.clone()
+        };
+        let layout = Arc::new(TupleDataLayout::new(layout_types, ValidityType::CanHaveNull)?);
+        let mut payload = TupleDataCollection::new(buffer_manager.clone(), layout, MemoryTag::OrderBy)?;
+        let mut append = payload.initialize_append(PinProperties::KeepEverythingPinned);
+        let mut keys = KeyBytes::default();
+        keys.offsets.push(0);
+        let mut total = 0;
+        for chunk in chunks {
+            let count = chunk.len();
+            let columns: Vec<&Vector> = key_columns.iter().map(|&column| chunk.column(column)).collect();
+            keys.push_columns(&columns, modifiers, count)?;
+            let columns: Vec<Vector> = if payload_types.is_empty() {
+                vec![Vector::flat(LogicalType::BOOLEAN, count)]
+            } else {
+                payload_columns
+                    .iter()
+                    .map(|&column| chunk.column(column).clone())
+                    .collect()
+            };
+            payload.append(&mut append, &DataChunk::new(columns, count))?;
+            total += count;
+        }
+        payload.finalize_pin_state(&mut append.pin_state);
+        let mut rows = Vec::with_capacity(total);
+        if total > 0 {
+            let mut iterator = ChunkIterator::new(&payload, PinProperties::AlreadyPinned, false)?;
+            loop {
+                rows.extend_from_slice(iterator.row_locations());
+                if !iterator.next_chunk()? {
+                    break;
+                }
+            }
+        }
+        let keep_alive = payload.heap_keep_alive();
+        Ok(Self {
+            keys,
+            payload_types,
+            payload,
+            rows,
+            keep_alive,
+        })
+    }
+
+    /// Number of rows.
+    pub(crate) fn count(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// The normalized key of row `row`.
+    #[inline]
+    pub(crate) fn key(&self, row: usize) -> &[u8] {
+        self.keys.get(row)
+    }
+
+    /// Gathers the payload of rows `indices` into `result` (`SliceSortedPayload`).
+    pub(crate) fn gather(&self, indices: &[u32], result: &mut DataChunk) -> Result<()> {
+        let count = indices.len();
+        let mut columns: Vec<Vector> = self
+            .payload_types
+            .iter()
+            .map(|ty| Vector::flat(ty.clone(), count.max(1)))
+            .collect();
+        let column_ids: Vec<usize> = (0..self.payload_types.len()).collect();
+        if count > 0 && !columns.is_empty() {
+            // SAFETY: every row of the payload stays pinned while `self` lives.
+            unsafe {
+                self.payload.gather(
+                    &self.rows,
+                    Some(indices),
+                    count,
+                    &column_ids,
+                    &mut columns,
+                    None,
+                    Some(&self.keep_alive),
+                )?;
+            }
+        }
+        result.set_columns(columns, count);
+        Ok(())
+    }
 }
 
 impl SortedTable {
@@ -285,49 +389,17 @@ impl SortedTable {
             Some(source) => source.collect()?,
             None => Vec::new(),
         };
-        let payload_layout_types = if self.payload_types.is_empty() {
-            vec![LogicalType::BOOLEAN]
-        } else {
-            self.payload_types.clone()
-        };
-        let layout = Arc::new(TupleDataLayout::new(payload_layout_types, ValidityType::CanHaveNull)?);
-        let mut payload = TupleDataCollection::new(self.buffer_manager.clone(), layout, MemoryTag::OrderBy)?;
-        let mut append = payload.initialize_append(PinProperties::KeepEverythingPinned);
-        let mut keys = KeyBytes::default();
-        let mut total = 0;
-        for chunk in &chunks {
-            let count = chunk.len();
-            keys.push_column(chunk.column(0), self.modifiers[0], count)?;
-            let columns: Vec<Vector> = if self.payload_types.is_empty() {
-                vec![Vector::flat(LogicalType::BOOLEAN, count)]
-            } else {
-                chunk.columns()[self.key_count..].to_vec()
-            };
-            payload.append(&mut append, &DataChunk::new(columns, count))?;
-            total += count;
-        }
-        payload.finalize_pin_state(&mut append.pin_state);
-        let mut rows = Vec::with_capacity(total);
-        if total > 0 {
-            let mut iterator = ChunkIterator::new(&payload, PinProperties::AlreadyPinned, false)?;
-            loop {
-                rows.extend_from_slice(iterator.row_locations());
-                if !iterator.next_chunk()? {
-                    break;
-                }
-            }
-        }
-        if keys.offsets.is_empty() {
-            keys.offsets.push(0);
-        }
-        let keep_alive = payload.heap_keep_alive();
-        self.count.store(total, Ordering::Relaxed);
-        self.sorted = Some(SortedRows {
-            keys,
-            payload,
-            rows,
-            keep_alive,
-        });
+        let payload_columns: Vec<usize> = (self.key_count..self.key_count + self.payload_types.len()).collect();
+        let sorted = SortedRows::materialize(
+            &self.buffer_manager,
+            &chunks,
+            &[0],
+            &self.modifiers[..1],
+            &payload_columns,
+            self.payload_types.clone(),
+        )?;
+        self.count.store(sorted.count(), Ordering::Relaxed);
+        self.sorted = Some(sorted);
         Ok(())
     }
 
@@ -373,33 +445,10 @@ impl SortedTable {
 
     /// Gathers the payload of sorted rows `indices` into `result` (`SliceSortedPayload`).
     pub(crate) fn gather(&self, indices: &[u32], result: &mut DataChunk) -> Result<()> {
-        let sorted = self
-            .sorted
+        self.sorted
             .as_ref()
-            .ok_or_else(|| Error::internal("gathering from an unsorted table"))?;
-        let count = indices.len();
-        let mut columns: Vec<Vector> = self
-            .payload_types
-            .iter()
-            .map(|ty| Vector::flat(ty.clone(), count.max(1)))
-            .collect();
-        let column_ids: Vec<usize> = (0..self.payload_types.len()).collect();
-        if count > 0 && !columns.is_empty() {
-            // SAFETY: every row of the payload stays pinned while `self` lives.
-            unsafe {
-                sorted.payload.gather(
-                    &sorted.rows,
-                    Some(indices),
-                    count,
-                    &column_ids,
-                    &mut columns,
-                    None,
-                    Some(&sorted.keep_alive),
-                )?;
-            }
-        }
-        result.set_columns(columns, count);
-        Ok(())
+            .ok_or_else(|| Error::internal("gathering from an unsorted table"))?
+            .gather(indices, result)
     }
 
     /// Marks sorted row `row` matched.

@@ -30,6 +30,8 @@ pub struct JoinPlanSettings {
     pub prefer_range_joins: bool,
     /// `scalar_subquery_error_on_multiple_rows`.
     pub scalar_subquery_error_on_multiple_rows: bool,
+    /// `asof_loop_join_threshold`: ASOF joins with fewer left rows use a nested loop join.
+    pub asof_loop_join_threshold: u64,
 }
 
 impl Default for JoinPlanSettings {
@@ -39,6 +41,7 @@ impl Default for JoinPlanSettings {
             merge_join_threshold: 1000,
             prefer_range_joins: false,
             scalar_subquery_error_on_multiple_rows: true,
+            asof_loop_join_threshold: 64,
         }
     }
 }

@@ -1,6 +1,7 @@
 //! Join operators (DuckDB's `execution/operator/join`) and the helpers they share
 //! (`PhysicalJoin`, `PhysicalComparisonJoin`, `OuterJoinMarker`).
 
+mod asof_join;
 mod blockwise_nl_join;
 mod hash_join;
 mod iejoin;
@@ -9,6 +10,7 @@ mod outer_join_marker;
 mod piecewise_merge_join;
 mod range_join;
 
+pub use asof_join::{AsOfGlobalSinkState, AsOfLocalSinkState, AsOfSourceState, PhysicalAsOfJoin};
 pub use blockwise_nl_join::{BlockwiseNLJoinGlobalState, BlockwiseNLJoinState, PhysicalBlockwiseNLJoin};
 pub use iejoin::{IEJoinGlobalState, IEJoinLocalState, IEJoinSourceState, PhysicalIEJoin};
 pub use hash_join::{HashJoinGlobalSinkState, HashJoinLocalSinkState, HashJoinProbeState, PhysicalHashJoin};

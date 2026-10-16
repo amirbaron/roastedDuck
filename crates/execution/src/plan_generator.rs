@@ -29,6 +29,7 @@ use rustdb_storage::{DataTable, StorageIndex, TableConstraints};
 use rustdb_types::{DataChunk, LogicalType};
 
 use crate::constraints::table_constraints;
+mod asof_join;
 mod comparison_join;
 mod window;
 
@@ -533,6 +534,14 @@ impl PlanGenerator {
                 unreachable!("matched above")
             };
             return self.plan_comparison_join(*join, children, types);
+        }
+        if let LogicalKind::ComparisonJoin(join) = &kind
+            && join.operator_type == LogicalOperatorType::LogicalAsofJoin
+        {
+            let LogicalKind::ComparisonJoin(join) = kind else {
+                unreachable!("matched above")
+            };
+            return self.plan_asof_join(*join, children, types);
         }
         if let LogicalKind::DelimGet { .. } = &kind {
             let (shared, depth) = self

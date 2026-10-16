@@ -337,6 +337,7 @@ impl Settings {
             merge_join_threshold: unsigned("merge_join_threshold", defaults.merge_join_threshold),
             prefer_range_joins: boolean("prefer_range_joins", defaults.prefer_range_joins),
             scalar_subquery_error_on_multiple_rows: self.planner.scalar_subquery_error_on_multiple_rows,
+            asof_loop_join_threshold: unsigned("asof_loop_join_threshold", defaults.asof_loop_join_threshold),
         }
     }
 

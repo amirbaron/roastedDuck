@@ -173,6 +173,30 @@ impl SortStrategy {
         }
     }
 
+    /// Makes `target` (a state of this strategy) partition on the radix bits `source`
+    /// partitions on, and keeps them fixed, so both have the same hash groups
+    /// (`HashedSort::Synchronize`).
+    pub fn synchronize(&self, source: &StrategyGlobalState, target: &StrategyGlobalState) -> Result<()> {
+        if let (Self::Hashed(hashed), StrategyGlobalState::Hashed(source), StrategyGlobalState::Hashed(target)) =
+            (self, source, target)
+        {
+            let bits = lock(&source.inner)
+                .grouping
+                .as_ref()
+                .map_or(0, PartitionedTupleData::radix_bits);
+            let mut inner = lock(&target.inner);
+            let old_bits = inner
+                .grouping
+                .as_ref()
+                .map_or(0, PartitionedTupleData::radix_bits);
+            inner.fixed_bits = bits != 0;
+            if bits != old_bits {
+                inner.grouping = Some(hashed.create_partition(bits)?);
+            }
+        }
+        Ok(())
+    }
+
     /// Ends the sink phase; `false` if there is no output.
     pub fn finalize(&self, global: &mut StrategyGlobalState) -> Result<bool> {
         match (self, global) {
