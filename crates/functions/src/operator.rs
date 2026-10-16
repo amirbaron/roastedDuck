@@ -13,6 +13,9 @@ pub(crate) trait CheckedInt: NativeType + Display + Ord {
     fn checked_add_(self, other: Self) -> Option<Self>;
     fn checked_sub_(self, other: Self) -> Option<Self>;
     fn checked_mul_(self, other: Self) -> Option<Self>;
+    /// `NegateOperator`: only the minimum of a signed type cannot be negated; unsigned
+    /// values wrap around.
+    fn negate_(self) -> Option<Self>;
 }
 
 macro_rules! checked_int {
@@ -25,6 +28,10 @@ macro_rules! checked_int {
             fn checked_sub_(self, other: Self) -> Option<Self> { self.checked_sub(other) }
             #[inline]
             fn checked_mul_(self, other: Self) -> Option<Self> { self.checked_mul(other) }
+            #[inline]
+            fn negate_(self) -> Option<Self> {
+                self.checked_neg().or_else(|| (<$ty>::MIN == 0).then(|| self.wrapping_neg()))
+            }
         }
     )*};
 }
@@ -32,6 +39,10 @@ checked_int!(i8, i16, i32, i64, u8, u16, u32, u64, u128);
 
 impl CheckedInt for i128 {
     const ZERO: Self = 0;
+    #[inline]
+    fn negate_(self) -> Option<Self> {
+        self.checked_neg()
+    }
     #[inline]
     fn checked_add_(self, other: Self) -> Option<Self> {
         self.checked_add(other)

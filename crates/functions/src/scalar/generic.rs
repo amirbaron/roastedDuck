@@ -38,7 +38,13 @@ pub fn typeof_functions() -> ScalarFunctionSet {
         vec![LogicalType::ANY],
         LogicalType::VARCHAR,
         |args, _, result| constant(result, &Value::varchar(args.column(0).logical_type().to_string())),
-    );
+    )
+    .with_bind_expression(|_, argument_types| {
+        // `BindTypeOfFunctionExpression`: a constant unless the type is unknown.
+        let ty = argument_types.first()?;
+        (!matches!(ty.id(), LogicalTypeId::Unknown | LogicalTypeId::SqlNull))
+            .then(|| Value::varchar(ty.to_string()))
+    });
     function.null_handling = NullHandling::Special;
     set("typeof", vec![function])
 }
@@ -57,6 +63,12 @@ pub fn get_type_functions() -> ScalarFunctionSet {
         }
         function.arguments[0] = input.argument_types[0].clone();
         Ok(None)
+    })
+    .with_bind_expression(|_, argument_types| {
+        // `BindGetTypeFunctionExpression`.
+        let ty = argument_types.first()?;
+        (!matches!(ty.id(), LogicalTypeId::Unknown | LogicalTypeId::SqlNull))
+            .then(|| Value::type_value(ty.clone()))
     });
     function.null_handling = NullHandling::Special;
     set("get_type", vec![function])

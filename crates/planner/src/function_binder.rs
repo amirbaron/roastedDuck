@@ -625,8 +625,10 @@ impl<'a> FunctionBinder<'a> {
             function.varargs.as_ref(),
             &function.return_type,
         )?;
+        let argument_types: Vec<LogicalType> =
+            children.iter().map(|child| child.return_type.clone()).collect();
         if let Some(bind_expression) = &function.bind_expression
-            && let Some(value) = bind_expression(bind_info.as_deref())
+            && let Some(value) = bind_expression(bind_info.as_deref(), &argument_types)
         {
             return Ok(Expression::constant(value));
         }

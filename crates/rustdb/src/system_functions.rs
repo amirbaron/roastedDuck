@@ -932,6 +932,89 @@ impl FunctionData for VariableValue {
     }
 }
 
+/// The type a `make_type` call names.
+#[derive(Debug)]
+struct MadeType(LogicalType);
+
+impl FunctionData for MadeType {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// `make_type(name, [parameters...])` (DuckDB's `MakeTypeFun`): the constant TYPE of the
+/// type `name` with the (named) parameters, bound like a type in SQL text.
+fn make_type_function() -> ScalarFunctionSet {
+    use rustdb_types::{TypeInfo, TypeParameter, TypeParameterValue, UnboundTypeInfo};
+    let mut function = ScalarFunction::new(
+        "make_type",
+        vec![LogicalType::VARCHAR],
+        LogicalType::simple(LogicalTypeId::Type),
+        |_: &DataChunk, _: &mut FunctionState, _: &mut Vector| {
+            Err(Error::invalid_input(
+                "make_type function can only be used in constant expressions",
+            ))
+        },
+    )
+    .with_bind(|_, input| {
+        // `BindMakeTypeFunctionExpression`.
+        let mut arguments = Vec::with_capacity(input.constants.len());
+        for (index, constant) in input.constants.iter().enumerate() {
+            let Some(value) = constant else {
+                return Err(Error::binder(
+                    "make_type function arguments must be constant expressions",
+                ));
+            };
+            arguments.push((
+                input.aliases.get(index).cloned().unwrap_or_default(),
+                value.clone(),
+            ));
+        }
+        let Some((_, name)) = arguments.first() else {
+            return Err(Error::binder("make_type function requires at least one argument"));
+        };
+        if name.logical_type().id() != LogicalTypeId::Varchar {
+            return Err(Error::binder(
+                "make_type function first argument must be the type name as VARCHAR",
+            ));
+        }
+        let (catalog, schema, name) = crate::sequence::parse_qualified_name(&name.to_varchar()?)?;
+        let parameters = arguments[1..]
+            .iter()
+            .map(|(alias, value)| TypeParameter {
+                name: alias.clone(),
+                value: TypeParameterValue::Constant(value.clone()),
+                query_location: None,
+            })
+            .collect();
+        let unbound = LogicalType::with_info(
+            LogicalTypeId::Unbound,
+            TypeInfo::Unbound(UnboundTypeInfo {
+                catalog,
+                schema,
+                name,
+                parameters,
+                query_location: None,
+            }),
+        );
+        let context = input
+            .binder
+            .and_then(|binder| binder.downcast_ref::<ClientContext>())
+            .ok_or_else(|| Error::internal("make_type bound without a client context"))?;
+        let bound = rustdb_planner::bind_logical_type(context, &unbound)?;
+        Ok(Some(Arc::new(MadeType(bound)) as Arc<dyn FunctionData>))
+    })
+    .with_bind_expression(|data, _| {
+        data.and_then(|data| data.as_any().downcast_ref::<MadeType>())
+            .map(|made| Value::type_value(made.0.clone()))
+    });
+    function.varargs = Some(LogicalType::ANY);
+    function.null_handling = rustdb_function::NullHandling::Special;
+    let mut set = ScalarFunctionSet::new("make_type");
+    set.add(function);
+    set
+}
+
 /// `getvariable(name)` (DuckDB's `GetVariableFun`): replaced by the variable's value,
 /// a constant of the value's type, when bound.
 fn getvariable_function() -> ScalarFunctionSet {
@@ -969,7 +1052,7 @@ fn getvariable_function() -> ScalarFunctionSet {
         function.return_type = value.logical_type().clone();
         Ok(Some(Arc::new(VariableValue(value)) as Arc<dyn FunctionData>))
     })
-    .with_bind_expression(|data| {
+    .with_bind_expression(|data, _| {
         data.and_then(|data| data.as_any().downcast_ref::<VariableValue>())
             .map(|variable| variable.0.clone())
     });
@@ -985,6 +1068,7 @@ pub(crate) fn context_scalar_functions() -> Vec<ScalarFunctionSet> {
         context_function("current_schema", |context| context.default_schema().to_owned()),
         in_search_path_function(),
         getvariable_function(),
+        make_type_function(),
     ]
 }
 

@@ -421,15 +421,20 @@ impl Temporal for Time {
     }
 }
 
+/// `dtime_ns_t::time()`: the microseconds of a `TIME_NS`, truncated (the TIME cast rounds).
+fn time_ns_micros(time: TimeNs) -> Time {
+    Time(time.0 / Interval::NANOS_PER_MICRO)
+}
+
 impl Temporal for TimeNs {
     fn bigint_part(self, part: Part) -> Result<i64> {
-        time_part(self.to_time().0, part)
+        time_part(time_ns_micros(self).0, part)
     }
     fn to_epoch(self) -> Result<f64> {
-        self.to_time().to_epoch()
+        time_ns_micros(self).to_epoch()
     }
     fn to_epoch_us(self) -> Result<i64> {
-        Ok(self.to_time().0)
+        Ok(time_ns_micros(self).0)
     }
     fn to_epoch_ms(self) -> Result<i64> {
         Err(Error::conversion("Unimplemented type for cast (INT64 -> INT64)"))

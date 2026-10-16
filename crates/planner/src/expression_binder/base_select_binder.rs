@@ -1261,7 +1261,7 @@ impl SelectBinder<'_> {
                 let value = context.evaluator.evaluate_scalar(bound)?;
                 match name.as_str() {
                     "recursive" => {
-                        if value.as_bool() == Some(true) {
+                        if value_get_bool(&value)? {
                             max_depth = u64::MAX;
                         }
                     }
@@ -1274,7 +1274,7 @@ impl SelectBinder<'_> {
                             return Err(Error::binder("UNNEST cannot have a max depth of 0"));
                         }
                     }
-                    "keep_parent_names" => keep_parent_names = value.as_bool() == Some(true),
+                    "keep_parent_names" => keep_parent_names = value_get_bool(&value)?,
                     "" => break,
                     other => {
                         return Err(Error::binder(format!(
@@ -1524,4 +1524,19 @@ fn negate_percentile_fractions(
     };
     set_bound(fractions, Expression::constant(folded));
     Ok(())
+}
+
+/// `Value::GetValue<bool>`: a non-boolean value is read as a TINYINT.
+fn value_get_bool(value: &Value) -> Result<bool> {
+    if value.logical_type().id() == LogicalTypeId::Boolean {
+        return Ok(value.as_bool() == Some(true));
+    }
+    let number = value.try_cast(&LogicalType::TINYINT).map_err(|error| {
+        if error.kind() == rustdb_common::ErrorKind::Conversion {
+            Error::invalid_input(error.raw_message().to_owned())
+        } else {
+            error
+        }
+    })?;
+    Ok(number.as_i128().is_some_and(|number| number != 0))
 }

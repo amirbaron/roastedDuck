@@ -483,7 +483,16 @@ impl Value {
             PhysicalType::Interval => Payload::Interval(vector.values::<Interval>()[slot]),
             PhysicalType::Varchar => {
                 let value = &vector.values::<StringT>()[slot];
-                Payload::Bytes(Arc::from(vector.string_value(value)))
+                let bytes = vector.string_value(value);
+                if ty.id() == LogicalTypeId::Type {
+                    // TYPE values hold their serialized type (`Value::TYPE(string_t)`).
+                    if let Ok(inner) =
+                        rustdb_serde::binary::BinaryDeserializer::deserialize::<LogicalType>(bytes)
+                    {
+                        return Self::type_value(inner);
+                    }
+                }
+                Payload::Bytes(Arc::from(bytes))
             }
             PhysicalType::List
             | PhysicalType::Struct
@@ -527,11 +536,18 @@ impl Value {
             Payload::Nested(_) => {
                 return Err(Error::internal("nested values are written by Vector::set_value"));
             }
-            Payload::Type(_) => {
-                return Err(Error::not_implemented(format!(
-                    "Writing {} values into vectors",
-                    self.ty
-                )));
+            Payload::Type(ty) => {
+                // `Value::TYPE`: the type in DuckDB's binary serialization.
+                let bytes = rustdb_serde::binary::BinarySerializer::serialize(
+                    ty,
+                    rustdb_serde::SerializationOptions {
+                        compatibility: rustdb_serde::SerializationCompatibility::latest(),
+                        ..rustdb_serde::SerializationOptions::default()
+                    },
+                )
+                .map_err(|error| Error::internal(format!("serializing a TYPE value: {error}")))?;
+                let string: StringT = vector.add_string(&bytes);
+                vector.values_mut::<StringT>()[slot] = string;
             }
         }
         Ok(())

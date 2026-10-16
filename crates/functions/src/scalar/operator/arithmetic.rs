@@ -316,8 +316,8 @@ fn unary_plus(ty: &LogicalType) -> ScalarFunction {
 
 /// `-x` of an integer (DuckDB's `NegateOperator`).
 fn negate_int<T: CheckedInt>(value: T) -> Result<T> {
-    T::ZERO
-        .checked_sub_(value)
+    value
+        .negate_()
         .ok_or_else(|| Error::out_of_range("Overflow in negation of numeric value!"))
 }
 

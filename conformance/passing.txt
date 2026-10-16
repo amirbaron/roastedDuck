@@ -2960,6 +2960,7 @@ test/sql/types/bignum/test_bignum_hugeint.test
 test/sql/types/bignum/test_bignum_implicit_cast.test
 test/sql/types/bignum/test_bignum_not_cast.test
 test/sql/types/bignum/test_bignum_subtract.test
+test/sql/types/bignum/test_bignum_sum.test
 test/sql/types/bignum/test_bignum_try_cast.test
 test/sql/types/bignum/test_double_bignum.test
 test/sql/types/bignum/test_int_bignum_conversion.test
@@ -3096,6 +3097,7 @@ test/sql/types/list/mix_numeric_types.test
 test/sql/types/list/nested_list_extract.test
 test/sql/types/list/nested_list_slice.test
 test/sql/types/list/nested_list_updates.test
+test/sql/types/list/recursive_unnest.test
 test/sql/types/list/unnest_aggregate.test
 test/sql/types/list/unnest_complex_types.test
 test/sql/types/list/unnest_expand.test
@@ -3261,6 +3263,7 @@ test/sql/types/test_typeof.test
 test/sql/types/test_user_type_errors_18452.test
 test/sql/types/time/test_time.test
 test/sql/types/time/test_time_2411.test
+test/sql/types/time/test_time_ns.test
 test/sql/types/time/test_time_tz.test
 test/sql/types/time/test_time_tz_collate.test
 test/sql/types/time/time_limits.test
@@ -3280,6 +3283,7 @@ test/sql/types/timestamp/timestamp_limits.test
 test/sql/types/timestamp/timestamp_precision.test
 test/sql/types/timestamp/timestamp_try_cast.test
 test/sql/types/uhugeint/test_uhugeint_aggregates.test
+test/sql/types/uhugeint/test_uhugeint_arithmetic.test
 test/sql/types/uhugeint/test_uhugeint_auto_cast.test
 test/sql/types/uhugeint/test_uhugeint_conversion.test
 test/sql/types/uhugeint/test_uhugeint_exponent.test
@@ -3306,6 +3310,7 @@ test/sql/types/union/union_validity.test
 test/sql/types/union/union_value.test
 test/sql/types/unsigned/test_unsigned_arithmetic.test
 test/sql/types/unsigned/test_unsigned_auto_cast.test
+test/sql/types/unsigned/test_unsigned_conversion.test
 test/sql/types/unsigned/test_unsigned_verify.test
 test/sql/types/uuid/test_uuid.test_slow
 test/sql/types/uuid/test_uuid_cast.test
