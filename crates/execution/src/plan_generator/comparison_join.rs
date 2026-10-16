@@ -263,6 +263,12 @@ impl PlanGenerator {
         let cardinalities = (estimate_cardinality(&left), estimate_cardinality(&right));
         let left = self.plan(left)?;
         let right = self.plan(right)?;
+        // The children's plans carry the estimates computed here (DuckDB sets
+        // `left.estimated_cardinality = lhs_cardinality`).
+        self.estimates
+            .insert(super::explain::operator_key(left.as_ref()), cardinalities.0);
+        self.estimates
+            .insert(super::explain::operator_key(right.as_ref()), cardinalities.1);
         create_comparison_join(self, join, types, left, right, cardinalities)
     }
 }

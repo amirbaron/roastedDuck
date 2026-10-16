@@ -323,6 +323,13 @@ impl RowGroup {
                 return Ok(());
             }
             let max_count = (state.max_row_group_row - current_row).min(VECTOR_SIZE) as usize;
+            // SYSTEM sampling skips whole vectors.
+            if let Some(sampling) = &mut state.sampling
+                && sampling.random.next_random() > sampling.sample_rate
+            {
+                self.next_vector(state, column_ids)?;
+                continue;
+            }
             if !self.check_zonemap_segments(state, column_ids, filters, row_start)? {
                 continue;
             }

@@ -262,19 +262,27 @@ impl PlanGenerator {
                 .filter(|(_, column)| column.is_row_id_column())
                 .map(|(position, _)| position)
                 .collect(),
+            sample_method: get
+                .sample_options
+                .as_ref()
+                .map(|sample| format!("System: {}%", sample.sample_size.to_varchar().unwrap_or_default())),
         };
-        Ok(Arc::new(
-            PhysicalSeqScan::new(
-                types,
-                storage,
-                Arc::clone(&context.transaction),
-                column_ids,
-                filters,
-                projection,
-            )
-            .with_dynamic_filters(get.dynamic_filters.clone())
-            .with_explain_info(explain),
-        ))
+        let mut scan = PhysicalSeqScan::new(
+            types,
+            storage,
+            Arc::clone(&context.transaction),
+            column_ids,
+            filters,
+            projection,
+        )
+        .with_dynamic_filters(get.dynamic_filters.clone())
+        .with_explain_info(explain);
+        if let Some(sample) = &get.sample_options {
+            // DuckDB's `ScanSamplingInfo`: the percentage as a fraction.
+            let percentage = sample.sample_size.as_f64().unwrap_or(100.0);
+            scan = scan.with_sampling(percentage / 100.0, sample.seed);
+        }
+        Ok(Arc::new(scan))
     }
 
     /// `INSERT` (DuckDB's `CreatePlan(LogicalInsert&)`); the defaults of columns missing
@@ -589,7 +597,15 @@ impl PlanGenerator {
         let distinct_estimate = self.recorded_estimate(&(Arc::clone(first_scan) as PhysicalRef));
         let input_types = input.types().to_vec();
         let duplicate_eliminated_columns = std::mem::take(&mut join.duplicate_eliminated_columns);
-        let distinct_groups = duplicate_eliminated_columns.len();
+        // The DISTINCT groups by the duplicate-eliminated columns, by reference.
+        let distinct_groups = duplicate_eliminated_columns
+            .iter()
+            .enumerate()
+            .map(|(position, column)| match &column.kind {
+                ExpressionKind::Reference(reference) => reference.index,
+                _ => position as u64,
+            })
+            .collect();
         let delim = PhysicalDelimJoin::new(duplicate_eliminated_columns, &shared, Arc::clone(&input));
         let cached: PhysicalRef = Arc::new(PhysicalDelimScan::buffered_input(
             input_types,
@@ -974,6 +990,7 @@ impl PlanGenerator {
                         .filter_map(|column| get.names.get(usize::try_from(column.index).ok()?).cloned())
                         .collect(),
                     virtual_columns: Vec::new(),
+                    sample_method: None,
                 };
                 Arc::new(
                     PhysicalTableScan::new(types, get.function, get.bind_data, column_ids)

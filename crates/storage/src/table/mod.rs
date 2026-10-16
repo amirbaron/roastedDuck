@@ -26,7 +26,7 @@ pub use row_group_collection::{
 pub use row_version_manager::RowVersionManager;
 pub use scan_state::{
     CollectionScanState, ParallelCollectionScanState, ParallelTableScanState, ScanFilter, ScanFilterInfo,
-    StorageIndex, TableScanOptions, TableScanState,
+    ScanRandom, ScanSampling, StorageIndex, TableScanOptions, TableScanState,
 };
 pub use segment_tree::{Segment, SegmentNode, SegmentTree};
 pub use update_segment::{UpdateSegment, UpdateVersion};

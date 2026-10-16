@@ -55,6 +55,19 @@ impl ColumnBindingReplacer {
         op.for_each_expression_mut(|expression| self.visit_expression(expression));
     }
 
+    /// Rewrites `op` and everything below it, children first, except the subtree of the
+    /// operator with [`LogicalOperator::node_id`] `stop_operator` (DuckDB's
+    /// `ColumnBindingReplacer::stop_operator`).
+    pub fn visit_operator_until(&self, op: &mut LogicalOperator, stop_operator: Option<u64>) {
+        if stop_operator == Some(op.node_id()) {
+            return;
+        }
+        for child in &mut op.children {
+            self.visit_operator_until(child, stop_operator);
+        }
+        op.for_each_expression_mut(|expression| self.visit_expression(expression));
+    }
+
     /// Rewrites the column references in `expression`.
     pub fn visit_expression(&self, expression: &mut Expression) {
         if let ExpressionKind::ColumnRef(column) = &mut expression.kind {

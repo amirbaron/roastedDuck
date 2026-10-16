@@ -119,7 +119,7 @@ fn add_references(op: &mut LogicalOperator, references: &mut BTreeSet<ColumnBind
 
 /// The row id's position in the scan's columns, adding it if it is not scanned yet
 /// (DuckDB's `LateMaterializationHelper::GetOrInsertRowIds`).
-fn get_or_insert_row_id(get: &mut LogicalGet) -> u64 {
+pub(crate) fn get_or_insert_row_id(get: &mut LogicalGet) -> u64 {
     if let Some(position) = get.column_ids.iter().position(ColumnIndex::is_row_id_column) {
         return position as u64;
     }

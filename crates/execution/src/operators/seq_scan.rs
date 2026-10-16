@@ -4,6 +4,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rustdb_common::{Result, STANDARD_VECTOR_SIZE};
+use rustdb_function::random::RandomEngine;
+use rustdb_storage::table::{ScanRandom, ScanSampling};
 use rustdb_storage::table_filter::DynamicTableFilterSet;
 use rustdb_storage::{
     DataTable, ParallelTableScanState, StorageIndex, TableFilterSet, TableScanState, Transaction,
@@ -41,6 +43,19 @@ pub struct PhysicalSeqScan {
     index_scan: Option<(u64, f64)>,
     /// What `EXPLAIN` shows about the scan.
     explain: ScanExplainInfo,
+    /// SYSTEM sampling pushed into the scan: the fraction of vectors to keep and the
+    /// `REPEATABLE` seed (DuckDB's `extra_info.sample_options`).
+    sampling: Option<(f64, Option<u64>)>,
+}
+
+/// [`RandomEngine`] as the storage's sampling random source.
+#[derive(Debug)]
+struct SamplingRandom(RandomEngine);
+
+impl ScanRandom for SamplingRandom {
+    fn next_random(&mut self) -> f64 {
+        self.0.next_random()
+    }
 }
 
 /// The names `EXPLAIN` shows for a table scan (the bind data and `names` DuckDB's
@@ -54,6 +69,8 @@ pub struct ScanExplainInfo {
     /// Positions of virtual columns (`rowid`), which DuckDB does not list as projections
     /// (`AddProjectionNames` skips ids past the table's columns).
     pub virtual_columns: Vec<usize>,
+    /// The pushed-down sampling (`System: 10%`).
+    pub sample_method: Option<String>,
 }
 
 impl ScanExplainInfo {
@@ -100,6 +117,9 @@ impl ScanExplainInfo {
         if let Some(dynamic_filters) = dynamic_filters {
             result.insert("Dynamic Filters".to_owned(), filter_info(dynamic_filters));
         }
+        if let Some(sample) = &self.sample_method {
+            result.insert("Sample Method".to_owned(), sample.clone());
+        }
         set_estimated_cardinality(&mut result, estimated_cardinality);
         result
     }
@@ -131,6 +151,7 @@ impl PhysicalSeqScan {
             projection,
             index_scan: Some((DEFAULT_INDEX_SCAN_MAX_COUNT, DEFAULT_INDEX_SCAN_PERCENTAGE)),
             explain: ScanExplainInfo::default(),
+            sampling: None,
         }
     }
 
@@ -155,6 +176,14 @@ impl PhysicalSeqScan {
     #[must_use]
     pub fn with_explain_info(mut self, explain: ScanExplainInfo) -> Self {
         self.explain = explain;
+        self
+    }
+
+    /// Pushes SYSTEM sampling into the scan: each vector is kept with probability
+    /// `sample_rate`, drawn from an engine seeded with `seed` if given.
+    #[must_use]
+    pub fn with_sampling(mut self, sample_rate: f64, seed: Option<u64>) -> Self {
+        self.sampling = Some((sample_rate, seed));
         self
     }
 
@@ -277,6 +306,18 @@ impl Source for PhysicalSeqScan {
     fn local_source_state(&self, _: &ExecutionContext, global: &Self::Global) -> Result<Self::Local> {
         let mut state = TableScanState::default();
         state.initialize(self.column_ids.clone(), global.filters.as_ref());
+        if let Some((sample_rate, seed)) = self.sampling {
+            // DuckDB seeds the committed data's engine only.
+            let table_random = seed.map_or_else(RandomEngine::default, RandomEngine::new);
+            state.table_state.sampling = Some(ScanSampling {
+                sample_rate,
+                random: Box::new(SamplingRandom(table_random)),
+            });
+            state.local_state.sampling = Some(ScanSampling {
+                sample_rate,
+                random: Box::new(SamplingRandom(RandomEngine::default())),
+            });
+        }
         Ok(SeqScanLocal {
             state,
             has_morsel: false,

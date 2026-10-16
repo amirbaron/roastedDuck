@@ -2,7 +2,7 @@
 //! each unless disabled through `disabled_optimizers`.
 
 use std::cell::Cell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use rustdb_catalog::EntryKind;
@@ -348,6 +348,11 @@ impl Optimizer {
         let plan = self.run(OptimizerType::LimitPushdown, plan, |_, plan| {
             Ok(crate::limit_pushdown::optimize(plan))
         })?;
+        // SYSTEM samples of table scans skip vectors in the scan.
+        let plan = self.run(OptimizerType::SamplingPushdown, plan, |_, mut plan| {
+            crate::sampling_pushdown::push_down_sampling(&mut plan);
+            Ok(plan)
+        })?;
         // ORDER BY + LIMIT becomes a Top-N.
         let plan = self.run(OptimizerType::TopN, plan, |_, plan| {
             Ok(crate::topn::optimize(plan))
@@ -358,12 +363,27 @@ impl Optimizer {
             crate::late_materialization::late_materialize(optimizer, &mut plan)?;
             Ok(plan)
         })?;
+        let mut statistics_map = HashMap::new();
         let plan = self.run(
             OptimizerType::StatisticsPropagation,
             plan,
             |optimizer, mut plan| {
                 let mut propagator = StatisticsPropagator::new(optimizer, &mut plan)?;
                 propagator.propagate_statistics(&mut plan)?;
+                statistics_map = propagator.into_statistics_map();
+                Ok(plan)
+            },
+        )?;
+        // `row_number()` windows filtered to the first rows become grouped aggregates.
+        let plan = self.run(
+            OptimizerType::TopNWindowElimination,
+            plan,
+            |optimizer, mut plan| {
+                crate::topn_window_elimination::eliminate_topn_windows(
+                    optimizer,
+                    &mut plan,
+                    &statistics_map,
+                )?;
                 Ok(plan)
             },
         )?;

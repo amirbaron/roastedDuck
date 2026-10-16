@@ -310,6 +310,20 @@ impl Settings {
                 }
                 self.other.insert(option, value.clone());
             }
+            "perfect_ht_threshold" => {
+                // DuckDB's `PerfectHtThresholdSetting::OnSet`.
+                let bits = value
+                    .default_cast_as(&LogicalType::UBIGINT)?
+                    .as_i128()
+                    .unwrap_or(0);
+                if bits > 32 {
+                    return Err(Error::new(
+                        ErrorKind::Parser,
+                        "Perfect HT threshold out of range: should be within range 0 - 32",
+                    ));
+                }
+                self.other.insert(option, value.clone());
+            }
             "disabled_optimizers" => {
                 OptimizerType::parse_list(&value.to_varchar()?)?;
                 self.other.insert(option, value.clone());

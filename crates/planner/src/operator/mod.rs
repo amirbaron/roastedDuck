@@ -146,6 +146,8 @@ pub struct LogicalGet {
     /// Filters that joins above set at run time, keyed by position in `column_ids`
     /// (DuckDB's `LogicalGet::dynamic_filters`).
     pub dynamic_filters: Option<Arc<rustdb_storage::table_filter::DynamicTableFilterSet>>,
+    /// SYSTEM sampling pushed into the scan (DuckDB's `extra_info.sample_options`).
+    pub sample_options: Option<Box<rustdb_ast::SampleOptions>>,
 }
 
 /// The output bindings of INSERT/DELETE/UPDATE: the table's columns with `RETURNING`, the

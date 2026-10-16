@@ -493,6 +493,7 @@ fn bind_base_table(
                 table_schema: Some((found.catalog.clone(), found.schema.clone())),
                 table_filters: rustdb_storage::TableFilterSet::default(),
                 dynamic_filters: None,
+                sample_options: None,
             };
             Ok(BoundStatement::new(
                 LogicalOperator::new(LogicalKind::Get(Box::new(get))),

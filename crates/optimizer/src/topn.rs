@@ -52,8 +52,15 @@ pub fn can_optimize(op: &LogicalOperator) -> bool {
 /// Turns every LIMIT over an ORDER BY into a Top-N, keeping the projections between
 /// them above it (DuckDB's `TopN::Optimize`).
 pub fn optimize(mut op: LogicalOperator) -> LogicalOperator {
-    if let Some(child) = op.children.first_mut() {
-        // DuckDB estimates the child first to decide on the cheaper strategy.
+    if let LogicalKind::Limit {
+        limit: BoundLimitNode::ConstantValue(_),
+        offset,
+    } = &op.kind
+        && !matches!(offset, BoundLimitNode::ExpressionValue(_))
+        && let Some(child) = op.children.first_mut()
+    {
+        // DuckDB estimates a constant LIMIT's child first to decide on the cheaper
+        // strategy.
         child.estimate_cardinality();
     }
     if can_optimize(&op)

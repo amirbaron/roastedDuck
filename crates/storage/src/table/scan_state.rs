@@ -154,6 +154,24 @@ pub struct CollectionScanState {
     pub(crate) valid_sel: Vec<u32>,
     /// Rows considered before filters were applied.
     pub rows_scanned: u64,
+    /// SYSTEM sampling pushed into the scan (DuckDB's `ScanSamplingInfo` with the
+    /// state's `random`): the vectors to skip.
+    pub sampling: Option<ScanSampling>,
+}
+
+/// A source of random numbers in `[0, 1)` for scan sampling (DuckDB's `RandomEngine`,
+/// which lives with the functions).
+pub trait ScanRandom: std::fmt::Debug + Send + Sync {
+    /// The next random number in `[0, 1)` (`RandomEngine::NextRandom`).
+    fn next_random(&mut self) -> f64;
+}
+
+/// SYSTEM sampling of a scan: each vector is kept with probability `sample_rate`
+/// (DuckDB's `ScanSamplingInfo`).
+#[derive(Debug)]
+pub struct ScanSampling {
+    pub sample_rate: f64,
+    pub random: Box<dyn ScanRandom>,
 }
 
 /// Options of a table scan (DuckDB's `TableScanOptions`).

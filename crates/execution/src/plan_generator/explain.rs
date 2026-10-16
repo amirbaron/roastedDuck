@@ -91,8 +91,8 @@ pub(super) struct DelimExplain {
     pub name: &'static str,
     pub delim_index: u64,
     pub input: PhysicalRef,
-    /// The number of duplicate-eliminated columns (the DISTINCT's groups).
-    pub distinct_groups: usize,
+    /// The input positions of the duplicate-eliminated columns (the DISTINCT's groups).
+    pub distinct_groups: Vec<u64>,
     /// The DISTINCT's estimate: that of the first delim scan.
     pub distinct_estimate: u64,
 }
@@ -143,7 +143,9 @@ impl RenderSource for PhysicalRenderNode<'_> {
             }
             Self::DelimDistinct { delim } => {
                 let mut params = rustdb_common::tree_renderer::RenderParams::new();
-                let groups: Vec<String> = (0..delim.distinct_groups)
+                let groups: Vec<String> = delim
+                    .distinct_groups
+                    .iter()
                     .map(|index| format!("#{index}"))
                     .collect();
                 params.insert("Groups".to_owned(), groups.join("\n"));

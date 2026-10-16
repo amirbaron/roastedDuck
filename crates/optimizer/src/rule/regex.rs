@@ -189,8 +189,8 @@ pub fn regex_optimization(
     function.children.truncate(2);
     function.children[1] = Expression::constant(Value::varchar(needle));
     let children = std::mem::take(&mut function.children);
-    let is_operator = function_name == "~~";
-    match bind_scalar_function(context.client, function_name, children, is_operator) {
+    // DuckDB builds a plain function call, shown as `"~~"(s, '%a_a%')`.
+    match bind_scalar_function(context.client, function_name, children, false) {
         Ok(replacement) => Ok(RuleOutcome::Replaced(replacement)),
         Err(error) => Err(error),
     }

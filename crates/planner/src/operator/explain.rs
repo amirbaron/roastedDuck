@@ -180,6 +180,15 @@ impl LogicalOperator {
                     .filter_map(|(&column, filter)| get.names.get(column).map(|name| filter.to_sql(name)))
                     .collect();
                 result.insert("Filters".to_owned(), filters.join("\n"));
+                if let Some(sample_options) = &get.sample_options {
+                    result.insert(
+                        "Sample Method".to_owned(),
+                        format!(
+                            "System: {}%",
+                            sample_options.sample_size.to_varchar().unwrap_or_default()
+                        ),
+                    );
+                }
                 if let (Some(table), Some((catalog, schema))) = (&get.table, &get.table_schema) {
                     result.insert(
                         "Table".to_owned(),

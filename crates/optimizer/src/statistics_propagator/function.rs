@@ -46,6 +46,9 @@ pub(super) fn propagate_scalar_function(
                 _ => None,
             })
         }
+        "struct_extract" | "array_extract" if child_stats.len() == 2 => {
+            Ok(propagate_struct_extract(expression, child_stats))
+        }
         "date_trunc" if child_stats.len() == 2 => {
             Ok(propagate_date_trunc(propagator, expression, child_stats))
         }
@@ -192,6 +195,30 @@ fn propagate_date_part(
     // `CopyValidity`.
     result.set_validity(child.can_have_null(), child.can_have_no_null());
     Some(result)
+}
+
+/// DuckDB's `PropagateStructExtractStats`: the statistics of the field a key extract
+/// (`struct_extract(s, 'name')`, also bound for `s['name']`) reads.
+fn propagate_struct_extract(
+    expression: &Expression,
+    child_stats: &[BaseStatistics],
+) -> Option<BaseStatistics> {
+    let ExpressionKind::Function(function) = &expression.kind else {
+        return None;
+    };
+    let [input, key] = function.children.as_slice() else {
+        return None;
+    };
+    if function.function.arguments.get(1)?.id() != LogicalTypeId::Varchar {
+        return None;
+    }
+    let key = key.as_constant()?.as_str()?.to_lowercase();
+    let index = input
+        .return_type
+        .struct_children()?
+        .iter()
+        .position(|(name, _)| name.to_lowercase() == key)?;
+    child_stats.first()?.struct_children()?.get(index).cloned()
 }
 
 /// DuckDB's `DateTruncStatistics`: `date_trunc(part, x)` over a DATE or TIMESTAMP with a
