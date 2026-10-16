@@ -8,6 +8,7 @@ pub mod encoders;
 pub mod stats;
 pub mod types;
 pub mod values;
+pub mod written_stats;
 
 use std::fs::File;
 use std::io::{BufWriter, Write as _};
@@ -416,6 +417,17 @@ impl ParquetWriter {
     /// The bytes written so far (`FileSize`).
     pub fn file_size(&self) -> u64 {
         self.sink.as_ref().map_or(self.final_size, FileSink::written)
+    }
+
+    /// What `RETURN_STATS` reports about the finalized file (`GatherWrittenStatistics`).
+    pub fn written_statistics(&self) -> rustdb_function::copy::CopyFunctionFileStatistics {
+        written_stats::gather(
+            &self.columns,
+            &self.metadata,
+            &self.finished,
+            self.final_size,
+            self.footer_size.unwrap_or(0),
+        )
     }
 
     /// The number of row groups written (`NumberOfRowGroups`).

@@ -257,8 +257,13 @@ fn parse_field_ids(
         let mut field = FieldId::default();
         if let Some(id_value) = field_id_value {
             use rustdb_function::cast::ValueCast as _;
-            let id_value = id_value.try_cast_as(&context.casts, &LogicalType::INTEGER, false)?;
-            let id = id_value.as_i64().unwrap_or(0) as i32;
+            // `Value::DefaultCastAs`.
+            let id_value = id_value
+                .try_cast_as(&context.casts, &LogicalType::INTEGER, false)
+                .map_err(|error| {
+                    Error::invalid_input(format!("Failed to cast value: {}", error.raw_message()))
+                })?;
+            let id = id_value.as_i32().unwrap_or(0);
             if !unique.insert(id) {
                 return Err(Error::binder(format!(
                     "Duplicate field_id {id} found in FIELD_IDS"
@@ -543,6 +548,16 @@ fn parquet_write_finalize(_: &dyn FunctionData, state: &CopyGlobalState) -> Resu
     writer.finalize()
 }
 
+/// `ParquetWriteGetWrittenStatistics`.
+fn parquet_write_get_written_statistics(
+    _: &dyn FunctionData,
+    state: &CopyGlobalState,
+) -> Result<rustdb_function::copy::CopyFunctionFileStatistics> {
+    let global = global_state(state)?;
+    let inner = global.inner.lock().unwrap_or_else(PoisonError::into_inner);
+    Ok(inner.0.written_statistics())
+}
+
 /// The bytes written to the file so far (for `FILE_SIZE_BYTES`).
 fn parquet_write_file_size(state: &CopyGlobalState) -> u64 {
     global_state(state).map_or(0, |global| {
@@ -728,6 +743,7 @@ pub fn parquet_copy_function() -> CopyFunction {
     function.copy_to_initialize_global = Some(Arc::new(parquet_write_initialize_global));
     function.copy_to_sink = Some(Arc::new(parquet_write_sink));
     function.copy_to_finalize = Some(Arc::new(parquet_write_finalize));
+    function.copy_to_get_written_statistics = Some(Arc::new(parquet_write_get_written_statistics));
     function.copy_to_file_size = Some(Arc::new(parquet_write_file_size));
     function.copy_from_bind = Some(Arc::new(parquet_copy_from_bind));
     function.copy_from_function = crate::scan::read_parquet_functions()

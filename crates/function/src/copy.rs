@@ -98,6 +98,20 @@ pub type CopyToSink =
     Arc<dyn Fn(&dyn FunctionData, &CopyGlobalState, &DataChunk) -> Result<()> + Send + Sync>;
 /// `copy_to_finalize`: completes and closes the file.
 pub type CopyToFinalize = Arc<dyn Fn(&dyn FunctionData, &CopyGlobalState) -> Result<()> + Send + Sync>;
+/// What `RETURN_STATS` reports about a written file (DuckDB's
+/// `CopyFunctionFileStatistics`).
+#[derive(Clone, Debug, Default)]
+pub struct CopyFunctionFileStatistics {
+    pub row_count: u64,
+    pub file_size_bytes: u64,
+    pub footer_size_bytes: Value,
+    /// Per column: statistic name -> value.
+    pub column_statistics: Vec<(String, Vec<(String, Value)>)>,
+}
+
+/// `copy_to_get_written_statistics`: the statistics of a finalized file.
+pub type CopyToGetWrittenStatistics =
+    Arc<dyn Fn(&dyn FunctionData, &CopyGlobalState) -> Result<CopyFunctionFileStatistics> + Send + Sync>;
 /// The bytes written to a file so far (for `FILE_SIZE_BYTES` rotation).
 pub type CopyToFileSize = Arc<dyn Fn(&CopyGlobalState) -> u64 + Send + Sync>;
 /// `copy_from_bind`: the bind data of the reader for the target columns.
@@ -119,6 +133,8 @@ pub struct CopyFunction {
     pub copy_to_initialize_global: Option<CopyToInitializeGlobal>,
     pub copy_to_sink: Option<CopyToSink>,
     pub copy_to_finalize: Option<CopyToFinalize>,
+    /// The statistics of a written file for `RETURN_STATS` (`copy_to_get_written_statistics`).
+    pub copy_to_get_written_statistics: Option<CopyToGetWrittenStatistics>,
     /// Whether the format can split its output by size (`rotate_files`), and the size.
     pub copy_to_file_size: Option<CopyToFileSize>,
     pub copy_from_bind: Option<CopyFromBind>,
@@ -136,6 +152,7 @@ impl CopyFunction {
             copy_to_initialize_global: None,
             copy_to_sink: None,
             copy_to_finalize: None,
+            copy_to_get_written_statistics: None,
             copy_to_file_size: None,
             copy_from_bind: None,
             copy_from_function: None,

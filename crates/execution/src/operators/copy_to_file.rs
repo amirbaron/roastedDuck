@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_function::copy::CopyGlobalState;
+use rustdb_function::copy::{CopyFunctionFileStatistics, CopyGlobalState};
 use rustdb_function::{CopyFunction, FunctionData};
 use rustdb_planner::operator::{CopyFunctionReturnType, CopyOverwriteMode, FilenamePattern};
 use rustdb_types::{DataChunk, LogicalType, SelectionVector, Value, Vector};
@@ -99,7 +99,7 @@ impl PhysicalCopyToFile {
     }
 
     /// `CreateFileState`: a new numbered file in the output directory.
-    fn create_file_state(&self, inner: &mut CopyInner) -> Result<CopyGlobalState> {
+    fn create_file_state(&self, inner: &mut CopyInner) -> Result<OpenFile> {
         let offset = inner.last_file_offset;
         inner.last_file_offset += 1;
         let output_path = self.options.filename_pattern.create_filename(
@@ -108,10 +108,12 @@ impl PhysicalCopyToFile {
             offset,
         );
         inner.created_files.push(output_path.clone());
-        if self.options.return_type != CopyFunctionReturnType::ChangedRows {
-            inner.written_files.push(output_path.clone());
-        }
-        self.initialize_global(&output_path)
+        let file = (self.options.return_type != CopyFunctionReturnType::ChangedRows)
+            .then(|| inner.add_file(output_path.clone(), Value::default()));
+        Ok(OpenFile {
+            state: self.initialize_global(&output_path)?,
+            file,
+        })
     }
 
     /// `CopyToFunctionGlobalState::Initialize`: opens the single output file.
@@ -120,9 +122,29 @@ impl PhysicalCopyToFile {
             return Ok(());
         }
         inner.created_files.push(self.options.file_path.clone());
-        inner.global_state = Some(self.initialize_global(&self.options.file_path)?);
-        inner.written_files.push(self.options.file_path.clone());
+        let state = self.initialize_global(&self.options.file_path)?;
+        let file = inner.add_file(self.options.file_path.clone(), Value::default());
+        inner.global_state = Some(OpenFile {
+            state,
+            file: Some(file),
+        });
         inner.initialized = true;
+        Ok(())
+    }
+
+    /// Finalizes a file and collects its statistics for `RETURN_STATS`
+    /// (`copy_to_get_written_statistics`).
+    fn finish_file(&self, inner: &mut CopyInner, file: &OpenFile) -> Result<()> {
+        self.finalize_file(&file.state)?;
+        if self.options.return_type == CopyFunctionReturnType::WrittenFileStatistics
+            && let (Some(index), Some(statistics)) =
+                (file.file, &self.function.copy_to_get_written_statistics)
+        {
+            let stats = statistics(self.bind_data.as_ref(), &file.state)?;
+            if let Some(entry) = inner.written_files.get_mut(index) {
+                entry.stats = Some(stats);
+            }
+        }
         Ok(())
     }
 
@@ -173,16 +195,30 @@ impl PhysicalCopyToFile {
                 }
             }
             inner.created_files.push(full_path.clone());
-            if self.options.return_type != CopyFunctionReturnType::ChangedRows {
-                inner.written_files.push(full_path.clone());
-            }
+            let file = if self.options.return_type == CopyFunctionReturnType::ChangedRows {
+                None
+            } else {
+                // The partition's values as text (`partition_keys`).
+                let mut entries = Vec::with_capacity(key.values.len());
+                for (column, value) in self.options.partition_columns.iter().zip(&key.values) {
+                    let text = if value.is_null() {
+                        Value::null(LogicalType::VARCHAR)
+                    } else {
+                        Value::varchar(value.to_varchar()?)
+                    };
+                    entries.push((Value::varchar(&self.options.names[*column]), text));
+                }
+                let keys = Value::map(LogicalType::VARCHAR, LogicalType::VARCHAR, entries);
+                Some(inner.add_file(full_path.clone(), keys))
+            };
             let state = self.initialize_global(&full_path)?;
             inner.partition_order.push(key.clone());
-            inner.partitions.insert(key.clone(), state);
+            inner.partitions.insert(key.clone(), OpenFile { state, file });
         }
         inner
             .partitions
             .get(key)
+            .map(|file| &file.state)
             .ok_or_else(|| Error::internal("partition writer disappeared"))
     }
 
@@ -251,6 +287,87 @@ impl PhysicalCopyToFile {
                 ))
             })
         }
+    }
+
+    /// The name of a written file as the copy returns it.
+    fn returned_path(&self, path: &str) -> String {
+        if self.options.use_tmp_file {
+            Self::non_tmp_file(path)
+        } else {
+            path.to_owned()
+        }
+    }
+
+    /// `GetData` with `RETURN_STATS` (`ReturnStatistics`): a row per written file, from
+    /// file `offset` on.
+    fn return_statistics(
+        &self,
+        inner: &CopyInner,
+        chunk: &mut DataChunk,
+        offset: &AtomicUsize,
+    ) -> Result<SourceResult> {
+        let start = offset.load(std::sync::atomic::Ordering::Relaxed);
+        let end = (start + rustdb_common::STANDARD_VECTOR_SIZE).min(inner.written_files.len());
+        let stats_map_type = LogicalType::map(LogicalType::VARCHAR, LogicalType::VARCHAR);
+        let mut columns: Vec<Vector> = self
+            .types
+            .iter()
+            .map(|ty| Vector::flat(ty.clone(), (end - start).max(1)))
+            .collect();
+        for (row, file) in inner.written_files[start..end].iter().enumerate() {
+            let default = CopyFunctionFileStatistics::default();
+            let stats = file.stats.as_ref().unwrap_or(&default);
+            // `CreateColumnStatistics`: columns and statistics in name order.
+            let mut column_stats: Vec<&(String, Vec<(String, Value)>)> =
+                stats.column_statistics.iter().collect();
+            column_stats.sort_by(|a, b| a.0.cmp(&b.0));
+            let mut entries = Vec::with_capacity(column_stats.len());
+            for (column, values) in column_stats {
+                let mut values: Vec<&(String, Value)> = values.iter().collect();
+                values.sort_by(|a, b| a.0.cmp(&b.0));
+                let mut inner_entries = Vec::with_capacity(values.len());
+                for (name, value) in values {
+                    let text = if value.is_null() {
+                        Value::null(LogicalType::VARCHAR)
+                    } else {
+                        Value::varchar(value.to_varchar()?)
+                    };
+                    inner_entries.push((Value::varchar(name), text));
+                }
+                entries.push((
+                    Value::varchar(column),
+                    Value::map(LogicalType::VARCHAR, LogicalType::VARCHAR, inner_entries),
+                ));
+            }
+            let footer = if stats.footer_size_bytes.is_null() {
+                Value::null(LogicalType::UBIGINT)
+            } else {
+                stats.footer_size_bytes.clone()
+            };
+            let partition_keys = if file.partition_keys.is_null() {
+                Value::null(LogicalType::map(LogicalType::VARCHAR, LogicalType::VARCHAR))
+            } else {
+                file.partition_keys.clone()
+            };
+            let values = [
+                Value::varchar(self.returned_path(&file.path)),
+                Value::ubigint(stats.row_count),
+                Value::ubigint(stats.file_size_bytes),
+                footer,
+                Value::map(LogicalType::VARCHAR, stats_map_type.clone(), entries),
+                partition_keys,
+            ];
+            for (column, value) in columns.iter_mut().zip(&values) {
+                column.set_value(row, value)?;
+            }
+        }
+        chunk.set_columns(columns, end - start);
+        offset.store(end, std::sync::atomic::Ordering::Relaxed);
+        Ok(if end < inner.written_files.len() {
+            SourceResult::HaveMoreOutput
+        } else {
+            SourceResult::Finished
+        })
     }
 
     /// `GetNonTmpFile`: the final name of a file written as `tmp_<name>`.
@@ -363,6 +480,22 @@ fn check_directory(path: &str, overwrite_mode: CopyOverwriteMode) -> Result<()> 
     )))
 }
 
+/// An open output file: the function's state and the file's index in
+/// `written_files`, if its name is returned.
+struct OpenFile {
+    state: CopyGlobalState,
+    file: Option<usize>,
+}
+
+/// A file a copy wrote (DuckDB's `CopyToFileInfo`).
+#[derive(Debug)]
+struct WrittenFile {
+    path: String,
+    /// The partition's values, a MAP(VARCHAR, VARCHAR) (NULL without partitions).
+    partition_keys: Value,
+    stats: Option<CopyFunctionFileStatistics>,
+}
+
 /// The mutable state of a copy (DuckDB's `CopyToFunctionGlobalState`).
 #[derive(Default)]
 struct CopyInner {
@@ -371,12 +504,24 @@ struct CopyInner {
     rows_copied: u64,
     last_file_offset: u64,
     global_offset: u64,
-    global_state: Option<CopyGlobalState>,
+    global_state: Option<OpenFile>,
     created_files: Vec<String>,
-    written_files: Vec<String>,
+    written_files: Vec<WrittenFile>,
     created_directories: Vec<String>,
-    partitions: HashMap<PartitionKey, CopyGlobalState>,
+    partitions: HashMap<PartitionKey, OpenFile>,
     partition_order: Vec<PartitionKey>,
+}
+
+impl CopyInner {
+    /// `AddFile`: records a file whose name (and statistics) the copy returns.
+    fn add_file(&mut self, path: String, partition_keys: Value) -> usize {
+        self.written_files.push(WrittenFile {
+            path,
+            partition_keys,
+            stats: None,
+        });
+        self.written_files.len() - 1
+    }
 }
 
 impl std::fmt::Debug for CopyInner {
@@ -472,24 +617,24 @@ impl Sink for PhysicalCopyToFile {
         }
         if options.per_thread_output || options.rotate {
             let rotate_now = match (&inner.global_state, &self.function.copy_to_file_size) {
-                (Some(state), Some(file_size)) if options.rotate => options
+                (Some(file), Some(file_size)) if options.rotate => options
                     .file_size_bytes
-                    .is_some_and(|limit| file_size(state) > limit),
+                    .is_some_and(|limit| file_size(&file.state) > limit),
                 _ => false,
             };
-            if rotate_now && let Some(state) = inner.global_state.take() {
-                self.finalize_file(&state)?;
+            if rotate_now && let Some(file) = inner.global_state.take() {
+                self.finish_file(&mut inner, &file)?;
             }
             if inner.global_state.is_none() {
                 let state = self.create_file_state(&mut inner)?;
                 inner.global_state = Some(state);
             }
         }
-        let state = inner
+        let file = inner
             .global_state
             .as_ref()
             .ok_or_else(|| Error::internal("copy without an open file"))?;
-        self.sink_into(state, chunk)?;
+        self.sink_into(&file.state, chunk)?;
         Ok(SinkResult::NeedMoreInput)
     }
 
@@ -502,16 +647,16 @@ impl Sink for PhysicalCopyToFile {
         let options = &self.options;
         if options.partition_output {
             for key in std::mem::take(&mut inner.partition_order) {
-                if let Some(state) = inner.partitions.remove(&key) {
-                    self.finalize_file(&state)?;
+                if let Some(file) = inner.partitions.remove(&key) {
+                    self.finish_file(inner, &file)?;
                 }
             }
         } else if options.per_thread_output && inner.rows_copied == 0 {
-            let state = self.create_file_state(inner)?;
-            self.finalize_file(&state)?;
-        } else if let Some(state) = inner.global_state.take() {
-            self.finalize_file(&state)?;
-            drop(state);
+            let file = self.create_file_state(inner)?;
+            self.finish_file(inner, &file)?;
+        } else if let Some(file) = inner.global_state.take() {
+            self.finish_file(inner, &file)?;
+            drop(file);
             if options.use_tmp_file {
                 let target = Self::non_tmp_file(&options.file_path);
                 std::fs::rename(&options.file_path, &target).map_err(|error| {
@@ -550,6 +695,10 @@ impl Source for PhysicalCopyToFile {
         let global = sink
             .downcast_ref::<CopyGlobal>()
             .ok_or_else(|| Error::internal("copy sink state has the wrong type"))?;
+        if self.options.return_type == CopyFunctionReturnType::WrittenFileStatistics {
+            let inner = global.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            return self.return_statistics(&inner, chunk, done);
+        }
         if done.swap(1, std::sync::atomic::Ordering::Relaxed) == 1 {
             chunk.set_columns(Vec::new(), 0);
             return Ok(SourceResult::Finished);
@@ -561,13 +710,7 @@ impl Source for PhysicalCopyToFile {
             let files = inner
                 .written_files
                 .iter()
-                .map(|file| {
-                    Value::varchar(if self.options.use_tmp_file {
-                        Self::non_tmp_file(file)
-                    } else {
-                        file.clone()
-                    })
-                })
+                .map(|file| Value::varchar(self.returned_path(&file.path)))
                 .collect();
             columns.push(Vector::constant(&Value::list(LogicalType::VARCHAR, files))?);
         }

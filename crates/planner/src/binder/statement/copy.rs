@@ -652,7 +652,9 @@ fn bind_copy_to(
             ));
         }
     }
-    if return_type == CopyFunctionReturnType::WrittenFileStatistics {
+    if return_type == CopyFunctionReturnType::WrittenFileStatistics
+        && function.copy_to_get_written_statistics.is_none()
+    {
         return Err(Error::not_implemented(format!(
             "RETURN_STATS is not supported for the \"{}\" copy format",
             info.format
