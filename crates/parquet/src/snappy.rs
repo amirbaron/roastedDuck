@@ -277,32 +277,54 @@ mod tests {
         }
     }
 
-    /// Throughput on md5-like strings (`cargo test --release -- --ignored snappy_speed`).
+    /// Throughput (`cargo test --release -- --ignored snappy_speed`) on md5-like strings,
+    /// or on the pages dumped in the file `SNAPPY_PAGES` (u32 compressed and
+    /// uncompressed lengths, then the bytes, per page).
     #[test]
     #[ignore = "benchmark"]
     fn snappy_speed() {
-        let mut page = Vec::new();
-        for value in bytes(9, 200_000 * 32, 16).chunks(32) {
-            page.extend_from_slice(&32u32.to_le_bytes());
-            page.extend(value.iter().map(|digit| b"0123456789abcdef"[*digit as usize]));
-        }
-        let compressed = snap::raw::Encoder::new().compress_vec(&page).unwrap();
-        let mut output = vec![0; page.len()];
+        let pages: Vec<(Vec<u8>, usize)> = if let Ok(path) = std::env::var("SNAPPY_PAGES") {
+            let dump = std::fs::read(path).unwrap();
+            let mut pages = Vec::new();
+            let mut position = 0;
+            while position < dump.len() {
+                let word = |at: usize| u32::from_le_bytes(dump[at..at + 4].try_into().unwrap()) as usize;
+                let (compressed, uncompressed) = (word(position), word(position + 4));
+                pages.push((
+                    dump[position + 8..position + 8 + compressed].to_vec(),
+                    uncompressed,
+                ));
+                position += 8 + compressed;
+            }
+            pages
+        } else {
+            let mut page = Vec::new();
+            for value in bytes(9, 200_000 * 32, 16).chunks(32) {
+                page.extend_from_slice(&32u32.to_le_bytes());
+                page.extend(value.iter().map(|digit| b"0123456789abcdef"[*digit as usize]));
+            }
+            let len = page.len();
+            vec![(snap::raw::Encoder::new().compress_vec(&page).unwrap(), len)]
+        };
+        let total: usize = pages.iter().map(|(_, len)| len).sum();
+        let largest = pages.iter().map(|(_, len)| *len).max().unwrap_or(0);
+        let mut output = vec![0; largest];
+        let mut expected = vec![0; largest];
         for name in ["ours", "snap", "ours", "snap"] {
             let start = std::time::Instant::now();
-            for _ in 0..20 {
+            for (compressed, len) in &pages {
                 if name == "ours" {
-                    decompress(&compressed, &mut output).unwrap();
+                    decompress(compressed, &mut output[..*len]).unwrap();
                 } else {
                     snap::raw::Decoder::new()
-                        .decompress(&compressed, &mut output)
+                        .decompress(compressed, &mut expected[..*len])
                         .unwrap();
                 }
             }
             let seconds = start.elapsed().as_secs_f64();
-            println!("{name}: {:.0} MB/s", 20.0 * page.len() as f64 / seconds / 1e6);
+            println!("{name}: {:.0} MB/s", total as f64 / seconds / 1e6);
         }
-        assert_eq!(output, page);
+        assert_eq!(output, expected);
     }
 
     #[test]
