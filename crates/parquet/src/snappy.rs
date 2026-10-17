@@ -316,6 +316,213 @@ fn copy_match(dst: &mut [u8], op: usize, offset: usize, length: usize) {
     }
 }
 
+/// The size of the blocks compressed independently (`kBlockSize`).
+const BLOCK_SIZE: usize = 1 << 16;
+/// The largest hash table (`kMaxHashTableBits`).
+const MAX_HASH_TABLE_BITS: u32 = 15;
+/// The smallest hash table (`kMinHashTableSize`).
+const MIN_HASH_TABLE_SIZE: usize = 1 << 8;
+/// The input bytes the main loop keeps in reserve (`kInputMarginBytes`).
+const INPUT_MARGIN_BYTES: usize = 15;
+
+/// Compresses `src` into `out` (appending) exactly like snappy's `RawCompress` at its
+/// default level (the C++ snappy DuckDB bundles, built without CRC32 instructions):
+/// the varint length, then each 64 KiB block compressed on its own.
+pub fn compress(src: &[u8], out: &mut Vec<u8>) {
+    let mut length = src.len() as u64;
+    loop {
+        let byte = (length & 0x7f) as u8;
+        length >>= 7;
+        if length == 0 {
+            out.push(byte);
+            break;
+        }
+        out.push(byte | 0x80);
+    }
+    let mut table = Vec::new();
+    for fragment in src.chunks(BLOCK_SIZE) {
+        let table_size = calculate_table_size(fragment.len());
+        table.clear();
+        table.resize(table_size, 0u16);
+        compress_fragment(fragment, out, &mut table);
+    }
+}
+
+/// `CalculateTableSize`: the next power of two of the fragment size, within bounds.
+fn calculate_table_size(input_size: usize) -> usize {
+    if input_size > 1 << MAX_HASH_TABLE_BITS {
+        return 1 << MAX_HASH_TABLE_BITS;
+    }
+    if input_size < MIN_HASH_TABLE_SIZE {
+        return MIN_HASH_TABLE_SIZE;
+    }
+    input_size.next_power_of_two()
+}
+
+#[inline]
+fn load32(data: &[u8], at: usize) -> u32 {
+    u32::from_le_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]])
+}
+
+#[inline]
+fn load64(data: &[u8], at: usize) -> u64 {
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&data[at..at + 8]);
+    u64::from_le_bytes(bytes)
+}
+
+/// `TableEntry`: the slot of four bytes in a table of `mask / 2 + 1` entries.
+#[inline]
+fn table_slot(bytes: u32, mask: u32) -> usize {
+    const MAGIC: u32 = 0x1e35_a7bd;
+    let hash = MAGIC.wrapping_mul(bytes) >> (31 - MAX_HASH_TABLE_BITS);
+    ((hash & mask) >> 1) as usize
+}
+
+/// `EmitLiteral`.
+fn emit_literal(out: &mut Vec<u8>, literal: &[u8]) {
+    let n = literal.len() - 1;
+    if n < 60 {
+        out.push((n << 2) as u8);
+    } else {
+        let count = (n.ilog2() >> 3) as usize + 1;
+        out.push(((59 + count) << 2) as u8);
+        out.extend_from_slice(&(n as u32).to_le_bytes()[..count]);
+    }
+    out.extend_from_slice(literal);
+}
+
+/// `EmitCopyAtMost64`.
+fn emit_copy_at_most_64(out: &mut Vec<u8>, offset: usize, len: usize) {
+    if len < 12 {
+        if offset < 2048 {
+            out.push((((len - 4) << 2) | 1 | ((offset >> 8) << 5)) as u8);
+            out.push(offset as u8);
+        } else {
+            out.push((((len - 1) << 2) | 2) as u8);
+            out.extend_from_slice(&(offset as u16).to_le_bytes());
+        }
+    } else {
+        out.push((((len - 1) << 2) | 2) as u8);
+        out.extend_from_slice(&(offset as u16).to_le_bytes());
+    }
+}
+
+/// `EmitCopy`: copies longer than 64 bytes as several, keeping at least 4 for the last.
+fn emit_copy(out: &mut Vec<u8>, offset: usize, mut len: usize) {
+    if len >= 12 {
+        while len >= 68 {
+            emit_copy_at_most_64(out, offset, 64);
+            len -= 64;
+        }
+        if len > 64 {
+            emit_copy_at_most_64(out, offset, 60);
+            len -= 60;
+        }
+    }
+    emit_copy_at_most_64(out, offset, len);
+}
+
+/// The number of equal bytes at `a` and `b` (`b` before `a`), up to the end of `data`
+/// (`FindMatchLength`).
+fn match_length(data: &[u8], earlier: usize, at: usize) -> usize {
+    let limit = data.len();
+    let mut matched = 0;
+    while at + matched + 8 <= limit {
+        let x = load64(data, earlier + matched) ^ load64(data, at + matched);
+        if x != 0 {
+            return matched + (x.trailing_zeros() >> 3) as usize;
+        }
+        matched += 8;
+    }
+    while at + matched < limit && data[earlier + matched] == data[at + matched] {
+        matched += 1;
+    }
+    matched
+}
+
+/// `CompressFragment`: one block, its copies only within it.
+fn compress_fragment(input: &[u8], out: &mut Vec<u8>, table: &mut [u16]) {
+    let input_size = input.len();
+    let mask = 2 * (table.len() as u32 - 1);
+    let mut ip = 0usize;
+    let ip_end = input_size;
+    if input_size >= INPUT_MARGIN_BYTES {
+        let ip_limit = input_size - INPUT_MARGIN_BYTES;
+        'main: loop {
+            // Bytes in [next_emit, ip) are emitted as a literal.
+            let next_emit = ip;
+            ip += 1;
+            let mut skip: u32 = 32;
+            let mut candidate;
+            let mut found = None;
+            if ip_limit >= ip + 16 {
+                let delta = ip;
+                for i in 0..16 {
+                    let dword = load32(input, ip + i);
+                    let slot = table_slot(dword, mask);
+                    candidate = usize::from(table[slot]);
+                    table[slot] = (delta + i) as u16;
+                    if load32(input, candidate) == dword {
+                        found = Some((i, candidate));
+                        break;
+                    }
+                }
+                if found.is_none() {
+                    ip += 16;
+                    skip += 16;
+                }
+            }
+            if let Some((i, matched_candidate)) = found {
+                // A literal of the `i + 1` bytes before the match.
+                out.push((i << 2) as u8);
+                out.extend_from_slice(&input[next_emit..=next_emit + i]);
+                ip += i;
+                candidate = matched_candidate;
+            } else {
+                loop {
+                    let data = load32(input, ip);
+                    let slot = table_slot(data, mask);
+                    let bytes_between_hash_lookups = (skip >> 5) as usize;
+                    skip += skip >> 5;
+                    let next_ip = ip + bytes_between_hash_lookups;
+                    if next_ip > ip_limit {
+                        ip = next_emit;
+                        break 'main;
+                    }
+                    candidate = usize::from(table[slot]);
+                    table[slot] = ip as u16;
+                    if data == load32(input, candidate) {
+                        break;
+                    }
+                    ip = next_ip;
+                }
+                emit_literal(out, &input[next_emit..ip]);
+            }
+            // Copies, as long as the bytes after one match again.
+            loop {
+                let base = ip;
+                let matched = 4 + match_length(input, candidate + 4, ip + 4);
+                ip += matched;
+                emit_copy(out, base - candidate, matched);
+                if ip >= ip_limit {
+                    break 'main;
+                }
+                table[table_slot(load32(input, ip - 1), mask)] = (ip - 1) as u16;
+                let slot = table_slot(load32(input, ip), mask);
+                candidate = usize::from(table[slot]);
+                table[slot] = ip as u16;
+                if load32(input, ip) != load32(input, candidate) {
+                    break;
+                }
+            }
+        }
+    }
+    if ip < ip_end {
+        emit_literal(out, &input[ip..ip_end]);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -433,6 +640,34 @@ mod tests {
                 }
             }
             round_trip(&data);
+        }
+    }
+
+    /// Writes `compress` of the file `SNAPPY_COMPRESS_IN` to `SNAPPY_COMPRESS_OUT`, to
+    /// compare with the C++ snappy (`cargo test -- --ignored snappy_compress_file`).
+    #[test]
+    #[ignore = "comparison tool"]
+    fn snappy_compress_file() {
+        let input = std::fs::read(std::env::var("SNAPPY_COMPRESS_IN").unwrap()).unwrap();
+        let mut output = Vec::new();
+        compress(&input, &mut output);
+        std::fs::write(std::env::var("SNAPPY_COMPRESS_OUT").unwrap(), &output).unwrap();
+    }
+
+    #[test]
+    fn compresses_what_it_decompresses() {
+        for seed in 0..50u64 {
+            let mut data = bytes(seed, 70_000 + seed as usize * 1000, (seed % 200) as u8 + 2);
+            data.extend(std::iter::repeat_n(7u8, 1000));
+            data.extend(bytes(seed + 1, 100, 255));
+            for len in [0, 1, 14, 15, 16, 17, 100, 65_536, 65_537, data.len()] {
+                let input = &data[..len.min(data.len())];
+                let mut compressed = Vec::new();
+                compress(input, &mut compressed);
+                let mut output = vec![0; input.len()];
+                decompress(&compressed, &mut output).unwrap();
+                assert_eq!(output, input);
+            }
         }
     }
 

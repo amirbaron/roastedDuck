@@ -107,14 +107,7 @@ fn gzip_decompress(mut src: &[u8], dst: &mut [u8]) -> Result<()> {
 pub fn compress(codec: CompressionCodec, src: &[u8], level: i64, out: &mut Vec<u8>) -> Result<()> {
     match codec {
         CompressionCodec::UNCOMPRESSED => out.extend_from_slice(src),
-        CompressionCodec::SNAPPY => {
-            let start = out.len();
-            out.resize(start + snap::raw::max_compress_len(src.len()), 0);
-            let written = snap::raw::Encoder::new()
-                .compress(src, &mut out[start..])
-                .map_err(|error| Error::internal(format!("snappy compression failed: {error}")))?;
-            out.truncate(start + written);
-        }
+        CompressionCodec::SNAPPY => crate::snappy::compress(src, out),
         CompressionCodec::GZIP => {
             // `MiniZStream::Compress`: a minimal gzip member at miniz's default level.
             let mut encoder = flate2::write::GzEncoder::new(std::mem::take(out), flate2::Compression::new(6));
@@ -135,13 +128,7 @@ pub fn compress(codec: CompressionCodec, src: &[u8], level: i64, out: &mut Vec<u
             ));
         }
         CompressionCodec::LZ4_RAW => out.extend_from_slice(&lz4_flex::block::compress(src)),
-        CompressionCodec::BROTLI => {
-            let mut writer = brotli::CompressorWriter::new(std::mem::take(out), 4096, 11, 22);
-            writer
-                .write_all(src)
-                .map_err(|error| Error::internal(format!("brotli compression failed: {error}")))?;
-            *out = writer.into_inner();
-        }
+        CompressionCodec::BROTLI => brotli_compress(src, out)?,
         _ => {
             return Err(Error::internal(format!(
                 "Unsupported codec for Parquet Writer: {}",
@@ -149,6 +136,51 @@ pub fn compress(codec: CompressionCodec, src: &[u8], level: i64, out: &mut Vec<u
             )));
         }
     }
+    Ok(())
+}
+
+/// `BrotliEncoderCompress(BROTLI_DEFAULT_QUALITY, BROTLI_DEFAULT_WINDOW,
+/// BROTLI_DEFAULT_MODE, ...)`: one-shot compression with the input size as hint, which
+/// shapes the output like DuckDB's.
+fn brotli_compress(src: &[u8], out: &mut Vec<u8>) -> Result<()> {
+    use brotli::enc::encode::{
+        BrotliEncoderDestroyInstance, BrotliEncoderMaxCompressedSize, BrotliEncoderOperation,
+        BrotliEncoderParameter, BrotliEncoderStateStruct,
+    };
+    let failure = || Error::internal("brotli compression failed");
+    let mut state = BrotliEncoderStateStruct::new(brotli::enc::StandardAlloc::default());
+    state.set_parameter(BrotliEncoderParameter::BROTLI_PARAM_QUALITY, 11);
+    state.set_parameter(BrotliEncoderParameter::BROTLI_PARAM_LGWIN, 22);
+    state.set_parameter(BrotliEncoderParameter::BROTLI_PARAM_MODE, 0);
+    state.set_parameter(
+        BrotliEncoderParameter::BROTLI_PARAM_SIZE_HINT,
+        u32::try_from(src.len()).unwrap_or(u32::MAX),
+    );
+    let start = out.len();
+    let capacity = BrotliEncoderMaxCompressedSize(src.len()).max(src.len() + 1024);
+    out.resize(start + capacity, 0);
+    let mut available_in = src.len();
+    let mut in_offset = 0;
+    let mut available_out = capacity;
+    let mut out_offset = 0;
+    let mut total_out = Some(0);
+    let ok = state.compress_stream(
+        BrotliEncoderOperation::BROTLI_OPERATION_FINISH,
+        &mut available_in,
+        src,
+        &mut in_offset,
+        &mut available_out,
+        &mut out[start..],
+        &mut out_offset,
+        &mut total_out,
+        &mut |_, _, _, _| (),
+    );
+    let finished = state.is_finished();
+    BrotliEncoderDestroyInstance(&mut state);
+    if !ok || !finished {
+        return Err(failure());
+    }
+    out.truncate(start + out_offset);
     Ok(())
 }
 
