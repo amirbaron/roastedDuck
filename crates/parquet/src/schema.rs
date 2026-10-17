@@ -50,6 +50,9 @@ pub struct ParquetOptions {
     pub explicit_cardinality: u64,
     /// Whether `GeoParquet` columns read as GEOMETRY (`enable_geoparquet_conversion`).
     pub geoparquet_conversion: bool,
+    /// Whether row groups are read in the prefetch mode, which checks their page offsets
+    /// (`prefetch_all_parquet_files` without `disable_parquet_prefetching`).
+    pub prefetch: bool,
 }
 
 /// One column of the `schema` parameter (`ParquetColumnDefinition`).

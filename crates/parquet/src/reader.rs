@@ -201,6 +201,7 @@ impl ParquetReader {
             finished: false,
             root: StructReader::new(&self.root_schema, children),
             column_ids,
+            prefetch: self.options.prefetch,
             filters,
             columns: Vec::new(),
             defines: vec![0; STANDARD_VECTOR_SIZE],
@@ -280,6 +281,8 @@ pub struct ReaderScanState {
     root: StructReader,
     /// The file column of each output column.
     column_ids: Vec<usize>,
+    /// Whether the row groups are checked like DuckDB's prefetch mode reads them.
+    prefetch: bool,
     /// The filters to apply, by output column (`ScanFilter`s); evaluated first, so the
     /// other columns are skipped when no row passes.
     filters: Vec<(usize, TableFilter)>,
@@ -311,10 +314,20 @@ impl ReaderScanState {
                     .get(group_index)
                     .ok_or_else(|| Error::internal("row group index out of range"))?;
                 self.group_rows = group.num_rows.max(0) as u64;
+                let mut to_scan = 0;
                 for &column in &self.column_ids {
-                    self.root
-                        .child_mut(column)?
-                        .initialize_read(group_index, group, &self.context)?;
+                    let reader = self.root.child_mut(column)?;
+                    reader.initialize_read(group_index, group, &self.context)?;
+                    to_scan += reader.total_compressed_size();
+                }
+                if self.prefetch && self.group_rows > 0 && to_scan > group_span(group) {
+                    return Err(Error::new(
+                        rustdb_common::ErrorKind::Io,
+                        format!(
+                            "The parquet file '{}' seems to have incorrectly set page offsets. This interferes with DuckDB's prefetching optimization. DuckDB may still be able to scan this file by manually disabling the prefetching mechanism using: 'SET disable_parquet_prefetching=true'.",
+                            self.context.file_name
+                        ),
+                    ));
                 }
                 continue;
             }
@@ -389,6 +402,28 @@ impl ReaderScanState {
         }
         Ok(vector)
     }
+}
+
+/// `GetGroupSpan`: the bytes from the first to the end of the last column chunk.
+fn group_span(group: &crate::thrift::RowGroup) -> u64 {
+    let mut min_offset = u64::MAX;
+    let mut max_offset = 0u64;
+    for column in &group.columns {
+        let Some(meta) = &column.meta_data else {
+            continue;
+        };
+        let mut current = u64::MAX;
+        if let Some(offset) = meta.dictionary_page_offset {
+            current = current.min(offset as u64);
+        }
+        if let Some(offset) = meta.index_page_offset {
+            current = current.min(offset as u64);
+        }
+        current = current.min(meta.data_page_offset as u64);
+        min_offset = min_offset.min(current);
+        max_offset = max_offset.max((meta.total_compressed_size as u64).wrapping_add(current));
+    }
+    max_offset.wrapping_sub(min_offset)
 }
 
 /// Keeps the rows of `rows` whose value in `vector` passes `filter` (`ColumnReader::Filter`):

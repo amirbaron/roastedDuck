@@ -352,6 +352,9 @@ fn read_parquet_bind(
     let mut options = ParquetOptions {
         binary_as_string: setting_bool(context, "binary_as_string"),
         geoparquet_conversion: setting_bool(context, "enable_geoparquet_conversion"),
+        // `ShouldAndCanPrefetch`: local files only with `prefetch_all_parquet_files`.
+        prefetch: setting_bool(context, "prefetch_all_parquet_files")
+            && !setting_bool(context, "disable_parquet_prefetching"),
         ..ParquetOptions::default()
     };
     parse_options(input, &mut file_options, &mut options, context)?;

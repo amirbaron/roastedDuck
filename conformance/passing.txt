@@ -607,6 +607,7 @@ test/parquet/parquet_long_string_stats.test
 test/parquet/parquet_null_compressed_materialization.test_slow
 test/parquet/parquet_stats_function.test
 test/parquet/parquet_version.test
+test/parquet/prefetching.test
 test/parquet/test_18470.test
 test/parquet/test_filename_column.test
 test/parquet/test_internal_5021.test
@@ -1551,6 +1552,7 @@ test/sql/copy/parquet/parquet_zstd.test
 test/sql/copy/parquet/partition_by_bind_issues.test
 test/sql/copy/parquet/read_parquet_parameter.test
 test/sql/copy/parquet/recursive_parquet_union_by_name.test
+test/sql/copy/parquet/replacement_scan_custom_extension.test
 test/sql/copy/parquet/rle_bool.test
 test/sql/copy/parquet/spark_v2.test
 test/sql/copy/parquet/struct_column_reader_skip.test
