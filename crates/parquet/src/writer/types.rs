@@ -37,8 +37,19 @@ pub trait WriteType: Send + std::fmt::Debug + 'static {
     const FALLBACK: FallbackEncoding;
 
     fn new_stats() -> Self::Stats;
-    fn src(vector: &Vector, row: usize) -> Self::Src<'_>;
+    /// What `get` reads the values of a vector from (its typed slice, or the vector).
+    type Batch<'a>: Copy;
+    fn batch(vector: &Vector) -> Self::Batch<'_>;
+    fn get<'a>(batch: Self::Batch<'a>, row: usize) -> Self::Src<'a>;
+    fn src(vector: &Vector, row: usize) -> Self::Src<'_> {
+        Self::get(Self::batch(vector), row)
+    }
     fn key(src: Self::Src<'_>) -> Self::Key;
+    /// The dictionary index of a value (without building its key when it can be
+    /// looked up by reference).
+    fn lookup(indexes: &FastMap<Self::Key, u32>, src: Self::Src<'_>) -> Option<u32> {
+        indexes.get(&Self::key(src)).copied()
+    }
     /// Appends the plain encoding of the Parquet value (`WriteToStream`).
     fn write_plain(src: Self::Src<'_>, out: &mut Vec<u8>) -> Result<()>;
     /// Updates the statistics with the value (`HandleStats`).
@@ -64,6 +75,62 @@ pub trait WriteType: Send + std::fmt::Debug + 'static {
     /// Whether the column chunk gets statistics at all (`InitializeStats` is not null).
     const HAS_STATISTICS: bool = true;
 }
+
+/// A fast hasher for the dictionaries (multiply-rotate with a final fold).
+#[derive(Default, Clone, Copy, Debug)]
+pub struct FastHasher(u64);
+
+const FAST_HASH_K: u64 = 0xf135_7aea_2e62_a9c5;
+
+impl FastHasher {
+    #[inline]
+    fn add(&mut self, value: u64) {
+        self.0 = (self.0.rotate_left(26) ^ value).wrapping_mul(FAST_HASH_K);
+    }
+}
+
+impl std::hash::Hasher for FastHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        let (chunks, rest) = bytes.as_chunks::<8>();
+        for chunk in chunks {
+            self.add(u64::from_le_bytes(*chunk));
+        }
+        if !rest.is_empty() {
+            let mut last = [0u8; 8];
+            last[..rest.len()].copy_from_slice(rest);
+            self.add(u64::from_le_bytes(last));
+        }
+    }
+    #[inline]
+    fn write_u8(&mut self, value: u8) {
+        self.add(u64::from(value));
+    }
+    #[inline]
+    fn write_u16(&mut self, value: u16) {
+        self.add(u64::from(value));
+    }
+    #[inline]
+    fn write_u32(&mut self, value: u32) {
+        self.add(u64::from(value));
+    }
+    #[inline]
+    fn write_u64(&mut self, value: u64) {
+        self.add(value);
+    }
+    #[inline]
+    fn write_usize(&mut self, value: usize) {
+        self.add(value as u64);
+    }
+    #[inline]
+    fn finish(&self) -> u64 {
+        let folded = u128::from(self.0) * u128::from(FAST_HASH_K);
+        (folded as u64) ^ ((folded >> 64) as u64)
+    }
+}
+
+/// The hash map of the dictionaries.
+pub type FastMap<K, V> = std::collections::HashMap<K, V, std::hash::BuildHasherDefault<FastHasher>>;
 
 /// `XXH64(data, len, 0)`.
 pub fn xxhash64(bytes: &[u8]) -> u64 {
@@ -120,9 +187,14 @@ impl<C: NumericCast> WriteType for Numeric<C> {
     fn new_stats() -> Self::Stats {
         NumericStatistics::new(C::SIGNED, false)
     }
+    type Batch<'a> = &'a [C::Src];
     #[inline]
-    fn src(vector: &Vector, row: usize) -> C::Src {
-        vector.values::<C::Src>()[row]
+    fn batch(vector: &Vector) -> Self::Batch<'_> {
+        vector.values::<C::Src>()
+    }
+    #[inline]
+    fn get<'a>(batch: Self::Batch<'a>, row: usize) -> Self::Src<'a> {
+        batch[row]
     }
     #[inline]
     fn key(src: C::Src) -> C::Src {
@@ -267,9 +339,14 @@ macro_rules! float_type {
             fn new_stats() -> Self::Stats {
                 NumericStatistics::new(true, true)
             }
+            type Batch<'a> = &'a [$ty];
             #[inline]
-            fn src(vector: &Vector, row: usize) -> $ty {
-                vector.values::<$ty>()[row]
+            fn batch(vector: &Vector) -> Self::Batch<'_> {
+                vector.values::<$ty>()
+            }
+            #[inline]
+            fn get<'a>(batch: Self::Batch<'a>, row: usize) -> Self::Src<'a> {
+                batch[row]
             }
             #[inline]
             fn key(src: $ty) -> FloatKey {
@@ -319,8 +396,12 @@ macro_rules! huge_type {
             fn new_stats() -> NoStatistics {
                 NoStatistics
             }
-            fn src(vector: &Vector, row: usize) -> $ty {
-                vector.values::<$ty>()[row]
+            type Batch<'a> = &'a [$ty];
+            fn batch(vector: &Vector) -> Self::Batch<'_> {
+                vector.values::<$ty>()
+            }
+            fn get<'a>(batch: Self::Batch<'a>, row: usize) -> Self::Src<'a> {
+                batch[row]
             }
             fn key(src: $ty) -> $ty {
                 src
@@ -358,12 +439,21 @@ impl<const BLOB: bool> WriteType for Bytes<BLOB> {
     fn new_stats() -> StringStatistics {
         StringStatistics::new(BLOB)
     }
+    type Batch<'a> = &'a Vector;
     #[inline]
-    fn src(vector: &Vector, row: usize) -> &[u8] {
-        vector.string_bytes(row)
+    fn batch(vector: &Vector) -> Self::Batch<'_> {
+        vector
+    }
+    #[inline]
+    fn get<'a>(batch: Self::Batch<'a>, row: usize) -> Self::Src<'a> {
+        batch.string_bytes(row)
     }
     fn key(src: &[u8]) -> Box<[u8]> {
         src.into()
+    }
+    #[inline]
+    fn lookup(indexes: &FastMap<Box<[u8]>, u32>, src: &[u8]) -> Option<u32> {
+        indexes.get(src).copied()
     }
     #[inline]
     fn write_plain(src: &[u8], out: &mut Vec<u8>) -> Result<()> {
@@ -404,12 +494,21 @@ impl WriteType for Geometry {
     fn new_stats() -> super::stats::GeoStatistics {
         super::stats::GeoStatistics::default()
     }
+    type Batch<'a> = &'a Vector;
     #[inline]
-    fn src(vector: &Vector, row: usize) -> &[u8] {
-        vector.string_bytes(row)
+    fn batch(vector: &Vector) -> Self::Batch<'_> {
+        vector
+    }
+    #[inline]
+    fn get<'a>(batch: Self::Batch<'a>, row: usize) -> Self::Src<'a> {
+        batch.string_bytes(row)
     }
     fn key(src: &[u8]) -> Box<[u8]> {
         src.into()
+    }
+    #[inline]
+    fn lookup(indexes: &FastMap<Box<[u8]>, u32>, src: &[u8]) -> Option<u32> {
+        indexes.get(src).copied()
     }
     #[inline]
     fn write_plain(src: &[u8], out: &mut Vec<u8>) -> Result<()> {
@@ -454,8 +553,12 @@ impl WriteType for Uuid {
     fn new_stats() -> BytesStatistics {
         BytesStatistics::default()
     }
-    fn src(vector: &Vector, row: usize) -> i128 {
-        vector.values::<i128>()[row]
+    type Batch<'a> = &'a [i128];
+    fn batch(vector: &Vector) -> Self::Batch<'_> {
+        vector.values::<i128>()
+    }
+    fn get<'a>(batch: Self::Batch<'a>, row: usize) -> Self::Src<'a> {
+        batch[row]
     }
     fn key(src: i128) -> i128 {
         src
@@ -508,8 +611,12 @@ impl WriteType for IntervalType {
     fn new_stats() -> NoStatistics {
         NoStatistics
     }
-    fn src(vector: &Vector, row: usize) -> IntervalParts {
-        let bytes = &vector.data_bytes()[row * 16..row * 16 + 16];
+    type Batch<'a> = &'a [u8];
+    fn batch(vector: &Vector) -> Self::Batch<'_> {
+        vector.data_bytes()
+    }
+    fn get<'a>(batch: Self::Batch<'a>, row: usize) -> Self::Src<'a> {
+        let bytes = &batch[row * 16..row * 16 + 16];
         let months = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
         let days = i32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         let mut micros = [0u8; 8];

@@ -764,9 +764,27 @@ pub struct PrimitiveWriter {
     page_info: Vec<PageInformation>,
     pages: Vec<PageWrite>,
     current_page: usize,
+    /// Page buffers of earlier row groups, reused so each row group does not allocate
+    /// (and fragment) its large buffers anew.
+    spare_buffers: Vec<Vec<u8>>,
 }
 
 impl PrimitiveWriter {
+    /// An empty buffer with room for `capacity` bytes, reusing a spare one.
+    fn take_buffer(&mut self, capacity: usize) -> Vec<u8> {
+        let mut buffer = self.spare_buffers.pop().unwrap_or_default();
+        buffer.clear();
+        buffer.reserve(capacity);
+        buffer
+    }
+
+    /// Keeps `buffer` for later pages.
+    fn recycle_buffer(&mut self, buffer: Vec<u8>) {
+        if buffer.capacity() > 0 {
+            self.spare_buffers.push(buffer);
+        }
+    }
+
     pub fn new(schema: WriterSchema, values: Box<dyn ValueWriter>) -> Self {
         Self {
             schema,
@@ -777,6 +795,7 @@ impl PrimitiveWriter {
             page_info: Vec::new(),
             pages: Vec::new(),
             current_page: 0,
+            spare_buffers: Vec::new(),
         }
     }
 
@@ -880,12 +899,19 @@ impl PrimitiveWriter {
             self.page_info.pop();
         }
         let encoding = self.values.encoding();
-        for info in &self.page_info {
+        for index in 0..self.page_info.len() {
+            let info = &self.page_info[index];
+            let (row_count, empty_count, capacity) = (
+                info.row_count,
+                info.empty_count,
+                info.estimated_page_size.next_power_of_two().max(512),
+            );
+            let buffer = self.take_buffer(capacity);
             self.pages.push(PageWrite {
                 header: PageHeader {
                     type_: PageType::DATA_PAGE,
                     data_page_header: Some(DataPageHeader {
-                        num_values: info.row_count as i32,
+                        num_values: row_count as i32,
                         encoding,
                         definition_level_encoding: Encoding::RLE,
                         repetition_level_encoding: Encoding::RLE,
@@ -893,10 +919,10 @@ impl PrimitiveWriter {
                     }),
                     ..PageHeader::default()
                 },
-                buffer: Vec::with_capacity(info.estimated_page_size.next_power_of_two().max(512)),
+                buffer,
                 compressed: Vec::new(),
-                write_count: info.empty_count,
-                max_write_count: info.row_count,
+                write_count: empty_count,
+                max_write_count: row_count,
             });
         }
         self.next_page(options)
@@ -968,6 +994,7 @@ impl PrimitiveWriter {
         if self.current_page > self.pages.len() || self.current_page == 0 {
             return Ok(());
         }
+        let mut compressed = self.take_buffer(0);
         let page = &mut self.pages[self.current_page - 1];
         self.values.flush_page(&mut page.buffer)?;
         let uncompressed = page.buffer.len();
@@ -977,7 +1004,6 @@ impl PrimitiveWriter {
             )));
         }
         page.header.uncompressed_page_size = uncompressed as i32;
-        let mut compressed = Vec::new();
         compress(
             options.codec,
             &page.buffer,
@@ -986,7 +1012,8 @@ impl PrimitiveWriter {
         )?;
         page.header.compressed_page_size = compressed.len() as i32;
         page.compressed = compressed;
-        page.buffer = Vec::new();
+        let buffer = std::mem::take(&mut page.buffer);
+        self.recycle_buffer(buffer);
         Ok(())
     }
 
@@ -1124,6 +1151,9 @@ impl PrimitiveWriter {
             total_uncompressed += sink.written() - header_start;
             total_uncompressed += page.header.uncompressed_page_size as u64;
             sink.write_all(&page.compressed)?;
+        }
+        for page in std::mem::take(&mut self.pages) {
+            self.recycle_buffer(page.compressed);
         }
         meta.total_compressed_size = (sink.written() - start_offset) as i64;
         meta.total_uncompressed_size = total_uncompressed as i64;

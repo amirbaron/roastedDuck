@@ -2,7 +2,6 @@
 //! `StandardColumnWriter`, `BooleanColumnWriter`, `FixedDecimalColumnWriter` and
 //! `EnumColumnWriter`): dictionaries, page encodings and statistics.
 
-use std::collections::HashMap;
 
 use rustdb_common::{Error, Result};
 use rustdb_types::{Vector, VectorKind};
@@ -106,7 +105,7 @@ enum PageEncoder {
 /// their plain encodings, until it would exceed its limits.
 #[derive(Debug)]
 struct Dictionary<K> {
-    indexes: HashMap<K, u32>,
+    indexes: super::types::FastMap<K, u32>,
     /// The plain-encoded values in index order (`target_stream`).
     target: Vec<u8>,
     maximum_size: usize,
@@ -120,7 +119,7 @@ struct Dictionary<K> {
 impl<K: Eq + std::hash::Hash> Dictionary<K> {
     fn new(maximum_size: usize, maximum_target_capacity: usize) -> Self {
         Self {
-            indexes: HashMap::new(),
+            indexes: super::types::FastMap::default(),
             target: Vec::new(),
             maximum_size,
             maximum_target_capacity,
@@ -134,7 +133,7 @@ impl<K: Eq + std::hash::Hash> Dictionary<K> {
     }
 
     fn reset(&mut self) {
-        self.indexes = HashMap::new();
+        self.indexes = super::types::FastMap::default();
         self.target = Vec::new();
         self.hashes = Vec::new();
     }
@@ -179,10 +178,10 @@ where
         if self.dictionary.full {
             return Ok(());
         }
-        let key = T::key(src);
-        if self.dictionary.indexes.contains_key(&key) {
+        if T::lookup(&self.dictionary.indexes, src).is_some() {
             return Ok(());
         }
+        let key = T::key(src);
         let size = self.dictionary.len();
         if size + 1 > self.dictionary.maximum_size {
             self.dictionary.full = true;
@@ -250,13 +249,14 @@ where
             _ => count,
         };
         let validity = vector.validity();
+        let batch = T::batch(vector);
         let mut vector_index = 0;
         for i in 0..vcount {
             if check_parent_empty && parent.is_some_and(|parent| parent.is_empty[levels_len + i] != 0) {
                 continue;
             }
             if validity.is_valid(vector_index) {
-                let src = T::src(vector, vector_index);
+                let src = T::get(batch, vector_index);
                 self.insert(src)?;
                 self.total_value_count += 1;
                 self.total_string_size += T::string_bytes(src).map_or(0, <[u8]>::len);
@@ -342,6 +342,7 @@ where
 
     fn write_vector(&mut self, out: &mut Vec<u8>, vector: &Vector, start: usize, end: usize) -> Result<()> {
         let validity = vector.validity().clone();
+        let batch = T::batch(vector);
         let mut page = std::mem::replace(&mut self.page, PageEncoder::Plain);
         let result = (|| -> Result<()> {
             match &mut page {
@@ -359,11 +360,8 @@ where
                             encoder.begin_write();
                             *written_value = true;
                         }
-                        let key = T::key(T::src(vector, row));
-                        let index =
-                            *self.dictionary.indexes.get(&key).ok_or_else(|| {
-                                Error::internal("value missing from the Parquet dictionary")
-                            })?;
+                        let index = T::lookup(&self.dictionary.indexes, T::get(batch, row))
+                            .ok_or_else(|| Error::internal("value missing from the Parquet dictionary"))?;
                         encoder.write_value(out, index);
                     }
                 }
@@ -372,7 +370,7 @@ where
                         if !validity.is_valid(row) {
                             continue;
                         }
-                        let src = T::src(vector, row);
+                        let src = T::get(batch, row);
                         self.update_stats(src)?;
                         let value = T::delta_value(src)?;
                         if *initialized {
@@ -388,7 +386,7 @@ where
                         if !validity.is_valid(row) {
                             continue;
                         }
-                        let src = T::src(vector, row);
+                        let src = T::get(batch, row);
                         self.update_stats(src)?;
                         let bytes = T::string_bytes(src)
                             .ok_or_else(|| Error::internal("DlbaEncoder should only be used with strings"))?;
@@ -410,7 +408,7 @@ where
                         if !validity.is_valid(row) {
                             continue;
                         }
-                        let src = T::src(vector, row);
+                        let src = T::get(batch, row);
                         self.update_stats(src)?;
                         bytes.clear();
                         T::write_plain(src, &mut bytes)?;
@@ -422,7 +420,7 @@ where
                         if !validity.is_valid(row) {
                             continue;
                         }
-                        let src = T::src(vector, row);
+                        let src = T::get(batch, row);
                         self.update_stats(src)?;
                         T::write_plain(src, out)?;
                     }
