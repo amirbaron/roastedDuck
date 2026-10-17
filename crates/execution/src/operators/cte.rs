@@ -88,6 +88,9 @@ impl PhysicalOperator for PhysicalCte {
     fn as_sink(&self) -> Option<&dyn ErasedSink> {
         Some(self)
     }
+    fn parallel_sink(&self) -> bool {
+        true
+    }
     fn is_cte(&self) -> bool {
         true
     }
@@ -102,31 +105,33 @@ impl PhysicalOperator for PhysicalCte {
 
 impl Sink for PhysicalCte {
     type Global = Mutex<Vec<DataChunk>>;
-    type Local = ();
+    /// The chunks one thread materialised.
+    type Local = Vec<DataChunk>;
 
     fn global_sink_state(&self, _: &ExecutionContext) -> Result<Self::Global> {
         Ok(Mutex::default())
     }
 
-    fn local_sink_state(&self, _: &ExecutionContext, _: &Self::Global) -> Result<()> {
-        Ok(())
+    fn local_sink_state(&self, _: &ExecutionContext, _: &Self::Global) -> Result<Vec<DataChunk>> {
+        Ok(Vec::new())
     }
 
     fn sink(
         &self,
         _: &ExecutionContext,
         chunk: &DataChunk,
-        global: &Self::Global,
-        (): &mut (),
+        _: &Self::Global,
+        local: &mut Vec<DataChunk>,
     ) -> Result<SinkResult> {
-        global
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(chunk.clone());
+        local.push(chunk.compacted());
         Ok(SinkResult::NeedMoreInput)
     }
 
-    fn combine(&self, _: &ExecutionContext, _: &Self::Global, (): ()) -> Result<()> {
+    fn combine(&self, _: &ExecutionContext, global: &Self::Global, mut local: Vec<DataChunk>) -> Result<()> {
+        global
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .append(&mut local);
         Ok(())
     }
 
@@ -194,6 +199,9 @@ impl PhysicalOperator for PhysicalCteScan {
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
     }
+    fn parallel_source(&self) -> bool {
+        true
+    }
     fn source_dependencies(&self) -> Vec<PhysicalRef> {
         if self.external {
             return Vec::new();
@@ -231,6 +239,10 @@ impl Source for PhysicalCteScan {
         } else {
             SourceResult::Finished
         })
+    }
+
+    fn max_threads(&self, (chunks, _): &Self::Global) -> usize {
+        chunks.len().max(1)
     }
 }
 

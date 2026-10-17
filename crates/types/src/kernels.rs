@@ -4,6 +4,8 @@
 //! constant result, flat inputs without NULLs run a tight loop the compiler can
 //! auto-vectorise, and everything else goes through the selection-aware generic path.
 
+use std::convert::Infallible;
+
 use rustdb_common::Result;
 
 use crate::{NativeType, ValidityMask, Vector, VectorKind};
@@ -19,8 +21,9 @@ where
     I: NativeType,
     O: NativeType,
 {
-    // An infallible closure lifted into the fallible path cannot fail.
-    let _ = try_unary(input, count, result, |value| Ok(f(value)));
+    // `Infallible` errors compile to nothing, so the loops stay free of early exits and
+    // can be vectorised.
+    let Ok(()) = unary_impl::<I, O, Infallible>(input, count, result, |value| Ok(f(value)));
 }
 
 /// Like [`unary`], but `f` may fail; the first error aborts the kernel.
@@ -28,8 +31,21 @@ pub fn try_unary<I, O>(
     input: &Vector,
     count: usize,
     result: &mut Vector,
-    mut f: impl FnMut(I) -> Result<O>,
+    f: impl FnMut(I) -> Result<O>,
 ) -> Result<()>
+where
+    I: NativeType,
+    O: NativeType,
+{
+    unary_impl(input, count, result, f)
+}
+
+fn unary_impl<I, O, E>(
+    input: &Vector,
+    count: usize,
+    result: &mut Vector,
+    mut f: impl FnMut(I) -> std::result::Result<O, E>,
+) -> std::result::Result<(), E>
 where
     I: NativeType,
     O: NativeType,
@@ -84,7 +100,8 @@ pub fn binary<L, R, O>(
     R: NativeType,
     O: NativeType,
 {
-    let _ = try_binary(left, right, count, result, |l, r| Ok(f(l, r)));
+    // See `unary`: no error path, so the loops can be vectorised.
+    let Ok(()) = binary_impl::<L, R, O, Infallible>(left, right, count, result, |l, r| Ok(f(l, r)));
 }
 
 /// Like [`binary`], but `f` may fail; the first error aborts the kernel.
@@ -93,8 +110,23 @@ pub fn try_binary<L, R, O>(
     right: &Vector,
     count: usize,
     result: &mut Vector,
-    mut f: impl FnMut(L, R) -> Result<O>,
+    f: impl FnMut(L, R) -> Result<O>,
 ) -> Result<()>
+where
+    L: NativeType,
+    R: NativeType,
+    O: NativeType,
+{
+    binary_impl(left, right, count, result, f)
+}
+
+fn binary_impl<L, R, O, E>(
+    left: &Vector,
+    right: &Vector,
+    count: usize,
+    result: &mut Vector,
+    mut f: impl FnMut(L, R) -> std::result::Result<O, E>,
+) -> std::result::Result<(), E>
 where
     L: NativeType,
     R: NativeType,

@@ -1,6 +1,6 @@
 # rustdb conformance dashboard
 
-Rust passing: **4018 / 4871 files** (3957 pass on both engines). "Passing" means the Rust run passed, or both engines skipped the file for the same reason.
+Rust passing: **4023 / 4871 files** (3962 pass on both engines). "Passing" means the Rust run passed, or both engines skipped the file for the same reason.
 
 | group | files | C++ pass | C++ skip | C++ fail | Rust passing | both pass | Rust fail | Rust crash/timeout | Rust skip (C++ pass) | Rust % |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -41,7 +41,7 @@ Rust passing: **4018 / 4871 files** (3957 pass on both engines). "Passing" means
 | test/sql/alter | 107 | 107 | 0 | 0 | 88 | 88 | 19 | 0 | 0 | 82.2% |
 | test/sql/append | 1 | 1 | 0 | 0 | 1 | 1 | 0 | 0 | 0 | 100.0% |
 | test/sql/attach | 86 | 81 | 5 | 0 | 60 | 55 | 25 | 0 | 1 | 69.8% |
-| test/sql/binder | 38 | 38 | 0 | 0 | 33 | 33 | 3 | 0 | 2 | 86.8% |
+| test/sql/binder | 38 | 38 | 0 | 0 | 34 | 34 | 2 | 0 | 2 | 89.5% |
 | test/sql/cast | 30 | 30 | 0 | 0 | 28 | 28 | 1 | 0 | 1 | 93.3% |
 | test/sql/catalog | 119 | 119 | 0 | 0 | 107 | 107 | 12 | 0 | 0 | 89.9% |
 | test/sql/collate | 24 | 24 | 0 | 0 | 20 | 20 | 0 | 0 | 4 | 83.3% |
@@ -66,7 +66,7 @@ Rust passing: **4018 / 4871 files** (3957 pass on both engines). "Passing" means
 | test/sql/json | 85 | 84 | 1 | 0 | 2 | 2 | 0 | 0 | 82 | 2.4% |
 | test/sql/keywords | 2 | 2 | 0 | 0 | 2 | 2 | 0 | 0 | 0 | 100.0% |
 | test/sql/limit | 11 | 11 | 0 | 0 | 9 | 9 | 1 | 0 | 1 | 81.8% |
-| test/sql/logging | 15 | 14 | 1 | 0 | 9 | 8 | 6 | 0 | 0 | 60.0% |
+| test/sql/logging | 15 | 14 | 1 | 0 | 10 | 9 | 5 | 0 | 0 | 66.7% |
 | test/sql/merge | 22 | 22 | 0 | 0 | 20 | 20 | 0 | 0 | 2 | 90.9% |
 | test/sql/optimizer | 40 | 40 | 0 | 0 | 37 | 37 | 1 | 0 | 2 | 92.5% |
 | test/sql/order | 33 | 33 | 0 | 0 | 32 | 32 | 0 | 0 | 1 | 97.0% |
@@ -89,7 +89,7 @@ Rust passing: **4018 / 4871 files** (3957 pass on both engines). "Passing" means
 | test/sql/setops | 24 | 24 | 0 | 0 | 23 | 23 | 1 | 0 | 0 | 95.8% |
 | test/sql/settings | 32 | 32 | 0 | 0 | 18 | 18 | 11 | 0 | 3 | 56.2% |
 | test/sql/show_select | 10 | 10 | 0 | 0 | 10 | 10 | 0 | 0 | 0 | 100.0% |
-| test/sql/storage | 601 | 582 | 19 | 0 | 466 | 448 | 107 | 0 | 27 | 77.5% |
+| test/sql/storage | 601 | 582 | 19 | 0 | 469 | 451 | 104 | 0 | 27 | 78.0% |
 | test/sql/storage_version | 1 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0.0% |
 | test/sql/subquery | 89 | 89 | 0 | 0 | 86 | 86 | 1 | 0 | 2 | 96.6% |
 | test/sql/table_function | 43 | 42 | 1 | 0 | 38 | 37 | 2 | 0 | 3 | 88.4% |
@@ -108,4 +108,4 @@ Rust passing: **4018 / 4871 files** (3957 pass on both engines). "Passing" means
 | test/sqlite | 4 | 4 | 0 | 0 | 4 | 4 | 0 | 0 | 0 | 100.0% |
 | test/sqlite/tags | 4 | 0 | 4 | 0 | 4 | 0 | 0 | 0 | 0 | 100.0% |
 | test/sqlserver | 2 | 2 | 0 | 0 | 2 | 2 | 0 | 0 | 0 | 100.0% |
-| **total** | 4871 | 4794 | 75 | 2 | 4018 | 3957 | 386 | 3 | 451 | 82.5% |
+| **total** | 4871 | 4794 | 75 | 2 | 4023 | 3962 | 381 | 3 | 451 | 82.6% |

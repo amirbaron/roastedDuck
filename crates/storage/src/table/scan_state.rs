@@ -202,6 +202,19 @@ impl TableScanState {
     pub fn column_ids(&self) -> &[StorageIndex] {
         &self.column_ids
     }
+
+    /// The batch index of the morsel being scanned: row groups of the table count from
+    /// 1, the transaction-local row groups continue after them
+    /// (`TableScanGetPartitionData`).
+    pub fn batch_index(&self) -> u64 {
+        if self.table_state.row_group.is_some() {
+            self.table_state.batch_index
+        } else if self.local_state.row_group.is_some() {
+            self.table_state.batch_index + self.local_state.batch_index
+        } else {
+            0
+        }
+    }
 }
 
 /// The shared position of a parallel scan of a collection (DuckDB's

@@ -187,6 +187,39 @@ fn array_size(ty: &LogicalType) -> usize {
 impl Vector {
     /// A flat vector with room for `capacity` rows, all zero/valid.
     pub fn flat(ty: LogicalType, capacity: usize) -> Self {
+        Self::flat_with(ty, capacity, RawBuffer::zeroed)
+    }
+
+    /// A flat vector for a writer that sets every slot it later reads, such as a column
+    /// scan: fixed-width slots start with unspecified values (a recycled buffer is not
+    /// cleared, like DuckDB's vector cache), strings and nested types start empty as in
+    /// [`Vector::flat`]. Only types for which every bit pattern is a valid value are
+    /// recycled (not BOOL, whose slots must hold 0 or 1).
+    pub fn flat_for_overwrite(ty: LogicalType, capacity: usize) -> Self {
+        let any_bits_valid = matches!(
+            ty.physical_type(),
+            PhysicalType::UInt8
+                | PhysicalType::Int8
+                | PhysicalType::UInt16
+                | PhysicalType::Int16
+                | PhysicalType::UInt32
+                | PhysicalType::Int32
+                | PhysicalType::UInt64
+                | PhysicalType::Int64
+                | PhysicalType::Float
+                | PhysicalType::Double
+                | PhysicalType::Interval
+                | PhysicalType::UInt128
+                | PhysicalType::Int128
+        );
+        if any_bits_valid {
+            Self::flat_with(ty, capacity, RawBuffer::recycled)
+        } else {
+            Self::flat(ty, capacity)
+        }
+    }
+
+    fn flat_with(ty: LogicalType, capacity: usize, buffer: fn(usize) -> RawBuffer) -> Self {
         let width = slot_width(&ty);
         let aux = match (ty.physical_type(), ty.info()) {
             (PhysicalType::Varchar, _) => Aux::Strings(Vec::new()),
@@ -207,7 +240,7 @@ impl Vector {
             _ => Aux::None,
         };
         let flat = Flat {
-            data: Arc::new(RawBuffer::zeroed(width * capacity)),
+            data: Arc::new(buffer(width * capacity)),
             validity: ValidityMask::all_valid(),
             aux,
             capacity,
@@ -264,7 +297,7 @@ impl Vector {
             flat.validity = ValidityMask::all_valid();
             return;
         }
-        *self = Self::flat(self.ty.clone(), capacity);
+        *self = Self::flat_for_overwrite(self.ty.clone(), capacity);
     }
 
     /// A sequence vector: row `i` is `start + i * increment`.
@@ -313,6 +346,36 @@ impl Vector {
             ty: self.ty.clone(),
             repr,
         }
+    }
+
+    /// Slices every vector of `columns` with `sel` (`DataChunk::Slice` with a
+    /// `SelCache`): dictionaries over the same selection, typically all columns of a
+    /// filtered chunk, share one composed selection instead of composing it per column.
+    pub fn slice_all(columns: &[Self], sel: &SelectionVector) -> Vec<Self> {
+        let mut cache: Vec<(usize, SelectionVector)> = Vec::new();
+        columns
+            .iter()
+            .map(|column| match &column.repr {
+                Repr::Dictionary { sel: inner, child } => {
+                    let key = inner.buffer_key();
+                    let composed = if let Some((_, composed)) = cache.iter().find(|(k, _)| *k == key) {
+                        composed.clone()
+                    } else {
+                        let composed = sel.compose(inner);
+                        cache.push((key, composed.clone()));
+                        composed
+                    };
+                    Self {
+                        ty: column.ty.clone(),
+                        repr: Repr::Dictionary {
+                            sel: composed,
+                            child: Arc::clone(child),
+                        },
+                    }
+                }
+                _ => column.slice(sel),
+            })
+            .collect()
     }
 
     pub fn logical_type(&self) -> &LogicalType {
@@ -727,7 +790,10 @@ impl Vector {
             }
             Repr::Dictionary { sel, child } => {
                 let sel = sel.clone();
-                *self = child.gather(&sel);
+                let mut flat = child.gather(&sel);
+                // The dictionary may have been reinterpreted as a type of the same layout.
+                flat.ty = self.ty.clone();
+                *self = flat;
             }
             Repr::Sequence { start, increment } => {
                 let (start, increment) = (*start, *increment);
@@ -740,6 +806,35 @@ impl Vector {
                 *self = flat;
             }
         }
+    }
+
+    /// The first `count` rows in a vector that holds nothing else, for operators that keep
+    /// rows for long (DuckDB copies them into a `ColumnDataCollection`): a selection of a
+    /// few rows of a large vector would otherwise keep the whole vector and its string
+    /// heaps alive. Full flat vectors are shared, not copied; LIST, STRUCT
+    /// and ARRAY rows are gathered but share their children's storage.
+    #[must_use]
+    pub fn compacted(&self, count: usize) -> Self {
+        match &self.repr {
+            Repr::Constant(_) | Repr::Sequence { .. } => return self.clone(),
+            Repr::Flat(flat) if flat.capacity <= count => return self.clone(),
+            _ => {}
+        }
+        if self.ty.physical_type() != PhysicalType::Varchar {
+            return self.slice(&SelectionVector::incremental(count)).flattened(count);
+        }
+        let mut result = Self::flat(self.ty.clone(), count.max(1));
+        let mut values = Vec::with_capacity(count);
+        for row in 0..count {
+            if self.is_null(row) {
+                result.validity_mut().set_invalid(row, count);
+                values.push(StringT::default());
+            } else {
+                values.push(result.add_string(self.string_bytes(row)));
+            }
+        }
+        result.values_mut::<StringT>()[..count].copy_from_slice(&values);
+        result
     }
 
     /// A flat copy of the first `count` rows (DuckDB's `Vector::Flatten` on a copy).

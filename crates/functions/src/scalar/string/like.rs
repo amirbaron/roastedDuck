@@ -9,7 +9,6 @@ use rustdb_types::{LogicalType, LogicalTypeId, TypeInfo};
 
 use crate::scalar::executor::{Str, binary, ternary, unary};
 use crate::scalar::string::caseconvert::case_convert;
-use crate::scalar::string::contains::find;
 
 /// Whether `byte` starts a UTF-8 character.
 #[inline]
@@ -169,6 +168,8 @@ fn ilike(string: &[u8], pattern: &[u8], escape: Option<u8>) -> Result<bool> {
 #[derive(Debug)]
 struct LikeMatcher {
     segments: Vec<Vec<u8>>,
+    /// A searcher per segment, built once instead of per row.
+    finders: Vec<memchr::memmem::Finder<'static>>,
     has_start_percentage: bool,
     has_end_percentage: bool,
 }
@@ -207,8 +208,13 @@ impl LikeMatcher {
         if last_non_pattern < pattern.len() {
             segments.push(pattern[last_non_pattern..].to_vec());
         }
+        let finders = segments
+            .iter()
+            .map(|segment| memchr::memmem::Finder::new(segment).into_owned())
+            .collect();
         (!segments.is_empty()).then_some(Self {
             segments,
+            finders,
             has_start_percentage,
             has_end_percentage,
         })
@@ -231,7 +237,7 @@ impl LikeMatcher {
         }
         while index < last {
             let segment = &self.segments[index];
-            let Some(offset) = find(rest, segment) else {
+            let Some(offset) = self.finders[index].find(rest) else {
                 return false;
             };
             rest = &rest[offset + segment.len()..];
@@ -239,7 +245,7 @@ impl LikeMatcher {
         }
         let segment = &self.segments[last];
         if self.has_end_percentage {
-            find(rest, segment).is_some()
+            self.finders[last].find(rest).is_some()
         } else {
             rest.ends_with(segment)
         }

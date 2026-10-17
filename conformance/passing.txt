@@ -966,6 +966,7 @@ test/sql/binder/test_function_chaining_alias.test
 test/sql/binder/test_having_alias.test
 test/sql/binder/test_implicit_struct_pack.test
 test/sql/binder/test_in_with_collate.test
+test/sql/binder/test_null_type_propagation.test
 test/sql/binder/test_select_clause_alias.test
 test/sql/binder/test_string_alias.test
 test/sql/cast/boolean_autocast.test
@@ -2391,6 +2392,7 @@ test/sql/limit/test_parallel_limit_nulls.test_slow
 test/sql/limit/test_parallel_limit_strings.test_slow
 test/sql/limit/test_preserve_insertion_order.test
 test/sql/logging/enable_logging_file_no_path.test
+test/sql/logging/file_system_logging_attach_deadlock.test
 test/sql/logging/http_log_timing.test
 test/sql/logging/logging.test
 test/sql/logging/logging_buffer_size.test
@@ -2812,8 +2814,10 @@ test/sql/storage/alter/alter_column_constraint.test
 test/sql/storage/append_strings_to_persistent.test
 test/sql/storage/bc/test_broken_view_v092.test
 test/sql/storage/bc/test_view_v092.test
+test/sql/storage/buffer_manager.test_slow
 test/sql/storage/buffer_manager/appending_table_exceeding_limit.test_slow
 test/sql/storage/buffer_manager/larger_than_memory_aggregate.test_slow
+test/sql/storage/buffer_manager_temp_dir.test
 test/sql/storage/catalog/generated_columns/virtual/basic.test
 test/sql/storage/catalog/generated_columns/virtual/constraints.test
 test/sql/storage/catalog/store_collate.test
@@ -3143,6 +3147,7 @@ test/sql/storage/store_group_order_all.test
 test/sql/storage/struct_default_entries.test_slow
 test/sql/storage/temp_directory/max_swap_space_explicit.test
 test/sql/storage/temp_directory/max_swap_space_inmemory.test
+test/sql/storage/temp_directory/max_swap_space_persistent.test
 test/sql/storage/temp_directory/max_swap_space_unlimited.test
 test/sql/storage/temp_directory/temp_directory_null.test
 test/sql/storage/temp_directory/test_default_temp_directory.test

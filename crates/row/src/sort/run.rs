@@ -7,7 +7,7 @@ use rustdb_buffer::MemoryTag;
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 
 use super::SortLayouts;
-use super::algorithm::{KeyBlocks, RadixPlan, sort_blocks, sort_slice};
+use super::algorithm::{KeyBlocks, ska_key, sort_keys};
 use super::encode::SortKeyBuffer;
 use super::key::{SortKey, dispatch_sort_key};
 use crate::collection::TupleDataCollection;
@@ -31,6 +31,8 @@ pub struct SortedRun {
     key_append: AppendState,
     payload_append: AppendState,
     pub(crate) finalized: bool,
+    /// Whether this is the approximate sort of an index creation (no full-key tie break).
+    is_index_sort: bool,
 }
 
 impl std::fmt::Debug for SortedRun {
@@ -43,7 +45,8 @@ impl std::fmt::Debug for SortedRun {
 }
 
 impl SortedRun {
-    pub(crate) fn new(layouts: &Arc<SortLayouts>) -> Result<Self> {
+    /// An empty run; `is_index_sort` for the approximate sort of an index creation.
+    pub(crate) fn new(layouts: &Arc<SortLayouts>, is_index_sort: bool) -> Result<Self> {
         let mut key_data = TupleDataCollection::new(
             layouts.buffer_manager.clone(),
             Arc::clone(&layouts.key_layout),
@@ -69,13 +72,15 @@ impl SortedRun {
             key_append,
             payload_append,
             finalized: false,
+            is_index_sort,
         })
     }
 
     /// An empty, finalized run to materialize merged data into
     /// (`CreateRunForMaterialization`).
     pub(crate) fn for_materialization(layouts: &Arc<SortLayouts>) -> Result<Self> {
-        let mut run = Self::new(layouts)?;
+        // Materialized runs are already in order and never sorted again.
+        let mut run = Self::new(layouts, false)?;
         run.key_append.pin_state.properties = PinProperties::UnpinAfterDone;
         run.payload_append.pin_state.properties = PinProperties::UnpinAfterDone;
         run.finalized = true;
@@ -187,27 +192,36 @@ impl SortedRun {
 
     fn sort_typed<K: SortKey>(&mut self) -> Result<()> {
         let layout = self.key_data.layout();
-        let plan = RadixPlan::new::<K>(layout.sort_width(), layout.sort_skippable_bytes());
+        let extract = ska_key::<K>(
+            layout.sort_width(),
+            layout.sort_skippable_bytes(),
+            self.is_index_sort,
+        );
         // SAFETY: every key block is pinned (KeepEverythingPinned) and only this run uses it.
         let mut blocks = unsafe { self.key_blocks::<K>()? };
         let len = blocks.len();
-        if len > self.key_data.tuples_per_block() {
-            // Sorting a contiguous copy is several times faster than sorting across blocks;
-            // without memory for the copy, sort in place.
-            if let Ok(buffer) = self.layouts.buffer_manager.allocate_data(len * size_of::<K>()) {
-                let keys = buffer.as_ptr().cast::<K>();
-                // SAFETY: `buffer` holds `len` keys, is 16-byte aligned (enough for `K`)
-                // and owned here; after `copy_to` every key is initialized.
-                let keys = unsafe {
-                    blocks.copy_to(keys);
-                    std::slice::from_raw_parts_mut(keys, len)
-                };
-                sort_slice(keys, &plan);
-                blocks.copy_from(keys);
-                return Ok(());
-            }
+        let copy_size = len * size_of::<K>();
+        let buffer_manager = &self.layouts.buffer_manager;
+        // Sorting a contiguous copy is several times faster than sorting across blocks; the
+        // copy is not worth evicting other data for (other threads' runs are still being
+        // built), so under memory pressure sort in place like DuckDB.
+        let copy_fits = buffer_manager.used_memory() + copy_size as u64 <= buffer_manager.max_memory() / 2;
+        if len > self.key_data.tuples_per_block()
+            && copy_fits
+            && let Ok(buffer) = buffer_manager.allocate_data(copy_size)
+        {
+            let keys = buffer.as_ptr().cast::<K>();
+            // SAFETY: `buffer` holds `len` keys, is 16-byte aligned (enough for `K`) and
+            // owned here; after `copy_to` every key is initialized.
+            let keys = unsafe {
+                blocks.copy_to(keys);
+                std::slice::from_raw_parts_mut(keys, len)
+            };
+            sort_keys(keys, &extract);
+            blocks.copy_from(keys);
+            return Ok(());
         }
-        sort_blocks(&mut blocks, &plan);
+        sort_keys(&mut blocks, &extract);
         Ok(())
     }
 

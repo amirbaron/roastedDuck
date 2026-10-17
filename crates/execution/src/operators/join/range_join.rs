@@ -333,7 +333,7 @@ impl SortedTable {
             .collect();
         let sort = Sort::new(ctx.env.buffer_manager.clone(), orders, &input_types, None)?;
         let config = SortConfig {
-            threads: ctx.env.threads,
+            threads: ctx.env.threads(),
             connections: 1,
             ..SortConfig::default()
         };

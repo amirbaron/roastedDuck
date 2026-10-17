@@ -20,9 +20,13 @@ pub(crate) mod algorithm;
 pub mod encode;
 pub(crate) mod key;
 mod merger;
+mod pdqsort;
 mod run;
+mod seq;
+mod ska_sort;
 mod sorter;
 mod strategy;
+mod vergesort;
 
 use std::sync::Arc;
 

@@ -32,6 +32,7 @@ use crate::constraints::table_constraints;
 mod asof_join;
 mod comparison_join;
 pub(crate) mod explain;
+pub mod order_preservation;
 mod window;
 
 pub use comparison_join::JoinPlanSettings;
@@ -1217,14 +1218,17 @@ impl PlanGenerator {
                     )));
                 }
                 if !groups.is_empty() || grouping_sets.len() > 1 {
-                    return Ok(Arc::new(PhysicalHashAggregate::new(
-                        types,
-                        groups,
-                        aggregates,
-                        grouping_sets,
-                        grouping_functions,
-                        child,
-                    )?));
+                    return Ok(Arc::new(
+                        PhysicalHashAggregate::new(
+                            types,
+                            groups,
+                            aggregates,
+                            grouping_sets,
+                            grouping_functions,
+                            child,
+                        )?
+                        .with_group_stats(&group_stats),
+                    ));
                 }
                 Arc::new(PhysicalUngroupedAggregate::new(types, aggregates, child)?)
             }

@@ -38,6 +38,9 @@ impl PhysicalOperator for PhysicalProjection {
     fn as_operator(&self) -> Option<&dyn ErasedOperator> {
         Some(self)
     }
+    fn parallel_operator(&self) -> bool {
+        true
+    }
 
     fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
         let mut result = RenderParams::new();

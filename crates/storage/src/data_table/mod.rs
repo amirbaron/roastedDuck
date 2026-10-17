@@ -253,6 +253,14 @@ impl DataTable {
     }
 
     /// Committed and uncommitted rows of the base table (deleted ones included).
+    /// How many threads can usefully scan the table: one per row group
+    /// (`DataTable::MaxThreads`).
+    pub fn max_threads(&self) -> usize {
+        let vector_size = rustdb_common::STANDARD_VECTOR_SIZE as u64;
+        let parallel_scan_tuple_count = (self.row_groups.row_group_size() / vector_size).max(1) * vector_size;
+        usize::try_from(self.total_rows() / parallel_scan_tuple_count + 1).unwrap_or(usize::MAX)
+    }
+
     pub fn total_rows(&self) -> u64 {
         self.row_groups.total_rows()
     }
@@ -443,7 +451,11 @@ impl DataTable {
             state.local_state = CollectionScanState::default();
             return Ok(true);
         }
-        state.table_state = CollectionScanState::default();
+        // The local rows' batches follow the table's (`TableScanGetPartitionData`).
+        state.table_state = CollectionScanState {
+            batch_index: state.table_state.batch_index,
+            ..CollectionScanState::default()
+        };
         if let Some(local) = transaction.local_storage().storage(self) {
             return local.collection().next_parallel_scan(
                 &parallel.local_state,

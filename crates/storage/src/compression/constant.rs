@@ -36,8 +36,23 @@ pub(crate) fn scan(
         .numeric_min()
         .ok_or_else(|| Error::internal("constant segment without a numeric minimum"))?;
     drop(stats);
-    for row in result_offset..result_offset + count {
-        result.set_value(row, &value)?;
+    if count == 0 {
+        return Ok(());
+    }
+    // Write the first row, then repeat its bytes (`ConstantScanPartial`).
+    result.set_value(result_offset, &value)?;
+    let width = result.logical_type().physical_type().size();
+    let bytes = result.data_bytes_mut();
+    let start = result_offset * width;
+    let end = (result_offset + count) * width;
+    if width == 0 || end > bytes.len() {
+        return Err(Error::internal(
+            "constant segment scan out of the vector's bounds",
+        ));
+    }
+    let (first, rest) = bytes[start..end].split_at_mut(width);
+    for slot in rest.chunks_exact_mut(width) {
+        slot.copy_from_slice(first);
     }
     Ok(())
 }

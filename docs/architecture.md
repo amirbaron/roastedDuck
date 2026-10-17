@@ -71,10 +71,23 @@ land, following the same table.
 - A physical operator implements `PhysicalOperator` plus one or more of the typed traits
   `Source`, `Operator`, `Sink`, each with `Global` (shared, `Sync`) and `Local`
   (per-thread) state types. The executor sees the type-erased versions.
-- Pipelines break at sinks (`Executor::build`). A sink's finalized global state is passed
-  to the same operator's source role.
+- Pipelines break at sinks (`parallel::meta_pipeline`, DuckDB's `MetaPipeline` /
+  `BuildPipelines`). A sink's finalized global state is passed to the same operator's
+  source and operator roles.
+- Execution follows DuckDB's `src/parallel`: every meta pipeline gets an event stack
+  (initialize → pipeline → prepare finish → finish → complete) linked by the pipelines'
+  dependencies; events queue tasks on the database's `TaskScheduler` (`SET threads`), and
+  the thread running the query works on its own tasks until the query completes.
+- An operator opts into parallelism with `parallel_source` / `parallel_operator` /
+  `parallel_sink` (default: sequential) and states its row order with `source_order` /
+  `operator_order` / `sink_order_dependent`. Sources that number their output in batches
+  (`supports_batch_index`, `Source::batch_index`) let order-dependent sinks such as the
+  batch result collector run in parallel and still keep the order. A sink with more
+  parallel work after `finalize` schedules it in stages through `finalize_tasks` /
+  `execute_finalize_task` (DuckDB's sink-specific finalize events).
 - Operators must be correct when run on several threads with separate local states;
-  merge in `combine`, finish in `finalize`.
+  merge in `combine`, finish in `finalize`. Results must not depend on the number of
+  threads except where DuckDB's do not either (row order without `ORDER BY`).
 
 ## Testing
 

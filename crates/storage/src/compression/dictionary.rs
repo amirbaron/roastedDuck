@@ -10,13 +10,13 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, Vector};
+use rustdb_types::{LogicalType, StringT, Vector};
 
 use super::bitpacking_primitives::{
     GROUP_SIZE, minimum_bit_width_unsigned, pack_buffer_u64, required_size, round_up_to_group,
     unpack_buffer_u32,
 };
-use super::primitive::{corrupt, load, unified_strings, update_string_stats, write_string_ranges};
+use super::primitive::{corrupt, load, unified_strings, update_string_stats};
 use super::uncompressed::string_block_limit;
 use super::{Analyzer, CompressionInfo, CompressionType, Compressor, SegmentScan};
 use crate::checkpoint::column_checkpointer::{FinishedSegment, SegmentSink};
@@ -38,6 +38,10 @@ pub(crate) struct DictionaryScanState {
     width: u8,
     /// Unpacked selection values (`sel_vec`).
     selection: Vec<u32>,
+    /// Every dictionary string, decoded once per segment (`None` for corrupt entries, an
+    /// error only when a row refers to them). Like DuckDB's dictionary vector, rows then
+    /// only copy a `string_t`.
+    strings: Option<Vec<Option<StringT>>>,
 }
 
 impl DictionaryScanState {
@@ -70,7 +74,22 @@ impl DictionaryScanState {
             index_buffer,
             width,
             selection: Vec::new(),
+            strings: None,
         })
+    }
+
+    /// The `string_t` of every dictionary entry, pointing into the segment.
+    fn decode_dictionary(&self) -> Vec<Option<StringT>> {
+        let bytes = self.data.bytes();
+        (0..self.index_buffer.len())
+            .map(|index| {
+                let range = self.string_range(index).ok()?;
+                let string = bytes.get(range)?;
+                // SAFETY: the bytes belong to the pinned segment data, which every result
+                // vector holding these strings keeps alive (see `scan`).
+                Some(unsafe { StringT::from_raw(string) })
+            })
+            .collect()
     }
 
     /// The byte range of dictionary string `index` (`GetStringLength` +
@@ -114,10 +133,27 @@ impl SegmentScan for DictionaryScanState {
         let src_offset = DICTIONARY_HEADER_SIZE + (start - start_offset) * self.width as usize / 8;
         let src = self.data.bytes().get(src_offset..).unwrap_or(&[]);
         unpack_buffer_u32(src, decompress_count, self.width, &mut self.selection);
-        let ranges = (0..count)
-            .map(|row| self.string_range(self.selection[row + start_offset] as usize))
-            .collect::<Result<Vec<_>>>()?;
-        write_string_ranges(result, result_offset, &self.data, ranges)
+        if self.strings.is_none() {
+            self.strings = Some(self.decode_dictionary());
+        }
+        let strings = self.strings.as_deref().unwrap_or_default();
+        let target = result
+            .values_mut::<StringT>()
+            .get_mut(result_offset..result_offset + count)
+            .ok_or_else(|| Error::internal("scan target vector too small"))?;
+        for (value, &index) in target
+            .iter_mut()
+            .zip(&self.selection[start_offset..start_offset + count])
+        {
+            *value = strings.get(index as usize).copied().flatten().ok_or_else(|| {
+                corrupt(
+                    "Failed to scan dictionary string - offset out of range. Database file appears to be corrupted.",
+                )
+            })?;
+        }
+        let keep_alive: Arc<dyn std::any::Any + Send + Sync> = Arc::clone(&self.data) as _;
+        result.add_keep_alive(keep_alive);
+        Ok(())
     }
 }
 

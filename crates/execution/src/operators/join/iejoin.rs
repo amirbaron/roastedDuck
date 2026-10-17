@@ -647,7 +647,7 @@ impl Source for PhysicalIEJoin {
             let ranking = self.rank(ctx, &global.tables)?;
             // The L2 blocks, split evenly over the threads.
             let l2_blocks = (left.count() + right.count()).div_ceil(STANDARD_VECTOR_SIZE);
-            let per_thread = l2_blocks.div_ceil(ctx.env.threads.max(1)).max(1);
+            let per_thread = l2_blocks.div_ceil(ctx.env.threads().max(1)).max(1);
             let mut first = 0;
             while first < l2_blocks && ranking.l2.count() > 0 {
                 tasks.push_back(IEJoinTask::Inner(first, (first + per_thread).min(l2_blocks)));

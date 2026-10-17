@@ -2,7 +2,7 @@
 //! `CombineHash`), bit-for-bit: hashes decide partitions, and SQL `hash()` exposes them.
 
 use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, PhysicalType, Vector, VectorKind};
+use rustdb_types::{LogicalType, NativeType, PhysicalType, StringT, Vector, VectorKind};
 
 use crate::compare::Interval;
 use crate::format::{FormatKind, VectorFormat};
@@ -167,44 +167,140 @@ fn check_result(result: &Vector) -> Result<()> {
     }
 }
 
+/// A fixed-width value with DuckDB's per-type hash (`Hash<T>`), so that vector hashing
+/// can run a loop monomorphised per type.
+trait HashNative: NativeType {
+    fn hash_value(self) -> u64;
+}
+
+macro_rules! hash_native {
+    ($($ty:ty => |$value:ident| $hash:expr),* $(,)?) => {$(
+        impl HashNative for $ty {
+            #[inline]
+            fn hash_value(self) -> u64 {
+                let $value = self;
+                $hash
+            }
+        }
+    )*};
+}
+
+hash_native!(
+    // Small integers are hashed as their (sign-extended) 32-bit value.
+    bool => |value| murmur_hash64(u64::from(value)),
+    i8 => |value| murmur_hash64(u64::from(i32::from(value) as u32)),
+    u8 => |value| murmur_hash64(u64::from(value)),
+    i16 => |value| murmur_hash64(u64::from(i32::from(value) as u32)),
+    u16 => |value| murmur_hash64(u64::from(value)),
+    i32 => |value| murmur_hash64(u64::from(value as u32)),
+    u32 => |value| murmur_hash64(u64::from(value)),
+    i64 => |value| murmur_hash64(value as u64),
+    u64 => |value| murmur_hash64(value),
+    i128 => |value| murmur_hash64(value as u64) ^ murmur_hash64((value >> 64) as u64),
+    u128 => |value| murmur_hash64(value as u64) ^ murmur_hash64((value >> 64) as u64),
+    f32 => |value| hash_fixed(PhysicalType::Float, &value.to_ne_bytes()),
+    f64 => |value| hash_fixed(PhysicalType::Double, &value.to_ne_bytes()),
+);
+
+/// Stores `hash` in `target`, or combines it with the hash already there.
+#[inline]
+fn emit(target: &mut u64, hash: u64, combine: bool) {
+    *target = if combine {
+        combine_hash(*target, hash)
+    } else {
+        hash
+    };
+}
+
+/// Hashes (or, with `combine`, combines into `out`) rows `0..out.len()` of a fixed-width
+/// vector.
+#[inline]
+fn hash_native<T: HashNative>(input: &Vector, out: &mut [u64], combine: bool) {
+    let data = input.unified::<T>();
+    if data.validity.is_all_valid() {
+        for (row, target) in out.iter_mut().enumerate() {
+            emit(target, data.values[data.slot(row)].hash_value(), combine);
+        }
+        return;
+    }
+    for (row, target) in out.iter_mut().enumerate() {
+        let slot = data.slot(row);
+        let hash = if data.validity.is_valid(slot) {
+            data.values[slot].hash_value()
+        } else {
+            NULL_HASH
+        };
+        emit(target, hash, combine);
+    }
+}
+
+/// [`hash_native`] for VARCHAR/BLOB vectors.
+fn hash_strings(input: &Vector, out: &mut [u64], combine: bool) {
+    let data = input.unified::<StringT>();
+    for (row, target) in out.iter_mut().enumerate() {
+        let slot = data.slot(row);
+        let hash = if data.validity.is_valid(slot) {
+            hash_bytes(input.string_value(&data.values[slot]))
+        } else {
+            NULL_HASH
+        };
+        emit(target, hash, combine);
+    }
+}
+
+/// Hashes rows `0..out.len()` of `input` into `out` (combining with the hashes already
+/// there if `combine`), with a loop monomorphised per type where the vector allows one.
+fn hash_rows(input: &Vector, out: &mut [u64], combine: bool) -> Result<()> {
+    if matches!(input.kind(), VectorKind::Flat | VectorKind::Dictionary) {
+        let typed: Option<fn(&Vector, &mut [u64], bool)> = match input.logical_type().physical_type() {
+            PhysicalType::Bool => Some(hash_native::<bool>),
+            PhysicalType::Int8 => Some(hash_native::<i8>),
+            PhysicalType::UInt8 => Some(hash_native::<u8>),
+            PhysicalType::Int16 => Some(hash_native::<i16>),
+            PhysicalType::UInt16 => Some(hash_native::<u16>),
+            PhysicalType::Int32 => Some(hash_native::<i32>),
+            PhysicalType::UInt32 => Some(hash_native::<u32>),
+            PhysicalType::Int64 => Some(hash_native::<i64>),
+            PhysicalType::UInt64 => Some(hash_native::<u64>),
+            PhysicalType::Int128 => Some(hash_native::<i128>),
+            PhysicalType::UInt128 => Some(hash_native::<u128>),
+            PhysicalType::Float => Some(hash_native::<f32>),
+            PhysicalType::Double => Some(hash_native::<f64>),
+            PhysicalType::Varchar => Some(hash_strings),
+            _ => None,
+        };
+        if let Some(typed) = typed {
+            typed(input, out, combine);
+            return Ok(());
+        }
+    }
+    let format = VectorFormat::new(input, out.len())?;
+    for (row, target) in out.iter_mut().enumerate() {
+        emit(target, hash_row(&format, row), combine);
+    }
+    Ok(())
+}
+
 /// Hashes the first `count` rows of `input` into `result` (`VectorOperations::Hash`).
 /// A constant input yields a constant result.
 pub fn hash_vector(input: &Vector, count: usize, result: &mut Vector) -> Result<()> {
     check_result(result)?;
-    let format = VectorFormat::new(input, count)?;
     if input.kind() == VectorKind::Constant {
+        let format = VectorFormat::new(input, count)?;
         *result = Vector::flat(result.logical_type().clone(), 1);
         result.values_mut::<u64>()[0] = hash_row(&format, 0);
         result.make_constant();
         return Ok(());
     }
     result.reset_flat(count.max(1));
-    let hashes = result.values_mut::<u64>();
-    if let (FormatKind::Fixed(8), true, true) = (format.kind, format.sel.is_identity(), format.all_valid())
-        && matches!(
-            input.logical_type().physical_type(),
-            PhysicalType::Int64 | PhysicalType::UInt64
-        )
-    {
-        // Tight loop for the most common key type.
-        for (row, hash) in hashes[..count].iter_mut().enumerate() {
-            let mut block = [0u8; 8];
-            block.copy_from_slice(format.slot_bytes(row, 8));
-            *hash = murmur_hash64(u64::from_ne_bytes(block));
-        }
-        return Ok(());
-    }
-    for (row, hash) in hashes[..count].iter_mut().enumerate() {
-        *hash = hash_row(&format, row);
-    }
-    Ok(())
+    hash_rows(input, &mut result.values_mut::<u64>()[..count], false)
 }
 
 /// Combines the hashes of `input` into `hashes` (`VectorOperations::CombineHash`).
 pub fn combine_hash_vector(hashes: &mut Vector, input: &Vector, count: usize) -> Result<()> {
     check_result(hashes)?;
-    let format = VectorFormat::new(input, count)?;
     if hashes.kind() == VectorKind::Constant && input.kind() == VectorKind::Constant {
+        let format = VectorFormat::new(input, count)?;
         let current = hashes.unified::<u64>().values[0];
         let mut constant = Vector::flat(hashes.logical_type().clone(), 1);
         constant.values_mut::<u64>()[0] = combine_hash(current, hash_row(&format, 0));
@@ -212,20 +308,17 @@ pub fn combine_hash_vector(hashes: &mut Vector, input: &Vector, count: usize) ->
         *hashes = constant;
         return Ok(());
     }
-    let current: Vec<u64> = {
-        let unified = hashes.unified::<u64>();
-        (0..count).map(|row| unified.values[unified.slot(row)]).collect()
-    };
-    let mut combined = Vector::flat(hashes.logical_type().clone(), count.max(1));
-    for (row, (hash, current)) in combined.values_mut::<u64>()[..count]
-        .iter_mut()
-        .zip(current)
-        .enumerate()
-    {
-        *hash = combine_hash(current, hash_row(&format, row));
+    if hashes.kind() != VectorKind::Flat || hashes.row_capacity() < count {
+        let mut flat = Vector::flat(hashes.logical_type().clone(), count.max(1));
+        {
+            let unified = hashes.unified::<u64>();
+            for (row, hash) in flat.values_mut::<u64>()[..count].iter_mut().enumerate() {
+                *hash = unified.values[unified.slot(row)];
+            }
+        }
+        *hashes = flat;
     }
-    *hashes = combined;
-    Ok(())
+    hash_rows(input, &mut hashes.values_mut::<u64>()[..count], true)
 }
 
 /// Hashes several columns into one hash per row (first column hashed, the rest combined),

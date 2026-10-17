@@ -4,7 +4,8 @@
 //! Whatever the value type, fastpforlib's layout is the same: the group's values, masked to
 //! `width` bits, are concatenated least significant bit first into a little-endian bit
 //! stream of `32 * width / 8` bytes. Packing and unpacking therefore work on raw `u64` /
-//! `u128` bit patterns and do not need per-type kernels.
+//! `u128` bit patterns and do not need per-type kernels; unpacking has one kernel per
+//! width so the shifts are constants.
 
 /// Values per packed group (`BITPACKING_ALGORITHM_GROUP_SIZE`).
 pub(crate) const GROUP_SIZE: usize = 32;
@@ -68,6 +69,52 @@ pub(crate) fn unpack_group_u64(src: &[u8], width: u8, out: &mut [u64; GROUP_SIZE
         *out = [0; GROUP_SIZE];
         return;
     }
+    // Widths up to 56 bits: every value lies within the 8 bytes starting at its first
+    // byte. With 8 bytes of slack after the group (the rest of the segment), read them
+    // directly with a kernel specialised for the width (fastpforlib's unrolled unpackers).
+    if width <= 56 && src.len() >= GROUP_SIZE * width as usize / 8 + 8 {
+        UNPACK_KERNELS[width as usize](src, out);
+        return;
+    }
+    unpack_group_u64_slow(src, width, out);
+}
+
+/// An unpacker for one width.
+type UnpackKernel = fn(&[u8], &mut [u64; GROUP_SIZE]);
+
+/// Unpacks 32 values of `W` bits, reading 8 bytes at each value's first byte; `src` must
+/// hold `4 * W + 8` bytes.
+#[inline]
+fn unpack_fixed<const W: usize>(src: &[u8], out: &mut [u64; GROUP_SIZE]) {
+    let mask = if W == 64 { u64::MAX } else { (1u64 << W) - 1 };
+    let src = &src[..GROUP_SIZE * W / 8 + 8];
+    for (index, value) in out.iter_mut().enumerate() {
+        let bit = index * W;
+        let byte = bit / 8;
+        let mut raw = [0u8; 8];
+        raw.copy_from_slice(&src[byte..byte + 8]);
+        *value = (u64::from_le_bytes(raw) >> (bit % 8)) & mask;
+    }
+}
+
+macro_rules! unpack_kernels {
+    ($($width:literal)*) => {
+        [unpack_zero, $(unpack_fixed::<$width>),*]
+    };
+}
+
+fn unpack_zero(_: &[u8], out: &mut [u64; GROUP_SIZE]) {
+    *out = [0; GROUP_SIZE];
+}
+
+/// The unpacker of every width up to 56 bits, indexed by width.
+static UNPACK_KERNELS: [UnpackKernel; 57] = unpack_kernels!(
+    1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32
+    33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56
+);
+
+/// [`unpack_group_u64`] for any width, through a zero-padded copy of the group.
+fn unpack_group_u64_slow(src: &[u8], width: u8, out: &mut [u64; GROUP_SIZE]) {
     let mut words = [0u64; 66];
     group_words(src, width, &mut words);
     let width = u32::from(width);
@@ -266,6 +313,11 @@ mod tests {
             let mut unpacked = [0u64; GROUP_SIZE];
             unpack_group_u64(&packed, width, &mut unpacked);
             assert_eq!(values, unpacked, "width {width}");
+            // With slack after the group the width-specialised kernels run.
+            packed.extend_from_slice(&[0xAB; 8]);
+            let mut fast = [0u64; GROUP_SIZE];
+            unpack_group_u64(&packed, width, &mut fast);
+            assert_eq!(values, fast, "fast kernel, width {width}");
         }
         for width in [0u8, 1, 63, 64, 65, 100, 127, 128] {
             let mask = if width == 128 {

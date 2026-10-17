@@ -174,12 +174,22 @@ impl Engine for RustEngine {
     /// `GetTestConfig()` expressed as settings. Gap: `rustdb::Config` has no fields yet for the
     /// non-setting options `checkpoint_on_shutdown`, `abort_on_wal_failure`, `debug_initialize`
     /// and `load_extensions = false`.
+    ///
+    /// `SLT_THREADS=<n>` runs every database with `threads = n` (to check that results do
+    /// not depend on the number of threads).
     fn test_config(&self) -> Result<Config, String> {
-        Ok(Config::default()
+        let mut config = Config::default()
             .with_option("checkpoint_threshold", Value::varchar("0b"))
             .with_option("allow_unsigned_extensions", Value::boolean(true))
             .with_option("default_block_size", Value::ubigint(DEFAULT_BLOCK_SIZE))
-            .with_option("debug_verify_vector", Value::varchar("NONE")))
+            .with_option("debug_verify_vector", Value::varchar("NONE"));
+        if let Ok(threads) = std::env::var("SLT_THREADS") {
+            let threads: u64 = threads
+                .parse()
+                .map_err(|_| format!("SLT_THREADS must be a number, got {threads:?}"))?;
+            config = config.with_option("threads", Value::ubigint(threads));
+        }
+        Ok(config)
     }
 
     fn set_option(&self, config: &mut Config, name: &str, value: &str) -> Result<(), String> {

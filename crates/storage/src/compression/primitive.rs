@@ -89,7 +89,11 @@ pub(crate) const fn align8(value: usize) -> usize {
 
 /// The data bytes of rows `offset..offset + count` of a flat result vector holding values of
 /// `T::SIZE` bytes.
-fn result_bytes<T: Primitive>(result: &mut Vector, offset: usize, count: usize) -> Result<&mut [u8]> {
+pub(crate) fn result_bytes<T: Primitive>(
+    result: &mut Vector,
+    offset: usize,
+    count: usize,
+) -> Result<&mut [u8]> {
     let start = offset * T::SIZE;
     result
         .data_bytes_mut()

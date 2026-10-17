@@ -5,7 +5,7 @@ use rustdb_catalog::{Catalog, Transaction, TransactionManager};
 use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
 use rustdb_execution::operators::{CollectedResult, PhysicalResultCollector};
 use rustdb_execution::{Executor, PhysicalRef, PlanContext, ScalarEvaluator, create_physical_plan_with};
-use rustdb_function::cast::CastFunctionSet;
+use rustdb_function::cast::{CastFunctionSet, ValueCast};
 use rustdb_optimizer::Optimizer;
 use rustdb_planner::{
     ClientContext, ColumnBindingResolver, LogicalKind, LogicalOperator, PlannedStatement, Planner,
@@ -121,6 +121,20 @@ fn is_secret_setting(name: &str) -> bool {
     .any(|setting| setting.eq_ignore_ascii_case(name))
 }
 
+/// DuckDB's default `temp_directory`: `<database>.tmp`, or `.tmp` in memory.
+fn default_temp_directory(path: &str) -> String {
+    if path.is_empty() {
+        ".tmp".to_owned()
+    } else {
+        format!("{path}.tmp")
+    }
+}
+
+/// Whether `name` is `threads` or its alias `worker_threads`.
+fn is_threads_setting(name: &str) -> bool {
+    name.eq_ignore_ascii_case("threads") || name.eq_ignore_ascii_case("worker_threads")
+}
+
 /// Whether `name` is `checkpoint_threshold` or its alias `wal_autocheckpoint`.
 fn is_checkpoint_threshold(name: &str) -> bool {
     name.eq_ignore_ascii_case("checkpoint_threshold") || name.eq_ignore_ascii_case("wal_autocheckpoint")
@@ -138,6 +152,56 @@ impl Drop for DatabaseInstance {
 }
 
 impl DatabaseInstance {
+    /// `SET threads` (`ThreadsSetting::SetGlobal`), or the default thread count for
+    /// `RESET threads` (`None`).
+    fn set_threads(&self, value: Option<&rustdb_types::Value>) -> Result<()> {
+        let threads = match value {
+            Some(value) => {
+                let threads = ValueCast::default_cast_as(value, &LogicalType::BIGINT)?
+                    .as_i128()
+                    .unwrap_or(0);
+                if threads < 1 {
+                    return Err(Error::new(ErrorKind::Syntax, "Must have at least 1 thread!"));
+                }
+                usize::try_from(threads).unwrap_or(usize::MAX)
+            }
+            None => rustdb_execution::default_threads(),
+        };
+        self.env.scheduler.set_threads(threads);
+        Ok(())
+    }
+
+    /// `SET`/`RESET` (`None`) of the buffer manager's options: `memory_limit` (alias
+    /// `max_memory`), `temp_directory` and `max_temp_directory_size`; other names are
+    /// ignored.
+    fn set_buffer_setting(&self, name: &str, value: Option<&rustdb_types::Value>) -> Result<()> {
+        let buffer_manager = &self.env.buffer_manager;
+        let name = name.to_ascii_lowercase();
+        match name.as_str() {
+            "memory_limit" | "max_memory" => {
+                let limit = match value {
+                    Some(value) => rustdb_buffer::parse_memory_limit(&value.to_varchar()?)?,
+                    None => rustdb_buffer::default_memory_limit(),
+                };
+                buffer_manager.set_memory_limit(limit)
+            }
+            "temp_directory" => {
+                let directory = match value {
+                    Some(value) => value.to_varchar()?,
+                    None => default_temp_directory(&self.path),
+                };
+                buffer_manager.set_temporary_directory(&directory)
+            }
+            "max_temp_directory_size" => {
+                let limit = value
+                    .map(|value| rustdb_buffer::parse_memory_limit(&value.to_varchar()?))
+                    .transpose()?;
+                buffer_manager.set_swap_limit(limit)
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// `SET checkpoint_threshold` (`CheckpointThresholdSetting::SetGlobal`).
     fn set_checkpoint_threshold(&self, value: &rustdb_types::Value) -> Result<()> {
         let limit = rustdb_buffer::parse_memory_limit(&value.to_varchar()?)?;
@@ -309,7 +373,11 @@ impl Database {
         }
         crate::system_functions::register_default_views(&system_catalog)?;
         crate::system_functions::register_default_macros(&system_catalog)?;
-        let env = rustdb_execution::ClientEnv::standalone()?;
+        let buffer_manager = rustdb_buffer::BufferManager::new(rustdb_buffer::BufferManagerConfig {
+            temp_directory: Some(default_temp_directory(&path).into()),
+            ..rustdb_buffer::BufferManagerConfig::default()
+        })?;
+        let env = Arc::new(rustdb_execution::ClientEnv::new(buffer_manager));
         let instance = DatabaseInstance {
             path: path.clone(),
             config: config.clone(),
@@ -328,6 +396,10 @@ impl Database {
             global_settings: Mutex::default(),
         };
         for (name, value) in &config.options {
+            if is_threads_setting(name) {
+                instance.set_threads(Some(value))?;
+            }
+            instance.set_buffer_setting(name, Some(value))?;
             if is_checkpoint_threshold(name) {
                 instance.set_checkpoint_threshold(value)?;
             }
@@ -1151,7 +1223,7 @@ impl Connection {
             memory_limit: buffer_manager.max_memory(),
             temp_directory: buffer_manager.temporary_directory(),
             max_swap: buffer_manager.max_swap(),
-            threads: std::thread::available_parallelism().map_or(1, |threads| threads.get() as u64),
+            threads: self.database.instance().env.threads() as u64,
         }
     }
 
@@ -1387,6 +1459,10 @@ impl Connection {
                 if is_secret_setting(name) {
                     self.database.instance().secrets.set_option(name, Some(value))?;
                 }
+                if is_threads_setting(name) {
+                    self.database.instance().set_threads(Some(value))?;
+                }
+                self.database.instance().set_buffer_setting(name, Some(value))?;
                 if crate::logging::is_logging_setting(name) {
                     crate::logging::apply_setting(&self.database.instance().log_manager, name, Some(value))?;
                 }
@@ -1409,6 +1485,10 @@ impl Connection {
                     crate::logging::apply_setting(&self.database.instance().log_manager, name, None)?;
                 }
                 self.settings.reset(name)?;
+                if is_threads_setting(name) {
+                    self.database.instance().set_threads(None)?;
+                }
+                self.database.instance().set_buffer_setting(name, None)?;
                 let (option, reset_scope) = (name.clone(), *scope);
                 self.record_setting(&option, None, reset_scope);
                 if is_force_compression(name) {
@@ -1535,6 +1615,7 @@ impl Connection {
         let client = self.client_context(transaction);
         let optimizer_config = self.settings.optimizer_config();
         let optimizer_client = optimizer_config.enabled.then(|| Arc::clone(&client));
+        let preserve_insertion_order = optimizer_config.preserve_insertion_order;
         plan = Optimizer::new(client, optimizer_config).optimize(plan)?;
         ColumnBindingResolver::resolve(&mut plan)?;
         seed_samples(&mut plan, &self.function_client);
@@ -1550,8 +1631,17 @@ impl Connection {
         // EXPLAIN ANALYZE profiles the run.
         let profiler =
             (physical.name() == "EXPLAIN_ANALYZE").then(|| Arc::new(rustdb_execution::QueryProfiler::new()));
-        let root: PhysicalRef = Arc::new(PhysicalResultCollector::new(physical));
-        let state = Executor::execute_profiled(&root, Arc::clone(&self.database.instance().env), profiler)?;
+        let env = Arc::clone(&self.database.instance().env);
+        let root: PhysicalRef = Arc::new(PhysicalResultCollector::for_plan(
+            physical,
+            env.threads(),
+            preserve_insertion_order,
+        ));
+        let options = rustdb_execution::QueryOptions {
+            profiler,
+            preserve_insertion_order,
+        };
+        let state = Executor::execute_with(&root, env, &options)?;
         let collected = state
             .downcast_ref::<Mutex<CollectedResult>>()
             .ok_or_else(|| Error::internal("result collector state has an unexpected type"))?;

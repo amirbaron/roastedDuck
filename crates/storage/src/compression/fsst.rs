@@ -99,7 +99,10 @@ impl SegmentScan for FsstScanState {
         for &length in &self.lengths[alignment..start - bitunpack_start] {
             offset = offset.wrapping_add(length);
         }
-        let mut decoded = Vec::new();
+        let scanned = &self.lengths[start - bitunpack_start..start - bitunpack_start + count];
+        let compressed_bytes: usize = scanned.iter().map(|&length| length as usize).sum();
+        // Each compressed byte decodes to at most 8 bytes.
+        let mut decoded = Vec::with_capacity(compressed_bytes * 8 + 8);
         let mut ranges = Vec::with_capacity(count);
         for &length in &self.lengths[start - bitunpack_start..start - bitunpack_start + count] {
             offset = offset.wrapping_add(length);

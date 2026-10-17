@@ -54,7 +54,7 @@ pub use logical_type::LogicalType;
 pub use native::NativeType;
 pub use physical_type::PhysicalType;
 pub use rustdb_common::STANDARD_VECTOR_SIZE;
-pub use selection::{Sel, SelectionVector};
+pub use selection::{Sel, SelectionVector, partition_rows};
 pub use string_t::StringT;
 pub use time::{ParsedTime, Time, TimeNs, TimeTz};
 pub use timestamp::{ParsedTimestamp, Timestamp, TimestampParseError};

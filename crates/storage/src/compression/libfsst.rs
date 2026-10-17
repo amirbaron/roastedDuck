@@ -841,24 +841,39 @@ impl FsstDecoder {
         Some((decoder, pos))
     }
 
-    /// `duckdb_fsst_decompress` into `out` (appending the whole decoded string).
+    /// `duckdb_fsst_decompress` into `out` (appending the whole decoded string). Like
+    /// DuckDB, every symbol is written as a whole 8-byte word and the end advanced by its
+    /// length, so no per-symbol copy of a variable length is needed.
     pub(crate) fn decompress_into(&self, input: &[u8], out: &mut Vec<u8>) {
+        let start = out.len();
+        // A code decodes to at most 8 bytes; the last word written may extend 8 bytes past
+        // the decoded end.
+        out.reserve(input.len() * 8 + 8);
+        let spare = out.spare_capacity_mut();
+        let mut written = 0;
         let mut pos = 0;
         while pos < input.len() {
             let code = input[pos];
             pos += 1;
             if code < FSST_ESC {
                 let symbol = self.symbol[usize::from(code)].to_le_bytes();
-                out.extend_from_slice(&symbol[..usize::from(self.len[usize::from(code)])]);
+                for (target, byte) in spare[written..written + 8].iter_mut().zip(symbol) {
+                    target.write(byte);
+                }
+                written += usize::from(self.len[usize::from(code)]).min(8);
             } else {
                 // An escaped literal byte (a truncated escape decodes to nothing).
                 if let Some(&byte) = input.get(pos) {
-                    out.push(byte);
+                    spare[written].write(byte);
+                    written += 1;
                 }
                 pos += 1;
             }
         }
         let _ = self.zero_terminated;
+        // SAFETY: every byte in `start..start + written` was written above (each symbol
+        // writes 8 bytes and advances by at most 8), and the capacity covers it.
+        unsafe { out.set_len(start + written) };
     }
 
     /// Decompresses `input` into a fresh buffer.

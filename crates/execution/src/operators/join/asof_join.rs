@@ -215,7 +215,7 @@ impl Sink for PhysicalAsOfJoin {
 
     fn global_sink_state(&self, ctx: &ExecutionContext) -> Result<AsOfGlobalSinkState> {
         let config = SortConfig {
-            threads: ctx.env.threads,
+            threads: ctx.env.threads(),
             connections: 1,
             ..SortConfig::default()
         };
@@ -629,7 +629,7 @@ impl Source for PhysicalAsOfJoin {
             })
             .collect();
         blocks.sort_by(|a, b| b.cmp(a));
-        let threads = ctx.env.threads.max(1);
+        let threads = ctx.env.threads().max(1);
         let per_thread = blocks.first().map_or(0, |&(chunks, _)| chunks.div_ceil(threads));
         let right_outer = matches!(self.join_type, JoinType::Right | JoinType::Outer);
         let mut tasks = VecDeque::new();

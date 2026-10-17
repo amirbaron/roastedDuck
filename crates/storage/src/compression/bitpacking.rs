@@ -16,7 +16,7 @@ use super::bitpacking_primitives::{
     pack_buffer_u64, pack_buffer_u128, required_size, unpack_group_u64, unpack_group_u128,
 };
 use super::primitive::{
-    Primitive, align8, corrupt, fill_values, load, unified_values, update_numeric_stats, write_values,
+    Primitive, align8, corrupt, load, result_bytes, unified_values, update_numeric_stats,
 };
 use super::{Analyzer, CodecScan, CompressionInfo, CompressionType, Compressor, SegmentScan, Sequential};
 use crate::checkpoint::column_checkpointer::{FinishedSegment, SegmentSink};
@@ -312,7 +312,8 @@ impl<T: BitpackingValue> CodecScan for BitpackingScanState<T> {
         Ok(())
     }
 
-    /// `BitpackingScanPartial`.
+    /// `BitpackingScanPartial`: decodes straight into the result vector, one algorithm
+    /// group at a time.
     fn scan_partial(
         &mut self,
         _segment: &ColumnSegment,
@@ -320,46 +321,64 @@ impl<T: BitpackingValue> CodecScan for BitpackingScanState<T> {
         result: &mut Vector,
         result_offset: usize,
     ) -> Result<()> {
+        let target = result_bytes::<T>(result, result_offset, count)?;
         let mut scanned = 0;
         while scanned < count {
             if self.group_offset == BITPACKING_METADATA_GROUP_SIZE {
                 self.load_next_group()?;
             }
             let remaining = count - scanned;
-            match self.group.mode {
+            let out = &mut target[scanned * T::SIZE..];
+            let to_scan = match self.group.mode {
                 BitpackingMode::Constant => {
                     let to_scan = remaining.min(BITPACKING_METADATA_GROUP_SIZE - self.group_offset);
                     let value = T::from_wide(self.group.constant);
-                    fill_values(result, result_offset + scanned, to_scan, value)?;
-                    scanned += to_scan;
-                    self.group_offset += to_scan;
+                    for slot in out.chunks_exact_mut(T::SIZE).take(to_scan) {
+                        value.store(slot);
+                    }
+                    to_scan
                 }
                 BitpackingMode::ConstantDelta => {
                     let to_scan = remaining.min(BITPACKING_METADATA_GROUP_SIZE - self.group_offset);
-                    self.values.clear();
-                    for index in 0..to_scan {
+                    for (index, slot) in out.chunks_exact_mut(T::SIZE).take(to_scan).enumerate() {
                         let multiplier = T::Wide::from_usize(self.group_offset + index);
                         let value = self
                             .group
                             .constant
                             .wrapping_mul(multiplier)
                             .wrapping_add(self.group.frame_of_reference);
-                        self.values.push(T::from_wide(value));
+                        T::from_wide(value).store(slot);
                     }
-                    write_values(result, result_offset + scanned, &self.values)?;
-                    scanned += to_scan;
-                    self.group_offset += to_scan;
+                    to_scan
                 }
                 BitpackingMode::For | BitpackingMode::DeltaFor => {
                     let to_scan = remaining.min(GROUP_SIZE - self.group_offset % GROUP_SIZE);
-                    self.decode_packed(to_scan)?;
-                    write_values(result, result_offset + scanned, &self.values)?;
-                    scanned += to_scan;
+                    self.unpack_algorithm_group()?;
+                    let offset_in_group = self.group_offset % GROUP_SIZE;
+                    let frame = self.group.frame_of_reference;
+                    let decoded = &self.decompression_buffer[offset_in_group..offset_in_group + to_scan];
+                    let slots = out.chunks_exact_mut(T::SIZE);
+                    if self.group.mode == BitpackingMode::DeltaFor {
+                        // `ApplyFrameOfReference` + `DeltaDecode`.
+                        let mut previous = self.group.delta_offset;
+                        for (slot, &delta) in slots.zip(decoded) {
+                            previous = delta.wrapping_add(frame).wrapping_add(previous);
+                            T::from_wide(previous).store(slot);
+                        }
+                        self.group.delta_offset = previous;
+                    } else {
+                        for (slot, &value) in slots.zip(decoded) {
+                            T::from_wide(value.wrapping_add(frame)).store(slot);
+                        }
+                    }
+                    to_scan
                 }
                 BitpackingMode::Invalid | BitpackingMode::Auto => {
                     return Err(corrupt("Invalid bitpacking mode"));
                 }
-            }
+            };
+            self.group_offset += to_scan;
+            scanned += to_scan;
         }
         Ok(())
     }

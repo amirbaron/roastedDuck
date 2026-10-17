@@ -2,7 +2,7 @@ use crate::operator::set_estimated_cardinality;
 use rustdb_common::Result;
 use rustdb_common::tree_renderer::RenderParams;
 use rustdb_planner::Expression;
-use rustdb_types::{DataChunk, LogicalType, SelectionVector};
+use rustdb_types::{DataChunk, LogicalType, SelectionVector, Vector};
 
 use crate::operator::{ErasedOperator, PhysicalOperator, PhysicalRef};
 use crate::{ExecutionContext, ExpressionExecutor, Operator, OperatorResult};
@@ -38,6 +38,9 @@ impl PhysicalOperator for PhysicalFilter {
     }
     fn as_operator(&self) -> Option<&dyn ErasedOperator> {
         Some(self)
+    }
+    fn parallel_operator(&self) -> bool {
+        true
     }
 
     fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
@@ -83,10 +86,7 @@ impl Operator for PhysicalFilter {
             output.set_columns(input.columns().to_vec(), passed);
         } else {
             let sel = SelectionVector::new(std::mem::take(&mut state.selection));
-            output.set_columns(
-                input.columns().iter().map(|column| column.slice(&sel)).collect(),
-                passed,
-            );
+            output.set_columns(Vector::slice_all(input.columns(), &sel), passed);
         }
         Ok(OperatorResult::NeedMoreInput)
     }

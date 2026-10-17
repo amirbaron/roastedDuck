@@ -515,6 +515,7 @@ version = "1.5.6"
 dependencies = [
  "libc",
  "rustdb-common",
+ "ruzstd",
 ]
 
 [[package]]

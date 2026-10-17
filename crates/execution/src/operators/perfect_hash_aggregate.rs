@@ -21,7 +21,10 @@ use rustdb_types::{
 };
 
 use crate::aggregate_hashtable::AggregateObject;
-use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState, aggregate_names};
+use crate::operator::{
+    ErasedSink, ErasedSource, OrderPreservationType, PhysicalOperator, PhysicalRef, SinkState,
+    aggregate_names,
+};
 use crate::{ExecutionContext, ExpressionExecutor, Sink, SinkFinalize, SinkResult, Source, SourceResult};
 
 /// The aggregate states of every possible group (DuckDB's `PerfectAggregateHashTable`).
@@ -432,6 +435,15 @@ impl PhysicalOperator for PhysicalPerfectHashAggregate {
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
     }
+    fn parallel_sink(&self) -> bool {
+        true
+    }
+    fn parallel_source(&self) -> bool {
+        true
+    }
+    fn source_order(&self) -> OrderPreservationType {
+        OrderPreservationType::NoOrder
+    }
 
     /// DuckDB's `PhysicalPerfectHashAggregate::ParamsToString` (no cardinality).
     fn params_to_string(&self, _: u64) -> RenderParams {
@@ -600,5 +612,10 @@ impl Source for PhysicalPerfectHashAggregate {
         } else {
             SourceResult::Finished
         })
+    }
+
+    fn max_threads(&self, (sink, _): &Self::Global) -> usize {
+        sink.downcast_ref::<PerfectHashAggregateGlobal>()
+            .map_or(1, |state| state.results.len().max(1))
     }
 }

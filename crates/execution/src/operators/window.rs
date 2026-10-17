@@ -21,7 +21,9 @@ use rustdb_planner::{Expression, ExpressionKind};
 use rustdb_row::sort::{SortColumn, SortConfig, SortStrategy, StrategyGlobalState, StrategyLocalState};
 use rustdb_types::{DataChunk, LogicalType, Vector};
 
-use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
+use crate::operator::{
+    ErasedSink, ErasedSource, OrderPreservationType, PhysicalOperator, PhysicalRef, SinkState,
+};
 use crate::window::WindowExpression;
 use crate::window::collection::{WindowCollection, delta_flags};
 use crate::window::executor::{ExecutorGlobalState, ExecutorLocalState, WindowExecutor, WindowGroup};
@@ -185,6 +187,29 @@ impl PhysicalOperator for PhysicalWindow {
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
     }
+    /// Input order only matters to functions without PARTITION BY and ORDER BY.
+    fn parallel_sink(&self) -> bool {
+        !self.is_order_dependent
+    }
+    fn sink_order_dependent(&self) -> bool {
+        self.is_order_dependent
+    }
+    /// Hash groups are evaluated by as many threads.
+    fn parallel_source(&self) -> bool {
+        true
+    }
+    /// `PhysicalWindow::SourceOrder`: partitions leave the order undefined, an ORDER BY
+    /// fixes it.
+    fn source_order(&self) -> OrderPreservationType {
+        let over = &self.over().window;
+        if !over.partitions.is_empty() {
+            OrderPreservationType::NoOrder
+        } else if over.orders.is_empty() {
+            OrderPreservationType::InsertionOrder
+        } else {
+            OrderPreservationType::FixedOrder
+        }
+    }
 
     fn params_to_string(&self, _: u64) -> RenderParams {
         let mut result = RenderParams::new();
@@ -215,7 +240,7 @@ impl Sink for PhysicalWindow {
     fn global_sink_state(&self, ctx: &ExecutionContext) -> Result<WindowGlobalSinkState> {
         let strategy = self.create_strategy(ctx)?;
         let sink = strategy.global_state(SortConfig {
-            threads: ctx.env.threads,
+            threads: ctx.env.threads(),
             connections: 1,
             ..SortConfig::default()
         })?;
@@ -563,5 +588,9 @@ impl Source for PhysicalWindow {
             let sink = global.sink_state()?;
             local.group = Some(Box::new(self.prepare_group(ctx, sink, bin)?));
         }
+    }
+
+    fn max_threads(&self, global: &WindowGlobalSourceState) -> usize {
+        global.groups.len().max(1)
     }
 }

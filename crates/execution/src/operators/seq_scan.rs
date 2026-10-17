@@ -239,6 +239,12 @@ impl PhysicalOperator for PhysicalSeqScan {
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
     }
+    fn parallel_source(&self) -> bool {
+        true
+    }
+    fn supports_batch_index(&self) -> bool {
+        true
+    }
 
     fn explain_name(&self) -> String {
         "SEQ_SCAN".to_owned()
@@ -278,6 +284,8 @@ pub struct SeqScanLocal {
     state: TableScanState,
     has_morsel: bool,
     scan_chunk: DataChunk,
+    /// The vector of indexed rows last fetched, while the scan is in its index phase.
+    index_batch: Option<u64>,
 }
 
 impl Source for PhysicalSeqScan {
@@ -322,6 +330,7 @@ impl Source for PhysicalSeqScan {
             state,
             has_morsel: false,
             scan_chunk: DataChunk::default(),
+            index_batch: None,
         })
     }
 
@@ -341,6 +350,7 @@ impl Source for PhysicalSeqScan {
                     break;
                 }
                 let end = (start + STANDARD_VECTOR_SIZE).min(row_ids.len());
+                local.index_batch = Some((start / STANDARD_VECTOR_SIZE) as u64);
                 let target = if self.projection.is_empty() {
                     &mut *chunk
                 } else {
@@ -362,6 +372,7 @@ impl Source for PhysicalSeqScan {
                 return Ok(SourceResult::HaveMoreOutput);
             }
         }
+        local.index_batch = None;
         loop {
             if local.has_morsel {
                 let target = if self.projection.is_empty() {
@@ -392,5 +403,21 @@ impl Source for PhysicalSeqScan {
                 return Ok(SourceResult::Finished);
             }
         }
+    }
+
+    fn max_threads(&self, _: &Self::Global) -> usize {
+        self.table.max_threads()
+    }
+
+    fn batch_index(&self, global: &Self::Global, local: &Self::Local) -> Result<u64> {
+        if let Some(batch) = local.index_batch {
+            return Ok(batch);
+        }
+        // After an index scan, the local rows' batches follow the indexed rows' vectors.
+        let index_batches = global
+            .index_rows
+            .as_ref()
+            .map_or(0, |rows| rows.len().div_ceil(STANDARD_VECTOR_SIZE) as u64);
+        Ok(index_batches + local.state.batch_index())
     }
 }

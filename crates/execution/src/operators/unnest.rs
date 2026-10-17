@@ -46,6 +46,9 @@ impl PhysicalOperator for PhysicalUnnest {
     fn as_operator(&self) -> Option<&dyn ErasedOperator> {
         Some(self)
     }
+    fn parallel_operator(&self) -> bool {
+        true
+    }
 }
 
 /// Where a thread is in the current input chunk (DuckDB's `UnnestOperatorState`).
