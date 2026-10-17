@@ -24,6 +24,26 @@ pub use write::{
 /// The zero bytes yyjson requires after the input (`YYJSON_PADDING_SIZE`).
 pub const PADDING_SIZE: usize = 4;
 
+/// Key equality, inlined for the short keys of typical documents (a `memcmp` call costs
+/// more than comparing a few bytes).
+#[inline]
+pub fn key_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    if a.len() > 16 {
+        return a == b;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
 /// `YYJSON_TYPE_*`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -226,7 +246,7 @@ impl<'a> Doc<'a> {
             return None;
         }
         self.obj_iter(obj)
-            .find(|&(k, _)| self.str(k) == key)
+            .find(|&(k, _)| key_eq(self.str(k), key))
             .map(|(_, value)| value)
     }
 

@@ -2,6 +2,8 @@
 //! documents with DuckDB's error messages, value type names, and JSON paths (`$.a[0]`)
 //! and pointers (`/a/0`).
 
+use std::borrow::Cow;
+
 use rustdb_common::{Error, Result};
 use rustdb_types::LogicalTypeId;
 
@@ -107,18 +109,19 @@ fn path_error(path: &[u8], pos: usize, binder: bool) -> Error {
 
 /// `JSONKeyReadResult`.
 #[derive(Debug)]
-struct KeyReadResult {
+struct KeyReadResult<'a> {
     chars_read: usize,
     recursive: bool,
-    key: Vec<u8>,
+    /// Borrowed from the path unless it had escapes.
+    key: Cow<'a, [u8]>,
 }
 
-impl KeyReadResult {
+impl KeyReadResult<'_> {
     fn empty() -> Self {
         Self {
             chars_read: 0,
             recursive: false,
-            key: Vec::new(),
+            key: Cow::Borrowed(&[]),
         }
     }
 
@@ -126,7 +129,7 @@ impl KeyReadResult {
         Self {
             chars_read: 1,
             recursive: false,
-            key: b"*".to_vec(),
+            key: Cow::Borrowed(b"*"),
         }
     }
 
@@ -134,7 +137,7 @@ impl KeyReadResult {
         Self {
             chars_read: 2,
             recursive: true,
-            key: b"*".to_vec(),
+            key: Cow::Borrowed(b"*"),
         }
     }
 
@@ -142,7 +145,7 @@ impl KeyReadResult {
         Self {
             chars_read: 1,
             recursive: true,
-            key: b"*".to_vec(),
+            key: Cow::Borrowed(b"*"),
         }
     }
 
@@ -151,13 +154,23 @@ impl KeyReadResult {
     }
 
     fn is_wildcard(&self) -> bool {
-        self.key == b"*"
+        *self.key == *b"*"
     }
 }
 
 /// `ReadString`: a key up to `.`/`[`, or a quoted key with `\"` / `\\` escapes.
-fn read_path_string(path: &[u8], escaped: bool) -> KeyReadResult {
+fn read_path_string(path: &[u8], escaped: bool) -> KeyReadResult<'_> {
     if escaped {
+        if let Some(close) = path.iter().position(|&c| c == b'"' || c == b'\\')
+            && path[close] == b'"'
+        {
+            // No escapes: the key is the text up to the closing quote.
+            return KeyReadResult {
+                chars_read: close,
+                recursive: false,
+                key: Cow::Borrowed(&path[..close]),
+            };
+        }
         let mut key = Vec::with_capacity(path.len());
         let mut backslash = false;
         let mut i = 0;
@@ -184,7 +197,7 @@ fn read_path_string(path: &[u8], escaped: bool) -> KeyReadResult {
         KeyReadResult {
             chars_read: i,
             recursive: false,
-            key,
+            key: Cow::Owned(key),
         }
     } else {
         let len = path
@@ -194,13 +207,13 @@ fn read_path_string(path: &[u8], escaped: bool) -> KeyReadResult {
         KeyReadResult {
             chars_read: len,
             recursive: false,
-            key: path[..len].to_vec(),
+            key: Cow::Borrowed(&path[..len]),
         }
     }
 }
 
 /// `ReadKey`: the key after a `.`.
-fn read_key(path: &[u8]) -> KeyReadResult {
+fn read_key(path: &[u8]) -> KeyReadResult<'_> {
     let Some(&first) = path.first() else {
         return KeyReadResult::empty();
     };
@@ -392,6 +405,88 @@ fn get_path(doc: &Doc<'_>, val: ValId, path: &[u8]) -> Option<ValId> {
         }
     }
     Some(val)
+}
+
+/// One step of a [`CompiledPath`].
+#[derive(Debug)]
+pub enum PathStep<'p> {
+    Key(Cow<'p, [u8]>),
+    Index { index: u64, from_back: bool },
+}
+
+/// A constant path parsed once per chunk instead of once per row; following it gives the
+/// same value as [`get_unsafe`].
+#[derive(Debug)]
+pub enum CompiledPath<'p> {
+    /// The value itself (an empty path).
+    Root,
+    /// A `$` path without wildcards.
+    Steps(Vec<PathStep<'p>>),
+    /// A JSON pointer (`/...`).
+    Pointer(&'p [u8]),
+    /// A path no value can match.
+    Nothing,
+}
+
+impl<'p> CompiledPath<'p> {
+    /// Parses `path` as [`get_unsafe`] reads it.
+    pub fn new(path: &'p [u8]) -> Self {
+        match path.first() {
+            None => return Self::Root,
+            Some(b'/') => return Self::Pointer(path),
+            Some(b'$') => {}
+            Some(_) => return Self::Nothing,
+        }
+        let mut steps = Vec::new();
+        let mut pos = 1;
+        while pos != path.len() {
+            let c = path[pos];
+            pos += 1;
+            match c {
+                b'.' => {
+                    let key = read_key(&path[pos..]);
+                    pos += key.chars_read;
+                    steps.push(PathStep::Key(key.key));
+                }
+                b'[' => {
+                    let Ok((ArrayIndex::Index { index, from_back }, consumed)) =
+                        read_array_index(&path[pos..])
+                    else {
+                        return Self::Nothing;
+                    };
+                    pos += consumed;
+                    steps.push(PathStep::Index { index, from_back });
+                }
+                _ => return Self::Nothing,
+            }
+        }
+        Self::Steps(steps)
+    }
+
+    /// The value at the path from `val`, if any.
+    #[inline]
+    pub fn get(&self, doc: &Doc<'_>, val: ValId) -> Option<ValId> {
+        match self {
+            Self::Root => Some(val),
+            Self::Steps(steps) => {
+                let mut val = val;
+                for step in steps {
+                    val = match step {
+                        PathStep::Key(key) => doc.obj_getn(val, key)?,
+                        PathStep::Index { index, from_back } => {
+                            if !doc.is_arr(val) {
+                                return None;
+                            }
+                            array_element(doc, val, *index, *from_back)?
+                        }
+                    };
+                }
+                Some(val)
+            }
+            Self::Pointer(path) => ptr_get(doc, val, path),
+            Self::Nothing => None,
+        }
+    }
 }
 
 /// `JSONCommon::GetUnsafe`: follows a validated pointer (`/...`) or path (`$...`).

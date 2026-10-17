@@ -8,7 +8,7 @@
 
 use super::{
     PADDING_SIZE, SUBTYPE_NOESC, SUBTYPE_REAL, SUBTYPE_SINT, SUBTYPE_TRUE, SUBTYPE_UINT, TAG_BIT, TYPE_ARR,
-    TYPE_BOOL, TYPE_NULL, TYPE_NUM, TYPE_OBJ, TYPE_RAW, TYPE_STR, Val, ValId,
+    TYPE_BOOL, TYPE_MASK, TYPE_NULL, TYPE_NUM, TYPE_OBJ, TYPE_RAW, TYPE_STR, Val, ValId,
 };
 
 /// `yyjson_read_code`.
@@ -120,6 +120,26 @@ fn hex_value(c: u8) -> Option<u16> {
     }
 }
 
+/// Marks (high bit per byte) the bytes of the little-endian word `x` that end the fast
+/// string scan: `"`, `\\`, control characters and non-ASCII bytes. Only the lowest mark
+/// is exact (borrows can mark bytes above it), which is all the scan uses.
+#[inline]
+fn special_bytes(x: u64) -> u64 {
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    const HIGH: u64 = 0x8080_8080_8080_8080;
+    let has_zero = |v: u64| v.wrapping_sub(ONES) & !v & HIGH;
+    let quote = has_zero(x ^ (ONES * u64::from(b'"')));
+    let backslash = has_zero(x ^ (ONES * u64::from(b'\\')));
+    let control = x.wrapping_sub(ONES * 0x20) & !x & HIGH;
+    quote | backslash | control | (x & HIGH)
+}
+
+/// Exact powers of ten for the fast float path.
+const POW10: [f64; 23] = [
+    1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18,
+    1e19, 1e20, 1e21, 1e22,
+];
+
 /// The parse state over `buf`, whose document spans `hdr..end` (followed by padding).
 struct Reader<'b> {
     buf: &'b mut [u8],
@@ -178,8 +198,27 @@ impl Reader<'_> {
         }
     }
 
+    /// Consumes the digits from `p`, accumulating them into `mantissa` (wrapping: callers
+    /// only use it when at most 19 digits were read). Returns the position after them.
+    #[inline]
+    fn accumulate_digits(&self, mut p: usize, mantissa: &mut u64) -> usize {
+        loop {
+            let digit = self.at(p).wrapping_sub(b'0');
+            if digit > 9 {
+                return p;
+            }
+            *mantissa = mantissa.wrapping_mul(10).wrapping_add(u64::from(digit));
+            p += 1;
+        }
+    }
+
     /// `read_number` with `YYJSON_READ_BIGNUM_AS_RAW` and `ALLOW_INF_AND_NAN`: numbers that
     /// do not fit a 64-bit integer or a finite double become raw values.
+    #[allow(
+        clippy::inline_always,
+        reason = "measured: the reader is ~40% slower with these as calls"
+    )]
+    #[inline(always)]
     fn read_number(&self, cur: &mut usize) -> Result<Val, ValueError> {
         let hdr = *cur;
         let sign = self.at(hdr) == b'-';
@@ -191,47 +230,26 @@ impl Reader<'_> {
             }
             return Err(("no digit after minus sign", p));
         }
-        let mut is_real = false;
+        // The significant digits, accumulated while they fit (at most 19 digits).
+        let mut mantissa: u64 = 0;
+        let int_start = p;
         if self.at(p) == b'0' {
             p += 1;
-            let c = self.at(p);
-            if is_digit(c) {
+            if is_digit(self.at(p)) {
                 return Err(("number with leading zero is not allowed", p - 1));
             }
         } else {
-            while is_digit(self.at(p)) {
-                p += 1;
-            }
+            p = self.accumulate_digits(p, &mut mantissa);
         }
-        if self.at(p) == b'.' {
-            is_real = true;
-            p += 1;
-            if !is_digit(self.at(p)) {
-                return Err(("no digit after decimal point", p));
-            }
-            while is_digit(self.at(p)) {
-                p += 1;
-            }
-        }
-        if is_exp(self.at(p)) {
-            is_real = true;
-            p += 1;
-            if is_sign(self.at(p)) {
-                p += 1;
-            }
-            if !is_digit(self.at(p)) {
-                return Err(("no digit after exponent sign", p));
-            }
-            while is_digit(self.at(p)) {
-                p += 1;
-            }
-        }
-        *cur = p;
-        let digits = &self.buf[hdr + usize::from(sign)..p];
-        if !is_real {
-            // At most 20 digits can fit a u64; leading zeros are not allowed.
-            let magnitude = if digits.len() <= 20 {
-                digits.iter().try_fold(0u64, |acc, &d| {
+        let int_digits = p - int_start;
+        let c = self.at(p);
+        if c != b'.' && !is_exp(c) {
+            *cur = p;
+            // Integers of up to 19 digits fit; 20 digits may, more never do.
+            let magnitude = if int_digits <= 19 {
+                Some(mantissa)
+            } else if int_digits == 20 {
+                self.buf[int_start..p].iter().try_fold(0u64, |acc, &d| {
                     acc.checked_mul(10)?.checked_add(u64::from(d - b'0'))
                 })
             } else {
@@ -248,6 +266,60 @@ impl Reader<'_> {
                 },
                 _ => Self::raw(hdr, p),
             });
+        }
+        let mut frac_digits = 0usize;
+        if c == b'.' {
+            p += 1;
+            if !is_digit(self.at(p)) {
+                return Err(("no digit after decimal point", p));
+            }
+            let frac_start = p;
+            p = self.accumulate_digits(p, &mut mantissa);
+            frac_digits = p - frac_start;
+        }
+        // The explicit exponent, if it is small enough for the fast path.
+        let mut exponent: i64 = 0;
+        let mut exponent_small = true;
+        if is_exp(self.at(p)) {
+            p += 1;
+            let negative = self.at(p) == b'-';
+            if is_sign(self.at(p)) {
+                p += 1;
+            }
+            if !is_digit(self.at(p)) {
+                return Err(("no digit after exponent sign", p));
+            }
+            let exp_start = p;
+            while is_digit(self.at(p)) {
+                if p - exp_start < 6 {
+                    exponent = exponent * 10 + i64::from(self.at(p) - b'0');
+                } else {
+                    exponent_small = false;
+                }
+                p += 1;
+            }
+            if negative {
+                exponent = -exponent;
+            }
+        }
+        *cur = p;
+        // Clinger's fast path: an exact mantissa times an exact power of ten is correctly
+        // rounded by one floating-point operation.
+        if exponent_small && int_digits + frac_digits <= 19 && mantissa <= 1 << 53 {
+            let power = exponent - frac_digits as i64;
+            if (-22..=22).contains(&power) {
+                let magnitude = mantissa as f64;
+                let value = if power >= 0 {
+                    magnitude * POW10[power as usize]
+                } else {
+                    magnitude / POW10[(-power) as usize]
+                };
+                let value = if sign { -value } else { value };
+                return Ok(Val {
+                    tag: TYPE_NUM | SUBTYPE_REAL,
+                    uni: value.to_bits(),
+                });
+            }
         }
         let text = std::str::from_utf8(&self.buf[hdr..p]).unwrap_or("0");
         let value: f64 = text.parse().unwrap_or(0.0);
@@ -295,11 +367,26 @@ impl Reader<'_> {
     }
 
     /// `read_string`: `*cur` is at the opening quote. Unescapes in place.
+    #[allow(
+        clippy::inline_always,
+        reason = "measured: the reader is ~40% slower with these as calls"
+    )]
+    #[inline(always)]
     fn read_string(&mut self, cur: &mut usize) -> Result<Val, ValueError> {
         let start = *cur + 1;
         let mut src = start;
-        // Skip characters that need no copying.
+        // Skip characters that need no copying, eight at a time while in the document.
         loop {
+            while src + 8 <= self.end {
+                let mut word = [0u8; 8];
+                word.copy_from_slice(&self.buf[src..src + 8]);
+                let special = special_bytes(u64::from_le_bytes(word));
+                if special != 0 {
+                    src += (special.trailing_zeros() / 8) as usize;
+                    break;
+                }
+                src += 8;
+            }
             let c = self.at(src);
             if !char_is(c, ESC_ASCII | NON_ASCII) {
                 src += 1;
@@ -431,6 +518,11 @@ impl Reader<'_> {
     }
 
     /// Reads a non-container value at `*cur`. `Ok(None)` means no value starts here.
+    #[allow(
+        clippy::inline_always,
+        reason = "measured: the reader is ~40% slower with these as calls"
+    )]
+    #[inline(always)]
     fn read_scalar(
         &mut self,
         cur: &mut usize,
@@ -488,6 +580,8 @@ impl Reader<'_> {
     }
 
     /// Builds the error (`return_err` of the root readers, with `is_truncated_end`).
+    #[cold]
+    #[inline(never)]
     fn error(&self, code: ReadErrorCode, msg: &'static str, pos: usize) -> ReadError {
         if self.is_truncated_end(pos, code) {
             return ReadError {
@@ -636,25 +730,30 @@ impl Reader<'_> {
     }
 
     /// `read_root_minify` (and `read_root_pretty`, which accepts the same input).
+    ///
+    /// As in yyjson, no stack is kept: while a container is open its slot's `uni` holds the
+    /// slot distance to its parent (0 for the root), and when a child container opens, the
+    /// parent's element count so far is parked in the parent's tag.
     fn read_container(&mut self, cur: usize, vals: &mut Vec<Val>) -> Result<ReadResult, ReadError> {
         let root = vals.len();
         let mut cur = cur;
-        // (container slot, element count: values for arrays, keys + values for objects)
-        let mut stack: Vec<(usize, usize)> = Vec::new();
-        let open = |vals: &mut Vec<Val>, is_obj: bool| {
-            vals.push(Val {
-                tag: if is_obj { TYPE_OBJ } else { TYPE_ARR },
-                uni: 0,
-            });
-            vals.len() - 1
-        };
+        // The open container and its element count (values for arrays, keys + values for
+        // objects).
+        let mut ctn = root;
+        let mut ctn_len: u64 = 0;
         let first = self.at(cur);
         cur += 1;
         let mut state = if first == b'{' {
-            stack.push((open(vals, true), 0));
+            vals.push(Val {
+                tag: TYPE_OBJ,
+                uni: 0,
+            });
             State::ObjKeyBegin
         } else {
-            stack.push((open(vals, false), 0));
+            vals.push(Val {
+                tag: TYPE_ARR,
+                uni: 0,
+            });
             State::ArrValBegin
         };
         macro_rules! fail {
@@ -662,46 +761,99 @@ impl Reader<'_> {
                 return Err(self.error($code, $msg, $pos))
             };
         }
+        // Opens a child container of `ctn`.
+        macro_rules! open {
+            ($ty:expr) => {{
+                let parent = &mut vals[ctn];
+                parent.tag = ((ctn_len + 1) << TAG_BIT) | (parent.tag & TYPE_MASK);
+                let slot = vals.len();
+                vals.push(Val {
+                    tag: $ty,
+                    uni: (slot - ctn) as u64,
+                });
+                ctn = slot;
+                ctn_len = 0;
+            }};
+        }
+        // Closes `ctn`; returns from the function after the root.
+        macro_rules! close {
+            () => {{
+                let size = (vals.len() - ctn) as u64;
+                let slot = &mut vals[ctn];
+                let ty = slot.tag & TYPE_MASK;
+                let parent_distance = slot.uni as usize;
+                let len = if ty == TYPE_OBJ { ctn_len / 2 } else { ctn_len };
+                slot.tag = (len << TAG_BIT) | ty;
+                slot.uni = size;
+                if parent_distance == 0 {
+                    return self.finish(cur, root);
+                }
+                ctn -= parent_distance;
+                let parent = vals[ctn].tag;
+                ctn_len = parent >> TAG_BIT;
+                state = if parent & TYPE_MASK == TYPE_OBJ {
+                    State::ObjValEnd
+                } else {
+                    State::ArrValEnd
+                };
+            }};
+        }
         loop {
             match state {
-                State::ArrValBegin => {
+                State::ArrValBegin => loop {
+                    // Values separated by plain commas are read in this inner loop.
                     let c = self.at(cur);
-                    if c == b'{' {
+                    let val = if char_is(c, NUMBER) {
+                        match self.read_number(&mut cur) {
+                            Ok(val) => val,
+                            Err((msg, pos)) => fail!(ReadErrorCode::InvalidNumber, msg, pos),
+                        }
+                    } else if c == b'"' {
+                        match self.read_string(&mut cur) {
+                            Ok(val) => val,
+                            Err((msg, pos)) => fail!(ReadErrorCode::InvalidString, msg, pos),
+                        }
+                    } else if c == b'{' {
                         cur += 1;
-                        stack.push((open(vals, true), 0));
+                        open!(TYPE_OBJ);
                         state = State::ObjKeyBegin;
-                        continue;
-                    }
-                    if c == b'[' {
+                        break;
+                    } else if c == b'[' {
                         cur += 1;
-                        stack.push((open(vals, false), 0));
+                        open!(TYPE_ARR);
                         continue;
-                    }
-                    if c == b']' {
+                    } else if c == b']' {
                         // An empty array, or a trailing comma (allowed).
                         cur += 1;
-                        state = Self::close(&mut stack, vals);
-                        if stack.is_empty() {
-                            return self.finish(cur, root);
-                        }
-                        continue;
-                    }
-                    if is_space(c) {
+                        close!();
+                        break;
+                    } else if is_space(c) {
                         cur = self.skip_space(cur + 1);
                         continue;
-                    }
-                    match self.read_scalar(&mut cur, false) {
-                        Ok(Some(val)) => {
-                            vals.push(val);
-                            if let Some(top) = stack.last_mut() {
-                                top.1 += 1;
+                    } else {
+                        match self.read_scalar(&mut cur, false) {
+                            Ok(Some(val)) => val,
+                            Ok(None) => {
+                                fail!(ReadErrorCode::UnexpectedCharacter, "unexpected character", cur)
                             }
-                            state = State::ArrValEnd;
+                            Err((code, (msg, pos))) => fail!(code, msg, pos),
                         }
-                        Ok(None) => fail!(ReadErrorCode::UnexpectedCharacter, "unexpected character", cur),
-                        Err((code, (msg, pos))) => fail!(code, msg, pos),
+                    };
+                    vals.push(val);
+                    ctn_len += 1;
+                    match self.at(cur) {
+                        b',' => cur += 1,
+                        b']' => {
+                            cur += 1;
+                            close!();
+                            break;
+                        }
+                        _ => {
+                            state = State::ArrValEnd;
+                            break;
+                        }
                     }
-                }
+                },
                 State::ArrValEnd => {
                     let c = self.at(cur);
                     if c == b',' {
@@ -709,10 +861,7 @@ impl Reader<'_> {
                         state = State::ArrValBegin;
                     } else if c == b']' {
                         cur += 1;
-                        state = Self::close(&mut stack, vals);
-                        if stack.is_empty() {
-                            return self.finish(cur, root);
-                        }
+                        close!();
                     } else if is_space(c) {
                         cur = self.skip_space(cur + 1);
                     } else {
@@ -725,19 +874,19 @@ impl Reader<'_> {
                         match self.read_string(&mut cur) {
                             Ok(val) => {
                                 vals.push(val);
-                                if let Some(top) = stack.last_mut() {
-                                    top.1 += 1;
+                                ctn_len += 1;
+                                if self.at(cur) == b':' {
+                                    cur += 1;
+                                    state = State::ObjValBegin;
+                                } else {
+                                    state = State::ObjKeyEnd;
                                 }
-                                state = State::ObjKeyEnd;
                             }
                             Err((msg, pos)) => fail!(ReadErrorCode::InvalidString, msg, pos),
                         }
                     } else if c == b'}' {
                         cur += 1;
-                        state = Self::close(&mut stack, vals);
-                        if stack.is_empty() {
-                            return self.finish(cur, root);
-                        }
+                        close!();
                     } else if is_space(c) {
                         cur = self.skip_space(cur + 1);
                     } else {
@@ -755,36 +904,76 @@ impl Reader<'_> {
                         fail!(ReadErrorCode::UnexpectedCharacter, "unexpected character", cur);
                     }
                 }
-                State::ObjValBegin => {
+                State::ObjValBegin => loop {
+                    // Members separated by plain `,"key":` are read in this inner loop.
                     let c = self.at(cur);
-                    if c == b'{' {
+                    let val = if c == b'"' {
+                        match self.read_string(&mut cur) {
+                            Ok(val) => val,
+                            Err((msg, pos)) => fail!(ReadErrorCode::InvalidString, msg, pos),
+                        }
+                    } else if char_is(c, NUMBER) {
+                        match self.read_number(&mut cur) {
+                            Ok(val) => val,
+                            Err((msg, pos)) => fail!(ReadErrorCode::InvalidNumber, msg, pos),
+                        }
+                    } else if c == b'{' {
                         cur += 1;
-                        stack.push((open(vals, true), 0));
+                        open!(TYPE_OBJ);
                         state = State::ObjKeyBegin;
-                        continue;
-                    }
-                    if c == b'[' {
+                        break;
+                    } else if c == b'[' {
                         cur += 1;
-                        stack.push((open(vals, false), 0));
+                        open!(TYPE_ARR);
                         state = State::ArrValBegin;
-                        continue;
-                    }
-                    if is_space(c) {
+                        break;
+                    } else if is_space(c) {
                         cur = self.skip_space(cur + 1);
                         continue;
-                    }
-                    match self.read_scalar(&mut cur, false) {
-                        Ok(Some(val)) => {
-                            vals.push(val);
-                            if let Some(top) = stack.last_mut() {
-                                top.1 += 1;
+                    } else {
+                        match self.read_scalar(&mut cur, false) {
+                            Ok(Some(val)) => val,
+                            Ok(None) => {
+                                fail!(ReadErrorCode::UnexpectedCharacter, "unexpected character", cur)
                             }
-                            state = State::ObjValEnd;
+                            Err((code, (msg, pos))) => fail!(code, msg, pos),
                         }
-                        Ok(None) => fail!(ReadErrorCode::UnexpectedCharacter, "unexpected character", cur),
-                        Err((code, (msg, pos))) => fail!(code, msg, pos),
+                    };
+                    vals.push(val);
+                    ctn_len += 1;
+                    match self.at(cur) {
+                        b',' if self.at(cur + 1) == b'"' => {
+                            cur += 1;
+                            match self.read_string(&mut cur) {
+                                Ok(key) => {
+                                    vals.push(key);
+                                    ctn_len += 1;
+                                }
+                                Err((msg, pos)) => fail!(ReadErrorCode::InvalidString, msg, pos),
+                            }
+                            if self.at(cur) == b':' {
+                                cur += 1;
+                                continue;
+                            }
+                            state = State::ObjKeyEnd;
+                            break;
+                        }
+                        b',' => {
+                            cur += 1;
+                            state = State::ObjKeyBegin;
+                            break;
+                        }
+                        b'}' => {
+                            cur += 1;
+                            close!();
+                            break;
+                        }
+                        _ => {
+                            state = State::ObjValEnd;
+                            break;
+                        }
                     }
-                }
+                },
                 State::ObjValEnd => {
                     let c = self.at(cur);
                     if c == b',' {
@@ -792,10 +981,7 @@ impl Reader<'_> {
                         state = State::ObjKeyBegin;
                     } else if c == b'}' {
                         cur += 1;
-                        state = Self::close(&mut stack, vals);
-                        if stack.is_empty() {
-                            return self.finish(cur, root);
-                        }
+                        close!();
                     } else if is_space(c) {
                         cur = self.skip_space(cur + 1);
                     } else {
@@ -803,27 +989,6 @@ impl Reader<'_> {
                     }
                 }
             }
-        }
-    }
-
-    /// Closes the innermost container (`arr_end` / `obj_end`): records its length and
-    /// subtree size; the parent (if any) continues after a value.
-    fn close(stack: &mut Vec<(usize, usize)>, vals: &mut [Val]) -> State {
-        let Some((slot, count)) = stack.pop() else {
-            return State::ArrValEnd;
-        };
-        let is_obj = vals[slot].tag == TYPE_OBJ;
-        let len = if is_obj { count / 2 } else { count };
-        vals[slot].tag = ((len as u64) << TAG_BIT) | if is_obj { TYPE_OBJ } else { TYPE_ARR };
-        vals[slot].uni = (vals.len() - slot) as u64;
-        let Some(top) = stack.last_mut() else {
-            return State::ArrValEnd;
-        };
-        top.1 += 1;
-        if vals[top.0].tag == TYPE_OBJ {
-            State::ObjValEnd
-        } else {
-            State::ArrValEnd
         }
     }
 }

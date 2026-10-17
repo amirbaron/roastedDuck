@@ -19,7 +19,7 @@ use rustdb_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Value, Vect
 use crate::json_common::{read_document, val_to_string, val_type_to_string};
 use crate::json_executors::{ColumnBuilder, StrBuilder, StrInput, addressable, local_arena};
 use crate::json_functions::{input_types, is_json_type};
-use crate::yyjson::{Doc, JsonArena, ValId, tag, write_val};
+use crate::yyjson::{Doc, JsonArena, ValId, key_eq, tag, write_val};
 
 /// Candidate date and timestamp formats, by type (`DateFormatMap`): the forced
 /// `dateformat` / `timestampformat`, or those detected while sampling.
@@ -448,25 +448,41 @@ fn struct_names(ty: &LogicalType) -> Vec<String> {
 pub(crate) struct KeyMap<'n> {
     names: &'n [String],
     map: Option<HashMap<&'n [u8], usize>>,
+    /// Whether the names are distinct, so that a guessed match is the first match.
+    distinct: bool,
 }
 
 impl<'n> KeyMap<'n> {
     pub(crate) fn new(names: &'n [String]) -> Self {
-        let map = (names.len() > 8).then(|| {
-            let mut map = HashMap::with_capacity(names.len());
-            for (index, name) in names.iter().enumerate() {
-                map.entry(name.as_bytes()).or_insert(index);
-            }
-            map
-        });
-        Self { names, map }
+        let mut map = HashMap::with_capacity(names.len());
+        for (index, name) in names.iter().enumerate() {
+            map.entry(name.as_bytes()).or_insert(index);
+        }
+        let distinct = map.len() == names.len();
+        let map = (names.len() > 8).then_some(map);
+        Self { names, map, distinct }
+    }
+
+    /// [`Self::find`], trying column `hint` first: objects usually list their keys in the
+    /// order of the columns, so the column after the previous key's is a good guess.
+    #[inline]
+    pub(crate) fn find_from(&self, key: &[u8], hint: usize) -> Option<usize> {
+        if self.distinct
+            && self
+                .names
+                .get(hint)
+                .is_some_and(|name| key_eq(name.as_bytes(), key))
+        {
+            return Some(hint);
+        }
+        self.find(key)
     }
 
     #[inline]
     pub(crate) fn find(&self, key: &[u8]) -> Option<usize> {
         match &self.map {
             Some(map) => map.get(key).copied(),
-            None => self.names.iter().position(|name| name.as_bytes() == key),
+            None => self.names.iter().position(|name| key_eq(name.as_bytes(), key)),
         }
     }
 }
@@ -503,10 +519,12 @@ pub(crate) fn transform_object(
         }
         found.fill(false);
         let mut found_count = 0;
+        let mut hint = 0;
         for (key, val) in doc.obj_iter(obj) {
             let key_bytes = doc.str(key);
-            match key_map.find(key_bytes) {
+            match key_map.find_from(key_bytes, hint) {
                 Some(col) => {
+                    hint = col + 1;
                     if found[col] {
                         if success && options.error_duplicate_key {
                             options.error_message = format!(

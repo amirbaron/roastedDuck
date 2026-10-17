@@ -12,7 +12,7 @@ use rustdb_types::{
     VectorKind,
 };
 
-use crate::json_common::{JsonPathType, get, get_unsafe, get_wildcard_path, read_document};
+use crate::json_common::{CompiledPath, JsonPathType, get, get_wildcard_path, read_document};
 use crate::json_functions::{JsonReadFunctionData, JsonReadManyFunctionData};
 use crate::yyjson::{Doc, JsonArena, ValId};
 
@@ -306,6 +306,7 @@ pub(crate) fn binary_execute<B: ColumnBuilder>(
             }
             return store(builder, result, constant);
         }
+        let path = CompiledPath::new(&info.path);
         let mut builder = B::default();
         for row in 0..rows {
             let Some(json) = input.get(row) else {
@@ -315,7 +316,7 @@ pub(crate) fn binary_execute<B: ColumnBuilder>(
             arena.reset();
             let doc = read_document(arena, json)?;
             let view = arena.doc();
-            match get_unsafe(&view, doc.root, &info.path) {
+            match path.get(&view, doc.root) {
                 Some(val) => f(&view, val, &mut builder)?,
                 None => match missing.as_mut() {
                     Some(missing) => missing(&mut builder),
@@ -388,6 +389,7 @@ pub(crate) fn execute_many<B: ColumnBuilder>(
     let column = addressable(args.column(0), rows);
     let input = StrInput::new(&column);
     let arena = local_arena(state);
+    let compiled: Vec<CompiledPath<'_>> = paths.iter().map(|path| CompiledPath::new(path)).collect();
     let mut builder = ListBuilder::<B>::default();
     for row in 0..rows {
         let Some(json) = input.get(row) else {
@@ -398,8 +400,8 @@ pub(crate) fn execute_many<B: ColumnBuilder>(
         let doc = read_document(arena, json)?;
         let view = arena.doc();
         builder.push_list(|child| {
-            for path in &paths {
-                match get_unsafe(&view, doc.root, path) {
+            for path in &compiled {
+                match path.get(&view, doc.root) {
                     Some(val) => f(&view, val, child)?,
                     None => match missing.as_mut() {
                         Some(missing) => missing(child),
