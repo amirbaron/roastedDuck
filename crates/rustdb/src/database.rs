@@ -365,6 +365,9 @@ impl Database {
         }
         system_catalog.register_copy_function(rustdb_csv::copy_csv::csv_copy_function())?;
         system_catalog.register_copy_function(rustdb_parquet::copy::parquet_copy_function())?;
+        for function in rustdb_json::json_copy_functions() {
+            system_catalog.register_copy_function(function)?;
+        }
         for set in rustdb_csv::multi_file::glob_functions() {
             system_catalog.register_table_functions(set)?;
         }

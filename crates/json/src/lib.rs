@@ -23,7 +23,7 @@ pub mod yyjson;
 use rustdb_types::LogicalType;
 
 pub use json_casts::register_json_casts;
-pub use json_functions::{json_scalar_functions, json_table_functions};
+pub use json_functions::{json_copy_functions, json_scalar_functions, json_table_functions};
 
 /// The name of the JSON type (`LogicalType::JSON_TYPE_NAME`).
 pub const JSON_TYPE_NAME: &str = "JSON";

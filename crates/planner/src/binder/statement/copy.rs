@@ -413,13 +413,84 @@ pub fn bind_copy_as(
             }
             copy_function(scope, "csv", false)?.ok_or_else(|| Error::internal("csv copy function missing"))?
         };
-    check_copy_options(scope, &function, info)?;
+    // Formats without an option list (DuckDB's `copy_options == nullptr`) check their
+    // options themselves.
+    if !function.options.is_empty() {
+        check_copy_options(scope, &function, info)?;
+    }
+    if !info.is_from
+        && let Some(plan) = function.plan.clone()
+    {
+        return bind_copy_plan(scope, info, &plan, copy_to_type);
+    }
     scope.with_properties(|properties| properties.return_type = StatementReturnType::ChangedRows);
     if info.is_from {
         bind_copy_from(scope, info, &function)
     } else {
         bind_copy_to(scope, info, &function, copy_to_type)
     }
+}
+
+/// `function.plan(binder, stmt)`: binds the COPY the format rewrites `COPY ... TO` into.
+fn bind_copy_plan(
+    scope: &mut BindScope<'_>,
+    info: &CopyInfo,
+    plan: &rustdb_function::copy::CopyPlan,
+    copy_to_type: CopyToType,
+) -> Result<BoundStatement> {
+    let original = info
+        .select_statement
+        .clone()
+        .ok_or_else(|| Error::internal("COPY TO without a query"))?;
+    // Bind the query in a separate binder to learn its columns.
+    let mut node = original.clone();
+    let mut child = scope.binder.child()?;
+    let bound = {
+        let mut child_scope = BindScope {
+            binder: &mut child,
+            outer: Some(scope as &mut dyn crate::binder::Scope),
+        };
+        bind_node(&mut child_scope, &mut node)?
+    };
+    let rewrite = plan(&rustdb_function::copy::CopyPlanInput {
+        names: &bound.names,
+        types: &bound.types,
+        options: &info.options,
+    })?;
+    let select_list =
+        rustdb_parser::parse_expression_list(&rewrite.select_list, &rustdb_parser::ParserOptions::default())?;
+    let subquery = TableRef {
+        alias: String::new(),
+        sample: None,
+        query_location: None,
+        kind: TableRefKind::Subquery(rustdb_ast::SubqueryRef {
+            subquery: Box::new(rustdb_ast::SelectStatement {
+                node: original,
+                named_param_map: CaseInsensitiveMap::default(),
+            }),
+            column_name_alias: Vec::new(),
+        }),
+    };
+    let mut rewritten = info.clone();
+    rewritten.format = rewrite.format;
+    rewritten.is_format_auto_detected = false;
+    rewritten.options = rewrite.options;
+    rewritten.select_statement = Some(Box::new(QueryNode {
+        modifiers: Vec::new(),
+        cte_map: CommonTableExpressionMap::default(),
+        kind: QueryNodeKind::Select(Box::new(SelectNode {
+            select_list,
+            from_table: Box::new(subquery),
+            where_clause: None,
+            group_expressions: Vec::new(),
+            group_sets: Vec::new(),
+            aggregate_handling: AggregateHandling::StandardHandling,
+            having: None,
+            sample: None,
+            qualify: None,
+        })),
+    }));
+    bind_copy_as(scope, &mut rewritten, copy_to_type)
 }
 
 /// `Binder::BindCopyTo`.

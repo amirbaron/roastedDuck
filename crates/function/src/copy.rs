@@ -163,6 +163,28 @@ pub type CopyToCombine =
 /// `desired_batch_size`: the rows per prepared batch (0: any).
 pub type CopyDesiredBatchSize = Arc<dyn Fn(&dyn FunctionData) -> u64 + Send + Sync>;
 
+/// What a `plan` callback sees (the bound query of `COPY ... TO`).
+#[derive(Debug)]
+pub struct CopyPlanInput<'a> {
+    pub names: &'a [String],
+    pub types: &'a [LogicalType],
+    /// The options of the statement (the generic COPY options included).
+    pub options: &'a CaseInsensitiveMap<Vec<Value>>,
+}
+
+/// How a `plan` callback rewrites `COPY ... TO`: as a COPY in `format` with `options` of
+/// `SELECT <select_list> FROM (<query>)`, where `select_list` is SQL over positional
+/// references (`#1`, ...) of the query's columns.
+#[derive(Debug)]
+pub struct CopyPlanRewrite {
+    pub format: String,
+    pub options: CaseInsensitiveMap<Vec<Value>>,
+    pub select_list: String,
+}
+
+/// `copy_to_plan_t`: rewrites a `COPY ... TO` into another COPY (DuckDB's `CopyFunction::plan`).
+pub type CopyPlan = Arc<dyn Fn(&CopyPlanInput<'_>) -> Result<CopyPlanRewrite> + Send + Sync>;
+
 /// A file format of COPY (DuckDB's `CopyFunction`).
 #[derive(Clone)]
 pub struct CopyFunction {
@@ -199,6 +221,9 @@ pub struct CopyFunction {
     pub copy_to_initialize_local: Option<CopyToInitializeLocal>,
     pub copy_to_sink_local: Option<CopyToSinkLocal>,
     pub copy_to_combine: Option<CopyToCombine>,
+    /// Rewrites `COPY ... TO` into another COPY (`plan`); the format then has no option
+    /// list of its own.
+    pub plan: Option<CopyPlan>,
 }
 
 impl CopyFunction {
@@ -225,6 +250,7 @@ impl CopyFunction {
             copy_to_initialize_local: None,
             copy_to_sink_local: None,
             copy_to_combine: None,
+            plan: None,
         }
     }
 }

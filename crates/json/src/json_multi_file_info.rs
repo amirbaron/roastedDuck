@@ -254,7 +254,7 @@ fn auto_detect(
         field_appearance_threshold: options.field_appearance_threshold,
         map_inference_threshold: options.map_inference_threshold,
     };
-    let ty = structure_to_type(&node, inference, 0, &LogicalType::SQLNULL);
+    let ty = structure_to_type(&node, inference, 0, &json_type());
     if options.record_type == JsonRecordType::AutoDetect {
         options.record_type = if ty.id() == LogicalTypeId::Struct {
             JsonRecordType::Records

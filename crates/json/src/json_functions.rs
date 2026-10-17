@@ -1,6 +1,7 @@
 //! Registration of the JSON functions and the bind data shared by the read functions
 //! (DuckDB's `json_functions.hpp` / `json_functions.cpp`).
 
+pub(crate) mod copy_json;
 pub(crate) mod json_array_length;
 pub(crate) mod json_contains;
 pub(crate) mod json_create;
@@ -20,7 +21,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use rustdb_common::{Error, Result};
-use rustdb_function::{BindInput, FunctionData, ScalarFunction, ScalarFunctionSet, TableFunctionSet};
+use rustdb_function::{BindInput, CopyFunction, FunctionData, ScalarFunction, ScalarFunctionSet, TableFunctionSet};
 use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
 use crate::json_common::{JsonPathType, validate_path};
@@ -225,4 +226,9 @@ pub fn json_scalar_functions() -> Vec<ScalarFunctionSet> {
 /// `JSONFunctions::GetTableFunctions`.
 pub fn json_table_functions() -> Vec<TableFunctionSet> {
     read_json::read_json_functions()
+}
+
+/// The `json`, `ndjson` and `jsonl` COPY formats.
+pub fn json_copy_functions() -> Vec<CopyFunction> {
+    copy_json::json_copy_functions()
 }
