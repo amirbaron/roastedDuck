@@ -37,6 +37,61 @@ pub enum ColumnReader {
     /// `GeometryColumnReader`: WKB values validated and made little-endian
     /// (`ST_GeomFromWKB` over a BLOB column).
     Geometry(Box<GeometryReader>),
+    /// `VariantColumnReader`.
+    Variant(Box<VariantReader>),
+}
+
+/// The reader of a VARIANT column (`VariantColumnReader`): its `metadata`, `value` and
+/// optional `typed_value` children.
+#[derive(Debug)]
+pub struct VariantReader {
+    children: Vec<ColumnReader>,
+    metadata_index: usize,
+    value_index: usize,
+    max_define: u8,
+}
+
+impl VariantReader {
+    fn read(
+        &mut self,
+        num_values: usize,
+        defines: &mut [u8],
+        repeats: &mut [u8],
+        result: &mut Vector,
+    ) -> Result<usize> {
+        // The children may leave the levels untouched when all their values are valid.
+        defines[..num_values].fill(self.max_define);
+        let mut vectors = Vec::with_capacity(self.children.len());
+        let mut counts = Vec::with_capacity(self.children.len());
+        for child in &mut self.children {
+            let mut vector = Vector::flat(
+                child.logical_type(),
+                rustdb_common::STANDARD_VECTOR_SIZE.max(num_values),
+            );
+            counts.push(child.read(num_values, defines, repeats, &mut vector)?);
+            vectors.push(vector);
+        }
+        let (metadata_count, value_count) = (counts[self.metadata_index], counts[self.value_index]);
+        if metadata_count != value_count {
+            return Err(Error::invalid_input(
+                "The Variant column did not contain the same amount of values for 'metadata' and 'value'",
+            ));
+        }
+        let typed_value = vectors.get(2);
+        if counts.get(2).is_some_and(|&count| count != value_count) {
+            return Err(Error::invalid_input(
+                "The shredded Variant column did not contain the same amount of values for 'typed_value' and 'value'",
+            ));
+        }
+        crate::variant::read::convert_column(
+            &vectors[self.metadata_index],
+            &vectors[self.value_index],
+            typed_value,
+            num_values,
+            result,
+        )?;
+        Ok(value_count)
+    }
 }
 
 /// The reader of a GEOMETRY column (`ExpressionColumnReader` with `ST_GeomFromWKB`).
@@ -110,10 +165,30 @@ impl ColumnReader {
                     scratch: None,
                 })))
             }
-            SchemaKind::Variant => Err(Error::not_implemented(format!(
-                "Reading {} columns from Parquet files",
-                schema.logical_type
-            ))),
+            SchemaKind::Variant => {
+                let child = |name: &str| schema.children.iter().position(|child| child.name == name);
+                let (Some(metadata_index), Some(value_index)) = (child("metadata"), child("value")) else {
+                    return Err(Error::internal(
+                        "The Variant column must have 'metadata' and 'value' as the first two columns",
+                    ));
+                };
+                if metadata_index > 1 || value_index > 1 {
+                    return Err(Error::internal(
+                        "The Variant column must have 'metadata' and 'value' as the first two columns",
+                    ));
+                }
+                let children = schema
+                    .children
+                    .iter()
+                    .map(|child| Self::create(context, child, &[]))
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(Self::Variant(Box::new(VariantReader {
+                    children,
+                    metadata_index,
+                    value_index,
+                    max_define: schema.max_define,
+                })))
+            }
             SchemaKind::Column => {
                 if schema.children.is_empty() {
                     return Ok(Self::Leaf(Box::new(LeafReader::new(context, schema)?)));
@@ -161,6 +236,7 @@ impl ColumnReader {
             Self::Struct(node) => node.logical_type().clone(),
             Self::RowNumber(_) => LogicalType::BIGINT,
             Self::Geometry(reader) => reader.logical_type.clone(),
+            Self::Variant(_) => LogicalType::variant(),
         }
     }
 
@@ -174,6 +250,10 @@ impl ColumnReader {
         match self {
             Self::Leaf(leaf) => leaf.initialize_read(row_group),
             Self::Geometry(reader) => reader.blob.initialize_read(row_group),
+            Self::Variant(reader) => reader
+                .children
+                .iter_mut()
+                .try_for_each(|child| child.initialize_read(row_group_index, row_group, context)),
             Self::List(list) => list.initialize_read(row_group_index, row_group, context),
             Self::Struct(node) => node.initialize_read(row_group_index, row_group, context),
             Self::RowNumber(reader) => {
@@ -201,6 +281,7 @@ impl ColumnReader {
         match self {
             Self::Leaf(leaf) => leaf.read(num_values, defines, repeats, result),
             Self::Geometry(reader) => reader.read(num_values, defines, repeats, result),
+            Self::Variant(reader) => reader.read(num_values, defines, repeats, result),
             Self::List(list) => list.read(num_values, defines, repeats, result),
             Self::Struct(node) => node.read(num_values, defines, repeats, result),
             Self::RowNumber(reader) => {
@@ -219,6 +300,10 @@ impl ColumnReader {
         match self {
             Self::Leaf(leaf) => leaf.skip(num_values),
             Self::Geometry(reader) => reader.blob.skip(num_values),
+            Self::Variant(reader) => reader
+                .children
+                .iter_mut()
+                .for_each(|child| child.skip(num_values)),
             Self::List(list) => list.skip(num_values),
             Self::Struct(node) => node.skip(num_values),
             Self::RowNumber(reader) => reader.row_group_offset += num_values as i64,
@@ -230,6 +315,11 @@ impl ColumnReader {
         match self {
             Self::Leaf(leaf) => Ok(leaf.group_rows_available()),
             Self::Geometry(reader) => Ok(reader.blob.group_rows_available()),
+            Self::Variant(reader) => reader
+                .children
+                .first()
+                .ok_or_else(|| Error::internal("No projected columns in struct?"))?
+                .group_rows_available(),
             Self::List(list) => list.group_rows_available(),
             Self::Struct(node) => node.group_rows_available(),
             Self::RowNumber(_) => Ok(u64::MAX),
@@ -241,6 +331,11 @@ impl ColumnReader {
         match self {
             Self::Leaf(leaf) => leaf.total_compressed_size(),
             Self::Geometry(reader) => reader.blob.total_compressed_size(),
+            Self::Variant(reader) => reader
+                .children
+                .iter()
+                .map(ColumnReader::total_compressed_size)
+                .sum(),
             Self::List(list) => list.total_compressed_size(),
             Self::Struct(node) => node.total_compressed_size(),
             Self::RowNumber(_) => 0,

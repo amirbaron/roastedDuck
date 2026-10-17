@@ -616,7 +616,15 @@ test/parquet/test_parquet_reader_compression.test
 test/parquet/test_parquet_schema.test
 test/parquet/timens_parquet.test
 test/parquet/timetz_parquet.test
+test/parquet/variant/variant_basic.test
 test/parquet/variant/variant_comparison.test
+test/parquet/variant/variant_filtering.test
+test/parquet/variant/variant_malicious.test
+test/parquet/variant/variant_nanos_tz.test
+test/parquet/variant/variant_partially_shredded.test
+test/parquet/variant/variant_shredded.test
+test/parquet/variant/variant_shredded_nested.test
+test/parquet/variant/variant_snowflake_test.test
 test/planner/projection_binding.test
 test/sakila/test_sakila.test_slow
 test/sql/aggregate/aggregates/aggregate_limit.test_slow
