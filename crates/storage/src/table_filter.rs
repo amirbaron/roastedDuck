@@ -329,6 +329,16 @@ impl TableFilter {
 
     /// Keeps the rows of `sel` (positions into the first `count` rows of `vector`) that
     /// pass the filter (`ColumnSegment::FilterSelection`).
+    /// Whether the filter is a fixed function of the value that never passes NULLs, so a
+    /// codec may evaluate it on stored values alone (comparisons, IN lists and their ANDs).
+    pub fn is_static_value_filter(&self) -> bool {
+        match self {
+            Self::ConstantComparison { .. } | Self::In(_) => true,
+            Self::And(children) => !children.is_empty() && children.iter().all(Self::is_static_value_filter),
+            _ => false,
+        }
+    }
+
     pub fn select(&self, vector: &Vector, count: usize, sel: &mut Vec<u32>) -> Result<()> {
         match self {
             Self::ConstantComparison { op, constant } => select_constant(vector, *op, constant, sel),
@@ -522,13 +532,15 @@ fn select_native<T: SqlOrd + NativeType>(vector: &Vector, op: CompareOp, constan
 fn select_strings(vector: &Vector, op: CompareOp, constant: &[u8], sel: &mut Vec<u32>) {
     let data = vector.unified::<StringT>();
     let (values, data_sel, validity) = (data.values, data.sel, data.validity);
+    // SAFETY: `constant` outlives `target`, which is only compared within this call.
+    let target = unsafe { StringT::from_raw(constant) };
+    let equal = |v: &StringT| {
+        v.quick_eq(&target)
+            .unwrap_or_else(|| vector.string_value(v) == constant)
+    };
     match op {
-        CompareOp::Equal => select_values(values, data_sel, validity, sel, |v| {
-            vector.string_value(v) == constant
-        }),
-        CompareOp::NotEqual => select_values(values, data_sel, validity, sel, |v| {
-            vector.string_value(v) != constant
-        }),
+        CompareOp::Equal => select_values(values, data_sel, validity, sel, equal),
+        CompareOp::NotEqual => select_values(values, data_sel, validity, sel, |v| !equal(v)),
         CompareOp::LessThan => select_values(values, data_sel, validity, sel, |v| {
             vector.string_value(v) < constant
         }),

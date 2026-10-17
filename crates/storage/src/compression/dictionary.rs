@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, StringT, Vector};
+use rustdb_types::{DictionaryInfo, LogicalType, SelectionVector, StringT, Vector};
 
 use super::bitpacking_primitives::{
     GROUP_SIZE, minimum_bit_width_unsigned, pack_buffer_u64, required_size, round_up_to_group,
@@ -42,6 +42,19 @@ pub(crate) struct DictionaryScanState {
     /// error only when a row refers to them). Like DuckDB's dictionary vector, rows then
     /// only copy a `string_t`.
     strings: Option<Vec<Option<StringT>>>,
+    /// The dictionary as a vector shared by the dictionary vectors scanned from the
+    /// segment (`None` inside when an entry is corrupt).
+    dictionary: SharedDictionary,
+}
+
+/// The dictionary of a segment as a vector for dictionary vectors.
+#[derive(Debug)]
+enum SharedDictionary {
+    NotBuilt,
+    /// An entry is corrupt: rows are scanned into flat vectors (and fail when they refer
+    /// to the entry).
+    Unavailable,
+    Built(Arc<Vector>, Arc<DictionaryInfo>),
 }
 
 impl DictionaryScanState {
@@ -75,6 +88,7 @@ impl DictionaryScanState {
             width,
             selection: Vec::new(),
             strings: None,
+            dictionary: SharedDictionary::NotBuilt,
         })
     }
 
@@ -117,7 +131,64 @@ impl DictionaryScanState {
     }
 }
 
+impl DictionaryScanState {
+    /// Unpacks the dictionary indexes of rows `start..start + count` into
+    /// `self.selection[start % GROUP_SIZE..]`; returns that offset.
+    fn unpack_selection(&mut self, start: usize, count: usize) -> usize {
+        let start_offset = start % GROUP_SIZE;
+        let decompress_count = round_up_to_group(count + start_offset);
+        self.selection.resize(decompress_count, 0);
+        let src_offset = DICTIONARY_HEADER_SIZE + (start - start_offset) * self.width as usize / 8;
+        let src = self.data.bytes().get(src_offset..).unwrap_or(&[]);
+        unpack_buffer_u32(src, decompress_count, self.width, &mut self.selection);
+        start_offset
+    }
+}
+
 impl SegmentScan for DictionaryScanState {
+    /// `ScanToDictionaryVector`: the dictionary is built into a vector once per segment.
+    fn scan_dictionary(
+        &mut self,
+        segment: &ColumnSegment,
+        start: usize,
+        count: usize,
+    ) -> Result<Option<Vector>> {
+        if self.strings.is_none() {
+            self.strings = Some(self.decode_dictionary());
+        }
+        if matches!(self.dictionary, SharedDictionary::NotBuilt) {
+            let strings = self.strings.as_deref().unwrap_or_default();
+            let built = strings.iter().copied().collect::<Option<Vec<StringT>>>().map_or(
+                SharedDictionary::Unavailable,
+                |strings| {
+                    let mut vector = Vector::flat(segment.logical_type().clone(), strings.len().max(1));
+                    vector.values_mut::<StringT>()[..strings.len()].copy_from_slice(&strings);
+                    let keep_alive: Arc<dyn std::any::Any + Send + Sync> = Arc::clone(&self.data) as _;
+                    vector.add_keep_alive(keep_alive);
+                    SharedDictionary::Built(Arc::new(vector), Arc::new(DictionaryInfo::new(strings.len())))
+                },
+            );
+            self.dictionary = built;
+        }
+        let SharedDictionary::Built(dictionary, info) = &self.dictionary else {
+            return Ok(None);
+        };
+        let (dictionary, info) = (Arc::clone(dictionary), Arc::clone(info));
+        let size = self.strings.as_ref().map_or(0, Vec::len);
+        let start_offset = self.unpack_selection(start, count);
+        let codes = &self.selection[start_offset..start_offset + count];
+        if codes.iter().any(|&code| code as usize >= size) {
+            return Err(corrupt(
+                "Failed to scan dictionary string - offset out of range. Database file appears to be corrupted.",
+            ));
+        }
+        Ok(Some(Vector::storage_dictionary(
+            dictionary,
+            SelectionVector::new(codes.to_vec()),
+            info,
+        )))
+    }
+
     /// `ScanToFlatVector`.
     fn scan(
         &mut self,
@@ -127,12 +198,7 @@ impl SegmentScan for DictionaryScanState {
         result: &mut Vector,
         result_offset: usize,
     ) -> Result<()> {
-        let start_offset = start % GROUP_SIZE;
-        let decompress_count = round_up_to_group(count + start_offset);
-        self.selection.resize(decompress_count, 0);
-        let src_offset = DICTIONARY_HEADER_SIZE + (start - start_offset) * self.width as usize / 8;
-        let src = self.data.bytes().get(src_offset..).unwrap_or(&[]);
-        unpack_buffer_u32(src, decompress_count, self.width, &mut self.selection);
+        let start_offset = self.unpack_selection(start, count);
         if self.strings.is_none() {
             self.strings = Some(self.decode_dictionary());
         }

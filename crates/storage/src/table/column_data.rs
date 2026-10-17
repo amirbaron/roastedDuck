@@ -709,6 +709,10 @@ impl ColumnData {
         result: &mut Vector,
         count: usize,
     ) -> Result<usize> {
+        if let Some(dictionary) = self.scan_dictionary_vector(state, count)? {
+            *result = dictionary;
+            return Ok(count);
+        }
         Self::prepare_result(result, count);
         self.scan_into(Some((transaction, vector_index)), state, result, count, 0)
     }
@@ -993,9 +997,43 @@ impl ColumnData {
         sel: &SelectionVector,
     ) -> Result<()> {
         let count = self.vector_count(vector_index);
+        if sel.len() < count && self.codec_select(state, count, result, sel)? {
+            return Ok(());
+        }
         self.scan(transaction, vector_index, state, result, count)?;
         *result = result.slice(sel);
         Ok(())
+    }
+
+    /// [`Self::select`] through the codec's `select` (DuckDB's `StandardColumnData::Select`
+    /// with a compression `select`), when the next `count` rows lie in one compressed
+    /// segment of a plain column without updates. Returns whether it applied.
+    fn codec_select(
+        &self,
+        state: &mut ColumnScanState,
+        count: usize,
+        result: &mut Vector,
+        sel: &SelectionVector,
+    ) -> Result<bool> {
+        let Some(node) = self.whole_vector_segment(state, count)? else {
+            return Ok(false);
+        };
+        let start = (state.offset_in_column - node.row_start) as usize;
+        let Some(SegmentScanState::Compressed(scan)) = &mut state.segment_state else {
+            return Ok(false);
+        };
+        Self::prepare_result(result, count);
+        if !scan.select(&node.node, start, count, result, sel.as_slice())? {
+            return Ok(false);
+        }
+        state.offset_in_column += count as u64;
+        if let (ColumnKind::Standard { validity }, Some(validity_state)) =
+            (&self.kind, state.child_states.first_mut())
+        {
+            validity.scan_into(None, validity_state, result, count, 0)?;
+        }
+        *result = result.slice(sel);
+        Ok(true)
     }
 
     /// Scans the vector and keeps the rows of `sel` that pass `filter` (`Filter`).
@@ -1009,8 +1047,127 @@ impl ColumnData {
         filter: &TableFilter,
     ) -> Result<()> {
         let count = self.vector_count(vector_index);
+        if let Some(node) = self.codec_filter_segment(state, count, filter)? {
+            let start = (state.offset_in_column - node.row_start) as usize;
+            let Some(SegmentScanState::Compressed(scan)) = &mut state.segment_state else {
+                return Err(Error::internal("compressed segment without its scan state"));
+            };
+            if scan.never_matches(&node.node, filter)? {
+                // No row of the segment passes: skip the vector without decoding it.
+                sel.clear();
+                return self.skip(state, count as u64);
+            }
+            Self::prepare_result(result, count);
+            if scan.filter(&node.node, start, count, result, sel, filter)? {
+                state.offset_in_column += count as u64;
+                if let (ColumnKind::Standard { validity }, Some(validity_state)) =
+                    (&self.kind, state.child_states.first_mut())
+                {
+                    validity.scan_into(None, validity_state, result, count, 0)?;
+                    let mask = result.validity();
+                    if !mask.is_all_valid() {
+                        sel.retain(|&row| mask.is_valid(row as usize));
+                    }
+                }
+                return Ok(());
+            }
+        }
         self.scan(transaction, vector_index, state, result, count)?;
         filter.select(result, count, sel)
+    }
+
+    /// The compressed segment holding all of the next `count` rows, with its scan state
+    /// ready, if its codec may evaluate `filter` itself (DuckDB's compressed `Filter`, e.g.
+    /// RLE's matching runs): plain columns without updates and filters that reject NULLs.
+    fn codec_filter_segment(
+        &self,
+        state: &mut ColumnScanState,
+        count: usize,
+        filter: &TableFilter,
+    ) -> Result<Option<SegmentNode<ColumnSegment>>> {
+        if !filter.is_static_value_filter() {
+            return Ok(None);
+        }
+        self.whole_vector_segment(state, count)
+    }
+
+    /// The compressed segment holding all of the next `count` rows of a plain column
+    /// without updates, with its scan state ready (DuckDB's `GetVectorScanType` returning
+    /// `SCAN_ENTIRE_VECTOR`).
+    fn whole_vector_segment(
+        &self,
+        state: &mut ColumnScanState,
+        count: usize,
+    ) -> Result<Option<SegmentNode<ColumnSegment>>> {
+        let ColumnKind::Standard { validity } = &self.kind else {
+            return Ok(None);
+        };
+        if self.has_updates() || validity.has_updates() {
+            return Ok(None);
+        }
+        while let Some((index, node)) = &state.current {
+            if state.offset_in_column < node.row_end() {
+                break;
+            }
+            let Some(next) = self.segments.get(index + 1) else {
+                return Ok(None);
+            };
+            state.current = Some((index + 1, next));
+            state.segment_state = None;
+            state.segment_checked = false;
+        }
+        let Some((_, node)) = state.current.clone() else {
+            return Ok(None);
+        };
+        if state.offset_in_column < node.row_start || state.offset_in_column + count as u64 > node.row_end() {
+            return Ok(None);
+        }
+        if state.segment_state.is_none() {
+            state.segment_state = Some(node.node.init_scan()?);
+        }
+        Ok(matches!(state.segment_state, Some(SegmentScanState::Compressed(_))).then_some(node))
+    }
+
+    /// Scans the next `count` (a whole vector) rows as a dictionary vector over the
+    /// segment's dictionary when the codec has one and the rows have no NULLs (DuckDB's
+    /// `ScanToDictionaryVector`; DuckDB flattens it again when the validity has NULLs).
+    fn scan_dictionary_vector(&self, state: &mut ColumnScanState, count: usize) -> Result<Option<Vector>> {
+        if count != STANDARD_VECTOR_SIZE || self.ty.physical_type() != PhysicalType::Varchar {
+            return Ok(None);
+        }
+        let ColumnKind::Standard { validity } = &self.kind else {
+            return Ok(None);
+        };
+        let Some(node) = self.whole_vector_segment(state, count)? else {
+            return Ok(None);
+        };
+        let Some(validity_state) = state.child_states.first_mut() else {
+            return Ok(None);
+        };
+        if !validity.range_has_no_nulls(validity_state, count) {
+            return Ok(None);
+        }
+        let start = (state.offset_in_column - node.row_start) as usize;
+        let Some(SegmentScanState::Compressed(scan)) = &mut state.segment_state else {
+            return Ok(None);
+        };
+        let Some(vector) = scan.scan_dictionary(&node.node, start, count)? else {
+            return Ok(None);
+        };
+        state.offset_in_column += count as u64;
+        validity.skip(validity_state, count as u64)?;
+        Ok(Some(vector))
+    }
+
+    /// Whether the statistics of the (validity) segment holding the next `count` rows
+    /// show that they have no NULLs.
+    fn range_has_no_nulls(&self, state: &ColumnScanState, count: usize) -> bool {
+        self.segments
+            .find(state.offset_in_column)
+            .is_some_and(|(_, node)| {
+                state.offset_in_column + count as u64 <= node.row_end()
+                    && !node.node.statistics().can_have_null()
+            })
     }
 
     // ----------------------------------------------------------------------------------

@@ -9,14 +9,14 @@
 use std::sync::Arc;
 
 use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, Vector};
+use rustdb_types::{LogicalType, StringT, Vector};
 
 use super::bitpacking_primitives::{
     GROUP_SIZE, minimum_bit_width_unsigned, pack_buffer_u64, required_size, round_up_to_group,
     unpack_buffer_u32,
 };
 use super::libfsst::{FSST_DECODER_SIZE, FsstDecoder, FsstEncoder};
-use super::primitive::{corrupt, load, unified_strings, update_string_stats, write_string_ranges};
+use super::primitive::{corrupt, load, unified_strings, update_string_stats};
 use super::uncompressed::string_block_limit;
 use super::{Analyzer, CompressionInfo, CompressionType, Compressor, SegmentScan};
 use crate::checkpoint::column_checkpointer::{FinishedSegment, SegmentSink};
@@ -79,6 +79,34 @@ impl SegmentScan for FsstScanState {
         result: &mut Vector,
         result_offset: usize,
     ) -> Result<()> {
+        self.scan_rows(start, count, result, result_offset, None)
+    }
+
+    /// `FSSTStorage::Select`: only the selected strings are decompressed.
+    fn select(
+        &mut self,
+        _segment: &ColumnSegment,
+        start: usize,
+        count: usize,
+        result: &mut Vector,
+        sel: &[u32],
+    ) -> Result<bool> {
+        self.scan_rows(start, count, result, 0, Some(sel))?;
+        Ok(true)
+    }
+}
+
+impl FsstScanState {
+    /// Scans rows `start..start + count` into `result` from `result_offset`; with `wanted`
+    /// (ascending rows relative to `start`) the other rows are left empty.
+    fn scan_rows(
+        &mut self,
+        start: usize,
+        count: usize,
+        result: &mut Vector,
+        result_offset: usize,
+        wanted: Option<&[u32]>,
+    ) -> Result<()> {
         if count == 0 {
             return Ok(());
         }
@@ -100,33 +128,61 @@ impl SegmentScan for FsstScanState {
             offset = offset.wrapping_add(length);
         }
         let scanned = &self.lengths[start - bitunpack_start..start - bitunpack_start + count];
-        let compressed_bytes: usize = scanned.iter().map(|&length| length as usize).sum();
-        // Each compressed byte decodes to at most 8 bytes.
-        let mut decoded = Vec::with_capacity(compressed_bytes * 8 + 8);
-        let mut ranges = Vec::with_capacity(count);
-        for &length in &self.lengths[start - bitunpack_start..start - bitunpack_start + count] {
+        let selected_bytes: usize = match wanted {
+            None => scanned.iter().map(|&length| length as usize).sum(),
+            Some(rows) => rows.iter().map(|&row| scanned[row as usize] as usize).sum(),
+        };
+        // Each compressed byte decodes to at most 8 bytes, and the last decoded word may
+        // reach 8 bytes further: with this capacity `decoded` never reallocates, so the
+        // strings pointing into it stay valid.
+        let mut decoded: Vec<u8> = Vec::with_capacity(selected_bytes * 8 + 8);
+        let target = result
+            .values_mut::<StringT>()
+            .get_mut(result_offset..result_offset + count)
+            .ok_or_else(|| Error::internal("scan target vector too small"))?;
+        let mut wanted = wanted.map(|rows| rows.iter().peekable());
+        for (row, (&length, slot)) in scanned.iter().zip(target.iter_mut()).enumerate() {
             offset = offset.wrapping_add(length);
-            let begin = decoded.len();
-            if length > 0 {
-                let decoder = self
-                    .decoder
-                    .as_ref()
-                    .ok_or_else(|| corrupt("FSST segment with strings but without a symbol table"))?;
-                let position = self
-                    .dict_end
-                    .checked_sub(offset as usize)
-                    .ok_or_else(|| corrupt("FSST string offset out of range - corrupt database file"))?;
-                let compressed = self
-                    .data
-                    .bytes()
-                    .get(position..position + length as usize)
-                    .ok_or_else(|| corrupt("FSST string out of range - corrupt database file"))?;
-                decoder.decompress_into(compressed, &mut decoded);
+            let selected = match &mut wanted {
+                None => true,
+                Some(rows) => rows.next_if(|&&next| next as usize == row).is_some(),
+            };
+            if length == 0 || !selected {
+                *slot = StringT::default();
+                continue;
             }
-            ranges.push(begin..decoded.len());
+            let decoder = self
+                .decoder
+                .as_ref()
+                .ok_or_else(|| corrupt("FSST segment with strings but without a symbol table"))?;
+            let position = self
+                .dict_end
+                .checked_sub(offset as usize)
+                .ok_or_else(|| corrupt("FSST string offset out of range - corrupt database file"))?;
+            let compressed = self
+                .data
+                .bytes()
+                .get(position..position + length as usize)
+                .ok_or_else(|| corrupt("FSST string out of range - corrupt database file"))?;
+            let begin = decoded.len();
+            decoder.decompress_into(compressed, &mut decoded);
+            let string = &decoded[begin..];
+            if string.len() <= StringT::INLINE_LENGTH {
+                *slot = StringT::inline(string);
+                // Inlined: the bytes are not needed any more.
+                decoded.truncate(begin);
+            } else {
+                // SAFETY: `decoded` keeps its allocation (see its capacity above) and is
+                // kept alive by `result` below.
+                *slot = unsafe { StringT::from_raw(string) };
+            }
         }
         self.last_known = Some((start + count - 1, offset));
-        write_string_ranges(result, result_offset, &Arc::new(decoded), ranges)
+        if !decoded.is_empty() {
+            let keep_alive: Arc<dyn std::any::Any + Send + Sync> = Arc::new(decoded);
+            result.add_keep_alive(keep_alive);
+        }
+        Ok(())
     }
 }
 

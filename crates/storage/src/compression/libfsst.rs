@@ -849,22 +849,52 @@ impl FsstDecoder {
         // A code decodes to at most 8 bytes; the last word written may extend 8 bytes past
         // the decoded end.
         out.reserve(input.len() * 8 + 8);
-        let spare = out.spare_capacity_mut();
+        let base = out.spare_capacity_mut().as_mut_ptr().cast::<u8>();
         let mut written = 0;
         let mut pos = 0;
-        while pos < input.len() {
+        loop {
+            // Four codes at a time while none of them is an escape (`fsst_decompress`'s
+            // unrolled loop with its `escapeMask` test, which flags 0xFF bytes).
+            while let Some(block) = input.get(pos..pos + 4) {
+                let codes = u32::from_le_bytes([block[0], block[1], block[2], block[3]]);
+                let escapes =
+                    (codes & 0x8080_8080) & ((!codes & 0x7F7F_7F7F).wrapping_add(0x7F7F_7F7F) ^ 0x8080_8080);
+                if escapes != 0 {
+                    break;
+                }
+                for &code in block {
+                    let index = usize::from(code);
+                    // SAFETY: as below: `written + 8` stays within the reserved spare bytes.
+                    unsafe {
+                        base.add(written)
+                            .cast::<u64>()
+                            .write_unaligned(self.symbol[index].to_le());
+                    }
+                    written += usize::from(self.len[index]).min(8);
+                }
+                pos += 4;
+            }
+            if pos >= input.len() {
+                break;
+            }
+            // One code (an escape among the next four, or the last few codes).
             let code = input[pos];
             pos += 1;
             if code < FSST_ESC {
-                let symbol = self.symbol[usize::from(code)].to_le_bytes();
-                for (target, byte) in spare[written..written + 8].iter_mut().zip(symbol) {
-                    target.write(byte);
+                let index = usize::from(code);
+                // SAFETY: the reserve above leaves `input.len() * 8 + 8` spare bytes; every
+                // code advances `written` by at most 8, so `written + 8` stays within them.
+                unsafe {
+                    base.add(written)
+                        .cast::<u64>()
+                        .write_unaligned(self.symbol[index].to_le());
                 }
-                written += usize::from(self.len[usize::from(code)]).min(8);
+                written += usize::from(self.len[index]).min(8);
             } else {
                 // An escaped literal byte (a truncated escape decodes to nothing).
                 if let Some(&byte) = input.get(pos) {
-                    spare[written].write(byte);
+                    // SAFETY: as above, `written < input.len() * 8 + 8`.
+                    unsafe { base.add(written).write(byte) };
                     written += 1;
                 }
                 pos += 1;

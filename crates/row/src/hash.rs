@@ -38,9 +38,16 @@ pub fn hash_bytes(bytes: &[u8]) -> u64 {
         h = h.wrapping_mul(MULTIPLIER);
     }
     if !remainder.is_empty() {
-        let mut block = [0u8; 8];
-        block[..remainder.len()].copy_from_slice(remainder);
-        h ^= u64::from_le_bytes(block);
+        // The remainder zero-padded to 8 bytes, read without a `memcpy` call: from the
+        // (overlapping) last 8 bytes when there are that many, byte by byte otherwise.
+        let block = if let Some(last) = bytes.last_chunk::<8>() {
+            u64::from_le_bytes(*last) >> (8 * (8 - remainder.len()))
+        } else {
+            remainder.iter().enumerate().fold(0u64, |block, (index, &byte)| {
+                block | (u64::from(byte) << (8 * index))
+            })
+        };
+        h ^= block;
         h = h.wrapping_mul(MULTIPLIER);
     }
     murmur_hash64(h)
@@ -251,6 +258,25 @@ fn hash_strings(input: &Vector, out: &mut [u64], combine: bool) {
 /// Hashes rows `0..out.len()` of `input` into `out` (combining with the hashes already
 /// there if `combine`), with a loop monomorphised per type where the vector allows one.
 fn hash_rows(input: &Vector, out: &mut [u64], combine: bool) -> Result<()> {
+    // A storage dictionary's entries are hashed once and shared by every vector scanned
+    // from it (DuckDB's `DictionaryVector::GetCachedHashes`).
+    if let Some((dictionary, sel, info)) = input.storage_dictionary_parts() {
+        let mut failed = None;
+        let hashes = info.hashes(|| {
+            let mut hashes = vec![0; info.size()];
+            if let Err(error) = hash_rows(dictionary, &mut hashes, false) {
+                failed = Some(error);
+            }
+            hashes
+        });
+        if let Some(error) = failed {
+            return Err(error);
+        }
+        for (target, &index) in out.iter_mut().zip(sel.as_slice()) {
+            emit(target, hashes[index as usize], combine);
+        }
+        return Ok(());
+    }
     if matches!(input.kind(), VectorKind::Flat | VectorKind::Dictionary) {
         let typed: Option<fn(&Vector, &mut [u64], bool)> = match input.logical_type().physical_type() {
             PhysicalType::Bool => Some(hash_native::<bool>),

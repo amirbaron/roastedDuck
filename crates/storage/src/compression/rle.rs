@@ -7,13 +7,15 @@ use rustdb_common::Result;
 use rustdb_types::{LogicalType, PhysicalType, Vector};
 
 use super::primitive::{
-    Primitive, align8, align8_floor, corrupt, fill_values, load, unified_values, update_numeric_stats,
+    Primitive, align8, align8_floor, corrupt, fill_values, load, result_bytes, unified_values,
+    update_numeric_stats,
 };
 use super::{Analyzer, CodecScan, CompressionInfo, CompressionType, Compressor, SegmentScan, Sequential};
 use crate::checkpoint::column_checkpointer::{FinishedSegment, SegmentSink};
 use crate::statistics::BaseStatistics;
 use crate::table::ColumnSegment;
 use crate::table::column_segment::PersistentData;
+use crate::table_filter::TableFilter;
 
 /// The run length type (`rle_count_t`).
 pub(crate) type RleCount = u16;
@@ -34,10 +36,53 @@ pub(crate) struct RleScanState<T> {
     rle_count_offset: usize,
     /// The number of run lengths that fit between the offset and the end of the block.
     max_entry_pos: usize,
+    /// For the filter last evaluated (by address): which runs pass it, and how many
+    /// (DuckDB's `matching_runs` / `matching_run_count`).
+    matching_runs: Option<MatchingRuns>,
     _marker: std::marker::PhantomData<T>,
 }
 
+/// Which runs of a segment pass a filter.
+#[derive(Debug)]
+struct MatchingRuns {
+    /// The filter's address.
+    filter: usize,
+    runs: Vec<bool>,
+    count: usize,
+}
+
 impl<T: Primitive> RleScanState<T> {
+    /// Evaluates `filter` on every run value once per segment.
+    fn matching_runs(&mut self, segment: &ColumnSegment, filter: &TableFilter) -> Result<&MatchingRuns> {
+        let key = std::ptr::from_ref(filter) as usize;
+        if self.matching_runs.as_ref().is_none_or(|m| m.filter != key) {
+            // Like DuckDB, the values up to the (aligned) run length offset: padding values
+            // can only make a run look like a match, never hide one.
+            let total = (self.rle_count_offset - RLE_HEADER_SIZE) / T::SIZE;
+            let mut values = Vector::flat(segment.logical_type().clone(), total.max(1));
+            let stored = self
+                .data
+                .bytes()
+                .get(RLE_HEADER_SIZE..RLE_HEADER_SIZE + total * T::SIZE)
+                .ok_or_else(|| corrupt("Corrupted RLE segment"))?;
+            result_bytes::<T>(&mut values, 0, total)?.copy_from_slice(stored);
+            let mut sel: Vec<u32> = (0..total as u32).collect();
+            filter.select(&values, total, &mut sel)?;
+            let mut runs = vec![false; total];
+            for &run in &sel {
+                runs[run as usize] = true;
+            }
+            self.matching_runs = Some(MatchingRuns {
+                filter: key,
+                runs,
+                count: sel.len(),
+            });
+        }
+        self.matching_runs
+            .as_ref()
+            .ok_or_else(|| corrupt("RLE filter state missing"))
+    }
+
     /// The length of run `entry`.
     #[inline]
     fn run_length(&self, entry: usize) -> Result<usize> {
@@ -113,8 +158,52 @@ impl<T: Primitive> CodecScan for RleScanState<T> {
             position_in_entry: 0,
             rle_count_offset,
             max_entry_pos,
+            matching_runs: None,
             _marker: std::marker::PhantomData,
         })
+    }
+
+    fn never_matches(&mut self, segment: &ColumnSegment, filter: &TableFilter) -> Result<bool> {
+        Ok(self.matching_runs(segment, filter)?.count == 0)
+    }
+
+    const FILTERS: bool = true;
+
+    /// `RLEFilter`'s fast path: only the rows of matching runs are written and selected.
+    fn filter_partial(
+        &mut self,
+        segment: &ColumnSegment,
+        count: usize,
+        result: &mut Vector,
+        sel: &mut Vec<u32>,
+        filter: &TableFilter,
+    ) -> Result<()> {
+        self.matching_runs(segment, filter)?;
+        let matching = std::mem::take(&mut self.matching_runs);
+        let runs = matching.as_ref().map_or(&[][..], |m| m.runs.as_slice());
+        sel.clear();
+        let target = result_bytes::<T>(result, 0, count)?;
+        let mut row = 0;
+        while row < count {
+            let run_end = self.run_length(self.entry_pos)?;
+            let run_count = run_end.saturating_sub(self.position_in_entry);
+            let take = run_count.min(count - row);
+            if runs.get(self.entry_pos).copied().unwrap_or(true) {
+                let value = self.run_value(self.entry_pos)?;
+                for slot in target[row * T::SIZE..(row + take) * T::SIZE].chunks_exact_mut(T::SIZE) {
+                    value.store(slot);
+                }
+                sel.extend(row as u32..(row + take) as u32);
+            }
+            row += take;
+            if take == run_count {
+                self.forward_to_next_run()?;
+            } else {
+                self.position_in_entry += take;
+            }
+        }
+        self.matching_runs = matching;
+        Ok(())
     }
 
     fn skip(&mut self, _segment: &ColumnSegment, count: usize) -> Result<()> {
