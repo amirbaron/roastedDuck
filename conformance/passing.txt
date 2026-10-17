@@ -900,6 +900,7 @@ test/sql/binder/test_function_chaining_alias.test
 test/sql/binder/test_having_alias.test
 test/sql/binder/test_implicit_struct_pack.test
 test/sql/binder/test_in_with_collate.test
+test/sql/binder/test_null_type_propagation.test
 test/sql/binder/test_select_clause_alias.test
 test/sql/binder/test_string_alias.test
 test/sql/cast/boolean_autocast.test
