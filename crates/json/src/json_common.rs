@@ -285,7 +285,6 @@ fn read_array_index(path: &[u8]) -> std::result::Result<(ArrayIndex, usize), usi
     if path.first() == Some(&b'#') {
         pos += 1;
         match path.get(pos) {
-            None => return Err(pos),
             Some(b']') => {
                 // `[#]` is always NULL in SQLite: an index that is never present.
                 return Ok((
@@ -297,7 +296,7 @@ fn read_array_index(path: &[u8]) -> std::result::Result<(ArrayIndex, usize), usi
                 ));
             }
             Some(b'-') => from_back = true,
-            Some(_) => return Err(pos),
+            _ => return Err(pos),
         }
     }
     if path.get(pos) == Some(&b'-') {

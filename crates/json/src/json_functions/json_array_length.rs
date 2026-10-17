@@ -8,6 +8,7 @@ use super::{input_types, read_bind, read_many_bind};
 use crate::json_executors::{NativeBuilder, binary_execute, execute_many, unary_execute};
 use crate::yyjson::{Doc, ValId};
 
+#[allow(clippy::unnecessary_wraps, reason = "the signature of a JSON read function")]
 fn array_length(doc: &Doc<'_>, val: ValId, out: &mut NativeBuilder<u64>) -> Result<()> {
     out.push(doc.arr_size(val) as u64);
     Ok(())

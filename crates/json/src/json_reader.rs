@@ -25,8 +25,6 @@ pub(crate) fn is_space(c: u8) -> bool {
 pub(crate) struct JsonFileHandle {
     reader: Box<dyn Read + Send>,
     file_size: u64,
-    /// Whether the bytes are read as stored (byte ranges can be read directly).
-    can_seek: bool,
 }
 
 impl std::fmt::Debug for JsonFileHandle {
@@ -67,16 +65,11 @@ impl JsonFileHandle {
         Ok(Self {
             reader,
             file_size: metadata.len(),
-            can_seek: matches!(compression, FileCompressionType::Uncompressed),
         })
     }
 
     pub(crate) fn file_size(&self) -> u64 {
         self.file_size
-    }
-
-    pub(crate) fn can_seek(&self) -> bool {
-        self.can_seek
     }
 
     /// Reads until `buffer` is full or the file ends (`ReadInternal`).
@@ -166,9 +159,7 @@ pub(crate) fn detect_format_and_record_type(buffer: &[u8]) -> (JsonFormat, JsonR
         if let Ok(doc) = arena.read(&buffer[..line_size], false) {
             let view = arena.doc();
             if view.is_arr(doc.root) && line_size == size {
-                let first_is_obj = view
-                    .arr_get(doc.root, 0)
-                    .is_some_and(|first| view.is_obj(first));
+                let first_is_obj = view.arr_get(doc.root, 0).is_some_and(|first| view.is_obj(first));
                 if view.arr_size(doc.root) == 0 || first_is_obj {
                     return (JsonFormat::Array, JsonRecordType::Records);
                 }
@@ -195,9 +186,7 @@ pub(crate) fn detect_format_and_record_type(buffer: &[u8]) -> (JsonFormat, JsonR
             return (JsonFormat::Unstructured, JsonRecordType::Values);
         }
         let view = arena.doc();
-        let first_is_obj = view
-            .arr_get(doc.root, 0)
-            .is_some_and(|first| view.is_obj(first));
+        let first_is_obj = view.arr_get(doc.root, 0).is_some_and(|first| view.is_obj(first));
         if view.arr_size(doc.root) == 0 || first_is_obj {
             return (JsonFormat::Array, JsonRecordType::Records);
         }
@@ -248,6 +237,10 @@ pub(crate) struct ByteRange {
 }
 
 /// Reads one file (or a byte range of it) (`JSONReader` with its `JSONReaderScanState`).
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "mirrors DuckDB's reader state flags"
+)]
 pub(crate) struct JsonReader {
     pub(crate) path: String,
     scan_type: JsonScanType,
@@ -300,7 +293,8 @@ impl JsonReader {
             record_type: options.record_type,
             handle: None,
             buffer: Vec::new(),
-            buffer_capacity: usize::try_from(options.maximum_object_size.saturating_mul(2)).unwrap_or(usize::MAX),
+            buffer_capacity: usize::try_from(options.maximum_object_size.saturating_mul(2))
+                .unwrap_or(usize::MAX),
             buffer_size: 0,
             buffer_offset: 0,
             remainder: None,
@@ -318,11 +312,6 @@ impl JsonReader {
     /// The size of the file, once opened.
     pub(crate) fn file_size(&self) -> u64 {
         self.handle.as_ref().map_or(0, JsonFileHandle::file_size)
-    }
-
-    /// Whether the file can be split into byte ranges.
-    pub(crate) fn can_seek(&self) -> bool {
-        self.handle.as_ref().is_some_and(JsonFileHandle::can_seek)
     }
 
     /// `Initialize`: opens the file and detects its format if needed.
@@ -397,7 +386,12 @@ impl JsonReader {
     }
 
     /// `AddTransformError`: an error converting value `object_index` of the last batch.
-    pub(crate) fn transform_error(&self, batch: &ScanBatch, object_index: usize, message: &str) -> Result<Error> {
+    pub(crate) fn transform_error(
+        &self,
+        batch: &ScanBatch,
+        object_index: usize,
+        message: &str,
+    ) -> Result<Error> {
         let line = batch.first_value + object_index as u64 + 1;
         let line = match self.range {
             Some(range) if range.start > 0 => line + count_lines_before(&self.path, range.start)?,
@@ -424,17 +418,14 @@ impl JsonReader {
         if self.is_last {
             return Ok(false);
         }
-        let remainder = match self.remainder.take() {
-            Some(offset) => {
-                let len = self.buffer_size - offset;
-                self.buffer.copy_within(offset..self.buffer_size, 0);
-                self.buffer_file_offset += offset as u64;
-                len
-            }
-            None => {
-                self.buffer_file_offset += self.buffer_size as u64;
-                0
-            }
+        let remainder = if let Some(offset) = self.remainder.take() {
+            let len = self.buffer_size - offset;
+            self.buffer.copy_within(offset..self.buffer_size, 0);
+            self.buffer_file_offset += offset as u64;
+            len
+        } else {
+            self.buffer_file_offset += self.buffer_size as u64;
+            0
         };
         let first = self.buffer_index == 0;
         let read = if first && let Some(data) = self.detected.take() {
@@ -446,7 +437,9 @@ impl JsonReader {
             };
             let request = if self.range.is_some() {
                 // Partial reads use smaller buffers; lines may extend them.
-                (8 << 20usize).max(remainder + 1).min(self.buffer_capacity.saturating_sub(PADDING_SIZE))
+                (8 << 20usize)
+                    .max(remainder + 1)
+                    .min(self.buffer_capacity.saturating_sub(PADDING_SIZE))
             } else {
                 self.buffer_capacity.saturating_sub(remainder + PADDING_SIZE)
             };
@@ -473,14 +466,12 @@ impl JsonReader {
                 None => self.buffer_offset = self.buffer_size,
             }
         }
-        if first && !self.is_last {
-            if self.range.is_none() {
-                if self.buffer_size >= 3 && self.buffer[..3] == [0xEF, 0xBB, 0xBF] {
-                    self.buffer_offset = 3;
-                }
-                if self.format == JsonFormat::Array {
-                    self.skip_over_array_start()?;
-                }
+        if first && !self.is_last && self.range.is_none() {
+            if self.buffer_size >= 3 && self.buffer[..3] == [0xEF, 0xBB, 0xBF] {
+                self.buffer_offset = 3;
+            }
+            if self.format == JsonFormat::Array {
+                self.skip_over_array_start()?;
             }
         }
         Ok(true)
@@ -573,19 +564,18 @@ impl JsonReader {
             } else {
                 next_json(&self.buffer, start, remaining)
             };
-            let end = match end {
-                Some(end) => end,
-                None => {
-                    if remaining as u64 > self.maximum_object_size {
-                        return Err(self.object_size_error(remaining));
-                    }
-                    if !self.is_last {
-                        self.remainder = Some(start);
-                        self.buffer_offset = size;
-                        break;
-                    }
-                    start + remaining
+            let end = if let Some(end) = end {
+                end
+            } else {
+                if remaining as u64 > self.maximum_object_size {
+                    return Err(self.object_size_error(remaining));
                 }
+                if !self.is_last {
+                    self.remainder = Some(start);
+                    self.buffer_offset = size;
+                    break;
+                }
+                start + remaining
             };
             let json_size = end - start;
             self.parse_json(batch, start, json_size, remaining)?;
@@ -612,7 +602,13 @@ impl JsonReader {
 
     /// `ParseJSON`: parses the value at `start` (`json_size` bytes, `remaining` in the
     /// buffer) and appends it to the batch.
-    fn parse_json(&mut self, batch: &mut ScanBatch, start: usize, json_size: usize, remaining: usize) -> Result<()> {
+    fn parse_json(
+        &mut self,
+        batch: &mut ScanBatch,
+        start: usize,
+        json_size: usize,
+        remaining: usize,
+    ) -> Result<()> {
         let values_in_batch = batch.values.len() as u64;
         let parsed = if self.scan_type == JsonScanType::ReadJsonObjects {
             batch.arena.read(&self.buffer[start..start + json_size], true)
@@ -627,7 +623,8 @@ impl JsonReader {
                 if self.format != JsonFormat::NewlineDelimited {
                     can_ignore = false;
                     if self.ignore_errors {
-                        extra = "Parse errors cannot be ignored for JSON formats other than 'newline_delimited'";
+                        extra =
+                            "Parse errors cannot be ignored for JSON formats other than 'newline_delimited'";
                     }
                 }
                 if !can_ignore {
@@ -654,7 +651,11 @@ impl JsonReader {
                         msg: "unexpected content after document",
                         pos: read_size,
                     };
-                    return Err(self.parse_error(values_in_batch, &error, "Try auto-detecting the JSON format")?);
+                    return Err(self.parse_error(
+                        values_in_batch,
+                        &error,
+                        "Try auto-detecting the JSON format",
+                    )?);
                 }
                 root = None;
             }

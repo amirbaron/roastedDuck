@@ -79,7 +79,6 @@ pub(crate) fn get_json_type(ty: &LogicalType) -> LogicalType {
         | L::Uuid
         | L::Bignum
         | L::Decimal => ty.clone(),
-        L::StringLiteral => LogicalType::VARCHAR,
         L::IntegerLiteral => ty.integer_literal_type().cloned().unwrap_or(LogicalType::INTEGER),
         L::List => LogicalType::list(get_json_type(ty.child_type().unwrap_or(&LogicalType::SQLNULL))),
         L::Array => match ty.array_child() {
@@ -296,7 +295,6 @@ fn convert(casts: &CastFunctionSet, vector: &Vector, count: usize) -> Result<Nod
         L::Variant => Node::Raw(
             crate::variant_to_json::variant_column_to_json(&vector, count)?.finish(&LogicalType::VARCHAR)?,
         ),
-        L::TimestampTz => Node::Str(cast(casts, &vector, &LogicalType::VARCHAR, count)?),
         _ => Node::Str(cast(casts, &vector, &LogicalType::VARCHAR, count)?),
     })
 }

@@ -618,6 +618,7 @@ dependencies = [
  "rustdb-functions",
  "rustdb-parser",
  "rustdb-planner",
+ "rustdb-serde",
  "rustdb-types",
  "ruzstd",
  "zmij",

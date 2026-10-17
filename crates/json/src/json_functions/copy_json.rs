@@ -10,8 +10,8 @@ use rustdb_function::{CopyFunction, FunctionData};
 use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
 use crate::json_enums::{JsonFormat, JsonRecordType, JsonScanType};
-use crate::json_multi_file_info::{JsonScanInfo, json_copy_from_bind};
 use crate::json_functions::read_json::json_reader_function;
+use crate::json_multi_file_info::{JsonScanInfo, json_copy_from_bind};
 
 /// The generic COPY options the rewrite passes on (`SUPPORTED_BASE_OPTIONS`).
 const SUPPORTED_BASE_OPTIONS: [&str; 16] = [
@@ -78,7 +78,10 @@ fn copy_to_json_plan(input: &CopyPlanInput<'_>) -> Result<CopyPlanRewrite> {
                 }
                 let array = match values.last() {
                     None => true,
-                    Some(value) => value.default_cast_as(&LogicalType::BOOLEAN)?.as_bool().unwrap_or(false),
+                    Some(value) => value
+                        .default_cast_as(&LogicalType::BOOLEAN)?
+                        .as_bool()
+                        .unwrap_or(false),
                 };
                 if array {
                     csv_options.insert("prefix".to_owned(), vec![Value::varchar("[\n\t")]);
@@ -87,7 +90,11 @@ fn copy_to_json_plan(input: &CopyPlanInput<'_>) -> Result<CopyPlanRewrite> {
                 }
             }
             "file_extension" => {
-                let extension = values.last().map(Value::to_varchar).transpose()?.unwrap_or_default();
+                let extension = values
+                    .last()
+                    .map(Value::to_varchar)
+                    .transpose()?
+                    .unwrap_or_default();
                 csv_options.insert("file_extension".to_owned(), vec![Value::varchar(extension)]);
             }
             _ if SUPPORTED_BASE_OPTIONS.contains(&option.as_str()) => {

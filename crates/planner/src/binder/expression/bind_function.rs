@@ -140,7 +140,12 @@ fn try_bind_lambda_or_json<B: ExpressionBinder + ?Sized>(
         if let Some(logger) = context.function_client.logger() {
             use rustdb_function::logging::{LogLevel, LogScope};
             if logger.should_log(LogScope::Connection, "", LogLevel::Warning) {
-                logger.write_log(LogScope::Connection, "", LogLevel::Warning, DEPRECATED_LAMBDA_ARROW)?;
+                logger.write_log(
+                    LogScope::Connection,
+                    "",
+                    LogLevel::Warning,
+                    DEPRECATED_LAMBDA_ARROW,
+                )?;
             }
         }
         Ok(())
@@ -178,7 +183,7 @@ fn try_bind_lambda_or_json<B: ExpressionBinder + ?Sized>(
             lambda_error.error.raw_message(),
             json_error.error.raw_message()
         )),
-        bound => bound,
+        bound @ BindResult::Bound(_) => bound,
     })
 }
 

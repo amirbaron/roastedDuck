@@ -57,30 +57,29 @@ pub(crate) fn thread_count(context: &ClientContext) -> u64 {
 /// `JSONMultiFileInfo::InitializeOptions`.
 fn initialize_options(info: Option<JsonScanInfo>) -> JsonReaderOptions {
     let mut options = JsonReaderOptions::default();
-    match info {
-        Some(info) => {
-            options.scan_type = info.scan_type;
-            options.format = info.format;
-            options.record_type = info.record_type;
-            options.auto_detect = info.auto_detect;
-            if info.scan_type == JsonScanType::ReadJsonObjects {
-                options.sql_type_list.push(json_type());
-                options.name_list.push("json".to_owned());
-            }
+    if let Some(info) = info {
+        options.scan_type = info.scan_type;
+        options.format = info.format;
+        options.record_type = info.record_type;
+        options.auto_detect = info.auto_detect;
+        if info.scan_type == JsonScanType::ReadJsonObjects {
+            options.sql_type_list.push(json_type());
+            options.name_list.push("json".to_owned());
         }
-        None => {
-            // COPY ... FROM
-            options.scan_type = JsonScanType::ReadJson;
-            options.record_type = JsonRecordType::Records;
-            options.format = JsonFormat::AutoDetect;
-            options.auto_detect = false;
-        }
+    } else {
+        // COPY ... FROM
+        options.scan_type = JsonScanType::ReadJson;
+        options.record_type = JsonRecordType::Records;
+        options.format = JsonFormat::AutoDetect;
+        options.auto_detect = false;
     }
     options
 }
 
 /// The detection templates of dates and timestamps (`InitializeFormats`).
-const DATE_TEMPLATES: [&str; 6] = ["%m-%d-%Y", "%m-%d-%y", "%d-%m-%Y", "%d-%m-%y", "%Y-%m-%d", "%y-%m-%d"];
+const DATE_TEMPLATES: [&str; 6] = [
+    "%m-%d-%Y", "%m-%d-%y", "%d-%m-%Y", "%d-%m-%y", "%Y-%m-%d", "%y-%m-%d",
+];
 const TIMESTAMP_TEMPLATES: [&str; 12] = [
     "%Y-%m-%d %H:%M:%S.%f",
     "%m-%d-%Y %I:%M:%S %p",
@@ -213,7 +212,10 @@ fn sample_file(
 }
 
 /// `JSONScan::AutoDetect`: samples the files and derives the columns.
-#[allow(clippy::too_many_arguments, reason = "the parts of the bind data AutoDetect fills")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the parts of the bind data AutoDetect fills"
+)]
 fn auto_detect(
     casts: &CastFunctionSet,
     files: &FileList,
@@ -227,7 +229,10 @@ fn auto_detect(
     let file_count = if file_options.union_by_name {
         files.files.len()
     } else {
-        files.files.len().min(usize::try_from(options.maximum_sample_files).unwrap_or(usize::MAX))
+        files
+            .files
+            .len()
+            .min(usize::try_from(options.maximum_sample_files).unwrap_or(usize::MAX))
     };
     let refiner = CandidateRefiner {
         casts,
@@ -391,7 +396,8 @@ pub(crate) fn json_bind(
     let files = create_file_list(function_name, &paths, "json")?;
     let mut file_options = MultiFileOptions::default();
     let mut options = initialize_options(Some(info));
-    let parse_type = |text: &str| crate::json_functions::json_transform::string_to_logical_type(Some(context), text);
+    let parse_type =
+        |text: &str| crate::json_functions::json_transform::string_to_logical_type(Some(context), text);
     for (key, value) in input.named_parameters {
         if file_options.parse_option(key, value, &parse_type)? {
             continue;
@@ -420,8 +426,10 @@ pub(crate) fn json_copy_from_bind(
 ) -> Result<JsonScanData> {
     let files = create_file_list("COPY", &[file_path.to_owned()], "json")?;
     let mut options = initialize_options(None);
-    let mut file_options = MultiFileOptions::default();
-    file_options.auto_detect_hive_partitioning = false;
+    let file_options = MultiFileOptions {
+        auto_detect_hive_partitioning: false,
+        ..MultiFileOptions::default()
+    };
     for (key, values) in copy_options.iter() {
         if options.parse_copy_option(key, values)? {
             continue;
@@ -436,5 +444,11 @@ pub(crate) fn json_copy_from_bind(
     if options.auto_detect && options.format != JsonFormat::Array {
         options.format = JsonFormat::AutoDetect;
     }
-    bind_json_files(context, files, file_options, options, Some((expected_names, expected_types)))
+    bind_json_files(
+        context,
+        files,
+        file_options,
+        options,
+        Some((expected_names, expected_types)),
+    )
 }

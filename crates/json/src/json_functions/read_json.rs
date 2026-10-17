@@ -57,7 +57,8 @@ fn json_file_filter_pushdown() -> FileFilterPushdown {
     FileFilterPushdown {
         files: Arc::new(|bind_data| {
             let data = bind_data.as_any().downcast_ref::<JsonScanData>()?;
-            (data.file_options.hive_partitioning || data.file_options.filename).then(|| data.files.files.clone())
+            (data.file_options.hive_partitioning || data.file_options.filename)
+                .then(|| data.files.files.clone())
         }),
         known_value: Arc::new(|bind_data, path, name, ty| {
             let Some(data) = bind_data.as_any().downcast_ref::<JsonScanData>() else {
@@ -76,7 +77,11 @@ fn json_file_filter_pushdown() -> FileFilterPushdown {
 }
 
 /// One overload of a JSON reader (`MultiFileFunction<JSONMultiFileInfo>`).
-pub(crate) fn json_reader_function(name: &'static str, info: JsonScanInfo, argument: LogicalType) -> TableFunction {
+pub(crate) fn json_reader_function(
+    name: &'static str,
+    info: JsonScanInfo,
+    argument: LogicalType,
+) -> TableFunction {
     let mut function = TableFunction::new(name, vec![argument])
         .with_bind(move |input| json_bind(name, info, input))
         .with_scan(json_scan)
@@ -102,7 +107,11 @@ pub(crate) fn json_reader_function(name: &'static str, info: JsonScanInfo, argum
 fn function_set(name: &'static str, info: JsonScanInfo) -> TableFunctionSet {
     let mut set = TableFunctionSet::new(name);
     set.add(json_reader_function(name, info, LogicalType::VARCHAR));
-    set.add(json_reader_function(name, info, LogicalType::list(LogicalType::VARCHAR)));
+    set.add(json_reader_function(
+        name,
+        info,
+        LogicalType::list(LogicalType::VARCHAR),
+    ));
     set
 }
 

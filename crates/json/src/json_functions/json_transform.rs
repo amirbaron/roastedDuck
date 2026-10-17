@@ -60,6 +60,10 @@ pub(crate) struct TransformOptions {
 }
 
 impl TransformOptions {
+    #[allow(
+        clippy::fn_params_excessive_bools,
+        reason = "DuckDB's JSONTransformOptions constructor"
+    )]
     pub(crate) fn new(
         strict_cast: bool,
         error_duplicate_key: bool,
@@ -497,7 +501,7 @@ pub(crate) fn transform_object(
             });
             continue;
         }
-        found.iter_mut().for_each(|f| *f = false);
+        found.fill(false);
         let mut found_count = 0;
         for (key, val) in doc.obj_iter(obj) {
             let key_bytes = doc.str(key);

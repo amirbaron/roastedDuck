@@ -8,6 +8,7 @@ use super::{input_types, read_bind, read_many_bind};
 use crate::json_executors::{NativeBuilder, binary_execute, execute_many};
 use crate::yyjson::{Doc, ValId};
 
+#[allow(clippy::unnecessary_wraps, reason = "the signature of a JSON read function")]
 fn exists(_: &Doc<'_>, _: ValId, out: &mut NativeBuilder<bool>) -> Result<()> {
     out.push(true);
     Ok(())

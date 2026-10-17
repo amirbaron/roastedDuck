@@ -10,8 +10,8 @@ use rustdb_function::{
     BindInput, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet, TableFunction,
     TableFunctionBindInput, TableFunctionReplacement, TableFunctionSet,
 };
-use rustdb_serde::json::JsonOptions;
 use rustdb_serde::SerializationCompatibility;
+use rustdb_serde::json::JsonOptions;
 use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Vector};
 
 use crate::json_common::read_document;
@@ -205,7 +205,9 @@ fn execute_bind_replace(input: &TableFunctionBindInput<'_>) -> Result<Option<Tab
         return Err(Error::internal("json_execute_serialized_sql without an argument"));
     };
     if serialized.is_null() {
-        return Err(Error::binder("json_execute_serialized_sql cannot execute NULL plan"));
+        return Err(Error::binder(
+            "json_execute_serialized_sql cannot execute NULL plan",
+        ));
     }
     let statements = deserialize_select_statements(serialized.to_varchar()?.as_bytes())?;
     let [statement] = statements.as_slice() else {

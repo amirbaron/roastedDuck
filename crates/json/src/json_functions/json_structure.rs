@@ -63,17 +63,16 @@ impl StructureDescription {
 
     /// The node of `key` in an object description.
     pub(crate) fn get_or_create_child(&mut self, key: &str) -> &mut StructureNode {
-        let index = match self.key_map.get(key) {
-            Some(&index) => index,
-            None => {
-                self.children.push(StructureNode {
-                    key: Some(key.to_owned()),
-                    ..StructureNode::default()
-                });
-                let index = self.children.len() - 1;
-                self.key_map.insert(key.to_owned(), index);
-                index
-            }
+        let index = if let Some(&index) = self.key_map.get(key) {
+            index
+        } else {
+            self.children.push(StructureNode {
+                key: Some(key.to_owned()),
+                ..StructureNode::default()
+            });
+            let index = self.children.len() - 1;
+            self.key_map.insert(key.to_owned(), index);
+            index
         };
         &mut self.children[index]
     }
@@ -130,13 +129,10 @@ impl StructureNode {
                 break;
             }
         }
-        let index = match found {
-            Some(index) => index,
-            None => {
-                self.descriptions.push(StructureDescription::new(ty));
-                self.descriptions.len() - 1
-            }
-        };
+        let index = found.unwrap_or_else(|| {
+            self.descriptions.push(StructureDescription::new(ty));
+            self.descriptions.len() - 1
+        });
         &mut self.descriptions[index]
     }
 
@@ -236,7 +232,7 @@ impl StructureNode {
                 if description.candidate_types.is_empty() {
                     return Ok(());
                 }
-                let strings = refiner.string_vector(doc, vals)?;
+                let strings = CandidateRefiner::string_vector(doc, vals)?;
                 refiner.eliminate_candidate_types(&mut description.candidate_types, &strings, vals.len())?;
             }
             _ => {}
@@ -255,7 +251,7 @@ pub(crate) struct CandidateRefiner<'a> {
 
 impl CandidateRefiner<'_> {
     /// `JSONTransform::GetStringVector` with default options: the string values.
-    fn string_vector(&self, doc: &Doc<'_>, vals: &[Option<ValId>]) -> Result<Vector> {
+    fn string_vector(doc: &Doc<'_>, vals: &[Option<ValId>]) -> Result<Vector> {
         let mut builder = StrBuilder::default();
         for &val in vals {
             match val.filter(|&val| doc.is_str(val)) {
@@ -268,7 +264,12 @@ impl CandidateRefiner<'_> {
 
     /// `EliminateCandidateTypes`: pops candidates (from the back) until one converts
     /// every string.
-    fn eliminate_candidate_types(&self, candidates: &mut Vec<LogicalTypeId>, strings: &Vector, count: usize) -> Result<()> {
+    fn eliminate_candidate_types(
+        &self,
+        candidates: &mut Vec<LogicalTypeId>,
+        strings: &Vector,
+        count: usize,
+    ) -> Result<()> {
         use rustdb_function::cast::{CastParameters, cast_vector};
         while let Some(&ty) = candidates.last() {
             if let Some(formats) = self.date_formats.formats(ty) {

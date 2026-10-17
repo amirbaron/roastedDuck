@@ -10,6 +10,7 @@ use crate::json_executors::{ColumnBuilder, StrBuilder, binary_execute, execute_m
 use crate::yyjson::{Doc, ValId, tag, write_val};
 
 /// `JSONCommon::JSONValue`.
+#[allow(clippy::unnecessary_wraps, reason = "the signature of a JSON read function")]
 fn json_value(doc: &Doc<'_>, val: ValId, out: &mut StrBuilder) -> Result<()> {
     match doc.tag(val) {
         tag::NULL | tag::ARR | tag::OBJ => out.push_null(),

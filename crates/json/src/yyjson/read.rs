@@ -101,11 +101,6 @@ fn is_digit(c: u8) -> bool {
 }
 
 #[inline]
-fn is_fp(c: u8) -> bool {
-    matches!(c, b'.' | b'e' | b'E')
-}
-
-#[inline]
 fn is_exp(c: u8) -> bool {
     matches!(c, b'e' | b'E')
 }
@@ -113,11 +108,6 @@ fn is_exp(c: u8) -> bool {
 #[inline]
 fn is_sign(c: u8) -> bool {
     matches!(c, b'+' | b'-')
-}
-
-#[inline]
-fn is_digit_or_fp(c: u8) -> bool {
-    is_digit(c) || is_fp(c)
 }
 
 #[inline]
@@ -298,7 +288,7 @@ impl Reader<'_> {
                 && b2 & 0xC0 == 0x80
                 && b3 & 0xC0 == 0x80
                 && (requ0 != 0 || requ1 != 0)
-                && (requ0 & 0x04 == 0 || (requ0 & 0x03 == 0 && requ1 == 0));
+                && (requ0 & 0x04 == 0 || (requ0.trailing_zeros() >= 2 && requ1 == 0));
             return if ok { 4 } else { 0 };
         }
         0

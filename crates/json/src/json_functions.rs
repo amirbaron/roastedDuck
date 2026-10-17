@@ -23,7 +23,9 @@ use std::any::Any;
 use std::sync::Arc;
 
 use rustdb_common::{Error, Result};
-use rustdb_function::{BindInput, CopyFunction, FunctionData, ScalarFunction, ScalarFunctionSet, TableFunctionSet};
+use rustdb_function::{
+    BindInput, CopyFunction, FunctionData, ScalarFunction, ScalarFunctionSet, TableFunctionSet,
+};
 use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
 use crate::json_common::{JsonPathType, validate_path};

@@ -6,8 +6,8 @@
 use rustdb_common::{Error, Result};
 use rustdb_function::cast::text_parse::TextFloat;
 use rustdb_function::cast::{BoundCastInfo, CastParameters};
-use rustdb_types::variant::{VariantChild, VariantData, VariantEntry, VariantLogicalType, varint_encode};
 use rustdb_types::Vector;
+use rustdb_types::variant::{VariantChild, VariantData, VariantEntry, VariantLogicalType, varint_encode};
 
 use crate::json_common::read_document;
 use crate::json_executors::{StrInput, addressable};
@@ -49,7 +49,11 @@ impl VariantBuilder {
         }
         for i in 0..count {
             self.data.children.push(VariantChild {
-                keys_index: if has_keys { Some(index(keys_offset + i)?) } else { None },
+                keys_index: if has_keys {
+                    Some(index(keys_offset + i)?)
+                } else {
+                    None
+                },
                 values_index: 0,
             });
         }
@@ -123,41 +127,43 @@ impl VariantBuilder {
 
 /// The cast from JSON to VARIANT.
 pub(crate) fn json_to_variant_cast() -> BoundCastInfo {
-    BoundCastInfo::new(|source: &Vector, result: &mut Vector, count: usize, params: &mut CastParameters| {
-        let rows = if source.is_constant() { count.min(1) } else { count };
-        let column = addressable(source, rows);
-        let input = StrInput::new(&column);
-        let target = result.logical_type().clone();
-        let mut out = Vector::flat(target, rows.max(1));
-        let mut arena = JsonArena::default();
-        let mut success = true;
-        for row in 0..rows {
-            let Some(json) = input.get(row) else {
-                out.set_null(row);
-                continue;
-            };
-            arena.reset();
-            let doc = read_document(&mut arena, json)?;
-            let view = arena.doc();
-            if view.is_null(doc.root) {
-                out.set_null(row);
-                continue;
-            }
-            let mut builder = VariantBuilder::default();
-            if !builder.convert(&view, doc.root)? {
-                out.set_null(row);
-                if success {
-                    params.assign_error("Failed to convert JSON value to VARIANT".to_owned())?;
-                    success = false;
+    BoundCastInfo::new(
+        |source: &Vector, result: &mut Vector, count: usize, params: &mut CastParameters| {
+            let rows = if source.is_constant() { count.min(1) } else { count };
+            let column = addressable(source, rows);
+            let input = StrInput::new(&column);
+            let target = result.logical_type().clone();
+            let mut out = Vector::flat(target, rows.max(1));
+            let mut arena = JsonArena::default();
+            let mut success = true;
+            for row in 0..rows {
+                let Some(json) = input.get(row) else {
+                    out.set_null(row);
+                    continue;
+                };
+                arena.reset();
+                let doc = read_document(&mut arena, json)?;
+                let view = arena.doc();
+                if view.is_null(doc.root) {
+                    out.set_null(row);
+                    continue;
                 }
-                continue;
+                let mut builder = VariantBuilder::default();
+                if !builder.convert(&view, doc.root)? {
+                    out.set_null(row);
+                    if success {
+                        params.assign_error("Failed to convert JSON value to VARIANT".to_owned())?;
+                        success = false;
+                    }
+                    continue;
+                }
+                out.set_value(row, &builder.data.to_value())?;
             }
-            out.set_value(row, &builder.data.to_value())?;
-        }
-        if source.is_constant() {
-            out.make_constant();
-        }
-        *result = out;
-        Ok(success)
-    })
+            if source.is_constant() {
+                out.make_constant();
+            }
+            *result = out;
+            Ok(success)
+        },
+    )
 }

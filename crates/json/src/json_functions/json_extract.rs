@@ -10,12 +10,14 @@ use crate::json_type;
 use crate::yyjson::{Doc, ValId, tag, write_val};
 
 /// `ExtractFromVal`: the value as JSON.
+#[allow(clippy::unnecessary_wraps, reason = "the signature of a JSON read function")]
 fn extract_from_val(doc: &Doc<'_>, val: ValId, out: &mut StrBuilder) -> Result<()> {
     out.push_with(|buf| write_val(buf, doc, val));
     Ok(())
 }
 
 /// `ExtractStringFromVal`: strings without quotes, NULL for JSON null, JSON otherwise.
+#[allow(clippy::unnecessary_wraps, reason = "the signature of a JSON read function")]
 fn extract_string_from_val(doc: &Doc<'_>, val: ValId, out: &mut StrBuilder) -> Result<()> {
     match doc.tag(val) {
         tag::NULL => out.push_null(),

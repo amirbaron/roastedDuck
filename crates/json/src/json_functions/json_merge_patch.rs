@@ -11,9 +11,9 @@ use crate::json_type;
 use crate::yyjson::{MutVal, merge_patch};
 
 /// `MergePatch`: objects are merged, anything else replaces the original.
-fn merge(orig: MutVal, patch: MutVal) -> MutVal {
+fn merge(orig: &MutVal, patch: MutVal) -> MutVal {
     if matches!(orig, MutVal::Obj(_)) && matches!(patch, MutVal::Obj(_)) {
-        merge_patch(Some(&orig), &patch)
+        merge_patch(Some(orig), &patch)
     } else {
         patch
     }
@@ -48,7 +48,7 @@ fn merge_patch_rows(args: &DataChunk, state: &mut FunctionState, result: &mut Ve
             orig = match (orig, patch) {
                 (_, None) => None,
                 (None, Some(patch)) => Some(patch),
-                (Some(orig), Some(patch)) => Some(merge(orig, patch)),
+                (Some(orig), Some(patch)) => Some(merge(&orig, patch)),
             };
         }
         match orig {

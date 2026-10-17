@@ -9,6 +9,7 @@ use crate::json_common::val_type_to_string;
 use crate::json_executors::{StrBuilder, binary_execute, execute_many, unary_execute};
 use crate::yyjson::{Doc, ValId};
 
+#[allow(clippy::unnecessary_wraps, reason = "the signature of a JSON read function")]
 fn get_type(doc: &Doc<'_>, val: ValId, out: &mut StrBuilder) -> Result<()> {
     out.push(val_type_to_string(doc, val).as_bytes());
     Ok(())

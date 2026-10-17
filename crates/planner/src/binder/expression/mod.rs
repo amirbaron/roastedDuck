@@ -124,8 +124,8 @@ fn bind_expression_kind<B: ExpressionBinder + ?Sized>(
                 let body = operator.children.pop();
                 let lhs = operator.children.pop();
                 if let (Some(lhs), Some(body)) = (lhs, body) {
-                    lambda.lhs = Box::new(lhs);
-                    lambda.expr = Box::new(body);
+                    *lambda.lhs = lhs;
+                    *lambda.expr = body;
                 }
             }
             Ok(result)

@@ -99,7 +99,12 @@ fn as_text(value: &Value) -> Result<String> {
 
 impl JsonReaderOptions {
     /// `JSONMultiFileInfo::ParseOption`: whether `key` is a JSON reader option.
-    pub fn parse_option(&mut self, context: Option<&ClientContext>, key: &str, value: &Value) -> Result<bool> {
+    pub fn parse_option(
+        &mut self,
+        context: Option<&ClientContext>,
+        key: &str,
+        value: &Value,
+    ) -> Result<bool> {
         if value.is_null() {
             return Err(Error::binder(format!("Cannot use NULL as argument to key {key}")));
         }
@@ -262,7 +267,10 @@ impl JsonReaderOptions {
         };
         let to_bool = |value: &Value| -> Result<bool> {
             use rustdb_function::cast::ValueCast;
-            Ok(value.default_cast_as(&LogicalType::BOOLEAN)?.as_bool().unwrap_or(false))
+            Ok(value
+                .default_cast_as(&LogicalType::BOOLEAN)?
+                .as_bool()
+                .unwrap_or(false))
         };
         match key.to_lowercase().as_str() {
             "dateformat" | "date_format" => self.date_format = as_text(&single(values)?)?,
@@ -279,9 +287,7 @@ impl JsonReaderOptions {
             }
             "compression" => self.compression = parse_compression(&as_text(&single(values)?)?)?,
             "array" => {
-                if values.is_empty() {
-                    self.format = JsonFormat::Array;
-                } else if to_bool(&single(values)?)? {
+                if values.is_empty() || to_bool(&single(values)?)? {
                     self.format = JsonFormat::Array;
                 } else {
                     self.format = JsonFormat::NewlineDelimited;

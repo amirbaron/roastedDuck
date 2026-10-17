@@ -10,7 +10,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use rustdb_common::{Error, Result};
 use rustdb_csv::multi_file::{FileList, MultiFileBindData, MultiFileOptions, hive_parse};
 use rustdb_function::cast::CastFunctionSet;
-use rustdb_function::{FunctionData, ParallelScanGlobal, ParallelScanLocal, ParallelTableScan, TableScanState};
+use rustdb_function::{
+    FunctionData, ParallelScanGlobal, ParallelScanLocal, ParallelTableScan, TableScanState,
+};
 use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
 use crate::json_enums::{JsonFormat, JsonRecordType, JsonScanType};
@@ -402,7 +404,12 @@ fn assemble(
 }
 
 /// Scans the next chunk for one thread; `false` once there is no more work.
-fn scan_next(data: &JsonScanData, global: &ScanGlobal, local: &mut ScanLocal, chunk: &mut DataChunk) -> Result<bool> {
+fn scan_next(
+    data: &JsonScanData,
+    global: &ScanGlobal,
+    local: &mut ScanLocal,
+    chunk: &mut DataChunk,
+) -> Result<bool> {
     loop {
         if let Some((reader, unit)) = local.reader.as_mut() {
             let count = reader.scan(&mut local.batch)?;
@@ -516,8 +523,16 @@ pub(crate) fn json_virtual_columns(bind_data: Option<&dyn FunctionData>) -> Vec<
         .is_some_and(|data| data.reader_bind.filename_idx.is_some());
     let mut result = Vec::with_capacity(2);
     if !filename_option {
-        result.push((COLUMN_IDENTIFIER_FILENAME, "filename".to_owned(), LogicalType::VARCHAR));
+        result.push((
+            COLUMN_IDENTIFIER_FILENAME,
+            "filename".to_owned(),
+            LogicalType::VARCHAR,
+        ));
     }
-    result.push((COLUMN_IDENTIFIER_FILE_INDEX, "file_index".to_owned(), LogicalType::UBIGINT));
+    result.push((
+        COLUMN_IDENTIFIER_FILE_INDEX,
+        "file_index".to_owned(),
+        LogicalType::UBIGINT,
+    ));
     result
 }

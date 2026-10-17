@@ -130,16 +130,15 @@ fn varchar_to_json_list(
             parsed => {
                 builder.push_null();
                 if success {
-                    let message = match parsed {
-                        Err(error) => format_parse_error(json, &error, ""),
-                        Ok(_) => {
-                            let truncated = if json.len() > 50 {
-                                format!("{}...", String::from_utf8_lossy(&json[..47]))
-                            } else {
-                                String::from_utf8_lossy(json).into_owned()
-                            };
-                            format!("Cannot cast to list of JSON. Input \"{truncated}\"")
-                        }
+                    let message = if let Err(error) = parsed {
+                        format_parse_error(json, &error, "")
+                    } else {
+                        let truncated = if json.len() > 50 {
+                            format!("{}...", String::from_utf8_lossy(&json[..47]))
+                        } else {
+                            String::from_utf8_lossy(json).into_owned()
+                        };
+                        format!("Cannot cast to list of JSON. Input \"{truncated}\"")
                     };
                     params.assign_error(message)?;
                     success = false;
@@ -236,7 +235,9 @@ fn contains_json(ty: &LogicalType) -> bool {
 fn json_as_variant(ty: &LogicalType) -> LogicalType {
     match ty.id() {
         LogicalTypeId::Varchar if ty.alias() == Some(crate::JSON_TYPE_NAME) => LogicalType::variant(),
-        LogicalTypeId::List => LogicalType::list(json_as_variant(ty.child_type().unwrap_or(&LogicalType::SQLNULL))),
+        LogicalTypeId::List => {
+            LogicalType::list(json_as_variant(ty.child_type().unwrap_or(&LogicalType::SQLNULL)))
+        }
         LogicalTypeId::Array => match ty.array_child() {
             Some((child, size)) => LogicalType::array(json_as_variant(child), size),
             None => ty.clone(),
@@ -333,20 +334,22 @@ pub fn register_json_casts(casts: &mut CastFunctionSet) {
 
     // Nested types holding JSON convert their JSON parts to VARIANT first (DuckDB's
     // `ToVariant` parses JSON-typed children).
-    let nested_to_variant: BindCastFn = Arc::new(|set: &CastFunctionSet, source: &LogicalType, target: &LogicalType| {
-        if !contains_json(source) {
-            return Ok(None);
-        }
-        let intermediate = json_as_variant(source);
-        let first = set.get_cast_function(source, &intermediate)?;
-        let second = set.get_cast_function(&intermediate, target)?;
-        Ok(Some(BoundCastInfo::new(move |input, result, count, params| {
-            let mut converted = Vector::flat(intermediate.clone(), count.max(1));
-            let first_ok = first.execute(input, &mut converted, count, params)?;
-            let second_ok = second.execute(&converted, result, count, params)?;
-            Ok(first_ok && second_ok)
-        })))
-    });
+    let nested_to_variant: BindCastFn = Arc::new(
+        |set: &CastFunctionSet, source: &LogicalType, target: &LogicalType| {
+            if !contains_json(source) {
+                return Ok(None);
+            }
+            let intermediate = json_as_variant(source);
+            let first = set.get_cast_function(source, &intermediate)?;
+            let second = set.get_cast_function(&intermediate, target)?;
+            Ok(Some(BoundCastInfo::new(move |input, result, count, params| {
+                let mut converted = Vector::flat(intermediate.clone(), count.max(1));
+                let first_ok = first.execute(input, &mut converted, count, params)?;
+                let second_ok = second.execute(&converted, result, count, params)?;
+                Ok(first_ok && second_ok)
+            })))
+        },
+    );
     for id in [
         LogicalTypeId::Struct,
         LogicalTypeId::List,
@@ -356,7 +359,12 @@ pub fn register_json_casts(casts: &mut CastFunctionSet) {
     ] {
         let source = cast_pattern(id);
         let cost = casts.implicit_cast_cost(&source, &LogicalType::variant());
-        casts.register_bind_function(source, LogicalType::variant(), Arc::clone(&nested_to_variant), cost);
+        casts.register_bind_function(
+            source,
+            LogicalType::variant(),
+            Arc::clone(&nested_to_variant),
+            cost,
+        );
     }
 
     // Anything can be cast to JSON.

@@ -8,8 +8,8 @@ use std::sync::{Arc, OnceLock};
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_function::cast::{CastFunctionSet, CastParameters, cast_vector};
 use rustdb_function::{
-    FunctionData, InOutResult, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet,
-    TableScanState,
+    FunctionData, InOutResult, TableFunction, TableFunctionBindInput, TableFunctionBindOutput,
+    TableFunctionSet, TableScanState,
 };
 use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Value, Vector};
 
@@ -164,7 +164,9 @@ impl Output {
         }
         self.id.push((val - state.root_doc()) as u64);
         match state.nodes.last() {
-            Some(node) if kind == InOutType::Tree => self.parent.push((node.parent - state.root_doc()) as u64),
+            Some(node) if kind == InOutType::Tree => {
+                self.parent.push((node.parent - state.root_doc()) as u64);
+            }
             _ => self.parent.push_null(),
         }
         let path = state.current_path();
@@ -218,7 +220,13 @@ fn text_column(column: &Vector, rows: usize, target: &LogicalType) -> Result<Vec
 }
 
 /// `InitializeLocalState`: parses the row's document and starts the walk at the path.
-fn initialize_row(kind: InOutType, state: &mut InOutState, input: &DataChunk, row: usize, out: &mut Output) -> Result<()> {
+fn initialize_row(
+    kind: InOutType,
+    state: &mut InOutState,
+    input: &DataChunk,
+    row: usize,
+    out: &mut Output,
+) -> Result<()> {
     state.nodes.clear();
     state.arena.reset();
     let mut path_value = Value::varchar("$");
@@ -232,10 +240,14 @@ fn initialize_row(kind: InOutType, state: &mut InOutState, input: &DataChunk, ro
     }
     let (path, path_type) = check_path(&path_value)?;
     if path_type == JsonPathType::Wildcard {
-        return Err(Error::binder("Wildcard JSON path not supported in json_each/json_tree"));
+        return Err(Error::binder(
+            "Wildcard JSON path not supported in json_each/json_tree",
+        ));
     }
     if path.first() != Some(&b'$') {
-        return Err(Error::binder("JSON path must start with '$' for json_each/json_tree"));
+        return Err(Error::binder(
+            "JSON path must start with '$' for json_each/json_tree",
+        ));
     }
     state.path = String::from_utf8_lossy(&path).into_owned();
     let documents = text_column(input.column(0), input.len(), &json_type())?;
@@ -275,7 +287,9 @@ fn walk(kind: InOutType, state: &mut InOutState, out: &mut Output) {
         let children: Vec<(Option<ValId>, ValId)> = if doc.is_arr(parent) {
             doc.arr_iter(parent).map(|value| (None, value)).collect()
         } else {
-            doc.obj_iter(parent).map(|(key, value)| (Some(key), value)).collect()
+            doc.obj_iter(parent)
+                .map(|(key, value)| (Some(key), value))
+                .collect()
         };
         let mut finished = true;
         for (idx, &(key, value)) in children.iter().enumerate().skip(start) {

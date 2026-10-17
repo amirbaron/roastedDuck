@@ -8,6 +8,7 @@ use crate::json_executors::{StrBuilder, unary_execute};
 use crate::json_type;
 use crate::yyjson::{Doc, ValId, write_val_pretty};
 
+#[allow(clippy::unnecessary_wraps, reason = "the signature of a JSON read function")]
 fn pretty_print(doc: &Doc<'_>, val: ValId, out: &mut StrBuilder) -> Result<()> {
     out.push_with(|buf| write_val_pretty(buf, doc, val));
     Ok(())
