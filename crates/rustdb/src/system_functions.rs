@@ -2661,6 +2661,7 @@ pub(crate) fn pragma_query(name: &str, parameters: &[Value]) -> Result<Option<St
         "database_size" => "SELECT * FROM pragma_database_size();".to_owned(),
         "collations" => "SELECT * FROM pragma_collations() ORDER BY 1".to_owned(),
         "show" => format!("SELECT * FROM pragma_show({});", quoted(&first()?)),
+        "json_execute_serialized_sql" => rustdb_json::execute_serialized_sql_pragma(&first()?)?,
         "version" => "SELECT * FROM pragma_version();".to_owned(),
         "platform" => "SELECT * FROM pragma_platform();".to_owned(),
         "user_agent" => "SELECT * FROM pragma_user_agent()".to_owned(),

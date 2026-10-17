@@ -10,7 +10,9 @@ pub(crate) mod json_extract;
 pub(crate) mod json_keys;
 pub(crate) mod json_merge_patch;
 pub(crate) mod json_pretty;
+pub mod json_serialize_sql;
 pub(crate) mod json_structure;
+pub(crate) mod json_table_in_out;
 pub(crate) mod json_transform;
 pub(crate) mod json_type;
 pub(crate) mod json_valid;
@@ -219,13 +221,18 @@ pub fn json_scalar_functions() -> Vec<ScalarFunctionSet> {
     functions.push(json_type::type_function());
     functions.push(json_valid::valid_function());
     functions.push(json_value::value_function());
+    functions.push(json_serialize_sql::serialize_sql_function());
+    functions.push(json_serialize_sql::deserialize_sql_function());
     functions.push(json_pretty::pretty_function());
     functions
 }
 
 /// `JSONFunctions::GetTableFunctions`.
 pub fn json_table_functions() -> Vec<TableFunctionSet> {
-    read_json::read_json_functions()
+    let mut functions = read_json::read_json_functions();
+    functions.extend(json_table_in_out::in_out_functions());
+    functions.push(json_serialize_sql::execute_serialized_sql_function());
+    functions
 }
 
 /// The `json`, `ndjson` and `jsonl` COPY formats.

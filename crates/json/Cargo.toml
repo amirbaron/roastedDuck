@@ -12,6 +12,7 @@ rustdb-types.workspace = true
 rustdb-ast.workspace = true
 rustdb-parser.workspace = true
 rustdb-planner.workspace = true
+rustdb-serde.workspace = true
 rustdb-function = { path = "../function" }
 rustdb-functions = { path = "../functions" }
 rustdb-csv = { path = "../csv" }
