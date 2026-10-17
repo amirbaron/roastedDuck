@@ -1582,6 +1582,7 @@ test/sql/copy/parquet/union_by_name_pushdown.test
 test/sql/copy/parquet/union_by_name_struct_filter.test
 test/sql/copy/parquet/writer/list_of_bools.test_slow
 test/sql/copy/parquet/writer/parquet_large_blobs.test_slow
+test/sql/copy/parquet/writer/parquet_test_all_types.test
 test/sql/copy/parquet/writer/parquet_timetz_roundtrip.test
 test/sql/copy/parquet/writer/parquet_write_booleans.test
 test/sql/copy/parquet/writer/parquet_write_compression_level.test
@@ -2732,6 +2733,7 @@ test/sql/returning/returning_delete_same_transaction.test
 test/sql/returning/returning_insert.test
 test/sql/returning/returning_large.test
 test/sql/sample/bernoulli_sampling.test_slow
+test/sql/sample/can_sample_from_ingested_files.test
 test/sql/sample/get_multiple_samples_small.test_slow
 test/sql/sample/large_reservoir_sample.test_slow
 test/sql/sample/large_sample.test_slow
@@ -3719,6 +3721,7 @@ test/sql/types/nested/map/test_map_entries.test
 test/sql/types/nested/map/test_map_keys.test
 test/sql/types/nested/map/test_map_nested_keys.test
 test/sql/types/nested/map/test_map_subscript.test
+test/sql/types/nested/map/test_map_subscript_all_types.test_slow
 test/sql/types/nested/map/test_map_subscript_composite.test
 test/sql/types/nested/map/test_map_subscript_from_column.test
 test/sql/types/nested/map/test_map_subscript_vector_types.test
@@ -3805,6 +3808,7 @@ test/sql/types/struct/unnest_struct.test
 test/sql/types/struct/unnest_struct_mix.test
 test/sql/types/struct/unnest_struct_subquery.test
 test/sql/types/struct/update_empty_row.test
+test/sql/types/test_all_types.test_slow
 test/sql/types/test_date_cast.test
 test/sql/types/test_null_type.test
 test/sql/types/test_typeof.test
@@ -3983,6 +3987,7 @@ test/sql/window/test_rownumber_orderby.test
 test/sql/window/test_scalar_window.test
 test/sql/window/test_split_partition_heap.test
 test/sql/window/test_streaming_lead_lag.test
+test/sql/window/test_streaming_lead_lag.test_slow
 test/sql/window/test_streaming_window.test
 test/sql/window/test_streaming_window_list.test_slow
 test/sql/window/test_thread_count.test
