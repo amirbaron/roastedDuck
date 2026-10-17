@@ -366,11 +366,13 @@ impl RowGroup {
                 state.vector_index += 1;
                 return Ok(());
             }
-            let mut sel: Vec<u32> = if count == max_count {
-                (0..max_count as u32).collect()
+            let mut sel = std::mem::take(&mut state.filter_sel);
+            sel.clear();
+            if count == max_count {
+                sel.extend(0..max_count as u32);
             } else {
-                valid_sel.clone()
-            };
+                sel.extend_from_slice(&valid_sel);
+            }
             state.valid_sel = valid_sel;
             if has_filters {
                 for entry in filters.filters().iter().filter(|entry| !entry.always_true) {
@@ -411,10 +413,11 @@ impl RowGroup {
                     self.column(column_id.primary_index())?
                         .skip(&mut state.column_scans[index], VECTOR_SIZE)?;
                 }
+                state.filter_sel = sel;
                 state.vector_index += 1;
                 continue;
             }
-            let selection = SelectionVector::new(sel.clone());
+            let selection = SelectionVector::new(&sel[..]);
             for (index, column_id) in column_ids.iter().enumerate() {
                 let vector = result.column_mut(index);
                 if has_filters && filters.column_has_filters(index) {
@@ -436,6 +439,7 @@ impl RowGroup {
                 )?;
             }
             result.set_len(sel.len());
+            state.filter_sel = sel;
             state.vector_index += 1;
             return Ok(());
         }

@@ -169,6 +169,8 @@ pub struct CollectionScanState {
     pub(crate) max_row: u64,
     pub(crate) batch_index: u64,
     pub(crate) valid_sel: Vec<u32>,
+    /// Scratch for the rows that pass the filters of the current vector.
+    pub(crate) filter_sel: Vec<u32>,
     /// Rows considered before filters were applied.
     pub rows_scanned: u64,
     /// SYSTEM sampling pushed into the scan (DuckDB's `ScanSamplingInfo` with the

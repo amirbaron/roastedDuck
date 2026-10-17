@@ -113,6 +113,57 @@ static UNPACK_KERNELS: [UnpackKernel; 57] = unpack_kernels!(
     33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56
 );
 
+/// Unpacks 32 values of `W` bits, adds `frame` and stores them narrowed by `store` (the
+/// unpack and `ApplyFrameOfReference` in one pass, straight into the result); `src` must
+/// hold `4 * W + 8` bytes.
+#[inline]
+fn unpack_fixed_for<const W: usize, T: Copy>(
+    src: &[u8],
+    frame: u64,
+    out: &mut [T; GROUP_SIZE],
+    store: impl Fn(u64) -> T,
+) {
+    let mask = if W == 64 { u64::MAX } else { (1u64 << W) - 1 };
+    let src = &src[..GROUP_SIZE * W / 8 + 8];
+    for (index, value) in out.iter_mut().enumerate() {
+        let bit = index * W;
+        let byte = bit / 8;
+        let mut raw = [0u8; 8];
+        raw.copy_from_slice(&src[byte..byte + 8]);
+        *value = store(((u64::from_le_bytes(raw) >> (bit % 8)) & mask).wrapping_add(frame));
+    }
+}
+
+/// [`unpack_group_u64`] plus the frame of reference, narrowed to `T` by `store`; `false`
+/// (nothing written) for widths it has no kernel for or without 8 bytes of slack after
+/// the group.
+#[inline]
+pub(crate) fn unpack_group_for<T: Copy>(
+    src: &[u8],
+    width: u8,
+    frame: u64,
+    out: &mut [T; GROUP_SIZE],
+    store: impl Fn(u64) -> T,
+) -> bool {
+    if width > 56 || src.len() < GROUP_SIZE * width as usize / 8 + 8 {
+        return false;
+    }
+    macro_rules! widths {
+        ($($w:literal)*) => {
+            match width {
+                0 => *out = [store(frame); GROUP_SIZE],
+                $($w => unpack_fixed_for::<$w, T>(src, frame, out, &store),)*
+                _ => return false,
+            }
+        };
+    }
+    widths!(
+        1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32
+        33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56
+    );
+    true
+}
+
 /// [`unpack_group_u64`] for any width, through a zero-padded copy of the group.
 fn unpack_group_u64_slow(src: &[u8], width: u8, out: &mut [u64; GROUP_SIZE]) {
     let mut words = [0u64; 66];

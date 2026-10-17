@@ -408,33 +408,24 @@ impl PerfectHashJoinExecutor {
                 .and_then(|range| self.build_min.checked_add(range))
                 .and_then(T::from_i128),
         );
-        if let (Some((min, max)), true, rustdb_types::Sel::Identity) = (bounds, all_valid, values.sel) {
-            // Flat keys without NULLs, compared in their own type
-            // (`TemplatedFillSelectionVectorProbe`).
+        if let Some((min, max)) = bounds {
+            // Keys compared in their own type (`TemplatedFillSelectionVectorProbe`), one
+            // loop per key representation.
             let words = self.bitmap_build_idx.words();
-            // Written at every row, kept when found (DuckDB's selection vectors).
-            let start = state.probe_sel_vec.len();
-            state.build_sel_vec.resize(start + count, 0);
-            state.probe_sel_vec.resize(start + count, 0);
-            let build = &mut state.build_sel_vec[start..];
-            let probe = &mut state.probe_sel_vec[start..];
-            let mut found = 0;
-            for (row, &value) in values.values[..count].iter().enumerate() {
-                let in_range = value >= min && value <= max;
-                let index = if in_range { value.offset_from(min) } else { 0 };
-                let present = in_range
-                    && words.is_none_or(|words| {
-                        words
-                            .get(index / 64)
-                            .is_some_and(|word| word >> (index % 64) & 1 == 1)
-                    });
-                build[found] = index as u32;
-                probe[found] = row as u32;
-                found += usize::from(present);
+            let data = values.values;
+            match (values.sel, all_valid) {
+                (rustdb_types::Sel::Identity, true) => {
+                    let data = &data[..count];
+                    select_in_range(state, count, min, max, words, |row| data[row]);
+                    return;
+                }
+                (rustdb_types::Sel::Indices(indices), true) => {
+                    let indices = &indices[..count];
+                    select_in_range(state, count, min, max, words, |row| data[indices[row] as usize]);
+                    return;
+                }
+                _ => {}
             }
-            state.build_sel_vec.truncate(start + found);
-            state.probe_sel_vec.truncate(start + found);
-            return;
         }
         for row in 0..count {
             let slot = values.slot(row);
@@ -447,6 +438,37 @@ impl PerfectHashJoinExecutor {
                 state.build_sel_vec.push(index as u32);
                 state.probe_sel_vec.push(row as u32);
             }
+        }
+    }
+}
+
+/// Appends the rows whose key (`key(row)`) lies in `min..=max` and has a build row to the
+/// probe selection, with their build slots. Branches on the match like DuckDB: few probe
+/// rows usually find a build row, so the branch predicts well and misses cost no writes.
+fn select_in_range<T: PerfectKey>(
+    state: &mut PerfectHashJoinState,
+    count: usize,
+    min: T,
+    max: T,
+    words: Option<&[u64]>,
+    key: impl Fn(usize) -> T,
+) {
+    state.build_sel_vec.reserve(count);
+    state.probe_sel_vec.reserve(count);
+    for row in 0..count {
+        let value = key(row);
+        if value < min || value > max {
+            continue;
+        }
+        let index = value.offset_from(min);
+        let present = words.is_none_or(|words| {
+            words
+                .get(index / 64)
+                .is_some_and(|word| word >> (index % 64) & 1 == 1)
+        });
+        if present {
+            state.build_sel_vec.push(index as u32);
+            state.probe_sel_vec.push(row as u32);
         }
     }
 }

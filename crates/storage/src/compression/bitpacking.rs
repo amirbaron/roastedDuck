@@ -13,7 +13,7 @@ use rustdb_types::{LogicalType, PhysicalType, Vector};
 
 use super::bitpacking_primitives::{
     BITPACKING_HEADER_SIZE, GROUP_SIZE, minimum_bit_width_signed, minimum_bit_width_unsigned,
-    pack_buffer_u64, pack_buffer_u128, required_size, unpack_group_u64, unpack_group_u128,
+    pack_buffer_u64, pack_buffer_u128, required_size, unpack_group_for, unpack_group_u64, unpack_group_u128,
 };
 use super::primitive::{
     Primitive, align8, corrupt, load, result_bytes, unified_values, update_numeric_stats,
@@ -67,6 +67,21 @@ pub(crate) trait Wide: Copy + Default + Send + Sync + std::fmt::Debug + 'static 
     fn from_usize(value: usize) -> Self;
     /// `UnPackBlock`: one group of 32 values of `width` bits.
     fn unpack_group(src: &[u8], width: u8, out: &mut [Self; GROUP_SIZE]);
+
+    /// Decodes the whole group at byte `start` of `data` with the frame of reference
+    /// added, as `T` values into `out` (`GROUP_SIZE` values' bytes); `false` (nothing
+    /// written) if there is no fused kernel for the width, `out` is not aligned for `T`,
+    /// or the group is out of range.
+    fn unpack_group_for<T: BitpackingValue<Wide = Self>>(
+        data: &[u8],
+        start: usize,
+        width: u8,
+        frame: Self,
+        out: &mut [u8],
+    ) -> bool {
+        let _ = (data, start, width, frame, out);
+        false
+    }
 }
 
 impl Wide for u64 {
@@ -85,6 +100,23 @@ impl Wide for u64 {
     #[inline]
     fn unpack_group(src: &[u8], width: u8, out: &mut [Self; GROUP_SIZE]) {
         unpack_group_u64(src, width, out);
+    }
+
+    #[inline]
+    fn unpack_group_for<T: BitpackingValue<Wide = Self>>(
+        data: &[u8],
+        start: usize,
+        width: u8,
+        frame: u64,
+        out: &mut [u8],
+    ) -> bool {
+        let (Some(src), Some(slots)) = (data.get(start..), typed_slots::<T>(out)) else {
+            return false;
+        };
+        let Ok(slots) = <&mut [T; GROUP_SIZE]>::try_from(slots) else {
+            return false;
+        };
+        unpack_group_for(src, width, frame, slots, T::from_wide)
     }
 }
 
@@ -353,6 +385,34 @@ impl<T: BitpackingValue> CodecScan for BitpackingScanState<T> {
                 }
                 BitpackingMode::For | BitpackingMode::DeltaFor => {
                     let to_scan = remaining.min(GROUP_SIZE - self.group_offset % GROUP_SIZE);
+                    if to_scan == GROUP_SIZE
+                        && T::Wide::unpack_group_for::<T>(
+                            self.data.bytes(),
+                            self.group.data + self.group_offset * self.group.width as usize / 8,
+                            self.group.width,
+                            self.group.frame_of_reference,
+                            &mut out[..GROUP_SIZE * T::SIZE],
+                        )
+                    {
+                        // A whole group decoded straight into the result
+                        // (`BitpackingScanPartial` unpacking into the result vector).
+                        if self.group.mode == BitpackingMode::DeltaFor
+                            && let Some(typed) = typed_slots::<T>(&mut out[..GROUP_SIZE * T::SIZE])
+                        {
+                            // `DeltaDecode` in place: only the low `T` bits of the running
+                            // sum are kept, and those do not depend on the bits narrowed
+                            // away.
+                            let mut previous = self.group.delta_offset;
+                            for slot in typed {
+                                previous = slot.to_wide().wrapping_add(previous);
+                                *slot = T::from_wide(previous);
+                            }
+                            self.group.delta_offset = previous;
+                        }
+                        self.group_offset += to_scan;
+                        scanned += to_scan;
+                        continue;
+                    }
                     self.unpack_algorithm_group()?;
                     let offset_in_group = self.group_offset % GROUP_SIZE;
                     let frame = self.group.frame_of_reference;
