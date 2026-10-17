@@ -233,6 +233,9 @@ fn read_parquet_virtual_columns(bind_data: Option<&dyn FunctionData>) -> Vec<(u6
 #[derive(Debug)]
 pub struct ParquetBindData {
     pub files: FileList,
+    /// The file list `EXPLAIN ANALYZE` shows: the patterns given, until filters prune
+    /// the expanded files (`GetDisplayFileList`).
+    display_paths: Option<Vec<String>>,
     pub names: Vec<String>,
     pub types: Vec<LogicalType>,
     pub file_options: MultiFileOptions,
@@ -282,6 +285,7 @@ impl ParquetBindData {
             *initial = None;
         }
         result.files = FileList { files };
+        result.display_paths = None;
         result
     }
 
@@ -294,6 +298,7 @@ impl ParquetBindData {
     fn with_filters_opt(&self, filters: Option<Arc<TableFilterSet>>) -> Self {
         Self {
             files: self.files.clone(),
+            display_paths: self.display_paths.clone(),
             names: self.names.clone(),
             types: self.types.clone(),
             file_options: self.file_options.clone(),
@@ -507,7 +512,8 @@ fn read_parquet_bind(
         ..ParquetOptions::default()
     };
     parse_options(input, &mut file_options, &mut options, context)?;
-    let data = bind_files(&context.casts, files, file_options, &options)?;
+    let mut data = bind_files(&context.casts, files, file_options, &options)?;
+    data.display_paths = Some(paths);
     Ok(TableFunctionBindOutput {
         return_types: data.types.clone(),
         names: data.names.clone(),
@@ -594,6 +600,7 @@ pub fn bind_files(
     let reader_bind = bind_options(&file_options, &files, &mut types, &mut names)?;
     Ok(ParquetBindData {
         files,
+        display_paths: None,
         names,
         types,
         file_options,
@@ -1182,6 +1189,35 @@ pub(crate) fn read_parquet_file_filter_pushdown() -> rustdb_function::FileFilter
     }
 }
 
+/// `MultiFileDynamicToString`: the number of files opened and the first file names.
+fn read_parquet_dynamic_to_string(
+    bind_data: Option<&dyn FunctionData>,
+    global: &ParallelScanGlobal,
+) -> Vec<(String, String)> {
+    const FILE_NAME_LIST_LIMIT: usize = 5;
+    let (Ok(data), Ok(global)) = (parquet_bind_data(bind_data), parallel_global(global)) else {
+        return Vec::new();
+    };
+    let files_loaded = {
+        let cursor = global.cursor.lock().unwrap_or_else(PoisonError::into_inner);
+        cursor.file_index + usize::from(cursor.file.is_some())
+    };
+    let mut result = vec![("Total Files Read".to_owned(), files_loaded.to_string())];
+    let display = data.display_paths.as_ref().unwrap_or(&data.files.files);
+    if !display.is_empty() {
+        let mut names: Vec<&str> = display
+            .iter()
+            .take(FILE_NAME_LIST_LIMIT)
+            .map(String::as_str)
+            .collect();
+        if files_loaded > FILE_NAME_LIST_LIMIT {
+            names.push("...");
+        }
+        result.push(("Filename(s)".to_owned(), names.join(", ")));
+    }
+    result
+}
+
 /// The `read_parquet` scan by several threads (`MultiFileFunction` with
 /// `ParquetScanMaxThreads` / `ParquetScanGetBatchIndex`).
 fn read_parquet_parallel() -> ParallelTableScan {
@@ -1195,6 +1231,7 @@ fn read_parquet_parallel() -> ParallelTableScan {
                 .downcast_ref::<ParallelLocal>()
                 .map_or(0, |local| local.batch_index)
         }),
+        dynamic_to_string: Some(Arc::new(read_parquet_dynamic_to_string)),
     }
 }
 

@@ -265,6 +265,7 @@ impl PipelineExecutor {
                 let source_result = self.fetch_from_source()?;
                 if source_result == SourceResult::Finished {
                     self.exhausted_pipeline = true;
+                    self.finalize_source_profiling()?;
                 }
                 if self.requires_batch_index {
                     self.next_batch(source_result == SourceResult::HaveMoreOutput)?;
@@ -514,6 +515,20 @@ impl PipelineExecutor {
         } else {
             OperatorResult::NeedMoreInput
         })
+    }
+
+    /// Records what the exhausted source reports for `EXPLAIN ANALYZE`
+    /// (`FinalizeSourceProfiling`).
+    fn finalize_source_profiling(&self) -> Result<()> {
+        let Some(profiling) = &self.profiling else {
+            return Ok(());
+        };
+        let params = role(&self.pipeline.source, |op| op.as_source())?
+            .extra_source_params(self.states.source.as_ref(), self.local_source_state.as_ref())?;
+        if !params.is_empty() {
+            profiling.profiler.record_extra_info(profiling.source, params);
+        }
+        Ok(())
     }
 
     /// Fetches the next chunk from the source into `chunks[0]` (`FetchFromSource`).

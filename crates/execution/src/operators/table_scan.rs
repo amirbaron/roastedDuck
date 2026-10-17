@@ -230,6 +230,17 @@ impl Source for PhysicalTableScan {
         }
     }
 
+    fn extra_source_params(&self, global: &TableScanGlobal, _: &Self::Local) -> Vec<(String, String)> {
+        match (&self.function.parallel_scan, &global.parallel) {
+            (Some(parallel), Some(shared)) => parallel
+                .dynamic_to_string
+                .as_ref()
+                .map(|dynamic| dynamic(self.bind_data.as_deref(), shared))
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    }
+
     fn batch_index(&self, global: &TableScanGlobal, local: &Self::Local) -> Result<u64> {
         match (&self.function.parallel_scan, &global.parallel, local) {
             (Some(parallel), Some(shared), Some(local)) => Ok((parallel.batch_index)(shared, local)),

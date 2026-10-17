@@ -174,6 +174,10 @@ pub struct ParallelTableScan {
     /// The batch index of the chunk the thread produced last, increasing in the
     /// function's row order (`GetPartitionData`).
     pub batch_index: Arc<dyn Fn(&ParallelScanGlobal, &ParallelScanLocal) -> u64 + Send + Sync>,
+    /// What `EXPLAIN ANALYZE` shows about the finished scan (`dynamic_to_string`).
+    pub dynamic_to_string: Option<
+        Arc<dyn Fn(Option<&dyn FunctionData>, &ParallelScanGlobal) -> Vec<(String, String)> + Send + Sync>,
+    >,
 }
 
 impl fmt::Debug for ParallelTableScan {
