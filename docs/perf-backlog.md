@@ -4,6 +4,35 @@ Known places where rustdb is slower or heavier than DuckDB 1.5.6. Every item mus
 closed before M9 (no benchmark below 0.99× C++ speed, memory geomean ≤ 0.6×). Numbers are
 CPU time unless noted; the machine is shared, so small differences need re-checking.
 
+## Benchmark suites (round 2)
+
+`scripts/perf/bench.py` runs TPC-H, h2oai (groupby and join) and a ClickBench subset on
+both engines; `scripts/perf/data.sh` creates the databases with DuckDB's CLI (both engines
+read the same file) and `scripts/perf/suites.sh` / `scripts/perf/table.py` run and tabulate
+whole suites. Each (engine, query) runs in its own process that drives the engine through
+the C API (DuckDB's release `libduckdb`, rustdb's `crates/capi`): one warm-up run whose
+result is checked, then 5 timed runs (best wall time; CPU time of that run); peak RSS is the
+process's. Results are compared value by value (doubles to 1e-9); `ORDER BY ... LIMIT`
+queries whose ties make the order arbitrary are checked by hashing the whole result
+without ORDER BY / LIMIT on both engines.
+
+Data (disk-limited machine): TPC-H **SF3** instead of SF10 (2.6 GB would not fit next to
+the other worktrees), h2oai `G1_1e7_1e2_5_0` and `J1_1e7_*` (DuckDB's benchmark data,
+10M rows), ClickBench **3 of the 100 `hits` partitions** (3M rows). Times are in-process
+and warm, unlike the per-process numbers of round 1 below, which included start-up and
+opening the database.
+
+| run | suite | threads | DuckDB wall s | rustdb wall s | speed geomean | slowest | mem geomean | max mem |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| baseline | tpch3 | 14 | 0.484 | 0.667 | 0.68× | q22 0.33× | 0.95× | q22 1.18× |
+| baseline | h2og | 14 | 0.502 | 3.335 | 0.35× | q08 0.05× | 0.84× | q08 1.91× |
+| baseline | h2oj | 14 | 0.697 | 5.776 | 0.12× | q04 0.10× | 0.91× | q05 0.98× |
+| baseline | hits | 14 | 0.512 | 0.916 | 0.61× | q29 0.16× | 0.97× | q26 1.55× |
+| baseline | tpch3 | 1 | 3.218 | 4.083 | 0.72× | q02 0.47× | 0.99× | q21 1.08× |
+| baseline | h2og | 1 | 3.319 | 5.021 | 0.65× | q08 0.28× | 0.92× | q08 1.03× |
+| baseline | h2oj | 1 | 7.355 | 6.426 | 1.17× | q05 1.01× | 0.58× | q05 0.64× |
+| baseline | hits | 1 | 3.450 | 5.346 | 0.52× | q29 0.05× | 1.03× | q23 1.68× |
+
 ## TPC-H SF1 status
 
 Measured with `.context/perf/bin/tpch.py` (one process per query, best of 5, warm OS
