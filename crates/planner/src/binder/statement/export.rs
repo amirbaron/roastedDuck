@@ -82,7 +82,7 @@ pub fn bind_export(scope: &mut BindScope<'_>, stmt: &mut ExportStatement) -> Res
     bind_copy_options(scope, info)?;
     let function = copy_function(scope, &info.format.clone(), false)?
         .ok_or_else(|| Error::internal("copy function lookup returned nothing"))?;
-    if function.copy_to_bind.is_none() {
+    if function.copy_to_bind.is_none() && function.plan.is_none() {
         return Err(Error::not_implemented(format!(
             "COPY TO is not supported for FORMAT \"{}\"",
             info.format
