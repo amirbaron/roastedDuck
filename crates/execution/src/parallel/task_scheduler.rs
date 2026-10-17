@@ -52,9 +52,12 @@ struct Queue {
 #[derive(Default)]
 struct Shared {
     queue: Mutex<Queue>,
-    /// Signalled when tasks are queued, when a waiting query may be complete and when
-    /// workers must stop.
-    signal: Condvar,
+    /// Wakes background workers: once per queued task (DuckDB's semaphore `signal(n)`),
+    /// and all of them when workers must stop.
+    work: Condvar,
+    /// Wakes the query threads waiting in [`ProducerToken::wait`]: when tasks are queued
+    /// and when a query may be complete.
+    done: Condvar,
 }
 
 impl Shared {
@@ -136,7 +139,7 @@ impl TaskScheduler {
             }
         }
         drop(workers);
-        self.shared.signal.notify_all();
+        self.shared.work.notify_all();
     }
 
     /// A token under which an executor queues its tasks (`CreateProducer`). Makes sure
@@ -161,7 +164,7 @@ impl Drop for TaskScheduler {
         for worker in &workers {
             worker.marker.store(false, Ordering::Release);
         }
-        self.shared.signal.notify_all();
+        self.shared.work.notify_all();
         for worker in workers {
             // A worker only panics if a task did; the task's executor has reported it.
             let _ = worker.handle.join();
@@ -178,7 +181,7 @@ fn execute_forever(shared: &Shared, marker: &AtomicBool) {
             return;
         }
         let Some(mut queued) = queue.tasks.pop_front() else {
-            queue = shared.signal.wait(queue).unwrap_or_else(PoisonError::into_inner);
+            queue = shared.work.wait(queue).unwrap_or_else(PoisonError::into_inner);
             continue;
         };
         drop(queue);
@@ -215,13 +218,18 @@ impl ProducerToken {
         if tasks.is_empty() {
             return;
         }
+        let count = tasks.len();
         let mut queue = self.shared.lock();
         queue.tasks.extend(tasks.into_iter().map(|task| QueuedTask {
             producer: self.id,
             task,
         }));
         drop(queue);
-        self.shared.signal.notify_all();
+        // One worker per task rather than all of them (`semaphore.signal(n)`).
+        for _ in 0..count {
+            self.shared.work.notify_one();
+        }
+        self.shared.done.notify_all();
     }
 
     /// Takes the oldest queued task of this producer (`GetTaskFromProducer`).
@@ -239,7 +247,7 @@ impl ProducerToken {
         while !done() && !queue.tasks.iter().any(|queued| queued.producer == self.id) {
             queue = self
                 .shared
-                .signal
+                .done
                 .wait(queue)
                 .unwrap_or_else(PoisonError::into_inner);
         }
@@ -248,7 +256,7 @@ impl ProducerToken {
     /// Wakes the threads waiting in [`ProducerToken::wait`] to re-check their condition.
     pub fn notify(&self) {
         drop(self.shared.lock());
-        self.shared.signal.notify_all();
+        self.shared.done.notify_all();
     }
 }
 

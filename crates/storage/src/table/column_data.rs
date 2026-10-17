@@ -6,7 +6,7 @@
 //! child; LIST columns store cumulative `u64` end offsets plus a child column; STRUCT
 //! columns store one child per field; ARRAY columns store a child with `size` rows per row.
 
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
@@ -200,6 +200,8 @@ pub struct ColumnData {
     data_type: AtomicU8,
     segments: SegmentTree<ColumnSegment>,
     updates: Mutex<Option<Arc<UpdateSegment>>>,
+    /// Whether `updates` is set (it is never cleared), readable without the lock.
+    has_update_segment: AtomicBool,
     /// Statistics of the whole column; only top-level columns have them (the statistics of
     /// nested children live inside their parent's).
     stats: Option<Mutex<BaseStatistics>>,
@@ -289,6 +291,7 @@ impl ColumnData {
             data_type: AtomicU8::new(data_type as u8),
             segments: SegmentTree::default(),
             updates: Mutex::default(),
+            has_update_segment: AtomicBool::new(false),
             stats,
             allocation_size: AtomicU64::new(0),
             io,
@@ -467,7 +470,7 @@ impl ColumnData {
 
     /// Whether this column (not its children) has updates.
     pub fn has_updates(&self) -> bool {
-        self.updates().is_some()
+        self.has_update_segment.load(Ordering::Acquire)
     }
 
     /// Whether the column or any child has updates.
@@ -1792,7 +1795,10 @@ impl ColumnData {
     ) -> Result<()> {
         let segment = {
             let mut updates = self.updates();
-            Arc::clone(updates.get_or_insert_with(|| Arc::new(UpdateSegment::new(self.ty.clone()))))
+            let segment =
+                Arc::clone(updates.get_or_insert_with(|| Arc::new(UpdateSegment::new(self.ty.clone()))));
+            self.has_update_segment.store(true, Ordering::Release);
+            segment
         };
         let first = row_ids.first().map_or(0, |&id| id as u64 - row_group_start);
         let vector_index = (first / VECTOR_SIZE) as usize;
