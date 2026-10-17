@@ -54,6 +54,9 @@ pub struct PhysicalCopyToFile {
     /// Whether threads prepare batches written in batch order (DuckDB's
     /// `PhysicalBatchCopyToFile`).
     batch: bool,
+    /// Whether threads write row groups of their own rows, in any order
+    /// (`PARALLEL_COPY_TO_FILE`).
+    parallel: bool,
 }
 
 impl PhysicalCopyToFile {
@@ -70,7 +73,15 @@ impl PhysicalCopyToFile {
             bind_data,
             options,
             batch: false,
+            parallel: false,
         }
+    }
+
+    /// Each thread writes row groups of its own rows (`PARALLEL_COPY_TO_FILE`).
+    #[must_use]
+    pub fn with_parallel_writes(mut self) -> Self {
+        self.parallel = true;
+        self
     }
 
     /// Writes batches prepared by several threads, in batch order
@@ -651,6 +662,8 @@ struct BatchCopy {
 #[derive(Debug, Default)]
 pub struct CopyLocal {
     file: Option<OpenFile>,
+    /// The function's state of this thread (parallel writes).
+    function_local: Option<rustdb_function::copy::CopyLocalState>,
     batch_index: u64,
     min_batch_index: u64,
     batch: RawBatch,
@@ -928,7 +941,7 @@ impl PhysicalOperator for PhysicalCopyToFile {
     /// `ParallelSink`: each thread writes its own files with `PER_THREAD_OUTPUT`, or
     /// prepares its own batches.
     fn parallel_sink(&self) -> bool {
-        self.options.per_thread_output || self.batch
+        self.options.per_thread_output || self.batch || self.parallel
     }
     fn requires_batch_index(&self) -> bool {
         self.batch
@@ -997,7 +1010,7 @@ impl Sink for PhysicalCopyToFile {
                 self.initialize(&mut inner)?;
             }
         }
-        if self.batch {
+        if self.batch || self.parallel {
             let batch_size = self
                 .function
                 .desired_batch_size
@@ -1024,6 +1037,27 @@ impl Sink for PhysicalCopyToFile {
         global: &CopyGlobal,
         local: &mut CopyLocal,
     ) -> Result<SinkResult> {
+        if self.parallel {
+            let file_state = self.batch_file_state(global)?;
+            local.rows_copied += chunk.len() as u64;
+            if local.function_local.is_none() {
+                let initialize = self
+                    .function
+                    .copy_to_initialize_local
+                    .as_ref()
+                    .ok_or_else(|| Error::internal("parallel copy without copy_to_initialize_local"))?;
+                local.function_local = Some(initialize(self.bind_data.as_ref())?);
+            }
+            let sink = self
+                .function
+                .copy_to_sink_local
+                .as_ref()
+                .ok_or_else(|| Error::internal("parallel copy without a local sink"))?;
+            if let Some(function_local) = local.function_local.as_mut() {
+                sink(self.bind_data.as_ref(), &file_state, function_local, chunk)?;
+            }
+            return Ok(SinkResult::NeedMoreInput);
+        }
         if self.batch {
             if !self.options.write_empty_file && local.rows_copied == 0 {
                 self.batch_file_state(global)?;
@@ -1092,6 +1126,23 @@ impl Sink for PhysicalCopyToFile {
     }
 
     fn combine(&self, _: &ExecutionContext, global: &CopyGlobal, mut local: CopyLocal) -> Result<()> {
+        if self.parallel {
+            global
+                .inner
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .rows_copied += local.rows_copied;
+            if let Some(function_local) = local.function_local.take() {
+                let combine = self
+                    .function
+                    .copy_to_combine
+                    .as_ref()
+                    .ok_or_else(|| Error::internal("parallel copy without copy_to_combine"))?;
+                let file_state = self.batch_file_state(global)?;
+                combine(self.bind_data.as_ref(), &file_state, function_local)?;
+            }
+            return Ok(());
+        }
         if self.batch {
             global
                 .inner

@@ -1704,6 +1704,18 @@ fn plan_copy_to_file(
         names: copy.names,
         expected_types: copy.expected_types,
     };
+    let parallel = mode == rustdb_function::copy::CopyFunctionExecutionMode::ParallelCopyToFile
+        && copy.function.copy_to_sink_local.is_some()
+        && copy.function.copy_to_combine.is_some()
+        && !options.per_thread_output
+        && !options.partition_output
+        && !options.rotate;
     let operator = crate::operators::PhysicalCopyToFile::new(child, copy.function, copy.bind_data, options);
-    Ok(Arc::new(if batch { operator.with_batches() } else { operator }))
+    Ok(Arc::new(if batch {
+        operator.with_batches()
+    } else if parallel {
+        operator.with_parallel_writes()
+    } else {
+        operator
+    }))
 }

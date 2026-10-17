@@ -48,6 +48,8 @@ struct RowBuffer {
 #[derive(Debug)]
 pub struct ParquetWriteGlobal {
     inner: Mutex<(ParquetWriter, RowBuffer)>,
+    /// The rows threads left behind in parallel writes (`combine_buffer`).
+    combine_buffer: Mutex<Option<RowBuffer>>,
     /// Prepares batches without the writer's lock (`prepare_batch`).
     preparer: crate::writer::RowGroupPreparer,
 }
@@ -551,8 +553,82 @@ fn parquet_write_initialize_global(data: &dyn FunctionData, path: &str) -> Resul
     let preparer = writer.preparer();
     Ok(Box::new(ParquetWriteGlobal {
         inner: Mutex::new((writer, RowBuffer::default())),
+        combine_buffer: Mutex::new(None),
         preparer,
     }))
+}
+
+/// `ParquetWriter::Flush` from any thread: prepares the row group without the file's
+/// lock, then writes it under the lock.
+fn flush_rows(global: &ParquetWriteGlobal, buffer: &RowBuffer) -> Result<()> {
+    if buffer.rows == 0 {
+        return Ok(());
+    }
+    let prepared = global.preparer.prepare(&buffer.chunks)?;
+    let mut inner = global.inner.lock().unwrap_or_else(PoisonError::into_inner);
+    inner.0.flush_prepared(prepared)
+}
+
+/// `ParquetWriteSink` with a thread's buffer (parallel writes).
+fn parquet_write_sink_local(
+    data: &dyn FunctionData,
+    state: &CopyGlobalState,
+    local: &mut rustdb_function::copy::CopyLocalState,
+    chunk: &DataChunk,
+) -> Result<()> {
+    let data = bind_data(data)?;
+    let global = global_state(state)?;
+    let buffer = local
+        .downcast_mut::<RowBuffer>()
+        .ok_or_else(|| Error::internal("parquet write with a foreign local state"))?;
+    if chunk.is_empty() {
+        return Ok(());
+    }
+    buffer.rows += chunk.len();
+    buffer.bytes += chunk_size_in_bytes(chunk);
+    buffer.chunks.push(chunk.clone());
+    if buffer.rows >= data.options.row_group_size || buffer.bytes >= data.options.row_group_size_bytes {
+        flush_rows(global, buffer)?;
+        *buffer = RowBuffer::default();
+    }
+    Ok(())
+}
+
+/// `ParquetWriteCombine`: a thread's buffer is written if it is at least half a row
+/// group, else combined with the other threads' leftovers.
+fn parquet_write_combine(
+    data: &dyn FunctionData,
+    state: &CopyGlobalState,
+    local: rustdb_function::copy::CopyLocalState,
+) -> Result<()> {
+    let data = bind_data(data)?;
+    let global = global_state(state)?;
+    let buffer = *local
+        .downcast::<RowBuffer>()
+        .map_err(|_| Error::internal("parquet write with a foreign local state"))?;
+    let half_rows = data.options.row_group_size / 2;
+    let half_bytes = data.options.row_group_size_bytes / 2;
+    if buffer.rows >= half_rows || buffer.bytes >= half_bytes {
+        return flush_rows(global, &buffer);
+    }
+    let mut combine = global
+        .combine_buffer
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    match combine.as_mut() {
+        Some(combined) => {
+            combined.rows += buffer.rows;
+            combined.bytes += buffer.bytes;
+            combined.chunks.extend(buffer.chunks);
+            if combined.rows >= half_rows || combined.bytes >= half_bytes {
+                let owned = combine.take().unwrap_or_default();
+                drop(combine);
+                return flush_rows(global, &owned);
+            }
+        }
+        None => *combine = Some(buffer),
+    }
+    Ok(())
 }
 
 /// `ParquetWriteExecutionMode` (regular for VARIANT columns, whose shredding the first
@@ -565,8 +641,11 @@ fn parquet_write_execution_mode(
     use rustdb_function::copy::CopyFunctionExecutionMode as Mode;
     let batches = bind_data(data).is_ok_and(|data| ParquetWriter::supports_batches(&data.types));
     if !preserve_insertion_order {
-        // Gap: the parallel (unordered) mode writes on one thread, in arrival order.
-        return Mode::RegularCopyToFile;
+        return if batches {
+            Mode::ParallelCopyToFile
+        } else {
+            Mode::RegularCopyToFile
+        };
     }
     if supports_batch_index && batches {
         return Mode::BatchCopyToFile;
@@ -643,6 +722,15 @@ fn parquet_write_sink(data: &dyn FunctionData, state: &CopyGlobalState, chunk: &
 /// `ParquetWriteCombine` + `ParquetWriteFinalize`.
 fn parquet_write_finalize(_: &dyn FunctionData, state: &CopyGlobalState) -> Result<()> {
     let global = global_state(state)?;
+    // The rows threads combined in parallel writes.
+    let combined = global
+        .combine_buffer
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take();
+    if let Some(combined) = combined {
+        flush_rows(global, &combined)?;
+    }
     let mut inner = global.inner.lock().unwrap_or_else(PoisonError::into_inner);
     let (writer, buffer) = &mut *inner;
     if buffer.rows > 0 {
@@ -883,6 +971,11 @@ pub fn parquet_copy_function() -> CopyFunction {
     function.prepare_batch = Some(Arc::new(parquet_write_prepare_batch));
     function.flush_batch = Some(Arc::new(parquet_write_flush_batch));
     // `ParquetWriteDesiredBatchSize`.
+    function.copy_to_initialize_local = Some(Arc::new(|_| {
+        Ok(Box::new(RowBuffer::default()) as rustdb_function::copy::CopyLocalState)
+    }));
+    function.copy_to_sink_local = Some(Arc::new(parquet_write_sink_local));
+    function.copy_to_combine = Some(Arc::new(parquet_write_combine));
     function.desired_batch_size = Some(Arc::new(|data| {
         bind_data(data).map_or(0, |data| data.options.row_group_size as u64)
     }));

@@ -149,6 +149,17 @@ pub type CopyPrepareBatch =
 /// `flush_batch`: writes a prepared batch (one thread at a time, in batch order).
 pub type CopyFlushBatch =
     Arc<dyn Fn(&dyn FunctionData, &CopyGlobalState, PreparedBatch) -> Result<()> + Send + Sync>;
+/// The state of one thread of a parallel write (DuckDB's `LocalFunctionData`).
+pub type CopyLocalState = Box<dyn Any + Send>;
+/// `copy_to_initialize_local`.
+pub type CopyToInitializeLocal = Arc<dyn Fn(&dyn FunctionData) -> Result<CopyLocalState> + Send + Sync>;
+/// `copy_to_sink` with the thread's local state (parallel writes).
+pub type CopyToSinkLocal = Arc<
+    dyn Fn(&dyn FunctionData, &CopyGlobalState, &mut CopyLocalState, &DataChunk) -> Result<()> + Send + Sync,
+>;
+/// `copy_to_combine`: hands a thread's remaining rows to the file.
+pub type CopyToCombine =
+    Arc<dyn Fn(&dyn FunctionData, &CopyGlobalState, CopyLocalState) -> Result<()> + Send + Sync>;
 /// `desired_batch_size`: the rows per prepared batch (0: any).
 pub type CopyDesiredBatchSize = Arc<dyn Fn(&dyn FunctionData) -> u64 + Send + Sync>;
 
@@ -183,6 +194,11 @@ pub struct CopyFunction {
     pub prepare_batch: Option<CopyPrepareBatch>,
     pub flush_batch: Option<CopyFlushBatch>,
     pub desired_batch_size: Option<CopyDesiredBatchSize>,
+    /// Parallel writes with thread-local state (`copy_to_initialize_local`,
+    /// `copy_to_sink`, `copy_to_combine`).
+    pub copy_to_initialize_local: Option<CopyToInitializeLocal>,
+    pub copy_to_sink_local: Option<CopyToSinkLocal>,
+    pub copy_to_combine: Option<CopyToCombine>,
 }
 
 impl CopyFunction {
@@ -206,6 +222,9 @@ impl CopyFunction {
             prepare_batch: None,
             flush_batch: None,
             desired_batch_size: None,
+            copy_to_initialize_local: None,
+            copy_to_sink_local: None,
+            copy_to_combine: None,
         }
     }
 }
