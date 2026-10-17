@@ -24,6 +24,8 @@ pub struct ReaderContext {
     pub file: Arc<ParquetFile>,
     pub file_name: Arc<str>,
     pub metadata: Arc<FileMetaData>,
+    /// How to decrypt the pages of an encrypted file.
+    pub decryption: Option<Arc<crate::crypto::FileDecryption>>,
 }
 
 /// A node of the reader tree.

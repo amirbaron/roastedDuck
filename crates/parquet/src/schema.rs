@@ -42,6 +42,8 @@ pub enum ExtraTypeInfo {
 pub struct ParquetOptions {
     /// The database's object cache when footers are cached (`parquet_metadata_cache`).
     pub metadata_cache: Option<std::sync::Arc<rustdb_function::ObjectCache>>,
+    /// The footer key of encrypted files (`encryption_config`).
+    pub encryption: Option<crate::crypto::FooterKey>,
     pub binary_as_string: bool,
     pub variant_legacy_encoding: bool,
     pub file_row_number: bool,

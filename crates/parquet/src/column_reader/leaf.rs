@@ -93,6 +93,67 @@ impl ChunkBuffer {
     }
 }
 
+/// The AAD ordinals of the pages being read from an encrypted file (DuckDB's
+/// `CryptoMetaData` of a column reader).
+#[derive(Debug, Default, Clone, Copy)]
+struct PageCrypto {
+    row_group: i16,
+    /// The page ordinal `ReadPageHeaders` counts (from 0 per call).
+    page_ordinal: i16,
+    has_dictionary: bool,
+    has_index: bool,
+    has_bloom_filter: bool,
+}
+
+impl PageCrypto {
+    /// `GetFinalPageOrdinal`.
+    fn final_ordinal(self, module_type: i8, ordinal: i16) -> i16 {
+        use crate::crypto::module;
+        match module_type {
+            module::DATA_PAGE_HEADER => {
+                if self.has_dictionary || self.has_index || self.has_bloom_filter {
+                    ordinal - 1
+                } else {
+                    ordinal
+                }
+            }
+            module::DATA_PAGE => ordinal,
+            _ => -1,
+        }
+    }
+
+    /// `GetModuleHeader`.
+    fn header_module(self, ordinal: i16) -> i8 {
+        use crate::crypto::module;
+        if ordinal > 0 {
+            module::DATA_PAGE_HEADER
+        } else if self.has_dictionary {
+            module::DICTIONARY_PAGE_HEADER
+        } else if self.has_index {
+            module::OFFSET_INDEX
+        } else if self.has_bloom_filter {
+            module::BLOOM_FILTER_HEADER
+        } else {
+            module::DATA_PAGE_HEADER
+        }
+    }
+
+    /// `GetModule`.
+    fn data_module(self, page_type: PageType, ordinal: i16) -> Result<i8> {
+        use crate::crypto::module;
+        if self.has_bloom_filter && ordinal == 0 {
+            return Ok(module::BLOOM_FILTER_BITSET);
+        }
+        Ok(match page_type {
+            PageType::DATA_PAGE | PageType::DATA_PAGE_V2 => module::DATA_PAGE,
+            PageType::DICTIONARY_PAGE => module::DICTIONARY_PAGE,
+            PageType::INDEX_PAGE if self.has_index => module::OFFSET_INDEX,
+            PageType::INDEX_PAGE => module::COLUMN_INDEX,
+            _ => return Err(Error::invalid_input("Module not found")),
+        })
+    }
+}
+
 /// The decoding of the current data page (`ColumnEncoding` with its decoder state).
 #[derive(Debug, Default)]
 enum PageDecoding {
@@ -153,6 +214,8 @@ pub struct LeafReader {
     /// use; `DictionaryDecoder`'s `filter_result`).
     dictionary_filters: Vec<Option<Vec<bool>>>,
     pending_skips: u64,
+    /// The AAD state of an encrypted file (`aad_crypto_metadata`).
+    crypto: PageCrypto,
     /// Scratch space for decoded values and dictionary indices.
     scratch: Vec<u8>,
     indices: Vec<u32>,
@@ -202,6 +265,7 @@ impl LeafReader {
             dictionary_size: 0,
             dictionary_filters: Vec::new(),
             pending_skips: 0,
+            crypto: PageCrypto::default(),
             scratch: Vec::new(),
             indices: Vec::new(),
         })
@@ -244,6 +308,14 @@ impl LeafReader {
             )));
         }
         let meta = chunk.meta_data.clone().unwrap_or_default();
+        // `InitializeCryptoMetadata`: the row group's ordinal and the column's.
+        self.crypto = PageCrypto {
+            row_group: row_group.ordinal.unwrap_or(0),
+            page_ordinal: 0,
+            has_dictionary: meta.dictionary_page_offset.is_some(),
+            has_index: meta.index_page_offset.is_some(),
+            has_bloom_filter: meta.bloom_filter_offset.is_some(),
+        };
         self.chunk_read_offset = meta.data_page_offset as u64;
         if let Some(dictionary_offset) = meta.dictionary_page_offset
             && dictionary_offset >= 4
@@ -301,7 +373,10 @@ impl LeafReader {
         self.repeats = None;
         self.ensure_chunk_loaded()?;
         let file = Arc::clone(&self.context.file);
-        let (header, header_len) = self.chunk.page_header(&file, self.chunk_read_offset)?;
+        let (header, header_len) = match self.context.decryption.clone() {
+            Some(decryption) => self.encrypted_page_header(&decryption)?,
+            None => self.chunk.page_header(&file, self.chunk_read_offset)?,
+        };
         self.chunk_read_offset += header_len as u64;
         if header.compressed_page_size < 0 || header.uncompressed_page_size < 0 {
             return Err(read_failure(self.file_name(), "Page sizes must be >= 0"));
@@ -332,10 +407,79 @@ impl LeafReader {
             _ => {
                 // Index pages and unknown page types are skipped.
                 self.chunk_read_offset += header.compressed_page_size as u64;
+                if self.context.decryption.is_some() {
+                    // The module's length field and nonce/tag are not in the page size.
+                    self.chunk_read_offset += crate::crypto::LENGTH_BYTES as u64;
+                }
             }
         }
         self.decoder.reset_page();
         Ok(())
+    }
+
+    /// `ReadEncrypted` of a page header: decrypts the header module at the current
+    /// position; returns the header and the module's length.
+    fn encrypted_page_header(
+        &mut self,
+        decryption: &crate::crypto::FileDecryption,
+    ) -> Result<(PageHeader, usize)> {
+        let module_type = self.crypto.header_module(self.crypto.page_ordinal);
+        self.crypto.page_ordinal = self.crypto.final_ordinal(module_type, self.crypto.page_ordinal);
+        let aad = crate::crypto::module_aad(
+            &decryption.file_aad,
+            module_type,
+            self.crypto.row_group,
+            self.column_index as i16,
+            self.crypto.page_ordinal,
+        )?;
+        let file = Arc::clone(&self.context.file);
+        let offset = self.chunk_read_offset;
+        let total =
+            crate::crypto::module_len(self.chunk.bytes(&file, offset, crate::crypto::LENGTH_BYTES)?)?;
+        let bytes = self.chunk.bytes(&file, offset, total)?;
+        let (plain, total) = crate::crypto::decrypt_module(&decryption.key, &aad, bytes)?;
+        let header = PageHeader::read(&mut crate::thrift::CompactReader::new(&plain))?;
+        Ok((header, total))
+    }
+
+    /// The bytes of a page's payload (`compressed_page_size`, without the encryption
+    /// overhead Arrow counts in it) at the current position, decrypted for an encrypted
+    /// file (`ReadData` / `ReadDataEncrypted`).
+    fn read_page_payload(&mut self, header: &PageHeader) -> Result<std::borrow::Cow<'_, [u8]>> {
+        let Some(decryption) = self.context.decryption.clone() else {
+            let len = header.compressed_page_size as usize;
+            return self.read_page_bytes(len).map(std::borrow::Cow::Borrowed);
+        };
+        let len = self.payload_size(header);
+        let module_type = self.crypto.data_module(header.type_, self.crypto.page_ordinal)?;
+        self.crypto.page_ordinal = self.crypto.final_ordinal(module_type, self.crypto.page_ordinal);
+        let aad = crate::crypto::module_aad(
+            &decryption.file_aad,
+            module_type,
+            self.crypto.row_group,
+            self.column_index as i16,
+            self.crypto.page_ordinal,
+        )?;
+        let file = Arc::clone(&self.context.file);
+        let offset = self.chunk_read_offset;
+        let total =
+            crate::crypto::module_len(self.chunk.bytes(&file, offset, crate::crypto::LENGTH_BYTES)?)?;
+        let bytes = self.chunk.bytes(&file, offset, total)?;
+        let (plain, total) = crate::crypto::decrypt_data(&decryption.key, &aad, bytes, len)?;
+        self.chunk_read_offset += total as u64;
+        Ok(std::borrow::Cow::Owned(plain))
+    }
+
+    /// The size of a page's payload: `compressed_page_size`, less the encryption
+    /// overhead Arrow adds to it in files with an AAD file identifier.
+    fn payload_size(&self, header: &PageHeader) -> usize {
+        let size = header.compressed_page_size as usize;
+        match &self.context.decryption {
+            Some(decryption) if !decryption.file_aad.is_empty() => size.saturating_sub(
+                crate::crypto::LENGTH_BYTES + crate::crypto::NONCE_BYTES + crate::crypto::TAG_BYTES,
+            ),
+            _ => size,
+        }
     }
 
     /// Reads `len` page bytes at the current position.
@@ -349,19 +493,19 @@ impl LeafReader {
     /// `PreparePage`: reads and decompresses a v1 data page or a dictionary page.
     fn prepare_page_v1(&mut self, header: &PageHeader) -> Result<()> {
         let uncompressed = header.uncompressed_page_size as usize;
-        let compressed = header.compressed_page_size as usize;
+        let compressed = self.payload_size(header);
         let codec = self.codec;
         let mut block = self.take_block(uncompressed + 1);
         if codec == CompressionCodec::UNCOMPRESSED {
             if compressed != uncompressed {
                 return Err(runtime_error("Page size mismatch"));
             }
-            let bytes = self.read_page_bytes(compressed)?;
-            block[..compressed].copy_from_slice(bytes);
+            let bytes = self.read_page_payload(header)?;
+            block[..compressed].copy_from_slice(&bytes);
         } else {
             let file_name = Arc::clone(&self.context.file_name);
-            let bytes = self.read_page_bytes(compressed)?;
-            decompress(codec, bytes, &mut block[..uncompressed], &file_name)?;
+            let bytes = self.read_page_payload(header)?;
+            decompress(codec, &bytes, &mut block[..uncompressed], &file_name)?;
         }
         self.set_block(block);
         Ok(())
@@ -371,7 +515,7 @@ impl LeafReader {
     fn prepare_page_v2(&mut self, header: &PageHeader) -> Result<()> {
         let v2 = header.data_page_header_v2.clone().unwrap_or_default();
         let uncompressed_size = header.uncompressed_page_size as usize;
-        let compressed_size = header.compressed_page_size as usize;
+        let compressed_size = self.payload_size(header);
         let mut block = self.take_block(uncompressed_size + 1);
         let mut is_uncompressed = v2.is_compressed == Some(false);
         if self.codec == CompressionCodec::UNCOMPRESSED {
@@ -381,7 +525,7 @@ impl LeafReader {
             is_uncompressed = true;
         }
         if is_uncompressed {
-            let bytes = self.read_page_bytes(compressed_size)?;
+            let bytes = self.read_page_payload(header)?;
             let len = bytes.len().min(uncompressed_size);
             block[..len].copy_from_slice(&bytes[..len]);
             block[len..].fill(0);
@@ -408,26 +552,26 @@ impl LeafReader {
                 "header inconsistency, compressed_page_size is smaller than repetition_levels_byte_length + definition_levels_byte_length",
             ));
         }
-        let levels = self.read_page_bytes(level_bytes)?;
-        block[..level_bytes].copy_from_slice(levels);
+        let file_name = Arc::clone(&self.context.file_name);
+        let codec = self.codec;
+        let payload = self.read_page_payload(header)?;
+        block[..level_bytes].copy_from_slice(&payload[..level_bytes]);
         let compressed_bytes = compressed_size - level_bytes;
         if compressed_bytes == 0 && uncompressed_size > level_bytes {
             return Err(read_failure(
-                self.file_name(),
+                &file_name,
                 "header inconsistency, compressed_page_size is too small for the declared value region",
             ));
         }
         if compressed_bytes > 0 {
-            let codec = self.codec;
-            let file_name = Arc::clone(&self.context.file_name);
-            let bytes = self.read_page_bytes(compressed_bytes)?;
             decompress(
                 codec,
-                bytes,
+                &payload[level_bytes..compressed_size],
                 &mut block[level_bytes..uncompressed_size],
                 &file_name,
             )?;
         }
+        drop(payload);
         self.set_block(block);
         Ok(())
     }
@@ -707,8 +851,12 @@ impl LeafReader {
     /// `ReadPageHeaders`: makes sure a page with values is ready; returns how many of
     /// `max_read` values to read from it.
     fn read_page_headers(&mut self, max_read: u64) -> Result<usize> {
+        // The AAD page ordinal counts from 0 in every call, like DuckDB's.
+        let mut page_ordinal = 0;
         while self.page_rows_available == 0 {
+            self.crypto.page_ordinal = page_ordinal;
             self.prepare_page()?;
+            page_ordinal += 1;
         }
         Ok(max_read
             .min(self.page_rows_available)

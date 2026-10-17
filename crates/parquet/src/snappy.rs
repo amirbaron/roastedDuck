@@ -164,12 +164,7 @@ unsafe fn copy64(dst: *mut u8, src: *const u8, len: usize) {
 /// output), done one element late and 32 bytes at a time, so the loop barely branches.
 /// Long literals, copy-4 and invalid copies stop it; returns the input and output
 /// positions where the careful loop takes over.
-fn decompress_branchless(
-    src: &[u8],
-    dst: &mut [u8],
-    start: usize,
-    op_start: usize,
-) -> (usize, usize) {
+fn decompress_branchless(src: &[u8], dst: &mut [u8], start: usize, op_start: usize) -> (usize, usize) {
     let mut ip = start;
     let mut op = op_start;
     if start + 2 * SLOP + 2 >= src.len() || op + 2 * SLOP >= dst.len() {

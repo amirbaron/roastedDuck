@@ -104,10 +104,12 @@ pub struct FileMetadata {
     pub metadata: FileMetaData,
     /// The length of the Thrift-encoded footer.
     pub footer_len: u32,
+    /// How to decrypt the file's modules, if its footer is encrypted.
+    pub decryption: Option<crate::crypto::FileDecryption>,
 }
 
 /// `LoadMetadata`: checks the magic bytes and parses the footer.
-pub fn load_metadata(file: &ParquetFile) -> Result<FileMetadata> {
+pub fn load_metadata(file: &ParquetFile, key: Option<&crate::crypto::FooterKey>) -> Result<FileMetadata> {
     let path = file.path();
     let size = file.size();
     if size < 12 {
@@ -117,19 +119,30 @@ pub fn load_metadata(file: &ParquetFile) -> Result<FileMetadata> {
     }
     let mut tail = [0u8; 8];
     file.read_exact_at(&mut tail, size - 8)?;
-    match &tail[4..] {
-        b"PAR1" => {}
+    // `ParseParquetFooter`.
+    let footer_encrypted = match &tail[4..] {
+        b"PAR1" => {
+            if key.is_some() {
+                return Err(Error::invalid_input(format!(
+                    "File '{path}' is not encrypted, but 'encryption_config' was set"
+                )));
+            }
+            false
+        }
         b"PARE" => {
-            return Err(Error::invalid_input(format!(
-                "File '{path}' is encrypted, but 'encryption_config' was not set"
-            )));
+            if key.is_none() {
+                return Err(Error::invalid_input(format!(
+                    "File '{path}' is encrypted, but 'encryption_config' was not set"
+                )));
+            }
+            true
         }
         _ => {
             return Err(Error::invalid_input(format!(
                 "No magic bytes found at end of file '{path}'"
             )));
         }
-    }
+    };
     let footer_len = u32::from_le_bytes([tail[0], tail[1], tail[2], tail[3]]);
     if footer_len == 0 || size < 12 + u64::from(footer_len) {
         return Err(Error::invalid_input(format!(
@@ -138,11 +151,40 @@ pub fn load_metadata(file: &ParquetFile) -> Result<FileMetadata> {
     }
     let footer = file.read_range(size - 8 - u64::from(footer_len), footer_len as usize)?;
     let mut reader = crate::thrift::CompactReader::new(&footer);
-    let metadata = FileMetaData::read(&mut reader)?;
+    let mut decryption = None;
+    let metadata = match key {
+        Some(key) if footer_encrypted => {
+            let crypto = crate::thrift::FileCryptoMetaData::read(&mut reader)?;
+            if crypto.encryption_algorithm.aes_gcm_ctr_v1.is_some() {
+                return Err(Error::invalid_input(format!(
+                    "File '{path}' is encrypted with AES_GCM_CTR_V1, but only AES_GCM_V1 is supported"
+                )));
+            }
+            let file_aad = crypto
+                .encryption_algorithm
+                .aes_gcm_v1
+                .as_ref()
+                .and_then(|aes| aes.aad_file_unique.as_ref())
+                .map(|unique| unique.0.clone())
+                .unwrap_or_default();
+            let aad = crate::crypto::module_aad(&file_aad, crate::crypto::module::FOOTER, -1, -1, -1)?;
+            let (plain, _) = crate::crypto::decrypt_module(&key.0, &aad, &footer[reader.position()..])?;
+            decryption = Some(crate::crypto::FileDecryption {
+                key: std::sync::Arc::clone(&key.0),
+                file_aad,
+            });
+            FileMetaData::read(&mut crate::thrift::CompactReader::new(&plain))?
+        }
+        _ => FileMetaData::read(&mut reader)?,
+    };
     if metadata.num_rows < 0 {
         return Err(Error::invalid_input(format!(
             "Failed to read Parquet file \"{path}\": has negative number of rows"
         )));
     }
-    Ok(FileMetadata { metadata, footer_len })
+    Ok(FileMetadata {
+        metadata,
+        footer_len,
+        decryption,
+    })
 }

@@ -1469,6 +1469,7 @@ test/sql/copy/parquet/delta_byte_array.test
 test/sql/copy/parquet/delta_byte_array_fixed_variable.test_slow
 test/sql/copy/parquet/describe_parquet.test
 test/sql/copy/parquet/dictionary_compression_ratio_threshold.test
+test/sql/copy/parquet/encryption/arrow_compatibility.test
 test/sql/copy/parquet/enum_converted_type.test
 test/sql/copy/parquet/file_metadata.test
 test/sql/copy/parquet/fixed.test

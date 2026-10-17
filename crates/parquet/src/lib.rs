@@ -11,6 +11,7 @@
 pub mod column_reader;
 pub mod compression;
 pub mod copy;
+pub mod crypto;
 pub mod decode;
 pub mod file;
 pub mod filter;

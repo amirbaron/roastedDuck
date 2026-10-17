@@ -1540,8 +1540,27 @@ impl Connection {
                 )?;
                 return Ok(nothing());
             }
-            LogicalKind::Pragma { name, .. } => {
+            LogicalKind::Pragma { name, parameters } => {
                 let lower = name.to_ascii_lowercase();
+                if lower == "add_parquet_key" {
+                    // `ParquetCrypto::AddKey` (`PragmaCall` with two VARCHAR arguments).
+                    let [key_name, key] = parameters.as_slice() else {
+                        return Err(Error::binder(format!(
+                            "No function matches the given name and argument types '{name}({})'. You might need to add explicit type casts.",
+                            parameters
+                                .iter()
+                                .map(|parameter| parameter.logical_type().to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )));
+                    };
+                    rustdb_parquet::crypto::add_key(
+                        &self.database.instance().object_cache,
+                        &key_name.to_varchar()?,
+                        &key.to_varchar()?,
+                    )?;
+                    return Ok(nothing());
+                }
                 if lower == "enable_optimizer" || lower == "disable_optimizer" {
                     self.settings.optimizer_disabled = lower == "disable_optimizer";
                 }

@@ -38,6 +38,14 @@ impl ParquetReader {
     /// with a metadata cache, a cached footer of the unchanged file is reused.
     pub fn open(path: &str, options: ParquetOptions) -> Result<Self> {
         let file = Arc::new(ParquetFile::open(path)?);
+        if let Some(key) = &options.encryption {
+            let loaded = load_metadata(&file, Some(key))?;
+            let decryption = loaded.decryption.map(Arc::new);
+            let mut reader =
+                Self::from_metadata(file, Arc::new(loaded.metadata), loaded.footer_len, options)?;
+            reader.context.decryption = decryption;
+            return Ok(reader);
+        }
         if let Some(cache) = &options.metadata_cache {
             let key = CachedMetadata::key(path);
             if let Some(entry) = cache.get::<CachedMetadata>(&key)
@@ -46,7 +54,7 @@ impl ParquetReader {
                 let metadata = Arc::clone(&entry.metadata);
                 return Self::from_metadata(file, metadata, entry.footer_len, options);
             }
-            let loaded = load_metadata(&file)?;
+            let loaded = load_metadata(&file, None)?;
             let metadata = Arc::new(loaded.metadata);
             cache.put(
                 key,
@@ -59,7 +67,7 @@ impl ParquetReader {
             );
             return Self::from_metadata(file, metadata, loaded.footer_len, options);
         }
-        let loaded = load_metadata(&file)?;
+        let loaded = load_metadata(&file, None)?;
         Self::from_metadata(file, Arc::new(loaded.metadata), loaded.footer_len, options)
     }
 
@@ -102,6 +110,7 @@ impl ParquetReader {
                 file_name: Arc::from(path.as_str()),
                 file,
                 metadata,
+                decryption: None,
             },
             options,
             root_schema,

@@ -377,7 +377,8 @@ fn parse_options(
                 file_options.auto_detect_hive_partitioning = false;
             }
             "encryption_config" => {
-                return Err(Error::not_implemented("Parquet encryption"));
+                let cache = context.function_client.object_cache();
+                options.encryption = Some(crate::crypto::parse_encryption_config(value, cache.as_deref())?);
             }
             // `compression` and `debug_use_openssl` are accepted and ignored.
             _ => {}
