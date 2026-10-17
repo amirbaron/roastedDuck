@@ -203,6 +203,9 @@ fn assert_rows(connection: &mut Connection, sql: &str, expected: &[&[&str]]) {
 #[test]
 fn window_ranking_functions() {
     let mut con = connect();
+    // Output order of partitioned windows without ORDER BY is only deterministic on one
+    // thread (in DuckDB too); the expected rows come from DuckDB with `threads=1`.
+    con.query("SET threads = 1").unwrap();
     assert_rows(
         &mut con,
         "SELECT p, i, row_number() OVER w, rank() OVER w, dense_rank() OVER w, percent_rank() OVER w, \
