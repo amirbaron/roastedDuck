@@ -113,7 +113,7 @@ pub(crate) fn null_columns(types: &[LogicalType]) -> Vec<Vector> {
 /// The rows of `left` selected by `sel`.
 pub(crate) fn slice_columns(left: &DataChunk, sel: &[u32]) -> Vec<Vector> {
     let sel = SelectionVector::new(sel.to_vec());
-    left.columns().iter().map(|column| column.slice(&sel)).collect()
+    Vector::slice_all(left.columns(), &sel)
 }
 
 /// The result of a join whose build side is empty

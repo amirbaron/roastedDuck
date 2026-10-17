@@ -38,6 +38,12 @@ impl SelectionVector {
         &self.indices
     }
 
+    /// Identifies the shared index buffer, so that compositions with the same selection
+    /// can be reused (DuckDB's `SelCache` keys on the buffer).
+    pub(crate) fn buffer_key(&self) -> usize {
+        self.indices.as_ptr() as usize
+    }
+
     /// The selection `self ∘ inner`: row `i` maps to `inner[self[i]]`.
     #[must_use]
     pub fn compose(&self, inner: &SelectionVector) -> Self {

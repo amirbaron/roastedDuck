@@ -18,8 +18,8 @@ use rustdb_planner::{Expression, ExpressionEvaluator, ExpressionKind, Expression
 use rustdb_types::compare::{CompareOp, compare};
 use rustdb_types::kernels::{scatter, unary};
 use rustdb_types::{
-    DataChunk, LogicalType, LogicalTypeId, SelectionVector, Unified, ValidityMask, Value, Vector, VectorKind,
-    partition_rows,
+    DataChunk, LogicalType, LogicalTypeId, Sel, SelectionVector, Unified, ValidityMask, Value, Vector,
+    VectorKind, partition_rows,
 };
 
 /// Per-expression execution state, mirroring the expression tree.
@@ -811,6 +811,29 @@ fn conjoin(expression_type: ExpressionType, left: &Vector, right: &Vector, count
     };
     let (l, r) = (left.unified::<bool>(), right.unified::<bool>());
     let mut out = Vector::flat(LogicalType::BOOLEAN, count);
+    if l.validity.is_all_valid() && r.validity.is_all_valid() {
+        // No NULLs: plain boolean logic, vectorisable for flat inputs.
+        let values = &mut out.values_mut::<bool>()[..count];
+        match (l.sel, r.sel, is_and) {
+            (Sel::Identity, Sel::Identity, true) => {
+                for ((value, &a), &b) in values.iter_mut().zip(&l.values[..count]).zip(&r.values[..count]) {
+                    *value = a & b;
+                }
+            }
+            (Sel::Identity, Sel::Identity, false) => {
+                for ((value, &a), &b) in values.iter_mut().zip(&l.values[..count]).zip(&r.values[..count]) {
+                    *value = a | b;
+                }
+            }
+            _ => {
+                for (i, value) in values.iter_mut().enumerate() {
+                    let (a, b) = (l.values[l.slot(i)], r.values[r.slot(i)]);
+                    *value = if is_and { a & b } else { a | b };
+                }
+            }
+        }
+        return Ok(out);
+    }
     let mut nulls = Vec::new();
     {
         let values = out.values_mut::<bool>();

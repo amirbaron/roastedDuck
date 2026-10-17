@@ -21,7 +21,7 @@ use rustdb_planner::{Expression, ExpressionKind};
 use rustdb_row::{
     PartitionedAppendState, RadixPartitioning, TupleDataCollection, TupleDataLayout, ValidityType,
 };
-use rustdb_types::{DataChunk, LogicalType, STANDARD_VECTOR_SIZE};
+use rustdb_types::{DataChunk, LogicalType, STANDARD_VECTOR_SIZE, Vector};
 
 use super::join_filter::{
     JoinFilterInput, KeyMinMax, clear_join_filters, push_bloom_filter, set_join_filters,
@@ -771,10 +771,7 @@ impl PhysicalHashJoin {
         };
         let slice = |chunk: &DataChunk, rows: &[u32]| {
             let sel = rustdb_types::SelectionVector::new(rows.to_vec());
-            DataChunk::new(
-                chunk.columns().iter().map(|column| column.slice(&sel)).collect(),
-                rows.len(),
-            )
+            DataChunk::new(Vector::slice_all(chunk.columns(), &sel), rows.len())
         };
         if !spill_rows.is_empty() {
             let mut columns = input.columns().to_vec();

@@ -2,10 +2,14 @@
 //! e.g. `PropagateNumericStats`, `PropagateAbsStats`, `CountPropagateStats`), selected
 //! by the bound function's name and signature.
 
+use std::sync::Arc;
+
 use rustdb_common::Result;
+use rustdb_function::{FunctionState, ScalarKernel};
 use rustdb_planner::{Expression, ExpressionKind};
 use rustdb_storage::statistics::{BaseStatistics, NumericValue};
-use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, Value};
+use rustdb_types::kernels::binary;
+use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, PhysicalType, Value, Vector};
 
 use super::{StatisticsPropagator, greater, has_min_max, numeric_max, numeric_min, set_max, set_min};
 use crate::expression_util::try_evaluate_scalar;
@@ -455,14 +459,18 @@ fn has_arithmetic_statistics(expression: &Expression) -> bool {
 
 /// DuckDB's `PropagateNumericStats` for `+`, `-` and `*`: the result range, unknown
 /// when the operation could overflow.
-fn propagate_arithmetic(expression: &Expression, child_stats: &[BaseStatistics]) -> Option<BaseStatistics> {
-    let ExpressionKind::Function(function) = &expression.kind else {
-        return None;
-    };
+fn propagate_arithmetic(
+    expression: &mut Expression,
+    child_stats: &[BaseStatistics],
+) -> Option<BaseStatistics> {
     if !has_arithmetic_statistics(expression) {
         return None;
     }
-    let (physical, range) = result_range(&expression.return_type)?;
+    let return_type = expression.return_type.clone();
+    let ExpressionKind::Function(function) = &mut expression.kind else {
+        return None;
+    };
+    let (physical, range) = result_range(&return_type)?;
     let (left, right) = (&child_stats[0], &child_stats[1]);
     let mut new_bounds = None;
     if has_min_max(left) && has_min_max(right) {
@@ -495,13 +503,54 @@ fn propagate_arithmetic(expression: &Expression, child_stats: &[BaseStatistics])
             }
         };
     }
-    let mut result = BaseStatistics::create_empty(expression.return_type.clone());
+    if new_bounds.is_some()
+        && let Some(kernel) = unchecked_kernel(&function.function.name, physical)
+    {
+        // No overflow is possible: the plain operator replaces the overflow-checking one
+        // (`SetFunctionCallback(GetScalarIntegerFunction<OP>(...))`).
+        function.function.kernel = kernel;
+    }
+    let mut result = BaseStatistics::create_empty(return_type);
     set_bounds(&mut result, physical, range, new_bounds);
     result.set_validity(
         left.can_have_null() || right.can_have_null(),
         left.can_have_no_null() || right.can_have_no_null(),
     );
     Some(result)
+}
+
+/// The kernel of `+`, `-` or `*` over two columns of `physical` without overflow checks
+/// (DuckDB's `GetScalarIntegerFunction<OP>`).
+fn unchecked_kernel(name: &str, physical: PhysicalType) -> Option<ScalarKernel> {
+    macro_rules! kernel {
+        ($t:ty, $op:ident) => {{
+            let kernel: ScalarKernel =
+                Arc::new(|args: &DataChunk, _: &mut FunctionState, result: &mut Vector| {
+                    binary::<$t, $t, $t>(args.column(0), args.column(1), args.len(), result, |l, r| {
+                        l.$op(r)
+                    });
+                    Ok(())
+                });
+            Some(kernel)
+        }};
+    }
+    macro_rules! by_type {
+        ($op:ident) => {
+            match physical {
+                PhysicalType::Int8 => kernel!(i8, $op),
+                PhysicalType::Int16 => kernel!(i16, $op),
+                PhysicalType::Int32 => kernel!(i32, $op),
+                PhysicalType::Int64 => kernel!(i64, $op),
+                _ => None,
+            }
+        };
+    }
+    match name {
+        "+" => by_type!(wrapping_add),
+        "-" => by_type!(wrapping_sub),
+        "*" => by_type!(wrapping_mul),
+        _ => None,
+    }
 }
 
 /// DuckDB's `PropagateAbsStats`: `abs` of non-negative values is removed.

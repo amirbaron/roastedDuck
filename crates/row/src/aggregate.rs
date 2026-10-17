@@ -7,7 +7,7 @@
 
 use std::ptr::NonNull;
 
-use rustdb_common::{Error, Result};
+use rustdb_common::Result;
 use rustdb_function::StatePtr;
 use rustdb_function::aggregate::AggregateInput;
 use rustdb_types::Vector;
@@ -37,16 +37,16 @@ unsafe fn state_pointers(
     index: usize,
     rows: impl Iterator<Item = RowPtr>,
     out: &mut Vec<StatePtr>,
-) -> Result<()> {
+) {
     let offset = layout.offsets()[layout.column_count() + index];
     out.clear();
-    for row in rows {
-        let pointer = NonNull::new(row.as_ptr().wrapping_add(offset))
-            .ok_or_else(|| Error::internal("aggregate state of a null row"))?;
-        // SAFETY: rows of the layout hold an aligned state for every aggregate.
-        out.push(unsafe { StatePtr::new(pointer) });
-    }
-    Ok(())
+    // One pass without per-row capacity or null checks (DuckDB's `AddInPlace` on the
+    // address vector); `rows` are non-null per the caller contract.
+    out.extend(rows.map(|row| {
+        // SAFETY: rows of the layout are non-null and hold an aligned state for every
+        // aggregate at `offset`.
+        unsafe { StatePtr::new(NonNull::new_unchecked(row.as_ptr().wrapping_add(offset))) }
+    }));
 }
 
 /// Initialises the aggregate states of rows `sel[..count]` (or the first `count`)
@@ -65,7 +65,7 @@ pub unsafe fn initialize_states(
         let selected = (0..count).map(|i| rows[sel.map_or(i, |sel| sel[i] as usize)]);
         // SAFETY: forwarded from the caller.
         unsafe {
-            state_pointers(layout, index, selected, &mut states)?;
+            state_pointers(layout, index, selected, &mut states);
             for &state in &states {
                 aggregate.function.ops.initialize(state);
             }
@@ -91,7 +91,7 @@ pub unsafe fn update_states(
     let aggregate = &layout.aggregates()[index];
     // SAFETY: forwarded from the caller.
     unsafe {
-        state_pointers(layout, index, rows[..count].iter().copied(), &mut state.states)?;
+        state_pointers(layout, index, rows[..count].iter().copied(), &mut state.states);
         aggregate
             .function
             .ops
@@ -115,13 +115,13 @@ pub unsafe fn combine_states(
     for (index, aggregate) in layout.aggregates().iter().enumerate() {
         // SAFETY: forwarded from the caller.
         unsafe {
-            state_pointers(layout, index, sources[..count].iter().copied(), &mut state.states)?;
+            state_pointers(layout, index, sources[..count].iter().copied(), &mut state.states);
             state_pointers(
                 layout,
                 index,
                 targets[..count].iter().copied(),
                 &mut state.targets,
-            )?;
+            );
             aggregate
                 .function
                 .ops
@@ -147,7 +147,7 @@ pub unsafe fn finalize_states(
     for (index, (aggregate, result)) in layout.aggregates().iter().zip(results).enumerate() {
         // SAFETY: forwarded from the caller.
         unsafe {
-            state_pointers(layout, index, rows[..count].iter().copied(), &mut state.states)?;
+            state_pointers(layout, index, rows[..count].iter().copied(), &mut state.states);
             aggregate
                 .function
                 .ops
@@ -173,7 +173,7 @@ pub unsafe fn destroy_states(
         let aggregate = &layout.aggregates()[index];
         // SAFETY: forwarded from the caller.
         unsafe {
-            state_pointers(layout, index, rows[..count].iter().copied(), &mut state.states)?;
+            state_pointers(layout, index, rows[..count].iter().copied(), &mut state.states);
             aggregate.function.ops.destroy(&state.states);
         }
     }

@@ -348,6 +348,36 @@ impl Vector {
         }
     }
 
+    /// Slices every vector of `columns` with `sel` (`DataChunk::Slice` with a
+    /// `SelCache`): dictionaries over the same selection, typically all columns of a
+    /// filtered chunk, share one composed selection instead of composing it per column.
+    pub fn slice_all(columns: &[Self], sel: &SelectionVector) -> Vec<Self> {
+        let mut cache: Vec<(usize, SelectionVector)> = Vec::new();
+        columns
+            .iter()
+            .map(|column| match &column.repr {
+                Repr::Dictionary { sel: inner, child } => {
+                    let key = inner.buffer_key();
+                    let composed = if let Some((_, composed)) = cache.iter().find(|(k, _)| *k == key) {
+                        composed.clone()
+                    } else {
+                        let composed = sel.compose(inner);
+                        cache.push((key, composed.clone()));
+                        composed
+                    };
+                    Self {
+                        ty: column.ty.clone(),
+                        repr: Repr::Dictionary {
+                            sel: composed,
+                            child: Arc::clone(child),
+                        },
+                    }
+                }
+                _ => column.slice(sel),
+            })
+            .collect()
+    }
+
     pub fn logical_type(&self) -> &LogicalType {
         &self.ty
     }
