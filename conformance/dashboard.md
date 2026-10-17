@@ -1,6 +1,6 @@
 # rustdb conformance dashboard
 
-Rust passing: **4017 / 4871 files** (3956 pass on both engines). "Passing" means the Rust run passed, or both engines skipped the file for the same reason.
+Rust passing: **4018 / 4871 files** (3957 pass on both engines). "Passing" means the Rust run passed, or both engines skipped the file for the same reason.
 
 | group | files | C++ pass | C++ skip | C++ fail | Rust passing | both pass | Rust fail | Rust crash/timeout | Rust skip (C++ pass) | Rust % |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -21,7 +21,7 @@ Rust passing: **4017 / 4871 files** (3956 pass on both engines). "Passing" means
 | test/issues/rigger | 96 | 96 | 0 | 0 | 96 | 96 | 0 | 0 | 0 | 100.0% |
 | test/ldbc | 1 | 1 | 0 | 0 | 1 | 1 | 0 | 0 | 0 | 100.0% |
 | test/logging | 1 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0.0% |
-| test/optimizer | 61 | 61 | 0 | 0 | 47 | 47 | 3 | 0 | 11 | 77.0% |
+| test/optimizer | 61 | 61 | 0 | 0 | 48 | 48 | 2 | 0 | 11 | 78.7% |
 | test/optimizer/column_lifetime_analyzer | 3 | 3 | 0 | 0 | 3 | 3 | 0 | 0 | 0 | 100.0% |
 | test/optimizer/expression_rewriter | 2 | 2 | 0 | 0 | 2 | 2 | 0 | 0 | 0 | 100.0% |
 | test/optimizer/filter_pushdown | 1 | 1 | 0 | 0 | 1 | 1 | 0 | 0 | 0 | 100.0% |
@@ -108,4 +108,4 @@ Rust passing: **4017 / 4871 files** (3956 pass on both engines). "Passing" means
 | test/sqlite | 4 | 4 | 0 | 0 | 4 | 4 | 0 | 0 | 0 | 100.0% |
 | test/sqlite/tags | 4 | 0 | 4 | 0 | 4 | 0 | 0 | 0 | 0 | 100.0% |
 | test/sqlserver | 2 | 2 | 0 | 0 | 2 | 2 | 0 | 0 | 0 | 100.0% |
-| **total** | 4871 | 4794 | 75 | 2 | 4017 | 3956 | 387 | 3 | 451 | 82.5% |
+| **total** | 4871 | 4794 | 75 | 2 | 4018 | 3957 | 386 | 3 | 451 | 82.5% |

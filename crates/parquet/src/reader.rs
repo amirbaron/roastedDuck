@@ -126,6 +126,29 @@ impl ParquetReader {
         result
     }
 
+    /// The `file_row_number` statistics of row group `row_group` alone.
+    pub fn row_number_statistics_of(
+        &self,
+        row_group: usize,
+    ) -> Option<rustdb_storage::statistics::BaseStatistics> {
+        use rustdb_storage::statistics::BaseStatistics;
+        let groups = &self.context.metadata.row_groups;
+        let group = groups.get(row_group)?;
+        if group.num_rows == 0 {
+            return Some(BaseStatistics::create_empty(LogicalType::BIGINT));
+        }
+        let offset: i64 = groups[..row_group].iter().map(|group| group.num_rows).sum();
+        let mut stats = BaseStatistics::create_unknown(LogicalType::BIGINT);
+        if let rustdb_storage::statistics::StatsData::Numeric(numeric) = stats.data_mut() {
+            numeric.min = Some(rustdb_storage::statistics::NumericValue::I64(offset));
+            numeric.max = Some(rustdb_storage::statistics::NumericValue::I64(
+                offset + group.num_rows - 1,
+            ));
+        }
+        stats.set_validity(false, true);
+        Some(stats)
+    }
+
     /// The statistics of the `file_row_number` column (`ParquetColumnSchema::Stats` of a
     /// `FILE_ROW_NUMBER` column): each row group's range of row numbers.
     pub fn row_number_statistics(&self) -> Option<rustdb_storage::statistics::BaseStatistics> {

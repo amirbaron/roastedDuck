@@ -92,6 +92,30 @@ pub type TableFunctionVirtualColumns =
 pub type TableFunctionStatistics =
     Arc<dyn Fn(Option<&dyn FunctionData>, u64) -> Option<Box<dyn std::any::Any + Send>> + Send + Sync>;
 
+/// The statistics of one partition (row group) of a table function's data, for
+/// statistics-based query answering (DuckDB's `PartitionRowGroup`).
+pub trait PartitionRowGroup: Send + Sync + fmt::Debug {
+    /// The statistics of column `column` (`rustdb_storage::statistics::BaseStatistics`,
+    /// boxed as `Any`), if known.
+    fn column_statistics(&self, column: u64) -> Option<Box<dyn std::any::Any + Send>>;
+    /// Whether the min/max of these statistics are values of the column, not bounds.
+    fn min_max_is_exact(&self, column: u64) -> bool;
+}
+
+/// A partition of a table function's data (DuckDB's `PartitionStatistics`).
+#[derive(Clone, Debug)]
+pub struct PartitionStatistics {
+    pub count: u64,
+    /// Whether `count` is exact.
+    pub exact: bool,
+    pub row_group: Option<Arc<dyn PartitionRowGroup>>,
+}
+
+/// The partitions of a call (DuckDB's `table_function_get_partition_stats_t`); empty when
+/// unknown.
+pub type TableFunctionPartitionStats =
+    Arc<dyn Fn(Option<&dyn FunctionData>) -> Vec<PartitionStatistics> + Send + Sync>;
+
 /// What a [`TableInOutFunction`] call did with its input (DuckDB's `OperatorResultType`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InOutResult {
@@ -165,6 +189,8 @@ pub struct TableFunction {
     pub get_virtual_columns: Option<TableFunctionVirtualColumns>,
     /// Column statistics (`statistics`).
     pub statistics: Option<TableFunctionStatistics>,
+    /// Partition statistics (`get_partition_stats`).
+    pub get_partition_stats: Option<TableFunctionPartitionStats>,
     /// Whether the scan fills one output column per scanned column id, in order
     /// (DuckDB's scan contract), instead of all of the function's columns.
     pub projected_output: bool,
@@ -191,6 +217,7 @@ impl TableFunction {
             pushdown_filters: None,
             get_virtual_columns: None,
             statistics: None,
+            get_partition_stats: None,
             projected_output: false,
         }
     }

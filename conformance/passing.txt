@@ -491,6 +491,7 @@ test/optimizer/cte_inlining.test
 test/optimizer/date_trunc_simplification.test
 test/optimizer/distributivity_rule.test
 test/optimizer/eager_aggregate_execution.test
+test/optimizer/eager_aggregate_execution_parquet.test
 test/optimizer/estimated_cardinalities_are_in_logical_plan.test
 test/optimizer/expression_rewriter/functions_that_error_are_not_reordered.test
 test/optimizer/expression_rewriter/ordered_aggregate_incorrectly_remove_order.test

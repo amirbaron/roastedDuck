@@ -88,6 +88,97 @@ fn read_parquet_statistics(bind_data: Option<&dyn FunctionData>, column: u64) ->
     Some(Box::new(stats))
 }
 
+/// A row group of the file of a single-file scan (`ParquetPartitionRowGroup`).
+#[derive(Debug)]
+struct ParquetPartitionRowGroup {
+    reader: Arc<ParquetReader>,
+    row_group: usize,
+    /// The `file_row_number` column of the scan, if requested.
+    file_row_number_idx: Option<usize>,
+    casts: Arc<CastFunctionSet>,
+}
+
+impl rustdb_function::PartitionRowGroup for ParquetPartitionRowGroup {
+    fn column_statistics(&self, column: u64) -> Option<Box<dyn Any + Send>> {
+        let column = usize::try_from(column).ok()?;
+        if self.file_row_number_idx == Some(column) {
+            return self
+                .reader
+                .row_number_statistics_of(self.row_group)
+                .map(|stats| Box::new(stats) as Box<dyn Any + Send>);
+        }
+        let schema = self.reader.root_schema.children.get(column)?;
+        let group = self.reader.context.metadata.row_groups.get(self.row_group)?;
+        crate::statistics::transform_column_statistics(
+            schema,
+            &group.columns,
+            self.reader.options.can_have_nan,
+            &self.casts,
+        )
+        .ok()
+        .flatten()
+        .map(|stats| Box::new(stats) as Box<dyn Any + Send>)
+    }
+
+    fn min_max_is_exact(&self, column: u64) -> bool {
+        let Ok(column) = usize::try_from(column) else {
+            return false;
+        };
+        if self.file_row_number_idx == Some(column) {
+            return true;
+        }
+        if column >= self.reader.root_schema.children.len() {
+            return false;
+        }
+        // Like DuckDB, the column chunk at the column's (top-level) index.
+        self.reader
+            .context
+            .metadata
+            .row_groups
+            .get(self.row_group)
+            .and_then(|group| group.columns.get(column))
+            .and_then(|chunk| chunk.meta_data.as_ref())
+            .and_then(|meta| meta.statistics.as_ref())
+            .is_some_and(|stats| {
+                stats.is_min_value_exact == Some(true) && stats.is_max_value_exact == Some(true)
+            })
+    }
+}
+
+/// `ParquetGetPartitionStats`: the row groups of a single file whose metadata was read
+/// while binding.
+fn read_parquet_partition_stats(
+    bind_data: Option<&dyn FunctionData>,
+) -> Vec<rustdb_function::PartitionStatistics> {
+    let Some(data) = bind_data.and_then(|data| data.as_any().downcast_ref::<ParquetBindData>()) else {
+        return Vec::new();
+    };
+    if data.files.expand_result() != FileExpandResult::SingleFile {
+        return Vec::new();
+    }
+    let Some(reader) = data
+        .initial_reader
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone()
+    else {
+        return Vec::new();
+    };
+    let row_groups = reader.context.metadata.row_groups.len();
+    (0..row_groups)
+        .map(|row_group| rustdb_function::PartitionStatistics {
+            count: reader.context.metadata.row_groups[row_group].num_rows.max(0) as u64,
+            exact: true,
+            row_group: Some(Arc::new(ParquetPartitionRowGroup {
+                reader: Arc::clone(&reader),
+                row_group,
+                file_row_number_idx: data.file_row_number_idx,
+                casts: Arc::clone(&data.casts),
+            })),
+        })
+        .collect()
+}
+
 /// `MultiFileGetVirtualColumns`: `filename` (unless the `filename` option names a real
 /// column), `file_index` and Parquet's `file_row_number`.
 fn read_parquet_virtual_columns(bind_data: Option<&dyn FunctionData>) -> Vec<(u64, String, LogicalType)> {
@@ -917,6 +1008,7 @@ fn read_parquet_function(name: &'static str, argument: LogicalType) -> TableFunc
     function.empty_column = true;
     function.get_virtual_columns = Some(Arc::new(read_parquet_virtual_columns));
     function.statistics = Some(Arc::new(read_parquet_statistics));
+    function.get_partition_stats = Some(Arc::new(read_parquet_partition_stats));
     function.projected_output = true;
     function
 }

@@ -28,8 +28,9 @@ pub use scalar::{
     ScalarKernel, Stability, StatsBindData,
 };
 pub use table::{
-    InOutResult, TableFunction, TableFunctionBind, TableFunctionBindInput, TableFunctionBindOutput,
-    TableFunctionBindReplace, TableFunctionPushdownFilters, TableFunctionReplacement, TableFunctionScan,
-    TableFunctionSet, TableFunctionTypePushdown, TableFunctionVirtualColumns, TableInOutFunction,
+    InOutResult, PartitionRowGroup, PartitionStatistics, TableFunction, TableFunctionBind,
+    TableFunctionBindInput, TableFunctionBindOutput, TableFunctionBindReplace, TableFunctionPartitionStats,
+    TableFunctionPushdownFilters, TableFunctionReplacement, TableFunctionScan, TableFunctionSet,
+    TableFunctionStatistics, TableFunctionTypePushdown, TableFunctionVirtualColumns, TableInOutFunction,
     TableScanState,
 };

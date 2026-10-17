@@ -19,13 +19,35 @@ use super::StatisticsPropagator;
 /// `StringStatsData::MAX_STRING_MINMAX_SIZE`).
 const MAX_STRING_MINMAX_SIZE: u64 = 8;
 
-/// One row group's statistics (DuckDB's `PartitionStatistics` of a table scan).
+/// One row group's statistics (DuckDB's `PartitionStatistics`).
 struct Partition {
-    row_group: Arc<RowGroup>,
+    source: PartitionSource,
     count: u64,
-    /// Whether the row group has no version information, so `count` and the min/max
-    /// statistics are exact.
+    /// Whether `count` (and for tables, the min/max statistics) are exact.
     exact: bool,
+}
+
+/// Where a partition's column statistics come from.
+enum PartitionSource {
+    /// A row group of a table.
+    RowGroup(Arc<RowGroup>),
+    /// A partition of a table function (`None` without column statistics).
+    Function(Option<Arc<dyn rustdb_function::PartitionRowGroup>>),
+}
+
+impl Partition {
+    /// The statistics of column `column` (a physical column of a table, a column of a
+    /// table function).
+    fn column_statistics(&self, column: usize) -> Option<BaseStatistics> {
+        match &self.source {
+            PartitionSource::RowGroup(row_group) => row_group.column_statistics(column).ok(),
+            PartitionSource::Function(row_group) => row_group
+                .as_ref()?
+                .column_statistics(column as u64)
+                .and_then(|stats| stats.downcast::<BaseStatistics>().ok())
+                .map(|stats| *stats),
+        }
+    }
 }
 
 /// Whether an aggregate is `min` (or `max`) of a column.
@@ -55,8 +77,14 @@ fn has_comparator(ty: &LogicalType) -> bool {
 
 /// The exact minimum or maximum of a row group's column (DuckDB's `TryGetValueFromStats`).
 fn value_from_stats(partition: &Partition, column: usize, is_min: bool) -> Option<Value> {
-    let stats = partition.row_group.column_statistics(column).ok()?;
-    if !min_max_is_exact(partition, &stats) {
+    let stats = partition.column_statistics(column)?;
+    let exact = match &partition.source {
+        PartitionSource::RowGroup(_) => min_max_is_exact(partition, &stats),
+        PartitionSource::Function(row_group) => {
+            row_group.as_ref()?.min_max_is_exact(column as u64) && function_bounds_usable(&stats)
+        }
+    };
+    if !exact {
         return None;
     }
     if let Some(numeric) = stats.numeric() {
@@ -81,13 +109,10 @@ fn value_from_stats(partition: &Partition, column: usize, is_min: bool) -> Optio
 /// DuckDB's `DuckDBPartitionRowGroup::MinMaxIsExact`: no version information or updates,
 /// and for strings, all values as long as the (complete) stored bounds.
 fn min_max_is_exact(partition: &Partition, stats: &BaseStatistics) -> bool {
-    if !partition.exact
-        || partition
-            .row_group
-            .columns()
-            .iter()
-            .any(|column| column.has_any_updates())
-    {
+    let PartitionSource::RowGroup(row_group) = &partition.source else {
+        return false;
+    };
+    if !partition.exact || row_group.columns().iter().any(|column| column.has_any_updates()) {
         return false;
     }
     if let Some(string) = stats.string() {
@@ -101,7 +126,17 @@ fn min_max_is_exact(partition: &Partition, stats: &BaseStatistics) -> bool {
     stats.numeric().is_some_and(NumericStats::has_min_max)
 }
 
+/// The checks of `TryGetValueFromStats` on a table function's statistics: numeric bounds
+/// must be set, string bounds complete (at most 8 bytes long).
+fn function_bounds_usable(stats: &BaseStatistics) -> bool {
+    if let Some(string) = stats.string() {
+        return string.has_max_string_length && u64::from(string.max_string_length) <= MAX_STRING_MINMAX_SIZE;
+    }
+    stats.numeric().is_some_and(NumericStats::has_min_max)
+}
+
 /// `left` is better than `right` for the aggregate.
+
 fn better(left: &Value, right: &Value, is_min: bool) -> bool {
     let ordering = match (left.as_bytes(), right.as_bytes()) {
         (Some(left), Some(right)) => left.cmp(right),
@@ -177,6 +212,18 @@ impl StatisticsPropagator<'_> {
         let LogicalKind::Get(get) = &child.kind else {
             return;
         };
+        if get.table.is_none() {
+            let get = get.clone();
+            Self::try_execute_function_aggregates(
+                node,
+                &get,
+                &count_star,
+                &min_max,
+                group_index,
+                aggregate_index,
+            );
+            return;
+        }
         let Some(entry) = &get.table else {
             return;
         };
@@ -197,7 +244,7 @@ impl StatisticsPropagator<'_> {
         {
             return;
         }
-        let mut partitions: Vec<Partition> = storage
+        let partitions: Vec<Partition> = storage
             .row_groups()
             .row_groups()
             .tree()
@@ -206,7 +253,7 @@ impl StatisticsPropagator<'_> {
             .map(|node| Partition {
                 count: node.node.count(),
                 exact: node.node.version_info().is_none(),
-                row_group: node.node,
+                source: PartitionSource::RowGroup(node.node),
             })
             .collect();
         if partitions.is_empty() {
@@ -227,20 +274,45 @@ impl StatisticsPropagator<'_> {
             };
             min_max_columns.push(physical);
         }
-        if !get.table_filters.is_empty() {
+        let mut filters = Vec::new();
+        for (&column, filter) in &get.table_filters.filters {
+            let Some(physical) = physical(column as u64) else {
+                return;
+            };
+            filters.push((physical, filter.clone()));
+        }
+        Self::rewrite_with_partitions(
+            node,
+            partitions,
+            &filters,
+            &min_max,
+            &min_max_columns,
+            &count_star,
+            group_index,
+            aggregate_index,
+        );
+    }
+
+    /// The end of `TryExecuteAggregates`: the aggregate over `partitions` (filtered by
+    /// `filters`, by column) answered from their statistics, if possible.
+    #[allow(clippy::too_many_arguments)]
+    fn rewrite_with_partitions(
+        node: &mut LogicalOperator,
+        mut partitions: Vec<Partition>,
+        filters: &[(usize, rustdb_storage::TableFilter)],
+        min_max: &[MinMax],
+        min_max_columns: &[usize],
+        count_star: &[usize],
+        group_index: u64,
+        aggregate_index: u64,
+    ) {
+        if !filters.is_empty() {
             // Every row group must pass or fail the filters entirely.
-            let mut filters = Vec::new();
-            for (&column, filter) in &get.table_filters.filters {
-                let Some(physical) = physical(column as u64) else {
-                    return;
-                };
-                filters.push((physical, filter));
-            }
             let mut remaining = Vec::new();
             for partition in partitions {
                 let mut result = FilterPropagateResult::FilterAlwaysTrue;
-                for (column, filter) in &filters {
-                    let Ok(stats) = partition.row_group.column_statistics(*column) else {
+                for (column, filter) in filters {
+                    let Some(stats) = partition.column_statistics(*column) else {
                         return;
                     };
                     let column_result = filter.check_statistics(&stats);
@@ -265,7 +337,7 @@ impl StatisticsPropagator<'_> {
         }
         let mut results: Vec<Expression> = Vec::new();
         let mut types: Vec<LogicalType> = Vec::new();
-        for (entry, &column) in min_max.iter().zip(&min_max_columns) {
+        for (entry, &column) in min_max.iter().zip(min_max_columns) {
             let mut result: Option<Value> = None;
             for partition in &partitions {
                 let Some(value) = value_from_stats(partition, column, entry.is_min) else {
@@ -289,7 +361,7 @@ impl StatisticsPropagator<'_> {
             }
             let count: u64 = partitions.iter().map(|partition| partition.count).sum();
             let value = Value::bigint(i64::try_from(count).unwrap_or(i64::MAX));
-            for &index in &count_star {
+            for &index in count_star {
                 results.insert(index, Expression::constant(value.clone()));
                 types.insert(index, LogicalType::BIGINT);
             }
@@ -305,5 +377,67 @@ impl StatisticsPropagator<'_> {
         .with_children(vec![LogicalOperator::new(LogicalKind::DummyScan {
             table_index: group_index,
         })]);
+    }
+
+    /// `TryExecuteAggregates` over a table function with partition statistics
+    /// (`get_partition_stats`).
+    fn try_execute_function_aggregates(
+        node: &mut LogicalOperator,
+        get: &rustdb_planner::operator::LogicalGet,
+        count_star: &[usize],
+        min_max: &[MinMax],
+        group_index: u64,
+        aggregate_index: u64,
+    ) {
+        let Some(partition_stats) = &get.function.get_partition_stats else {
+            return;
+        };
+        if get.sample_options.is_some() {
+            return;
+        }
+        let partitions: Vec<Partition> = partition_stats(get.bind_data.as_deref())
+            .into_iter()
+            .map(|partition| Partition {
+                count: partition.count,
+                exact: partition.exact,
+                source: PartitionSource::Function(partition.row_group),
+            })
+            .collect();
+        if partitions.is_empty() {
+            return;
+        }
+        // `TryGetStorageIndex`: no row id or virtual columns.
+        let storage_index = |column: u64| {
+            (column < rustdb_planner::operator::COLUMN_IDENTIFIER_EMPTY && column < (1 << 63))
+                .then(|| usize::try_from(column).ok())
+                .flatten()
+        };
+        let mut min_max_columns = Vec::with_capacity(min_max.len());
+        for entry in min_max {
+            let Some(column) = get.column_ids.get(entry.binding.column_index as usize) else {
+                return;
+            };
+            let Some(index) = storage_index(column.index) else {
+                return;
+            };
+            min_max_columns.push(index);
+        }
+        let mut filters = Vec::new();
+        for (&column, filter) in &get.table_filters.filters {
+            let Some(index) = storage_index(column as u64) else {
+                return;
+            };
+            filters.push((index, filter.clone()));
+        }
+        Self::rewrite_with_partitions(
+            node,
+            partitions,
+            &filters,
+            min_max,
+            &min_max_columns,
+            count_star,
+            group_index,
+            aggregate_index,
+        );
     }
 }
