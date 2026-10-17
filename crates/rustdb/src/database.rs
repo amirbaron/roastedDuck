@@ -317,6 +317,13 @@ pub struct Database {
     instance: Arc<DatabaseInstance>,
 }
 
+/// DuckDB's default casts plus those of the statically loaded json extension.
+fn json_casts() -> CastFunctionSet {
+    let mut casts = CastFunctionSet::new();
+    rustdb_json::register_json_casts(&mut casts);
+    casts
+}
+
 impl Database {
     /// Opens (or creates) the database at `path`; `""` or `":memory:"` is in-memory.
     pub fn open(path: &str, config: &Config) -> Result<Self> {
@@ -373,8 +380,12 @@ impl Database {
         for set in rustdb_parquet::parquet_scalar_functions() {
             system_catalog.register_scalar_functions(set)?;
         }
+        for set in rustdb_json::json_scalar_functions() {
+            system_catalog.register_scalar_functions(set)?;
+        }
         crate::system_functions::register_default_views(&system_catalog)?;
         crate::system_functions::register_default_macros(&system_catalog)?;
+        crate::system_functions::register_json_macros(&system_catalog)?;
         let buffer_manager = rustdb_buffer::BufferManager::new(rustdb_buffer::BufferManagerConfig {
             temp_directory: Some(default_temp_directory(&path).into()),
             ..rustdb_buffer::BufferManagerConfig::default()
@@ -387,7 +398,7 @@ impl Database {
             system_catalog: Arc::new(system_catalog),
             databases: DatabaseManager::default(),
             default_database: std::sync::OnceLock::new(),
-            casts: Arc::new(CastFunctionSet::new()),
+            casts: Arc::new(json_casts()),
             env,
             shutdown_checkpoint_disabled: std::sync::atomic::AtomicBool::new(false),
             checkpoint_wal_size: std::sync::atomic::AtomicU64::new(DEFAULT_CHECKPOINT_WAL_SIZE),
@@ -508,11 +519,11 @@ impl Database {
     /// Loads a (statically linked) extension, like `LOAD name`.
     pub fn load_extension(&self, name: &str) -> ExtensionLoad {
         match name {
-            "parquet" => ExtensionLoad::Loaded,
-            "core_functions" | "json" | "icu" | "tpch" | "tpcds" | "autocomplete" | "httpfs" | "fts"
-            | "inet" | "excel" | "sqlsmith" | "spatial" | "delta" | "iceberg" | "aws" | "azure"
-            | "motherduck" | "postgres_scanner" | "mysql_scanner" | "sqlite_scanner" | "vss" | "ui"
-            | "encodings" | "ducklake" | "avro" | "demo_capi" => ExtensionLoad::NotAvailable,
+            "parquet" | "json" => ExtensionLoad::Loaded,
+            "core_functions" | "icu" | "tpch" | "tpcds" | "autocomplete" | "httpfs" | "fts" | "inet"
+            | "excel" | "sqlsmith" | "spatial" | "delta" | "iceberg" | "aws" | "azure" | "motherduck"
+            | "postgres_scanner" | "mysql_scanner" | "sqlite_scanner" | "vss" | "ui" | "encodings"
+            | "ducklake" | "avro" | "demo_capi" => ExtensionLoad::NotAvailable,
             _ => ExtensionLoad::Unknown,
         }
     }
@@ -566,6 +577,14 @@ impl Drop for Connection {
 }
 
 impl Connection {
+    /// Casts `value` with the casts of this database, including those of loaded extensions
+    /// (DuckDB's `Value::CastAs(ClientContext &, ...)`).
+    pub fn cast_value(&self, value: &Value, target: &rustdb_types::LogicalType) -> Result<Value> {
+        use rustdb_function::cast::ValueCast;
+        let mut params = rustdb_function::cast::CastParameters::new();
+        value.cast_with(&self.database.instance.casts, target, &mut params)
+    }
+
     /// The options set on this connection (and not reset since), by canonical name,
     /// like the values DuckDB's `RestartCommand` carries over to the restarted database.
     pub fn assigned_settings(&self) -> Vec<(String, Value)> {

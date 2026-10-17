@@ -151,30 +151,16 @@ fn try_bind_lambda_or_json<B: ExpressionBinder + ?Sized>(
     {
         return Ok(BindResult::Unbound(lambda_error));
     }
-    // Without the JSON extension the arrow operator only binds its operands; the first
-    // operand error is reported next to the lambda error.
-    let ParsedExpressionKind::Function(function) = &mut expr.kind else {
-        return Ok(BindResult::Unbound(lambda_error));
-    };
-    let mut json_error = None;
-    for child in &mut function.children {
-        if let ParsedExpressionKind::Lambda(lambda) = &mut child.kind {
-            binder.bind_child(&mut lambda.lhs, depth, &mut json_error)?;
-            if json_error.is_none() {
-                binder.bind_child(&mut lambda.expr, depth, &mut json_error)?;
-            }
-            if json_error.is_some() {
-                break;
-            }
-        }
-    }
-    Ok(match json_error {
-        Some(json_error) => BindResult::error(format!(
+    // Not a lambda: the arrow is the JSON operator, bound as an argument of the function.
+    let location = expr.query_location;
+    let json_result = bind_scalar_function(binder, expr, functions, depth, location)?;
+    Ok(match json_result {
+        BindResult::Unbound(json_error) => BindResult::error(format!(
             "failed to bind function, either: {}\n or: {}",
             lambda_error.error.raw_message(),
             json_error.error.raw_message()
         )),
-        None => BindResult::Unbound(lambda_error),
+        bound => bound,
     })
 }
 

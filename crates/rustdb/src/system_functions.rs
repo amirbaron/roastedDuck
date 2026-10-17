@@ -821,6 +821,33 @@ pub(crate) fn register_default_macros(system: &Catalog) -> Result<()> {
     Ok(())
 }
 
+/// The `JSON` type and the macros of the json extension (`JSON_MACROS`), internal like
+/// DuckDB's (`JsonExtension::Load`).
+pub(crate) fn register_json_macros(system: &Catalog) -> Result<()> {
+    let json_type = rustdb_catalog::TypeEntry {
+        user_type: rustdb_json::json_type(),
+    };
+    let mut entry = CatalogEntry::new(rustdb_json::JSON_TYPE_NAME, EntryKind::Type(json_type));
+    entry.internal = true;
+    system.create_entry_committed("main", entry)?;
+    for json_macro in rustdb_json::JSON_MACROS {
+        let default = crate::default_functions::DefaultMacro {
+            schema: "main",
+            name: json_macro.name,
+            parameters: json_macro.parameters,
+            named_parameters: &[],
+            body: json_macro.body,
+        };
+        let entry = rustdb_catalog::MacroEntry {
+            macros: vec![default_macro_function(&default, false)?],
+        };
+        let mut entry = CatalogEntry::new(json_macro.name, EntryKind::Macro(entry));
+        entry.internal = true;
+        system.create_entry_committed("main", entry)?;
+    }
+    Ok(())
+}
+
 /// The catalog table functions.
 pub(crate) fn catalog_table_functions() -> Vec<TableFunctionSet> {
     vec![

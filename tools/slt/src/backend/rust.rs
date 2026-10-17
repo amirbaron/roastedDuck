@@ -100,6 +100,25 @@ fn is_numeric(id: LogicalTypeId) -> bool {
     )
 }
 
+/// Whether `ty` is or contains the JSON type (the only type with extension casts).
+fn contains_json(ty: &LogicalType) -> bool {
+    match ty.id() {
+        LogicalTypeId::Varchar => ty.alias() == Some("JSON"),
+        LogicalTypeId::List => ty.child_type().is_some_and(contains_json),
+        LogicalTypeId::Array => ty.array_child().is_some_and(|(child, _)| contains_json(child)),
+        LogicalTypeId::Map => ty
+            .map_key_value()
+            .is_some_and(|(key, value)| contains_json(key) || contains_json(value)),
+        LogicalTypeId::Struct => ty
+            .struct_children()
+            .is_some_and(|children| children.iter().any(|(_, child)| contains_json(child))),
+        LogicalTypeId::Union => ty
+            .union_members()
+            .is_some_and(|members| members.iter().any(|(_, member)| contains_json(member))),
+        _ => false,
+    }
+}
+
 /// `TestResultHelper::SQLLogicTestConvertValue`.
 fn convert_value(value: &Value, original_sqlite_test: bool) -> Result<String, String> {
     if value.is_null() {
@@ -259,7 +278,7 @@ impl Engine for RustEngine {
 
     fn render(
         &self,
-        _context: &Connection,
+        context: &Connection,
         result: &mut RustResult,
         original_sqlite_test: bool,
     ) -> Result<Vec<String>, String> {
@@ -269,7 +288,17 @@ impl Engine for RustEngine {
         let mut values = Vec::with_capacity(result.row_count() * result.column_count());
         for row in 0..result.row_count() {
             for column in 0..result.column_count() {
-                values.push(convert_value(&result.value(column, row), original_sqlite_test)?);
+                let value = result.value(column, row);
+                // Like DuckDB's runner (`Value::CastAs(context, VARCHAR)`): types with
+                // extension casts (JSON) are rendered through the database's casts.
+                let value = if contains_json(value.logical_type()) && !value.is_null() {
+                    context
+                        .cast_value(&value, &LogicalType::VARCHAR)
+                        .map_err(|error| error.to_string())?
+                } else {
+                    value
+                };
+                values.push(convert_value(&value, original_sqlite_test)?);
             }
         }
         Ok(values)
