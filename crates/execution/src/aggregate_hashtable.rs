@@ -13,9 +13,10 @@ use rustdb_common::{Error, Result};
 use rustdb_function::AggregateFunction;
 use rustdb_function::FunctionData;
 use rustdb_row::{
-    ChunkFormat, MatchPredicate, PartitionedAppendState, PartitionedTupleData, PinProperties, RowAggregate,
-    RowMatcher, RowOperationsState, RowPtr, TupleDataCollection, TupleDataLayout, ValidityType,
-    combine_states, destroy_states, finalize_states, initialize_states, update_states,
+    ChunkFormat, GroupedUpdate, MatchPredicate, PartitionedAppendState, PartitionedTupleData, PinProperties,
+    RowAggregate, RowMatcher, RowOperationsState, RowPtr, TupleDataCollection, TupleDataLayout, ValidityType,
+    combine_states, destroy_states, finalize_states, initialize_states, supports_update_selection,
+    update_states,
 };
 use rustdb_storage::statistics::{HLL_REGISTERS, HyperLogLog};
 use rustdb_types::{DataChunk, DictionaryInfo, LogicalType, STANDARD_VECTOR_SIZE, SelectionVector, Vector};
@@ -139,6 +140,10 @@ pub struct GroupedAggregateHashTable {
     count: usize,
     matcher: RowMatcher,
     row_state: RowOperationsState,
+    /// Whether every aggregate can add a selection of rows to one state, so chunks with
+    /// few groups are added one group at a time ([`GroupedUpdate`]).
+    selection_update: bool,
+    grouped_update: GroupedUpdate,
     /// Row of the group of each input row of the last `find_or_create_groups`.
     addresses: Vec<RowPtr>,
     /// Input rows of the last `find_or_create_groups` that created a group, in creation
@@ -224,6 +229,7 @@ impl GroupedAggregateHashTable {
             MatchPredicate::NotDistinctFrom
         };
         let matcher = RowMatcher::new(&layout, &vec![predicate; group_types.len()], None)?;
+        let selection_update = supports_update_selection(&layout);
         let mut table = Self {
             layout,
             group_types,
@@ -234,6 +240,8 @@ impl GroupedAggregateHashTable {
             count: 0,
             matcher,
             row_state: RowOperationsState::default(),
+            selection_update,
+            grouped_update: GroupedUpdate::default(),
             addresses: Vec::new(),
             new_group_rows: Vec::new(),
             ht_offsets: Vec::new(),
@@ -597,6 +605,16 @@ impl GroupedAggregateHashTable {
             Some(new_groups) => new_groups,
             None => self.find_or_create_groups(groups, hashes)?,
         };
+        if self.selection_update && selections.iter().all(Option::is_none) {
+            // SAFETY: the addresses are pinned rows of this layout with live states.
+            let added = unsafe {
+                self.grouped_update
+                    .update(&self.layout, &self.addresses[..groups.len()], inputs)?
+            };
+            if added {
+                return Ok(new_groups);
+            }
+        }
         for (index, columns) in inputs.iter().enumerate() {
             match selections.get(index).and_then(Option::as_ref) {
                 None => {

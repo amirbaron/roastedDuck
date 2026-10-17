@@ -79,6 +79,31 @@ where
         }
         return Ok(());
     }
+    if let (crate::Sel::Identity, Some(words)) = (input.sel, input.validity.words()) {
+        // Flat with NULLs (`ExecuteFlat`): the result shares the input's mask, and `f`
+        // runs on the valid rows a validity word at a time.
+        for (block, (out, values)) in out[..count]
+            .chunks_mut(64)
+            .zip(input.values[..count].chunks(64))
+            .enumerate()
+        {
+            let word = words.get(block).copied().unwrap_or(u64::MAX);
+            if word == u64::MAX {
+                for (out, &value) in out.iter_mut().zip(values) {
+                    *out = f(value)?;
+                }
+            } else if word != 0 {
+                for (bit, (out, &value)) in out.iter_mut().zip(values).enumerate() {
+                    if word >> bit & 1 == 1 {
+                        *out = f(value)?;
+                    }
+                }
+            }
+        }
+        let validity = input.validity.clone();
+        result.set_validity(validity);
+        return Ok(());
+    }
     let mut nulls = Vec::new();
     for (row, out) in out[..count].iter_mut().enumerate() {
         match input.get(row) {
@@ -220,6 +245,46 @@ where
                 }
             }
         }
+        return Ok(());
+    }
+    let flat_or_constant = |sel: crate::Sel<'_>| matches!(sel, crate::Sel::Identity | crate::Sel::Constant);
+    if flat_or_constant(lu.sel) && flat_or_constant(ru.sel) {
+        // Flat (or valid constant) inputs with NULLs (`ExecuteFlat`): the result mask is
+        // the inputs' masks combined, and `f` runs on the valid rows a word at a time.
+        let left_constant = matches!(lu.sel, crate::Sel::Constant);
+        let right_constant = matches!(ru.sel, crate::Sel::Constant);
+        let left_words = if left_constant { None } else { lu.validity.words() };
+        let right_words = if right_constant { None } else { ru.validity.words() };
+        let validity = match (left_words, right_words) {
+            (Some(left), Some(right)) => ValidityMask::from_words(
+                (0..count.div_ceil(64))
+                    .map(|word| {
+                        left.get(word).copied().unwrap_or(u64::MAX)
+                            & right.get(word).copied().unwrap_or(u64::MAX)
+                    })
+                    .collect(),
+            ),
+            (Some(_), None) => lu.validity.clone(),
+            _ => ru.validity.clone(),
+        };
+        if let Some(words) = validity.words() {
+            for (block, out) in out[..count].chunks_mut(64).enumerate() {
+                let word = words.get(block).copied().unwrap_or(u64::MAX);
+                if word == 0 {
+                    continue;
+                }
+                let base = block * 64;
+                for (bit, out) in out.iter_mut().enumerate() {
+                    if word == u64::MAX || word >> bit & 1 == 1 {
+                        let row = base + bit;
+                        let l = lu.values[if left_constant { 0 } else { row }];
+                        let r = ru.values[if right_constant { 0 } else { row }];
+                        *out = f(l, r)?;
+                    }
+                }
+            }
+        }
+        result.set_validity(validity);
         return Ok(());
     }
     let mut nulls = Vec::new();

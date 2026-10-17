@@ -131,6 +131,61 @@ impl<A: UnaryAggregate> AggregateOps for Unary<A> {
         Ok(())
     }
 
+    fn supports_update_selection(&self) -> bool {
+        true
+    }
+
+    unsafe fn update_selection(
+        &self,
+        inputs: &[Vector],
+        _: AggregateInput<'_>,
+        state: StatePtr,
+        sel: &[u32],
+    ) -> Result<()> {
+        // SAFETY: per the trait contract the state is initialised and exclusive.
+        let state = unsafe { state_mut::<A::State>(state) };
+        let values = inputs[0].unified::<A::Input>();
+        // The same `A::update` calls as `update` makes for these rows, in the same order
+        // (no `update_repeated`, which may round differently).
+        if values.validity.is_all_valid() {
+            match values.sel {
+                // Unchecked reads, so the loop has no panic path and the state can stay
+                // in registers.
+                Sel::Identity => {
+                    for &row in sel {
+                        // SAFETY: `row` is a row of the flat input (the caller's contract).
+                        A::update(state, unsafe { *values.values.get_unchecked(row as usize) })?;
+                    }
+                }
+                Sel::Constant => {
+                    let value = values.values[0];
+                    for _ in sel {
+                        A::update(state, value)?;
+                    }
+                }
+                Sel::Indices(indices) => {
+                    for &row in sel {
+                        // SAFETY: `row` is a row of the input, whose selection maps it to
+                        // a slot of its data.
+                        let value = unsafe {
+                            *values
+                                .values
+                                .get_unchecked(*indices.get_unchecked(row as usize) as usize)
+                        };
+                        A::update(state, value)?;
+                    }
+                }
+            }
+            return Ok(());
+        }
+        for &row in sel {
+            if let Some(value) = values.get(row as usize) {
+                A::update(state, value)?;
+            }
+        }
+        Ok(())
+    }
+
     unsafe fn simple_update(
         &self,
         inputs: &[Vector],

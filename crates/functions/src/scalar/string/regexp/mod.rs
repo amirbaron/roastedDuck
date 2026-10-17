@@ -8,7 +8,7 @@ pub(crate) mod util;
 use std::any::Any;
 use std::sync::Arc;
 
-use regex::bytes::Regex;
+use regex::bytes::{CaptureLocations, Regex};
 use rustdb_common::{Error, Result};
 use rustdb_function::cast::ValueCast;
 use rustdb_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
@@ -142,43 +142,45 @@ fn matches_set(name: &str, full: bool) -> ScalarFunctionSet {
 // regexp_replace
 // ---------------------------------------------------------------------------------------
 
-/// `RE2::Replace` (first match) or `RE2::GlobalReplace` into `out`.
-fn replace(input: &[u8], regex: &Regex, replacement: &[u8], global: bool, out: &mut Vec<u8>) -> Result<()> {
+/// `RE2::Replace` (first match) or `RE2::GlobalReplace` into `out`; `captures` is
+/// scratch space from `regex.capture_locations()`.
+fn replace(
+    input: &[u8],
+    regex: &Regex,
+    replacement: &[u8],
+    global: bool,
+    captures: &mut CaptureLocations,
+    out: &mut Vec<u8>,
+) {
     let groups = group_count(regex);
     let needed = util::max_submatch(replacement);
     if needed > groups {
         out.extend_from_slice(input);
-        return Ok(());
+        return;
     }
     if !global {
-        let Some(captures) = regex.captures(input) else {
+        let Some(whole) = regex.captures_read(captures, input) else {
             out.extend_from_slice(input);
-            return Ok(());
+            return;
         };
-        let whole = captures
-            .get(0)
-            .ok_or_else(|| Error::internal("match without group 0"))?;
-        let mut rewritten = Vec::new();
-        if !util::rewrite(&mut rewritten, replacement, &captures, needed + 1) {
-            out.extend_from_slice(input);
-            return Ok(());
-        }
+        let start = out.len();
         out.extend_from_slice(&input[..whole.start()]);
-        out.extend_from_slice(&rewritten);
+        if !util::rewrite(out, replacement, input, captures, needed + 1) {
+            out.truncate(start);
+            out.extend_from_slice(input);
+            return;
+        }
         out.extend_from_slice(&input[whole.end()..]);
-        return Ok(());
+        return;
     }
     let mut position = 0;
     let mut last_end = None;
     let mut count = 0;
     let start = out.len();
     while position <= input.len() {
-        let Some(captures) = regex.captures_at(input, position) else {
+        let Some(whole) = regex.captures_read_at(captures, input, position) else {
             break;
         };
-        let whole = captures
-            .get(0)
-            .ok_or_else(|| Error::internal("match without group 0"))?;
         if position < whole.start() {
             out.extend_from_slice(&input[position..whole.start()]);
         }
@@ -193,7 +195,7 @@ fn replace(input: &[u8], regex: &Regex, replacement: &[u8], global: bool, out: &
             position += length;
             continue;
         }
-        util::rewrite(out, replacement, &captures, needed + 1);
+        util::rewrite(out, replacement, input, captures, needed + 1);
         position = whole.end();
         last_end = Some(position);
         count += 1;
@@ -201,12 +203,11 @@ fn replace(input: &[u8], regex: &Regex, replacement: &[u8], global: bool, out: &
     if count == 0 {
         out.truncate(start);
         out.extend_from_slice(input);
-        return Ok(());
+        return;
     }
     if position < input.len() {
         out.extend_from_slice(&input[position..]);
     }
-    Ok(())
 }
 
 fn bind_replace(_: &mut ScalarFunction, input: &BindInput<'_>) -> BindResult {
@@ -233,21 +234,18 @@ fn replace_kernel(
     let global = data.global_replace;
     if let Some(regex) = &data.constant {
         let inputs = DataChunk::new(vec![args.column(0).clone(), args.column(2).clone()], args.len());
+        let mut captures = regex.capture_locations();
         return binary::<Str, Str, StrOut>(&inputs, result, |input, replacement, out| {
-            replace(input, regex, replacement, global, out)?;
+            replace(input, regex, replacement, global, &mut captures, out);
             Ok(true)
         });
     }
     let mut cache = PatternCache::default();
     let options = data.options;
     ternary::<Str, Str, Str, StrOut>(args, result, |input, pattern, replacement, out| {
-        replace(
-            input,
-            cache.get(pattern, options, false)?,
-            replacement,
-            global,
-            out,
-        )?;
+        let regex = cache.get(pattern, options, false)?;
+        let mut captures = regex.capture_locations();
+        replace(input, regex, replacement, global, &mut captures, out);
         Ok(true)
     })
 }

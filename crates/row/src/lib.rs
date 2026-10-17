@@ -39,7 +39,8 @@ pub mod sort;
 mod state;
 
 pub use aggregate::{
-    RowOperationsState, combine_states, destroy_states, finalize_states, initialize_states, update_states,
+    GroupedUpdate, RowOperationsState, combine_states, destroy_states, finalize_states, initialize_states,
+    supports_update_selection, update_state_selection, update_states,
 };
 pub use collection::{ChunkIterator, TupleDataCollection};
 pub use compare::{compare_values, values_distinct};

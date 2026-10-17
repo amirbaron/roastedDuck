@@ -13,8 +13,8 @@ use rustdb_common::{Error, Result};
 use rustdb_planner::Expression;
 use rustdb_planner::expression::BoundAggregateExpression;
 use rustdb_row::{
-    RowAggregate, RowOperationsState, RowPtr, TupleDataLayout, combine_states, destroy_states,
-    finalize_states, initialize_states, update_states,
+    GroupedUpdate, RowAggregate, RowOperationsState, RowPtr, TupleDataLayout, combine_states, destroy_states,
+    finalize_states, initialize_states, supports_update_selection, update_states,
 };
 use rustdb_types::{
     DataChunk, LogicalType, PhysicalType, STANDARD_VECTOR_SIZE, SelectionVector, Value, Vector,
@@ -37,6 +37,10 @@ struct PerfectAggregateTable {
     /// Whether a row fell into each slot (`group_is_set`).
     group_is_set: Vec<bool>,
     row_state: RowOperationsState,
+    /// Whether every aggregate can add a selection of rows to one state, so a chunk with
+    /// few groups can be added one group at a time.
+    selection_update: bool,
+    grouped_update: GroupedUpdate,
 }
 
 // SAFETY: the state array is uniquely owned and only accessed through `&mut self` (or
@@ -95,7 +99,10 @@ impl PerfectAggregateTable {
             allocation,
             group_is_set: vec![false; total_groups],
             row_state: RowOperationsState::default(),
+            selection_update: false,
+            grouped_update: GroupedUpdate::default(),
         };
+        table.selection_update = supports_update_selection(&table.layout);
         let mut start = 0;
         while start < total_groups {
             let end = (start + STANDARD_VECTOR_SIZE).min(total_groups);
@@ -131,7 +138,6 @@ impl PerfectAggregateTable {
             shift -= bits;
             compute_group_location(group, min, &mut slots, shift, count)?;
         }
-        let mut rows = Vec::with_capacity(count);
         for &slot in &slots {
             let slot = usize::try_from(slot).unwrap_or(usize::MAX);
             if slot >= self.total_groups {
@@ -141,7 +147,13 @@ impl PerfectAggregateTable {
                 )));
             }
             self.group_is_set[slot] = true;
-            rows.push(self.row(slot));
+        }
+        let rows: Vec<RowPtr> = slots.iter().map(|&slot| self.row(slot as usize)).collect();
+        if self.selection_update && selections.iter().all(Option::is_none) {
+            // SAFETY: the rows are initialised state rows of this table.
+            if unsafe { self.grouped_update.update(&self.layout, &rows, inputs)? } {
+                return Ok(());
+            }
         }
         for (index, columns) in inputs.iter().enumerate() {
             match selections.get(index).and_then(Option::as_ref) {
@@ -305,6 +317,22 @@ fn compute_group_location(
                         for slot in &mut slots[..count] {
                             *slot += constant;
                         }
+                    }
+                }
+                return Ok(());
+            }
+            if let (rustdb_types::Sel::Identity, Some(words)) = (values.sel, values.validity.words()) {
+                // Flat with NULLs: NULL rows keep offset 0; the valid rows of each
+                // validity word are added without a per-row lookup.
+                for (block, (slots, values)) in slots[..count]
+                    .chunks_mut(64)
+                    .zip(values.values[..count].chunks(64))
+                    .enumerate()
+                {
+                    let word = words.get(block).copied().unwrap_or(u64::MAX);
+                    for (bit, (slot, &value)) in slots.iter_mut().zip(values).enumerate() {
+                        let valid = u64::from(word >> bit & 1 == 1);
+                        *slot += location(value) * valid;
                     }
                 }
                 return Ok(());

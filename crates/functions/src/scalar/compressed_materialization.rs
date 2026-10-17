@@ -11,7 +11,7 @@ use rustdb_common::{Error, Result};
 use rustdb_function::{FunctionData, ScalarFunction, ScalarFunctionSet};
 use rustdb_types::{DataChunk, LogicalType, NativeType, PhysicalType, Vector};
 
-use crate::scalar::executor::{Str, StrOut, binary, unary};
+use crate::scalar::executor::{Str, StrOut, unary};
 
 /// `CMUtils::Bind`.
 fn bind_internal(
@@ -46,20 +46,32 @@ macro_rules! bits {
 }
 bits!(i16, i32, i64, i128, u8, u16, u32, u64, u128);
 
-/// `input - min` as the narrower unsigned type (`TemplatedIntegralCompress`).
+/// The constant `min` argument (`ConstantVector::GetData(args.data[1])[0]`).
+fn constant_min<T: NativeType>(args: &DataChunk) -> T {
+    let min = &args.columns()[1];
+    let data = min.unified::<T>();
+    data.values[data.slot(0)]
+}
+
+/// `input - min` as the narrower unsigned type (`TemplatedIntegralCompress`, a
+/// `UnaryExecutor` over the input with the constant minimum).
+#[allow(clippy::unnecessary_wraps, reason = "a `Kernel`")]
 fn compress_kernel<I: Bits, R: Bits>(args: &DataChunk, result: &mut Vector) -> Result<()> {
-    binary::<I, I, R>(args, result, |input, min, out| {
-        *out = R::from_bits(input.to_bits().wrapping_sub(min.to_bits()));
-        Ok(true)
-    })
+    let min = constant_min::<I>(args).to_bits();
+    rustdb_types::kernels::unary::<I, R>(&args.columns()[0], args.len(), result, |input| {
+        R::from_bits(input.to_bits().wrapping_sub(min))
+    });
+    Ok(())
 }
 
 /// `min + input` (`TemplatedIntegralDecompress`).
+#[allow(clippy::unnecessary_wraps, reason = "a `Kernel`")]
 fn decompress_kernel<I: Bits, R: Bits>(args: &DataChunk, result: &mut Vector) -> Result<()> {
-    binary::<I, R, R>(args, result, |input, min, out| {
-        *out = R::from_bits(min.to_bits().wrapping_add(input.to_bits()));
-        Ok(true)
-    })
+    let min = constant_min::<R>(args).to_bits();
+    rustdb_types::kernels::unary::<I, R>(&args.columns()[0], args.len(), result, |input| {
+        R::from_bits(min.wrapping_add(input.to_bits()))
+    });
+    Ok(())
 }
 
 type Kernel = fn(&DataChunk, &mut Vector) -> Result<()>;
