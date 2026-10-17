@@ -46,8 +46,17 @@ pub fn decompress(src: &[u8], dst: &mut [u8]) -> Result<(), SnappyError> {
         return Err(SnappyError::LengthMismatch);
     }
     let end = dst.len();
-    let (mut ip, mut op) = decompress_fast(src, dst, header)?;
+    let mut ip = header;
+    let mut op = 0;
     while ip < src.len() {
+        if ip + 2 * SLOP + 2 < src.len() && op + 2 * SLOP < end {
+            // Back to the fast loop after an element it leaves to this one
+            // (`DecompressAllTags` calling `DecompressBranchless` again).
+            (ip, op) = decompress_branchless(src, dst, ip, op);
+            if ip >= src.len() {
+                break;
+            }
+        }
         let tag = src[ip];
         ip += 1;
         if tag.trailing_zeros() >= 2 {
@@ -106,99 +115,176 @@ pub fn decompress(src: &[u8], dst: &mut [u8]) -> Result<(), SnappyError> {
     }
 }
 
-/// Input bytes the fast loop needs after a tag: the longest tag (5 bytes) or a tag with
-/// a 16-byte literal.
-const FAST_INPUT_SLACK: usize = 17;
-/// Output bytes the fast loop needs: the longest copy (64 bytes) with a 16-byte overrun.
-const FAST_OUTPUT_SLACK: usize = 80;
+/// The bytes the branchless loop may read or write past an element (`kSlopBytes`).
+const SLOP: usize = 64;
 
-/// The main loop of [`decompress`] while both buffers have room for the longest element
-/// plus an overrun (`SnappyDecompressor::DecompressAllTags`): no per-byte bounds checks.
-/// Returns the input and output positions where the careful loop takes over.
-fn decompress_fast(src: &[u8], dst: &mut [u8], mut ip: usize) -> Result<(usize, usize), SnappyError> {
-    let mut op = 0;
-    let src_ptr = src.as_ptr();
-    let dst_ptr = dst.as_mut_ptr();
-    while ip + FAST_INPUT_SLACK <= src.len() && op + FAST_OUTPUT_SLACK <= dst.len() {
-        // SAFETY: `ip + 17 <= src.len()`, so the tag and the up to 16 bytes after it are
-        // in bounds.
-        let tag = unsafe { *src_ptr.add(ip) };
-        let (length, offset) = match tag & 3 {
-            0 => {
-                let literal = usize::from(tag >> 2) + 1;
-                if literal <= 16 {
-                    // SAFETY: 16 bytes after the tag are readable (checked above) and
-                    // `op + 80 <= dst.len()`; the buffers do not overlap.
-                    unsafe { std::ptr::copy_nonoverlapping(src_ptr.add(ip + 1), dst_ptr.add(op), 16) };
-                    ip += 1 + literal;
-                    op += literal;
-                    continue;
+/// `kLengthMinusOffset`: per tag, the element's length minus its copy offset, with the
+/// offset bits the tag holds (copy-1) and a fake offset of 256 for literals; `0xFF` for
+/// the elements the branchless loop leaves to the careful one (long literals, copy-4).
+const LENGTH_MINUS_OFFSET: [i16; 256] = {
+    let mut table = [0i16; 256];
+    let mut tag = 0;
+    while tag < 256 {
+        let data = (tag >> 2) as i16;
+        table[tag] = match tag & 3 {
+            0 if data >= 60 => 0xFF,
+            0 => data + 1 - 256,
+            1 => (data & 7) + 4 - (data >> 3) * 256,
+            2 => data + 1,
+            _ => 0xFF,
+        };
+        tag += 1;
+    }
+    table
+};
+
+/// The bits of the two bytes after a tag that hold its copy offset, by tag type, 16
+/// bits each (`kExtractMasksCombined`): none for literals and copy-4.
+const OFFSET_MASKS_PACKED: u64 = 0x0000_FFFF_00FF_0000;
+
+/// Copies `len` (at most 64) bytes from `src` to `dst` in 32-byte steps, writing up to
+/// 64 bytes (`MemCopy64`).
+///
+/// # Safety
+/// 64 bytes must be readable at `src` and writable at `dst`; the regions may overlap.
+#[inline]
+unsafe fn copy64(dst: *mut u8, src: *const u8, len: usize) {
+    // SAFETY: the caller guarantees 64 readable and writable bytes; `copy` allows
+    // overlap.
+    unsafe {
+        std::ptr::copy(src, dst, 32);
+        if len > 32 {
+            std::ptr::copy(src.add(32), dst.add(32), 32);
+        }
+    }
+}
+
+/// The main loop of [`decompress`] (snappy's `DecompressBranchless`): literals and
+/// non-overlapping copies are both "copy `len` bytes from a pointer" (the input or the
+/// output), done one element late and 32 bytes at a time, so the loop barely branches.
+/// Long literals, copy-4 and invalid copies stop it; returns the input and output
+/// positions where the careful loop takes over.
+fn decompress_branchless(
+    src: &[u8],
+    dst: &mut [u8],
+    start: usize,
+    op_start: usize,
+) -> (usize, usize) {
+    let mut ip = start;
+    let mut op = op_start;
+    if start + 2 * SLOP + 2 >= src.len() || op + 2 * SLOP >= dst.len() {
+        return (ip, op);
+    }
+    let ip_limit = src.len() - 2 * SLOP - 1;
+    let op_limit = dst.len() - 2 * SLOP;
+    let s = src.as_ptr();
+    let d = dst.as_mut_ptr();
+    let safe_source = [0u8; SLOP];
+    let mut deferred_src: *const u8 = safe_source.as_ptr();
+    let mut deferred_len = 0usize;
+    ip += 1;
+    // SAFETY: `ip - 1 < start + 2 * SLOP + 2 < src.len()`.
+    let mut tag = usize::from(unsafe { *s.add(ip - 1) });
+    // SAFETY (whole loop): at the top of an iteration `ip < ip_limit`, so the two
+    // elements read at most `2 * (SLOP - 2) + 2 * 3` bytes past it (the longest short
+    // literal is 60 bytes, and 64 are read), within `src`. At the top `op +
+    // deferred_len < op_limit`, and an iteration grows `op` by at most 128 bytes,
+    // writing at most 64 bytes past it, within `dst`. Copy sources are at or before
+    // the output written so far (`delta >= 0`, the offset at least the length) or in
+    // the input.
+    'outer: loop {
+        for _ in 0..2 {
+            let old_ip = ip;
+            let length_minus_offset = LENGTH_MINUS_OFFSET[tag] as isize;
+            let tag_type = tag & 3;
+            // The bytes to the next tag, selected without a branch.
+            let advance = if tag_type == 0 { (tag >> 2) + 1 } else { tag_type };
+            // SAFETY: within the bounds of the loop invariant above.
+            tag = usize::from(unsafe { *s.add(ip + advance) });
+            ip += advance + 1;
+            // SAFETY: within the bounds of the loop invariant above.
+            let next =
+                u16::from_le_bytes(unsafe { std::ptr::read_unaligned(s.add(old_ip).cast::<[u8; 2]>()) })
+                    as isize;
+            let len = (length_minus_offset & 0xFF) as usize;
+            // `ExtractOffset`: the masks packed in a constant, avoiding a load.
+            let extracted = next & ((OFFSET_MASKS_PACKED >> (tag_type * 16)) & 0xFFFF) as isize;
+            let len_minus_offset = length_minus_offset - extracted;
+            if length_minus_offset > extracted {
+                if len & 0x80 != 0 {
+                    ip = old_ip;
+                    break 'outer;
                 }
-                if literal > 60 || ip + 1 + literal > src.len() || op + literal > dst.len() {
-                    // Long literals take the careful path.
-                    break;
+                // A copy-1 or copy-2 overlapping its own output.
+                // SAFETY: within the bounds of the loop invariant above.
+                unsafe { copy64(d.add(op), deferred_src, deferred_len) };
+                op += deferred_len;
+                deferred_src = safe_source.as_ptr();
+                deferred_len = 0;
+                let offset = len as isize - len_minus_offset;
+                if offset <= 0 || offset as usize > op {
+                    ip = old_ip;
+                    break 'outer;
                 }
-                // SAFETY: both ranges were checked just above; the buffers do not overlap.
-                unsafe { std::ptr::copy_nonoverlapping(src_ptr.add(ip + 1), dst_ptr.add(op), literal) };
-                ip += 1 + literal;
-                op += literal;
+                let offset = offset as usize;
+                if offset >= 8 {
+                    let mut copied = 0;
+                    while copied < len {
+                        // SAFETY: within the bounds of the loop invariant above.
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(d.add(op + copied - offset), d.add(op + copied), 8);
+                        }
+                        copied += 8;
+                    }
+                } else {
+                    for index in 0..len {
+                        // SAFETY: within the bounds of the loop invariant above.
+                        unsafe { *d.add(op + index) = *d.add(op + index - offset) };
+                    }
+                }
+                op += len;
                 continue;
             }
-            // SAFETY (all three arms): the tag is followed by at least 16 readable bytes.
-            1 => {
-                let byte = unsafe { *src_ptr.add(ip + 1) };
-                ip += 2;
-                (
-                    usize::from((tag >> 2) & 7) + 4,
-                    (usize::from(tag >> 5) << 8) | usize::from(byte),
-                )
-            }
-            2 => {
-                let bytes = unsafe { std::ptr::read_unaligned(src_ptr.add(ip + 1).cast::<[u8; 2]>()) };
-                ip += 3;
-                (usize::from(tag >> 2) + 1, usize::from(u16::from_le_bytes(bytes)))
-            }
-            _ => {
-                let bytes = unsafe { std::ptr::read_unaligned(src_ptr.add(ip + 1).cast::<[u8; 4]>()) };
-                ip += 5;
-                (usize::from(tag >> 2) + 1, u32::from_le_bytes(bytes) as usize)
-            }
-        };
-        if offset == 0 || offset > op {
-            return Err(SnappyError::Corrupt);
-        }
-        // `length <= 64` and `op + 80 <= dst.len()`: there is room for copying up to 16
-        // bytes past the end of the match.
-        let from = op - offset;
-        if offset >= 16 {
-            let mut copied = 0;
-            while copied < length {
-                // SAFETY: the chunk ends before `op + length + 16 <= dst.len()`, and the
-                // source chunk ends at or before the destination chunk starts (the offset is
-                // at least 16), so they do not overlap.
-                unsafe {
-                    std::ptr::copy_nonoverlapping(dst_ptr.add(from + copied), dst_ptr.add(op + copied), 16);
+            let delta = (op + deferred_len) as isize + len_minus_offset - len as isize;
+            if delta < 0 {
+                // Only literals at the very start (their fake offset reaches back).
+                if tag_type != 0 {
+                    ip = old_ip;
+                    break 'outer;
                 }
-                copied += 16;
+                // SAFETY: within the bounds of the loop invariant above.
+                unsafe { copy64(d.add(op), deferred_src, deferred_len) };
+                op += deferred_len;
+                // SAFETY: within the bounds of the loop invariant above.
+                deferred_src = unsafe { s.add(old_ip) };
+                deferred_len = len;
+                continue;
             }
-        } else if offset >= 8 {
-            let mut copied = 0;
-            while copied < length {
-                // SAFETY: as above with 8-byte chunks and an offset of at least 8.
-                unsafe {
-                    std::ptr::copy_nonoverlapping(dst_ptr.add(from + copied), dst_ptr.add(op + copied), 8);
-                }
-                copied += 8;
-            }
-        } else {
-            for index in 0..length {
-                // SAFETY: `from + index < op + index < op + length <= dst.len()`.
-                unsafe { *dst_ptr.add(op + index) = *dst_ptr.add(from + index) };
-            }
+            let from: *const u8 = if tag_type == 0 {
+                // SAFETY: within the bounds of the loop invariant above.
+                unsafe { s.add(old_ip) }
+            } else {
+                // SAFETY: within the bounds of the loop invariant above.
+                unsafe { d.add(delta as usize) }
+            };
+            // SAFETY: within the bounds of the loop invariant above.
+            unsafe { copy64(d.add(op), deferred_src, deferred_len) };
+            op += deferred_len;
+            deferred_src = from;
+            deferred_len = len;
         }
-        op += length;
+        if ip >= ip_limit || op + deferred_len >= op_limit {
+            break;
+        }
     }
-    Ok((ip, op))
+    // `ip` is just past the next tag.
+    ip -= 1;
+    if deferred_len > 0 {
+        // SAFETY: as in the loop, 64 bytes are writable at `op`.
+        unsafe { copy64(d.add(op), deferred_src, deferred_len) };
+        op += deferred_len;
+    }
+    (ip, op)
 }
 
 /// Copies `length` bytes starting `offset` bytes back to `op` (the regions may overlap:
@@ -325,6 +411,34 @@ mod tests {
             println!("{name}: {:.0} MB/s", total as f64 / seconds / 1e6);
         }
         assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn decompresses_mixed_streams() {
+        // Long literals, runs, near and far copies interleaved, so the fast loop leaves
+        // and re-enters many times.
+        for seed in 0..200u64 {
+            let mut data = Vec::new();
+            let mut state = seed * 7919 + 1;
+            while data.len() < 20_000 + (seed as usize % 7) * 3_000 {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                let len = (state % 300) as usize + 1;
+                match state % 5 {
+                    0 => data.extend(bytes(state, len, 255)),
+                    1 => data.extend(std::iter::repeat_n((state >> 8) as u8, len)),
+                    2 if data.len() > 70_000 / 10 => {
+                        let from = (state as usize >> 4) % (data.len() - 64);
+                        let chunk: Vec<u8> = data[from..from + 64.min(len)].to_vec();
+                        data.extend(chunk);
+                    }
+                    3 => data.extend(bytes(state, len, 4)),
+                    _ => data.extend(format!("value_{}_", state % 1000).into_bytes()),
+                }
+            }
+            round_trip(&data);
+        }
     }
 
     #[test]
