@@ -453,6 +453,7 @@ fn bind_copy_to(
     let mut write_partition_columns = false;
     let mut write_empty_file = true;
     let mut hive_file_pattern = true;
+    let mut preserve_order = None;
     let mut return_type = CopyFunctionReturnType::ChangedRows;
     let mut file_extension = function.extension.clone();
     let original_options = std::mem::take(&mut info.options);
@@ -521,9 +522,7 @@ fn bind_copy_to(
                     return_type = CopyFunctionReturnType::ChangedRowsAndFileList;
                 }
             }
-            "preserve_order" => {
-                let _ = boolean_arg(scope, values)?;
-            }
+            "preserve_order" => preserve_order = Some(boolean_arg(scope, values)?),
             "return_stats" => {
                 if boolean_arg(scope, values)? {
                     return_type = CopyFunctionReturnType::WrittenFileStatistics;
@@ -679,6 +678,7 @@ fn bind_copy_to(
         partition_columns: partition_cols,
         write_empty_file,
         hive_file_pattern,
+        preserve_order,
         return_type,
         names: unique_column_names,
         expected_types: select_node.types.clone(),

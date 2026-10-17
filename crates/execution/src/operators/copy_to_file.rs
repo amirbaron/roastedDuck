@@ -482,9 +482,17 @@ fn check_directory(path: &str, overwrite_mode: CopyOverwriteMode) -> Result<()> 
 
 /// An open output file: the function's state and the file's index in
 /// `written_files`, if its name is returned.
-struct OpenFile {
+pub struct OpenFile {
     state: CopyGlobalState,
     file: Option<usize>,
+}
+
+impl std::fmt::Debug for OpenFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenFile")
+            .field("file", &self.file)
+            .finish_non_exhaustive()
+    }
 }
 
 /// A file a copy wrote (DuckDB's `CopyToFileInfo`).
@@ -570,11 +578,58 @@ impl PhysicalOperator for PhysicalCopyToFile {
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
     }
+    /// `ParallelSink`: each thread writes its own files with `PER_THREAD_OUTPUT`.
+    fn parallel_sink(&self) -> bool {
+        self.options.per_thread_output
+    }
+}
+
+impl PhysicalCopyToFile {
+    /// `Sink` with `PER_THREAD_OUTPUT`: the thread's own file (rotated by size if asked),
+    /// written without holding the copy's lock.
+    fn sink_per_thread(
+        &self,
+        chunk: &DataChunk,
+        global: &CopyGlobal,
+        local: &mut Option<OpenFile>,
+    ) -> Result<()> {
+        {
+            let mut inner = global.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            inner.rows_copied += chunk.len() as u64;
+            let rotate_now = match local.as_ref() {
+                Some(file) if self.options.rotate => {
+                    match (&self.function.rotate_next_file, &self.function.copy_to_file_size) {
+                        (Some(rotate_next_file), _) => rotate_next_file(
+                            &file.state,
+                            self.bind_data.as_ref(),
+                            self.options.file_size_bytes,
+                        ),
+                        (None, Some(file_size)) => self
+                            .options
+                            .file_size_bytes
+                            .is_some_and(|limit| file_size(&file.state) > limit),
+                        (None, None) => false,
+                    }
+                }
+                _ => false,
+            };
+            if rotate_now && let Some(file) = local.take() {
+                self.finish_file(&mut inner, &file)?;
+            }
+            if local.is_none() {
+                *local = Some(self.create_file_state(&mut inner)?);
+            }
+        }
+        let file = local
+            .as_ref()
+            .ok_or_else(|| Error::internal("copy without an open file"))?;
+        self.sink_into(&file.state, chunk)
+    }
 }
 
 impl Sink for PhysicalCopyToFile {
     type Global = CopyGlobal;
-    type Local = ();
+    type Local = Option<OpenFile>;
 
     fn global_sink_state(&self, _: &ExecutionContext) -> Result<CopyGlobal> {
         let global = CopyGlobal::default();
@@ -594,8 +649,8 @@ impl Sink for PhysicalCopyToFile {
         Ok(global)
     }
 
-    fn local_sink_state(&self, _: &ExecutionContext, _: &CopyGlobal) -> Result<()> {
-        Ok(())
+    fn local_sink_state(&self, _: &ExecutionContext, _: &CopyGlobal) -> Result<Option<OpenFile>> {
+        Ok(None)
     }
 
     fn sink(
@@ -603,8 +658,12 @@ impl Sink for PhysicalCopyToFile {
         _: &ExecutionContext,
         chunk: &DataChunk,
         global: &CopyGlobal,
-        (): &mut (),
+        local: &mut Option<OpenFile>,
     ) -> Result<SinkResult> {
+        if self.options.per_thread_output && !self.options.partition_output {
+            self.sink_per_thread(chunk, global, local)?;
+            return Ok(SinkResult::NeedMoreInput);
+        }
         let mut inner = global.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let options = &self.options;
         if !options.write_empty_file && !options.rotate {
@@ -646,7 +705,11 @@ impl Sink for PhysicalCopyToFile {
         Ok(SinkResult::NeedMoreInput)
     }
 
-    fn combine(&self, _: &ExecutionContext, _: &CopyGlobal, (): ()) -> Result<()> {
+    fn combine(&self, _: &ExecutionContext, global: &CopyGlobal, local: Option<OpenFile>) -> Result<()> {
+        if let Some(file) = local {
+            let mut inner = global.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            self.finish_file(&mut inner, &file)?;
+        }
         Ok(())
     }
 

@@ -962,7 +962,7 @@ impl PlanGenerator {
             LogicalKind::Delete(delete) => self.plan_delete(&delete, &expressions, next_child("delete")?)?,
             LogicalKind::Update(update) => self.plan_update(*update, expressions, next_child("update")?)?,
             LogicalKind::MergeInto(merge) => self.plan_merge_into(*merge, next_child("merge")?)?,
-            LogicalKind::CopyToFile(copy) => plan_copy_to_file(*copy, next_child("copy")?),
+            LogicalKind::CopyToFile(copy) => plan_copy_to_file(*copy, next_child("copy")?)?,
             LogicalKind::Export(export) => {
                 let context = self.context()?;
                 let catalog = context.catalog(&export.catalog)?;
@@ -1621,7 +1621,21 @@ fn evaluate_rows(types: &[LogicalType], rows: &[Vec<Expression>]) -> Result<Vec<
 }
 
 /// `PhysicalPlanGenerator::CreatePlan(LogicalCopyToFile &)`.
-fn plan_copy_to_file(copy: rustdb_planner::operator::LogicalCopyToFile, child: PhysicalRef) -> PhysicalRef {
+fn plan_copy_to_file(
+    copy: rustdb_planner::operator::LogicalCopyToFile,
+    child: PhysicalRef,
+) -> Result<PhysicalRef> {
+    if copy.preserve_order == Some(true)
+        && (copy.per_thread_output
+            || copy.file_size_bytes.is_some()
+            || copy.rotate
+            || copy.partition_output
+            || !copy.partition_columns.is_empty())
+    {
+        return Err(Error::invalid_input(
+            "PRESERVE_ORDER is not supported with these parameters",
+        ));
+    }
     let mut file_path = copy.file_path;
     if let Some(rest) = file_path.strip_prefix('~')
         && (rest.is_empty() || rest.starts_with('/'))
@@ -1653,10 +1667,10 @@ fn plan_copy_to_file(copy: rustdb_planner::operator::LogicalCopyToFile, child: P
         names: copy.names,
         expected_types: copy.expected_types,
     };
-    Arc::new(crate::operators::PhysicalCopyToFile::new(
+    Ok(Arc::new(crate::operators::PhysicalCopyToFile::new(
         child,
         copy.function,
         copy.bind_data,
         options,
-    ))
+    )))
 }

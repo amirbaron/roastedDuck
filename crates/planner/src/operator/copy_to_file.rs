@@ -200,6 +200,8 @@ pub struct LogicalCopyToFile {
     pub partition_columns: Vec<usize>,
     pub write_empty_file: bool,
     pub hive_file_pattern: bool,
+    /// The `PRESERVE_ORDER` option (`PreserveOrderType`); `None` when not given.
+    pub preserve_order: Option<bool>,
     pub return_type: CopyFunctionReturnType,
     pub names: Vec<String>,
     pub expected_types: Vec<LogicalType>,
