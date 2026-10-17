@@ -268,6 +268,9 @@ pub struct HashAggregateLocal {
     /// Per grouping set, per `DISTINCT` aggregate: the thread's distinct tuples, handed
     /// to the global state in `combine`.
     distinct: Vec<Vec<Option<GroupedAggregateHashTable>>>,
+    /// Per grouping set, per `DISTINCT` aggregate: distinct tuples set aside under memory
+    /// pressure, unpinned so that they can be spilled.
+    distinct_abandoned: Vec<Vec<Option<PartitionedTupleData>>>,
     /// Per grouping set: groups taken out of the tables when they outgrew the thread's
     /// memory share, in the external partitions and unpinned so that they can be spilled
     /// (DuckDB's `abandoned_data`).
@@ -350,6 +353,11 @@ impl Sink for PhysicalHashAggregate {
             sink_capacity: vec![global.sink_capacity; tables.len()],
             adapted: vec![grow; tables.len()],
             distinct: self.distinct_tables(ctx)?,
+            distinct_abandoned: self
+                .grouping_sets
+                .iter()
+                .map(|_| self.aggregates.iter().map(|_| None).collect())
+                .collect(),
             abandoned: self.grouping_sets.iter().map(|_| None).collect(),
             memory_limit: usize::try_from(ctx.env.buffer_manager.max_memory() / threads / 4)
                 .unwrap_or(usize::MAX),
@@ -444,12 +452,17 @@ impl Sink for PhysicalHashAggregate {
         let size: usize = local
             .tables
             .iter()
+            .chain(local.distinct.iter().flatten().flatten())
             .map(GroupedAggregateHashTable::size_in_bytes)
             .sum();
-        if size > local.memory_limit {
-            let buffer_manager = &ctx.env.buffer_manager;
-            if buffer_manager.used_memory() > buffer_manager.max_memory() / 4 * 3 {
-                Self::go_external(global, local)?;
+        if size > local.memory_limit && memory_pressure(ctx) {
+            Self::go_external(global, local)?;
+            for (tables, abandoned) in local.distinct.iter_mut().zip(&mut local.distinct_abandoned) {
+                for (table, abandoned) in tables.iter_mut().zip(abandoned) {
+                    if let Some(table) = table {
+                        abandon_table(table, abandoned, global.external_radix_bits)?;
+                    }
+                }
             }
         }
         Ok(SinkResult::NeedMoreInput)
@@ -464,14 +477,18 @@ impl Sink for PhysicalHashAggregate {
         global.any_combined.store(true, Ordering::Release);
         if global.has_distinct {
             let mut distinct_parts = Vec::new();
-            for (set_index, local_set) in local.distinct.iter_mut().enumerate() {
-                for (index, local_table) in local_set.iter_mut().enumerate() {
-                    if let Some(local_table) = local_table
-                        && local_table.count() > 0
-                    {
-                        let data = local_table.take_partitioned_data()?;
-                        data.unpin();
-                        distinct_parts.push((set_index, index, data));
+            for (set_index, (local_set, abandoned_set)) in local
+                .distinct
+                .iter_mut()
+                .zip(&mut local.distinct_abandoned)
+                .enumerate()
+            {
+                for (index, (local_table, abandoned)) in local_set.iter_mut().zip(abandoned_set).enumerate() {
+                    if let Some(local_table) = local_table {
+                        let data = table_data(local_table, abandoned.take())?;
+                        if data.count() > 0 {
+                            distinct_parts.push((set_index, index, data));
+                        }
                     }
                 }
             }
@@ -719,7 +736,7 @@ const MAXIMUM_EXTERNAL_RADIX_BITS: usize = 7;
 /// finalized on its own) as the threads can append to at once within half the memory
 /// limit, every partition pinning a row and a heap block while appending; at least
 /// `minimum`.
-fn external_radix_bits(ctx: &ExecutionContext, minimum: usize) -> usize {
+pub(crate) fn external_radix_bits(ctx: &ExecutionContext, minimum: usize) -> usize {
     let buffer_manager = &ctx.env.buffer_manager;
     let per_thread = buffer_manager.max_memory() / 2 / ctx.env.threads().max(1) as u64;
     let partitions = per_thread / (2 * buffer_manager.block_alloc_size() as u64).max(1);
@@ -727,8 +744,56 @@ fn external_radix_bits(ctx: &ExecutionContext, minimum: usize) -> usize {
     bits.clamp(minimum, MAXIMUM_EXTERNAL_RADIX_BITS.max(minimum))
 }
 
+/// The share of the memory limit one thread's tables may hold before their rows are set
+/// aside under memory pressure: a quarter of its share (DuckDB's `GetMaxThreadMemory`).
+pub(crate) fn thread_memory_limit(ctx: &ExecutionContext) -> usize {
+    let threads = ctx.env.threads().max(1) as u64;
+    usize::try_from(ctx.env.buffer_manager.max_memory() / threads / 4).unwrap_or(usize::MAX)
+}
+
+/// Whether the buffer manager is under memory pressure (over three quarters used).
+pub(crate) fn memory_pressure(ctx: &ExecutionContext) -> bool {
+    let buffer_manager = &ctx.env.buffer_manager;
+    buffer_manager.used_memory() > buffer_manager.max_memory() / 4 * 3
+}
+
+/// Moves the rows of `table` into `abandoned` (created with `external_bits` radix bits)
+/// and unpins them so that they can be spilled; the table starts over. Duplicates across
+/// the two are merged when the partitions are combined (DuckDB's `abandoned_data`).
+pub(crate) fn abandon_table(
+    table: &mut GroupedAggregateHashTable,
+    abandoned: &mut Option<PartitionedTupleData>,
+    external_bits: usize,
+) -> Result<()> {
+    let mut data = table.take_partitioned_data()?;
+    let target = match abandoned {
+        Some(target) => target,
+        None => abandoned.insert(data.with_radix_bits(external_bits.max(data.radix_bits()))?),
+    };
+    data.repartition(target)?;
+    target.unpin();
+    Ok(())
+}
+
+/// The rows of `table` plus those set aside in `abandoned`, unpinned.
+pub(crate) fn table_data(
+    table: &mut GroupedAggregateHashTable,
+    abandoned: Option<PartitionedTupleData>,
+) -> Result<PartitionedTupleData> {
+    let mut data = table.take_partitioned_data()?;
+    if let Some(mut abandoned) = abandoned {
+        data.repartition(&mut abandoned)?;
+        data = abandoned;
+    }
+    data.unpin();
+    Ok(data)
+}
+
 /// `data` with at least `radix_bits` radix bits, unpinned so it can be spilled.
-fn repartitioned(mut data: PartitionedTupleData, radix_bits: usize) -> Result<PartitionedTupleData> {
+pub(crate) fn repartitioned(
+    mut data: PartitionedTupleData,
+    radix_bits: usize,
+) -> Result<PartitionedTupleData> {
     if data.radix_bits() < radix_bits {
         let mut target = data.with_radix_bits(radix_bits)?;
         data.repartition(&mut target)?;

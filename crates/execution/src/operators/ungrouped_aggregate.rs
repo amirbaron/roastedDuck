@@ -15,6 +15,9 @@ use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
 use crate::aggregate_hashtable::{GroupedAggregateHashTable, initial_capacity};
 use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
+use crate::operators::hash_aggregate::{
+    abandon_table, external_radix_bits, memory_pressure, repartitioned, table_data, thread_memory_limit,
+};
 use crate::{ExecutionContext, ExpressionExecutor, Sink, SinkFinalize, SinkResult, Source, SourceResult};
 
 /// One state per aggregate, allocated together in a single aligned buffer.
@@ -177,6 +180,13 @@ pub struct UngroupedLocal {
     states: AggregateStates,
     /// Per aggregate: the thread's table of distinct argument tuples.
     distinct: Vec<Option<GroupedAggregateHashTable>>,
+    /// Per aggregate: distinct tuples set aside under memory pressure, unpinned so that
+    /// they can be spilled.
+    abandoned: Vec<Option<PartitionedTupleData>>,
+    /// The table size above which tuples are set aside under memory pressure.
+    memory_limit: usize,
+    /// The radix bits of tuples set aside (an out-of-core aggregation's partitions).
+    external_bits: usize,
     arguments: Vec<ExpressionExecutor>,
     filters: Vec<Option<ExpressionExecutor>>,
     selection: Vec<u32>,
@@ -218,6 +228,9 @@ impl Sink for PhysicalUngroupedAggregate {
             .collect::<Result<Vec<_>>>()?;
         Ok(UngroupedLocal {
             states: AggregateStates::new(&self.aggregates),
+            abandoned: self.aggregates.iter().map(|_| None).collect(),
+            memory_limit: thread_memory_limit(ctx),
+            external_bits: external_radix_bits(ctx, radix_bits),
             distinct,
             arguments: self
                 .aggregates
@@ -239,7 +252,7 @@ impl Sink for PhysicalUngroupedAggregate {
 
     fn sink(
         &self,
-        _: &ExecutionContext,
+        ctx: &ExecutionContext,
         chunk: &DataChunk,
         _: &Self::Global,
         local: &mut UngroupedLocal,
@@ -261,6 +274,9 @@ impl Sink for PhysicalUngroupedAggregate {
             if let Some(distinct) = &mut local.distinct[index] {
                 let arguments = DataChunk::new(arguments.columns().to_vec(), input.len());
                 add_distinct(distinct, &arguments)?;
+                if distinct.size_in_bytes() > local.memory_limit && memory_pressure(ctx) {
+                    abandon_table(distinct, &mut local.abandoned[index], local.external_bits)?;
+                }
                 continue;
             }
             let data = AggregateInput {
@@ -281,9 +297,14 @@ impl Sink for PhysicalUngroupedAggregate {
     }
 
     fn combine(&self, _: &ExecutionContext, global: &Self::Global, mut local: UngroupedLocal) -> Result<()> {
-        for (table, collected) in local.distinct.iter_mut().zip(&global.distinct) {
+        for ((table, abandoned), collected) in local
+            .distinct
+            .iter_mut()
+            .zip(&mut local.abandoned)
+            .zip(&global.distinct)
+        {
             if let (Some(table), Some(collected)) = (table, collected) {
-                let data = table.take_partitioned_data()?;
+                let data = table_data(table, abandoned.take())?;
                 collected.lock().map_err(|_| poisoned())?.push(data);
             }
         }
@@ -309,6 +330,16 @@ impl Sink for PhysicalUngroupedAggregate {
         for (aggregate, collected) in global.distinct.iter_mut().enumerate() {
             let Some(collected) = collected else { continue };
             let parts = std::mem::take(collected.get_mut().map_err(|_| poisoned())?);
+            // Threads that set tuples aside have more partitions than the others.
+            let radix_bits = parts
+                .iter()
+                .map(PartitionedTupleData::radix_bits)
+                .max()
+                .unwrap_or(0);
+            let parts = parts
+                .into_iter()
+                .map(|part| repartitioned(part, radix_bits))
+                .collect::<Result<Vec<_>>>()?;
             let partition_count = parts
                 .iter()
                 .map(PartitionedTupleData::partition_count)
