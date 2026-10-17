@@ -1460,6 +1460,7 @@ test/sql/copy/parquet/copy_ninf_stats.test
 test/sql/copy/parquet/copy_option_non_foldable.test
 test/sql/copy/parquet/copy_option_prepared.test
 test/sql/copy/parquet/copy_option_suggestion.test
+test/sql/copy/parquet/copy_preserve_order.test_slow
 test/sql/copy/parquet/corrupt_stats.test
 test/sql/copy/parquet/decimal_filter.test
 test/sql/copy/parquet/delta_byte_array.test
@@ -1624,6 +1625,7 @@ test/sql/copy/partitioned/hive_partitioned_write.test
 test/sql/copy/partitioned/hive_partitioning_overwrite.test
 test/sql/copy/partitioned/partition_issue_6304.test
 test/sql/copy/partitioned/skip_partition_column_writes.test
+test/sql/copy/per_thread_output.test
 test/sql/copy/return_files.test
 test/sql/copy/return_stats.test
 test/sql/copy/return_stats_truncate.test
