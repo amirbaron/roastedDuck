@@ -9,15 +9,21 @@
 
 pub mod json_casts;
 pub mod json_common;
+pub mod json_enums;
 pub(crate) mod json_executors;
 pub mod json_functions;
+pub(crate) mod json_multi_file_info;
+pub(crate) mod json_reader;
+pub mod json_reader_options;
+pub(crate) mod json_scan;
+mod json_to_variant;
 mod variant_to_json;
 pub mod yyjson;
 
 use rustdb_types::LogicalType;
 
 pub use json_casts::register_json_casts;
-pub use json_functions::json_scalar_functions;
+pub use json_functions::{json_scalar_functions, json_table_functions};
 
 /// The name of the JSON type (`LogicalType::JSON_TYPE_NAME`).
 pub const JSON_TYPE_NAME: &str = "JSON";

@@ -383,6 +383,9 @@ impl Database {
         for set in rustdb_json::json_scalar_functions() {
             system_catalog.register_scalar_functions(set)?;
         }
+        for set in rustdb_json::json_table_functions() {
+            system_catalog.register_table_functions(set)?;
+        }
         crate::system_functions::register_default_views(&system_catalog)?;
         crate::system_functions::register_default_macros(&system_catalog)?;
         crate::system_functions::register_json_macros(&system_catalog)?;

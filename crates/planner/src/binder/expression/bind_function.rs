@@ -131,6 +131,20 @@ fn try_bind_lambda_or_json<B: ExpressionBinder + ?Sized>(
         _ => String::new(),
     };
     let invalid_syntax = setting == "DISABLE_SINGLE_ARROW" && syntax == Some(LambdaSyntaxType::SingleArrow);
+    let warn_deprecated_syntax = setting == "DEFAULT" && syntax == Some(LambdaSyntaxType::SingleArrow);
+    // `DUCKDB_LOG_WARNING(context, msg)`.
+    let warn_deprecated = || -> Result<()> {
+        if !warn_deprecated_syntax {
+            return Ok(());
+        }
+        if let Some(logger) = context.function_client.logger() {
+            use rustdb_function::logging::{LogLevel, LogScope};
+            if logger.should_log(LogScope::Connection, "", LogLevel::Warning) {
+                logger.write_log(LogScope::Connection, "", LogLevel::Warning, DEPRECATED_LAMBDA_ARROW)?;
+            }
+        }
+        Ok(())
+    };
     let result = match bind_lambda_function(binder, expr, functions, depth) {
         Err(error) if invalid_syntax && error.kind() == rustdb_common::ErrorKind::ParameterNotResolved => {
             return Err(Error::binder(DEPRECATED_LAMBDA_ARROW));
@@ -141,14 +155,18 @@ fn try_bind_lambda_or_json<B: ExpressionBinder + ?Sized>(
         if invalid_syntax {
             return Ok(BindResult::error(DEPRECATED_LAMBDA_ARROW));
         }
+        warn_deprecated()?;
         return Ok(result);
     };
-    if keyword_syntax
-        || lambda_error
-            .error
-            .raw_message()
-            .contains("Deprecated lambda arrow (->) detected.")
+    if keyword_syntax {
+        return Ok(BindResult::Unbound(lambda_error));
+    }
+    if lambda_error
+        .error
+        .raw_message()
+        .contains("Deprecated lambda arrow (->) detected.")
     {
+        warn_deprecated()?;
         return Ok(BindResult::Unbound(lambda_error));
     }
     // Not a lambda: the arrow is the JSON operator, bound as an argument of the function.

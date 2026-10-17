@@ -189,6 +189,134 @@ impl StructureNode {
     }
 }
 
+impl StructureNode {
+    /// `RefineCandidateTypes`: drops the candidate types of VARCHAR positions that the
+    /// sampled strings `vals` do not convert to.
+    pub(crate) fn refine_candidate_types(
+        &mut self,
+        doc: &Doc<'_>,
+        vals: &[Option<ValId>],
+        refiner: &CandidateRefiner<'_>,
+    ) -> Result<()> {
+        if self.descriptions.len() != 1 || !self.contains_varchar() {
+            return Ok(());
+        }
+        let description = &mut self.descriptions[0];
+        match description.ty {
+            LogicalTypeId::List => {
+                let mut children = Vec::new();
+                for &val in vals {
+                    if let Some(val) = val.filter(|&val| !doc.is_null(val)) {
+                        children.extend(doc.arr_iter(val).map(Some));
+                    }
+                }
+                if let Some(child) = description.children.first_mut() {
+                    child.refine_candidate_types(doc, &children, refiner)?;
+                }
+            }
+            LogicalTypeId::Struct => {
+                let child_count = description.children.len();
+                let mut child_vals: Vec<Vec<Option<ValId>>> = vec![vec![None; vals.len()]; child_count];
+                for (i, &val) in vals.iter().enumerate() {
+                    let Some(val) = val.filter(|&val| !doc.is_null(val)) else {
+                        continue;
+                    };
+                    for (key, child) in doc.obj_iter(val) {
+                        let key = String::from_utf8_lossy(doc.str(key));
+                        if let Some(&index) = description.key_map.get(key.as_ref()) {
+                            child_vals[index][i] = Some(child);
+                        }
+                    }
+                }
+                for (child, vals) in description.children.iter_mut().zip(&child_vals) {
+                    child.refine_candidate_types(doc, vals, refiner)?;
+                }
+            }
+            LogicalTypeId::Varchar => {
+                if description.candidate_types.is_empty() {
+                    return Ok(());
+                }
+                let strings = refiner.string_vector(doc, vals)?;
+                refiner.eliminate_candidate_types(&mut description.candidate_types, &strings, vals.len())?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+/// What candidate refinement needs: the casts and the date/timestamp formats
+/// (`RefineCandidateTypes`' arguments).
+#[derive(Debug)]
+pub(crate) struct CandidateRefiner<'a> {
+    pub(crate) casts: &'a rustdb_function::cast::CastFunctionSet,
+    pub(crate) date_formats: &'a super::json_transform::DateFormatMap,
+}
+
+impl CandidateRefiner<'_> {
+    /// `JSONTransform::GetStringVector` with default options: the string values.
+    fn string_vector(&self, doc: &Doc<'_>, vals: &[Option<ValId>]) -> Result<Vector> {
+        let mut builder = StrBuilder::default();
+        for &val in vals {
+            match val.filter(|&val| doc.is_str(val)) {
+                Some(val) => builder.push(doc.str(val)),
+                None => crate::json_executors::ColumnBuilder::push_null(&mut builder),
+            }
+        }
+        crate::json_executors::ColumnBuilder::finish(builder, &LogicalType::VARCHAR)
+    }
+
+    /// `EliminateCandidateTypes`: pops candidates (from the back) until one converts
+    /// every string.
+    fn eliminate_candidate_types(&self, candidates: &mut Vec<LogicalTypeId>, strings: &Vector, count: usize) -> Result<()> {
+        use rustdb_function::cast::{CastParameters, cast_vector};
+        while let Some(&ty) = candidates.last() {
+            if let Some(formats) = self.date_formats.formats(ty) {
+                if eliminate_candidate_formats(formats, ty, strings, count) {
+                    return Ok(());
+                }
+                candidates.pop();
+                continue;
+            }
+            let mut params = CastParameters::try_cast();
+            params.strict = true;
+            let target = candidate_logical_type(ty);
+            let result = cast_vector(self.casts, strings, &target, count, &mut params)?;
+            let failed = params.error_message().is_some()
+                || (0..count).any(|row| !strings.is_null(row) && result.is_null(row));
+            if failed {
+                candidates.pop();
+            } else {
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `EliminateCandidateFormats`: whether some format (tried from the back) parses every
+/// string.
+fn eliminate_candidate_formats(
+    formats: &[rustdb_functions::strtime::StrpTimeFormat],
+    ty: LogicalTypeId,
+    strings: &Vector,
+    count: usize,
+) -> bool {
+    let input = crate::json_executors::StrInput::new(strings);
+    formats.iter().rev().any(|format| {
+        (0..count).all(|row| match input.get(row) {
+            None => true,
+            Some(text) => {
+                if ty == LogicalTypeId::Date {
+                    format.try_parse_date(text).is_some()
+                } else {
+                    format.try_parse_timestamp(text).is_some()
+                }
+            }
+        })
+    })
+}
+
 /// `JSONStructure::ExtractStructure`: adds the structure of value `val` to `node`.
 pub(crate) fn extract_structure(
     doc: &Doc<'_>,

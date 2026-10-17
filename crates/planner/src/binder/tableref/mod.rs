@@ -337,6 +337,9 @@ fn csv_replacement_scan(base: &BaseTableRef, alias: &str) -> Option<TableRef> {
         "read_csv_auto"
     } else if can_replace("parquet") {
         "parquet_scan"
+    } else if can_replace("json") || can_replace("jsonl") || can_replace("ndjson") {
+        // The JSON extension's `ReadJSONReplacement`.
+        "read_json_auto"
     } else {
         return None;
     };

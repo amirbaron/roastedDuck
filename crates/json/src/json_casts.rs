@@ -213,6 +213,56 @@ const ALL_TYPES: [LogicalTypeId; 38] = {
     ]
 };
 
+/// Whether `ty` is or contains the JSON type.
+fn contains_json(ty: &LogicalType) -> bool {
+    match ty.id() {
+        LogicalTypeId::Varchar => ty.alias() == Some(crate::JSON_TYPE_NAME),
+        LogicalTypeId::List => ty.child_type().is_some_and(contains_json),
+        LogicalTypeId::Array => ty.array_child().is_some_and(|(child, _)| contains_json(child)),
+        LogicalTypeId::Map => ty
+            .map_key_value()
+            .is_some_and(|(key, value)| contains_json(key) || contains_json(value)),
+        LogicalTypeId::Struct => ty
+            .struct_children()
+            .is_some_and(|children| children.iter().any(|(_, child)| contains_json(child))),
+        LogicalTypeId::Union => ty
+            .union_members()
+            .is_some_and(|members| members.iter().any(|(_, member)| contains_json(member))),
+        _ => false,
+    }
+}
+
+/// `ty` with every JSON replaced by VARIANT.
+fn json_as_variant(ty: &LogicalType) -> LogicalType {
+    match ty.id() {
+        LogicalTypeId::Varchar if ty.alias() == Some(crate::JSON_TYPE_NAME) => LogicalType::variant(),
+        LogicalTypeId::List => LogicalType::list(json_as_variant(ty.child_type().unwrap_or(&LogicalType::SQLNULL))),
+        LogicalTypeId::Array => match ty.array_child() {
+            Some((child, size)) => LogicalType::array(json_as_variant(child), size),
+            None => ty.clone(),
+        },
+        LogicalTypeId::Map => match ty.map_key_value() {
+            Some((key, value)) => LogicalType::map(json_as_variant(key), json_as_variant(value)),
+            None => ty.clone(),
+        },
+        LogicalTypeId::Struct => LogicalType::struct_type(
+            ty.struct_children()
+                .unwrap_or_default()
+                .iter()
+                .map(|(name, child)| (name.clone(), json_as_variant(child)))
+                .collect(),
+        ),
+        LogicalTypeId::Union => LogicalType::union_type(
+            ty.union_members()
+                .unwrap_or_default()
+                .iter()
+                .map(|(name, member)| (name.clone(), json_as_variant(member)))
+                .collect(),
+        ),
+        _ => ty.clone(),
+    }
+}
+
 /// Registers the JSON casts (in DuckDB's order: simple, create, transform).
 pub fn register_json_casts(casts: &mut CastFunctionSet) {
     let json = json_type();
@@ -272,6 +322,42 @@ pub fn register_json_casts(casts: &mut CastFunctionSet) {
         crate::variant_to_json::variant_to_json_cast(),
         (casts.implicit_cast_cost(&LogicalType::variant(), &LogicalType::VARCHAR) - 1).max(0),
     );
+
+    // JSON to VARIANT (DuckDB's core `ConvertJSONToVariant`).
+    casts.register_cast_function(
+        json.clone(),
+        LogicalType::variant(),
+        crate::json_to_variant::json_to_variant_cast(),
+        casts.implicit_cast_cost(&LogicalType::VARCHAR, &LogicalType::variant()),
+    );
+
+    // Nested types holding JSON convert their JSON parts to VARIANT first (DuckDB's
+    // `ToVariant` parses JSON-typed children).
+    let nested_to_variant: BindCastFn = Arc::new(|set: &CastFunctionSet, source: &LogicalType, target: &LogicalType| {
+        if !contains_json(source) {
+            return Ok(None);
+        }
+        let intermediate = json_as_variant(source);
+        let first = set.get_cast_function(source, &intermediate)?;
+        let second = set.get_cast_function(&intermediate, target)?;
+        Ok(Some(BoundCastInfo::new(move |input, result, count, params| {
+            let mut converted = Vector::flat(intermediate.clone(), count.max(1));
+            let first_ok = first.execute(input, &mut converted, count, params)?;
+            let second_ok = second.execute(&converted, result, count, params)?;
+            Ok(first_ok && second_ok)
+        })))
+    });
+    for id in [
+        LogicalTypeId::Struct,
+        LogicalTypeId::List,
+        LogicalTypeId::Map,
+        LogicalTypeId::Array,
+        LogicalTypeId::Union,
+    ] {
+        let source = cast_pattern(id);
+        let cost = casts.implicit_cast_cost(&source, &LogicalType::variant());
+        casts.register_bind_function(source, LogicalType::variant(), Arc::clone(&nested_to_variant), cost);
+    }
 
     // Anything can be cast to JSON.
     let to_json: BindCastFn =

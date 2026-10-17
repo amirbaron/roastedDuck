@@ -14,12 +14,13 @@ pub(crate) mod json_transform;
 pub(crate) mod json_type;
 pub(crate) mod json_valid;
 pub(crate) mod json_value;
+pub(crate) mod read_json;
 
 use std::any::Any;
 use std::sync::Arc;
 
 use rustdb_common::{Error, Result};
-use rustdb_function::{BindInput, FunctionData, ScalarFunction, ScalarFunctionSet};
+use rustdb_function::{BindInput, FunctionData, ScalarFunction, ScalarFunctionSet, TableFunctionSet};
 use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
 use crate::json_common::{JsonPathType, validate_path};
@@ -219,4 +220,9 @@ pub fn json_scalar_functions() -> Vec<ScalarFunctionSet> {
     functions.push(json_value::value_function());
     functions.push(json_pretty::pretty_function());
     functions
+}
+
+/// `JSONFunctions::GetTableFunctions`.
+pub fn json_table_functions() -> Vec<TableFunctionSet> {
+    read_json::read_json_functions()
 }
