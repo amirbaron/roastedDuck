@@ -42,8 +42,8 @@ use crate::expression_executor::ExpressionExecutor;
 use crate::operator::{PhysicalRef, SinkData};
 use crate::operators::{
     AlterEntryAction, CatalogTableCreator, CreateIndexAction, CreateSchemaAction, CreateSequenceAction,
-    CreateViewAction, DdlAction, DropAction, InsertTarget, PhysicalCreateTable, PhysicalDdl, PhysicalDelete,
-    PhysicalInsert, PhysicalSeqScan, PhysicalUpdate, ScanExplainInfo,
+    CreateViewAction, DdlAction, DropAction, InsertTarget, PhysicalBatchInsert, PhysicalCreateTable,
+    PhysicalDdl, PhysicalDelete, PhysicalInsert, PhysicalSeqScan, PhysicalUpdate, ScanExplainInfo,
 };
 use crate::operators::{CreateEntryAction, PhysicalCreateType, PhysicalCrossProduct};
 use crate::operators::{CteData, PhysicalCte, PhysicalCteScan, PhysicalRecursiveCte};
@@ -97,6 +97,10 @@ pub struct PlanContext {
     /// The client for the rewrites DuckDB's planner makes when the optimizer is enabled
     /// (the ordered aggregates of DISTINCT ON); `None` with the optimizer disabled.
     pub optimizer_client: Option<Arc<rustdb_planner::ClientContext>>,
+    /// The `threads` setting, which decides whether inserts run in parallel.
+    pub threads: usize,
+    /// The `preserve_insertion_order` setting.
+    pub preserve_insertion_order: bool,
 }
 
 impl PlanContext {
@@ -325,13 +329,16 @@ impl PlanGenerator {
             &storage,
             &insert.bound_constraints,
         )?;
-        Ok(Arc::new(PhysicalInsert::new(
+        let parallel_ok =
+            !insert.return_chunk && !storage.has_indexes() && constraints.foreign_keys.is_empty();
+        Ok(insert_operator(
+            context,
             child,
             InsertTarget::Table(storage),
-            Arc::clone(&context.transaction),
             constraints,
             insert.return_chunk,
-        )))
+            parallel_ok,
+        ))
     }
 
     /// `DELETE`: the single expression references the row id column of the input.
@@ -985,16 +992,19 @@ impl PlanGenerator {
                     info: info.info,
                     io,
                 });
-                let transaction = Arc::clone(&context.transaction);
                 match children.next() {
-                    Some(query) => Arc::new(PhysicalInsert::new(
+                    Some(query) => insert_operator(
+                        context,
                         query,
                         InsertTarget::Create(creator),
-                        transaction,
                         TableConstraints::default(),
                         false,
+                        true,
+                    ),
+                    None => Arc::new(PhysicalCreateTable::new(
+                        creator,
+                        Arc::clone(&context.transaction),
                     )),
-                    None => Arc::new(PhysicalCreateTable::new(creator, transaction)),
                 }
             }
             LogicalKind::Create { operator_type, info } => {
@@ -1635,4 +1645,32 @@ fn plan_copy_to_file(copy: rustdb_planner::operator::LogicalCopyToFile, child: P
         copy.bind_data,
         options,
     ))
+}
+
+/// The insert DuckDB plans for `child` (`DuckCatalog::PlanInsert`, `PlanCreateTableAs`): a
+/// batch insert when the order must be kept and every source numbers its batches, a
+/// parallel insert when the order does not matter (and there are several threads), a
+/// serial one otherwise. `parallel_ok` is false for `RETURNING` and, unlike DuckDB, for
+/// tables with indexes or foreign keys, which always insert serially here.
+fn insert_operator(
+    context: &PlanContext,
+    child: PhysicalRef,
+    target: InsertTarget,
+    constraints: TableConstraints,
+    return_chunk: bool,
+    parallel_ok: bool,
+) -> PhysicalRef {
+    let transaction = Arc::clone(&context.transaction);
+    let parallel_streaming =
+        !order_preservation::preserve_insertion_order(child.as_ref(), context.preserve_insertion_order);
+    if parallel_ok
+        && !parallel_streaming
+        && order_preservation::use_batch_index(child.as_ref(), context.threads)
+    {
+        return Arc::new(PhysicalBatchInsert::new(child, target, transaction, constraints));
+    }
+    Arc::new(
+        PhysicalInsert::new(child, target, transaction, constraints, return_chunk)
+            .with_parallel(parallel_ok && parallel_streaming && context.threads > 1),
+    )
 }

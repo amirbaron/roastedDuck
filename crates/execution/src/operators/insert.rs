@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rustdb_common::{Error, Result};
-use rustdb_storage::{DataTable, TableConstraints, Transaction};
+use rustdb_storage::{DataTable, OptimisticCollection, TableConstraints, Transaction};
 use rustdb_types::{DataChunk, LogicalType};
 
 use super::modify::{ModifyResult, SharedAppend, count_types};
@@ -24,12 +24,25 @@ pub enum InsertTarget {
     Create(Arc<dyn TableCreator>),
 }
 
+impl InsertTarget {
+    /// The table, created by a `CREATE TABLE AS` target.
+    pub(crate) fn table(&self, transaction: &Transaction) -> Result<Option<Arc<DataTable>>> {
+        match self {
+            Self::Table(table) => Ok(Some(Arc::clone(table))),
+            Self::Create(creator) => creator.create(transaction),
+        }
+    }
+}
+
 /// Appends its input to a table's transaction-local storage (DuckDB's `PhysicalInsert`).
 ///
 /// The input holds one column per physical table column, in table order (defaults are
 /// computed by a projection below). Without `RETURNING` the operator returns the number
 /// of inserted rows as a BIGINT; with it, the inserted rows (a projection above computes
 /// the `RETURNING` expressions).
+///
+/// A parallel insert (whose input order does not matter) appends each thread's rows to a
+/// collection of its own and merges the collections into the local storage in `combine`.
 #[derive(Debug)]
 pub struct PhysicalInsert {
     types: Vec<LogicalType>,
@@ -41,6 +54,9 @@ pub struct PhysicalInsert {
     /// An append shared with other operators writing the same table (the actions of a
     /// MERGE), which must not run interleaved appends.
     shared_append: Option<SharedAppend>,
+    /// Whether threads append in parallel to collections of their own (DuckDB's
+    /// `parallel`).
+    parallel: bool,
 }
 
 impl PhysicalInsert {
@@ -64,6 +80,7 @@ impl PhysicalInsert {
             constraints,
             return_chunk,
             shared_append: None,
+            parallel: false,
         }
     }
 
@@ -71,13 +88,25 @@ impl PhysicalInsert {
     #[must_use]
     pub fn with_shared_append(mut self, append: SharedAppend) -> Self {
         self.shared_append = Some(append);
+        self.parallel = false;
+        self
+    }
+
+    /// Lets threads append in parallel. Only planned for inserts without `RETURNING`
+    /// into tables without indexes or foreign keys, whose input order does not matter.
+    #[must_use]
+    pub fn with_parallel(mut self, parallel: bool) -> Self {
+        self.parallel = parallel && !self.return_chunk && self.shared_append.is_none();
         self
     }
 }
 
 impl PhysicalOperator for PhysicalInsert {
     fn name(&self) -> &'static str {
-        "INSERT"
+        match self.target {
+            InsertTarget::Table(_) => "INSERT",
+            InsertTarget::Create(_) => "CREATE_TABLE_AS",
+        }
     }
     fn types(&self) -> &[LogicalType] {
         &self.types
@@ -91,6 +120,9 @@ impl PhysicalOperator for PhysicalInsert {
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
     }
+    fn parallel_sink(&self) -> bool {
+        self.parallel
+    }
 }
 
 /// The shared state of an insert: the table, one append into its local storage (DuckDB
@@ -100,19 +132,26 @@ pub struct InsertGlobal {
     table: Option<Arc<DataTable>>,
     append: SharedAppend,
     result: ModifyResult,
+    /// Serialises the merges of a parallel insert's threads (DuckDB's `lock`).
+    merge_lock: Mutex<()>,
+}
+
+/// A thread's rows of a parallel insert.
+#[derive(Debug, Default)]
+pub struct InsertLocal {
+    collection: Option<OptimisticCollection>,
 }
 
 impl Sink for PhysicalInsert {
     type Global = InsertGlobal;
-    type Local = ();
+    type Local = InsertLocal;
 
     fn global_sink_state(&self, _: &ExecutionContext) -> Result<Self::Global> {
-        let table = match &self.target {
-            InsertTarget::Table(table) => Some(Arc::clone(table)),
-            InsertTarget::Create(creator) => creator.create(&self.transaction)?,
-        };
+        let table = self.target.table(&self.transaction)?;
         let append = match (&self.shared_append, &table) {
             (Some(shared), _) => Arc::clone(shared),
+            // A parallel insert appends small collections with appends of their own.
+            (None, Some(_)) if self.parallel => SharedAppend::default(),
             (None, Some(table)) => Arc::new(Mutex::new(Some(
                 table.initialize_local_append(&self.transaction, self.constraints.clone())?,
             ))),
@@ -122,11 +161,12 @@ impl Sink for PhysicalInsert {
             table,
             append,
             result: ModifyResult::default(),
+            merge_lock: Mutex::new(()),
         })
     }
 
-    fn local_sink_state(&self, _: &ExecutionContext, _: &Self::Global) -> Result<()> {
-        Ok(())
+    fn local_sink_state(&self, _: &ExecutionContext, _: &Self::Global) -> Result<InsertLocal> {
+        Ok(InsertLocal::default())
     }
 
     fn sink(
@@ -134,11 +174,22 @@ impl Sink for PhysicalInsert {
         _: &ExecutionContext,
         chunk: &DataChunk,
         global: &Self::Global,
-        (): &mut (),
+        local: &mut InsertLocal,
     ) -> Result<SinkResult> {
         let Some(table) = &global.table else {
             return Ok(SinkResult::Finished);
         };
+        if self.parallel {
+            table.verify_append_constraints(&self.constraints, chunk)?;
+            let collection = match &mut local.collection {
+                Some(collection) => collection,
+                None => local
+                    .collection
+                    .insert(table.create_optimistic_collection(&self.transaction)?),
+            };
+            collection.append(chunk)?;
+            return Ok(SinkResult::NeedMoreInput);
+        }
         let mut append = global.append.lock().unwrap_or_else(PoisonError::into_inner);
         if append.is_none() {
             *append = Some(table.initialize_local_append(&self.transaction, self.constraints.clone())?);
@@ -154,8 +205,25 @@ impl Sink for PhysicalInsert {
         Ok(SinkResult::NeedMoreInput)
     }
 
-    fn combine(&self, _: &ExecutionContext, _: &Self::Global, (): ()) -> Result<()> {
-        Ok(())
+    fn combine(&self, _: &ExecutionContext, global: &Self::Global, local: InsertLocal) -> Result<()> {
+        let (Some(table), Some(mut collection)) = (&global.table, local.collection) else {
+            return Ok(());
+        };
+        collection.finalize();
+        let count = collection.total_rows();
+        let _merge = global.merge_lock.lock().unwrap_or_else(PoisonError::into_inner);
+        global.result.add_count(count);
+        if count < table.row_groups().row_group_size() {
+            // Few rows: append them to the local storage directly.
+            append_collections(
+                table,
+                &self.transaction,
+                &self.constraints,
+                std::iter::once(&collection),
+            )
+        } else {
+            table.local_merge(&self.transaction, &collection)
+        }
     }
 
     fn finalize(&self, _: &ExecutionContext, global: &mut Self::Global) -> Result<SinkFinalize> {
@@ -169,6 +237,26 @@ impl Sink for PhysicalInsert {
         }
         Ok(SinkFinalize::Ready)
     }
+}
+
+/// Appends the rows of `collections`, in order, to the local storage through one local
+/// append (`InitializeLocalAppend` ... `FinalizeLocalAppend`).
+pub(crate) fn append_collections<'a>(
+    table: &Arc<DataTable>,
+    transaction: &Transaction,
+    constraints: &TableConstraints,
+    collections: impl IntoIterator<Item = &'a OptimisticCollection>,
+) -> Result<()> {
+    let mut append = table.initialize_local_append(transaction, constraints.clone())?;
+    let mut appended = Ok(());
+    for collection in collections {
+        appended = table.local_append_collection(&mut append, collection);
+        if appended.is_err() {
+            break;
+        }
+    }
+    table.finalize_local_append(append);
+    appended
 }
 
 impl Source for PhysicalInsert {

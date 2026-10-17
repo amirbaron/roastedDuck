@@ -1618,6 +1618,8 @@ impl Connection {
             explain_output: self.settings.explain_output(),
             query: self.function_client.query(),
             optimizer_client,
+            threads: self.database.instance().env.threads(),
+            preserve_insertion_order,
         };
         let physical = create_physical_plan_with(plan, &context)?;
         // EXPLAIN ANALYZE profiles the run.

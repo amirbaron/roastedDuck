@@ -4,7 +4,7 @@ timed runs, its CPU time, the process's peak RSS, and a result check.
 usage: python3 -I scripts/perf/bench.py SUITE [--threads N] [--reps 5] [--queries a,b]
        [--engines duck,rust] [--out results.json] [--no-check] [--memory-limit X] [--dump DIR]
 SUITE: tpch1 | tpch3 | tpch10 (`tpchSF.duckdb`) | h2og (`h2o_g.duckdb`) | h2oj (`h2o_j.duckdb`)
-       | hits (`hits.duckdb`), in the data directory (`RUSTDB_PERF_DIR`, default
+       | hits (`hits.duckdb`) | any `NAME.duckdb` with one or more `--sql QUERY`, in the data directory (`RUSTDB_PERF_DIR`, default
        `.context/perf`); `scripts/perf/data.sh` creates them with DuckDB's CLI.
 
 Needs `cargo build --release -p rustdb-capi` (rustdb's `libduckdb`) and the reference tree
@@ -30,6 +30,7 @@ PERF = os.environ.get("RUSTDB_PERF_DIR", os.path.join(ROOT, ".context/perf"))
 REF = os.environ.get("DUCKDB_SRC", os.path.join(ROOT, ".context/duckdb-download/duckdb-1.5.6"))
 LIBS = {"duck": os.path.join(REF, "build/release/src/libduckdb.dylib"),
         "rust": os.environ.get("RUST_LIB", os.path.join(ROOT, "target/release/libduckdb.dylib"))}
+ADHOC = []
 CLIS = {"duck": os.path.join(REF, "build/release/duckdb"), "rust": os.path.join(ROOT, "target/release/rustdb")}
 
 
@@ -41,7 +42,7 @@ def one_line(sql):
 def suite_queries(suite):
     """[(name, db, sql, check_sql or None)]"""
     out = []
-    if suite.startswith("tpch"):
+    if suite.startswith("tpch") and not suite.endswith(".duckdb"):
         db = os.path.join(PERF, f"{suite}.duckdb")
         for i in range(1, 23):
             path = os.path.join(REF, "extension/tpch/dbgen/queries", f"q{i:02d}.sql")
@@ -58,6 +59,11 @@ def suite_queries(suite):
             check = re.search(r"^RESULT_QUERY=(.*)$", text, re.M).group(1).strip().rstrip(";")
             sql = one_line(open(os.path.join(base, "queries", f"q{m.group(1)}.sql")).read())
             out.append((f"q{m.group(1)}", db, sql, check))
+    elif suite.endswith(".duckdb"):
+        # Ad-hoc: SUITE is a database in the data directory, the queries come from --sql.
+        db = os.path.join(PERF, suite)
+        for i, sql in enumerate(ADHOC):
+            out.append((f"q{i + 1:02d}", db, one_line(sql), None))
     elif suite == "hits":
         db = os.path.join(PERF, "hits.duckdb")
         base = os.path.join(REF, "benchmark/clickbench/queries")
@@ -220,7 +226,9 @@ def main():
     p.add_argument("--out", default=None)
     p.add_argument("--no-check", action="store_true")
     p.add_argument("--dump", default=None, help="write each engine's checked result here")
+    p.add_argument("--sql", action="append", default=[], help="queries of an ad-hoc suite (SUITE = a .duckdb file)")
     a = p.parse_args()
+    ADHOC.extend(a.sql)
     engines = a.engines.split(",")
     queries = suite_queries(a.suite)
     if a.queries:

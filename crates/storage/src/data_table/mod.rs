@@ -1,8 +1,10 @@
 //! The storage of one table (DuckDB's `DataTable` and `DataTableInfo`).
 
 mod indexes;
+mod optimistic;
 
 pub use indexes::{BoundForeignKey, ForeignKeyKind};
+pub use optimistic::OptimisticCollection;
 
 use std::fmt;
 use std::sync::atomic::{AtomicU8, Ordering};
