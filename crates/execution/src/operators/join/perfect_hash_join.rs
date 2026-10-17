@@ -412,22 +412,28 @@ impl PerfectHashJoinExecutor {
             // Flat keys without NULLs, compared in their own type
             // (`TemplatedFillSelectionVectorProbe`).
             let words = self.bitmap_build_idx.words();
-            state.build_sel_vec.reserve(count);
-            state.probe_sel_vec.reserve(count);
+            // Written at every row, kept when found (DuckDB's selection vectors).
+            let start = state.probe_sel_vec.len();
+            state.build_sel_vec.resize(start + count, 0);
+            state.probe_sel_vec.resize(start + count, 0);
+            let build = &mut state.build_sel_vec[start..];
+            let probe = &mut state.probe_sel_vec[start..];
+            let mut found = 0;
             for (row, &value) in values.values[..count].iter().enumerate() {
-                if value < min || value > max {
-                    continue;
-                }
-                let index = value.offset_from(min);
-                if words.is_none_or(|words| {
-                    words
-                        .get(index / 64)
-                        .is_some_and(|word| word >> (index % 64) & 1 == 1)
-                }) {
-                    state.build_sel_vec.push(index as u32);
-                    state.probe_sel_vec.push(row as u32);
-                }
+                let in_range = value >= min && value <= max;
+                let index = if in_range { value.offset_from(min) } else { 0 };
+                let present = in_range
+                    && words.is_none_or(|words| {
+                        words
+                            .get(index / 64)
+                            .is_some_and(|word| word >> (index % 64) & 1 == 1)
+                    });
+                build[found] = index as u32;
+                probe[found] = row as u32;
+                found += usize::from(present);
             }
+            state.build_sel_vec.truncate(start + found);
+            state.probe_sel_vec.truncate(start + found);
             return;
         }
         for row in 0..count {

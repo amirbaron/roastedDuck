@@ -212,6 +212,14 @@ def geomean(xs):
     return math.exp(sum(math.log(x) for x in xs) / len(xs)) if xs else float("nan")
 
 
+def interpreter_rss():
+    """Peak RSS of the measuring process before it loads an engine (the Python
+    interpreter and ctypes), subtracted from both engines' peaks."""
+    code = "import ctypes, json, resource; print(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)"
+    out = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True).stdout
+    return int(out.strip() or 0)
+
+
 def main():
     if len(sys.argv) == 3 and sys.argv[1] == "--child":
         print(json.dumps(child(sys.argv[2], json.loads(sys.stdin.read()))))
@@ -235,7 +243,9 @@ def main():
         wanted = {q if q.startswith("q") else f"q{int(q):02d}" for q in a.queries.split(",")}
         queries = [q for q in queries if q[0] in wanted]
     both = len(engines) == 2
-    print(f"{a.suite} threads={a.threads} reps={a.reps}")
+    base = interpreter_rss()
+    print(f"{a.suite} threads={a.threads} reps={a.reps} (mem x: peak RSS above the interpreter's "
+          f"{base / 1e6:.0f} MB)")
     hdr = "q    " + "".join(f"| {e} wall     cpu   rssMB " for e in engines)
     if both:
         hdr += "| speed | cpu x | mem x | check"
@@ -255,7 +265,8 @@ def main():
             d, r = res["duck"], res["rust"]
             sp = d["wall"] / r["wall"]
             cp = d["cpu"] / max(r["cpu"], 1e-6)
-            line += f"| {sp:5.2f} | {cp:5.2f} | {r['rss'] / d['rss']:5.2f} "
+            mem = max(r["rss"] - base, 1) / max(d["rss"] - base, 1)
+            line += f"| {sp:5.2f} | {cp:5.2f} | {mem:5.2f} "
             if not a.no_check:
                 if same(d["result"], r["result"]):
                     line += "| ok"
@@ -269,7 +280,7 @@ def main():
                     os.makedirs(a.dump, exist_ok=True)
                     for e in engines:
                         open(os.path.join(a.dump, f"{a.suite}-{name}-{e}.txt"), "w").write(res[e]["result"])
-            res["speed"], res["mem"] = sp, r["rss"] / d["rss"]
+            res["speed"], res["mem"], res["mem_raw"] = sp, mem, r["rss"] / d["rss"]
         print(line, flush=True)
     if both:
         ok = [r for r in rows.values() if "speed" in r]
@@ -283,7 +294,8 @@ def main():
         for r in rows.values():
             for e in engines:
                 r[e].pop("result", None)
-        json.dump({"suite": a.suite, "threads": a.threads, "rows": rows}, open(a.out, "w"), indent=1)
+        json.dump({"suite": a.suite, "threads": a.threads, "interpreter_rss": base, "rows": rows},
+                  open(a.out, "w"), indent=1)
 
 
 main()

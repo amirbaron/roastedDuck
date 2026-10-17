@@ -1037,6 +1037,7 @@ impl ColumnData {
     }
 
     /// Scans the vector and keeps the rows of `sel` that pass `filter` (`Filter`).
+    #[allow(clippy::too_many_arguments)]
     pub fn filter(
         &self,
         transaction: TransactionData,
@@ -1045,6 +1046,7 @@ impl ColumnData {
         result: &mut Vector,
         sel: &mut Vec<u32>,
         filter: &TableFilter,
+        needs_values: bool,
     ) -> Result<()> {
         let count = self.vector_count(vector_index);
         if let Some(node) = self.codec_filter_segment(state, count, filter)? {
@@ -1058,7 +1060,7 @@ impl ColumnData {
                 return self.skip(state, count as u64);
             }
             Self::prepare_result(result, count);
-            if scan.filter(&node.node, start, count, result, sel, filter)? {
+            if scan.filter(&node.node, start, count, result, sel, filter, needs_values)? {
                 state.offset_in_column += count as u64;
                 if let (ColumnKind::Standard { validity }, Some(validity_state)) =
                     (&self.kind, state.child_states.first_mut())

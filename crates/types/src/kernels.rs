@@ -67,6 +67,11 @@ where
             for (out, &value) in out[..count].iter_mut().zip(&input.values[..count]) {
                 *out = f(value)?;
             }
+        } else if let crate::Sel::Indices(indices) = input.sel {
+            // A dictionary (e.g. a filtered scan): no per-row selection dispatch.
+            for (out, &slot) in out[..count].iter_mut().zip(&indices[..count]) {
+                *out = f(input.values[slot as usize])?;
+            }
         } else {
             for (row, out) in out[..count].iter_mut().enumerate() {
                 *out = f(input.values[input.slot(row)])?;
@@ -171,6 +176,42 @@ where
                 let l = lu.values[0];
                 for (out, &r) in out[..count].iter_mut().zip(&ru.values[..count]) {
                     *out = f(l, r)?;
+                }
+            }
+            // Dictionaries (e.g. filtered scans): no per-row selection dispatch.
+            (crate::Sel::Indices(left), crate::Sel::Indices(right)) => {
+                for ((out, &ls), &rs) in out[..count].iter_mut().zip(&left[..count]).zip(&right[..count]) {
+                    *out = f(lu.values[ls as usize], ru.values[rs as usize])?;
+                }
+            }
+            (crate::Sel::Indices(left), crate::Sel::Constant) => {
+                let r = ru.values[0];
+                for (out, &ls) in out[..count].iter_mut().zip(&left[..count]) {
+                    *out = f(lu.values[ls as usize], r)?;
+                }
+            }
+            (crate::Sel::Constant, crate::Sel::Indices(right)) => {
+                let l = lu.values[0];
+                for (out, &rs) in out[..count].iter_mut().zip(&right[..count]) {
+                    *out = f(l, ru.values[rs as usize])?;
+                }
+            }
+            (crate::Sel::Indices(left), crate::Sel::Identity) => {
+                for ((out, &ls), &r) in out[..count]
+                    .iter_mut()
+                    .zip(&left[..count])
+                    .zip(&ru.values[..count])
+                {
+                    *out = f(lu.values[ls as usize], r)?;
+                }
+            }
+            (crate::Sel::Identity, crate::Sel::Indices(right)) => {
+                for ((out, &l), &rs) in out[..count]
+                    .iter_mut()
+                    .zip(&lu.values[..count])
+                    .zip(&right[..count])
+                {
+                    *out = f(l, ru.values[rs as usize])?;
                 }
             }
             _ => {

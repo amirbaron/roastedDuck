@@ -398,6 +398,7 @@ impl RowGroup {
                         vector,
                         &mut sel,
                         &entry.filter,
+                        !filters.is_filter_only(index),
                     )?;
                 }
             }

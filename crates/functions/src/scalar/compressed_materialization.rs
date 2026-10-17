@@ -191,12 +191,11 @@ fn compress_string(input: &[u8], size: usize) -> u128 {
     if size == 1 {
         return input.first().map_or(0, |&first| 1 + u128::from(first));
     }
+    // The first `size - 1` bytes, most significant first, above the length byte.
     let mut bytes = [0u8; 16];
-    for (i, &byte) in input.iter().take(size).enumerate() {
-        bytes[size - 1 - i] = byte;
-    }
-    bytes[0] = input.len() as u8;
-    u128::from_le_bytes(bytes)
+    let prefix = input.len().min(size - 1);
+    bytes[..prefix].copy_from_slice(&input[..prefix]);
+    (u128::from_be_bytes(bytes) >> (8 * (16 - size))) | u128::from(input.len() as u8)
 }
 
 /// `StringDecompress` (and `MiniStringDecompress`).
@@ -326,6 +325,27 @@ pub fn compressed_materialization_functions() -> Vec<ScalarFunctionSet> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compress_string_matches_the_byte_by_byte_layout() {
+        for size in [2usize, 4, 8, 16] {
+            for input in [&b""[..], b"a", b"ab", b"abcdefg", b"abcdefghijklmnopqrstu"] {
+                if input.len() >= size {
+                    continue;
+                }
+                let mut bytes = [0u8; 16];
+                for (i, &byte) in input.iter().take(size).enumerate() {
+                    bytes[size - 1 - i] = byte;
+                }
+                bytes[0] = input.len() as u8;
+                assert_eq!(
+                    compress_string(input, size),
+                    u128::from_le_bytes(bytes),
+                    "{size} {input:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn strings_round_trip_and_order() {

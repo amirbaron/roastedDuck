@@ -467,6 +467,11 @@ impl ColumnSegment {
                 "ColumnSegment::FetchRow - row_id out of range for segment",
             ));
         }
+        // Rows fetched by id (late materialisation, index lookups) are read a few at a
+        // time and again by later queries: their blocks stay cached like DuckDB's.
+        if let Some(block) = &self.block {
+            block.keep_cached();
+        }
         match self.compression {
             CompressionType::Constant | CompressionType::Empty => {
                 constant::scan(self, 1, result, result_index)

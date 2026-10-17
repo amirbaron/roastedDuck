@@ -788,8 +788,10 @@ fn compress_chunk(
 #[derive(Clone, Debug)]
 pub(crate) struct FsstDecoder {
     zero_terminated: bool,
-    len: [u8; 255],
-    symbol: [u64; 255],
+    /// Indexed by code; 256 entries (code 255, the escape, is never looked up) so that a
+    /// `u8` index needs no bounds check. Every length is 1..=8.
+    len: [u8; 256],
+    symbol: [u64; 256],
 }
 
 /// `FSST_CORRUPT`: "corrupt" in little endian, the symbol of unused codes.
@@ -809,8 +811,8 @@ impl FsstDecoder {
         len_histo.copy_from_slice(buf.get(9..17)?);
         let mut decoder = Self {
             zero_terminated,
-            len: [8; 255],
-            symbol: [FSST_CORRUPT; 255],
+            len: [8; 256],
+            symbol: [FSST_CORRUPT; 256],
         };
         decoder.len[0] = 1;
         decoder.symbol[0] = 0;
@@ -849,9 +851,26 @@ impl FsstDecoder {
         // A code decodes to at most 8 bytes; the last word written may extend 8 bytes past
         // the decoded end.
         out.reserve(input.len() * 8 + 8);
-        let base = out.spare_capacity_mut().as_mut_ptr().cast::<u8>();
+        // SAFETY: the reserve above leaves `input.len() * 8 + 8` spare bytes at `start`.
+        let written = unsafe { self.decompress_to(input, out.as_mut_ptr().add(start)) };
+        // SAFETY: `decompress_to` initialised `written` bytes after `start`.
+        unsafe { out.set_len(start + written) };
+    }
+
+    /// [`FsstDecoder::decompress_into`] without the capacity check: decodes `input` to
+    /// `out` and returns the decoded length.
+    ///
+    /// # Safety
+    /// `out` must be valid for writes of `input.len() * 8 + 8` bytes.
+    #[inline]
+    pub(crate) unsafe fn decompress_to(&self, input: &[u8], out: *mut u8) -> usize {
         let mut written = 0;
         let mut pos = 0;
+        let store = |at: usize, symbol: u64| {
+            // SAFETY: every code advances `written` by at most 8 (lengths are 1..=8), so
+            // `at + 8 <= input.len() * 8 + 8`, within `out` (the caller's contract).
+            unsafe { out.add(at).cast::<u64>().write_unaligned(symbol.to_le()) };
+        };
         loop {
             // Four codes at a time while none of them is an escape (`fsst_decompress`'s
             // unrolled loop with its `escapeMask` test, which flags 0xFF bytes).
@@ -864,13 +883,8 @@ impl FsstDecoder {
                 }
                 for &code in block {
                     let index = usize::from(code);
-                    // SAFETY: as below: `written + 8` stays within the reserved spare bytes.
-                    unsafe {
-                        base.add(written)
-                            .cast::<u64>()
-                            .write_unaligned(self.symbol[index].to_le());
-                    }
-                    written += usize::from(self.len[index]).min(8);
+                    store(written, self.symbol[index]);
+                    written += usize::from(self.len[index]);
                 }
                 pos += 4;
             }
@@ -882,28 +896,20 @@ impl FsstDecoder {
             pos += 1;
             if code < FSST_ESC {
                 let index = usize::from(code);
-                // SAFETY: the reserve above leaves `input.len() * 8 + 8` spare bytes; every
-                // code advances `written` by at most 8, so `written + 8` stays within them.
-                unsafe {
-                    base.add(written)
-                        .cast::<u64>()
-                        .write_unaligned(self.symbol[index].to_le());
-                }
-                written += usize::from(self.len[index]).min(8);
+                store(written, self.symbol[index]);
+                written += usize::from(self.len[index]);
             } else {
                 // An escaped literal byte (a truncated escape decodes to nothing).
                 if let Some(&byte) = input.get(pos) {
-                    // SAFETY: as above, `written < input.len() * 8 + 8`.
-                    unsafe { base.add(written).write(byte) };
+                    // SAFETY: as in `store`, `written < input.len() * 8 + 8`.
+                    unsafe { out.add(written).write(byte) };
                     written += 1;
                 }
                 pos += 1;
             }
         }
         let _ = self.zero_terminated;
-        // SAFETY: every byte in `start..start + written` was written above (each symbol
-        // writes 8 bytes and advances by at most 8), and the capacity covers it.
-        unsafe { out.set_len(start + written) };
+        written
     }
 
     /// Decompresses `input` into a fresh buffer.

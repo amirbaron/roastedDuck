@@ -173,8 +173,11 @@ pub trait SegmentScan: fmt::Debug + Send + Sync {
     /// Scans rows `start..start + count` like [`SegmentScan::scan`] (into row 0 of
     /// `result`) while keeping only the rows of `sel` whose stored value passes `filter`
     /// (DuckDB's `CompressionFunction::filter`); rows dropped from `sel` need not be
-    /// written. Returns `false`, doing nothing, if the codec cannot do this better than
-    /// a scan followed by the filter. `filter` rejects NULLs; the caller drops NULL rows.
+    /// written, and without `needs_values` (a column scanned for its filter only) no row
+    /// needs to be. Returns `false`, doing nothing, if the codec cannot do this better
+    /// than a scan followed by the filter. `filter` rejects NULLs; the caller drops NULL
+    /// rows.
+    #[allow(clippy::too_many_arguments, reason = "DuckDB's filter function signature")]
     fn filter(
         &mut self,
         segment: &ColumnSegment,
@@ -183,8 +186,9 @@ pub trait SegmentScan: fmt::Debug + Send + Sync {
         result: &mut Vector,
         sel: &mut Vec<u32>,
         filter: &TableFilter,
+        needs_values: bool,
     ) -> Result<bool> {
-        let _ = (segment, start, count, result, sel, filter);
+        let _ = (segment, start, count, result, sel, filter, needs_values);
         Ok(false)
     }
 }
@@ -278,6 +282,7 @@ impl<S: CodecScan> SegmentScan for Sequential<S> {
         result: &mut Vector,
         sel: &mut Vec<u32>,
         filter: &TableFilter,
+        _needs_values: bool,
     ) -> Result<bool> {
         // Only for a selection of every row (the first filter of a vector).
         if !S::FILTERS || sel.len() != count {

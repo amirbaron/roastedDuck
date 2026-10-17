@@ -314,6 +314,7 @@ impl Source for PhysicalSeqScan {
     fn local_source_state(&self, _: &ExecutionContext, global: &Self::Global) -> Result<Self::Local> {
         let mut state = TableScanState::default();
         state.initialize(self.column_ids.clone(), global.filters.as_ref());
+        state.set_projection(&self.projection);
         if let Some((sample_rate, seed)) = self.sampling {
             // DuckDB seeds the committed data's engine only.
             let table_random = seed.map_or_else(RandomEngine::default, RandomEngine::new);

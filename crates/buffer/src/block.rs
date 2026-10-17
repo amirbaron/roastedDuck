@@ -405,6 +405,11 @@ impl BlockHandle {
         }
     }
 
+    /// Undoes [`BlockHandle::release_on_unpin`]: the block stays cached when unpinned.
+    pub fn keep_cached(&self) {
+        self.memory.release_on_unpin.store(false, Ordering::Relaxed);
+    }
+
     pub fn tag(&self) -> MemoryTag {
         self.memory.tag()
     }

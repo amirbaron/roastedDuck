@@ -23,6 +23,8 @@ use crate::checkpoint::column_checkpointer::{FinishedSegment, SegmentSink};
 use crate::statistics::BaseStatistics;
 use crate::table::ColumnSegment;
 use crate::table::column_segment::PersistentData;
+use crate::table_filter::TableFilter;
+use rustdb_types::compare::CompareOp;
 
 /// The size of `fsst_compression_header_t`.
 pub(crate) const FSST_HEADER_SIZE: usize = 16;
@@ -93,6 +95,56 @@ impl SegmentScan for FsstScanState {
     ) -> Result<bool> {
         self.scan_rows(start, count, result, 0, Some(sel))?;
         Ok(true)
+    }
+
+    /// `= ''` and `<> ''` are decided by the compressed lengths alone (an empty string,
+    /// and only an empty string, has no codes), so only the selected strings are decoded.
+    /// rustdb-specific: DuckDB decompresses every string to compare it.
+    fn filter(
+        &mut self,
+        _segment: &ColumnSegment,
+        start: usize,
+        count: usize,
+        result: &mut Vector,
+        sel: &mut Vec<u32>,
+        filter: &TableFilter,
+        needs_values: bool,
+    ) -> Result<bool> {
+        let TableFilter::ConstantComparison { op, constant } = filter else {
+            return Ok(false);
+        };
+        let want_empty = match op {
+            CompareOp::Equal => true,
+            CompareOp::NotEqual => false,
+            _ => return Ok(false),
+        };
+        if sel.len() != count || constant.as_bytes() != Some(&b""[..]) {
+            return Ok(false);
+        }
+        let alignment = start % GROUP_SIZE;
+        let total = round_up_to_group(alignment + count);
+        let mut lengths = std::mem::take(&mut self.lengths);
+        lengths.resize(total, 0);
+        let src_offset = FSST_HEADER_SIZE + (start - alignment) * self.width as usize / 8;
+        let src = self.data.bytes().get(src_offset..).unwrap_or(&[]);
+        unpack_buffer_u32(src, total, self.width, &mut lengths);
+        sel.clear();
+        sel.extend(
+            lengths[alignment..alignment + count]
+                .iter()
+                .enumerate()
+                .filter(|&(_, &length)| (length == 0) == want_empty)
+                .map(|(row, _)| row as u32),
+        );
+        self.lengths = lengths;
+        if !needs_values {
+            // The strings themselves are not needed: nothing to decode.
+            return Ok(true);
+        }
+        let selected = std::mem::take(sel);
+        let scanned = self.scan_rows(start, count, result, 0, Some(&selected));
+        *sel = selected;
+        scanned.map(|()| true)
     }
 }
 
@@ -165,7 +217,11 @@ impl FsstScanState {
                 .get(position..position + length as usize)
                 .ok_or_else(|| corrupt("FSST string out of range - corrupt database file"))?;
             let begin = decoded.len();
-            decoder.decompress_into(compressed, &mut decoded);
+            // SAFETY: `decoded` has room for `compressed.len() * 8 + 8` more bytes: its
+            // capacity covers 8 bytes per compressed byte of every selected string, plus 8.
+            let length = unsafe { decoder.decompress_to(compressed, decoded.as_mut_ptr().add(begin)) };
+            // SAFETY: `decompress_to` initialised those `length` bytes.
+            unsafe { decoded.set_len(begin + length) };
             let string = &decoded[begin..];
             if string.len() <= StringT::INLINE_LENGTH {
                 *slot = StringT::inline(string);

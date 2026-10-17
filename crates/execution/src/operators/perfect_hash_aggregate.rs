@@ -281,6 +281,34 @@ fn compute_group_location(
     macro_rules! location {
         ($native:ty) => {{
             let values = group.unified::<$native>();
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "UnsafeNumericCast"
+            )]
+            let location = |value: $native| ((i128::from(value) - min + 1) as u64) << shift;
+            if values.validity.is_all_valid() {
+                // Without NULLs: the selection resolved outside the loop.
+                match values.sel {
+                    rustdb_types::Sel::Identity => {
+                        for (slot, &value) in slots[..count].iter_mut().zip(&values.values[..count]) {
+                            *slot += location(value);
+                        }
+                    }
+                    rustdb_types::Sel::Indices(indices) => {
+                        for (slot, &index) in slots[..count].iter_mut().zip(&indices[..count]) {
+                            *slot += location(values.values[index as usize]);
+                        }
+                    }
+                    rustdb_types::Sel::Constant => {
+                        let constant = location(values.values[0]);
+                        for slot in &mut slots[..count] {
+                            *slot += constant;
+                        }
+                    }
+                }
+                return Ok(());
+            }
             for (row, slot) in slots.iter_mut().enumerate().take(count) {
                 if let Some(value) = values.get(row) {
                     #[allow(
