@@ -100,6 +100,28 @@ impl<A: UnaryAggregate> AggregateOps for Unary<A> {
             }
             return Ok(());
         }
+        if let (Sel::Identity, Some(words)) = (values.sel, values.validity.words()) {
+            // Flat with NULLs: 64 rows per validity word (`UnaryScatterLoop` with
+            // `ValidityMask::GetValidityEntry`); all-valid and all-NULL words skip the
+            // per-row checks.
+            for (block, (states, rows)) in states
+                .chunks(64)
+                .zip(values.values[..count].chunks(64))
+                .enumerate()
+            {
+                let word = words.get(block).copied().unwrap_or(u64::MAX);
+                if word == 0 {
+                    continue;
+                }
+                for (bit, (&state, &value)) in states.iter().zip(rows).enumerate() {
+                    if word == u64::MAX || word >> bit & 1 == 1 {
+                        // SAFETY: per the trait contract each state is initialised and exclusive.
+                        A::update(unsafe { state_mut(state) }, value)?;
+                    }
+                }
+            }
+            return Ok(());
+        }
         for (row, &state) in states.iter().enumerate() {
             if let Some(value) = values.get(row) {
                 // SAFETY: per the trait contract each state is initialised and exclusive.
@@ -134,6 +156,24 @@ impl<A: UnaryAggregate> AggregateOps for Unary<A> {
             } else {
                 for row in 0..count {
                     A::update(state, values.values[values.slot(row)])?;
+                }
+            }
+            return Ok(());
+        }
+        if let (Sel::Identity, Some(words)) = (values.sel, values.validity.words()) {
+            // Flat with NULLs: 64 rows per validity word.
+            for (block, rows) in values.values[..count].chunks(64).enumerate() {
+                let word = words.get(block).copied().unwrap_or(u64::MAX);
+                if word == u64::MAX {
+                    for &value in rows {
+                        A::update(state, value)?;
+                    }
+                } else if word != 0 {
+                    for (bit, &value) in rows.iter().enumerate() {
+                        if word >> bit & 1 == 1 {
+                            A::update(state, value)?;
+                        }
+                    }
                 }
             }
             return Ok(());

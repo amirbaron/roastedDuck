@@ -24,22 +24,41 @@ trait PerfectKey: NativeType + PartialOrd {
     /// The key as a 128-bit signed integer, or `None` if it does not fit
     /// (`ExtractNumericValue`).
     fn to_i128(self) -> Option<i128>;
+    /// `value` as this type, if it fits.
+    fn from_i128(value: i128) -> Option<Self>;
+    /// `self - min` for `self >= min`, as a slot.
+    fn offset_from(self, min: Self) -> usize;
 }
 
 macro_rules! perfect_keys {
-    ($($ty:ty),*) => {
+    ($($ty:ty => $unsigned:ty),*) => {
         $(
             impl PerfectKey for $ty {
                 #[inline]
                 fn to_i128(self) -> Option<i128> {
                     i128::try_from(self).ok()
                 }
+
+                #[inline]
+                fn from_i128(value: i128) -> Option<Self> {
+                    Self::try_from(value).ok()
+                }
+
+                #[inline]
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "slots are below the build range")]
+                fn offset_from(self, min: Self) -> usize {
+                    // The difference fits the unsigned type of the same width.
+                    self.wrapping_sub(min) as $unsigned as usize
+                }
             }
         )*
     };
 }
 
-perfect_keys!(i8, i16, i32, i64, i128, u8, u16, u32, u64, u128);
+perfect_keys!(
+    i8 => u8, i16 => u16, i32 => u32, i64 => u64, i128 => u128,
+    u8 => u8, u16 => u16, u32 => u32, u64 => u64, u128 => u128
+);
 
 /// Calls `$body` with `$ty` bound to the native type of the integer physical type
 /// `$physical`, or evaluates `$otherwise` for other types.
@@ -284,10 +303,19 @@ impl PerfectHashJoinExecutor {
             unsafe { ht.gather_output_column(&tuples, key_count, index, &mut vector, &sel_build)? };
             // Empty slots are NULL, so that the emitted dictionaries make sense.
             if !self.is_build_dense {
-                let validity = vector.validity_mut();
-                for slot in (0..build_size).filter(|&slot| !self.bitmap_build_idx.is_valid(slot)) {
-                    validity.set_invalid(slot, build_size);
+                // AND the slot bitmap into the gathered validity, a word at a time.
+                let word_count = build_size.div_ceil(64);
+                let mut words = vector
+                    .validity()
+                    .words()
+                    .map_or_else(|| vec![u64::MAX; word_count], <[u64]>::to_vec);
+                words.resize(word_count, u64::MAX);
+                if let Some(slots) = self.bitmap_build_idx.words() {
+                    for (word, &slot_word) in words.iter_mut().zip(slots) {
+                        *word &= slot_word;
+                    }
                 }
+                vector.set_validity(ValidityMask::from_words(words));
             }
             self.perfect_hash_table.push(vector);
         }
@@ -374,6 +402,34 @@ impl PerfectHashJoinExecutor {
     ) {
         let values = key.unified::<T>();
         let all_valid = values.validity.is_all_valid();
+        let bounds = T::from_i128(self.build_min).zip(
+            i128::try_from(self.build_range)
+                .ok()
+                .and_then(|range| self.build_min.checked_add(range))
+                .and_then(T::from_i128),
+        );
+        if let (Some((min, max)), true, rustdb_types::Sel::Identity) = (bounds, all_valid, values.sel) {
+            // Flat keys without NULLs, compared in their own type
+            // (`TemplatedFillSelectionVectorProbe`).
+            let words = self.bitmap_build_idx.words();
+            state.build_sel_vec.reserve(count);
+            state.probe_sel_vec.reserve(count);
+            for (row, &value) in values.values[..count].iter().enumerate() {
+                if value < min || value > max {
+                    continue;
+                }
+                let index = value.offset_from(min);
+                if words.is_none_or(|words| {
+                    words
+                        .get(index / 64)
+                        .is_some_and(|word| word >> (index % 64) & 1 == 1)
+                }) {
+                    state.build_sel_vec.push(index as u32);
+                    state.probe_sel_vec.push(row as u32);
+                }
+            }
+            return;
+        }
         for row in 0..count {
             let slot = values.slot(row);
             if !all_valid && !values.validity.is_valid(slot) {
