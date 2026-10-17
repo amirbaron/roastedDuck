@@ -131,6 +131,9 @@ impl PhysicalOperator for PhysicalTableScan {
                 .collect();
             result.insert("Filters".to_owned(), info.join("\n"));
         }
+        for (key, value) in &self.explain.file_filters {
+            result.insert(key.clone(), value.clone());
+        }
         crate::operator::set_estimated_cardinality(&mut result, estimated_cardinality);
         result
     }

@@ -152,6 +152,33 @@ pub struct LogicalGet {
     pub dynamic_filters: Option<Arc<rustdb_storage::table_filter::DynamicTableFilterSet>>,
     /// SYSTEM sampling pushed into the scan (DuckDB's `extra_info.sample_options`).
     pub sample_options: Option<Box<rustdb_ast::SampleOptions>>,
+    /// The filters that pruned the scanned files, for `EXPLAIN` (the rest of DuckDB's
+    /// `ExtraOperatorInfo`).
+    pub file_filters: FileFilterInfo,
+}
+
+/// The file filters of a scan (DuckDB's `ExtraOperatorInfo::file_filters`, `total_files`
+/// and `filtered_files`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FileFilterInfo {
+    /// The filters that pruned a file, concatenated.
+    pub filters: String,
+    pub total_files: Option<u64>,
+    pub filtered_files: Option<u64>,
+}
+
+impl FileFilterInfo {
+    /// The `EXPLAIN` entries: `File Filters` and `Scanning Files`.
+    pub fn explain_params(&self) -> Vec<(String, String)> {
+        if self.filters.is_empty() {
+            return Vec::new();
+        }
+        let mut result = vec![("File Filters".to_owned(), self.filters.clone())];
+        if let (Some(filtered), Some(total)) = (self.filtered_files, self.total_files) {
+            result.push(("Scanning Files".to_owned(), format!("{filtered}/{total}")));
+        }
+        result
+    }
 }
 
 /// The output bindings of INSERT/DELETE/UPDATE: the table's columns with `RETURNING`, the

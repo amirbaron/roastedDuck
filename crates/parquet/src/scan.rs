@@ -153,8 +153,31 @@ fn read_parquet_partition_stats(
     let Some(data) = bind_data.and_then(|data| data.as_any().downcast_ref::<ParquetBindData>()) else {
         return Vec::new();
     };
-    if data.files.expand_result() != FileExpandResult::SingleFile {
-        return Vec::new();
+    if data.files.expand_result() != FileExpandResult::SingleFile
+        || data
+            .initial_reader
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_none()
+    {
+        // `TryLoadCaches`: the row counts of every file from the metadata cache.
+        let Some(cache) = &data.options.metadata_cache else {
+            return Vec::new();
+        };
+        let mut result = Vec::new();
+        for path in &data.files.files {
+            let Some(entry) = crate::reader::CachedMetadata::lookup(cache, path) else {
+                return Vec::new();
+            };
+            result.extend(entry.metadata.row_groups.iter().map(|group| {
+                rustdb_function::PartitionStatistics {
+                    count: group.num_rows.max(0) as u64,
+                    exact: true,
+                    row_group: None,
+                }
+            }));
+        }
+        return result;
     }
     let Some(reader) = data
         .initial_reader
@@ -238,8 +261,37 @@ impl FunctionData for ParquetBindData {
 }
 
 impl ParquetBindData {
+    /// A copy that scans only the files at positions `keep` (`PruneReaders`).
+    fn with_files(&self, keep: &[usize]) -> Self {
+        let files: Vec<String> = keep
+            .iter()
+            .filter_map(|&index| self.files.files.get(index).cloned())
+            .collect();
+        let mut result = self.with_filters_opt(self.filters.clone());
+        result
+            .union_readers
+            .retain(|reader| files.iter().any(|file| file == reader.file_name()));
+        let initial = result
+            .initial_reader
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner);
+        if initial
+            .as_ref()
+            .is_some_and(|reader| !files.iter().any(|file| file == reader.file_name()))
+        {
+            *initial = None;
+        }
+        result.files = FileList { files };
+        result
+    }
+
     /// A copy that applies `filters` (`MultiFileFunction` with pushed-down table filters).
     fn with_filters(&self, filters: TableFilterSet) -> Self {
+        self.with_filters_opt(Some(Arc::new(filters)))
+    }
+
+    /// A copy with the pushed-down table filters `filters`.
+    fn with_filters_opt(&self, filters: Option<Arc<TableFilterSet>>) -> Self {
         Self {
             files: self.files.clone(),
             names: self.names.clone(),
@@ -257,7 +309,7 @@ impl ParquetBindData {
             union_readers: self.union_readers.clone(),
             table_columns: self.table_columns.clone(),
             casts: Arc::clone(&self.casts),
-            filters: Some(Arc::new(filters)),
+            filters,
             initial_file_cardinality: self.initial_file_cardinality,
         }
     }
@@ -443,6 +495,12 @@ fn read_parquet_bind(
     let mut options = ParquetOptions {
         binary_as_string: setting_bool(context, "binary_as_string"),
         geoparquet_conversion: setting_bool(context, "enable_geoparquet_conversion"),
+        // `ParquetReader::MetadataCacheEnabled`.
+        metadata_cache: if setting_bool(context, "parquet_metadata_cache") {
+            context.function_client.object_cache()
+        } else {
+            None
+        },
         // `ShouldAndCanPrefetch`: local files only with `prefetch_all_parquet_files`.
         prefetch: setting_bool(context, "prefetch_all_parquet_files")
             && !setting_bool(context, "disable_parquet_prefetching"),
@@ -1100,6 +1158,30 @@ fn read_parquet_parallel_scan(
     }
 }
 
+/// The file filter pushdown of `read_parquet` (`MultiFileComplexFilterPushdown`).
+pub(crate) fn read_parquet_file_filter_pushdown() -> rustdb_function::FileFilterPushdown {
+    rustdb_function::FileFilterPushdown {
+        files: Arc::new(|bind_data| {
+            let data = bind_data.as_any().downcast_ref::<ParquetBindData>()?;
+            (data.file_options.hive_partitioning || data.file_options.filename)
+                .then(|| data.files.files.clone())
+        }),
+        known_value: Arc::new(|bind_data, path, name, ty| {
+            let Some(data) = bind_data.as_any().downcast_ref::<ParquetBindData>() else {
+                return Ok(None);
+            };
+            rustdb_csv::multi_file::known_column_value(&data.file_options, &data.casts, path, name, ty)
+        }),
+        with_files: Arc::new(|bind_data, keep| {
+            let data = bind_data
+                .as_any()
+                .downcast_ref::<ParquetBindData>()
+                .ok_or_else(|| Error::internal("read_parquet file pruning without bind data"))?;
+            Ok(Arc::new(data.with_files(keep)) as Arc<dyn FunctionData>)
+        }),
+    }
+}
+
 /// The `read_parquet` scan by several threads (`MultiFileFunction` with
 /// `ParquetScanMaxThreads` / `ParquetScanGetBatchIndex`).
 fn read_parquet_parallel() -> ParallelTableScan {
@@ -1270,6 +1352,7 @@ fn read_parquet_function(name: &'static str, argument: LogicalType) -> TableFunc
     function.get_partition_stats = Some(Arc::new(read_parquet_partition_stats));
     function.projected_output = true;
     function.parallel_scan = Some(read_parquet_parallel());
+    function.file_filter_pushdown = Some(read_parquet_file_filter_pushdown());
     function
 }
 

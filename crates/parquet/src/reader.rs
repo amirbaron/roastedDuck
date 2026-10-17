@@ -34,9 +34,31 @@ pub struct ParquetReader {
 }
 
 impl ParquetReader {
-    /// Opens `path` and parses its footer and schema (`ParquetReader::ParquetReader`).
+    /// Opens `path` and parses its footer and schema (`ParquetReader::ParquetReader`);
+    /// with a metadata cache, a cached footer of the unchanged file is reused.
     pub fn open(path: &str, options: ParquetOptions) -> Result<Self> {
         let file = Arc::new(ParquetFile::open(path)?);
+        if let Some(cache) = &options.metadata_cache {
+            let key = CachedMetadata::key(path);
+            if let Some(entry) = cache.get::<CachedMetadata>(&key)
+                && entry.is_valid(file.size(), file.modified())
+            {
+                let metadata = Arc::clone(&entry.metadata);
+                return Self::from_metadata(file, metadata, entry.footer_len, options);
+            }
+            let loaded = load_metadata(&file)?;
+            let metadata = Arc::new(loaded.metadata);
+            cache.put(
+                key,
+                Arc::new(CachedMetadata {
+                    metadata: Arc::clone(&metadata),
+                    footer_len: loaded.footer_len,
+                    size: file.size(),
+                    modified: file.modified(),
+                }),
+            );
+            return Self::from_metadata(file, metadata, loaded.footer_len, options);
+        }
         let loaded = load_metadata(&file)?;
         Self::from_metadata(file, Arc::new(loaded.metadata), loaded.footer_len, options)
     }
@@ -230,6 +252,37 @@ impl ParquetReader {
             defines: vec![0; STANDARD_VECTOR_SIZE],
             repeats: vec![0; STANDARD_VECTOR_SIZE],
         })
+    }
+}
+
+/// A footer in the metadata cache (`ParquetFileMetadataCache`), with what identifies the
+/// file version it was read from.
+#[derive(Debug)]
+pub struct CachedMetadata {
+    pub metadata: Arc<FileMetaData>,
+    footer_len: u32,
+    size: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+impl CachedMetadata {
+    /// The object cache key of the footer of `path` (`GetWithTypePrefix`).
+    pub fn key(path: &str) -> String {
+        format!("parquet_metadata{path}")
+    }
+
+    /// Whether the cached footer is that of the file as it is now (`IsValid`).
+    pub fn is_valid(&self, size: u64, modified: Option<std::time::SystemTime>) -> bool {
+        self.size == size && self.modified.is_some() && self.modified == modified
+    }
+
+    /// The cached footer of `path`, if the file has not changed since (`TryLoadCaches`).
+    pub fn lookup(cache: &rustdb_function::ObjectCache, path: &str) -> Option<Arc<Self>> {
+        let entry = cache.get::<Self>(&Self::key(path))?;
+        let metadata = std::fs::metadata(path).ok()?;
+        entry
+            .is_valid(metadata.len(), metadata.modified().ok())
+            .then_some(entry)
     }
 }
 

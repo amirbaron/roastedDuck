@@ -13,6 +13,8 @@ pub struct ParquetFile {
     path: String,
     file: File,
     size: u64,
+    /// The last modification time, if known.
+    modified: Option<std::time::SystemTime>,
 }
 
 fn io_error(message: String) -> Error {
@@ -40,6 +42,7 @@ impl ParquetFile {
             path: path.to_owned(),
             file,
             size: metadata.len(),
+            modified: metadata.modified().ok(),
         })
     }
 
@@ -49,6 +52,10 @@ impl ParquetFile {
 
     pub fn size(&self) -> u64 {
         self.size
+    }
+
+    pub fn modified(&self) -> Option<std::time::SystemTime> {
+        self.modified
     }
 
     /// Fills `buffer` from offset `offset`.

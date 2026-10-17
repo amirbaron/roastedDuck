@@ -33,6 +33,40 @@ pub trait SettingsSource: Send + Sync + std::fmt::Debug {
     fn settings(&self) -> Vec<SettingInfo>;
 }
 
+/// Objects a database keeps for its lifetime, by key (DuckDB's `ObjectCache`), such as
+/// the parsed footers of Parquet files.
+#[derive(Default)]
+pub struct ObjectCache {
+    entries: Mutex<std::collections::HashMap<String, Arc<dyn std::any::Any + Send + Sync>>>,
+}
+
+impl std::fmt::Debug for ObjectCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ObjectCache").finish_non_exhaustive()
+    }
+}
+
+impl ObjectCache {
+    /// The object stored under `key`, if it has type `T`.
+    pub fn get<T: Send + Sync + 'static>(&self, key: &str) -> Option<Arc<T>> {
+        let entry = self
+            .entries
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(key)
+            .cloned()?;
+        entry.downcast::<T>().ok()
+    }
+
+    /// Stores `value` under `key`, replacing what was there.
+    pub fn put<T: Send + Sync + 'static>(&self, key: String, value: Arc<T>) {
+        self.entries
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key, value);
+    }
+}
+
 /// Connection ids handed out so far (DuckDB's `ConnectionManager` counter).
 static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -57,6 +91,8 @@ pub struct FunctionClient {
     connections: Mutex<Option<Arc<AtomicU64>>>,
     /// The connection's loggers (DuckDB's `ClientContext::GetLogger`).
     logger: Mutex<Option<Arc<dyn crate::logging::ClientLogger>>>,
+    /// The database's object cache (`ObjectCache::GetObjectCache`).
+    object_cache: Mutex<Option<Arc<ObjectCache>>>,
 }
 
 impl Default for FunctionClient {
@@ -71,6 +107,7 @@ impl Default for FunctionClient {
             settings: Mutex::default(),
             connections: Mutex::default(),
             logger: Mutex::default(),
+            object_cache: Mutex::default(),
         }
     }
 }
@@ -143,6 +180,19 @@ impl FunctionClient {
     /// The connection's loggers, if the database logs.
     pub fn logger(&self) -> Option<Arc<dyn crate::logging::ClientLogger>> {
         self.logger.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    /// Shares the database's object cache with this connection.
+    pub fn set_object_cache(&self, cache: Arc<ObjectCache>) {
+        *self.object_cache.lock().unwrap_or_else(PoisonError::into_inner) = Some(cache);
+    }
+
+    /// The database's object cache, if the connection belongs to a database.
+    pub fn object_cache(&self) -> Option<Arc<ObjectCache>> {
+        self.object_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Shares the database's open-connection counter with this connection.

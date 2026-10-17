@@ -116,6 +116,32 @@ pub struct PartitionStatistics {
 pub type TableFunctionPartitionStats =
     Arc<dyn Fn(Option<&dyn FunctionData>) -> Vec<PartitionStatistics> + Send + Sync>;
 
+/// Filter pushdown into the file list of a multi-file scan whose paths determine column
+/// values: hive partitions and the `filename` column (DuckDB's `pushdown_complex_filter`
+/// of `MultiFileFunction`, `MultiFileList::ComplexFilterPushdown`).
+#[derive(Clone)]
+#[allow(clippy::type_complexity, reason = "callback signatures")]
+pub struct FileFilterPushdown {
+    /// The scanned files, if their paths determine any column (`hive_partitioning` or
+    /// `filename` is set).
+    pub files: Arc<dyn Fn(&dyn FunctionData) -> Option<Vec<String>> + Send + Sync>,
+    /// The value of the column named `name` (of type `ty`) in the file at `path`, if the
+    /// path determines it (`GetKnownColumnValues` + `HivePartitioning::GetValue`).
+    pub known_value: Arc<
+        dyn Fn(&dyn FunctionData, &str, &str, &LogicalType) -> Result<Option<rustdb_types::Value>>
+            + Send
+            + Sync,
+    >,
+    /// The bind data scanning only the files at positions `keep` of `files`.
+    pub with_files: Arc<dyn Fn(&dyn FunctionData, &[usize]) -> Result<Arc<dyn FunctionData>> + Send + Sync>,
+}
+
+impl fmt::Debug for FileFilterPushdown {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FileFilterPushdown").finish_non_exhaustive()
+    }
+}
+
 /// The shared state of a parallel table function scan.
 pub type ParallelScanGlobal = Arc<dyn std::any::Any + Send + Sync>;
 /// The state of one thread of a parallel table function scan.
@@ -233,6 +259,8 @@ pub struct TableFunction {
     pub get_partition_stats: Option<TableFunctionPartitionStats>,
     /// A scan by several threads at once; used instead of `scan` when set.
     pub parallel_scan: Option<ParallelTableScan>,
+    /// Filter pushdown into the scanned files (`pushdown_complex_filter`).
+    pub file_filter_pushdown: Option<FileFilterPushdown>,
     /// Whether the scan fills one output column per scanned column id, in order
     /// (DuckDB's scan contract), instead of all of the function's columns.
     pub projected_output: bool,
@@ -261,6 +289,7 @@ impl TableFunction {
             statistics: None,
             get_partition_stats: None,
             parallel_scan: None,
+            file_filter_pushdown: None,
             projected_output: false,
         }
     }

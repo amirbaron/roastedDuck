@@ -71,6 +71,8 @@ pub struct ScanExplainInfo {
     pub virtual_columns: Vec<usize>,
     /// The pushed-down sampling (`System: 10%`).
     pub sample_method: Option<String>,
+    /// `File Filters` / `Scanning Files`.
+    pub file_filters: Vec<(String, String)>,
 }
 
 impl ScanExplainInfo {
@@ -119,6 +121,9 @@ impl ScanExplainInfo {
         }
         if let Some(sample) = &self.sample_method {
             result.insert("Sample Method".to_owned(), sample.clone());
+        }
+        for (key, value) in &self.file_filters {
+            result.insert(key.clone(), value.clone());
         }
         set_estimated_cardinality(&mut result, estimated_cardinality);
         result

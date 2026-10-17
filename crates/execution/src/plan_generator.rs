@@ -271,6 +271,7 @@ impl PlanGenerator {
                 .sample_options
                 .as_ref()
                 .map(|sample| format!("System: {}%", sample.sample_size.to_varchar().unwrap_or_default())),
+            file_filters: get.file_filters.explain_params(),
         };
         let mut scan = PhysicalSeqScan::new(
             types,
@@ -1102,6 +1103,7 @@ impl PlanGenerator {
                         .map(|(position, _)| position)
                         .collect(),
                     sample_method: None,
+                    file_filters: get.file_filters.explain_params(),
                 };
                 // Filters pushed into the scan are applied by the function itself.
                 let filters = table_filter_set(&get)?;

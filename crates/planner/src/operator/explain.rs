@@ -189,6 +189,9 @@ impl LogicalOperator {
                         ),
                     );
                 }
+                for (key, value) in get.file_filters.explain_params() {
+                    result.insert(key, value);
+                }
                 if let (Some(table), Some((catalog, schema))) = (&get.table, &get.table_schema) {
                     result.insert(
                         "Table".to_owned(),

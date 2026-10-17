@@ -56,6 +56,8 @@ pub(crate) struct DatabaseInstance {
     pub(crate) secrets: Arc<crate::secrets::SecretManager>,
     /// The number of open connections (DuckDB's `ConnectionManager`).
     connections: Arc<std::sync::atomic::AtomicU64>,
+    /// The object cache (DuckDB's `DatabaseInstance::object_cache`).
+    object_cache: Arc<rustdb_function::ObjectCache>,
     /// The log manager (DuckDB's `DatabaseInstance::GetLogManager`).
     pub(crate) log_manager: Arc<crate::logging::LogManager>,
     /// The options set globally (DuckDB's `DBConfig` user settings), with a version
@@ -392,6 +394,7 @@ impl Database {
             compression: std::sync::Mutex::default(),
             secrets: Arc::default(),
             connections: Arc::default(),
+            object_cache: Arc::default(),
             log_manager: Arc::default(),
             global_settings: Mutex::default(),
         };
@@ -472,6 +475,7 @@ impl Database {
             .connections
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         function_client.set_connection_counter(Arc::clone(&self.instance.connections));
+        function_client.set_object_cache(Arc::clone(&self.instance.object_cache));
         // `ClientContext::ClientContext`: a connection-scoped logger.
         let logger = Arc::new(crate::logging::ConnectionLogger::new(
             Arc::clone(&self.instance.log_manager),

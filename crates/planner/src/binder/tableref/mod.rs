@@ -512,6 +512,7 @@ fn bind_base_table(
                 table_filters: rustdb_storage::TableFilterSet::default(),
                 dynamic_filters: None,
                 sample_options: None,
+                file_filters: crate::operator::FileFilterInfo::default(),
             };
             Ok(BoundStatement::new(
                 LogicalOperator::new(LogicalKind::Get(Box::new(get))),

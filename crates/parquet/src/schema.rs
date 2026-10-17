@@ -40,6 +40,8 @@ pub enum ExtraTypeInfo {
 #[derive(Clone, Debug, Default)]
 #[allow(clippy::struct_excessive_bools, reason = "DuckDB's ParquetOptions flags")]
 pub struct ParquetOptions {
+    /// The database's object cache when footers are cached (`parquet_metadata_cache`).
+    pub metadata_cache: Option<std::sync::Arc<rustdb_function::ObjectCache>>,
     pub binary_as_string: bool,
     pub variant_legacy_encoding: bool,
     pub file_row_number: bool,
