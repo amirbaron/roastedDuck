@@ -40,7 +40,7 @@ pub trait WriteType: Send + std::fmt::Debug + 'static {
     /// What `get` reads the values of a vector from (its typed slice, or the vector).
     type Batch<'a>: Copy;
     fn batch(vector: &Vector) -> Self::Batch<'_>;
-    fn get<'a>(batch: Self::Batch<'a>, row: usize) -> Self::Src<'a>;
+    fn get(batch: Self::Batch<'_>, row: usize) -> Self::Src<'_>;
     fn src(vector: &Vector, row: usize) -> Self::Src<'_> {
         Self::get(Self::batch(vector), row)
     }
@@ -193,7 +193,7 @@ impl<C: NumericCast> WriteType for Numeric<C> {
         vector.values::<C::Src>()
     }
     #[inline]
-    fn get<'a>(batch: Self::Batch<'a>, row: usize) -> Self::Src<'a> {
+    fn get(batch: Self::Batch<'_>, row: usize) -> Self::Src<'_> {
         batch[row]
     }
     #[inline]
@@ -345,7 +345,7 @@ macro_rules! float_type {
                 vector.values::<$ty>()
             }
             #[inline]
-            fn get<'a>(batch: Self::Batch<'a>, row: usize) -> Self::Src<'a> {
+            fn get(batch: Self::Batch<'_>, row: usize) -> Self::Src<'_> {
                 batch[row]
             }
             #[inline]
@@ -400,7 +400,7 @@ macro_rules! huge_type {
             fn batch(vector: &Vector) -> Self::Batch<'_> {
                 vector.values::<$ty>()
             }
-            fn get<'a>(batch: Self::Batch<'a>, row: usize) -> Self::Src<'a> {
+            fn get(batch: Self::Batch<'_>, row: usize) -> Self::Src<'_> {
                 batch[row]
             }
             fn key(src: $ty) -> $ty {
@@ -445,7 +445,7 @@ impl<const BLOB: bool> WriteType for Bytes<BLOB> {
         vector
     }
     #[inline]
-    fn get<'a>(batch: Self::Batch<'a>, row: usize) -> Self::Src<'a> {
+    fn get(batch: Self::Batch<'_>, row: usize) -> Self::Src<'_> {
         batch.string_bytes(row)
     }
     fn key(src: &[u8]) -> Box<[u8]> {
@@ -500,7 +500,7 @@ impl WriteType for Geometry {
         vector
     }
     #[inline]
-    fn get<'a>(batch: Self::Batch<'a>, row: usize) -> Self::Src<'a> {
+    fn get(batch: Self::Batch<'_>, row: usize) -> Self::Src<'_> {
         batch.string_bytes(row)
     }
     fn key(src: &[u8]) -> Box<[u8]> {
@@ -557,7 +557,7 @@ impl WriteType for Uuid {
     fn batch(vector: &Vector) -> Self::Batch<'_> {
         vector.values::<i128>()
     }
-    fn get<'a>(batch: Self::Batch<'a>, row: usize) -> Self::Src<'a> {
+    fn get(batch: Self::Batch<'_>, row: usize) -> Self::Src<'_> {
         batch[row]
     }
     fn key(src: i128) -> i128 {
@@ -615,7 +615,7 @@ impl WriteType for IntervalType {
     fn batch(vector: &Vector) -> Self::Batch<'_> {
         vector.data_bytes()
     }
-    fn get<'a>(batch: Self::Batch<'a>, row: usize) -> Self::Src<'a> {
+    fn get(batch: Self::Batch<'_>, row: usize) -> Self::Src<'_> {
         let bytes = &batch[row * 16..row * 16 + 16];
         let months = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
         let days = i32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);

@@ -97,6 +97,10 @@ pub struct PlanContext {
     /// The client for the rewrites DuckDB's planner makes when the optimizer is enabled
     /// (the ordered aggregates of DISTINCT ON); `None` with the optimizer disabled.
     pub optimizer_client: Option<Arc<rustdb_planner::ClientContext>>,
+    /// The number of threads (`UseBatchIndex`).
+    pub threads: usize,
+    /// The `preserve_insertion_order` setting.
+    pub preserve_insertion_order: bool,
 }
 
 impl PlanContext {
@@ -963,7 +967,9 @@ impl PlanGenerator {
             LogicalKind::Delete(delete) => self.plan_delete(&delete, &expressions, next_child("delete")?)?,
             LogicalKind::Update(update) => self.plan_update(*update, expressions, next_child("update")?)?,
             LogicalKind::MergeInto(merge) => self.plan_merge_into(*merge, next_child("merge")?)?,
-            LogicalKind::CopyToFile(copy) => plan_copy_to_file(*copy, next_child("copy")?)?,
+            LogicalKind::CopyToFile(copy) => {
+                plan_copy_to_file(*copy, next_child("copy")?, self.context.as_ref())?
+            }
             LogicalKind::Export(export) => {
                 let context = self.context()?;
                 let catalog = context.catalog(&export.catalog)?;
@@ -1626,16 +1632,45 @@ fn evaluate_rows(types: &[LogicalType], rows: &[Vec<Expression>]) -> Result<Vec<
 fn plan_copy_to_file(
     copy: rustdb_planner::operator::LogicalCopyToFile,
     child: PhysicalRef,
+    context: Option<&PlanContext>,
 ) -> Result<PhysicalRef> {
-    if copy.preserve_order == Some(true)
-        && (copy.per_thread_output
-            || copy.file_size_bytes.is_some()
-            || copy.rotate
-            || copy.partition_output
-            || !copy.partition_columns.is_empty())
+    let (threads, preserve_setting) = context.map_or((1, true), |context| {
+        (context.threads, context.preserve_insertion_order)
+    });
+    let mut preserve_insertion_order =
+        order_preservation::preserve_insertion_order(child.as_ref(), preserve_setting);
+    let mut supports_batch_index = order_preservation::use_batch_index(child.as_ref(), threads);
+    if let Some(preserve) = copy.preserve_order {
+        preserve_insertion_order = preserve;
+    }
+    if copy.per_thread_output
+        || copy.file_size_bytes.is_some()
+        || copy.rotate
+        || copy.partition_output
+        || !copy.partition_columns.is_empty()
     {
-        return Err(Error::invalid_input(
-            "PRESERVE_ORDER is not supported with these parameters",
+        if copy.preserve_order == Some(true) {
+            return Err(Error::invalid_input(
+                "PRESERVE_ORDER is not supported with these parameters",
+            ));
+        }
+        preserve_insertion_order = false;
+        supports_batch_index = false;
+    }
+    let mode = copy.function.execution_mode.as_ref().map_or(
+        rustdb_function::copy::CopyFunctionExecutionMode::RegularCopyToFile,
+        |mode| {
+            mode(
+                copy.bind_data.as_ref(),
+                preserve_insertion_order,
+                supports_batch_index,
+            )
+        },
+    );
+    let batch = mode == rustdb_function::copy::CopyFunctionExecutionMode::BatchCopyToFile;
+    if batch && !supports_batch_index {
+        return Err(Error::internal(
+            "BATCH_COPY_TO_FILE can only be used if batch indexes are supported",
         ));
     }
     let mut file_path = copy.file_path;
@@ -1669,10 +1704,6 @@ fn plan_copy_to_file(
         names: copy.names,
         expected_types: copy.expected_types,
     };
-    Ok(Arc::new(crate::operators::PhysicalCopyToFile::new(
-        child,
-        copy.function,
-        copy.bind_data,
-        options,
-    )))
+    let operator = crate::operators::PhysicalCopyToFile::new(child, copy.function, copy.bind_data, options);
+    Ok(Arc::new(if batch { operator.with_batches() } else { operator }))
 }

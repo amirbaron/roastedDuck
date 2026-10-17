@@ -179,6 +179,7 @@ struct PendingBloomFilter {
 pub struct ParquetWriter {
     sink: Option<FileSink>,
     options: WriterOptions,
+    names: Vec<String>,
     types: Vec<LogicalType>,
     columns: Vec<ColumnWriter>,
     metadata: FileMetaData,
@@ -191,6 +192,59 @@ pub struct ParquetWriter {
     final_size: u64,
     /// The `GeoParquet` metadata gathered from the geometry columns.
     geo: crate::geo::GeoParquetMetadata,
+}
+
+/// Prepares row groups of a file without its writer, so several threads can encode
+/// batches at once (`ParquetWritePrepareBatch`).
+#[derive(Debug, Clone)]
+pub struct RowGroupPreparer {
+    names: Vec<String>,
+    types: Vec<LogicalType>,
+    options: WriterOptions,
+}
+
+impl RowGroupPreparer {
+    /// Column writers like the file writer's own.
+    fn fresh_columns(&self) -> Result<Vec<ColumnWriter>> {
+        let mut columns = Vec::with_capacity(self.types.len());
+        for (name, ty) in self.names.iter().zip(&self.types) {
+            columns.push(create_writer(
+                &[],
+                ty,
+                name,
+                Some(&self.options.field_ids),
+                0,
+                1,
+                true,
+            )?);
+        }
+        let mut schema = Vec::new();
+        for column in &mut columns {
+            column.finalize_schema(&mut schema, &self.options)?;
+        }
+        Ok(columns)
+    }
+
+    /// `PrepareRowGroup` on column writers of its own (only for
+    /// [`ParquetWriter::supports_batches`] types).
+    pub fn prepare(&self, chunks: &[DataChunk]) -> Result<PreparedRowGroup> {
+        let num_rows: usize = chunks.iter().map(DataChunk::len).sum();
+        let mut columns = self.fresh_columns()?;
+        let row_group = if num_rows == 0 {
+            RowGroup::default()
+        } else {
+            let flat_chunks = ParquetWriter::flat_chunks(chunks)?;
+            ParquetWriter::encode_row_group(&mut columns, &flat_chunks, num_rows, &self.options)?
+        };
+        Ok(PreparedRowGroup { row_group, columns })
+    }
+}
+
+/// A row group encoded off the writer (`PreparedRowGroup`), written later in order.
+#[derive(Debug)]
+pub struct PreparedRowGroup {
+    row_group: RowGroup,
+    columns: Vec<ColumnWriter>,
 }
 
 /// `ColumnWriter::CreateWriterRecursive`.
@@ -563,6 +617,7 @@ impl ParquetWriter {
         Ok(Self {
             sink: Some(sink),
             options,
+            names: names.to_vec(),
             types: types.to_vec(),
             columns,
             metadata,
@@ -632,13 +687,25 @@ impl ParquetWriter {
         Ok(())
     }
 
-    /// Writes `chunks` as one row group (`Flush` = `PrepareRowGroup` + `FlushRowGroup`).
-    pub fn flush(&mut self, chunks: &[DataChunk]) -> Result<()> {
-        let num_rows: usize = chunks.iter().map(DataChunk::len).sum();
-        if num_rows == 0 {
-            return Ok(());
+    /// Whether row groups can be prepared on other threads (`prepare_batch`): VARIANT
+    /// columns decide their shredding from the first row group the writer sees.
+    pub fn supports_batches(types: &[LogicalType]) -> bool {
+        !types
+            .iter()
+            .any(|ty| crate::copy::type_contains(ty, &|ty: &LogicalType| ty.id() == LogicalTypeId::Variant))
+    }
+
+    /// What prepares row groups of this file on other threads.
+    pub fn preparer(&self) -> RowGroupPreparer {
+        RowGroupPreparer {
+            names: self.names.clone(),
+            types: self.types.clone(),
+            options: self.options.clone(),
         }
-        // The writers index vector slots directly, so nested values are made flat.
+    }
+
+    /// The vectors of `chunks` made flat (the writers index vector slots directly).
+    fn flat_chunks(chunks: &[DataChunk]) -> Result<Vec<(Vec<Vector>, usize)>> {
         let mut flat_chunks = Vec::with_capacity(chunks.len());
         for chunk in chunks {
             let columns = chunk
@@ -648,31 +715,73 @@ impl ParquetWriter {
                 .collect::<Result<Vec<_>>>()?;
             flat_chunks.push((columns, chunk.len()));
         }
-        transform_variant_columns(&mut self.columns, &mut flat_chunks)?;
+        Ok(flat_chunks)
+    }
+
+    /// Encodes the rows of `flat_chunks` with `columns` (the column part of
+    /// `PrepareRowGroup`): the pages are complete, the row group not yet written.
+    fn encode_row_group(
+        columns: &mut [ColumnWriter],
+        flat_chunks: &[(Vec<Vector>, usize)],
+        num_rows: usize,
+        options: &WriterOptions,
+    ) -> Result<RowGroup> {
         let mut row_group = RowGroup {
             num_rows: num_rows as i64,
             file_offset: Some(0),
             ..RowGroup::default()
         };
-        self.initialize_schema()?;
-        let options = self.options.clone();
-        for (index, column) in self.columns.iter_mut().enumerate() {
-            column.initialize_write(&mut row_group.columns, num_rows, &options);
+        for (index, column) in columns.iter_mut().enumerate() {
+            column.initialize_write(&mut row_group.columns, num_rows, options);
             if column.has_analyze() {
-                for (vectors, count) in &flat_chunks {
+                for (vectors, count) in flat_chunks {
                     column.analyze(None, &vectors[index], *count)?;
                 }
-                column.finalize_analyze(&options);
+                column.finalize_analyze(options);
             }
-            for (vectors, count) in &flat_chunks {
+            for (vectors, count) in flat_chunks {
                 column.prepare(None, &vectors[index], *count, true)?;
             }
-            column.begin_write(&options)?;
-            for (vectors, count) in &flat_chunks {
-                column.write(&vectors[index], *count, &options)?;
+            column.begin_write(options)?;
+            for (vectors, count) in flat_chunks {
+                column.write(&vectors[index], *count, options)?;
             }
         }
-        // `FlushRowGroup`.
+        Ok(row_group)
+    }
+
+    /// `FlushRowGroup` of a prepared row group.
+    pub fn flush_prepared(&mut self, prepared: PreparedRowGroup) -> Result<()> {
+        let PreparedRowGroup {
+            row_group,
+            mut columns,
+        } = prepared;
+        if row_group.num_rows == 0 {
+            return Ok(());
+        }
+        self.initialize_schema()?;
+        self.write_row_group(row_group, &mut columns)
+    }
+
+    /// Writes `chunks` as one row group (`Flush` = `PrepareRowGroup` + `FlushRowGroup`).
+    pub fn flush(&mut self, chunks: &[DataChunk]) -> Result<()> {
+        let num_rows: usize = chunks.iter().map(DataChunk::len).sum();
+        if num_rows == 0 {
+            return Ok(());
+        }
+        let mut flat_chunks = Self::flat_chunks(chunks)?;
+        transform_variant_columns(&mut self.columns, &mut flat_chunks)?;
+        self.initialize_schema()?;
+        let mut columns = std::mem::take(&mut self.columns);
+        let result = Self::encode_row_group(&mut columns, &flat_chunks, num_rows, &self.options)
+            .and_then(|row_group| self.write_row_group(row_group, &mut columns));
+        self.columns = columns;
+        result
+    }
+
+    /// `FlushRowGroup`: writes the pages of `columns` and records the row group.
+    fn write_row_group(&mut self, mut row_group: RowGroup, columns: &mut [ColumnWriter]) -> Result<()> {
+        let options = self.options.clone();
         let sink = self
             .sink
             .as_mut()
@@ -681,7 +790,7 @@ impl ParquetWriter {
         row_group.file_offset = Some(file_offset as i64);
         let mut finished = Vec::new();
         let mut total_byte_size = 0i64;
-        for column in &mut self.columns {
+        for column in columns.iter_mut() {
             column.finalize_write(
                 &mut row_group.columns,
                 &mut total_byte_size,

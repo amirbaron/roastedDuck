@@ -2,7 +2,6 @@
 //! `StandardColumnWriter`, `BooleanColumnWriter`, `FixedDecimalColumnWriter` and
 //! `EnumColumnWriter`): dictionaries, page encodings and statistics.
 
-
 use rustdb_common::{Error, Result};
 use rustdb_types::{Vector, VectorKind};
 

@@ -48,6 +48,8 @@ struct RowBuffer {
 #[derive(Debug)]
 pub struct ParquetWriteGlobal {
     inner: Mutex<(ParquetWriter, RowBuffer)>,
+    /// Prepares batches without the writer's lock (`prepare_batch`).
+    preparer: crate::writer::RowGroupPreparer,
 }
 
 fn client_context(binder: Option<&dyn Any>) -> Result<&ClientContext> {
@@ -546,9 +548,55 @@ fn global_state(state: &CopyGlobalState) -> Result<&ParquetWriteGlobal> {
 fn parquet_write_initialize_global(data: &dyn FunctionData, path: &str) -> Result<CopyGlobalState> {
     let data = bind_data(data)?;
     let writer = ParquetWriter::new(path, &data.names, &data.types, data.options.clone())?;
+    let preparer = writer.preparer();
     Ok(Box::new(ParquetWriteGlobal {
         inner: Mutex::new((writer, RowBuffer::default())),
+        preparer,
     }))
+}
+
+/// `ParquetWriteExecutionMode` (regular for VARIANT columns, whose shredding the first
+/// row group decides).
+fn parquet_write_execution_mode(
+    data: &dyn FunctionData,
+    preserve_insertion_order: bool,
+    supports_batch_index: bool,
+) -> rustdb_function::copy::CopyFunctionExecutionMode {
+    use rustdb_function::copy::CopyFunctionExecutionMode as Mode;
+    let batches = bind_data(data).is_ok_and(|data| ParquetWriter::supports_batches(&data.types));
+    if !preserve_insertion_order {
+        // Gap: the parallel (unordered) mode writes on one thread, in arrival order.
+        return Mode::RegularCopyToFile;
+    }
+    if supports_batch_index && batches {
+        return Mode::BatchCopyToFile;
+    }
+    Mode::RegularCopyToFile
+}
+
+/// `ParquetWritePrepareBatch`: encodes a row group.
+#[allow(clippy::needless_pass_by_value, reason = "the prepare_batch signature")]
+fn parquet_write_prepare_batch(
+    _: &dyn FunctionData,
+    state: &CopyGlobalState,
+    chunks: Vec<DataChunk>,
+) -> Result<rustdb_function::copy::PreparedBatch> {
+    let global = global_state(state)?;
+    Ok(Box::new(global.preparer.prepare(&chunks)?))
+}
+
+/// `ParquetWriteFlushBatch`: writes a prepared row group.
+fn parquet_write_flush_batch(
+    _: &dyn FunctionData,
+    state: &CopyGlobalState,
+    batch: rustdb_function::copy::PreparedBatch,
+) -> Result<()> {
+    let global = global_state(state)?;
+    let prepared = batch
+        .downcast::<crate::writer::PreparedRowGroup>()
+        .map_err(|_| Error::internal("parquet flush of a batch it did not prepare"))?;
+    let mut inner = global.inner.lock().unwrap_or_else(PoisonError::into_inner);
+    inner.0.flush_prepared(*prepared)
 }
 
 /// The approximate in-memory size of a chunk (`ColumnDataCollection::SizeInBytes`).
@@ -735,7 +783,7 @@ fn parquet_copy_from_bind(
 }
 
 /// `TypeVisitor::Contains`: whether `ty` or a type nested in it satisfies `predicate`.
-fn type_contains(ty: &LogicalType, predicate: &impl Fn(&LogicalType) -> bool) -> bool {
+pub(crate) fn type_contains(ty: &LogicalType, predicate: &impl Fn(&LogicalType) -> bool) -> bool {
     if predicate(ty) {
         return true;
     }
@@ -831,6 +879,13 @@ pub fn parquet_copy_function() -> CopyFunction {
     function.copy_to_bind = Some(Arc::new(parquet_write_bind));
     function.copy_to_initialize_global = Some(Arc::new(parquet_write_initialize_global));
     function.copy_to_sink = Some(Arc::new(parquet_write_sink));
+    function.execution_mode = Some(Arc::new(parquet_write_execution_mode));
+    function.prepare_batch = Some(Arc::new(parquet_write_prepare_batch));
+    function.flush_batch = Some(Arc::new(parquet_write_flush_batch));
+    // `ParquetWriteDesiredBatchSize`.
+    function.desired_batch_size = Some(Arc::new(|data| {
+        bind_data(data).map_or(0, |data| data.options.row_group_size as u64)
+    }));
     function.copy_to_finalize = Some(Arc::new(parquet_write_finalize));
     function.copy_to_get_written_statistics = Some(Arc::new(parquet_write_get_written_statistics));
     function.copy_to_file_size = Some(Arc::new(parquet_write_file_size));

@@ -126,6 +126,32 @@ pub type CopyFromBind = Arc<
     dyn Fn(&CopyFromBindInput<'_>, &[String], &[LogicalType]) -> Result<Arc<dyn FunctionData>> + Send + Sync,
 >;
 
+/// How a COPY runs (DuckDB's `CopyFunctionExecutionMode`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CopyFunctionExecutionMode {
+    /// One thread writes the rows in order.
+    RegularCopyToFile,
+    /// Several threads write, order not kept.
+    ParallelCopyToFile,
+    /// Several threads prepare batches that are written in batch order.
+    BatchCopyToFile,
+}
+
+/// `execution_mode`: how a write runs, given whether the order must be kept and whether
+/// every source numbers its rows in batches.
+pub type CopyExecutionMode =
+    Arc<dyn Fn(&dyn FunctionData, bool, bool) -> CopyFunctionExecutionMode + Send + Sync>;
+/// A batch prepared for writing (DuckDB's `PreparedBatchData`).
+pub type PreparedBatch = Box<dyn Any + Send>;
+/// `prepare_batch`: encodes the rows of a batch (any thread, concurrently).
+pub type CopyPrepareBatch =
+    Arc<dyn Fn(&dyn FunctionData, &CopyGlobalState, Vec<DataChunk>) -> Result<PreparedBatch> + Send + Sync>;
+/// `flush_batch`: writes a prepared batch (one thread at a time, in batch order).
+pub type CopyFlushBatch =
+    Arc<dyn Fn(&dyn FunctionData, &CopyGlobalState, PreparedBatch) -> Result<()> + Send + Sync>;
+/// `desired_batch_size`: the rows per prepared batch (0: any).
+pub type CopyDesiredBatchSize = Arc<dyn Fn(&dyn FunctionData) -> u64 + Send + Sync>;
+
 /// A file format of COPY (DuckDB's `CopyFunction`).
 #[derive(Clone)]
 pub struct CopyFunction {
@@ -151,6 +177,12 @@ pub struct CopyFunction {
     pub rotate_next_file: Option<CopyRotateNextFile>,
     pub copy_from_bind: Option<CopyFromBind>,
     pub copy_from_function: Option<TableFunction>,
+    /// How writes run (`execution_mode`); regular without it.
+    pub execution_mode: Option<CopyExecutionMode>,
+    /// Batched writes (`prepare_batch`, `flush_batch`, `desired_batch_size`).
+    pub prepare_batch: Option<CopyPrepareBatch>,
+    pub flush_batch: Option<CopyFlushBatch>,
+    pub desired_batch_size: Option<CopyDesiredBatchSize>,
 }
 
 impl CopyFunction {
@@ -170,6 +202,10 @@ impl CopyFunction {
             rotate_next_file: None,
             copy_from_bind: None,
             copy_from_function: None,
+            execution_mode: None,
+            prepare_batch: None,
+            flush_batch: None,
+            desired_batch_size: None,
         }
     }
 }
