@@ -136,7 +136,6 @@ fn function_bounds_usable(stats: &BaseStatistics) -> bool {
 }
 
 /// `left` is better than `right` for the aggregate.
-
 fn better(left: &Value, right: &Value, is_min: bool) -> bool {
     let ordering = match (left.as_bytes(), right.as_bytes()) {
         (Some(left), Some(right)) => left.cmp(right),
@@ -408,7 +407,7 @@ impl StatisticsPropagator<'_> {
         }
         // `TryGetStorageIndex`: no row id or virtual columns.
         let storage_index = |column: u64| {
-            (column < rustdb_planner::operator::COLUMN_IDENTIFIER_EMPTY && column < (1 << 63))
+            (column < (1 << 63))
                 .then(|| usize::try_from(column).ok())
                 .flatten()
         };
