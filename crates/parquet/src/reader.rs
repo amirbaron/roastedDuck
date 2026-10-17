@@ -316,6 +316,15 @@ pub struct ReaderScanState {
 }
 
 impl ReaderScanState {
+    /// Restarts the scan on `row_groups`, reusing the column readers.
+    pub fn restart(&mut self, row_groups: Vec<usize>) {
+        self.group_indexes = row_groups;
+        self.current_group = None;
+        self.offset_in_group = 0;
+        self.group_rows = 0;
+        self.finished = false;
+    }
+
     /// Reads the next chunk of the scanned columns into `output` (one vector per scan
     /// column); returns its row count, 0 once the scan is done (`ParquetReader::Scan`).
     pub fn scan(&mut self, output: &mut Vec<Vector>) -> Result<usize> {

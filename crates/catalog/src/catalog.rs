@@ -139,7 +139,7 @@ impl Catalog {
     /// Registers a built-in COPY file format in `main`.
     pub fn register_copy_function(&self, function: rustdb_function::CopyFunction) -> Result<()> {
         let name = function.name.to_string();
-        self.register_builtin(name, EntryKind::CopyFunction(function))
+        self.register_builtin(name, EntryKind::CopyFunction(Box::new(function)))
     }
 
     /// Registers a built-in view in `main` (DuckDB's `DefaultViewGenerator`).

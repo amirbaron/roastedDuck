@@ -86,6 +86,12 @@ impl PhysicalOperator for PhysicalTableScan {
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
     }
+    fn parallel_source(&self) -> bool {
+        self.function.parallel_scan.is_some()
+    }
+    fn supports_batch_index(&self) -> bool {
+        self.function.parallel_scan.is_some()
+    }
 
     fn explain_name(&self) -> String {
         self.function.name.to_ascii_uppercase()
@@ -130,46 +136,26 @@ impl PhysicalOperator for PhysicalTableScan {
     }
 }
 
-/// The scan's cursor; one thread produces at a time.
-#[derive(Debug, Default)]
+/// The scan's cursor (one thread produces at a time), or the shared state of a parallel
+/// scan.
+#[derive(Default)]
 pub struct TableScanGlobal {
     state: Mutex<(TableScanState, bool)>,
+    parallel: Option<rustdb_function::ParallelScanGlobal>,
 }
 
-impl Source for PhysicalTableScan {
-    type Global = TableScanGlobal;
-    type Local = ();
-
-    fn global_source_state(&self, _: &ExecutionContext, _: Option<&SinkState>) -> Result<TableScanGlobal> {
-        Ok(TableScanGlobal::default())
+impl std::fmt::Debug for TableScanGlobal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TableScanGlobal")
+            .field("parallel", &self.parallel.is_some())
+            .finish_non_exhaustive()
     }
+}
 
-    fn local_source_state(&self, _: &ExecutionContext, _: &TableScanGlobal) -> Result<()> {
-        Ok(())
-    }
-
-    fn get_data(
-        &self,
-        _: &ExecutionContext,
-        chunk: &mut DataChunk,
-        global: &TableScanGlobal,
-        (): &mut (),
-    ) -> Result<SourceResult> {
-        let Some(scan) = &self.function.scan else {
-            return Err(Error::internal(format!(
-                "table function {} cannot be scanned",
-                self.function.name
-            )));
-        };
-        let mut guard = global.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let (state, finished) = &mut *guard;
-        if *finished {
-            chunk.set_columns(Vec::new(), 0);
-            return Ok(SourceResult::Finished);
-        }
-        let mut output = DataChunk::default();
-        let more = scan(self.bind_data.as_deref(), &self.column_ids, state, &mut output)?;
-        *finished = !more;
+impl PhysicalTableScan {
+    /// The output columns of a chunk the function produced: the scanned columns (with
+    /// NULLs for virtual columns the function lacks), restricted to `projection`.
+    fn project(&self, output: DataChunk) -> Result<(Vec<Vector>, usize)> {
         let count = output.len();
         let mut columns = output.into_columns();
         let mut projected = if self.function.projected_output {
@@ -201,6 +187,94 @@ impl Source for PhysicalTableScan {
                 })
                 .collect::<Result<Vec<_>>>()?;
         }
+        Ok((projected, count))
+    }
+}
+
+impl Source for PhysicalTableScan {
+    type Global = TableScanGlobal;
+    type Local = Option<rustdb_function::ParallelScanLocal>;
+
+    fn global_source_state(&self, _: &ExecutionContext, _: Option<&SinkState>) -> Result<TableScanGlobal> {
+        let parallel = match &self.function.parallel_scan {
+            Some(parallel) => Some((parallel.init_global)(
+                self.bind_data.as_deref(),
+                &self.column_ids,
+            )?),
+            None => None,
+        };
+        Ok(TableScanGlobal {
+            state: Mutex::default(),
+            parallel,
+        })
+    }
+
+    fn local_source_state(
+        &self,
+        _: &ExecutionContext,
+        global: &TableScanGlobal,
+    ) -> Result<Option<rustdb_function::ParallelScanLocal>> {
+        match (&self.function.parallel_scan, &global.parallel) {
+            (Some(parallel), Some(shared)) => Ok(Some((parallel.init_local)(shared)?)),
+            _ => Ok(None),
+        }
+    }
+
+    fn max_threads(&self, global: &TableScanGlobal) -> usize {
+        match (&self.function.parallel_scan, &global.parallel) {
+            (Some(parallel), Some(shared)) => (parallel.max_threads)(shared),
+            _ => 1,
+        }
+    }
+
+    fn batch_index(&self, global: &TableScanGlobal, local: &Self::Local) -> Result<u64> {
+        match (&self.function.parallel_scan, &global.parallel, local) {
+            (Some(parallel), Some(shared), Some(local)) => Ok((parallel.batch_index)(shared, local)),
+            _ => Err(Error::internal("table function scan without batch indices")),
+        }
+    }
+
+    fn get_data(
+        &self,
+        _: &ExecutionContext,
+        chunk: &mut DataChunk,
+        global: &TableScanGlobal,
+        local: &mut Self::Local,
+    ) -> Result<SourceResult> {
+        if let (Some(parallel), Some(shared), Some(local)) =
+            (&self.function.parallel_scan, &global.parallel, local)
+        {
+            let mut output = DataChunk::default();
+            if !(parallel.scan)(
+                self.bind_data.as_deref(),
+                &self.column_ids,
+                shared,
+                local,
+                &mut output,
+            )? {
+                chunk.set_columns(Vec::new(), 0);
+                return Ok(SourceResult::Finished);
+            }
+            let (projected, count) = self.project(output)?;
+            chunk.set_columns(projected, count);
+            return Ok(SourceResult::HaveMoreOutput);
+        }
+        let Some(scan) = &self.function.scan else {
+            return Err(Error::internal(format!(
+                "table function {} cannot be scanned",
+                self.function.name
+            )));
+        };
+        let mut guard = global.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let (state, finished) = &mut *guard;
+        if *finished {
+            chunk.set_columns(Vec::new(), 0);
+            return Ok(SourceResult::Finished);
+        }
+        let mut output = DataChunk::default();
+        let more = scan(self.bind_data.as_deref(), &self.column_ids, state, &mut output)?;
+        *finished = !more;
+        let (projected, count) = self.project(output)?;
         chunk.set_columns(projected, count);
         Ok(if more {
             SourceResult::HaveMoreOutput

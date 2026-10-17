@@ -116,6 +116,46 @@ pub struct PartitionStatistics {
 pub type TableFunctionPartitionStats =
     Arc<dyn Fn(Option<&dyn FunctionData>) -> Vec<PartitionStatistics> + Send + Sync>;
 
+/// The shared state of a parallel table function scan.
+pub type ParallelScanGlobal = Arc<dyn std::any::Any + Send + Sync>;
+/// The state of one thread of a parallel table function scan.
+pub type ParallelScanLocal = Box<dyn std::any::Any + Send>;
+
+/// A table function that several threads scan at once, each with its own local state
+/// (DuckDB's `init_global` / `init_local` and a `function` that runs on many threads).
+#[derive(Clone)]
+#[allow(clippy::type_complexity, reason = "callback signatures")]
+pub struct ParallelTableScan {
+    /// The shared state of a scan of `column_ids`.
+    pub init_global:
+        Arc<dyn Fn(Option<&dyn FunctionData>, &[u64]) -> Result<ParallelScanGlobal> + Send + Sync>,
+    /// The state of a new thread.
+    pub init_local: Arc<dyn Fn(&ParallelScanGlobal) -> Result<ParallelScanLocal> + Send + Sync>,
+    /// Fills the next chunk of this thread; `false` once the thread has no more work.
+    pub scan: Arc<
+        dyn Fn(
+                Option<&dyn FunctionData>,
+                &[u64],
+                &ParallelScanGlobal,
+                &mut ParallelScanLocal,
+                &mut DataChunk,
+            ) -> Result<bool>
+            + Send
+            + Sync,
+    >,
+    /// How many threads can usefully scan (`MaxThreads`).
+    pub max_threads: Arc<dyn Fn(&ParallelScanGlobal) -> usize + Send + Sync>,
+    /// The batch index of the chunk the thread produced last, increasing in the
+    /// function's row order (`GetPartitionData`).
+    pub batch_index: Arc<dyn Fn(&ParallelScanGlobal, &ParallelScanLocal) -> u64 + Send + Sync>,
+}
+
+impl fmt::Debug for ParallelTableScan {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ParallelTableScan").finish_non_exhaustive()
+    }
+}
+
 /// What a [`TableInOutFunction`] call did with its input (DuckDB's `OperatorResultType`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InOutResult {
@@ -191,6 +231,8 @@ pub struct TableFunction {
     pub statistics: Option<TableFunctionStatistics>,
     /// Partition statistics (`get_partition_stats`).
     pub get_partition_stats: Option<TableFunctionPartitionStats>,
+    /// A scan by several threads at once; used instead of `scan` when set.
+    pub parallel_scan: Option<ParallelTableScan>,
     /// Whether the scan fills one output column per scanned column id, in order
     /// (DuckDB's scan contract), instead of all of the function's columns.
     pub projected_output: bool,
@@ -218,6 +260,7 @@ impl TableFunction {
             get_virtual_columns: None,
             statistics: None,
             get_partition_stats: None,
+            parallel_scan: None,
             projected_output: false,
         }
     }

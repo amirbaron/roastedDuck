@@ -169,7 +169,7 @@ pub(super) fn copy_function(
         .context
         .get_entry("system", "main", CatalogType::CopyFunction, format, if_exists)?;
     Ok(found.and_then(|found| match &found.entry.kind {
-        EntryKind::CopyFunction(function) => Some(function.clone()),
+        EntryKind::CopyFunction(function) => Some((**function).clone()),
         _ => None,
     }))
 }

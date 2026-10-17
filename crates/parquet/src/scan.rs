@@ -14,8 +14,8 @@ use rustdb_csv::multi_file::{
 };
 use rustdb_function::cast::{CastFunctionSet, CastParameters};
 use rustdb_function::{
-    FunctionData, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet,
-    TableScanState,
+    FunctionData, ParallelScanGlobal, ParallelScanLocal, ParallelTableScan, TableFunction,
+    TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet, TableScanState,
 };
 use rustdb_planner::ClientContext;
 use rustdb_storage::{TableFilter, TableFilterSet};
@@ -656,9 +656,40 @@ fn column_not_found(data: &ParquetBindData, reader: &ParquetReader, name: &str) 
     ))
 }
 
+/// A file ready to be scanned: its reader, how its columns map onto the output and the
+/// row groups left after pruning.
+#[derive(Debug)]
+struct PreparedFile {
+    reader: Arc<ParquetReader>,
+    scan_columns: Vec<ScanColumn>,
+    sources: Vec<ColumnSource>,
+    /// The filters the reader applies, by scan column.
+    reader_filters: Vec<(usize, TableFilter)>,
+    /// The filters the reader does not apply, by output column.
+    chunk_filters: Vec<(usize, TableFilter)>,
+    row_groups: Vec<usize>,
+    /// The row count to emit when no column is read from the file.
+    rows_only: Option<u64>,
+}
+
 /// Opens file `file_index` and maps its columns onto the requested global columns
 /// (`CreateReader` + `CreateMapping` + `PrepareReader` + `InitializeScan`).
 fn open_file(data: &ParquetBindData, file_index: usize, column_ids: &[u64]) -> Result<FileScan> {
+    let file = prepare_file(data, file_index, column_ids)?;
+    let state = file
+        .reader
+        .initialize_scan(file.row_groups, &file.scan_columns, file.reader_filters)?;
+    Ok(FileScan {
+        state,
+        sources: file.sources,
+        rows_only: file.rows_only.map(|remaining| RowsOnly { remaining }),
+        filters: file.chunk_filters,
+    })
+}
+
+/// Opens file `file_index`, maps its columns onto the requested global columns and
+/// prunes its row groups (`CreateReader` + `CreateMapping` + `PrepareReader`).
+fn prepare_file(data: &ParquetBindData, file_index: usize, column_ids: &[u64]) -> Result<PreparedFile> {
     let reader = data.open_reader(file_index)?;
     let path = data.files.files[file_index].clone();
     let hive_partitions = if data.reader_bind.hive_partitioning_indexes.is_empty() {
@@ -823,20 +854,266 @@ fn open_file(data: &ParquetBindData, file_index: usize, column_ids: &[u64]) -> R
             }
         }
     }
-    let rows_only = scan_columns.is_empty().then(|| RowsOnly {
-        remaining: if skip_file { 0 } else { reader.num_rows() },
-    });
-    let state = reader.initialize_scan(
-        row_groups,
-        &scan_columns,
-        reader_filters.filters.into_iter().collect(),
-    )?;
-    Ok(FileScan {
-        state,
+    let rows_only = scan_columns
+        .is_empty()
+        .then(|| if skip_file { 0 } else { reader.num_rows() });
+    Ok(PreparedFile {
+        reader,
+        scan_columns,
         sources,
+        reader_filters: reader_filters.filters.into_iter().collect(),
+        chunk_filters,
+        row_groups,
         rows_only,
-        filters: chunk_filters,
     })
+}
+
+/// The output chunk of `count` scanned rows of file `file_index` (`scan_output`, one
+/// vector per scan column): one column per source, cast where needed, with the chunk
+/// filters applied. `None` when no row passes them.
+fn assemble_chunk(
+    data: &ParquetBindData,
+    file_index: usize,
+    sources: &[ColumnSource],
+    filters: &[(usize, TableFilter)],
+    scan_output: &[Vector],
+    count: usize,
+) -> Result<Option<DataChunk>> {
+    // One output column per scanned column id (`projected_output`).
+    let mut output = Vec::with_capacity(sources.len());
+    for (position, source) in sources.iter().enumerate() {
+        output.push(match source {
+            ColumnSource::Reader { index, cast, target } => {
+                let vector = scan_output[*index].clone();
+                match cast {
+                    None => vector,
+                    Some(cast) => cast.execute(
+                        data,
+                        &data.files.files[file_index],
+                        position,
+                        &vector,
+                        target,
+                        count,
+                    )?,
+                }
+            }
+            ColumnSource::Constant(value) => Vector::constant(value)?,
+        });
+    }
+    let mut count = count;
+    match apply_filters(filters, &mut output, count)? {
+        Some(0) => return Ok(None),
+        Some(passed) => count = passed,
+        None => {}
+    }
+    Ok(Some(DataChunk::new(output, count)))
+}
+
+/// The shared state of a parallel `read_parquet` scan: a cursor handing out the files'
+/// row groups (DuckDB's `MultiFileGlobalState` with `TryInitializeNextBatch`).
+#[derive(Debug)]
+struct ParallelGlobal {
+    cursor: Mutex<Cursor>,
+    max_threads: usize,
+}
+
+/// The position of a parallel scan.
+#[derive(Debug, Default)]
+struct Cursor {
+    file_index: usize,
+    file: Option<Arc<PreparedFile>>,
+    /// The position in the current file's row groups of the next morsel.
+    next_group: usize,
+    /// The batch index of the next morsel.
+    batch_index: u64,
+    /// Whether a thread failed, so the others stop.
+    failed: bool,
+}
+
+/// A unit of a parallel scan: a file (with its index) and one of its row groups, or
+/// (`None`) all the rows of a file no column is read from; with its batch index.
+type Morsel = (Arc<PreparedFile>, usize, Option<usize>, u64);
+
+impl Cursor {
+    /// The next morsel, opening files as needed; `None` once all are handed out.
+    fn next(&mut self, data: &ParquetBindData, column_ids: &[u64]) -> Result<Option<Morsel>> {
+        loop {
+            if let Some(file) = &self.file {
+                let group = match file.rows_only {
+                    Some(rows) => (self.next_group == 0 && rows > 0).then_some(None),
+                    None => file.row_groups.get(self.next_group).map(|&group| Some(group)),
+                };
+                if let Some(group) = group {
+                    self.next_group += 1;
+                    let batch = self.batch_index;
+                    self.batch_index += 1;
+                    return Ok(Some((Arc::clone(file), self.file_index, group, batch)));
+                }
+                self.file = None;
+                self.file_index += 1;
+                self.next_group = 0;
+            }
+            if self.file_index >= data.files.files.len() {
+                return Ok(None);
+            }
+            self.file = Some(Arc::new(prepare_file(data, self.file_index, column_ids)?));
+        }
+    }
+}
+
+/// The state of one thread of a parallel `read_parquet` scan.
+#[derive(Debug, Default)]
+struct ParallelLocal {
+    file: Option<Arc<PreparedFile>>,
+    file_index: usize,
+    /// The reader of the current row group; `None` for a rows-only morsel.
+    state: Option<ReaderScanState>,
+    /// The rows left of a rows-only morsel.
+    rows_remaining: u64,
+    scan_output: Vec<Vector>,
+    batch_index: u64,
+    /// Whether a morsel is being read.
+    active: bool,
+}
+
+/// The bind data of a `read_parquet` scan.
+fn parquet_bind_data(bind_data: Option<&dyn FunctionData>) -> Result<&ParquetBindData> {
+    bind_data
+        .and_then(|data| data.as_any().downcast_ref::<ParquetBindData>())
+        .ok_or_else(|| Error::internal("read_parquet scan without bind data"))
+}
+
+/// `MultiFileFunction::InitGlobal` + `MaxThreads`: one thread per row group of a single
+/// file, any number for several files.
+fn read_parquet_init_global(
+    bind_data: Option<&dyn FunctionData>,
+    column_ids: &[u64],
+) -> Result<ParallelScanGlobal> {
+    let data = parquet_bind_data(bind_data)?;
+    let mut cursor = Cursor::default();
+    let max_threads = match data.files.files.len() {
+        0 => 1,
+        1 => {
+            let file = prepare_file(data, 0, column_ids)?;
+            let threads = file.row_groups.len().max(1);
+            cursor.file = Some(Arc::new(file));
+            threads
+        }
+        _ => usize::MAX,
+    };
+    Ok(Arc::new(ParallelGlobal {
+        cursor: Mutex::new(cursor),
+        max_threads,
+    }))
+}
+
+/// The global state of a parallel `read_parquet` scan.
+fn parallel_global(global: &ParallelScanGlobal) -> Result<&ParallelGlobal> {
+    global
+        .downcast_ref::<ParallelGlobal>()
+        .ok_or_else(|| Error::internal("read_parquet parallel scan state"))
+}
+
+/// `MultiFileFunction::MultiFileScan` on one thread: the next chunk of this thread's
+/// row group, taking the next row group when it is done.
+fn read_parquet_parallel_scan(
+    bind_data: Option<&dyn FunctionData>,
+    column_ids: &[u64],
+    global: &ParallelScanGlobal,
+    local: &mut ParallelScanLocal,
+    chunk: &mut DataChunk,
+) -> Result<bool> {
+    let data = parquet_bind_data(bind_data)?;
+    let global = parallel_global(global)?;
+    let local = local
+        .downcast_mut::<ParallelLocal>()
+        .ok_or_else(|| Error::internal("read_parquet parallel scan local state"))?;
+    loop {
+        if local.active
+            && let Some(file) = &local.file
+        {
+            let count = if let Some(state) = &mut local.state {
+                state.scan(&mut local.scan_output)?
+            } else {
+                let count = local.rows_remaining.min(STANDARD_VECTOR_SIZE as u64) as usize;
+                local.rows_remaining -= count as u64;
+                count
+            };
+            if count > 0 {
+                if let Some(output) = assemble_chunk(
+                    data,
+                    local.file_index,
+                    &file.sources,
+                    &file.chunk_filters,
+                    &local.scan_output,
+                    count,
+                )? {
+                    *chunk = output;
+                    return Ok(true);
+                }
+                continue;
+            }
+            local.active = false;
+        }
+        let next = {
+            let mut cursor = global.cursor.lock().unwrap_or_else(PoisonError::into_inner);
+            if cursor.failed {
+                return Ok(false);
+            }
+            match cursor.next(data, column_ids) {
+                Ok(next) => next,
+                Err(error) => {
+                    cursor.failed = true;
+                    return Err(error);
+                }
+            }
+        };
+        let Some((file, file_index, group, batch_index)) = next else {
+            return Ok(false);
+        };
+        local.batch_index = batch_index;
+        local.file_index = file_index;
+        match group {
+            None => {
+                local.state = None;
+                local.rows_remaining = file.rows_only.unwrap_or(0);
+            }
+            Some(group) => {
+                let same_file = local
+                    .file
+                    .as_ref()
+                    .is_some_and(|current| Arc::ptr_eq(current, &file));
+                match &mut local.state {
+                    Some(state) if same_file => state.restart(vec![group]),
+                    _ => {
+                        local.state = Some(file.reader.initialize_scan(
+                            vec![group],
+                            &file.scan_columns,
+                            file.reader_filters.clone(),
+                        )?);
+                    }
+                }
+            }
+        }
+        local.file = Some(file);
+        local.active = true;
+    }
+}
+
+/// The `read_parquet` scan by several threads (`MultiFileFunction` with
+/// `ParquetScanMaxThreads` / `ParquetScanGetBatchIndex`).
+fn read_parquet_parallel() -> ParallelTableScan {
+    ParallelTableScan {
+        init_global: Arc::new(read_parquet_init_global),
+        init_local: Arc::new(|_| Ok(Box::new(ParallelLocal::default()) as ParallelScanLocal)),
+        scan: Arc::new(read_parquet_parallel_scan),
+        max_threads: Arc::new(|global| parallel_global(global).map_or(1, |global| global.max_threads)),
+        batch_index: Arc::new(|_, local| {
+            local
+                .downcast_ref::<ParallelLocal>()
+                .map_or(0, |local| local.batch_index)
+        }),
+    }
 }
 
 /// The `read_parquet` scan: the next chunk of the requested columns.
@@ -884,35 +1161,17 @@ fn read_parquet_scan(
             state.file_index += 1;
             continue;
         }
-        // One output column per scanned column id (`projected_output`).
-        let mut output = Vec::with_capacity(column_ids.len());
-        for (position, source) in file.sources.iter().enumerate() {
-            output.push(match source {
-                ColumnSource::Reader { index, cast, target } => {
-                    let vector = state.scan_output[*index].clone();
-                    match cast {
-                        None => vector,
-                        Some(cast) => cast.execute(
-                            data,
-                            &data.files.files[state.file_index],
-                            position,
-                            &vector,
-                            target,
-                            count,
-                        )?,
-                    }
-                }
-                ColumnSource::Constant(value) => Vector::constant(value)?,
-            });
+        if let Some(output) = assemble_chunk(
+            data,
+            state.file_index,
+            &file.sources,
+            &file.filters,
+            &state.scan_output,
+            count,
+        )? {
+            *chunk = output;
+            return Ok(true);
         }
-        let mut count = count;
-        match apply_filters(&file.filters, &mut output, count)? {
-            Some(0) => continue,
-            Some(passed) => count = passed,
-            None => {}
-        }
-        *chunk = DataChunk::new(output, count);
-        return Ok(true);
     }
 }
 
@@ -1010,6 +1269,7 @@ fn read_parquet_function(name: &'static str, argument: LogicalType) -> TableFunc
     function.statistics = Some(Arc::new(read_parquet_statistics));
     function.get_partition_stats = Some(Arc::new(read_parquet_partition_stats));
     function.projected_output = true;
+    function.parallel_scan = Some(read_parquet_parallel());
     function
 }
 
