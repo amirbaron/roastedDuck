@@ -362,7 +362,56 @@ fn parquet_write_bind(
                 }
             }
             "shredding" => {
-                return Err(Error::not_implemented("SHREDDING for Parquet VARIANT columns"));
+                if value.logical_type().id() == LogicalTypeId::Varchar
+                    && value.to_varchar()?.eq_ignore_ascii_case("auto")
+                {
+                    return Err(Error::not_implemented(
+                        "The 'auto' option is not yet implemented for 'shredding'",
+                    ));
+                }
+                let variant_names: Vec<String> = names
+                    .iter()
+                    .zip(types)
+                    .filter(|(_, ty)| ty.id() == LogicalTypeId::Variant)
+                    .map(|(name, _)| name.clone())
+                    .collect();
+                let fields = value
+                    .logical_type()
+                    .struct_children()
+                    .unwrap_or_default()
+                    .to_vec();
+                let children = value.children().unwrap_or_default().to_vec();
+                for ((column, _), child) in fields.iter().zip(children) {
+                    let column = column.to_lowercase();
+                    if !variant_names
+                        .iter()
+                        .any(|name| name.eq_ignore_ascii_case(&column))
+                    {
+                        if variant_names.is_empty() {
+                            return Err(Error::binder(format!(
+                                "VARIANT by name \"{column}\" specified in SHREDDING not found. There are no VARIANT columns present."
+                            )));
+                        }
+                        return Err(Error::binder(format!(
+                            "VARIANT by name \"{column}\" specified in SHREDDING not found. Consider using WRITE_PARTITION_COLUMNS if this column is a partition column. Available names of VARIANT columns: [{}]",
+                            variant_names.join(", ")
+                        )));
+                    }
+                    if child.logical_type().id() != LogicalTypeId::Varchar {
+                        return Err(Error::binder(
+                            "SHREDDING value should be of type VARCHAR, a stringified type to use for the column",
+                        ));
+                    }
+                    let ty = rustdb_csv::read_csv::transform_string_to_logical_type(
+                        context,
+                        &child.to_varchar()?,
+                    )?;
+                    crate::variant::write::check_shredding_type(&ty)?;
+                    if ty.id() != LogicalTypeId::Variant {
+                        crate::variant::write::transform_typed_value(&ty)?;
+                    }
+                    options.shredding.push((column, ty));
+                }
             }
             "kv_metadata" => {
                 let ty = value.logical_type();

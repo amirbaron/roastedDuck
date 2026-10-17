@@ -14,9 +14,11 @@ use std::fs::File;
 use std::io::{BufWriter, Write as _};
 
 use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, PhysicalType};
+use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, PhysicalType, Vector};
 
-use self::column::{ColumnWriter, FinishedColumn, ListWriter, PrimitiveWriter, StructWriter, WriterSchema};
+use self::column::{
+    ColumnWriter, FinishedColumn, ListWriter, PrimitiveWriter, StructWriter, VariantWriter, WriterSchema,
+};
 use self::types::{Bytes, Float, HugeIntAsDouble, IntervalType, Numeric, Uuid};
 use self::values::{
     BooleanWriter, EnumWriter, FixedDecimalWriter, StandardWriter, ValueWriter, deep_flatten,
@@ -62,6 +64,8 @@ pub struct WriterOptions {
     pub enable_bloom_filters: bool,
     pub bloom_filter_false_positive_ratio: f64,
     pub version: ParquetVersion,
+    /// The shredding types of VARIANT columns (`SHREDDING`), by column name.
+    pub shredding: Vec<(String, LogicalType)>,
     /// The `GeoParquet` metadata and geometry types written (`GEOPARQUET_VERSION`).
     pub geoparquet_version: crate::geo::GeoParquetVersion,
     /// Whether `GeoParquet` metadata is written at all (`enable_geoparquet_conversion`).
@@ -85,6 +89,7 @@ impl Default for WriterOptions {
             version: ParquetVersion::V1,
             geoparquet_version: crate::geo::GeoParquetVersion::V1,
             geoparquet_conversion: true,
+            shredding: Vec::new(),
         }
     }
 }
@@ -307,7 +312,27 @@ fn create_writer(
                 false,
             ))))
         }
-        LogicalTypeId::Variant => Err(Error::not_implemented("Writing VARIANT columns to Parquet")),
+        LogicalTypeId::Variant => {
+            let mut writer = VariantWriter {
+                schema,
+                inner: ColumnWriter::Struct(StructWriter::new(
+                    WriterSchema {
+                        name: String::new(),
+                        logical_type: LogicalType::INVALID,
+                        max_define: 0,
+                        max_repeat: 0,
+                        repetition: FieldRepetitionType::REQUIRED,
+                        field_id: None,
+                        path: Vec::new(),
+                    },
+                    Vec::new(),
+                )),
+                shredding: None,
+                analyzed: false,
+            };
+            build_variant_children(&mut writer, None)?;
+            Ok(ColumnWriter::Variant(Box::new(writer)))
+        }
         _ => {
             let values = primitive_values(ty)?;
             Ok(ColumnWriter::Primitive(Box::new(PrimitiveWriter::new(
@@ -315,6 +340,134 @@ fn create_writer(
             ))))
         }
     }
+}
+
+/// `CreateWriterRecursive` for VARIANT (and `AnalyzeSchemaFinalize`): the `metadata`,
+/// `value` and, when shredded on `shredding`, `typed_value` writers.
+fn build_variant_children(writer: &mut VariantWriter, shredding: Option<&LogicalType>) -> Result<()> {
+    let schema = &writer.schema;
+    let path = schema.path.clone();
+    let parent_path = &path[..path.len().saturating_sub(1)];
+    let column_path: Vec<String> = path.clone();
+    let _ = parent_path;
+    let typed = shredding
+        .filter(|ty| !matches!(ty.id(), LogicalTypeId::Any | LogicalTypeId::Variant))
+        .map(crate::variant::write::transform_typed_value)
+        .transpose()?;
+    let is_shredded = shredding.is_some();
+    let child_define = schema.max_define + 1;
+    let mut children = vec![
+        create_writer(
+            &column_path,
+            &LogicalType::BLOB,
+            "metadata",
+            None,
+            schema.max_repeat,
+            child_define,
+            false,
+        )?,
+        create_writer(
+            &column_path,
+            &LogicalType::BLOB,
+            "value",
+            None,
+            schema.max_repeat,
+            child_define,
+            is_shredded,
+        )?,
+    ];
+    let mut fields = vec![
+        ("metadata".to_owned(), LogicalType::BLOB),
+        ("value".to_owned(), LogicalType::BLOB),
+    ];
+    if let Some(typed) = &typed {
+        children.push(create_writer(
+            &column_path,
+            typed,
+            "typed_value",
+            None,
+            schema.max_repeat,
+            child_define,
+            true,
+        )?);
+        fields.push(("typed_value".to_owned(), typed.clone()));
+    }
+    let inner_schema = WriterSchema {
+        logical_type: LogicalType::struct_type(fields),
+        ..schema.clone()
+    };
+    writer.inner = ColumnWriter::Struct(StructWriter::new(inner_schema, children));
+    writer.shredding = shredding.cloned();
+    Ok(())
+}
+
+/// Transforms the VARIANT columns of a row group into their Parquet structs
+/// (`AnalyzeSchema`, then the `variant_to_parquet_variant` transform), shredding on the
+/// type found in the first row group when none was given.
+fn transform_variant_columns(
+    columns: &mut [ColumnWriter],
+    chunks: &mut [(Vec<Vector>, usize)],
+) -> Result<()> {
+    use rustdb_types::variant::VariantData;
+    for (index, column) in columns.iter_mut().enumerate() {
+        let ColumnWriter::Variant(writer) = column else {
+            continue;
+        };
+        let mut rows: Vec<Vec<Option<VariantData>>> = Vec::with_capacity(chunks.len());
+        for (vectors, count) in chunks.iter() {
+            let vector = &vectors[index];
+            let mut chunk_rows = Vec::with_capacity(*count);
+            for row in 0..*count {
+                chunk_rows.push(VariantData::from_value(&vector.get_value(row))?);
+            }
+            rows.push(chunk_rows);
+        }
+        if writer.child_count() == 2 && !writer.analyzed {
+            // `AnalyzeSchema` over the first row group.
+            let mut analysis = crate::variant::write::AnalyzeData::default();
+            for row in rows.iter().flatten() {
+                analysis.analyze(row.as_ref(), 0)?;
+            }
+            writer.analyzed = true;
+            if let Some(shredded) = analysis.shredded_type() {
+                build_variant_children(writer, Some(&shredded))?;
+            }
+        }
+        let struct_type = writer.transformed_type().clone();
+        for ((vectors, count), chunk_rows) in chunks.iter_mut().zip(&rows) {
+            let values = crate::variant::write::to_parquet_variant(
+                chunk_rows,
+                writer.shredding.as_ref(),
+                &struct_type,
+            )?;
+            let mut vector = Vector::flat(struct_type.clone(), (*count).max(1));
+            for (row, value) in values.iter().enumerate() {
+                vector.set_value(row, value)?;
+            }
+            vectors[index] = vector;
+        }
+    }
+    Ok(())
+}
+
+/// Applies the `SHREDDING` types of the top-level VARIANT columns.
+fn apply_shredding(columns: &mut [ColumnWriter], names: &[String], options: &WriterOptions) -> Result<()> {
+    for (column, name) in columns.iter_mut().zip(names) {
+        if let ColumnWriter::Variant(writer) = column
+            && let Some((_, ty)) = options
+                .shredding
+                .iter()
+                .find(|(column, _)| column.eq_ignore_ascii_case(name))
+        {
+            let shredding = if ty.id() == LogicalTypeId::Variant {
+                LogicalType::ANY
+            } else {
+                ty.clone()
+            };
+            build_variant_children(writer, Some(&shredding))?;
+        }
+    }
+    Ok(())
 }
 
 fn standard<T: types::WriteType>(is_string: bool) -> Box<dyn ValueWriter>
@@ -386,6 +539,7 @@ impl ParquetWriter {
                 true,
             )?);
         }
+        apply_shredding(&mut columns, names, &options)?;
         let key_value_metadata = (!options.kv_metadata.is_empty()).then(|| {
             options
                 .kv_metadata
@@ -494,6 +648,7 @@ impl ParquetWriter {
                 .collect::<Result<Vec<_>>>()?;
             flat_chunks.push((columns, chunk.len()));
         }
+        transform_variant_columns(&mut self.columns, &mut flat_chunks)?;
         let mut row_group = RowGroup {
             num_rows: num_rows as i64,
             file_offset: Some(0),

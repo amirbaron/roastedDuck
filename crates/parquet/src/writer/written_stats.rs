@@ -188,6 +188,8 @@ struct Unifier {
     num_values: u64,
     /// The geometry statistics of a GEOMETRY column (`UnifyGeoStats`).
     geo_stats: Option<crate::geo::GeoStats>,
+    /// The layout of a VARIANT, on its `metadata` field.
+    variant_type: Option<String>,
 }
 
 impl Unifier {
@@ -205,6 +207,7 @@ impl Unifier {
             column_size_bytes: 0,
             num_values: 0,
             geo_stats: None,
+            variant_type: None,
         }
     }
 
@@ -328,6 +331,20 @@ fn collect_unifiers(writer: &ColumnWriter, mut base_name: String, unifiers: &mut
                 collect_unifiers(child, base_name.clone(), unifiers);
             }
         }
+        ColumnWriter::Variant(node) => {
+            if let ColumnWriter::Struct(inner) = &node.inner {
+                for child in &inner.children {
+                    let start = unifiers.len();
+                    collect_unifiers(child, base_name.clone(), unifiers);
+                    // The 'metadata' field carries the layout of the VARIANT.
+                    if child.schema().name == "metadata"
+                        && let Some(unifier) = unifiers.get_mut(start)
+                    {
+                        unifier.variant_type = Some(node.transformed_type().to_string());
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -401,6 +418,9 @@ pub fn gather(
                 if let Some(max) = &unifier.global_max {
                     stats.push(("max".to_owned(), Value::varchar(unifier.stats_to_string(max))));
                 }
+            }
+            if let Some(variant_type) = &unifier.variant_type {
+                stats.push(("variant_type".to_owned(), Value::varchar(variant_type)));
             }
             if unifier.all_nulls_set {
                 stats.push(("null_count".to_owned(), Value::ubigint(unifier.null_count)));

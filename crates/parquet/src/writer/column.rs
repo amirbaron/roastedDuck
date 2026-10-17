@@ -57,6 +57,94 @@ pub enum ColumnWriter {
     /// LIST, MAP (over a REPEATED key/value struct) and ARRAY.
     List(Box<ListWriter>),
     Struct(StructWriter),
+    /// VARIANT (`VariantColumnWriter`): a struct of `metadata`, `value` and an optional
+    /// shredded `typed_value`, written from the transformed values.
+    Variant(Box<VariantWriter>),
+}
+
+/// The writer of a VARIANT column (`VariantColumnWriter`).
+#[derive(Debug)]
+pub struct VariantWriter {
+    /// The VARIANT group.
+    pub schema: WriterSchema,
+    /// The struct of `metadata`, `value` and `typed_value` (`TransformedType`).
+    pub inner: ColumnWriter,
+    /// The type the values are shredded on, if any.
+    pub shredding: Option<LogicalType>,
+    /// Whether the column was analyzed for shredding already (`is_analyzed`).
+    pub analyzed: bool,
+}
+
+impl VariantWriter {
+    /// The type of the transformed values: the inner struct's.
+    pub fn transformed_type(&self) -> &LogicalType {
+        &self.inner.schema().logical_type
+    }
+
+    /// The number of children of the inner struct.
+    pub fn child_count(&self) -> usize {
+        match &self.inner {
+            ColumnWriter::Struct(node) => node.children.len(),
+            _ => 0,
+        }
+    }
+}
+
+/// `ColumnWriter::DecrementMaxDefineRecursive`.
+fn decrement_max_define(writer: &mut ColumnWriter) {
+    match writer {
+        ColumnWriter::Primitive(node) => node.schema.max_define -= 1,
+        ColumnWriter::List(node) => {
+            node.schema.max_define -= 1;
+            decrement_max_define(&mut node.child);
+        }
+        ColumnWriter::Struct(node) => {
+            node.schema.max_define -= 1;
+            node.children.iter_mut().for_each(decrement_max_define);
+        }
+        ColumnWriter::Variant(node) => {
+            node.schema.max_define -= 1;
+            decrement_max_define(&mut node.inner);
+        }
+    }
+}
+
+/// `MarkRepetitionRequired`.
+fn mark_required(writer: &mut ColumnWriter) {
+    let schema = match writer {
+        ColumnWriter::Primitive(node) => &mut node.schema,
+        ColumnWriter::List(node) => &mut node.schema,
+        ColumnWriter::Struct(node) => &mut node.schema,
+        ColumnWriter::Variant(node) => &mut node.schema,
+    };
+    if schema.repetition == FieldRepetitionType::REQUIRED {
+        return;
+    }
+    schema.repetition = FieldRepetitionType::REQUIRED;
+    decrement_max_define(writer);
+}
+
+/// `MarkShreddedGroupRequired`: field and element groups below `typed_value` are
+/// REQUIRED, recursively.
+fn mark_shredded_group_required(group: &mut ColumnWriter) {
+    mark_required(group);
+    if let ColumnWriter::Struct(node) = group
+        && let Some(typed_value) = node
+            .children
+            .iter_mut()
+            .find(|child| child.schema().name == "typed_value")
+    {
+        mark_typed_value_groups_required(typed_value);
+    }
+}
+
+/// `MarkTypedValueShreddingGroupsRequired`.
+fn mark_typed_value_groups_required(typed_value: &mut ColumnWriter) {
+    match typed_value {
+        ColumnWriter::Struct(node) => node.children.iter_mut().for_each(mark_shredded_group_required),
+        ColumnWriter::List(node) => mark_shredded_group_required(&mut node.child),
+        _ => {}
+    }
 }
 
 fn map_key_null_error() -> Error {
@@ -134,6 +222,7 @@ impl ColumnWriter {
             Self::Primitive(writer) => &writer.schema,
             Self::List(writer) => &writer.schema,
             Self::Struct(writer) => &writer.schema,
+            Self::Variant(writer) => &writer.schema,
         }
     }
 
@@ -197,6 +286,38 @@ impl ColumnWriter {
                 }
                 Ok(leaves)
             }
+            Self::Variant(writer) => {
+                // `VariantColumnWriter::FinalizeSchema`.
+                let ColumnWriter::Struct(inner) = &mut writer.inner else {
+                    return Err(Error::internal("VARIANT writer without its struct"));
+                };
+                if let Some(typed_value) = inner
+                    .children
+                    .iter_mut()
+                    .find(|child| child.schema().name == "typed_value")
+                {
+                    mark_typed_value_groups_required(typed_value);
+                }
+                let schema = &writer.schema;
+                schemas.push(SchemaElement {
+                    repetition_type: Some(schema.repetition),
+                    num_children: Some(inner.children.len() as i32),
+                    name: schema.name.clone(),
+                    field_id: schema.field_id,
+                    logical_type: Some(crate::thrift::LogicalType {
+                        variant: Some(crate::thrift::VariantType {
+                            specification_version: Some(1),
+                        }),
+                        ..crate::thrift::LogicalType::default()
+                    }),
+                    ..SchemaElement::default()
+                });
+                let mut leaves = 0;
+                for child in &mut inner.children {
+                    leaves += child.finalize_schema(schemas, options)?;
+                }
+                Ok(leaves)
+            }
         }
     }
 
@@ -220,6 +341,7 @@ impl ColumnWriter {
                     child.initialize_write(columns, num_rows, options);
                 }
             }
+            Self::Variant(writer) => writer.inner.initialize_write(columns, num_rows, options),
         }
     }
 
@@ -229,6 +351,7 @@ impl ColumnWriter {
             Self::Primitive(writer) => writer.values.has_analyze(),
             Self::List(writer) => writer.child.has_analyze(),
             Self::Struct(writer) => writer.children.iter().any(ColumnWriter::has_analyze),
+            Self::Variant(writer) => writer.inner.has_analyze(),
         }
     }
 
@@ -264,6 +387,7 @@ impl ColumnWriter {
                 }
                 Ok(())
             }
+            Self::Variant(writer) => writer.inner.analyze(parent, vector, count),
         }
     }
 
@@ -279,6 +403,7 @@ impl ColumnWriter {
                     }
                 }
             }
+            Self::Variant(writer) => writer.inner.finalize_analyze(options),
         }
     }
 
@@ -319,6 +444,7 @@ impl ColumnWriter {
                 }
                 Ok(())
             }
+            Self::Variant(writer) => writer.inner.prepare(parent, vector, count, can_span_pages),
         }
     }
 
@@ -333,6 +459,7 @@ impl ColumnWriter {
                 }
                 Ok(())
             }
+            Self::Variant(writer) => writer.inner.begin_write(options),
         }
     }
 
@@ -361,6 +488,7 @@ impl ColumnWriter {
                 }
                 Ok(())
             }
+            Self::Variant(writer) => writer.inner.write(vector, count, options),
         }
     }
 
@@ -390,6 +518,11 @@ impl ColumnWriter {
                     child.finalize_write(columns, total_byte_size, sink, options, null_count, output)?;
                 }
                 Ok(())
+            }
+            Self::Variant(writer) => {
+                writer
+                    .inner
+                    .finalize_write(columns, total_byte_size, sink, options, extra_null_count, output)
             }
         }
     }

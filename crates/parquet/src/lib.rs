@@ -26,11 +26,17 @@ pub mod variant;
 pub mod vector_ops;
 pub mod writer;
 
-use rustdb_function::TableFunctionSet;
+use rustdb_function::{ScalarFunctionSet, TableFunctionSet};
 
 /// The table functions of the extension.
 pub fn parquet_table_functions() -> Vec<TableFunctionSet> {
     let mut functions = scan::read_parquet_functions();
     functions.extend(metadata::metadata_functions());
     functions
+}
+
+/// The scalar functions of the extension: `variant_to_parquet_variant` and
+/// `variant_bytes_to_variant`.
+pub fn parquet_scalar_functions() -> Vec<ScalarFunctionSet> {
+    variant::functions()
 }

@@ -3,6 +3,10 @@
 //! values into DuckDB's VARIANT layout (`VariantValue::ToVARIANT`).
 
 pub mod read;
+pub mod write;
+
+use rustdb_function::{NullHandling, ScalarFunction, ScalarFunctionSet};
+use rustdb_types::{LogicalType, Vector};
 
 use std::collections::BTreeMap;
 
@@ -485,4 +489,72 @@ fn convert_primitive(value: &Value, data: &mut VariantData) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// `GetParquetVariantType`: the Parquet layout of an unshredded VARIANT.
+fn parquet_variant_type() -> LogicalType {
+    LogicalType::struct_type(vec![
+        ("metadata".to_owned(), LogicalType::BLOB),
+        ("value".to_owned(), LogicalType::BLOB),
+    ])
+    .with_alias("PARQUET_VARIANT")
+}
+
+/// `variant_to_parquet_variant(VARIANT)` and `variant_bytes_to_variant(BLOB)`.
+pub fn functions() -> Vec<ScalarFunctionSet> {
+    let mut to_parquet = ScalarFunctionSet::new("variant_to_parquet_variant");
+    let mut function = ScalarFunction::new(
+        "variant_to_parquet_variant",
+        vec![LogicalType::variant()],
+        parquet_variant_type(),
+        |args, _, result| {
+            let input = args.column(0);
+            let count = args.len();
+            let rows = (0..count)
+                .map(|row| VariantData::from_value(&input.get_value(row)))
+                .collect::<Result<Vec<_>>>()?;
+            let ty = parquet_variant_type();
+            let values = write::to_parquet_variant(&rows, None, &ty)?;
+            let mut output = Vector::flat(ty, count.max(1));
+            for (row, value) in values.iter().enumerate() {
+                output.set_value(row, value)?;
+            }
+            *result = output;
+            Ok(())
+        },
+    );
+    function.null_handling = NullHandling::Special;
+    to_parquet.add(function);
+
+    let mut from_bytes = ScalarFunctionSet::new("variant_bytes_to_variant");
+    let mut function = ScalarFunction::new(
+        "variant_bytes_to_variant",
+        vec![LogicalType::BLOB],
+        LogicalType::variant(),
+        |args, _, result| {
+            // `ConvertBinaryToVariant`: the value follows the metadata in each blob.
+            let input = args.column(0);
+            let count = args.len();
+            let mut values = Vec::with_capacity(count);
+            for row in 0..count {
+                if input.is_null(row) {
+                    values.push(VariantValue::Missing);
+                    continue;
+                }
+                let bytes = input.string_bytes(row);
+                let metadata = VariantMetadata::new(bytes)?;
+                values.push(decode(&metadata, bytes, metadata.total_size)?);
+            }
+            let mut output = Vector::flat(LogicalType::variant(), count.max(1));
+            for (row, variant) in to_variant(&values)?.into_iter().enumerate() {
+                let value = variant.unwrap_or_else(|| Value::null(LogicalType::variant()));
+                output.set_value(row, &value)?;
+            }
+            *result = output;
+            Ok(())
+        },
+    );
+    function.null_handling = NullHandling::Special;
+    from_bytes.add(function);
+    vec![to_parquet, from_bytes]
 }
