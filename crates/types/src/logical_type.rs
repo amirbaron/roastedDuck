@@ -19,7 +19,70 @@ use crate::{
 #[derive(Clone)]
 pub struct LogicalType {
     id: LogicalTypeId,
-    info: Option<Arc<ExtraTypeInfo>>,
+    info: Option<Info>,
+}
+
+/// The parameters of a [`LogicalType`].
+#[derive(Clone)]
+enum Info {
+    /// Parameters shared through a reference count.
+    Shared(Arc<ExtraTypeInfo>),
+    /// The interned parameters of a plain DECIMAL. Vectors clone their type all the
+    /// time; with a shared reference count, threads cloning the same DECIMAL type would
+    /// contend on it.
+    Static(&'static ExtraTypeInfo),
+}
+
+impl Info {
+    fn new(info: ExtraTypeInfo) -> Self {
+        if let TypeInfo::Decimal(DecimalTypeInfo { width, scale }) = info.kind
+            && info.alias.is_empty()
+            && info.extension_info.is_none()
+            && let Some(interned) = interned_decimal(width, scale)
+        {
+            return Self::Static(interned);
+        }
+        Self::Shared(Arc::new(info))
+    }
+
+    fn get(&self) -> &ExtraTypeInfo {
+        match self {
+            Self::Shared(info) => info,
+            Self::Static(info) => info,
+        }
+    }
+
+    fn into_inner(self) -> ExtraTypeInfo {
+        match self {
+            Self::Shared(info) => Arc::unwrap_or_clone(info),
+            Self::Static(info) => info.clone(),
+        }
+    }
+}
+
+/// The largest DECIMAL width (`DecimalType::MAX_WIDTH_DECIMAL`).
+const MAX_DECIMAL_WIDTH: u8 = 38;
+
+/// The parameters of every plain `DECIMAL(width, scale)`, created once.
+fn interned_decimal(width: u8, scale: u8) -> Option<&'static ExtraTypeInfo> {
+    static DECIMALS: std::sync::OnceLock<Box<[ExtraTypeInfo]>> = std::sync::OnceLock::new();
+    if width > MAX_DECIMAL_WIDTH || scale > MAX_DECIMAL_WIDTH {
+        return None;
+    }
+    let side = usize::from(MAX_DECIMAL_WIDTH) + 1;
+    let all = DECIMALS.get_or_init(|| {
+        (0..side * side)
+            .map(|index| ExtraTypeInfo {
+                alias: String::new(),
+                extension_info: None,
+                kind: TypeInfo::Decimal(DecimalTypeInfo {
+                    width: (index / side) as u8,
+                    scale: (index % side) as u8,
+                }),
+            })
+            .collect()
+    });
+    all.get(usize::from(width) * side + usize::from(scale))
 }
 
 impl LogicalType {
@@ -201,7 +264,7 @@ impl LogicalType {
     pub fn from_parts(id: LogicalTypeId, info: Option<ExtraTypeInfo>) -> Self {
         Self {
             id,
-            info: info.map(Arc::new),
+            info: info.map(Info::new),
         }
     }
 
@@ -214,7 +277,7 @@ impl LogicalType {
                 extension_info: None,
                 kind: TypeInfo::Generic,
             },
-            Arc::unwrap_or_clone,
+            Info::into_inner,
         );
         info.alias = alias.into();
         Self::from_parts(self.id, Some(info))
@@ -227,18 +290,17 @@ impl LogicalType {
 
     /// The subclass-specific parameters, if any.
     pub fn info(&self) -> Option<&TypeInfo> {
-        self.info.as_deref().map(|info| &info.kind)
+        self.info.as_ref().map(|info| &info.get().kind)
     }
 
     /// DuckDB's complete `ExtraTypeInfo`, including alias and extension metadata.
     pub fn extra_info(&self) -> Option<&ExtraTypeInfo> {
-        self.info.as_deref()
+        self.info.as_ref().map(Info::get)
     }
 
     /// The alias, if one is set.
     pub fn alias(&self) -> Option<&str> {
-        self.info
-            .as_deref()
+        self.extra_info()
             .map(|info| info.alias.as_str())
             .filter(|alias| !alias.is_empty())
     }
@@ -481,7 +543,7 @@ impl PartialEq for LogicalType {
         if self.id != other.id {
             return false;
         }
-        match (self.info.as_deref(), other.info.as_deref()) {
+        match (self.extra_info(), other.extra_info()) {
             (None, None) => true,
             (Some(info), None) | (None, Some(info)) => {
                 info_without_contents(info) && info.alias.is_empty() && info.extension_info.is_none()
@@ -505,7 +567,7 @@ impl std::hash::Hash for LogicalType {
     /// Consistent with [`PartialEq`]: the contents of STRING and GENERIC infos are skipped.
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.id.hash(state);
-        match self.info.as_deref() {
+        match self.extra_info() {
             None => "".hash(state),
             Some(info) => {
                 info.alias.hash(state);
