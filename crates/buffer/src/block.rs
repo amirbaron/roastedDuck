@@ -85,6 +85,12 @@ pub(crate) struct BlockMemory {
     /// Bytes to reserve when (re)loading the block.
     memory_usage: AtomicU64,
     eviction_queue_index: AtomicUsize,
+    /// Whether the buffer is freed as soon as the block is unpinned instead of staying
+    /// cached until memory runs short (persistent table data, see
+    /// [`BlockHandle::release_on_unpin`]).
+    release_on_unpin: AtomicBool,
+    /// Whether the block was read (and its checksum verified) before.
+    read_before: AtomicBool,
     inner: Mutex<BlockInner>,
 }
 
@@ -111,6 +117,8 @@ impl BlockMemory {
             destroy_upon: AtomicU8::new(DestroyBufferUpon::Block as u8),
             memory_usage: AtomicU64::new(alloc_size as u64),
             eviction_queue_index: AtomicUsize::new(NO_QUEUE_INDEX),
+            release_on_unpin: AtomicBool::new(false),
+            read_before: AtomicBool::new(false),
             inner: Mutex::new(BlockInner {
                 buffer: None,
                 charge,
@@ -145,6 +153,8 @@ impl BlockMemory {
             destroy_upon: AtomicU8::new(destroy_upon as u8),
             memory_usage: AtomicU64::new(memory_usage),
             eviction_queue_index: AtomicUsize::new(NO_QUEUE_INDEX),
+            release_on_unpin: AtomicBool::new(false),
+            read_before: AtomicBool::new(false),
             inner: Mutex::new(BlockInner {
                 buffer: Some(buffer),
                 charge,
@@ -205,6 +215,11 @@ impl BlockMemory {
 
     fn is_temporary(&self) -> bool {
         self.block_id >= MAXIMUM_BLOCK
+    }
+
+    /// Whether the buffer is freed when the last pin goes (see `release_on_unpin`).
+    pub(crate) fn releases_on_unpin(&self) -> bool {
+        self.release_on_unpin.load(Ordering::Relaxed) && !self.is_temporary()
     }
 
     /// Whether unpinned data must go to the eviction queue (rather than be dropped).
@@ -380,6 +395,16 @@ impl BlockHandle {
         self.block_id
     }
 
+    /// Frees the buffer of this persistent block whenever its last pin is released,
+    /// instead of keeping it cached until memory runs short as DuckDB does. Table data is
+    /// read in a stream by scans: re-reading a block from the file (the operating
+    /// system's cache) costs less than keeping every scanned block resident.
+    pub fn release_on_unpin(&self) {
+        if self.block_manager.is_some() {
+            self.memory.release_on_unpin.store(true, Ordering::Relaxed);
+        }
+    }
+
     pub fn tag(&self) -> MemoryTag {
         self.memory.tag()
     }
@@ -449,7 +474,12 @@ impl BlockHandle {
             let mut buffer = memory
                 .shared
                 .create_block_buffer(block_manager.as_ref(), reusable)?;
-            block_manager.read(self.block_id, &mut buffer)?;
+            if memory.read_before.load(Ordering::Relaxed) {
+                block_manager.reread(self.block_id, &mut buffer)?;
+            } else {
+                block_manager.read(self.block_id, &mut buffer)?;
+                memory.read_before.store(true, Ordering::Relaxed);
+            }
             buffer
         } else {
             if !memory.must_write_to_temporary_file() {

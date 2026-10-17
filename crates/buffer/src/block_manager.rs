@@ -36,6 +36,12 @@ pub trait BlockManager: Send + Sync + std::fmt::Debug {
     /// Fills `buffer` (header included) with the contents of block `block_id`.
     fn read(&self, block_id: BlockId, buffer: &mut FileBuffer) -> Result<()>;
 
+    /// [`BlockManager::read`] of a block whose checksum was verified by an earlier read
+    /// of the same (immutable) block: managers may skip verifying it again.
+    fn reread(&self, block_id: BlockId, buffer: &mut FileBuffer) -> Result<()> {
+        self.read(block_id, buffer)
+    }
+
     /// Writes `buffer` (header included) as block `block_id`.
     fn write(&self, block_id: BlockId, buffer: &FileBuffer) -> Result<()>;
 

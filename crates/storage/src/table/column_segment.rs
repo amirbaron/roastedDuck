@@ -248,6 +248,7 @@ impl ColumnSegment {
             _ => {
                 let layout = Layout::of(&ty)?;
                 let block = buffer_manager.register_block(block_manager, block_id);
+                block.release_on_unpin();
                 Ok(Self {
                     ty,
                     layout,
