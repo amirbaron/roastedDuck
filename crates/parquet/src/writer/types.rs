@@ -100,6 +100,8 @@ pub trait NumericCast: Send + std::fmt::Debug + 'static {
     const FALLBACK: FallbackEncoding;
     /// Whether the source type is signed (only then the deprecated min/max are written).
     const SIGNED: bool;
+    /// Whether the column gets statistics (`InitializeStats` of the operator).
+    const HAS_STATISTICS: bool = true;
     fn cast(src: Self::Src) -> Result<Self::Tgt>;
 }
 
@@ -113,6 +115,7 @@ impl<C: NumericCast> WriteType for Numeric<C> {
     type Stats = NumericStatistics<C::Tgt>;
     const PARQUET_TYPE: Type = C::PARQUET_TYPE;
     const FALLBACK: FallbackEncoding = C::FALLBACK;
+    const HAS_STATISTICS: bool = C::HAS_STATISTICS;
 
     fn new_stats() -> Self::Stats {
         NumericStatistics::new(C::SIGNED, false)
@@ -150,6 +153,9 @@ impl<C: NumericCast> WriteType for Numeric<C> {
 
 macro_rules! numeric_cast {
     ($(#[$meta:meta])* $name:ident, $src:ty => $tgt:ty, $parquet:ident, $fallback:ident, $signed:expr, |$value:ident| $body:expr) => {
+        numeric_cast!($(#[$meta])* $name, $src => $tgt, $parquet, $fallback, $signed, true, |$value| $body);
+    };
+    ($(#[$meta:meta])* $name:ident, $src:ty => $tgt:ty, $parquet:ident, $fallback:ident, $signed:expr, $stats:expr, |$value:ident| $body:expr) => {
         $(#[$meta])*
         #[derive(Debug)]
         pub struct $name;
@@ -160,6 +166,7 @@ macro_rules! numeric_cast {
             const PARQUET_TYPE: Type = Type::$parquet;
             const FALLBACK: FallbackEncoding = FallbackEncoding::$fallback;
             const SIGNED: bool = $signed;
+            const HAS_STATISTICS: bool = $stats;
             #[inline]
             fn cast($value: $src) -> Result<$tgt> {
                 $body
@@ -211,8 +218,8 @@ numeric_cast!(
 );
 numeric_cast!(
     /// TIME WITH TIME ZONE as INT64 UTC microseconds of the day (`ParquetTimeTZOperator`,
-    /// `Time::NormalizeTimeTZ`).
-    TimeTz, i64 => i64, INT64, DeltaBinaryPacked, true, |value| {
+    /// `Time::NormalizeTimeTZ`), without statistics (its operator has none).
+    TimeTz, i64 => i64, INT64, DeltaBinaryPacked, true, false, |value| {
         const MICROS_PER_DAY: i64 = 86_400_000_000;
         let time = rustdb_types::TimeTz(value as u64);
         let shift = -i64::from(time.offset()) * 1_000_000;
