@@ -127,7 +127,7 @@ pub fn compress(codec: CompressionCodec, src: &[u8], level: i64, out: &mut Vec<u
                 ruzstd::encoding::CompressionLevel::Fastest,
             ));
         }
-        CompressionCodec::LZ4_RAW => out.extend_from_slice(&lz4_flex::block::compress(src)),
+        CompressionCodec::LZ4_RAW => crate::lz4::compress(src, out),
         CompressionCodec::BROTLI => brotli_compress(src, out)?,
         _ => {
             return Err(Error::internal(format!(
