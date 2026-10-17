@@ -514,6 +514,195 @@ pub fn to_parquet_variant(
         .collect()
 }
 
+/// `StringUtil::CIHash`: Jenkins' one-at-a-time hash of the lowercased bytes.
+fn ci_hash(text: &str) -> u64 {
+    let mut hash: u32 = 0;
+    for byte in text.bytes() {
+        hash = hash.wrapping_add(u32::from(byte.to_ascii_lowercase()));
+        hash = hash.wrapping_add(hash << 10);
+        hash ^= hash >> 6;
+    }
+    hash = hash.wrapping_add(hash << 3);
+    hash ^= hash >> 11;
+    hash = hash.wrapping_add(hash << 15);
+    u64::from(hash)
+}
+
+/// The OBJECT fields of a VARIANT analysis (`case_insensitive_map_t<VariantAnalyzeData>`):
+/// a case-insensitive map whose first spelling of a key names the field, iterated in
+/// the order of the C++ standard library's `unordered_map` (libc++, which DuckDB's
+/// builds on this platform use), since that order picks the shredded field order.
+#[derive(Debug, Default)]
+struct ObjectFields {
+    /// The fields in insertion order, with their hashes.
+    entries: Vec<(String, u64, AnalyzeData)>,
+    /// The position in `entries` of each lowercased key.
+    positions: std::collections::HashMap<String, usize>,
+}
+
+impl ObjectFields {
+    /// `operator[]`: the field of `key`, inserted if new.
+    fn entry(&mut self, key: &str) -> &mut AnalyzeData {
+        let lower = key.to_ascii_lowercase();
+        let position = if let Some(&position) = self.positions.get(&lower) {
+            position
+        } else {
+            self.entries
+                .push((key.to_owned(), ci_hash(key), AnalyzeData::default()));
+            let position = self.entries.len() - 1;
+            self.positions.insert(lower, position);
+            position
+        };
+        &mut self.entries[position].2
+    }
+
+    /// The fields in the iteration order of libc++'s `unordered_map` after inserting
+    /// them in this order.
+    fn iter_in_map_order(&self) -> impl Iterator<Item = (&str, &AnalyzeData)> {
+        let hashes: Vec<u64> = self.entries.iter().map(|(_, hash, _)| *hash).collect();
+        libcxx_unordered_order(&hashes)
+            .into_iter()
+            .map(|position| (self.entries[position].0.as_str(), &self.entries[position].2))
+    }
+}
+
+/// libc++'s `__next_prime`: the smallest prime at least `n`.
+fn next_prime(n: usize) -> usize {
+    let is_prime = |value: usize| {
+        if value < 2 {
+            return false;
+        }
+        let mut divisor = 2;
+        while divisor * divisor <= value {
+            if value.is_multiple_of(divisor) {
+                return false;
+            }
+            divisor += 1;
+        }
+        true
+    };
+    let mut candidate = n;
+    while !is_prime(candidate) {
+        candidate += 1;
+    }
+    candidate
+}
+
+/// The iteration order (positions) of keys with `hashes` inserted in order into a
+/// libc++ `unordered_map` with unique keys and the default maximum load factor 1
+/// (`__emplace_unique_key_args`, `__rehash_unique`, `__do_rehash`).
+fn libcxx_unordered_order(hashes: &[u64]) -> Vec<usize> {
+    /// The list head (`__p1_`, before the first node).
+    const BEFORE_BEGIN: usize = usize::MAX;
+    struct Table<'a> {
+        hashes: &'a [u64],
+        /// The successor of each node, and of the head.
+        next: Vec<Option<usize>>,
+        head: Option<usize>,
+        /// Per bucket, the node before its first node.
+        buckets: Vec<Option<usize>>,
+    }
+    impl Table<'_> {
+        fn constrain(&self, hash: u64) -> usize {
+            let count = self.buckets.len() as u64;
+            let constrained = if count.is_power_of_two() {
+                hash & (count - 1)
+            } else if hash < count {
+                hash
+            } else {
+                hash % count
+            };
+            constrained as usize
+        }
+        fn next_of(&self, node: usize) -> Option<usize> {
+            if node == BEFORE_BEGIN {
+                self.head
+            } else {
+                self.next[node]
+            }
+        }
+        fn set_next(&mut self, node: usize, value: Option<usize>) {
+            if node == BEFORE_BEGIN {
+                self.head = value;
+            } else {
+                self.next[node] = value;
+            }
+        }
+        /// `__do_rehash<true>`.
+        fn rehash(&mut self, count: usize) {
+            self.buckets = vec![None; count];
+            let Some(first) = self.head else {
+                return;
+            };
+            let mut previous_hash = self.constrain(self.hashes[first]);
+            self.buckets[previous_hash] = Some(BEFORE_BEGIN);
+            let mut previous = first;
+            while let Some(current) = self.next_of(previous) {
+                let hash = self.constrain(self.hashes[current]);
+                if hash == previous_hash {
+                    previous = current;
+                } else if let Some(bucket) = self.buckets[hash] {
+                    let after = self.next_of(current);
+                    self.set_next(previous, after);
+                    let bucket_next = self.next_of(bucket);
+                    self.set_next(current, bucket_next);
+                    self.set_next(bucket, Some(current));
+                } else {
+                    self.buckets[hash] = Some(previous);
+                    previous = current;
+                    previous_hash = hash;
+                }
+            }
+        }
+    }
+    let mut table = Table {
+        hashes,
+        next: vec![None; hashes.len()],
+        head: None,
+        buckets: Vec::new(),
+    };
+    for (node, &hash) in hashes.iter().enumerate() {
+        let size = node;
+        let bucket_count = table.buckets.len();
+        if bucket_count == 0 || size + 1 > bucket_count {
+            // `__is_hash_power2`: a power of two above 2.
+            let power2 = bucket_count > 2 && bucket_count.is_power_of_two();
+            let mut count = (2 * bucket_count + usize::from(!power2)).max(size + 1);
+            if count == 1 {
+                count = 2;
+            } else if !count.is_power_of_two() {
+                count = next_prime(count);
+            }
+            if count > bucket_count {
+                table.rehash(count);
+            }
+        }
+        let bucket = table.constrain(hash);
+        match table.buckets[bucket] {
+            None => {
+                table.next[node] = table.head;
+                table.head = Some(node);
+                table.buckets[bucket] = Some(BEFORE_BEGIN);
+                if let Some(following) = table.next[node] {
+                    let following_bucket = table.constrain(table.hashes[following]);
+                    table.buckets[following_bucket] = Some(node);
+                }
+            }
+            Some(previous) => {
+                table.next[node] = table.next_of(previous);
+                table.set_next(previous, Some(node));
+            }
+        }
+    }
+    let mut order = Vec::with_capacity(hashes.len());
+    let mut current = table.head;
+    while let Some(node) = current {
+        order.push(node);
+        current = table.next[node];
+    }
+    order
+}
+
 /// The type statistics of a VARIANT column (`VariantAnalyzeData`).
 #[derive(Debug, Default)]
 pub struct AnalyzeData {
@@ -522,7 +711,7 @@ pub struct AnalyzeData {
     decimal_scale: u32,
     decimal_consistent: bool,
     total_count: u64,
-    object: Option<BTreeMap<String, AnalyzeData>>,
+    object: Option<ObjectFields>,
     array: Option<Box<AnalyzeData>>,
 }
 
@@ -547,17 +736,12 @@ impl AnalyzeData {
         self.bump(type_id, 1);
         match type_id {
             V::Object => {
-                let fields = self.object.get_or_insert_with(BTreeMap::new);
+                let fields = self.object.get_or_insert_with(ObjectFields::default);
                 let nested = data.nested(index)?;
                 for position in 0..nested.child_count {
                     let child = data.child(nested, position)?;
-                    // A case-insensitive map: the first spelling of a key names the field.
                     let key = data.child_key(child)?;
-                    let existing = fields.keys().find(|name| name.eq_ignore_ascii_case(key)).cloned();
-                    let field = fields
-                        .entry(existing.unwrap_or_else(|| key.to_owned()))
-                        .or_default();
-                    field.analyze(Some(data), child.values_index)?;
+                    fields.entry(key).analyze(Some(data), child.values_index)?;
                 }
             }
             V::Array => {
@@ -649,8 +833,8 @@ impl AnalyzeData {
             let fields: Vec<(String, LogicalType)> = self
                 .object
                 .as_ref()?
-                .iter()
-                .filter_map(|(name, field)| field.shredded_type().map(|ty| (name.clone(), ty)))
+                .iter_in_map_order()
+                .filter_map(|(name, field)| field.shredded_type().map(|ty| (name.to_owned(), ty)))
                 .collect();
             if fields.is_empty() {
                 return None;
