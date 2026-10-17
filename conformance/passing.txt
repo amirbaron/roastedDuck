@@ -1534,6 +1534,7 @@ test/sql/copy/parquet/parquet_hive.test
 test/sql/copy/parquet/parquet_hive2.test
 test/sql/copy/parquet/parquet_hive_empty.test
 test/sql/copy/parquet/parquet_hive_null.test
+test/sql/copy/parquet/parquet_late_materialization.test
 test/sql/copy/parquet/parquet_list.test
 test/sql/copy/parquet/parquet_metadata.test
 test/sql/copy/parquet/parquet_metadata_blob.test

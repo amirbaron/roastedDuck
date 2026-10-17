@@ -1390,6 +1390,10 @@ fn read_parquet_function(name: &'static str, argument: LogicalType) -> TableFunc
     function.projected_output = true;
     function.parallel_scan = Some(read_parquet_parallel());
     function.file_filter_pushdown = Some(read_parquet_file_filter_pushdown());
+    // `ParquetGetRowIdColumns`.
+    function.get_row_id_columns = Some(Arc::new(|_| {
+        vec![COLUMN_IDENTIFIER_FILE_INDEX, COLUMN_IDENTIFIER_FILE_ROW_NUMBER]
+    }));
     function
 }
 

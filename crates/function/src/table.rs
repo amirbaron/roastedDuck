@@ -142,6 +142,9 @@ impl fmt::Debug for FileFilterPushdown {
     }
 }
 
+/// The (virtual) columns that identify a row of a call (`table_function_get_row_id_columns`).
+pub type TableFunctionRowIdColumns = Arc<dyn Fn(Option<&dyn FunctionData>) -> Vec<u64> + Send + Sync>;
+
 /// The shared state of a parallel table function scan.
 pub type ParallelScanGlobal = Arc<dyn std::any::Any + Send + Sync>;
 /// The state of one thread of a parallel table function scan.
@@ -265,6 +268,9 @@ pub struct TableFunction {
     pub parallel_scan: Option<ParallelTableScan>,
     /// Filter pushdown into the scanned files (`pushdown_complex_filter`).
     pub file_filter_pushdown: Option<FileFilterPushdown>,
+    /// The (virtual) columns that identify a row, for late materialization
+    /// (`late_materialization` + `get_row_id_columns`).
+    pub get_row_id_columns: Option<TableFunctionRowIdColumns>,
     /// Whether the scan fills one output column per scanned column id, in order
     /// (DuckDB's scan contract), instead of all of the function's columns.
     pub projected_output: bool,
@@ -294,6 +300,7 @@ impl TableFunction {
             get_partition_stats: None,
             parallel_scan: None,
             file_filter_pushdown: None,
+            get_row_id_columns: None,
             projected_output: false,
         }
     }
