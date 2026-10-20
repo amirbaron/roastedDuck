@@ -57,9 +57,13 @@ fn probe(
     compare: &mut Vec<u32>,
 ) {
     let mask = (entries.len() - 1) & usize::try_from(bitmask).unwrap_or(usize::MAX);
-    // Written by index like DuckDB's selection vectors; truncated afterwards.
-    empty.resize(remaining.len(), 0);
-    compare.resize(remaining.len(), 0);
+    // Written by index like DuckDB's selection vectors, into the spare capacity.
+    empty.clear();
+    compare.clear();
+    empty.reserve(remaining.len());
+    compare.reserve(remaining.len());
+    let empty_out = &mut empty.spare_capacity_mut()[..remaining.len()];
+    let compare_out = &mut compare.spare_capacity_mut()[..remaining.len()];
     let (mut empty_count, mut compare_count) = (0, 0);
     for &index in remaining {
         let row = index as usize;
@@ -70,12 +74,12 @@ fn probe(
             if *entry == 0 {
                 // Unoccupied: claim it with the salt; the pointer follows later.
                 *entry = salt;
-                empty[empty_count] = index;
+                empty_out[empty_count].write(index);
                 empty_count += 1;
                 break;
             }
             if (*entry | POINTER_MASK) == salt {
-                compare[compare_count] = index;
+                compare_out[compare_count].write(index);
                 compare_count += 1;
                 break;
             }
@@ -83,8 +87,12 @@ fn probe(
         }
         offsets[row] = offset as u64;
     }
-    empty.truncate(empty_count);
-    compare.truncate(compare_count);
+    // SAFETY: every row goes to exactly one output, at its count, so the first
+    // `empty_count` / `compare_count` spare slots were written.
+    unsafe {
+        empty.set_len(empty_count);
+        compare.set_len(compare_count);
+    }
 }
 
 /// The number of table entries for `count` groups (`GetCapacityForCount`).
@@ -151,6 +159,10 @@ pub struct GroupedAggregateHashTable {
     new_group_rows: Vec<u32>,
     ht_offsets: Vec<u64>,
     salts: Vec<u64>,
+    /// Scratch selections of `find_or_create_groups`: the rows still probing, those that
+    /// claimed an empty entry, those to compare with an entry's group, and those that
+    /// differed.
+    probe_buffers: [Vec<u32>; 4],
     /// Whether rows still hold aggregate states that need destroying.
     states_live: bool,
     /// Rows added with `add_chunk` (`sink_count`).
@@ -246,6 +258,7 @@ impl GroupedAggregateHashTable {
             new_group_rows: Vec::new(),
             ht_offsets: Vec::new(),
             salts: Vec::new(),
+            probe_buffers: Default::default(),
             states_live: false,
             sink_count: 0,
             skip_lookups: false,
@@ -446,11 +459,10 @@ impl GroupedAggregateHashTable {
         }
         std::hint::black_box(occupied);
 
-        let mut remaining: Vec<u32> = (0..count as u32).collect();
+        let [mut remaining, mut empty, mut compare, mut no_match] = std::mem::take(&mut self.probe_buffers);
+        remaining.clear();
+        remaining.extend(0..count as u32);
         let mut new_groups = 0;
-        let mut empty = Vec::with_capacity(count);
-        let mut compare = Vec::with_capacity(count);
-        let mut no_match = Vec::new();
         let mut iterations = 0;
         while !remaining.is_empty() {
             iterations += 1;
@@ -500,6 +512,7 @@ impl GroupedAggregateHashTable {
             }
             std::mem::swap(&mut remaining, &mut no_match);
         }
+        self.probe_buffers = [remaining, empty, compare, no_match];
         self.count += new_groups;
         Ok(new_groups)
     }

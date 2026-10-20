@@ -321,6 +321,19 @@ fn select_loop<T: NativeType>(
             let (l, r) = (lu.values[0], &ru.values[..count]);
             partition_rows(count, positions, true_sel, false_sel, |row| predicate(l, r[row]))
         }
+        // Columns sliced by a scan's filters: usually both by the same selection.
+        (Sel::Indices(left), Sel::Indices(right)) => {
+            let (left, right) = (&left[..count], &right[..count]);
+            partition_rows(count, positions, true_sel, false_sel, |row| {
+                predicate(lu.values[left[row] as usize], ru.values[right[row] as usize])
+            })
+        }
+        (Sel::Indices(left), Sel::Constant) => {
+            let (left, r) = (&left[..count], ru.values[0]);
+            partition_rows(count, positions, true_sel, false_sel, |row| {
+                predicate(lu.values[left[row] as usize], r)
+            })
+        }
         _ => partition_rows(count, positions, true_sel, false_sel, |row| {
             predicate(lu.values[lu.slot(row)], ru.values[ru.slot(row)])
         }),

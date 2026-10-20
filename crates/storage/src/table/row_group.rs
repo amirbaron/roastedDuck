@@ -512,6 +512,33 @@ impl RowGroup {
                 state.vector_index += 1;
                 continue;
             }
+            if sel.len() == max_count {
+                // Every row passed: the filtered columns hold the whole vector, the others
+                // are scanned without a selection.
+                for (index, column_id) in column_ids.iter().enumerate() {
+                    if has_filters && filters.column_has_filters(index) {
+                        continue;
+                    }
+                    let vector = result.column_mut(index);
+                    if column_id.is_row_id() {
+                        *vector = row_id_vector(row_id_start, max_count);
+                        continue;
+                    }
+                    let column_state = &mut state.column_scans[index];
+                    column_state.update_scan_type = options.update_type;
+                    self.column(column_id.primary_index())?.scan(
+                        transaction,
+                        vector_index,
+                        column_state,
+                        vector,
+                        max_count,
+                    )?;
+                }
+                result.set_len(max_count);
+                state.filter_sel = sel;
+                state.vector_index += 1;
+                return Ok(());
+            }
             let selection = SelectionVector::new(&sel[..]);
             for (index, column_id) in column_ids.iter().enumerate() {
                 let vector = result.column_mut(index);
