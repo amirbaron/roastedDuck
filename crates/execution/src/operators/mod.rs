@@ -26,6 +26,7 @@ mod modify;
 mod order;
 mod perfect_hash_aggregate;
 mod pivot;
+mod radix_sink;
 mod projection;
 mod result_collector;
 mod sample;

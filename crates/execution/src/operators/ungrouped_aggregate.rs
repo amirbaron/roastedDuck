@@ -10,10 +10,11 @@ use rustdb_function::aggregate::AggregateInput;
 use rustdb_function::{AggregateOps, StatePtr};
 use rustdb_planner::expression::BoundAggregateExpression as BoundAggregate;
 use rustdb_row::hash::hash_columns;
-use rustdb_row::{PartitionedTupleData, RadixPartitioning, TupleDataCollection};
+use rustdb_row::{PartitionedTupleData, TupleDataCollection};
 use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
 use crate::aggregate_hashtable::{GroupedAggregateHashTable, initial_capacity};
+use crate::operators::radix_sink::{RadixSinkConfig, RadixSinkTable, initial_radix_bits};
 use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
 use crate::operators::hash_aggregate::{
     abandon_table, external_radix_bits, memory_pressure, repartitioned, table_data, thread_memory_limit,
@@ -160,6 +161,9 @@ pub struct UngroupedGlobal {
     /// Per aggregate: the threads' distinct tuples (`None` unless DISTINCT), and whether
     /// each thread's are distinct (none were set aside).
     distinct: Vec<Option<Mutex<Vec<ThreadTuples>>>>,
+    /// Per aggregate: how the threads fill their tables of distinct tuples (`None` unless
+    /// DISTINCT).
+    distinct_configs: Vec<Option<RadixSinkConfig>>,
     /// After `finalize`: one unit of work per DISTINCT aggregate and radix partition.
     distinct_partitions: Vec<DistinctPartition>,
     /// Whether the distinct partitions were handed out as finalize tasks.
@@ -186,7 +190,7 @@ struct DistinctPartition {
 pub struct UngroupedLocal {
     states: AggregateStates,
     /// Per aggregate: the thread's table of distinct argument tuples.
-    distinct: Vec<Option<GroupedAggregateHashTable>>,
+    distinct: Vec<Option<RadixSinkTable>>,
     /// Per aggregate: distinct tuples set aside under memory pressure, unpinned so that
     /// they can be spilled.
     abandoned: Vec<Option<PartitionedTupleData>>,
@@ -207,7 +211,21 @@ impl Sink for PhysicalUngroupedAggregate {
     type Global = UngroupedGlobal;
     type Local = UngroupedLocal;
 
-    fn global_sink_state(&self, _: &ExecutionContext) -> Result<Self::Global> {
+    fn global_sink_state(&self, ctx: &ExecutionContext) -> Result<Self::Global> {
+        let external_bits = external_radix_bits(ctx, initial_radix_bits(ctx));
+        let distinct_configs = self
+            .aggregates
+            .iter()
+            .map(|aggregate| {
+                if !aggregate.is_distinct() {
+                    return Ok(None);
+                }
+                let row_width = Self::distinct_table(ctx, aggregate, initial_capacity(), 0)?
+                    .layout()
+                    .row_width();
+                Ok(Some(RadixSinkConfig::new(ctx, row_width, external_bits)))
+            })
+            .collect::<Result<Vec<_>>>()?;
         Ok(UngroupedGlobal {
             states: Mutex::new(AggregateStates::new(&self.aggregates)),
             distinct: self
@@ -215,21 +233,27 @@ impl Sink for PhysicalUngroupedAggregate {
                 .iter()
                 .map(|aggregate| aggregate.is_distinct().then(Mutex::default))
                 .collect(),
+            distinct_configs,
             distinct_partitions: Vec::new(),
             distinct_scheduled: AtomicBool::new(false),
         })
     }
 
-    fn local_sink_state(&self, ctx: &ExecutionContext, _: &Self::Global) -> Result<UngroupedLocal> {
+    fn local_sink_state(&self, ctx: &ExecutionContext, global: &Self::Global) -> Result<UngroupedLocal> {
         // Radix partitioned so that threads can deduplicate partitions independently.
-        let radix_bits = RadixPartitioning::radix_bits(ctx.env.threads().next_power_of_two()).min(4);
+        let radix_bits = initial_radix_bits(ctx);
         let distinct = self
             .aggregates
             .iter()
-            .map(|aggregate| {
-                aggregate
-                    .is_distinct()
-                    .then(|| Self::distinct_table(ctx, aggregate, radix_bits))
+            .zip(&global.distinct_configs)
+            .map(|(aggregate, config)| {
+                config
+                    .as_ref()
+                    .map(|config| {
+                        let bits = config.radix_bits.load(Ordering::Acquire);
+                        let table = Self::distinct_table(ctx, aggregate, config.sink_capacity, bits)?;
+                        Ok(RadixSinkTable::new(config, table))
+                    })
                     .transpose()
             })
             .collect::<Result<Vec<_>>>()?;
@@ -261,7 +285,7 @@ impl Sink for PhysicalUngroupedAggregate {
         &self,
         ctx: &ExecutionContext,
         chunk: &DataChunk,
-        _: &Self::Global,
+        global: &Self::Global,
         local: &mut UngroupedLocal,
     ) -> Result<SinkResult> {
         for (index, aggregate) in self.aggregates.iter().enumerate() {
@@ -280,9 +304,12 @@ impl Sink for PhysicalUngroupedAggregate {
             local.arguments[index].execute(&input, &mut arguments)?;
             if let Some(distinct) = &mut local.distinct[index] {
                 let arguments = DataChunk::new(arguments.columns().to_vec(), input.len());
-                add_distinct(distinct, &arguments)?;
-                if distinct.size_in_bytes() > local.memory_limit && memory_pressure(ctx) {
-                    abandon_table(distinct, &mut local.abandoned[index], local.external_bits)?;
+                add_distinct(&mut distinct.table, &arguments)?;
+                if let Some(config) = &global.distinct_configs[index] {
+                    distinct.after_add_chunk(config)?;
+                }
+                if distinct.table.size_in_bytes() > local.memory_limit && memory_pressure(ctx) {
+                    abandon_table(&mut distinct.table, &mut local.abandoned[index], local.external_bits)?;
                 }
                 continue;
             }
@@ -312,8 +339,8 @@ impl Sink for PhysicalUngroupedAggregate {
         {
             if let (Some(table), Some(collected)) = (table, collected) {
                 let abandoned = abandoned.take();
-                let distinct = abandoned.is_none();
-                let data = table_data(table, abandoned)?;
+                let distinct = abandoned.is_none() && table.table.is_deduplicated();
+                let data = table_data(&mut table.table, abandoned)?;
                 collected.lock().map_err(|_| poisoned())?.push((data, distinct));
             }
         }
@@ -435,7 +462,7 @@ impl Sink for PhysicalUngroupedAggregate {
                 }
             }
         } else {
-            let mut table = Self::distinct_table(ctx, aggregate, 0)?;
+            let mut table = Self::distinct_table(ctx, aggregate, initial_capacity(), 0)?;
             for collection in &data {
                 table.combine(collection)?;
             }
@@ -458,16 +485,11 @@ impl PhysicalUngroupedAggregate {
     fn distinct_table(
         ctx: &ExecutionContext,
         aggregate: &BoundAggregate,
+        capacity: usize,
         radix_bits: usize,
     ) -> Result<GroupedAggregateHashTable> {
         let types = aggregate.children.iter().map(|c| c.return_type.clone()).collect();
-        GroupedAggregateHashTable::new(
-            ctx.env.buffer_manager.clone(),
-            types,
-            &[],
-            initial_capacity(),
-            radix_bits,
-        )
+        GroupedAggregateHashTable::new(ctx.env.buffer_manager.clone(), types, &[], capacity, radix_bits)
     }
 }
 

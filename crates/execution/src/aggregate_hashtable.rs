@@ -174,6 +174,8 @@ pub struct GroupedAggregateHashTable {
     hll: Option<HyperLogLog>,
     /// Cached groups of a storage dictionary group column (`dict_state`).
     dictionary_groups: DictionaryGroups,
+    /// How often the pointer table started over while the rows were kept (`Abandon`).
+    restarts: usize,
 }
 
 impl GroupedAggregateHashTable {
@@ -264,6 +266,7 @@ impl GroupedAggregateHashTable {
             skip_lookups: false,
             hll: None,
             dictionary_groups: DictionaryGroups::default(),
+            restarts: 0,
         };
         table.resize(capacity.max(initial_capacity()).next_power_of_two())?;
         Ok(table)
@@ -317,6 +320,11 @@ impl GroupedAggregateHashTable {
         self.skip_lookups = true;
     }
 
+    /// Whether every group has a single row (no duplicates to merge when combining).
+    pub fn is_deduplicated(&self) -> bool {
+        !self.skip_lookups && self.restarts == 0
+    }
+
     /// Starts or stops counting the distinct group hashes (`EnableHLL`).
     pub fn enable_hll(&mut self, enable: bool) {
         self.hll = enable.then(|| self.hll.unwrap_or_default());
@@ -337,6 +345,7 @@ impl GroupedAggregateHashTable {
     pub fn abandon(&mut self) {
         self.entries.fill(0);
         self.count = 0;
+        self.restarts += 1;
         self.dictionary_groups = DictionaryGroups::default();
     }
 
