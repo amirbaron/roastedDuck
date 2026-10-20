@@ -15,7 +15,7 @@ use rustdb_ast::{
     SetOperationType, SetScope, SetStatement, ShowType, SqlStatement, TableRef, TransactionInfo,
     TransactionModifierType, UpdateSetInfo, VacuumOptions, WindowExcludeMode,
 };
-use rustdb_common::{CaseInsensitiveMap, OrderedMap, Result};
+use rustdb_common::{CaseInsensitiveMap, OrderedMap};
 use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
 use super::nodes::{
@@ -25,7 +25,6 @@ use super::nodes::{
     OnConflictExpressionTarget, PartitionSortedOptions, QualifiedName, SequenceOption, SettingInfo,
     TableAlias, UnpivotNameValues, WindowBoundaryExpression, WindowExpr, WindowFrame,
 };
-use super::parse_result::ParseResult;
 use super::{
     PegTransformer, TransformEnum, TransformFunction, TransformResult, set_expression_location,
     set_table_ref_location,

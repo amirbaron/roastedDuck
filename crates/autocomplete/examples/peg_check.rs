@@ -58,8 +58,7 @@ fn difference_field(expected: &str, actual: &str) -> String {
     let before = &expected[..position.min(expected.len())];
     let field = before
         .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':'))
-        .filter(|word| word.len() > 1 && word.ends_with(':'))
-        .last()
+        .rfind(|word| word.len() > 1 && word.ends_with(':'))
         .map_or("", |word| word.trim_end_matches(':'));
     let owner = before
         .rsplit(" { ")
@@ -90,7 +89,7 @@ fn first_difference(expected: &str, actual: &str) -> String {
 fn rendering(statements: &[SqlStatement]) -> String {
     let mut text = String::new();
     for statement in statements {
-        let _ = write!(text, "{:?} {:?}\n", statement.named_param_map, statement.kind);
+        let _ = writeln!(text, "{:?} {:?}", statement.named_param_map, statement.kind);
     }
     let marker = "query_location: ";
     let mut result = String::with_capacity(text.len());
