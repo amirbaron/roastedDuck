@@ -253,9 +253,16 @@ fn overloads<T: BitInput + 'static>(set: &mut AggregateFunctionSet, ty: &Logical
         LogicalType::BIT,
         Typed(BitstringAgg::<T>(PhantomData)),
     )
-    .with_bind(bind_bitstring_agg);
+    .with_bind(bind_bitstring_agg)
+    // `BitstringPropagateStats`: the argument's statistics give the bounds.
+    .with_statistics(|_, arguments| {
+        let (min, max) = arguments.first()?.clone()?;
+        Some(Arc::new(Bounds(Some((min, max)))) as Arc<dyn FunctionData>)
+    });
     let mut bounded = function.clone();
     bounded.arguments = vec![ty.clone(), ty.clone(), ty.clone()];
+    // Min and max are given as arguments.
+    bounded.statistics = None;
     set.add(function);
     set.add(bounded);
 }

@@ -93,10 +93,26 @@ fn bind_scalar_function<B: ExpressionBinder + ?Sized>(
     let result =
         FunctionBinder::new(&context).bind_scalar_function(functions, children, function.is_operator)?;
     let bound = result.map_err(|error| error.with_position(location).error)?;
-    if let crate::expression::ExpressionKind::Function(bound_function) = &bound.kind
-        && bound_function.function.stability == rustdb_function::Stability::ConsistentWithinQuery
-    {
-        binder.binder_ref().set_always_require_rebind();
+    if let crate::expression::ExpressionKind::Function(bound_function) = &bound.kind {
+        if bound_function.function.stability == rustdb_function::Stability::ConsistentWithinQuery {
+            binder.binder_ref().set_always_require_rebind();
+        }
+        // `get_modified_databases`: e.g. `nextval` writes to the sequence's database.
+        if let Some(database) = bound_function
+            .bind_info
+            .as_deref()
+            .and_then(rustdb_function::FunctionData::modified_database)
+        {
+            binder.binder_ref().with_properties(|properties| {
+                if !properties
+                    .modified_databases
+                    .iter()
+                    .any(|name| name.eq_ignore_ascii_case(database))
+                {
+                    properties.modified_databases.push(database.to_owned());
+                }
+            });
+        }
     }
     Ok(bound.into())
 }

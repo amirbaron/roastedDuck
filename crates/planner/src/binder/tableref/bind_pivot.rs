@@ -351,12 +351,13 @@ fn construct_initial_grouping(
     let mut node = select_node_from(*source);
     if pivot.groups.is_empty() {
         for column in all_columns {
-            let ParsedExpressionKind::ColumnRef(reference) = &column.kind else {
+            // `GetResolvedColumnExpression`: a USING column of a FULL JOIN is a COALESCE
+            // of the joined columns.
+            let Some(name) = crate::binder::expression::bind_star::resolved_column_name(&column) else {
                 return Err(Error::internal(
                     "Unexpected child of pivot source - not a ColumnRef",
                 ));
             };
-            let name = reference.column_names.last().cloned().unwrap_or_default();
             if !handled.contains(&name.to_lowercase()) {
                 push_group(&mut node, ParsedExpression::column_ref([name]));
             }
@@ -716,6 +717,18 @@ fn bind_pivot_node(
 
 /// `PIVOT ... ON col IN enum_type`: one entry per member of the ENUM type.
 fn expand_pivot_enum(scope: &BindScope<'_>, column: &mut rustdb_ast::PivotColumn) -> Result<()> {
+    // The built-in types are catalog entries too (`DefaultTypeGenerator`); a bare ENUM
+    // has no members.
+    if let Some(id) = rustdb_types::builtin_type_id(&column.pivot_enum) {
+        if id == LogicalTypeId::Enum {
+            return Err(Error::binder("ENUM type is incomplete"));
+        }
+        return Err(Error::binder(format!(
+            "Pivot must reference an ENUM type: \"{}\" is of type \"{}\"",
+            column.pivot_enum,
+            LogicalType::simple(id)
+        )));
+    }
     let lookup = scope
         .context
         .get_entry("", "", CatalogType::Type, &column.pivot_enum, false)?

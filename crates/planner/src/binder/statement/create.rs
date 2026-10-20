@@ -272,7 +272,9 @@ pub fn bind_create_schema(scope: &BindScope<'_>, info: &mut CreateInfo) -> Resul
     }
     let Some(found) = scope.context.catalog(&catalog) else {
         // `Catalog::GetSchema` (`BindSchema`).
-        return Err(Error::catalog(format!("Catalog with name {catalog} does not exist!")));
+        return Err(Error::catalog(format!(
+            "Catalog with name {catalog} does not exist!"
+        )));
     };
     if found.name().eq_ignore_ascii_case("system") {
         return Err(Error::binder("Cannot create entry in system catalog"));
@@ -599,6 +601,12 @@ fn bind_generated_columns(
                 crate::expression_binder::CheckBinder::generated(&mut binder, None, table, &check_columns);
             generated_binder.bind(&mut expression, true)?
         };
+        if bound.has_subquery() {
+            return Err(Error::binder(format!(
+                "Failed to bind generated column '{}' because the expression contains a subquery",
+                columns[index].name
+            )));
+        }
         let column = &mut columns[index];
         if column.logical_type.id() == rustdb_types::LogicalTypeId::Any {
             // `ColumnDefinition::ChangeGeneratedExpressionType`.
@@ -740,6 +748,23 @@ fn bind_new_constraints(
                     vec![unique.index.0 as usize]
                 };
                 primary_keys = Some(keys);
+            }
+            // `BindForeignKey`, in constraint order with the UNIQUE checks.
+            Constraint::ForeignKey(fk) => {
+                let duplicate = |names: &[String]| {
+                    names
+                        .iter()
+                        .enumerate()
+                        .any(|(i, name)| names[..i].iter().any(|other| other.eq_ignore_ascii_case(name)))
+                };
+                if duplicate(&fk.pk_columns) {
+                    return Err(Error::parser(
+                        "duplicate primary key referenced in FOREIGN KEY constraint",
+                    ));
+                }
+                if duplicate(&fk.fk_columns) {
+                    return Err(Error::parser("duplicate key specified in FOREIGN KEY constraint"));
+                }
             }
             Constraint::Unique(unique) if unique.index.0 == u64::MAX => {
                 let mut seen = Vec::new();

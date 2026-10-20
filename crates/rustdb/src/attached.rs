@@ -46,6 +46,9 @@ pub(crate) struct AttachOptions {
     pub storage_version: Option<Value>,
     pub block_size: Option<Value>,
     pub row_group_size: Option<Value>,
+    /// The options `AttachOptions` does not consume itself, in order
+    /// (`AttachOptions::options`), shown by `duckdb_databases()`.
+    pub kept: Vec<(String, Value)>,
     /// `DEFAULT_TABLE`: the (schema, name) the database's name refers to.
     pub default_table: Option<(String, String)>,
 }
@@ -94,10 +97,20 @@ impl AttachOptions {
                     let (_, schema, name) = crate::sequence::parse_qualified_name(&value.to_varchar()?)?;
                     options.default_table = Some((schema, name));
                 }
-                "recovery_mode" | "vacuum_rebuild_indexes" | "compress" => {}
-                "storage_version" => options.storage_version = Some(value.clone()),
-                "block_size" => options.block_size = Some(value.clone()),
-                "row_group_size" => options.row_group_size = Some(value.clone()),
+                "recovery_mode" | "vacuum_rebuild_indexes" => {}
+                "compress" => options.kept.push((name.to_lowercase(), value.clone())),
+                "storage_version" => {
+                    options.storage_version = Some(value.clone());
+                    options.kept.push((name.to_lowercase(), value.clone()));
+                }
+                "block_size" => {
+                    options.block_size = Some(value.clone());
+                    options.kept.push((name.to_lowercase(), value.clone()));
+                }
+                "row_group_size" => {
+                    options.row_group_size = Some(value.clone());
+                    options.kept.push((name.to_lowercase(), value.clone()));
+                }
                 "encryption_key" => {
                     // `StorageOptions::Initialize` checks the key before anything is opened.
                     if value.logical_type().id() != LogicalTypeId::Varchar {
@@ -221,7 +234,8 @@ impl DatabaseManager {
         let path = if path == ":memory:" || path.starts_with(":memory:") {
             String::new()
         } else {
-            path.to_owned()
+            // `FileSystem::ExpandPath`: `~` (with `home_directory`) and `file:` URLs.
+            rustdb_function::file_system::expand_path(path)
         };
         let name = if name.is_empty() {
             database_name(&path)
@@ -263,13 +277,14 @@ impl DatabaseManager {
             if on_conflict == OnCreateConflict::IgnoreOnConflict {
                 return Ok(None);
             }
-            if on_conflict != OnCreateConflict::ReplaceOnConflict {
-                return Err(Error::binder(format!(
-                    "Failed to attach database: database with name \"{}\" already exists",
-                    existing.name
-                )));
-            }
         }
+        // A plain ATTACH registers the file path before the name, so a file conflict is
+        // reported first (`InsertDatabasePath`, then the catalog set's `CreateEntry`).
+        let name_taken = if on_conflict == OnCreateConflict::ReplaceOnConflict {
+            None
+        } else {
+            self.get(&name).map(|existing| existing.name.clone())
+        };
         // `DatabaseFilePathManager::InsertDatabasePath`: a file is attached once, unless
         // every attach is read-only.
         if !path.is_empty()
@@ -284,6 +299,11 @@ impl DatabaseManager {
                 "Unique file handle conflict: Cannot attach \"{name}\" - the database file \"{path}\" is already \
                  attached by database \"{}\"",
                 existing.name
+            )));
+        }
+        if let Some(existing) = name_taken {
+            return Err(Error::binder(format!(
+                "Failed to attach database: database with name \"{existing}\" already exists"
             )));
         }
         let catalog = Arc::new(Catalog::new(name.clone())?);
@@ -302,10 +322,26 @@ impl DatabaseManager {
         if let Some((schema, table)) = &options.default_table {
             catalog.set_default_table(schema, table);
         }
+        let tags = storage
+            .as_ref()
+            .map(|storage| {
+                // `SingleFileBlockManager::AddStorageVersionTag`.
+                vec![(
+                    "storage_version".to_owned(),
+                    rustdb_storage::storage_info::storage_version_name(storage.block_manager().storage_version(), true),
+                )]
+            })
+            .unwrap_or_default();
         catalog.set_attach_info(rustdb_catalog::AttachedInfo {
             path: path.clone(),
             read_only: options.read_only(),
             hidden: options.hidden,
+            options: options
+                .kept
+                .iter()
+                .map(|(name, value)| Ok((name.clone(), value.to_varchar()?)))
+                .collect::<Result<_>>()?,
+            tags,
         });
         let database = Arc::new(AttachedDatabase {
             name: name.clone(),

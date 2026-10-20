@@ -138,6 +138,15 @@ fn empty_map() -> Value {
     Value::map(LogicalType::VARCHAR, LogicalType::VARCHAR, Vec::new())
 }
 
+/// A `MAP(VARCHAR, VARCHAR)` of `entries`.
+fn text_map(entries: &[(String, String)]) -> Value {
+    Value::map(
+        LogicalType::VARCHAR,
+        LogicalType::VARCHAR,
+        entries.iter().map(|(key, value)| (text(key.clone()), text(value.clone()))).collect(),
+    )
+}
+
 /// The visible catalogs, sorted by name, without hidden ones.
 fn visible_catalogs(context: &ClientContext) -> Vec<&Arc<Catalog>> {
     let mut catalogs: Vec<&Arc<Catalog>> = context
@@ -197,13 +206,13 @@ fn database_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 oid(catalog.oid()),
                 path,
                 null_text(),
-                empty_map(),
+                info.map_or_else(empty_map, |info| text_map(&info.tags)),
                 Value::boolean(internal),
                 text("duckdb"),
                 Value::boolean(info.is_some_and(|info| info.read_only)),
                 Value::boolean(false),
                 null_text(),
-                empty_map(),
+                info.map_or_else(empty_map, |info| text_map(&info.options)),
             ],
         ));
     }

@@ -318,7 +318,7 @@ fn function_child(root: &mut ParsedExpression, inverse: bool) -> Result<&mut rus
 }
 
 /// The column reference behind an expanded star entry (DuckDB's `GetResolvedColumnExpression`).
-fn resolved_column_name(expr: &ParsedExpression) -> Option<String> {
+pub(crate) fn resolved_column_name(expr: &ParsedExpression) -> Option<String> {
     match &expr.kind {
         ParsedExpressionKind::ColumnRef(column) => column.column_names.last().cloned(),
         ParsedExpressionKind::Operator(operator)

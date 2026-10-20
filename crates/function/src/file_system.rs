@@ -192,7 +192,6 @@ pub fn verify_can_access_directory(path: &str) -> rustdb_common::Result<()> {
     verify_can_access(path, true)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

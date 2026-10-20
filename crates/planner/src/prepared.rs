@@ -39,6 +39,9 @@ pub struct StatementProperties {
     pub return_type: StatementReturnType,
     /// The number of prepared statement parameters.
     pub parameter_count: usize,
+    /// The databases that functions in the statement write to, in the order their
+    /// calls were bound (`RegisterDBModify` by a function's `get_modified_databases`).
+    pub modified_databases: Vec<String>,
 }
 
 impl Default for StatementProperties {
@@ -50,6 +53,7 @@ impl Default for StatementProperties {
             always_require_rebind: false,
             return_type: StatementReturnType::QueryResult,
             parameter_count: 0,
+            modified_databases: Vec::new(),
         }
     }
 }

@@ -31,6 +31,8 @@ pub struct CheckBinder<'a> {
     columns: &'a [CheckColumn],
     /// The physical columns the constraint reads.
     pub bound_columns: Vec<usize>,
+    /// Binding a generated column: subqueries bind (the caller rejects them).
+    generated: bool,
 }
 
 impl<'a> CheckBinder<'a> {
@@ -45,6 +47,7 @@ impl<'a> CheckBinder<'a> {
             table: table.into(),
             columns,
             bound_columns: Vec::new(),
+            generated: false,
         }
     }
 
@@ -62,6 +65,7 @@ impl<'a> CheckBinder<'a> {
             table: table.into(),
             columns,
             bound_columns: Vec::new(),
+            generated: true,
         }
     }
 
@@ -131,6 +135,9 @@ impl ExpressionBinder for CheckBinder<'_> {
             ParsedExpressionKind::Window(_) => Ok(BindResult::error(
                 "window functions are not allowed in check constraints",
             )),
+            ParsedExpressionKind::Subquery(_) if self.generated => {
+                bind_expression_base(self, expr, depth, root_expression)
+            }
             ParsedExpressionKind::Subquery(_) => {
                 Ok(BindResult::error("cannot use subquery in check constraint"))
             }
@@ -352,8 +359,9 @@ impl<'a> AlterBinder<'a> {
             ));
         };
         self.bound_columns.push(physical);
+        // An unnamed `BoundReferenceExpression` (it prints as `#index`).
         Ok(Expression::reference(
-            column.name.clone(),
+            "",
             column.logical_type.clone(),
             (self.bound_columns.len() - 1) as u64,
         )

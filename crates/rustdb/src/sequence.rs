@@ -18,6 +18,9 @@ struct SequenceBindData {
     sequence: SequenceEntry,
     /// The catalog of the sequence; taking a value writes to its database.
     catalog: Option<Arc<rustdb_catalog::Catalog>>,
+    /// Whether the call takes values (`nextval`), which modifies the sequence's database
+    /// (`NextValModifiedDatabases`).
+    modifies: bool,
     /// The transaction the call runs in; it logs the sequence's state at commit.
     transaction: Weak<rustdb_storage::Transaction>,
 }
@@ -25,6 +28,13 @@ struct SequenceBindData {
 impl FunctionData for SequenceBindData {
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    fn modified_database(&self) -> Option<&str> {
+        self.catalog
+            .as_ref()
+            .filter(|_| self.modifies)
+            .map(|catalog| catalog.name())
     }
 }
 
@@ -80,7 +90,7 @@ pub(crate) fn parse_qualified_name(input: &str) -> Result<(String, String, Strin
 }
 
 /// `NextValBind`: the sequence named by the constant argument.
-fn bind_sequence(input: &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>> {
+fn bind_sequence(input: &BindInput<'_>, modifies: bool) -> Result<Option<Arc<dyn FunctionData>>> {
     let Some(Some(name)) = input.constants.first() else {
         if input.argument_types.first().map(LogicalType::id) == Some(rustdb_types::LogicalTypeId::Unknown) {
             return Err(rustdb_planner::expression_binder::parameter_not_resolved());
@@ -109,6 +119,7 @@ fn bind_sequence(input: &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>>
         schema: found.schema,
         sequence: sequence.clone(),
         catalog: context.catalog(&found.catalog).cloned(),
+        modifies,
         transaction: Arc::downgrade(&context.transaction),
     })))
 }
@@ -168,7 +179,7 @@ pub(crate) fn sequence_functions() -> Vec<ScalarFunctionSet> {
                 sequence_kernel(state, args.len(), result, next, logged)
             },
         )
-        .with_bind(|_, input| bind_sequence(input));
+        .with_bind(move |_, input| bind_sequence(input, logged));
         function.stability = Stability::Volatile;
         function.null_handling = rustdb_function::NullHandling::Special;
         let mut set = ScalarFunctionSet::new(name);

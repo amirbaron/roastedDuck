@@ -49,6 +49,7 @@ pub(crate) fn startup_options(config: &Config) -> AttachOptions {
         storage_version: option(config, "storage_compatibility_version").cloned(),
         block_size: option(config, "default_block_size").cloned(),
         row_group_size: None,
+        kept: Vec::new(),
         default_table: None,
     }
 }
@@ -62,7 +63,7 @@ fn unsigned(value: &Value, name: &str) -> Result<u64> {
 }
 
 /// `Storage::VerifyBlockAllocSize`.
-fn verify_block_alloc_size(size: u64) -> Result<()> {
+pub(crate) fn verify_block_alloc_size(size: u64) -> Result<()> {
     const MIN_BLOCK_ALLOC_SIZE: u64 = 16_384;
     const MAX_BLOCK_ALLOC_SIZE: u64 = 262_144;
     if !size.is_power_of_two() {
@@ -126,7 +127,25 @@ pub(crate) fn open_storage(
     catalog: &Catalog,
 ) -> Result<Arc<StorageManager>> {
     let options = storage_options(attach)?;
+    let requested_block_size = options.block_alloc_size;
+    let requested_block_size_set = attach.block_size.is_some();
     let storage = StorageManager::open(path, buffer_manager, options)?;
+    // `SingleFileStorageManager::LoadDatabase`: an existing file keeps its block size.
+    let file_block_size = rustdb_buffer::BlockManager::block_alloc_size(storage.block_manager().as_ref());
+    if requested_block_size_set && !storage.is_new() && requested_block_size != file_block_size {
+        return Err(Error::invalid_input(format!(
+            "block size parameter does not match the file's block size, got {requested_block_size}, expected \
+             {file_block_size}"
+        )));
+    }
+    let row_group_size = storage.io().row_group_size();
+    if row_group_size > 122_880 && storage.block_manager().storage_version() < 4 {
+        return Err(Error::invalid_input(format!(
+            "Unsupported row group size {row_group_size} - row group sizes >= 122_880 are only supported with \
+             STORAGE_VERSION '1.2.0' or above.\nExplicitly specify a newer storage version when creating the \
+             database to enable larger row groups"
+        )));
+    }
     // `SingleFileStorageManager::LoadDatabase` times loading the checkpoint.
     let timer = rustdb_common::profiling::start_timer(MetricType::AttachLoadStorageLatency);
     load_checkpoint(catalog, &storage, &NoExpressionIndexes)?;
