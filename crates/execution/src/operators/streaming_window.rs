@@ -187,7 +187,7 @@ impl PhysicalStreamingWindow {
                 let destructor = window
                     .aggregate
                     .as_ref()
-                    .is_some_and(|aggregate| aggregate.ops.needs_destructor());
+                    .is_some_and(|aggregate| aggregate.has_state_destructor);
                 !destructor && running
             }
             ExpressionType::WindowPercentRank

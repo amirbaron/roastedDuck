@@ -4176,6 +4176,7 @@ test/sql/window/test_split_partition_heap.test
 test/sql/window/test_streaming_lead_lag.test
 test/sql/window/test_streaming_lead_lag.test_slow
 test/sql/window/test_streaming_window.test
+test/sql/window/test_streaming_window_distinct.test
 test/sql/window/test_streaming_window_list.test_slow
 test/sql/window/test_thread_count.test
 test/sql/window/test_tpcc_results.test
