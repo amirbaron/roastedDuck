@@ -2666,6 +2666,7 @@ test/sql/overflow/table_overflow.test
 test/sql/overflow/test_numeric_overflow.test
 test/sql/overflow/test_overflow.test
 test/sql/parallelism/interquery/concurrent_append_index_join.test_slow
+test/sql/parallelism/interquery/concurrent_append_metadata_queries.test_slow
 test/sql/parallelism/interquery/concurrent_append_scan_blob.test_slow
 test/sql/parallelism/interquery/concurrent_append_transactional.test_slow
 test/sql/parallelism/interquery/concurrent_append_transactions.test_slow
@@ -2818,6 +2819,7 @@ test/sql/pragma/test_enable_http_logging.test
 test/sql/pragma/test_enable_profile.test
 test/sql/pragma/test_force_compression.test
 test/sql/pragma/test_memory_limit.test
+test/sql/pragma/test_metadata_info.test
 test/sql/pragma/test_pragma_database_list.test
 test/sql/pragma/test_pragma_database_size.test
 test/sql/pragma/test_pragma_functions.test
@@ -3306,6 +3308,7 @@ test/sql/storage/reclaim_space/test_reclaim_space_drop.test_slow
 test/sql/storage/reclaim_space/test_reclaim_space_drop_column.test_slow
 test/sql/storage/reclaim_space/test_reclaim_space_update.test_slow
 test/sql/storage/reclaim_space/test_reclaim_space_update_large_string.test
+test/sql/storage/relocate_metadata.test_slow
 test/sql/storage/shutdown_create_index.test
 test/sql/storage/shutdown_running_transaction.test
 test/sql/storage/shutdown_running_transaction_updates.test

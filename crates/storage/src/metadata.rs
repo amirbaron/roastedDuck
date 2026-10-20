@@ -96,6 +96,15 @@ impl MetadataBlock {
     }
 }
 
+/// One file block of metadata as `pragma_metadata_info` shows it (`MetadataBlockInfo`).
+#[derive(Clone, Debug)]
+pub struct MetadataBlockInfo {
+    pub block_id: BlockId,
+    pub total_blocks: u64,
+    /// The free metadata block indexes, ascending.
+    pub free_list: Vec<u64>,
+}
+
 /// Allocates, pins and flushes metadata blocks (DuckDB's `MetadataManager`).
 #[derive(Debug)]
 pub struct MetadataManager {
@@ -132,6 +141,24 @@ impl MetadataManager {
     /// The size of one metadata block (`GetMetadataBlockSize`).
     pub fn metadata_block_size(&self) -> usize {
         (self.block_manager.block_size() / METADATA_BLOCK_COUNT) & !7
+    }
+
+    /// Every file block holding metadata with its free metadata blocks, by block id
+    /// (`GetMetadataInfo`).
+    pub fn metadata_info(&self) -> Vec<MetadataBlockInfo> {
+        self.lock()
+            .values()
+            .map(|block| {
+                let mut free_list: Vec<u64> =
+                    block.free_blocks.iter().map(|&index| u64::from(index)).collect();
+                free_list.sort_unstable();
+                MetadataBlockInfo {
+                    block_id: block.block_id,
+                    total_blocks: METADATA_BLOCK_COUNT as u64,
+                    free_list,
+                }
+            })
+            .collect()
     }
 
     /// The number of file blocks holding metadata (`BlockCount`).

@@ -29,6 +29,8 @@ pub struct Catalog {
     /// The table the catalog's name refers to, as (schema, name) (`DEFAULT_TABLE`;
     /// DuckDB's `Catalog::default_table`).
     default_table: std::sync::Mutex<Option<(String, String)>>,
+    /// The storage of a database file (unset in memory), for `pragma_metadata_info`.
+    storage: OnceLock<std::sync::Weak<rustdb_storage::storage_manager::StorageManager>>,
 }
 
 /// How a database is attached (the parts of DuckDB's `AttachedDatabase` the catalog
@@ -54,6 +56,7 @@ impl Catalog {
             oid: 0,
             attach_info: OnceLock::new(),
             default_table: std::sync::Mutex::default(),
+            storage: OnceLock::new(),
         };
         let mut catalog = catalog;
         if !catalog.name.eq_ignore_ascii_case("system") {
@@ -98,6 +101,21 @@ impl Catalog {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
+    }
+
+    /// Records the storage of the database file (once).
+    pub fn set_storage(&self, storage: &Arc<rustdb_storage::storage_manager::StorageManager>) {
+        let _ = self.storage.set(Arc::downgrade(storage));
+    }
+
+    /// The metadata blocks of the database file; empty in memory
+    /// (`DuckCatalog::GetMetadataInfo`).
+    pub fn metadata_info(&self) -> Vec<rustdb_storage::metadata::MetadataBlockInfo> {
+        self.storage
+            .get()
+            .and_then(std::sync::Weak::upgrade)
+            .map(|storage| storage.metadata().metadata_info())
+            .unwrap_or_default()
     }
 
     /// How the database is attached; `None` for `system`.

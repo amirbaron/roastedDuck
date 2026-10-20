@@ -282,6 +282,7 @@ impl DatabaseManager {
         } else {
             let storage = open_storage(&path, options, buffer_manager.clone(), &catalog)?;
             catalog.set_io(Arc::clone(storage.io()))?;
+            catalog.set_storage(&storage);
             Some(storage)
         };
         if let Some((schema, table)) = &options.default_table {
