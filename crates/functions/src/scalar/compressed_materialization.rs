@@ -203,11 +203,14 @@ fn compress_string(input: &[u8], size: usize) -> u128 {
     if size == 1 {
         return input.first().map_or(0, |&first| 1 + u128::from(first));
     }
-    // The first `size - 1` bytes, most significant first, above the length byte.
-    let mut bytes = [0u8; 16];
+    // The first `size - 1` bytes, most significant first, above the length byte. The
+    // strings are short: shifting them in avoids a `memcpy` call per row.
     let prefix = input.len().min(size - 1);
-    bytes[..prefix].copy_from_slice(&input[..prefix]);
-    (u128::from_be_bytes(bytes) >> (8 * (16 - size))) | u128::from(input.len() as u8)
+    let packed = input[..prefix]
+        .iter()
+        .enumerate()
+        .fold(0u128, |packed, (index, &byte)| packed | u128::from(byte) << (8 * (15 - index)));
+    (packed >> (8 * (16 - size))) | u128::from(input.len() as u8)
 }
 
 /// `StringDecompress` (and `MiniStringDecompress`).
