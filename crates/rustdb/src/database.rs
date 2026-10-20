@@ -728,7 +728,9 @@ impl Connection {
         let ended = self.transactions.end_statement(outcome.is_ok(), invalidates);
         // `EndQueryInternal`: the profile is written before the logger is refreshed.
         drop(metrics_guard);
-        let profiled = self.profiler.end_query(&self.settings.profiler, self.logger.as_ref());
+        let profiled = self
+            .profiler
+            .end_query(&self.settings.profiler, self.logger.as_ref());
         self.end_query_logging();
         let mut result = outcome.and_then(|result| ended.map(|()| result));
         if result.is_ok()
@@ -1581,7 +1583,9 @@ impl Connection {
             LogicalKind::Prepare { .. } => Some("PREPARE"),
             LogicalKind::Deallocate { .. } => Some("DROP"),
             LogicalKind::CreateSecret(_) => Some("CREATE_SECRET"),
-            LogicalKind::Drop(info) if info.catalog_type == rustdb_ast::CatalogType::SecretEntry => Some("DROP"),
+            LogicalKind::Drop(info) if info.catalog_type == rustdb_ast::CatalogType::SecretEntry => {
+                Some("DROP")
+            }
             LogicalKind::Pragma { .. } => Some("PRAGMA"),
             _ => None,
         };

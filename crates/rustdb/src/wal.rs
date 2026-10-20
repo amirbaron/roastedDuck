@@ -65,7 +65,8 @@ pub(crate) fn replay(database: &Database, attached: &Arc<AttachedDatabase>) -> R
         return Ok(());
     };
     // `SingleFileStorageManager::LoadDatabase` times the replay.
-    let _timer = rustdb_common::profiling::start_timer(rustdb_common::profiling::MetricType::AttachReplayWalLatency);
+    let _timer =
+        rustdb_common::profiling::start_timer(rustdb_common::profiling::MetricType::AttachReplayWalLatency);
     let (size, requires_truncate) = match WalReader::open(&storage.wal_path())? {
         None => (0, false),
         Some(reader) => replay_log(database, attached, &storage, reader)?,

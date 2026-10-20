@@ -9,6 +9,7 @@
 //! in the configured format, to the configured file or the terminal.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fmt::Write as _;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -84,7 +85,10 @@ enum MetricsInputType {
 /// The profiling options of a connection (the profiler fields of DuckDB's
 /// `ClientConfig`).
 #[derive(Clone, Debug)]
-#[allow(clippy::struct_excessive_bools, reason = "mirrors DuckDB's ClientConfig flags")]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "mirrors DuckDB's ClientConfig flags"
+)]
 pub(crate) struct ProfilerConfig {
     /// `enable_profiler`.
     pub enable_profiler: bool,
@@ -417,10 +421,9 @@ impl ProfilerConfig {
                     .map(|name| ((*name).to_owned(), Value::boolean(true)))
                     .collect(),
             ),
-            MetricsInputType::List => Value::list(
-                LogicalType::VARCHAR,
-                names.iter().map(Value::varchar).collect(),
-            ),
+            MetricsInputType::List => {
+                Value::list(LogicalType::VARCHAR, names.iter().map(Value::varchar).collect())
+            }
         }
     }
 }
@@ -644,7 +647,12 @@ impl ProfilingInfo {
                         .map(|(key, value)| {
                             let lines: Vec<&str> = value.split('\n').collect();
                             let value = if lines.len() > 1 {
-                                JsonValue::Array(lines.into_iter().map(|line| JsonValue::Str(line.to_owned())).collect())
+                                JsonValue::Array(
+                                    lines
+                                        .into_iter()
+                                        .map(|line| JsonValue::Str(line.to_owned()))
+                                        .collect(),
+                                )
                             } else {
                                 JsonValue::Str(value)
                             };
@@ -842,6 +850,10 @@ fn erase_query_root_settings(settings: &BTreeSet<MetricType>) -> BTreeSet<Metric
 
 /// The profiler of a connection (DuckDB's `QueryProfiler`).
 #[derive(Debug, Default)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "mirrors DuckDB's QueryProfiler flags"
+)]
 pub(crate) struct QueryProfiler {
     /// Whether a query is being profiled.
     running: bool,
@@ -885,7 +897,8 @@ impl QueryProfiler {
 
     /// `QueryProfiler::PrintOptimizerOutput`.
     fn print_optimizer_output(&self, config: &ProfilerConfig) -> bool {
-        Self::print_format(config) == ProfilerPrintFormat::QueryTreeOptimizer || self.is_detailed_enabled(config)
+        Self::print_format(config) == ProfilerPrintFormat::QueryTreeOptimizer
+            || self.is_detailed_enabled(config)
     }
 
     /// Whether the statement is being profiled.
@@ -914,7 +927,7 @@ impl QueryProfiler {
         self.query_metrics = Arc::new(QueryMetrics::default());
         self.metrics_finalized = false;
         self.running = true;
-        self.query_name = query.to_owned();
+        query.clone_into(&mut self.query_name);
         self.latency = Some(Instant::now());
     }
 
@@ -976,10 +989,23 @@ impl QueryProfiler {
             return;
         }
         self.query_requires_profiling = config.coverage == ProfilingCoverage::All;
-        let mut root = Self::node(&config.metrics, 0, None, "RESULT_COLLECTOR", "RESULT_COLLECTOR", RenderParams::new());
+        let mut root = Self::node(
+            &config.metrics,
+            0,
+            None,
+            "RESULT_COLLECTOR",
+            "RESULT_COLLECTOR",
+            &RenderParams::new(),
+        );
         let child_settings = erase_query_root_settings(&config.metrics);
-        root.children
-            .push(Self::node(&child_settings, 1, None, operator_type, operator_type, RenderParams::new()));
+        root.children.push(Self::node(
+            &child_settings,
+            1,
+            None,
+            operator_type,
+            operator_type,
+            &RenderParams::new(),
+        ));
         self.finish_initialize(root);
     }
 
@@ -1002,14 +1028,16 @@ impl QueryProfiler {
         operator: Option<usize>,
         name: &str,
         operator_type: &str,
-        params: RenderParams,
+        params: &RenderParams,
     ) -> ProfilingNode {
         let mut info = ProfilingInfo::new(settings, depth);
         if depth != 0 {
             info.metrics
                 .insert(MetricType::OperatorName, MetricValue::Text(name.to_owned()));
-            info.metrics
-                .insert(MetricType::OperatorType, MetricValue::Text(operator_type.to_owned()));
+            info.metrics.insert(
+                MetricType::OperatorType,
+                MetricValue::Text(operator_type.to_owned()),
+            );
         }
         if info.shows(MetricType::ExtraInfo) {
             // The estimated cardinality is not known to the physical operators.
@@ -1018,7 +1046,8 @@ impl QueryProfiler {
                 .filter(|(key, _)| key.as_str() != RenderTreeNode::ESTIMATED_CARDINALITY)
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect();
-            info.metrics.insert(MetricType::ExtraInfo, MetricValue::Map(entries));
+            info.metrics
+                .insert(MetricType::ExtraInfo, MetricValue::Map(entries));
         }
         ProfilingNode {
             info,
@@ -1051,7 +1080,7 @@ impl QueryProfiler {
             Some(operator_key(op)),
             &op.explain_name(),
             &operator_type,
-            op.params_to_string(0),
+            &op.params_to_string(0),
         );
         for child in op.children() {
             let child = self.create_tree(config, child.as_ref(), &child_settings, depth + 1);
@@ -1111,8 +1140,10 @@ impl QueryProfiler {
             if info.collects(MetricType::OperatorTotalRowGroupsToScan)
                 && let Some(total) = scan.total_row_groups
             {
-                info.metrics
-                    .insert(MetricType::OperatorTotalRowGroupsToScan, MetricValue::UBigint(total));
+                info.metrics.insert(
+                    MetricType::OperatorTotalRowGroupsToScan,
+                    MetricValue::UBigint(total),
+                );
             }
         }
         if info.collects(MetricType::ExtraInfo) {
@@ -1196,8 +1227,12 @@ impl QueryProfiler {
         use MetricType as M;
         let value = match metric {
             M::CpuTime => return root.cumulative(M::CpuTime, M::OperatorTiming),
-            M::CumulativeCardinality => return root.cumulative(M::CumulativeCardinality, M::OperatorCardinality),
-            M::CumulativeRowsScanned => return root.cumulative(M::CumulativeRowsScanned, M::OperatorRowsScanned),
+            M::CumulativeCardinality => {
+                return root.cumulative(M::CumulativeCardinality, M::OperatorCardinality);
+            }
+            M::CumulativeRowsScanned => {
+                return root.cumulative(M::CumulativeRowsScanned, M::OperatorRowsScanned);
+            }
             M::CumulativeRowGroupsScanned => {
                 return root.cumulative(M::CumulativeRowGroupsScanned, M::OperatorRowGroupsScanned);
             }
@@ -1295,7 +1330,9 @@ impl QueryProfiler {
     /// `QueryProfiler::ToString` in the configured format.
     fn to_string(&self, config: &ProfilerConfig) -> String {
         match Self::print_format(config) {
-            ProfilerPrintFormat::QueryTree | ProfilerPrintFormat::QueryTreeOptimizer => self.query_tree(config),
+            ProfilerPrintFormat::QueryTree | ProfilerPrintFormat::QueryTreeOptimizer => {
+                self.query_tree(config)
+            }
             ProfilerPrintFormat::Json => self.to_json(),
             ProfilerPrintFormat::NoOutput => String::new(),
             format => {
@@ -1318,7 +1355,11 @@ impl QueryProfiler {
     /// `QueryProfiler::ToJSON`.
     fn to_json(&self) -> String {
         let Some(root) = &self.root else {
-            let result = if self.query_name.is_empty() { "empty" } else { "error" };
+            let result = if self.query_name.is_empty() {
+                "empty"
+            } else {
+                "error"
+            };
             return write_json(
                 &JsonValue::Object(vec![("result".to_owned(), JsonValue::Str(result.to_owned()))]),
                 true,
@@ -1327,7 +1368,10 @@ impl QueryProfiler {
         let mut entries = Vec::new();
         root.info.write_json(&mut entries);
         let children = root.children.first().map(ProfilingNode::to_json);
-        entries.push(("children".to_owned(), JsonValue::Array(children.into_iter().collect())));
+        entries.push((
+            "children".to_owned(),
+            JsonValue::Array(children.into_iter().collect()),
+        ));
         write_json(&JsonValue::Object(entries), true)
     }
 
@@ -1357,7 +1401,7 @@ impl QueryProfiler {
             "Total Time: {}",
             render_timing(self.query_metrics.seconds(MetricType::Latency))
         );
-        out.push_str(&format!("││{}││\n", draw_padded(&total_time, TOTAL_BOX_WIDTH - 4)));
+        let _ = writeln!(out, "││{}││", draw_padded(&total_time, TOTAL_BOX_WIDTH - 4));
         out.push_str("│└──────────────────────────────────────────────┘│\n");
         out.push_str("└────────────────────────────────────────────────┘\n");
         if let Some(root) = &self.root {
@@ -1415,24 +1459,31 @@ fn render_title_case(text: &str) -> String {
 }
 
 /// `RenderPhaseTimings`.
-fn render_phase_timings(out: &mut String, head: &(String, f64), timings: &BTreeMap<String, f64>, width: usize) {
+fn render_phase_timings(
+    out: &mut String,
+    head: &(String, f64),
+    timings: &BTreeMap<String, f64>,
+    width: usize,
+) {
     out.push_str("┌────────────────────────────────────────────────┐\n");
-    out.push_str(&format!(
-        "│{}│\n",
+    let _ = writeln!(
+        out,
+        "│{}│",
         draw_padded(
             &format!("{}: {}", render_title_case(&head.0), render_timing(head.1)),
             width - 2
         )
-    ));
+    );
     out.push_str("│┌──────────────────────────────────────────────┐│\n");
     for (name, timing) in timings {
-        out.push_str(&format!(
-            "││{}││\n",
+        let _ = writeln!(
+            out,
+            "││{}││",
             draw_padded(
                 &format!("{}: {}", render_title_case(name), render_timing(*timing)),
                 width - 4
             )
-        ));
+        );
     }
     out.push_str("│└──────────────────────────────────────────────┘│\n");
     out.push_str("└────────────────────────────────────────────────┘\n");

@@ -564,7 +564,8 @@ impl PipelineExecutor {
         let local = self.local_sink_state.take().ok_or_else(|| {
             Error::internal("Calling PushFinalize on a pipeline that has been finalized already")
         })?;
-        self.sink()?.combine(&self.ctx, self.states.sink.as_ref(), local)?;
+        self.sink()?
+            .combine(&self.ctx, self.states.sink.as_ref(), local)?;
         self.finalize_source_profiling()
     }
 }

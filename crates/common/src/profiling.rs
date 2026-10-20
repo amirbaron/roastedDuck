@@ -378,6 +378,7 @@ thread_local! {
 /// Restores the thread's previously active metrics when dropped.
 #[derive(Debug)]
 pub struct ActiveMetricsGuard {
+    #[allow(clippy::option_option, reason = "the outer `None`: nothing was replaced")]
     previous: Option<Option<Arc<QueryMetrics>>>,
 }
 

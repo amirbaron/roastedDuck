@@ -50,7 +50,8 @@ impl PhysicalExplainAnalyze {
         const TOTAL_BOX_WIDTH: usize = 50;
         // Without a format, the connection's profiling format applies
         // (`QueryProfiler::GetPrintFormat`).
-        if self.format == ExplainFormat::Json || (self.format == ExplainFormat::Default && profiler.json_by_default())
+        if self.format == ExplainFormat::Json
+            || (self.format == ExplainFormat::Default && profiler.json_by_default())
         {
             return self.render_json(profiler);
         }

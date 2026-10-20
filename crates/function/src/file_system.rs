@@ -19,6 +19,7 @@ thread_local! {
 /// Restores the thread's previous opener when dropped.
 #[derive(Debug)]
 pub struct OpenerGuard {
+    #[allow(clippy::option_option, reason = "the outer `None`: nothing was replaced")]
     previous: Option<Option<Arc<FunctionClient>>>,
 }
 

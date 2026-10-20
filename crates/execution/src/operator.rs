@@ -263,7 +263,12 @@ pub trait Source: PhysicalOperator {
     /// What a thread's table scan read, for the profiler (`PhysicalTableScan::GetMetrics`
     /// with the cardinality fallback of `FinalizeSourceProfiling`); `exhausted` tells
     /// whether the thread read the source to its end. `None` for other sources.
-    fn scan_metrics(&self, global: &Self::Global, local: &Self::Local, exhausted: bool) -> Option<ScanMetrics> {
+    fn scan_metrics(
+        &self,
+        global: &Self::Global,
+        local: &Self::Local,
+        exhausted: bool,
+    ) -> Option<ScanMetrics> {
         let _ = (global, local, exhausted);
         None
     }

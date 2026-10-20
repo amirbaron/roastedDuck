@@ -212,7 +212,12 @@ impl FunctionClient {
 
     /// The configuration changes functions made since the last call, in order.
     pub fn take_client_requests(&self) -> Vec<ClientRequest> {
-        std::mem::take(&mut *self.client_requests.lock().unwrap_or_else(PoisonError::into_inner))
+        std::mem::take(
+            &mut *self
+                .client_requests
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        )
     }
 
     /// Shares the database's object cache with this connection.

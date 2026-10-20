@@ -316,9 +316,7 @@ impl Source for PhysicalSeqScan {
 
     fn global_source_state(&self, _: &ExecutionContext, _: Option<&SinkState>) -> Result<Self::Global> {
         let filters = self.scan_filters();
-        let total_row_groups = self
-            .table
-            .row_group_count_with_local_storage(&self.transaction) as u64;
+        let total_row_groups = self.table.row_group_count_with_local_storage(&self.transaction) as u64;
         if let Some(row_ids) = self.index_scan_row_ids(filters.as_ref())? {
             self.is_index_scan.store(true, Ordering::Relaxed);
             // Fetch the indexed rows, then scan only the transaction-local rows.
