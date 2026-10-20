@@ -306,7 +306,9 @@ impl Catalog {
                 self.drop_schema(transaction, name, false, false)?;
                 let entry = CatalogEntry::new(name, EntryKind::Schema(SchemaEntry::new(&self.name, name)));
                 if !self.schemas.create(transaction, entry)? {
-                    return Err(Error::internal("Failed to create schema entry in CREATE_OR_REPLACE"));
+                    return Err(Error::internal(
+                        "Failed to create schema entry in CREATE_OR_REPLACE",
+                    ));
                 }
                 Ok(())
             }
@@ -319,6 +321,24 @@ impl Catalog {
     /// Adds `entry` to `schema` (DuckDB's `DuckSchemaEntry::AddEntryInternal`). Returns
     /// whether it was created (`IF NOT EXISTS` on an existing entry creates nothing).
     pub fn create_entry(
+        &self,
+        transaction: &Transaction,
+        schema: &str,
+        entry: CatalogEntry,
+        on_conflict: OnCreateConflict,
+    ) -> Result<bool> {
+        let created = self.create_entry_in_schema(transaction, schema, entry, on_conflict)?;
+        if created {
+            // The entry depends on its schema, which must still exist when it commits.
+            transaction.push_catalog_undo(Box::new(crate::transaction::CommitCheck::SchemaExists {
+                name: schema.to_owned(),
+                schemas: Arc::clone(&self.schemas),
+            }));
+        }
+        Ok(created)
+    }
+
+    fn create_entry_in_schema(
         &self,
         transaction: &Transaction,
         schema: &str,
@@ -899,6 +919,17 @@ impl Catalog {
             }
         }
         self.schemas.drop_entry(transaction, name, false)?;
+        transaction.push_catalog_undo(Box::new(crate::transaction::CommitCheck::SchemaDropped {
+            name: schema.name().to_owned(),
+            sets: vec![
+                Arc::clone(&contents.tables),
+                Arc::clone(&contents.functions),
+                Arc::clone(&contents.table_functions),
+                Arc::clone(&contents.sequences),
+                Arc::clone(&contents.types),
+                Arc::clone(&contents.indexes),
+            ],
+        }));
         Ok(())
     }
 }
