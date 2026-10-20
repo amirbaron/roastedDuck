@@ -953,6 +953,7 @@ test/sql/attach/attach_table_constraints.test
 test/sql/attach/attach_table_ddl.test
 test/sql/attach/attach_table_info.test
 test/sql/attach/attach_transactionality.test
+test/sql/attach/attach_view_search_path.test
 test/sql/attach/attach_views.test
 test/sql/attach/attach_wal_alter.test
 test/sql/attach/attach_wal_alter_sequence.test
@@ -1119,11 +1120,13 @@ test/sql/catalog/test_if_not_exists.test
 test/sql/catalog/test_incorrect_table_creation.test
 test/sql/catalog/test_quoted_column_name.test
 test/sql/catalog/test_schema_conflict.test
+test/sql/catalog/test_set_schema.test
 test/sql/catalog/test_set_search_path.test
 test/sql/catalog/test_standard_schema.test
 test/sql/catalog/test_temporary.test
 test/sql/catalog/test_unicode_schema.test
 test/sql/catalog/view/recursive_view_with_dependencies.test
+test/sql/catalog/view/test_loosely_qualified_view_sql.test
 test/sql/catalog/view/test_stacked_view.test
 test/sql/catalog/view/test_view_alias.test
 test/sql/catalog/view/test_view_delete_update.test

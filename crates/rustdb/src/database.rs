@@ -875,6 +875,7 @@ impl Connection {
         Arc::new(ClientContext {
             catalogs: self.catalogs(instance.default_database_name()),
             search_path: self.search_path.clone(),
+            view_search_path: Vec::new(),
             transaction,
             casts: Arc::clone(&instance.casts),
             evaluator: Arc::new(ScalarEvaluator),

@@ -1,6 +1,8 @@
 //! `CREATE SCHEMA`, `CREATE TABLE [AS]`, `CREATE VIEW` and `DROP` (DuckDB's
 //! `bind_create.cpp`, `bind_create_table.cpp` and `bind_drop.cpp`).
 
+use std::sync::Arc;
+
 use rustdb_ast::{
     CatalogEntryInfo, CatalogType as AstCatalogType, ColumnDefinition, CompressionType, Constraint,
     CreateInfo, CreateInfoKind, DropInfo, ForeignKeyConstraint, ForeignKeyType, LogicalDependency,
@@ -278,7 +280,9 @@ fn bind_create_view_info(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Re
         return Err(Error::internal("expected a view"));
     };
     let mut query = view.query.clone();
-    let mut view_binder = super::super::Binder::new(scope.context.clone())?;
+    let mut view_binder = super::super::Binder::new(Arc::new(
+        scope.context.with_view_search_path(&info.catalog, &info.schema),
+    ))?;
     view_binder.can_contain_nulls = true;
     let record = scope.context.config.enable_view_dependencies;
     let previous = record.then(|| scope.context.start_recording_dependencies());
