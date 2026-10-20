@@ -208,6 +208,7 @@ test/fuzzer/pedro/rename_table_index_storage.test
 test/fuzzer/pedro/restart_current_time.test
 test/fuzzer/pedro/restart_random.test
 test/fuzzer/pedro/returning_clause_sizes_not_match.test
+test/fuzzer/pedro/returning_clause_with_rowid.test
 test/fuzzer/pedro/rollup_wrong_result.test
 test/fuzzer/pedro/sample_limit_overflow.test
 test/fuzzer/pedro/segment_tree_index_issue.test

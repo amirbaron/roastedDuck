@@ -272,7 +272,9 @@ pub fn bind_create_schema(scope: &BindScope<'_>, info: &mut CreateInfo) -> Resul
     }
     let Some(found) = scope.context.catalog(&catalog) else {
         // `Catalog::GetSchema` (`BindSchema`).
-        return Err(Error::catalog(format!("Catalog with name {catalog} does not exist!")));
+        return Err(Error::catalog(format!(
+            "Catalog with name {catalog} does not exist!"
+        )));
     };
     if found.name().eq_ignore_ascii_case("system") {
         return Err(Error::binder("Cannot create entry in system catalog"));

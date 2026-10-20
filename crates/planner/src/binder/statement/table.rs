@@ -13,10 +13,7 @@ use super::super::expression::expand_star_expression;
 use super::super::{BindScope, Binder, Binding, BindingAlias, BindingKind, BoundStatement};
 use crate::expression::Expression;
 use crate::expression_binder::{CheckBinder, CheckColumn, ConstantBinder, ExpressionBinder, ReturningBinder};
-use crate::operator::{
-    BoundConstraint, BoundForeignKeyInfo, COLUMN_IDENTIFIER_ROW_ID, ColumnIndex, LogicalOperator,
-    SharedColumnIds,
-};
+use crate::operator::{BoundConstraint, BoundForeignKeyInfo, ColumnIndex, LogicalOperator, SharedColumnIds};
 use crate::prepared::StatementReturnType;
 
 /// The table entry of a catalog entry.
@@ -353,10 +350,11 @@ pub fn bind_returning_with_virtual(
             ids.push(ColumnIndex::new(VIRTUAL_COLUMN_START));
         }
     }
-    let mut virtual_columns = vec![(COLUMN_IDENTIFIER_ROW_ID, "rowid".to_owned(), LogicalType::BIGINT)];
-    if let Some((name, ty)) = extra_virtual {
-        virtual_columns.insert(0, (VIRTUAL_COLUMN_START, name.to_owned(), ty));
-    }
+    // `rowid` is not a column of the returned rows; only MERGE adds `merge_action`.
+    let virtual_columns: Vec<(u64, String, LogicalType)> = extra_virtual
+        .map(|(name, ty)| (VIRTUAL_COLUMN_START, name.to_owned(), ty))
+        .into_iter()
+        .collect();
     let names: Vec<String> = entry.columns.iter().map(|c| c.name.clone()).collect();
     let types: Vec<LogicalType> = entry.columns.iter().map(|c| c.logical_type.clone()).collect();
     let binding_alias = if alias.is_empty() {
