@@ -203,16 +203,33 @@ fn compact(
     no_match: &mut Option<&mut Vec<u32>>,
     mut matches: impl FnMut(usize) -> bool,
 ) -> usize {
+    let sel = &mut sel[..count];
     let mut match_count = 0;
+    let Some(no_match) = no_match.as_deref_mut() else {
+        for i in 0..count {
+            let idx = sel[i];
+            sel[match_count] = idx;
+            match_count += usize::from(matches(idx as usize));
+        }
+        return match_count;
+    };
+    // Branch-free like DuckDB's `TemplatedMatch`: every row is written to both outputs
+    // and only the one its result picks advances (the rejected rows go to the spare
+    // capacity of `no_match`).
+    let start = no_match.len();
+    no_match.reserve(count);
+    let rejected = &mut no_match.spare_capacity_mut()[..count];
+    let mut no_match_count = 0;
     for i in 0..count {
         let idx = sel[i];
-        if matches(idx as usize) {
-            sel[match_count] = idx;
-            match_count += 1;
-        } else if let Some(no_match) = no_match.as_deref_mut() {
-            no_match.push(idx);
-        }
+        let matched = matches(idx as usize);
+        sel[match_count] = idx;
+        rejected[no_match_count].write(idx);
+        match_count += usize::from(matched);
+        no_match_count += usize::from(!matched);
     }
+    // SAFETY: spare slot `i` was written when `no_match_count` was `i`.
+    unsafe { no_match.set_len(start + no_match_count) };
     match_count
 }
 
