@@ -601,6 +601,12 @@ fn bind_generated_columns(
                 crate::expression_binder::CheckBinder::generated(&mut binder, None, table, &check_columns);
             generated_binder.bind(&mut expression, true)?
         };
+        if bound.has_subquery() {
+            return Err(Error::binder(format!(
+                "Failed to bind generated column '{}' because the expression contains a subquery",
+                columns[index].name
+            )));
+        }
         let column = &mut columns[index];
         if column.logical_type.id() == rustdb_types::LogicalTypeId::Any {
             // `ColumnDefinition::ChangeGeneratedExpressionType`.

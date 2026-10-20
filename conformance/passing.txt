@@ -885,6 +885,7 @@ test/sql/alter/alter_type/test_alter_type.test
 test/sql/alter/alter_type/test_alter_type_check.test
 test/sql/alter/alter_type/test_alter_type_dependencies.test
 test/sql/alter/alter_type/test_alter_type_expression.test
+test/sql/alter/alter_type/test_alter_type_incorrect.test
 test/sql/alter/alter_type/test_alter_type_index.test
 test/sql/alter/alter_type/test_alter_type_local.test
 test/sql/alter/alter_type/test_alter_type_multi_column.test
@@ -2291,6 +2292,7 @@ test/sql/generated_columns/virtual/casting.test
 test/sql/generated_columns/virtual/check.test
 test/sql/generated_columns/virtual/circular_dependency_stresstest.test
 test/sql/generated_columns/virtual/collate.test
+test/sql/generated_columns/virtual/create_table.test
 test/sql/generated_columns/virtual/default.test
 test/sql/generated_columns/virtual/drop.test
 test/sql/generated_columns/virtual/drop_dependency.test
