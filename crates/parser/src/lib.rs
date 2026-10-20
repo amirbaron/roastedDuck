@@ -62,6 +62,9 @@ mod transformer;
 
 pub use transformer::build;
 
+/// `ParsedExpression::IsScalar` and `HasSubquery`, for the PEG transformer.
+pub use equality::{has_subquery, is_scalar};
+
 use rustdb_ast::{CreateInfo, SqlStatement, SqlStatementKind};
 use rustdb_common::{Error, Result};
 

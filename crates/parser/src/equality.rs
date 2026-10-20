@@ -193,7 +193,7 @@ fn children(expr: &ParsedExpression, callback: &mut dyn FnMut(&ParsedExpression)
 }
 
 /// `ParsedExpression::IsScalar`: no column, subquery or positional references.
-pub(crate) fn is_scalar(expr: &ParsedExpression) -> bool {
+pub fn is_scalar(expr: &ParsedExpression) -> bool {
     match &expr.kind {
         ParsedExpressionKind::ColumnRef(_)
         | ParsedExpressionKind::Subquery(_)
@@ -206,7 +206,7 @@ pub(crate) fn is_scalar(expr: &ParsedExpression) -> bool {
 }
 
 /// `ParsedExpression::HasSubquery`.
-pub(crate) fn has_subquery(expr: &ParsedExpression) -> bool {
+pub fn has_subquery(expr: &ParsedExpression) -> bool {
     match &expr.kind {
         ParsedExpressionKind::Subquery(_) => true,
         _ => any_child(expr, &has_subquery),

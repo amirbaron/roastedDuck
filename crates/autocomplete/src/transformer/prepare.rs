@@ -3,8 +3,20 @@
 use super::prelude::*;
 
 impl PegTransformer {
-    /// `TransformPrepareStatement`.
+    /// `TransformPrepareStatement`: `PREPARE name TypeList? AS Statement`.
     pub(super) fn transform_prepare_statement(&mut self, parse_result: &ParseResult) -> Result<SqlStatement> {
-        Err(not_ported("TransformPrepareStatement", parse_result))
+        let list = parse_result.list()?;
+        let name = list.identifier(1)?.to_owned();
+        if list.has(2)? {
+            return Err(Error::not_implemented(
+                "TypeList for prepared statement has not been implemented.",
+            ));
+        }
+        let statement: SqlStatement = self.transform_child(list, 4)?;
+        self.clear_parameters();
+        Ok(SqlStatement::new(SqlStatementKind::Prepare(PrepareStatement {
+            name,
+            statement: Box::new(statement),
+        })))
     }
 }

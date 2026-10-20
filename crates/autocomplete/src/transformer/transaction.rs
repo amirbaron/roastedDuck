@@ -1,30 +1,55 @@
-//! The transform functions of DuckDB's `transform_transaction.cpp`.
+//! The transform functions of DuckDB's `transform_transaction.cpp`: `BEGIN`, `COMMIT`
+//! and `ROLLBACK`.
+
+#![allow(
+    clippy::unused_self,
+    clippy::unnecessary_wraps,
+    reason = "transform functions have the signature of the rule registry"
+)]
 
 use super::prelude::*;
 
+/// `TransactionInfo(type)`: the default modifier and policy.
+const fn transaction_info(transaction_type: TransactionType) -> TransactionInfo {
+    TransactionInfo {
+        transaction_type,
+        modifier: TransactionModifierType::TransactionDefaultModifier,
+        invalidation_policy: TransactionInvalidationPolicy::StandardPolicy,
+        auto_rollback: false,
+    }
+}
+
 impl PegTransformer {
-    /// `TransformTransactionStatement`.
+    /// `TransformTransactionStatement`: `BeginTransaction / CommitTransaction /
+    /// RollbackTransaction`.
     pub(super) fn transform_transaction_statement(
         &mut self,
         parse_result: &ParseResult,
     ) -> Result<SqlStatement> {
-        Err(not_ported("TransformTransactionStatement", parse_result))
+        let info: TransactionInfo = self.transform(parse_result.list()?.choice(0)?)?;
+        Ok(SqlStatement::new(SqlStatementKind::Transaction(info)))
     }
 
-    /// `TransformBeginTransaction`.
+    /// `TransformBeginTransaction`: `(BEGIN / START) TRANSACTION? ReadOrWrite?`.
     pub(super) fn transform_begin_transaction(
         &mut self,
         parse_result: &ParseResult,
     ) -> Result<TransactionInfo> {
-        Err(not_ported("TransformBeginTransaction", parse_result))
+        let list = parse_result.list()?;
+        let mut info = transaction_info(TransactionType::BeginTransaction);
+        info.modifier = match list.optional(2)? {
+            Some(read_or_write) => self.transform(read_or_write)?,
+            None => TransactionModifierType::TransactionDefaultModifier,
+        };
+        Ok(info)
     }
 
-    /// `TransformReadOrWrite`.
+    /// `TransformReadOrWrite`: `READ (ONLY / WRITE)`.
     pub(super) fn transform_read_or_write(
         &mut self,
         parse_result: &ParseResult,
     ) -> Result<TransactionModifierType> {
-        Err(not_ported("TransformReadOrWrite", parse_result))
+        self.transform_child(parse_result.list()?, 1)
     }
 
     /// `TransformReadOnlyOrReadWrite`.
@@ -32,22 +57,22 @@ impl PegTransformer {
         &mut self,
         parse_result: &ParseResult,
     ) -> Result<TransactionModifierType> {
-        Err(not_ported("TransformReadOnlyOrReadWrite", parse_result))
+        Self::transform_enum(parse_result.list()?.choice(0)?)
     }
 
     /// `TransformCommitTransaction`.
     pub(super) fn transform_commit_transaction(
         &mut self,
-        parse_result: &ParseResult,
+        _parse_result: &ParseResult,
     ) -> Result<TransactionInfo> {
-        Err(not_ported("TransformCommitTransaction", parse_result))
+        Ok(transaction_info(TransactionType::Commit))
     }
 
     /// `TransformRollbackTransaction`.
     pub(super) fn transform_rollback_transaction(
         &mut self,
-        parse_result: &ParseResult,
+        _parse_result: &ParseResult,
     ) -> Result<TransactionInfo> {
-        Err(not_ported("TransformRollbackTransaction", parse_result))
+        Ok(transaction_info(TransactionType::Rollback))
     }
 }

@@ -1,8 +1,6 @@
 //! PIVOT statements (`transform_pivot_stmt.cpp`).
 
 use std::collections::BTreeSet;
-use std::fmt::Write as _;
-use std::hash::{BuildHasher, Hasher};
 
 use rustdb_ast::{
     CommonTableExpressionMap, DistinctModifier, ExpressionType, OrderByNode, OrderByNullType, OrderModifier,
@@ -15,36 +13,6 @@ use rustdb_types::{LogicalType, Value};
 
 use super::build::{self, set_ref_location};
 use super::{PivotEntry, Transformer, required, string_list};
-
-/// `UUID::ToString(UUID::GenerateRandomUUID())`: a random version-4 UUID.
-fn random_uuid() -> String {
-    let state = std::collections::hash_map::RandomState::new();
-    let mut bytes = [0_u8; 16];
-    for (i, chunk) in bytes.chunks_mut(8).enumerate() {
-        let mut hasher = state.build_hasher();
-        hasher.write_usize(i);
-        hasher.write_u128(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos()),
-        );
-        chunk.copy_from_slice(&hasher.finish().to_le_bytes());
-    }
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let hex = bytes.iter().fold(String::with_capacity(32), |mut hex, byte| {
-        let _ = write!(hex, "{byte:02x}");
-        hex
-    });
-    format!(
-        "{}-{}-{}-{}-{}",
-        &hex[0..8],
-        &hex[8..12],
-        &hex[12..16],
-        &hex[16..20],
-        &hex[20..32]
-    )
-}
 
 impl<'a> Transformer<'a> {
     /// `TransformPivotStatement`: `PIVOT t ON col USING agg GROUP BY g`.
@@ -88,7 +56,7 @@ impl<'a> Transformer<'a> {
                     "PIVOT statement with multiple names in pivot entry!?",
                 ));
             };
-            let enum_name = format!("__pivot_enum_{}", random_uuid());
+            let enum_name = format!("__pivot_enum_{}", build::random_uuid());
             let mut base_cte_map = CommonTableExpressionMap::default();
             self.extract_ctes(&mut base_cte_map);
             let mut base = build::select_node();
