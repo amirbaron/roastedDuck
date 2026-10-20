@@ -239,6 +239,31 @@ fn bind_alter_table(
             change.expression.as_deref(),
         ),
         AlterTableInfo::AddConstraint(add) => add_constraint(table, table_name, &add.constraint),
+        AlterTableInfo::AddField(add) => {
+            let mut add = (**add).clone();
+            add.new_field.logical_type = bind_logical_type_in_schema(
+                &scope.context,
+                &add.new_field.logical_type,
+                table_schema.0,
+                table_schema.1,
+            )?;
+            let change = super::alter_struct::add_field(table, &add)?;
+            field_change(scope, table_schema, table, table_name, change)
+        }
+        AlterTableInfo::RemoveField(remove) => field_change(
+            scope,
+            table_schema,
+            table,
+            table_name,
+            super::alter_struct::remove_field(table, remove)?,
+        ),
+        AlterTableInfo::RenameField(rename) => field_change(
+            scope,
+            table_schema,
+            table,
+            table_name,
+            Some(super::alter_struct::rename_field(table, rename)?),
+        ),
         AlterTableInfo::SetPartitionedBy(_) => Err(Error::not_implemented(
             "SET PARTITIONED BY is not supported for DuckDB tables",
         )),
@@ -251,11 +276,34 @@ fn bind_alter_table(
         AlterTableInfo::ResetTableOptions(_) => Err(Error::not_implemented(
             "RESET (<options>) is not supported for DuckDB tables",
         )),
-        other => Err(Error::not_implemented(format!(
+        other @ AlterTableInfo::ForeignKeyConstraint(_) => Err(Error::not_implemented(format!(
             "ALTER TABLE {}",
             other.alter_table_type().name()
         ))),
     }
+}
+
+/// A struct field change as the `ALTER COLUMN TYPE` DuckDB turns it into
+/// (`ChangeColumnType` with the `remap_struct` expression); `None` changes nothing.
+fn field_change(
+    scope: &mut BindScope<'_>,
+    table_schema: (&str, &str),
+    table: &TableEntry,
+    table_name: &str,
+    change: Option<super::alter_struct::FieldChange>,
+) -> Result<AlterAction> {
+    let Some(change) = change else {
+        return Ok(AlterAction::Nothing);
+    };
+    alter_column_type(
+        scope,
+        table_schema,
+        table,
+        table_name,
+        &change.column,
+        &change.new_type,
+        Some(&change.expression),
+    )
 }
 
 /// The generated columns whose expressions reference column `index`, directly or through

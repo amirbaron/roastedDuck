@@ -871,6 +871,12 @@ test/sql/alter/drop_col/test_drop_col_pk.test
 test/sql/alter/drop_col/test_drop_col_rollback.test
 test/sql/alter/drop_col/test_drop_col_transactions.test
 test/sql/alter/drop_col/test_drop_col_with_generated_cols.test
+test/sql/alter/list/add_column_in_struct.test
+test/sql/alter/list/drop_column_in_struct.test
+test/sql/alter/list/rename_column_in_struct.test
+test/sql/alter/map/add_column_in_struct.test
+test/sql/alter/map/drop_column_in_struct.test
+test/sql/alter/map/rename_column_in_struct.test
 test/sql/alter/rename_col/test_rename_col.test
 test/sql/alter/rename_col/test_rename_col_check.test
 test/sql/alter/rename_col/test_rename_col_dependencies.test
@@ -897,6 +903,12 @@ test/sql/alter/rename_view/test_rename_view_incorrect.test
 test/sql/alter/rename_view/test_rename_view_many_transactions.test
 test/sql/alter/rename_view/test_rename_view_table.test
 test/sql/alter/rename_view/test_rename_view_transactions.test
+test/sql/alter/struct/add_col_nested_struct.test
+test/sql/alter/struct/add_col_struct.test
+test/sql/alter/struct/drop_col_nested_struct.test
+test/sql/alter/struct/drop_col_struct.test
+test/sql/alter/struct/rename_col_nested_struct.test
+test/sql/alter/struct/rename_col_struct.test
 test/sql/alter/test_alter_if_exists.test
 test/sql/append/test_big_append.test_slow
 test/sql/attach/attach_catalog_error_early_out.test
