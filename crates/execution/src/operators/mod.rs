@@ -81,7 +81,8 @@ pub use projection::PhysicalProjection;
 pub use result_collector::{CollectedResult, PhysicalResultCollector};
 pub use sample::{BlockingSample, PhysicalReservoirSample, PhysicalStreamingSample};
 pub use seq_scan::{
-    DEFAULT_INDEX_SCAN_MAX_COUNT, DEFAULT_INDEX_SCAN_PERCENTAGE, PhysicalSeqScan, ScanExplainInfo, SeqScanLocal,
+    DEFAULT_INDEX_SCAN_MAX_COUNT, DEFAULT_INDEX_SCAN_PERCENTAGE, PhysicalSeqScan, ScanExplainInfo,
+    SeqScanLocal,
 };
 pub use streaming_window::{PhysicalStreamingWindow, StreamingWindowGlobalState, StreamingWindowState};
 pub use table_inout::{InOutState, PhysicalTableInOutFunction};

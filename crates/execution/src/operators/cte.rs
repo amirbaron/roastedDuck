@@ -418,7 +418,11 @@ impl Source for PhysicalRecursiveCte {
             )?;
             let anchor = Self::run(&self.parts[0], &ctx.env)?;
             let chunks = self.iteration_rows(&mut seen, anchor)?;
-            *guard = Some(Iteration { seen, chunks, next: 0 });
+            *guard = Some(Iteration {
+                seen,
+                chunks,
+                next: 0,
+            });
         }
         let Some(iteration) = guard.as_mut() else {
             return Err(Error::internal("recursive CTE without an iteration"));
