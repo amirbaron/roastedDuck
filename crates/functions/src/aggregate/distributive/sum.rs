@@ -21,8 +21,11 @@ pub(crate) fn hugeint_multiply(left: i128, right: i128) -> Result<i128> {
         .ok_or_else(|| Error::out_of_range(format!("Overflow in HUGEINT multiplication: {left} * {right}")))
 }
 
-/// A running sum and whether any value was added (DuckDB's `SumState`).
+/// A running sum and whether any value was added (DuckDB's `SumState`). At most 8-byte
+/// aligned like DuckDB's (whose `hugeint_t` is two 64-bit words): an `i128` sum takes 24
+/// bytes of a hash table row instead of 32.
 #[derive(Clone, Copy, Debug, Default)]
+#[repr(C, packed(8))]
 pub(crate) struct SumState<T> {
     pub(crate) is_set: bool,
     pub(crate) value: T,

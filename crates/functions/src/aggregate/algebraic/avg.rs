@@ -35,8 +35,10 @@ fn divident(count: u64, input: AggregateInput<'_>) -> f64 {
     }
 }
 
-/// Count and running sum (DuckDB's `AvgState`).
+/// Count and running sum (DuckDB's `AvgState`), at most 8-byte aligned like DuckDB's (see
+/// `SumState`).
 #[derive(Clone, Copy, Debug, Default)]
+#[repr(C, packed(8))]
 struct AvgState<T> {
     count: u64,
     value: T,
