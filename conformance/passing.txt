@@ -3843,6 +3843,7 @@ test/sql/types/list/list_null_members.test
 test/sql/types/list/list_null_members_small.test
 test/sql/types/list/list_of_struct.test
 test/sql/types/list/list_parse_recursion.test
+test/sql/types/list/list_stats.test
 test/sql/types/list/list_storage.test
 test/sql/types/list/list_test_many_deletes.test
 test/sql/types/list/list_to_varchar_cast.test
@@ -4012,6 +4013,7 @@ test/sql/types/struct/struct_projection_pushdown.test
 test/sql/types/struct/struct_projection_pushdown_index.test_slow
 test/sql/types/struct/struct_projection_pushdown_optimizer_bug.test
 test/sql/types/struct/struct_projection_pushdown_unnamed.test
+test/sql/types/struct/struct_stats.test
 test/sql/types/struct/struct_subquery.test
 test/sql/types/struct/struct_tables.test
 test/sql/types/struct/struct_unnest_recursion.test
