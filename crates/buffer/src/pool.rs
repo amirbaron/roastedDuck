@@ -105,9 +105,14 @@ impl BufferPool {
         TABLE_CACHE_LIMIT.min(self.max_memory() / 8)
     }
 
-    /// Counts `size` bytes of table data as kept loaded, if they fit the table cache.
+    /// Counts `size` bytes of table data as kept loaded, if they fit the table cache and
+    /// the pool's whole usage (operators' data too) is below the cache size: queries that
+    /// need memory for their hash tables or sorts do not keep table data as well.
     pub(crate) fn try_cache_table_data(&self, size: u64) -> bool {
         let limit = self.table_cache_limit();
+        if self.used_memory(false) + size > limit {
+            return false;
+        }
         self.cached_table_data
             .try_update(Ordering::AcqRel, Ordering::Acquire, |cached| {
                 (cached + size <= limit).then_some(cached + size)
