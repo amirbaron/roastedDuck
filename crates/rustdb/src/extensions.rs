@@ -121,6 +121,12 @@ fn extension_path(name: &str) -> String {
 /// caller loads.
 pub(crate) fn load_extension(info: &LoadInfo) -> Result<Option<String>> {
     if info.load_type != LoadType::Load {
+        // Installing writes to the extension directory through the client's opener file
+        // system, which the access configuration may forbid.
+        let path = extension_path(&apply_extension_alias(&info.filename));
+        if let Some((directory, _)) = path.rsplit_once('/') {
+            rustdb_function::file_system::verify_can_access_directory(directory)?;
+        }
         return Err(Error::not_implemented("INSTALL of extensions"));
     }
     let extension = &info.filename;
@@ -133,6 +139,13 @@ pub(crate) fn load_extension(info: &LoadInfo) -> Result<Option<String>> {
         }
         extension_path(&name)
     };
+    // `TryInitialLoad`: external extensions need external access.
+    if !rustdb_function::file_system::external_access_enabled() {
+        return Err(Error::new(
+            ErrorKind::Permission,
+            "Loading external extensions is disabled through configuration",
+        ));
+    }
     if !filename.ends_with(".duckdb_extension") {
         return Err(Error::new(
             ErrorKind::Permission,

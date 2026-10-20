@@ -296,6 +296,12 @@ impl DatabaseInstance {
                 buffer_manager.set_memory_limit(limit)
             }
             "temp_directory" => {
+                if !rustdb_function::file_system::external_access_enabled() {
+                    return Err(Error::new(
+                        rustdb_common::ErrorKind::Permission,
+                        "Modifying the temp_directory has been disabled by configuration",
+                    ));
+                }
                 let directory = match value {
                     Some(value) => value.to_varchar()?,
                     None => default_temp_directory(&self.path),
@@ -547,6 +553,9 @@ impl Database {
         options: &AttachOptions,
         on_conflict: rustdb_ast::OnCreateConflict,
     ) -> Result<Option<Arc<AttachedDatabase>>> {
+        if !path.is_empty() && !path.starts_with(":memory:") {
+            rustdb_function::file_system::verify_can_access_file(path)?;
+        }
         let Some(attached) = self.instance.databases.attach(
             name,
             path,
@@ -1050,6 +1059,7 @@ impl Connection {
             .map(rustdb_types::Value::to_varchar)
             .transpose()?
             .unwrap_or_default();
+        rustdb_function::file_system::verify_can_access_directory(&directory)?;
         let join = |name: &str| {
             if directory.ends_with('/') {
                 format!("{directory}{name}")

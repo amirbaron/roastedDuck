@@ -38,6 +38,7 @@ impl std::fmt::Debug for JsonFileHandle {
 impl JsonFileHandle {
     /// Opens `path` (`FileSystem::OpenFile` with the compression of the options).
     pub(crate) fn open(path: &str, compression: FileCompressionType, start: u64) -> Result<Self> {
+        rustdb_function::file_system::verify_can_access_file(path)?;
         let mut file = File::open(path).map_err(|error| rustdb_csv::buffer::open_error(path, &error))?;
         let metadata = file
             .metadata()
