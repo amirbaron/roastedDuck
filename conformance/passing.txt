@@ -1183,6 +1183,7 @@ test/sql/catalog/test_set_search_path.test
 test/sql/catalog/test_standard_schema.test
 test/sql/catalog/test_temporary.test
 test/sql/catalog/test_unicode_schema.test
+test/sql/catalog/view/recursive_view.test
 test/sql/catalog/view/recursive_view_with_dependencies.test
 test/sql/catalog/view/test_loosely_qualified_view_sql.test
 test/sql/catalog/view/test_stacked_view.test

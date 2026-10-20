@@ -231,6 +231,9 @@ pub struct Binder {
     pub can_contain_nulls: bool,
     pub(crate) unnamed_subquery_index: u64,
     depth: u64,
+    /// The views being bound by this binder and its parents (DuckDB's `bound_views` up
+    /// the parent chain), to detect a view that references itself.
+    pub(crate) bound_views: Vec<Arc<rustdb_catalog::CatalogEntry>>,
 }
 
 impl Binder {
@@ -249,6 +252,7 @@ impl Binder {
             can_contain_nulls: false,
             unnamed_subquery_index: 1,
             depth: 1,
+            bound_views: Vec::new(),
         };
         binder.increase_depth()?;
         Ok(binder)
@@ -274,9 +278,23 @@ impl Binder {
             can_contain_nulls: false,
             unnamed_subquery_index: 1,
             depth: self.depth,
+            bound_views: self.bound_views.clone(),
         };
         binder.increase_depth()?;
         Ok(binder)
+    }
+
+    /// Records that this binder binds `view`; fails if a parent binder is already binding
+    /// it (`Binder::AddBoundView`).
+    pub(crate) fn add_bound_view(&mut self, view: &Arc<rustdb_catalog::CatalogEntry>) -> Result<()> {
+        if self.bound_views.iter().any(|bound| Arc::ptr_eq(bound, view)) {
+            return Err(Error::binder(format!(
+                "infinite recursion detected: attempting to recursively bind view \"{}\"",
+                view.name()
+            )));
+        }
+        self.bound_views.push(Arc::clone(view));
+        Ok(())
     }
 
     pub(crate) fn increase_depth(&mut self) -> Result<()> {
