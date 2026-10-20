@@ -27,8 +27,8 @@ const N_BITS: u32 = 4;
 /// selects a sector by its low bits and four bits in it by its high bytes.
 #[derive(Debug)]
 pub struct BloomFilter {
+    /// A power-of-two number of sectors.
     sectors: Box<[AtomicU64]>,
-    bitmask: u64,
 }
 
 impl BloomFilter {
@@ -38,7 +38,6 @@ impl BloomFilter {
         let num_sectors = (min_bits.next_power_of_two() >> LOG_SECTOR_SIZE).min(MAX_NUM_SECTORS);
         Self {
             sectors: (0..num_sectors).map(|_| AtomicU64::new(0)).collect(),
-            bitmask: num_sectors - 1,
         }
     }
 
@@ -58,14 +57,33 @@ impl BloomFilter {
 
     #[inline]
     fn sector(&self, hash: u64) -> &AtomicU64 {
-        // The bitmask keeps the index below the sector count.
-        &self.sectors[usize::try_from(hash & self.bitmask).unwrap_or_default()]
+        // The sector count is a power of two: masking with it minus one keeps the index
+        // in bounds without a check.
+        &self.sectors[hash as usize & (self.sectors.len() - 1)]
     }
 
     /// Adds a key hash (`InsertOne`).
     #[inline]
     pub fn insert(&self, hash: u64) {
         self.sector(hash).fetch_or(Self::mask(hash), Ordering::Relaxed);
+    }
+
+    /// Moves the rows of `rows` whose hash (`hashes[i]` for `rows[i]`) may have been
+    /// inserted to its front, keeping their order, and returns how many there are
+    /// (`LookupHashes` with the selection compacted).
+    fn retain_found(&self, rows: &mut [u32], hashes: &[u64]) -> usize {
+        // The sectors in locals: through `self`, the atomics would make every iteration
+        // load them again.
+        let sectors = &self.sectors[..];
+        let mask = sectors.len() - 1;
+        let mut kept = 0;
+        for index in 0..rows.len().min(hashes.len()) {
+            let hash = hashes[index];
+            let bits = Self::mask(hash);
+            rows[kept] = rows[index];
+            kept += usize::from(sectors[hash as usize & mask].load(Ordering::Relaxed) & bits == bits);
+        }
+        kept
     }
 
     /// Whether a key with this hash may have been inserted (`LookupOne`).
@@ -166,11 +184,7 @@ impl ExpressionFilter for BloomTableFilter {
             let hashes = &mut hashes[..sel.len()];
             hash_selected(vector, sel, hashes)?;
             // Branchless compaction (`LookupHashes` writes every index, counts the found).
-            let mut kept = 0;
-            for (index, &hash) in hashes.iter().enumerate() {
-                sel[kept] = sel[index];
-                kept += usize::from(self.filter.lookup(hash));
-            }
+            let kept = self.filter.retain_found(sel, hashes);
             sel.truncate(kept);
             Ok(())
         })
