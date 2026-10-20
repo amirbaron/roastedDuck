@@ -1775,6 +1775,7 @@ test/sql/delete/test_large_delete_parallel.test
 test/sql/delete/test_segment_deletes.test
 test/sql/delete/test_truncate.test
 test/sql/delete/test_using_delete.test
+test/sql/delete/test_using_delete_duplicates.test
 test/sql/error/aggregate_order_by.test
 test/sql/error/error_location_not_duplicated.test
 test/sql/error/escape_percent_sign.test
