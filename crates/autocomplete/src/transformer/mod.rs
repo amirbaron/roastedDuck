@@ -105,10 +105,15 @@ pub(crate) struct PegTransformer {
 }
 
 /// A value transform rules produce (the `T` of DuckDB's `PEGTransformer::Transform<T>`).
+/// A transform function (DuckDB's `PEGTransformerFactory::Transform*` functions).
+pub(crate) type TransformFunction<T> = fn(&mut PegTransformer, &ParseResult) -> Result<T>;
+
 pub(crate) trait TransformResult: Sized {
-    /// Runs the transform function of the rule `parse_result` was matched by, if that
-    /// rule produces `Self`.
-    fn dispatch(transformer: &mut PegTransformer, parse_result: &ParseResult) -> Option<Result<Self>>;
+    /// The transform function of `rule`, if that rule produces `Self`. A function
+    /// pointer rather than a call: the transform functions recurse through
+    /// [`PegTransformer::transform`], and inlining them all into one dispatching frame
+    /// would make every level of a deeply nested query that large.
+    fn transform_function(rule: &str) -> Option<TransformFunction<Self>>;
 
     /// `SetResultLocation`: expressions and table refs without a location get the
     /// position of the parse result.
@@ -156,9 +161,9 @@ impl PegTransformer {
     /// `PEGTransformer::Transform<T>`: runs the transform function of the rule
     /// `parse_result` was matched by.
     pub fn transform<T: TransformResult>(&mut self, parse_result: &ParseResult) -> Result<T> {
-        match T::dispatch(self, parse_result) {
-            Some(result) => {
-                let mut result = result?;
+        match T::transform_function(parse_result.name) {
+            Some(function) => {
+                let mut result = function(self, parse_result)?;
                 result.set_location(parse_result.offset);
                 Ok(result)
             }

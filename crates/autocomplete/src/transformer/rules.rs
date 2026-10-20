@@ -27,7 +27,8 @@ use super::nodes::{
 };
 use super::parse_result::ParseResult;
 use super::{
-    PegTransformer, TransformEnum, TransformResult, set_expression_location, set_table_ref_location,
+    PegTransformer, TransformEnum, TransformFunction, TransformResult, set_expression_location,
+    set_table_ref_location,
 };
 
 /// Implements [`TransformResult`] for each type from its rules, and lists every rule.
@@ -35,9 +36,9 @@ macro_rules! transform_rules {
     ($($ty:ty [$($locate:path)?] { $($rule:literal => $method:ident,)* })*) => {
         $(
             impl TransformResult for $ty {
-                fn dispatch(transformer: &mut PegTransformer, parse_result: &ParseResult) -> Option<Result<Self>> {
-                    Some(match parse_result.name {
-                        $($rule => transformer.$method(parse_result),)*
+                fn transform_function(rule: &str) -> Option<TransformFunction<Self>> {
+                    Some(match rule {
+                        $($rule => PegTransformer::$method,)*
                         _ => return None,
                     })
                 }

@@ -133,7 +133,13 @@ fn equal_rendering_difference(expected: &[SqlStatement], actual: &[SqlStatement]
 fn main() -> std::io::Result<()> {
     // The SQL logic test runner runs statements on threads with large stacks too.
     std::thread::Builder::new()
-        .stack_size(1 << 30)
+        .stack_size(
+            std::env::var("PEG_CHECK_STACK_MB")
+                .ok()
+                .and_then(|mb| mb.parse::<usize>().ok())
+                .unwrap_or(1024)
+                << 20,
+        )
         .spawn(run)?
         .join()
         .unwrap_or_else(|_| Err(std::io::Error::other("peg_check panicked")))
@@ -185,7 +191,10 @@ fn run() -> std::io::Result<()> {
                         equal_rendering_difference(&expected, &actual),
                     )
                 } else if locations {
-                    ("different locations".to_owned(), first_difference(&expected_full, &actual_full))
+                    (
+                        "different locations".to_owned(),
+                        first_difference(&expected_full, &actual_full),
+                    )
                 } else {
                     ("same (but locations)".to_owned(), String::new())
                 }

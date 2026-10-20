@@ -238,7 +238,14 @@ impl<'a, E: Engine> Runner<'a, E> {
             .engine
             .open(dbpath, &self.config)
             .map_err(|error| Failure::new(format!("Failed to load database {dbpath}: {error}")))?;
-        for extension in EXTENSIONS_LOADED_ON_START {
+        // `SLT_STATIC_EXTENSIONS` (comma-separated) stands in for a test configuration's
+        // `statically_loaded_extensions` in validation runs.
+        let configured = std::env::var("SLT_STATIC_EXTENSIONS").unwrap_or_default();
+        let configured = configured
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty());
+        for extension in EXTENSIONS_LOADED_ON_START.into_iter().chain(configured) {
             self.engine
                 .load_extension(&database, extension)
                 .map_err(|error| Failure::new(format!("Failed to load database {dbpath}: {error}")))?;
@@ -279,7 +286,11 @@ impl<'a, E: Engine> Runner<'a, E> {
         // `SLT_ON_INIT` stands in for a test configuration's `on_init` (for instance
         // `test/configs/peg_parser_strict.json`'s) in validation runs.
         let on_init = std::env::var("SLT_ON_INIT").unwrap_or_default();
-        let init = self.replace_keywords(&self.environment.process_path(&format!("{on_init};"), &self.file_name));
+        let init = self.replace_keywords(
+            &self
+                .environment
+                .process_path(&format!("{on_init};"), &self.file_name),
+        );
         let result = self.engine.query(&mut connection, &init);
         self.con = Some(connection);
         if let Some(error) = crate::backend::QueryResult::error(&result) {
