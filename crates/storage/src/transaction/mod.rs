@@ -435,11 +435,18 @@ impl TransactionManager {
             Ok(()) => {
                 self.last_commit.store(commit_id, Ordering::Release);
                 if !undo.is_empty() {
-                    let checkpoint_guard = transaction
-                        .checkpoint_guard
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .take();
+                    // DuckDB stores the transactions that updated or changed the catalog
+                    // (`RemoveTransaction`'s `store_transaction`), checkpoint lock and all.
+                    let properties = undo.properties();
+                    let checkpoint_guard = if properties.has_updates || properties.has_catalog_changes {
+                        transaction
+                            .checkpoint_guard
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .take()
+                    } else {
+                        None
+                    };
                     state.recently_committed.push_back(CommittedUndo {
                         commit_id,
                         undo,

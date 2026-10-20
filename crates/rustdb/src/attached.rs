@@ -131,8 +131,8 @@ impl AttachedDatabase {
             return Ok(());
         };
         // `SingleFileCheckpointWriter::CreateCheckpoint`: no checkpoint of an invalidated
-        // instance.
-        if self.instance_validity.invalidated().is_some() {
+        // instance; an invalidated database is not written to any more either.
+        if self.instance_validity.invalidated().is_some() || self.validity.invalidated().is_some() {
             return Ok(());
         }
         crate::storage::create_checkpoint(&self.catalog, storage, mode, transactions, &|error| {

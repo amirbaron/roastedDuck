@@ -859,3 +859,15 @@ pub(crate) fn init_analyze(ty: &LogicalType, info: &CompressionInfo) -> Option<B
         total_count: 0,
     }))
 }
+
+/// `DictFSSTGetSegmentInfo`: the segment's mode with its row count.
+pub(crate) fn segment_info(segment: &ColumnSegment) -> Result<Vec<(String, String)>> {
+    let data = segment.pin_persistent()?;
+    let mode = match load::<u8>(data.bytes(), 8)? {
+        0 => "DICTIONARY",
+        1 => "DICT_FSST",
+        2 => "FSST_ONLY",
+        _ => "UNKNOWN",
+    };
+    Ok(vec![(mode.to_owned(), segment.count().to_string())])
+}

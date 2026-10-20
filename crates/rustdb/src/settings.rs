@@ -560,6 +560,57 @@ impl Settings {
 
     /// The `OnSet` / `SetGlobal` checks of options that cannot change while the database
     /// is running.
+    /// `PhysicalSet::GetSettingScope`: options that only exist globally cannot be set (or
+    /// reset) for a session.
+    pub(crate) fn check_scope(name: &str, scope: rustdb_ast::SetScope) -> Result<()> {
+        /// The options whose `Scope` is `SettingScopeTarget::GLOBAL_ONLY`.
+        const GLOBAL_ONLY: &[&str] = &[
+            "allow_community_extensions",
+            "allow_extensions_metadata_mismatch",
+            "allow_unredacted_secrets",
+            "allow_unsigned_extensions",
+            "autoinstall_extension_repository",
+            "autoinstall_known_extensions",
+            "autoload_known_extensions",
+            "current_transaction_invalidation_policy",
+            "custom_extension_repository",
+            "debug_eviction_queue_sleep_micro_seconds",
+            "default_block_size",
+            "disable_database_invalidation",
+            "duckdb_api",
+            "enable_external_access",
+            "enable_external_file_cache",
+            "enable_fsst_vectors",
+            "experimental_metadata_reuse",
+            "extension_directory",
+            "external_threads",
+            "force_bitpacking_mode",
+            "force_column_metadata_reuse",
+            "force_compression",
+            "geometry_minimum_shredding_size",
+            "http_proxy_password",
+            "http_proxy_username",
+            "lock_configuration",
+            "max_vacuum_tasks",
+            "pin_threads",
+            "scheduler_process_partial",
+            "storage_block_prefetch",
+            "temp_file_encryption",
+            "variant_minimum_shredding_size",
+            "warnings_as_errors",
+            "zstd_min_string_length",
+        ];
+        if scope == rustdb_ast::SetScope::Session
+            && let Some(option) = canonical_name(name)
+            && GLOBAL_ONLY.contains(&option)
+        {
+            return Err(Error::invalid_input(format!(
+                "Setting \"{option}\" cannot be set as a session variable - it can only be set globally"
+            )));
+        }
+        Ok(())
+    }
+
     pub(crate) fn check_running_set(name: &str, value: &Value) -> Result<()> {
         let enabled = || {
             value

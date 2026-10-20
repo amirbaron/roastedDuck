@@ -258,6 +258,9 @@ struct WalState {
     /// The file is cut to `size` when it is opened (`UNINITIALIZED_REQUIRES_TRUNCATE`):
     /// replay stopped at a torn or failed entry.
     requires_truncate: bool,
+    /// Set when a checkpoint failed: the database is invalidated and nothing more is
+    /// written (the WAL keeps the checkpoint marker last).
+    failed: Option<String>,
 }
 
 /// The WAL of a database file.
@@ -375,6 +378,12 @@ impl WalGuard<'_> {
         self.state.entries
     }
 
+    /// Refuses every further commit with `message`, after a checkpoint failed and
+    /// invalidated the database.
+    pub fn invalidate(&mut self, message: String) {
+        self.state.failed = Some(message);
+    }
+
     /// Opens the file for appending (`Initialize`).
     fn file(&mut self) -> Result<&mut File> {
         if self.state.file.is_none() {
@@ -433,6 +442,12 @@ impl WalGuard<'_> {
     pub fn commit(&mut self, mut batch: WalBatch) -> Result<()> {
         if batch.is_empty() {
             return Ok(());
+        }
+        if let Some(message) = &self.state.failed {
+            return Err(rustdb_common::Error::new(
+                rustdb_common::ErrorKind::Io,
+                message.clone(),
+            ));
         }
         batch.entry(WalType::WalFlush, |_| Ok(()))?;
         let initial_size = self.state.size;

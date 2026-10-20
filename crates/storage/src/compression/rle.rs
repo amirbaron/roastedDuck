@@ -210,6 +210,26 @@ impl<T: Primitive> CodecScan for RleScanState<T> {
         self.skip_internal(count)
     }
 
+    /// `CanEmitConstantVector` + `RLEScanConstant`: a whole vector inside one run is a
+    /// constant vector.
+    fn scan_constant(&mut self, segment: &ColumnSegment, count: usize) -> Result<Option<Vector>> {
+        if count != rustdb_common::STANDARD_VECTOR_SIZE {
+            return Ok(None);
+        }
+        let run_length = self.run_length(self.entry_pos)?;
+        if run_length.saturating_sub(self.position_in_entry) < count {
+            return Ok(None);
+        }
+        let mut result = Vector::flat(segment.logical_type().clone(), 1);
+        fill_values(&mut result, 0, 1, self.run_value(self.entry_pos)?)?;
+        result.make_constant();
+        self.position_in_entry += count;
+        if self.position_in_entry >= run_length {
+            self.forward_to_next_run()?;
+        }
+        Ok(Some(result))
+    }
+
     /// `RLEScanPartialInternal` (always producing a flat vector).
     fn scan_partial(
         &mut self,

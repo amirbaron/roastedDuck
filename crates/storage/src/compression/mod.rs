@@ -158,6 +158,18 @@ pub trait SegmentScan: fmt::Debug + Send + Sync {
         Ok(false)
     }
 
+    /// Rows `start..start + count` (a whole vector) as a constant vector, if the codec
+    /// can tell they all hold one value (DuckDB's RLE `CanEmitConstantVector`).
+    fn scan_constant(
+        &mut self,
+        segment: &ColumnSegment,
+        start: usize,
+        count: usize,
+    ) -> Result<Option<Vector>> {
+        let _ = (segment, start, count);
+        Ok(None)
+    }
+
     /// Rows `start..start + count` (a whole vector) as a dictionary vector over the
     /// segment's dictionary, if the codec has one (DuckDB's `ScanToDictionaryVector`).
     fn scan_dictionary(
@@ -212,6 +224,13 @@ pub(crate) trait CodecScan: fmt::Debug + Send + Sync + Sized {
     fn never_matches(&mut self, segment: &ColumnSegment, filter: &TableFilter) -> Result<bool> {
         let _ = (segment, filter);
         Ok(false)
+    }
+
+    /// [`SegmentScan::scan_constant`] of the next `count` rows; moves past them when it
+    /// returns a vector.
+    fn scan_constant(&mut self, segment: &ColumnSegment, count: usize) -> Result<Option<Vector>> {
+        let _ = (segment, count);
+        Ok(None)
     }
 
     /// Whether the codec implements [`CodecScan::filter_partial`].
@@ -272,6 +291,27 @@ impl<S: CodecScan> SegmentScan for Sequential<S> {
 
     fn never_matches(&mut self, segment: &ColumnSegment, filter: &TableFilter) -> Result<bool> {
         self.state.never_matches(segment, filter)
+    }
+
+    fn scan_constant(
+        &mut self,
+        segment: &ColumnSegment,
+        start: usize,
+        count: usize,
+    ) -> Result<Option<Vector>> {
+        if start < self.position {
+            self.state = S::init(segment)?;
+            self.position = 0;
+        }
+        if start > self.position {
+            self.state.skip(segment, start - self.position)?;
+            self.position = start;
+        }
+        let result = self.state.scan_constant(segment, count)?;
+        if result.is_some() {
+            self.position = start + count;
+        }
+        Ok(result)
     }
 
     fn filter(
@@ -343,6 +383,16 @@ pub(crate) fn init_scan(segment: &ColumnSegment) -> Result<Box<dyn SegmentScan>>
     }
 }
 
+/// `CompressionFunction::get_segment_info` of the codecs that have one: `(key, value)`
+/// pairs, shown as `key: value, ...` by `pragma_storage_info`.
+pub(crate) fn segment_info(segment: &ColumnSegment) -> Result<Option<Vec<(String, String)>>> {
+    Ok(match segment.compression() {
+        CompressionType::BitPacking => Some(bitpacking::segment_info(segment)?),
+        CompressionType::DictFsst => Some(dict_fsst::segment_info(segment)?),
+        _ => None,
+    })
+}
+
 /// `CompressionFunction::fetch_row`: reads row `row` of a compressed segment into
 /// `result[result_index]`.
 pub(crate) fn fetch_row(
@@ -399,6 +449,9 @@ pub struct CompressionConfig {
     /// `disabled_compression_methods`: a bit per disabled compression type
     /// (`CompressionFunctionSet::is_disabled`).
     pub disabled: u32,
+    /// `force_bitpacking_mode`: the `BitpackingMode` every group uses where it can
+    /// (`AUTO` = 1 lets each group pick).
+    pub force_bitpacking_mode: u8,
 }
 
 impl Default for CompressionConfig {
@@ -407,6 +460,7 @@ impl Default for CompressionConfig {
             force_compression: CompressionType::Auto,
             zstd_min_string_length: 4096,
             disabled: 0,
+            force_bitpacking_mode: 1,
         }
     }
 }
@@ -415,6 +469,22 @@ impl CompressionConfig {
     /// Whether `compression` is disabled (`disabled_compression_methods`).
     pub const fn is_disabled(&self, compression: CompressionType) -> bool {
         self.disabled & (1 << compression as u32) != 0
+    }
+
+    /// `ForceBitpackingModeSetting::OnSet`: the mode called `name` (case-insensitive:
+    /// `auto`, `constant`, `constant_delta`, `delta_for`, `for`).
+    pub fn bitpacking_mode_from_name(name: &str) -> Option<u8> {
+        [
+            "INVALID",
+            "AUTO",
+            "CONSTANT",
+            "CONSTANT_DELTA",
+            "DELTA_FOR",
+            "FOR",
+        ]
+        .iter()
+        .position(|candidate| candidate.eq_ignore_ascii_case(name))
+        .map(|position| position as u8)
     }
 
     /// Disables exactly `methods` (`SetDisabledCompressionMethods`).

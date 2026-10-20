@@ -436,7 +436,7 @@ impl ColumnData {
             let segment = &node.node;
             let persistent = segment.segment_type() == crate::table::column_segment::SegmentType::Persistent;
             let overflow: Vec<i64> = segment.overflow_blocks().to_vec();
-            let segment_info = if overflow.is_empty() {
+            let mut segment_info = if overflow.is_empty() {
                 String::new()
             } else {
                 format!(
@@ -444,6 +444,13 @@ impl ColumnData {
                     overflow.iter().map(i64::to_string).collect::<Vec<_>>().join(", ")
                 )
             };
+            if persistent && let Ok(Some(info)) = crate::compression::segment_info(segment) {
+                segment_info = info
+                    .iter()
+                    .map(|(key, value)| format!("{key}: {value}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+            }
             out.push(ColumnSegmentInfo {
                 row_group_index,
                 column_id: col_path.first().copied().unwrap_or_default(),
@@ -805,6 +812,10 @@ impl ColumnData {
     ) -> Result<usize> {
         if let Some(dictionary) = self.scan_dictionary_vector(state, count)? {
             *result = dictionary;
+            return Ok(count);
+        }
+        if let Some(constant) = self.scan_constant_vector(state, count)? {
+            *result = constant;
             return Ok(count);
         }
         Self::prepare_result(result, count);
@@ -1248,6 +1259,39 @@ impl ColumnData {
             return Ok(None);
         };
         let Some(vector) = scan.scan_dictionary(&node.node, start, count)? else {
+            return Ok(None);
+        };
+        state.offset_in_column += count as u64;
+        validity.skip(validity_state, count as u64)?;
+        Ok(Some(vector))
+    }
+
+    /// Scans the next `count` (a whole vector) rows as a constant vector when the codec
+    /// stores them as one value and they have no NULLs (DuckDB's RLE `RLEScanConstant`).
+    fn scan_constant_vector(&self, state: &mut ColumnScanState, count: usize) -> Result<Option<Vector>> {
+        if count != STANDARD_VECTOR_SIZE {
+            return Ok(None);
+        }
+        let ColumnKind::Standard { validity } = &self.kind else {
+            return Ok(None);
+        };
+        let Some(node) = self.whole_vector_segment(state, count)? else {
+            return Ok(None);
+        };
+        if node.node.compression() != crate::compression::CompressionType::Rle {
+            return Ok(None);
+        }
+        let Some(validity_state) = state.child_states.first_mut() else {
+            return Ok(None);
+        };
+        if !validity.range_has_no_nulls(validity_state, count) {
+            return Ok(None);
+        }
+        let start = (state.offset_in_column - node.row_start) as usize;
+        let Some(SegmentScanState::Compressed(scan)) = &mut state.segment_state else {
+            return Ok(None);
+        };
+        let Some(vector) = scan.scan_constant(&node.node, start, count)? else {
             return Ok(None);
         };
         state.offset_in_column += count as u64;

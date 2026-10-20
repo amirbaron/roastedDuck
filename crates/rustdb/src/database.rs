@@ -421,13 +421,50 @@ impl DatabaseInstance {
     }
 
     /// `SET` / `RESET` (`None`) of `disabled_compression_methods`
-    /// (`DisabledCompressionMethodsSetting::SetGlobal`); other names are ignored.
+    /// (`DisabledCompressionMethodsSetting::SetGlobal`) and `force_bitpacking_mode`
+    /// (`ForceBitpackingModeSetting::OnSet`); other names are ignored.
     fn set_disabled_compression_methods(
         &self,
         name: &str,
         value: Option<&rustdb_types::Value>,
     ) -> Result<()> {
-        use rustdb_storage::compression::CompressionType;
+        use rustdb_storage::compression::{CompressionConfig, CompressionType};
+        if name.eq_ignore_ascii_case("force_bitpacking_mode") {
+            let mode = match value {
+                Some(value) => {
+                    let text = value.to_varchar()?;
+                    CompressionConfig::bitpacking_mode_from_name(&text).ok_or_else(|| {
+                        rustdb_function::logging::enum_error(
+                            &text,
+                            "BitpackingMode",
+                            &[
+                                "INVALID",
+                                "AUTO",
+                                "CONSTANT",
+                                "CONSTANT_DELTA",
+                                "DELTA_FOR",
+                                "FOR",
+                            ],
+                        )
+                    })?
+                }
+                None => CompressionConfig::default().force_bitpacking_mode,
+            };
+            let config = {
+                let mut config = self
+                    .compression
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                config.force_bitpacking_mode = mode;
+                *config
+            };
+            for database in self.databases.all() {
+                if let Some(storage) = &database.storage {
+                    storage.set_compression_config(config);
+                }
+            }
+            return Ok(());
+        }
         if !name.eq_ignore_ascii_case("disabled_compression_methods") {
             return Ok(());
         }
@@ -2034,10 +2071,12 @@ impl Connection {
         match &plan.kind {
             LogicalKind::Set { name, value, scope } if *scope != SetScope::Variable => {
                 self.settings.check_lock(name)?;
+                Settings::check_scope(name, *scope)?;
                 Settings::check_running_set(name, value)?;
             }
             LogicalKind::Reset { name, scope } if *scope != SetScope::Variable => {
                 self.settings.check_lock(name)?;
+                Settings::check_scope(name, *scope)?;
                 Settings::check_running_reset(name)?;
             }
             _ => {}

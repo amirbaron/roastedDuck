@@ -244,11 +244,21 @@ pub(crate) fn create_checkpoint(
         vacuum_lock.is_some(),
         transactions.map_or(u64::MAX, rustdb_catalog::TransactionManager::lowest_active_start),
     )
-    .map_err(failed)?;
+    .map_err(|error| {
+        let error = failed(error);
+        if let Some(guard) = guard.as_mut() {
+            guard.invalidate(error.raw_message().to_owned());
+        }
+        error
+    })?;
     timer.end();
     drop(exclusive);
     if has_wal && let Some(guard) = guard.as_mut() {
-        guard.finish_checkpoint().map_err(failed)?;
+        guard.finish_checkpoint().map_err(|error| {
+            let error = failed(error);
+            guard.invalidate(error.raw_message().to_owned());
+            error
+        })?;
     }
     Ok(())
 }
