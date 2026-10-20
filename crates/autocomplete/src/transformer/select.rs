@@ -3,6 +3,7 @@
 use rustdb_function::cast::ValueCast;
 use rustdb_parser::build;
 
+use super::create_view::to_recursive_cte;
 use super::expression::expression_is_empty_star;
 use super::prelude::*;
 
@@ -383,66 +384,6 @@ fn sample_method_from_string(name: &str) -> Result<SampleMethod> {
             "Enum value: unrecognized value \"{name}\" for enum \"SampleMethod\"\n{}",
             rustdb_common::string_util::candidates_message(&closest, "Candidates")
         ))
-    })
-}
-
-/// `ToRecursiveCTE`: a `UNION [ALL]` CTE that refers to itself becomes a recursive CTE
-/// node; any other node is kept.
-pub(super) fn to_recursive_cte(
-    node: QueryNode,
-    name: &str,
-    aliases: &[String],
-    key_targets: &[ParsedExpression],
-) -> Result<QueryNode> {
-    let QueryNodeKind::SetOperation(set_node) = &node.kind else {
-        return Ok(node);
-    };
-    if set_node.setop_type != SetOperationType::Union {
-        return Ok(node);
-    }
-    if set_node.children.len() < 2 {
-        return Err(Error::parser(
-            "Expected at least two children to set operation node in recursive CTE",
-        ));
-    }
-    let QueryNode {
-        modifiers,
-        cte_map,
-        kind: QueryNodeKind::SetOperation(mut set_node),
-    } = node
-    else {
-        return Err(Error::internal("Expected a set operation node"));
-    };
-    let union_all = set_node.setop_all;
-    let right = set_node
-        .children
-        .pop()
-        .ok_or_else(|| Error::internal("A set operation without children"))?;
-    // An n-ary node splits into everything but the last operand and the last one, like
-    // the left-recursive tree of the grammar.
-    let left = if set_node.children.len() == 1 {
-        set_node
-            .children
-            .pop()
-            .ok_or_else(|| Error::internal("A set operation without children"))?
-    } else {
-        QueryNode {
-            modifiers,
-            cte_map: CommonTableExpressionMap::default(),
-            kind: QueryNodeKind::SetOperation(set_node),
-        }
-    };
-    Ok(QueryNode {
-        modifiers: Vec::new(),
-        cte_map,
-        kind: QueryNodeKind::RecursiveCte(Box::new(RecursiveCteNode {
-            cte_name: name.to_owned(),
-            union_all,
-            left: Box::new(left),
-            right: Box::new(right),
-            aliases: aliases.to_vec(),
-            key_targets: key_targets.to_vec(),
-        })),
     })
 }
 

@@ -112,9 +112,15 @@ fn main() -> std::io::Result<()> {
             (Ok(expected), Ok(Ok(actual))) => {
                 let (expected_text, actual_text) = (format!("{expected:?}"), format!("{actual:?}"));
                 if expected_text == actual_text {
-                    ("different (same rendering)".to_owned(), equal_rendering_difference(&expected, &actual))
+                    (
+                        "different (same rendering)".to_owned(),
+                        equal_rendering_difference(&expected, &actual),
+                    )
                 } else {
-                    ("different".to_owned(), first_difference(&expected_text, &actual_text))
+                    (
+                        "different".to_owned(),
+                        first_difference(&expected_text, &actual_text),
+                    )
                 }
             }
             (Ok(_), Ok(Err(error))) => (

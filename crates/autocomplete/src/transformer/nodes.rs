@@ -265,23 +265,12 @@ pub(crate) enum SequenceInfo {
     Owner,
 }
 
-/// One option of `CREATE` / `ALTER SEQUENCE` (DuckDB's `SequenceOption`,
-/// `ValueSequenceOption` and `QualifiedSequenceOption`).
+/// One option of `CREATE` / `ALTER SEQUENCE` (DuckDB's `ValueSequenceOption` and
+/// `QualifiedSequenceOption`).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum SequenceOption {
-    /// An option without a value (`NO MINVALUE`).
-    Plain(SequenceInfo),
     Value(SequenceInfo, Value),
     Qualified(SequenceInfo, QualifiedName),
-}
-
-impl SequenceOption {
-    /// The option's `SequenceInfo`.
-    pub const fn info(&self) -> SequenceInfo {
-        match self {
-            Self::Plain(info) | Self::Value(info, _) | Self::Qualified(info, _) => *info,
-        }
-    }
 }
 
 /// A `CREATE TYPE ... AS ENUM` a `PIVOT` without an `IN` list needs (DuckDB's

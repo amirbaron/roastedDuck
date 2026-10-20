@@ -108,7 +108,10 @@ fn any_child(expr: &ParsedExpression, predicate: &dyn Fn(&ParsedExpression) -> b
     copy_free
 }
 
-fn children(expr: &ParsedExpression, callback: &mut dyn FnMut(&ParsedExpression)) {
+/// Calls `callback` on each direct child of `expr`, in DuckDB's order (immutable
+/// `for_each_child_mut`, DuckDB's `ParsedExpressionIterator::EnumerateChildren`);
+/// subqueries are not entered.
+pub fn children(expr: &ParsedExpression, callback: &mut dyn FnMut(&ParsedExpression)) {
     match &expr.kind {
         ParsedExpressionKind::Between(between) => {
             callback(&between.input);
@@ -202,7 +205,7 @@ pub fn is_scalar(expr: &ParsedExpression) -> bool {
     }
 }
 
-/// `ParsedExpression::HasSubquery`.
+/// `ParsedExpression::HasSubquery`: whether `expr` contains a subquery.
 pub fn has_subquery(expr: &ParsedExpression) -> bool {
     match &expr.kind {
         ParsedExpressionKind::Subquery(_) => true,

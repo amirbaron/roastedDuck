@@ -1,7 +1,7 @@
 //! The parse tree the matcher builds for the transformer (DuckDB's `ParseResult`
 //! hierarchy, `transformer/parse_result.hpp`).
 
-use rustdb_ast::{ParsedExpression, ParsedExpressionKind};
+use rustdb_ast::ParsedExpression;
 use rustdb_common::{Error, Result};
 use rustdb_types::{LogicalType, Value};
 
@@ -108,10 +108,7 @@ impl ParseResult {
     /// `Cast<ListParseResult>`.
     pub fn list(&self) -> Result<List<'_>> {
         match &self.kind {
-            ParseResultKind::List(children) => Ok(List {
-                name: self.name,
-                children,
-            }),
+            ParseResultKind::List(children) => Ok(List { children }),
             _ => Err(self.cast_error(ParseResultType::List)),
         }
     }
@@ -206,7 +203,6 @@ impl ParseResult {
 /// A list parse result (DuckDB's `ListParseResult`), with accessors for its children.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct List<'a> {
-    pub name: &'static str,
     pub children: &'a [ParseResult],
 }
 
@@ -252,11 +248,6 @@ impl<'a> List<'a> {
     pub fn has(&self, index: usize) -> Result<bool> {
         Ok(self.optional(index)?.is_some())
     }
-
-    /// The number of children.
-    pub fn len(&self) -> usize {
-        self.children.len()
-    }
 }
 
 /// `StringLiteralParseResult::ToExpression`: the constant a string literal stands for.
@@ -291,9 +282,4 @@ pub(crate) fn string_literal_expression(text: &str, string_type: SpecialStringCh
             ParsedExpression::constant(Value::varchar(escaped))
         }
     }
-}
-
-/// Whether `expression` is a constant (a `ConstantExpression`).
-pub(crate) const fn is_constant(expression: &ParsedExpression) -> bool {
-    matches!(expression.kind, ParsedExpressionKind::Constant(_))
 }

@@ -139,14 +139,6 @@ fn set_table_ref_location(table_ref: &mut TableRef, offset: Option<usize>) {
     }
 }
 
-/// The error of a function DuckDB has but the port lacks.
-pub(crate) fn not_ported(function: &str, parse_result: &ParseResult) -> Error {
-    Error::not_implemented(format!(
-        "PEG transformer function {function} (rule '{}') is not supported",
-        parse_result.name
-    ))
-}
-
 impl PegTransformer {
     pub fn new(options: ParserOptions) -> Self {
         Self {
