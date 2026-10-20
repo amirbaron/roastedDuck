@@ -248,6 +248,8 @@ test/fuzzer/public/insert_returning.test
 test/fuzzer/public/lateral_in_right_side_of_join.test
 test/fuzzer/public/lateral_join_subquery.test
 test/fuzzer/public/lateral_right_join.test
+test/fuzzer/public/pivot_empty_enum.test
+test/fuzzer/public/pivot_full_join_using.test
 test/fuzzer/public/positional_join_correlated_subquery.test
 test/fuzzer/public/pragma_named_parameters.test
 test/fuzzer/public/regex_range_filter_mismatch.test
