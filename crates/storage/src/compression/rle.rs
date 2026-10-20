@@ -7,7 +7,7 @@ use rustdb_common::Result;
 use rustdb_types::{LogicalType, PhysicalType, Vector};
 
 use super::primitive::{
-    Primitive, align8, align8_floor, corrupt, fill_values, load, result_bytes, unified_values,
+    Primitive, align8, align8_floor, corrupt, load, result_bytes, unified_values,
     update_numeric_stats,
 };
 use super::{Analyzer, CodecScan, CompressionInfo, CompressionType, Compressor, SegmentScan, Sequential};
@@ -216,21 +216,25 @@ impl<T: Primitive> CodecScan for RleScanState<T> {
         _segment: &ColumnSegment,
         count: usize,
         result: &mut Vector,
-        mut result_offset: usize,
+        result_offset: usize,
     ) -> Result<()> {
-        let result_end = result_offset + count;
-        while result_offset < result_end {
+        // The target is taken once: runs are often short.
+        let mut target = result_bytes::<T>(result, result_offset, count)?;
+        while !target.is_empty() {
             let run_end = self.run_length(self.entry_pos)?;
             let run_count = run_end.saturating_sub(self.position_in_entry);
-            let remaining = result_end - result_offset;
+            let remaining = target.len() / T::SIZE;
             let element = self.run_value(self.entry_pos)?;
+            let take = run_count.min(remaining);
+            let (run, rest) = target.split_at_mut(take * T::SIZE);
+            for slot in run.chunks_exact_mut(T::SIZE) {
+                element.store(slot);
+            }
+            target = rest;
             if run_count > remaining {
-                fill_values(result, result_offset, remaining, element)?;
                 self.position_in_entry += remaining;
                 break;
             }
-            fill_values(result, result_offset, run_count, element)?;
-            result_offset += run_count;
             self.forward_to_next_run()?;
         }
         Ok(())

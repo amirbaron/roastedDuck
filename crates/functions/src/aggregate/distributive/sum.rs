@@ -21,6 +21,27 @@ pub(crate) fn hugeint_multiply(left: i128, right: i128) -> Result<i128> {
         .ok_or_else(|| Error::out_of_range(format!("Overflow in HUGEINT multiplication: {left} * {right}")))
 }
 
+/// The wrapping sum of `values` in 64 bits.
+#[inline]
+pub(crate) fn wrapping_sum_i64<I: NativeType + Into<i64>>(values: &[I]) -> i64 {
+    values.iter().fold(0i64, |sum, &value| sum.wrapping_add(value.into()))
+}
+
+/// The wrapping sum of `values` in 128 bits. Values of at most 32 bits are summed in 64
+/// bits per run of 2^30 (which cannot overflow), so that the loop vectorises.
+#[inline]
+pub(crate) fn wrapping_sum_i128<I: NativeType + Into<i128>>(values: &[I]) -> i128 {
+    if size_of::<I>() <= 4 {
+        values.chunks(1 << 30).fold(0i128, |total, run| {
+            #[allow(clippy::cast_possible_truncation, reason = "values of at most 32 bits")]
+            let sum = run.iter().fold(0i64, |sum, &value| sum + value.into() as i64);
+            total.wrapping_add(i128::from(sum))
+        })
+    } else {
+        values.iter().fold(0i128, |sum, &value| sum.wrapping_add(value.into()))
+    }
+}
+
 /// A running sum and whether any value was added (DuckDB's `SumState`). At most 8-byte
 /// aligned like DuckDB's (whose `hugeint_t` is two 64-bit words): an `i128` sum takes 24
 /// bytes of a hash table row instead of 32.
@@ -44,6 +65,12 @@ impl<I: NativeType + Into<i64>> UnaryAggregate for IntegerSum<I> {
     fn update(state: &mut SumState<i64>, value: I) -> Result<()> {
         state.is_set = true;
         state.value = state.value.wrapping_add(value.into());
+        Ok(())
+    }
+
+    fn update_values(state: &mut SumState<i64>, values: &[I]) -> Result<()> {
+        state.is_set |= !values.is_empty();
+        state.value = state.value.wrapping_add(wrapping_sum_i64(values));
         Ok(())
     }
 
@@ -77,6 +104,12 @@ impl<I: NativeType + Into<i128>> UnaryAggregate for SumToHugeint<I> {
     fn update(state: &mut SumState<i128>, value: I) -> Result<()> {
         state.is_set = true;
         state.value = state.value.wrapping_add(value.into());
+        Ok(())
+    }
+
+    fn update_values(state: &mut SumState<i128>, values: &[I]) -> Result<()> {
+        state.is_set |= !values.is_empty();
+        state.value = state.value.wrapping_add(wrapping_sum_i128(values));
         Ok(())
     }
 

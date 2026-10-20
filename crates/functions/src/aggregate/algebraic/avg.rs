@@ -9,7 +9,9 @@ use rustdb_function::cast::numeric::i128_to_f64;
 use rustdb_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionData};
 use rustdb_types::{Interval, LogicalType, LogicalTypeId, NativeType, PhysicalType, TimeTz};
 
-use crate::aggregate::distributive::sum::{hugeint_add, hugeint_multiply, kahan_add};
+use crate::aggregate::distributive::sum::{
+    hugeint_add, hugeint_multiply, kahan_add, wrapping_sum_i64, wrapping_sum_i128,
+};
 use crate::operator::{interval_add, interval_multiply};
 use crate::temporal::time_tz_normalized_micros;
 
@@ -60,6 +62,12 @@ impl<I: NativeType + Into<i64>> UnaryAggregate for SmallIntegerAverage<I> {
         Ok(())
     }
 
+    fn update_values(state: &mut AvgState<i64>, values: &[I]) -> Result<()> {
+        state.count += values.len() as u64;
+        state.value = state.value.wrapping_add(wrapping_sum_i64(values));
+        Ok(())
+    }
+
     fn update_repeated(state: &mut AvgState<i64>, value: I, count: usize) -> Result<()> {
         state.count += count as u64;
         state.value = state.value.wrapping_add(value.into().wrapping_mul(count as i64));
@@ -97,6 +105,12 @@ impl<I: NativeType + Into<i128>> UnaryAggregate for IntegerAverage<I> {
     fn update(state: &mut AvgState<i128>, value: I) -> Result<()> {
         state.count += 1;
         state.value = state.value.wrapping_add(value.into());
+        Ok(())
+    }
+
+    fn update_values(state: &mut AvgState<i128>, values: &[I]) -> Result<()> {
+        state.count += values.len() as u64;
+        state.value = state.value.wrapping_add(wrapping_sum_i128(values));
         Ok(())
     }
 
