@@ -84,20 +84,6 @@ pub fn expand_path(path: &str) -> String {
     path[file_url_offset(path)..].to_owned()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn file_urls_are_local_paths() {
-        assert_eq!(expand_path("file:/a/b.csv"), "/a/b.csv");
-        assert_eq!(expand_path("file:///a/b.csv"), "/a/b.csv");
-        assert_eq!(expand_path("file://localhost/a/b.csv"), "/a/b.csv");
-        assert_eq!(expand_path("file://host/a/b.csv"), "file://host/a/b.csv");
-        assert_eq!(expand_path("data/b.csv"), "data/b.csv");
-    }
-}
-
 /// `FileSystem::CanonicalizePath`: `.` and empty components dropped, `..` resolved
 /// lexically (at the root it is ignored); remote paths are kept as they are.
 pub fn canonicalize_path(path: &str) -> String {
@@ -204,4 +190,19 @@ pub fn verify_can_access_file(path: &str) -> rustdb_common::Result<()> {
 /// `OpenerFileSystem::VerifyCanAccessDirectory`.
 pub fn verify_can_access_directory(path: &str) -> rustdb_common::Result<()> {
     verify_can_access(path, true)
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_urls_are_local_paths() {
+        assert_eq!(expand_path("file:/a/b.csv"), "/a/b.csv");
+        assert_eq!(expand_path("file:///a/b.csv"), "/a/b.csv");
+        assert_eq!(expand_path("file://localhost/a/b.csv"), "/a/b.csv");
+        assert_eq!(expand_path("file://host/a/b.csv"), "file://host/a/b.csv");
+        assert_eq!(expand_path("data/b.csv"), "data/b.csv");
+    }
 }
