@@ -284,6 +284,7 @@ impl ClientContext {
     /// The context binding a view stored in `catalog.schema`: its names resolve there
     /// first (`Binder::GetSearchPath(catalog, schema, true)` set on the view binder's
     /// entry retriever). The system and temporary catalogs keep the client's path.
+    #[must_use]
     pub fn with_view_search_path(&self, catalog: &str, schema: &str) -> Self {
         let mut context = self.clone();
         if catalog.is_empty()
