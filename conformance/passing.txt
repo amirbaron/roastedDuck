@@ -1269,6 +1269,7 @@ test/sql/constraints/unique/test_unique_multi_column.test
 test/sql/constraints/unique/test_unique_multi_constraint.test
 test/sql/constraints/unique/test_unique_string.test
 test/sql/constraints/unique/test_unique_temp.test
+test/sql/copy/copy_blob.test
 test/sql/copy/csv/14512.test
 test/sql/copy/csv/14874.test
 test/sql/copy/csv/17738.test

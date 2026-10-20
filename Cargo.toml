@@ -50,3 +50,8 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# DuckDB compresses with C miniz; this copy of miniz_oxide 0.9.1 takes miniz's
+# stored-block decision so compressed output matches DuckDB's byte for byte.
+[patch.crates-io]
+miniz_oxide = { path = "third_party/miniz_oxide" }
