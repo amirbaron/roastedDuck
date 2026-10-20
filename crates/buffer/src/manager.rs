@@ -755,21 +755,12 @@ impl BufferManager {
     /// Allocates `size` bytes, charged to the `ALLOCATOR` tag (DuckDB's buffer allocator).
     /// Fails with an out-of-memory error if they don't fit.
     pub fn allocate_data(&self, size: usize) -> Result<AllocatedData> {
-        AllocatedData::allocate(size, Some(self.reserve_data(size)?), false)
-    }
-
-    /// [`BufferManager::allocate_data`] with the memory zeroed.
-    pub fn allocate_zeroed_data(&self, size: usize) -> Result<AllocatedData> {
-        AllocatedData::allocate(size, Some(self.reserve_data(size)?), true)
-    }
-
-    fn reserve_data(&self, size: usize) -> Result<MemoryReservation> {
         let (reservation, _) =
             self.shared
                 .evict_or_throw(MemoryTag::Allocator, size as u64, false, || {
                     format!("failed to allocate data of size {}", format_bytes(size as u64))
                 })?;
-        Ok(reservation)
+        AllocatedData::allocate(size, Some(reservation), false)
     }
 
     /// The manager assigning memory to concurrently running operators.
@@ -961,6 +952,11 @@ impl AllocatedData {
     /// Memory that is not charged to any buffer manager.
     pub fn untracked(size: usize) -> Result<Self> {
         Self::allocate(size, None, false)
+    }
+
+    /// Zeroed memory that is not charged to any buffer manager.
+    pub fn untracked_zeroed(size: usize) -> Result<Self> {
+        Self::allocate(size, None, true)
     }
 
     /// Start of the memory (uninitialised unless allocated zeroed), 16-byte aligned.

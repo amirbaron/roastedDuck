@@ -137,8 +137,11 @@ struct DictionaryGroups {
     groups: Vec<RowPtr>,
 }
 
-/// The entries of a pointer table, zeroed, in buffer-allocator memory (DuckDB's
-/// `hash_map`): a large table goes back to the OS when a bigger one replaces it.
+/// The entries of a pointer table, zeroed (DuckDB's `hash_map`). A large table is a
+/// mapping of its own, so it goes back to the OS when a bigger one replaces it (the process
+/// allocator kept every outgrown table). DuckDB charges it to the buffer pool; here, as
+/// before, the sinks only count it in their memory estimate (`size_in_bytes`): charging
+/// it too takes TPC-H q9 over a 100 MB limit (`external_file_cache_low_mem.test_slow`).
 #[derive(Debug, Default)]
 struct Entries {
     memory: Option<AllocatedData>,
@@ -146,8 +149,8 @@ struct Entries {
 }
 
 impl Entries {
-    fn zeroed(buffer_manager: &BufferManager, len: usize) -> Result<Self> {
-        let memory = buffer_manager.allocate_zeroed_data(len * size_of::<u64>())?;
+    fn zeroed(len: usize) -> Result<Self> {
+        let memory = AllocatedData::untracked_zeroed(len * size_of::<u64>())?;
         Ok(Self {
             memory: Some(memory),
             len,
@@ -190,7 +193,6 @@ impl DerefMut for Entries {
 pub struct GroupedAggregateHashTable {
     layout: Arc<TupleDataLayout>,
     group_types: Vec<LogicalType>,
-    buffer_manager: BufferManager,
     partitioned: PartitionedTupleData,
     append: PartitionedAppendState,
     entries: Entries,
@@ -280,7 +282,7 @@ impl GroupedAggregateHashTable {
         )?);
         let hash_column = group_types.len();
         let mut partitioned = PartitionedTupleData::new(
-            buffer_manager.clone(),
+            buffer_manager,
             Arc::clone(&layout),
             MemoryTag::HashTable,
             radix_bits,
@@ -297,7 +299,6 @@ impl GroupedAggregateHashTable {
         let mut table = Self {
             layout,
             group_types,
-            buffer_manager,
             partitioned,
             append,
             entries: Entries::default(),
@@ -427,7 +428,7 @@ impl GroupedAggregateHashTable {
         // The groups are reinserted from the rows, so the old table goes before the new one
         // is allocated.
         self.entries = Entries::default();
-        self.entries = Entries::zeroed(&self.buffer_manager, capacity)?;
+        self.entries = Entries::zeroed(capacity)?;
         self.bitmask = capacity as u64 - 1;
         if self.count != 0 {
             self.reinsert_rows()?;
