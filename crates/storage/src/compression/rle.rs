@@ -239,6 +239,40 @@ impl<T: Primitive> CodecScan for RleScanState<T> {
         }
         Ok(())
     }
+
+    const SELECTS: bool = true;
+
+    /// `RLESelect`: writes the run value of the rows of `sel` only.
+    fn select_partial(
+        &mut self,
+        _segment: &ColumnSegment,
+        count: usize,
+        result: &mut Vector,
+        sel: &[u32],
+    ) -> Result<()> {
+        let target = result_bytes::<T>(result, 0, count)?;
+        let mut row = 0;
+        let mut selected = sel.iter().map(|&row| row as usize).peekable();
+        while row < count {
+            let run_end = self.run_length(self.entry_pos)?;
+            let run_count = run_end.saturating_sub(self.position_in_entry);
+            let remaining = count - row;
+            let end = row + run_count.min(remaining);
+            if selected.peek().is_some_and(|&next| next < end) {
+                let element = self.run_value(self.entry_pos)?;
+                while let Some(next) = selected.next_if(|&next| next < end) {
+                    element.store(&mut target[next * T::SIZE..(next + 1) * T::SIZE]);
+                }
+            }
+            row = end;
+            if run_count > remaining {
+                self.position_in_entry += remaining;
+                break;
+            }
+            self.forward_to_next_run()?;
+        }
+        Ok(())
+    }
 }
 
 /// `RLEFun::GetFunction(type).init_scan`.

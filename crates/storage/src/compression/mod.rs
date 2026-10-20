@@ -214,6 +214,22 @@ pub(crate) trait CodecScan: fmt::Debug + Send + Sync + Sized {
         Ok(false)
     }
 
+    /// Whether the codec implements [`CodecScan::select_partial`].
+    const SELECTS: bool = false;
+
+    /// [`SegmentScan::select`] over the next `count` rows: decodes the rows of `sel`
+    /// (ascending, below `count`) into the same rows of `result`.
+    fn select_partial(
+        &mut self,
+        segment: &ColumnSegment,
+        count: usize,
+        result: &mut Vector,
+        sel: &[u32],
+    ) -> Result<()> {
+        let _ = (segment, count, result, sel);
+        Err(Error::internal("codec without a select"))
+    }
+
     /// Whether the codec implements [`CodecScan::filter_partial`].
     const FILTERS: bool = false;
 
@@ -272,6 +288,29 @@ impl<S: CodecScan> SegmentScan for Sequential<S> {
 
     fn never_matches(&mut self, segment: &ColumnSegment, filter: &TableFilter) -> Result<bool> {
         self.state.never_matches(segment, filter)
+    }
+
+    fn select(
+        &mut self,
+        segment: &ColumnSegment,
+        start: usize,
+        count: usize,
+        result: &mut Vector,
+        sel: &[u32],
+    ) -> Result<bool> {
+        if !S::SELECTS {
+            return Ok(false);
+        }
+        if start < self.position {
+            self.state = S::init(segment)?;
+            self.position = 0;
+        }
+        if start > self.position {
+            self.state.skip(segment, start - self.position)?;
+        }
+        self.state.select_partial(segment, count, result, sel)?;
+        self.position = start + count;
+        Ok(true)
     }
 
     fn filter(
