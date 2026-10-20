@@ -128,6 +128,9 @@ pub struct Binding {
     pub types: Vec<LogicalType>,
     pub names: Vec<String>,
     name_map: CaseInsensitiveMap<u64>,
+    /// The catalog and schema of the binding's catalog entry (DuckDB reads them from
+    /// `GetStandardEntry()->ParentCatalog()` / `ParentSchema()`), whatever its alias.
+    pub entry_parent: Option<(String, String)>,
 }
 
 impl Binding {
@@ -146,6 +149,7 @@ impl Binding {
             types,
             names,
             name_map: CaseInsensitiveMap::default(),
+            entry_parent: None,
         };
         binding.initialize()?;
         if let BindingKind::Table { virtual_columns, .. } = &binding.kind {
@@ -281,6 +285,13 @@ impl Binding {
             .ok_or_else(|| Error::internal(format!("Column {column_name} not found in macro")))?;
         alias.clone_into(&mut argument.alias);
         Ok(argument)
+    }
+
+    /// Records the catalog and schema the binding's catalog entry belongs to.
+    #[must_use]
+    pub fn with_entry_parent(mut self, catalog: &str, schema: &str) -> Self {
+        self.entry_parent = Some((catalog.to_owned(), schema.to_owned()));
+        self
     }
 
     /// The catalog entry behind a table or view binding.

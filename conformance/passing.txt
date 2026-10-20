@@ -1038,6 +1038,7 @@ test/sql/binder/separate_schema_tables.test
 test/sql/binder/similar_to.test
 test/sql/binder/string_literal_binding.test
 test/sql/binder/table_alias_single_quotes.test
+test/sql/binder/table_view_alias.test
 test/sql/binder/test_alias.test
 test/sql/binder/test_alias_map_in_subquery.test
 test/sql/binder/test_case_insensitive_binding.test

@@ -494,7 +494,8 @@ fn bind_base_table(
                 types.clone(),
                 names.clone(),
                 table_index,
-            )?);
+            )?
+            .with_entry_parent(&found.catalog, &found.schema));
             let get = LogicalGet {
                 table_index,
                 function: TableFunction::new("seq_scan", Vec::new()),
@@ -572,7 +573,8 @@ fn bind_base_table(
                 bound.types.clone(),
                 names,
                 index,
-            )?);
+            )?
+            .with_entry_parent(&found.catalog, &found.schema));
             Ok(bound)
         }
         _ => Err(Error::internal("Catalog entry type")),
