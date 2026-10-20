@@ -1001,6 +1001,7 @@ test/sql/attach/attach_table_constraints.test
 test/sql/attach/attach_table_ddl.test
 test/sql/attach/attach_table_info.test
 test/sql/attach/attach_transactionality.test
+test/sql/attach/attach_use_rollback.test
 test/sql/attach/attach_view_search_path.test
 test/sql/attach/attach_views.test
 test/sql/attach/attach_wal_alter.test
@@ -1156,6 +1157,7 @@ test/sql/catalog/sequence/sequence_overflow.test
 test/sql/catalog/sequence/test_duckdb_sequences.test
 test/sql/catalog/sequence/test_sequence.test
 test/sql/catalog/sequence/test_sequence_dependency.test
+test/sql/catalog/sequence/test_sequence_google_fuzz.test
 test/sql/catalog/table/create_table_as_abort.test
 test/sql/catalog/table/create_table_parameters.test
 test/sql/catalog/table/long_identifier.test
@@ -1171,6 +1173,7 @@ test/sql/catalog/test_create_from_select.test
 test/sql/catalog/test_extension_suggestion.test
 test/sql/catalog/test_if_not_exists.test
 test/sql/catalog/test_incorrect_table_creation.test
+test/sql/catalog/test_querying_from_detached_catalog.test
 test/sql/catalog/test_quoted_column_name.test
 test/sql/catalog/test_schema.test
 test/sql/catalog/test_schema_conflict.test
