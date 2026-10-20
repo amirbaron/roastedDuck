@@ -2,6 +2,7 @@
 # Update with: slt ratchet update <rust-results.jsonl>
 test/common/test_cast_hugeint.test
 test/common/test_cast_struct.test
+test/common/test_local_file_urls.test
 test/db-benchmark/groupby.test_slow
 test/db-benchmark/join.test_slow
 test/extension/autoloading_copy_function.test
@@ -1304,6 +1305,7 @@ test/sql/copy/csv/csv_error_message.test
 test/sql/copy/csv/csv_glob_fallback.test
 test/sql/copy/csv/csv_hive.test
 test/sql/copy/csv/csv_hive_filename_union.test
+test/sql/copy/csv/csv_home_directory.test
 test/sql/copy/csv/csv_limit_copy.test
 test/sql/copy/csv/csv_line_too_long.test
 test/sql/copy/csv/csv_memory_management.test_slow
@@ -1344,6 +1346,7 @@ test/sql/copy/csv/overwrite/test_overwrite_pipe_windows.test
 test/sql/copy/csv/parallel/csv_parallel_buffer_size.test
 test/sql/copy/csv/parallel/csv_parallel_clickbench.test_slow
 test/sql/copy/csv/parallel/csv_parallel_new_line.test_slow
+test/sql/copy/csv/parallel/csv_parallel_null_option.test
 test/sql/copy/csv/parallel/parallel_csv_hive_partitioning.test
 test/sql/copy/csv/parallel/parallel_csv_union_by_name.test
 test/sql/copy/csv/parallel/test_5438.test
@@ -1649,6 +1652,7 @@ test/sql/copy/parquet/writer/parquet_write_date.test
 test/sql/copy/parquet/writer/parquet_write_decimals.test
 test/sql/copy/parquet/writer/parquet_write_enums.test
 test/sql/copy/parquet/writer/parquet_write_field_id.test
+test/sql/copy/parquet/writer/parquet_write_home_directory.test
 test/sql/copy/parquet/writer/parquet_write_hugeint.test
 test/sql/copy/parquet/writer/parquet_write_interval.test
 test/sql/copy/parquet/writer/parquet_write_issue_5779.test
@@ -1793,6 +1797,7 @@ test/sql/delete/test_segment_deletes.test
 test/sql/delete/test_truncate.test
 test/sql/delete/test_using_delete.test
 test/sql/delete/test_using_delete_duplicates.test
+test/sql/detailed_profiler/test_detailed_profiler.test
 test/sql/error/aggregate_order_by.test
 test/sql/error/error_location_not_duplicated.test
 test/sql/error/escape_percent_sign.test
@@ -1808,6 +1813,7 @@ test/sql/error/unknown_window_function.test
 test/sql/explain/explain_all_statements.test
 test/sql/explain/explain_execute.test
 test/sql/explain/test_explain.test
+test/sql/explain/test_explain_analyze.test
 test/sql/explain/test_explain_table_scan.test
 test/sql/export/empty_export.test
 test/sql/export/export_compression_level.test
@@ -1905,6 +1911,7 @@ test/sql/function/generic/test_large_in.test_slow
 test/sql/function/generic/test_least_greatest.test
 test/sql/function/generic/test_null_if.test
 test/sql/function/generic/test_set.test
+test/sql/function/generic/test_sleep.test
 test/sql/function/generic/test_stats.test
 test/sql/function/generic/test_table_param.test
 test/sql/function/interval/test_date_part.test
@@ -2561,7 +2568,9 @@ test/sql/logging/logging.test
 test/sql/logging/logging_buffer_size.test
 test/sql/logging/logging_call_functions.test
 test/sql/logging/logging_context_ids.test
+test/sql/logging/logging_csv.test
 test/sql/logging/logging_file_bind_replace.test
+test/sql/logging/logging_file_persistence.test
 test/sql/logging/test_logging_function.test
 test/sql/logging/test_logging_function_large.test_slow
 test/sql/merge/merge_into.test
@@ -2811,8 +2820,32 @@ test/sql/pivot/unpivot_types.test
 test/sql/pivot/unpivot_unnamed_subquery.test
 test/sql/pivot/unpivot_view.test
 test/sql/pragma/pragma_database_size_readonly.test
+test/sql/pragma/profiling/call_enable_profiling_function.test
+test/sql/pragma/profiling/test_all_profiling_settings.test
+test/sql/pragma/profiling/test_attach_and_checkpoint_latency.test
+test/sql/pragma/profiling/test_commit_write_wal_latency_and_count.test
 test/sql/pragma/profiling/test_cumulative_vacuum_time.test_slow
+test/sql/pragma/profiling/test_custom_profiling_blocked_thread_time.test
+test/sql/pragma/profiling/test_custom_profiling_disable_metrics.test
+test/sql/pragma/profiling/test_custom_profiling_errors.test
+test/sql/pragma/profiling/test_custom_profiling_memory_and_temp_dir.test_slow
+test/sql/pragma/profiling/test_custom_profiling_optimizer_settings.test
+test/sql/pragma/profiling/test_custom_profiling_planner.test_slow
+test/sql/pragma/profiling/test_custom_profiling_result_set_size.test
+test/sql/pragma/profiling/test_custom_profiling_row_group_metrics.test_slow
+test/sql/pragma/profiling/test_custom_profiling_row_group_metrics_local_storage.test
+test/sql/pragma/profiling/test_custom_profiling_rows_scanned.test
+test/sql/pragma/profiling/test_custom_profiling_rows_scanned_parquet.test
+test/sql/pragma/profiling/test_custom_profiling_total_memory_allocated.test
+test/sql/pragma/profiling/test_custom_profiling_using_groups.test
+test/sql/pragma/profiling/test_default_profiling_settings.test
+test/sql/pragma/profiling/test_duckdb_profiling_settings_function.test
+test/sql/pragma/profiling/test_empty_profiling_settings.test
+test/sql/pragma/profiling/test_logging_interaction.test
 test/sql/pragma/profiling/test_no_reset_setting.test
+test/sql/pragma/profiling/test_profiling_all.test
+test/sql/pragma/profiling/test_profiling_fs.test
+test/sql/pragma/profiling/test_profiling_output_file_overwrite.test
 test/sql/pragma/test_db_invalidation_after_load.test
 test/sql/pragma/test_disabled_compression.test
 test/sql/pragma/test_enable_http_logging.test
@@ -2825,6 +2858,7 @@ test/sql/pragma/test_pragma_database_size.test
 test/sql/pragma/test_pragma_functions.test
 test/sql/pragma/test_pragma_parsing.test
 test/sql/pragma/test_pragma_sanitized_inputs.test
+test/sql/pragma/test_query_log.test
 test/sql/pragma/test_show_tables.test
 test/sql/pragma/test_show_tables_temp_views.test
 test/sql/pragma/test_storage_info.test
