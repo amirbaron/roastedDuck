@@ -486,6 +486,7 @@ dependencies = [
  "rustdb-planner",
  "rustdb-serde",
  "rustdb-storage",
+ "rustdb-tpch",
  "rustdb-types",
 ]
 
@@ -727,6 +728,20 @@ dependencies = [
  "rustdb-serde",
  "rustdb-types",
  "ruzstd",
+]
+
+[[package]]
+name = "rustdb-tpch"
+version = "1.5.6"
+dependencies = [
+ "rustdb-ast",
+ "rustdb-catalog",
+ "rustdb-common",
+ "rustdb-execution",
+ "rustdb-function",
+ "rustdb-planner",
+ "rustdb-storage",
+ "rustdb-types",
 ]
 
 [[package]]

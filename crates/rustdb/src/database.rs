@@ -73,16 +73,28 @@ pub(crate) struct DatabaseInstance {
 enum StaticExtension {
     Parquet,
     Json,
+    Tpch,
 }
 
 impl StaticExtension {
-    const ALL: [Self; 2] = [Self::Parquet, Self::Json];
+    const ALL: [Self; 3] = [Self::Parquet, Self::Json, Self::Tpch];
 
     fn from_name(name: &str) -> Option<Self> {
         match name {
             "parquet" => Some(Self::Parquet),
             "json" => Some(Self::Json),
+            rustdb_tpch::EXTENSION_NAME => Some(Self::Tpch),
             _ => None,
+        }
+    }
+
+    /// The SQL the extension's pragma `name` stands for, if it has one of the name.
+    fn pragma_query(self, name: &str, parameters: &[Value]) -> Result<Option<String>> {
+        match self {
+            Self::Tpch if name.eq_ignore_ascii_case("tpch") => {
+                rustdb_tpch::pragma_tpch_query(parameters).map(Some)
+            }
+            _ => Ok(None),
         }
     }
 
@@ -109,6 +121,11 @@ impl StaticExtension {
                     system.register_table_functions(set)?;
                 }
                 crate::system_functions::register_json_macros(system)?;
+            }
+            Self::Tpch => {
+                for set in rustdb_tpch::tpch_table_functions() {
+                    system.register_table_functions(set)?;
+                }
             }
         }
         Ok(())
@@ -214,6 +231,22 @@ impl DatabaseInstance {
             loaded.push(extension);
         }
         Ok(())
+    }
+
+    /// The SQL a pragma of a loaded extension stands for (`PragmaFunction::PragmaCall`
+    /// with a query), if a loaded extension has a pragma `name`.
+    fn extension_pragma_query(&self, name: &str, parameters: &[Value]) -> Result<Option<String>> {
+        let loaded = self
+            .loaded_extensions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        for extension in loaded {
+            if let Some(query) = extension.pragma_query(name, parameters)? {
+                return Ok(Some(query));
+            }
+        }
+        Ok(None)
     }
 
     /// `SET threads` (`ThreadsSetting::SetGlobal`), or the default thread count for
@@ -585,8 +618,8 @@ impl Database {
             return Ok(ExtensionLoad::Loaded);
         }
         Ok(match name {
-            "core_functions" | "icu" | "tpch" | "tpcds" | "autocomplete" | "httpfs" | "fts" | "inet"
-            | "excel" | "sqlsmith" | "spatial" | "delta" | "iceberg" | "aws" | "azure" | "motherduck"
+            "core_functions" | "icu" | "tpcds" | "autocomplete" | "httpfs" | "fts" | "inet" | "excel"
+            | "sqlsmith" | "spatial" | "delta" | "iceberg" | "aws" | "azure" | "motherduck"
             | "postgres_scanner" | "mysql_scanner" | "sqlite_scanner" | "vss" | "ui" | "encodings"
             | "ducklake" | "avro" | "demo_capi" => ExtensionLoad::NotAvailable,
             _ => ExtensionLoad::Unknown,
@@ -1176,9 +1209,18 @@ impl Connection {
             {
                 return self.import_database(constants);
             }
-            if let Some(constants) = constants
-                && let Some(query) = crate::system_functions::pragma_query(&pragma.name, &constants)?
-            {
+            let query = match &constants {
+                Some(constants) => match self
+                    .database
+                    .instance
+                    .extension_pragma_query(&pragma.name, constants)?
+                {
+                    Some(query) => Some(query),
+                    None => crate::system_functions::pragma_query(&pragma.name, constants)?,
+                },
+                None => None,
+            };
+            if let Some(query) = query {
                 let mut result = MaterializedResult::default();
                 for statement in rustdb_parser::parse(&query)? {
                     result = self.run_statement(statement)?;
@@ -2093,11 +2135,22 @@ fn collect_modified_databases(plan: &LogicalOperator, instance: &DatabaseInstanc
         }
         LogicalKind::Alter(alter) => push(&alter.catalog),
         LogicalKind::Drop(info) => push(&info.catalog),
+        LogicalKind::Get(get) => {
+            if let Some(name) = table_function_modified_database(get) {
+                push(name);
+            }
+        }
         _ => {}
     }
     for child in &plan.children {
         collect_modified_databases(child, instance, out);
     }
+}
+
+/// The database a table function call writes to, as its bind registered it (DuckDB's
+/// `RegisterDBModify`, e.g. by `dbgen`).
+fn table_function_modified_database(get: &rustdb_planner::operator::LogicalGet) -> Option<&str> {
+    get.bind_data.as_deref()?.modified_database()
 }
 
 /// Whether a plan updates table data or changes the catalog, which keeps checkpoints from
@@ -2111,6 +2164,8 @@ fn needs_checkpoint_lock(plan: &LogicalOperator) -> bool {
         | LogicalKind::CreateIndex(_)
         | LogicalKind::Alter(_)
         | LogicalKind::Drop(_) => true,
+        // A table function that writes creates catalog entries (`CREATE_CATALOG_ENTRY`).
+        LogicalKind::Get(get) => table_function_modified_database(get).is_some(),
         LogicalKind::MergeInto(merge) => merge
             .actions
             .values()
