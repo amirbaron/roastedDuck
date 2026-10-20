@@ -204,6 +204,7 @@ test/fuzzer/pedro/recursive_cte_dependent_join.test
 test/fuzzer/pedro/recursive_cte_limit_percent.test
 test/fuzzer/pedro/regr_count_validity.test
 test/fuzzer/pedro/rename_column_assertion.test
+test/fuzzer/pedro/rename_restart.test
 test/fuzzer/pedro/rename_table_index_rollback.test
 test/fuzzer/pedro/rename_table_index_storage.test
 test/fuzzer/pedro/restart_current_time.test
