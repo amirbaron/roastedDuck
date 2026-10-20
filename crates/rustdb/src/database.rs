@@ -1615,7 +1615,7 @@ impl Connection {
             _ => return Err(Error::invalid_input("Not all parameters were bound")),
         };
         let return_type = properties.return_type;
-        self.register_modifications(&plan, statement_type)?;
+        self.register_modifications(&plan, &properties.modified_databases, statement_type)?;
         self.run_plan(plan, names, types)
             .map(|result| result.with_return_type(return_type))
     }
@@ -1669,10 +1669,14 @@ impl Connection {
     fn register_modifications(
         &mut self,
         plan: &LogicalOperator,
+        function_modified: &[String],
         statement_type: rustdb_ast::StatementType,
     ) -> Result<()> {
         let instance = self.database.instance();
-        let mut modified: Vec<String> = Vec::new();
+        // DuckDB walks its `modified_databases` map, which lists the latest registration
+        // first: the databases functions write to come before the statement's own target,
+        // which its bind registered earlier.
+        let mut modified: Vec<String> = function_modified.iter().rev().cloned().collect();
         collect_modified_databases(plan, instance, &mut modified);
         if modified.is_empty() {
             return Ok(());

@@ -253,12 +253,9 @@ pub fn bind_default_value_in(
     }
     let mut binder = scope.binder.child()?;
     if let Some((catalog, schema)) = path {
-        let mut context = (*binder.context).clone();
-        context.search_path = vec![(catalog.clone(), schema.clone())];
-        if !schema.eq_ignore_ascii_case("main") {
-            context.search_path.push((catalog.clone(), "main".to_owned()));
-        }
-        binder.context = Arc::new(context);
+        // `Binder::SetSearchPath(catalog, schema)`: the table's schema comes before the
+        // client's search path.
+        binder.context = Arc::new(binder.context.with_view_search_path(catalog, schema));
     }
     let mut constant_binder = ConstantBinder::new(&mut binder, None, "DEFAULT value");
     constant_binder.state().target_type = Some(ty.clone());
