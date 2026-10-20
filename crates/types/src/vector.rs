@@ -323,6 +323,16 @@ impl Vector {
         Ok(vector)
     }
 
+    /// A vector of `count` rows that all hold row `row` of `self` (DuckDB's
+    /// `ConstantVector::Reference`). Values of nested types are referenced through a
+    /// selection rather than copied out, so a large LIST or MAP costs nothing per call.
+    pub fn reference_row(&self, row: usize, count: usize) -> Result<Self> {
+        if self.ty.is_nested() {
+            return Ok(self.slice(&SelectionVector::new(vec![row as u32; count])));
+        }
+        Self::constant(&self.get_value(row))
+    }
+
     /// A constant vector that is NULL for every row.
     pub fn constant_null(ty: LogicalType) -> Self {
         let mut vector = Self::flat(ty, 1);
