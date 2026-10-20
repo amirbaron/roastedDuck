@@ -335,7 +335,7 @@ pub fn replace_with_checkpointed(table: &DataTable, persisted: Vec<PersistedRowG
             continue;
         }
         // The written columns are built again when first used.
-        let types = written
+        let types: Arc<[rustdb_types::LogicalType]> = written
             .columns
             .iter()
             .map(|data| data.logical_type.clone())

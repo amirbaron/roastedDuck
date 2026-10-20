@@ -158,6 +158,7 @@ pub fn load_row_groups(
     blocks: &mut Vec<BlockId>,
 ) -> Result<RowGroupCollection> {
     let collection = RowGroupCollection::new(Arc::clone(io), types.to_vec(), 0);
+    let shared_types: Arc<[LogicalType]> = Arc::from(types);
     for pointer in data.row_groups {
         if pointer.data_pointers.len() != types.len() {
             return Err(Error::serialization(
@@ -171,7 +172,7 @@ pub fn load_row_groups(
         }
         let row_group = RowGroup::from_metadata(
             Arc::clone(io),
-            types.to_vec(),
+            Arc::clone(&shared_types),
             Arc::clone(metadata),
             &pointer.data_pointers,
             pointer.tuple_count,

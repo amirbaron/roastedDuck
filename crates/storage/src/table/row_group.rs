@@ -90,7 +90,8 @@ pub struct RowGroup {
 #[derive(Debug)]
 struct UnloadedColumns {
     io: Arc<TableIoManager>,
-    types: Vec<LogicalType>,
+    /// The column types, shared by the row groups of a table.
+    types: Arc<[LogicalType]>,
     /// Reads the columns stored as metadata pointers.
     metadata: Option<Arc<MetadataManager>>,
     /// Taken when the column is built.
@@ -101,7 +102,7 @@ struct UnloadedColumns {
 #[derive(Debug)]
 enum StoredColumn {
     /// Its segments, as just written by a checkpoint.
-    Data(PersistentColumnData),
+    Data(Box<PersistentColumnData>),
     /// Where its `PersistentColumnData` is in the database file's metadata: read when the
     /// column is first used, like DuckDB's lazily loaded `column_pointers` (keeping every
     /// column's segments and statistics in memory costs ~2 KB per column and row group).
@@ -141,7 +142,7 @@ impl RowGroup {
     pub fn with_persistent(
         &self,
         io: Arc<TableIoManager>,
-        types: Vec<LogicalType>,
+        types: Arc<[LogicalType]>,
         data: Vec<PersistentColumnData>,
     ) -> Self {
         let row_group = Self::from_persistent(io, types, data, self.count());
@@ -155,7 +156,7 @@ impl RowGroup {
     /// from `data` when first used.
     pub fn from_persistent(
         io: Arc<TableIoManager>,
-        types: Vec<LogicalType>,
+        types: Arc<[LogicalType]>,
         data: Vec<PersistentColumnData>,
         count: u64,
     ) -> Self {
@@ -168,7 +169,7 @@ impl RowGroup {
                 metadata: None,
                 data: data
                     .into_iter()
-                    .map(|column| Mutex::new(Some(StoredColumn::Data(column))))
+                    .map(|column| Mutex::new(Some(StoredColumn::Data(Box::new(column)))))
                     .collect(),
             })),
             version_info: Mutex::default(),
@@ -180,7 +181,7 @@ impl RowGroup {
     /// from a `RowGroupPointer`).
     pub fn from_metadata(
         io: Arc<TableIoManager>,
-        types: Vec<LogicalType>,
+        types: Arc<[LogicalType]>,
         metadata: Arc<MetadataManager>,
         pointers: &[MetaBlockPointer],
         count: u64,
