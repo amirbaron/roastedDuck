@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
 use rustdb_common::{Error, Result};
@@ -353,12 +353,37 @@ impl PhysicalOperator for PhysicalRecursiveCte {
     }
 }
 
-/// The CTE's result, computed on the first `get_data`.
+/// The rows of the current iteration and those produced so far (without `ALL`).
 #[derive(Debug, Default)]
 pub struct RecursiveCteState {
-    computed: AtomicBool,
-    chunks: Mutex<Vec<DataChunk>>,
-    next: AtomicUsize,
+    iteration: Mutex<Option<Iteration>>,
+}
+
+/// An iteration's result being returned (DuckDB's `RecursiveCTEState`).
+#[derive(Debug)]
+struct Iteration {
+    /// Every row produced so far, to discard duplicates (UNION without ALL).
+    seen: GroupedAggregateHashTable,
+    /// The non-empty chunks this iteration produced; the next iteration's working table.
+    chunks: Vec<DataChunk>,
+    /// The next chunk of `chunks` to return.
+    next: usize,
+}
+
+impl PhysicalRecursiveCte {
+    /// The non-empty chunks of an iteration's output, without rows produced before
+    /// unless `ALL`.
+    fn iteration_rows(
+        &self,
+        seen: &mut GroupedAggregateHashTable,
+        produced: Vec<DataChunk>,
+    ) -> Result<Vec<DataChunk>> {
+        if self.union_all {
+            Ok(produced.into_iter().filter(|chunk| !chunk.is_empty()).collect())
+        } else {
+            Self::new_rows(seen, produced)
+        }
+    }
 }
 
 impl Source for PhysicalRecursiveCte {
@@ -373,6 +398,8 @@ impl Source for PhysicalRecursiveCte {
         Ok(())
     }
 
+    /// Returns each iteration's rows before running the next one, so a `LIMIT` above
+    /// stops an unbounded recursion (`PhysicalRecursiveCTE::GetData`).
     fn get_data(
         &self,
         ctx: &ExecutionContext,
@@ -380,38 +407,39 @@ impl Source for PhysicalRecursiveCte {
         state: &RecursiveCteState,
         (): &mut (),
     ) -> Result<SourceResult> {
-        let mut chunks = state.chunks.lock().unwrap_or_else(PoisonError::into_inner);
-        if !state.computed.swap(true, Ordering::AcqRel) {
-            let mut seen = GroupedAggregateHashTable::new(
-                ctx.env.buffer_manager.clone(),
-                self.types.clone(),
-                &[],
-                initial_capacity(),
-                0,
-            )?;
-            let mut working = Self::run(&self.parts[0], &ctx.env)?;
-            if !self.union_all {
-                working = Self::new_rows(&mut seen, working)?;
+        let mut guard = state.iteration.lock().unwrap_or_else(PoisonError::into_inner);
+        let iteration = match &mut *guard {
+            Some(iteration) => iteration,
+            None => {
+                let mut seen = GroupedAggregateHashTable::new(
+                    ctx.env.buffer_manager.clone(),
+                    self.types.clone(),
+                    &[],
+                    initial_capacity(),
+                    0,
+                )?;
+                let anchor = Self::run(&self.parts[0], &ctx.env)?;
+                let chunks = self.iteration_rows(&mut seen, anchor)?;
+                guard.insert(Iteration {
+                    seen,
+                    chunks,
+                    next: 0,
+                })
             }
-            while working.iter().any(|chunk| !chunk.is_empty()) {
-                chunks.extend(working.iter().cloned());
-                self.working_table.set(working);
-                let produced = Self::run(&self.parts[1], &ctx.env)?;
-                working = if self.union_all {
-                    produced
-                } else {
-                    Self::new_rows(&mut seen, produced)?
-                };
+        };
+        loop {
+            if let Some(source) = iteration.chunks.get(iteration.next) {
+                iteration.next += 1;
+                chunk.set_columns(source.columns().to_vec(), source.len());
+                return Ok(SourceResult::HaveMoreOutput);
             }
+            if iteration.chunks.is_empty() {
+                return Ok(SourceResult::Finished);
+            }
+            self.working_table.set(std::mem::take(&mut iteration.chunks));
+            let produced = Self::run(&self.parts[1], &ctx.env)?;
+            iteration.chunks = self.iteration_rows(&mut iteration.seen, produced)?;
+            iteration.next = 0;
         }
-        let index = state.next.fetch_add(1, Ordering::Relaxed);
-        if let Some(source) = chunks.get(index) {
-            chunk.set_columns(source.columns().to_vec(), source.len());
-        }
-        Ok(if index + 1 < chunks.len() {
-            SourceResult::HaveMoreOutput
-        } else {
-            SourceResult::Finished
-        })
     }
 }

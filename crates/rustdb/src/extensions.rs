@@ -117,7 +117,9 @@ fn extension_path(name: &str) -> String {
 }
 
 /// Runs `LOAD` / `INSTALL`.
-pub(crate) fn load_extension(info: &LoadInfo) -> Result<()> {
+/// Returns the name of the statically linked extension `LOAD` refers to, which the
+/// caller loads.
+pub(crate) fn load_extension(info: &LoadInfo) -> Result<Option<String>> {
     if info.load_type != LoadType::Load {
         return Err(Error::not_implemented("INSTALL of extensions"));
     }
@@ -127,7 +129,7 @@ pub(crate) fn load_extension(info: &LoadInfo) -> Result<()> {
     } else {
         let name = apply_extension_alias(extension);
         if LINKED_EXTENSIONS.contains(&name.as_str()) {
-            return Ok(());
+            return Ok(Some(name));
         }
         extension_path(&name)
     };
