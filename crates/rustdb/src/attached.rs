@@ -66,6 +66,11 @@ pub(crate) struct AttachedDatabase {
 }
 
 impl AttachedDatabase {
+    /// Whether the database was closed.
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(std::sync::atomic::Ordering::Acquire)
+    }
+
     /// Whether this is the database opened at start-up.
     pub fn is_initial(&self) -> bool {
         self.is_initial.load(std::sync::atomic::Ordering::Acquire)
@@ -292,6 +297,9 @@ pub(crate) struct DatabaseManager {
     /// attach or detach of it is under way (DuckDB reserves the path in its
     /// `DatabaseFilePathManager` for the same reason).
     attach_lock: Mutex<()>,
+    /// Detached databases a transaction still uses: their files stay reserved until
+    /// they are closed (`DatabaseFilePathManager`).
+    detached: Mutex<Vec<std::sync::Weak<AttachedDatabase>>>,
 }
 
 impl DatabaseManager {
@@ -322,7 +330,21 @@ impl DatabaseManager {
     pub fn detach(&self, name: &str, checkpoint: bool) -> Option<Result<()>> {
         let _guard = self.attach_lock.lock().unwrap_or_else(PoisonError::into_inner);
         let database = self.remove(name)?;
-        Some(AttachedDatabase::close_if_last_reference(&database, checkpoint))
+        let result = AttachedDatabase::close_if_last_reference(&database, checkpoint);
+        if !database.is_closed() {
+            self.detached
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(Arc::downgrade(&database));
+        }
+        Some(result)
+    }
+
+    /// The detached databases that are not closed yet.
+    fn detached_open(&self) -> Vec<Arc<AttachedDatabase>> {
+        let mut detached = self.detached.lock().unwrap_or_else(PoisonError::into_inner);
+        detached.retain(|database| database.upgrade().is_some_and(|database| !database.is_closed()));
+        detached.iter().filter_map(std::sync::Weak::upgrade).collect()
     }
 
     /// Detaches `database` if it is still attached (`ptr_eq`) under its name.
@@ -413,12 +435,16 @@ impl DatabaseManager {
         // `DatabaseFilePathManager::InsertDatabasePath`: a file is attached once, unless
         // every attach is read-only.
         if !path.is_empty()
-            && let Some(existing) = self.read().iter().find(|database| {
-                canonical_path(&database.path) == canonical_path(&path)
-                    && !(database.read_only && options.read_only())
-                    && !(on_conflict == OnCreateConflict::ReplaceOnConflict
-                        && database.name.eq_ignore_ascii_case(&name))
-            })
+            && let Some(existing) = self
+                .read()
+                .iter()
+                .chain(self.detached_open().iter())
+                .find(|database| {
+                    canonical_path(&database.path) == canonical_path(&path)
+                        && !(database.read_only && options.read_only())
+                        && !(on_conflict == OnCreateConflict::ReplaceOnConflict
+                            && database.name.eq_ignore_ascii_case(&name))
+                })
         {
             return Err(Error::binder(format!(
                 "Unique file handle conflict: Cannot attach \"{name}\" - the database file \"{path}\" is already \

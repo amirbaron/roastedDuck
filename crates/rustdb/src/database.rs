@@ -804,6 +804,17 @@ impl Database {
         if !path.is_empty() && !path.starts_with(":memory:") {
             rustdb_function::file_system::verify_can_access_file(path)?;
         }
+        // A new database file gets the configured storage version
+        // (`serialization_compatibility`, also set by a global `SET`).
+        let mut options = options.clone();
+        if options.storage_version.is_none()
+            && !path.is_empty()
+            && !path.starts_with(":memory:")
+            && !std::path::Path::new(path).exists()
+        {
+            options.storage_version = self.global_setting("storage_compatibility_version");
+        }
+        let options = &options;
         let Some(attached) = self.instance.databases.attach(
             name,
             path,
@@ -833,6 +844,19 @@ impl Database {
     /// The database file path, or `""` for in-memory databases.
     pub fn path(&self) -> &str {
         &self.instance.path
+    }
+
+    /// The value a global `SET` gave option `name` (canonical name), if any (the
+    /// instance's `DBConfig` options).
+    pub fn global_setting(&self, name: &str) -> Option<Value> {
+        self.instance
+            .global_settings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values
+            .iter()
+            .find(|(option, _)| option.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.clone())
     }
 
     pub fn config(&self) -> &Config {
