@@ -66,7 +66,7 @@ impl std::fmt::Debug for BufferPool {
 
 /// The size of the table cache, at most an eighth of the memory limit
 /// ([`BufferPool::table_cache_limit`]).
-const TABLE_CACHE_LIMIT: u64 = 128 << 20;
+const TABLE_CACHE_LIMIT: u64 = 96 << 20;
 
 /// DuckDB's default `allocator_bulk_deallocation_flush_threshold` (512 MiB).
 pub const DEFAULT_BULK_DEALLOCATION_FLUSH_THRESHOLD: u64 = 512 << 20;
