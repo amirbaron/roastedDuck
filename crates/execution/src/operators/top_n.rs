@@ -17,7 +17,7 @@ use rustdb_row::sort::{
 };
 use rustdb_storage::table_filter::DynamicFilterData;
 use rustdb_types::compare::CompareOp;
-use rustdb_types::{DataChunk, LogicalType, PhysicalType, SelectionVector, StringT, Vector};
+use rustdb_types::{DataChunk, LogicalType, PhysicalType, SelectionVector, StringT, Vector, append_where};
 
 use crate::operator::{
     ErasedSink, ErasedSource, OrderPreservationType, PhysicalOperator, PhysicalRef, SinkState, order_names,
@@ -70,9 +70,6 @@ impl PhysicalTopN {
     /// Tightens the dynamic filter to the boundary of a full heap (DuckDB's
     /// `TopNBoundaryValue::UpdateValue`).
     fn update_boundary(&self, global: &TopNGlobalState, heap: &TopNHeap) -> Result<()> {
-        let Some((data, op)) = &self.dynamic_filter else {
-            return Ok(());
-        };
         if heap.heap_size == 0 || heap.heap.len() < heap.heap_size {
             return Ok(());
         }
@@ -84,6 +81,9 @@ impl PhysicalTopN {
             return Ok(());
         }
         *boundary = Some(top.key.clone());
+        let Some((data, op)) = &self.dynamic_filter else {
+            return Ok(());
+        };
         let Some(first) = self.orders.first() else {
             return Ok(());
         };
@@ -124,6 +124,7 @@ impl PhysicalTopN {
             heap: BinaryHeap::new(),
             data: Payload::default(),
             sequence: 0,
+            boundary: None,
         })
     }
 }
@@ -286,6 +287,9 @@ pub struct TopNHeap {
     data: Payload,
     /// Arrival counter for tie-breaking.
     sequence: u64,
+    /// The global boundary key last seen and the length of its first column's key
+    /// (DuckDB's `boundary_val` / `boundary_values`).
+    boundary: Option<(Box<[u8]>, usize)>,
 }
 
 impl TopNHeap {
@@ -313,13 +317,48 @@ impl TopNHeap {
         self.heap.push(entry);
     }
 
-    /// DuckDB's `TopNHeap::Sink`.
-    fn sink(&mut self, input: &DataChunk) -> Result<()> {
+    /// The rows of `sort_chunk` whose first sort column does not order after the global
+    /// boundary's (`CheckBoundaryValues` on the first column): only they can enter the
+    /// heap. `None` when every row may.
+    fn rows_within_boundary(&mut self, sort_chunk: &DataChunk, boundary: &[u8]) -> Result<Option<Vec<u32>>> {
+        if self.boundary.as_ref().is_none_or(|(known, _)| **known != *boundary) {
+            let mut columns = [Vector::flat(sort_chunk.column(0).logical_type().clone(), 1)];
+            let length = decode_sort_key(boundary, &mut columns, 0, &self.modifiers[..1])?;
+            self.boundary = Some((boundary.into(), length));
+        }
+        let Some((known, length)) = &self.boundary else {
+            return Ok(None);
+        };
+        let limit = &known[..*length];
+        let count = sort_chunk.len();
+        let firsts = create_sort_keys(&[sort_chunk.column(0)], &self.modifiers[..1], count)?;
+        let mut rows = Vec::new();
+        append_where(count, &mut rows, |row| row as u32, |row| firsts.key(row) <= limit);
+        Ok((rows.len() < count).then_some(rows))
+    }
+
+    /// DuckDB's `TopNHeap::Sink`; `boundary` is the global boundary key, if any.
+    fn sink(&mut self, input: &DataChunk, boundary: Option<&[u8]>) -> Result<()> {
         if self.heap_size == 0 || input.is_empty() {
             return Ok(());
         }
         let mut sort_chunk = DataChunk::default();
         self.executor.execute(input, &mut sort_chunk)?;
+        let mut sliced = None;
+        if let Some(boundary) = boundary
+            && let Some(rows) = self.rows_within_boundary(&sort_chunk, boundary)?
+        {
+            if rows.is_empty() {
+                return Ok(());
+            }
+            let sel = SelectionVector::new(rows);
+            let slice = |chunk: &DataChunk| {
+                DataChunk::new(chunk.columns().iter().map(|column| column.slice(&sel)).collect(), sel.len())
+            };
+            sort_chunk = slice(&sort_chunk);
+            sliced = Some(slice(input));
+        }
+        let input = sliced.as_ref().unwrap_or(input);
         let columns: Vec<&Vector> = sort_chunk.columns().iter().collect();
         let keys = create_sort_keys(&columns, &self.modifiers, input.len())?;
         let mut selected: Vec<u32> = Vec::new();
@@ -441,7 +480,12 @@ impl Sink for PhysicalTopN {
         global: &TopNGlobalState,
         local: &mut TopNHeap,
     ) -> Result<SinkResult> {
-        local.sink(chunk)?;
+        let boundary = global
+            .boundary
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        local.sink(chunk, boundary.as_deref())?;
         self.update_boundary(global, local)?;
         local.reduce()?;
         Ok(SinkResult::NeedMoreInput)
