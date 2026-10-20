@@ -526,6 +526,12 @@ fn bind_base_table(
         EntryKind::View(view) => {
             let mut view_binder = scope.binder.child_of_type(BinderType::View)?;
             view_binder.can_contain_nulls = true;
+            // A view resolves names where it is stored first.
+            view_binder.context = Arc::new(
+                view_binder
+                    .context
+                    .with_view_search_path(&found.catalog, &found.schema),
+            );
             let mut column_aliases = view.aliases.clone();
             for (i, column_alias) in base.column_name_alias.iter().enumerate() {
                 match column_aliases.get_mut(i) {

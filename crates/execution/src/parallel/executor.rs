@@ -667,6 +667,13 @@ impl Task for ExecutorTask {
         if self.executor.is_cancelled() {
             return TaskExecutionResult::Error;
         }
+        // The thread records into the query's metrics while it works on the query.
+        let _metrics = rustdb_common::profiling::activate(
+            self.executor
+                .profiler
+                .as_ref()
+                .and_then(|profiler| profiler.query_metrics()),
+        );
         match catch_unwind(AssertUnwindSafe(|| self.execute_task(mode))) {
             Ok(Ok(result)) => result,
             Ok(Err(error)) => {

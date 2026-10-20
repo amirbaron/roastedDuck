@@ -8,6 +8,7 @@ use std::io::{BufReader, Read};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rustdb_common::{Error, ErrorKind, Result};
+use rustdb_function::logging::FileSystemLogger;
 
 use crate::options::{CsvReaderOptions, FileCompressionType};
 
@@ -115,6 +116,34 @@ impl std::fmt::Debug for CsvFileHandle {
     }
 }
 
+/// A local file whose reads go to the connection's `FileSystem` log (DuckDB's
+/// `FileHandle` of the `LocalFileSystem`, which logs `OPEN`, every `READ` and `CLOSE`).
+struct LoggedFile {
+    file: File,
+    logger: Option<FileSystemLogger>,
+    /// Where the next read starts.
+    position: u64,
+}
+
+impl Read for LoggedFile {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.file.read(buffer)?;
+        if let Some(logger) = &self.logger {
+            logger.read(read as u64, self.position);
+        }
+        self.position += read as u64;
+        Ok(read)
+    }
+}
+
+impl Drop for LoggedFile {
+    fn drop(&mut self) {
+        if let Some(logger) = &self.logger {
+            logger.close();
+        }
+    }
+}
+
 /// The error of a file that cannot be opened (DuckDB's `LocalFileSystem::OpenFile`).
 pub fn open_error(path: &str, error: &std::io::Error) -> Error {
     let reason = match error.kind() {
@@ -162,6 +191,11 @@ impl CsvFileHandle {
             ));
         }
         let compression = options.compression.resolve(path);
+        let file = LoggedFile {
+            file,
+            logger: FileSystemLogger::open(path),
+            position: 0,
+        };
         let raw: Box<dyn Read + Send> = Box::new(BufReader::with_capacity(1 << 16, file));
         let decompressed: Box<dyn Read + Send> = match compression {
             FileCompressionType::Gzip => Box::new(flate2::read::MultiGzDecoder::new(raw)),

@@ -62,6 +62,14 @@ impl DataChunk {
         &self.columns
     }
 
+    /// The bytes the chunk's rows occupy (DuckDB's `DataChunk::GetAllocationSize`).
+    pub fn allocation_size(&self) -> usize {
+        self.columns
+            .iter()
+            .map(|column| column.allocation_size(self.len))
+            .sum()
+    }
+
     pub fn into_columns(self) -> Vec<Vector> {
         self.columns
     }

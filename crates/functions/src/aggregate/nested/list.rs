@@ -111,6 +111,7 @@ pub fn list_functions() -> AggregateFunctionSet {
             LogicalType::list(template),
             Typed(List),
         )
-        .with_bind(bind_list),
+        .with_bind(bind_list)
+        .without_state_destructor(),
     )
 }

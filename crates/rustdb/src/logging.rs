@@ -239,13 +239,15 @@ impl LogTable {
 }
 
 /// A CSV field as DuckDB's `CSVWriter` writes it: NULL is empty, the empty string and
-/// values with the delimiter, quotes or line breaks are quoted.
-fn csv_field(value: &Value, delimiter: char, out: &mut String) {
+/// values with a comma, quote, `#` or line break are quoted. The log storages keep the
+/// writer options of the default dialect when the delimiter changes, so the comma
+/// decides quoting whatever the delimiter (`CSVLogStorage::SetWriterConfigs`).
+fn csv_field(value: &Value, out: &mut String) {
     if value.is_null() {
         return;
     }
     let text = value.to_varchar().unwrap_or_default();
-    if text.is_empty() || text.contains([delimiter, '"', '\n', '\r']) {
+    if text.is_empty() || text.contains([',', '"', '#', '\n', '\r']) {
         out.push('"');
         out.push_str(&text.replace('"', "\"\""));
         out.push('"');
@@ -303,7 +305,7 @@ impl LogFiles {
 
     /// Appends rows to the table's file, creating it (with a header) if needed
     /// (`InitializeFile` and the CSV writer's flush).
-    fn append(&self, table: LogTable, rows: &[Vec<Value>]) -> Result<()> {
+    fn append(&self, table: LogTable, rows: &[Vec<Value>], delimiter: &str) -> Result<()> {
         use std::io::Write as _;
         let path = self.path(table).ok_or_else(|| {
             Error::new(
@@ -324,15 +326,15 @@ impl LogFiles {
         let empty = file.metadata().map_or(true, |metadata| metadata.len() == 0);
         let mut out = String::new();
         if empty {
-            out.push_str(&table.column_names().join(","));
+            out.push_str(&table.column_names().join(delimiter));
             out.push('\n');
         }
         for row in rows {
             for (index, value) in row.iter().enumerate() {
                 if index > 0 {
-                    out.push(',');
+                    out.push_str(delimiter);
                 }
-                csv_field(value, ',', &mut out);
+                csv_field(value, &mut out);
             }
             out.push('\n');
         }
@@ -368,6 +370,8 @@ struct BufferingStorage {
     entries: Vec<LogEntry>,
     contexts: Vec<RegisteredContext>,
     files: LogFiles,
+    /// The CSV delimiter of the stdout and file storages (`delim`).
+    delimiter: String,
 }
 
 impl BufferingStorage {
@@ -388,6 +392,7 @@ impl BufferingStorage {
             entries: Vec::new(),
             contexts: Vec::new(),
             files: LogFiles::default(),
+            delimiter: if kind == StorageKind::Stdout { "\t" } else { "," }.to_owned(),
         }
     }
 
@@ -438,9 +443,9 @@ impl BufferingStorage {
                 for row in entries.iter().map(denormalized) {
                     for (index, value) in row.iter().enumerate() {
                         if index > 0 {
-                            out.push('\t');
+                            out.push_str(&self.delimiter);
                         }
-                        csv_field(value, '\t', &mut out);
+                        csv_field(value, &mut out);
                     }
                     out.push('\n');
                 }
@@ -448,7 +453,7 @@ impl BufferingStorage {
             }
             StorageKind::File if self.normalize => {
                 let rows: Vec<Vec<Value>> = entries.iter().map(|(entry, _)| entry.row()).collect();
-                self.files.append(LogTable::LogEntries, &rows)?;
+                self.files.append(LogTable::LogEntries, &rows, &self.delimiter)?;
             }
             StorageKind::File => {
                 let rows: Vec<Vec<Value>> = entries.iter().map(denormalized).collect();
@@ -457,7 +462,7 @@ impl BufferingStorage {
                 } else {
                     LogTable::LogEntries
                 };
-                self.files.append(table, &rows)?;
+                self.files.append(table, &rows, &self.delimiter)?;
             }
         }
         Ok(())
@@ -469,7 +474,7 @@ impl BufferingStorage {
             StorageKind::Memory => self.contexts.extend(contexts),
             StorageKind::File if !contexts.is_empty() => {
                 let rows: Vec<Vec<Value>> = contexts.iter().map(RegisteredContext::row).collect();
-                self.files.append(LogTable::LogContexts, &rows)?;
+                self.files.append(LogTable::LogContexts, &rows, &self.delimiter)?;
             }
             _ => {}
         }
@@ -560,6 +565,11 @@ impl BufferingStorage {
                 "only_flush_on_full_buffer" => {
                     self.only_flush_on_full_buffer = value.as_bool().unwrap_or(false);
                 }
+                // `CSVLogStorage::UpdateConfigInternal`.
+                "delim" if self.kind != StorageKind::Memory => {
+                    self.flush_all()?;
+                    self.delimiter = value.to_varchar()?;
+                }
                 _ => {
                     return Err(Error::invalid_input(format!(
                         "Unrecognized log storage config option for storage: '{}': '{key}'",
@@ -599,9 +609,10 @@ impl BufferingStorage {
             "SELECT *"
         };
         Ok(Some(format!(
-            "{select} FROM read_csv_auto({}, columns={{{}}})",
+            "{select} FROM read_csv_auto({}, columns={{{}}}, delim={})",
             rustdb_types::identifier::sql_identifier(path),
-            table.csv_columns()
+            table.csv_columns(),
+            rustdb_types::identifier::write_quoted(&self.delimiter, '\'')
         )))
     }
 }

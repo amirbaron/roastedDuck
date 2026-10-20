@@ -46,6 +46,8 @@ pub(crate) struct AttachOptions {
     pub storage_version: Option<Value>,
     pub block_size: Option<Value>,
     pub row_group_size: Option<Value>,
+    /// `DEFAULT_TABLE`: the (schema, name) the database's name refers to.
+    pub default_table: Option<(String, String)>,
 }
 
 impl AttachOptions {
@@ -87,7 +89,12 @@ impl AttachOptions {
                     }
                 }
                 "hidden" => options.hidden = value_as_bool(value)?,
-                "default_table" | "recovery_mode" | "vacuum_rebuild_indexes" | "compress" => {}
+                "default_table" => {
+                    // `QualifiedName::Parse`.
+                    let (_, schema, name) = crate::sequence::parse_qualified_name(&value.to_varchar()?)?;
+                    options.default_table = Some((schema, name));
+                }
+                "recovery_mode" | "vacuum_rebuild_indexes" | "compress" => {}
                 "storage_version" => options.storage_version = Some(value.clone()),
                 "block_size" => options.block_size = Some(value.clone()),
                 "row_group_size" => options.row_group_size = Some(value.clone()),
@@ -157,22 +164,23 @@ impl DatabaseManager {
     }
 
     /// Detaches the database called `name`: removes it and closes it, writing a
-    /// checkpoint (`DatabaseManager::DetachDatabase`).
-    pub fn detach(&self, name: &str) -> Option<Arc<AttachedDatabase>> {
+    /// checkpoint if `checkpoint` (`checkpoint_on_shutdown`) is on
+    /// (`DatabaseManager::DetachDatabase`).
+    pub fn detach(&self, name: &str, checkpoint: bool) -> Option<Arc<AttachedDatabase>> {
         let _guard = self.attach_lock.lock().unwrap_or_else(PoisonError::into_inner);
         let database = self.remove(name)?;
-        database.close(true);
+        database.close(checkpoint);
         Some(database)
     }
 
     /// Detaches `database` if it is still attached (`ptr_eq`) under its name.
-    pub fn detach_if_current(&self, database: &Arc<AttachedDatabase>) {
+    pub fn detach_if_current(&self, database: &Arc<AttachedDatabase>, checkpoint: bool) {
         let _guard = self.attach_lock.lock().unwrap_or_else(PoisonError::into_inner);
         let current = self.get(&database.name);
         if current.is_some_and(|current| Arc::ptr_eq(&current, database))
             && let Some(removed) = self.remove(&database.name)
         {
-            removed.close(true);
+            removed.close(checkpoint);
         }
     }
 
@@ -236,6 +244,9 @@ impl DatabaseManager {
                     )));
                 }
             }
+            if let Some((schema, table)) = &options.default_table {
+                existing.catalog.set_default_table(schema, table);
+            }
             if on_conflict == OnCreateConflict::IgnoreOnConflict {
                 return Ok(None);
             }
@@ -272,8 +283,12 @@ impl DatabaseManager {
         } else {
             let storage = open_storage(&path, options, buffer_manager.clone(), &catalog)?;
             catalog.set_io(Arc::clone(storage.io()))?;
+            catalog.set_storage(&storage);
             Some(storage)
         };
+        if let Some((schema, table)) = &options.default_table {
+            catalog.set_default_table(schema, table);
+        }
         catalog.set_attach_info(rustdb_catalog::AttachedInfo {
             path: path.clone(),
             read_only: options.read_only(),

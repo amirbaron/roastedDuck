@@ -109,6 +109,8 @@ pub(crate) struct PipelineExecutor {
     requires_batch_index: bool,
     partition_info: PartitionInfo,
     exhausted_pipeline: bool,
+    /// The source returned its last chunk (DuckDB's `exhausted_source`).
+    exhausted_source: bool,
     flush: FlushState,
     profiling: Option<Profiling>,
 }
@@ -188,6 +190,7 @@ impl PipelineExecutor {
             requires_batch_index,
             partition_info,
             exhausted_pipeline: false,
+            exhausted_source: false,
             flush: FlushState::NotStarted,
             profiling,
         })
@@ -214,12 +217,16 @@ impl PipelineExecutor {
         self.profiling.as_ref().map(|_| Instant::now())
     }
 
-    /// Records a profiled call of the operator `key` selects that produced `rows`.
-    fn record(&self, key: impl FnOnce(&Profiling) -> usize, rows: usize, started: Option<Instant>) {
+    /// Records a profiled call of the operator `key` selects, which produced
+    /// `chunks[output]` (`OperatorProfiler::EndOperator`; a sink produces no chunk).
+    fn record(&self, key: impl FnOnce(&Profiling) -> usize, output: Option<usize>, started: Option<Instant>) {
         if let (Some(profiling), Some(started)) = (&self.profiling, started) {
-            profiling
-                .profiler
-                .record(key(profiling), rows as u64, started.elapsed());
+            let elapsed = started.elapsed();
+            let (rows, bytes) = output.map_or((0, 0), |index| {
+                let chunk = &self.chunks[index];
+                (chunk.len() as u64, chunk.allocation_size() as u64)
+            });
+            profiling.profiler.record(key(profiling), rows, elapsed, bytes);
         }
     }
 
@@ -265,7 +272,7 @@ impl PipelineExecutor {
                 let source_result = self.fetch_from_source()?;
                 if source_result == SourceResult::Finished {
                     self.exhausted_pipeline = true;
-                    self.finalize_source_profiling()?;
+                    self.exhausted_source = true;
                 }
                 if self.requires_batch_index {
                     self.next_batch(source_result == SourceResult::HaveMoreOutput)?;
@@ -324,7 +331,7 @@ impl PipelineExecutor {
                         self.intermediate_states[index].as_mut(),
                     )?
                 };
-                self.record(|p| p.operators[index], self.chunks[output].len(), started);
+                self.record(|p| p.operators[index], Some(output), started);
             }
             self.flush = FlushState::Flushing {
                 operator: index,
@@ -419,7 +426,7 @@ impl PipelineExecutor {
                         local.as_mut(),
                     )?
                 };
-                self.record(|p| p.sink, 0, started);
+                self.record(|p| p.sink, None, started);
                 if sink_result == SinkResult::Finished {
                     self.finish_processing(None);
                     return Ok(OperatorResult::Finished);
@@ -486,11 +493,7 @@ impl PipelineExecutor {
                     self.intermediate_states[operator_idx].as_mut(),
                 )?
             };
-            self.record(
-                |p| p.operators[operator_idx],
-                self.chunks[current_idx].len(),
-                started,
-            );
+            self.record(|p| p.operators[operator_idx], Some(current_idx), started);
             match result {
                 OperatorResult::HaveMoreOutput => self.in_process_operators.push(current_idx),
                 // Unlike DuckDB's operators, ours may emit their last rows together with
@@ -517,16 +520,28 @@ impl PipelineExecutor {
         })
     }
 
-    /// Records what the exhausted source reports for `EXPLAIN ANALYZE`
-    /// (`FinalizeSourceProfiling`).
+    /// Records what the source reports once the thread is done with it: parameters for
+    /// `EXPLAIN ANALYZE` and what a table scan read (`FinalizeSourceProfiling`).
     fn finalize_source_profiling(&self) -> Result<()> {
         let Some(profiling) = &self.profiling else {
             return Ok(());
         };
-        let params = role(&self.pipeline.source, |op| op.as_source())?
-            .extra_source_params(self.states.source.as_ref(), self.local_source_state.as_ref())?;
+        let source = role(&self.pipeline.source, |op| op.as_source())?;
+        let params =
+            source.extra_source_params(self.states.source.as_ref(), self.local_source_state.as_ref())?;
         if !params.is_empty() {
             profiling.profiler.record_extra_info(profiling.source, params);
+        }
+        // Our sources may return their last rows with `Finished`: when an operator
+        // finished the pipeline on those rows, DuckDB would not have asked the source
+        // again, so it does not count as exhausted.
+        let exhausted = self.exhausted_source && !self.is_finished();
+        if let Some(metrics) = source.scan_metrics(
+            self.states.source.as_ref(),
+            self.local_source_state.as_ref(),
+            exhausted,
+        )? {
+            profiling.profiler.record_scan(profiling.source, metrics);
         }
         Ok(())
     }
@@ -540,7 +555,7 @@ impl PipelineExecutor {
             self.states.source.as_ref(),
             self.local_source_state.as_mut(),
         )?;
-        self.record(|p| p.source, self.chunks[0].len(), started);
+        self.record(|p| p.source, Some(0), started);
         Ok(result)
     }
 
@@ -549,6 +564,8 @@ impl PipelineExecutor {
         let local = self.local_sink_state.take().ok_or_else(|| {
             Error::internal("Calling PushFinalize on a pipeline that has been finalized already")
         })?;
-        self.sink()?.combine(&self.ctx, self.states.sink.as_ref(), local)
+        self.sink()?
+            .combine(&self.ctx, self.states.sink.as_ref(), local)?;
+        self.finalize_source_profiling()
     }
 }

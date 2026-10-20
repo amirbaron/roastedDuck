@@ -17,6 +17,7 @@ PATHS=("$@")
 cd "$ROOT"
 export PATH="$HOME/.cargo/bin:$PATH"
 cargo build --release -p slt -j "$JOBS" >/dev/null
+"$ROOT/scripts/sign.sh" "$ROOT/target/release/slt"
 SLT="$ROOT/target/release/slt"
 OUT="$ROOT/target/slt"
 mkdir -p "$OUT"

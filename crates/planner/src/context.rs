@@ -129,6 +129,11 @@ pub struct ClientContext {
     /// The `(catalog, schema)` entries of `search_path` / `USE`; empty for the default
     /// (DuckDB's `CatalogSearchPath::set_paths`).
     pub search_path: Vec<(String, String)>,
+    /// The entries searched before `search_path` while a view is bound (DuckDB's
+    /// `CatalogEntryRetriever::SetSearchPath` with `Binder::GetSearchPath`): the view's
+    /// schema, then its catalog with an empty schema, which non-table lookups resolve to
+    /// the catalog's default schema in place (`default_schema_precedence`).
+    pub view_search_path: Vec<(String, String)>,
     pub transaction: Arc<Transaction>,
     pub casts: Arc<CastFunctionSet>,
     pub evaluator: Arc<dyn ExpressionEvaluator>,
@@ -276,27 +281,150 @@ impl ClientContext {
         unique
     }
 
-    /// The `(catalog, schema)` pairs searched for a name qualified by `catalog` and
-    /// `schema`, either of which may be empty (`Catalog::GetCatalogEntries`).
-    fn search_path(&self, catalog: &str, schema: &str) -> Vec<(String, String)> {
+    /// The context binding a view stored in `catalog.schema`: its names resolve there
+    /// first (`Binder::GetSearchPath(catalog, schema, true)` set on the view binder's
+    /// entry retriever). The system and temporary catalogs keep the client's path.
+    #[must_use]
+    pub fn with_view_search_path(&self, catalog: &str, schema: &str) -> Self {
+        let mut context = self.clone();
+        if catalog.is_empty()
+            || catalog.eq_ignore_ascii_case("system")
+            || catalog.eq_ignore_ascii_case(TEMP_CATALOG)
+        {
+            return context;
+        }
+        let schema = if schema.is_empty() { DEFAULT_SCHEMA } else { schema };
+        context.view_search_path = vec![
+            (catalog.to_owned(), schema.to_owned()),
+            (catalog.to_owned(), String::new()),
+        ];
+        context
+    }
+
+    /// The entries of the lookup search path (`CatalogSearchPath::paths`): `temp.main`,
+    /// the view's entries, the set entries, the default database's `main`, `system.main`
+    /// and `system.pg_catalog`. Entries with an empty schema name a catalog only.
+    fn lookup_paths(&self) -> Vec<(String, String)> {
+        if self.view_search_path.is_empty() {
+            return self.full_search_path();
+        }
+        let mut paths = Vec::with_capacity(self.view_search_path.len() + self.search_path.len() + 4);
+        if self.catalog(TEMP_CATALOG).is_some() {
+            paths.push((TEMP_CATALOG.to_owned(), DEFAULT_SCHEMA.to_owned()));
+        }
+        paths.extend(self.view_search_path.iter().cloned());
+        paths.extend(self.search_path.iter().cloned());
+        paths.push((self.default_catalog().to_owned(), DEFAULT_SCHEMA.to_owned()));
+        paths.push(("system".to_owned(), DEFAULT_SCHEMA.to_owned()));
+        paths.push(("system".to_owned(), "pg_catalog".to_owned()));
+        let mut unique: Vec<(String, String)> = Vec::with_capacity(paths.len());
+        for path in paths {
+            if !unique
+                .iter()
+                .any(|(c, s)| c.eq_ignore_ascii_case(&path.0) && s.eq_ignore_ascii_case(&path.1))
+            {
+                unique.push(path);
+            }
+        }
+        unique
+    }
+
+    /// The `(catalog, schema)` pairs searched for a name of type `ty` qualified by
+    /// `catalog` and `schema`, either of which may be empty (`Catalog::GetCatalogEntries`).
+    fn search_path(&self, catalog: &str, schema: &str, ty: CatalogType) -> Vec<(String, String)> {
+        let paths = self.lookup_paths();
+        let unique = |entries: Vec<(String, String)>| {
+            let mut result: Vec<(String, String)> = Vec::with_capacity(entries.len());
+            for entry in entries {
+                if !result
+                    .iter()
+                    .any(|(c, s)| c.eq_ignore_ascii_case(&entry.0) && s.eq_ignore_ascii_case(&entry.1))
+                {
+                    result.push(entry);
+                }
+            }
+            result
+        };
         match (catalog.is_empty(), schema.is_empty()) {
-            (true, true) => self.full_search_path(),
+            // Tables skip catalog-only entries; other lookups search the catalog's
+            // default schema there (`GetWithPrecedenceSchemas`).
+            (true, true) => unique(
+                paths
+                    .into_iter()
+                    .filter_map(|(path_catalog, path_schema)| {
+                        if !path_schema.is_empty() {
+                            Some((path_catalog, path_schema))
+                        } else if ty == CatalogType::Table {
+                            None
+                        } else {
+                            Some((path_catalog, DEFAULT_SCHEMA.to_owned()))
+                        }
+                    })
+                    .collect(),
+            ),
             (true, false) if is_default_schema(schema) => vec![("system".to_owned(), schema.to_lowercase())],
             (true, false) => {
-                let mut entries: Vec<(String, String)> = self
-                    .full_search_path()
+                // `GetCatalogsForSchema`: catalog-only entries match every schema.
+                let mut entries: Vec<(String, String)> = paths
                     .into_iter()
-                    .filter(|(_, path_schema)| path_schema.eq_ignore_ascii_case(schema))
+                    .filter(|(_, path_schema)| {
+                        path_schema.is_empty() || path_schema.eq_ignore_ascii_case(schema)
+                    })
                     .map(|(path_catalog, _)| (path_catalog, schema.to_owned()))
                     .collect();
                 if entries.is_empty() {
-                    entries.push((self.default_catalog().to_owned(), schema.to_owned()));
+                    let default = self
+                        .view_search_path
+                        .first()
+                        .map_or_else(|| self.default_catalog().to_owned(), |(c, _)| c.clone());
+                    entries.push((default, schema.to_owned()));
                 }
-                entries
+                unique(entries)
             }
-            (false, true) => vec![(catalog.to_owned(), self.default_schema_for(catalog))],
+            (false, true) if self.view_search_path.is_empty() => {
+                vec![(catalog.to_owned(), self.default_schema_for(catalog))]
+            }
+            (false, true) => {
+                // `GetSchemasForCatalog`, else the catalog's default schema.
+                let mut entries: Vec<(String, String)> = paths
+                    .into_iter()
+                    .filter(|(path_catalog, path_schema)| {
+                        !path_schema.is_empty() && path_catalog.eq_ignore_ascii_case(catalog)
+                    })
+                    .map(|(_, path_schema)| (catalog.to_owned(), path_schema))
+                    .collect();
+                if entries.is_empty() {
+                    entries.push((catalog.to_owned(), DEFAULT_SCHEMA.to_owned()));
+                }
+                unique(entries)
+            }
             (false, false) => vec![(catalog.to_owned(), schema.to_owned())],
         }
+    }
+
+    /// Records `lookup` for the dependencies of an entry being created.
+    fn record_lookup(&self, lookup: EntryLookup) -> EntryLookup {
+        if let Some(recorded) = self
+            .dependency_recorder
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_mut()
+        {
+            recorded.push(lookup.clone());
+        }
+        lookup
+    }
+
+    /// The default table of the attached database called `name` (`TryLookupDefaultTable`).
+    fn default_table_lookup(&self, name: &str) -> Option<EntryLookup> {
+        let catalog = self.catalog(name)?;
+        let (schema, table) = catalog.default_table()?;
+        let entry = catalog.get_entry(&self.transaction, CatalogType::Table, &schema, &table)?;
+        Some(EntryLookup {
+            catalog: catalog.name().to_owned(),
+            schema,
+            entry,
+        })
     }
 
     fn lookup_in(
@@ -321,7 +449,10 @@ impl ClientContext {
         name: &str,
         if_exists: bool,
     ) -> Result<Option<EntryLookup>> {
-        let path = self.search_path(catalog, schema);
+        let path = self.search_path(catalog, schema, ty);
+        // An unqualified table name may name an attached database with a default table
+        // (`TryLookupDefaultTable`).
+        let default_lookup = catalog.is_empty() && schema.is_empty() && ty == CatalogType::Table;
         for (catalog_name, schema_name) in &path {
             if let Some(entry) = self.lookup_in(catalog_name, schema_name, ty, name) {
                 let lookup = EntryLookup {
@@ -329,16 +460,14 @@ impl ClientContext {
                     schema: schema_name.clone(),
                     entry,
                 };
-                if let Some(recorded) = self
-                    .dependency_recorder
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .as_mut()
-                {
-                    recorded.push(lookup.clone());
+                if default_lookup && let Some(default_table) = self.default_table_lookup(name) {
+                    return Err(default_table_ambiguity(&lookup, &default_table, name));
                 }
-                return Ok(Some(lookup));
+                return Ok(Some(self.record_lookup(lookup)));
             }
+        }
+        if default_lookup && let Some(default_table) = self.default_table_lookup(name) {
+            return Ok(Some(self.record_lookup(default_table)));
         }
         if if_exists {
             return Ok(None);
@@ -432,9 +561,9 @@ impl ClientContext {
                 .iter()
                 .any(|(c, s)| c.eq_ignore_ascii_case(catalog) && s.eq_ignore_ascii_case(schema))
         };
-        if reaches(self.search_path("", schema)) {
+        if reaches(self.search_path("", schema, CatalogType::Table)) {
             format!("{schema}.{name}")
-        } else if reaches(self.search_path(catalog, "")) {
+        } else if reaches(self.search_path(catalog, "", CatalogType::Table)) {
             format!("{catalog}.{name}")
         } else {
             format!("{catalog}.{schema}.{name}")
@@ -572,4 +701,22 @@ pub fn position_missing_entry(error: Error, location: Option<u64>) -> Error {
     } else {
         error
     }
+}
+
+/// DuckDB's `ThrowDefaultTableAmbiguityException`: `name` is both an entry on the search
+/// path and an attached database with a default table.
+fn default_table_ambiguity(found: &EntryLookup, default_table: &EntryLookup, name: &str) -> Error {
+    let entry_type = found.entry.catalog_type().display_name();
+    Error::catalog(format!(
+        "Ambiguity detected for '{name}': this could either refer to the '{entry_type}' '{name}', or the attached \
+         catalog '{name}' which has a default table. To avoid this error, either detach the catalog and reattach \
+         under a different name, or use a fully qualified name for the '{entry_type}': '{}.{}.{}' or for the \
+         Catalog Default Table: '{}.{}.{}'.",
+        found.catalog,
+        found.schema,
+        found.entry.name(),
+        default_table.catalog,
+        default_table.schema,
+        default_table.entry.name()
+    ))
 }

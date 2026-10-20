@@ -401,6 +401,10 @@ impl WalGuard<'_> {
             .write_all(bytes)
             .map_err(|error| io_error(format!("Could not write file \"{path}\": {error}")))?;
         self.state.size += bytes.len() as u64;
+        rustdb_common::profiling::add_to_counter(
+            rustdb_common::profiling::MetricType::TotalBytesWritten,
+            bytes.len() as u64,
+        );
         Ok(())
     }
 

@@ -145,7 +145,9 @@ impl RowGroup {
         data: Vec<PersistentColumnData>,
     ) -> Self {
         let row_group = Self::from_persistent(io, types, data, self.count());
-        row_group.version_info_lock().clone_from(&self.version_info_lock());
+        row_group
+            .version_info_lock()
+            .clone_from(&self.version_info_lock());
         row_group
     }
 

@@ -4,6 +4,7 @@
 use std::cell::Cell;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use rustdb_catalog::EntryKind;
 use rustdb_common::string_util::candidates_error_message;
@@ -148,6 +149,9 @@ pub struct Optimizer {
     pub(crate) config: OptimizerConfig,
     /// The next unused table index (DuckDB's `Binder::GenerateTableIndex`).
     next_table_index: Cell<u64>,
+    /// The time each pass took, in the order they ran (the optimizer phases DuckDB's
+    /// `RunOptimizer` reports to the query profiler).
+    timings: Vec<(OptimizerType, Duration)>,
 }
 
 /// Fixes the columns of every scan: the binder shares them with its table bindings
@@ -195,7 +199,13 @@ impl Optimizer {
             context,
             config,
             next_table_index: Cell::new(0),
+            timings: Vec::new(),
         }
+    }
+
+    /// The time each pass took, in the order they ran.
+    pub fn timings(&self) -> &[(OptimizerType, Duration)] {
+        &self.timings
     }
 
     /// A fresh table index (DuckDB's `Binder::GenerateTableIndex`).
@@ -238,7 +248,10 @@ impl Optimizer {
         if self.optimizer_disabled(ty) {
             return Ok(plan);
         }
-        pass(self, plan)
+        let start = Instant::now();
+        let result = pass(self, plan);
+        self.timings.push((ty, start.elapsed()));
+        result
     }
 
     /// DuckDB's `Optimizer::RunBuiltInOptimizers`.

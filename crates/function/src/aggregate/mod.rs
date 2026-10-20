@@ -348,6 +348,11 @@ pub struct AggregateFunction {
     pub bind: Option<AggregateBind>,
     /// How collations of the arguments are applied before `bind`.
     pub collation: AggregateCollation,
+    /// Whether DuckDB's aggregate has a state destructor callback
+    /// (`HasStateDestructorCallback`), which keeps it out of streaming windows. By
+    /// default whether the Rust state needs dropping; aggregates whose DuckDB states
+    /// live in the aggregate arena (`list`, `string_agg`) have none.
+    pub has_state_destructor: bool,
 }
 
 impl AggregateFunction {
@@ -368,7 +373,22 @@ impl AggregateFunction {
             distinct_dependence: DistinctDependence::default(),
             bind: None,
             collation: AggregateCollation::None,
+            has_state_destructor: false,
         }
+        .with_state_destructor_of_ops()
+    }
+
+    fn with_state_destructor_of_ops(mut self) -> Self {
+        self.has_state_destructor = self.ops.needs_destructor();
+        self
+    }
+
+    /// Marks an aggregate whose DuckDB state has no destructor callback (see
+    /// [`AggregateFunction::has_state_destructor`]).
+    #[must_use]
+    pub fn without_state_destructor(mut self) -> Self {
+        self.has_state_destructor = false;
+        self
     }
 
     /// An overload whose bind callback always replaces it with a concrete function.

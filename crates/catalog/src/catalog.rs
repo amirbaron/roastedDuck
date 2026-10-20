@@ -26,6 +26,11 @@ pub struct Catalog {
     oid: u64,
     /// How the database is attached, for `duckdb_databases()`.
     attach_info: OnceLock<AttachedInfo>,
+    /// The table the catalog's name refers to, as (schema, name) (`DEFAULT_TABLE`;
+    /// DuckDB's `Catalog::default_table`).
+    default_table: std::sync::Mutex<Option<(String, String)>>,
+    /// The storage of a database file (unset in memory), for `pragma_metadata_info`.
+    storage: OnceLock<std::sync::Weak<rustdb_storage::storage_manager::StorageManager>>,
 }
 
 /// How a database is attached (the parts of DuckDB's `AttachedDatabase` the catalog
@@ -50,6 +55,8 @@ impl Catalog {
             wal: OnceLock::new(),
             oid: 0,
             attach_info: OnceLock::new(),
+            default_table: std::sync::Mutex::default(),
+            storage: OnceLock::new(),
         };
         let mut catalog = catalog;
         if !catalog.name.eq_ignore_ascii_case("system") {
@@ -76,6 +83,39 @@ impl Catalog {
     /// Records how the database is attached (once).
     pub fn set_attach_info(&self, info: AttachedInfo) {
         let _ = self.attach_info.set(info);
+    }
+
+    /// Makes the catalog's name refer to `schema.name` (`Catalog::SetDefaultTable`); an
+    /// empty schema is `main`.
+    pub fn set_default_table(&self, schema: &str, name: &str) {
+        let schema = if schema.is_empty() { DEFAULT_SCHEMA } else { schema };
+        *self
+            .default_table
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((schema.to_owned(), name.to_owned()));
+    }
+
+    /// The (schema, name) of the default table, if any (`Catalog::HasDefaultTable`).
+    pub fn default_table(&self) -> Option<(String, String)> {
+        self.default_table
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Records the storage of the database file (once).
+    pub fn set_storage(&self, storage: &Arc<rustdb_storage::storage_manager::StorageManager>) {
+        let _ = self.storage.set(Arc::downgrade(storage));
+    }
+
+    /// The metadata blocks of the database file; empty in memory
+    /// (`DuckCatalog::GetMetadataInfo`).
+    pub fn metadata_info(&self) -> Vec<rustdb_storage::metadata::MetadataBlockInfo> {
+        self.storage
+            .get()
+            .and_then(std::sync::Weak::upgrade)
+            .map(|storage| storage.metadata().metadata_info())
+            .unwrap_or_default()
     }
 
     /// How the database is attached; `None` for `system`.
@@ -261,6 +301,15 @@ impl Catalog {
         }
         match on_conflict {
             OnCreateConflict::IgnoreOnConflict => Ok(()),
+            OnCreateConflict::ReplaceOnConflict => {
+                // Dependent entries make the drop fail (no CASCADE).
+                self.drop_schema(transaction, name, false, false)?;
+                let entry = CatalogEntry::new(name, EntryKind::Schema(SchemaEntry::new(&self.name, name)));
+                if !self.schemas.create(transaction, entry)? {
+                    return Err(Error::internal("Failed to create schema entry in CREATE_OR_REPLACE"));
+                }
+                Ok(())
+            }
             _ => Err(Error::catalog(format!(
                 "Schema with name \"{name}\" already exists!"
             ))),
@@ -392,6 +441,17 @@ impl Catalog {
         let schema_entry = self.schema_entry(transaction, schema)?;
         let schema_entry = schema_entry.as_schema().ok_or_else(missing_main)?;
         let set = Self::set_for(schema_entry, ty);
+        // A rename that only changes the case replaces the entry in place
+        // (`CatalogSet::AlterEntry` skips `RenameEntryInternal`).
+        if entry.name().eq_ignore_ascii_case(name) {
+            if !set.alter_with_hook(transaction, name, entry, hook, info)? {
+                return Err(Error::catalog(format!(
+                    "{} with name {name} does not exist!",
+                    ty.display_name()
+                )));
+            }
+            return Ok(());
+        }
         if set.get(transaction, entry.name()).is_some() {
             return Err(Error::catalog(format!(
                 "Could not rename \"{name}\" to \"{}\": another entry with this name already exists!",

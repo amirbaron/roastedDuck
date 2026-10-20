@@ -92,3 +92,61 @@ pub trait ClientLogger: Send + Sync + fmt::Debug {
     /// The database's log manager, for its own functions.
     fn as_any(&self) -> &dyn Any;
 }
+
+/// The `FileSystem` log entries of a local file (DuckDB's `FileSystemLogType` written by
+/// the `DUCKDB_LOG_FILE_SYSTEM_*` macros of a file handle).
+#[derive(Debug)]
+pub struct FileSystemLogger {
+    logger: std::sync::Arc<dyn ClientLogger>,
+    path: String,
+}
+
+impl FileSystemLogger {
+    /// The logger of a file opened now, if the thread runs a statement; logs `OPEN`.
+    pub fn open(path: &str) -> Option<Self> {
+        let logger = Self {
+            logger: crate::file_system::opener()?.logger()?,
+            path: path.to_owned(),
+        };
+        logger.log("OPEN", None);
+        Some(logger)
+    }
+
+    /// `DUCKDB_LOG_FILE_SYSTEM_READ`: `bytes` read at `position`.
+    pub fn read(&self, bytes: u64, position: u64) {
+        self.log("READ", Some((bytes, position)));
+    }
+
+    /// `DUCKDB_LOG_FILE_SYSTEM_WRITE`: `bytes` written at `position`.
+    pub fn write(&self, bytes: u64, position: u64) {
+        self.log("WRITE", Some((bytes, position)));
+    }
+
+    /// `DUCKDB_LOG_FILE_SYSTEM_CLOSE`.
+    pub fn close(&self) {
+        self.log("CLOSE", None);
+    }
+
+    /// `FileSystemLogType::ConstructLogMessage`.
+    fn log(&self, op: &str, bytes: Option<(u64, u64)>) {
+        if !self
+            .logger
+            .should_log(LogScope::Connection, "FileSystem", LogLevel::Trace)
+        {
+            return;
+        }
+        let message = match bytes {
+            Some((bytes, position)) => format!(
+                "{{\"fs\":\"LocalFileSystem\",\"path\":\"{}\",\"op\":\"{op}\",\"bytes\":\"{bytes}\",\"pos\":\"{position}\"}}",
+                self.path
+            ),
+            None => format!(
+                "{{\"fs\":\"LocalFileSystem\",\"path\":\"{}\",\"op\":\"{op}\"}}",
+                self.path
+            ),
+        };
+        let _ = self
+            .logger
+            .write_log(LogScope::Connection, "FileSystem", LogLevel::Trace, &message);
+    }
+}

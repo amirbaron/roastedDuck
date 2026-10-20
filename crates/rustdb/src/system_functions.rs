@@ -2572,12 +2572,80 @@ fn storage_info_rows(context: &ClientContext, name: &str) -> Result<Vec<Vec<Valu
     Ok(rows)
 }
 
+const METADATA_INFO_COLUMNS: Columns = &[
+    ("block_id", bigint),
+    ("total_blocks", bigint),
+    ("free_blocks", bigint),
+    ("free_list", bigint_list),
+];
+
+/// The rows of `pragma_metadata_info` for the catalog called `name`
+/// (`PragmaMetadataInfoFunction`).
+fn metadata_info_rows(context: &ClientContext, name: &str) -> Result<Vec<Vec<Value>>> {
+    let catalog = context
+        .catalog(name)
+        .ok_or_else(|| Error::binder(format!("Catalog \"{name}\" does not exist!")))?;
+    let as_bigint = |value: u64| Value::bigint(i64::try_from(value).unwrap_or(i64::MAX));
+    Ok(catalog
+        .metadata_info()
+        .into_iter()
+        .map(|block| {
+            vec![
+                Value::bigint(block.block_id),
+                as_bigint(block.total_blocks),
+                as_bigint(block.free_list.len() as u64),
+                Value::list(
+                    LogicalType::BIGINT,
+                    block.free_list.into_iter().map(as_bigint).collect(),
+                ),
+            ]
+        })
+        .collect())
+}
+
+/// `pragma_metadata_info([database])`: the metadata blocks of the default or the given
+/// database (`PragmaMetadataInfoBind`).
+fn metadata_info_functions() -> TableFunctionSet {
+    let name = "pragma_metadata_info";
+    let mut set = rows_function(name, METADATA_INFO_COLUMNS, |context| {
+        metadata_info_rows(context, context.default_catalog())
+    });
+    set.add(
+        TableFunction::new(name, vec![LogicalType::VARCHAR])
+            .with_bind(move |input| {
+                let context = client_context(input)?;
+                let database = match input.inputs.first() {
+                    Some(value) if value.is_null() => {
+                        return Err(Error::binder(
+                            "Database argument for pragma_metadata_info cannot be NULL",
+                        ));
+                    }
+                    Some(value) => value.to_varchar()?,
+                    None => context.default_catalog().to_owned(),
+                };
+                let types: Vec<LogicalType> = METADATA_INFO_COLUMNS.iter().map(|(_, ty)| ty()).collect();
+                let rows = metadata_info_rows(context, &database)?;
+                Ok(TableFunctionBindOutput {
+                    return_types: types.clone(),
+                    names: METADATA_INFO_COLUMNS
+                        .iter()
+                        .map(|(name, _)| (*name).to_owned())
+                        .collect(),
+                    bind_data: Some(Arc::new(Rows { types, rows })),
+                })
+            })
+            .with_scan(|bind_data, _, state, chunk| scan_rows(bind_data, state, chunk)),
+    );
+    set
+}
+
 /// The `pragma_*` table functions.
 pub(crate) fn pragma_table_functions() -> Vec<TableFunctionSet> {
     vec![
         rows_function_with_name("pragma_table_info", TABLE_INFO_COLUMNS, table_info_rows),
         rows_function_with_name("pragma_storage_info", STORAGE_INFO_COLUMNS, storage_info_rows),
         rows_function("pragma_database_size", DATABASE_SIZE_COLUMNS, database_size_rows),
+        metadata_info_functions(),
         rows_function_with_name("pragma_show", SHOW_COLUMNS, show_rows),
         rows_function("pragma_version", VERSION_COLUMNS, version_rows),
         rows_function("pragma_platform", PLATFORM_COLUMNS, platform_rows),
@@ -2662,6 +2730,7 @@ pub(crate) fn pragma_query(name: &str, parameters: &[Value]) -> Result<Option<St
         "show_databases" => "SELECT database_name FROM duckdb_databases() WHERE NOT internal ORDER BY database_name;".to_owned(),
         "database_list" => "SELECT * FROM pragma_database_list;".to_owned(),
         "database_size" => "SELECT * FROM pragma_database_size();".to_owned(),
+        "metadata_info" => "SELECT * FROM pragma_metadata_info();".to_owned(),
         "collations" => "SELECT * FROM pragma_collations() ORDER BY 1".to_owned(),
         "show" => format!("SELECT * FROM pragma_show({});", quoted(&first()?)),
         "json_execute_serialized_sql" => rustdb_json::execute_serialized_sql_pragma(&first()?)?,

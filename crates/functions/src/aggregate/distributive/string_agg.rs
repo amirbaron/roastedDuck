@@ -128,7 +128,8 @@ pub fn string_agg_functions() -> AggregateFunctionSet {
         LogicalType::VARCHAR,
         Typed(StringAgg),
     )
-    .with_bind(bind_string_agg);
+    .with_bind(bind_string_agg)
+    .without_state_destructor();
     let mut with_separator = function.clone();
     with_separator.arguments.push(LogicalType::VARCHAR);
     set.add(function);
