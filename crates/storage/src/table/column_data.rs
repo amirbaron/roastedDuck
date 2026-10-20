@@ -480,6 +480,97 @@ impl ColumnData {
         any
     }
 
+    /// Whether this column's own segments must be written again: a segment is transient,
+    /// or rows of a persistent one were updated (`ColumnData::HasChanges`).
+    pub fn has_changes(&self) -> bool {
+        let updates = self.update_segment();
+        self.segments.read().iter().any(|node| {
+            if node.node.segment_type() == super::column_segment::SegmentType::Transient {
+                return true;
+            }
+            let count = node.node.count();
+            count > 0
+                && updates.as_ref().is_some_and(|updates| {
+                    updates.has_updates_between(node.row_start, node.row_start + count - 1)
+                })
+        })
+    }
+
+    /// Whether the column or any child has changes (`HasAnyChanges` and its overrides).
+    pub fn has_any_changes(&self) -> bool {
+        let mut any = self.has_changes();
+        self.for_each_child(|child| any |= child.has_any_changes());
+        any
+    }
+
+    /// The data pointers of the column's own persistent segments, the first starting at
+    /// row `row_start` (`ColumnDataCheckpointer::WritePersistentSegments`).
+    pub(crate) fn persistent_data_pointers(
+        &self,
+        row_start: u64,
+    ) -> Result<Vec<crate::checkpoint::pointers::DataPointer>> {
+        use crate::checkpoint::pointers::{BlockPointer, DataPointer};
+        let mut result = Vec::new();
+        let mut current_row = 0;
+        for node in self.segments.read().iter() {
+            if node.row_start != current_row {
+                return Err(Error::internal(format!(
+                    "Failure in RowGroup::Checkpoint - column data pointer is unaligned with row group start\n\
+                     Current row: {current_row}\nSegment start: {}",
+                    node.row_start
+                )));
+            }
+            let segment = &node.node;
+            if segment.segment_type() != super::column_segment::SegmentType::Persistent {
+                return Err(Error::internal(
+                    "Attempting to call ColumnSegment::GetDataPointer on a transient segment",
+                ));
+            }
+            let block_pointer = if segment.block_id() == rustdb_buffer::INVALID_BLOCK {
+                BlockPointer::invalid()
+            } else {
+                BlockPointer {
+                    block_id: segment.block_id(),
+                    offset: u32::try_from(segment.block_offset())
+                        .map_err(|_| Error::internal("block offset overflow"))?,
+                }
+            };
+            result.push(DataPointer {
+                row_start: row_start + current_row,
+                tuple_count: segment.count(),
+                block_pointer,
+                compression: segment.compression(),
+                statistics: segment.statistics().clone(),
+                overflow_blocks: segment.overflow_blocks().to_vec(),
+            });
+            current_row += segment.count();
+        }
+        Ok(result)
+    }
+
+    /// The column and its children as stored by its persistent segments, the first
+    /// starting at row `row_start` (`ColumnData::Serialize` of a column without changes).
+    pub(crate) fn persistent_data(
+        &self,
+        row_start: u64,
+    ) -> Result<crate::checkpoint::pointers::PersistentColumnData> {
+        let mut result = crate::checkpoint::pointers::PersistentColumnData::new(self.ty.clone());
+        if !matches!(self.kind, ColumnKind::Struct { .. } | ColumnKind::Array { .. }) {
+            result.pointers = self.persistent_data_pointers(row_start)?;
+        }
+        let mut children = Vec::new();
+        let mut error = None;
+        self.for_each_child(|child| match child.persistent_data(row_start) {
+            Ok(data) => children.push(data),
+            Err(e) => error = Some(e),
+        });
+        if let Some(error) = error {
+            return Err(error);
+        }
+        result.child_columns = children;
+        Ok(result)
+    }
+
     // ----------------------------------------------------------------------------------
     // Statistics
     // ----------------------------------------------------------------------------------

@@ -89,6 +89,34 @@ pub(crate) struct CheckpointContext<'a> {
     pub writer: &'a mut BlockWriter,
     pub io: &'a Arc<TableIoManager>,
     pub info: CompressionInfo,
+    /// The compression the column was declared with (`USING COMPRESSION`,
+    /// `ColumnCheckpointInfo::GetCompressionType`); `Auto` lets the codecs compete.
+    pub column_compression: CompressionType,
+    /// `schema.table` of the column, for the log.
+    pub table_name: &'a str,
+}
+
+/// `DUCKDB_LOG_TRACE` of the codec `DetectBestCompressionMethod` chose for a column.
+fn log_final_analyze(
+    table_name: &str,
+    column: &ColumnData,
+    ty: &LogicalType,
+    function: CompressionType,
+    score: u64,
+) {
+    use rustdb_function::logging::{LogLevel, LogScope};
+    let Some(logger) = rustdb_function::file_system::opener().and_then(|client| client.logger()) else {
+        return;
+    };
+    if !logger.should_log(LogScope::Database, "", LogLevel::Trace) {
+        return;
+    }
+    let message = format!(
+        "ColumnDataCheckpointer FinalAnalyze({}) result for {table_name}.{}({ty}): {score}",
+        super::pointers::compression_enum_name(function),
+        column.column_index()
+    );
+    let _ = logger.write_log(LogScope::Database, "", LogLevel::Trace, &message);
 }
 
 /// The physical type segments of `ty` store.
@@ -219,18 +247,42 @@ fn checkpoint_segments<const N: usize>(
 ) -> Result<[Vec<DataPointer>; N]> {
     let info = ctx.info;
     let io = ctx.io;
+    // `ColumnDataCheckpointer::Checkpoint`: when none of the targets has changes, their
+    // persistent segments are kept as they are (`WritePersistentSegments`).
+    let validity = match column.kind() {
+        ColumnKind::Standard { validity } if N == 2 => Some(validity.as_ref()),
+        _ => None,
+    };
+    if !column.has_changes() && validity.is_none_or(|validity| !validity.has_changes()) {
+        let mut result: [Vec<DataPointer>; N] = std::array::from_fn(|_| Vec::new());
+        result[0] = column.persistent_data_pointers(row_group_start)?;
+        if let Some(validity) = validity {
+            result[1] = validity.persistent_data_pointers(row_group_start)?;
+        }
+        for pointers in &result {
+            ctx.writer.add_reused_pointers(pointers);
+        }
+        return Ok(result);
+    }
     // `DetectBestCompressionMethod`.
     let mut functions: Vec<Vec<Option<CompressionType>>> = Vec::with_capacity(N);
     let mut forced = Vec::with_capacity(N);
     let mut states: Vec<Vec<Option<Box<dyn Analyzer>>>> = Vec::with_capacity(N);
     for ty in targets {
         let physical = segment_physical_type(ty);
-        let mut target_functions: Vec<Option<CompressionType>> =
-            candidate_functions(physical).into_iter().map(Some).collect();
-        forced.push(force_compression(
-            &mut target_functions,
-            info.config.force_compression,
-        ));
+        // `DBConfig::GetCompressionFunctions`: the codecs of the type that are not disabled.
+        let mut target_functions: Vec<Option<CompressionType>> = candidate_functions(physical)
+            .into_iter()
+            .filter(|&compression| !info.config.is_disabled(compression))
+            .map(Some)
+            .collect();
+        // The column's `USING COMPRESSION` comes first, then `force_compression`.
+        let forced_type = if ctx.column_compression == CompressionType::Auto {
+            info.config.force_compression
+        } else {
+            ctx.column_compression
+        };
+        forced.push(force_compression(&mut target_functions, forced_type));
         let mut target_states = Vec::with_capacity(target_functions.len());
         for function in &target_functions {
             target_states.push(match function {
@@ -278,12 +330,14 @@ fn checkpoint_segments<const N: usize>(
                 break;
             }
         }
-        chosen.push(best.ok_or_else(|| {
+        let best = best.ok_or_else(|| {
             Error::new(
                 rustdb_common::ErrorKind::Fatal,
                 format!("No suitable compression/storage method found to store column of type {ty}"),
             )
-        })?);
+        })?;
+        log_final_analyze(ctx.table_name, column, ty, best.0, best_score);
+        chosen.push(best);
     }
     // `ValidityCoveredByBasedata`: the validity becomes a single empty segment.
     let validity_covered = N == 2 && covers_validity(chosen[0].0);

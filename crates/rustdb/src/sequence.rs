@@ -142,7 +142,7 @@ fn sequence_kernel(
     {
         // `DuckTransaction::PushSequenceUsage`; the sequence's database is modified.
         if let Some(catalog) = &data.catalog {
-            transaction.modify_database(catalog.name(), catalog.wal(), true)?;
+            transaction.modify_database(catalog.name(), catalog.wal(), true, false)?;
         }
         let state = data.sequence.data();
         transaction.push_sequence_usage(

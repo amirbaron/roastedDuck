@@ -396,6 +396,9 @@ pub struct CompressionConfig {
     pub force_compression: CompressionType,
     /// `zstd_min_string_length`: below this average string length ZSTD is penalised.
     pub zstd_min_string_length: u64,
+    /// `disabled_compression_methods`: a bit per disabled compression type
+    /// (`CompressionFunctionSet::is_disabled`).
+    pub disabled: u32,
 }
 
 impl Default for CompressionConfig {
@@ -403,7 +406,30 @@ impl Default for CompressionConfig {
         Self {
             force_compression: CompressionType::Auto,
             zstd_min_string_length: 4096,
+            disabled: 0,
         }
+    }
+}
+
+impl CompressionConfig {
+    /// Whether `compression` is disabled (`disabled_compression_methods`).
+    pub const fn is_disabled(&self, compression: CompressionType) -> bool {
+        self.disabled & (1 << compression as u32) != 0
+    }
+
+    /// Disables exactly `methods` (`SetDisabledCompressionMethods`).
+    pub fn set_disabled(&mut self, methods: &[CompressionType]) {
+        self.disabled = methods
+            .iter()
+            .fold(0, |bits, &compression| bits | (1 << compression as u32));
+    }
+
+    /// The disabled methods (`GetDisabledCompressionMethods`).
+    pub fn disabled_methods(&self) -> Vec<CompressionType> {
+        CompressionType::ALL
+            .into_iter()
+            .filter(|&compression| self.is_disabled(compression))
+            .collect()
     }
 }
 
@@ -489,6 +515,72 @@ pub(crate) fn candidate_functions(physical: PhysicalType) -> Vec<CompressionType
     .into_iter()
     .filter(|&compression| supported(compression))
     .collect()
+}
+
+/// Whether a compression type can be written (DuckDB's `CompressionAvailabilityResult`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompressionAvailability {
+    Available,
+    /// Only decompression is supported.
+    Deprecated,
+    /// The storage version is too old for it.
+    NotAvailableYet,
+}
+
+/// `CompressionTypeIsAvailable`: whether `compression` can be written with storage version
+/// `storage_version` (`None`: unknown, so available unless always deprecated).
+pub fn compression_type_is_available(
+    compression: CompressionType,
+    storage_version: Option<u64>,
+) -> CompressionAvailability {
+    use CompressionType as C;
+    // (type, minimum storage version, maximum storage version); no minimum: deprecated.
+    let (minimum, maximum): (Option<u64>, Option<u64>) = match compression {
+        C::Patas | C::Chimp => (None, Some(0)),
+        C::Dictionary | C::Fsst => (Some(0), Some(4)),
+        C::DictFsst => (Some(5), None),
+        _ => return CompressionAvailability::Available,
+    };
+    let Some(minimum) = minimum else {
+        return CompressionAvailability::Deprecated;
+    };
+    let Some(current) = storage_version else {
+        return CompressionAvailability::Available;
+    };
+    if minimum > current {
+        return CompressionAvailability::NotAvailableYet;
+    }
+    if maximum.is_some_and(|maximum| maximum < current) {
+        return CompressionAvailability::Deprecated;
+    }
+    CompressionAvailability::Available
+}
+
+/// `DBConfig::TryGetCompressionFunction`: whether `compression` has a function for
+/// `physical` (the constant and empty-validity functions included).
+pub fn has_compression_function(compression: CompressionType, physical: PhysicalType) -> bool {
+    match compression {
+        // `ConstantFun::TypeIsSupported` / `EmptyValidityCompressionFun::TypeIsSupported`.
+        CompressionType::Constant => matches!(
+            physical,
+            PhysicalType::Bit
+                | PhysicalType::Bool
+                | PhysicalType::Int8
+                | PhysicalType::Int16
+                | PhysicalType::Int32
+                | PhysicalType::Int64
+                | PhysicalType::UInt8
+                | PhysicalType::UInt16
+                | PhysicalType::UInt32
+                | PhysicalType::UInt64
+                | PhysicalType::Int128
+                | PhysicalType::UInt128
+                | PhysicalType::Float
+                | PhysicalType::Double
+        ),
+        CompressionType::Empty => physical == PhysicalType::Bit,
+        other => candidate_functions(physical).contains(&other),
+    }
 }
 
 /// Whether a codec stores the column's validity itself (`CompressionValidity::

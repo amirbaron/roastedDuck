@@ -52,6 +52,15 @@ pub(crate) struct DatabaseInstance {
     /// How checkpoints compress segments (`force_compression`, a global setting): applied
     /// to the storage of every attached database.
     compression: std::sync::Mutex<rustdb_storage::compression::CompressionConfig>,
+    /// Whether the instance can still be used (`DatabaseInstance::GetValidChecker`).
+    pub(crate) validity: Arc<crate::attached::ValidChecker>,
+    /// `wal_autocheckpoint_entries`: a commit that leaves this many WAL entries
+    /// checkpoints (0: disabled).
+    pub(crate) wal_autocheckpoint_entries: std::sync::atomic::AtomicU64,
+    /// How checkpoints reuse metadata (`experimental_metadata_reuse`,
+    /// `force_column_metadata_reuse`; global settings): applied to the storage of every
+    /// attached database.
+    checkpoint_config: std::sync::Mutex<rustdb_storage::storage_manager::CheckpointConfig>,
     /// The secrets (DuckDB's `DBConfig::secret_manager`).
     pub(crate) secrets: Arc<crate::secrets::SecretManager>,
     /// The number of open connections (DuckDB's `ConnectionManager`).
@@ -253,7 +262,7 @@ impl Drop for DatabaseInstance {
     fn drop(&mut self) {
         let checkpoint = self.checkpoint_on_shutdown();
         for database in self.databases.all() {
-            database.close(checkpoint);
+            let _ = database.close(checkpoint, crate::attached::CloseAction::TryCheckpoint);
         }
     }
 }
@@ -360,6 +369,26 @@ impl DatabaseInstance {
         }
     }
 
+    /// `SET` / `RESET` (`None`) of `wal_autocheckpoint_entries`; other names are ignored.
+    fn set_wal_autocheckpoint_entries(&self, name: &str, value: Option<&rustdb_types::Value>) -> Result<()> {
+        if !name.eq_ignore_ascii_case("wal_autocheckpoint_entries") {
+            return Ok(());
+        }
+        let entries = match value {
+            Some(value) => {
+                use rustdb_function::cast::ValueCast;
+                value
+                    .default_cast_as(&rustdb_types::LogicalType::UBIGINT)?
+                    .as_u64()
+                    .unwrap_or(0)
+            }
+            None => 0,
+        };
+        self.wal_autocheckpoint_entries
+            .store(entries, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+
     /// `SET checkpoint_threshold` (`CheckpointThresholdSetting::SetGlobal`).
     fn set_checkpoint_threshold(&self, value: &rustdb_types::Value) -> Result<()> {
         let limit = rustdb_buffer::parse_memory_limit(&value.to_varchar()?)?;
@@ -389,6 +418,145 @@ impl DatabaseInstance {
             }
         }
         Ok(())
+    }
+
+    /// `SET` / `RESET` (`None`) of `disabled_compression_methods`
+    /// (`DisabledCompressionMethodsSetting::SetGlobal`); other names are ignored.
+    fn set_disabled_compression_methods(
+        &self,
+        name: &str,
+        value: Option<&rustdb_types::Value>,
+    ) -> Result<()> {
+        use rustdb_storage::compression::CompressionType;
+        if !name.eq_ignore_ascii_case("disabled_compression_methods") {
+            return Ok(());
+        }
+        let mut methods = Vec::new();
+        if let Some(value) = value {
+            for entry in value.to_varchar()?.split(',') {
+                let param = entry.trim().to_lowercase();
+                if param.is_empty() {
+                    continue;
+                }
+                if param == "none" {
+                    methods.clear();
+                    break;
+                }
+                let compression = CompressionType::from_enum_name(&param).ok_or_else(|| {
+                    let candidates: Vec<String> = CompressionType::ALL
+                        .iter()
+                        .map(|compression| compression.enum_name().to_owned())
+                        .collect();
+                    Error::not_implemented(format!(
+                        "Enum value: unrecognized value \"{param}\" for enum \"CompressionType\"\n{}",
+                        rustdb_common::string_util::candidates_error_message(
+                            &candidates,
+                            &param,
+                            "Candidates"
+                        )
+                    ))
+                })?;
+                if matches!(
+                    compression,
+                    CompressionType::Auto
+                        | CompressionType::Constant
+                        | CompressionType::Empty
+                        | CompressionType::Uncompressed
+                ) {
+                    return Err(Error::invalid_input(format!(
+                        "Compression method {param} cannot be disabled"
+                    )));
+                }
+                methods.push(compression);
+            }
+        }
+        let config = {
+            let mut config = self
+                .compression
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            config.set_disabled(&methods);
+            *config
+        };
+        for database in self.databases.all() {
+            if let Some(storage) = &database.storage {
+                storage.set_compression_config(config);
+            }
+        }
+        Ok(())
+    }
+
+    /// `SET` / `RESET` (`None`) of the settings checkpoints follow
+    /// (`ExperimentalMetadataReuseSetting`, `ForceColumnMetadataReuseSetting`,
+    /// `MaxVacuumTasksSetting`, `DebugCheckpointAbortSetting`); other names are ignored.
+    fn set_checkpoint_setting(&self, name: &str, value: Option<&rustdb_types::Value>) -> Result<()> {
+        use rustdb_function::cast::ValueCast;
+        use rustdb_storage::storage_manager::{CheckpointAbort, CheckpointConfig};
+        let lower = name.to_ascii_lowercase();
+        let update: Box<dyn Fn(&mut CheckpointConfig)> = match (lower.as_str(), value) {
+            ("experimental_metadata_reuse" | "force_column_metadata_reuse", value) => {
+                let enabled = match value {
+                    Some(value) => value
+                        .default_cast_as(&rustdb_types::LogicalType::BOOLEAN)?
+                        .as_bool()
+                        .unwrap_or(false),
+                    None => lower == "experimental_metadata_reuse",
+                };
+                if lower == "experimental_metadata_reuse" {
+                    Box::new(move |config| config.metadata_reuse = enabled)
+                } else {
+                    Box::new(move |config| config.force_column_metadata_reuse = enabled)
+                }
+            }
+            ("max_vacuum_tasks", value) => {
+                let tasks = match value {
+                    Some(value) => value
+                        .default_cast_as(&rustdb_types::LogicalType::UBIGINT)?
+                        .as_u64()
+                        .unwrap_or(0),
+                    None => CheckpointConfig::default().max_vacuum_tasks,
+                };
+                Box::new(move |config| config.max_vacuum_tasks = tasks)
+            }
+            // `DebugCheckpointAbortSetting::OnSet`.
+            ("debug_checkpoint_abort", Some(value)) => {
+                if value.is_null() {
+                    return Err(Error::invalid_input(
+                        "debug_checkpoint_abort setting cannot be NULL",
+                    ));
+                }
+                let text = value.to_varchar()?;
+                let abort = CheckpointAbort::from_name(&text).ok_or_else(|| {
+                    let names: Vec<&str> = CheckpointAbort::ALL.iter().map(|(_, name)| *name).collect();
+                    rustdb_function::logging::enum_error(&text, "CheckpointAbort", &names)
+                })?;
+                Box::new(move |config| config.abort = abort)
+            }
+            ("debug_checkpoint_abort", None) => Box::new(|config| config.abort = CheckpointAbort::NoAbort),
+            _ => return Ok(()),
+        };
+        let config = {
+            let mut config = self
+                .checkpoint_config
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            update(&mut config);
+            *config
+        };
+        for database in self.databases.all() {
+            if let Some(storage) = &database.storage {
+                storage.set_checkpoint_config(config);
+            }
+        }
+        Ok(())
+    }
+
+    /// How checkpoints reuse metadata.
+    fn checkpoint_config(&self) -> rustdb_storage::storage_manager::CheckpointConfig {
+        *self
+            .checkpoint_config
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// The compression settings checkpoints use.
@@ -433,7 +601,12 @@ impl DatabaseInstance {
     /// Checkpoints the database `name` a commit wrote to when its WAL grew beyond
     /// `checkpoint_threshold`, unless other transactions are running
     /// (`DuckTransactionManager::CanCheckpoint`).
-    fn auto_checkpoint(&self, name: &str) -> Result<()> {
+    ///
+    /// `blocks_concurrent` tells whether the committed transaction updated rows or
+    /// dropped catalog entries: then it does not checkpoint while other transactions run
+    /// (`GetCheckpointType`). A failing checkpoint reports that the commit succeeded
+    /// (`BuildAutocheckpointError`).
+    fn auto_checkpoint(&self, name: &str, blocks_concurrent: bool) -> Result<()> {
         let threshold = self
             .checkpoint_wal_size
             .load(std::sync::atomic::Ordering::Relaxed);
@@ -446,15 +619,40 @@ impl DatabaseInstance {
         let Some(wal) = storage.wal() else {
             return Ok(());
         };
-        if wal.size() <= threshold || self.transactions.active_count() > 0 {
+        // `SingleFileStorageManager::AutomaticCheckpoint`: the WAL size or entry count.
+        let entry_limit = self
+            .wal_autocheckpoint_entries
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let (size, entries) = {
+            let guard = wal.lock();
+            (guard.size(), guard.entries())
+        };
+        if size <= threshold && !(entry_limit > 0 && entries >= entry_limit) {
             return Ok(());
         }
-        crate::storage::create_checkpoint(
-            &database.catalog,
-            storage,
-            crate::storage::CheckpointMode::Automatic,
-            Some(&self.transactions),
-        )
+        if self.transactions.active_count() > 0 {
+            // Other transactions may need older data: a concurrent checkpoint, unless this
+            // transaction made changes they must not see; the checkpoint lock must be free.
+            if blocks_concurrent || wal.checkpoint_lock().try_exclusive().is_none() {
+                return Ok(());
+            }
+        }
+        database
+            .create_checkpoint(crate::storage::CheckpointMode::Automatic, Some(&self.transactions))
+            .map_err(|error| {
+                let recovery = if database.is_initial() {
+                    "Reopen the database instance to recover."
+                } else {
+                    "Detach and reattach the database to recover."
+                };
+                Error::new(
+                    error.kind(),
+                    format!(
+                        "Transaction COMMIT succeeded and is durable, but the autocheckpoint failed. {recovery} {}",
+                        error.raw_message()
+                    ),
+                )
+            })
     }
 
     /// Whether `checkpoint_on_shutdown` is on (`PRAGMA disable_checkpoint_on_shutdown`).
@@ -552,6 +750,9 @@ impl Database {
             shutdown_checkpoint_disabled: std::sync::atomic::AtomicBool::new(false),
             checkpoint_wal_size: std::sync::atomic::AtomicU64::new(DEFAULT_CHECKPOINT_WAL_SIZE),
             compression: std::sync::Mutex::default(),
+            checkpoint_config: std::sync::Mutex::default(),
+            validity: Arc::default(),
+            wal_autocheckpoint_entries: std::sync::atomic::AtomicU64::new(0),
             secrets: Arc::default(),
             connections: Arc::default(),
             object_cache: Arc::default(),
@@ -575,6 +776,9 @@ impl Database {
             if is_force_compression(name) {
                 instance.set_force_compression(Some(value))?;
             }
+            instance.set_checkpoint_setting(name, Some(value))?;
+            instance.set_disabled_compression_methods(name, Some(value))?;
+            instance.set_wal_autocheckpoint_entries(name, Some(value))?;
         }
         let database = Self {
             instance: Arc::new(instance),
@@ -582,6 +786,7 @@ impl Database {
         let options = crate::storage::startup_options(config);
         let main = database.attach("", &path, &options, rustdb_ast::OnCreateConflict::ErrorOnConflict)?;
         if let Some(main) = main {
+            main.is_initial.store(true, std::sync::atomic::Ordering::Release);
             let _ = database.instance.default_database.set(main.name.clone());
         }
         Ok(database)
@@ -605,12 +810,14 @@ impl Database {
             options,
             on_conflict,
             &self.instance.env.buffer_manager,
+            &self.instance.validity,
         )?
         else {
             return Ok(None);
         };
         if let Some(storage) = &attached.storage {
             storage.set_compression_config(self.instance.compression_config());
+            storage.set_checkpoint_config(self.instance.checkpoint_config());
         }
         if let Err(error) = crate::wal::replay(self, &attached) {
             self.instance.databases.remove(&attached.name);
@@ -668,6 +875,7 @@ impl Database {
             search_path: Vec::new(),
             search_path_set: Vec::new(),
             transaction_attaches: Vec::new(),
+            used_databases: Vec::new(),
             prepared_statements: CaseInsensitiveMap::default(),
             function_client,
             user_variables: CaseInsensitiveMap::default(),
@@ -724,6 +932,9 @@ pub struct Connection {
     /// Databases attached by the open explicit transaction; rolling it back detaches
     /// them (the `ATTACHED_DATABASE` undo entries).
     transaction_attaches: Vec<Arc<AttachedDatabase>>,
+    /// The databases the current transaction uses (`MetaTransaction::UseDatabase`): a
+    /// database detached meanwhile is closed when the transaction ends.
+    used_databases: Vec<Arc<AttachedDatabase>>,
     /// `SET VARIABLE` values (DuckDB's `ClientConfig::user_variables`).
     user_variables: CaseInsensitiveMap<rustdb_types::Value>,
     /// The connection's loggers.
@@ -809,6 +1020,10 @@ impl Connection {
     /// `ExecutePendingQueryInternal`): bind and plan, resolve column bindings, build the
     /// physical plan and run it, all inside the connection's transaction.
     pub fn execute_statement(&mut self, query: &str, statement: SqlStatement) -> Result<MaterializedResult> {
+        // `BeginQueryInternal`: nothing runs on an invalidated instance.
+        if let Some(message) = self.database.instance().validity.invalidated() {
+            return Err(invalidated_database_error(&message).with_query_context(query));
+        }
         self.sync_global_settings();
         self.function_client.set_query(query);
         self.function_client
@@ -835,10 +1050,28 @@ impl Connection {
             .as_ref()
             .is_err_and(|error| invalidates_transaction(error.kind()));
         // The database the transaction wrote to, which its commit may checkpoint.
-        let modified = if self.transactions.has_current() {
-            self.transactions.current().modified_database()
+        let (modified, blocks_concurrent) = if self.transactions.has_current() {
+            let current = self.transactions.current();
+            let properties = current.undo_properties();
+            (
+                current.modified_database(),
+                properties.has_updates || properties.has_dropped_entries,
+            )
+        } else {
+            (None, false)
+        };
+        // A transaction that used an invalidated database cannot commit
+        // (`MetaTransaction::Commit`); it is rolled back.
+        let invalid_use = if self.transactions.is_auto_commit() && outcome.is_ok() {
+            self.used_databases
+                .iter()
+                .find_map(|database| database.validity.invalidated())
         } else {
             None
+        };
+        let outcome = match invalid_use {
+            Some(message) => Err(Error::new(ErrorKind::Io, message)),
+            None => outcome,
         };
         let ended = self.transactions.end_statement(outcome.is_ok(), invalidates);
         // `EndQueryInternal`: the profile is written before the logger is refreshed.
@@ -856,7 +1089,16 @@ impl Connection {
         if result.is_ok()
             && !self.transactions.has_current()
             && let Some(modified) = modified
-            && let Err(error) = self.database.instance().auto_checkpoint(&modified)
+            && let Err(error) = self
+                .database
+                .instance()
+                .auto_checkpoint(&modified, blocks_concurrent)
+        {
+            result = Err(error);
+        }
+        if !self.transactions.has_current()
+            && let Err(error) = self.release_databases()
+            && result.is_ok()
         {
             result = Err(error);
         }
@@ -1345,14 +1587,13 @@ impl Connection {
             let instance = self.database.instance();
             let name = database.unwrap_or_else(|| self.default_catalog());
             let attached = instance.database(&name)?;
+            let started = !self.transactions.is_auto_commit()
+                && self
+                    .used_databases
+                    .iter()
+                    .any(|database| Arc::ptr_eq(database, &attached));
             let transaction = self.transactions.current();
-            crate::storage::checkpoint(
-                &attached.catalog,
-                attached.storage.as_ref(),
-                &transaction,
-                force,
-                &instance.transactions,
-            )?;
+            crate::storage::checkpoint(&attached, &transaction, started, force, &instance.transactions)?;
         }
         Ok(result)
     }
@@ -1376,6 +1617,35 @@ impl Connection {
             Some(LogicalKind::Pragma { parameters, .. }) => Ok(parameters),
             _ => Err(Error::internal("a PRAGMA bound to another statement")),
         }
+    }
+
+    /// Records that the transaction uses `database` (`MetaTransaction::UseDatabase`).
+    fn use_database(&mut self, database: &Arc<AttachedDatabase>) {
+        if !self.used_databases.iter().any(|used| Arc::ptr_eq(used, database)) {
+            self.used_databases.push(Arc::clone(database));
+        }
+    }
+
+    /// The reason a database the transaction used was invalidated, if one was.
+    fn invalidated_used_database(&self) -> Option<String> {
+        self.used_databases
+            .iter()
+            .find_map(|database| database.validity.invalidated())
+    }
+
+    /// Lets go of the databases the finished transaction used; one detached meanwhile is
+    /// closed now that no transaction uses it (`MetaTransaction::Finalize`).
+    fn release_databases(&mut self) -> Result<()> {
+        let checkpoint = self.database.instance().checkpoint_on_shutdown();
+        let mut result = Ok(());
+        for database in std::mem::take(&mut self.used_databases) {
+            if let Err(error) = AttachedDatabase::close_if_last_reference(&database, checkpoint)
+                && result.is_ok()
+            {
+                result = Err(error);
+            }
+        }
+        result
     }
 
     /// Ends the explicit transaction's attaches: kept on commit, detached again when the
@@ -1424,7 +1694,7 @@ impl Connection {
             .databases
             .detach(&info.name, instance.checkpoint_on_shutdown())
         {
-            Some(_) => Ok(()),
+            Some(result) => result,
             None if info.if_not_found == rustdb_ast::OnEntryNotFound::ReturnNull => Ok(()),
             None => Err(Error::binder(format!(
                 "Failed to detach database with name \"{}\": database not found",
@@ -1674,6 +1944,19 @@ impl Connection {
         let instance = self.database.instance();
         let mut modified: Vec<String> = Vec::new();
         collect_modified_databases(plan, instance, &mut modified);
+        // The databases the statement reads or writes join the transaction
+        // (`MetaTransaction::GetTransaction`), unless they were invalidated.
+        let mut used = modified.clone();
+        collect_read_databases(plan, &mut used);
+        let used: Vec<Arc<AttachedDatabase>> = used
+            .iter()
+            .filter_map(|name| instance.databases.get(name))
+            .collect();
+        for database in &used {
+            database.check_valid()?;
+            self.use_database(database);
+        }
+        let instance = self.database.instance();
         if modified.is_empty() {
             return Ok(());
         }
@@ -1705,6 +1988,7 @@ impl Connection {
                 &database.name,
                 database.catalog.wal(),
                 needs_checkpoint_lock(plan),
+                needs_vacuum_lock(plan),
             )?;
         }
         Ok(())
@@ -1762,11 +2046,35 @@ impl Connection {
         match &plan.kind {
             LogicalKind::Transaction { info } => {
                 match info.transaction_type {
-                    TransactionType::BeginTransaction => self
-                        .transactions
-                        .begin(info.modifier == rustdb_ast::TransactionModifierType::TransactionReadOnly)?,
+                    TransactionType::BeginTransaction => {
+                        self.transactions.begin(
+                            info.modifier == rustdb_ast::TransactionModifierType::TransactionReadOnly,
+                        )?;
+                        // `immediate_transaction_mode` starts the transaction in every valid
+                        // database right away.
+                        if rustdb_function::SettingsSource::current_setting(
+                            &self.settings_snapshot(),
+                            "immediate_transaction_mode",
+                        )
+                        .ok()
+                        .and_then(|value| value.as_bool())
+                            == Some(true)
+                        {
+                            for database in self.database.instance().databases.all() {
+                                if database.validity.invalidated().is_none() {
+                                    self.use_database(&database);
+                                }
+                            }
+                        }
+                    }
                     TransactionType::Commit => {
-                        // An aborted transaction's COMMIT rolls it back.
+                        // A transaction that used an invalidated database is rolled back
+                        // (`MetaTransaction::Commit`), as is an aborted one.
+                        if let Some(message) = self.invalidated_used_database() {
+                            self.transactions.rollback()?;
+                            self.finish_transaction_attaches(true);
+                            return Err(Error::new(ErrorKind::Io, message));
+                        }
                         let rolls_back = self.transactions.is_invalidated();
                         let result = self.transactions.commit();
                         self.finish_transaction_attaches(rolls_back || result.is_err());
@@ -1775,6 +2083,9 @@ impl Connection {
                     TransactionType::Rollback => {
                         self.transactions.rollback()?;
                         self.finish_transaction_attaches(true);
+                        if let Some(message) = self.invalidated_used_database() {
+                            return Err(Error::new(ErrorKind::Io, message));
+                        }
                     }
                     TransactionType::Invalid => {
                         return Err(Error::not_implemented("Unrecognized transaction type!"));
@@ -1864,6 +2175,15 @@ impl Connection {
                 if is_force_compression(name) {
                     self.database.instance().set_force_compression(Some(value))?;
                 }
+                self.database
+                    .instance()
+                    .set_checkpoint_setting(name, Some(value))?;
+                self.database
+                    .instance()
+                    .set_disabled_compression_methods(name, Some(value))?;
+                self.database
+                    .instance()
+                    .set_wal_autocheckpoint_entries(name, Some(value))?;
                 return Ok(nothing());
             }
             LogicalKind::Reset { name, scope } => {
@@ -1886,6 +2206,13 @@ impl Connection {
                 if is_force_compression(name) {
                     self.database.instance().set_force_compression(None)?;
                 }
+                self.database.instance().set_checkpoint_setting(name, None)?;
+                self.database
+                    .instance()
+                    .set_disabled_compression_methods(name, None)?;
+                self.database
+                    .instance()
+                    .set_wal_autocheckpoint_entries(name, None)?;
                 if is_checkpoint_threshold(name) {
                     self.database
                         .instance()
@@ -2193,6 +2520,31 @@ fn parse_search_path(input: &str) -> Result<Vec<(String, String)>> {
 
 /// The databases a plan writes to: the catalog of DDL statements and the database of
 /// the table of DML statements.
+/// `ErrorManager::InvalidatedDatabase`: the error of using an invalidated instance.
+fn invalidated_database_error(message: &str) -> Error {
+    const BASE: &str = "Failed: database has been invalidated because of a previous fatal error. The database must \
+                        be restarted prior to being used again.\n";
+    if message.contains(BASE) {
+        return Error::new(ErrorKind::Fatal, message.to_owned());
+    }
+    Error::new(ErrorKind::Fatal, format!("{BASE}Original error: \"{message}\""))
+}
+
+/// The databases whose tables a plan scans.
+fn collect_read_databases(plan: &LogicalOperator, out: &mut Vec<String>) {
+    if let LogicalKind::Get(get) = &plan.kind
+        && get.table.is_some()
+        && let Some((catalog, _)) = &get.table_schema
+        && !catalog.is_empty()
+        && !out.iter().any(|existing| existing.eq_ignore_ascii_case(catalog))
+    {
+        out.push(catalog.clone());
+    }
+    for child in &plan.children {
+        collect_read_databases(child, out);
+    }
+}
+
 fn collect_modified_databases(plan: &LogicalOperator, instance: &DatabaseInstance, out: &mut Vec<String>) {
     let mut push = |name: &str| {
         if !name.is_empty() && !out.iter().any(|existing| existing.eq_ignore_ascii_case(name)) {
@@ -2294,6 +2646,22 @@ fn needs_checkpoint_lock(plan: &LogicalOperator) -> bool {
         _ => false,
     };
     own || plan.children.iter().any(needs_checkpoint_lock)
+}
+
+/// Whether a plan inserts or deletes rows, which holds the vacuum lock shared
+/// (`DuckTransaction::SetModifications` with `InsertData` / `DeleteData`).
+fn needs_vacuum_lock(plan: &LogicalOperator) -> bool {
+    let own = match &plan.kind {
+        LogicalKind::Insert(_) | LogicalKind::Delete(_) => true,
+        LogicalKind::MergeInto(merge) => merge.actions.values().flatten().any(|action| {
+            matches!(
+                action.action_type,
+                rustdb_ast::MergeActionType::MergeInsert | rustdb_ast::MergeActionType::MergeDelete
+            )
+        }),
+        _ => false,
+    };
+    own || plan.children.iter().any(needs_vacuum_lock)
 }
 
 /// Pragmas without a result that only tune testing or profiling behaviour.

@@ -1,11 +1,12 @@
 //! A horizontal partition of a table of up to 122,880 rows (DuckDB's `RowGroup`).
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use rustdb_common::{Error, Result};
 use rustdb_types::{DataChunk, LogicalType, SelectionVector, Vector};
 
+use super::PerColumnMetadataBlocks;
 use super::chunk_info::{DeletedRows, DeletedScanType, InsertedScanType, ScanOptions, UpdateScanType};
 use super::column_data::{
     ColumnAppendState, ColumnData, ColumnDataType, ColumnScanState, UpdateRegistration,
@@ -16,6 +17,7 @@ use super::segment_tree::Segment;
 use crate::VECTOR_SIZE;
 use crate::checkpoint::pointers::PersistentColumnData;
 use crate::data_table::TableIoManager;
+use crate::metadata::MetaBlockPointer;
 use crate::statistics::{BaseStatistics, FilterPropagateResult};
 use crate::table_filter::TableFilter;
 use crate::transaction::TransactionData;
@@ -72,6 +74,101 @@ pub enum TableScanType {
     CommittedRows,
 }
 
+/// Where the metadata of a row group's columns is stored in the database file, kept so
+/// that checkpoints can reuse it (DuckDB's `RowGroup::column_pointers`,
+/// `has_metadata_blocks`, `extra_metadata_blocks`, `has_per_column_metadata_blocks` and
+/// `per_column_metadata_blocks`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RowGroupMetadata {
+    /// The start of each column's `PersistentColumnData`; empty when the row group has
+    /// no metadata on disk.
+    pub column_pointers: Vec<MetaBlockPointer>,
+    /// Whether `extra_metadata_blocks` is known.
+    pub has_metadata_blocks: bool,
+    /// The metadata blocks of the columns besides those `column_pointers` point into.
+    pub extra_metadata_blocks: Vec<u64>,
+    pub has_per_column_metadata_blocks: bool,
+    /// Per column, the metadata blocks besides its start block.
+    pub per_column_metadata_blocks: PerColumnMetadataBlocks,
+}
+
+impl RowGroupMetadata {
+    /// What a copy of the row group for an ALTER TABLE keeps (`CreateNewRowGroupCopy`):
+    /// the column pointers resized to `column_count` and whether per-column metadata
+    /// blocks are known, with `columns` giving the source column of each target column.
+    fn copied(&self, column_count: usize, columns: impl Fn(usize) -> Option<usize>) -> Self {
+        let column_pointers = if self.column_pointers.is_empty() {
+            Vec::new()
+        } else {
+            (0..column_count)
+                .map(|target| {
+                    columns(target)
+                        .and_then(|source| self.column_pointers.get(source).copied())
+                        .unwrap_or_else(MetaBlockPointer::invalid)
+                })
+                .collect()
+        };
+        Self {
+            column_pointers,
+            has_per_column_metadata_blocks: self.has_per_column_metadata_blocks,
+            ..Self::default()
+        }
+    }
+
+    /// The metadata of a copy with a new last column (`RowGroup::AddColumn`).
+    #[must_use]
+    pub fn with_added_column(&self) -> Self {
+        let count = self.column_pointers.len();
+        let mut result = self.copied(count + 1, |target| (target < count).then_some(target));
+        if self.has_per_column_metadata_blocks {
+            result.per_column_metadata_blocks = self.per_column_metadata_blocks.clone();
+        }
+        result
+    }
+
+    /// The metadata of a copy without column `removed` (`RowGroup::RemoveColumn`).
+    #[must_use]
+    pub fn without_column(&self, removed: usize) -> Self {
+        let count = self.column_pointers.len().saturating_sub(1);
+        let mut result = self.copied(count, |target| {
+            Some(if target < removed { target } else { target + 1 })
+        });
+        if self.has_per_column_metadata_blocks {
+            result.per_column_metadata_blocks = self.per_column_metadata_blocks.clone();
+            result.per_column_metadata_blocks.remove_column(removed);
+        }
+        result
+    }
+
+    /// The metadata of a copy where column `changed` is rewritten (`RowGroup::AlterType`).
+    #[must_use]
+    pub fn with_changed_column(&self, changed: usize) -> Self {
+        let count = self.column_pointers.len();
+        let mut result = self.copied(count, |target| (target != changed).then_some(target));
+        if self.has_per_column_metadata_blocks {
+            result.per_column_metadata_blocks = self.per_column_metadata_blocks.clone();
+            result.per_column_metadata_blocks.clear_column(changed);
+        }
+        result
+    }
+
+    /// The extra metadata blocks as pointers (`GetExtraMetadataBlockPointers`).
+    pub fn extra_metadata_block_pointers(&self) -> Vec<MetaBlockPointer> {
+        if self.has_per_column_metadata_blocks {
+            self.per_column_metadata_blocks
+                .blocks()
+                .into_iter()
+                .map(|block| MetaBlockPointer::new(block, 0))
+                .collect()
+        } else {
+            self.extra_metadata_blocks
+                .iter()
+                .map(|&block| MetaBlockPointer::new(block, 0))
+                .collect()
+        }
+    }
+}
+
 /// A row group: one column data per column plus the rows' versions.
 #[derive(Debug)]
 pub struct RowGroup {
@@ -82,6 +179,11 @@ pub struct RowGroup {
     /// What the columns not built yet are made from.
     unloaded: Option<Box<UnloadedColumns>>,
     version_info: Mutex<Option<Arc<RowVersionManager>>>,
+    /// Where the columns' metadata is on disk.
+    metadata: Mutex<RowGroupMetadata>,
+    /// Set when the row group was copied for an ALTER TABLE or moved to another
+    /// collection: it has to be written again (`has_changes`).
+    has_changes: AtomicBool,
 }
 
 /// The stored segments of a row group's columns, until each column is first used.
@@ -117,22 +219,27 @@ impl RowGroup {
             columns: columns.into_iter().map(OnceLock::from).collect(),
             unloaded: None,
             version_info: Mutex::default(),
+            metadata: Mutex::default(),
+            has_changes: AtomicBool::new(false),
         }
     }
 
     /// A row group sharing this one's versions whose columns are now stored as `data`
-    /// (after a checkpoint wrote them), built when first used.
+    /// with their metadata at `metadata` (after a checkpoint wrote them), built when first
+    /// used (the `result_row_group` of `RowGroup::WriteToDisk`).
     #[must_use]
     pub fn with_persistent(
         &self,
         io: Arc<TableIoManager>,
         types: Vec<LogicalType>,
         data: Vec<PersistentColumnData>,
+        metadata: RowGroupMetadata,
     ) -> Self {
         let row_group = Self::from_persistent(io, types, data, self.count());
         row_group
             .version_info_lock()
             .clone_from(&self.version_info_lock());
+        row_group.set_metadata(metadata);
         row_group
     }
 
@@ -153,11 +260,13 @@ impl RowGroup {
                 data: data.into_iter().map(|column| Mutex::new(Some(column))).collect(),
             })),
             version_info: Mutex::default(),
+            metadata: Mutex::default(),
+            has_changes: AtomicBool::new(false),
         }
     }
 
     /// A row group sharing this one's columns and versions, with `columns` replaced
-    /// (`CreateNewRowGroupCopy`, used by ALTER TABLE).
+    /// (`CreateNewRowGroupCopy`, used by ALTER TABLE): it has changes.
     #[must_use]
     pub fn with_columns(&self, columns: Vec<Arc<ColumnData>>) -> Self {
         Self {
@@ -165,7 +274,68 @@ impl RowGroup {
             columns: columns.into_iter().map(OnceLock::from).collect(),
             unloaded: None,
             version_info: Mutex::new(self.version_info_lock().clone()),
+            metadata: Mutex::default(),
+            has_changes: AtomicBool::new(true),
         }
+    }
+
+    /// Where the columns' metadata is on disk.
+    pub fn metadata(&self) -> RowGroupMetadata {
+        self.metadata
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Records where the columns' metadata is on disk.
+    pub fn set_metadata(&self, metadata: RowGroupMetadata) {
+        *self.metadata.lock().unwrap_or_else(PoisonError::into_inner) = metadata;
+    }
+
+    /// Publishes the `count` rows a vacuum appended to this new row group: they are
+    /// visible to every transaction (`RowGroup(collection, count)`).
+    pub(crate) fn set_vacuumed_count(&self, count: u64) {
+        self.set_count(count);
+    }
+
+    /// Marks the row group as changed (`MoveToCollection`).
+    pub fn set_has_changes(&self) {
+        self.has_changes.store(true, Ordering::Release);
+    }
+
+    /// Whether column `index` was built (`ColumnIsLoaded`).
+    pub fn column_is_loaded(&self, index: usize) -> bool {
+        self.columns.get(index).is_some_and(|slot| slot.get().is_some())
+    }
+
+    /// Whether anything must be written again: the row group was copied or moved,
+    /// deletes were committed since the last checkpoint, or a built column has changes
+    /// (`HasChanges`; columns not built yet never have changes).
+    pub fn has_changes(&self) -> bool {
+        if self.has_changes.load(Ordering::Acquire) {
+            return true;
+        }
+        if self
+            .version_info()
+            .is_some_and(|info| info.has_unserialized_changes())
+        {
+            return true;
+        }
+        self.loaded_columns().any(|column| column.has_any_changes())
+    }
+
+    /// The stored segments of column `index` when it was not built yet.
+    pub fn unloaded_column_data(&self, index: usize) -> Option<PersistentColumnData> {
+        if self.column_is_loaded(index) {
+            return None;
+        }
+        let unloaded = self.unloaded.as_ref()?;
+        unloaded
+            .data
+            .get(index)?
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     pub fn count(&self) -> u64 {

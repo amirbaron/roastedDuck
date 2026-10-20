@@ -269,6 +269,9 @@ pub struct WriteAheadLog {
     state: Mutex<WalState>,
     /// Held shared by the transactions writing to the database.
     checkpoint_lock: Arc<crate::checkpoint_lock::CheckpointLock>,
+    /// Held shared by transactions that insert or delete rows, exclusively by a checkpoint
+    /// that vacuums (`DuckTransactionManager::vacuum_lock`).
+    vacuum_lock: Arc<crate::checkpoint_lock::CheckpointLock>,
 }
 
 impl WriteAheadLog {
@@ -291,12 +294,18 @@ impl WriteAheadLog {
                 ..WalState::default()
             }),
             checkpoint_lock: Arc::default(),
+            vacuum_lock: Arc::default(),
         }
     }
 
     /// The database's checkpoint lock (`DuckTransactionManager::checkpoint_lock`).
     pub fn checkpoint_lock(&self) -> &Arc<crate::checkpoint_lock::CheckpointLock> {
         &self.checkpoint_lock
+    }
+
+    /// The database's vacuum lock (`DuckTransactionManager::vacuum_lock`).
+    pub fn vacuum_lock(&self) -> &Arc<crate::checkpoint_lock::CheckpointLock> {
+        &self.vacuum_lock
     }
 
     pub fn path(&self) -> &str {

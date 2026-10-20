@@ -9,10 +9,10 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use rustdb_ast::{
-    CatalogType as AstCatalogType, ColumnDefinition, ColumnList, CompressionType, Constraint,
-    CreateIndexInfo, CreateInfo, CreateInfoKind, CreateMacroInfo, CreateSequenceInfo, CreateTableInfo,
-    CreateTypeInfo, CreateViewInfo, ForeignKeyType, IndexConstraintType as AstIndexConstraintType,
-    LogicalDependencyList, OnCreateConflict, ParsedExpressionKind, TableColumnType,
+    CatalogType as AstCatalogType, ColumnDefinition, ColumnList, Constraint, CreateIndexInfo, CreateInfo,
+    CreateInfoKind, CreateMacroInfo, CreateSequenceInfo, CreateTableInfo, CreateTypeInfo, CreateViewInfo,
+    ForeignKeyType, IndexConstraintType as AstIndexConstraintType, LogicalDependencyList, OnCreateConflict,
+    ParsedExpressionKind, TableColumnType,
 };
 use rustdb_buffer::BlockId;
 use rustdb_common::{CaseInsensitiveMap, Error, OrderedMap, Result};
@@ -21,11 +21,11 @@ use rustdb_serde::{Deserializer, Serializer};
 use rustdb_storage::checkpoint::pointers::{deserialize_meta_block_pointer, serialize_meta_block_pointer};
 use rustdb_storage::checkpoint::stream::StreamDeserializer;
 use rustdb_storage::checkpoint::table_reader::{load_row_groups, read_table_data};
-use rustdb_storage::checkpoint::table_writer::{BlockWriter, write_table_data};
+use rustdb_storage::checkpoint::table_writer::{BlockWriter, finish_table_checkpoint, write_table_data};
 use rustdb_storage::index::IndexConstraintType;
 use rustdb_storage::metadata::{MetaBlockPointer, MetadataReader, MetadataWriter};
 use rustdb_storage::storage_info::{DatabaseHeader, STANDARD_VECTOR_SIZE};
-use rustdb_storage::storage_manager::StorageManager;
+use rustdb_storage::storage_manager::{CheckpointAbort, StorageManager};
 use rustdb_storage::{ColumnDefinition as StorageColumn, DataTable};
 use rustdb_types::{LogicalType, Value};
 
@@ -94,7 +94,7 @@ pub(crate) fn table_create_info(
                 logical_type: column.logical_type.clone(),
                 expression,
                 category,
-                compression_type: CompressionType::CompressionAuto,
+                compression_type: column.compression_type,
                 comment: column.comment.clone(),
                 tags: OrderedMap::default(),
             }
@@ -476,6 +476,8 @@ pub fn write_checkpoint(
     transaction: &Transaction,
     on_start: &mut dyn FnMut(MetaBlockPointer) -> Result<()>,
     replace_in_memory: bool,
+    vacuum: bool,
+    lowest_active_start: u64,
 ) -> Result<()> {
     if storage.is_read_only() {
         return Ok(());
@@ -487,6 +489,7 @@ pub fn write_checkpoint(
     let meta_block = writer.meta_block_pointer()?;
     on_start(meta_block)?;
     let mut blocks = BlockWriter::new(Arc::clone(storage.block_manager()));
+    let table_settings = storage.table_write_settings(replace_in_memory && vacuum, lowest_active_start);
     let catalog_name = catalog.name().to_owned();
     let mut persisted = Vec::new();
 
@@ -552,7 +555,9 @@ pub fn write_checkpoint(
             match &entry.kind {
                 EntryKind::Schema(_) => {
                     serializer.write_property(99, "catalog_type", &AstCatalogType::SchemaEntry)?;
-                    let info = base_info(&catalog_name, entry.name(), false, CreateInfoKind::Schema);
+                    // `SchemaCatalogEntry::GetInfo`: the schema name and comment, no catalog.
+                    let mut info = base_info("", entry.name(), false, CreateInfoKind::Schema);
+                    info.comment.clone_from(&entry.comment);
                     write_create_info(serializer, 100, "schema", &info)?;
                 }
                 EntryKind::Type(ty) => {
@@ -603,12 +608,13 @@ pub fn write_checkpoint(
                         &mut blocks,
                         &options,
                         u64::MAX,
+                        table_settings,
                     )?;
                     serializer.write_object_property(101, "table_pointer", |s| {
                         serialize_meta_block_pointer(s, data.table_pointer)
                     })?;
                     serializer.write_property(102, "total_rows", &data.total_rows)?;
-                    persisted.push((Arc::clone(storage_table), data.persisted));
+                    persisted.push((Arc::clone(storage_table), data));
                     let index_infos = serialize_indexes(storage_table, storage, &options, &mut blocks)?;
                     // Empty block pointers for forwards compatibility.
                     serializer.on_property_begin(103, "index_pointers");
@@ -662,6 +668,9 @@ pub fn write_checkpoint(
     writer.flush()?;
     table_writer.flush()?;
     blocks.flush()?;
+    let abort = storage.checkpoint_config().abort;
+    abort.check(CheckpointAbort::BeforeHeader)?;
+    abort.check(CheckpointAbort::BeforeHeaderNonFatal)?;
     let block_manager = storage.block_manager();
     let header = DatabaseHeader {
         iteration: 0,
@@ -672,12 +681,12 @@ pub fn write_checkpoint(
         vector_size: STANDARD_VECTOR_SIZE,
         serialization_compatibility: block_manager.storage_version(),
     };
-    block_manager.write_header(metadata, header, &blocks.used_blocks)?;
+    block_manager.write_header(metadata, header, &blocks.used_blocks, abort)?;
+    abort.check(CheckpointAbort::BeforeTruncate)?;
     block_manager.truncate()?;
-    if replace_in_memory {
-        for (table, row_groups) in persisted {
-            rustdb_storage::checkpoint::table_writer::replace_with_checkpointed(&table, row_groups)?;
-        }
+    abort.check(CheckpointAbort::BeforeWalFinish)?;
+    for (table, data) in persisted {
+        finish_table_checkpoint(&table, data, replace_in_memory)?;
     }
     Ok(())
 }
@@ -856,6 +865,7 @@ pub fn load_checkpoint(
                     .physical_columns()
                     .map(|(_, _, column)| {
                         StorageColumn::new(column.name.clone(), column.logical_type.clone())
+                            .with_compression(column.storage_compression())
                     })
                     .collect();
                 let types: Vec<LogicalType> = columns.iter().map(|c| c.ty.clone()).collect();

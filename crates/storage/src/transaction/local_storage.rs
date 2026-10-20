@@ -124,7 +124,9 @@ impl LocalTableStorage {
         if bulk && deleted == 0 {
             table.row_groups().merge_storage(&collection)?;
         } else {
-            let mut append = table.row_groups().initialize_append(transaction.data())?;
+            let mut append = table
+                .row_groups()
+                .initialize_append_with_indexes(transaction.data(), table.has_indexes())?;
             let result = Self::scan_visible(transaction.data(), &collection, |chunk| {
                 table.row_groups().append(chunk, &mut append).map(|_| ())
             });

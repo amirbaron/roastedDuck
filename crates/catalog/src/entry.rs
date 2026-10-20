@@ -135,6 +135,16 @@ pub struct TableColumn {
     pub generated: Option<ParsedExpression>,
     /// `COMMENT ON COLUMN` (NULL without one).
     pub comment: rustdb_types::Value,
+    /// `USING COMPRESSION` (`ColumnDefinition::compression_type`).
+    pub compression_type: rustdb_ast::CompressionType,
+}
+
+impl TableColumn {
+    /// The storage compression the column was declared with.
+    pub fn storage_compression(&self) -> rustdb_storage::compression::CompressionType {
+        rustdb_storage::compression::CompressionType::from_u8(self.compression_type as u8)
+            .unwrap_or(rustdb_storage::compression::CompressionType::Auto)
+    }
 }
 
 /// A table's definition (DuckDB's `TableCatalogEntry` / `DuckTableEntry`). Its data lives
@@ -168,6 +178,7 @@ impl TableEntry {
                     default_value: if generated { None } else { expression.clone() },
                     generated: if generated { expression } else { None },
                     comment: column.comment.clone(),
+                    compression_type: column.compression_type,
                 }
             })
             .collect();

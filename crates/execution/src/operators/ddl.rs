@@ -263,7 +263,12 @@ impl TableCreator for CatalogTableCreator {
             check_struct_columns(&column.logical_type)?;
         }
         let columns: Vec<ColumnDefinition> = physical()
-            .map(|c| ColumnDefinition::new(c.name.clone(), c.logical_type.clone()))
+            .map(|c| {
+                ColumnDefinition::new(c.name.clone(), c.logical_type.clone()).with_compression(
+                    rustdb_storage::compression::CompressionType::from_u8(c.compression_type as u8)
+                        .unwrap_or(rustdb_storage::compression::CompressionType::Auto),
+                )
+            })
             .collect();
         let storage = DataTable::new(
             Arc::clone(&self.io),

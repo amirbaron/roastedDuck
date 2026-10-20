@@ -4,6 +4,7 @@
 pub mod chunk_info;
 pub mod column_data;
 pub mod column_segment;
+pub mod per_column_metadata_blocks;
 pub mod row_group;
 pub mod row_group_collection;
 pub mod row_version_manager;
@@ -19,9 +20,13 @@ pub use column_data::{
     UpdateRegistration,
 };
 pub use column_segment::{ColumnSegment, SegmentScanState, SegmentType};
-pub use row_group::{DeleteRecord, RowGroup, RowGroupAppendState, TableScanType, UpdateRecord};
+pub use per_column_metadata_blocks::{PerColumnMetadataBlock, PerColumnMetadataBlocks};
+pub use row_group::{
+    DeleteRecord, RowGroup, RowGroupAppendState, RowGroupMetadata, TableScanType, UpdateRecord,
+};
 pub use row_group_collection::{
-    FetchType, RowGroupAppendMode, RowGroupCollection, RowGroupSegmentTree, TableAppendState, TableStatistics,
+    FetchType, RowGroupAppendMode, RowGroupCollection, RowGroupSegmentTree, TableAppendState,
+    TableMetadataPointer, TableStatistics,
 };
 pub use row_version_manager::RowVersionManager;
 pub use scan_state::{

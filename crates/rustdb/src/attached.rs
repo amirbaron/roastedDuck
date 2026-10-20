@@ -12,6 +12,38 @@ use rustdb_types::{LogicalTypeId, Value};
 use crate::AccessMode;
 use crate::storage::{database_name, open_storage};
 
+/// Whether a database instance or an attached database can still be used (DuckDB's
+/// `ValidChecker`): invalidated, with the reason, after a failure it cannot recover from.
+#[derive(Debug, Default)]
+pub(crate) struct ValidChecker {
+    message: Mutex<Option<String>>,
+}
+
+impl ValidChecker {
+    /// `Invalidate`.
+    pub fn invalidate(&self, message: String) {
+        *self.message.lock().unwrap_or_else(PoisonError::into_inner) = Some(message);
+    }
+
+    /// The reason the object was invalidated, if it was (`IsInvalidated` and
+    /// `InvalidatedMessage`).
+    pub fn invalidated(&self) -> Option<String> {
+        self.message
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+}
+
+/// How a database is closed (DuckDB's `DatabaseCloseAction`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CloseAction {
+    /// Shutting down: a failing checkpoint is ignored.
+    TryCheckpoint,
+    /// `DETACH`: a failing checkpoint is an error.
+    Checkpoint,
+}
+
 /// One attached database.
 #[derive(Debug)]
 pub(crate) struct AttachedDatabase {
@@ -22,18 +54,126 @@ pub(crate) struct AttachedDatabase {
     /// The database file, unless the database is in memory.
     pub storage: Option<Arc<StorageManager>>,
     pub read_only: bool,
+    /// Whether this is the database opened at start-up (`IsInitialDatabase`).
+    pub is_initial: std::sync::atomic::AtomicBool,
+    /// This database's validity (a failed checkpoint invalidates it).
+    pub validity: ValidChecker,
+    /// The instance's validity (a failed checkpoint of the initial database invalidates
+    /// the instance).
+    pub instance_validity: Arc<ValidChecker>,
+    /// Set once the database was closed (`is_closed`).
+    closed: std::sync::atomic::AtomicBool,
 }
 
 impl AttachedDatabase {
-    /// Writes a checkpoint when the database is closed or detached
-    /// (`AttachedDatabase::Close`); errors are dropped, as DuckDB logs them.
-    pub fn close(&self, checkpoint: bool) {
-        if checkpoint
-            && let Some(storage) = &self.storage
-            && !storage.is_read_only()
-        {
-            let _ = crate::storage::checkpoint_on_close(&self.catalog, storage);
+    /// Whether this is the database opened at start-up.
+    pub fn is_initial(&self) -> bool {
+        self.is_initial.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// The error of using the database after it was invalidated (the `IOException` of
+    /// `MetaTransaction::GetTransaction`).
+    pub fn check_valid(&self) -> Result<()> {
+        match self.validity.invalidated() {
+            Some(message) => Err(Error::new(ErrorKind::Io, message)),
+            None => Ok(()),
         }
+    }
+
+    /// `AttachedDatabase::Invalidate` after a failed checkpoint.
+    fn invalidate(&self, reason: &str) {
+        let recovery = if self.storage.is_none() {
+            "It is an in-memory database, so its data cannot be recovered."
+        } else {
+            "Detach and reattach it before using it again."
+        };
+        self.validity.invalidate(format!(
+            "Database \"{}\" has been invalidated because checkpointing failed. {recovery} Original error: {reason}",
+            self.name
+        ));
+    }
+
+    /// The error of a checkpoint that failed while writing, after invalidating the
+    /// instance (initial database) or this database (the `catch` of
+    /// `SingleFileStorageManager::CreateCheckpoint`).
+    pub fn checkpoint_failed(&self, error: &Error) -> Error {
+        let reason = error.raw_message();
+        if self.is_initial() {
+            self.instance_validity.invalidate(reason.to_owned());
+            return Error::new(
+                ErrorKind::Fatal,
+                format!("Failed to create checkpoint because of error: {reason}"),
+            );
+        }
+        self.invalidate(reason);
+        Error::new(
+            ErrorKind::Io,
+            format!(
+                "Checkpoint failed for database \"{}\". The database has been invalidated. Original error: {reason}",
+                self.name
+            ),
+        )
+    }
+
+    /// Writes a checkpoint of the database if it has storage and is still valid
+    /// (`SingleFileStorageManager::CreateCheckpoint`).
+    pub fn create_checkpoint(
+        &self,
+        mode: crate::storage::CheckpointMode,
+        transactions: Option<&rustdb_catalog::TransactionManager>,
+    ) -> Result<()> {
+        let Some(storage) = &self.storage else {
+            return Ok(());
+        };
+        // `SingleFileCheckpointWriter::CreateCheckpoint`: no checkpoint of an invalidated
+        // instance.
+        if self.instance_validity.invalidated().is_some() {
+            return Ok(());
+        }
+        crate::storage::create_checkpoint(&self.catalog, storage, mode, transactions, &|error| {
+            self.checkpoint_failed(&error)
+        })
+    }
+
+    /// Closes the database, writing a checkpoint if `checkpoint` (`checkpoint_on_shutdown`)
+    /// is on and the database and instance are still valid (`AttachedDatabase::Close`).
+    /// With `CloseAction::Checkpoint` (`DETACH`) a failing checkpoint is an error.
+    pub fn close(&self, checkpoint: bool, action: CloseAction) -> Result<()> {
+        if self.closed.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            return Ok(());
+        }
+        let create_checkpoint = checkpoint
+            && self
+                .storage
+                .as_ref()
+                .is_some_and(|storage| !storage.is_read_only())
+            && self.instance_validity.invalidated().is_none()
+            && self.validity.invalidated().is_none();
+        if !create_checkpoint {
+            return Ok(());
+        }
+        match self.create_checkpoint(crate::storage::CheckpointMode::Automatic, None) {
+            Ok(()) => Ok(()),
+            // DuckDB logs the error.
+            Err(_) if action == CloseAction::TryCheckpoint => Ok(()),
+            Err(error) => Err(Error::new(
+                error.kind(),
+                format!(
+                    "Detached database '{}', but CHECKPOINT during DETACH failed. \n{}",
+                    self.name,
+                    error.raw_message()
+                ),
+            )),
+        }
+    }
+
+    /// `InvokeCloseIfLastReference`: closes a detached database once `database` is the
+    /// last reference to it.
+    pub fn close_if_last_reference(database: &Arc<Self>, checkpoint: bool) -> Result<()> {
+        if Arc::strong_count(database) == 1 {
+            database.close(checkpoint, CloseAction::Checkpoint)?;
+        }
+        Ok(())
     }
 }
 
@@ -176,14 +316,13 @@ impl DatabaseManager {
         self.read().clone()
     }
 
-    /// Detaches the database called `name`: removes it and closes it, writing a
-    /// checkpoint if `checkpoint` (`checkpoint_on_shutdown`) is on
-    /// (`DatabaseManager::DetachDatabase`).
-    pub fn detach(&self, name: &str, checkpoint: bool) -> Option<Arc<AttachedDatabase>> {
+    /// Detaches the database called `name`: removes it and closes it once no transaction
+    /// uses it any more, writing a checkpoint if `checkpoint` (`checkpoint_on_shutdown`) is
+    /// on (`DatabaseManager::DetachDatabase`). `None` if there is no such database.
+    pub fn detach(&self, name: &str, checkpoint: bool) -> Option<Result<()>> {
         let _guard = self.attach_lock.lock().unwrap_or_else(PoisonError::into_inner);
         let database = self.remove(name)?;
-        database.close(checkpoint);
-        Some(database)
+        Some(AttachedDatabase::close_if_last_reference(&database, checkpoint))
     }
 
     /// Detaches `database` if it is still attached (`ptr_eq`) under its name.
@@ -193,7 +332,7 @@ impl DatabaseManager {
         if current.is_some_and(|current| Arc::ptr_eq(&current, database))
             && let Some(removed) = self.remove(&database.name)
         {
-            removed.close(checkpoint);
+            let _ = removed.close(checkpoint, CloseAction::TryCheckpoint);
         }
     }
 
@@ -216,6 +355,7 @@ impl DatabaseManager {
         options: &AttachOptions,
         on_conflict: OnCreateConflict,
         buffer_manager: &rustdb_buffer::BufferManager,
+        instance_validity: &Arc<ValidChecker>,
     ) -> Result<Option<Arc<AttachedDatabase>>> {
         let _guard = self.attach_lock.lock().unwrap_or_else(PoisonError::into_inner);
         let path = if path == ":memory:" || path.starts_with(":memory:") {
@@ -313,6 +453,10 @@ impl DatabaseManager {
             catalog,
             storage,
             read_only: options.read_only(),
+            is_initial: std::sync::atomic::AtomicBool::new(false),
+            validity: ValidChecker::default(),
+            instance_validity: Arc::clone(instance_validity),
+            closed: std::sync::atomic::AtomicBool::new(false),
         });
         let mut databases = self.write();
         if let Some(position) = databases
@@ -321,7 +465,7 @@ impl DatabaseManager {
         {
             // `ATTACH OR REPLACE`.
             let old = databases.remove(position);
-            old.close(true);
+            let _ = old.close(true, CloseAction::TryCheckpoint);
         }
         databases.push(Arc::clone(&database));
         Ok(Some(database))

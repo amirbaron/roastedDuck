@@ -577,6 +577,7 @@ impl SingleFileBlockManager {
         metadata: &MetadataManager,
         mut header: DatabaseHeader,
         data_blocks: &BTreeMap<BlockId, u32>,
+        abort: crate::storage_manager::CheckpointAbort,
     ) -> Result<()> {
         let released: Vec<BlockId> = {
             let mut state = self.lock();
@@ -638,6 +639,7 @@ impl SingleFileBlockManager {
         metadata.flush()?;
         header.block_count = self.total_blocks();
         header.serialization_compatibility = self.storage_version;
+        abort.check(crate::storage_manager::CheckpointAbort::AfterFreeListWrite)?;
         self.handle.sync()?;
         let mut content = Vec::with_capacity(FILE_HEADER_SIZE);
         header.write(&mut content);

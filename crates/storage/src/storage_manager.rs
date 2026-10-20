@@ -1,7 +1,7 @@
 //! The storage of an attached database file (DuckDB's `SingleFileStorageManager`): the
 //! block manager, the metadata manager and the I/O manager of its tables.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use rustdb_buffer::{BlockManager, BufferManager};
 use rustdb_common::Result;
@@ -34,6 +34,112 @@ impl Default for StorageOptions {
     }
 }
 
+/// Where a checkpoint is aborted for testing (DuckDB's `CheckpointAbort`, the
+/// `debug_checkpoint_abort` setting).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CheckpointAbort {
+    #[default]
+    NoAbort,
+    BeforeTruncate,
+    BeforeHeader,
+    AfterFreeListWrite,
+    BeforeWalFinish,
+    BeforeMovingRecovery,
+    BeforeDeletingCheckpointWal,
+    BeforeHeaderNonFatal,
+    InMemoryCheckpoint,
+}
+
+impl CheckpointAbort {
+    /// Every value with its `EnumUtil` name.
+    pub const ALL: [(Self, &'static str); 9] = [
+        (Self::NoAbort, "NONE"),
+        (Self::BeforeTruncate, "BEFORE_TRUNCATE"),
+        (Self::BeforeHeader, "BEFORE_HEADER"),
+        (Self::AfterFreeListWrite, "AFTER_FREE_LIST_WRITE"),
+        (Self::BeforeWalFinish, "BEFORE_WAL_FINISH"),
+        (Self::BeforeMovingRecovery, "BEFORE_MOVING_RECOVERY"),
+        (
+            Self::BeforeDeletingCheckpointWal,
+            "BEFORE_DELETING_CHECKPOINT_WAL",
+        ),
+        (Self::BeforeHeaderNonFatal, "BEFORE_HEADER_NON_FATAL"),
+        (Self::InMemoryCheckpoint, "IN_MEMORY_CHECKPOINT"),
+    ];
+
+    /// `EnumUtil::FromString<CheckpointAbort>` (case-insensitive).
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .find(|(_, candidate)| candidate.eq_ignore_ascii_case(name))
+            .map(|(value, _)| *value)
+    }
+
+    /// The error a checkpoint aborted at `self` fails with.
+    pub fn error(self) -> rustdb_common::Error {
+        use rustdb_common::{Error, ErrorKind};
+        let fatal = |message: &str| Error::new(ErrorKind::Fatal, message.to_owned());
+        match self {
+            Self::BeforeHeader => {
+                fatal("Checkpoint aborted before header write because of PRAGMA checkpoint_abort flag")
+            }
+            Self::BeforeHeaderNonFatal => Error::new(
+                ErrorKind::Io,
+                "Checkpoint aborted before header write (non-fatal) because of PRAGMA checkpoint_abort flag",
+            ),
+            Self::AfterFreeListWrite => {
+                fatal("Checkpoint aborted after free list write because of PRAGMA checkpoint_abort flag")
+            }
+            // DuckDB reports the abort before the WAL finish with the truncate message.
+            Self::BeforeTruncate | Self::BeforeWalFinish => {
+                fatal("Checkpoint aborted before truncate because of PRAGMA checkpoint_abort flag")
+            }
+            Self::BeforeMovingRecovery => fatal(
+                "Checkpoint aborted before moving recovery file because of PRAGMA checkpoint_abort flag",
+            ),
+            Self::BeforeDeletingCheckpointWal => fatal(
+                "Checkpoint aborted before deleting checkpoint file because of PRAGMA checkpoint_abort flag",
+            ),
+            Self::InMemoryCheckpoint => Error::new(
+                ErrorKind::Io,
+                "In-memory checkpoint aborted because of PRAGMA debug_checkpoint_abort flag",
+            ),
+            Self::NoAbort => Error::internal("no checkpoint abort"),
+        }
+    }
+
+    /// Fails with [`CheckpointAbort::error`] when the checkpoint aborts at `point`.
+    pub fn check(self, point: Self) -> rustdb_common::Result<()> {
+        if self == point { Err(self.error()) } else { Ok(()) }
+    }
+}
+
+/// The settings checkpoints of a database follow (DuckDB's `experimental_metadata_reuse`
+/// and `force_column_metadata_reuse`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CheckpointConfig {
+    /// Unchanged row groups and tables keep their metadata.
+    pub metadata_reuse: bool,
+    /// Unchanged columns of changed row groups keep their metadata (storage version
+    /// v1.4.0 or later).
+    pub force_column_metadata_reuse: bool,
+    /// `max_vacuum_tasks`.
+    pub max_vacuum_tasks: u64,
+    /// `debug_checkpoint_abort`.
+    pub abort: CheckpointAbort,
+}
+
+impl Default for CheckpointConfig {
+    fn default() -> Self {
+        Self {
+            metadata_reuse: true,
+            force_column_metadata_reuse: false,
+            max_vacuum_tasks: 100,
+            abort: CheckpointAbort::NoAbort,
+        }
+    }
+}
+
 /// The storage of one database file.
 #[derive(Debug)]
 pub struct StorageManager {
@@ -45,6 +151,7 @@ pub struct StorageManager {
     created: bool,
     /// The WAL, set up once the existing one was replayed.
     wal: OnceLock<Arc<WriteAheadLog>>,
+    checkpoint_config: Mutex<CheckpointConfig>,
 }
 
 impl StorageManager {
@@ -93,6 +200,7 @@ impl StorageManager {
             io,
             created,
             wal: OnceLock::new(),
+            checkpoint_config: Mutex::default(),
         })
     }
 
@@ -133,6 +241,41 @@ impl StorageManager {
     /// Sets how checkpoints of this database compress segments (`force_compression`).
     pub fn set_compression_config(&self, config: crate::compression::CompressionConfig) {
         self.block_manager.set_compression_config(config);
+    }
+
+    /// The settings checkpoints follow.
+    pub fn checkpoint_config(&self) -> CheckpointConfig {
+        *self
+            .checkpoint_config
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Sets the settings checkpoints follow.
+    pub fn set_checkpoint_config(&self, config: CheckpointConfig) {
+        *self
+            .checkpoint_config
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = config;
+    }
+
+    /// How a checkpoint writes the data of tables: `full_checkpoint` when no transaction
+    /// needs older data (`CheckpointType::FULL_CHECKPOINT`), with the oldest active
+    /// transaction's start time.
+    pub fn table_write_settings(
+        &self,
+        full_checkpoint: bool,
+        lowest_active_start: u64,
+    ) -> crate::checkpoint::table_writer::TableWriteSettings {
+        let config = self.checkpoint_config();
+        crate::checkpoint::table_writer::TableWriteSettings {
+            metadata_reuse: config.metadata_reuse,
+            force_column_metadata_reuse: config.force_column_metadata_reuse,
+            storage_version: self.block_manager.storage_version(),
+            full_checkpoint,
+            max_vacuum_tasks: config.max_vacuum_tasks,
+            lowest_active_start,
+        }
     }
 
     pub fn metadata(&self) -> &MetadataManager {
