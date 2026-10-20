@@ -752,15 +752,24 @@ impl BufferManager {
         }
     }
 
-    /// Allocates `size` bytes from the global allocator, charged to the `ALLOCATOR` tag
-    /// (DuckDB's buffer allocator). Fails with an out-of-memory error if they don't fit.
+    /// Allocates `size` bytes, charged to the `ALLOCATOR` tag (DuckDB's buffer allocator).
+    /// Fails with an out-of-memory error if they don't fit.
     pub fn allocate_data(&self, size: usize) -> Result<AllocatedData> {
+        AllocatedData::allocate(size, Some(self.reserve_data(size)?), false)
+    }
+
+    /// [`BufferManager::allocate_data`] with the memory zeroed.
+    pub fn allocate_zeroed_data(&self, size: usize) -> Result<AllocatedData> {
+        AllocatedData::allocate(size, Some(self.reserve_data(size)?), true)
+    }
+
+    fn reserve_data(&self, size: usize) -> Result<MemoryReservation> {
         let (reservation, _) =
             self.shared
                 .evict_or_throw(MemoryTag::Allocator, size as u64, false, || {
                     format!("failed to allocate data of size {}", format_bytes(size as u64))
                 })?;
-        AllocatedData::allocate(size, Some(reservation))
+        Ok(reservation)
     }
 
     /// The manager assigning memory to concurrently running operators.
@@ -880,13 +889,20 @@ impl BufferManager {
     }
 }
 
-/// Memory from the global allocator charged to the `ALLOCATOR` tag (DuckDB's
-/// `AllocatedData` from the buffer allocator). Freed and released when dropped.
+/// Memory charged to the `ALLOCATOR` tag (DuckDB's `AllocatedData` from the buffer
+/// allocator). Freed and released when dropped.
+///
+/// Allocations of at least [`MAP_THRESHOLD`] bytes are page mappings of their own: the
+/// process allocator would keep them resident after they are freed (a hash table that
+/// doubled its pointer table a few times held all the smaller tables as well).
 pub struct AllocatedData {
     ptr: NonNull<u8>,
     layout: Layout,
     _reservation: Option<MemoryReservation>,
 }
+
+/// Allocations from this size on are mapped from the OS directly.
+const MAP_THRESHOLD: usize = 1 << 20;
 
 // SAFETY: `AllocatedData` uniquely owns its allocation.
 unsafe impl Send for AllocatedData {}
@@ -902,15 +918,34 @@ impl std::fmt::Debug for AllocatedData {
 }
 
 impl AllocatedData {
-    fn allocate(size: usize, reservation: Option<MemoryReservation>) -> Result<Self> {
-        let layout = Layout::from_size_align(size.max(1), 16).map_err(|_| {
+    fn allocate(size: usize, reservation: Option<MemoryReservation>, zeroed: bool) -> Result<Self> {
+        let error = || {
             out_of_memory(format!(
                 "failed to allocate data of size {}",
                 format_bytes(size as u64)
             ))
-        })?;
+        };
+        if size >= MAP_THRESHOLD {
+            // Mappings start zeroed.
+            let layout = Layout::from_size_align(size.next_multiple_of(os::PAGE_SIZE), os::PAGE_SIZE)
+                .map_err(|_| error())?;
+            let ptr = os::map(layout.size()).ok_or_else(error)?;
+            return Ok(Self {
+                ptr,
+                layout,
+                _reservation: reservation,
+            });
+        }
+        let layout = Layout::from_size_align(size.max(1), 16).map_err(|_| error())?;
         // SAFETY: `layout` has non-zero size.
-        let ptr = NonNull::new(unsafe { std::alloc::alloc(layout) }).ok_or_else(|| {
+        let ptr = NonNull::new(unsafe {
+            if zeroed {
+                std::alloc::alloc_zeroed(layout)
+            } else {
+                std::alloc::alloc(layout)
+            }
+        })
+        .ok_or_else(|| {
             out_of_memory(format!(
                 "failed to allocate data of size {}",
                 format_bytes(size as u64)
@@ -925,10 +960,10 @@ impl AllocatedData {
 
     /// Memory that is not charged to any buffer manager.
     pub fn untracked(size: usize) -> Result<Self> {
-        Self::allocate(size, None)
+        Self::allocate(size, None, false)
     }
 
-    /// Start of the (uninitialised) memory, 16-byte aligned.
+    /// Start of the memory (uninitialised unless allocated zeroed), 16-byte aligned.
     pub fn as_ptr(&self) -> *mut u8 {
         self.ptr.as_ptr()
     }
@@ -944,7 +979,12 @@ impl AllocatedData {
 
 impl Drop for AllocatedData {
     fn drop(&mut self) {
-        // SAFETY: allocated in `allocate` with `self.layout`.
-        unsafe { std::alloc::dealloc(self.ptr.as_ptr(), self.layout) };
+        if self.layout.size() >= MAP_THRESHOLD {
+            // SAFETY: mapped in `allocate` with this size; nothing uses it any more.
+            unsafe { os::unmap(self.ptr, self.layout.size()) };
+        } else {
+            // SAFETY: allocated in `allocate` with `self.layout`.
+            unsafe { std::alloc::dealloc(self.ptr.as_ptr(), self.layout) };
+        }
     }
 }

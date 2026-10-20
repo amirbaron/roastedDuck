@@ -6,9 +6,10 @@
 //! (the "salt"), so most probes are resolved without touching the row. Probing is linear
 //! with a salt-dependent odd stride, exactly as in DuckDB.
 
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
-use rustdb_buffer::{BufferManager, MemoryTag};
+use rustdb_buffer::{AllocatedData, BufferManager, MemoryTag};
 use rustdb_common::{Error, Result};
 use rustdb_function::AggregateFunction;
 use rustdb_function::FunctionData;
@@ -136,14 +137,63 @@ struct DictionaryGroups {
     groups: Vec<RowPtr>,
 }
 
+/// The entries of a pointer table, zeroed, in buffer-allocator memory (DuckDB's
+/// `hash_map`): a large table goes back to the OS when a bigger one replaces it.
+#[derive(Debug, Default)]
+struct Entries {
+    memory: Option<AllocatedData>,
+    len: usize,
+}
+
+impl Entries {
+    fn zeroed(buffer_manager: &BufferManager, len: usize) -> Result<Self> {
+        let memory = buffer_manager.allocate_zeroed_data(len * size_of::<u64>())?;
+        Ok(Self {
+            memory: Some(memory),
+            len,
+        })
+    }
+}
+
+impl Deref for Entries {
+    type Target = [u64];
+
+    #[allow(
+        clippy::cast_ptr_alignment,
+        reason = "AllocatedData is 16-byte aligned, more than u64 needs"
+    )]
+    fn deref(&self) -> &[u64] {
+        match &self.memory {
+            // SAFETY: the memory holds `len` initialised u64s and lives as long as `self`.
+            Some(memory) => unsafe { std::slice::from_raw_parts(memory.as_ptr().cast(), self.len) },
+            None => &[],
+        }
+    }
+}
+
+impl DerefMut for Entries {
+    #[allow(
+        clippy::cast_ptr_alignment,
+        reason = "AllocatedData is 16-byte aligned, more than u64 needs"
+    )]
+    fn deref_mut(&mut self) -> &mut [u64] {
+        match &mut self.memory {
+            // SAFETY: as in `deref`; `&mut self` makes the access unique.
+            Some(memory) => unsafe { std::slice::from_raw_parts_mut(memory.as_ptr().cast(), self.len) },
+            None => &mut [],
+        }
+    }
+}
+
 /// A hash table mapping groups to aggregate states.
 #[derive(Debug)]
 pub struct GroupedAggregateHashTable {
     layout: Arc<TupleDataLayout>,
     group_types: Vec<LogicalType>,
+    buffer_manager: BufferManager,
     partitioned: PartitionedTupleData,
     append: PartitionedAppendState,
-    entries: Vec<u64>,
+    entries: Entries,
     bitmask: u64,
     count: usize,
     matcher: RowMatcher,
@@ -230,7 +280,7 @@ impl GroupedAggregateHashTable {
         )?);
         let hash_column = group_types.len();
         let mut partitioned = PartitionedTupleData::new(
-            buffer_manager,
+            buffer_manager.clone(),
             Arc::clone(&layout),
             MemoryTag::HashTable,
             radix_bits,
@@ -247,9 +297,10 @@ impl GroupedAggregateHashTable {
         let mut table = Self {
             layout,
             group_types,
+            buffer_manager,
             partitioned,
             append,
-            entries: Vec::new(),
+            entries: Entries::default(),
             bitmask: 0,
             count: 0,
             matcher,
@@ -373,7 +424,10 @@ impl GroupedAggregateHashTable {
         if self.count != 0 && capacity < self.capacity() {
             return Err(Error::internal("Cannot downsize a non-empty hash table!"));
         }
-        self.entries = vec![0; capacity];
+        // The groups are reinserted from the rows, so the old table goes before the new one
+        // is allocated.
+        self.entries = Entries::default();
+        self.entries = Entries::zeroed(&self.buffer_manager, capacity)?;
         self.bitmask = capacity as u64 - 1;
         if self.count != 0 {
             self.reinsert_rows()?;
@@ -454,7 +508,7 @@ impl GroupedAggregateHashTable {
         // overlap before the branchy probing loop below (DuckDB's `occupied_count`).
         let mut occupied = 0usize;
         {
-            let entries = self.entries.as_slice();
+            let entries = &self.entries[..];
             let mask = (entries.len() - 1) & usize::try_from(self.bitmask).unwrap_or(usize::MAX);
             let offsets = &mut self.ht_offsets[..count];
             let salts = &mut self.salts[..count];
