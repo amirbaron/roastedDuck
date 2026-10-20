@@ -100,6 +100,8 @@ impl PhysicalUpdate {
         self.table
             .update(&self.transaction, ids, &self.columns, &updates, &self.constraints)?;
         if self.return_chunk {
+            // Each input row returns the values it set, even where a later row of the
+            // same statement overwrote them (DuckDB returns its update chunk).
             let mut rows = DataChunk::default();
             self.table.fetch(
                 &self.transaction,
@@ -107,7 +109,14 @@ impl PhysicalUpdate {
                 &all_columns(self.table.columns().len()),
                 ids,
             )?;
-            global.result.push_returned(rows);
+            if rows.len() != ids.len() {
+                return Err(Error::internal("update could not fetch every returned row"));
+            }
+            let mut columns = rows.into_columns();
+            for (index, &column) in self.columns.iter().enumerate() {
+                columns[column] = updates.column(index).clone();
+            }
+            global.result.push_returned(DataChunk::new(columns, ids.len()));
         }
         Ok(())
     }

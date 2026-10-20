@@ -2870,6 +2870,7 @@ test/sql/returning/returning_delete_list.test
 test/sql/returning/returning_delete_same_transaction.test
 test/sql/returning/returning_insert.test
 test/sql/returning/returning_large.test
+test/sql/returning/returning_update.test
 test/sql/sample/bernoulli_sampling.test_slow
 test/sql/sample/can_sample_from_ingested_files.test
 test/sql/sample/get_multiple_samples_small.test_slow
