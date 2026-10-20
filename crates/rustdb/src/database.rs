@@ -1050,10 +1050,10 @@ impl Connection {
             return self.copy_database(copy);
         }
         if let rustdb_ast::SqlStatementKind::Load(info) = &statement.kind {
-            if let Some(name) = crate::extensions::load_extension(info)? {
-                if let Some(extension) = StaticExtension::from_name(&name) {
-                    self.database.instance.load_static_extension(extension)?;
-                }
+            if let Some(name) = crate::extensions::load_extension(info)?
+                && let Some(extension) = StaticExtension::from_name(&name)
+            {
+                self.database.instance.load_static_extension(extension)?;
             }
             return Ok(MaterializedResult::default());
         }

@@ -273,10 +273,10 @@ impl PhysicalOperator for PhysicalSeqScan {
             dynamic.as_ref(),
             estimated_cardinality,
         );
-        if self.is_index_scan.load(Ordering::Relaxed) {
-            if let Some(scan_type) = result.get_mut("Type") {
-                "Index Scan".clone_into(scan_type);
-            }
+        if self.is_index_scan.load(Ordering::Relaxed)
+            && let Some(scan_type) = result.get_mut("Type")
+        {
+            "Index Scan".clone_into(scan_type);
         }
         result
     }
