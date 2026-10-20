@@ -15,6 +15,8 @@ use super::scan_state::{CollectionScanState, ScanFilterInfo, StorageIndex};
 use super::segment_tree::Segment;
 use crate::VECTOR_SIZE;
 use crate::checkpoint::pointers::PersistentColumnData;
+use crate::checkpoint::table_reader::read_column;
+use crate::metadata::{MetaBlockPointer, MetadataManager};
 use crate::data_table::TableIoManager;
 use crate::statistics::{BaseStatistics, FilterPropagateResult};
 use crate::table_filter::TableFilter;
@@ -89,8 +91,21 @@ pub struct RowGroup {
 struct UnloadedColumns {
     io: Arc<TableIoManager>,
     types: Vec<LogicalType>,
+    /// Reads the columns stored as metadata pointers.
+    metadata: Option<Arc<MetadataManager>>,
     /// Taken when the column is built.
-    data: Vec<Mutex<Option<PersistentColumnData>>>,
+    data: Vec<Mutex<Option<StoredColumn>>>,
+}
+
+/// How a column that is not built yet is stored.
+#[derive(Debug)]
+enum StoredColumn {
+    /// Its segments, as just written by a checkpoint.
+    Data(PersistentColumnData),
+    /// Where its `PersistentColumnData` is in the database file's metadata: read when the
+    /// column is first used, like DuckDB's lazily loaded `column_pointers` (keeping every
+    /// column's segments and statistics in memory costs ~2 KB per column and row group).
+    Pointer(MetaBlockPointer),
 }
 
 impl Segment for RowGroup {
@@ -148,7 +163,37 @@ impl RowGroup {
             unloaded: Some(Box::new(UnloadedColumns {
                 io,
                 types,
-                data: data.into_iter().map(|column| Mutex::new(Some(column))).collect(),
+                metadata: None,
+                data: data
+                    .into_iter()
+                    .map(|column| Mutex::new(Some(StoredColumn::Data(column))))
+                    .collect(),
+            })),
+            version_info: Mutex::default(),
+        }
+    }
+
+    /// A row group of `count` rows stored in the database file whose columns' data is
+    /// read from the metadata at `pointers` when first used (DuckDB's `RowGroup` built
+    /// from a `RowGroupPointer`).
+    pub fn from_metadata(
+        io: Arc<TableIoManager>,
+        types: Vec<LogicalType>,
+        metadata: Arc<MetadataManager>,
+        pointers: &[MetaBlockPointer],
+        count: u64,
+    ) -> Self {
+        Self {
+            count: AtomicU64::new(count),
+            columns: (0..pointers.len()).map(|_| OnceLock::new()).collect(),
+            unloaded: Some(Box::new(UnloadedColumns {
+                io,
+                types,
+                metadata: Some(metadata),
+                data: pointers
+                    .iter()
+                    .map(|&pointer| Mutex::new(Some(StoredColumn::Pointer(pointer))))
+                    .collect(),
             })),
             version_info: Mutex::default(),
         }
@@ -198,15 +243,21 @@ impl RowGroup {
         if let Some(column) = slot.get() {
             return Ok(column);
         }
-        let stored = data
-            .as_ref()
-            .ok_or_else(|| Error::internal("row group column stored data already taken"))?;
-        let column = ColumnData::from_persistent(
-            Arc::clone(&unloaded.io),
-            index,
-            unloaded.types[index].clone(),
-            stored,
-        )?;
+        let ty = &unloaded.types[index];
+        let read;
+        let stored = match data.as_ref() {
+            Some(StoredColumn::Data(stored)) => stored,
+            Some(StoredColumn::Pointer(pointer)) => {
+                let metadata = unloaded
+                    .metadata
+                    .as_ref()
+                    .ok_or_else(|| Error::internal("row group column pointer without metadata"))?;
+                read = read_column(metadata, *pointer, ty)?;
+                &read
+            }
+            None => return Err(Error::internal("row group column stored data already taken")),
+        };
+        let column = ColumnData::from_persistent(Arc::clone(&unloaded.io), index, ty.clone(), stored)?;
         let _ = slot.set(Arc::new(column));
         *data = None;
         drop(data);
