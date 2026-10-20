@@ -80,6 +80,7 @@ macro_rules! enum_rules {
 
 transform_rules! {
     SqlStatement [] {
+        "Statement" => transform_statement,
         "AlterStatement" => transform_alter_statement,
         "AttachStatement" => transform_attach_statement,
         "AnalyzeStatement" => transform_analyze_statement,
@@ -765,8 +766,10 @@ transform_rules! {
         "InsertByNameOrPosition" => transform_insert_by_name_or_position,
         "InsertValuesList" => transform_insert_values_list,
     }
-    UpdateSetInfo [] {
+    Option<UpdateSetInfo> [] {
         "UpdateMatchSetClause" => transform_update_match_set_clause,
+    }
+    UpdateSetInfo [] {
         "UpdateSetClause" => transform_update_set_clause,
         "UpdateSetTuple" => transform_update_set_tuple,
         "UpdateSetElementList" => transform_update_set_element_list,

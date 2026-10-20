@@ -68,6 +68,9 @@ pub use transformer::function::{
 };
 pub use transformer::star::{QualifiedColumnMap, serialized_exclude_list};
 
+/// `ParsedExpression::IsScalar` and `HasSubquery`, for the PEG transformer.
+pub use equality::{has_subquery, is_scalar};
+
 use rustdb_ast::{CreateInfo, SqlStatement, SqlStatementKind};
 use rustdb_common::{Error, Result};
 
