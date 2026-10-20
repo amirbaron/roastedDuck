@@ -1747,6 +1747,9 @@ test/sql/cte/test_issue_5673.test
 test/sql/cte/test_moderate_union_all.test
 test/sql/cte/test_nested_recursive_cte.test
 test/sql/cte/test_outer_joins_recursive_cte.test
+test/sql/cte/test_recursive_cte_tutorial.test
+test/sql/cte/test_recursive_cte_union.test
+test/sql/cte/test_recursive_cte_union_all.test
 test/sql/delete/bulk_delete_version_info_memory.test
 test/sql/delete/cleanup_delete_on_conflict.test
 test/sql/delete/delete_compression_after_restart.test
