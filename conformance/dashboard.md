@@ -1,6 +1,6 @@
 # rustdb conformance dashboard
 
-Rust passing: **4260 / 4871 files** (4195 pass on both engines). "Passing" means the Rust run passed, or both engines skipped the file for the same reason.
+Rust passing: **4262 / 4871 files** (4197 pass on both engines). "Passing" means the Rust run passed, or both engines skipped the file for the same reason.
 
 | group | files | C++ pass | C++ skip | C++ fail | Rust passing | both pass | Rust fail | Rust crash/timeout | Rust skip (C++ pass) | Rust % |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -39,12 +39,12 @@ Rust passing: **4260 / 4871 files** (4195 pass on both engines). "Passing" means
 | test/planner | 1 | 1 | 0 | 0 | 1 | 1 | 0 | 0 | 0 | 100.0% |
 | test/sakila | 1 | 1 | 0 | 0 | 1 | 1 | 0 | 0 | 0 | 100.0% |
 | test/sql/aggregate | 153 | 151 | 2 | 0 | 144 | 143 | 2 | 0 | 6 | 94.1% |
-| test/sql/alter | 107 | 107 | 0 | 0 | 101 | 101 | 6 | 0 | 0 | 94.4% |
+| test/sql/alter | 107 | 107 | 0 | 0 | 102 | 102 | 5 | 0 | 0 | 95.3% |
 | test/sql/append | 1 | 1 | 0 | 0 | 1 | 1 | 0 | 0 | 0 | 100.0% |
 | test/sql/attach | 86 | 81 | 5 | 0 | 66 | 61 | 19 | 0 | 1 | 76.7% |
 | test/sql/binder | 38 | 38 | 0 | 0 | 35 | 35 | 2 | 0 | 1 | 92.1% |
 | test/sql/cast | 30 | 30 | 0 | 0 | 29 | 29 | 1 | 0 | 0 | 96.7% |
-| test/sql/catalog | 119 | 119 | 0 | 0 | 110 | 110 | 9 | 0 | 0 | 92.4% |
+| test/sql/catalog | 119 | 119 | 0 | 0 | 111 | 111 | 8 | 0 | 0 | 93.3% |
 | test/sql/collate | 24 | 24 | 0 | 0 | 20 | 20 | 0 | 0 | 4 | 83.3% |
 | test/sql/conjunction | 2 | 2 | 0 | 0 | 2 | 2 | 0 | 0 | 0 | 100.0% |
 | test/sql/constraints | 50 | 50 | 0 | 0 | 49 | 49 | 0 | 0 | 1 | 98.0% |
@@ -109,4 +109,4 @@ Rust passing: **4260 / 4871 files** (4195 pass on both engines). "Passing" means
 | test/sqlite | 4 | 4 | 0 | 0 | 4 | 4 | 0 | 0 | 0 | 100.0% |
 | test/sqlite/tags | 4 | 0 | 4 | 0 | 4 | 0 | 0 | 0 | 0 | 100.0% |
 | test/sqlserver | 2 | 2 | 0 | 0 | 2 | 2 | 0 | 0 | 0 | 100.0% |
-| **total** | 4871 | 4794 | 75 | 2 | 4260 | 4195 | 302 | 0 | 299 | 87.5% |
+| **total** | 4871 | 4794 | 75 | 2 | 4262 | 4197 | 300 | 0 | 299 | 87.5% |

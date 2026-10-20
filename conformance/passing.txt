@@ -889,6 +889,7 @@ test/sql/alter/rename_col/test_rename_col_unique.test
 test/sql/alter/rename_schema/rename_schema.test
 test/sql/alter/rename_table/test_rename_bug4455_schema.test
 test/sql/alter/rename_table/test_rename_table.test
+test/sql/alter/rename_table/test_rename_table_case.test
 test/sql/alter/rename_table/test_rename_table_chain_commit.test
 test/sql/alter/rename_table/test_rename_table_chain_rollback.test
 test/sql/alter/rename_table/test_rename_table_collision.test
@@ -1134,6 +1135,7 @@ test/sql/catalog/test_extension_suggestion.test
 test/sql/catalog/test_if_not_exists.test
 test/sql/catalog/test_incorrect_table_creation.test
 test/sql/catalog/test_quoted_column_name.test
+test/sql/catalog/test_schema.test
 test/sql/catalog/test_schema_conflict.test
 test/sql/catalog/test_set_schema.test
 test/sql/catalog/test_set_search_path.test
