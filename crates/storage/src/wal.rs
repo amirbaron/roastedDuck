@@ -261,6 +261,9 @@ struct WalState {
     /// Set when a checkpoint failed: the database is invalidated and nothing more is
     /// written (the WAL keeps the checkpoint marker last).
     failed: Option<String>,
+    /// `RECOVERY_MODE NO_WAL_WRITES`: commits are not logged, only their size counted so
+    /// that checkpoints still happen (`AddWALSize`).
+    no_writes: bool,
 }
 
 /// The WAL of a database file.
@@ -378,6 +381,16 @@ impl WalGuard<'_> {
         self.state.entries
     }
 
+    /// Whether commits are not logged.
+    pub fn no_writes(&self) -> bool {
+        self.state.no_writes
+    }
+
+    /// Stops logging commits (`RecoveryMode::NO_WAL_WRITES`).
+    pub fn set_no_writes(&mut self) {
+        self.state.no_writes = true;
+    }
+
     /// Refuses every further commit with `message`, after a checkpoint failed and
     /// invalidated the database.
     pub fn invalidate(&mut self, message: String) {
@@ -449,6 +462,11 @@ impl WalGuard<'_> {
                 message.clone(),
             ));
         }
+        if self.state.no_writes {
+            // `DuckTransaction::ShouldWriteToWAL` is false: only the size is counted.
+            self.state.size += batch.buffer.len() as u64;
+            return Ok(());
+        }
         batch.entry(WalType::WalFlush, |_| Ok(()))?;
         let initial_size = self.state.size;
         let result = self.write_header().and_then(|()| {
@@ -492,7 +510,11 @@ impl WalGuard<'_> {
         batch.entry(WalType::Checkpoint, |s| {
             s.write_object_property(101, "meta_block", |s| serialize_meta_block_pointer(s, meta_block))
         })?;
-        self.commit(batch)?;
+        // The marker is written even when commits are not (`WriteCheckpoint`).
+        let no_writes = std::mem::take(&mut self.state.no_writes);
+        let result = self.commit(batch);
+        self.state.no_writes = no_writes;
+        result?;
         Ok(true)
     }
 

@@ -196,6 +196,8 @@ pub(crate) struct AttachOptions {
     pub kept: Vec<(String, Value)>,
     /// `DEFAULT_TABLE`: the (schema, name) the database's name refers to.
     pub default_table: Option<(String, String)>,
+    /// `RECOVERY_MODE NO_WAL_WRITES`: commits are not written to the WAL.
+    pub no_wal_writes: bool,
 }
 
 impl AttachOptions {
@@ -242,7 +244,22 @@ impl AttachOptions {
                     let (_, schema, name) = crate::sequence::parse_qualified_name(&value.to_varchar()?)?;
                     options.default_table = Some((schema, name));
                 }
-                "recovery_mode" | "vacuum_rebuild_indexes" => {}
+                "recovery_mode" => {
+                    // `EnumUtil::FromString<RecoveryMode>`.
+                    let mode = value.to_varchar()?;
+                    options.no_wal_writes = match mode.to_ascii_uppercase().as_str() {
+                        "DEFAULT" => false,
+                        "NO_WAL_WRITES" => true,
+                        _ => {
+                            return Err(rustdb_function::logging::enum_error(
+                                &mode,
+                                "RecoveryMode",
+                                &["DEFAULT", "NO_WAL_WRITES"],
+                            ));
+                        }
+                    };
+                }
+                "vacuum_rebuild_indexes" => {}
                 "compress" => options.kept.push((name.to_lowercase(), value.clone())),
                 "storage_version" => {
                     options.storage_version = Some(value.clone());
@@ -494,7 +511,10 @@ impl DatabaseManager {
                 // `SingleFileBlockManager::AddStorageVersionTag`.
                 vec![(
                     "storage_version".to_owned(),
-                    rustdb_storage::storage_info::storage_version_name(storage.block_manager().storage_version(), true),
+                    rustdb_storage::storage_info::storage_version_name(
+                        storage.block_manager().storage_version(),
+                        true,
+                    ),
                 )]
             })
             .unwrap_or_default();

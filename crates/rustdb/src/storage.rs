@@ -51,6 +51,7 @@ pub(crate) fn startup_options(config: &Config) -> AttachOptions {
         row_group_size: None,
         kept: Vec::new(),
         default_table: None,
+        no_wal_writes: false,
     }
 }
 

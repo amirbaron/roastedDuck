@@ -667,6 +667,7 @@ impl DatabaseInstance {
         if size <= threshold && !(entry_limit > 0 && entries >= entry_limit) {
             return Ok(());
         }
+        let no_wal_writes = wal.lock().no_writes();
         if self.transactions.active_count() > 0 {
             // Other transactions may need older data: a concurrent checkpoint, unless this
             // transaction made changes they must not see; the checkpoint lock must be free.
@@ -677,6 +678,13 @@ impl DatabaseInstance {
         database
             .create_checkpoint(crate::storage::CheckpointMode::Automatic, Some(&self.transactions))
             .map_err(|error| {
+                if no_wal_writes {
+                    // Nothing was logged: the commit itself failed (`error.Merge`).
+                    return Error::new(
+                        ErrorKind::Transaction,
+                        format!("Failed to commit: {}", error.raw_message()),
+                    );
+                }
                 let recovery = if database.is_initial() {
                     "Reopen the database instance to recover."
                 } else {
@@ -870,6 +878,12 @@ impl Database {
         if let Err(error) = crate::wal::replay(self, &attached) {
             self.instance.databases.remove(&attached.name);
             return Err(error);
+        }
+        // `RecoveryMode::NO_WAL_WRITES`: the WAL is replayed, but not written to again.
+        if options.no_wal_writes
+            && let Some(wal) = attached.storage.as_ref().and_then(|storage| storage.wal())
+        {
+            wal.lock().set_no_writes();
         }
         Ok(Some(attached))
     }

@@ -143,7 +143,10 @@ fn text_map(entries: &[(String, String)]) -> Value {
     Value::map(
         LogicalType::VARCHAR,
         LogicalType::VARCHAR,
-        entries.iter().map(|(key, value)| (text(key.clone()), text(value.clone()))).collect(),
+        entries
+            .iter()
+            .map(|(key, value)| (text(key.clone()), text(value.clone())))
+            .collect(),
     )
 }
 
