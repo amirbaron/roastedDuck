@@ -1008,6 +1008,7 @@ test/sql/attach/attach_row_group_size.test
 test/sql/attach/attach_row_group_size_decreasing.test
 test/sql/attach/attach_same_db.test
 test/sql/attach/attach_schema.test
+test/sql/attach/attach_sequence.test
 test/sql/attach/attach_serialize_dependency.test
 test/sql/attach/attach_show_all_tables.test
 test/sql/attach/attach_show_table.test
@@ -1804,6 +1805,7 @@ test/sql/copy_database/copy_database_simple.test
 test/sql/copy_database/copy_database_tpch.test_slow
 test/sql/copy_database/copy_database_with_index.test
 test/sql/copy_database/copy_database_with_unique_index.test
+test/sql/copy_database/copy_table_with_sequence.test
 test/sql/create/big_create_table_as.test_slow
 test/sql/create/big_create_table_as_varchar.test_slow
 test/sql/create/create_as.test
@@ -3710,6 +3712,7 @@ test/sql/storage/wal/wal_view_explicit_aliases.test
 test/sql/storage/wal/wal_view_explicit_aliases_no_view_dependencies.test
 test/sql/storage/wal/wal_view_storage.test
 test/sql/storage/wal/wal_view_storage_no_view_dependencies.test
+test/sql/storage_version/storage_version.test_slow
 test/sql/subquery/any_all/issue_2999.test
 test/sql/subquery/any_all/subquery_in.test
 test/sql/subquery/any_all/test_any_all.test
