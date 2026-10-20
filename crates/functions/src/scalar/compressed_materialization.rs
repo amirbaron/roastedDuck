@@ -208,9 +208,10 @@ fn compress_string(input: &[u8], size: usize) -> u128 {
     let prefix = input.len().min(size - 1);
     let packed = input[..prefix]
         .iter()
-        .enumerate()
-        .fold(0u128, |packed, (index, &byte)| packed | u128::from(byte) << (8 * (15 - index)));
-    (packed >> (8 * (16 - size))) | u128::from(input.len() as u8)
+        .fold(0u128, |packed, &byte| packed << 8 | u128::from(byte));
+    // An empty prefix of a 16-byte result would shift by 128 bits.
+    let aligned = packed.checked_shl(8 * (size - prefix) as u32).unwrap_or(0);
+    aligned | u128::from(input.len() as u8)
 }
 
 /// `StringDecompress` (and `MiniStringDecompress`).
