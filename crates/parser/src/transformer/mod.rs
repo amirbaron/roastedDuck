@@ -7,20 +7,20 @@
 //! DuckDB keeps on the root transformer (parameters, pivot entries, nesting depth) lives
 //! on the transformer itself.
 
-mod build;
+pub mod build;
 mod constant;
 mod cte;
 mod ddl;
 mod dml;
-mod expression;
-mod function;
-mod helpers;
+pub(crate) mod expression;
+pub(crate) mod function;
+pub(crate) mod helpers;
 mod misc;
 mod node_tag;
 mod operator;
 mod pivot;
 mod select;
-mod star;
+pub(crate) mod star;
 mod subquery;
 mod tableref;
 mod typename;

@@ -220,6 +220,18 @@ fn unrecognized(name: &str, enabled: impl Fn(&str) -> bool) -> Error {
     ))
 }
 
+/// Whether a parser extension replaces the Postgres parser
+/// (`allow_parser_override_extension`, DuckDB's `AllowParserOverride`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ParserOverride {
+    /// The Postgres parser only.
+    Default,
+    /// The extension's parser, falling back to the Postgres parser when it fails.
+    Fallback,
+    /// The extension's parser; its errors are final.
+    Strict,
+}
+
 /// The connection's option values.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Settings {
@@ -557,6 +569,13 @@ impl Settings {
                 .unwrap_or(false)
         };
         match option_by_name(name).unwrap_or_default() {
+            option @ ("allowed_directories" | "allowed_paths")
+                if !rustdb_function::file_system::external_access_enabled() =>
+            {
+                Err(Error::invalid_input(format!(
+                    "Cannot change {option} when enable_external_access is disabled"
+                )))
+            }
             "access_mode" => Err(Error::invalid_input(
                 "Cannot change access_mode setting while database is running - it must be set when opening or \
                  attaching the database",
@@ -591,6 +610,13 @@ impl Settings {
     /// The `ResetGlobal` / `ResetLocal` checks of options that cannot be reset.
     pub(crate) fn check_running_reset(name: &str) -> Result<()> {
         match option_by_name(name).unwrap_or_default() {
+            option @ ("allowed_directories" | "allowed_paths")
+                if !rustdb_function::file_system::external_access_enabled() =>
+            {
+                Err(Error::invalid_input(format!(
+                    "Cannot change {option} when enable_external_access is disabled"
+                )))
+            }
             "custom_user_agent" => Err(Error::invalid_input(
                 "Cannot change custom_user_agent setting while database is running",
             )),
@@ -654,6 +680,23 @@ impl Settings {
             preserve_identifier_case: flag("preserve_identifier_case", true),
             integer_division: flag("integer_division", false),
             max_expression_depth: self.planner.max_expression_depth,
+        }
+    }
+
+    /// `allow_parser_override_extension` (DuckDB's `AllowParserOverride`).
+    pub(crate) fn parser_override(&self) -> ParserOverride {
+        let mode = self
+            .assigned
+            .iter()
+            .find(|(name, _)| *name == "allow_parser_override_extension")
+            .and_then(|(_, value)| value.to_varchar().ok())
+            .unwrap_or_default();
+        if mode.eq_ignore_ascii_case("strict") {
+            ParserOverride::Strict
+        } else if mode.eq_ignore_ascii_case("fallback") {
+            ParserOverride::Fallback
+        } else {
+            ParserOverride::Default
         }
     }
 

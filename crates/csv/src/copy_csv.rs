@@ -163,7 +163,7 @@ fn write_csv_bind(
 }
 
 /// Where the writer's bytes go: a plain or compressed file.
-enum CsvSink {
+pub(crate) enum CsvSink {
     Plain(BufWriter<File>),
     Gzip(flate2::write::GzEncoder<BufWriter<File>>),
     /// Zstandard output is compressed when the file is closed.
@@ -172,7 +172,19 @@ enum CsvSink {
 }
 
 impl CsvSink {
-    fn write(&mut self, data: &[u8]) -> std::io::Result<()> {
+    /// Creates `path` (replacing an existing file), compressed as `compression` says
+    /// (`FileSystem::OpenFile` with `FILE_FLAGS_FILE_CREATE_NEW` and the compression).
+    pub(crate) fn create(path: &str, compression: FileCompressionType) -> Result<Self> {
+        let file = File::create(path).map_err(|error| crate::buffer::open_error(path, &error))?;
+        let file = BufWriter::with_capacity(1 << 15, file);
+        Ok(match compression.resolve(path) {
+            FileCompressionType::Gzip => Self::Gzip(flate2::write::GzEncoder::new(file, flate2::Compression::default())),
+            FileCompressionType::Zstd => Self::Zstd(Vec::new(), file),
+            _ => Self::Plain(file),
+        })
+    }
+
+    pub(crate) fn write(&mut self, data: &[u8]) -> std::io::Result<()> {
         match self {
             Self::Plain(file) => file.write_all(data),
             Self::Gzip(encoder) => encoder.write_all(data),
@@ -184,7 +196,7 @@ impl CsvSink {
         }
     }
 
-    fn close(&mut self) -> std::io::Result<()> {
+    pub(crate) fn close(&mut self) -> std::io::Result<()> {
         match std::mem::replace(self, Self::Closed) {
             Self::Plain(mut file) => file.flush(),
             Self::Gzip(encoder) => encoder.finish()?.flush(),
@@ -312,16 +324,7 @@ fn write_csv_initialize_global(bind_data: &dyn FunctionData, path: &str) -> Resu
         .as_any()
         .downcast_ref::<WriteCsvData>()
         .ok_or_else(|| Error::internal("csv write without bind data"))?;
-    let file = File::create(path).map_err(|error| crate::buffer::open_error(path, &error))?;
-    let file = BufWriter::with_capacity(1 << 15, file);
-    let sink = match data.options.compression.resolve(path) {
-        FileCompressionType::Gzip => CsvSink::Gzip(flate2::write::GzEncoder::new(
-            file,
-            flate2::Compression::default(),
-        )),
-        FileCompressionType::Zstd => CsvSink::Zstd(Vec::new(), file),
-        _ => CsvSink::Plain(file),
-    };
+    let sink = CsvSink::create(path, data.options.compression)?;
     let mut writer = CsvWriter {
         sink,
         path: path.to_owned(),

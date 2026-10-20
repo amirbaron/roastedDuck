@@ -84,6 +84,115 @@ pub fn expand_path(path: &str) -> String {
     path[file_url_offset(path)..].to_owned()
 }
 
+/// `FileSystem::CanonicalizePath`: `.` and empty components dropped, `..` resolved
+/// lexically (at the root it is ignored); remote paths are kept as they are.
+pub fn canonicalize_path(path: &str) -> String {
+    if path.contains("://") {
+        return path.to_owned();
+    }
+    let mut stack: Vec<&str> = Vec::new();
+    for element in path.split('/') {
+        match element {
+            "" | "." => {}
+            ".." => {
+                stack.pop();
+            }
+            element => stack.push(element),
+        }
+    }
+    let mut result = if path.starts_with('/') {
+        "/".to_owned()
+    } else {
+        String::new()
+    };
+    result.push_str(&stack.join("/"));
+    result
+}
+
+/// The VARCHAR entries of the list setting `name`.
+fn list_setting(settings: &dyn crate::client::SettingsSource, name: &str) -> Vec<String> {
+    let Ok(value) = settings.current_setting(name) else {
+        return Vec::new();
+    };
+    value
+        .children()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|entry| entry.to_varchar().ok())
+        .collect()
+}
+
+/// `DBConfig::CanAccessFile`: with `enable_external_access` off, only `allowed_paths`
+/// and files under `allowed_directories` can be accessed.
+fn can_access(settings: &dyn crate::client::SettingsSource, path: &str, directory: bool) -> bool {
+    let enabled = settings
+        .current_setting("enable_external_access")
+        .ok()
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true);
+    if enabled {
+        return true;
+    }
+    let mut path = canonicalize_path(path);
+    if list_setting(settings, "allowed_paths")
+        .iter()
+        .any(|allowed| canonicalize_path(allowed) == path)
+    {
+        return true;
+    }
+    let directories = list_setting(settings, "allowed_directories");
+    if directories.is_empty() {
+        return false;
+    }
+    if directory && !path.ends_with('/') {
+        path.push('/');
+    }
+    directories.iter().any(|allowed| {
+        let mut allowed = canonicalize_path(allowed);
+        if !allowed.ends_with('/') {
+            allowed.push('/');
+        }
+        path.starts_with(&allowed)
+    })
+}
+
+/// Whether the statement's configuration allows external access (`enable_external_access`).
+pub fn external_access_enabled() -> bool {
+    opener()
+        .and_then(|client| client.settings())
+        .and_then(|settings| settings.current_setting("enable_external_access").ok())
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true)
+}
+
+fn verify_can_access(path: &str, directory: bool) -> rustdb_common::Result<()> {
+    let Some(settings) = opener().and_then(|client| client.settings()) else {
+        return Ok(());
+    };
+    if can_access(settings.as_ref(), path, directory) {
+        return Ok(());
+    }
+    Err(rustdb_common::Error::new(
+        rustdb_common::ErrorKind::Permission,
+        format!(
+            "Cannot access {} \"{path}\" - file system operations are disabled by configuration",
+            if directory { "directory" } else { "file" }
+        ),
+    ))
+}
+
+/// `OpenerFileSystem::VerifyCanAccessFile`: a Permission Error if the configuration
+/// forbids accessing the file `path`.
+pub fn verify_can_access_file(path: &str) -> rustdb_common::Result<()> {
+    verify_can_access(path, false)
+}
+
+/// `OpenerFileSystem::VerifyCanAccessDirectory`.
+pub fn verify_can_access_directory(path: &str) -> rustdb_common::Result<()> {
+    verify_can_access(path, true)
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;

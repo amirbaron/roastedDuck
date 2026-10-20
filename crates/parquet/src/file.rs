@@ -24,6 +24,7 @@ fn io_error(message: String) -> Error {
 impl ParquetFile {
     /// Opens `path` for reading (`FileSystem::OpenFile`).
     pub fn open(path: &str) -> Result<Self> {
+        rustdb_function::file_system::verify_can_access_file(path)?;
         let file = File::open(path).map_err(|error| {
             let reason = match error.kind() {
                 std::io::ErrorKind::NotFound => "No such file or directory".to_owned(),

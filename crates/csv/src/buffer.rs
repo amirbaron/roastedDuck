@@ -182,6 +182,7 @@ impl CsvFileHandle {
             }
             return Err(Error::invalid_input(error));
         }
+        rustdb_function::file_system::verify_can_access_file(path)?;
         let file = File::open(path).map_err(|error| open_error(path, &error))?;
         let metadata = file.metadata().map_err(|error| open_error(path, &error))?;
         if metadata.is_dir() {

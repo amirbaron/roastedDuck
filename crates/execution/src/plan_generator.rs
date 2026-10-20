@@ -1704,6 +1704,9 @@ fn plan_copy_to_file(
         ));
     }
     let mut file_path = copy.file_path;
+    // The writers open the file on worker threads, where the statement's file opener is
+    // not set, so the access configuration is checked here (`OpenerFileSystem`).
+    rustdb_function::file_system::verify_can_access_file(&file_path)?;
     if let Some(rest) = file_path.strip_prefix('~')
         && (rest.is_empty() || rest.starts_with('/'))
         && let Some(home) = std::env::var_os("HOME")

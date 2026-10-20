@@ -494,7 +494,8 @@ fn bind_base_table(
                 types.clone(),
                 names.clone(),
                 table_index,
-            )?);
+            )?
+            .with_entry_parent(&found.catalog, &found.schema));
             let get = LogicalGet {
                 table_index,
                 function: TableFunction::new("seq_scan", Vec::new()),
@@ -525,6 +526,7 @@ fn bind_base_table(
         }
         EntryKind::View(view) => {
             let mut view_binder = scope.binder.child_of_type(BinderType::View)?;
+            view_binder.add_bound_view(&found.entry)?;
             view_binder.can_contain_nulls = true;
             // A view resolves names where it is stored first.
             view_binder.context = Arc::new(
@@ -572,7 +574,8 @@ fn bind_base_table(
                 bound.types.clone(),
                 names,
                 index,
-            )?);
+            )?
+            .with_entry_parent(&found.catalog, &found.schema));
             Ok(bound)
         }
         _ => Err(Error::internal("Catalog entry type")),

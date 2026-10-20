@@ -95,6 +95,12 @@ fn bind_expression_kind<B: ExpressionBinder + ?Sized>(
             if lambda.syntax_type == rustdb_ast::LambdaSyntaxType::LambdaKeyword {
                 return Ok(BindResult::error("invalid lambda expression"));
             }
+            // The PEG parser produces `A -> (B ->> C)` where the Postgres parser
+            // left-associates to `(A -> B) ->> C`: restructure before binding.
+            if is_double_arrow_rhs(&lambda.expr) {
+                restructure_arrow_chain(expr)?;
+                return binder.bind_expression(expr, depth, false);
+            }
             let location = expr.query_location;
             let ParsedExpressionKind::Lambda(lambda) = &mut expr.kind else {
                 return Err(Error::internal("expected a lambda expression"));
@@ -154,6 +160,58 @@ fn bind_expression_kind<B: ExpressionBinder + ?Sized>(
 }
 
 /// Binds the children named by `select`, in order, keeping the first error.
+/// DuckDB's `IsDoubleArrowRHS`: whether a lambda body is a `->>` operator call.
+fn is_double_arrow_rhs(expr: &ParsedExpression) -> bool {
+    matches!(
+        &expr.kind,
+        ParsedExpressionKind::Function(function)
+            if function.is_operator && function.function_name == "->>" && function.children.len() == 2
+    )
+}
+
+/// DuckDB's `RestructureArrowChain`: `A -> (B ->> C)` becomes `(A -> B) ->> C`.
+fn restructure_arrow_chain(expr: &mut ParsedExpression) -> Result<()> {
+    let placeholder = ParsedExpression::constant(rustdb_types::Value::null(LogicalType::SQLNULL));
+    let ParsedExpressionKind::Lambda(lambda) = std::mem::replace(&mut expr.kind, placeholder.kind) else {
+        return Err(Error::internal("expected a lambda expression"));
+    };
+    let rustdb_ast::LambdaExpression {
+        lhs,
+        expr: body,
+        syntax_type,
+    } = lambda;
+    let ParsedExpressionKind::Function(function) = body.kind else {
+        return Err(Error::internal("expected a ->> operator"));
+    };
+    let mut operands = function.children.into_iter();
+    let (Some(middle), Some(right)) = (operands.next(), operands.next()) else {
+        return Err(Error::internal("expected a ->> operator with two operands"));
+    };
+    let inner_lambda = ParsedExpression::new(
+        ExpressionType::Lambda,
+        ParsedExpressionKind::Lambda(rustdb_ast::LambdaExpression {
+            lhs,
+            expr: Box::new(middle),
+            syntax_type,
+        }),
+    );
+    *expr = ParsedExpression::new(
+        ExpressionType::Function,
+        ParsedExpressionKind::Function(Box::new(rustdb_ast::FunctionExpression {
+            function_name: "->>".to_owned(),
+            schema: String::new(),
+            children: vec![inner_lambda, right],
+            filter: None,
+            order_bys: rustdb_ast::OrderModifier { orders: Vec::new() },
+            distinct: false,
+            is_operator: true,
+            export_state: false,
+            catalog: String::new(),
+        })),
+    );
+    Ok(())
+}
+
 fn bind_children<B: ExpressionBinder + ?Sized>(
     binder: &mut B,
     children: Vec<&mut ParsedExpression>,

@@ -213,20 +213,20 @@ pub(crate) fn ci_hash(text: &str) -> u64 {
 /// A `case_insensitive_map_t` or `case_insensitive_set_t` whose iteration order follows
 /// libc++, built by unique insertions.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct CiHashMap<V> {
+pub struct CiHashMap<V> {
     order: HashOrder,
     entries: Vec<(String, V)>,
 }
 
 impl<V> CiHashMap<V> {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             order: HashOrder::new(),
             entries: Vec::new(),
         }
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
@@ -237,16 +237,16 @@ impl<V> CiHashMap<V> {
             .map(|node| node - 1)
     }
 
-    pub(crate) fn get(&self, key: &str) -> Option<&V> {
+    pub fn get(&self, key: &str) -> Option<&V> {
         self.position(key).map(|index| &self.entries[index].1)
     }
 
-    pub(crate) fn contains_key(&self, key: &str) -> bool {
+    pub fn contains_key(&self, key: &str) -> bool {
         self.position(key).is_some()
     }
 
     /// `map[key] = value`: inserts, or overwrites the value of an existing key.
-    pub(crate) fn set(&mut self, key: String, value: V) {
+    pub fn set(&mut self, key: String, value: V) {
         let entries = &self.entries;
         match self.order.insert_unique(ci_hash(&key), |node| {
             entries[node - 1].0.eq_ignore_ascii_case(&key)
@@ -257,7 +257,7 @@ impl<V> CiHashMap<V> {
     }
 
     /// `map.insert({key, value})`: inserts unless the key exists; returns whether it did.
-    pub(crate) fn insert(&mut self, key: String, value: V) -> bool {
+    pub fn insert(&mut self, key: String, value: V) -> bool {
         if self.contains_key(&key) {
             return false;
         }
@@ -266,13 +266,13 @@ impl<V> CiHashMap<V> {
     }
 
     /// `clear()`: keeps the buckets.
-    pub(crate) fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.order.clear();
         self.entries.clear();
     }
 
     /// The entries in iteration order.
-    pub(crate) fn iter(&self) -> impl Iterator<Item = (&str, &V)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &V)> {
         self.order.order().into_iter().map(|node| {
             let (key, value) = &self.entries[node - 1];
             (key.as_str(), value)
@@ -280,7 +280,7 @@ impl<V> CiHashMap<V> {
     }
 
     /// Consumes the map, yielding the entries in iteration order.
-    pub(crate) fn into_ordered(self) -> Vec<(String, V)> {
+    pub fn into_ordered(self) -> Vec<(String, V)> {
         let mut slots: Vec<Option<(String, V)>> = self.entries.into_iter().map(Some).collect();
         self.order
             .order()

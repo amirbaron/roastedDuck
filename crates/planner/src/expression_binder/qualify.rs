@@ -507,11 +507,15 @@ fn qualify_many_dots<Q: ColumnQualifier + ?Sized>(
     // Pick the error matching what the first parts most likely are.
     let (mut catalog_pos, mut schema_pos, mut table_pos) = (None, None, None);
     for binding in context.bindings() {
+        let (catalog, schema) = binding
+            .entry_parent
+            .as_ref()
+            .map_or((&binding.alias.catalog, &binding.alias.schema), |(catalog, schema)| (catalog, schema));
         for (i, name) in names.iter().take(3).enumerate() {
-            if &binding.alias.catalog == name {
+            if catalog == name {
                 catalog_pos = Some(i);
             }
-            if &binding.alias.schema == name {
+            if schema == name {
                 schema_pos = Some(i);
             }
             if &binding.alias.alias == name {

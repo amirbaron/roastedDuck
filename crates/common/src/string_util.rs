@@ -64,13 +64,10 @@ fn jaro_similarity(p: &[u8], t: &[u8]) -> f64 {
     (common / p_len as f64 + common / t_len as f64 + (common - transpositions as f64) / common) / 3.0
 }
 
-/// Levenshtein distance after lower-casing, with a configurable substitution cost
-/// (DuckDB's `StringUtil::LevenshteinDistance`).
-pub fn levenshtein_distance(left: &str, right: &str, not_equal_penalty: usize) -> usize {
-    let (s1, s2) = (
-        left.to_lowercase().into_bytes(),
-        right.to_lowercase().into_bytes(),
-    );
+/// Levenshtein distance after ASCII lower-casing (`StringUtil::Lower`), with a configurable
+/// substitution cost (DuckDB's `StringUtil::LevenshteinDistance`). Works on bytes, like DuckDB.
+pub fn levenshtein_distance(left: &[u8], right: &[u8], not_equal_penalty: usize) -> usize {
+    let (s1, s2) = (left.to_ascii_lowercase(), right.to_ascii_lowercase());
     if s1.is_empty() {
         return s2.len();
     }
@@ -78,15 +75,22 @@ pub fn levenshtein_distance(left: &str, right: &str, not_equal_penalty: usize) -
         return s1.len();
     }
     let mut previous: Vec<usize> = (0..=s2.len()).collect();
+    let mut current = vec![0; s2.len() + 1];
     for (i, &a) in s1.iter().enumerate() {
-        let mut current = vec![i + 1; s2.len() + 1];
+        current[0] = i + 1;
         for (j, &b) in s2.iter().enumerate() {
             let substitution = previous[j] + if a == b { 0 } else { not_equal_penalty };
             current[j + 1] = (previous[j + 1] + 1).min(current[j] + 1).min(substitution);
         }
-        previous = current;
+        std::mem::swap(&mut previous, &mut current);
     }
     previous[s2.len()]
+}
+
+/// The edit distance used to rank suggestions: Levenshtein with substitutions costing 3
+/// (DuckDB's `StringUtil::SimilarityScore`).
+pub fn similarity_score(left: &[u8], right: &[u8]) -> usize {
+    levenshtein_distance(left, right, 3)
 }
 
 /// DuckDB's `StringUtil::CILessThan` (shorter strings compare as if NUL-terminated).
@@ -136,9 +140,9 @@ pub fn top_n_strings(mut scores: Vec<(String, f64)>, n: usize, threshold: f64) -
     result
 }
 
-/// [`top_n_strings`] over Levenshtein distances normalised to similarities
-/// (DuckDB's deprecated `TopNStrings(vector<pair<string, idx_t>>)`).
-fn top_n_distances(scores: Vec<(String, usize)>, n: usize, threshold: usize) -> Vec<String> {
+/// [`top_n_strings`] over distances (lower is better) normalised to similarities against
+/// the largest distance and `threshold` (DuckDB's `TopNStrings(vector<pair<string, idx_t>>)`).
+pub fn top_n_distances(scores: Vec<(String, usize)>, n: usize, threshold: usize) -> Vec<String> {
     let max_score = scores.iter().map(|(_, s)| *s).max().unwrap_or(0).max(threshold);
     let normalize = |score: usize| 1.0 - score as f64 / max_score as f64;
     let normalized = scores
@@ -154,12 +158,9 @@ pub fn top_n_levenshtein(strings: &[String], target: &str) -> Vec<String> {
     let scores = strings
         .iter()
         .map(|candidate| {
-            let compared = if target.len() < candidate.len() {
-                candidate.get(..target.len()).unwrap_or(candidate)
-            } else {
-                candidate
-            };
-            (candidate.clone(), levenshtein_distance(compared, target, 3))
+            let candidate_bytes = candidate.as_bytes();
+            let compared = &candidate_bytes[..target.len().min(candidate_bytes.len())];
+            (candidate.clone(), similarity_score(compared, target.as_bytes()))
         })
         .collect();
     top_n_distances(scores, 5, 5)
@@ -199,7 +200,7 @@ mod tests {
         assert!((similarity_rating("dixon", "dicksonx") - 0.813_333).abs() < 1e-5);
         assert_eq!(similarity_rating("", "a"), 0.0);
         assert_eq!(similarity_rating("abc", "abc"), 1.0);
-        assert_eq!(levenshtein_distance("Kitten", "sitting", 1), 3);
+        assert_eq!(levenshtein_distance(b"Kitten", b"sitting", 1), 3);
     }
 
     #[test]

@@ -15,7 +15,7 @@ use crate::equality::expressions_equal;
 
 /// `WindowExpression::WindowToExpressionType`: window functions by name; anything else
 /// is an aggregate.
-fn window_to_expression_type(name: &str) -> ExpressionType {
+pub fn window_to_expression_type(name: &str) -> ExpressionType {
     match name {
         "rank" => ExpressionType::WindowRank,
         "rank_dense" | "dense_rank" => ExpressionType::WindowRankDense,
@@ -34,7 +34,7 @@ fn window_to_expression_type(name: &str) -> ExpressionType {
 }
 
 /// `IsOrderableWindowFunction`.
-fn is_orderable_window_function(expression_type: ExpressionType) -> Result<bool> {
+pub fn is_orderable_window_function(expression_type: ExpressionType) -> Result<bool> {
     use ExpressionType as E;
     match expression_type {
         E::WindowFirstValue
@@ -58,7 +58,7 @@ fn is_orderable_window_function(expression_type: ExpressionType) -> Result<bool>
 }
 
 /// `IsExcludableWindowFunction`.
-fn is_excludable_window_function(expression_type: ExpressionType) -> Result<bool> {
+pub fn is_excludable_window_function(expression_type: ExpressionType) -> Result<bool> {
     use ExpressionType as E;
     match expression_type {
         E::WindowFirstValue | E::WindowLastValue | E::WindowNthValue | E::WindowAggregate => Ok(true),

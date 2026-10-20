@@ -370,7 +370,7 @@ impl<'a> Transformer<'a> {
 }
 
 /// `Value::GetValue<double>()`.
-pub(crate) fn get_value_f64(value: &Value) -> Result<f64> {
+pub fn get_value_f64(value: &Value) -> Result<f64> {
     if value.is_null() {
         return Err(Error::internal(
             "Calling GetValueInternal on a value that is NULL",
@@ -382,7 +382,7 @@ pub(crate) fn get_value_f64(value: &Value) -> Result<f64> {
 }
 
 /// `Value::GetValue<int64_t>()`.
-pub(crate) fn get_value_i64(value: &Value) -> Result<i64> {
+pub fn get_value_i64(value: &Value) -> Result<i64> {
     if value.is_null() {
         return Err(Error::internal(
             "Calling GetValueInternal on a value that is NULL",

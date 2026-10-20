@@ -24,6 +24,14 @@ pub trait CatalogUndo: Send + Sync + fmt::Debug {
         let _ = transaction_id;
     }
 
+    /// Fails the commit of a transaction that started at `start_time` if the change
+    /// conflicts with what other transactions committed since (DuckDB's
+    /// `DependencyManager::VerifyCommitDrop` / `VerifyExistence`).
+    fn verify_commit(&self, start_time: u64) -> Result<()> {
+        let _ = start_time;
+        Ok(())
+    }
+
     /// Discards the uncommitted change.
     fn rollback(&self);
 
@@ -184,6 +192,17 @@ impl UndoBuffer {
     /// leave the indexes; with `others_active` they are kept in the indexes' side index of
     /// deleted rows still in use. On failure the already committed entries are reverted to
     /// `transaction_id` and the error returned.
+    /// Checks every catalog change before anything is committed (see
+    /// [`CatalogUndo::verify_commit`]).
+    pub fn verify_commit(&self, start_time: u64) -> Result<()> {
+        for entry in &self.entries {
+            if let UndoEntry::Catalog(change) = entry {
+                change.verify_commit(start_time)?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn commit(&self, commit_id: u64, transaction_id: u64, others_active: bool) -> Result<()> {
         let removal = if others_active {
             IndexRemovalType::MainIndex

@@ -199,6 +199,8 @@ pub fn bind_export(scope: &mut BindScope<'_>, stmt: &mut ExportStatement) -> Res
             .with_children(vec![left, node]),
         });
     }
+    // `FileSystem::CreateDirectory` through the client's opener file system.
+    rustdb_function::file_system::verify_can_access_directory(&info.file_path)?;
     let directory = std::path::Path::new(&info.file_path);
     if !directory.is_dir() {
         std::fs::create_dir_all(directory).map_err(|error| {

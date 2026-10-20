@@ -106,6 +106,14 @@ impl TransactionContext {
         Ok(())
     }
 
+    /// Aborts the explicit transaction (an error under DuckDB's
+    /// `ALL_ERRORS_INVALIDATE_TRANSACTION` policy).
+    pub fn invalidate(&mut self) {
+        if !self.auto_commit {
+            self.invalidated = true;
+        }
+    }
+
     /// `BEGIN TRANSACTION [READ ONLY]`
     pub fn begin(&mut self, read_only: bool) -> Result<()> {
         if !self.auto_commit {

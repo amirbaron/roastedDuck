@@ -82,6 +82,9 @@ pub enum ClientRequest {
     },
     /// `disable_profiling()` (`DisableProfiling`).
     DisableProfiling,
+    /// Sets a database-wide option (`DBConfig::SetOptionByName`), e.g. the
+    /// `allow_parser_override_extension` of `enable_peg_parser()`.
+    SetGlobalOption { name: String, value: Value },
 }
 
 /// Connection ids handed out so far (DuckDB's `ConnectionManager` counter).

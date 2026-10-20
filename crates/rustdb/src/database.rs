@@ -65,7 +65,7 @@ pub(crate) struct DatabaseInstance {
     /// set the option themselves.
     global_settings: Mutex<GlobalSettings>,
     /// The statically linked extensions whose catalog entries are registered.
-    loaded_extensions: Mutex<Vec<StaticExtension>>,
+    loaded_extensions: Arc<Mutex<Vec<StaticExtension>>>,
 }
 
 /// An extension linked into the engine whose functions are registered on load.
@@ -74,17 +74,29 @@ enum StaticExtension {
     Parquet,
     Json,
     Tpch,
+    Autocomplete,
 }
 
 impl StaticExtension {
-    const ALL: [Self; 3] = [Self::Parquet, Self::Json, Self::Tpch];
+    const ALL: [Self; 4] = [Self::Parquet, Self::Json, Self::Tpch, Self::Autocomplete];
 
     fn from_name(name: &str) -> Option<Self> {
         match name {
             "parquet" => Some(Self::Parquet),
             "json" => Some(Self::Json),
             rustdb_tpch::EXTENSION_NAME => Some(Self::Tpch),
+            rustdb_autocomplete::EXTENSION_NAME => Some(Self::Autocomplete),
             _ => None,
+        }
+    }
+
+    /// The pragma functions the extension registers.
+    const fn pragma_functions(self) -> &'static [&'static str] {
+        match self {
+            Self::Parquet => &["add_parquet_key"],
+            Self::Json => &["json_execute_serialized_sql"],
+            Self::Tpch => &["tpch"],
+            Self::Autocomplete => &[],
         }
     }
 
@@ -92,7 +104,7 @@ impl StaticExtension {
     fn has_pragma(self, name: &str) -> bool {
         match self {
             Self::Tpch => name.eq_ignore_ascii_case("tpch"),
-            Self::Parquet | Self::Json => false,
+            Self::Parquet | Self::Json | Self::Autocomplete => false,
         }
     }
 
@@ -100,12 +112,15 @@ impl StaticExtension {
     fn pragma_query(self, name: &str, parameters: &[Value]) -> Result<String> {
         match self {
             Self::Tpch => rustdb_tpch::pragma_tpch_query(parameters),
-            Self::Parquet | Self::Json => Err(Error::internal(format!("no pragma {name}"))),
+            Self::Parquet | Self::Json | Self::Autocomplete => {
+                Err(Error::internal(format!("no pragma {name}")))
+            }
         }
     }
 
-    /// Registers the extension's functions, types and macros (its `Load`).
-    fn register(self, system: &Catalog) -> Result<()> {
+    /// Registers the extension's functions, types and macros (its `Load`); `loaded` are
+    /// the extensions loaded so far.
+    fn register(self, system: &Catalog, loaded: &Arc<Mutex<Vec<Self>>>) -> Result<()> {
         match self {
             Self::Parquet => {
                 system.register_copy_function(rustdb_parquet::copy::parquet_copy_function())?;
@@ -133,9 +148,27 @@ impl StaticExtension {
                     system.register_table_functions(set)?;
                 }
             }
+            Self::Autocomplete => {
+                let loaded = Arc::clone(loaded);
+                let pragma_names = Arc::new(move || pragma_function_names(&loaded));
+                for set in rustdb_autocomplete::autocomplete_table_functions(pragma_names) {
+                    system.register_table_functions(set)?;
+                }
+            }
         }
         Ok(())
     }
+}
+
+/// The names of the pragma functions: the builtin ones and those of the `loaded`
+/// extensions (DuckDB's `PRAGMA_FUNCTION_ENTRY` catalog entries).
+fn pragma_function_names(loaded: &Mutex<Vec<StaticExtension>>) -> Vec<String> {
+    let loaded = loaded.lock().unwrap_or_else(PoisonError::into_inner);
+    crate::system_functions::PRAGMA_FUNCTIONS
+        .iter()
+        .chain(loaded.iter().flat_map(|extension| extension.pragma_functions()))
+        .map(|name| (*name).to_owned())
+        .collect()
 }
 
 /// The globally set options and their version (see `DatabaseInstance::global_settings`).
@@ -233,10 +266,19 @@ impl DatabaseInstance {
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         if !loaded.contains(&extension) {
-            extension.register(&self.system_catalog)?;
+            extension.register(&self.system_catalog, &self.loaded_extensions)?;
             loaded.push(extension);
         }
         Ok(())
+    }
+
+    /// Whether a loaded extension registers a parser override (DuckDB's
+    /// `ParserExtension::Register`; the autocomplete extension's PEG parser).
+    fn has_parser_extension(&self) -> bool {
+        self.loaded_extensions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(&StaticExtension::Autocomplete)
     }
 
     /// The extension providing pragma `name`, if one is loaded.
@@ -296,6 +338,12 @@ impl DatabaseInstance {
                 buffer_manager.set_memory_limit(limit)
             }
             "temp_directory" => {
+                if !rustdb_function::file_system::external_access_enabled() {
+                    return Err(Error::new(
+                        rustdb_common::ErrorKind::Permission,
+                        "Modifying the temp_directory has been disabled by configuration",
+                    ));
+                }
                 let directory = match value {
                     Some(value) => value.to_varchar()?,
                     None => default_temp_directory(&self.path),
@@ -475,6 +523,7 @@ impl Database {
             system_catalog.register_table_functions(set)?;
         }
         system_catalog.register_copy_function(rustdb_csv::copy_csv::csv_copy_function())?;
+        system_catalog.register_copy_function(rustdb_csv::copy_blob::blob_copy_function())?;
         for set in rustdb_csv::multi_file::glob_functions() {
             system_catalog.register_table_functions(set)?;
         }
@@ -508,7 +557,7 @@ impl Database {
             object_cache: Arc::default(),
             log_manager: Arc::default(),
             global_settings: Mutex::default(),
-            loaded_extensions: Mutex::default(),
+            loaded_extensions: Arc::default(),
         };
         if config.load_extensions {
             for extension in StaticExtension::ALL {
@@ -547,6 +596,9 @@ impl Database {
         options: &AttachOptions,
         on_conflict: rustdb_ast::OnCreateConflict,
     ) -> Result<Option<Arc<AttachedDatabase>>> {
+        if !path.is_empty() && !path.starts_with(":memory:") {
+            rustdb_function::file_system::verify_can_access_file(path)?;
+        }
         let Some(attached) = self.instance.databases.attach(
             name,
             path,
@@ -631,10 +683,10 @@ impl Database {
             return Ok(ExtensionLoad::Loaded);
         }
         Ok(match name {
-            "core_functions" | "icu" | "tpcds" | "autocomplete" | "httpfs" | "fts" | "inet" | "excel"
-            | "sqlsmith" | "spatial" | "delta" | "iceberg" | "aws" | "azure" | "motherduck"
-            | "postgres_scanner" | "mysql_scanner" | "sqlite_scanner" | "vss" | "ui" | "encodings"
-            | "ducklake" | "avro" | "demo_capi" => ExtensionLoad::NotAvailable,
+            "core_functions" | "icu" | "tpcds" | "httpfs" | "fts" | "inet" | "excel" | "sqlsmith"
+            | "spatial" | "delta" | "iceberg" | "aws" | "azure" | "motherduck" | "postgres_scanner"
+            | "mysql_scanner" | "sqlite_scanner" | "vss" | "ui" | "encodings" | "ducklake" | "avro"
+            | "demo_capi" => ExtensionLoad::NotAvailable,
             _ => ExtensionLoad::Unknown,
         })
     }
@@ -714,10 +766,24 @@ impl Connection {
         &self.database
     }
 
-    /// Parses `sql` into its statements (DuckDB's `ClientContext::ExtractStatements`).
+    /// Parses `sql` into its statements (DuckDB's `ClientContext::ExtractStatements` and
+    /// `Parser::ParseQuery`): with `allow_parser_override_extension` set and the
+    /// autocomplete extension loaded, its PEG parser goes first.
     pub fn extract_statements(&self, sql: &str) -> Result<Vec<SqlStatement>> {
-        rustdb_parser::parse_with_options(sql, &self.settings.parser_options())
-            .map_err(|error| error.with_query_context(sql))
+        use crate::settings::ParserOverride;
+        let options = self.settings.parser_options();
+        let mode = self.settings.parser_override();
+        if mode != ParserOverride::Default && self.database.instance().has_parser_extension() {
+            let stripped = rustdb_parser::strip_unicode_spaces(sql);
+            let query = stripped.as_deref().unwrap_or(sql);
+            match rustdb_autocomplete::parse_query(query, options) {
+                Ok(statements) => return Ok(statements),
+                Err(error) if mode == ParserOverride::Strict => return Err(error.with_query_context(sql)),
+                // `FALLBACK`: the Postgres parser takes over.
+                Err(_) => {}
+            }
+        }
+        rustdb_parser::parse_with_options(sql, &options).map_err(|error| error.with_query_context(sql))
     }
 
     /// Runs every statement in `sql` and returns the result of the last one (DuckDB's
@@ -798,7 +864,7 @@ impl Connection {
     }
 
     /// Applies the configuration changes functions made (`enable_profiling` /
-    /// `disable_profiling`).
+    /// `disable_profiling`, `enable_peg_parser` / `disable_peg_parser`).
     fn apply_client_requests(&mut self, requests: Vec<rustdb_function::ClientRequest>) -> Result<()> {
         use rustdb_function::ClientRequest;
         for request in requests {
@@ -823,6 +889,10 @@ impl Connection {
                         .apply_enable_profiling(&options, &disabled)?;
                 }
                 ClientRequest::DisableProfiling => self.settings.profiler.apply_disable_profiling(),
+                ClientRequest::SetGlobalOption { name, value } => {
+                    self.settings.set(&name, &value)?;
+                    self.record_setting(&name, Some(&value), SetScope::Global);
+                }
             }
         }
         Ok(())
@@ -1050,6 +1120,7 @@ impl Connection {
             .map(rustdb_types::Value::to_varchar)
             .transpose()?
             .unwrap_or_default();
+        rustdb_function::file_system::verify_can_access_directory(&directory)?;
         let join = |name: &str| {
             if directory.ends_with('/') {
                 format!("{directory}{name}")
@@ -1407,6 +1478,14 @@ impl Connection {
                 ))
             };
             if catalog.is_empty() {
+                // The `temp` and `system` catalogs alone mean their `main` schema.
+                if schema.eq_ignore_ascii_case(rustdb_catalog::TEMP_CATALOG)
+                    || schema.eq_ignore_ascii_case("system")
+                {
+                    resolved.push((schema.to_lowercase(), rustdb_catalog::DEFAULT_SCHEMA.to_owned()));
+                    set_paths.push((schema.clone(), rustdb_catalog::DEFAULT_SCHEMA.to_owned()));
+                    continue;
+                }
                 // A database name alone means its default schema.
                 if let Some(database) = instance.databases.get(&schema)
                     && let Some(main) = database
@@ -1548,7 +1627,11 @@ impl Connection {
         let has_select = statements
             .iter()
             .any(|statement| matches!(statement.kind, rustdb_ast::SqlStatementKind::Select(_)));
-        let wrap = statements.len() > 1 && !has_select && self.transactions.is_auto_commit();
+        let transactional = statements.len() > 1 && !has_select;
+        let wrap = transactional && self.transactions.is_auto_commit();
+        // In an explicit transaction the body runs under `ALL_ERRORS_INVALIDATE_TRANSACTION`
+        // (`StatementPreprocessor`'s `SET_INVALIDATION_POLICY`): any error aborts it.
+        let all_errors_invalidate = transactional && !wrap;
         let run_sql = |connection: &mut Self, sql: &str| -> Result<MaterializedResult> {
             let mut result = MaterializedResult::default();
             for statement in rustdb_parser::parse(sql)? {
@@ -1566,6 +1649,9 @@ impl Connection {
                 Err(error) => {
                     if wrap && !self.transactions.is_auto_commit() {
                         let _ = run_sql(self, "ROLLBACK");
+                    }
+                    if all_errors_invalidate {
+                        self.transactions.invalidate();
                     }
                     return Err(error);
                 }
