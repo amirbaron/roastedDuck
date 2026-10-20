@@ -236,6 +236,15 @@ impl PhysicalOperator for PhysicalNestedLoopJoin {
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         propagates_build_side(self.join_type).then_some(self as &dyn ErasedSource)
     }
+    fn parallel_operator(&self) -> bool {
+        true
+    }
+    fn parallel_sink(&self) -> bool {
+        true
+    }
+    fn parallel_source(&self) -> bool {
+        true
+    }
 
     fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
         super::comparison_join_params(self.join_type, &self.conditions, estimated_cardinality)
@@ -511,6 +520,12 @@ impl Source for PhysicalNestedLoopJoin {
 
     fn local_source_state(&self, _: &ExecutionContext, _: &RightOuterScanState) -> Result<()> {
         Ok(())
+    }
+
+    /// `NestedLoopJoinGlobalScanState::MaxThreads`.
+    fn max_threads(&self, global: &RightOuterScanState) -> usize {
+        super::sink_state::<NestedLoopJoinGlobalState>(global.sink(), "nested loop join")
+            .map_or(1, |sink| sink.right_outer.max_threads())
     }
 
     fn get_data(

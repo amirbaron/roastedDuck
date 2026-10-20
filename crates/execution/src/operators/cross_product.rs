@@ -39,6 +39,12 @@ impl PhysicalOperator for PhysicalCrossProduct {
     fn as_operator(&self) -> Option<&dyn ErasedOperator> {
         Some(self)
     }
+    fn parallel_operator(&self) -> bool {
+        true
+    }
+    fn parallel_sink(&self) -> bool {
+        true
+    }
 }
 
 /// The materialised right input (`CrossProductGlobalState::rhs_materialized`).

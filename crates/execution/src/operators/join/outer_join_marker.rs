@@ -2,7 +2,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use rustdb_types::{DataChunk, LogicalType};
+use rustdb_types::{DataChunk, LogicalType, STANDARD_VECTOR_SIZE};
 
 use super::{null_columns, slice_columns};
 
@@ -33,6 +33,11 @@ impl OuterJoinMarker {
             return;
         }
         self.found_match = (0..count).map(|_| AtomicBool::new(false)).collect();
+    }
+
+    /// How many threads can scan the unmatched rows (`MaxThreads`).
+    pub fn max_threads(&self) -> usize {
+        self.found_match.len() / (STANDARD_VECTOR_SIZE * 10)
     }
 
     /// Marks every row unmatched (`Reset`).
