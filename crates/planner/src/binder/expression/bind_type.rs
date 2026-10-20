@@ -141,6 +141,16 @@ impl TypeBinder<'_> {
             return Ok(ty);
         }
         if qualified_in_main {
+            // Nested type expressions are bound first (`BindExpression(TypeExpression &)`
+            // binds its children), so `ENUM(...)[]` binds the ENUM here.
+            let mut info = info.clone();
+            for parameter in &mut info.parameters {
+                if let rustdb_types::TypeParameterValue::Type(child) = &parameter.value {
+                    let child = self.bind_unbound(child)?;
+                    parameter.value =
+                        rustdb_types::TypeParameterValue::Constant(rustdb_types::Value::type_value(child));
+                }
+            }
             let bound = info.default_bind()?;
             if bound.id() != LogicalTypeId::Unbound {
                 // The modifiers of a builtin type may name user types.
