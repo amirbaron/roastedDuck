@@ -7,6 +7,7 @@ pub mod blob;
 pub mod collections;
 mod error;
 mod index;
+pub mod profiling;
 mod query_context;
 pub mod string_util;
 pub mod tree_renderer;

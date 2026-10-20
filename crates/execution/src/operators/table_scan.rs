@@ -6,7 +6,7 @@ use rustdb_function::{FunctionData, TableFunction, TableScanState};
 use rustdb_types::{DataChunk, LogicalType, Vector};
 
 use crate::operator::{ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
-use crate::{ExecutionContext, Source, SourceResult};
+use crate::{ExecutionContext, ScanMetrics, Source, SourceResult};
 
 /// Scans a table function (DuckDB's `PhysicalTableScan`): the function produces all of
 /// its columns, of which `column_ids` are output.
@@ -239,6 +239,23 @@ impl Source for PhysicalTableScan {
                 .unwrap_or_default(),
             _ => Vec::new(),
         }
+    }
+
+    /// A function without scan metrics reports its estimated cardinality as the rows
+    /// scanned once the thread exhausted it (`AddEstimatedTableScanRowsScanned`).
+    fn scan_metrics(&self, _: &TableScanGlobal, _: &Self::Local, exhausted: bool) -> Option<ScanMetrics> {
+        let rows_scanned = if exhausted {
+            self.function
+                .cardinality
+                .as_ref()
+                .and_then(|cardinality| cardinality(self.bind_data.as_deref()))
+        } else {
+            None
+        };
+        Some(ScanMetrics {
+            rows_scanned,
+            ..ScanMetrics::default()
+        })
     }
 
     fn batch_index(&self, global: &TableScanGlobal, local: &Self::Local) -> Result<u64> {

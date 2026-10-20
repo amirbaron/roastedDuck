@@ -382,6 +382,31 @@ impl Vector {
         &self.ty
     }
 
+    /// The bytes `cardinality` rows of this vector occupy, nested children included
+    /// (DuckDB's `Vector::GetAllocationSize`).
+    pub fn allocation_size(&self, cardinality: usize) -> usize {
+        match self.ty.physical_type() {
+            PhysicalType::List => {
+                let child = self
+                    .list_child()
+                    .map_or(0, |(child, size)| child.allocation_size(size));
+                PhysicalType::List.size() * cardinality + child
+            }
+            PhysicalType::Array => {
+                let size = self.ty.array_child().map_or(0, |(_, size)| size as usize);
+                self.array_child()
+                    .map_or(0, |child| child.allocation_size(size * cardinality))
+            }
+            PhysicalType::Struct => self.struct_children().map_or(0, |children| {
+                children
+                    .iter()
+                    .map(|child| child.allocation_size(cardinality))
+                    .sum()
+            }),
+            physical => physical.size() * cardinality,
+        }
+    }
+
     pub fn kind(&self) -> VectorKind {
         match self.repr {
             Repr::Flat(_) => VectorKind::Flat,

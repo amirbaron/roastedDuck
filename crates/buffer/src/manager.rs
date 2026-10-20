@@ -419,6 +419,12 @@ impl BufferManager {
         self.shared.used_memory()
     }
 
+    /// Bytes currently charged, without folding in the per-thread caches (DuckDB's
+    /// `BufferPool::GetUsedMemory(false)`).
+    pub fn used_memory_estimate(&self) -> u64 {
+        self.shared.pool.used_memory(false)
+    }
+
     /// The memory limit.
     pub fn max_memory(&self) -> u64 {
         self.shared.pool.max_memory()
