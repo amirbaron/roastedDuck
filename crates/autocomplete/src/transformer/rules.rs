@@ -117,6 +117,7 @@ transform_rules! {
         "TransactionStatement" => transform_transaction_statement,
         "UpdateStatement" => transform_update_statement,
         "VacuumStatement" => transform_vacuum_statement,
+        "Statement" => transform_statement,
     }
     AlterInfo [] {
         "AlterOptions" => transform_alter_options,

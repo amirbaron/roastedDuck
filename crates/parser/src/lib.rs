@@ -62,6 +62,9 @@ mod transformer;
 
 pub use transformer::build;
 
+/// Child enumeration and `HasSubquery` of parsed expressions, for the PEG transformer.
+pub use equality::{children as expression_children, has_subquery};
+
 use rustdb_ast::{CreateInfo, SqlStatement, SqlStatementKind};
 use rustdb_common::{Error, Result};
 
