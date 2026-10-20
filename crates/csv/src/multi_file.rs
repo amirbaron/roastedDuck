@@ -502,6 +502,8 @@ fn list_files(path: &str) -> Vec<(String, bool)> {
 
 /// `LocalGlobResult`: expands a pattern against the local file system.
 pub fn local_glob(pattern: &str) -> Result<Vec<String>> {
+    // `OpenerFileSystem::Glob` checks the pattern against the access configuration.
+    rustdb_function::file_system::verify_can_access_file(pattern)?;
     // `LocalGlobResult`: `~` and `file:` URLs expand first (`FileSystem::ExpandPath`).
     let path = rustdb_function::file_system::expand_path(pattern);
     if path.is_empty() {

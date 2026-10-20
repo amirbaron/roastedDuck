@@ -331,6 +331,7 @@ impl TransactionManager {
     /// (`DuckTransaction::WriteToWAL` + `UndoBuffer::Commit`). If stamping fails, the
     /// logged entries are cut off again (`RevertCommit`).
     fn log_and_commit(transaction: &Transaction, commit_id: u64, others_active: bool) -> Result<()> {
+        transaction.undo().verify_commit(transaction.start_time)?;
         let Some(wal) = transaction.wal() else {
             transaction.local_storage.commit(transaction)?;
             return transaction

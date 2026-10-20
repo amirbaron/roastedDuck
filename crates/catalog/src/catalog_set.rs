@@ -323,6 +323,27 @@ impl CatalogSet {
         Ok(true)
     }
 
+    /// Whether another transaction committed an entry into this set after `start_time`.
+    pub(crate) fn created_since(&self, start_time: u64) -> Option<String> {
+        self.lock().values().find_map(|chain| {
+            let head = chain.first()?;
+            let timestamp = head.timestamp();
+            let entry = head.entry.as_ref()?;
+            (timestamp < TRANSACTION_ID_START && timestamp > start_time).then(|| entry.name().to_owned())
+        })
+    }
+
+    /// Whether another transaction committed a drop of `name` after `start_time`.
+    pub(crate) fn dropped_since(&self, name: &str, start_time: u64) -> bool {
+        self.lock()
+            .get(&key(name))
+            .and_then(|chain| chain.first())
+            .is_some_and(|head| {
+                let timestamp = head.timestamp();
+                head.is_tombstone() && timestamp < TRANSACTION_ID_START && timestamp > start_time
+            })
+    }
+
     /// Looks up `name` as seen by `transaction`.
     pub fn lookup(&self, transaction: &Transaction, name: &str) -> Lookup {
         let chains = self.lock();

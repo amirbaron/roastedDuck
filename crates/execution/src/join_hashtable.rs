@@ -1229,21 +1229,28 @@ impl JoinHashTable {
         key_type: &LogicalType,
         mut f: impl FnMut(&[RowPtr], &Vector) -> Result<bool>,
     ) -> Result<bool> {
-        let mut scan = self
-            .data_collection
-            .initialize_scan_columns(Vec::new(), PinProperties::AlreadyPinned);
+        if self.data_collection.chunk_count() == 0 {
+            return Ok(true);
+        }
+        // This runs before the pointer table is built: the scan pins every block and keeps
+        // it pinned, so the returned rows (and their heaps) stay valid (`ScanKeyColumn`
+        // with `KEEP_EVERYTHING_PINNED`).
+        let mut iterator =
+            ChunkIterator::new(&self.data_collection, PinProperties::KeepEverythingPinned, false)?;
         let mut keys = Vector::flat(key_type.clone(), STANDARD_VECTOR_SIZE);
-        for chunk in 0..self.data_collection.chunk_count() {
-            let count = self.data_collection.fetch_chunk(&mut scan, chunk, false)?;
-            let rows = &scan.chunk_state.row_locations()[..count];
+        loop {
+            let count = iterator.current_chunk_count();
+            let rows = &iterator.row_locations()[..count];
             keys.reset_flat(count);
-            // SAFETY: the rows were just fetched from this table's pinned blocks.
+            // SAFETY: the rows are pinned rows of this table.
             unsafe { self.gather(rows, None, count, column, &mut keys, None)? };
             if !f(rows, &keys)? {
                 return Ok(false);
             }
+            if !iterator.next_chunk()? {
+                return Ok(true);
+            }
         }
-        Ok(true)
     }
 
     /// Gathers build output column `index` of `rows[..count]` into the slots `target_sel`
@@ -1260,8 +1267,24 @@ impl JoinHashTable {
         target_sel: &[u32],
     ) -> Result<()> {
         let column = self.output_columns[index];
+        // Strings point into the table's heap blocks: the gathered vector keeps their pins
+        // (the table may not be finalized yet, so its own keep-alive may be unset).
+        let keep_alive = self
+            .heap_keep_alive
+            .clone()
+            .unwrap_or_else(|| self.data_collection.heap_keep_alive());
         // SAFETY: forwarded from the caller.
-        unsafe { self.gather(rows, None, count, column, target, Some(target_sel)) }
+        unsafe {
+            self.data_collection.gather(
+                rows,
+                None,
+                count,
+                &[column],
+                std::slice::from_mut(target),
+                Some(target_sel),
+                Some(&keep_alive),
+            )
+        }
     }
 
     /// A scan of data collection chunks `chunks` for [`Self::scan_full_outer`].

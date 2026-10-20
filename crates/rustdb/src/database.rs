@@ -338,6 +338,12 @@ impl DatabaseInstance {
                 buffer_manager.set_memory_limit(limit)
             }
             "temp_directory" => {
+                if !rustdb_function::file_system::external_access_enabled() {
+                    return Err(Error::new(
+                        rustdb_common::ErrorKind::Permission,
+                        "Modifying the temp_directory has been disabled by configuration",
+                    ));
+                }
                 let directory = match value {
                     Some(value) => value.to_varchar()?,
                     None => default_temp_directory(&self.path),
@@ -589,6 +595,9 @@ impl Database {
         options: &AttachOptions,
         on_conflict: rustdb_ast::OnCreateConflict,
     ) -> Result<Option<Arc<AttachedDatabase>>> {
+        if !path.is_empty() && !path.starts_with(":memory:") {
+            rustdb_function::file_system::verify_can_access_file(path)?;
+        }
         let Some(attached) = self.instance.databases.attach(
             name,
             path,
@@ -1110,6 +1119,7 @@ impl Connection {
             .map(rustdb_types::Value::to_varchar)
             .transpose()?
             .unwrap_or_default();
+        rustdb_function::file_system::verify_can_access_directory(&directory)?;
         let join = |name: &str| {
             if directory.ends_with('/') {
                 format!("{directory}{name}")
@@ -1608,7 +1618,11 @@ impl Connection {
         let has_select = statements
             .iter()
             .any(|statement| matches!(statement.kind, rustdb_ast::SqlStatementKind::Select(_)));
-        let wrap = statements.len() > 1 && !has_select && self.transactions.is_auto_commit();
+        let transactional = statements.len() > 1 && !has_select;
+        let wrap = transactional && self.transactions.is_auto_commit();
+        // In an explicit transaction the body runs under `ALL_ERRORS_INVALIDATE_TRANSACTION`
+        // (`StatementPreprocessor`'s `SET_INVALIDATION_POLICY`): any error aborts it.
+        let all_errors_invalidate = transactional && !wrap;
         let run_sql = |connection: &mut Self, sql: &str| -> Result<MaterializedResult> {
             let mut result = MaterializedResult::default();
             for statement in rustdb_parser::parse(sql)? {
@@ -1626,6 +1640,9 @@ impl Connection {
                 Err(error) => {
                     if wrap && !self.transactions.is_auto_commit() {
                         let _ = run_sql(self, "ROLLBACK");
+                    }
+                    if all_errors_invalidate {
+                        self.transactions.invalidate();
                     }
                     return Err(error);
                 }

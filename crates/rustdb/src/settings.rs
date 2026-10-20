@@ -569,6 +569,13 @@ impl Settings {
                 .unwrap_or(false)
         };
         match option_by_name(name).unwrap_or_default() {
+            option @ ("allowed_directories" | "allowed_paths")
+                if !rustdb_function::file_system::external_access_enabled() =>
+            {
+                Err(Error::invalid_input(format!(
+                    "Cannot change {option} when enable_external_access is disabled"
+                )))
+            }
             "access_mode" => Err(Error::invalid_input(
                 "Cannot change access_mode setting while database is running - it must be set when opening or \
                  attaching the database",
@@ -603,6 +610,13 @@ impl Settings {
     /// The `ResetGlobal` / `ResetLocal` checks of options that cannot be reset.
     pub(crate) fn check_running_reset(name: &str) -> Result<()> {
         match option_by_name(name).unwrap_or_default() {
+            option @ ("allowed_directories" | "allowed_paths")
+                if !rustdb_function::file_system::external_access_enabled() =>
+            {
+                Err(Error::invalid_input(format!(
+                    "Cannot change {option} when enable_external_access is disabled"
+                )))
+            }
             "custom_user_agent" => Err(Error::invalid_input(
                 "Cannot change custom_user_agent setting while database is running",
             )),

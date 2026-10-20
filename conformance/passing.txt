@@ -961,6 +961,7 @@ test/sql/attach/attach_dependencies.test
 test/sql/attach/attach_did_you_mean.test
 test/sql/attach/attach_different_alias.test
 test/sql/attach/attach_duckdb_type.test
+test/sql/attach/attach_enable_external_access.test
 test/sql/attach/attach_encrypted_db_key_test.test
 test/sql/attach/attach_encryption_block_header.test
 test/sql/attach/attach_encryption_downgrade_prevention.test
@@ -968,6 +969,7 @@ test/sql/attach/attach_encryption_fallback_readonly.test
 test/sql/attach/attach_enums.test
 test/sql/attach/attach_export_import.test
 test/sql/attach/attach_expr.test
+test/sql/attach/attach_external_access.test
 test/sql/attach/attach_force_checkpoint_deadlock.test_slow
 test/sql/attach/attach_hidden.test
 test/sql/attach/attach_huggingface_index.test
@@ -1337,6 +1339,7 @@ test/sql/copy/csv/csv_duck_fuzz.test
 test/sql/copy/csv/csv_enum.test
 test/sql/copy/csv/csv_enum_storage.test
 test/sql/copy/csv/csv_error_message.test
+test/sql/copy/csv/csv_external_access.test
 test/sql/copy/csv/csv_glob_fallback.test
 test/sql/copy/csv/csv_hive.test
 test/sql/copy/csv/csv_hive_filename_union.test
@@ -1639,6 +1642,7 @@ test/sql/copy/parquet/parquet_encryption.test
 test/sql/copy/parquet/parquet_encryption_tpch.test_slow
 test/sql/copy/parquet/parquet_enum_test.test
 test/sql/copy/parquet/parquet_expression_filter.test
+test/sql/copy/parquet/parquet_external_access.test
 test/sql/copy/parquet/parquet_filename.test
 test/sql/copy/parquet/parquet_filename_filter.test
 test/sql/copy/parquet/parquet_filter_bug1391.test
@@ -1888,6 +1892,7 @@ test/sql/explain/test_explain_table_scan.test
 test/sql/export/empty_export.test
 test/sql/export/export_compression_level.test
 test/sql/export/export_database.test
+test/sql/export/export_external_access.test
 test/sql/export/export_generated_columns.test
 test/sql/export/export_hive_path.test
 test/sql/export/export_indexes.test
@@ -2457,6 +2462,7 @@ test/sql/join/empty_joins.test
 test/sql/join/external/external_join_many_duplicates.test_slow
 test/sql/join/external/many_external_joins.test_slow
 test/sql/join/external/simple_external_join.test_slow
+test/sql/join/external/tpch_all_tables.test_slow
 test/sql/join/full_outer/full_outer_join_cache.test
 test/sql/join/full_outer/full_outer_join_union.test
 test/sql/join/full_outer/test_full_outer_join.test
@@ -3074,6 +3080,8 @@ test/sql/setops/union_single_dedup.test
 test/sql/setops/value_union.test
 test/sql/settings/access_mode.test
 test/sql/settings/allowed_configs.test
+test/sql/settings/allowed_directories.test
+test/sql/settings/allowed_paths.test
 test/sql/settings/connection_local_settings.test
 test/sql/settings/default_null_order_extended.test
 test/sql/settings/drop_set_schema.test
@@ -3455,6 +3463,7 @@ test/sql/storage/temp_directory/max_swap_space_inmemory.test
 test/sql/storage/temp_directory/max_swap_space_persistent.test
 test/sql/storage/temp_directory/max_swap_space_unlimited.test
 test/sql/storage/temp_directory/offloading_block_files.test_slow
+test/sql/storage/temp_directory/temp_directory_enable_external_access.test
 test/sql/storage/temp_directory/temp_directory_null.test
 test/sql/storage/temp_directory/test_default_temp_directory.test
 test/sql/storage/test_big_strings.test_slow
@@ -3781,9 +3790,17 @@ test/sql/transactions/rollback_drop_table_with_pk.test
 test/sql/transactions/statement-preprocessor/copy_from_database_is_transactional.test
 test/sql/transactions/statement-preprocessor/invalidation_policy_is_respected_by_preprocessor.test
 test/sql/transactions/statement-preprocessor/multistatement_is_transactional.test
+test/sql/transactions/statement-preprocessor/multistatement_is_transactional_after_BEGIN.test
+test/sql/transactions/statement-preprocessor/multistatement_is_transactional_after_BEGIN_chained_COMMIT.test
+test/sql/transactions/statement-preprocessor/multistatement_is_transactional_chained_BEGIN.test
+test/sql/transactions/statement-preprocessor/multistatement_is_transactional_chained_BEGIN_body_COMMIT.test
 test/sql/transactions/statement-preprocessor/multistatement_is_transactional_chained_PRAGMA.test
+test/sql/transactions/statement-preprocessor/multistatement_is_transactional_chained_PRAGMA_BEGIN.test
 test/sql/transactions/statement-preprocessor/pivot_is_handled_correctly.test
 test/sql/transactions/test_basic_transactions.test
+test/sql/transactions/test_create_drop_conflict.test
+test/sql/transactions/test_create_drop_conflict_variation1.test
+test/sql/transactions/test_create_drop_conflict_variation2.test
 test/sql/transactions/test_from_update_conflict.test
 test/sql/transactions/test_index_abort.test
 test/sql/transactions/test_index_huge_aborted_append.test

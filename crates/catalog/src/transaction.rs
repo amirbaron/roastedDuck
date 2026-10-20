@@ -96,6 +96,52 @@ impl CatalogUndo for CatalogChange {
     }
 }
 
+/// A check made when a transaction commits, without changes of its own.
+#[derive(Debug)]
+pub(crate) enum CommitCheck {
+    /// A dropped schema: no other transaction may have created entries in it since this
+    /// one started (`VerifyCommitDrop`; DuckDB's entries depend on their schema).
+    SchemaDropped {
+        name: String,
+        sets: Vec<Arc<CatalogSet>>,
+    },
+    /// An entry created in a schema: no other transaction may have dropped the schema
+    /// since (`VerifyExistence`).
+    SchemaExists { name: String, schemas: Arc<CatalogSet> },
+}
+
+impl CatalogUndo for CommitCheck {
+    fn commit(&self, _: u64) {}
+
+    fn rollback(&self) {}
+
+    fn verify_commit(&self, start_time: u64) -> Result<()> {
+        match self {
+            Self::SchemaDropped { name, sets } => {
+                if sets.iter().any(|set| set.created_since(start_time).is_some()) {
+                    return Err(rustdb_common::Error::new(
+                        rustdb_common::ErrorKind::Dependency,
+                        format!(
+                            "Could not commit DROP of \"{name}\" because a dependency was created after the transaction started"
+                        ),
+                    ));
+                }
+            }
+            Self::SchemaExists { name, schemas } => {
+                if schemas.dropped_since(name, start_time) {
+                    return Err(rustdb_common::Error::new(
+                        rustdb_common::ErrorKind::Dependency,
+                        format!(
+                            "Could not commit creation of dependency, subject \"{name}\" has been deleted"
+                        ),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Registers catalog changes in a transaction's undo log.
 pub(crate) trait TransactionExt {
     fn push_catalog_change(
