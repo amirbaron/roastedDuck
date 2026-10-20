@@ -194,6 +194,9 @@ pub struct ScalarFunction {
     /// types (DuckDB's `bind_expression` callback, for functions such as `getvariable` or
     /// `typeof` that resolve completely while binding).
     pub bind_expression: Option<BindExpression>,
+    /// The kernel statistics propagation switches to when the first argument cannot
+    /// contain unicode (the `SetFunctionCallback` of DuckDB's `ILikePropagateStats`).
+    pub ascii_kernel: Option<ScalarKernel>,
 }
 
 /// See [`ScalarFunction::bind_expression`].
@@ -220,7 +223,18 @@ impl ScalarFunction {
             lambda_cast: None,
             collation_handling: CollationHandling::PropagateCollations,
             bind_expression: None,
+            ascii_kernel: None,
         }
+    }
+
+    /// Sets the kernel for arguments without unicode (see [`ScalarFunction::ascii_kernel`]).
+    #[must_use]
+    pub fn with_ascii_kernel(
+        mut self,
+        kernel: impl Fn(&DataChunk, &mut FunctionState, &mut Vector) -> Result<()> + Send + Sync + 'static,
+    ) -> Self {
+        self.ascii_kernel = Some(Arc::new(kernel));
+        self
     }
 
     /// Sets the bind-expression callback (see [`ScalarFunction::bind_expression`]).

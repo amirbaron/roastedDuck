@@ -34,6 +34,7 @@ test/fuzzer/duckfuzz/array_const_columndatacopy.test
 test/fuzzer/duckfuzz/array_const_null_cast.test
 test/fuzzer/duckfuzz/array_distance.test
 test/fuzzer/duckfuzz/array_group_by_sample.test
+test/fuzzer/duckfuzz/array_hash.test
 test/fuzzer/duckfuzz/array_list_gather_cast.test
 test/fuzzer/duckfuzz/array_serialization_flattening.test
 test/fuzzer/duckfuzz/array_slice_nullness.test
