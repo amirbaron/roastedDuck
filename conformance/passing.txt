@@ -2903,6 +2903,7 @@ test/sql/select/test_select_locking.test
 test/sql/select/test_select_qualified_view.test
 test/sql/setops/ambiguous_order_by.test
 test/sql/setops/setops_pushdown.test
+test/sql/setops/test_except.test
 test/sql/setops/test_full_outer_join_union.test
 test/sql/setops/test_joins_under_setops.test_slow
 test/sql/setops/test_nested_except.test

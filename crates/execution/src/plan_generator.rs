@@ -103,6 +103,8 @@ pub struct PlanContext {
     pub preserve_insertion_order: bool,
     /// The `index_scan_max_count` and `index_scan_percentage` settings.
     pub index_scan: (u64, f64),
+    /// The client, for the collations planning pushes (`ExpressionBinder::PushCollation`).
+    pub client: Arc<rustdb_planner::ClientContext>,
 }
 
 impl PlanContext {
@@ -1307,7 +1309,8 @@ impl PlanGenerator {
                             "EXCEPT / INTERSECT must have exactly two children",
                         ));
                     };
-                    return except_or_intersect(operator_type, setop_all, types, left, right);
+                    let client = self.context.as_ref().map(|context| &*context.client);
+                    return except_or_intersect(client, operator_type, setop_all, types, left, right);
                 }
                 let inputs: Vec<PhysicalRef> = children.by_ref().collect();
                 let mut inputs = inputs.into_iter().rev();
@@ -1380,8 +1383,10 @@ impl PlanGenerator {
 }
 
 /// `EXCEPT` as an anti join and `INTERSECT` as a semi join on all columns compared with
-/// `IS NOT DISTINCT FROM`, then made distinct (DuckDB's `CreatePlan(LogicalSetOperation&)`).
+/// `IS NOT DISTINCT FROM` under the columns' collations, then made distinct (DuckDB's
+/// `CreatePlan(LogicalSetOperation&)`).
 fn except_or_intersect(
+    client: Option<&rustdb_planner::ClientContext>,
     operator_type: LogicalOperatorType,
     setop_all: bool,
     types: Vec<LogicalType>,
@@ -1395,12 +1400,14 @@ fn except_or_intersect(
     let mut conditions: Vec<JoinCondition> = column_types
         .iter()
         .enumerate()
-        .map(|(index, ty)| JoinCondition {
-            left: Expression::reference("", ty.clone(), index as u64),
-            right: Expression::reference("", ty.clone(), index as u64),
-            comparison: ExpressionType::CompareNotDistinctFrom,
+        .map(|(index, ty)| {
+            Ok(JoinCondition {
+                left: collated_reference(client, ty, index)?,
+                right: collated_reference(client, ty, index)?,
+                comparison: ExpressionType::CompareNotDistinctFrom,
+            })
         })
-        .collect();
+        .collect::<Result<_>>()?;
     // EXCEPT ALL / INTERSECT ALL number the duplicates on each side and also join on the
     // numbers, for bag semantics.
     let (left, right, join_types) = if setop_all {
@@ -1412,8 +1419,8 @@ fn except_or_intersect(
         let mut join_types = types.clone();
         join_types.push(LogicalType::BIGINT);
         (
-            window::partitioned_row_number(left)?,
-            window::partitioned_row_number(right)?,
+            window::partitioned_row_number(client, left)?,
+            window::partitioned_row_number(client, right)?,
             join_types,
         )
     } else {
@@ -1445,6 +1452,20 @@ fn except_or_intersect(
         return Ok(Arc::new(PhysicalProjection::new(types, select_list, join)));
     }
     distinct_on_all_columns(types, join)
+}
+
+/// A reference to column `index` under the collation of `ty` (`PushCollation`); plans
+/// without a client compare binary.
+pub(crate) fn collated_reference(
+    client: Option<&rustdb_planner::ClientContext>,
+    ty: &LogicalType,
+    index: usize,
+) -> Result<Expression> {
+    let reference = Expression::reference("", ty.clone(), index as u64);
+    match client {
+        Some(client) => rustdb_planner::collation_binding::push_collation(client, reference, ty),
+        None => Ok(reference),
+    }
 }
 
 /// `DISTINCT` / `DISTINCT ON` (DuckDB's `CreatePlan(LogicalDistinct&)`): one group per

@@ -1719,6 +1719,7 @@ impl Connection {
         let optimizer_config = self.settings.optimizer_config();
         let optimizer_client = optimizer_config.enabled.then(|| Arc::clone(&client));
         let preserve_insertion_order = optimizer_config.preserve_insertion_order;
+        let plan_client = Arc::clone(&client);
         plan = Optimizer::new(client, optimizer_config).optimize(plan)?;
         ColumnBindingResolver::resolve(&mut plan)?;
         seed_samples(&mut plan, &self.function_client);
@@ -1732,6 +1733,7 @@ impl Connection {
             threads: self.database.instance().env.threads(),
             preserve_insertion_order,
             index_scan: self.settings.index_scan_thresholds(),
+            client: plan_client,
         };
         let physical = create_physical_plan_with(plan, &context)?;
         // EXPLAIN ANALYZE profiles the run.
