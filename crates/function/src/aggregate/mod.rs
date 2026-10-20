@@ -24,7 +24,7 @@ use std::ptr::NonNull;
 use std::sync::Arc;
 
 use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, ValidityMask, Vector};
+use rustdb_types::{LogicalType, ValidityMask, Value, Vector};
 
 use crate::{BindInput, FunctionData, NullHandling};
 
@@ -353,7 +353,18 @@ pub struct AggregateFunction {
     /// default whether the Rust state needs dropping; aggregates whose DuckDB states
     /// live in the aggregate arena (`list`, `string_agg`) have none.
     pub has_state_destructor: bool,
+    /// Called by statistics propagation with each argument's `(min, max)`, when known;
+    /// returns new bind data (DuckDB's `statistics` callback with `AggregateStatisticsInput`,
+    /// which may update the bind data).
+    pub statistics: Option<AggregateStatistics>,
 }
+
+/// See [`AggregateFunction::statistics`].
+pub type AggregateStatistics = Arc<
+    dyn Fn(Option<&Arc<dyn FunctionData>>, &[Option<(Value, Value)>]) -> Option<Arc<dyn FunctionData>>
+        + Send
+        + Sync,
+>;
 
 impl AggregateFunction {
     pub fn new(
@@ -374,6 +385,7 @@ impl AggregateFunction {
             bind: None,
             collation: AggregateCollation::None,
             has_state_destructor: false,
+            statistics: None,
         }
         .with_state_destructor_of_ops()
     }
@@ -413,6 +425,22 @@ impl AggregateFunction {
         + 'static,
     ) -> Self {
         self.bind = Some(Arc::new(bind));
+        self
+    }
+
+    /// Sets the statistics callback (see [`AggregateFunction::statistics`]).
+    #[must_use]
+    pub fn with_statistics(
+        mut self,
+        statistics: impl Fn(
+            Option<&Arc<dyn FunctionData>>,
+            &[Option<(Value, Value)>],
+        ) -> Option<Arc<dyn FunctionData>>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        self.statistics = Some(Arc::new(statistics));
         self
     }
 

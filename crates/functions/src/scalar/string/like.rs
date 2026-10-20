@@ -308,7 +308,11 @@ fn binary_like(name: &str, op: Matcher, invert: bool) -> ScalarFunction {
 fn like_kernel(
     op: Matcher,
     invert: bool,
-) -> impl Fn(&rustdb_types::DataChunk, &mut rustdb_function::FunctionState, &mut rustdb_types::Vector) -> Result<()>
+) -> impl Fn(
+    &rustdb_types::DataChunk,
+    &mut rustdb_function::FunctionState,
+    &mut rustdb_types::Vector,
+) -> Result<()>
 + Send
 + Sync
 + 'static {

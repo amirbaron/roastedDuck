@@ -43,6 +43,7 @@ test/fuzzer/duckfuzz/array_slice_underflow.test
 test/fuzzer/duckfuzz/array_slice_vector_type.test
 test/fuzzer/duckfuzz/bind_limit_num.test_slow
 test/fuzzer/duckfuzz/bitstring_agg_minmax.test
+test/fuzzer/duckfuzz/bitstring_agg_uhugeint.test
 test/fuzzer/duckfuzz/bitstring_agg_unfoldable.test
 test/fuzzer/duckfuzz/column_alias_exist.test
 test/fuzzer/duckfuzz/complex_join_cardinality_assert.test
@@ -254,6 +255,7 @@ test/fuzzer/public/unsatisfiable_filter_prune.test
 test/fuzzer/public/window_subquery_error.test
 test/fuzzer/public/window_subquery_with_functions_error.test
 test/fuzzer/sqlsmith/bitstring_agg_executor.test
+test/fuzzer/sqlsmith/bitstring_agg_overflow.test
 test/fuzzer/sqlsmith/current_schemas_null.test
 test/fuzzer/sqlsmith/dayofweek_overflow.test
 test/fuzzer/sqlsmith/fuzzer_window_varchar.test
@@ -732,6 +734,7 @@ test/sql/aggregate/aggregates/test_binned_histogram.test
 test/sql/aggregate/aggregates/test_bit_and.test
 test/sql/aggregate/aggregates/test_bit_or.test
 test/sql/aggregate/aggregates/test_bit_xor.test
+test/sql/aggregate/aggregates/test_bitstring_agg.test
 test/sql/aggregate/aggregates/test_bool.test
 test/sql/aggregate/aggregates/test_corr.test
 test/sql/aggregate/aggregates/test_count.test

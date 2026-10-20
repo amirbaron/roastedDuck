@@ -352,6 +352,16 @@ pub(super) fn propagate_aggregate_function(
     let ExpressionKind::Aggregate(aggregate) = &mut expression.kind else {
         return Ok(None);
     };
+    // The aggregate's own statistics callback may update its bind data.
+    if let Some(statistics) = aggregate.function.statistics.clone() {
+        let bounds: Vec<Option<(Value, Value)>> = child_stats
+            .iter()
+            .map(|stats| Some((stats.numeric_min()?, stats.numeric_max()?)))
+            .collect();
+        if let Some(bind_info) = statistics(aggregate.bind_info.as_ref(), &bounds) {
+            aggregate.bind_info = Some(bind_info);
+        }
+    }
     // DuckDB's `CountPropagateStats`: COUNT of a column without NULLs is COUNT(*).
     let without_statistics = aggregate
         .bind_info
