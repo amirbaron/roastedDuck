@@ -18,7 +18,7 @@ use rustdb_function::{
     FunctionData, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet,
 };
 use rustdb_planner::ClientContext;
-use rustdb_types::{DataChunk, LogicalType, Value, Vector};
+use rustdb_types::{DataChunk, LogicalType, Value, Vector, implicit_cast_cost};
 
 use crate::dbgen::DbgenTarget;
 use crate::tpch_constants::{
@@ -286,12 +286,31 @@ pub fn get_answer(sf: f64, query: i32) -> Result<&'static str> {
     Ok(answers[index])
 }
 
-/// `PragmaTpchQuery`: the query `PRAGMA tpch(n)` runs.
+/// `PragmaTpchQuery`: the query `PRAGMA tpch(n)` runs. The pragma takes one BIGINT
+/// (`PragmaFunction::PragmaCall("tpch", ..., {LogicalType::BIGINT})`), bound with
+/// implicit casts only, and reads it as an `int32_t`.
 pub fn pragma_tpch_query(parameters: &[Value]) -> Result<String> {
-    let index = parameters
-        .first()
-        .ok_or_else(|| Error::binder("PRAGMA tpch requires the query number"))?
-        .default_cast_as(&LogicalType::INTEGER)?;
-    let index = index.as_i32().unwrap_or_default();
-    get_query(index).map(str::to_owned)
+    let parameter = match parameters {
+        [parameter] if implicit_cast_cost(parameter.logical_type(), &LogicalType::BIGINT) >= 0 => parameter,
+        _ => {
+            let types: Vec<String> = parameters
+                .iter()
+                .map(|parameter| parameter.logical_type().to_string())
+                .collect();
+            return Err(Error::binder(format!(
+                "No function matches the given name and argument types 'tpch({})'. You might need to add explicit type casts.\n\tCandidate functions:\n\tPRAGMA tpch(BIGINT)\n",
+                types.join(", ")
+            )));
+        }
+    };
+    let value = parameter
+        .default_cast_as(&LogicalType::BIGINT)?
+        .as_i64()
+        .ok_or_else(|| Error::internal("Calling GetValue on a NULL value"))?;
+    let query = i32::try_from(value).map_err(|_| {
+        Error::invalid_input(format!(
+            "Type INT64 with value {value} can't be cast because the value is out of range for the destination type INT32"
+        ))
+    })?;
+    get_query(query).map(str::to_owned)
 }

@@ -88,13 +88,19 @@ impl StaticExtension {
         }
     }
 
-    /// The SQL the extension's pragma `name` stands for, if it has one of the name.
-    fn pragma_query(self, name: &str, parameters: &[Value]) -> Result<Option<String>> {
+    /// Whether the extension has a pragma `name` that stands for a query.
+    fn has_pragma(self, name: &str) -> bool {
         match self {
-            Self::Tpch if name.eq_ignore_ascii_case("tpch") => {
-                rustdb_tpch::pragma_tpch_query(parameters).map(Some)
-            }
-            _ => Ok(None),
+            Self::Tpch => name.eq_ignore_ascii_case("tpch"),
+            Self::Parquet | Self::Json => false,
+        }
+    }
+
+    /// The SQL the extension's pragma `name` stands for.
+    fn pragma_query(self, name: &str, parameters: &[Value]) -> Result<String> {
+        match self {
+            Self::Tpch => rustdb_tpch::pragma_tpch_query(parameters),
+            Self::Parquet | Self::Json => Err(Error::internal(format!("no pragma {name}"))),
         }
     }
 
@@ -233,20 +239,27 @@ impl DatabaseInstance {
         Ok(())
     }
 
-    /// The SQL a pragma of a loaded extension stands for (`PragmaFunction::PragmaCall`
-    /// with a query), if a loaded extension has a pragma `name`.
-    fn extension_pragma_query(&self, name: &str, parameters: &[Value]) -> Result<Option<String>> {
-        let loaded = self
-            .loaded_extensions
+    /// The extension providing pragma `name`, if one is loaded.
+    fn extension_with_pragma(&self, name: &str) -> Option<StaticExtension> {
+        self.loaded_extensions
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        for extension in loaded {
-            if let Some(query) = extension.pragma_query(name, parameters)? {
-                return Ok(Some(query));
-            }
-        }
-        Ok(None)
+            .iter()
+            .copied()
+            .find(|extension| extension.has_pragma(name))
+    }
+
+    /// Whether a loaded extension has a pragma `name`.
+    fn has_extension_pragma(&self, name: &str) -> bool {
+        self.extension_with_pragma(name).is_some()
+    }
+
+    /// The SQL the pragma `name` of a loaded extension stands for (a
+    /// `PragmaFunction::PragmaCall` with a query).
+    fn extension_pragma_query(&self, name: &str, parameters: &[Value]) -> Result<String> {
+        self.extension_with_pragma(name)
+            .ok_or_else(|| Error::internal(format!("no extension has the pragma {name}")))?
+            .pragma_query(name, parameters)
     }
 
     /// `SET threads` (`ThreadsSetting::SetGlobal`), or the default thread count for
@@ -1191,7 +1204,18 @@ impl Connection {
             return Ok(MaterializedResult::default());
         }
         // Pragmas that stand for a query run that query (DuckDB's `PragmaHandler`).
-        let statement = statement;
+        if let rustdb_ast::SqlStatementKind::Pragma(pragma) = &statement.kind
+            && self.database.instance.has_extension_pragma(&pragma.name)
+        {
+            // An extension's pragma binds its parameters like any pragma.
+            let name = pragma.name.clone();
+            let parameters = self.bind_pragma_parameters(statement)?;
+            let query = self
+                .database
+                .instance
+                .extension_pragma_query(&name, &parameters)?;
+            return self.run_pragma_query(&query);
+        }
         if let rustdb_ast::SqlStatementKind::Pragma(pragma) = &statement.kind {
             let constants: Option<Vec<rustdb_types::Value>> = pragma
                 .parameters
@@ -1210,22 +1234,11 @@ impl Connection {
                 return self.import_database(constants);
             }
             let query = match &constants {
-                Some(constants) => match self
-                    .database
-                    .instance
-                    .extension_pragma_query(&pragma.name, constants)?
-                {
-                    Some(query) => Some(query),
-                    None => crate::system_functions::pragma_query(&pragma.name, constants)?,
-                },
+                Some(constants) => crate::system_functions::pragma_query(&pragma.name, constants)?,
                 None => None,
             };
             if let Some(query) = query {
-                let mut result = MaterializedResult::default();
-                for statement in rustdb_parser::parse(&query)? {
-                    result = self.run_statement(statement)?;
-                }
-                return Ok(result);
+                return self.run_pragma_query(&query);
             }
         }
         // `CHECKPOINT` is `CALL checkpoint()`: the call is bound and run like any table
@@ -1271,6 +1284,27 @@ impl Connection {
             )?;
         }
         Ok(result)
+    }
+
+    /// Runs the statements of the query a pragma stands for; the result is the last
+    /// statement's.
+    fn run_pragma_query(&mut self, query: &str) -> Result<MaterializedResult> {
+        let mut result = MaterializedResult::default();
+        for statement in rustdb_parser::parse(query)? {
+            result = self.run_statement(statement)?;
+        }
+        Ok(result)
+    }
+
+    /// The values of a `PRAGMA`'s parameters, bound and evaluated as constants
+    /// (`Binder::BindPragma`).
+    fn bind_pragma_parameters(&mut self, statement: SqlStatement) -> Result<Vec<Value>> {
+        let transaction = self.transactions.current();
+        let planner = Planner::new(self.client_context(transaction));
+        match planner.create_plan(statement)?.plan.map(|plan| plan.kind) {
+            Some(LogicalKind::Pragma { parameters, .. }) => Ok(parameters),
+            _ => Err(Error::internal("a PRAGMA bound to another statement")),
+        }
     }
 
     /// Ends the explicit transaction's attaches: kept on commit, detached again when the
