@@ -164,8 +164,13 @@ def child(engine, spec):
 
 def run(engine, db, sql, check, threads, reps, memory_limit):
     spec = {"db": db, "sql": sql, "check": check, "threads": threads, "reps": reps, "memory_limit": memory_limit}
-    proc = subprocess.run([sys.executable, "-I", os.path.abspath(__file__), "--child", engine],
-                          input=json.dumps(spec), capture_output=True, text=True)
+    # A watchdog: a hung engine fails the query instead of stalling the run.
+    limit = float(os.environ.get("BENCH_TIMEOUT", "600"))
+    try:
+        proc = subprocess.run([sys.executable, "-I", os.path.abspath(__file__), "--child", engine],
+                              input=json.dumps(spec), capture_output=True, text=True, timeout=limit)
+    except subprocess.TimeoutExpired:
+        return {"error": f"timed out after {limit:.0f} s", "rss": 0}
     try:
         return json.loads(proc.stdout.strip().splitlines()[-1])
     except (IndexError, json.JSONDecodeError):
@@ -202,7 +207,7 @@ def tie_check(db, sql):
     if base == sql:
         return False
     q = f"SET threads=1; SELECT count(*), sum(hash(t)::HUGEINT) FROM ({base}) t"
-    outs = [subprocess.run([CLIS[e], db, "-csv", "-c", q], capture_output=True, text=True).stdout
+    outs = [subprocess.run([CLIS[e], db, "-csv", "-c", q], capture_output=True, text=True, timeout=600).stdout
             for e in ("duck", "rust")]
     return outs[0] == outs[1] and outs[0].count("\n") == 2
 
