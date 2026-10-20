@@ -221,7 +221,8 @@ impl DatabaseManager {
         let path = if path == ":memory:" || path.starts_with(":memory:") {
             String::new()
         } else {
-            path.to_owned()
+            // `FileSystem::ExpandPath`: `~` (with `home_directory`) and `file:` URLs.
+            rustdb_function::file_system::expand_path(path)
         };
         let name = if name.is_empty() {
             database_name(&path)
@@ -263,13 +264,14 @@ impl DatabaseManager {
             if on_conflict == OnCreateConflict::IgnoreOnConflict {
                 return Ok(None);
             }
-            if on_conflict != OnCreateConflict::ReplaceOnConflict {
-                return Err(Error::binder(format!(
-                    "Failed to attach database: database with name \"{}\" already exists",
-                    existing.name
-                )));
-            }
         }
+        // A plain ATTACH registers the file path before the name, so a file conflict is
+        // reported first (`InsertDatabasePath`, then the catalog set's `CreateEntry`).
+        let name_taken = if on_conflict == OnCreateConflict::ReplaceOnConflict {
+            None
+        } else {
+            self.get(&name).map(|existing| existing.name.clone())
+        };
         // `DatabaseFilePathManager::InsertDatabasePath`: a file is attached once, unless
         // every attach is read-only.
         if !path.is_empty()
@@ -284,6 +286,11 @@ impl DatabaseManager {
                 "Unique file handle conflict: Cannot attach \"{name}\" - the database file \"{path}\" is already \
                  attached by database \"{}\"",
                 existing.name
+            )));
+        }
+        if let Some(existing) = name_taken {
+            return Err(Error::binder(format!(
+                "Failed to attach database: database with name \"{existing}\" already exists"
             )));
         }
         let catalog = Arc::new(Catalog::new(name.clone())?);
