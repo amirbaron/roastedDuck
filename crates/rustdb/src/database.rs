@@ -708,10 +708,9 @@ impl Connection {
             .start_query(&self.settings.profiler, query, is_explain_analyze);
         let metrics = self.profiler.active_metrics().cloned();
         let metrics_guard = rustdb_common::profiling::activate(metrics.as_ref());
-        // Files opened by the statement log to the connection's loggers.
-        let _logger_guard = rustdb_function::logging::activate_logger(
-            Arc::clone(&self.logger) as Arc<dyn rustdb_function::logging::ClientLogger>
-        );
+        // The connection is the opener of the files the statement opens: they read its
+        // settings and log to its loggers.
+        let _opener_guard = rustdb_function::file_system::activate_opener(Arc::clone(&self.function_client));
         self.begin_query_logging(query);
         let outcome = self.run_statement(statement);
         // Functions that changed the connection's configuration did so while running.

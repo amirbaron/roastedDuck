@@ -502,7 +502,8 @@ fn list_files(path: &str) -> Vec<(String, bool)> {
 
 /// `LocalGlobResult`: expands a pattern against the local file system.
 pub fn local_glob(pattern: &str) -> Result<Vec<String>> {
-    let path = expand_home(pattern);
+    // `LocalGlobResult`: `~` and `file:` URLs expand first (`FileSystem::ExpandPath`).
+    let path = rustdb_function::file_system::expand_path(pattern);
     if path.is_empty() {
         return Ok(Vec::new());
     }
@@ -640,17 +641,6 @@ pub fn local_glob(pattern: &str) -> Result<Vec<String>> {
         expanded_files.push(path);
     }
     Ok(expanded_files)
-}
-
-/// `~` expands to the home directory (`FileSystem::ExpandPath`).
-fn expand_home(path: &str) -> String {
-    if let Some(rest) = path.strip_prefix('~')
-        && (rest.is_empty() || rest.starts_with('/'))
-        && let Some(home) = std::env::var_os("HOME")
-    {
-        return format!("{}{rest}", home.to_string_lossy());
-    }
-    path.to_owned()
 }
 
 /// DuckDB's `Glob` (with `?` matching any character).

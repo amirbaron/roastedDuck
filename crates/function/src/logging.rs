@@ -93,39 +93,6 @@ pub trait ClientLogger: Send + Sync + fmt::Debug {
     fn as_any(&self) -> &dyn Any;
 }
 
-thread_local! {
-    /// The loggers of the connection whose statement this thread runs.
-    static ACTIVE_LOGGER: std::cell::RefCell<Option<std::sync::Arc<dyn ClientLogger>>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-/// Restores the thread's previous loggers when dropped.
-#[derive(Debug)]
-pub struct ActiveLoggerGuard {
-    previous: Option<Option<std::sync::Arc<dyn ClientLogger>>>,
-}
-
-impl Drop for ActiveLoggerGuard {
-    fn drop(&mut self) {
-        if let Some(previous) = self.previous.take() {
-            ACTIVE_LOGGER.with(|active| *active.borrow_mut() = previous);
-        }
-    }
-}
-
-/// Makes `logger` the loggers file handles opened on this thread log to, until the guard
-/// is dropped (DuckDB passes the `ClientContext` as the file opener).
-pub fn activate_logger(logger: std::sync::Arc<dyn ClientLogger>) -> ActiveLoggerGuard {
-    ActiveLoggerGuard {
-        previous: Some(ACTIVE_LOGGER.with(|active| active.borrow_mut().replace(logger))),
-    }
-}
-
-/// The loggers of the connection whose statement this thread runs.
-pub fn active_logger() -> Option<std::sync::Arc<dyn ClientLogger>> {
-    ACTIVE_LOGGER.with(|active| active.borrow().clone())
-}
-
 /// The `FileSystem` log entries of a local file (DuckDB's `FileSystemLogType` written by
 /// the `DUCKDB_LOG_FILE_SYSTEM_*` macros of a file handle).
 #[derive(Debug)]
@@ -138,7 +105,7 @@ impl FileSystemLogger {
     /// The logger of a file opened now, if the thread runs a statement; logs `OPEN`.
     pub fn open(path: &str) -> Option<Self> {
         let logger = Self {
-            logger: active_logger()?,
+            logger: crate::file_system::opener()?.logger()?,
             path: path.to_owned(),
         };
         logger.log("OPEN", None);
