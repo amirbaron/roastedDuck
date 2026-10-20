@@ -114,7 +114,9 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
     with_aliases(&mut sets, string::substring::substring_functions(), &["substr"]);
     sets.push(string::substring::substring_grapheme_functions());
     sets.extend(generic::generic_functions());
-    sets.extend(geometry::geometry_functions());
+    for (set, aliases) in geometry::geometry_functions() {
+        with_aliases(&mut sets, set, aliases);
+    }
     sets.extend(variant::variant_functions());
     sets.extend(log::log_functions());
     sets.extend(system::system_functions());
@@ -148,7 +150,25 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
     for (set, aliases) in math::numeric::numeric_functions() {
         with_aliases(&mut sets, set, aliases);
     }
-    sets
+    merge_overloads(sets)
+}
+
+/// Sets registered under the same name become one set, the overloads of the first
+/// registration first (DuckDB registers built-ins with `ALTER_ON_CONFLICT`, merging
+/// them; e.g. `&&` of GEOMETRY and of lists).
+fn merge_overloads(sets: Vec<ScalarFunctionSet>) -> Vec<ScalarFunctionSet> {
+    let mut merged: Vec<ScalarFunctionSet> = Vec::with_capacity(sets.len());
+    let mut positions: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for set in sets {
+        let name = set.name.to_lowercase();
+        if let Some(&position) = positions.get(&name) {
+            merged[position].functions.extend(set.functions);
+        } else {
+            positions.insert(name, merged.len());
+            merged.push(set);
+        }
+    }
+    merged
 }
 
 /// The string functions (DuckDB's `function/scalar/string` and

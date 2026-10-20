@@ -3757,6 +3757,7 @@ test/sql/types/float/nan_test.test
 test/sql/types/float/nan_window.test
 test/sql/types/float/nested_nan.test
 test/sql/types/geo/geometry.test
+test/sql/types/geo/geometry_intersects.test
 test/sql/types/geo/geometry_shred_fetch.test
 test/sql/types/geo/geometry_shred_list.test
 test/sql/types/geo/geometry_storage_version.test
