@@ -962,6 +962,7 @@ test/sql/attach/attach_concurrent_detach_mix.test_slow
 test/sql/attach/attach_copy.test
 test/sql/attach/attach_create_index.test
 test/sql/attach/attach_cross_catalog.test
+test/sql/attach/attach_custom_block_size.test
 test/sql/attach/attach_database_options.test
 test/sql/attach/attach_database_size.test
 test/sql/attach/attach_dbname_quotes.test
@@ -1003,6 +1004,7 @@ test/sql/attach/attach_read_only.test
 test/sql/attach/attach_read_only_transaction.test
 test/sql/attach/attach_remote_http_logging.test
 test/sql/attach/attach_reserved.test
+test/sql/attach/attach_row_group_size.test
 test/sql/attach/attach_row_group_size_decreasing.test
 test/sql/attach/attach_same_db.test
 test/sql/attach/attach_schema.test
@@ -3260,6 +3262,7 @@ test/sql/storage/commit_abort.test
 test/sql/storage/commit_abort_large.test_slow
 test/sql/storage/commit_abort_medium.test
 test/sql/storage/commit_index_deletes.test
+test/sql/storage/compact_block_size/block_size_with_rollback.test
 test/sql/storage/compact_block_size/compact_vector_size.test
 test/sql/storage/compact_block_size/create_table_compression.test
 test/sql/storage/compact_block_size/ensure_bitpacking.test
