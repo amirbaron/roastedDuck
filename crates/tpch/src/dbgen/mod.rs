@@ -500,6 +500,47 @@ impl ChunkSink for TableAppends {
     }
 }
 
+/// The row appenders of the eight tables (`tpch_append_information` per table).
+#[derive(Debug)]
+struct RowAppenders {
+    part: RowAppender,
+    psupp: RowAppender,
+    supp: RowAppender,
+    cust: RowAppender,
+    order: RowAppender,
+    line: RowAppender,
+    nation: RowAppender,
+    region: RowAppender,
+}
+
+impl RowAppenders {
+    fn new() -> Self {
+        Self {
+            part: RowAppender::new(Table::Part, &PART_INFO),
+            psupp: RowAppender::new(Table::Psupp, &PARTSUPP_INFO),
+            supp: RowAppender::new(Table::Supp, &SUPPLIER_INFO),
+            cust: RowAppender::new(Table::Cust, &CUSTOMER_INFO),
+            order: RowAppender::new(Table::Order, &ORDERS_INFO),
+            line: RowAppender::new(Table::Line, &LINEITEM_INFO),
+            nation: RowAppender::new(Table::Nation, &NATION_INFO),
+            region: RowAppender::new(Table::Region, &REGION_INFO),
+        }
+    }
+
+    fn all_mut(&mut self) -> [&mut RowAppender; 8] {
+        [
+            &mut self.part,
+            &mut self.psupp,
+            &mut self.supp,
+            &mut self.cust,
+            &mut self.order,
+            &mut self.line,
+            &mut self.nation,
+            &mut self.region,
+        ]
+    }
+}
+
 /// The row buffers and appenders of one generator (DuckDB's `TPCHDataAppender`).
 #[derive(Debug)]
 struct DataAppender {
@@ -509,15 +550,11 @@ struct DataAppender {
     part: Part,
     supplier: Supplier,
     code: Code,
-    appenders: Vec<RowAppender>,
+    appenders: RowAppenders,
 }
 
 impl DataAppender {
     fn new(ctx: DbgenContext) -> Self {
-        let appenders = Table::ALL
-            .into_iter()
-            .filter_map(|table| table_info(table).map(|info| RowAppender::new(table, info)))
-            .collect();
         Self {
             ctx,
             order: Box::default(),
@@ -525,15 +562,14 @@ impl DataAppender {
             part: Part::default(),
             supplier: Supplier::default(),
             code: Code::default(),
-            appenders,
+            appenders: RowAppenders::new(),
         }
     }
 
     /// `append_order` and `append_line`.
     fn append_order_line(&mut self, sink: &mut dyn ChunkSink) -> Result<()> {
-        let index = self.appender_index(Table::Order);
         let o = &*self.order;
-        let appender = &mut self.appenders[index];
+        let appender = &mut self.appenders.order;
         appender.int64(o.okey);
         appender.int64(o.custkey);
         appender.char(o.orderstatus);
@@ -545,8 +581,7 @@ impl DataAppender {
         appender.string(o.comment);
         appender.end_row(sink)?;
 
-        let index = self.appender_index(Table::Line);
-        let appender = &mut self.appenders[index];
+        let appender = &mut self.appenders.line;
         for line in &o.l[..o.lines] {
             appender.int64(line.okey);
             appender.int64(line.partkey);
@@ -571,9 +606,8 @@ impl DataAppender {
 
     /// `append_supp`.
     fn append_supp(&mut self, sink: &mut dyn ChunkSink) -> Result<()> {
-        let index = self.appender_index(Table::Supp);
         let s = &self.supplier;
-        let appender = &mut self.appenders[index];
+        let appender = &mut self.appenders.supp;
         appender.int64(s.suppkey);
         appender.string(&s.name);
         appender.string(&s.address);
@@ -586,9 +620,8 @@ impl DataAppender {
 
     /// `append_cust`.
     fn append_cust(&mut self, sink: &mut dyn ChunkSink) -> Result<()> {
-        let index = self.appender_index(Table::Cust);
         let c = &self.customer;
-        let appender = &mut self.appenders[index];
+        let appender = &mut self.appenders.cust;
         appender.int64(c.custkey);
         appender.string(&c.name);
         appender.string(&c.address);
@@ -602,9 +635,8 @@ impl DataAppender {
 
     /// `append_part` and `append_psupp`.
     fn append_part_psupp(&mut self, sink: &mut dyn ChunkSink) -> Result<()> {
-        let index = self.appender_index(Table::Part);
         let p = &self.part;
-        let appender = &mut self.appenders[index];
+        let appender = &mut self.appenders.part;
         appender.int64(p.partkey);
         appender.string(&p.name);
         appender.string(&p.mfgr);
@@ -616,8 +648,7 @@ impl DataAppender {
         appender.string(p.comment);
         appender.end_row(sink)?;
 
-        let index = self.appender_index(Table::Psupp);
-        let appender = &mut self.appenders[index];
+        let appender = &mut self.appenders.psupp;
         for supplier in &p.s[..SUPP_PER_PART] {
             appender.int64(supplier.partkey);
             appender.int64(supplier.suppkey);
@@ -631,9 +662,8 @@ impl DataAppender {
 
     /// `append_nation`.
     fn append_nation(&mut self, sink: &mut dyn ChunkSink) -> Result<()> {
-        let index = self.appender_index(Table::Nation);
         let c = &self.code;
-        let appender = &mut self.appenders[index];
+        let appender = &mut self.appenders.nation;
         appender.int32(c.code);
         appender.string(c.text);
         appender.int32(c.join);
@@ -643,20 +673,12 @@ impl DataAppender {
 
     /// `append_region`.
     fn append_region(&mut self, sink: &mut dyn ChunkSink) -> Result<()> {
-        let index = self.appender_index(Table::Region);
         let c = &self.code;
-        let appender = &mut self.appenders[index];
+        let appender = &mut self.appenders.region;
         appender.int32(c.code);
         appender.string(c.text);
         appender.string(c.comment);
         appender.end_row(sink)
-    }
-
-    fn appender_index(&self, table: Table) -> usize {
-        self.appenders
-            .iter()
-            .position(|appender| appender.table == table)
-            .unwrap_or_default()
     }
 
     /// `gen_tbl`: generates `count` rows of table `tnum` after the first `offset`.
@@ -732,7 +754,7 @@ impl DataAppender {
 
     /// Hands the last rows of every table to `sink`.
     fn flush(&mut self, sink: &mut dyn ChunkSink) -> Result<()> {
-        for appender in &mut self.appenders {
+        for appender in self.appenders.all_mut() {
             appender.flush(sink)?;
         }
         Ok(())
