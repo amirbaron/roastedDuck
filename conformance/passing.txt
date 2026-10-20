@@ -383,6 +383,7 @@ test/issues/general/test_5200.test
 test/issues/general/test_5390.test
 test/issues/general/test_5488.test
 test/issues/general/test_5614.test
+test/issues/general/test_5660.test
 test/issues/general/test_5664.test
 test/issues/general/test_5896.test
 test/issues/general/test_6822.test
