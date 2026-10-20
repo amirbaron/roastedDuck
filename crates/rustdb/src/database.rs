@@ -73,16 +73,34 @@ pub(crate) struct DatabaseInstance {
 enum StaticExtension {
     Parquet,
     Json,
+    Tpch,
 }
 
 impl StaticExtension {
-    const ALL: [Self; 2] = [Self::Parquet, Self::Json];
+    const ALL: [Self; 3] = [Self::Parquet, Self::Json, Self::Tpch];
 
     fn from_name(name: &str) -> Option<Self> {
         match name {
             "parquet" => Some(Self::Parquet),
             "json" => Some(Self::Json),
+            rustdb_tpch::EXTENSION_NAME => Some(Self::Tpch),
             _ => None,
+        }
+    }
+
+    /// Whether the extension has a pragma `name` that stands for a query.
+    fn has_pragma(self, name: &str) -> bool {
+        match self {
+            Self::Tpch => name.eq_ignore_ascii_case("tpch"),
+            Self::Parquet | Self::Json => false,
+        }
+    }
+
+    /// The SQL the extension's pragma `name` stands for.
+    fn pragma_query(self, name: &str, parameters: &[Value]) -> Result<String> {
+        match self {
+            Self::Tpch => rustdb_tpch::pragma_tpch_query(parameters),
+            Self::Parquet | Self::Json => Err(Error::internal(format!("no pragma {name}"))),
         }
     }
 
@@ -109,6 +127,11 @@ impl StaticExtension {
                     system.register_table_functions(set)?;
                 }
                 crate::system_functions::register_json_macros(system)?;
+            }
+            Self::Tpch => {
+                for set in rustdb_tpch::tpch_table_functions() {
+                    system.register_table_functions(set)?;
+                }
             }
         }
         Ok(())
@@ -214,6 +237,29 @@ impl DatabaseInstance {
             loaded.push(extension);
         }
         Ok(())
+    }
+
+    /// The extension providing pragma `name`, if one is loaded.
+    fn extension_with_pragma(&self, name: &str) -> Option<StaticExtension> {
+        self.loaded_extensions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .copied()
+            .find(|extension| extension.has_pragma(name))
+    }
+
+    /// Whether a loaded extension has a pragma `name`.
+    fn has_extension_pragma(&self, name: &str) -> bool {
+        self.extension_with_pragma(name).is_some()
+    }
+
+    /// The SQL the pragma `name` of a loaded extension stands for (a
+    /// `PragmaFunction::PragmaCall` with a query).
+    fn extension_pragma_query(&self, name: &str, parameters: &[Value]) -> Result<String> {
+        self.extension_with_pragma(name)
+            .ok_or_else(|| Error::internal(format!("no extension has the pragma {name}")))?
+            .pragma_query(name, parameters)
     }
 
     /// `SET threads` (`ThreadsSetting::SetGlobal`), or the default thread count for
@@ -585,8 +631,8 @@ impl Database {
             return Ok(ExtensionLoad::Loaded);
         }
         Ok(match name {
-            "core_functions" | "icu" | "tpch" | "tpcds" | "autocomplete" | "httpfs" | "fts" | "inet"
-            | "excel" | "sqlsmith" | "spatial" | "delta" | "iceberg" | "aws" | "azure" | "motherduck"
+            "core_functions" | "icu" | "tpcds" | "autocomplete" | "httpfs" | "fts" | "inet" | "excel"
+            | "sqlsmith" | "spatial" | "delta" | "iceberg" | "aws" | "azure" | "motherduck"
             | "postgres_scanner" | "mysql_scanner" | "sqlite_scanner" | "vss" | "ui" | "encodings"
             | "ducklake" | "avro" | "demo_capi" => ExtensionLoad::NotAvailable,
             _ => ExtensionLoad::Unknown,
@@ -1158,7 +1204,18 @@ impl Connection {
             return Ok(MaterializedResult::default());
         }
         // Pragmas that stand for a query run that query (DuckDB's `PragmaHandler`).
-        let statement = statement;
+        if let rustdb_ast::SqlStatementKind::Pragma(pragma) = &statement.kind
+            && self.database.instance.has_extension_pragma(&pragma.name)
+        {
+            // An extension's pragma binds its parameters like any pragma.
+            let name = pragma.name.clone();
+            let parameters = self.bind_pragma_parameters(statement)?;
+            let query = self
+                .database
+                .instance
+                .extension_pragma_query(&name, &parameters)?;
+            return self.run_pragma_query(&query);
+        }
         if let rustdb_ast::SqlStatementKind::Pragma(pragma) = &statement.kind {
             let constants: Option<Vec<rustdb_types::Value>> = pragma
                 .parameters
@@ -1176,14 +1233,12 @@ impl Connection {
             {
                 return self.import_database(constants);
             }
-            if let Some(constants) = constants
-                && let Some(query) = crate::system_functions::pragma_query(&pragma.name, &constants)?
-            {
-                let mut result = MaterializedResult::default();
-                for statement in rustdb_parser::parse(&query)? {
-                    result = self.run_statement(statement)?;
-                }
-                return Ok(result);
+            let query = match &constants {
+                Some(constants) => crate::system_functions::pragma_query(&pragma.name, constants)?,
+                None => None,
+            };
+            if let Some(query) = query {
+                return self.run_pragma_query(&query);
             }
         }
         // `CHECKPOINT` is `CALL checkpoint()`: the call is bound and run like any table
@@ -1229,6 +1284,27 @@ impl Connection {
             )?;
         }
         Ok(result)
+    }
+
+    /// Runs the statements of the query a pragma stands for; the result is the last
+    /// statement's.
+    fn run_pragma_query(&mut self, query: &str) -> Result<MaterializedResult> {
+        let mut result = MaterializedResult::default();
+        for statement in rustdb_parser::parse(query)? {
+            result = self.run_statement(statement)?;
+        }
+        Ok(result)
+    }
+
+    /// The values of a `PRAGMA`'s parameters, bound and evaluated as constants
+    /// (`Binder::BindPragma`).
+    fn bind_pragma_parameters(&mut self, statement: SqlStatement) -> Result<Vec<Value>> {
+        let transaction = self.transactions.current();
+        let planner = Planner::new(self.client_context(transaction));
+        match planner.create_plan(statement)?.plan.map(|plan| plan.kind) {
+            Some(LogicalKind::Pragma { parameters, .. }) => Ok(parameters),
+            _ => Err(Error::internal("a PRAGMA bound to another statement")),
+        }
     }
 
     /// Ends the explicit transaction's attaches: kept on commit, detached again when the
@@ -2093,11 +2169,22 @@ fn collect_modified_databases(plan: &LogicalOperator, instance: &DatabaseInstanc
         }
         LogicalKind::Alter(alter) => push(&alter.catalog),
         LogicalKind::Drop(info) => push(&info.catalog),
+        LogicalKind::Get(get) => {
+            if let Some(name) = table_function_modified_database(get) {
+                push(name);
+            }
+        }
         _ => {}
     }
     for child in &plan.children {
         collect_modified_databases(child, instance, out);
     }
+}
+
+/// The database a table function call writes to, as its bind registered it (DuckDB's
+/// `RegisterDBModify`, e.g. by `dbgen`).
+fn table_function_modified_database(get: &rustdb_planner::operator::LogicalGet) -> Option<&str> {
+    get.bind_data.as_deref()?.modified_database()
 }
 
 /// Whether a plan updates table data or changes the catalog, which keeps checkpoints from
@@ -2111,6 +2198,8 @@ fn needs_checkpoint_lock(plan: &LogicalOperator) -> bool {
         | LogicalKind::CreateIndex(_)
         | LogicalKind::Alter(_)
         | LogicalKind::Drop(_) => true,
+        // A table function that writes creates catalog entries (`CREATE_CATALOG_ENTRY`).
+        LogicalKind::Get(get) => table_function_modified_database(get).is_some(),
         LogicalKind::MergeInto(merge) => merge
             .actions
             .values()

@@ -193,7 +193,7 @@ impl Operator for PhysicalCrossProduct {
         let constants = single
             .columns()
             .iter()
-            .map(|column| Vector::constant(&column.get_value(position)))
+            .map(|column| column.reference_row(position, whole.len()))
             .collect::<Result<Vec<Vector>>>()?;
         let columns = if executor.scan_input_chunk {
             constants

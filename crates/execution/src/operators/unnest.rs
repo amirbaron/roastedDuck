@@ -186,7 +186,7 @@ impl Operator for PhysicalUnnest {
             if unnest_list_count == 1 {
                 // Every output row comes from the same input row.
                 for column in input.columns() {
-                    columns.push(Vector::constant(&column.get_value(initial_row))?);
+                    columns.push(column.reference_row(initial_row, result_length)?);
                 }
             } else {
                 let sel = SelectionVector::new(input_sel);
