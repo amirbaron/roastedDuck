@@ -276,7 +276,10 @@ impl<'a, E: Engine> Runner<'a, E> {
             self.engine.query(&mut connection, &sql);
         }
         // `on_init` + ";" + `on_new_connection`: both empty in the default configuration.
-        let init = self.replace_keywords(&self.environment.process_path(";", &self.file_name));
+        // `SLT_ON_INIT` stands in for a test configuration's `on_init` (for instance
+        // `test/configs/peg_parser_strict.json`'s) in validation runs.
+        let on_init = std::env::var("SLT_ON_INIT").unwrap_or_default();
+        let init = self.replace_keywords(&self.environment.process_path(&format!("{on_init};"), &self.file_name));
         let result = self.engine.query(&mut connection, &init);
         self.con = Some(connection);
         if let Some(error) = crate::backend::QueryResult::error(&result) {

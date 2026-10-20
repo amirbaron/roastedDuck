@@ -48,6 +48,27 @@ fn error_category(message: &str) -> String {
     trimmed
 }
 
+/// The innermost struct and field around the first difference of two renderings.
+fn difference_field(expected: &str, actual: &str) -> String {
+    let position = expected
+        .bytes()
+        .zip(actual.bytes())
+        .position(|(a, b)| a != b)
+        .unwrap_or_else(|| expected.len().min(actual.len()));
+    let before = &expected[..position.min(expected.len())];
+    let field = before
+        .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':'))
+        .filter(|word| word.len() > 1 && word.ends_with(':'))
+        .last()
+        .map_or("", |word| word.trim_end_matches(':'));
+    let owner = before
+        .rsplit(" { ")
+        .nth(1)
+        .and_then(|text| text.rsplit(|c: char| !(c.is_alphanumeric() || c == '_')).next())
+        .unwrap_or("");
+    format!("{owner}.{field}")
+}
+
 /// The first place the debug renderings of two parses differ, with some context.
 fn first_difference(expected: &str, actual: &str) -> String {
     let position = expected
@@ -61,6 +82,32 @@ fn first_difference(expected: &str, actual: &str) -> String {
         String::from_utf8_lossy(&text.as_bytes()[start.min(text.len())..end]).into_owned()
     };
     format!("  pg : …{}\n  peg: …{}", window(expected), window(actual))
+}
+
+/// The debug rendering of the statements' contents, without the query locations (the
+/// PEG transformer's differ from the Postgres parser's) and the statement text (the PEG
+/// parser's starts at the first token).
+fn rendering(statements: &[SqlStatement]) -> String {
+    let mut text = String::new();
+    for statement in statements {
+        let _ = write!(text, "{:?} {:?}\n", statement.named_param_map, statement.kind);
+    }
+    let marker = "query_location: ";
+    let mut result = String::with_capacity(text.len());
+    let mut rest = text.as_str();
+    while let Some(position) = rest.find(marker) {
+        result.push_str(&rest[..position + marker.len()]);
+        rest = &rest[position + marker.len()..];
+        if let Some(after) = rest.strip_prefix("None") {
+            rest = after;
+        } else if let Some(after) = rest.strip_prefix("Some(") {
+            rest = after.trim_start_matches(|c: char| c.is_ascii_digit());
+            rest = rest.strip_prefix(')').unwrap_or(rest);
+        }
+        result.push('_');
+    }
+    result.push_str(rest);
+    result
 }
 
 /// Which parts of two parses with the same debug rendering differ.
@@ -84,6 +131,18 @@ fn equal_rendering_difference(expected: &[SqlStatement], actual: &[SqlStatement]
 }
 
 fn main() -> std::io::Result<()> {
+    // The SQL logic test runner runs statements on threads with large stacks too.
+    std::thread::Builder::new()
+        .stack_size(1 << 30)
+        .spawn(run)?
+        .join()
+        .unwrap_or_else(|_| Err(std::io::Error::other("peg_check panicked")))
+}
+
+fn run() -> std::io::Result<()> {
+    let trace = std::env::var_os("PEG_CHECK_TRACE").is_some();
+    // With PEG_CHECK_LOCATIONS, parses differing in locations only count as different.
+    let locations = std::env::var_os("PEG_CHECK_LOCATIONS").is_some();
     let mut args = std::env::args().skip(1);
     let statements_path = args
         .next()
@@ -104,23 +163,31 @@ fn main() -> std::io::Result<()> {
             continue;
         };
         total += 1;
+        if trace {
+            eprintln!("{total}: {sql}");
+        }
         let pg = rustdb_parser::parse(sql);
         let peg = peg_parse(sql);
         let (category, detail) = match (pg, peg) {
             (_, Err(panic)) => (format!("PANIC {}", error_category(&panic)), String::new()),
             (Ok(expected), Ok(Ok(actual))) if expected == actual => ("same".to_owned(), String::new()),
             (Ok(expected), Ok(Ok(actual))) => {
-                let (expected_text, actual_text) = (format!("{expected:?}"), format!("{actual:?}"));
-                if expected_text == actual_text {
+                let (expected_text, actual_text) = (rendering(&expected), rendering(&actual));
+                let (expected_full, actual_full) = (format!("{expected:?}"), format!("{actual:?}"));
+                if expected_text != actual_text {
+                    (
+                        format!("different: {}", difference_field(&expected_text, &actual_text)),
+                        first_difference(&expected_text, &actual_text),
+                    )
+                } else if expected_full == actual_full {
                     (
                         "different (same rendering)".to_owned(),
                         equal_rendering_difference(&expected, &actual),
                     )
+                } else if locations {
+                    ("different locations".to_owned(), first_difference(&expected_full, &actual_full))
                 } else {
-                    (
-                        "different".to_owned(),
-                        first_difference(&expected_text, &actual_text),
-                    )
+                    ("same (but locations)".to_owned(), String::new())
                 }
             }
             (Ok(_), Ok(Err(error))) => (
