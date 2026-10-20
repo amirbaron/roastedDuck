@@ -49,6 +49,7 @@ pub(crate) fn startup_options(config: &Config) -> AttachOptions {
         storage_version: option(config, "storage_compatibility_version").cloned(),
         block_size: option(config, "default_block_size").cloned(),
         row_group_size: None,
+        kept: Vec::new(),
         default_table: None,
     }
 }

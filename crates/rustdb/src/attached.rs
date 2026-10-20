@@ -46,6 +46,9 @@ pub(crate) struct AttachOptions {
     pub storage_version: Option<Value>,
     pub block_size: Option<Value>,
     pub row_group_size: Option<Value>,
+    /// The options `AttachOptions` does not consume itself, in order
+    /// (`AttachOptions::options`), shown by `duckdb_databases()`.
+    pub kept: Vec<(String, Value)>,
     /// `DEFAULT_TABLE`: the (schema, name) the database's name refers to.
     pub default_table: Option<(String, String)>,
 }
@@ -94,10 +97,20 @@ impl AttachOptions {
                     let (_, schema, name) = crate::sequence::parse_qualified_name(&value.to_varchar()?)?;
                     options.default_table = Some((schema, name));
                 }
-                "recovery_mode" | "vacuum_rebuild_indexes" | "compress" => {}
-                "storage_version" => options.storage_version = Some(value.clone()),
-                "block_size" => options.block_size = Some(value.clone()),
-                "row_group_size" => options.row_group_size = Some(value.clone()),
+                "recovery_mode" | "vacuum_rebuild_indexes" => {}
+                "compress" => options.kept.push((name.to_lowercase(), value.clone())),
+                "storage_version" => {
+                    options.storage_version = Some(value.clone());
+                    options.kept.push((name.to_lowercase(), value.clone()));
+                }
+                "block_size" => {
+                    options.block_size = Some(value.clone());
+                    options.kept.push((name.to_lowercase(), value.clone()));
+                }
+                "row_group_size" => {
+                    options.row_group_size = Some(value.clone());
+                    options.kept.push((name.to_lowercase(), value.clone()));
+                }
                 "encryption_key" => {
                     // `StorageOptions::Initialize` checks the key before anything is opened.
                     if value.logical_type().id() != LogicalTypeId::Varchar {
@@ -309,10 +322,26 @@ impl DatabaseManager {
         if let Some((schema, table)) = &options.default_table {
             catalog.set_default_table(schema, table);
         }
+        let tags = storage
+            .as_ref()
+            .map(|storage| {
+                // `SingleFileBlockManager::AddStorageVersionTag`.
+                vec![(
+                    "storage_version".to_owned(),
+                    rustdb_storage::storage_info::storage_version_name(storage.block_manager().storage_version(), true),
+                )]
+            })
+            .unwrap_or_default();
         catalog.set_attach_info(rustdb_catalog::AttachedInfo {
             path: path.clone(),
             read_only: options.read_only(),
             hidden: options.hidden,
+            options: options
+                .kept
+                .iter()
+                .map(|(name, value)| Ok((name.clone(), value.to_varchar()?)))
+                .collect::<Result<_>>()?,
+            tags,
         });
         let database = Arc::new(AttachedDatabase {
             name: name.clone(),

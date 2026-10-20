@@ -42,6 +42,10 @@ pub struct AttachedInfo {
     pub read_only: bool,
     /// Left out of catalog listings (`HIDDEN`).
     pub hidden: bool,
+    /// The ATTACH options the database keeps, as text (`AttachedDatabase::GetAttachOptions`).
+    pub options: Vec<(String, String)>,
+    /// `AttachedDatabase::tags` (the file's `storage_version`).
+    pub tags: Vec<(String, String)>,
 }
 
 impl Catalog {
