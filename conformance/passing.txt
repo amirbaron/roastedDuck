@@ -2457,6 +2457,7 @@ test/sql/join/empty_joins.test
 test/sql/join/external/external_join_many_duplicates.test_slow
 test/sql/join/external/many_external_joins.test_slow
 test/sql/join/external/simple_external_join.test_slow
+test/sql/join/external/tpch_all_tables.test_slow
 test/sql/join/full_outer/full_outer_join_cache.test
 test/sql/join/full_outer/full_outer_join_union.test
 test/sql/join/full_outer/test_full_outer_join.test
