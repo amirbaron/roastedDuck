@@ -51,8 +51,6 @@ pub struct BufferPool {
     allocator: Arc<BlockAllocator>,
     bulk_deallocation_flush_threshold: AtomicU64,
     temporary_memory: TemporaryMemoryManager,
-    /// Bytes of unpinned table data kept loaded (see [`BufferPool::table_cache_limit`]).
-    cached_table_data: AtomicU64,
 }
 
 impl std::fmt::Debug for BufferPool {
@@ -63,10 +61,6 @@ impl std::fmt::Debug for BufferPool {
             .finish_non_exhaustive()
     }
 }
-
-/// The size of the table cache, at most an eighth of the memory limit
-/// ([`BufferPool::table_cache_limit`]).
-const TABLE_CACHE_LIMIT: u64 = 96 << 20;
 
 /// DuckDB's default `allocator_bulk_deallocation_flush_threshold` (512 MiB).
 pub const DEFAULT_BULK_DEALLOCATION_FLUSH_THRESHOLD: u64 = 512 << 20;
@@ -92,37 +86,7 @@ impl BufferPool {
             allocator,
             bulk_deallocation_flush_threshold: AtomicU64::new(DEFAULT_BULK_DEALLOCATION_FLUSH_THRESHOLD),
             temporary_memory: TemporaryMemoryManager::new(),
-            cached_table_data: AtomicU64::new(0),
         })
-    }
-
-    /// The most unpinned table data (persistent blocks released on unpin) kept loaded:
-    /// DuckDB keeps every block it read until memory runs short, which makes repeated
-    /// scans skip reading the file but keeps the whole scanned data resident. A bounded
-    /// cache keeps the first blocks read (it does not replace them, so a scan larger than
-    /// the cache still finds part of its data) while every other block is read again.
-    pub fn table_cache_limit(&self) -> u64 {
-        TABLE_CACHE_LIMIT.min(self.max_memory() / 8)
-    }
-
-    /// Counts `size` bytes of table data as kept loaded, if they fit the table cache and
-    /// the pool's whole usage (operators' data too) is below the cache size: queries that
-    /// need memory for their hash tables or sorts do not keep table data as well.
-    pub(crate) fn try_cache_table_data(&self, size: u64) -> bool {
-        let limit = self.table_cache_limit();
-        if self.used_memory(false) + size > limit {
-            return false;
-        }
-        self.cached_table_data
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |cached| {
-                (cached + size <= limit).then_some(cached + size)
-            })
-            .is_ok()
-    }
-
-    /// `size` bytes of cached table data were unloaded.
-    pub(crate) fn uncache_table_data(&self, size: u64) {
-        self.cached_table_data.fetch_sub(size, Ordering::AcqRel);
     }
 
     /// The allocator buffers are allocated from.

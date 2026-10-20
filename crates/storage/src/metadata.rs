@@ -285,7 +285,7 @@ impl MetadataManager {
         // Blocks read from the file are never written in place (`convert_to_transient`
         // copies them first), so they are read again (when a row group's column is first
         // used) instead of staying resident.
-        handle.free_on_unpin();
+        handle.release_on_unpin();
         block.block = Some(handle);
         blocks.insert(block.block_id, block);
     }
