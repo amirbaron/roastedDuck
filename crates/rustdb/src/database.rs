@@ -1558,7 +1558,11 @@ impl Connection {
         let has_select = statements
             .iter()
             .any(|statement| matches!(statement.kind, rustdb_ast::SqlStatementKind::Select(_)));
-        let wrap = statements.len() > 1 && !has_select && self.transactions.is_auto_commit();
+        let transactional = statements.len() > 1 && !has_select;
+        let wrap = transactional && self.transactions.is_auto_commit();
+        // In an explicit transaction the body runs under `ALL_ERRORS_INVALIDATE_TRANSACTION`
+        // (`StatementPreprocessor`'s `SET_INVALIDATION_POLICY`): any error aborts it.
+        let all_errors_invalidate = transactional && !wrap;
         let run_sql = |connection: &mut Self, sql: &str| -> Result<MaterializedResult> {
             let mut result = MaterializedResult::default();
             for statement in rustdb_parser::parse(sql)? {
@@ -1576,6 +1580,9 @@ impl Connection {
                 Err(error) => {
                     if wrap && !self.transactions.is_auto_commit() {
                         let _ = run_sql(self, "ROLLBACK");
+                    }
+                    if all_errors_invalidate {
+                        self.transactions.invalidate();
                     }
                     return Err(error);
                 }
