@@ -190,7 +190,7 @@ impl CatalogSet {
         self: &Arc<Self>,
         transaction: &Transaction,
         name: &str,
-        entry: CatalogEntry,
+        mut entry: CatalogEntry,
         hook: StorageHook,
         info: Option<rustdb_ast::AlterInfo>,
     ) -> Result<bool> {
@@ -211,9 +211,11 @@ impl CatalogSet {
                     ),
                 ));
             }
-            if head.entry.is_none() {
+            let Some(current) = &head.entry else {
                 return Ok(false);
-            }
+            };
+            // A renamed entry keeps its identity.
+            entry.oid = current.oid;
             chain.insert(0, Arc::clone(&tombstone));
         }
         transaction.push_catalog_change(Arc::clone(self), old, tombstone, hook, WalRecord::None);

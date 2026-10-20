@@ -613,8 +613,16 @@ pub fn bind_table_function(
             let (Some(statement), true) = (statements.pop(), statements.is_empty()) else {
                 return Err(Error::parser(replacement.error));
             };
-            let rustdb_ast::SqlStatementKind::Select(select) = statement.kind else {
-                return Err(Error::parser(replacement.error));
+            let select = match statement.kind {
+                rustdb_ast::SqlStatementKind::Select(select) => select,
+                // A PIVOT that creates enum types (`ParseSubquery`).
+                rustdb_ast::SqlStatementKind::Multi(_) => {
+                    return Err(Error::parser(
+                        "PIVOT statements without explicit IN clauses are not supported in query() function. \
+                         Please specify the pivot values explicitly, e.g.: PIVOT ... ON col IN (val1, val2, ...)",
+                    ));
+                }
+                _ => return Err(Error::parser(replacement.error)),
             };
             let mut subquery = rustdb_ast::SubqueryRef {
                 subquery: Box::new(select),

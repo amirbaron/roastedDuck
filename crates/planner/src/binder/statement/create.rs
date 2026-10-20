@@ -459,6 +459,7 @@ fn bind_table_definition(
     bind_create_table_constraints(
         scope,
         &table.table,
+        catalog,
         schema,
         &mut table.columns.columns,
         &mut table.constraints,
@@ -944,6 +945,7 @@ fn entry_column_definitions(table: &TableEntry) -> Vec<ColumnDefinition> {
 fn bind_create_table_constraints(
     scope: &BindScope<'_>,
     table_name: &str,
+    catalog: &str,
     schema: &str,
     columns: &mut [ColumnDefinition],
     constraints: &mut [Constraint],
@@ -975,7 +977,7 @@ fn bind_create_table_constraints(
             return Err(Error::binder("cannot reference a VIEW with a FOREIGN KEY"));
         };
         fk.schema.clone_from(&found.schema);
-        if !found.schema.eq_ignore_ascii_case(schema) {
+        if !found.schema.eq_ignore_ascii_case(schema) || !found.catalog.eq_ignore_ascii_case(catalog) {
             return Err(Error::binder(
                 "Creating foreign keys across different schemas or catalogs is not supported",
             ));

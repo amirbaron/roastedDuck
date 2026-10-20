@@ -983,6 +983,7 @@ test/sql/attach/attach_export_import.test
 test/sql/attach/attach_expr.test
 test/sql/attach/attach_external_access.test
 test/sql/attach/attach_force_checkpoint_deadlock.test_slow
+test/sql/attach/attach_foreign_key.test
 test/sql/attach/attach_hidden.test
 test/sql/attach/attach_home_directory.test
 test/sql/attach/attach_huggingface_index.test
@@ -1138,6 +1139,7 @@ test/sql/catalog/function/attached_macro.test
 test/sql/catalog/function/information_schema_macro.test
 test/sql/catalog/function/macro_query_table.test
 test/sql/catalog/function/python_style_macro_parameters.test
+test/sql/catalog/function/query_function.test
 test/sql/catalog/function/struct_extract_macro.test
 test/sql/catalog/function/test_complex_macro.test
 test/sql/catalog/function/test_cross_catalog_macros.test
@@ -1184,6 +1186,7 @@ test/sql/catalog/table/test_default_values.test
 test/sql/catalog/table/test_many_columns.test
 test/sql/catalog/table/test_many_columns_group.test_slow
 test/sql/catalog/table/test_table_drop_concurrent.test_slow
+test/sql/catalog/test_alter_oid_stability.test
 test/sql/catalog/test_catalog_errors.test
 test/sql/catalog/test_create_from_select.test
 test/sql/catalog/test_extension_suggestion.test
