@@ -113,7 +113,7 @@ same inputs instead of hand-porting the output:
 | hyperloglog | port | **bit-exact**: HLL sketches live in stored column stats |
 | pcg | `rand_pcg` (same variant) | `setseed()` + `random()` sequences match tests |
 | ICU (extension) | ICU4X (collation, calendars) + `jiff` (tz) | timezone/collation tests match |
-| tpch dbgen | `tpchgen-rs` | dbgen-identical output |
+| tpch dbgen | port (`crates/tpch`, DuckDB's embedded dbgen) | dbgen-identical output (verified byte for byte, SF 0.000001 to 3) |
 | tpcds dsdgen | port | test data identical |
 | jaro_winkler, skiplist, tdigest, pdqsort, ska_sort, vergesort | port or `std` sort | exact numeric results |
 | concurrentqueue | `crossbeam` | — |
