@@ -50,6 +50,20 @@ impl DestroyBufferUpon {
     }
 }
 
+/// What unpinning a block does with its buffer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum UnpinPolicy {
+    /// Keep it loaded (in the eviction queue) until memory runs short.
+    Keep = 0,
+    /// Free it, unless the pool's table cache has room.
+    Release = 1,
+    /// Like `Release`, but the loaded buffer is counted in the table cache.
+    ReleaseCached = 2,
+    /// Free it (data read once, such as a checkpoint's metadata).
+    Free = 3,
+}
+
 /// Whether a block's data is in memory.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlockState {
@@ -85,10 +99,10 @@ pub(crate) struct BlockMemory {
     /// Bytes to reserve when (re)loading the block.
     memory_usage: AtomicU64,
     eviction_queue_index: AtomicUsize,
-    /// Whether the buffer is freed as soon as the block is unpinned instead of staying
-    /// cached until memory runs short (persistent table data, see
+    /// What happens to the buffer when the block is unpinned (an [`UnpinPolicy`]):
+    /// persistent table data is only kept within the pool's table cache (see
     /// [`BlockHandle::release_on_unpin`]).
-    release_on_unpin: AtomicBool,
+    unpin_policy: AtomicU8,
     /// Whether the block was read (and its checksum verified) before.
     read_before: AtomicBool,
     inner: Mutex<BlockInner>,
@@ -117,7 +131,7 @@ impl BlockMemory {
             destroy_upon: AtomicU8::new(DestroyBufferUpon::Block as u8),
             memory_usage: AtomicU64::new(alloc_size as u64),
             eviction_queue_index: AtomicUsize::new(NO_QUEUE_INDEX),
-            release_on_unpin: AtomicBool::new(false),
+            unpin_policy: AtomicU8::new(UnpinPolicy::Keep as u8),
             read_before: AtomicBool::new(false),
             inner: Mutex::new(BlockInner {
                 buffer: None,
@@ -153,7 +167,7 @@ impl BlockMemory {
             destroy_upon: AtomicU8::new(destroy_upon as u8),
             memory_usage: AtomicU64::new(memory_usage),
             eviction_queue_index: AtomicUsize::new(NO_QUEUE_INDEX),
-            release_on_unpin: AtomicBool::new(false),
+            unpin_policy: AtomicU8::new(UnpinPolicy::Keep as u8),
             read_before: AtomicBool::new(false),
             inner: Mutex::new(BlockInner {
                 buffer: Some(buffer),
@@ -217,9 +231,42 @@ impl BlockMemory {
         self.block_id >= MAXIMUM_BLOCK
     }
 
-    /// Whether the buffer is freed when the last pin goes (see `release_on_unpin`).
+    /// Whether the buffer is freed when the last pin goes unless the pool's table cache
+    /// keeps it (see `release_on_unpin`).
     pub(crate) fn releases_on_unpin(&self) -> bool {
-        self.release_on_unpin.load(Ordering::Relaxed) && !self.is_temporary()
+        self.unpin_policy.load(Ordering::Relaxed) != UnpinPolicy::Keep as u8 && !self.is_temporary()
+    }
+
+    /// Whether the unpinned block may stay loaded: it is in the pool's table cache
+    /// already, or the cache has room for it now. Call with the lock held.
+    pub(crate) fn keep_in_table_cache(&self) -> bool {
+        match self.unpin_policy.load(Ordering::Relaxed) {
+            policy if policy == UnpinPolicy::ReleaseCached as u8 => return true,
+            policy if policy == UnpinPolicy::Free as u8 => return false,
+            _ => {}
+        }
+        if !self.shared.pool().try_cache_table_data(self.memory_usage()) {
+            return false;
+        }
+        self.unpin_policy
+            .store(UnpinPolicy::ReleaseCached as u8, Ordering::Relaxed);
+        true
+    }
+
+    /// Takes the block out of the pool's table cache, if it is there (it is unloaded).
+    fn leave_table_cache(&self) {
+        if self
+            .unpin_policy
+            .compare_exchange(
+                UnpinPolicy::ReleaseCached as u8,
+                UnpinPolicy::Release as u8,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            )
+            .is_ok()
+        {
+            self.shared.pool().uncache_table_data(self.memory_usage());
+        }
     }
 
     /// Whether unpinned data must go to the eviction queue (rather than be dropped).
@@ -267,6 +314,7 @@ impl BlockMemory {
                 .write_temporary_buffer(self.tag, self.block_id, buffer)?;
         }
         inner.charge.resize(0);
+        self.leave_table_cache();
         self.loaded.store(false, Ordering::Release);
         self.data.store(std::ptr::null_mut(), Ordering::Relaxed);
         Ok(inner.buffer.take())
@@ -346,6 +394,7 @@ impl Drop for BlockMemory {
             // The entry in the eviction queue is dead now.
             self.shared.pool().increment_dead_nodes(self);
         }
+        self.leave_table_cache();
         let inner = self.inner.get_mut().unwrap_or_else(PoisonError::into_inner);
         inner.buffer = None;
         inner.charge.resize(0);
@@ -395,19 +444,41 @@ impl BlockHandle {
         self.block_id
     }
 
-    /// Frees the buffer of this persistent block whenever its last pin is released,
-    /// instead of keeping it cached until memory runs short as DuckDB does. Table data is
+    /// Keeps this persistent block loaded after its last pin is released only while the
+    /// pool's table cache has room ([`BufferPool::table_cache_limit`]), instead of until
+    /// memory runs short as DuckDB does; otherwise its buffer is freed. Table data is
     /// read in a stream by scans: re-reading a block from the file (the operating
     /// system's cache) costs less than keeping every scanned block resident.
+    ///
+    /// [`BufferPool::table_cache_limit`]: crate::BufferPool::table_cache_limit
     pub fn release_on_unpin(&self) {
         if self.block_manager.is_some() {
-            self.memory.release_on_unpin.store(true, Ordering::Relaxed);
+            let _ = self.memory.unpin_policy.compare_exchange(
+                UnpinPolicy::Keep as u8,
+                UnpinPolicy::Release as u8,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            );
+        }
+    }
+
+    /// Frees the buffer of this persistent block whenever its last pin is released, for
+    /// data that is read once (it never enters the table cache).
+    pub fn free_on_unpin(&self) {
+        if self.block_manager.is_some() {
+            self.memory
+                .unpin_policy
+                .store(UnpinPolicy::Free as u8, Ordering::Relaxed);
         }
     }
 
     /// Undoes [`BlockHandle::release_on_unpin`]: the block stays cached when unpinned.
     pub fn keep_cached(&self) {
-        self.memory.release_on_unpin.store(false, Ordering::Relaxed);
+        let _guard = self.memory.lock();
+        self.memory.leave_table_cache();
+        self.memory
+            .unpin_policy
+            .store(UnpinPolicy::Keep as u8, Ordering::Relaxed);
     }
 
     pub fn tag(&self) -> MemoryTag {

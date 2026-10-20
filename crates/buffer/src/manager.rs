@@ -333,7 +333,7 @@ impl ManagerShared {
             if memory.remove_reader_locked() != 0 {
                 return;
             }
-            if memory.releases_on_unpin() {
+            if memory.releases_on_unpin() && !memory.keep_in_table_cache() {
                 // Persistent data: reloaded from the file when pinned again.
                 let _ = memory.unload(&mut inner);
                 return;
