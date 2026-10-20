@@ -17,7 +17,7 @@ use super::build::{self, set_location};
 use super::{ParamType, Transformer, cast_node, node_string, node_tag, required};
 
 /// `NegateComparisonExpression`.
-pub(crate) fn negate_comparison(expression_type: ExpressionType) -> Result<ExpressionType> {
+pub fn negate_comparison(expression_type: ExpressionType) -> Result<ExpressionType> {
     use ExpressionType as E;
     Ok(match expression_type {
         E::CompareEqual => E::CompareNotequal,
@@ -33,7 +33,7 @@ pub(crate) fn negate_comparison(expression_type: ExpressionType) -> Result<Expre
 }
 
 /// `OperatorToExpressionType`: the comparison an operator stands for, if any.
-pub(crate) fn operator_to_expression_type(op: &str) -> ExpressionType {
+pub fn operator_to_expression_type(op: &str) -> ExpressionType {
     match op {
         "=" | "==" => ExpressionType::CompareEqual,
         "!=" | "<>" => ExpressionType::CompareNotequal,

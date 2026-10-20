@@ -48,12 +48,12 @@ fn qualified_equal(a: &QualifiedColumnName, b: &QualifiedColumnName) -> bool {
 
 /// A `qualified_column_map_t` / `qualified_column_set_t` in libc++ iteration order.
 #[derive(Debug, Default)]
-struct QualifiedMap<V> {
+pub struct QualifiedColumnMap<V> {
     order: HashOrder,
     entries: Vec<(QualifiedColumnName, V)>,
 }
 
-impl<V> QualifiedMap<V> {
+impl<V> QualifiedColumnMap<V> {
     fn find(&self, key: &QualifiedColumnName) -> Option<usize> {
         let entries = &self.entries;
         self.order.find(ci_hash(&key.column), |node| {
@@ -61,11 +61,11 @@ impl<V> QualifiedMap<V> {
         })
     }
 
-    fn contains(&self, key: &QualifiedColumnName) -> bool {
+    pub fn contains(&self, key: &QualifiedColumnName) -> bool {
         self.find(key).is_some()
     }
 
-    fn insert(&mut self, key: QualifiedColumnName, value: V) {
+    pub fn insert(&mut self, key: QualifiedColumnName, value: V) {
         let entries = &self.entries;
         if self
             .order
@@ -78,7 +78,7 @@ impl<V> QualifiedMap<V> {
         }
     }
 
-    fn into_ordered(self) -> Vec<(QualifiedColumnName, V)> {
+    pub fn into_ordered(self) -> Vec<(QualifiedColumnName, V)> {
         let mut slots: Vec<Option<(QualifiedColumnName, V)>> = self.entries.into_iter().map(Some).collect();
         self.order
             .order()
@@ -91,10 +91,10 @@ impl<V> QualifiedMap<V> {
 /// The exclude list in the order DuckDB serializes it: the unqualified names (re-inserted
 /// into a `case_insensitive_set_t`), then the qualified ones (re-inserted into a fresh
 /// `qualified_column_set_t`).
-fn serialized_exclude_list(exclude: QualifiedMap<()>) -> Vec<QualifiedColumnName> {
+pub fn serialized_exclude_list(exclude: QualifiedColumnMap<()>) -> Vec<QualifiedColumnName> {
     let ordered = exclude.into_ordered();
     let mut plain = CiHashMap::new();
-    let mut qualified = QualifiedMap::default();
+    let mut qualified = QualifiedColumnMap::default();
     for (name, ()) in ordered {
         if name.is_qualified() {
             qualified.insert(name, ());
@@ -142,7 +142,7 @@ impl<'a> Transformer<'a> {
     /// and `RENAME`.
     pub(crate) fn transform_star_expression(&mut self, star: &'a AStar) -> Result<ParsedExpression> {
         let mut result = build::star_expression(star.relation.clone().unwrap_or_default());
-        let mut exclude: QualifiedMap<()> = QualifiedMap::default();
+        let mut exclude: QualifiedColumnMap<()> = QualifiedColumnMap::default();
         for item in &star.except_list {
             let Node::List(parts) = item else {
                 return Err(Error::internal("EXCLUDE entry is not a list"));
@@ -177,7 +177,7 @@ impl<'a> Transformer<'a> {
             }
             replace.insert(entry, replace_expression);
         }
-        let mut rename: QualifiedMap<String> = QualifiedMap::default();
+        let mut rename: QualifiedColumnMap<String> = QualifiedColumnMap::default();
         for item in &star.rename_list {
             let Node::List(pair) = item else {
                 return Err(Error::internal("RENAME entry is not a list"));

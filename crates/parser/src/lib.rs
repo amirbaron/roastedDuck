@@ -53,7 +53,7 @@
 //! DuckDB's `Parser::ParseQuery` on a corpus file.
 
 mod candidates;
-mod equality;
+pub mod equality;
 pub mod hash_order;
 pub mod highlight;
 pub mod json;
@@ -61,6 +61,11 @@ mod lists;
 mod transformer;
 
 pub use transformer::build;
+pub use transformer::expression::{negate_comparison, operator_to_expression_type};
+pub use transformer::function::{
+    is_excludable_window_function, is_orderable_window_function, window_to_expression_type,
+};
+pub use transformer::star::{QualifiedColumnMap, serialized_exclude_list};
 
 use rustdb_ast::{CreateInfo, SqlStatement, SqlStatementKind};
 use rustdb_common::{Error, Result};

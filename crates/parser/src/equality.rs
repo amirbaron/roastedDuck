@@ -18,10 +18,7 @@ use rustdb_types::{LogicalType, TypeInfo, TypeParameter, TypeParameterValue, Unb
 
 /// Calls `callback` on each direct child of `expr`, in DuckDB's order; subqueries are
 /// not entered (only the child of `x IN (SELECT ...)` is visited).
-pub(crate) fn for_each_child_mut(
-    expr: &mut ParsedExpression,
-    callback: &mut dyn FnMut(&mut ParsedExpression),
-) {
+pub fn for_each_child_mut(expr: &mut ParsedExpression, callback: &mut dyn FnMut(&mut ParsedExpression)) {
     match &mut expr.kind {
         ParsedExpressionKind::Between(between) => {
             callback(&mut between.input);
@@ -214,7 +211,7 @@ pub(crate) fn has_subquery(expr: &ParsedExpression) -> bool {
 }
 
 /// A hash consistent with [`expressions_equal`]: equal expressions hash equally.
-pub(crate) fn expression_hash(expr: &ParsedExpression) -> u64 {
+pub fn expression_hash(expr: &ParsedExpression) -> u64 {
     let mut hasher = DefaultHasher::new();
     (expr.expression_type as u8).hash(&mut hasher);
     (expr.expression_class() as u8).hash(&mut hasher);
@@ -360,7 +357,7 @@ fn statements_equal(a: &SelectStatement, b: &SelectStatement) -> bool {
 }
 
 /// `ParsedExpression::Equals`.
-pub(crate) fn expressions_equal(a: &ParsedExpression, b: &ParsedExpression) -> bool {
+pub fn expressions_equal(a: &ParsedExpression, b: &ParsedExpression) -> bool {
     if a.expression_class() != b.expression_class() || a.expression_type != b.expression_type {
         return false;
     }
