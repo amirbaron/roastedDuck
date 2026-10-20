@@ -12,6 +12,7 @@ mod keyword_helper;
 mod matcher;
 mod peg_parser;
 mod tokenizer;
+mod transformer;
 
 use std::any::Any;
 use std::sync::Arc;
@@ -29,6 +30,8 @@ use crate::tokenizer::{MatcherToken, TokenizeState, TokenizerCallbacks, tokenize
 
 /// The extension's name (`AutocompleteExtension::Name`).
 pub const EXTENSION_NAME: &str = "autocomplete";
+
+pub use transformer::parse_query;
 
 /// The names of the pragma functions of the database. DuckDB lists them from the
 /// catalog; the embedding database provides them.

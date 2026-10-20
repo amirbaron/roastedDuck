@@ -10,26 +10,26 @@ use rustdb_common::{CaseInsensitiveMap, OrderedMap};
 use rustdb_types::{LogicalType, Value};
 
 /// `SetQueryLocation`: negative (unknown) locations are ignored.
-pub(crate) fn set_location(expr: &mut ParsedExpression, location: i32) {
+pub fn set_location(expr: &mut ParsedExpression, location: i32) {
     if let Ok(location) = u64::try_from(location) {
         expr.query_location = Some(location);
     }
 }
 
 /// `SetQueryLocation` for table refs.
-pub(crate) fn set_ref_location(table_ref: &mut TableRef, location: i32) {
+pub fn set_ref_location(table_ref: &mut TableRef, location: i32) {
     if let Ok(location) = u64::try_from(location) {
         table_ref.query_location = Some(location);
     }
 }
 
 /// `ConstantExpression(value)`.
-pub(crate) fn constant(value: Value) -> ParsedExpression {
+pub fn constant(value: Value) -> ParsedExpression {
     ParsedExpression::constant(value)
 }
 
 /// `ColumnRefExpression(names)`.
-pub(crate) fn column_ref(names: Vec<String>) -> ParsedExpression {
+pub fn column_ref(names: Vec<String>) -> ParsedExpression {
     ParsedExpression::new(
         ExpressionType::ColumnRef,
         ParsedExpressionKind::ColumnRef(ColumnRefExpression { column_names: names }),
@@ -37,7 +37,7 @@ pub(crate) fn column_ref(names: Vec<String>) -> ParsedExpression {
 }
 
 /// `ColumnRefExpression(column_name, table_name)`.
-pub(crate) fn qualified_column_ref(column: String, table: String) -> ParsedExpression {
+pub fn qualified_column_ref(column: String, table: String) -> ParsedExpression {
     if table.is_empty() {
         column_ref(vec![column])
     } else {
@@ -46,7 +46,7 @@ pub(crate) fn qualified_column_ref(column: String, table: String) -> ParsedExpre
 }
 
 /// `StarExpression()` / `StarExpression(relation_name)`.
-pub(crate) fn star_expression(relation_name: String) -> StarExpression {
+pub fn star_expression(relation_name: String) -> StarExpression {
     StarExpression {
         relation_name,
         exclude_list: Vec::new(),
@@ -58,7 +58,7 @@ pub(crate) fn star_expression(relation_name: String) -> StarExpression {
 }
 
 /// A plain `*`.
-pub(crate) fn star() -> ParsedExpression {
+pub fn star() -> ParsedExpression {
     ParsedExpression::new(
         ExpressionType::Star,
         ParsedExpressionKind::Star(Box::new(star_expression(String::new()))),
@@ -68,7 +68,7 @@ pub(crate) fn star() -> ParsedExpression {
 /// `FunctionExpression(catalog, schema, name, children, filter, order_bys, distinct,
 /// is_operator, export_state)`; the name is lower-cased like DuckDB does.
 #[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
-pub(crate) fn function_full(
+pub fn function_full(
     catalog: String,
     schema: String,
     name: &str,
@@ -96,7 +96,7 @@ pub(crate) fn function_full(
 }
 
 /// `FunctionExpression(name, children)`.
-pub(crate) fn function(name: &str, children: Vec<ParsedExpression>) -> ParsedExpression {
+pub fn function(name: &str, children: Vec<ParsedExpression>) -> ParsedExpression {
     function_full(
         String::new(),
         String::new(),
@@ -111,7 +111,7 @@ pub(crate) fn function(name: &str, children: Vec<ParsedExpression>) -> ParsedExp
 }
 
 /// `OperatorExpression(type, children)`.
-pub(crate) fn operator(expression_type: ExpressionType, children: Vec<ParsedExpression>) -> ParsedExpression {
+pub fn operator(expression_type: ExpressionType, children: Vec<ParsedExpression>) -> ParsedExpression {
     ParsedExpression::new(
         expression_type,
         ParsedExpressionKind::Operator(OperatorExpression { children }),
@@ -119,7 +119,7 @@ pub(crate) fn operator(expression_type: ExpressionType, children: Vec<ParsedExpr
 }
 
 /// `ComparisonExpression(type, left, right)`.
-pub(crate) fn comparison(
+pub fn comparison(
     expression_type: ExpressionType,
     left: ParsedExpression,
     right: ParsedExpression,
@@ -135,7 +135,7 @@ pub(crate) fn comparison(
 
 /// `ConjunctionExpression(type, left, right)`: children that are conjunctions of the
 /// same type are flattened (`AddExpression`).
-pub(crate) fn conjunction(
+pub fn conjunction(
     expression_type: ExpressionType,
     left: ParsedExpression,
     right: ParsedExpression,
@@ -157,7 +157,7 @@ pub(crate) fn conjunction(
 }
 
 /// `CastExpression(target, child, try_cast)`.
-pub(crate) fn cast(target: LogicalType, child: ParsedExpression, try_cast: bool) -> ParsedExpression {
+pub fn cast(target: LogicalType, child: ParsedExpression, try_cast: bool) -> ParsedExpression {
     ParsedExpression::new(
         ExpressionType::OperatorCast,
         ParsedExpressionKind::Cast(CastExpression {
@@ -169,7 +169,7 @@ pub(crate) fn cast(target: LogicalType, child: ParsedExpression, try_cast: bool)
 }
 
 /// A one-armed `CASE WHEN when THEN then ELSE else END`.
-pub(crate) fn case_expression(checks: Vec<CaseCheck>, else_expr: ParsedExpression) -> ParsedExpression {
+pub fn case_expression(checks: Vec<CaseCheck>, else_expr: ParsedExpression) -> ParsedExpression {
     ParsedExpression::new(
         ExpressionType::CaseExpr,
         ParsedExpressionKind::Case(CaseExpression {
@@ -180,7 +180,7 @@ pub(crate) fn case_expression(checks: Vec<CaseCheck>, else_expr: ParsedExpressio
 }
 
 /// `PositionalReferenceExpression(index)`.
-pub(crate) fn positional_reference(index: u64) -> ParsedExpression {
+pub fn positional_reference(index: u64) -> ParsedExpression {
     ParsedExpression::new(
         ExpressionType::PositionalReference,
         ParsedExpressionKind::PositionalReference(PositionalReferenceExpression { index }),
@@ -188,7 +188,7 @@ pub(crate) fn positional_reference(index: u64) -> ParsedExpression {
 }
 
 /// A table ref with no alias, sample or location.
-pub(crate) fn table_ref(kind: TableRefKind) -> TableRef {
+pub fn table_ref(kind: TableRefKind) -> TableRef {
     TableRef {
         alias: String::new(),
         sample: None,
@@ -198,12 +198,12 @@ pub(crate) fn table_ref(kind: TableRefKind) -> TableRef {
 }
 
 /// `EmptyTableRef`.
-pub(crate) fn empty_table_ref() -> TableRef {
+pub fn empty_table_ref() -> TableRef {
     table_ref(TableRefKind::Empty)
 }
 
 /// `SubqueryRef(subquery)`.
-pub(crate) fn subquery_ref(subquery: SelectStatement) -> TableRef {
+pub fn subquery_ref(subquery: SelectStatement) -> TableRef {
     table_ref(TableRefKind::Subquery(SubqueryRef {
         subquery: Box::new(subquery),
         column_name_alias: Vec::new(),
@@ -211,7 +211,7 @@ pub(crate) fn subquery_ref(subquery: SelectStatement) -> TableRef {
 }
 
 /// A `SelectNode` with an empty FROM and nothing else.
-pub(crate) fn select_node() -> SelectNode {
+pub fn select_node() -> SelectNode {
     SelectNode {
         select_list: Vec::new(),
         from_table: Box::new(empty_table_ref()),
@@ -226,7 +226,7 @@ pub(crate) fn select_node() -> SelectNode {
 }
 
 /// A query node without modifiers or CTEs.
-pub(crate) fn query_node(kind: QueryNodeKind) -> QueryNode {
+pub fn query_node(kind: QueryNodeKind) -> QueryNode {
     QueryNode {
         modifiers: Vec::new(),
         cte_map: CommonTableExpressionMap::default(),
@@ -235,7 +235,7 @@ pub(crate) fn query_node(kind: QueryNodeKind) -> QueryNode {
 }
 
 /// A `SelectStatement` around a query node.
-pub(crate) fn select_statement(node: QueryNode) -> SelectStatement {
+pub fn select_statement(node: QueryNode) -> SelectStatement {
     SelectStatement {
         node: Box::new(node),
         named_param_map: CaseInsensitiveMap::default(),
@@ -243,6 +243,6 @@ pub(crate) fn select_statement(node: QueryNode) -> SelectStatement {
 }
 
 /// `ConstantExpression(Value(text))`.
-pub(crate) fn varchar_constant(text: &str) -> ParsedExpression {
+pub fn varchar_constant(text: &str) -> ParsedExpression {
     constant(Value::varchar(text))
 }

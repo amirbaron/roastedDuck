@@ -220,6 +220,18 @@ fn unrecognized(name: &str, enabled: impl Fn(&str) -> bool) -> Error {
     ))
 }
 
+/// Whether a parser extension replaces the Postgres parser
+/// (`allow_parser_override_extension`, DuckDB's `AllowParserOverride`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ParserOverride {
+    /// The Postgres parser only.
+    Default,
+    /// The extension's parser, falling back to the Postgres parser when it fails.
+    Fallback,
+    /// The extension's parser; its errors are final.
+    Strict,
+}
+
 /// The connection's option values.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Settings {
@@ -654,6 +666,23 @@ impl Settings {
             preserve_identifier_case: flag("preserve_identifier_case", true),
             integer_division: flag("integer_division", false),
             max_expression_depth: self.planner.max_expression_depth,
+        }
+    }
+
+    /// `allow_parser_override_extension` (DuckDB's `AllowParserOverride`).
+    pub(crate) fn parser_override(&self) -> ParserOverride {
+        let mode = self
+            .assigned
+            .iter()
+            .find(|(name, _)| *name == "allow_parser_override_extension")
+            .and_then(|(_, value)| value.to_varchar().ok())
+            .unwrap_or_default();
+        if mode.eq_ignore_ascii_case("strict") {
+            ParserOverride::Strict
+        } else if mode.eq_ignore_ascii_case("fallback") {
+            ParserOverride::Fallback
+        } else {
+            ParserOverride::Default
         }
     }
 

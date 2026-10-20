@@ -272,6 +272,15 @@ impl DatabaseInstance {
         Ok(())
     }
 
+    /// Whether a loaded extension registers a parser override (DuckDB's
+    /// `ParserExtension::Register`; the autocomplete extension's PEG parser).
+    fn has_parser_extension(&self) -> bool {
+        self.loaded_extensions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(&StaticExtension::Autocomplete)
+    }
+
     /// The extension providing pragma `name`, if one is loaded.
     fn extension_with_pragma(&self, name: &str) -> Option<StaticExtension> {
         self.loaded_extensions
@@ -747,10 +756,24 @@ impl Connection {
         &self.database
     }
 
-    /// Parses `sql` into its statements (DuckDB's `ClientContext::ExtractStatements`).
+    /// Parses `sql` into its statements (DuckDB's `ClientContext::ExtractStatements` and
+    /// `Parser::ParseQuery`): with `allow_parser_override_extension` set and the
+    /// autocomplete extension loaded, its PEG parser goes first.
     pub fn extract_statements(&self, sql: &str) -> Result<Vec<SqlStatement>> {
-        rustdb_parser::parse_with_options(sql, &self.settings.parser_options())
-            .map_err(|error| error.with_query_context(sql))
+        use crate::settings::ParserOverride;
+        let options = self.settings.parser_options();
+        let mode = self.settings.parser_override();
+        if mode != ParserOverride::Default && self.database.instance().has_parser_extension() {
+            let stripped = rustdb_parser::strip_unicode_spaces(sql);
+            let query = stripped.as_deref().unwrap_or(sql);
+            match rustdb_autocomplete::parse_query(query, options) {
+                Ok(statements) => return Ok(statements),
+                Err(error) if mode == ParserOverride::Strict => return Err(error.with_query_context(sql)),
+                // `FALLBACK`: the Postgres parser takes over.
+                Err(_) => {}
+            }
+        }
+        rustdb_parser::parse_with_options(sql, &options).map_err(|error| error.with_query_context(sql))
     }
 
     /// Runs every statement in `sql` and returns the result of the last one (DuckDB's

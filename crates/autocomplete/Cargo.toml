@@ -14,6 +14,10 @@ rustdb-planner.workspace = true
 rustdb-catalog = { path = "../catalog" }
 rustdb-function = { path = "../function" }
 rustdb-pg-parser = { path = "../pg-parser" }
+rustdb-parser.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+rustdb-serde.workspace = true

@@ -54,11 +54,13 @@
 
 mod candidates;
 mod equality;
-mod hash_order;
+pub mod hash_order;
 pub mod highlight;
 pub mod json;
 mod lists;
 mod transformer;
+
+pub use transformer::build;
 
 use rustdb_ast::{CreateInfo, SqlStatement, SqlStatementKind};
 use rustdb_common::{Error, Result};
@@ -68,7 +70,9 @@ pub use lists::{
     parse_order_list, parse_update_list, parse_values_list,
 };
 pub use rustdb_pg_parser::keywords::{Keyword, KeywordCategory, keyword_list};
-pub use rustdb_pg_parser::{SimplifiedToken, SimplifiedTokenType, keyword_category, tokenize};
+pub use rustdb_pg_parser::{
+    SimplifiedToken, SimplifiedTokenType, keyword_category, strip_unicode_spaces, tokenize,
+};
 
 /// The `error_subtype` DuckDB attaches to errors of the grammar (`ParserException::SyntaxError`).
 pub const SYNTAX_ERROR: &str = "SYNTAX_ERROR";
