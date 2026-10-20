@@ -1,7 +1,7 @@
 //! A horizontal partition of a table of up to 122,880 rows (DuckDB's `RowGroup`).
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use rustdb_common::{Error, Result};
 use rustdb_types::{DataChunk, LogicalType, SelectionVector, Vector};
@@ -14,6 +14,7 @@ use super::row_version_manager::RowVersionManager;
 use super::scan_state::{CollectionScanState, ScanFilterInfo, StorageIndex};
 use super::segment_tree::Segment;
 use crate::VECTOR_SIZE;
+use crate::checkpoint::pointers::PersistentColumnData;
 use crate::data_table::TableIoManager;
 use crate::statistics::{BaseStatistics, FilterPropagateResult};
 use crate::table_filter::TableFilter;
@@ -75,8 +76,21 @@ pub enum TableScanType {
 #[derive(Debug)]
 pub struct RowGroup {
     count: AtomicU64,
-    columns: Vec<Arc<ColumnData>>,
+    /// The columns built so far; a row group read from the database file builds each on
+    /// first use (DuckDB's lazily loaded columns, `is_loaded`).
+    columns: Vec<OnceLock<Arc<ColumnData>>>,
+    /// What the columns not built yet are made from.
+    unloaded: Option<Box<UnloadedColumns>>,
     version_info: Mutex<Option<Arc<RowVersionManager>>>,
+}
+
+/// The stored segments of a row group's columns, until each column is first used.
+#[derive(Debug)]
+struct UnloadedColumns {
+    io: Arc<TableIoManager>,
+    types: Vec<LogicalType>,
+    /// Taken when the column is built.
+    data: Vec<Mutex<Option<PersistentColumnData>>>,
 }
 
 impl Segment for RowGroup {
@@ -100,7 +114,42 @@ impl RowGroup {
     pub fn from_columns(columns: Vec<Arc<ColumnData>>, count: u64) -> Self {
         Self {
             count: AtomicU64::new(count),
-            columns,
+            columns: columns.into_iter().map(OnceLock::from).collect(),
+            unloaded: None,
+            version_info: Mutex::default(),
+        }
+    }
+
+    /// A row group sharing this one's versions whose columns are now stored as `data`
+    /// (after a checkpoint wrote them), built when first used.
+    #[must_use]
+    pub fn with_persistent(
+        &self,
+        io: Arc<TableIoManager>,
+        types: Vec<LogicalType>,
+        data: Vec<PersistentColumnData>,
+    ) -> Self {
+        let row_group = Self::from_persistent(io, types, data, self.count());
+        row_group.version_info_lock().clone_from(&self.version_info_lock());
+        row_group
+    }
+
+    /// A row group of `count` rows stored in the database file, whose columns are built
+    /// from `data` when first used.
+    pub fn from_persistent(
+        io: Arc<TableIoManager>,
+        types: Vec<LogicalType>,
+        data: Vec<PersistentColumnData>,
+        count: u64,
+    ) -> Self {
+        Self {
+            count: AtomicU64::new(count),
+            columns: (0..data.len()).map(|_| OnceLock::new()).collect(),
+            unloaded: Some(Box::new(UnloadedColumns {
+                io,
+                types,
+                data: data.into_iter().map(|column| Mutex::new(Some(column))).collect(),
+            })),
             version_info: Mutex::default(),
         }
     }
@@ -111,7 +160,8 @@ impl RowGroup {
     pub fn with_columns(&self, columns: Vec<Arc<ColumnData>>) -> Self {
         Self {
             count: AtomicU64::new(self.count()),
-            columns,
+            columns: columns.into_iter().map(OnceLock::from).collect(),
+            unloaded: None,
             version_info: Mutex::new(self.version_info_lock().clone()),
         }
     }
@@ -128,19 +178,64 @@ impl RowGroup {
         self.columns.len()
     }
 
+    /// Column `index`, built from its stored segments on first use (`GetColumn`).
     pub fn column(&self, index: usize) -> Result<&Arc<ColumnData>> {
-        self.columns
+        let slot = self
+            .columns
             .get(index)
-            .ok_or_else(|| Error::internal(format!("row group has no column {index}")))
+            .ok_or_else(|| Error::internal(format!("row group has no column {index}")))?;
+        if let Some(column) = slot.get() {
+            return Ok(column);
+        }
+        let unloaded = self
+            .unloaded
+            .as_ref()
+            .ok_or_else(|| Error::internal("row group column neither built nor stored"))?;
+        // Built under the column's lock, so it is built once.
+        let mut data = unloaded.data[index]
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(column) = slot.get() {
+            return Ok(column);
+        }
+        let stored = data
+            .as_ref()
+            .ok_or_else(|| Error::internal("row group column stored data already taken"))?;
+        let column = ColumnData::from_persistent(
+            Arc::clone(&unloaded.io),
+            index,
+            unloaded.types[index].clone(),
+            stored,
+        )?;
+        let _ = slot.set(Arc::new(column));
+        *data = None;
+        drop(data);
+        slot.get()
+            .ok_or_else(|| Error::internal("row group column was not built"))
     }
 
-    pub fn columns(&self) -> &[Arc<ColumnData>] {
-        &self.columns
+    /// Every column, building those not built yet.
+    pub fn columns(&self) -> Result<Vec<Arc<ColumnData>>> {
+        (0..self.columns.len())
+            .map(|index| self.column(index).map(Arc::clone))
+            .collect()
+    }
+
+    /// The columns built so far (a column not built yet has no updates, appends or
+    /// transient data).
+    fn loaded_columns(&self) -> impl Iterator<Item = &Arc<ColumnData>> {
+        self.columns.iter().filter_map(OnceLock::get)
+    }
+
+    /// Whether any column has updates (`HasChanges` on the loaded columns: unloaded
+    /// columns can never have changes).
+    pub fn has_any_updates(&self) -> bool {
+        self.loaded_columns().any(|column| column.has_any_updates())
     }
 
     /// Bytes of transient segments allocated by appends.
     pub fn allocation_size(&self) -> u64 {
-        self.columns.iter().map(|column| column.allocation_size()).sum()
+        self.loaded_columns().map(|column| column.allocation_size()).sum()
     }
 
     fn version_info_lock(&self) -> MutexGuard<'_, Option<Arc<RowVersionManager>>> {
@@ -174,9 +269,9 @@ impl RowGroup {
             let result = if entry.table_column_index.is_row_id() {
                 check_row_id_filter(&entry.filter, row_start, row_start + self.count())
             } else {
-                match self.columns.get(entry.table_column_index.primary_index()) {
-                    Some(column) => column.check_zonemap_column(&entry.filter),
-                    None => FilterPropagateResult::NoPruningPossible,
+                match self.column(entry.table_column_index.primary_index()) {
+                    Ok(column) => column.check_zonemap_column(&entry.filter),
+                    Err(_) => FilterPropagateResult::NoPruningPossible,
                 }
             };
             if result == FilterPropagateResult::FilterAlwaysFalse {
@@ -495,7 +590,7 @@ impl RowGroup {
     pub fn initialize_append(&self) -> Result<RowGroupAppendState> {
         Ok(RowGroupAppendState {
             states: self
-                .columns
+                .columns()?
                 .iter()
                 .map(|column| column.initialize_append())
                 .collect::<Result<_>>()?,
@@ -507,7 +602,7 @@ impl RowGroup {
     /// the row group with [`RowGroup::append_version_info`].
     pub fn append(&self, state: &mut RowGroupAppendState, chunk: &DataChunk, count: usize) -> Result<()> {
         for ((column, column_state), vector) in
-            self.columns.iter().zip(&mut state.states).zip(chunk.columns())
+            self.columns()?.iter().zip(&mut state.states).zip(chunk.columns())
         {
             column.append(column_state, vector, count)?;
         }
@@ -536,7 +631,7 @@ impl RowGroup {
             return Err(Error::internal("RowGroup::RevertAppend new_count out of range"));
         }
         self.get_or_create_version_info().revert_append(new_count);
-        for column in &self.columns {
+        for column in self.loaded_columns() {
             column.revert_append(new_count)?;
         }
         self.set_count(new_count);
@@ -677,19 +772,23 @@ impl RowGroup {
         self.column(column)?.statistics()
     }
 
-    /// Merges every column's statistics into `stats`.
+    /// Merges every built column's statistics into `stats` (a row group read from the
+    /// file comes with the table's statistics, which cover the columns not built yet).
     pub fn merge_into_statistics(&self, stats: &mut [BaseStatistics]) -> Result<()> {
-        for (column, column_stats) in self.columns.iter().zip(stats) {
-            column.merge_into_statistics(column_stats)?;
+        for (slot, column_stats) in self.columns.iter().zip(stats) {
+            if let Some(column) = slot.get() {
+                column.merge_into_statistics(column_stats)?;
+            }
         }
         Ok(())
     }
 
     /// Changes who owns the row group's data (`MoveToCollection`).
-    pub fn set_data_type(&self, data_type: ColumnDataType) {
-        for column in &self.columns {
+    pub fn set_data_type(&self, data_type: ColumnDataType) -> Result<()> {
+        for column in self.columns()? {
             column.set_data_type(data_type);
         }
+        Ok(())
     }
 
     /// Scans the whole row group (every row, including deleted ones) of the given columns
