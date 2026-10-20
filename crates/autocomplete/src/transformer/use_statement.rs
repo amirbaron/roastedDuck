@@ -1,10 +1,5 @@
 //! The transform functions of DuckDB's `transform_use.cpp`.
 
-#![allow(
-    clippy::unused_self,
-    reason = "transform functions have the signature of the rule registry"
-)]
-
 use rustdb_ast::keyword::write_optionally_quoted;
 
 use super::prelude::*;

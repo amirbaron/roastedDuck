@@ -1,10 +1,5 @@
 //! The transform functions of DuckDB's `transform_set.cpp`: `SET` and `RESET`.
 
-#![allow(
-    clippy::unused_self,
-    reason = "transform functions have the signature of the rule registry"
-)]
-
 use super::explain::vector_index_error;
 use super::prelude::*;
 

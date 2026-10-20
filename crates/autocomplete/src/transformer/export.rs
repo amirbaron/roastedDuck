@@ -1,11 +1,6 @@
 //! The transform functions of DuckDB's `transform_export.cpp`: `EXPORT DATABASE [db TO]
 //! 'path' [(options)]`.
 
-#![allow(
-    clippy::unused_self,
-    reason = "transform functions have the signature of the rule registry"
-)]
-
 use rustdb_parser::hash_order::CiHashMap;
 
 use super::explain::vector_element;

@@ -1,12 +1,6 @@
 //! The transform functions of DuckDB's `transform_transaction.cpp`: `BEGIN`, `COMMIT`
 //! and `ROLLBACK`.
 
-#![allow(
-    clippy::unused_self,
-    clippy::unnecessary_wraps,
-    reason = "transform functions have the signature of the rule registry"
-)]
-
 use super::prelude::*;
 
 /// `TransactionInfo(type)`: the default modifier and policy.

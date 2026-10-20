@@ -616,19 +616,18 @@ impl Grammar {
                 if !self.matches(id, ctx, state)? {
                     return Ok(None);
                 }
-                leaf(self.token_parse_result(&matcher.kind, &token.text, ctx.preserve_identifier_case))
+                leaf(Self::token_parse_result(
+                    &matcher.kind,
+                    &token.text,
+                    ctx.preserve_identifier_case,
+                ))
             }
         })
     }
 
     /// The parse result of a single matched token (the `MatchParseResult` of the token
     /// matchers).
-    fn token_parse_result(
-        &self,
-        kind: &MatcherKind,
-        text: &str,
-        preserve_identifier_case: bool,
-    ) -> ParseResultKind {
+    fn token_parse_result(kind: &MatcherKind, text: &str, preserve_identifier_case: bool) -> ParseResultKind {
         match kind {
             MatcherKind::Keyword { .. } => ParseResultKind::Keyword(text.to_owned()),
             MatcherKind::Identifier {

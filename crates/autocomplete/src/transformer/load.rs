@@ -1,11 +1,6 @@
 //! The transform functions of DuckDB's `transform_load.cpp`: `LOAD`, `[FORCE] INSTALL`
 //! and `UPDATE EXTENSIONS`.
 
-#![allow(
-    clippy::unused_self,
-    reason = "transform functions have the signature of the rule registry"
-)]
-
 use super::prelude::*;
 
 impl PegTransformer {

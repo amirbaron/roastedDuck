@@ -1,11 +1,5 @@
 //! The transform functions of DuckDB's `transform_merge_into.cpp`.
 
-#![allow(
-    clippy::unused_self,
-    clippy::unnecessary_wraps,
-    reason = "transform functions have the signature of the rule registry"
-)]
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::prelude::*;

@@ -91,7 +91,7 @@ impl PegTransformer {
             let mut indirection: ParsedExpression = self.transform(child)?;
             match &mut indirection.kind {
                 ParsedExpressionKind::Cast(cast) => {
-                    cast.child = Box::new(expr);
+                    *cast.child = expr;
                     prev_indirection_was_cast = true;
                 }
                 ParsedExpressionKind::Operator(operator) => {
@@ -643,7 +643,7 @@ impl PegTransformer {
                         && let Some(index) = index.as_i64()
                     {
                         let positional_index = u64::try_from(index).unwrap_or(u64::MAX);
-                        order.expression = Box::new(build::positional_reference(positional_index));
+                        *order.expression = build::positional_reference(positional_index);
                     }
                 } else if is_select {
                     // Push the ORDER BY expression into the SELECT list and refer to it.
@@ -794,6 +794,7 @@ impl PegTransformer {
 
 /// The parts of a function call that apply to its window (see
 /// `transform_window_function`).
+#[allow(clippy::struct_excessive_bools, reason = "DuckDB's local variables")]
 struct WindowArguments {
     distinct: bool,
     ignore_nulls: bool,
@@ -1057,7 +1058,7 @@ impl PegTransformer {
             let mut is_expr: ParsedExpression = self.transform(test)?;
             match &mut is_expr.kind {
                 ParsedExpressionKind::Comparison(comparison) => {
-                    comparison.left = Box::new(build::cast(LogicalType::BOOLEAN, expr, false));
+                    *comparison.left = build::cast(LogicalType::BOOLEAN, expr, false);
                 }
                 ParsedExpressionKind::Operator(operator) => operator.children.insert(0, expr),
                 _ => {
@@ -1183,7 +1184,7 @@ impl PegTransformer {
         // Whether the operation is negated with a NOT around it.
         let wrap_in_not = match &mut result.kind {
             ParsedExpressionKind::Between(between) => {
-                between.input = Box::new(expr);
+                *between.input = expr;
                 has_not
             }
             ParsedExpressionKind::Function(function) => {
@@ -1674,13 +1675,12 @@ impl PegTransformer {
             return Err(Error::parser("Parameter numbers must be greater than 0"));
         }
         let identifier = value.to_varchar()?;
-        let index = match self.get_param(&identifier, PreparedParamType::Positional)? {
-            Some(index) => index,
-            None => {
-                let index = u64::from(param_number.unsigned_abs());
-                self.set_param(&identifier, index, PreparedParamType::Positional)?;
-                index
-            }
+        let index = if let Some(index) = self.get_param(&identifier, PreparedParamType::Positional)? {
+            index
+        } else {
+            let index = u64::from(param_number.unsigned_abs());
+            self.set_param(&identifier, index, PreparedParamType::Positional)?;
+            index
         };
         self.prepared_statement_parameter_index = self.prepared_statement_parameter_index.max(index);
         Ok(parameter_expression(identifier))
@@ -1692,13 +1692,12 @@ impl PegTransformer {
         parse_result: &ParseResult,
     ) -> Result<ParsedExpression> {
         let identifier: String = self.transform(parse_result.list()?.child(1)?)?;
-        let index = match self.get_param(&identifier, PreparedParamType::Named)? {
-            Some(index) => index,
-            None => {
-                let index = self.prepared_statement_parameter_index + 1;
-                self.set_param(&identifier, index, PreparedParamType::Named)?;
-                index
-            }
+        let index = if let Some(index) = self.get_param(&identifier, PreparedParamType::Named)? {
+            index
+        } else {
+            let index = self.prepared_statement_parameter_index + 1;
+            self.set_param(&identifier, index, PreparedParamType::Named)?;
+            index
         };
         self.prepared_statement_parameter_index = self.prepared_statement_parameter_index.max(index);
         Ok(parameter_expression(identifier))
@@ -2494,11 +2493,10 @@ impl PegTransformer {
                 result = expr;
                 None
             }
-            Some(true) => Some(expr),
             None if expr.expression_type == ExpressionType::Lambda => {
                 Some(build::function("list_filter", vec![build::star(), expr]))
             }
-            None => Some(expr),
+            Some(true) | None => Some(expr),
         };
         if let ParsedExpressionKind::Star(star) = &mut result.kind {
             if let Some(inner) = inner {
@@ -2805,14 +2803,13 @@ impl PegTransformer {
         } else {
             SubqueryType::Scalar
         };
-        let subquery = match reference.kind {
-            TableRefKind::Subquery(subquery_ref) => *subquery_ref.subquery,
-            _ => {
-                let mut select_node = build::select_node();
-                select_node.select_list.push(build::star());
-                select_node.from_table = Box::new(reference);
-                build::select_statement(build::query_node(QueryNodeKind::Select(Box::new(select_node))))
-            }
+        let subquery = if let TableRefKind::Subquery(subquery_ref) = reference.kind {
+            *subquery_ref.subquery
+        } else {
+            let mut select_node = build::select_node();
+            select_node.select_list.push(build::star());
+            select_node.from_table = Box::new(reference);
+            build::select_statement(build::query_node(QueryNodeKind::Select(Box::new(select_node))))
         };
         let result = subquery_expression(subquery_type, subquery, None, ExpressionType::Invalid);
         if is_not {

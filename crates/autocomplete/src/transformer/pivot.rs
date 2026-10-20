@@ -2,11 +2,6 @@
 //! statements), and the `CREATE TYPE ... AS ENUM` statements a `PIVOT` without `IN`
 //! lists expands into (`PEGTransformer::CreatePivotStatement`).
 
-#![allow(
-    clippy::unused_self,
-    reason = "transform functions have the signature of the rule registry"
-)]
-
 use rustdb_parser::{build, has_subquery, is_scalar};
 
 use super::prelude::*;

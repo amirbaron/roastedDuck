@@ -1,10 +1,5 @@
 //! The transform functions of DuckDB's `transform_update.cpp`.
 
-#![allow(
-    clippy::unused_self,
-    reason = "transform functions have the signature of the rule registry"
-)]
-
 use super::prelude::*;
 
 /// `UpdateSetInfo()`: no assignments, no condition.

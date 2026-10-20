@@ -1,12 +1,6 @@
 //! The transform functions of DuckDB's `transform_describe.cpp`: `SHOW`, `DESCRIBE` and
 //! `SUMMARIZE`, which select `*` from a `ShowRef`.
 
-#![allow(
-    clippy::unused_self,
-    clippy::unnecessary_wraps,
-    reason = "transform functions have the signature of the rule registry"
-)]
-
 use rustdb_parser::build;
 
 use super::prelude::*;

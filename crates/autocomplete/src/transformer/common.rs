@@ -149,12 +149,10 @@ pub(super) fn try_negate_value(value: &Value) -> Option<Value> {
             let raw = value.as_u128()?;
             // |i128::MIN| is the largest UHUGEINT a HUGEINT can hold negated.
             let abs_min_hugeint = i128::MAX.unsigned_abs() + 1;
-            if raw == abs_min_hugeint {
-                Some(Value::hugeint(i128::MIN))
-            } else if raw < abs_min_hugeint {
-                Some(Value::hugeint(-(raw as i128)))
-            } else {
-                None
+            match raw.cmp(&abs_min_hugeint) {
+                std::cmp::Ordering::Equal => Some(Value::hugeint(i128::MIN)),
+                std::cmp::Ordering::Less => Some(Value::hugeint(-(raw as i128))),
+                std::cmp::Ordering::Greater => None,
             }
         }
         LogicalTypeId::Double => Some(Value::double(-value.as_f64()?)),
@@ -240,7 +238,7 @@ impl PegTransformer {
             ParseResultKind::List(children) => {
                 for child in children {
                     match &child.kind {
-                        ParseResultKind::List(grandchildren) if grandchildren.is_empty() => continue,
+                        ParseResultKind::List(grandchildren) if grandchildren.is_empty() => {}
                         ParseResultKind::Choice { result, .. } => {
                             return match &result.kind {
                                 ParseResultKind::Identifier(identifier) => Ok(identifier.clone()),
