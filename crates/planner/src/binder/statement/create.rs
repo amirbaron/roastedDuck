@@ -31,6 +31,18 @@ pub fn bind_create(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Result<B
     let plan = match &info.kind {
         CreateInfoKind::Schema => {
             let catalog = bind_catalog(scope, &info.catalog);
+            // `PhysicalCreateSchema` and `CatalogSet::CheckCatalogEntryInvariants`.
+            if catalog.eq_ignore_ascii_case("system") {
+                return Err(Error::binder("Cannot create schema in system catalog"));
+            }
+            if catalog.eq_ignore_ascii_case(rustdb_catalog::TEMP_CATALOG)
+                && !info.schema.eq_ignore_ascii_case(rustdb_catalog::DEFAULT_SCHEMA)
+            {
+                return Err(Error::invalid_input(format!(
+                    "Cannot create non-temporary entry \"{}\" in temporary catalog",
+                    info.schema
+                )));
+            }
             info.catalog = catalog;
             LogicalOperator::new(LogicalKind::Create {
                 operator_type: LogicalOperatorType::LogicalCreateSchema,

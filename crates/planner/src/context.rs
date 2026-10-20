@@ -247,6 +247,9 @@ impl ClientContext {
     /// The catalog an entry of `schema` goes to by default
     /// (`CatalogSearchPath::GetDefaultCatalog`).
     pub fn default_catalog_for(&self, schema: &str) -> String {
+        if is_default_schema(schema) {
+            return "system".to_owned();
+        }
         self.search_path
             .iter()
             .find(|(_, path_schema)| path_schema.eq_ignore_ascii_case(schema))
