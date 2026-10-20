@@ -205,7 +205,10 @@ impl Drop for DatabaseInstance {
 impl DatabaseInstance {
     /// Registers a statically linked extension's catalog entries once.
     fn load_static_extension(&self, extension: StaticExtension) -> Result<()> {
-        let mut loaded = self.loaded_extensions.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut loaded = self
+            .loaded_extensions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         if !loaded.contains(&extension) {
             extension.register(&self.system_catalog)?;
             loaded.push(extension);
@@ -971,6 +974,7 @@ impl Connection {
         Arc::new(ClientContext {
             catalogs: self.catalogs(instance.default_database_name()),
             search_path: self.search_path.clone(),
+            view_search_path: Vec::new(),
             transaction,
             casts: Arc::clone(&instance.casts),
             evaluator: Arc::new(ScalarEvaluator),

@@ -151,14 +151,14 @@ pub fn st_setcrs_functions() -> ScalarFunctionSet {
     single(function)
 }
 
-/// Every GEOMETRY function set.
-pub fn geometry_functions() -> Vec<ScalarFunctionSet> {
+/// Every GEOMETRY function set with its aliases.
+pub fn geometry_functions() -> Vec<(ScalarFunctionSet, &'static [&'static str])> {
     vec![
-        st_geomfromwkb_functions(),
-        st_aswkb_functions(),
-        st_astext_functions(),
-        st_intersects_extent_functions(),
-        st_crs_functions(),
-        st_setcrs_functions(),
+        (st_geomfromwkb_functions(), &[]),
+        (st_aswkb_functions(), &["st_asbinary"]),
+        (st_astext_functions(), &["st_aswkt"]),
+        (st_intersects_extent_functions(), &["&&"]),
+        (st_crs_functions(), &[]),
+        (st_setcrs_functions(), &[]),
     ]
 }

@@ -26,6 +26,9 @@ pub struct Catalog {
     oid: u64,
     /// How the database is attached, for `duckdb_databases()`.
     attach_info: OnceLock<AttachedInfo>,
+    /// The table the catalog's name refers to, as (schema, name) (`DEFAULT_TABLE`;
+    /// DuckDB's `Catalog::default_table`).
+    default_table: std::sync::Mutex<Option<(String, String)>>,
 }
 
 /// How a database is attached (the parts of DuckDB's `AttachedDatabase` the catalog
@@ -50,6 +53,7 @@ impl Catalog {
             wal: OnceLock::new(),
             oid: 0,
             attach_info: OnceLock::new(),
+            default_table: std::sync::Mutex::default(),
         };
         let mut catalog = catalog;
         if !catalog.name.eq_ignore_ascii_case("system") {
@@ -76,6 +80,24 @@ impl Catalog {
     /// Records how the database is attached (once).
     pub fn set_attach_info(&self, info: AttachedInfo) {
         let _ = self.attach_info.set(info);
+    }
+
+    /// Makes the catalog's name refer to `schema.name` (`Catalog::SetDefaultTable`); an
+    /// empty schema is `main`.
+    pub fn set_default_table(&self, schema: &str, name: &str) {
+        let schema = if schema.is_empty() { DEFAULT_SCHEMA } else { schema };
+        *self
+            .default_table
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((schema.to_owned(), name.to_owned()));
+    }
+
+    /// The (schema, name) of the default table, if any (`Catalog::HasDefaultTable`).
+    pub fn default_table(&self) -> Option<(String, String)> {
+        self.default_table
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// How the database is attached; `None` for `system`.

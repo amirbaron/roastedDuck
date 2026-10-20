@@ -871,6 +871,12 @@ test/sql/alter/drop_col/test_drop_col_pk.test
 test/sql/alter/drop_col/test_drop_col_rollback.test
 test/sql/alter/drop_col/test_drop_col_transactions.test
 test/sql/alter/drop_col/test_drop_col_with_generated_cols.test
+test/sql/alter/list/add_column_in_struct.test
+test/sql/alter/list/drop_column_in_struct.test
+test/sql/alter/list/rename_column_in_struct.test
+test/sql/alter/map/add_column_in_struct.test
+test/sql/alter/map/drop_column_in_struct.test
+test/sql/alter/map/rename_column_in_struct.test
 test/sql/alter/rename_col/test_rename_col.test
 test/sql/alter/rename_col/test_rename_col_check.test
 test/sql/alter/rename_col/test_rename_col_dependencies.test
@@ -897,6 +903,12 @@ test/sql/alter/rename_view/test_rename_view_incorrect.test
 test/sql/alter/rename_view/test_rename_view_many_transactions.test
 test/sql/alter/rename_view/test_rename_view_table.test
 test/sql/alter/rename_view/test_rename_view_transactions.test
+test/sql/alter/struct/add_col_nested_struct.test
+test/sql/alter/struct/add_col_struct.test
+test/sql/alter/struct/drop_col_nested_struct.test
+test/sql/alter/struct/drop_col_struct.test
+test/sql/alter/struct/rename_col_nested_struct.test
+test/sql/alter/struct/rename_col_struct.test
 test/sql/alter/test_alter_if_exists.test
 test/sql/append/test_big_append.test_slow
 test/sql/attach/attach_catalog_error_early_out.test
@@ -910,6 +922,7 @@ test/sql/attach/attach_cross_catalog.test
 test/sql/attach/attach_database_size.test
 test/sql/attach/attach_dbname_quotes.test
 test/sql/attach/attach_default_database_case.test
+test/sql/attach/attach_default_table.test
 test/sql/attach/attach_defaults.test
 test/sql/attach/attach_dependencies.test
 test/sql/attach/attach_did_you_mean.test
@@ -953,6 +966,7 @@ test/sql/attach/attach_table_constraints.test
 test/sql/attach/attach_table_ddl.test
 test/sql/attach/attach_table_info.test
 test/sql/attach/attach_transactionality.test
+test/sql/attach/attach_view_search_path.test
 test/sql/attach/attach_views.test
 test/sql/attach/attach_wal_alter.test
 test/sql/attach/attach_wal_alter_sequence.test
@@ -960,6 +974,7 @@ test/sql/attach/detach_keyword.test
 test/sql/attach/in_memory_attach.test
 test/sql/attach/reattach_schema.test
 test/sql/attach/remote_file_concurrently.test
+test/sql/attach/searchpath_fallback.test
 test/sql/attach/show_databases.test
 test/sql/attach/show_schemas.test
 test/sql/binder/alias_error_10057.test
@@ -1119,11 +1134,13 @@ test/sql/catalog/test_if_not_exists.test
 test/sql/catalog/test_incorrect_table_creation.test
 test/sql/catalog/test_quoted_column_name.test
 test/sql/catalog/test_schema_conflict.test
+test/sql/catalog/test_set_schema.test
 test/sql/catalog/test_set_search_path.test
 test/sql/catalog/test_standard_schema.test
 test/sql/catalog/test_temporary.test
 test/sql/catalog/test_unicode_schema.test
 test/sql/catalog/view/recursive_view_with_dependencies.test
+test/sql/catalog/view/test_loosely_qualified_view_sql.test
 test/sql/catalog/view/test_stacked_view.test
 test/sql/catalog/view/test_view_alias.test
 test/sql/catalog/view/test_view_delete_update.test
@@ -3740,6 +3757,7 @@ test/sql/types/float/nan_test.test
 test/sql/types/float/nan_window.test
 test/sql/types/float/nested_nan.test
 test/sql/types/geo/geometry.test
+test/sql/types/geo/geometry_intersects.test
 test/sql/types/geo/geometry_shred_fetch.test
 test/sql/types/geo/geometry_shred_list.test
 test/sql/types/geo/geometry_storage_version.test
