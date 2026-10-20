@@ -1477,6 +1477,14 @@ impl Connection {
                 ))
             };
             if catalog.is_empty() {
+                // The `temp` and `system` catalogs alone mean their `main` schema.
+                if schema.eq_ignore_ascii_case(rustdb_catalog::TEMP_CATALOG)
+                    || schema.eq_ignore_ascii_case("system")
+                {
+                    resolved.push((schema.to_lowercase(), rustdb_catalog::DEFAULT_SCHEMA.to_owned()));
+                    set_paths.push((schema.clone(), rustdb_catalog::DEFAULT_SCHEMA.to_owned()));
+                    continue;
+                }
                 // A database name alone means its default schema.
                 if let Some(database) = instance.databases.get(&schema)
                     && let Some(main) = database

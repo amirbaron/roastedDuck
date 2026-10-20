@@ -41,10 +41,7 @@ pub fn find_table(scope: &BindScope<'_>, catalog: &str, schema: &str, name: &str
         .get_entry(&catalog, &schema, CatalogType::Table, name, false)?
         .ok_or_else(|| Error::internal("table lookup"))?;
     if !matches!(found.entry.kind, EntryKind::Table(_)) {
-        return Err(Error::catalog(format!(
-            "Existing object {} is of type View, trying to replace with type Table",
-            found.entry.name()
-        )));
+        return Err(Error::catalog(format!("{name} is not an table")));
     }
     Ok(FoundTable {
         schema: found.schema,

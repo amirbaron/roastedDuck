@@ -1001,6 +1001,7 @@ test/sql/attach/attach_table_constraints.test
 test/sql/attach/attach_table_ddl.test
 test/sql/attach/attach_table_info.test
 test/sql/attach/attach_transactionality.test
+test/sql/attach/attach_use_rollback.test
 test/sql/attach/attach_view_search_path.test
 test/sql/attach/attach_views.test
 test/sql/attach/attach_wal_alter.test
@@ -1012,6 +1013,7 @@ test/sql/attach/remote_file_concurrently.test
 test/sql/attach/searchpath_fallback.test
 test/sql/attach/show_databases.test
 test/sql/attach/show_schemas.test
+test/sql/attach/system_catalog.test
 test/sql/binder/alias_error_10057.test
 test/sql/binder/alias_qualification_errors.test
 test/sql/binder/alias_qualification_group_by.test
@@ -1117,6 +1119,7 @@ test/sql/catalog/dependencies/test_write_after_rename.test
 test/sql/catalog/did_you_mean.test
 test/sql/catalog/drop_create_rollback.test
 test/sql/catalog/function/attached_macro.test
+test/sql/catalog/function/information_schema_macro.test
 test/sql/catalog/function/macro_query_table.test
 test/sql/catalog/function/python_style_macro_parameters.test
 test/sql/catalog/function/struct_extract_macro.test
@@ -1146,6 +1149,7 @@ test/sql/catalog/function/test_table_macro_complex.test
 test/sql/catalog/function/test_table_macro_copy.test
 test/sql/catalog/function/test_table_macro_groups.test
 test/sql/catalog/function/test_window_macro.test
+test/sql/catalog/information_schema_read_only.test
 test/sql/catalog/issue_9459.test
 test/sql/catalog/sequence/sequence_cycle.test
 test/sql/catalog/sequence/sequence_offset_increment.test
@@ -1153,6 +1157,7 @@ test/sql/catalog/sequence/sequence_overflow.test
 test/sql/catalog/sequence/test_duckdb_sequences.test
 test/sql/catalog/sequence/test_sequence.test
 test/sql/catalog/sequence/test_sequence_dependency.test
+test/sql/catalog/sequence/test_sequence_google_fuzz.test
 test/sql/catalog/table/create_table_as_abort.test
 test/sql/catalog/table/create_table_parameters.test
 test/sql/catalog/table/long_identifier.test
@@ -1168,6 +1173,7 @@ test/sql/catalog/test_create_from_select.test
 test/sql/catalog/test_extension_suggestion.test
 test/sql/catalog/test_if_not_exists.test
 test/sql/catalog/test_incorrect_table_creation.test
+test/sql/catalog/test_querying_from_detached_catalog.test
 test/sql/catalog/test_quoted_column_name.test
 test/sql/catalog/test_schema.test
 test/sql/catalog/test_schema_conflict.test
@@ -1179,6 +1185,7 @@ test/sql/catalog/test_unicode_schema.test
 test/sql/catalog/view/recursive_view_with_dependencies.test
 test/sql/catalog/view/test_loosely_qualified_view_sql.test
 test/sql/catalog/view/test_stacked_view.test
+test/sql/catalog/view/test_view.test
 test/sql/catalog/view/test_view_alias.test
 test/sql/catalog/view/test_view_delete_update.test
 test/sql/catalog/view/test_view_drop_concurrent.test
@@ -3088,6 +3095,7 @@ test/sql/settings/drop_set_schema.test
 test/sql/settings/integer_division_setting.test
 test/sql/settings/lock_configuration_schema.test
 test/sql/settings/reset/reset_threads.test
+test/sql/settings/set_schema_temp_main.test
 test/sql/settings/setting_alias.test
 test/sql/settings/setting_collation.test
 test/sql/settings/setting_disabled_optimizer.test

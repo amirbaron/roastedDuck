@@ -247,6 +247,9 @@ impl ClientContext {
     /// The catalog an entry of `schema` goes to by default
     /// (`CatalogSearchPath::GetDefaultCatalog`).
     pub fn default_catalog_for(&self, schema: &str) -> String {
+        if is_default_schema(schema) {
+            return "system".to_owned();
+        }
         self.search_path
             .iter()
             .find(|(_, path_schema)| path_schema.eq_ignore_ascii_case(schema))
@@ -454,6 +457,14 @@ impl ClientContext {
         // (`TryLookupDefaultTable`).
         let default_lookup = catalog.is_empty() && schema.is_empty() && ty == CatalogType::Table;
         for (catalog_name, schema_name) in &path {
+            // `TryLookupEntry`: a search path entry whose database is gone (detached by
+            // another connection) ends the lookup.
+            if self.catalog(catalog_name).is_none() {
+                if if_exists {
+                    return Ok(None);
+                }
+                return Err(Error::binder(format!("Catalog \"{catalog_name}\" does not exist!")));
+            }
             if let Some(entry) = self.lookup_in(catalog_name, schema_name, ty, name) {
                 let lookup = EntryLookup {
                     catalog: catalog_name.clone(),

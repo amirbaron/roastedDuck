@@ -2515,10 +2515,8 @@ fn storage_info_rows(context: &ClientContext, name: &str) -> Result<Vec<Vec<Valu
         )?
         .ok_or_else(|| Error::catalog(format!("Table with name {table} does not exist!")))?;
     let EntryKind::Table(entry) = &found.entry.kind else {
-        return Err(Error::catalog(format!(
-            "Existing object {} is of type View, trying to replace with type Table",
-            found.entry.name()
-        )));
+        // `Catalog::GetEntry<TableCatalogEntry>`.
+        return Err(Error::catalog(format!("{table} is not an table")));
     };
     let Some(storage) = &entry.storage else {
         return Ok(Vec::new());
