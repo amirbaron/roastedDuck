@@ -155,6 +155,7 @@ test/fuzzer/pedro/floating_point_inequality.test
 test/fuzzer/pedro/force_external_blob.test
 test/fuzzer/pedro/force_no_cross_product.test
 test/fuzzer/pedro/forced_parallelism_empty_select.test
+test/fuzzer/pedro/foreign_key_binding_issue.test
 test/fuzzer/pedro/foreign_key_type_mismatch.test
 test/fuzzer/pedro/gcol_stack_overflow.test
 test/fuzzer/pedro/group_by_all_row_alias.test

@@ -749,6 +749,23 @@ fn bind_new_constraints(
                 };
                 primary_keys = Some(keys);
             }
+            // `BindForeignKey`, in constraint order with the UNIQUE checks.
+            Constraint::ForeignKey(fk) => {
+                let duplicate = |names: &[String]| {
+                    names
+                        .iter()
+                        .enumerate()
+                        .any(|(i, name)| names[..i].iter().any(|other| other.eq_ignore_ascii_case(name)))
+                };
+                if duplicate(&fk.pk_columns) {
+                    return Err(Error::parser(
+                        "duplicate primary key referenced in FOREIGN KEY constraint",
+                    ));
+                }
+                if duplicate(&fk.fk_columns) {
+                    return Err(Error::parser("duplicate key specified in FOREIGN KEY constraint"));
+                }
+            }
             Constraint::Unique(unique) if unique.index.0 == u64::MAX => {
                 let mut seen = Vec::new();
                 for name in &unique.columns {
