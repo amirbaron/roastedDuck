@@ -401,6 +401,31 @@ impl ClientContext {
         }
     }
 
+    /// Records `lookup` for the dependencies of an entry being created.
+    fn record_lookup(&self, lookup: EntryLookup) -> EntryLookup {
+        if let Some(recorded) = self
+            .dependency_recorder
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_mut()
+        {
+            recorded.push(lookup.clone());
+        }
+        lookup
+    }
+
+    /// The default table of the attached database called `name` (`TryLookupDefaultTable`).
+    fn default_table_lookup(&self, name: &str) -> Option<EntryLookup> {
+        let catalog = self.catalog(name)?;
+        let (schema, table) = catalog.default_table()?;
+        let entry = catalog.get_entry(&self.transaction, CatalogType::Table, &schema, &table)?;
+        Some(EntryLookup {
+            catalog: catalog.name().to_owned(),
+            schema,
+            entry,
+        })
+    }
+
     fn lookup_in(
         &self,
         catalog: &str,
@@ -424,6 +449,9 @@ impl ClientContext {
         if_exists: bool,
     ) -> Result<Option<EntryLookup>> {
         let path = self.search_path(catalog, schema, ty);
+        // An unqualified table name may name an attached database with a default table
+        // (`TryLookupDefaultTable`).
+        let default_lookup = catalog.is_empty() && schema.is_empty() && ty == CatalogType::Table;
         for (catalog_name, schema_name) in &path {
             if let Some(entry) = self.lookup_in(catalog_name, schema_name, ty, name) {
                 let lookup = EntryLookup {
@@ -431,16 +459,14 @@ impl ClientContext {
                     schema: schema_name.clone(),
                     entry,
                 };
-                if let Some(recorded) = self
-                    .dependency_recorder
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .as_mut()
-                {
-                    recorded.push(lookup.clone());
+                if default_lookup && let Some(default_table) = self.default_table_lookup(name) {
+                    return Err(default_table_ambiguity(&lookup, &default_table, name));
                 }
-                return Ok(Some(lookup));
+                return Ok(Some(self.record_lookup(lookup)));
             }
+        }
+        if default_lookup && let Some(default_table) = self.default_table_lookup(name) {
+            return Ok(Some(self.record_lookup(default_table)));
         }
         if if_exists {
             return Ok(None);
@@ -674,4 +700,22 @@ pub fn position_missing_entry(error: Error, location: Option<u64>) -> Error {
     } else {
         error
     }
+}
+
+/// DuckDB's `ThrowDefaultTableAmbiguityException`: `name` is both an entry on the search
+/// path and an attached database with a default table.
+fn default_table_ambiguity(found: &EntryLookup, default_table: &EntryLookup, name: &str) -> Error {
+    let entry_type = found.entry.catalog_type().display_name();
+    Error::catalog(format!(
+        "Ambiguity detected for '{name}': this could either refer to the '{entry_type}' '{name}', or the attached \
+         catalog '{name}' which has a default table. To avoid this error, either detach the catalog and reattach \
+         under a different name, or use a fully qualified name for the '{entry_type}': '{}.{}.{}' or for the \
+         Catalog Default Table: '{}.{}.{}'.",
+        found.catalog,
+        found.schema,
+        found.entry.name(),
+        default_table.catalog,
+        default_table.schema,
+        default_table.entry.name()
+    ))
 }

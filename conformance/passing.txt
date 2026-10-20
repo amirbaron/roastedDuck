@@ -910,6 +910,7 @@ test/sql/attach/attach_cross_catalog.test
 test/sql/attach/attach_database_size.test
 test/sql/attach/attach_dbname_quotes.test
 test/sql/attach/attach_default_database_case.test
+test/sql/attach/attach_default_table.test
 test/sql/attach/attach_defaults.test
 test/sql/attach/attach_dependencies.test
 test/sql/attach/attach_did_you_mean.test
@@ -961,6 +962,7 @@ test/sql/attach/detach_keyword.test
 test/sql/attach/in_memory_attach.test
 test/sql/attach/reattach_schema.test
 test/sql/attach/remote_file_concurrently.test
+test/sql/attach/searchpath_fallback.test
 test/sql/attach/show_databases.test
 test/sql/attach/show_schemas.test
 test/sql/binder/alias_error_10057.test

@@ -46,6 +46,8 @@ pub(crate) struct AttachOptions {
     pub storage_version: Option<Value>,
     pub block_size: Option<Value>,
     pub row_group_size: Option<Value>,
+    /// `DEFAULT_TABLE`: the (schema, name) the database's name refers to.
+    pub default_table: Option<(String, String)>,
 }
 
 impl AttachOptions {
@@ -87,7 +89,12 @@ impl AttachOptions {
                     }
                 }
                 "hidden" => options.hidden = value_as_bool(value)?,
-                "default_table" | "recovery_mode" | "vacuum_rebuild_indexes" | "compress" => {}
+                "default_table" => {
+                    // `QualifiedName::Parse`.
+                    let (_, schema, name) = crate::sequence::parse_qualified_name(&value.to_varchar()?)?;
+                    options.default_table = Some((schema, name));
+                }
+                "recovery_mode" | "vacuum_rebuild_indexes" | "compress" => {}
                 "storage_version" => options.storage_version = Some(value.clone()),
                 "block_size" => options.block_size = Some(value.clone()),
                 "row_group_size" => options.row_group_size = Some(value.clone()),
@@ -236,6 +243,9 @@ impl DatabaseManager {
                     )));
                 }
             }
+            if let Some((schema, table)) = &options.default_table {
+                existing.catalog.set_default_table(schema, table);
+            }
             if on_conflict == OnCreateConflict::IgnoreOnConflict {
                 return Ok(None);
             }
@@ -274,6 +284,9 @@ impl DatabaseManager {
             catalog.set_io(Arc::clone(storage.io()))?;
             Some(storage)
         };
+        if let Some((schema, table)) = &options.default_table {
+            catalog.set_default_table(schema, table);
+        }
         catalog.set_attach_info(rustdb_catalog::AttachedInfo {
             path: path.clone(),
             read_only: options.read_only(),
