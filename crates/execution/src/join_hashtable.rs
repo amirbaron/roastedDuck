@@ -146,6 +146,9 @@ impl FirstRound<'_> {
 /// How many rows ahead probes prefetch pointer table entries and rows.
 const PREFETCH_DISTANCE: usize = 96;
 
+/// How many rows ahead inserts prefetch pointer table entries.
+const INSERT_PREFETCH_DISTANCE: usize = 32;
+
 /// Salts are only compared for tables that do not fit in the CPU cache.
 const USE_SALT_THRESHOLD: usize = 8192;
 
@@ -1608,10 +1611,17 @@ impl<'a> Inserter<'a> {
             }
         }
         let capacity_mask = ht.bitmask | SALT_MASK;
+        // In a large table every row's entry is a cache miss: prefetching the entries of
+        // the rows a few ahead lets them overlap.
+        let prefetch = ht.prefetches();
         while !self.remaining.is_empty() {
             self.keys_to_compare.clear();
             self.rhs_rows.clear();
-            for &row_index in &self.remaining {
+            for (i, &row_index) in self.remaining.iter().enumerate() {
+                if prefetch && let Some(&ahead) = self.remaining.get(i + INSERT_PREFETCH_DISTANCE) {
+                    let offset = self.ht_offsets[ahead as usize] & ht.bitmask;
+                    prefetch_read(entries[offset as usize].as_ptr().cast_const().cast());
+                }
                 let row_index = row_index as usize;
                 let salt = self.salts[row_index];
                 let mut offset = self.ht_offsets[row_index];
