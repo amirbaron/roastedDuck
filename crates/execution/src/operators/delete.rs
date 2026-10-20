@@ -54,7 +54,7 @@ impl PhysicalDelete {
     /// The rows of `deleted` (fetched for `ids`) not returned before, each once. When
     /// some are dropped, the rest come in row id order, as DuckDB collects them in a
     /// `map<row_t, idx_t>`.
-    fn newly_deleted(&self, global: &DeleteGlobal, ids: &[i64], deleted: DataChunk) -> DataChunk {
+    fn newly_deleted(global: &DeleteGlobal, ids: &[i64], deleted: DataChunk) -> DataChunk {
         let mut returned = global.deleted_row_ids.lock().unwrap_or_else(PoisonError::into_inner);
         let mut new_rows = BTreeMap::new();
         for (row, &id) in ids.iter().enumerate() {
@@ -140,7 +140,7 @@ impl Sink for PhysicalDelete {
             .delete_with_constraints(&self.transaction, &ids, &self.constraints)?;
         global.result.add_count(count);
         if let Some(deleted) = returned {
-            global.result.push_returned(self.newly_deleted(global, &ids, deleted));
+            global.result.push_returned(Self::newly_deleted(global, &ids, deleted));
         }
         Ok(SinkResult::NeedMoreInput)
     }

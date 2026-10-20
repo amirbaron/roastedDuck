@@ -334,6 +334,67 @@ fn hash_rows(input: &Vector, out: &mut [u64], combine: bool) -> Result<()> {
     Ok(())
 }
 
+/// Hashes rows `rows` of `input` into `out` (`out[i]` = the hash of row `rows[i]`), like
+/// hashing `input` sliced by `rows` (`VectorOperations::Hash` of a sliced vector).
+pub fn hash_selected(input: &Vector, rows: &[u32], out: &mut [u64]) -> Result<()> {
+    fn native<T: HashNative>(input: &Vector, rows: &[u32], out: &mut [u64]) {
+        let data = input.unified::<T>();
+        if data.validity.is_all_valid() {
+            match data.sel {
+                rustdb_types::Sel::Identity => {
+                    for (target, &row) in out.iter_mut().zip(rows) {
+                        *target = data.values[row as usize].hash_value();
+                    }
+                }
+                rustdb_types::Sel::Indices(indices) => {
+                    for (target, &row) in out.iter_mut().zip(rows) {
+                        *target = data.values[indices[row as usize] as usize].hash_value();
+                    }
+                }
+                rustdb_types::Sel::Constant => out.fill(data.values[0].hash_value()),
+            }
+            return;
+        }
+        for (target, &row) in out.iter_mut().zip(rows) {
+            let slot = data.slot(row as usize);
+            *target = if data.validity.is_valid(slot) {
+                data.values[slot].hash_value()
+            } else {
+                NULL_HASH
+            };
+        }
+    }
+    let out = &mut out[..rows.len()];
+    if input.storage_dictionary_parts().is_none() && matches!(input.kind(), VectorKind::Flat | VectorKind::Dictionary) {
+        type Hasher = fn(&Vector, &[u32], &mut [u64]);
+        let typed: Option<Hasher> = match input.logical_type().physical_type() {
+            PhysicalType::Int8 => Some(native::<i8>),
+            PhysicalType::UInt8 => Some(native::<u8>),
+            PhysicalType::Int16 => Some(native::<i16>),
+            PhysicalType::UInt16 => Some(native::<u16>),
+            PhysicalType::Int32 => Some(native::<i32>),
+            PhysicalType::UInt32 => Some(native::<u32>),
+            PhysicalType::Int64 => Some(native::<i64>),
+            PhysicalType::UInt64 => Some(native::<u64>),
+            PhysicalType::Int128 => Some(native::<i128>),
+            PhysicalType::UInt128 => Some(native::<u128>),
+            _ => None,
+        };
+        if let Some(typed) = typed {
+            typed(input, rows, out);
+            return Ok(());
+        }
+    }
+    // Everything else: hash all rows up to the last selected one, then pick.
+    let count = rows.iter().max().map_or(0, |&row| row as usize + 1);
+    let mut all = vec![0; count];
+    hash_rows(input, &mut all, false)?;
+    for (target, &row) in out.iter_mut().zip(rows) {
+        *target = all[row as usize];
+    }
+    Ok(())
+}
+
 /// Hashes the first `count` rows of `input` into `result` (`VectorOperations::Hash`).
 /// A constant input yields a constant result.
 pub fn hash_vector(input: &Vector, count: usize, result: &mut Vector) -> Result<()> {
