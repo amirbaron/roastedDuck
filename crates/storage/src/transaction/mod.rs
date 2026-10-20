@@ -21,6 +21,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use rustdb_common::profiling::{MetricType, start_timer};
 use rustdb_common::{Error, Result};
 
 use crate::data_table::DataTable;
@@ -339,15 +340,19 @@ impl TransactionManager {
         // The transaction-local rows reach the table under the WAL lock, so a checkpoint
         // (which holds it) never sees appended rows whose commit is not logged yet.
         let mut guard = wal.lock();
+        let mut commit_timer = start_timer(MetricType::CommitLocalStorageLatency);
         transaction.local_storage.commit(transaction)?;
+        commit_timer.end();
         let undo = transaction.undo();
         if undo.is_empty() {
             return undo.commit(commit_id, transaction.transaction_id, others_active);
         }
         let initial_size = guard.size();
+        let mut wal_timer = start_timer(MetricType::WriteToWalLatency);
         let mut batch = wal.batch();
         undo.write_to_wal(&mut batch, transaction.data())?;
         guard.commit(batch)?;
+        wal_timer.end();
         let result = undo.commit(commit_id, transaction.transaction_id, others_active);
         if result.is_err() {
             let _ = guard.truncate(initial_size);

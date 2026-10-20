@@ -571,6 +571,7 @@ impl Database {
             function_client,
             user_variables: CaseInsensitiveMap::default(),
             profiler: crate::query_profiler::QueryProfiler::default(),
+            log_query_writer: None,
         })
     }
 
@@ -628,6 +629,9 @@ pub struct Connection {
     logger: Arc<crate::logging::ConnectionLogger>,
     /// The profiler of the connection's statements (DuckDB's `ClientData::profiler`).
     profiler: crate::query_profiler::QueryProfiler,
+    /// The file `log_query_path` names, which every statement is written to (DuckDB's
+    /// `ClientData::log_query_writer`).
+    log_query_writer: Option<std::fs::File>,
 }
 
 impl Drop for Connection {
@@ -704,6 +708,10 @@ impl Connection {
             .start_query(&self.settings.profiler, query, is_explain_analyze);
         let metrics = self.profiler.active_metrics().cloned();
         let metrics_guard = rustdb_common::profiling::activate(metrics.as_ref());
+        // Files opened by the statement log to the connection's loggers.
+        let _logger_guard = rustdb_function::logging::activate_logger(
+            Arc::clone(&self.logger) as Arc<dyn rustdb_function::logging::ClientLogger>
+        );
         self.begin_query_logging(query);
         let outcome = self.run_statement(statement);
         // Functions that changed the connection's configuration did so while running.
@@ -855,6 +863,7 @@ impl Connection {
     fn begin_query_logging(&mut self, query: &str) {
         use crate::logging::{ContextScope, LoggingContext};
         use rustdb_function::logging::{ClientLogger, LogLevel, LogScope};
+        self.log_query(query);
         let manager = Arc::clone(&self.logger.manager);
         let _ = manager.flush();
         // Like DuckDB, the query's transaction starts first when the query is logged.
@@ -880,6 +889,34 @@ impl Connection {
                 .logger
                 .write_log(LogScope::Connection, "QueryLog", LogLevel::Info, query);
         }
+    }
+
+    /// `ClientContext::LogQueryInternal`: the statement and a newline, synced to disk.
+    fn log_query(&mut self, query: &str) {
+        use std::io::Write as _;
+        if let Some(writer) = &mut self.log_query_writer {
+            let _ = writer
+                .write_all(query.as_bytes())
+                .and_then(|()| writer.write_all(b"\n"))
+                .and_then(|()| writer.sync_data());
+        }
+    }
+
+    /// `LogQueryPathSetting::OnSet`: an empty path stops logging, any other starts a new
+    /// log file there.
+    fn set_log_query_path(&mut self, value: Option<&rustdb_types::Value>) -> Result<()> {
+        let path = value
+            .map(rustdb_types::Value::to_varchar)
+            .transpose()?
+            .unwrap_or_default();
+        self.log_query_writer = if path.is_empty() {
+            None
+        } else {
+            Some(std::fs::File::create(&path).map_err(|error| {
+                Error::new(ErrorKind::Io, format!("Cannot open file \"{path}\": {error}"))
+            })?)
+        };
+        Ok(())
     }
 
     /// `ClientContext::EndQueryInternal`'s logging: flush and a connection-scoped logger.
@@ -1198,7 +1235,9 @@ impl Connection {
         }
         let instance = self.database.instance();
         for attached in attaches {
-            instance.databases.detach_if_current(&attached);
+            instance
+                .databases
+                .detach_if_current(&attached, instance.checkpoint_on_shutdown());
         }
     }
 
@@ -1229,7 +1268,10 @@ impl Connection {
             )));
         }
         let instance = self.database.instance();
-        match instance.databases.detach(&info.name) {
+        match instance
+            .databases
+            .detach(&info.name, instance.checkpoint_on_shutdown())
+        {
             Some(_) => Ok(()),
             None if info.if_not_found == rustdb_ast::OnEntryNotFound::ReturnNull => Ok(()),
             None => Err(Error::binder(format!(
@@ -1637,6 +1679,9 @@ impl Connection {
                 if is_threads_setting(name) {
                     self.database.instance().set_threads(Some(value))?;
                 }
+                if name.eq_ignore_ascii_case("log_query_path") {
+                    self.set_log_query_path(Some(value))?;
+                }
                 self.database.instance().set_buffer_setting(name, Some(value))?;
                 if crate::logging::is_logging_setting(name) {
                     crate::logging::apply_setting(&self.database.instance().log_manager, name, Some(value))?;
@@ -1660,6 +1705,9 @@ impl Connection {
                     crate::logging::apply_setting(&self.database.instance().log_manager, name, None)?;
                 }
                 self.settings.reset(name)?;
+                if name.eq_ignore_ascii_case("log_query_path") {
+                    self.set_log_query_path(None)?;
+                }
                 if is_threads_setting(name) {
                     self.database.instance().set_threads(None)?;
                 }

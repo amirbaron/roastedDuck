@@ -157,22 +157,23 @@ impl DatabaseManager {
     }
 
     /// Detaches the database called `name`: removes it and closes it, writing a
-    /// checkpoint (`DatabaseManager::DetachDatabase`).
-    pub fn detach(&self, name: &str) -> Option<Arc<AttachedDatabase>> {
+    /// checkpoint if `checkpoint` (`checkpoint_on_shutdown`) is on
+    /// (`DatabaseManager::DetachDatabase`).
+    pub fn detach(&self, name: &str, checkpoint: bool) -> Option<Arc<AttachedDatabase>> {
         let _guard = self.attach_lock.lock().unwrap_or_else(PoisonError::into_inner);
         let database = self.remove(name)?;
-        database.close(true);
+        database.close(checkpoint);
         Some(database)
     }
 
     /// Detaches `database` if it is still attached (`ptr_eq`) under its name.
-    pub fn detach_if_current(&self, database: &Arc<AttachedDatabase>) {
+    pub fn detach_if_current(&self, database: &Arc<AttachedDatabase>, checkpoint: bool) {
         let _guard = self.attach_lock.lock().unwrap_or_else(PoisonError::into_inner);
         let current = self.get(&database.name);
         if current.is_some_and(|current| Arc::ptr_eq(&current, database))
             && let Some(removed) = self.remove(&database.name)
         {
-            removed.close(true);
+            removed.close(checkpoint);
         }
     }
 

@@ -278,7 +278,7 @@ impl DataTable {
             + transaction
                 .local_storage()
                 .storage(self)
-                .map_or(0, |local| local.collection().row_group_count())
+                .map_or(0, |local| local.collection().filled_row_group_count())
     }
 
     fn version(&self) -> TableVersion {

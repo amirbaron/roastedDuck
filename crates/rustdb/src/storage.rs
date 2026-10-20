@@ -6,6 +6,7 @@ use std::sync::Arc;
 use rustdb_ast::CreateIndexInfo;
 use rustdb_catalog::checkpoint::{IndexExpressionLoader, load_checkpoint, write_checkpoint};
 use rustdb_catalog::{Catalog, Transaction};
+use rustdb_common::profiling::MetricType;
 use rustdb_common::{Error, ErrorKind, Result};
 use rustdb_serde::SerializationCompatibility;
 use rustdb_storage::DataTable;
@@ -125,7 +126,10 @@ pub(crate) fn open_storage(
 ) -> Result<Arc<StorageManager>> {
     let options = storage_options(attach)?;
     let storage = StorageManager::open(path, buffer_manager, options)?;
+    // `SingleFileStorageManager::LoadDatabase` times loading the checkpoint.
+    let timer = rustdb_common::profiling::start_timer(MetricType::AttachLoadStorageLatency);
     load_checkpoint(catalog, &storage, &NoExpressionIndexes)?;
+    drop(timer);
     Ok(Arc::new(storage))
 }
 
@@ -212,6 +216,8 @@ pub(crate) fn create_checkpoint(
         return Ok(());
     }
     let mut has_wal = false;
+    // `SingleFileStorageManager::CreateCheckpoint` times writing the checkpoint.
+    let mut timer = rustdb_common::profiling::start_timer(MetricType::CheckpointLatency);
     write_checkpoint(
         catalog,
         storage,
@@ -224,6 +230,7 @@ pub(crate) fn create_checkpoint(
         },
         replace_in_memory,
     )?;
+    timer.end();
     drop(exclusive);
     if has_wal && let Some(guard) = guard.as_mut() {
         guard.finish_checkpoint()?;
