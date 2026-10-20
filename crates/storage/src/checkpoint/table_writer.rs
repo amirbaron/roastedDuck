@@ -27,7 +27,6 @@ use crate::metadata::{MetaBlockPointer, MetadataManager, MetadataWriter};
 use crate::single_file_block_manager::SingleFileBlockManager;
 use crate::statistics::{BaseStatistics, serialize_table_statistics};
 use crate::table::RowGroup;
-use crate::table::column_data::ColumnData;
 use crate::table::column_segment::{ColumnSegment, Layout};
 
 /// The writer of data blocks of a checkpoint (DuckDB's `PartialBlockManager` for full
@@ -332,19 +331,20 @@ pub fn replace_with_checkpointed(table: &DataTable, persisted: Vec<PersistedRowG
         else {
             continue;
         };
-        if node.node.count() != written.count || node.node.columns().len() != written.columns.len() {
+        if node.node.count() != written.count || node.node.column_count() != written.columns.len() {
             continue;
         }
-        let mut columns = Vec::with_capacity(written.columns.len());
-        for (index, (data, old)) in written.columns.iter().zip(node.node.columns()).enumerate() {
-            columns.push(Arc::new(ColumnData::from_persistent(
-                Arc::clone(collection.io()),
-                index,
-                old.logical_type().clone(),
-                data,
-            )?));
-        }
-        node.node = Arc::new(node.node.with_columns(columns));
+        // The written columns are built again when first used.
+        let types = written
+            .columns
+            .iter()
+            .map(|data| data.logical_type.clone())
+            .collect();
+        node.node = Arc::new(node.node.with_persistent(
+            Arc::clone(collection.io()),
+            types,
+            written.columns.clone(),
+        ));
     }
     row_groups.tree().replace(nodes);
     Ok(())
@@ -391,8 +391,8 @@ pub fn write_table_data(
             tuple_count: count,
             ..RowGroupPointer::default()
         };
-        let mut written_columns = Vec::with_capacity(row_group.columns().len());
-        for (index, column) in row_group.columns().iter().enumerate() {
+        let mut written_columns = Vec::with_capacity(row_group.column_count());
+        for (index, column) in row_group.columns()?.iter().enumerate() {
             let mut context = CheckpointContext {
                 info: blocks.compression_info(),
                 writer: &mut *blocks,

@@ -91,6 +91,25 @@ pub trait Aggregate: Send + Sync + 'static {
         count: usize,
     ) -> Result<()>;
 
+    /// Whether [`Aggregate::update_selection`] is implemented.
+    const SELECTION_UPDATE: bool = false;
+
+    /// Adds rows `sel` of `inputs` (in order) to one state, leaving the state
+    /// [`Aggregate::update`] would with those rows all pointing at it. Only called when
+    /// [`Aggregate::SELECTION_UPDATE`] is set.
+    fn update_selection(
+        &self,
+        inputs: &[Vector],
+        input: AggregateInput<'_>,
+        state: &mut Self::State,
+        sel: &[u32],
+    ) -> Result<()> {
+        let _ = (inputs, input, state, sel);
+        Err(rustdb_common::Error::internal(
+            "aggregate without a selection update",
+        ))
+    }
+
     /// Merges `source` into `target`.
     fn combine(
         &self,
@@ -170,6 +189,22 @@ impl<A: Aggregate> AggregateOps for Typed<A> {
         // SAFETY: per the trait contract the state is initialised and exclusive.
         let state = unsafe { state_mut::<A::State>(state) };
         self.0.update(inputs, input, &mut States::single(state), count)
+    }
+
+    fn supports_update_selection(&self) -> bool {
+        A::SELECTION_UPDATE
+    }
+
+    unsafe fn update_selection(
+        &self,
+        inputs: &[Vector],
+        input: AggregateInput<'_>,
+        state: StatePtr,
+        sel: &[u32],
+    ) -> Result<()> {
+        // SAFETY: per the trait contract the state is initialised and exclusive.
+        let state = unsafe { state_mut::<A::State>(state) };
+        self.0.update_selection(inputs, input, state, sel)
     }
 
     unsafe fn combine(

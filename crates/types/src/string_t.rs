@@ -60,6 +60,44 @@ impl StringT {
         self.len as usize <= Self::INLINE_LENGTH
     }
 
+    /// Equality decided from the 16 bytes of the two values alone (DuckDB's
+    /// `string_t::StringComparisonOperators::Equals` fast path): different lengths or
+    /// prefixes are unequal, inlined strings compare their bytes. `None` when the heap
+    /// bytes of two long strings must be compared.
+    #[inline]
+    pub fn quick_eq(&self, other: &Self) -> Option<bool> {
+        if self.len != other.len {
+            return Some(false);
+        }
+        let len = self.len as usize;
+        let word = |s: &Self, at: usize| {
+            let mut bytes = [0u8; 8];
+            bytes[..8.min(12 - at)].copy_from_slice(&s.data[at..at + 8.min(12 - at)]);
+            u64::from_le_bytes(bytes)
+        };
+        if len > Self::INLINE_LENGTH {
+            return if self.prefix() == other.prefix() {
+                None
+            } else {
+                Some(false)
+            };
+        }
+        // Only the inlined bytes count, not whatever follows them.
+        let low = word(self, 0) ^ word(other, 0);
+        let high = word(self, 8) ^ word(other, 8);
+        let low_mask = if len >= 8 {
+            u64::MAX
+        } else {
+            (1u64 << (len * 8)) - 1
+        };
+        let high_mask = if len <= 8 {
+            0
+        } else {
+            (1u64 << ((len - 8) * 8)) - 1
+        };
+        Some(low & low_mask == 0 && high & high_mask == 0)
+    }
+
     /// The first (up to) four bytes; equal prefixes are needed for equal strings.
     pub fn prefix(&self) -> [u8; 4] {
         [self.data[0], self.data[1], self.data[2], self.data[3]]
@@ -87,5 +125,46 @@ impl fmt::Debug for StringT {
         // The pointer half of `data` is meaningless without its heap, so only the length and
         // prefix are shown.
         write!(f, "StringT {{ len: {}, prefix: {:?} }}", self.len, self.prefix())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StringT;
+
+    #[test]
+    fn quick_eq_ignores_padding_and_defers_long_strings() {
+        let words: [&[u8]; 8] = [
+            b"",
+            b"a",
+            b"abcd",
+            b"abcde",
+            b"abcdefgh",
+            b"abcdefghi",
+            b"abcdefghijkl",
+            b"abcdefghijkx",
+        ];
+        for a in words {
+            for b in words {
+                let (x, y) = (StringT::inline(a), StringT::inline(b));
+                assert_eq!(x.quick_eq(&y), Some(a == b), "{a:?} {b:?}");
+            }
+        }
+        let mut padded = StringT::inline(b"abc");
+        padded.data[7] = 0xff;
+        assert_eq!(padded.quick_eq(&StringT::inline(b"abc")), Some(true));
+        let long: &[u8] = b"abcdefghijklmnop";
+        let other: &[u8] = b"abcdefghijklmnoq";
+        let third: &[u8] = b"xbcdefghijklmnop";
+        // SAFETY: the slices outlive the values.
+        let (x, y, z) = unsafe {
+            (
+                StringT::from_raw(long),
+                StringT::from_raw(other),
+                StringT::from_raw(third),
+            )
+        };
+        assert_eq!(x.quick_eq(&y), None);
+        assert_eq!(x.quick_eq(&z), Some(false));
     }
 }

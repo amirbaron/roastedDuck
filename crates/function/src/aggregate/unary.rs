@@ -100,10 +100,87 @@ impl<A: UnaryAggregate> AggregateOps for Unary<A> {
             }
             return Ok(());
         }
+        if let (Sel::Identity, Some(words)) = (values.sel, values.validity.words()) {
+            // Flat with NULLs: 64 rows per validity word (`UnaryScatterLoop` with
+            // `ValidityMask::GetValidityEntry`); all-valid and all-NULL words skip the
+            // per-row checks.
+            for (block, (states, rows)) in states
+                .chunks(64)
+                .zip(values.values[..count].chunks(64))
+                .enumerate()
+            {
+                let word = words.get(block).copied().unwrap_or(u64::MAX);
+                if word == 0 {
+                    continue;
+                }
+                for (bit, (&state, &value)) in states.iter().zip(rows).enumerate() {
+                    if word == u64::MAX || word >> bit & 1 == 1 {
+                        // SAFETY: per the trait contract each state is initialised and exclusive.
+                        A::update(unsafe { state_mut(state) }, value)?;
+                    }
+                }
+            }
+            return Ok(());
+        }
         for (row, &state) in states.iter().enumerate() {
             if let Some(value) = values.get(row) {
                 // SAFETY: per the trait contract each state is initialised and exclusive.
                 A::update(unsafe { state_mut(state) }, value)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn supports_update_selection(&self) -> bool {
+        true
+    }
+
+    unsafe fn update_selection(
+        &self,
+        inputs: &[Vector],
+        _: AggregateInput<'_>,
+        state: StatePtr,
+        sel: &[u32],
+    ) -> Result<()> {
+        // SAFETY: per the trait contract the state is initialised and exclusive.
+        let state = unsafe { state_mut::<A::State>(state) };
+        let values = inputs[0].unified::<A::Input>();
+        // The same `A::update` calls as `update` makes for these rows, in the same order
+        // (no `update_repeated`, which may round differently).
+        if values.validity.is_all_valid() {
+            match values.sel {
+                // Unchecked reads, so the loop has no panic path and the state can stay
+                // in registers.
+                Sel::Identity => {
+                    for &row in sel {
+                        // SAFETY: `row` is a row of the flat input (the caller's contract).
+                        A::update(state, unsafe { *values.values.get_unchecked(row as usize) })?;
+                    }
+                }
+                Sel::Constant => {
+                    let value = values.values[0];
+                    for _ in sel {
+                        A::update(state, value)?;
+                    }
+                }
+                Sel::Indices(indices) => {
+                    for &row in sel {
+                        // SAFETY: `row` is a row of the input, whose selection maps it to
+                        // a slot of its data.
+                        let value = unsafe {
+                            *values
+                                .values
+                                .get_unchecked(*indices.get_unchecked(row as usize) as usize)
+                        };
+                        A::update(state, value)?;
+                    }
+                }
+            }
+            return Ok(());
+        }
+        for &row in sel {
+            if let Some(value) = values.get(row as usize) {
+                A::update(state, value)?;
             }
         }
         Ok(())
@@ -134,6 +211,24 @@ impl<A: UnaryAggregate> AggregateOps for Unary<A> {
             } else {
                 for row in 0..count {
                     A::update(state, values.values[values.slot(row)])?;
+                }
+            }
+            return Ok(());
+        }
+        if let (Sel::Identity, Some(words)) = (values.sel, values.validity.words()) {
+            // Flat with NULLs: 64 rows per validity word.
+            for (block, rows) in values.values[..count].chunks(64).enumerate() {
+                let word = words.get(block).copied().unwrap_or(u64::MAX);
+                if word == u64::MAX {
+                    for &value in rows {
+                        A::update(state, value)?;
+                    }
+                } else if word != 0 {
+                    for (bit, &value) in rows.iter().enumerate() {
+                        if word >> bit & 1 == 1 {
+                            A::update(state, value)?;
+                        }
+                    }
                 }
             }
             return Ok(());

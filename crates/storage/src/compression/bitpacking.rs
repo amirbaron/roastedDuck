@@ -13,7 +13,7 @@ use rustdb_types::{LogicalType, PhysicalType, Vector};
 
 use super::bitpacking_primitives::{
     BITPACKING_HEADER_SIZE, GROUP_SIZE, minimum_bit_width_signed, minimum_bit_width_unsigned,
-    pack_buffer_u64, pack_buffer_u128, required_size, unpack_group_u64, unpack_group_u128,
+    pack_buffer_u64, pack_buffer_u128, required_size, unpack_group_for, unpack_group_u64, unpack_group_u128,
 };
 use super::primitive::{
     Primitive, align8, corrupt, load, result_bytes, unified_values, update_numeric_stats,
@@ -67,6 +67,21 @@ pub(crate) trait Wide: Copy + Default + Send + Sync + std::fmt::Debug + 'static 
     fn from_usize(value: usize) -> Self;
     /// `UnPackBlock`: one group of 32 values of `width` bits.
     fn unpack_group(src: &[u8], width: u8, out: &mut [Self; GROUP_SIZE]);
+
+    /// Decodes the whole group at byte `start` of `data` with the frame of reference
+    /// added, as `T` values into `out` (`GROUP_SIZE` values' bytes); `false` (nothing
+    /// written) if there is no fused kernel for the width, `out` is not aligned for `T`,
+    /// or the group is out of range.
+    fn unpack_group_for<T: BitpackingValue<Wide = Self>>(
+        data: &[u8],
+        start: usize,
+        width: u8,
+        frame: Self,
+        out: &mut [u8],
+    ) -> bool {
+        let _ = (data, start, width, frame, out);
+        false
+    }
 }
 
 impl Wide for u64 {
@@ -85,6 +100,23 @@ impl Wide for u64 {
     #[inline]
     fn unpack_group(src: &[u8], width: u8, out: &mut [Self; GROUP_SIZE]) {
         unpack_group_u64(src, width, out);
+    }
+
+    #[inline]
+    fn unpack_group_for<T: BitpackingValue<Wide = Self>>(
+        data: &[u8],
+        start: usize,
+        width: u8,
+        frame: u64,
+        out: &mut [u8],
+    ) -> bool {
+        let (Some(src), Some(slots)) = (data.get(start..), typed_slots::<T>(out)) else {
+            return false;
+        };
+        let Ok(slots) = <&mut [T; GROUP_SIZE]>::try_from(slots) else {
+            return false;
+        };
+        unpack_group_for(src, width, frame, slots, T::from_wide)
     }
 }
 
@@ -353,12 +385,49 @@ impl<T: BitpackingValue> CodecScan for BitpackingScanState<T> {
                 }
                 BitpackingMode::For | BitpackingMode::DeltaFor => {
                     let to_scan = remaining.min(GROUP_SIZE - self.group_offset % GROUP_SIZE);
+                    if to_scan == GROUP_SIZE
+                        && T::Wide::unpack_group_for::<T>(
+                            self.data.bytes(),
+                            self.group.data + self.group_offset * self.group.width as usize / 8,
+                            self.group.width,
+                            self.group.frame_of_reference,
+                            &mut out[..GROUP_SIZE * T::SIZE],
+                        )
+                    {
+                        // A whole group decoded straight into the result
+                        // (`BitpackingScanPartial` unpacking into the result vector).
+                        if self.group.mode == BitpackingMode::DeltaFor
+                            && let Some(typed) = typed_slots::<T>(&mut out[..GROUP_SIZE * T::SIZE])
+                        {
+                            // `DeltaDecode` in place: only the low `T` bits of the running
+                            // sum are kept, and those do not depend on the bits narrowed
+                            // away.
+                            let mut previous = self.group.delta_offset;
+                            for slot in typed {
+                                previous = slot.to_wide().wrapping_add(previous);
+                                *slot = T::from_wide(previous);
+                            }
+                            self.group.delta_offset = previous;
+                        }
+                        self.group_offset += to_scan;
+                        scanned += to_scan;
+                        continue;
+                    }
                     self.unpack_algorithm_group()?;
                     let offset_in_group = self.group_offset % GROUP_SIZE;
                     let frame = self.group.frame_of_reference;
                     let decoded = &self.decompression_buffer[offset_in_group..offset_in_group + to_scan];
-                    let slots = out.chunks_exact_mut(T::SIZE);
-                    if self.group.mode == BitpackingMode::DeltaFor {
+                    if self.group.mode == BitpackingMode::DeltaFor
+                        && let Some(typed) = typed_slots::<T>(&mut out[..to_scan * T::SIZE])
+                    {
+                        let mut previous = self.group.delta_offset;
+                        for (slot, &delta) in typed.iter_mut().zip(decoded) {
+                            previous = delta.wrapping_add(frame).wrapping_add(previous);
+                            *slot = T::from_wide(previous);
+                        }
+                        self.group.delta_offset = previous;
+                    } else if self.group.mode == BitpackingMode::DeltaFor {
+                        let slots = out.chunks_exact_mut(T::SIZE);
                         // `ApplyFrameOfReference` + `DeltaDecode`.
                         let mut previous = self.group.delta_offset;
                         for (slot, &delta) in slots.zip(decoded) {
@@ -366,8 +435,13 @@ impl<T: BitpackingValue> CodecScan for BitpackingScanState<T> {
                             T::from_wide(previous).store(slot);
                         }
                         self.group.delta_offset = previous;
+                    } else if let Some(typed) = typed_slots::<T>(&mut out[..to_scan * T::SIZE]) {
+                        // Values written as `T` (the vector's native layout).
+                        for (slot, &value) in typed.iter_mut().zip(decoded) {
+                            *slot = T::from_wide(value.wrapping_add(frame));
+                        }
                     } else {
-                        for (slot, &value) in slots.zip(decoded) {
+                        for (slot, &value) in out.chunks_exact_mut(T::SIZE).zip(decoded) {
                             T::from_wide(value.wrapping_add(frame)).store(slot);
                         }
                     }
@@ -382,6 +456,17 @@ impl<T: BitpackingValue> CodecScan for BitpackingScanState<T> {
         }
         Ok(())
     }
+}
+
+/// `bytes` as `T` slots when they are aligned for `T` and `T`'s in-memory layout is the
+/// stored (little-endian) one.
+fn typed_slots<T: BitpackingValue>(bytes: &mut [u8]) -> Option<&mut [T]> {
+    if cfg!(target_endian = "big") || bytes.as_ptr().align_offset(align_of::<T>()) != 0 {
+        return None;
+    }
+    // SAFETY: the bytes are aligned for `T`, `T` is a primitive integer for which every bit
+    // pattern is valid, and the length is a multiple of `T::SIZE` (`size_of::<T>()`).
+    Some(unsafe { std::slice::from_raw_parts_mut(bytes.as_mut_ptr().cast::<T>(), bytes.len() / T::SIZE) })
 }
 
 /// `BitpackingFun::GetFunction(type).init_scan`.

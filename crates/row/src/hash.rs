@@ -38,9 +38,16 @@ pub fn hash_bytes(bytes: &[u8]) -> u64 {
         h = h.wrapping_mul(MULTIPLIER);
     }
     if !remainder.is_empty() {
-        let mut block = [0u8; 8];
-        block[..remainder.len()].copy_from_slice(remainder);
-        h ^= u64::from_le_bytes(block);
+        // The remainder zero-padded to 8 bytes, read without a `memcpy` call: from the
+        // (overlapping) last 8 bytes when there are that many, byte by byte otherwise.
+        let block = if let Some(last) = bytes.last_chunk::<8>() {
+            u64::from_le_bytes(*last) >> (8 * (8 - remainder.len()))
+        } else {
+            remainder.iter().enumerate().fold(0u64, |block, (index, &byte)| {
+                block | (u64::from(byte) << (8 * index))
+            })
+        };
+        h ^= block;
         h = h.wrapping_mul(MULTIPLIER);
     }
     murmur_hash64(h)
@@ -216,10 +223,37 @@ fn emit(target: &mut u64, hash: u64, combine: bool) {
 /// vector.
 #[inline]
 fn hash_native<T: HashNative>(input: &Vector, out: &mut [u64], combine: bool) {
+    if combine {
+        hash_native_impl::<T, true>(input, out);
+    } else {
+        hash_native_impl::<T, false>(input, out);
+    }
+}
+
+/// [`hash_native`] with the combination and, without NULLs, the selection resolved
+/// outside the loop.
+fn hash_native_impl<T: HashNative, const COMBINE: bool>(input: &Vector, out: &mut [u64]) {
     let data = input.unified::<T>();
+    let combine = COMBINE;
     if data.validity.is_all_valid() {
-        for (row, target) in out.iter_mut().enumerate() {
-            emit(target, data.values[data.slot(row)].hash_value(), combine);
+        let count = out.len();
+        match data.sel {
+            rustdb_types::Sel::Identity => {
+                for (target, value) in out.iter_mut().zip(&data.values[..count]) {
+                    emit(target, value.hash_value(), combine);
+                }
+            }
+            rustdb_types::Sel::Indices(indices) => {
+                for (target, &slot) in out.iter_mut().zip(&indices[..count]) {
+                    emit(target, data.values[slot as usize].hash_value(), combine);
+                }
+            }
+            rustdb_types::Sel::Constant => {
+                let hash = data.values[0].hash_value();
+                for target in out.iter_mut() {
+                    emit(target, hash, combine);
+                }
+            }
         }
         return;
     }
@@ -251,6 +285,25 @@ fn hash_strings(input: &Vector, out: &mut [u64], combine: bool) {
 /// Hashes rows `0..out.len()` of `input` into `out` (combining with the hashes already
 /// there if `combine`), with a loop monomorphised per type where the vector allows one.
 fn hash_rows(input: &Vector, out: &mut [u64], combine: bool) -> Result<()> {
+    // A storage dictionary's entries are hashed once and shared by every vector scanned
+    // from it (DuckDB's `DictionaryVector::GetCachedHashes`).
+    if let Some((dictionary, sel, info)) = input.storage_dictionary_parts() {
+        let mut failed = None;
+        let hashes = info.hashes(|| {
+            let mut hashes = vec![0; info.size()];
+            if let Err(error) = hash_rows(dictionary, &mut hashes, false) {
+                failed = Some(error);
+            }
+            hashes
+        });
+        if let Some(error) = failed {
+            return Err(error);
+        }
+        for (target, &index) in out.iter_mut().zip(sel.as_slice()) {
+            emit(target, hashes[index as usize], combine);
+        }
+        return Ok(());
+    }
     if matches!(input.kind(), VectorKind::Flat | VectorKind::Dictionary) {
         let typed: Option<fn(&Vector, &mut [u64], bool)> = match input.logical_type().physical_type() {
             PhysicalType::Bool => Some(hash_native::<bool>),
@@ -324,10 +377,11 @@ pub fn combine_hash_vector(hashes: &mut Vector, input: &Vector, count: usize) ->
 /// Hashes several columns into one hash per row (first column hashed, the rest combined),
 /// as DuckDB does for multi-column keys.
 pub fn hash_columns(columns: &[&Vector], count: usize) -> Result<Vector> {
-    let mut hashes = Vector::flat(LogicalType::UBIGINT, count.max(1));
     let Some((first, rest)) = columns.split_first() else {
-        return Ok(hashes);
+        return Ok(Vector::flat(LogicalType::UBIGINT, count.max(1)));
     };
+    // Every slot is written by the hash.
+    let mut hashes = Vector::flat_for_overwrite(LogicalType::UBIGINT, count.max(1));
     hash_vector(first, count, &mut hashes)?;
     for column in rest {
         combine_hash_vector(&mut hashes, column, count)?;

@@ -118,6 +118,28 @@ pub trait AggregateOps: Send + Sync + 'static {
         count: usize,
     ) -> Result<()>;
 
+    /// Whether [`AggregateOps::update_selection`] is implemented.
+    fn supports_update_selection(&self) -> bool {
+        false
+    }
+
+    /// Adds input rows `sel` (in order) to one state. The result is the state that
+    /// [`AggregateOps::update`] leaves when those rows all point at `state`, so a grouped
+    /// aggregate may add the rows of one group at a time.
+    ///
+    /// # Safety
+    /// See the trait-level contract; every entry of `sel` is a row of `inputs`.
+    unsafe fn update_selection(
+        &self,
+        inputs: &[Vector],
+        input: AggregateInput<'_>,
+        state: StatePtr,
+        sel: &[u32],
+    ) -> Result<()> {
+        let _ = (inputs, input, state, sel);
+        Err(Error::internal("aggregate without a selection update"))
+    }
+
     /// Merges `source[i]` into `target[i]`.
     ///
     /// # Safety

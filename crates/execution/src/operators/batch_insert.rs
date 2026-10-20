@@ -1,0 +1,438 @@
+//! Parallel inserts that keep the input's order (DuckDB's `PhysicalBatchInsert`).
+
+use std::collections::VecDeque;
+use std::sync::atomic::AtomicUsize;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
+use rustdb_common::{Error, Result};
+use rustdb_storage::{DataTable, OptimisticCollection, TableConstraints, Transaction};
+use rustdb_types::{DataChunk, LogicalType};
+
+use super::insert::{InsertTarget, append_collections};
+use super::modify::{ModifyResult, count_types};
+use crate::operator::{ErasedSink, ErasedSource, PartitionInfo, PhysicalOperator, PhysicalRef, SinkState};
+use crate::{ExecutionContext, Sink, SinkFinalize, SinkResult, Source, SourceResult};
+
+/// Appends its input to a table in the order of the input's batch indices while every
+/// thread appends on its own (DuckDB's `PhysicalBatchInsert`).
+///
+/// Each thread appends a batch to a collection of its own and hands it to the global
+/// state when its batch ends. Consecutive small collections are merged into collections
+/// of about a row group (by the sinking threads, as soon as every batch before them is
+/// complete); `finalize` moves the collections into the transaction-local storage in batch
+/// order. DuckDB also writes merged row groups to disk early and blocks threads that run
+/// too far ahead of the lowest batch when memory runs out; rustdb keeps the rows in
+/// memory, like a serial insert.
+#[derive(Debug)]
+pub struct PhysicalBatchInsert {
+    types: Vec<LogicalType>,
+    children: [PhysicalRef; 1],
+    target: InsertTarget,
+    transaction: Arc<Transaction>,
+    constraints: TableConstraints,
+}
+
+impl PhysicalBatchInsert {
+    pub fn new(
+        child: PhysicalRef,
+        target: InsertTarget,
+        transaction: Arc<Transaction>,
+        constraints: TableConstraints,
+    ) -> Self {
+        Self {
+            types: count_types(),
+            children: [child],
+            target,
+            transaction,
+            constraints,
+        }
+    }
+}
+
+impl PhysicalOperator for PhysicalBatchInsert {
+    fn name(&self) -> &'static str {
+        match self.target {
+            InsertTarget::Table(_) => "BATCH_INSERT",
+            InsertTarget::Create(_) => "BATCH_CREATE_TABLE_AS",
+        }
+    }
+    fn types(&self) -> &[LogicalType] {
+        &self.types
+    }
+    fn children(&self) -> &[PhysicalRef] {
+        &self.children
+    }
+    fn as_sink(&self) -> Option<&dyn ErasedSink> {
+        Some(self)
+    }
+    fn as_source(&self) -> Option<&dyn ErasedSource> {
+        Some(self)
+    }
+    fn parallel_sink(&self) -> bool {
+        true
+    }
+    fn requires_batch_index(&self) -> bool {
+        true
+    }
+}
+
+/// One batch's rows, or several merged batches' (DuckDB's `RowGroupBatchEntry`).
+#[derive(Debug)]
+struct BatchEntry {
+    batch_index: u64,
+    total_rows: u64,
+    /// `None` while a merge task holds the rows.
+    collection: Option<OptimisticCollection>,
+    /// Whether the rows are about a row group or more and no longer merged with others
+    /// (DuckDB's `RowGroupBatchType::FLUSHED`).
+    flushed: bool,
+}
+
+/// Collections to merge into one, which then replaces the entry of `merged_batch_index`
+/// (DuckDB's `MergeCollectionTask`).
+#[derive(Debug)]
+struct MergeTask {
+    collections: Vec<OptimisticCollection>,
+    merged_batch_index: u64,
+}
+
+#[derive(Debug, Default)]
+struct BatchState {
+    /// The collections handed over, by batch index.
+    entries: Vec<BatchEntry>,
+    /// The first entry that may still be merged (`next_start`).
+    next_start: usize,
+    /// Whether collections were merged while sinking (`optimistically_written`).
+    merged: bool,
+}
+
+/// The global state of a batch insert.
+#[derive(Debug)]
+pub struct BatchInsertGlobal {
+    table: Option<Arc<DataTable>>,
+    row_group_size: u64,
+    state: Mutex<BatchState>,
+    tasks: Mutex<VecDeque<MergeTask>>,
+    result: ModifyResult,
+}
+
+impl BatchInsertGlobal {
+    fn state(&self) -> MutexGuard<'_, BatchState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Whether `count` rows fill row groups well (`ReadyToMerge`).
+    fn ready_to_merge(&self, count: u64) -> bool {
+        let size = self.row_group_size;
+        (count >= size / 10 * 9 && count <= size)
+            || (count >= size / 10 * 18 && count <= size * 2)
+            || (count >= size / 10 * 27 && count <= size * 3)
+            || count >= size / 10 * 36
+    }
+
+    /// Hands a finalized batch collection over (`AddCollection`); from `next_batch`, also
+    /// schedules merges of the complete batches.
+    fn add_collection(
+        &self,
+        batch_index: u64,
+        min_batch_index: u64,
+        collection: OptimisticCollection,
+        schedule: bool,
+    ) -> Result<()> {
+        if batch_index < min_batch_index {
+            return Err(Error::internal(format!(
+                "Batch index of the added collection ({batch_index}) is smaller than the min batch index ({min_batch_index})"
+            )));
+        }
+        let total_rows = collection.total_rows();
+        let flushed = total_rows >= self.row_group_size;
+        self.result.add_count(total_rows);
+        let mut state = self.state();
+        let position = state
+            .entries
+            .partition_point(|entry| entry.batch_index < batch_index);
+        if state
+            .entries
+            .get(position)
+            .is_some_and(|entry| entry.batch_index == batch_index)
+        {
+            return Err(Error::internal(format!(
+                "PhysicalBatchInsert::AddCollection error: batch index {batch_index} is present in multiple collections. This occurs when batch indexes are not uniquely distributed over threads"
+            )));
+        }
+        state.entries.insert(
+            position,
+            BatchEntry {
+                batch_index,
+                total_rows,
+                collection: Some(collection),
+                flushed,
+            },
+        );
+        if schedule {
+            self.schedule_merge_tasks(&mut state, min_batch_index)?;
+        }
+        Ok(())
+    }
+
+    /// Turns runs of small collections of complete batches that together fill row groups
+    /// into merge tasks (`ScheduleMergeTasks`).
+    fn schedule_merge_tasks(&self, state: &mut BatchState, min_batch_index: u64) -> Result<()> {
+        // (start, end, total rows) of each run to merge.
+        let mut runs = Vec::new();
+        let mut start = state.next_start;
+        let mut total = 0;
+        let mut index = start;
+        while index < state.entries.len() {
+            let entry = &state.entries[index];
+            if entry.batch_index > min_batch_index {
+                // Later batches may still arrive before this entry.
+                if self.ready_to_merge(total) {
+                    runs.push((start, index, total));
+                }
+                break;
+            }
+            if entry.flushed {
+                if total > 0 {
+                    runs.push((start, index, total));
+                }
+                start = index + 1;
+                state.next_start = state.next_start.max(start);
+                total = 0;
+                index += 1;
+                continue;
+            }
+            total += entry.total_rows;
+            if self.ready_to_merge(total) {
+                runs.push((start, index + 1, total));
+                start = index + 1;
+                total = 0;
+            }
+            index += 1;
+        }
+        if runs.is_empty() {
+            return Ok(());
+        }
+        let mut tasks = self.tasks.lock().unwrap_or_else(PoisonError::into_inner);
+        for &(start, end, total) in &runs {
+            let merged_batch_index = state.entries[start].batch_index;
+            let mut collections = Vec::with_capacity(end - start);
+            for entry in &mut state.entries[start..end] {
+                if entry.flushed {
+                    return Err(Error::internal(
+                        "Adding a row group collection that should not be flushed",
+                    ));
+                }
+                collections.push(
+                    entry
+                        .collection
+                        .take()
+                        .ok_or_else(|| Error::internal("batch insert collection merged twice"))?,
+                );
+                entry.total_rows = total;
+                entry.flushed = true;
+            }
+            tasks.push_back(MergeTask {
+                collections,
+                merged_batch_index,
+            });
+        }
+        // Every merged run keeps only its first entry, which receives the merged rows.
+        for &(start, end, _) in runs.iter().rev() {
+            if start + 1 < end {
+                state.entries.drain(start + 1..end);
+            }
+        }
+        Ok(())
+    }
+
+    /// Runs queued merge tasks until there are none (`ExecuteTasks`).
+    fn execute_tasks(&self) -> Result<()> {
+        loop {
+            let task = self
+                .tasks
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .pop_front();
+            let Some(task) = task else { return Ok(()) };
+            let merged = merge(task.collections)?;
+            let mut state = self.state();
+            state.merged = true;
+            let entry = state
+                .entries
+                .iter_mut()
+                .find(|entry| entry.batch_index == task.merged_batch_index)
+                .ok_or_else(|| Error::internal("Merged batch index was no longer present in collection"))?;
+            entry.collection = merged;
+        }
+    }
+}
+
+/// Appends every collection after the first to the first (`CollectionMerger::Flush`).
+fn merge(collections: Vec<OptimisticCollection>) -> Result<Option<OptimisticCollection>> {
+    let mut collections = collections.into_iter();
+    let Some(mut result) = collections.next() else {
+        return Ok(None);
+    };
+    for collection in collections {
+        result.append_collection(&collection)?;
+    }
+    Ok(Some(result))
+}
+
+/// A thread's state: the collection of the batch it is appending.
+#[derive(Debug, Default)]
+pub struct BatchInsertLocal {
+    current_index: u64,
+    min_batch_index: u64,
+    collection: Option<OptimisticCollection>,
+}
+
+impl Sink for PhysicalBatchInsert {
+    type Global = BatchInsertGlobal;
+    type Local = BatchInsertLocal;
+
+    fn global_sink_state(&self, _: &ExecutionContext) -> Result<Self::Global> {
+        let table = self.target.table(&self.transaction)?;
+        let row_group_size = table
+            .as_ref()
+            .map_or(rustdb_storage::DEFAULT_ROW_GROUP_SIZE, |table| {
+                table.row_groups().row_group_size()
+            });
+        Ok(BatchInsertGlobal {
+            table,
+            row_group_size,
+            state: Mutex::default(),
+            tasks: Mutex::default(),
+            result: ModifyResult::default(),
+        })
+    }
+
+    fn local_sink_state(&self, _: &ExecutionContext, _: &Self::Global) -> Result<Self::Local> {
+        Ok(BatchInsertLocal::default())
+    }
+
+    fn next_batch(
+        &self,
+        _: &ExecutionContext,
+        global: &Self::Global,
+        local: &mut Self::Local,
+        partition: PartitionInfo,
+    ) -> Result<()> {
+        if let Some(mut collection) = local.collection.take() {
+            if local.current_index == partition.batch_index {
+                return Err(Error::internal("NextBatch called with the same batch index?"));
+            }
+            collection.finalize();
+            global.add_collection(local.current_index, partition.min_batch_index, collection, true)?;
+            global.execute_tasks()?;
+        }
+        local.current_index = partition.batch_index;
+        local.min_batch_index = partition.min_batch_index;
+        Ok(())
+    }
+
+    fn sink(
+        &self,
+        _: &ExecutionContext,
+        chunk: &DataChunk,
+        global: &Self::Global,
+        local: &mut Self::Local,
+    ) -> Result<SinkResult> {
+        let Some(table) = &global.table else {
+            return Ok(SinkResult::Finished);
+        };
+        table.verify_append_constraints(&self.constraints, chunk)?;
+        let collection = match &mut local.collection {
+            Some(collection) => collection,
+            None => local
+                .collection
+                .insert(table.create_optimistic_collection(&self.transaction)?),
+        };
+        collection.append(chunk)?;
+        Ok(SinkResult::NeedMoreInput)
+    }
+
+    fn combine(&self, _: &ExecutionContext, global: &Self::Global, local: Self::Local) -> Result<()> {
+        if let Some(mut collection) = local.collection {
+            collection.finalize();
+            if collection.total_rows() > 0 {
+                global.add_collection(local.current_index, local.min_batch_index, collection, false)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn finalize(&self, _: &ExecutionContext, global: &mut Self::Global) -> Result<SinkFinalize> {
+        global.execute_tasks()?;
+        let Some(table) = global.table.clone() else {
+            return Ok(SinkFinalize::Ready);
+        };
+        let state = std::mem::take(&mut *global.state());
+        let collections = state
+            .entries
+            .into_iter()
+            .map(|entry| {
+                entry
+                    .collection
+                    .map(|collection| (entry.flushed, collection))
+                    .ok_or_else(|| Error::internal("batch insert collection still being merged"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        if state.merged || global.result.count() >= global.row_group_size {
+            // Merge the runs of small collections, then move every collection into the
+            // local storage in batch order.
+            let mut finals = Vec::new();
+            let mut small = Vec::new();
+            for (flushed, collection) in collections {
+                if flushed {
+                    finals.extend(merge(std::mem::take(&mut small))?);
+                    finals.push(collection);
+                } else {
+                    small.push(collection);
+                }
+            }
+            finals.extend(merge(small)?);
+            for collection in &finals {
+                table.local_merge(&self.transaction, collection)?;
+            }
+        } else {
+            // Few rows: append them to the local storage directly.
+            append_collections(
+                &table,
+                &self.transaction,
+                &self.constraints,
+                collections.iter().map(|(_, collection)| collection),
+            )?;
+        }
+        Ok(SinkFinalize::Ready)
+    }
+}
+
+impl Source for PhysicalBatchInsert {
+    type Global = (SinkState, AtomicUsize);
+    type Local = ();
+
+    fn global_source_state(&self, _: &ExecutionContext, sink: Option<&SinkState>) -> Result<Self::Global> {
+        let sink = sink.ok_or_else(|| Error::internal("batch insert source requires its sink state"))?;
+        Ok((Arc::clone(sink), AtomicUsize::new(0)))
+    }
+
+    fn local_source_state(&self, _: &ExecutionContext, _: &Self::Global) -> Result<()> {
+        Ok(())
+    }
+
+    fn get_data(
+        &self,
+        _: &ExecutionContext,
+        chunk: &mut DataChunk,
+        (sink, next): &Self::Global,
+        (): &mut (),
+    ) -> Result<SourceResult> {
+        let global = sink
+            .downcast_ref::<BatchInsertGlobal>()
+            .ok_or_else(|| Error::internal("batch insert sink state has the wrong type"))?;
+        global.result.emit(false, next, chunk)?;
+        Ok(SourceResult::Finished)
+    }
+}

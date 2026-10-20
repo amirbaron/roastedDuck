@@ -69,6 +69,9 @@ fn pop_heap<T>(heap: &mut [T], len: usize, less: &impl Fn(&T, &T) -> bool) {
     sift_up(heap, hole + 1, less);
 }
 
+/// Heaps up to this size allocate exactly their size up front.
+const SMALL_HEAP: usize = 16;
+
 /// A heap keeping the `capacity` best entries by `less` (the best are the smallest).
 #[derive(Clone, Debug)]
 pub(crate) struct TopN<T> {
@@ -106,6 +109,11 @@ impl<T> TopN<T> {
         replace: impl FnOnce(&mut T),
     ) {
         if self.entries.len() < self.capacity {
+            if self.entries.capacity() == 0 {
+                // Small heaps (e.g. `arg_max(x, y, 2)` per group) allocate just their
+                // size rather than `Vec`'s first growth step.
+                self.entries.reserve_exact(self.capacity.min(SMALL_HEAP));
+            }
             self.entries.push(make());
             let len = self.entries.len();
             sift_up(&mut self.entries, len, less);

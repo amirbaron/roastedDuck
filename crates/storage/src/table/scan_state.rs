@@ -69,6 +69,9 @@ pub struct ScanFilterInfo {
     /// Per scanned column: whether it has a filter at all.
     base_column_has_filter: Vec<bool>,
     always_true_filters: usize,
+    /// Per scanned column: whether only its filter needs it, not the scan's output
+    /// (DuckDB's columns outside `projection_ids`).
+    filter_only: Vec<bool>,
 }
 
 impl ScanFilterInfo {
@@ -97,6 +100,20 @@ impl ScanFilterInfo {
 
     pub fn filters(&self) -> &[ScanFilter] {
         &self.filters
+    }
+
+    /// Marks the scanned columns outside `projection` (positions into the column list;
+    /// empty = every column is output) as needed by their filters only.
+    pub fn set_projection(&mut self, projection: &[usize]) {
+        self.filter_only = (0..self.base_column_has_filter.len())
+            .map(|column| !projection.is_empty() && !projection.contains(&column))
+            .collect();
+    }
+
+    /// Whether scan column `column` is only scanned for its filter: its values need not
+    /// be produced.
+    pub fn is_filter_only(&self, column: usize) -> bool {
+        self.filter_only.get(column).copied().unwrap_or(false)
     }
 
     /// Whether any filter must still be evaluated.
@@ -152,6 +169,8 @@ pub struct CollectionScanState {
     pub(crate) max_row: u64,
     pub(crate) batch_index: u64,
     pub(crate) valid_sel: Vec<u32>,
+    /// Scratch for the rows that pass the filters of the current vector.
+    pub(crate) filter_sel: Vec<u32>,
     /// Rows considered before filters were applied.
     pub rows_scanned: u64,
     /// SYSTEM sampling pushed into the scan (DuckDB's `ScanSamplingInfo` with the
@@ -197,6 +216,11 @@ impl TableScanState {
     pub fn initialize(&mut self, column_ids: Vec<StorageIndex>, filters: Option<&TableFilterSet>) {
         self.filters = ScanFilterInfo::new(filters, &column_ids);
         self.column_ids = column_ids;
+    }
+
+    /// See [`ScanFilterInfo::set_projection`].
+    pub fn set_projection(&mut self, projection: &[usize]) {
+        self.filters.set_projection(projection);
     }
 
     pub fn column_ids(&self) -> &[StorageIndex] {

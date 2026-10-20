@@ -318,12 +318,14 @@ unsafe fn match_column(
                             let location = rhs_rows[idx].as_ptr().add(offset);
                             let rhs_string = load::<StringT>(location);
                             let lhs_string = lhs.string(slot);
-                            // Equal strings share length and prefix: check those first.
-                            if equality
-                                && (lhs_string.len() != rhs_string.len()
-                                    || lhs_string.prefix() != rhs_string.prefix())
-                            {
-                                return Ordering::Less;
+                            // Equality is mostly decided by length, prefix and inlined bytes.
+                            let quick = if equality {
+                                lhs_string.quick_eq(&rhs_string)
+                            } else {
+                                None
+                            };
+                            if let Some(equal) = quick {
+                                return if equal { Ordering::Equal } else { Ordering::Less };
                             }
                             let rhs_bytes = if rhs_string.is_inlined() {
                                 std::slice::from_raw_parts(location.add(4), rhs_string.len())
@@ -331,7 +333,15 @@ unsafe fn match_column(
                                 let pointer = load::<u64>(location.add(8)) as usize as *const u8;
                                 std::slice::from_raw_parts(pointer, rhs_string.len())
                             };
-                            lhs.string_bytes(slot).cmp(rhs_bytes)
+                            let lhs_bytes = lhs.string_bytes(slot);
+                            if equality {
+                                return if lhs_bytes == rhs_bytes {
+                                    Ordering::Equal
+                                } else {
+                                    Ordering::Less
+                                };
+                            }
+                            lhs_bytes.cmp(rhs_bytes)
                         },
                         !lhs.slot_is_valid(slot),
                         rhs_null(idx),

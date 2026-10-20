@@ -97,12 +97,38 @@ pub(crate) unsafe fn set_all_valid(row: *mut u8, bytes: usize) {
     unsafe { std::ptr::write_bytes(row, 0xFF, bytes) };
 }
 
-/// Copies `len` bytes.
+/// Copies `len` bytes. Short copies (strings, mostly) use two overlapping loads and
+/// stores instead of a `memcpy` call (DuckDB's `FastMemcpy`).
 ///
 /// # Safety
 /// Both ranges must be valid and must not overlap.
 #[inline]
 pub(crate) unsafe fn copy(source: *const u8, target: *mut u8, len: usize) {
-    // SAFETY: guaranteed by the caller.
-    unsafe { std::ptr::copy_nonoverlapping(source, target, len) };
+    // SAFETY (whole function): every access lies within the first `len` bytes of the
+    // ranges, which the caller guarantees are valid and disjoint: a head and a tail word
+    // of `W` bytes need `W <= len`, and the byte loop stays below `len`.
+    unsafe {
+        if len > 32 {
+            std::ptr::copy_nonoverlapping(source, target, len);
+        } else if len >= 16 {
+            let head = source.cast::<u128>().read_unaligned();
+            let tail = source.add(len - 16).cast::<u128>().read_unaligned();
+            target.cast::<u128>().write_unaligned(head);
+            target.add(len - 16).cast::<u128>().write_unaligned(tail);
+        } else if len >= 8 {
+            let head = source.cast::<u64>().read_unaligned();
+            let tail = source.add(len - 8).cast::<u64>().read_unaligned();
+            target.cast::<u64>().write_unaligned(head);
+            target.add(len - 8).cast::<u64>().write_unaligned(tail);
+        } else if len >= 4 {
+            let head = source.cast::<u32>().read_unaligned();
+            let tail = source.add(len - 4).cast::<u32>().read_unaligned();
+            target.cast::<u32>().write_unaligned(head);
+            target.add(len - 4).cast::<u32>().write_unaligned(tail);
+        } else {
+            for index in 0..len {
+                *target.add(index) = *source.add(index);
+            }
+        }
+    }
 }

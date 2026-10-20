@@ -65,4 +65,4 @@ pub use unbound::{
 pub use uuid::Uuid;
 pub use validity::ValidityMask;
 pub use value::Value;
-pub use vector::{ListEntry, StringHeap, Unified, Vector, VectorKind};
+pub use vector::{DictionaryInfo, ListEntry, StringHeap, Unified, Vector, VectorKind};

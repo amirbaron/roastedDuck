@@ -299,6 +299,13 @@ impl rustdb_function::FunctionData for WithoutStatistics {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    /// DuckDB has no bind data here (the missing statistics callback is not part of
+    /// `AggregateFunction::operator==`), so such aggregates are equal to each other and
+    /// `CommonAggregateOptimizer` computes them once.
+    fn equals(&self, other: &dyn rustdb_function::FunctionData) -> bool {
+        other.as_any().is::<Self>()
+    }
 }
 
 /// The statistics of an aggregate, possibly simplifying it.

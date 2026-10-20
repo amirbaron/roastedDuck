@@ -112,7 +112,7 @@ fn min_max_is_exact(partition: &Partition, stats: &BaseStatistics) -> bool {
     let PartitionSource::RowGroup(row_group) = &partition.source else {
         return false;
     };
-    if !partition.exact || row_group.columns().iter().any(|column| column.has_any_updates()) {
+    if !partition.exact || row_group.has_any_updates() {
         return false;
     }
     if let Some(string) = stats.string() {

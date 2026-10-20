@@ -157,13 +157,18 @@ impl PhysicalOperator for PhysicalUngroupedAggregate {
 #[derive(Debug)]
 pub struct UngroupedGlobal {
     states: Mutex<AggregateStates>,
-    /// Per aggregate: the threads' distinct tuples (`None` unless DISTINCT).
-    distinct: Vec<Option<Mutex<Vec<PartitionedTupleData>>>>,
+    /// Per aggregate: the threads' distinct tuples (`None` unless DISTINCT), and whether
+    /// each thread's are distinct (none were set aside).
+    distinct: Vec<Option<Mutex<Vec<ThreadTuples>>>>,
     /// After `finalize`: one unit of work per DISTINCT aggregate and radix partition.
     distinct_partitions: Vec<DistinctPartition>,
     /// Whether the distinct partitions were handed out as finalize tasks.
     distinct_scheduled: AtomicBool,
 }
+
+/// One thread's distinct tuples of an aggregate, and whether they are distinct (none were
+/// set aside).
+type ThreadTuples = (PartitionedTupleData, bool);
 
 /// The tuples of one radix partition of one DISTINCT aggregate's arguments, from every
 /// thread.
@@ -171,6 +176,8 @@ pub struct UngroupedGlobal {
 struct DistinctPartition {
     aggregate: usize,
     data: Mutex<Vec<TupleDataCollection>>,
+    /// Whether the tuples are distinct already (they came from one thread's table).
+    unique: bool,
 }
 
 /// Per-thread state: local aggregate states, the DISTINCT tables, and executors for
@@ -304,8 +311,10 @@ impl Sink for PhysicalUngroupedAggregate {
             .zip(&global.distinct)
         {
             if let (Some(table), Some(collected)) = (table, collected) {
-                let data = table_data(table, abandoned.take())?;
-                collected.lock().map_err(|_| poisoned())?.push(data);
+                let abandoned = abandoned.take();
+                let distinct = abandoned.is_none();
+                let data = table_data(table, abandoned)?;
+                collected.lock().map_err(|_| poisoned())?.push((data, distinct));
             }
         }
         let global = global.states.lock().map_err(|_| poisoned())?;
@@ -330,6 +339,10 @@ impl Sink for PhysicalUngroupedAggregate {
         for (aggregate, collected) in global.distinct.iter_mut().enumerate() {
             let Some(collected) = collected else { continue };
             let parts = std::mem::take(collected.get_mut().map_err(|_| poisoned())?);
+            // A single thread's tuples (none set aside) are distinct already.
+            let mut filled = parts.iter().filter(|(part, _)| part.count() > 0);
+            let unique = matches!((filled.next(), filled.next()), (Some((_, true)), None));
+            let parts: Vec<PartitionedTupleData> = parts.into_iter().map(|(part, _)| part).collect();
             // Threads that set tuples aside have more partitions than the others.
             let radix_bits = parts
                 .iter()
@@ -363,6 +376,7 @@ impl Sink for PhysicalUngroupedAggregate {
                         .map(|data| DistinctPartition {
                             aggregate,
                             data: Mutex::new(data),
+                            unique,
                         }),
                 );
         }
@@ -392,16 +406,11 @@ impl Sink for PhysicalUngroupedAggregate {
         let index = partition.aggregate;
         let aggregate = &self.aggregates[index];
         let data = std::mem::take(&mut *partition.data.lock().map_err(|_| poisoned())?);
-        let mut table = Self::distinct_table(ctx, aggregate, 0)?;
-        for collection in &data {
-            table.combine(collection)?;
-        }
-        drop(data);
         let states = AggregateStates::new(&self.aggregates);
         let input = || AggregateInput {
             bind_data: aggregate.bind_info.as_deref().map(|d| d as _),
         };
-        table.finalize_into(|tuples| {
+        let mut update = |tuples: DataChunk| {
             // SAFETY: the state is initialised and owned by this task.
             unsafe {
                 aggregate.function.ops.simple_update(
@@ -411,7 +420,28 @@ impl Sink for PhysicalUngroupedAggregate {
                     tuples.len(),
                 )
             }
-        })?;
+        };
+        if partition.unique {
+            for collection in &data {
+                let tuple_columns = collection.layout().column_count() - 1;
+                // SAFETY: distinct tables hold no aggregate states.
+                unsafe {
+                    GroupedAggregateHashTable::finalize_collection(
+                        collection.layout(),
+                        tuple_columns,
+                        collection,
+                        &mut update,
+                    )?;
+                }
+            }
+        } else {
+            let mut table = Self::distinct_table(ctx, aggregate, 0)?;
+            for collection in &data {
+                table.combine(collection)?;
+            }
+            table.finalize_into(&mut update)?;
+        }
+        drop(data);
         let global_states = global.states.lock().map_err(|_| poisoned())?;
         // SAFETY: both states are initialised; the global one is protected by the lock.
         unsafe {

@@ -2,7 +2,7 @@
 
 use rustdb_common::{Error, Result};
 use rustdb_function::{ScalarFunction, ScalarFunctionSet};
-use rustdb_types::LogicalType;
+use rustdb_types::{DataChunk, LogicalType, StringT, Vector, VectorKind};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::scalar::executor::{Str, StrOut, binary, ternary};
@@ -195,6 +195,63 @@ pub(crate) fn substring_grapheme(input: &[u8], offset: i64, length: i64) -> Resu
 
 type Substring = for<'a> fn(&'a [u8], i64, i64) -> Result<&'a [u8]>;
 
+/// The value of a constant, non-NULL BIGINT argument.
+fn constant_bigint(vector: &Vector) -> Option<i64> {
+    if vector.is_constant() {
+        vector.unified::<i64>().get(0)
+    } else {
+        None
+    }
+}
+
+/// `substring` with a constant offset and length (the common case): the results point
+/// into the input strings instead of being copied, like DuckDB's `string_t` results that
+/// reference their input. Returns `false` (doing nothing) for other argument shapes.
+fn substring_references(args: &DataChunk, op: Substring, result: &mut Vector) -> Result<bool> {
+    let input = args.column(0);
+    if input.kind() == VectorKind::Sequence {
+        return Ok(false);
+    }
+    let Some(offset) = constant_bigint(args.column(1)) else {
+        return Ok(false);
+    };
+    let length = if args.column_count() > 2 {
+        match constant_bigint(args.column(2)) {
+            Some(length) => length,
+            None => return Ok(false),
+        }
+    } else {
+        i64::from(u32::MAX)
+    };
+    let constant = input.is_constant();
+    let rows = if constant { 1 } else { args.len() };
+    let strings = input.unified::<StringT>();
+    result.reset_flat(rows);
+    let mut nulls = Vec::new();
+    for (row, slot) in result.values_mut::<StringT>()[..rows].iter_mut().enumerate() {
+        let index = strings.slot(row);
+        if !strings.validity.is_valid(index) {
+            nulls.push(row);
+            continue;
+        }
+        let part = op(input.string_value(&strings.values[index]), offset, length)?;
+        // SAFETY: `part` lies within a string of `input`; `result` keeps the heaps of
+        // `input` alive (`add_heap_references` below), and short parts are copied inline.
+        *slot = unsafe { StringT::from_raw(part) };
+    }
+    result.add_heap_references(input);
+    if !nulls.is_empty() {
+        let validity = result.validity_mut();
+        for row in nulls {
+            validity.set_invalid(row, rows);
+        }
+    }
+    if constant {
+        result.make_constant();
+    }
+    Ok(true)
+}
+
 fn substring_set(name: &str, op: Substring) -> ScalarFunctionSet {
     let mut set = ScalarFunctionSet::new(name);
     set.add(ScalarFunction::new(
@@ -202,6 +259,9 @@ fn substring_set(name: &str, op: Substring) -> ScalarFunctionSet {
         vec![LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::BIGINT],
         LogicalType::VARCHAR,
         move |args, _, result| {
+            if substring_references(args, op, result)? {
+                return Ok(());
+            }
             ternary::<Str, i64, i64, StrOut>(args, result, |input, offset, length, out| {
                 out.extend_from_slice(op(input, offset, length)?);
                 Ok(true)
@@ -213,6 +273,9 @@ fn substring_set(name: &str, op: Substring) -> ScalarFunctionSet {
         vec![LogicalType::VARCHAR, LogicalType::BIGINT],
         LogicalType::VARCHAR,
         move |args, _, result| {
+            if substring_references(args, op, result)? {
+                return Ok(());
+            }
             binary::<Str, i64, StrOut>(args, result, |input, offset, out| {
                 out.extend_from_slice(op(input, offset, i64::from(u32::MAX))?);
                 Ok(true)

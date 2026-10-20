@@ -123,14 +123,20 @@ fn compare_native<T: SqlOrd>(
 
 fn compare_strings(op: CompareOp, left: &Vector, right: &Vector, count: usize, result: &mut Vector) {
     // Equal strings must share length and prefix; check those before touching heap bytes.
-    binary::<StringT, StringT, bool>(left, right, count, result, |l, r| {
-        if matches!(op, CompareOp::Equal | CompareOp::NotEqual)
-            && (l.len() != r.len() || l.prefix() != r.prefix())
-        {
-            return op == CompareOp::NotEqual;
+    match op {
+        CompareOp::Equal | CompareOp::NotEqual => {
+            let equal = op == CompareOp::Equal;
+            binary::<StringT, StringT, bool>(left, right, count, result, |l, r| {
+                let same = l
+                    .quick_eq(&r)
+                    .unwrap_or_else(|| left.string_value(&l) == right.string_value(&r));
+                same == equal
+            });
         }
-        apply_bytes(op, left.string_value(&l), right.string_value(&r))
-    });
+        _ => binary::<StringT, StringT, bool>(left, right, count, result, |l, r| {
+            apply_bytes(op, left.string_value(&l), right.string_value(&r))
+        }),
+    }
 }
 
 /// LIST/STRUCT/ARRAY comparisons: NULL at the top level gives NULL; inside, values
