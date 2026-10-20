@@ -257,6 +257,7 @@ pub fn bind_select_node(
         let mut select_binder = SelectBinder::new(inner, outer, &mut result, &info, SelectRole::Select);
         for (i, expr) in select_list.iter_mut().enumerate() {
             let is_window = matches!(expr.kind, ParsedExpressionKind::Window(_));
+            let unnest_count = select_binder.node_mut().unnests.len();
             let bound = select_binder.bind(expr, true)?;
             let is_original_column = i < column_count;
             let can_group_by_all =
@@ -304,6 +305,9 @@ pub fn bind_select_node(
                 }
                 if is_window {
                     return Err(Error::binder("Cannot group on a window clause"));
+                }
+                if select_binder.node_mut().unnests.len() > unnest_count {
+                    return Err(Error::binder("Cannot group on an UNNEST or UNLIST clause"));
                 }
                 group_by_all_indexes.push(i);
             }

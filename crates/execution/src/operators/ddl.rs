@@ -558,7 +558,11 @@ impl DdlAction for CreateIndexAction {
             .clone()
             .ok_or_else(|| Error::binder("Indexes can only be created on DuckDB tables."))?;
         let art = self.new_art(&storage, index)?;
-        storage.create_index(transaction, art)?;
+        storage.create_index(
+            transaction,
+            art,
+            self.info.on_conflict != OnCreateConflict::IgnoreOnConflict,
+        )?;
         let mut entry = CatalogEntry::new(
             index.name.clone(),
             EntryKind::Index(IndexEntry {

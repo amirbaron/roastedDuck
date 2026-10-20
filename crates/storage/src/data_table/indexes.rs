@@ -198,10 +198,23 @@ impl DataTable {
     }
 
     /// Builds `index` over the table's rows and adds it (`PhysicalCreateIndex`). Rows the
-    /// transaction inserted are added to the index when it commits.
-    pub fn create_index(self: &Arc<Self>, transaction: &Transaction, mut index: Art) -> Result<()> {
+    /// transaction inserted are added to the index when it commits. With
+    /// `check_unique_name`, another index of the table with the same name (e.g. the one of
+    /// a primary key) is an error (`DuckSchemaEntry::CreateIndex`).
+    pub fn create_index(
+        self: &Arc<Self>,
+        transaction: &Transaction,
+        mut index: Art,
+        check_unique_name: bool,
+    ) -> Result<()> {
         self.build_index(transaction, &mut index, false)?;
         self.check_main_table_for_index_creation()?;
+        if check_unique_name && self.indexes().find(index.name()).is_some() {
+            return Err(Error::catalog(format!(
+                "An index with the name {} already exists!",
+                index.name()
+            )));
+        }
         self.indexes().add(index);
         Ok(())
     }
@@ -260,7 +273,9 @@ impl DataTable {
         columns
     }
 
-    fn check_main_table_for_index_creation(&self) -> Result<()> {
+    /// Rejects adding an index to a version of the table that another transaction
+    /// altered or dropped (`PhysicalCreateIndex::Finalize`).
+    pub fn check_main_table_for_index_creation(&self) -> Result<()> {
         if self.is_main_table() {
             return Ok(());
         }

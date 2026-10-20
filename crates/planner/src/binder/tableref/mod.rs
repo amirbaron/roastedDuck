@@ -480,22 +480,24 @@ fn bind_base_table(
                 BindingAlias::new(alias)
             };
             let shared_column_ids = crate::operator::SharedColumnIds::default();
-            scope.bind_context.add_binding(Binding::new(
-                BindingKind::Table {
-                    bound_column_ids: Arc::clone(&shared_column_ids),
-                    entry: Some(Arc::clone(&found.entry)),
-                    virtual_columns: vec![(
-                        crate::operator::COLUMN_IDENTIFIER_ROW_ID,
-                        "rowid".to_owned(),
-                        LogicalType::BIGINT,
-                    )],
-                },
-                binding_alias,
-                types.clone(),
-                names.clone(),
-                table_index,
-            )?
-            .with_entry_parent(&found.catalog, &found.schema));
+            scope.bind_context.add_binding(
+                Binding::new(
+                    BindingKind::Table {
+                        bound_column_ids: Arc::clone(&shared_column_ids),
+                        entry: Some(Arc::clone(&found.entry)),
+                        virtual_columns: vec![(
+                            crate::operator::COLUMN_IDENTIFIER_ROW_ID,
+                            "rowid".to_owned(),
+                            LogicalType::BIGINT,
+                        )],
+                    },
+                    binding_alias,
+                    types.clone(),
+                    names.clone(),
+                    table_index,
+                )?
+                .with_entry_parent(&found.catalog, &found.schema),
+            );
             let get = LogicalGet {
                 table_index,
                 function: TableFunction::new("seq_scan", Vec::new()),
@@ -566,16 +568,18 @@ fn bind_base_table(
             } else {
                 BindingAlias::new(alias)
             };
-            scope.bind_context.add_binding(Binding::new(
-                BindingKind::Entry {
-                    entry: Arc::clone(&found.entry),
-                },
-                view_alias,
-                bound.types.clone(),
-                names,
-                index,
-            )?
-            .with_entry_parent(&found.catalog, &found.schema));
+            scope.bind_context.add_binding(
+                Binding::new(
+                    BindingKind::Entry {
+                        entry: Arc::clone(&found.entry),
+                    },
+                    view_alias,
+                    bound.types.clone(),
+                    names,
+                    index,
+                )?
+                .with_entry_parent(&found.catalog, &found.schema),
+            );
             Ok(bound)
         }
         _ => Err(Error::internal("Catalog entry type")),

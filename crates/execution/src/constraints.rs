@@ -133,6 +133,15 @@ pub fn table_constraints(
             .map(|(_, _, column)| column.name.clone())
             .collect();
     }
+    // Foreign keys reference tables of the table's own catalog
+    // (`Catalog::GetEntry(table.catalog, fk.schema, fk.table)`).
+    let own_catalog: Vec<Arc<Catalog>> = catalogs
+        .iter()
+        .filter(|catalog| catalog.io().is_ok_and(|io| Arc::ptr_eq(io, storage.io())))
+        .take(1)
+        .cloned()
+        .collect();
+    let catalogs = if own_catalog.is_empty() { catalogs } else { &own_catalog[..] };
     let mut checks = Vec::new();
     let mut generated = Vec::new();
     for constraint in bound {

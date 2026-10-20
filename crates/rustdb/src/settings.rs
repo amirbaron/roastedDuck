@@ -627,6 +627,15 @@ impl Settings {
                     "Cannot change {option} when enable_external_access is disabled"
                 )))
             }
+            // `DefaultBlockSizeSetting::SetGlobal` (`Storage::VerifyBlockAllocSize`).
+            "default_block_size" => {
+                let size = value
+                    .default_cast_as(&LogicalType::UBIGINT)
+                    .ok()
+                    .and_then(|value| value.as_u64())
+                    .ok_or_else(|| Error::invalid_input("default_block_size must be an integer"))?;
+                crate::storage::verify_block_alloc_size(size)
+            }
             "access_mode" => Err(Error::invalid_input(
                 "Cannot change access_mode setting while database is running - it must be set when opening or \
                  attaching the database",

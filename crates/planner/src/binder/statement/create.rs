@@ -504,6 +504,7 @@ fn bind_table_definition(
     bind_create_table_constraints(
         scope,
         &table.table,
+        catalog,
         schema,
         &mut table.columns.columns,
         &mut table.constraints,
@@ -646,6 +647,12 @@ fn bind_generated_columns(
                 crate::expression_binder::CheckBinder::generated(&mut binder, None, table, &check_columns);
             generated_binder.bind(&mut expression, true)?
         };
+        if bound.has_subquery() {
+            return Err(Error::binder(format!(
+                "Failed to bind generated column '{}' because the expression contains a subquery",
+                columns[index].name
+            )));
+        }
         let column = &mut columns[index];
         if column.logical_type.id() == rustdb_types::LogicalTypeId::Any {
             // `ColumnDefinition::ChangeGeneratedExpressionType`.
@@ -787,6 +794,23 @@ fn bind_new_constraints(
                     vec![unique.index.0 as usize]
                 };
                 primary_keys = Some(keys);
+            }
+            // `BindForeignKey`, in constraint order with the UNIQUE checks.
+            Constraint::ForeignKey(fk) => {
+                let duplicate = |names: &[String]| {
+                    names
+                        .iter()
+                        .enumerate()
+                        .any(|(i, name)| names[..i].iter().any(|other| other.eq_ignore_ascii_case(name)))
+                };
+                if duplicate(&fk.pk_columns) {
+                    return Err(Error::parser(
+                        "duplicate primary key referenced in FOREIGN KEY constraint",
+                    ));
+                }
+                if duplicate(&fk.fk_columns) {
+                    return Err(Error::parser("duplicate key specified in FOREIGN KEY constraint"));
+                }
             }
             Constraint::Unique(unique) if unique.index.0 == u64::MAX => {
                 let mut seen = Vec::new();
@@ -966,6 +990,7 @@ fn entry_column_definitions(table: &TableEntry) -> Vec<ColumnDefinition> {
 fn bind_create_table_constraints(
     scope: &BindScope<'_>,
     table_name: &str,
+    catalog: &str,
     schema: &str,
     columns: &mut [ColumnDefinition],
     constraints: &mut [Constraint],
@@ -997,7 +1022,7 @@ fn bind_create_table_constraints(
             return Err(Error::binder("cannot reference a VIEW with a FOREIGN KEY"));
         };
         fk.schema.clone_from(&found.schema);
-        if !found.schema.eq_ignore_ascii_case(schema) {
+        if !found.schema.eq_ignore_ascii_case(schema) || !found.catalog.eq_ignore_ascii_case(catalog) {
             return Err(Error::binder(
                 "Creating foreign keys across different schemas or catalogs is not supported",
             ));

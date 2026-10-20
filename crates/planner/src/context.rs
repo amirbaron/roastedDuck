@@ -463,7 +463,9 @@ impl ClientContext {
                 if if_exists {
                     return Ok(None);
                 }
-                return Err(Error::binder(format!("Catalog \"{catalog_name}\" does not exist!")));
+                return Err(Error::binder(format!(
+                    "Catalog \"{catalog_name}\" does not exist!"
+                )));
             }
             if let Some(entry) = self.lookup_in(catalog_name, schema_name, ty, name) {
                 let lookup = EntryLookup {
