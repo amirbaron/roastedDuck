@@ -63,6 +63,26 @@ fn first_difference(expected: &str, actual: &str) -> String {
     format!("  pg : …{}\n  peg: …{}", window(expected), window(actual))
 }
 
+/// Which parts of two parses with the same debug rendering differ.
+fn equal_rendering_difference(expected: &[SqlStatement], actual: &[SqlStatement]) -> String {
+    let mut parts = Vec::new();
+    for (expected, actual) in expected.iter().zip(actual) {
+        if expected.location != actual.location || expected.length != actual.length {
+            parts.push("location/length");
+        }
+        if expected.query != actual.query {
+            parts.push("query");
+        }
+        if expected.named_param_map != actual.named_param_map {
+            parts.push("named_param_map");
+        }
+        if expected.kind != actual.kind {
+            parts.push("kind");
+        }
+    }
+    format!("  parts: {}", parts.join(", "))
+}
+
 fn main() -> std::io::Result<()> {
     let mut args = std::env::args().skip(1);
     let statements_path = args
@@ -89,10 +109,14 @@ fn main() -> std::io::Result<()> {
         let (category, detail) = match (pg, peg) {
             (_, Err(panic)) => (format!("PANIC {}", error_category(&panic)), String::new()),
             (Ok(expected), Ok(Ok(actual))) if expected == actual => ("same".to_owned(), String::new()),
-            (Ok(expected), Ok(Ok(actual))) => (
-                "different".to_owned(),
-                first_difference(&format!("{expected:?}"), &format!("{actual:?}")),
-            ),
+            (Ok(expected), Ok(Ok(actual))) => {
+                let (expected_text, actual_text) = (format!("{expected:?}"), format!("{actual:?}"));
+                if expected_text == actual_text {
+                    ("different (same rendering)".to_owned(), equal_rendering_difference(&expected, &actual))
+                } else {
+                    ("different".to_owned(), first_difference(&expected_text, &actual_text))
+                }
+            }
             (Ok(_), Ok(Err(error))) => (
                 format!("peg error: {}", error_category(&error.to_string())),
                 String::new(),
