@@ -1,9 +1,10 @@
-use std::sync::Arc;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::AtomicUsize;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use rustdb_common::{Error, Result};
 use rustdb_storage::{DataTable, TableConstraints, Transaction};
-use rustdb_types::{DataChunk, LogicalType};
+use rustdb_types::{DataChunk, LogicalType, SelectionVector};
 
 use super::modify::{ModifyResult, all_columns, count_types, row_ids};
 use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
@@ -50,6 +51,26 @@ impl PhysicalDelete {
         }
     }
 
+    /// The rows of `deleted` (fetched for `ids`) not returned before, each once. When
+    /// some are dropped, the rest come in row id order, as DuckDB collects them in a
+    /// `map<row_t, idx_t>`.
+    fn newly_deleted(&self, global: &DeleteGlobal, ids: &[i64], deleted: DataChunk) -> DataChunk {
+        let mut returned = global.deleted_row_ids.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut new_rows = BTreeMap::new();
+        for (row, &id) in ids.iter().enumerate() {
+            if !returned.contains(&id) && !new_rows.contains_key(&id) {
+                new_rows.insert(id, row as u32);
+                returned.insert(id);
+            }
+        }
+        if new_rows.len() == deleted.len() {
+            return deleted;
+        }
+        let sel = SelectionVector::new(new_rows.into_values().collect::<Vec<u32>>());
+        let len = sel.len();
+        DataChunk::new(deleted.columns().iter().map(|column| column.slice(&sel)).collect(), len)
+    }
+
     /// Verifies the delete-side foreign keys of `constraints` before deleting.
     #[must_use]
     pub fn with_constraints(mut self, constraints: TableConstraints) -> Self {
@@ -76,12 +97,21 @@ impl PhysicalOperator for PhysicalDelete {
     }
 }
 
+/// The shared state of a delete.
+#[derive(Debug, Default)]
+pub struct DeleteGlobal {
+    result: ModifyResult,
+    /// The rows this statement returned as deleted (with `RETURNING`): a join can
+    /// produce a row more than once (DuckDB's `deleted_row_ids`).
+    deleted_row_ids: Mutex<HashSet<i64>>,
+}
+
 impl Sink for PhysicalDelete {
-    type Global = ModifyResult;
+    type Global = DeleteGlobal;
     type Local = ();
 
     fn global_sink_state(&self, _: &ExecutionContext) -> Result<Self::Global> {
-        Ok(ModifyResult::default())
+        Ok(DeleteGlobal::default())
     }
 
     fn local_sink_state(&self, _: &ExecutionContext, _: &Self::Global) -> Result<()> {
@@ -96,17 +126,22 @@ impl Sink for PhysicalDelete {
         (): &mut (),
     ) -> Result<SinkResult> {
         let ids = row_ids(chunk.column(self.row_id_index), chunk.len())?;
-        if self.return_chunk {
+        let returned = if self.return_chunk {
             let mut deleted = DataChunk::default();
             let columns = all_columns(self.table.columns().len());
             self.table
                 .fetch(&self.transaction, &mut deleted, &columns, &ids)?;
-            global.push_returned(deleted);
-        }
+            Some(deleted)
+        } else {
+            None
+        };
         let count = self
             .table
             .delete_with_constraints(&self.transaction, &ids, &self.constraints)?;
-        global.add_count(count);
+        global.result.add_count(count);
+        if let Some(deleted) = returned {
+            global.result.push_returned(self.newly_deleted(global, &ids, deleted));
+        }
         Ok(SinkResult::NeedMoreInput)
     }
 
@@ -135,10 +170,10 @@ impl Source for PhysicalDelete {
         (sink, next): &Self::Global,
         (): &mut (),
     ) -> Result<SourceResult> {
-        let result = sink
-            .downcast_ref::<ModifyResult>()
+        let global = sink
+            .downcast_ref::<DeleteGlobal>()
             .ok_or_else(|| Error::internal("delete sink state has the wrong type"))?;
-        Ok(if result.emit(self.return_chunk, next, chunk)? {
+        Ok(if global.result.emit(self.return_chunk, next, chunk)? {
             SourceResult::HaveMoreOutput
         } else {
             SourceResult::Finished

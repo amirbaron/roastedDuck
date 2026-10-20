@@ -246,6 +246,9 @@ struct DistinctUnit {
     set_index: usize,
     aggregate: usize,
     data: Mutex<Vec<TupleDataCollection>>,
+    /// Whether the tuples are distinct already: everything came from one thread's single
+    /// table (DuckDB's `single_ht` for the distinct radix table).
+    unique: bool,
 }
 
 /// The rows of one radix partition of one grouping set, from every thread, which a
@@ -433,6 +436,10 @@ impl Sink for PhysicalHashAggregate {
                 add_tuples(distinct, &tuples, &[], &[])?;
                 selections[index] = Some(Vec::new());
             }
+            if self.can_skip_regular_sink() {
+                // Every aggregate is DISTINCT: the groups come from the distinct tuples.
+                continue;
+            }
             let hashes = if groups.column_count() == 0 {
                 Vector::constant(&Value::ubigint(0))?
             } else {
@@ -566,18 +573,6 @@ impl Sink for PhysicalHashAggregate {
             return Ok(());
         };
         let set = &self.grouping_sets[unit.set_index];
-        let rows: usize = data.iter().map(TupleDataCollection::count).sum();
-        let mut distinct = GroupedAggregateHashTable::new(
-            ctx.env.buffer_manager.clone(),
-            first.layout().types()[..first.layout().column_count() - 1].to_vec(),
-            &[],
-            capacity_for_count(rows),
-            0,
-        )?;
-        for collection in &data {
-            distinct.combine(collection)?;
-        }
-        drop(data);
         let mut table = self.new_table(
             ctx,
             set,
@@ -594,14 +589,43 @@ impl Sink for PhysicalHashAggregate {
                 }
             })
             .collect();
-        distinct.finalize_into(|tuples| {
+        let mut emit = |tuples: DataChunk| {
             let count = tuples.len();
             let mut columns = tuples.into_columns();
             let arguments = columns.split_off(group_count);
             let mut inputs = vec![Vec::new(); self.aggregates.len()];
             inputs[unit.aggregate] = arguments;
             add_tuples(&mut table, &DataChunk::new(columns, count), &inputs, &selections)
-        })?;
+        };
+        if unit.unique {
+            // One thread's single table: its tuples are distinct, no need to deduplicate.
+            for collection in &data {
+                let tuple_columns = collection.layout().column_count() - 1;
+                // SAFETY: distinct tables hold no aggregate states.
+                unsafe {
+                    GroupedAggregateHashTable::finalize_collection(
+                        collection.layout(),
+                        tuple_columns,
+                        collection,
+                        &mut emit,
+                    )?;
+                }
+            }
+        } else {
+            let rows: usize = data.iter().map(TupleDataCollection::count).sum();
+            let mut distinct = GroupedAggregateHashTable::new(
+                ctx.env.buffer_manager.clone(),
+                first.layout().types()[..first.layout().column_count() - 1].to_vec(),
+                &[],
+                capacity_for_count(rows),
+                0,
+            )?;
+            for collection in &data {
+                distinct.combine(collection)?;
+            }
+            distinct.finalize_into(&mut emit)?;
+        }
+        drop(data);
         let data = table.take_partitioned_data()?;
         data.unpin();
         global.collected.lock().unwrap_or_else(PoisonError::into_inner)[unit.set_index].push(data);
@@ -610,6 +634,17 @@ impl Sink for PhysicalHashAggregate {
 }
 
 impl PhysicalHashAggregate {
+    /// Whether the sink only feeds the distinct tables (`CanSkipRegularSink`): every
+    /// aggregate is `DISTINCT` and none has a `FILTER`, so the distinct tuples carry
+    /// every group.
+    fn can_skip_regular_sink(&self) -> bool {
+        !self.aggregates.is_empty()
+            && self
+                .aggregates
+                .iter()
+                .all(|aggregate| aggregate.is_distinct() && aggregate.filter.is_none())
+    }
+
     /// Splits every `DISTINCT` aggregate's tuples into their radix partitions, one unit
     /// of work each.
     fn distinct_units(global: &mut HashAggregateGlobal) -> Result<Vec<DistinctUnit>> {
@@ -620,8 +655,12 @@ impl PhysicalHashAggregate {
                 .unwrap_or_else(PoisonError::into_inner),
         );
         let mut units = Vec::new();
+        let external = global.external.load(Ordering::Acquire);
         for (set_index, aggregates) in collected.into_iter().enumerate() {
             for (aggregate, parts) in aggregates.into_iter().enumerate() {
+                let unique = !external
+                    && global.threads == 1
+                    && parts.iter().filter(|part| part.count() > 0).count() == 1;
                 let radix_bits = parts
                     .iter()
                     .map(PartitionedTupleData::radix_bits)
@@ -645,6 +684,7 @@ impl PhysicalHashAggregate {
                             set_index,
                             aggregate,
                             data: Mutex::new(data),
+                            unique,
                         }),
                 );
             }

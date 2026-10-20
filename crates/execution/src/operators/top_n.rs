@@ -192,14 +192,16 @@ struct Payload {
 }
 
 impl Payload {
-    /// Appends rows `sel` of `chunk`; returns the row number of the first.
+    /// Appends rows `sel` of `chunk`; returns the row number of the first. The rows are
+    /// copied, strings included (DuckDB appends them to the heap's payload chunk), so the
+    /// payload does not keep the scanned vectors' string buffers alive.
     fn append(&mut self, chunk: &DataChunk, sel: &[u32]) -> usize {
         let start = self.count;
-        let selection = SelectionVector::new(sel.to_vec());
+        let selection = SelectionVector::new(sel);
         let columns = chunk
             .columns()
             .iter()
-            .map(|column| column.slice(&selection).flattened(sel.len()))
+            .map(|column| column.slice(&selection).compacted(sel.len()))
             .collect();
         self.chunks.push(DataChunk::new(columns, sel.len()));
         self.count += sel.len();

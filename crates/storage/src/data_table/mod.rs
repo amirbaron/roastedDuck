@@ -1,8 +1,10 @@
 //! The storage of one table (DuckDB's `DataTable` and `DataTableInfo`).
 
 mod indexes;
+mod optimistic;
 
 pub use indexes::{BoundForeignKey, ForeignKeyKind};
+pub use optimistic::OptimisticCollection;
 
 use std::fmt;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -926,13 +928,13 @@ impl DataTable {
     pub fn remove_column(self: &Arc<Self>, transaction: &Transaction, column: usize) -> Result<Arc<Self>> {
         let _lock = self.append_lock();
         self.verify_remove_column(column)?;
-        let row_groups = Arc::new(self.row_groups.remove_column(column));
+        let row_groups = Arc::new(self.row_groups.remove_column(column)?);
         let mut columns = self.columns.clone();
         columns.remove(column);
         let table = Self::derived(self, columns, row_groups);
         transaction
             .local_storage()
-            .alter(self, &table, |collection| Ok(collection.remove_column(column)))?;
+            .alter(self, &table, |collection| collection.remove_column(column))?;
         self.set_as_altered();
         Ok(table)
     }

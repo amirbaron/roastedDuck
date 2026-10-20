@@ -37,6 +37,7 @@ use rustdb_types::{LogicalType, PhysicalType, Vector};
 use crate::checkpoint::column_checkpointer::SegmentSink;
 use crate::data_table::TableIoManager;
 use crate::table::ColumnSegment;
+use crate::table_filter::TableFilter;
 
 /// The encoding of a column segment (DuckDB's `CompressionType`; the discriminants are
 /// stored on disk).
@@ -132,6 +133,64 @@ pub trait SegmentScan: fmt::Debug + Send + Sync {
         result: &mut Vector,
         result_offset: usize,
     ) -> Result<()>;
+
+    /// Whether no row of the segment can pass `filter`, which rejects NULLs, as far as the
+    /// codec can tell cheaply (DuckDB's RLE `Filter` evaluates the filter on the run values
+    /// once and skips the segment when no run matches). `false` means "unknown".
+    fn never_matches(&mut self, segment: &ColumnSegment, filter: &TableFilter) -> Result<bool> {
+        let _ = (segment, filter);
+        Ok(false)
+    }
+
+    /// Scans rows `start..start + count` into row 0 of `result` like
+    /// [`SegmentScan::scan`], decoding only the rows of `sel` (ascending, relative to
+    /// `start`); the others may hold anything (DuckDB's `CompressionFunction::select`).
+    /// Returns `false`, doing nothing, if the codec cannot do better than a full scan.
+    fn select(
+        &mut self,
+        segment: &ColumnSegment,
+        start: usize,
+        count: usize,
+        result: &mut Vector,
+        sel: &[u32],
+    ) -> Result<bool> {
+        let _ = (segment, start, count, result, sel);
+        Ok(false)
+    }
+
+    /// Rows `start..start + count` (a whole vector) as a dictionary vector over the
+    /// segment's dictionary, if the codec has one (DuckDB's `ScanToDictionaryVector`).
+    fn scan_dictionary(
+        &mut self,
+        segment: &ColumnSegment,
+        start: usize,
+        count: usize,
+    ) -> Result<Option<Vector>> {
+        let _ = (segment, start, count);
+        Ok(None)
+    }
+
+    /// Scans rows `start..start + count` like [`SegmentScan::scan`] (into row 0 of
+    /// `result`) while keeping only the rows of `sel` whose stored value passes `filter`
+    /// (DuckDB's `CompressionFunction::filter`); rows dropped from `sel` need not be
+    /// written, and without `needs_values` (a column scanned for its filter only) no row
+    /// needs to be. Returns `false`, doing nothing, if the codec cannot do this better
+    /// than a scan followed by the filter. `filter` rejects NULLs; the caller drops NULL
+    /// rows.
+    #[allow(clippy::too_many_arguments, reason = "DuckDB's filter function signature")]
+    fn filter(
+        &mut self,
+        segment: &ColumnSegment,
+        start: usize,
+        count: usize,
+        result: &mut Vector,
+        sel: &mut Vec<u32>,
+        filter: &TableFilter,
+        needs_values: bool,
+    ) -> Result<bool> {
+        let _ = (segment, start, count, result, sel, filter, needs_values);
+        Ok(false)
+    }
 }
 
 /// A codec whose scan state only moves forward (DuckDB's `InitScan`, `Skip` and
@@ -149,6 +208,28 @@ pub(crate) trait CodecScan: fmt::Debug + Send + Sync + Sized {
         result: &mut Vector,
         result_offset: usize,
     ) -> Result<()>;
+    /// [`SegmentScan::never_matches`]; does not move the state.
+    fn never_matches(&mut self, segment: &ColumnSegment, filter: &TableFilter) -> Result<bool> {
+        let _ = (segment, filter);
+        Ok(false)
+    }
+
+    /// Whether the codec implements [`CodecScan::filter_partial`].
+    const FILTERS: bool = false;
+
+    /// [`SegmentScan::filter`] over the next `count` rows, with `sel` holding every row
+    /// `0..count`.
+    fn filter_partial(
+        &mut self,
+        segment: &ColumnSegment,
+        count: usize,
+        result: &mut Vector,
+        sel: &mut Vec<u32>,
+        filter: &TableFilter,
+    ) -> Result<()> {
+        let _ = (segment, count, result, sel, filter);
+        Err(Error::internal("codec without a filter"))
+    }
 }
 
 /// Adapts a [`CodecScan`] to random positions: rows before the current position restart
@@ -187,6 +268,36 @@ impl<S: CodecScan> SegmentScan for Sequential<S> {
         self.state.scan_partial(segment, count, result, result_offset)?;
         self.position = start + count;
         Ok(())
+    }
+
+    fn never_matches(&mut self, segment: &ColumnSegment, filter: &TableFilter) -> Result<bool> {
+        self.state.never_matches(segment, filter)
+    }
+
+    fn filter(
+        &mut self,
+        segment: &ColumnSegment,
+        start: usize,
+        count: usize,
+        result: &mut Vector,
+        sel: &mut Vec<u32>,
+        filter: &TableFilter,
+        _needs_values: bool,
+    ) -> Result<bool> {
+        // Only for a selection of every row (the first filter of a vector).
+        if !S::FILTERS || sel.len() != count {
+            return Ok(false);
+        }
+        if start < self.position {
+            self.state = S::init(segment)?;
+            self.position = 0;
+        }
+        if start > self.position {
+            self.state.skip(segment, start - self.position)?;
+        }
+        self.state.filter_partial(segment, count, result, sel, filter)?;
+        self.position = start + count;
+        Ok(true)
     }
 }
 

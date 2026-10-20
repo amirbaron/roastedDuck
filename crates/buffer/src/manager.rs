@@ -333,6 +333,11 @@ impl ManagerShared {
             if memory.remove_reader_locked() != 0 {
                 return;
             }
+            if memory.releases_on_unpin() {
+                // Persistent data: reloaded from the file when pinned again.
+                let _ = memory.unload(&mut inner);
+                return;
+            }
             if memory.must_add_to_eviction_queue() {
                 self.pool.add_to_eviction_queue(memory, &mut inner)
             } else {
@@ -370,7 +375,7 @@ impl BufferManager {
         let memory_limit = config.memory_limit.unwrap_or_else(default_memory_limit);
         let retention = config
             .allocator_retention
-            .unwrap_or_else(|| (memory_limit / 16).clamp(4 << 20, 256 << 20) as usize);
+            .unwrap_or_else(|| (memory_limit / 16).clamp(4 << 20, 64 << 20) as usize);
         let allocator = Arc::new(BlockAllocator::new(DEFAULT_BLOCK_ALLOC_SIZE, retention));
         let pool = BufferPool::new(memory_limit, allocator, config.track_eviction_timestamps);
         let manager = Self::with_pool(pool, config.temp_directory);

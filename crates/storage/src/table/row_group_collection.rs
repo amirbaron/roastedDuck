@@ -676,7 +676,7 @@ impl RowGroupCollection {
         let row_groups = self.row_groups();
         let mut index = row_groups.base_row_id + self.total_rows();
         for node in other.row_groups().tree.nodes() {
-            node.node.set_data_type(ColumnDataType::MainTable);
+            node.node.set_data_type(ColumnDataType::MainTable)?;
             let count = node.node.count();
             row_groups.tree.push(index, node.node);
             index += count;
@@ -865,7 +865,7 @@ impl RowGroupCollection {
                 column.append(&mut append, &values, rows)?;
                 written += rows as u64;
             }
-            let mut columns = node.node.columns().to_vec();
+            let mut columns = node.node.columns()?;
             columns.push(Arc::clone(&column));
             let row_group = Arc::new(node.node.with_columns(columns));
             if let Some(column_stats) = result.stats().columns.get_mut(column_index) {
@@ -877,8 +877,7 @@ impl RowGroupCollection {
     }
 
     /// A copy of the collection without column `column` (`RemoveColumn`).
-    #[must_use]
-    pub fn remove_column(&self, column: usize) -> Self {
+    pub fn remove_column(&self, column: usize) -> Result<Self> {
         let mut types = self.types.clone();
         types.remove(column);
         let mut stats = self.stats().clone();
@@ -889,13 +888,13 @@ impl RowGroupCollection {
         let result = self.derived(types, stats);
         let target = result.row_groups();
         for node in self.row_groups().tree.nodes() {
-            let mut columns = node.node.columns().to_vec();
+            let mut columns = node.node.columns()?;
             columns.remove(column);
             target
                 .tree
                 .push(node.row_start, Arc::new(node.node.with_columns(columns)));
         }
-        result
+        Ok(result)
     }
 
     /// A copy of the collection where column `changed` has type `target`, computed by
@@ -964,7 +963,7 @@ impl RowGroupCollection {
                     column.append(&mut append, &values, chunk.len())?;
                 }
             }
-            let mut columns = node.node.columns().to_vec();
+            let mut columns = node.node.columns()?;
             columns[changed] = Arc::clone(&column);
             if let Some(column_stats) = result.stats().columns.get_mut(changed) {
                 column.merge_into_statistics(column_stats)?;

@@ -11,7 +11,7 @@ use rustdb_common::{Error, Result};
 use rustdb_function::{FunctionData, ScalarFunction, ScalarFunctionSet};
 use rustdb_types::{DataChunk, LogicalType, NativeType, PhysicalType, Vector};
 
-use crate::scalar::executor::{Str, StrOut, binary, unary};
+use crate::scalar::executor::{Str, StrOut, unary};
 
 /// `CMUtils::Bind`.
 fn bind_internal(
@@ -46,20 +46,32 @@ macro_rules! bits {
 }
 bits!(i16, i32, i64, i128, u8, u16, u32, u64, u128);
 
-/// `input - min` as the narrower unsigned type (`TemplatedIntegralCompress`).
+/// The constant `min` argument (`ConstantVector::GetData(args.data[1])[0]`).
+fn constant_min<T: NativeType>(args: &DataChunk) -> T {
+    let min = &args.columns()[1];
+    let data = min.unified::<T>();
+    data.values[data.slot(0)]
+}
+
+/// `input - min` as the narrower unsigned type (`TemplatedIntegralCompress`, a
+/// `UnaryExecutor` over the input with the constant minimum).
+#[allow(clippy::unnecessary_wraps, reason = "a `Kernel`")]
 fn compress_kernel<I: Bits, R: Bits>(args: &DataChunk, result: &mut Vector) -> Result<()> {
-    binary::<I, I, R>(args, result, |input, min, out| {
-        *out = R::from_bits(input.to_bits().wrapping_sub(min.to_bits()));
-        Ok(true)
-    })
+    let min = constant_min::<I>(args).to_bits();
+    rustdb_types::kernels::unary::<I, R>(&args.columns()[0], args.len(), result, |input| {
+        R::from_bits(input.to_bits().wrapping_sub(min))
+    });
+    Ok(())
 }
 
 /// `min + input` (`TemplatedIntegralDecompress`).
+#[allow(clippy::unnecessary_wraps, reason = "a `Kernel`")]
 fn decompress_kernel<I: Bits, R: Bits>(args: &DataChunk, result: &mut Vector) -> Result<()> {
-    binary::<I, R, R>(args, result, |input, min, out| {
-        *out = R::from_bits(min.to_bits().wrapping_add(input.to_bits()));
-        Ok(true)
-    })
+    let min = constant_min::<R>(args).to_bits();
+    rustdb_types::kernels::unary::<I, R>(&args.columns()[0], args.len(), result, |input| {
+        R::from_bits(min.wrapping_add(input.to_bits()))
+    });
+    Ok(())
 }
 
 type Kernel = fn(&DataChunk, &mut Vector) -> Result<()>;
@@ -191,12 +203,11 @@ fn compress_string(input: &[u8], size: usize) -> u128 {
     if size == 1 {
         return input.first().map_or(0, |&first| 1 + u128::from(first));
     }
+    // The first `size - 1` bytes, most significant first, above the length byte.
     let mut bytes = [0u8; 16];
-    for (i, &byte) in input.iter().take(size).enumerate() {
-        bytes[size - 1 - i] = byte;
-    }
-    bytes[0] = input.len() as u8;
-    u128::from_le_bytes(bytes)
+    let prefix = input.len().min(size - 1);
+    bytes[..prefix].copy_from_slice(&input[..prefix]);
+    (u128::from_be_bytes(bytes) >> (8 * (16 - size))) | u128::from(input.len() as u8)
 }
 
 /// `StringDecompress` (and `MiniStringDecompress`).
@@ -326,6 +337,27 @@ pub fn compressed_materialization_functions() -> Vec<ScalarFunctionSet> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compress_string_matches_the_byte_by_byte_layout() {
+        for size in [2usize, 4, 8, 16] {
+            for input in [&b""[..], b"a", b"ab", b"abcdefg", b"abcdefghijklmnopqrstu"] {
+                if input.len() >= size {
+                    continue;
+                }
+                let mut bytes = [0u8; 16];
+                for (i, &byte) in input.iter().take(size).enumerate() {
+                    bytes[size - 1 - i] = byte;
+                }
+                bytes[0] = input.len() as u8;
+                assert_eq!(
+                    compress_string(input, size),
+                    u128::from_le_bytes(bytes),
+                    "{size} {input:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn strings_round_trip_and_order() {

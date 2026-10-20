@@ -174,13 +174,16 @@ pub(crate) fn plan_window(
 /// `child` with a `ROW_NUMBER() OVER (PARTITION BY <all columns>)` column appended, which
 /// numbers duplicate rows (DuckDB's `CreatePartitionedRowNumExpression`, used by
 /// `EXCEPT ALL` / `INTERSECT ALL`).
-pub(crate) fn partitioned_row_number(child: PhysicalRef) -> Result<PhysicalRef> {
+pub(crate) fn partitioned_row_number(
+    client: Option<&rustdb_planner::ClientContext>,
+    child: PhysicalRef,
+) -> Result<PhysicalRef> {
     let input_types = child.types().to_vec();
     let partitions = input_types
         .iter()
         .enumerate()
-        .map(|(index, ty)| Expression::reference("", ty.clone(), index as u64))
-        .collect();
+        .map(|(index, ty)| super::collated_reference(client, ty, index))
+        .collect::<Result<_>>()?;
     let row_number = Expression::new(
         rustdb_planner::ExpressionType::WindowRowNumber,
         LogicalType::BIGINT,

@@ -1,6 +1,7 @@
 //! Physical operator implementations.
 
 mod alter;
+mod batch_insert;
 mod column_data_scan;
 mod copy_to_file;
 mod create_table;
@@ -40,6 +41,7 @@ mod update;
 mod window;
 
 pub use alter::AlterEntryAction;
+pub use batch_insert::{BatchInsertGlobal, PhysicalBatchInsert};
 pub use column_data_scan::PhysicalColumnDataScan;
 pub use copy_to_file::{CopyGlobal, CopyToFileOptions, PhysicalCopyToFile};
 pub use create_table::PhysicalCreateTable;

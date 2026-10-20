@@ -1154,6 +1154,7 @@ const TABLE_INFO_COLUMNS: Columns = &[
 /// `pragma_table_info(name)` (`PragmaTableInfoFunction`): the columns of a table or view.
 fn table_info_rows(context: &ClientContext, name: &str) -> Result<Vec<Vec<Value>>> {
     let (catalog, schema, table) = crate::sequence::parse_qualified_name(name)?;
+    let (catalog, schema) = context.bind_schema_or_catalog(&catalog, &schema)?;
     let found = context
         .get_entry(
             &catalog,
@@ -1231,6 +1232,7 @@ const SHOW_COLUMNS: Columns = &[
 /// a table or view in the form of DESCRIBE.
 fn show_rows(context: &ClientContext, name: &str) -> Result<Vec<Vec<Value>>> {
     let (catalog, schema, table) = crate::sequence::parse_qualified_name(name)?;
+    let (catalog, schema) = context.bind_schema_or_catalog(&catalog, &schema)?;
     let found = context
         .get_entry(
             &catalog,
@@ -2502,6 +2504,7 @@ const STORAGE_INFO_COLUMNS: Columns = &[
 /// `pragma_storage_info(name)` (`PragmaStorageInfoFunction`): every segment of a table.
 fn storage_info_rows(context: &ClientContext, name: &str) -> Result<Vec<Vec<Value>>> {
     let (catalog, schema, table) = crate::sequence::parse_qualified_name(name)?;
+    let (catalog, schema) = context.bind_schema_or_catalog(&catalog, &schema)?;
     let found = context
         .get_entry(
             &catalog,

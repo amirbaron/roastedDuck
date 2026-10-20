@@ -273,10 +273,10 @@ impl PhysicalOperator for PhysicalSeqScan {
             dynamic.as_ref(),
             estimated_cardinality,
         );
-        if self.is_index_scan.load(Ordering::Relaxed) {
-            if let Some(scan_type) = result.get_mut("Type") {
-                "Index Scan".clone_into(scan_type);
-            }
+        if self.is_index_scan.load(Ordering::Relaxed)
+            && let Some(scan_type) = result.get_mut("Type")
+        {
+            "Index Scan".clone_into(scan_type);
         }
         result
     }
@@ -342,6 +342,7 @@ impl Source for PhysicalSeqScan {
     fn local_source_state(&self, _: &ExecutionContext, global: &Self::Global) -> Result<Self::Local> {
         let mut state = TableScanState::default();
         state.initialize(self.column_ids.clone(), global.filters.as_ref());
+        state.set_projection(&self.projection);
         if let Some((sample_rate, seed)) = self.sampling {
             // DuckDB seeds the committed data's engine only.
             let table_random = seed.map_or_else(RandomEngine::default, RandomEngine::new);

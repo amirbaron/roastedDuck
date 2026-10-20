@@ -56,6 +56,20 @@ pub(super) fn propagate_scalar_function(
         "date_trunc" if child_stats.len() == 2 => {
             Ok(propagate_date_trunc(propagator, expression, child_stats))
         }
+        _ if function.function.ascii_kernel.is_some()
+            && child_stats
+                .first()
+                .and_then(BaseStatistics::string)
+                .is_some_and(|string| !string.has_unicode) =>
+        {
+            // The argument has no unicode: the ASCII kernel applies (`ILikePropagateStats`).
+            if let ExpressionKind::Function(function) = &mut expression.kind
+                && let Some(kernel) = function.function.ascii_kernel.take()
+            {
+                function.function.kernel = kernel;
+            }
+            Ok(None)
+        }
         "stats" => {
             // DuckDB's `StatsPropagateStats`: record the argument's statistics.
             if let (Some(data), Some(stats)) = (
@@ -284,6 +298,13 @@ pub struct WithoutStatistics;
 impl rustdb_function::FunctionData for WithoutStatistics {
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+
+    /// DuckDB has no bind data here (the missing statistics callback is not part of
+    /// `AggregateFunction::operator==`), so such aggregates are equal to each other and
+    /// `CommonAggregateOptimizer` computes them once.
+    fn equals(&self, other: &dyn rustdb_function::FunctionData) -> bool {
+        other.as_any().is::<Self>()
     }
 }
 

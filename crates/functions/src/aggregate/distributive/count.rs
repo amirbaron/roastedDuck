@@ -46,6 +46,34 @@ impl Aggregate for Count {
         Ok(())
     }
 
+    const SELECTION_UPDATE: bool = true;
+
+    fn update_selection(
+        &self,
+        inputs: &[Vector],
+        _: AggregateInput<'_>,
+        state: &mut i64,
+        sel: &[u32],
+    ) -> Result<()> {
+        let input = &inputs[0];
+        let validity = input.validity();
+        if input.kind() == VectorKind::Constant {
+            if !input.is_null(0) {
+                *state += sel.len() as i64;
+            }
+        } else if validity.is_all_valid() {
+            *state += sel.len() as i64;
+        } else {
+            let data_sel = input.sel();
+            let valid = sel
+                .iter()
+                .filter(|&&row| validity.is_valid(data_sel.slot(row as usize)))
+                .count();
+            *state += valid as i64;
+        }
+        Ok(())
+    }
+
     fn combine(&self, source: &i64, target: &mut i64, _: AggregateInput<'_>) -> Result<()> {
         *target += *source;
         Ok(())
@@ -123,6 +151,19 @@ impl Aggregate for CountStar {
         for row in 0..count {
             *states.get(row) += 1;
         }
+        Ok(())
+    }
+
+    const SELECTION_UPDATE: bool = true;
+
+    fn update_selection(
+        &self,
+        _: &[Vector],
+        _: AggregateInput<'_>,
+        state: &mut i64,
+        sel: &[u32],
+    ) -> Result<()> {
+        *state += sel.len() as i64;
         Ok(())
     }
 

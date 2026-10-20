@@ -155,13 +155,20 @@ pub(crate) fn like(string: &[u8], pattern: &[u8], escape: Option<u8>) -> Result<
     Ok(pidx == plen && sidx == slen)
 }
 
-/// `ILIKE`: `LIKE` on the lowercased string and pattern.
+/// `ILIKE`: `LIKE` on the lowercased string and pattern (`ILikeOperatorFunction`). Without
+/// an escape argument the escape is NUL, as DuckDB's default `escape = '\0'`.
 fn ilike(string: &[u8], pattern: &[u8], escape: Option<u8>) -> Result<bool> {
     let mut lower_string = Vec::with_capacity(string.len());
     case_convert(string, false, &mut lower_string);
     let mut lower_pattern = Vec::with_capacity(pattern.len());
     case_convert(pattern, false, &mut lower_pattern);
-    like(&lower_string, &lower_pattern, escape)
+    like(&lower_string, &lower_pattern, Some(escape.unwrap_or(0)))
+}
+
+/// `ILIKE` of a string without unicode (`ILikeOperatorASCII`): bytes are lowercased as
+/// ASCII and the pattern has no escape.
+fn ilike_ascii(string: &[u8], pattern: &[u8], _: Option<u8>) -> Result<bool> {
+    like(&string.to_ascii_lowercase(), &pattern.to_ascii_lowercase(), None)
 }
 
 /// A constant pattern made only of literal segments and `%` (DuckDB's `LikeMatcher`).
@@ -294,13 +301,23 @@ fn binary_like(name: &str, op: Matcher, invert: bool) -> ScalarFunction {
         name,
         vec![LogicalType::VARCHAR, LogicalType::VARCHAR],
         LogicalType::BOOLEAN,
-        move |args, _, result| {
-            binary::<Str, Str, bool>(args, result, |string, pattern, out| {
-                *out = op(string, pattern, None)? != invert;
-                Ok(true)
-            })
-        },
+        like_kernel(op, invert),
     )
+}
+
+fn like_kernel(
+    op: Matcher,
+    invert: bool,
+) -> impl Fn(&rustdb_types::DataChunk, &mut rustdb_function::FunctionState, &mut rustdb_types::Vector) -> Result<()>
++ Send
++ Sync
++ 'static {
+    move |args, _, result| {
+        binary::<Str, Str, bool>(args, result, |string, pattern, out| {
+            *out = op(string, pattern, None)? != invert;
+            Ok(true)
+        })
+    }
 }
 
 /// DuckDB's `GetEscapeChar`.
@@ -346,8 +363,8 @@ pub fn like_functions() -> Vec<ScalarFunctionSet> {
             |string, pattern, _| Ok(glob(string, pattern)),
             false,
         )),
-        single(binary_like("~~*", ilike, false)),
-        single(binary_like("!~~*", ilike, true)),
+        single(binary_like("~~*", ilike, false).with_ascii_kernel(like_kernel(ilike_ascii, false))),
+        single(binary_like("!~~*", ilike, true).with_ascii_kernel(like_kernel(ilike_ascii, true))),
         escape_like("like_escape", like, false),
         escape_like("not_like_escape", like, true),
         escape_like("ilike_escape", ilike, false),

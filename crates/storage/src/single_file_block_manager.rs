@@ -780,6 +780,14 @@ impl BlockManager for SingleFileBlockManager {
         verify_checksum(bytes, location)
     }
 
+    /// Blocks are immutable while their handle lives (a rewritten block gets a new
+    /// handle), so the checksum verified by the first read is not computed again when a
+    /// released table block is read back.
+    fn reread(&self, block_id: BlockId, buffer: &mut FileBuffer) -> Result<()> {
+        let location = self.block_location(block_id)?;
+        self.handle.read_at(buffer.internal_mut(), location)
+    }
+
     fn write(&self, block_id: BlockId, buffer: &FileBuffer) -> Result<()> {
         // SAFETY: blocks are written while no one modifies them (checkpoints write
         // blocks they own).

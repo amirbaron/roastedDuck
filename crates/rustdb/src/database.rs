@@ -1108,10 +1108,10 @@ impl Connection {
             return self.copy_database(copy);
         }
         if let rustdb_ast::SqlStatementKind::Load(info) = &statement.kind {
-            if let Some(name) = crate::extensions::load_extension(info)? {
-                if let Some(extension) = StaticExtension::from_name(&name) {
-                    self.database.instance.load_static_extension(extension)?;
-                }
+            if let Some(name) = crate::extensions::load_extension(info)?
+                && let Some(extension) = StaticExtension::from_name(&name)
+            {
+                self.database.instance.load_static_extension(extension)?;
             }
             return Ok(MaterializedResult::default());
         }
@@ -1816,6 +1816,7 @@ impl Connection {
         let optimizer_config = self.settings.optimizer_config();
         let optimizer_client = optimizer_config.enabled.then(|| Arc::clone(&client));
         let preserve_insertion_order = optimizer_config.preserve_insertion_order;
+        let plan_client = Arc::clone(&client);
         let optimize = optimizer_config.enabled;
         if optimize {
             self.profiler
@@ -1856,6 +1857,7 @@ impl Connection {
             threads: self.database.instance().env.threads(),
             preserve_insertion_order,
             index_scan: self.settings.index_scan_thresholds(),
+            client: plan_client,
         };
         self.profiler
             .start_phase(&self.settings.profiler, MetricType::PhysicalPlannerCreatePlan);

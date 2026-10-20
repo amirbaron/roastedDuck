@@ -13,12 +13,13 @@ use rustdb_common::{Error, Result};
 use rustdb_function::AggregateFunction;
 use rustdb_function::FunctionData;
 use rustdb_row::{
-    ChunkFormat, MatchPredicate, PartitionedAppendState, PartitionedTupleData, PinProperties, RowAggregate,
-    RowMatcher, RowOperationsState, RowPtr, TupleDataCollection, TupleDataLayout, ValidityType,
-    combine_states, destroy_states, finalize_states, initialize_states, update_states,
+    ChunkFormat, GroupedUpdate, MatchPredicate, PartitionedAppendState, PartitionedTupleData, PinProperties,
+    RowAggregate, RowMatcher, RowOperationsState, RowPtr, TupleDataCollection, TupleDataLayout, ValidityType,
+    combine_states, destroy_states, finalize_states, initialize_states, supports_update_selection,
+    update_states,
 };
 use rustdb_storage::statistics::{HLL_REGISTERS, HyperLogLog};
-use rustdb_types::{DataChunk, LogicalType, STANDARD_VECTOR_SIZE, SelectionVector, Vector};
+use rustdb_types::{DataChunk, DictionaryInfo, LogicalType, STANDARD_VECTOR_SIZE, SelectionVector, Vector};
 
 /// Upper 16 bits of an entry: the salt.
 const SALT_MASK: u64 = 0xFFFF_0000_0000_0000;
@@ -112,6 +113,21 @@ pub struct AggregateObject {
     pub child_count: usize,
 }
 
+/// Storage dictionaries larger than this are aggregated row by row
+/// (`MAX_DICTIONARY_SIZE_THRESHOLD`).
+const MAX_DICTIONARY_SIZE: usize = 20_000;
+
+/// The groups of the entries of the storage dictionary seen last (DuckDB's
+/// `AggregateDictionaryState`): a dictionary group column is looked up once per distinct
+/// entry, not once per row.
+#[derive(Debug, Default)]
+struct DictionaryGroups {
+    /// The dictionary (kept alive, so that its address identifies it).
+    dictionary: Option<Arc<DictionaryInfo>>,
+    /// The group row of every entry looked up so far (`RowPtr::NULL` otherwise).
+    groups: Vec<RowPtr>,
+}
+
 /// A hash table mapping groups to aggregate states.
 #[derive(Debug)]
 pub struct GroupedAggregateHashTable {
@@ -124,6 +140,10 @@ pub struct GroupedAggregateHashTable {
     count: usize,
     matcher: RowMatcher,
     row_state: RowOperationsState,
+    /// Whether every aggregate can add a selection of rows to one state, so chunks with
+    /// few groups are added one group at a time ([`GroupedUpdate`]).
+    selection_update: bool,
+    grouped_update: GroupedUpdate,
     /// Row of the group of each input row of the last `find_or_create_groups`.
     addresses: Vec<RowPtr>,
     /// Input rows of the last `find_or_create_groups` that created a group, in creation
@@ -140,6 +160,8 @@ pub struct GroupedAggregateHashTable {
     skip_lookups: bool,
     /// Distinct group hashes seen while enabled (`hll` / `enable_hll`).
     hll: Option<HyperLogLog>,
+    /// Cached groups of a storage dictionary group column (`dict_state`).
+    dictionary_groups: DictionaryGroups,
 }
 
 impl GroupedAggregateHashTable {
@@ -207,6 +229,7 @@ impl GroupedAggregateHashTable {
             MatchPredicate::NotDistinctFrom
         };
         let matcher = RowMatcher::new(&layout, &vec![predicate; group_types.len()], None)?;
+        let selection_update = supports_update_selection(&layout);
         let mut table = Self {
             layout,
             group_types,
@@ -217,6 +240,8 @@ impl GroupedAggregateHashTable {
             count: 0,
             matcher,
             row_state: RowOperationsState::default(),
+            selection_update,
+            grouped_update: GroupedUpdate::default(),
             addresses: Vec::new(),
             new_group_rows: Vec::new(),
             ht_offsets: Vec::new(),
@@ -225,6 +250,7 @@ impl GroupedAggregateHashTable {
             sink_count: 0,
             skip_lookups: false,
             hll: None,
+            dictionary_groups: DictionaryGroups::default(),
         };
         table.resize(capacity.max(initial_capacity()).next_power_of_two())?;
         Ok(table)
@@ -298,6 +324,7 @@ impl GroupedAggregateHashTable {
     pub fn abandon(&mut self) {
         self.entries.fill(0);
         self.count = 0;
+        self.dictionary_groups = DictionaryGroups::default();
     }
 
     /// Moves the rows into `radix_bits` partitions (`SetRadixBits` + `Repartition`). The
@@ -477,6 +504,74 @@ impl GroupedAggregateHashTable {
         Ok(new_groups)
     }
 
+    /// [`Self::find_or_create_groups`] for a single group column that is a dictionary
+    /// vector over a storage dictionary (DuckDB's `TryAddDictionaryGroups`): the entries
+    /// not looked up before are looked up once, then every row takes its entry's group.
+    /// Returns `None` (doing nothing) for other groups. `new_group_rows` then refers to the
+    /// looked-up entries, not to the rows.
+    fn find_or_create_dictionary_groups(&mut self, groups: &DataChunk) -> Result<Option<usize>> {
+        if self.skip_lookups || groups.column_count() != 1 {
+            return Ok(None);
+        }
+        let Some((dictionary, sel, info)) = groups.column(0).storage_dictionary_parts() else {
+            return Ok(None);
+        };
+        let size = info.size();
+        if size >= MAX_DICTIONARY_SIZE {
+            return Ok(None);
+        }
+        let count = groups.len();
+        let rows = &sel.as_slice()[..count];
+        if rows.iter().any(|&entry| entry as usize >= size) {
+            return Ok(None);
+        }
+        let cached = &mut self.dictionary_groups;
+        if !cached
+            .dictionary
+            .as_ref()
+            .is_some_and(|known| Arc::ptr_eq(known, info))
+        {
+            cached.dictionary = Some(Arc::clone(info));
+            cached.groups.clear();
+            cached.groups.resize(size, RowPtr::NULL);
+        }
+        // The entries without a group yet, each once (DuckDB's `found_entry`).
+        let mut unique: Vec<u32> = Vec::new();
+        for &entry in rows {
+            let group = &mut cached.groups[entry as usize];
+            if group.is_null() {
+                *group = RowPtr::from_ptr(std::ptr::dangling_mut());
+                unique.push(entry);
+            }
+        }
+        let mut new_groups = 0;
+        if !unique.is_empty() {
+            let values = Vector::storage_dictionary(
+                Arc::clone(dictionary),
+                SelectionVector::new(unique.clone()),
+                Arc::clone(info),
+            );
+            let hashes = rustdb_row::hash::hash_columns(&[&values], unique.len())?;
+            let chunk = DataChunk::new(vec![values], unique.len());
+            new_groups = match self.find_or_create_groups(&chunk, &hashes) {
+                Ok(new_groups) => new_groups,
+                Err(error) => {
+                    // The placeholders of the unique entries must not survive.
+                    self.dictionary_groups = DictionaryGroups::default();
+                    return Err(error);
+                }
+            };
+            for (index, &entry) in unique.iter().enumerate() {
+                self.dictionary_groups.groups[entry as usize] = self.addresses[index];
+            }
+        }
+        let groups = &self.dictionary_groups.groups;
+        self.addresses.clear();
+        self.addresses
+            .extend(rows.iter().map(|&entry| groups[entry as usize]));
+        Ok(Some(new_groups))
+    }
+
     /// Appends the groups of input rows `rows` and points their claimed entries at them.
     fn append_new_groups(&mut self, formats: &ChunkFormat<'_>, rows: &[u32]) -> Result<()> {
         self.partitioned
@@ -506,7 +601,20 @@ impl GroupedAggregateHashTable {
         selections: &[Option<Vec<u32>>],
     ) -> Result<usize> {
         self.sink_count += groups.len();
-        let new_groups = self.find_or_create_groups(groups, hashes)?;
+        let new_groups = match self.find_or_create_dictionary_groups(groups)? {
+            Some(new_groups) => new_groups,
+            None => self.find_or_create_groups(groups, hashes)?,
+        };
+        if self.selection_update && selections.iter().all(Option::is_none) {
+            // SAFETY: the addresses are pinned rows of this layout with live states.
+            let added = unsafe {
+                self.grouped_update
+                    .update(&self.layout, &self.addresses[..groups.len()], inputs)?
+            };
+            if added {
+                return Ok(new_groups);
+            }
+        }
         for (index, columns) in inputs.iter().enumerate() {
             match selections.get(index).and_then(Option::as_ref) {
                 None => {
@@ -615,6 +723,7 @@ impl GroupedAggregateHashTable {
         self.entries.fill(0);
         self.count = 0;
         self.states_live = false;
+        self.dictionary_groups = DictionaryGroups::default();
         Ok(data)
     }
 

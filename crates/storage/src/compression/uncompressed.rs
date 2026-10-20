@@ -463,26 +463,45 @@ fn scan_validity(
     let last_word = (start + count).div_ceil(64);
     // SAFETY: words covering published rows; bits beyond the count are ignored below.
     let bytes = unsafe { buffer.bytes(first_word * 8, (last_word - first_word) * 8)? };
-    let source: Vec<u64> = bytes
-        .as_chunks::<8>()
-        .0
-        .iter()
-        .map(|chunk| u64::from_le_bytes(*chunk))
-        .collect();
-    if source.iter().all(|&word| word == u64::MAX) {
+    let source = bytes.as_chunks::<8>().0;
+    let word = |index: usize| {
+        source
+            .get(index)
+            .map_or(u64::MAX, |chunk| u64::from_le_bytes(*chunk))
+    };
+    // The validity bits of rows `row..row + 64` (fewer at the end: the rest read as valid).
+    let bits_at = |row: usize| {
+        let bit = start - first_word * 64 + row;
+        let shift = bit % 64;
+        let low = word(bit / 64) >> shift;
+        let bits = if shift == 0 {
+            low
+        } else {
+            low | (word(bit / 64 + 1) << (64 - shift))
+        };
+        let len = (count - row).min(64);
+        if len == 64 { bits } else { bits | (u64::MAX << len) }
+    };
+    if (0..count).step_by(64).all(|row| bits_at(row) == u64::MAX) {
         return Ok(());
     }
-    let bit = |row: usize| source[(start + row) / 64 - first_word] >> ((start + row) % 64) & 1 == 1;
     let capacity = result.capacity().max(result_offset + count);
     let mut words = match result.validity().words() {
         Some(words) => words.to_vec(),
         None => Vec::new(),
     };
     words.resize(capacity.div_ceil(64), u64::MAX);
-    for row in 0..count {
-        if !bit(row) {
-            let target = result_offset + row;
-            words[target / 64] &= !(1u64 << (target % 64));
+    // Clear the invalid rows, 64 at a time, at their (possibly unaligned) target bits.
+    for row in (0..count).step_by(64) {
+        let invalid = !bits_at(row);
+        if invalid == 0 {
+            continue;
+        }
+        let target = result_offset + row;
+        let (index, shift) = (target / 64, target % 64);
+        words[index] &= !(invalid << shift);
+        if shift > 0 && invalid >> (64 - shift) != 0 {
+            words[index + 1] &= !(invalid >> (64 - shift));
         }
     }
     result.set_validity(ValidityMask::from_words(words));

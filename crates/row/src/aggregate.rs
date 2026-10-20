@@ -99,6 +99,125 @@ pub unsafe fn update_states(
     }
 }
 
+/// Whether every aggregate of `layout` can add a selection of rows to one state
+/// ([`AggregateOps::update_selection`](rustdb_function::aggregate::AggregateOps)).
+pub fn supports_update_selection(layout: &TupleDataLayout) -> bool {
+    layout
+        .aggregates()
+        .iter()
+        .all(|aggregate| aggregate.function.ops.supports_update_selection())
+}
+
+/// Adds input rows `sel` (in order) to the state of aggregate `index` in `row`: the
+/// result of [`update_states`] with those rows all pointing at `row`.
+///
+/// # Safety
+/// `row` must be a pinned row of `layout` with initialised states, not accessed
+/// concurrently; the aggregate must support selection updates.
+pub unsafe fn update_state_selection(
+    layout: &TupleDataLayout,
+    index: usize,
+    row: RowPtr,
+    inputs: &[Vector],
+    sel: &[u32],
+) -> Result<()> {
+    let aggregate = &layout.aggregates()[index];
+    let offset = layout.offsets()[layout.column_count() + index];
+    // SAFETY: rows of the layout are non-null and hold an aligned state for every
+    // aggregate at `offset`; the rest is forwarded from the caller.
+    unsafe {
+        let state = StatePtr::new(NonNull::new_unchecked(row.as_ptr().wrapping_add(offset)));
+        aggregate
+            .function
+            .ops
+            .update_selection(inputs, input(aggregate), state, sel)
+    }
+}
+
+/// Adds the rows of a chunk to their states one group at a time when the chunk has few
+/// groups: each state then takes all its rows in one call, in row order, so it ends as
+/// the row-at-a-time [`update_states`] leaves it, without the store-to-load chains of
+/// updating the same few states row after row.
+#[derive(Debug, Default)]
+pub struct GroupedUpdate {
+    /// The distinct state rows of the chunk.
+    present: Vec<RowPtr>,
+    /// The input rows of one group.
+    rows: Vec<u32>,
+}
+
+impl GroupedUpdate {
+    /// The most groups a chunk may have (each group is one pass over the chunk).
+    const MAX_GROUPS: usize = 8;
+    /// The fewest rows per group, on average.
+    const MIN_ROWS_PER_GROUP: usize = 16;
+
+    /// Collects the distinct rows of `addresses` into `present` and returns whether there
+    /// are few of them, with many rows each.
+    fn few_groups(&mut self, addresses: &[RowPtr]) -> bool {
+        self.present.clear();
+        let Some(&first) = addresses.first() else {
+            return false;
+        };
+        // Unused entries repeat the first row, so each row compares against all of them
+        // without branches; only a new group branches.
+        let mut known = [first; Self::MAX_GROUPS];
+        let mut len = 1;
+        for &address in addresses {
+            #[allow(
+                clippy::needless_bitwise_bool,
+                reason = "compares all entries without branches"
+            )]
+            let found = known.iter().fold(false, |found, &row| found | (row == address));
+            if !found {
+                if len == Self::MAX_GROUPS {
+                    return false;
+                }
+                known[len] = address;
+                len += 1;
+            }
+        }
+        self.present.extend_from_slice(&known[..len]);
+        addresses.len() >= len * Self::MIN_ROWS_PER_GROUP
+    }
+
+    /// Adds input row `i` of `inputs[a]` to the state of aggregate `a` in `addresses[i]`
+    /// for every aggregate, like [`update_states`], if the chunk has few groups; returns
+    /// whether it did (nothing is updated otherwise). Every aggregate of `layout` must
+    /// support selection updates ([`supports_update_selection`]).
+    ///
+    /// # Safety
+    /// As [`update_states`]; `addresses` holds a row for each input row.
+    pub unsafe fn update(
+        &mut self,
+        layout: &TupleDataLayout,
+        addresses: &[RowPtr],
+        inputs: &[Vec<Vector>],
+    ) -> Result<bool> {
+        if !self.few_groups(addresses) {
+            return Ok(false);
+        }
+        for group in 0..self.present.len() {
+            let target = self.present[group];
+            // The rows of this group, in order (branch-free: every row is written, and
+            // kept if it matches).
+            self.rows.clear();
+            self.rows.resize(addresses.len(), 0);
+            let mut kept = 0;
+            for (row, &address) in addresses.iter().enumerate() {
+                self.rows[kept] = row as u32;
+                kept += usize::from(address == target);
+            }
+            self.rows.truncate(kept);
+            for (index, columns) in inputs.iter().enumerate() {
+                // SAFETY: forwarded from the caller; the rows are rows of the inputs.
+                unsafe { update_state_selection(layout, index, target, columns, &self.rows)? };
+            }
+        }
+        Ok(true)
+    }
+}
+
 /// Merges the states of `sources[i]` into `targets[i]` for every aggregate
 /// (`RowOperations::CombineStates`).
 ///

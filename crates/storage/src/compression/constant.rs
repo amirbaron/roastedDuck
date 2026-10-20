@@ -50,9 +50,13 @@ pub(crate) fn scan(
             "constant segment scan out of the vector's bounds",
         ));
     }
-    let (first, rest) = bytes[start..end].split_at_mut(width);
-    for slot in rest.chunks_exact_mut(width) {
-        slot.copy_from_slice(first);
+    // Double the filled prefix each time: a few large copies instead of one per row.
+    let region = &mut bytes[start..end];
+    let mut filled = width;
+    while filled < region.len() {
+        let len = filled.min(region.len() - filled);
+        region.copy_within(..len, filled);
+        filled += len;
     }
     Ok(())
 }

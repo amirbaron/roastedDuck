@@ -11,11 +11,10 @@ use std::sync::Arc;
 use rustdb_common::Result;
 use rustdb_function::aggregate::{Aggregate, AggregateInput, AggregateOps, States, Typed};
 use rustdb_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionData};
-use rustdb_row::sort::{NullOrder, OrderModifiers, OrderType, create_sort_keys, decode_sort_key};
 use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, Vector};
 
 use crate::aggregate::distributive::minmax::check_top_n;
-use crate::aggregate::heap::{TopN, comparator};
+use crate::aggregate::heap::TopN;
 use crate::aggregate::nested::list::append_list;
 use crate::aggregate::stored::{Bytes, Fixed, SortKey, StoredKind};
 use crate::signature::type_id;
@@ -324,66 +323,71 @@ fn add_arg_min_max_overloads<const MAX: bool>(set: &mut AggregateFunctionSet, nu
     set.add(generic);
 }
 
-/// The state of the top-N form: the best `(key, argument)` pairs as sort keys.
-type KeyArgument = (Option<Vec<u8>>, Option<Vec<u8>>);
+/// A `(key, argument)` pair of the top-N form (`None` = NULL).
+type KeyArg<K, A> = (Option<K>, Option<A>);
 
-#[derive(Default)]
-struct ArgTopNState {
-    heap: Option<TopN<KeyArgument>>,
+/// The state of the top-N form: the best `(key, argument)` pairs.
+struct ArgTopNState<A, B> {
+    heap: Option<TopN<KeyArg<B, A>>>,
 }
 
-/// `arg_min(x, by, n)` (DuckDB's `ArgMinMaxNState`): keys and arguments are kept as sort
-/// keys, which order like the values; NULL keys (in the `_nulls_last` form) order last.
-struct ArgMinMaxN<const MAX: bool> {
+impl<A, B> Default for ArgTopNState<A, B> {
+    fn default() -> Self {
+        Self { heap: None }
+    }
+}
+
+/// `arg_min(x, by, n)` (DuckDB's `ArgMinMaxNState`) storing arguments as `A` and keys as `B`
+/// (DuckDB's `MinMaxFixedValue` / `MinMaxStringValue` / `MinMaxFallbackValue`); NULL keys
+/// (in the `_nulls_last` form) order last.
+struct ArgMinMaxN<A, B, const MAX: bool> {
     null_handling: NullHandling,
+    _kinds: PhantomData<fn() -> (A, B)>,
 }
 
-const ASC_NULLS_LAST: OrderModifiers = OrderModifiers::new(OrderType::Ascending, NullOrder::NullsLast);
-
-type Entry = (Option<Vec<u8>>, Option<Vec<u8>>);
-
-impl<const MAX: bool> ArgMinMaxN<MAX> {
+impl<A: StoredKind, B: StoredKind, const MAX: bool> ArgMinMaxN<A, B, MAX> {
     /// Whether key `a` is better than key `b` (NULL keys are worst).
-    fn key_better(a: Option<&[u8]>, b: Option<&[u8]>) -> bool {
+    #[inline]
+    fn key_better(a: Option<B::Ref<'_>>, b: Option<B::Ref<'_>>) -> bool {
         match (a, b) {
             (Some(a), Some(b)) => {
-                if MAX {
-                    a > b
-                } else {
-                    a < b
-                }
+                let ordering = B::cmp(a, b);
+                if MAX { ordering.is_gt() } else { ordering.is_lt() }
             }
             (Some(_), None) => true,
             _ => false,
         }
     }
 
-    fn less() -> impl Fn(&Entry, &Entry) -> bool {
-        comparator(false, |a: &Entry, b: &Entry| {
-            if Self::key_better(a.0.as_deref(), b.0.as_deref()) {
-                std::cmp::Ordering::Less
-            } else if Self::key_better(b.0.as_deref(), a.0.as_deref()) {
-                std::cmp::Ordering::Greater
-            } else {
-                std::cmp::Ordering::Equal
-            }
-        })
+    /// The heap order: entries with better keys first.
+    fn less(a: &KeyArg<B::Owned, A::Owned>, b: &KeyArg<B::Owned, A::Owned>) -> bool {
+        Self::key_better(a.0.as_ref().map(B::borrow), b.0.as_ref().map(B::borrow))
     }
 
-    fn insert(heap: &mut TopN<Entry>, key: Option<&[u8]>, arg: Option<&[u8]>) {
+    #[inline]
+    fn insert(heap: &mut TopN<KeyArg<B::Owned, A::Owned>>, key: Option<B::Ref<'_>>, arg: Option<A::Ref<'_>>) {
         heap.insert_with(
-            &Self::less(),
-            |top| Self::key_better(key, top.0.as_deref()),
-            || (key.map(<[u8]>::to_vec), arg.map(<[u8]>::to_vec)),
-            |slot| *slot = (key.map(<[u8]>::to_vec), arg.map(<[u8]>::to_vec)),
+            &Self::less,
+            |top| Self::key_better(key, top.0.as_ref().map(B::borrow)),
+            || (key.map(B::to_owned), arg.map(A::to_owned)),
+            |slot| {
+                match (key, &mut slot.0) {
+                    (Some(key), Some(current)) => B::assign(current, key),
+                    (key, current) => *current = key.map(B::to_owned),
+                }
+                match (arg, &mut slot.1) {
+                    (Some(arg), Some(current)) => A::assign(current, arg),
+                    (arg, current) => *current = arg.map(A::to_owned),
+                }
+            },
         );
     }
 }
 
-impl<const MAX: bool> Aggregate for ArgMinMaxN<MAX> {
-    type State = ArgTopNState;
+impl<A: StoredKind, B: StoredKind, const MAX: bool> Aggregate for ArgMinMaxN<A, B, MAX> {
+    type State = ArgTopNState<A::Owned, B::Owned>;
 
-    fn initialize(&self) -> ArgTopNState {
+    fn initialize(&self) -> Self::State {
         ArgTopNState::default()
     }
 
@@ -391,15 +395,15 @@ impl<const MAX: bool> Aggregate for ArgMinMaxN<MAX> {
         &self,
         inputs: &[Vector],
         _: AggregateInput<'_>,
-        states: &mut States<'_, ArgTopNState>,
+        states: &mut States<'_, Self::State>,
         count: usize,
     ) -> Result<()> {
-        let arg_keys = create_sort_keys(&[&inputs[0]], &[ASC_NULLS_LAST], count)?;
-        let by_keys = create_sort_keys(&[&inputs[1]], &[ASC_NULLS_LAST], count)?;
+        let args = A::prepare(&inputs[0], count)?;
+        let keys = B::prepare(&inputs[1], count)?;
         let n = inputs[2].unified::<i64>();
         for row in 0..count {
-            let arg = (!inputs[0].is_null(row)).then(|| arg_keys.key(row));
-            let key = (!inputs[1].is_null(row)).then(|| by_keys.key(row));
+            let arg = A::get(&args, row);
+            let key = B::get(&keys, row);
             if self.null_handling == NullHandling::IgnoreAnyNull && (arg.is_none() || key.is_none()) {
                 continue;
             }
@@ -415,17 +419,17 @@ impl<const MAX: bool> Aggregate for ArgMinMaxN<MAX> {
         Ok(())
     }
 
-    fn combine(&self, source: &ArgTopNState, target: &mut ArgTopNState, _: AggregateInput<'_>) -> Result<()> {
+    fn combine(&self, source: &Self::State, target: &mut Self::State, _: AggregateInput<'_>) -> Result<()> {
         crate::aggregate::distributive::minmax::combine_top_n(
             source.heap.as_ref(),
             &mut target.heap,
-            |heap, (key, arg)| Self::insert(heap, key.as_deref(), arg.as_deref()),
+            |heap, (key, arg)| Self::insert(heap, key.as_ref().map(B::borrow), arg.as_ref().map(A::borrow)),
         )
     }
 
     fn finalize(
         &self,
-        state: &mut ArgTopNState,
+        state: &mut Self::State,
         _: AggregateInput<'_>,
         result: &mut Vector,
         row: usize,
@@ -434,21 +438,15 @@ impl<const MAX: bool> Aggregate for ArgMinMaxN<MAX> {
             result.set_null(row);
             return Ok(());
         };
-        let sorted = heap.sorted(&Self::less());
+        let sorted = heap.sorted(&Self::less);
         append_list(
             result,
             row,
             |child, offset| {
                 for (index, (_, arg)) in sorted.iter().enumerate() {
-                    if let Some(arg) = arg {
-                        decode_sort_key(
-                            arg,
-                            std::slice::from_mut(child),
-                            offset + index,
-                            &[ASC_NULLS_LAST],
-                        )?;
-                    } else {
-                        child.set_null(offset + index);
+                    match arg {
+                        Some(arg) => A::write(arg, child, offset + index)?,
+                        None => child.set_null(offset + index),
                     }
                 }
                 Ok(())
@@ -456,6 +454,41 @@ impl<const MAX: bool> Aggregate for ArgMinMaxN<MAX> {
             sorted.len(),
         )
     }
+}
+
+/// Dispatches `$body` with `$K` bound to how the top-N `arg_min`/`arg_max` stores values of
+/// `$ty`: by value for the types DuckDB specialises (`INT32`, `INT64`, `FLOAT`, `DOUBLE`), as
+/// bytes for VARCHAR, as ascending sort keys otherwise (which order like the values).
+macro_rules! with_top_n_kind {
+    ($ty:expr, $K:ident => $body:expr) => {{
+        use rustdb_types::PhysicalType as P;
+        match $ty.physical_type() {
+            P::Int32 => {
+                type $K = Fixed<i32>;
+                $body
+            }
+            P::Int64 => {
+                type $K = Fixed<i64>;
+                $body
+            }
+            P::Float => {
+                type $K = Fixed<f32>;
+                $body
+            }
+            P::Double => {
+                type $K = Fixed<f64>;
+                $body
+            }
+            P::Varchar => {
+                type $K = Bytes;
+                $body
+            }
+            _ => {
+                type $K = SortKey<false>;
+                $body
+            }
+        }
+    }};
 }
 
 /// DuckDB's `AddArgMinMaxNFunction`.
@@ -472,8 +505,15 @@ fn arg_min_max_n<const MAX: bool>(null_handling: NullHandling) -> AggregateFunct
                 return Err(crate::parameter_not_resolved());
             }
             let ty = input.argument_types[0].clone();
-            function.ops = Arc::new(Typed(ArgMinMaxN::<MAX> { null_handling }));
-            function.arguments = vec![ty.clone(), input.argument_types[1].clone(), LogicalType::BIGINT];
+            let by = input.argument_types[1].clone();
+            function.ops = with_top_n_kind!(ty, A => with_top_n_kind!(by, B => {
+                let ops: Arc<dyn AggregateOps> = Arc::new(Typed(ArgMinMaxN::<A, B, MAX> {
+                    null_handling,
+                    _kinds: PhantomData,
+                }));
+                ops
+            }));
+            function.arguments = vec![ty.clone(), by, LogicalType::BIGINT];
             function.return_type = LogicalType::list(ty);
             Ok(Some(Arc::new(ArgMinMaxData { null_handling })))
         },

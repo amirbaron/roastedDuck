@@ -21,6 +21,36 @@ pub enum VectorKind {
     Sequence,
 }
 
+/// A whole dictionary of a storage segment, shared by the dictionary vectors scanned from
+/// it (DuckDB's `VectorChildBuffer` with its `size` and `id`). Operators may work on its
+/// entries once instead of once per row, e.g. hash them once
+/// (`DictionaryVector::GetCachedHashes`).
+#[derive(Debug)]
+pub struct DictionaryInfo {
+    size: usize,
+    hashes: std::sync::OnceLock<Box<[u64]>>,
+}
+
+impl DictionaryInfo {
+    /// The information of a dictionary of `size` entries.
+    pub fn new(size: usize) -> Self {
+        Self {
+            size,
+            hashes: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// The number of dictionary entries (`DictionaryVector::DictionarySize`).
+    pub fn size(&self) -> usize {
+        self.size
+    }
+
+    /// The hashes of the dictionary's entries, computed by `compute` on first use.
+    pub fn hashes(&self, compute: impl FnOnce() -> Vec<u64>) -> &[u64] {
+        self.hashes.get_or_init(|| compute().into_boxed_slice())
+    }
+}
+
 /// `(offset, length)` of one list value inside the list's child vector (`list_entry_t`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(C)]
@@ -131,6 +161,9 @@ enum Repr {
     Dictionary {
         sel: SelectionVector,
         child: Arc<Vector>,
+        /// Set when `child` is a whole dictionary of a storage segment (DuckDB's
+        /// `DictionarySize` / `DictionaryId`); kept by slices.
+        info: Option<Arc<DictionaryInfo>>,
     },
     Sequence {
         start: i64,
@@ -188,6 +221,37 @@ impl Vector {
     /// A flat vector with room for `capacity` rows, all zero/valid.
     pub fn flat(ty: LogicalType, capacity: usize) -> Self {
         Self::flat_with(ty, capacity, RawBuffer::zeroed)
+    }
+
+    /// A dictionary vector over a whole storage dictionary (DuckDB's
+    /// `Vector::Dictionary(buffer_ptr<VectorChildBuffer>, sel)`): row `i` is entry `sel[i]`
+    /// of `dictionary`, a flat vector.
+    pub fn storage_dictionary(
+        dictionary: Arc<Self>,
+        sel: SelectionVector,
+        info: Arc<DictionaryInfo>,
+    ) -> Self {
+        Self {
+            ty: dictionary.ty.clone(),
+            repr: Repr::Dictionary {
+                sel,
+                child: dictionary,
+                info: Some(info),
+            },
+        }
+    }
+
+    /// The dictionary, selection and dictionary information of a vector over a storage
+    /// dictionary (DuckDB's `DictionaryVector::DictionaryId` is set).
+    pub fn storage_dictionary_parts(&self) -> Option<(&Arc<Self>, &SelectionVector, &Arc<DictionaryInfo>)> {
+        match &self.repr {
+            Repr::Dictionary {
+                sel,
+                child,
+                info: Some(info),
+            } => Some((child, sel, info)),
+            _ => None,
+        }
     }
 
     /// A flat vector for a writer that sets every slot it later reads, such as a column
@@ -333,13 +397,19 @@ impl Vector {
                 flat.flatten(sel.as_slice().iter().map(|&i| i as usize + 1).max().unwrap_or(0));
                 return flat.slice(sel);
             }
-            Repr::Dictionary { sel: inner, child } => Repr::Dictionary {
+            Repr::Dictionary {
+                sel: inner,
+                child,
+                info,
+            } => Repr::Dictionary {
                 sel: sel.compose(inner),
                 child: Arc::clone(child),
+                info: info.clone(),
             },
             Repr::Flat(_) => Repr::Dictionary {
                 sel: sel.clone(),
                 child: Arc::new(self.clone()),
+                info: None,
             },
         };
         Self {
@@ -356,7 +426,11 @@ impl Vector {
         columns
             .iter()
             .map(|column| match &column.repr {
-                Repr::Dictionary { sel: inner, child } => {
+                Repr::Dictionary {
+                    sel: inner,
+                    child,
+                    info,
+                } => {
                     let key = inner.buffer_key();
                     let composed = if let Some((_, composed)) = cache.iter().find(|(k, _)| *k == key) {
                         composed.clone()
@@ -370,6 +444,7 @@ impl Vector {
                         repr: Repr::Dictionary {
                             sel: composed,
                             child: Arc::clone(child),
+                            info: info.clone(),
                         },
                     }
                 }
@@ -813,7 +888,7 @@ impl Vector {
                 let sel = SelectionVector::new(vec![0; count]);
                 *self = self.gather(&sel);
             }
-            Repr::Dictionary { sel, child } => {
+            Repr::Dictionary { sel, child, .. } => {
                 let sel = sel.clone();
                 let mut flat = child.gather(&sel);
                 // The dictionary may have been reinterpreted as a type of the same layout.
@@ -953,7 +1028,9 @@ impl Vector {
         match &self.repr {
             Repr::Flat(_) => self.gather(sel),
             Repr::Constant(_) => self.gather(&SelectionVector::new(vec![0; sel.len()])),
-            Repr::Dictionary { sel: inner, child } => child.gather(&sel.compose(inner)),
+            Repr::Dictionary {
+                sel: inner, child, ..
+            } => child.gather(&sel.compose(inner)),
             Repr::Sequence { .. } => {
                 let max = sel.as_slice().iter().map(|&i| i as usize + 1).max().unwrap_or(0);
                 self.flattened(max).gather(sel)

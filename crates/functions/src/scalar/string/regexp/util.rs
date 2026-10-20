@@ -11,7 +11,7 @@
 use std::borrow::Cow;
 use std::fmt::Write as _;
 
-use regex::bytes::{Captures, Regex, RegexBuilder};
+use regex::bytes::{CaptureLocations, Regex, RegexBuilder};
 use regex_syntax::ast::ErrorKind as AstErrorKind;
 use rustdb_common::{Error, Result};
 use rustdb_types::Value;
@@ -426,7 +426,13 @@ pub(crate) fn max_submatch(rewrite: &[u8]) -> usize {
 
 /// Appends `rewrite` with `\N` replaced by group N (`RE2::Rewrite`); `false` on an invalid
 /// rewrite (whatever was appended stays).
-pub(crate) fn rewrite(out: &mut Vec<u8>, rewrite: &[u8], captures: &Captures<'_>, groups: usize) -> bool {
+pub(crate) fn rewrite(
+    out: &mut Vec<u8>,
+    rewrite: &[u8],
+    input: &[u8],
+    captures: &CaptureLocations,
+    groups: usize,
+) -> bool {
     let mut i = 0;
     while i < rewrite.len() {
         let c = rewrite[i];
@@ -441,8 +447,8 @@ pub(crate) fn rewrite(out: &mut Vec<u8>, rewrite: &[u8], captures: &Captures<'_>
                 if n >= groups {
                     return false;
                 }
-                if let Some(group) = captures.get(n) {
-                    out.extend_from_slice(group.as_bytes());
+                if let Some((start, end)) = captures.get(n) {
+                    out.extend_from_slice(&input[start..end]);
                 }
             }
             Some(b'\\') => out.push(b'\\'),

@@ -408,24 +408,20 @@ impl Source for PhysicalRecursiveCte {
         (): &mut (),
     ) -> Result<SourceResult> {
         let mut guard = state.iteration.lock().unwrap_or_else(PoisonError::into_inner);
-        let iteration = match &mut *guard {
-            Some(iteration) => iteration,
-            None => {
-                let mut seen = GroupedAggregateHashTable::new(
-                    ctx.env.buffer_manager.clone(),
-                    self.types.clone(),
-                    &[],
-                    initial_capacity(),
-                    0,
-                )?;
-                let anchor = Self::run(&self.parts[0], &ctx.env)?;
-                let chunks = self.iteration_rows(&mut seen, anchor)?;
-                guard.insert(Iteration {
-                    seen,
-                    chunks,
-                    next: 0,
-                })
-            }
+        if guard.is_none() {
+            let mut seen = GroupedAggregateHashTable::new(
+                ctx.env.buffer_manager.clone(),
+                self.types.clone(),
+                &[],
+                initial_capacity(),
+                0,
+            )?;
+            let anchor = Self::run(&self.parts[0], &ctx.env)?;
+            let chunks = self.iteration_rows(&mut seen, anchor)?;
+            *guard = Some(Iteration { seen, chunks, next: 0 });
+        }
+        let Some(iteration) = guard.as_mut() else {
+            return Err(Error::internal("recursive CTE without an iteration"));
         };
         loop {
             if let Some(source) = iteration.chunks.get(iteration.next) {

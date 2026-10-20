@@ -147,7 +147,8 @@ fn check_integer_range(filter: &BloomFilter, min: NumericValue, max: NumericValu
 impl ExpressionFilter for BloomTableFilter {
     /// DuckDB's `BFTableFilter::Filter`: hashes the keys and keeps the rows found.
     fn select(&self, vector: &Vector, count: usize, sel: &mut Vec<u32>) -> Result<()> {
-        let mut hashes = Vector::flat(LogicalType::UBIGINT, count.max(1));
+        // Every slot is written by the hash.
+        let mut hashes = Vector::flat_for_overwrite(LogicalType::UBIGINT, count.max(1));
         hash_vector(vector, count, &mut hashes)?;
         if hashes.kind() == VectorKind::Constant {
             if !self.filter.lookup(hashes.values::<u64>()[0]) {
@@ -156,7 +157,14 @@ impl ExpressionFilter for BloomTableFilter {
             return Ok(());
         }
         let hashes = hashes.values::<u64>();
-        sel.retain(|&row| self.filter.lookup(hashes[row as usize]));
+        // Branchless compaction (`LookupHashes` writes every index, counts the found).
+        let mut kept = 0;
+        for index in 0..sel.len() {
+            let row = sel[index];
+            sel[kept] = row;
+            kept += usize::from(self.filter.lookup(hashes[row as usize]));
+        }
+        sel.truncate(kept);
         Ok(())
     }
 

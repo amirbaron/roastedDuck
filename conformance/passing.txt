@@ -34,6 +34,7 @@ test/fuzzer/duckfuzz/array_const_columndatacopy.test
 test/fuzzer/duckfuzz/array_const_null_cast.test
 test/fuzzer/duckfuzz/array_distance.test
 test/fuzzer/duckfuzz/array_group_by_sample.test
+test/fuzzer/duckfuzz/array_hash.test
 test/fuzzer/duckfuzz/array_list_gather_cast.test
 test/fuzzer/duckfuzz/array_serialization_flattening.test
 test/fuzzer/duckfuzz/array_slice_nullness.test
@@ -937,10 +938,12 @@ test/sql/attach/attach_multi_identifiers.test
 test/sql/attach/attach_nested_types.test
 test/sql/attach/attach_null.test
 test/sql/attach/attach_persistent.test
+test/sql/attach/attach_pragma_storage_info.test
 test/sql/attach/attach_read_only.test
 test/sql/attach/attach_read_only_transaction.test
 test/sql/attach/attach_remote_http_logging.test
 test/sql/attach/attach_reserved.test
+test/sql/attach/attach_row_group_size_decreasing.test
 test/sql/attach/attach_same_db.test
 test/sql/attach/attach_schema.test
 test/sql/attach/attach_serialize_dependency.test
@@ -948,6 +951,7 @@ test/sql/attach/attach_show_all_tables.test
 test/sql/attach/attach_show_table.test
 test/sql/attach/attach_table_constraints.test
 test/sql/attach/attach_table_ddl.test
+test/sql/attach/attach_table_info.test
 test/sql/attach/attach_transactionality.test
 test/sql/attach/attach_views.test
 test/sql/attach/attach_wal_alter.test
@@ -1771,6 +1775,7 @@ test/sql/delete/test_large_delete_parallel.test
 test/sql/delete/test_segment_deletes.test
 test/sql/delete/test_truncate.test
 test/sql/delete/test_using_delete.test
+test/sql/delete/test_using_delete_duplicates.test
 test/sql/error/aggregate_order_by.test
 test/sql/error/error_location_not_duplicated.test
 test/sql/error/escape_percent_sign.test
@@ -2866,6 +2871,7 @@ test/sql/returning/returning_delete_list.test
 test/sql/returning/returning_delete_same_transaction.test
 test/sql/returning/returning_insert.test
 test/sql/returning/returning_large.test
+test/sql/returning/returning_update.test
 test/sql/sample/bernoulli_sampling.test_slow
 test/sql/sample/can_sample_from_ingested_files.test
 test/sql/sample/get_multiple_samples_small.test_slow
@@ -2903,6 +2909,7 @@ test/sql/select/test_select_locking.test
 test/sql/select/test_select_qualified_view.test
 test/sql/setops/ambiguous_order_by.test
 test/sql/setops/setops_pushdown.test
+test/sql/setops/test_except.test
 test/sql/setops/test_full_outer_join_union.test
 test/sql/setops/test_joins_under_setops.test_slow
 test/sql/setops/test_nested_except.test
@@ -2990,6 +2997,7 @@ test/sql/storage/catalog/test_view_storage.test
 test/sql/storage/catalog/test_view_storage_no_view_dependencies.test
 test/sql/storage/checkpoint/checkpoint_with_outstanding_insertions.test
 test/sql/storage/checkpoint/concurrent_load_delete.test_slow
+test/sql/storage/checkpoint/indexed_table_delete_insert_fragmentation.test
 test/sql/storage/checkpoint/indexed_table_row_group_growth.test_slow
 test/sql/storage/checkpoint/keep_small_row_groups.test_slow
 test/sql/storage/checkpoint_exactly_morsel_size.test_slow
@@ -3002,6 +3010,8 @@ test/sql/storage/commit_abort_medium.test
 test/sql/storage/commit_index_deletes.test
 test/sql/storage/compact_block_size/compact_vector_size.test
 test/sql/storage/compact_block_size/create_table_compression.test
+test/sql/storage/compact_block_size/ensure_bitpacking.test
+test/sql/storage/compact_block_size/ensure_no_bitpacking.test
 test/sql/storage/compact_block_size/insertion_order_odd_batches.test
 test/sql/storage/compact_block_size/mixed_block_sizes.test
 test/sql/storage/compression/alp/alp_corrupted_exception_position.test
@@ -3021,6 +3031,7 @@ test/sql/storage/compression/alp/alp_read.test_slow
 test/sql/storage/compression/alp/alp_simple.test
 test/sql/storage/compression/alp/alp_simple_float.test
 test/sql/storage/compression/alp/alp_skip.test_slow
+test/sql/storage/compression/alp/alp_storage_version.test
 test/sql/storage/compression/alp/alp_stress_test.test_slow
 test/sql/storage/compression/alp/alp_uncompressed_mode_regression.test_slow
 test/sql/storage/compression/alp/alp_zeros.test
@@ -3038,6 +3049,7 @@ test/sql/storage/compression/alprd/alprd_read.test_slow
 test/sql/storage/compression/alprd/alprd_simple.test
 test/sql/storage/compression/alprd/alprd_simple_float.test
 test/sql/storage/compression/alprd/alprd_skip.test_slow
+test/sql/storage/compression/alprd/alprd_storage_version.test
 test/sql/storage/compression/alprd/alprd_stress_test.test_slow
 test/sql/storage/compression/alprd/alprd_uncompressed_mode_regression.test_slow
 test/sql/storage/compression/alprd/alprd_uncompressed_mode_v1_5_0.test_slow

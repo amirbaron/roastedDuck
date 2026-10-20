@@ -13,9 +13,7 @@ use super::stream::StreamDeserializer;
 use crate::data_table::TableIoManager;
 use crate::metadata::{MetaBlockPointer, MetadataManager, MetadataReader};
 use crate::statistics::{BaseStatistics, DistinctStatistics, deserialize_table_statistics};
-use crate::table::{
-    ChunkVectorInfo, ColumnData, RowGroup, RowGroupCollection, RowVersionManager, TableStatistics,
-};
+use crate::table::{ChunkVectorInfo, RowGroup, RowGroupCollection, RowVersionManager, TableStatistics};
 
 /// A table's data as stored by a checkpoint.
 #[derive(Debug)]
@@ -167,17 +165,14 @@ pub fn load_row_groups(
             ));
         }
         let mut columns = Vec::with_capacity(types.len());
-        for (index, (column_pointer, ty)) in pointer.data_pointers.iter().zip(types).enumerate() {
+        for (column_pointer, ty) in pointer.data_pointers.iter().zip(types) {
             let persistent = read_column(metadata, *column_pointer, ty)?;
             persistent.collect_blocks(blocks);
-            columns.push(Arc::new(ColumnData::from_persistent(
-                Arc::clone(io),
-                index,
-                ty.clone(),
-                &persistent,
-            )?));
+            columns.push(persistent);
         }
-        let row_group = RowGroup::from_columns(columns, pointer.tuple_count);
+        // The columns are built when first used.
+        let row_group =
+            RowGroup::from_persistent(Arc::clone(io), types.to_vec(), columns, pointer.tuple_count);
         if let Some(first) = pointer.deletes_pointers.first() {
             row_group.set_version_info(Arc::new(read_deletes(metadata, *first)?));
         }
