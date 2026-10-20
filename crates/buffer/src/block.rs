@@ -103,8 +103,9 @@ pub(crate) struct BlockMemory {
     /// persistent table data is only kept within the pool's table cache (see
     /// [`BlockHandle::release_on_unpin`]).
     unpin_policy: AtomicU8,
-    /// Whether the block was read (and its checksum verified) before.
-    read_before: AtomicBool,
+    /// How often the block was read from the file, up to 2: the first read verifies its
+    /// checksum, and only blocks read again enter the table cache.
+    file_reads: AtomicU8,
     inner: Mutex<BlockInner>,
 }
 
@@ -132,7 +133,7 @@ impl BlockMemory {
             memory_usage: AtomicU64::new(alloc_size as u64),
             eviction_queue_index: AtomicUsize::new(NO_QUEUE_INDEX),
             unpin_policy: AtomicU8::new(UnpinPolicy::Keep as u8),
-            read_before: AtomicBool::new(false),
+            file_reads: AtomicU8::new(0),
             inner: Mutex::new(BlockInner {
                 buffer: None,
                 charge,
@@ -168,7 +169,7 @@ impl BlockMemory {
             memory_usage: AtomicU64::new(memory_usage),
             eviction_queue_index: AtomicUsize::new(NO_QUEUE_INDEX),
             unpin_policy: AtomicU8::new(UnpinPolicy::Keep as u8),
-            read_before: AtomicBool::new(false),
+            file_reads: AtomicU8::new(0),
             inner: Mutex::new(BlockInner {
                 buffer: Some(buffer),
                 charge,
@@ -245,7 +246,11 @@ impl BlockMemory {
             policy if policy == UnpinPolicy::Free as u8 => return false,
             _ => {}
         }
-        if !self.shared.pool().try_cache_table_data(self.memory_usage()) {
+        // Data read once (loading an index, a one-off scan) does not take up the cache;
+        // data read again likely is again.
+        if self.file_reads.load(Ordering::Relaxed) < 2
+            || !self.shared.pool().try_cache_table_data(self.memory_usage())
+        {
             return false;
         }
         self.unpin_policy
@@ -550,11 +555,12 @@ impl BlockHandle {
             let mut buffer = memory
                 .shared
                 .create_block_buffer(block_manager.as_ref(), reusable)?;
-            if memory.read_before.load(Ordering::Relaxed) {
+            if memory.file_reads.load(Ordering::Relaxed) > 0 {
                 block_manager.reread(self.block_id, &mut buffer)?;
+                memory.file_reads.store(2, Ordering::Relaxed);
             } else {
                 block_manager.read(self.block_id, &mut buffer)?;
-                memory.read_before.store(true, Ordering::Relaxed);
+                memory.file_reads.store(1, Ordering::Relaxed);
             }
             buffer
         } else {
