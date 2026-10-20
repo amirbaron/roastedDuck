@@ -64,6 +64,55 @@ pub(crate) struct DatabaseInstance {
     /// that changes on every global `SET` / `RESET`; connections apply them unless they
     /// set the option themselves.
     global_settings: Mutex<GlobalSettings>,
+    /// The statically linked extensions whose catalog entries are registered.
+    loaded_extensions: Mutex<Vec<StaticExtension>>,
+}
+
+/// An extension linked into the engine whose functions are registered on load.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StaticExtension {
+    Parquet,
+    Json,
+}
+
+impl StaticExtension {
+    const ALL: [Self; 2] = [Self::Parquet, Self::Json];
+
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "parquet" => Some(Self::Parquet),
+            "json" => Some(Self::Json),
+            _ => None,
+        }
+    }
+
+    /// Registers the extension's functions, types and macros (its `Load`).
+    fn register(self, system: &Catalog) -> Result<()> {
+        match self {
+            Self::Parquet => {
+                system.register_copy_function(rustdb_parquet::copy::parquet_copy_function())?;
+                for set in rustdb_parquet::parquet_table_functions() {
+                    system.register_table_functions(set)?;
+                }
+                for set in rustdb_parquet::parquet_scalar_functions() {
+                    system.register_scalar_functions(set)?;
+                }
+            }
+            Self::Json => {
+                for function in rustdb_json::json_copy_functions() {
+                    system.register_copy_function(function)?;
+                }
+                for set in rustdb_json::json_scalar_functions() {
+                    system.register_scalar_functions(set)?;
+                }
+                for set in rustdb_json::json_table_functions() {
+                    system.register_table_functions(set)?;
+                }
+                crate::system_functions::register_json_macros(system)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The globally set options and their version (see `DatabaseInstance::global_settings`).
@@ -154,6 +203,16 @@ impl Drop for DatabaseInstance {
 }
 
 impl DatabaseInstance {
+    /// Registers a statically linked extension's catalog entries once.
+    fn load_static_extension(&self, extension: StaticExtension) -> Result<()> {
+        let mut loaded = self.loaded_extensions.lock().unwrap_or_else(PoisonError::into_inner);
+        if !loaded.contains(&extension) {
+            extension.register(&self.system_catalog)?;
+            loaded.push(extension);
+        }
+        Ok(())
+    }
+
     /// `SET threads` (`ThreadsSetting::SetGlobal`), or the default thread count for
     /// `RESET threads` (`None`).
     fn set_threads(&self, value: Option<&rustdb_types::Value>) -> Result<()> {
@@ -364,10 +423,6 @@ impl Database {
             system_catalog.register_table_functions(set)?;
         }
         system_catalog.register_copy_function(rustdb_csv::copy_csv::csv_copy_function())?;
-        system_catalog.register_copy_function(rustdb_parquet::copy::parquet_copy_function())?;
-        for function in rustdb_json::json_copy_functions() {
-            system_catalog.register_copy_function(function)?;
-        }
         for set in rustdb_csv::multi_file::glob_functions() {
             system_catalog.register_table_functions(set)?;
         }
@@ -377,21 +432,8 @@ impl Database {
         for set in rustdb_csv::read_csv::read_csv_functions() {
             system_catalog.register_table_functions(set)?;
         }
-        for set in rustdb_parquet::parquet_table_functions() {
-            system_catalog.register_table_functions(set)?;
-        }
-        for set in rustdb_parquet::parquet_scalar_functions() {
-            system_catalog.register_scalar_functions(set)?;
-        }
-        for set in rustdb_json::json_scalar_functions() {
-            system_catalog.register_scalar_functions(set)?;
-        }
-        for set in rustdb_json::json_table_functions() {
-            system_catalog.register_table_functions(set)?;
-        }
         crate::system_functions::register_default_views(&system_catalog)?;
         crate::system_functions::register_default_macros(&system_catalog)?;
-        crate::system_functions::register_json_macros(&system_catalog)?;
         let buffer_manager = rustdb_buffer::BufferManager::new(rustdb_buffer::BufferManagerConfig {
             temp_directory: Some(default_temp_directory(&path).into()),
             ..rustdb_buffer::BufferManagerConfig::default()
@@ -414,7 +456,13 @@ impl Database {
             object_cache: Arc::default(),
             log_manager: Arc::default(),
             global_settings: Mutex::default(),
+            loaded_extensions: Mutex::default(),
         };
+        if config.load_extensions {
+            for extension in StaticExtension::ALL {
+                instance.load_static_extension(extension)?;
+            }
+        }
         for (name, value) in &config.options {
             if is_threads_setting(name) {
                 instance.set_threads(Some(value))?;
@@ -523,15 +571,18 @@ impl Database {
     }
 
     /// Loads a (statically linked) extension, like `LOAD name`.
-    pub fn load_extension(&self, name: &str) -> ExtensionLoad {
-        match name {
-            "parquet" | "json" => ExtensionLoad::Loaded,
+    pub fn load_extension(&self, name: &str) -> Result<ExtensionLoad> {
+        if let Some(extension) = StaticExtension::from_name(name) {
+            self.instance.load_static_extension(extension)?;
+            return Ok(ExtensionLoad::Loaded);
+        }
+        Ok(match name {
             "core_functions" | "icu" | "tpch" | "tpcds" | "autocomplete" | "httpfs" | "fts" | "inet"
             | "excel" | "sqlsmith" | "spatial" | "delta" | "iceberg" | "aws" | "azure" | "motherduck"
             | "postgres_scanner" | "mysql_scanner" | "sqlite_scanner" | "vss" | "ui" | "encodings"
             | "ducklake" | "avro" | "demo_capi" => ExtensionLoad::NotAvailable,
             _ => ExtensionLoad::Unknown,
-        }
+        })
     }
 
     pub(crate) fn instance(&self) -> &DatabaseInstance {
@@ -999,7 +1050,11 @@ impl Connection {
             return self.copy_database(copy);
         }
         if let rustdb_ast::SqlStatementKind::Load(info) = &statement.kind {
-            crate::extensions::load_extension(info)?;
+            if let Some(name) = crate::extensions::load_extension(info)? {
+                if let Some(extension) = StaticExtension::from_name(&name) {
+                    self.database.instance.load_static_extension(extension)?;
+                }
+            }
             return Ok(MaterializedResult::default());
         }
         // Pragmas that stand for a query run that query (DuckDB's `PragmaHandler`).

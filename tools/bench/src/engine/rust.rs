@@ -71,7 +71,10 @@ impl Engine for RustEngine {
             .state
             .as_ref()
             .ok_or_else(|| EngineError::failed("no open database"))?;
-        Ok(match database.load_extension(name) {
+        let load = database
+            .load_extension(name)
+            .map_err(|error| EngineError::failed(error.to_string()))?;
+        Ok(match load {
             ExtensionLoad::Loaded => ExtensionStatus::Loaded,
             ExtensionLoad::NotAvailable => ExtensionStatus::NotAvailable,
             ExtensionLoad::Unknown => ExtensionStatus::Unknown,

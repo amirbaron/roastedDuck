@@ -3275,6 +3275,7 @@ test/sql/storage/temp_directory/max_swap_space_explicit.test
 test/sql/storage/temp_directory/max_swap_space_inmemory.test
 test/sql/storage/temp_directory/max_swap_space_persistent.test
 test/sql/storage/temp_directory/max_swap_space_unlimited.test
+test/sql/storage/temp_directory/offloading_block_files.test_slow
 test/sql/storage/temp_directory/temp_directory_null.test
 test/sql/storage/temp_directory/test_default_temp_directory.test
 test/sql/storage/test_big_strings.test_slow
