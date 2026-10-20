@@ -91,7 +91,12 @@ impl Executor {
         });
         let result = shared.run(&graph);
         shared.cancel_tasks();
-        result?;
+        if let Err(error) = result {
+            // Release the operators' states now (a failed COPY removes its files), not
+            // when a worker thread drops its last handle on the query.
+            drop(std::mem::take(&mut *lock(&shared.states)));
+            return Err(error);
+        }
         shared.take_finalized_sink(root)
     }
 }

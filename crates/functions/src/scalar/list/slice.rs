@@ -330,8 +330,14 @@ fn bind_slice(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindResul
                      query as follows:\n SELECT array_to_string((str_split(string, '')[begin:end:step], '');",
                 ));
             }
-            function.arguments[0] = ty.clone();
-            function.return_type = ty.clone();
+            if ty.id() == LogicalTypeId::Varchar && ty.alias() == Some("JSON") {
+                // A slice of JSON text is not JSON.
+                function.arguments[0] = LogicalType::VARCHAR;
+                function.return_type = LogicalType::VARCHAR;
+            } else {
+                function.arguments[0] = ty.clone();
+                function.return_type = ty.clone();
+            }
             for index in 1..3 {
                 if input.argument_types[index].id() != LogicalTypeId::List {
                     function.arguments[index] = LogicalType::BIGINT;

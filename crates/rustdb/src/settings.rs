@@ -15,6 +15,15 @@ use rustdb_types::{LogicalType, Value};
 
 use crate::default_settings::{SETTINGS, SettingDefinition};
 
+/// Options whose `SetGlobal`/`ResetGlobal` always fail
+/// (`DeltaOnlyVariantEncodingEnabledSetting`).
+fn check_user_adjustable(option: &str) -> Result<()> {
+    if option == "__delta_only_variant_encoding_enabled" {
+        return Err(Error::invalid_input("This setting is not adjustable by a user"));
+    }
+    Ok(())
+}
+
 /// DuckDB's built-in option names (`internal_options`), followed by the aliases.
 const OPTION_NAMES: &[&str] = &[
     "__delta_only_variant_encoding_enabled",
@@ -695,6 +704,7 @@ impl Settings {
     /// `SET name = value`.
     pub fn set(&mut self, name: &str, value: &Value) -> Result<()> {
         let option = canonical_name(name).ok_or_else(|| unrecognized(name, |option| self.enabled(option)))?;
+        check_user_adjustable(option)?;
         self.apply(option, value)?;
         match self.assigned.iter_mut().find(|(name, _)| *name == option) {
             Some((_, assigned)) => *assigned = value.clone(),
@@ -910,6 +920,7 @@ impl Settings {
     /// `RESET name`.
     pub fn reset(&mut self, name: &str) -> Result<()> {
         let option = canonical_name(name).ok_or_else(|| unrecognized(name, |option| self.enabled(option)))?;
+        check_user_adjustable(option)?;
         self.assigned.retain(|(name, _)| *name != option);
         let defaults = PlannerConfig::default();
         match option {

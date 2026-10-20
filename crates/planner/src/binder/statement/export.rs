@@ -13,7 +13,7 @@ use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
 use rustdb_function::CopyOptionMode;
 use rustdb_types::{LogicalType, Value};
 
-use super::copy::{bind_copy, bind_copy_options, copy_function};
+use super::copy::{bind_copy_as, bind_copy_options, copy_function};
 use crate::binder::{BindScope, BoundStatement, Scope};
 use crate::generated::enums::LogicalOperatorType;
 use crate::operator::{ExportedTable, LogicalExport, LogicalKind, LogicalOperator};
@@ -82,7 +82,7 @@ pub fn bind_export(scope: &mut BindScope<'_>, stmt: &mut ExportStatement) -> Res
     bind_copy_options(scope, info)?;
     let function = copy_function(scope, &info.format.clone(), false)?
         .ok_or_else(|| Error::internal("copy function lookup returned nothing"))?;
-    if function.copy_to_bind.is_none() {
+    if function.copy_to_bind.is_none() && function.plan.is_none() {
         return Err(Error::not_implemented(format!(
             "COPY TO is not supported for FORMAT \"{}\"",
             info.format
@@ -176,7 +176,11 @@ pub fn bind_export(scope: &mut BindScope<'_>, stmt: &mut ExportStatement) -> Res
                 binder: &mut child,
                 outer: Some(scope as &mut dyn Scope),
             };
-            bind_copy(&mut child_scope, &mut copy_info)?
+            bind_copy_as(
+                &mut child_scope,
+                &mut copy_info,
+                rustdb_function::copy::CopyToType::ExportDatabase,
+            )?
         };
         export_nodes.push(bound.plan);
     }

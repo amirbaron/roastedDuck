@@ -108,6 +108,51 @@ impl ReadCsvData {
     }
 }
 
+impl ReadCsvData {
+    /// A copy that reads only the files at positions `keep` (`PruneReaders`).
+    fn with_files(&self, keep: &[usize]) -> Self {
+        let mut result = self.with_types(self.types.clone());
+        let files: Vec<String> = keep
+            .iter()
+            .filter_map(|&index| self.files.files.get(index).cloned())
+            .collect();
+        if result.union_readers.len() == self.files.files.len() {
+            result.union_readers = keep
+                .iter()
+                .filter_map(|&index| self.union_readers.get(index).cloned())
+                .collect();
+        } else {
+            result.union_readers.retain(|reader| files.contains(&reader.file));
+        }
+        result.files = FileList { files };
+        result
+    }
+}
+
+/// The file filter pushdown of `read_csv` (`MultiFileComplexFilterPushdown`).
+fn read_csv_file_filter_pushdown() -> rustdb_function::FileFilterPushdown {
+    rustdb_function::FileFilterPushdown {
+        files: Arc::new(|bind_data| {
+            let data = bind_data.as_any().downcast_ref::<ReadCsvData>()?;
+            (data.file_options.hive_partitioning || data.file_options.filename)
+                .then(|| data.files.files.clone())
+        }),
+        known_value: Arc::new(|bind_data, path, name, ty| {
+            let Some(data) = bind_data.as_any().downcast_ref::<ReadCsvData>() else {
+                return Ok(None);
+            };
+            crate::multi_file::known_column_value(&data.file_options, &data.casts, path, name, ty)
+        }),
+        with_files: Arc::new(|bind_data, keep| {
+            let data = bind_data
+                .as_any()
+                .downcast_ref::<ReadCsvData>()
+                .ok_or_else(|| Error::internal("read_csv file pruning without bind data"))?;
+            Ok(Arc::new(data.with_files(keep)) as Arc<dyn FunctionData>)
+        }),
+    }
+}
+
 /// `MultiFileFunction::PushdownType`: reads columns as other types.
 fn read_csv_type_pushdown(
     bind_data: &dyn FunctionData,
@@ -790,6 +835,7 @@ fn read_csv_function(name: &'static str, argument: LogicalType) -> TableFunction
     function.projection_pushdown = true;
     function.empty_column = true;
     function.type_pushdown = Some(Arc::new(read_csv_type_pushdown));
+    function.file_filter_pushdown = Some(read_csv_file_filter_pushdown());
     function
 }
 

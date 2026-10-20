@@ -18,6 +18,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloc-no-stdlib"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2fb6cfd47bf496ff64095c20eaba0c201404ee38714d4142fcfa1dc334fcc7a"
+
+[[package]]
+name = "alloc-stdlib"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b5c1865780388bfa186411ab5f247819487fc4864c6e9c3106611fa347586e1"
+dependencies = [
+ "alloc-no-stdlib",
+]
+
+[[package]]
 name = "anstream"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -88,6 +103,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
  "generic-array",
+]
+
+[[package]]
+name = "brotli"
+version = "9.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8b851b75c23ca7873623d612fe49bd1989aeb03d08fb9432187eb253d3d4c6b"
+dependencies = [
+ "alloc-no-stdlib",
+ "alloc-stdlib",
+ "brotli-decompressor",
+]
+
+[[package]]
+name = "brotli-decompressor"
+version = "6.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "941cd9bd4ddab83cb46fa5a2d428f1c857b24ac78cb876cf7beb710840934bd7"
+dependencies = [
+ "alloc-no-stdlib",
+ "alloc-stdlib",
 ]
 
 [[package]]
@@ -326,6 +362,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lz4_flex"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ecbdfe44b1bd960b68170b417450a628c43f7cf56bb3c5317e61cb230ee7f226"
+dependencies = [
+ "twox-hash",
+]
+
+[[package]]
 name = "md-5"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -434,7 +479,9 @@ dependencies = [
  "rustdb-execution",
  "rustdb-function",
  "rustdb-functions",
+ "rustdb-json",
  "rustdb-optimizer",
+ "rustdb-parquet",
  "rustdb-parser",
  "rustdb-planner",
  "rustdb-serde",
@@ -559,6 +606,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustdb-json"
+version = "1.5.6"
+dependencies = [
+ "flate2",
+ "memchr",
+ "rustdb-ast",
+ "rustdb-common",
+ "rustdb-csv",
+ "rustdb-function",
+ "rustdb-functions",
+ "rustdb-parser",
+ "rustdb-planner",
+ "rustdb-serde",
+ "rustdb-types",
+ "ruzstd",
+ "zmij",
+]
+
+[[package]]
 name = "rustdb-optimizer"
 version = "1.5.6"
 dependencies = [
@@ -570,6 +636,26 @@ dependencies = [
  "rustdb-planner",
  "rustdb-storage",
  "rustdb-types",
+]
+
+[[package]]
+name = "rustdb-parquet"
+version = "1.5.6"
+dependencies = [
+ "brotli",
+ "flate2",
+ "lz4_flex",
+ "rustdb-buffer",
+ "rustdb-common",
+ "rustdb-csv",
+ "rustdb-function",
+ "rustdb-planner",
+ "rustdb-storage",
+ "rustdb-types",
+ "ruzstd",
+ "serde_json",
+ "snap",
+ "twox-hash",
 ]
 
 [[package]]
@@ -738,6 +824,12 @@ dependencies = [
  "serde_json",
  "uuid",
 ]
+
+[[package]]
+name = "snap"
+version = "1.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "199905e6153d6405f9728fe44daace35f8f837bbf830bb6e85fbd5828709a886"
 
 [[package]]
 name = "strsim"

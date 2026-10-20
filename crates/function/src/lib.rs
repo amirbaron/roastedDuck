@@ -8,6 +8,7 @@ pub mod aggregate;
 pub mod bignum;
 pub mod cast;
 pub mod client;
+pub use client::ObjectCache;
 pub mod copy;
 pub mod extension_entries;
 pub mod function_descriptions;
@@ -28,7 +29,10 @@ pub use scalar::{
     ScalarKernel, Stability, StatsBindData,
 };
 pub use table::{
-    InOutResult, TableFunction, TableFunctionBind, TableFunctionBindInput, TableFunctionBindOutput,
-    TableFunctionBindReplace, TableFunctionReplacement, TableFunctionScan, TableFunctionSet,
-    TableFunctionTypePushdown, TableInOutFunction, TableScanState,
+    FileFilterPushdown, InOutResult, ParallelScanGlobal, ParallelScanLocal, ParallelTableScan,
+    PartitionRowGroup, PartitionStatistics, TableFunction, TableFunctionBind, TableFunctionBindInput,
+    TableFunctionBindOutput, TableFunctionBindReplace, TableFunctionPartitionStats,
+    TableFunctionPushdownFilters, TableFunctionReplacement, TableFunctionScan, TableFunctionSet,
+    TableFunctionStatistics, TableFunctionTypePushdown, TableFunctionVirtualColumns, TableInOutFunction,
+    TableScanState,
 };

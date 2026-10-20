@@ -56,6 +56,8 @@ pub(crate) struct DatabaseInstance {
     pub(crate) secrets: Arc<crate::secrets::SecretManager>,
     /// The number of open connections (DuckDB's `ConnectionManager`).
     connections: Arc<std::sync::atomic::AtomicU64>,
+    /// The object cache (DuckDB's `DatabaseInstance::object_cache`).
+    object_cache: Arc<rustdb_function::ObjectCache>,
     /// The log manager (DuckDB's `DatabaseInstance::GetLogManager`).
     pub(crate) log_manager: Arc<crate::logging::LogManager>,
     /// The options set globally (DuckDB's `DBConfig` user settings), with a version
@@ -315,6 +317,13 @@ pub struct Database {
     instance: Arc<DatabaseInstance>,
 }
 
+/// DuckDB's default casts plus those of the statically loaded json extension.
+fn json_casts() -> CastFunctionSet {
+    let mut casts = CastFunctionSet::new();
+    rustdb_json::register_json_casts(&mut casts);
+    casts
+}
+
 impl Database {
     /// Opens (or creates) the database at `path`; `""` or `":memory:"` is in-memory.
     pub fn open(path: &str, config: &Config) -> Result<Self> {
@@ -355,6 +364,10 @@ impl Database {
             system_catalog.register_table_functions(set)?;
         }
         system_catalog.register_copy_function(rustdb_csv::copy_csv::csv_copy_function())?;
+        system_catalog.register_copy_function(rustdb_parquet::copy::parquet_copy_function())?;
+        for function in rustdb_json::json_copy_functions() {
+            system_catalog.register_copy_function(function)?;
+        }
         for set in rustdb_csv::multi_file::glob_functions() {
             system_catalog.register_table_functions(set)?;
         }
@@ -364,8 +377,21 @@ impl Database {
         for set in rustdb_csv::read_csv::read_csv_functions() {
             system_catalog.register_table_functions(set)?;
         }
+        for set in rustdb_parquet::parquet_table_functions() {
+            system_catalog.register_table_functions(set)?;
+        }
+        for set in rustdb_parquet::parquet_scalar_functions() {
+            system_catalog.register_scalar_functions(set)?;
+        }
+        for set in rustdb_json::json_scalar_functions() {
+            system_catalog.register_scalar_functions(set)?;
+        }
+        for set in rustdb_json::json_table_functions() {
+            system_catalog.register_table_functions(set)?;
+        }
         crate::system_functions::register_default_views(&system_catalog)?;
         crate::system_functions::register_default_macros(&system_catalog)?;
+        crate::system_functions::register_json_macros(&system_catalog)?;
         let buffer_manager = rustdb_buffer::BufferManager::new(rustdb_buffer::BufferManagerConfig {
             temp_directory: Some(default_temp_directory(&path).into()),
             ..rustdb_buffer::BufferManagerConfig::default()
@@ -378,13 +404,14 @@ impl Database {
             system_catalog: Arc::new(system_catalog),
             databases: DatabaseManager::default(),
             default_database: std::sync::OnceLock::new(),
-            casts: Arc::new(CastFunctionSet::new()),
+            casts: Arc::new(json_casts()),
             env,
             shutdown_checkpoint_disabled: std::sync::atomic::AtomicBool::new(false),
             checkpoint_wal_size: std::sync::atomic::AtomicU64::new(DEFAULT_CHECKPOINT_WAL_SIZE),
             compression: std::sync::Mutex::default(),
             secrets: Arc::default(),
             connections: Arc::default(),
+            object_cache: Arc::default(),
             log_manager: Arc::default(),
             global_settings: Mutex::default(),
         };
@@ -465,6 +492,7 @@ impl Database {
             .connections
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         function_client.set_connection_counter(Arc::clone(&self.instance.connections));
+        function_client.set_object_cache(Arc::clone(&self.instance.object_cache));
         // `ClientContext::ClientContext`: a connection-scoped logger.
         let logger = Arc::new(crate::logging::ConnectionLogger::new(
             Arc::clone(&self.instance.log_manager),
@@ -497,10 +525,11 @@ impl Database {
     /// Loads a (statically linked) extension, like `LOAD name`.
     pub fn load_extension(&self, name: &str) -> ExtensionLoad {
         match name {
-            "core_functions" | "parquet" | "json" | "icu" | "tpch" | "tpcds" | "autocomplete" | "httpfs"
-            | "fts" | "inet" | "excel" | "sqlsmith" | "spatial" | "delta" | "iceberg" | "aws" | "azure"
-            | "motherduck" | "postgres_scanner" | "mysql_scanner" | "sqlite_scanner" | "vss" | "ui"
-            | "encodings" | "ducklake" | "avro" | "demo_capi" => ExtensionLoad::NotAvailable,
+            "parquet" | "json" => ExtensionLoad::Loaded,
+            "core_functions" | "icu" | "tpch" | "tpcds" | "autocomplete" | "httpfs" | "fts" | "inet"
+            | "excel" | "sqlsmith" | "spatial" | "delta" | "iceberg" | "aws" | "azure" | "motherduck"
+            | "postgres_scanner" | "mysql_scanner" | "sqlite_scanner" | "vss" | "ui" | "encodings"
+            | "ducklake" | "avro" | "demo_capi" => ExtensionLoad::NotAvailable,
             _ => ExtensionLoad::Unknown,
         }
     }
@@ -554,6 +583,14 @@ impl Drop for Connection {
 }
 
 impl Connection {
+    /// Casts `value` with the casts of this database, including those of loaded extensions
+    /// (DuckDB's `Value::CastAs(ClientContext &, ...)`).
+    pub fn cast_value(&self, value: &Value, target: &rustdb_types::LogicalType) -> Result<Value> {
+        use rustdb_function::cast::ValueCast;
+        let mut params = rustdb_function::cast::CastParameters::new();
+        value.cast_with(&self.database.instance.casts, target, &mut params)
+    }
+
     /// The options set on this connection (and not reset since), by canonical name,
     /// like the values DuckDB's `RestartCommand` carries over to the restarted database.
     pub fn assigned_settings(&self) -> Vec<(String, Value)> {
@@ -1528,8 +1565,27 @@ impl Connection {
                 )?;
                 return Ok(nothing());
             }
-            LogicalKind::Pragma { name, .. } => {
+            LogicalKind::Pragma { name, parameters } => {
                 let lower = name.to_ascii_lowercase();
+                if lower == "add_parquet_key" {
+                    // `ParquetCrypto::AddKey` (`PragmaCall` with two VARCHAR arguments).
+                    let [key_name, key] = parameters.as_slice() else {
+                        return Err(Error::binder(format!(
+                            "No function matches the given name and argument types '{name}({})'. You might need to add explicit type casts.",
+                            parameters
+                                .iter()
+                                .map(|parameter| parameter.logical_type().to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )));
+                    };
+                    rustdb_parquet::crypto::add_key(
+                        &self.database.instance().object_cache,
+                        &key_name.to_varchar()?,
+                        &key.to_varchar()?,
+                    )?;
+                    return Ok(nothing());
+                }
                 if lower == "enable_optimizer" || lower == "disable_optimizer" {
                     self.settings.optimizer_disabled = lower == "disable_optimizer";
                 }

@@ -95,14 +95,40 @@ fn bind_expression_kind<B: ExpressionBinder + ?Sized>(
             if lambda.syntax_type == rustdb_ast::LambdaSyntaxType::LambdaKeyword {
                 return Ok(BindResult::error("invalid lambda expression"));
             }
+            let location = expr.query_location;
+            let ParsedExpressionKind::Lambda(lambda) = &mut expr.kind else {
+                return Err(Error::internal("expected a lambda expression"));
+            };
+            let placeholder = || {
+                Box::new(ParsedExpression::constant(rustdb_types::Value::null(
+                    LogicalType::SQLNULL,
+                )))
+            };
+            let lhs = std::mem::replace(&mut lambda.lhs, placeholder());
+            let body = std::mem::replace(&mut lambda.expr, placeholder());
             let mut arrow = ParsedExpression::new(
                 ExpressionType::Arrow,
                 ParsedExpressionKind::Operator(rustdb_ast::OperatorExpression {
-                    children: vec![(*lambda.lhs).clone(), (*lambda.expr).clone()],
+                    children: vec![*lhs, *body],
                 }),
             );
-            arrow.query_location = expr.query_location;
-            bind_operator(binder, &mut arrow, depth)
+            arrow.query_location = location;
+            let result = bind_operator(binder, &mut arrow, depth)?;
+            // The arrow's operands may now be bound: keep them for a retry (e.g. with
+            // correlated columns), like DuckDB restores the original expression.
+            if let BindResult::Unbound(_) = &result
+                && let ParsedExpressionKind::Operator(operator) = &mut arrow.kind
+                && operator.children.len() == 2
+                && let ParsedExpressionKind::Lambda(lambda) = &mut expr.kind
+            {
+                let body = operator.children.pop();
+                let lhs = operator.children.pop();
+                if let (Some(lhs), Some(body)) = (lhs, body) {
+                    *lambda.lhs = lhs;
+                    *lambda.expr = body;
+                }
+            }
+            Ok(result)
         }
         ParsedExpressionKind::Operator(_) => bind_operator(binder, expr, depth),
         ParsedExpressionKind::Subquery(_) => bind_subquery_expression(binder, expr, depth),
@@ -519,6 +545,46 @@ fn variant_path_constant(path: &mut ParsedExpression, index: bool) -> Result<()>
     Ok(())
 }
 
+/// Whether `ty` is the JSON type (DuckDB's `LogicalType::IsJSONType`).
+fn is_json_type(ty: &LogicalType) -> bool {
+    ty.id() == LogicalTypeId::Varchar && ty.alias() == Some("JSON")
+}
+
+/// The constant index/field of an extract from JSON as a JSON path: `$[n]` for array
+/// indexes, `$."name"` for fields (the JSON cases of `BindExpression(OperatorExpression &)`).
+fn json_path_constant(
+    context: &crate::ClientContext,
+    path: &mut ParsedExpression,
+    array: bool,
+) -> Result<()> {
+    use rustdb_function::cast::ValueCast;
+    let Some(value) = crate::expression_binder::peek_bound(path)
+        .and_then(Expression::as_constant)
+        .filter(|value| !value.is_null())
+        .cloned()
+    else {
+        return Ok(());
+    };
+    let is_text = matches!(
+        value.logical_type().id(),
+        LogicalTypeId::Varchar | LogicalTypeId::StringLiteral
+    );
+    let path_text = if array {
+        match value.try_cast_as(&context.casts, &LogicalType::UINTEGER, false) {
+            Ok(index) => format!("$[{}]", index.to_varchar()?),
+            Err(_) if is_text => format!("$.\"{}\"", value.to_varchar()?),
+            Err(_) => return Ok(()),
+        }
+    } else {
+        format!("$.\"{}\"", value.to_varchar()?)
+    };
+    crate::expression_binder::set_bound(
+        path,
+        Expression::constant(rustdb_types::Value::varchar(path_text)),
+    );
+    Ok(())
+}
+
 /// DuckDB's `BindExpression(OperatorExpression &)`.
 fn bind_operator<B: ExpressionBinder + ?Sized>(
     binder: &mut B,
@@ -552,9 +618,15 @@ fn bind_operator<B: ExpressionBinder + ?Sized>(
         ExpressionType::ArrayExtract => {
             let base_type = crate::expression_binder::peek_bound(&operator.children[0])
                 .map_or(LogicalTypeId::Invalid, |e| e.return_type.id());
+            let base_is_json = crate::expression_binder::peek_bound(&operator.children[0])
+                .is_some_and(|e| is_json_type(&e.return_type));
             if base_type == LogicalTypeId::Variant && operator.children.len() == 2 {
                 variant_path_constant(&mut operator.children[1], true)?;
                 Some("variant_extract")
+            } else if base_is_json && operator.children.len() == 2 {
+                let context = binder.binder_ref().context.clone();
+                json_path_constant(&context, &mut operator.children[1], true)?;
+                Some("json_extract")
             } else {
                 Some(if base_type == LogicalTypeId::Map {
                     "map_extract_value"
@@ -580,19 +652,25 @@ fn bind_operator<B: ExpressionBinder + ?Sized>(
             if base.has_parameter() || base.return_type.id() == LogicalTypeId::Unknown {
                 return Err(parameter_not_resolved());
             }
-            match base.return_type.id() {
-                LogicalTypeId::Union => Some("union_extract"),
-                LogicalTypeId::Map => Some("map_extract_value"),
-                LogicalTypeId::Variant => {
-                    variant_path_constant(&mut operator.children[1], false)?;
-                    Some("variant_extract")
-                }
-                LogicalTypeId::Struct | LogicalTypeId::SqlNull => Some("struct_extract"),
-                _ => {
-                    return Ok(BindResult::error(format!(
-                        "Cannot extract field {name} from expression \"{base}\" because it is not a struct, union, \
+            if is_json_type(&base.return_type) {
+                let context = binder.binder_ref().context.clone();
+                json_path_constant(&context, &mut operator.children[1], false)?;
+                Some("json_extract")
+            } else {
+                match base.return_type.id() {
+                    LogicalTypeId::Union => Some("union_extract"),
+                    LogicalTypeId::Map => Some("map_extract_value"),
+                    LogicalTypeId::Variant => {
+                        variant_path_constant(&mut operator.children[1], false)?;
+                        Some("variant_extract")
+                    }
+                    LogicalTypeId::Struct | LogicalTypeId::SqlNull => Some("struct_extract"),
+                    _ => {
+                        return Ok(BindResult::error(format!(
+                            "Cannot extract field {name} from expression \"{base}\" because it is not a struct, union, \
                          map, or json"
-                    )));
+                        )));
+                    }
                 }
             }
         }

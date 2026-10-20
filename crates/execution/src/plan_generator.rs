@@ -97,7 +97,7 @@ pub struct PlanContext {
     /// The client for the rewrites DuckDB's planner makes when the optimizer is enabled
     /// (the ordered aggregates of DISTINCT ON); `None` with the optimizer disabled.
     pub optimizer_client: Option<Arc<rustdb_planner::ClientContext>>,
-    /// The `threads` setting, which decides whether inserts run in parallel.
+    /// The `threads` setting: whether inserts run in parallel and `UseBatchIndex`.
     pub threads: usize,
     /// The `preserve_insertion_order` setting.
     pub preserve_insertion_order: bool,
@@ -275,6 +275,7 @@ impl PlanGenerator {
                 .sample_options
                 .as_ref()
                 .map(|sample| format!("System: {}%", sample.sample_size.to_varchar().unwrap_or_default())),
+            file_filters: get.file_filters.explain_params(),
         };
         let mut scan = PhysicalSeqScan::new(
             types,
@@ -969,7 +970,9 @@ impl PlanGenerator {
             LogicalKind::Delete(delete) => self.plan_delete(&delete, &expressions, next_child("delete")?)?,
             LogicalKind::Update(update) => self.plan_update(*update, expressions, next_child("update")?)?,
             LogicalKind::MergeInto(merge) => self.plan_merge_into(*merge, next_child("merge")?)?,
-            LogicalKind::CopyToFile(copy) => plan_copy_to_file(*copy, next_child("copy")?),
+            LogicalKind::CopyToFile(copy) => {
+                plan_copy_to_file(*copy, next_child("copy")?, self.context.as_ref())?
+            }
             LogicalKind::Export(export) => {
                 let context = self.context()?;
                 let catalog = context.catalog(&export.catalog)?;
@@ -1092,20 +1095,45 @@ impl PlanGenerator {
                     child,
                 )?)
             }
-            LogicalKind::Get(get) if get.function.scan.is_some() && get.projection_ids.is_empty() => {
-                let column_ids = get.column_ids.iter().map(|column| column.index).collect();
+            LogicalKind::Get(get)
+                if get.function.scan.is_some()
+                    && (get.projection_ids.is_empty() || get.function.pushdown_filters.is_some()) =>
+            {
+                let column_ids: Vec<u64> = get.column_ids.iter().map(|column| column.index).collect();
                 let explain = crate::operators::ScanExplainInfo {
                     table: String::new(),
                     column_names: get
                         .column_ids
                         .iter()
-                        .filter_map(|column| get.names.get(usize::try_from(column.index).ok()?).cloned())
+                        .map(|column| get.column_name(column))
                         .collect(),
-                    virtual_columns: Vec::new(),
+                    virtual_columns: get
+                        .column_ids
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, column)| column.index >= get.names.len() as u64)
+                        .map(|(position, _)| position)
+                        .collect(),
                     sample_method: None,
+                    file_filters: get.file_filters.explain_params(),
                 };
+                // Filters pushed into the scan are applied by the function itself.
+                let filters = table_filter_set(&get)?;
+                let mut bind_data = get.bind_data;
+                if let (Some(filters), Some(pushdown), Some(data)) =
+                    (&filters, &get.function.pushdown_filters, &bind_data)
+                {
+                    bind_data = Some(pushdown(
+                        data.as_ref(),
+                        &column_ids,
+                        filters as &dyn std::any::Any,
+                    )?);
+                }
+                let projection = get.projection_ids.iter().map(|&id| id as usize).collect();
                 Arc::new(
-                    PhysicalTableScan::new(types, get.function, get.bind_data, column_ids)
+                    PhysicalTableScan::new(types, get.function, bind_data, column_ids)
+                        .with_projection(projection)
+                        .with_filters(filters)
                         .with_explain_info(explain),
                 )
             }
@@ -1607,7 +1635,50 @@ fn evaluate_rows(types: &[LogicalType], rows: &[Vec<Expression>]) -> Result<Vec<
 }
 
 /// `PhysicalPlanGenerator::CreatePlan(LogicalCopyToFile &)`.
-fn plan_copy_to_file(copy: rustdb_planner::operator::LogicalCopyToFile, child: PhysicalRef) -> PhysicalRef {
+fn plan_copy_to_file(
+    copy: rustdb_planner::operator::LogicalCopyToFile,
+    child: PhysicalRef,
+    context: Option<&PlanContext>,
+) -> Result<PhysicalRef> {
+    let (threads, preserve_setting) = context.map_or((1, true), |context| {
+        (context.threads, context.preserve_insertion_order)
+    });
+    let mut preserve_insertion_order =
+        order_preservation::preserve_insertion_order(child.as_ref(), preserve_setting);
+    let mut supports_batch_index = order_preservation::use_batch_index(child.as_ref(), threads);
+    if let Some(preserve) = copy.preserve_order {
+        preserve_insertion_order = preserve;
+    }
+    if copy.per_thread_output
+        || copy.file_size_bytes.is_some()
+        || copy.rotate
+        || copy.partition_output
+        || !copy.partition_columns.is_empty()
+    {
+        if copy.preserve_order == Some(true) {
+            return Err(Error::invalid_input(
+                "PRESERVE_ORDER is not supported with these parameters",
+            ));
+        }
+        preserve_insertion_order = false;
+        supports_batch_index = false;
+    }
+    let mode = copy.function.execution_mode.as_ref().map_or(
+        rustdb_function::copy::CopyFunctionExecutionMode::RegularCopyToFile,
+        |mode| {
+            mode(
+                copy.bind_data.as_ref(),
+                preserve_insertion_order,
+                supports_batch_index,
+            )
+        },
+    );
+    let batch = mode == rustdb_function::copy::CopyFunctionExecutionMode::BatchCopyToFile;
+    if batch && !supports_batch_index {
+        return Err(Error::internal(
+            "BATCH_COPY_TO_FILE can only be used if batch indexes are supported",
+        ));
+    }
     let mut file_path = copy.file_path;
     if let Some(rest) = file_path.strip_prefix('~')
         && (rest.is_empty() || rest.starts_with('/'))
@@ -1639,12 +1710,20 @@ fn plan_copy_to_file(copy: rustdb_planner::operator::LogicalCopyToFile, child: P
         names: copy.names,
         expected_types: copy.expected_types,
     };
-    Arc::new(crate::operators::PhysicalCopyToFile::new(
-        child,
-        copy.function,
-        copy.bind_data,
-        options,
-    ))
+    let parallel = mode == rustdb_function::copy::CopyFunctionExecutionMode::ParallelCopyToFile
+        && copy.function.copy_to_sink_local.is_some()
+        && copy.function.copy_to_combine.is_some()
+        && !options.per_thread_output
+        && !options.partition_output
+        && !options.rotate;
+    let operator = crate::operators::PhysicalCopyToFile::new(child, copy.function, copy.bind_data, options);
+    Ok(Arc::new(if batch {
+        operator.with_batches()
+    } else if parallel {
+        operator.with_parallel_writes()
+    } else {
+        operator
+    }))
 }
 
 /// The insert DuckDB plans for `child` (`DuckCatalog::PlanInsert`, `PlanCreateTableAs`): a

@@ -21,6 +21,8 @@ rustdb-storage = { path = "../storage" }
 rustdb-buffer = { path = "../buffer" }
 rustdb-serde = { path = "../serde" }
 rustdb-csv = { path = "../csv" }
+rustdb-parquet = { path = "../parquet" }
+rustdb-json = { path = "../json" }
 
 [lints]
 workspace = true

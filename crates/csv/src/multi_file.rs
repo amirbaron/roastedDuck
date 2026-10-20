@@ -810,6 +810,27 @@ pub fn hive_value(key: &str, value: &str, ty: &LogicalType, casts: &CastFunction
     })
 }
 
+/// The value of the column named `name` (of type `ty`) in the file at `path`, if its path
+/// determines it: the `filename` column or a hive partition (`GetKnownColumnValues` +
+/// `HivePartitioning::GetValue`).
+pub fn known_column_value(
+    options: &MultiFileOptions,
+    casts: &CastFunctionSet,
+    path: &str,
+    name: &str,
+    ty: &LogicalType,
+) -> Result<Option<Value>> {
+    if options.filename && name == "filename" {
+        return Ok(Some(Value::varchar(path)));
+    }
+    if options.hive_partitioning
+        && let Some(value) = hive_parse(path).get(name)
+    {
+        return hive_value(name, value, ty, casts).map(Some);
+    }
+    Ok(None)
+}
+
 /// `AutoDetectHivePartitioningInternal`.
 fn auto_detect_hive_partitioning_internal(files: &FileList) -> bool {
     let Some(first) = files.first_file() else {

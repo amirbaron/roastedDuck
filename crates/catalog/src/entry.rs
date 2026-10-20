@@ -399,7 +399,7 @@ pub enum EntryKind {
     AggregateFunction(AggregateFunctionSet),
     TableFunction(TableFunctionSet),
     /// A COPY file format (`CopyFunctionCatalogEntry`).
-    CopyFunction(rustdb_function::CopyFunction),
+    CopyFunction(Box<rustdb_function::CopyFunction>),
     Table(TableEntry),
     View(ViewEntry),
     Index(IndexEntry),

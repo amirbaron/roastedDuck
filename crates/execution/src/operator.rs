@@ -252,6 +252,13 @@ pub trait Source: PhysicalOperator {
         1
     }
 
+    /// What `EXPLAIN ANALYZE` adds to the operator's parameters once a thread has
+    /// exhausted the source (`ExtraSourceParams`).
+    fn extra_source_params(&self, global: &Self::Global, local: &Self::Local) -> Vec<(String, String)> {
+        let _ = (global, local);
+        Vec::new()
+    }
+
     /// The batch index of the chunk `get_data` just returned, counted from 0 in the
     /// source's row order (DuckDB's `GetPartitionData`); only called on sources that
     /// [support batch indices](PhysicalOperator::supports_batch_index).
@@ -417,6 +424,11 @@ pub trait ErasedSource {
     ) -> Result<SourceResult>;
     fn max_threads(&self, global: &(dyn Any + Send + Sync)) -> Result<usize>;
     fn batch_index(&self, global: &(dyn Any + Send + Sync), local: &(dyn Any + Send)) -> Result<u64>;
+    fn extra_source_params(
+        &self,
+        global: &(dyn Any + Send + Sync),
+        local: &(dyn Any + Send),
+    ) -> Result<Vec<(String, String)>>;
 }
 
 impl<T: Source> ErasedSource for T {
@@ -463,6 +475,17 @@ impl<T: Source> ErasedSource for T {
             .downcast_ref::<T::Local>()
             .ok_or_else(|| state_type_error(name))?;
         Source::batch_index(self, downcast(global, name)?, local)
+    }
+    fn extra_source_params(
+        &self,
+        global: &(dyn Any + Send + Sync),
+        local: &(dyn Any + Send),
+    ) -> Result<Vec<(String, String)>> {
+        let name = self.name();
+        let local = local
+            .downcast_ref::<T::Local>()
+            .ok_or_else(|| state_type_error(name))?;
+        Ok(Source::extra_source_params(self, downcast(global, name)?, local))
     }
 }
 

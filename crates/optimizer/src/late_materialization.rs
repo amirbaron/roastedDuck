@@ -120,20 +120,73 @@ fn add_references(op: &mut LogicalOperator, references: &mut BTreeSet<ColumnBind
 /// The row id's position in the scan's columns, adding it if it is not scanned yet
 /// (DuckDB's `LateMaterializationHelper::GetOrInsertRowIds`).
 pub(crate) fn get_or_insert_row_id(get: &mut LogicalGet) -> u64 {
-    if let Some(position) = get.column_ids.iter().position(ColumnIndex::is_row_id_column) {
-        return position as u64;
-    }
-    get.column_ids.push(ColumnIndex::new(COLUMN_IDENTIFIER_ROW_ID));
-    let position = get.column_ids.len() as u64 - 1;
-    if !get.projection_ids.is_empty() {
-        get.projection_ids.push(position);
-    }
-    position
+    get_or_insert_row_ids(get, &[RowIdColumn::table_row_id()])[0]
 }
 
-/// A reference to the row id.
-fn row_id_ref(binding: ColumnBinding) -> Expression {
-    Expression::column_ref(ROW_ID_NAME, LogicalType::BIGINT, binding, 0)
+/// A column identifying the rows of a scan (DuckDB's row id `TableColumn`s).
+#[derive(Clone, Debug)]
+struct RowIdColumn {
+    id: u64,
+    name: String,
+    ty: LogicalType,
+}
+
+impl RowIdColumn {
+    /// The `rowid` of a table.
+    fn table_row_id() -> Self {
+        Self {
+            id: COLUMN_IDENTIFIER_ROW_ID,
+            name: ROW_ID_NAME.to_owned(),
+            ty: LogicalType::BIGINT,
+        }
+    }
+
+    fn reference(&self, binding: ColumnBinding) -> Expression {
+        Expression::column_ref(self.name.clone(), self.ty.clone(), binding, 0)
+    }
+}
+
+/// The columns identifying the rows of `get`, if it supports late materialization: a
+/// table's row id, or a table function's `get_row_id_columns`.
+fn row_id_columns(get: &LogicalGet) -> Result<Option<Vec<RowIdColumn>>> {
+    if get.table.is_some() {
+        return Ok(Some(vec![RowIdColumn::table_row_id()]));
+    }
+    let Some(get_row_id_columns) = &get.function.get_row_id_columns else {
+        return Ok(None);
+    };
+    let ids = get_row_id_columns(get.bind_data.as_deref());
+    if ids.is_empty() {
+        return Err(Error::internal("Row Id Columns must not be empty"));
+    }
+    ids.into_iter()
+        .map(|id| {
+            let (name, ty) = get
+                .virtual_column(id)
+                .ok_or_else(|| Error::internal("Row id column id not found in virtual column list"))?;
+            Ok(RowIdColumn { id, name, ty })
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(Some)
+}
+
+/// The positions of the row id columns in the scan's columns, adding those not scanned
+/// yet (DuckDB's `LateMaterializationHelper::GetOrInsertRowIds`).
+fn get_or_insert_row_ids(get: &mut LogicalGet, row_ids: &[RowIdColumn]) -> Vec<u64> {
+    row_ids
+        .iter()
+        .map(|row_id| {
+            if let Some(position) = get.column_ids.iter().position(|column| column.index == row_id.id) {
+                return position as u64;
+            }
+            get.column_ids.push(ColumnIndex::new(row_id.id));
+            let position = get.column_ids.len() as u64 - 1;
+            if !get.projection_ids.is_empty() {
+                get.projection_ids.push(position);
+            }
+            position
+        })
+        .collect()
 }
 
 /// Column `column_index` of `op` as an expression over `op`'s input (DuckDB's
@@ -148,7 +201,7 @@ fn get_expression(op: &LogicalOperator, column_index: u64) -> Result<Expression>
             let name = if column.is_row_id_column() {
                 ROW_ID_NAME.to_owned()
             } else {
-                get.names.get(column.index as usize).cloned().unwrap_or_default()
+                get.column_name(column)
             };
             Ok(Expression::column_ref(
                 name,
@@ -231,28 +284,37 @@ fn replace_top_level_table_index(op: &mut LogicalOperator, new_index: u64) -> Re
     }
 }
 
-/// Projects the row id up from the scan at `depth` below `op` through the operators in
-/// between (DuckDB's `ConstructRHS`); returns its binding at the top of the chain.
-fn construct_rhs(op: &mut LogicalOperator, depth: usize) -> Result<ColumnBinding> {
+/// Projects the row ids up from the scan at `depth` below `op` through the operators in
+/// between (DuckDB's `ConstructRHS`); returns their bindings at the top of the chain.
+fn construct_rhs(
+    op: &mut LogicalOperator,
+    depth: usize,
+    row_ids: &[RowIdColumn],
+) -> Result<Vec<ColumnBinding>> {
     let scan = chain_mut(op, depth).ok_or_else(|| Error::internal("late materialization: missing scan"))?;
     let LogicalKind::Get(get) = &mut scan.kind else {
         return Err(Error::internal("late materialization: missing scan"));
     };
-    let row_id_index = get_or_insert_row_id(get);
+    let row_id_indexes = get_or_insert_row_ids(get, row_ids);
     let mut column_count = if get.projection_ids.is_empty() {
         get.column_ids.len()
     } else {
         get.projection_ids.len()
     };
-    let mut binding = ColumnBinding::new(get.table_index, row_id_index);
+    let mut bindings: Vec<ColumnBinding> = row_id_indexes
+        .into_iter()
+        .map(|index| ColumnBinding::new(get.table_index, index))
+        .collect();
     for level in (1..depth).rev() {
         let node =
             chain_mut(op, level).ok_or_else(|| Error::internal("late materialization: broken chain"))?;
         match &mut node.kind {
             LogicalKind::Projection { table_index } => {
                 let table_index = *table_index;
-                node.expressions.push(row_id_ref(binding));
-                binding = ColumnBinding::new(table_index, node.expressions.len() as u64 - 1);
+                for (row_id, binding) in row_ids.iter().zip(bindings.iter_mut()) {
+                    node.expressions.push(row_id.reference(*binding));
+                    *binding = ColumnBinding::new(table_index, node.expressions.len() as u64 - 1);
+                }
                 column_count = node.expressions.len();
             }
             LogicalKind::Filter { projection_map } => {
@@ -267,7 +329,7 @@ fn construct_rhs(op: &mut LogicalOperator, depth: usize) -> Result<ColumnBinding
             }
         }
     }
-    Ok(binding)
+    Ok(bindings)
 }
 
 /// DuckDB's `TryLateMaterialization`.
@@ -313,10 +375,13 @@ fn try_late_materialization(optimizer: &Optimizer, op: &mut LogicalOperator) -> 
     let Some(LogicalKind::Get(get)) = chain(op, scan_depth).map(|scan| &scan.kind) else {
         return Ok(false);
     };
-    // Only table scans fetch rows by row id; and the rewrite must drop columns.
-    if references.len() >= get.column_ids.len() || get.table.is_none() {
+    // The rewrite must drop columns, and the scan must fetch rows by row id.
+    if references.len() >= get.column_ids.len() {
         return Ok(false);
     }
+    let Some(row_ids) = row_id_columns(get)? else {
+        return Ok(false);
+    };
 
     // The second scan of the table, which fetches the rows' columns (DuckDB's
     // `CreateLHSGet`): the same columns, without the filters.
@@ -324,9 +389,13 @@ fn try_late_materialization(optimizer: &Optimizer, op: &mut LogicalOperator) -> 
     lhs_get.table_index = optimizer.generate_table_index();
     lhs_get.table_filters = rustdb_storage::TableFilterSet::default();
     lhs_get.dynamic_filters = None;
+    lhs_get.file_filters = rustdb_planner::operator::FileFilterInfo::default();
     let lhs_index = lhs_get.table_index;
     let lhs_columns = lhs_get.column_ids.len();
-    let lhs_row_id = ColumnBinding::new(lhs_index, get_or_insert_row_id(&mut lhs_get));
+    let lhs_row_ids: Vec<ColumnBinding> = get_or_insert_row_ids(&mut lhs_get, &row_ids)
+        .into_iter()
+        .map(|index| ColumnBinding::new(lhs_index, index))
+        .collect();
     let lhs = LogicalOperator::new(LogicalKind::Get(lhs_get));
 
     // The final columns: the root projection inlined down to the second scan.
@@ -355,29 +424,45 @@ fn try_late_materialization(optimizer: &Optimizer, op: &mut LogicalOperator) -> 
     let is_top_n = op.operator_type() == LogicalOperatorType::LogicalTopN;
     let mut final_orders: Vec<BoundOrderByNode> = match &op.kind {
         LogicalKind::TopN { orders, .. } => orders.clone(),
-        _ => vec![BoundOrderByNode::new(
-            OrderType::Ascending,
-            OrderByNullType::NullsLast,
-            row_id_ref(lhs_row_id),
-        )],
+        _ => row_ids
+            .iter()
+            .zip(&lhs_row_ids)
+            .map(|(row_id, binding)| {
+                BoundOrderByNode::new(
+                    OrderType::Ascending,
+                    OrderByNullType::NullsLast,
+                    row_id.reference(*binding),
+                )
+            })
+            .collect(),
     };
 
     // The original plan, with the row id projected up to it.
-    let mut rhs_row_id = construct_rhs(op, scan_depth)?;
+    let mut rhs_row_ids = construct_rhs(op, scan_depth, &row_ids)?;
     // The final projection keeps the original top-level table index; the original chain
     // gets a new one.
-    let final_index = rhs_row_id.table_index;
+    let final_index = rhs_row_ids
+        .first()
+        .ok_or_else(|| Error::internal("late materialization: no row ids"))?
+        .table_index;
     let rhs_table_index = optimizer.generate_table_index();
-    rhs_row_id.table_index = rhs_table_index;
+    for binding in &mut rhs_row_ids {
+        binding.table_index = rhs_table_index;
+    }
     replace_top_level_table_index(op, rhs_table_index)?;
+    if rhs_row_ids.len() != lhs_row_ids.len() {
+        return Err(Error::internal("Mismatch in late materialization binding sizes"));
+    }
 
     let original = std::mem::replace(op, LogicalOperator::new(LogicalKind::CrossProduct));
     let mut join = LogicalComparisonJoin::new(JoinType::Semi, LogicalOperatorType::LogicalComparisonJoin);
-    join.conditions.push(JoinCondition {
-        left: row_id_ref(lhs_row_id),
-        right: row_id_ref(rhs_row_id),
-        comparison: ExpressionType::CompareEqual,
-    });
+    for ((row_id, left), right) in row_ids.iter().zip(&lhs_row_ids).zip(&rhs_row_ids) {
+        join.conditions.push(JoinCondition {
+            left: row_id.reference(*left),
+            right: row_id.reference(*right),
+            comparison: ExpressionType::CompareEqual,
+        });
+    }
     let join =
         LogicalOperator::new(LogicalKind::ComparisonJoin(Box::new(join))).with_children(vec![lhs, original]);
     let order = |orders: Vec<BoundOrderByNode>, child: LogicalOperator| {

@@ -149,7 +149,10 @@ fn render_json_operator(op: &dyn PhysicalOperator, profiler: &QueryProfiler, lev
         "{inner}\"operator_name\": \"{}\",",
         json_escape(&op.explain_name())
     );
-    let params = op.params_to_string(0);
+    let mut params = op.params_to_string(0);
+    for (key, value) in profiler.extra_info(op) {
+        params.insert(key, value);
+    }
     let entries: Vec<String> = params
         .iter()
         .filter(|(key, _)| !key.starts_with("__"))
@@ -277,6 +280,9 @@ impl RenderSource for ProfileNode<'_> {
                     profile.rows = 0;
                 }
                 let mut params = op.params_to_string(0);
+                for (key, value) in profiler.extra_info(op) {
+                    params.insert(key, value);
+                }
                 add_profile(&mut params, profile.rows, profile.time.as_secs_f64());
                 RenderTreeNode::new(op.profiler_name(), params)
             }

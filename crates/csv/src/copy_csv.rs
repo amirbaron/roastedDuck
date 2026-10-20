@@ -8,7 +8,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
 use rustdb_function::cast::{CastFunctionSet, CastParameters};
-use rustdb_function::copy::{CopyFromBindInput, CopyFunctionBindInput, CopyGlobalState};
+use rustdb_function::copy::{
+    CopyFromBindInput, CopyFunctionBindInput, CopyFunctionExecutionMode, CopyGlobalState, CopyLocalState,
+    PreparedBatch,
+};
 use rustdb_function::{CopyFunction, CopyOption, CopyOptionMode, FunctionData};
 use rustdb_functions::strtime::StrpTimeFormat;
 use rustdb_planner::ClientContext;
@@ -386,18 +389,38 @@ fn column_text(data: &WriteCsvData, column: usize, vector: &Vector, count: usize
     }
 }
 
-/// `WriteCSVSink`: writes the rows of a chunk.
-fn write_csv_sink(bind_data: &dyn FunctionData, state: &CopyGlobalState, chunk: &DataChunk) -> Result<()> {
-    let data = bind_data
+/// The bind data of a CSV write.
+fn write_data(bind_data: &dyn FunctionData) -> Result<&WriteCsvData> {
+    bind_data
         .as_any()
         .downcast_ref::<WriteCsvData>()
-        .ok_or_else(|| Error::internal("csv write without bind data"))?;
-    let global = state
+        .ok_or_else(|| Error::internal("csv write without bind data"))
+}
+
+/// The open file of a CSV write.
+fn write_global(state: &CopyGlobalState) -> Result<&GlobalWriteCsvData> {
+    state
         .downcast_ref::<GlobalWriteCsvData>()
-        .ok_or_else(|| Error::internal("csv write without its file"))?;
+        .ok_or_else(|| Error::internal("csv write without its file"))
+}
+
+/// `WriteCSVSink`: writes the rows of a chunk. The rows are encoded before the file is
+/// locked, so concurrent sinks (parallel writes) only serialize the write itself.
+fn write_csv_sink(bind_data: &dyn FunctionData, state: &CopyGlobalState, chunk: &DataChunk) -> Result<()> {
+    let data = write_data(bind_data)?;
+    let global = write_global(state)?;
+    let Some(block) = encode_chunk(data, chunk)? else {
+        return Ok(());
+    };
+    let mut writer = global.writer.lock().unwrap_or_else(PoisonError::into_inner);
+    writer.flush_block(&block, &data.writer_options.newline)
+}
+
+/// The rows of a chunk as CSV lines (without a final newline); `None` for no rows.
+fn encode_chunk(data: &WriteCsvData, chunk: &DataChunk) -> Result<Option<Vec<u8>>> {
     let count = chunk.len();
     if count == 0 {
-        return Ok(());
+        return Ok(None);
     }
     let texts = chunk
         .columns()
@@ -438,8 +461,56 @@ fn write_csv_sink(bind_data: &dyn FunctionData, state: &CopyGlobalState, chunk: 
             );
         }
     }
+    Ok(Some(out))
+}
+
+/// `WriteCSVExecutionMode`.
+fn write_csv_execution_mode(
+    _: &dyn FunctionData,
+    preserve_insertion_order: bool,
+    supports_batch_index: bool,
+) -> CopyFunctionExecutionMode {
+    if !preserve_insertion_order {
+        return CopyFunctionExecutionMode::ParallelCopyToFile;
+    }
+    if supports_batch_index {
+        return CopyFunctionExecutionMode::BatchCopyToFile;
+    }
+    CopyFunctionExecutionMode::RegularCopyToFile
+}
+
+/// `WriteCSVPrepareBatch`: encodes the chunks of a batch (any thread).
+fn write_csv_prepare_batch(
+    bind_data: &dyn FunctionData,
+    _: &CopyGlobalState,
+    chunks: Vec<DataChunk>,
+) -> Result<PreparedBatch> {
+    let data = write_data(bind_data)?;
+    let mut blocks = Vec::with_capacity(chunks.len());
+    for chunk in chunks {
+        if let Some(block) = encode_chunk(data, &chunk)? {
+            blocks.push(block);
+        }
+    }
+    Ok(Box::new(blocks))
+}
+
+/// `WriteCSVFlushBatch`: writes an encoded batch (in batch order).
+fn write_csv_flush_batch(
+    bind_data: &dyn FunctionData,
+    state: &CopyGlobalState,
+    batch: PreparedBatch,
+) -> Result<()> {
+    let data = write_data(bind_data)?;
+    let global = write_global(state)?;
+    let blocks = batch
+        .downcast::<Vec<Vec<u8>>>()
+        .map_err(|_| Error::internal("csv batch of another format"))?;
     let mut writer = global.writer.lock().unwrap_or_else(PoisonError::into_inner);
-    writer.flush_block(&out, &data.writer_options.newline)
+    for block in blocks.iter() {
+        writer.flush_block(block, &data.writer_options.newline)?;
+    }
+    Ok(())
 }
 
 /// `WriteCSVFinalize`: writes the suffix (or the final newline) and closes the file.
@@ -564,6 +635,16 @@ pub fn csv_copy_function() -> CopyFunction {
     function.copy_to_initialize_global = Some(Arc::new(write_csv_initialize_global));
     function.copy_to_sink = Some(Arc::new(write_csv_sink));
     function.copy_to_finalize = Some(Arc::new(write_csv_finalize));
+    function.execution_mode = Some(Arc::new(write_csv_execution_mode));
+    function.prepare_batch = Some(Arc::new(write_csv_prepare_batch));
+    function.flush_batch = Some(Arc::new(write_csv_flush_batch));
+    // Parallel writes encode each chunk on its thread and append it under the file lock
+    // (`WriteCSVInitializeLocal` / `WriteCSVSink` / `WriteCSVCombine`).
+    function.copy_to_initialize_local = Some(Arc::new(|_| Ok(Box::new(()) as CopyLocalState)));
+    function.copy_to_sink_local = Some(Arc::new(|bind_data, state, _, chunk| {
+        write_csv_sink(bind_data, state, chunk)
+    }));
+    function.copy_to_combine = Some(Arc::new(|_, _, _| Ok(())));
     function.copy_to_file_size = Some(Arc::new(write_csv_file_size));
     function.copy_from_bind = Some(Arc::new(read_csv_copy_bind));
     function.copy_from_function = read_csv_functions()

@@ -152,6 +152,33 @@ pub struct LogicalGet {
     pub dynamic_filters: Option<Arc<rustdb_storage::table_filter::DynamicTableFilterSet>>,
     /// SYSTEM sampling pushed into the scan (DuckDB's `extra_info.sample_options`).
     pub sample_options: Option<Box<rustdb_ast::SampleOptions>>,
+    /// The filters that pruned the scanned files, for `EXPLAIN` (the rest of DuckDB's
+    /// `ExtraOperatorInfo`).
+    pub file_filters: FileFilterInfo,
+}
+
+/// The file filters of a scan (DuckDB's `ExtraOperatorInfo::file_filters`, `total_files`
+/// and `filtered_files`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FileFilterInfo {
+    /// The filters that pruned a file, concatenated.
+    pub filters: String,
+    pub total_files: Option<u64>,
+    pub filtered_files: Option<u64>,
+}
+
+impl FileFilterInfo {
+    /// The `EXPLAIN` entries: `File Filters` and `Scanning Files`.
+    pub fn explain_params(&self) -> Vec<(String, String)> {
+        if self.filters.is_empty() {
+            return Vec::new();
+        }
+        let mut result = vec![("File Filters".to_owned(), self.filters.clone())];
+        if let (Some(filtered), Some(total)) = (self.filtered_files, self.total_files) {
+            result.push(("Scanning Files".to_owned(), format!("{filtered}/{total}")));
+        }
+        result
+    }
 }
 
 /// The output bindings of INSERT/DELETE/UPDATE: the table's columns with `RETURNING`, the
@@ -223,10 +250,30 @@ impl LogicalGet {
         if column.index == COLUMN_IDENTIFIER_EMPTY {
             return LogicalType::BOOLEAN;
         }
-        self.returned_types
-            .get(column.index as usize)
-            .cloned()
-            .unwrap_or(LogicalType::BIGINT)
+        if let Some(ty) = self.returned_types.get(column.index as usize) {
+            return ty.clone();
+        }
+        self.virtual_column(column.index)
+            .map_or(LogicalType::BIGINT, |(_, ty)| ty)
+    }
+
+    /// The name of a scanned column, virtual columns included.
+    pub fn column_name(&self, column: &ColumnIndex) -> String {
+        if let Some(name) = self.names.get(column.index as usize) {
+            return name.clone();
+        }
+        self.virtual_column(column.index)
+            .map(|(name, _)| name)
+            .unwrap_or_default()
+    }
+
+    /// The name and type of the function's virtual column `index` (`GetVirtualColumns`).
+    pub fn virtual_column(&self, index: u64) -> Option<(String, LogicalType)> {
+        let virtual_columns = self.function.get_virtual_columns.as_ref()?;
+        virtual_columns(self.bind_data.as_deref())
+            .into_iter()
+            .find(|(id, _, _)| *id == index)
+            .map(|(_, name, ty)| (name, ty))
     }
 }
 

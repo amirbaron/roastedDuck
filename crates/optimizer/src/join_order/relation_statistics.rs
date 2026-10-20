@@ -58,6 +58,13 @@ pub fn table_column_statistics(
     if column == COLUMN_IDENTIFIER_ROW_ID {
         return None;
     }
+    if get.table.is_none() {
+        // A table function's own statistics (`get.function.statistics`).
+        let statistics = get.function.statistics.as_ref()?;
+        return statistics(get.bind_data.as_deref(), column)
+            .and_then(|stats| stats.downcast::<BaseStatistics>().ok())
+            .map(|stats| *stats);
+    }
     let entry = get.table.as_ref()?;
     let EntryKind::Table(table) = &entry.kind else {
         return None;

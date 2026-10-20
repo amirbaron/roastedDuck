@@ -74,6 +74,121 @@ pub type TableFunctionScan = Arc<
 pub type TableFunctionTypePushdown =
     Arc<dyn Fn(&dyn FunctionData, &[(usize, LogicalType)]) -> Result<Arc<dyn FunctionData>> + Send + Sync>;
 
+/// Applies pushed-down table filters (`rustdb_storage::TableFilterSet`, keyed by the
+/// position of the filtered column in the scan's column ids, passed as `Any`) to a table
+/// function's bind data: the scan of the returned bind data only produces rows passing
+/// the filters, so the planner drops the filters themselves.
+pub type TableFunctionPushdownFilters =
+    Arc<dyn Fn(&dyn FunctionData, &[u64], &dyn std::any::Any) -> Result<Arc<dyn FunctionData>> + Send + Sync>;
+
+/// The virtual columns of a call (DuckDB's `table_function_get_virtual_columns_t`):
+/// `(column id, name, type)` for columns such as `filename` that can be selected by name
+/// without being part of the function's columns.
+pub type TableFunctionVirtualColumns =
+    Arc<dyn Fn(Option<&dyn FunctionData>) -> Vec<(u64, String, LogicalType)> + Send + Sync>;
+
+/// The statistics of column `column` of a call (DuckDB's `table_statistics_t`):
+/// `rustdb_storage::statistics::BaseStatistics`, boxed as `Any`.
+pub type TableFunctionStatistics =
+    Arc<dyn Fn(Option<&dyn FunctionData>, u64) -> Option<Box<dyn std::any::Any + Send>> + Send + Sync>;
+
+/// The statistics of one partition (row group) of a table function's data, for
+/// statistics-based query answering (DuckDB's `PartitionRowGroup`).
+pub trait PartitionRowGroup: Send + Sync + fmt::Debug {
+    /// The statistics of column `column` (`rustdb_storage::statistics::BaseStatistics`,
+    /// boxed as `Any`), if known.
+    fn column_statistics(&self, column: u64) -> Option<Box<dyn std::any::Any + Send>>;
+    /// Whether the min/max of these statistics are values of the column, not bounds.
+    fn min_max_is_exact(&self, column: u64) -> bool;
+}
+
+/// A partition of a table function's data (DuckDB's `PartitionStatistics`).
+#[derive(Clone, Debug)]
+pub struct PartitionStatistics {
+    pub count: u64,
+    /// Whether `count` is exact.
+    pub exact: bool,
+    pub row_group: Option<Arc<dyn PartitionRowGroup>>,
+}
+
+/// The partitions of a call (DuckDB's `table_function_get_partition_stats_t`); empty when
+/// unknown.
+pub type TableFunctionPartitionStats =
+    Arc<dyn Fn(Option<&dyn FunctionData>) -> Vec<PartitionStatistics> + Send + Sync>;
+
+/// Filter pushdown into the file list of a multi-file scan whose paths determine column
+/// values: hive partitions and the `filename` column (DuckDB's `pushdown_complex_filter`
+/// of `MultiFileFunction`, `MultiFileList::ComplexFilterPushdown`).
+#[derive(Clone)]
+#[allow(clippy::type_complexity, reason = "callback signatures")]
+pub struct FileFilterPushdown {
+    /// The scanned files, if their paths determine any column (`hive_partitioning` or
+    /// `filename` is set).
+    pub files: Arc<dyn Fn(&dyn FunctionData) -> Option<Vec<String>> + Send + Sync>,
+    /// The value of the column named `name` (of type `ty`) in the file at `path`, if the
+    /// path determines it (`GetKnownColumnValues` + `HivePartitioning::GetValue`).
+    pub known_value: Arc<
+        dyn Fn(&dyn FunctionData, &str, &str, &LogicalType) -> Result<Option<rustdb_types::Value>>
+            + Send
+            + Sync,
+    >,
+    /// The bind data scanning only the files at positions `keep` of `files`.
+    pub with_files: Arc<dyn Fn(&dyn FunctionData, &[usize]) -> Result<Arc<dyn FunctionData>> + Send + Sync>,
+}
+
+impl fmt::Debug for FileFilterPushdown {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FileFilterPushdown").finish_non_exhaustive()
+    }
+}
+
+/// The (virtual) columns that identify a row of a call (`table_function_get_row_id_columns`).
+pub type TableFunctionRowIdColumns = Arc<dyn Fn(Option<&dyn FunctionData>) -> Vec<u64> + Send + Sync>;
+
+/// The shared state of a parallel table function scan.
+pub type ParallelScanGlobal = Arc<dyn std::any::Any + Send + Sync>;
+/// The state of one thread of a parallel table function scan.
+pub type ParallelScanLocal = Box<dyn std::any::Any + Send>;
+
+/// A table function that several threads scan at once, each with its own local state
+/// (DuckDB's `init_global` / `init_local` and a `function` that runs on many threads).
+#[derive(Clone)]
+#[allow(clippy::type_complexity, reason = "callback signatures")]
+pub struct ParallelTableScan {
+    /// The shared state of a scan of `column_ids`.
+    pub init_global:
+        Arc<dyn Fn(Option<&dyn FunctionData>, &[u64]) -> Result<ParallelScanGlobal> + Send + Sync>,
+    /// The state of a new thread.
+    pub init_local: Arc<dyn Fn(&ParallelScanGlobal) -> Result<ParallelScanLocal> + Send + Sync>,
+    /// Fills the next chunk of this thread; `false` once the thread has no more work.
+    pub scan: Arc<
+        dyn Fn(
+                Option<&dyn FunctionData>,
+                &[u64],
+                &ParallelScanGlobal,
+                &mut ParallelScanLocal,
+                &mut DataChunk,
+            ) -> Result<bool>
+            + Send
+            + Sync,
+    >,
+    /// How many threads can usefully scan (`MaxThreads`).
+    pub max_threads: Arc<dyn Fn(&ParallelScanGlobal) -> usize + Send + Sync>,
+    /// The batch index of the chunk the thread produced last, increasing in the
+    /// function's row order (`GetPartitionData`).
+    pub batch_index: Arc<dyn Fn(&ParallelScanGlobal, &ParallelScanLocal) -> u64 + Send + Sync>,
+    /// What `EXPLAIN ANALYZE` shows about the finished scan (`dynamic_to_string`).
+    pub dynamic_to_string: Option<
+        Arc<dyn Fn(Option<&dyn FunctionData>, &ParallelScanGlobal) -> Vec<(String, String)> + Send + Sync>,
+    >,
+}
+
+impl fmt::Debug for ParallelTableScan {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ParallelTableScan").finish_non_exhaustive()
+    }
+}
+
 /// What a [`TableInOutFunction`] call did with its input (DuckDB's `OperatorResultType`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InOutResult {
@@ -122,6 +237,9 @@ pub struct TableFunction {
     pub projection_pushdown: bool,
     /// Whether the scan can apply filters itself.
     pub filter_pushdown: bool,
+    /// Whether the scan can leave out columns read only for its filters (DuckDB's
+    /// `filter_prune`).
+    pub filter_prune: bool,
     /// Whether this is a table-in/table-out function (DuckDB's `in_out_function`):
     /// constant arguments form its input row, and every output column is scanned.
     pub in_out: bool,
@@ -137,6 +255,25 @@ pub struct TableFunction {
     /// Whether the function has DuckDB's empty virtual column (`COLUMN_IDENTIFIER_EMPTY`,
     /// which the multi-file readers provide): a scan needing no column reads it.
     pub empty_column: bool,
+    /// Hands the filters pushed into the scan to the function (DuckDB's table filters of
+    /// a `filter_pushdown` function): returns the bind data that applies them.
+    pub pushdown_filters: Option<TableFunctionPushdownFilters>,
+    /// The function's virtual columns (`get_virtual_columns`).
+    pub get_virtual_columns: Option<TableFunctionVirtualColumns>,
+    /// Column statistics (`statistics`).
+    pub statistics: Option<TableFunctionStatistics>,
+    /// Partition statistics (`get_partition_stats`).
+    pub get_partition_stats: Option<TableFunctionPartitionStats>,
+    /// A scan by several threads at once; used instead of `scan` when set.
+    pub parallel_scan: Option<ParallelTableScan>,
+    /// Filter pushdown into the scanned files (`pushdown_complex_filter`).
+    pub file_filter_pushdown: Option<FileFilterPushdown>,
+    /// The (virtual) columns that identify a row, for late materialization
+    /// (`late_materialization` + `get_row_id_columns`).
+    pub get_row_id_columns: Option<TableFunctionRowIdColumns>,
+    /// Whether the scan fills one output column per scanned column id, in order
+    /// (DuckDB's scan contract), instead of all of the function's columns.
+    pub projected_output: bool,
 }
 
 impl TableFunction {
@@ -151,11 +288,20 @@ impl TableFunction {
             scan: None,
             projection_pushdown: false,
             filter_pushdown: false,
+            filter_prune: false,
             in_out: false,
             type_pushdown: None,
             in_out_function: None,
             cardinality: None,
             empty_column: false,
+            pushdown_filters: None,
+            get_virtual_columns: None,
+            statistics: None,
+            get_partition_stats: None,
+            parallel_scan: None,
+            file_filter_pushdown: None,
+            get_row_id_columns: None,
+            projected_output: false,
         }
     }
 

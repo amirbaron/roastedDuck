@@ -297,14 +297,8 @@ fn extract_base_name(path: &str) -> String {
         .to_owned()
 }
 
-/// The CSV replacement scan (DuckDB's `ReadCSVReplacement` through
-/// `Binder::BindWithReplacementScan`): `FROM 'file.csv'` reads the file with
-/// `read_csv_auto`.
-#[allow(
-    clippy::case_sensitive_file_extension_comparisons,
-    reason = "the name is lowercased"
-)]
-fn csv_replacement_scan(base: &BaseTableRef, alias: &str) -> Option<TableRef> {
+/// `ReplacementScan::GetFullPath`: the catalog, schema and table names joined by dots.
+fn replacement_full_path(base: &BaseTableRef) -> String {
     let mut full_path = base.catalog_name.clone();
     if !base.schema_name.is_empty() {
         if !full_path.is_empty() {
@@ -316,21 +310,41 @@ fn csv_replacement_scan(base: &BaseTableRef, alias: &str) -> Option<TableRef> {
         full_path.push('.');
     }
     full_path += &base.table_name;
+    full_path
+}
+
+/// The CSV replacement scan (DuckDB's `ReadCSVReplacement` through
+/// `Binder::BindWithReplacementScan`): `FROM 'file.csv'` reads the file with
+/// `read_csv_auto`.
+#[allow(
+    clippy::case_sensitive_file_extension_comparisons,
+    reason = "the name is lowercased"
+)]
+fn csv_replacement_scan(base: &BaseTableRef, alias: &str) -> Option<TableRef> {
+    let full_path = replacement_full_path(base);
     let mut lower_name = full_path.to_lowercase();
     if lower_name.ends_with(".gz") {
         lower_name.truncate(lower_name.len() - 3);
     } else if lower_name.ends_with(".zst") {
         lower_name.truncate(lower_name.len() - 4);
     }
-    if !lower_name.ends_with(".csv")
-        && !lower_name.contains(".csv?")
-        && !lower_name.ends_with(".tsv")
-        && !lower_name.contains(".tsv?")
-    {
+    // `ReplacementScan::CanReplace` for the CSV reader, then for the Parquet extension's
+    // `ParquetScanReplacement`.
+    let can_replace = |extension: &str| {
+        lower_name.ends_with(&format!(".{extension}")) || lower_name.contains(&format!(".{extension}?"))
+    };
+    let function_name = if can_replace("csv") || can_replace("tsv") {
+        "read_csv_auto"
+    } else if can_replace("parquet") {
+        "parquet_scan"
+    } else if can_replace("json") || can_replace("jsonl") || can_replace("ndjson") {
+        // The JSON extension's `ReadJSONReplacement`.
+        "read_json_auto"
+    } else {
         return None;
-    }
+    };
     let function = rustdb_ast::FunctionExpression {
-        function_name: "read_csv_auto".to_owned(),
+        function_name: function_name.to_owned(),
         schema: String::new(),
         children: vec![rustdb_ast::ParsedExpression::constant(
             rustdb_types::Value::varchar(&full_path),
@@ -419,6 +433,13 @@ fn bind_base_table(
         if let Some(mut replacement) = csv_replacement_scan(base, alias) {
             return bind_table_ref(scope, &mut replacement);
         }
+        // An existing file no replacement scan reads (`ExtensionHelper::IsFullPath`).
+        let full_path = replacement_full_path(base);
+        if full_path.contains(['.', '/', '\\']) && std::path::Path::new(&full_path).is_file() {
+            return Err(Error::binder(format!(
+                "No extension found that is capable of reading the file \"{full_path}\"\n* If this file is a supported file format you can explicitly use the reader functions, such as read_csv, read_json or read_parquet"
+            )));
+        }
         if matches!(lookup, CteLookup::Circular) {
             return Err(Error::binder(format!(
                 "Circular reference to CTE \"{}\", use WITH RECURSIVE to use recursive CTEs.",
@@ -494,6 +515,7 @@ fn bind_base_table(
                 table_filters: rustdb_storage::TableFilterSet::default(),
                 dynamic_filters: None,
                 sample_options: None,
+                file_filters: crate::operator::FileFilterInfo::default(),
             };
             Ok(BoundStatement::new(
                 LogicalOperator::new(LogicalKind::Get(Box::new(get))),

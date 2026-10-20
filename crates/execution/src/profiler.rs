@@ -22,6 +22,8 @@ pub struct OperatorProfile {
 pub struct QueryProfiler {
     start: Instant,
     operators: Mutex<HashMap<usize, OperatorProfile>>,
+    /// Parameters sources report once exhausted (`OperatorInformation::extra_info`).
+    extra_info: Mutex<HashMap<usize, Vec<(String, String)>>>,
 }
 
 impl Default for QueryProfiler {
@@ -41,6 +43,7 @@ impl QueryProfiler {
         Self {
             start: Instant::now(),
             operators: Mutex::new(HashMap::new()),
+            extra_info: Mutex::new(HashMap::new()),
         }
     }
 
@@ -55,6 +58,29 @@ impl QueryProfiler {
         let entry = operators.entry(key).or_default();
         entry.rows += rows;
         entry.time += time;
+    }
+
+    /// Records parameters of operator `key`, replacing earlier values of the same
+    /// names (`FinalizeSourceProfiling`).
+    pub(crate) fn record_extra_info(&self, key: usize, params: Vec<(String, String)>) {
+        let mut extra_info = self.extra_info.lock().unwrap_or_else(PoisonError::into_inner);
+        let entry = extra_info.entry(key).or_default();
+        for (name, value) in params {
+            match entry.iter_mut().find(|(existing, _)| *existing == name) {
+                Some(slot) => slot.1 = value,
+                None => entry.push((name, value)),
+            }
+        }
+    }
+
+    /// The parameters operator `op` reported while running.
+    pub fn extra_info(&self, op: &dyn PhysicalOperator) -> Vec<(String, String)> {
+        self.extra_info
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&operator_key(op))
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// The profile of `op`.
