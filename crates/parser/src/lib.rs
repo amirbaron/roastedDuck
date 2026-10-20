@@ -61,6 +61,7 @@ mod lists;
 mod transformer;
 
 pub use transformer::build;
+pub use transformer::helpers::{get_value_f64, get_value_i64};
 pub use transformer::expression::{negate_comparison, operator_to_expression_type};
 pub use transformer::function::{
     is_excludable_window_function, is_orderable_window_function, window_to_expression_type,

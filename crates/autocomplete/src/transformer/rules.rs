@@ -835,7 +835,7 @@ transform_rules! {
     Vec<ResultModifier> [] {
         "ResultModifiers" => transform_result_modifiers,
     }
-    ResultModifier [] {
+    Option<ResultModifier> [] {
         "LimitOffset" => transform_limit_offset,
         "LimitOffsetClause" => transform_limit_offset_clause,
         "OffsetLimitClause" => transform_offset_limit_clause,

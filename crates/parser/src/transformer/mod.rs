@@ -14,7 +14,7 @@ mod ddl;
 mod dml;
 pub(crate) mod expression;
 pub(crate) mod function;
-mod helpers;
+pub(crate) mod helpers;
 mod misc;
 mod node_tag;
 mod operator;

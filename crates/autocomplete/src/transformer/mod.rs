@@ -11,6 +11,12 @@
 //! (`transform_select.cpp` is `select`), and [`rules`] lists, per result type, the rules
 //! and their methods; [`PegTransformer::transform`] dispatches through it.
 
+#![allow(
+    clippy::unused_self,
+    clippy::unnecessary_wraps,
+    reason = "every transform function has the signature the rule dispatch calls, like DuckDB's"
+)]
+
 mod nodes;
 pub(crate) mod parse_result;
 mod prelude;
