@@ -1,7 +1,7 @@
 use crate::operator::set_estimated_cardinality;
 use rustdb_common::tree_renderer::RenderParams;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use rustdb_common::{Result, STANDARD_VECTOR_SIZE};
 use rustdb_function::random::RandomEngine;
@@ -41,6 +41,9 @@ pub struct PhysicalSeqScan {
     projection: Vec<usize>,
     /// `index_scan_max_count` and `index_scan_percentage`; `None` disables index scans.
     index_scan: Option<(u64, f64)>,
+    /// Set once a run of the scan used the index (DuckDB's `TableScanBindData::is_index_scan`),
+    /// so `EXPLAIN ANALYZE` shows the scan type.
+    is_index_scan: AtomicBool,
     /// What `EXPLAIN` shows about the scan.
     explain: ScanExplainInfo,
     /// SYSTEM sampling pushed into the scan: the fraction of vectors to keep and the
@@ -155,6 +158,7 @@ impl PhysicalSeqScan {
             filters,
             projection,
             index_scan: Some((DEFAULT_INDEX_SCAN_MAX_COUNT, DEFAULT_INDEX_SCAN_PERCENTAGE)),
+            is_index_scan: AtomicBool::new(false),
             explain: ScanExplainInfo::default(),
             sampling: None,
         }
@@ -263,12 +267,18 @@ impl PhysicalOperator for PhysicalSeqScan {
             .as_ref()
             .filter(|dynamic| dynamic.has_filters())
             .and_then(|dynamic| dynamic.final_table_filters(None));
-        self.explain.params(
+        let mut result = self.explain.params(
             &self.projection,
             self.filters.as_ref(),
             dynamic.as_ref(),
             estimated_cardinality,
-        )
+        );
+        if self.is_index_scan.load(Ordering::Relaxed) {
+            if let Some(scan_type) = result.get_mut("Type") {
+                "Index Scan".clone_into(scan_type);
+            }
+        }
+        result
     }
 }
 
@@ -300,6 +310,7 @@ impl Source for PhysicalSeqScan {
     fn global_source_state(&self, _: &ExecutionContext, _: Option<&SinkState>) -> Result<Self::Global> {
         let filters = self.scan_filters();
         if let Some(row_ids) = self.index_scan_row_ids(filters.as_ref())? {
+            self.is_index_scan.store(true, Ordering::Relaxed);
             // Fetch the indexed rows, then scan only the transaction-local rows.
             return Ok(SeqScanGlobal {
                 parallel: self.table.initialize_local_parallel_scan(&self.transaction),

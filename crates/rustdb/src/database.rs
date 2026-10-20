@@ -1731,6 +1731,7 @@ impl Connection {
             optimizer_client,
             threads: self.database.instance().env.threads(),
             preserve_insertion_order,
+            index_scan: self.settings.index_scan_thresholds(),
         };
         let physical = create_physical_plan_with(plan, &context)?;
         // EXPLAIN ANALYZE profiles the run.

@@ -101,6 +101,8 @@ pub struct PlanContext {
     pub threads: usize,
     /// The `preserve_insertion_order` setting.
     pub preserve_insertion_order: bool,
+    /// The `index_scan_max_count` and `index_scan_percentage` settings.
+    pub index_scan: (u64, f64),
 }
 
 impl PlanContext {
@@ -286,6 +288,7 @@ impl PlanGenerator {
             projection,
         )
         .with_dynamic_filters(get.dynamic_filters.clone())
+        .with_index_scan(Some(context.index_scan))
         .with_explain_info(explain);
         if let Some(sample) = &get.sample_options {
             // DuckDB's `ScanSamplingInfo`: the percentage as a fraction.

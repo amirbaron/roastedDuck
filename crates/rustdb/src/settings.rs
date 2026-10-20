@@ -882,6 +882,25 @@ impl Settings {
             .unwrap_or_default()
     }
 
+    /// `index_scan_max_count` and `index_scan_percentage`: an index scan is used when at
+    /// most `max(count, percentage * rows)` rows match.
+    pub fn index_scan_thresholds(&self) -> (u64, f64) {
+        let max_count = self
+            .other
+            .get("index_scan_max_count")
+            .and_then(|value| value.default_cast_as(&LogicalType::UBIGINT).ok())
+            .and_then(|value| value.as_i128())
+            .and_then(|value| u64::try_from(value).ok())
+            .unwrap_or(rustdb_execution::operators::DEFAULT_INDEX_SCAN_MAX_COUNT);
+        let percentage = self
+            .other
+            .get("index_scan_percentage")
+            .and_then(|value| value.default_cast_as(&LogicalType::DOUBLE).ok())
+            .and_then(|value| value.as_f64())
+            .unwrap_or(rustdb_execution::operators::DEFAULT_INDEX_SCAN_PERCENTAGE);
+        (max_count, percentage)
+    }
+
     /// The settings that steer physical join planning.
     pub fn join_plan_settings(&self) -> JoinPlanSettings {
         let defaults = JoinPlanSettings::default();

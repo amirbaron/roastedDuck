@@ -508,6 +508,7 @@ test/optimizer/expression_rewriter/functions_that_error_are_not_reordered.test
 test/optimizer/expression_rewriter/ordered_aggregate_incorrectly_remove_order.test
 test/optimizer/filter_pushdown/filter_pushdown_into_subquery.test
 test/optimizer/grouping_expression_simplification.test
+test/optimizer/index_optimizer.test
 test/optimizer/issue_12181.test
 test/optimizer/issue_20928.test
 test/optimizer/issue_21011.test
@@ -859,6 +860,7 @@ test/sql/alter/default/test_set_default.test
 test/sql/alter/drop_col/test_drop_col.test
 test/sql/alter/drop_col/test_drop_col_check.test
 test/sql/alter/drop_col/test_drop_col_check_next.test
+test/sql/alter/drop_col/test_drop_col_concurrent_dml_conflict.test
 test/sql/alter/drop_col/test_drop_col_failure.test
 test/sql/alter/drop_col/test_drop_col_index.test
 test/sql/alter/drop_col/test_drop_col_not_null.test
@@ -1085,6 +1087,7 @@ test/sql/catalog/function/test_simple_macro.test
 test/sql/catalog/function/test_subquery_macro.test
 test/sql/catalog/function/test_table_macro.test
 test/sql/catalog/function/test_table_macro_args.test
+test/sql/catalog/function/test_table_macro_complex.test
 test/sql/catalog/function/test_table_macro_copy.test
 test/sql/catalog/function/test_table_macro_groups.test
 test/sql/catalog/function/test_window_macro.test
@@ -1678,6 +1681,7 @@ test/sql/copy_database/copy_database_different_types.test
 test/sql/copy_database/copy_database_errors.test
 test/sql/copy_database/copy_database_fk.test
 test/sql/copy_database/copy_database_gen_col.test
+test/sql/copy_database/copy_database_index.test
 test/sql/copy_database/copy_database_multiple.test
 test/sql/copy_database/copy_database_simple.test
 test/sql/copy_database/copy_database_with_index.test
@@ -2213,6 +2217,7 @@ test/sql/index/art/create_drop/test_art_create_many_duplicates_deletes.test
 test/sql/index/art/create_drop/test_art_create_unique.test
 test/sql/index/art/create_drop/test_art_drop_index.test
 test/sql/index/art/create_drop/test_art_invalid_create_index.test
+test/sql/index/art/create_drop/test_art_long_keys.test_slow
 test/sql/index/art/create_drop/test_art_many_versions.test
 test/sql/index/art/create_drop/test_art_single_value.test
 test/sql/index/art/insert_update_delete/test_art_linear_insert.test_slow
@@ -2232,6 +2237,7 @@ test/sql/index/art/insert_update_delete/test_art_update_with_dict_fsst_and_repla
 test/sql/index/art/issues/test_art_fuzzer.test
 test/sql/index/art/issues/test_art_fuzzer_persisted.test
 test/sql/index/art/issues/test_art_issue_21394.test
+test/sql/index/art/issues/test_art_issue_24246.test
 test/sql/index/art/issues/test_art_issue_4976.test
 test/sql/index/art/issues/test_art_issue_6603.test
 test/sql/index/art/issues/test_art_issue_6799.test
@@ -2258,15 +2264,24 @@ test/sql/index/art/nodes/test_art_prefixes.test_slow
 test/sql/index/art/nodes/test_art_prefixes_restart.test
 test/sql/index/art/nodes/test_art_sparse_merge.test
 test/sql/index/art/nodes/test_art_sparse_row_ids.test_slow
+test/sql/index/art/scan/test_art_adaptive_scan.test
 test/sql/index/art/scan/test_art_many_matches.test
 test/sql/index/art/scan/test_art_negative_range_scan.test
 test/sql/index/art/scan/test_art_null_bytes.test
+test/sql/index/art/scan/test_art_prepared_scan.test
 test/sql/index/art/scan/test_art_range_scan.test
 test/sql/index/art/scan/test_art_scan_coverage.test
 test/sql/index/art/scan/test_art_scan_duplicate_filters.test
 test/sql/index/art/scan/test_art_scan_filter_column.test
 test/sql/index/art/scan/test_art_scan_normal_to_nested.test
+test/sql/index/art/scan/test_art_scan_thresholds.test
+test/sql/index/art/scan/test_in_filter_index_scan.test
 test/sql/index/art/scan/test_random_uuid.test
+test/sql/index/art/storage/test_art_buffered_replays_chunk_edges.test
+test/sql/index/art/storage/test_art_buffered_replays_interleaved.test
+test/sql/index/art/storage/test_art_buffered_replays_interval_merging.test
+test/sql/index/art/storage/test_art_buffered_replays_mod2.test_slow
+test/sql/index/art/storage/test_art_buffered_replays_multi_col.test
 test/sql/index/art/storage/test_art_checkpoint.test
 test/sql/index/art/storage/test_art_import.test
 test/sql/index/art/storage/test_art_import_export.test
@@ -3366,7 +3381,11 @@ test/sql/storage/wal/wal_create_insert_drop.test
 test/sql/storage/wal/wal_drop_table.test
 test/sql/storage/wal/wal_empty_table.test
 test/sql/storage/wal/wal_hugeint_storage.test
+test/sql/storage/wal/wal_index_delete.test
 test/sql/storage/wal/wal_index_delete_gen.test
+test/sql/storage/wal/wal_index_interleaved.test
+test/sql/storage/wal/wal_index_large_batch_interleaved.test
+test/sql/storage/wal/wal_index_replay.test
 test/sql/storage/wal/wal_interval_storage.test
 test/sql/storage/wal/wal_lazy_creation.test
 test/sql/storage/wal/wal_list_storage.test
@@ -3555,6 +3574,8 @@ test/sql/topn/tpcds_q14_topn.test
 test/sql/topn/tpcds_q59_topn.test
 test/sql/tpch/tpch_power_test.test_slow
 test/sql/transactions/aborted_transaction_commit.test
+test/sql/transactions/concurrent_drop_index.test
+test/sql/transactions/concurrent_drop_table.test
 test/sql/transactions/conflict_drop_then_delete.test
 test/sql/transactions/conflict_rename_append.test
 test/sql/transactions/count_star_transactions.test
@@ -3564,7 +3585,10 @@ test/sql/transactions/min_max_updates.test
 test/sql/transactions/revert_commit_index_corruption_drop_table.test
 test/sql/transactions/rollback_drop.test
 test/sql/transactions/rollback_drop_column.test
+test/sql/transactions/rollback_drop_index.test
 test/sql/transactions/rollback_drop_table.test
+test/sql/transactions/rollback_drop_table_with_delete.test
+test/sql/transactions/rollback_drop_table_with_delete_concurrent.test
 test/sql/transactions/rollback_drop_table_with_pk.test
 test/sql/transactions/statement-preprocessor/invalidation_policy_is_respected_by_preprocessor.test
 test/sql/transactions/statement-preprocessor/multistatement_is_transactional.test

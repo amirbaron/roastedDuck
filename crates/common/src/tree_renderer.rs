@@ -542,31 +542,15 @@ impl TextTreeRenderer {
     fn split_string_buffer(&self, source: &str, result: &mut Vec<String>) {
         let max_line_render_size = self.node_render_width - 2;
         let bytes = source.as_bytes();
-        // Grapheme boundaries with their widths.
-        let graphemes: Vec<(usize, usize)> = source
-            .grapheme_indices(true)
-            .map(|(offset, grapheme)| (offset, grapheme_width(grapheme)))
-            .collect();
-        let next_boundary = |position: usize| -> usize {
-            graphemes
-                .iter()
-                .map(|&(offset, _)| offset)
-                .find(|&offset| offset > position)
-                .unwrap_or(bytes.len())
-        };
-        let width_at = |position: usize| -> usize {
-            graphemes
-                .iter()
-                .find(|&&(offset, _)| offset == position)
-                .map_or(1, |&(_, width)| width)
-        };
         let mut character_pos = 0;
         let mut start_pos = 0;
         let mut render_width = 0;
         let mut last_possible_split = 0;
         while character_pos < bytes.len() {
-            let char_render_width = width_at(character_pos);
-            let next_character_pos = next_boundary(character_pos);
+            // Every position visited is a grapheme boundary (`NextGraphemeCluster`).
+            let grapheme = source[character_pos..].graphemes(true).next().unwrap_or_default();
+            let char_render_width = grapheme_width(grapheme);
+            let next_character_pos = character_pos + grapheme.len().max(1);
             if render_width + char_render_width > max_line_render_size {
                 if start_pos + 8 > last_possible_split {
                     last_possible_split = character_pos;
