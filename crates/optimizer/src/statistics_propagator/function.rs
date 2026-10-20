@@ -50,6 +50,19 @@ pub(super) fn propagate_scalar_function(
                 _ => None,
             })
         }
+        // `ListExtractStats`: an element of the list, or NULL out of range.
+        "list_extract" | "list_element" | "array_extract"
+            if child_stats.len() == 2
+                && function
+                    .children
+                    .first()
+                    .is_some_and(|list| list.return_type.id() == LogicalTypeId::List) =>
+        {
+            Ok(child_stats[0].child().cloned().map(|mut element| {
+                element.set_has_null();
+                element
+            }))
+        }
         "struct_extract" | "array_extract" if child_stats.len() == 2 => {
             Ok(propagate_struct_extract(expression, child_stats))
         }
@@ -69,6 +82,28 @@ pub(super) fn propagate_scalar_function(
                 function.function.kernel = kernel;
             }
             Ok(None)
+        }
+        // `StructPackStats`: the fields have the statistics of the arguments.
+        "struct_pack" | "row" => {
+            let mut stats = BaseStatistics::create_unknown(expression.return_type.clone());
+            if let Some(children) = stats.struct_children_mut() {
+                for (child, argument) in children.iter_mut().zip(child_stats) {
+                    child.clone_from(argument);
+                }
+            }
+            Ok(Some(stats))
+        }
+        // `ListValueStats`: the elements have the merged statistics of the arguments; the
+        // list itself is never NULL.
+        "list_value" | "list_pack" => {
+            let mut stats = BaseStatistics::create_empty(expression.return_type.clone());
+            if let Some(child) = stats.child_mut() {
+                for argument in child_stats {
+                    child.merge(argument);
+                }
+            }
+            stats.set_has_no_null_fast();
+            Ok(Some(stats))
         }
         "stats" => {
             // DuckDB's `StatsPropagateStats`: record the argument's statistics.

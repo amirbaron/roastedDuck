@@ -301,6 +301,15 @@ impl Catalog {
         }
         match on_conflict {
             OnCreateConflict::IgnoreOnConflict => Ok(()),
+            OnCreateConflict::ReplaceOnConflict => {
+                // Dependent entries make the drop fail (no CASCADE).
+                self.drop_schema(transaction, name, false, false)?;
+                let entry = CatalogEntry::new(name, EntryKind::Schema(SchemaEntry::new(&self.name, name)));
+                if !self.schemas.create(transaction, entry)? {
+                    return Err(Error::internal("Failed to create schema entry in CREATE_OR_REPLACE"));
+                }
+                Ok(())
+            }
             _ => Err(Error::catalog(format!(
                 "Schema with name \"{name}\" already exists!"
             ))),
@@ -432,6 +441,17 @@ impl Catalog {
         let schema_entry = self.schema_entry(transaction, schema)?;
         let schema_entry = schema_entry.as_schema().ok_or_else(missing_main)?;
         let set = Self::set_for(schema_entry, ty);
+        // A rename that only changes the case replaces the entry in place
+        // (`CatalogSet::AlterEntry` skips `RenameEntryInternal`).
+        if entry.name().eq_ignore_ascii_case(name) {
+            if !set.alter_with_hook(transaction, name, entry, hook, info)? {
+                return Err(Error::catalog(format!(
+                    "{} with name {name} does not exist!",
+                    ty.display_name()
+                )));
+            }
+            return Ok(());
+        }
         if set.get(transaction, entry.name()).is_some() {
             return Err(Error::catalog(format!(
                 "Could not rename \"{name}\" to \"{}\": another entry with this name already exists!",

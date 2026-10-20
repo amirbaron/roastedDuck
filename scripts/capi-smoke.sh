@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REF="${REF:-$ROOT/.context/duckdb-download/duckdb-1.5.6}"
 cargo build --release -p rustdb-capi --manifest-path "$ROOT/Cargo.toml"
+"$ROOT/scripts/sign.sh"
 OUT="$ROOT/target/capi-smoke"
 mkdir -p "$OUT"
 cc -std=c11 -Wall -Werror -I "$REF/src/include" "$ROOT/crates/capi/tests/smoke.c" \
