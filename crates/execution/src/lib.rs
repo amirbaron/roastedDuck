@@ -30,4 +30,4 @@ pub use parallel::{Executor, QueryOptions, TaskScheduler};
 pub use plan_generator::{
     ExplainOutput, JoinPlanSettings, PlanContext, create_physical_plan, create_physical_plan_with,
 };
-pub use profiler::{OperatorProfile, QueryProfiler};
+pub use profiler::{OperatorProfile, QueryProfiler, ScanMetrics, operator_key};

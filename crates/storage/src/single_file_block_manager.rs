@@ -12,6 +12,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use rustdb_buffer::{BlockId, BlockManager, BlockRegistry, FileBuffer};
+use rustdb_common::profiling::{MetricType, add_to_counter};
 use rustdb_common::{Error, ErrorKind, Result};
 
 use crate::compression::CompressionConfig;
@@ -34,7 +35,10 @@ struct FileHandle {
 }
 
 impl FileHandle {
+    /// Reads `buffer.len()` bytes at `location`; the running query counts them
+    /// (`FileHandle::Read`'s `TOTAL_BYTES_READ`).
     fn read_at(&self, buffer: &mut [u8], location: u64) -> Result<()> {
+        add_to_counter(MetricType::TotalBytesRead, buffer.len() as u64);
         #[cfg(unix)]
         {
             use std::os::unix::fs::FileExt;
@@ -63,7 +67,10 @@ impl FileHandle {
         }
     }
 
+    /// Writes `buffer` at `location`; the running query counts the bytes
+    /// (`FileHandle::Write`'s `TOTAL_BYTES_WRITTEN`).
     fn write_at(&self, buffer: &[u8], location: u64) -> Result<()> {
+        add_to_counter(MetricType::TotalBytesWritten, buffer.len() as u64);
         #[cfg(unix)]
         {
             use std::os::unix::fs::FileExt;

@@ -48,7 +48,11 @@ impl PhysicalExplainAnalyze {
     /// The profile as DuckDB's text output (`QueryProfiler::QueryTreeToStream`).
     fn render_profile(&self, profiler: &QueryProfiler) -> String {
         const TOTAL_BOX_WIDTH: usize = 50;
-        if self.format == ExplainFormat::Json {
+        // Without a format, the connection's profiling format applies
+        // (`QueryProfiler::GetPrintFormat`).
+        if self.format == ExplainFormat::Json
+            || (self.format == ExplainFormat::Default && profiler.json_by_default())
+        {
             return self.render_json(profiler);
         }
         let tree = RenderTree::create(&ProfileNode::Query {

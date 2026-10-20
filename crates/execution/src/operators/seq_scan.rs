@@ -13,7 +13,7 @@ use rustdb_storage::{
 use rustdb_types::{DataChunk, LogicalType};
 
 use crate::operator::{ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
-use crate::{ExecutionContext, Source, SourceResult};
+use crate::{ExecutionContext, ScanMetrics, Source, SourceResult};
 
 /// Scans a table's storage in parallel, one row group per morsel (DuckDB's
 /// `PhysicalTableScan` running the `seq_scan` table function, `TableScanFunction`).
@@ -291,6 +291,9 @@ pub struct SeqScanGlobal {
     next_index_row: AtomicUsize,
     /// The filters the scan applies, with the run-time filters set when it started.
     filters: Option<TableFilterSet>,
+    /// The row groups of the table and the transaction's local rows when the scan
+    /// started (`total_row_groups_to_scan`).
+    total_row_groups: u64,
 }
 
 /// A thread's scan: its storage scan state and, with a projection, the scanned chunk.
@@ -301,6 +304,10 @@ pub struct SeqScanLocal {
     scan_chunk: DataChunk,
     /// The vector of indexed rows last fetched, while the scan is in its index phase.
     index_batch: Option<u64>,
+    /// The row groups this thread scanned (`TableScanLocalState::row_groups_scanned`).
+    row_groups_scanned: u64,
+    /// The indexed rows this thread fetched (`IndexScanLocalState::rows_scanned`).
+    index_rows_scanned: u64,
 }
 
 impl Source for PhysicalSeqScan {
@@ -309,6 +316,7 @@ impl Source for PhysicalSeqScan {
 
     fn global_source_state(&self, _: &ExecutionContext, _: Option<&SinkState>) -> Result<Self::Global> {
         let filters = self.scan_filters();
+        let total_row_groups = self.table.row_group_count_with_local_storage(&self.transaction) as u64;
         if let Some(row_ids) = self.index_scan_row_ids(filters.as_ref())? {
             self.is_index_scan.store(true, Ordering::Relaxed);
             // Fetch the indexed rows, then scan only the transaction-local rows.
@@ -317,6 +325,7 @@ impl Source for PhysicalSeqScan {
                 index_rows: Some(row_ids),
                 next_index_row: AtomicUsize::new(0),
                 filters,
+                total_row_groups,
             });
         }
         Ok(SeqScanGlobal {
@@ -324,6 +333,7 @@ impl Source for PhysicalSeqScan {
             index_rows: None,
             next_index_row: AtomicUsize::new(0),
             filters,
+            total_row_groups,
         })
     }
 
@@ -348,6 +358,8 @@ impl Source for PhysicalSeqScan {
             has_morsel: false,
             scan_chunk: DataChunk::default(),
             index_batch: None,
+            row_groups_scanned: 0,
+            index_rows_scanned: 0,
         })
     }
 
@@ -368,6 +380,7 @@ impl Source for PhysicalSeqScan {
                 }
                 let end = (start + STANDARD_VECTOR_SIZE).min(row_ids.len());
                 local.index_batch = Some((start / STANDARD_VECTOR_SIZE) as u64);
+                local.index_rows_scanned += (end - start) as u64;
                 let target = if self.projection.is_empty() {
                     &mut *chunk
                 } else {
@@ -419,11 +432,25 @@ impl Source for PhysicalSeqScan {
                 chunk.set_len(0);
                 return Ok(SourceResult::Finished);
             }
+            local.row_groups_scanned += 1;
         }
     }
 
     fn max_threads(&self, _: &Self::Global) -> usize {
         self.table.max_threads()
+    }
+
+    /// `TableScanGetMetrics`: the rows and row groups the thread scanned and the row
+    /// groups the table had.
+    fn scan_metrics(&self, global: &Self::Global, local: &Self::Local, _: bool) -> Option<ScanMetrics> {
+        let state = &local.state;
+        Some(ScanMetrics {
+            rows_scanned: Some(
+                state.table_state.rows_scanned + state.local_state.rows_scanned + local.index_rows_scanned,
+            ),
+            row_groups_scanned: Some(local.row_groups_scanned),
+            total_row_groups: Some(global.total_row_groups),
+        })
     }
 
     fn batch_index(&self, global: &Self::Global, local: &Self::Local) -> Result<u64> {

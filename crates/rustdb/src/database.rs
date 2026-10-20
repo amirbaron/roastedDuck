@@ -410,6 +410,9 @@ impl Database {
         for set in crate::checkpoint::checkpoint_functions() {
             system_catalog.register_table_functions(set)?;
         }
+        for set in crate::query_profiler::profiling_functions() {
+            system_catalog.register_table_functions(set)?;
+        }
         for set in crate::system_functions::catalog_table_functions() {
             system_catalog.register_table_functions(set)?;
         }
@@ -570,6 +573,8 @@ impl Database {
             prepared_statements: CaseInsensitiveMap::default(),
             function_client,
             user_variables: CaseInsensitiveMap::default(),
+            profiler: crate::query_profiler::QueryProfiler::default(),
+            log_query_writer: None,
         })
     }
 
@@ -625,6 +630,11 @@ pub struct Connection {
     user_variables: CaseInsensitiveMap<rustdb_types::Value>,
     /// The connection's loggers.
     logger: Arc<crate::logging::ConnectionLogger>,
+    /// The profiler of the connection's statements (DuckDB's `ClientData::profiler`).
+    profiler: crate::query_profiler::QueryProfiler,
+    /// The file `log_query_path` names, which every statement is written to (DuckDB's
+    /// `ClientData::log_query_writer`).
+    log_query_writer: Option<std::fs::File>,
 }
 
 impl Drop for Connection {
@@ -691,8 +701,24 @@ impl Connection {
         self.function_client.set_query(query);
         self.function_client
             .set_settings(Arc::new(self.settings_snapshot()));
+        // `PendingStatementOrPreparedStatement` starts the profiler first.
+        let is_explain_analyze = matches!(
+            &statement.kind,
+            rustdb_ast::SqlStatementKind::Explain(explain)
+                if explain.explain_type == rustdb_ast::ExplainType::ExplainAnalyze
+        );
+        self.profiler
+            .start_query(&self.settings.profiler, query, is_explain_analyze);
+        let metrics = self.profiler.active_metrics().cloned();
+        let metrics_guard = rustdb_common::profiling::activate(metrics.as_ref());
+        // The connection is the opener of the files the statement opens: they read its
+        // settings and log to its loggers.
+        let _opener_guard = rustdb_function::file_system::activate_opener(Arc::clone(&self.function_client));
         self.begin_query_logging(query);
         let outcome = self.run_statement(statement);
+        // Functions that changed the connection's configuration did so while running.
+        let requests = self.function_client.take_client_requests();
+        let outcome = outcome.and_then(|result| self.apply_client_requests(requests).map(|()| result));
         let invalidates = outcome
             .as_ref()
             .is_err_and(|error| invalidates_transaction(error.kind()));
@@ -703,8 +729,18 @@ impl Connection {
             None
         };
         let ended = self.transactions.end_statement(outcome.is_ok(), invalidates);
+        // `EndQueryInternal`: the profile is written before the logger is refreshed.
+        drop(metrics_guard);
+        let profiled = self
+            .profiler
+            .end_query(&self.settings.profiler, self.logger.as_ref());
         self.end_query_logging();
         let mut result = outcome.and_then(|result| ended.map(|()| result));
+        if result.is_ok()
+            && let Err(error) = profiled
+        {
+            result = Err(error);
+        }
         if result.is_ok()
             && !self.transactions.has_current()
             && let Some(modified) = modified
@@ -713,6 +749,37 @@ impl Connection {
             result = Err(error);
         }
         result.map_err(|error| error.with_query_context(query))
+    }
+
+    /// Applies the configuration changes functions made (`enable_profiling` /
+    /// `disable_profiling`).
+    fn apply_client_requests(&mut self, requests: Vec<rustdb_function::ClientRequest>) -> Result<()> {
+        use rustdb_function::ClientRequest;
+        for request in requests {
+            match request {
+                ClientRequest::EnableProfiling {
+                    format,
+                    coverage,
+                    save_location,
+                    mode,
+                    metrics,
+                } => {
+                    let disabled = self.settings.optimizer_config().disabled;
+                    let options = crate::query_profiler::ProfilingOptions {
+                        format: format.as_deref(),
+                        coverage: coverage.as_deref(),
+                        save_location: save_location.as_deref(),
+                        mode: mode.as_deref(),
+                        metrics: metrics.as_ref(),
+                    };
+                    self.settings
+                        .profiler
+                        .apply_enable_profiling(&options, &disabled)?;
+                }
+                ClientRequest::DisableProfiling => self.settings.profiler.apply_disable_profiling(),
+            }
+        }
+        Ok(())
     }
 
     /// Applies the options another connection set globally since the last statement
@@ -800,6 +867,7 @@ impl Connection {
     fn begin_query_logging(&mut self, query: &str) {
         use crate::logging::{ContextScope, LoggingContext};
         use rustdb_function::logging::{ClientLogger, LogLevel, LogScope};
+        self.log_query(query);
         let manager = Arc::clone(&self.logger.manager);
         let _ = manager.flush();
         // Like DuckDB, the query's transaction starts first when the query is logged.
@@ -825,6 +893,34 @@ impl Connection {
                 .logger
                 .write_log(LogScope::Connection, "QueryLog", LogLevel::Info, query);
         }
+    }
+
+    /// `ClientContext::LogQueryInternal`: the statement and a newline, synced to disk.
+    fn log_query(&mut self, query: &str) {
+        use std::io::Write as _;
+        if let Some(writer) = &mut self.log_query_writer {
+            let _ = writer
+                .write_all(query.as_bytes())
+                .and_then(|()| writer.write_all(b"\n"))
+                .and_then(|()| writer.sync_data());
+        }
+    }
+
+    /// `LogQueryPathSetting::OnSet`: an empty path stops logging, any other starts a new
+    /// log file there.
+    fn set_log_query_path(&mut self, value: Option<&rustdb_types::Value>) -> Result<()> {
+        let path = value
+            .map(rustdb_types::Value::to_varchar)
+            .transpose()?
+            .unwrap_or_default();
+        self.log_query_writer = if path.is_empty() {
+            None
+        } else {
+            Some(std::fs::File::create(&path).map_err(|error| {
+                Error::new(ErrorKind::Io, format!("Cannot open file \"{path}\": {error}"))
+            })?)
+        };
+        Ok(())
     }
 
     /// `ClientContext::EndQueryInternal`'s logging: flush and a connection-scoped logger.
@@ -1144,7 +1240,9 @@ impl Connection {
         }
         let instance = self.database.instance();
         for attached in attaches {
-            instance.databases.detach_if_current(&attached);
+            instance
+                .databases
+                .detach_if_current(&attached, instance.checkpoint_on_shutdown());
         }
     }
 
@@ -1175,7 +1273,10 @@ impl Connection {
             )));
         }
         let instance = self.database.instance();
-        match instance.databases.detach(&info.name) {
+        match instance
+            .databases
+            .detach(&info.name, instance.checkpoint_on_shutdown())
+        {
             Some(_) => Ok(()),
             None if info.if_not_found == rustdb_ast::OnEntryNotFound::ReturnNull => Ok(()),
             None => Err(Error::binder(format!(
@@ -1324,10 +1425,20 @@ impl Connection {
     }
 
     fn run_planned(&mut self, statement: SqlStatement) -> Result<MaterializedResult> {
+        use rustdb_common::profiling::MetricType;
         let statement_type = statement.kind.statement_type();
         let transaction = self.transactions.current();
         let planner = Planner::new(self.client_context(transaction));
-        let planned = planner.create_plan(statement)?;
+        // `CreatePreparedStatementInternal`: the planner's phase, of which binding is
+        // all here.
+        self.profiler
+            .start_phase(&self.settings.profiler, MetricType::Planner);
+        self.profiler
+            .start_phase(&self.settings.profiler, MetricType::PlannerBinding);
+        let planned = planner.create_plan(statement);
+        self.profiler.end_phase(&self.settings.profiler);
+        self.profiler.end_phase(&self.settings.profiler);
+        let planned = planned?;
         if self.transactions.is_invalidated() && planned.properties.requires_valid_transaction {
             return Err(TransactionContext::aborted_error());
         }
@@ -1461,6 +1572,31 @@ impl Connection {
             }
             _ => {}
         }
+        // Statements the connection runs itself are profiled as their physical operator
+        // under the result collector.
+        let operator_type = match &plan.kind {
+            LogicalKind::Transaction { .. } => Some("TRANSACTION"),
+            LogicalKind::Attach(_) => Some("ATTACH"),
+            LogicalKind::Detach(_) => Some("DETACH"),
+            LogicalKind::Set {
+                scope: SetScope::Variable,
+                ..
+            } => None,
+            LogicalKind::Set { .. } => Some("SET"),
+            LogicalKind::Reset { .. } => Some("RESET"),
+            LogicalKind::Prepare { .. } => Some("PREPARE"),
+            LogicalKind::Deallocate { .. } => Some("DROP"),
+            LogicalKind::CreateSecret(_) => Some("CREATE_SECRET"),
+            LogicalKind::Drop(info) if info.catalog_type == rustdb_ast::CatalogType::SecretEntry => {
+                Some("DROP")
+            }
+            LogicalKind::Pragma { .. } => Some("PRAGMA"),
+            _ => None,
+        };
+        if let Some(operator_type) = operator_type {
+            self.profiler
+                .initialize_statement(&self.settings.profiler, operator_type);
+        }
         match &plan.kind {
             LogicalKind::Transaction { info } => {
                 match info.transaction_type {
@@ -1550,6 +1686,9 @@ impl Connection {
                 if is_threads_setting(name) {
                     self.database.instance().set_threads(Some(value))?;
                 }
+                if name.eq_ignore_ascii_case("log_query_path") {
+                    self.set_log_query_path(Some(value))?;
+                }
                 self.database.instance().set_buffer_setting(name, Some(value))?;
                 if crate::logging::is_logging_setting(name) {
                     crate::logging::apply_setting(&self.database.instance().log_manager, name, Some(value))?;
@@ -1573,6 +1712,9 @@ impl Connection {
                     crate::logging::apply_setting(&self.database.instance().log_manager, name, None)?;
                 }
                 self.settings.reset(name)?;
+                if name.eq_ignore_ascii_case("log_query_path") {
+                    self.set_log_query_path(None)?;
+                }
                 if is_threads_setting(name) {
                     self.database.instance().set_threads(None)?;
                 }
@@ -1648,6 +1790,11 @@ impl Connection {
                 if lower == "enable_optimizer" || lower == "disable_optimizer" {
                     self.settings.optimizer_disabled = lower == "disable_optimizer";
                 }
+                match lower.as_str() {
+                    "enable_profiling" | "enable_profile" => self.settings.profiler.enable(),
+                    "disable_profiling" | "disable_profile" => self.settings.profiler.disable(),
+                    _ => {}
+                }
                 if lower == "disable_checkpoint_on_shutdown" || lower == "enable_checkpoint_on_shutdown" {
                     self.database
                         .instance()
@@ -1718,14 +1865,42 @@ impl Connection {
         names: Vec<String>,
         types: Vec<LogicalType>,
     ) -> Result<MaterializedResult> {
+        use rustdb_common::profiling::MetricType;
         let transaction = self.transactions.current();
         let client = self.client_context(transaction);
         let optimizer_config = self.settings.optimizer_config();
         let optimizer_client = optimizer_config.enabled.then(|| Arc::clone(&client));
         let preserve_insertion_order = optimizer_config.preserve_insertion_order;
         let plan_client = Arc::clone(&client);
-        plan = Optimizer::new(client, optimizer_config).optimize(plan)?;
-        ColumnBindingResolver::resolve(&mut plan)?;
+        let optimize = optimizer_config.enabled;
+        if optimize {
+            self.profiler
+                .start_phase(&self.settings.profiler, MetricType::AllOptimizers);
+        }
+        let mut optimizer = Optimizer::new(client, optimizer_config);
+        let optimized = optimizer.optimize(plan);
+        if optimize {
+            for (pass, time) in optimizer.timings() {
+                self.profiler
+                    .add_optimizer_timing(&self.settings.profiler, *pass, time.as_secs_f64());
+            }
+            self.profiler.end_phase(&self.settings.profiler);
+        }
+        plan = optimized?;
+        // `PhysicalPlanGenerator::Plan`: the operators' types are already resolved.
+        self.profiler
+            .start_phase(&self.settings.profiler, MetricType::PhysicalPlanner);
+        self.profiler
+            .start_phase(&self.settings.profiler, MetricType::PhysicalPlannerResolveTypes);
+        self.profiler.end_phase(&self.settings.profiler);
+        self.profiler
+            .start_phase(&self.settings.profiler, MetricType::PhysicalPlannerColumnBinding);
+        let resolved = ColumnBindingResolver::resolve(&mut plan);
+        self.profiler.end_phase(&self.settings.profiler);
+        if let Err(error) = resolved {
+            self.profiler.end_phase(&self.settings.profiler);
+            return Err(error);
+        }
         seed_samples(&mut plan, &self.function_client);
         let context = PlanContext {
             transaction: self.transactions.current(),
@@ -1739,21 +1914,41 @@ impl Connection {
             index_scan: self.settings.index_scan_thresholds(),
             client: plan_client,
         };
-        let physical = create_physical_plan_with(plan, &context)?;
-        // EXPLAIN ANALYZE profiles the run.
-        let profiler =
-            (physical.name() == "EXPLAIN_ANALYZE").then(|| Arc::new(rustdb_execution::QueryProfiler::new()));
+        self.profiler
+            .start_phase(&self.settings.profiler, MetricType::PhysicalPlannerCreatePlan);
+        let physical = create_physical_plan_with(plan, &context);
+        self.profiler.end_phase(&self.settings.profiler);
+        self.profiler.end_phase(&self.settings.profiler);
+        let physical = physical?;
+        let explain_analyze = physical.name() == "EXPLAIN_ANALYZE";
         let env = Arc::clone(&self.database.instance().env);
         let root: PhysicalRef = Arc::new(PhysicalResultCollector::for_plan(
             physical,
             env.threads(),
             preserve_insertion_order,
         ));
+        // `Executor::Initialize`; EXPLAIN ANALYZE and profiled queries record what every
+        // operator did.
+        self.profiler.initialize(&self.settings.profiler, &root);
+        let profiler = (explain_analyze || self.profiler.is_running()).then(|| {
+            Arc::new(
+                rustdb_execution::QueryProfiler::new()
+                    .with_query_metrics(self.profiler.active_metrics().cloned())
+                    .with_json_by_default(crate::query_profiler::QueryProfiler::prints_json(
+                        &self.settings.profiler,
+                    ))
+                    .with_memory(env.buffer_manager.clone()),
+            )
+        });
         let options = rustdb_execution::QueryOptions {
-            profiler,
+            profiler: profiler.clone(),
             preserve_insertion_order,
         };
-        let state = Executor::execute_with(&root, env, &options)?;
+        let state = Executor::execute_with(&root, env, &options);
+        if let Some(profiler) = &profiler {
+            self.profiler.flush(&self.settings.profiler, profiler);
+        }
+        let state = state?;
         let collected = state
             .downcast_ref::<Mutex<CollectedResult>>()
             .ok_or_else(|| Error::internal("result collector state has an unexpected type"))?;

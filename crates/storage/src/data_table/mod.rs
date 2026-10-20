@@ -271,6 +271,16 @@ impl DataTable {
         self.row_groups.row_group_count()
     }
 
+    /// The row groups of the table and of the transaction's local rows
+    /// (`GetRowGroupCountWithLocalStorage`).
+    pub fn row_group_count_with_local_storage(self: &Arc<Self>, transaction: &Transaction) -> usize {
+        self.row_group_count()
+            + transaction
+                .local_storage()
+                .storage(self)
+                .map_or(0, |local| local.collection().filled_row_group_count())
+    }
+
     fn version(&self) -> TableVersion {
         match self.version.load(Ordering::Acquire) {
             1 => TableVersion::Altered,
@@ -453,9 +463,11 @@ impl DataTable {
             state.local_state = CollectionScanState::default();
             return Ok(true);
         }
-        // The local rows' batches follow the table's (`TableScanGetPartitionData`).
+        // The local rows' batches follow the table's (`TableScanGetPartitionData`); the
+        // rows scanned so far stay counted.
         state.table_state = CollectionScanState {
             batch_index: state.table_state.batch_index,
+            rows_scanned: state.table_state.rows_scanned,
             ..CollectionScanState::default()
         };
         if let Some(local) = transaction.local_storage().storage(self) {

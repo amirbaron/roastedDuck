@@ -11,6 +11,7 @@ pub mod client;
 pub use client::ObjectCache;
 pub mod copy;
 pub mod extension_entries;
+pub mod file_system;
 pub mod function_descriptions;
 pub mod logging;
 pub mod random;
@@ -21,7 +22,7 @@ pub use aggregate::{
     AggregateCollation, AggregateFunction, AggregateFunctionSet, AggregateOps, OwnedStates, StatePtr,
     UnaryAggregate,
 };
-pub use client::{FunctionClient, SettingInfo, SettingsSource};
+pub use client::{ClientRequest, FunctionClient, SettingInfo, SettingsSource};
 pub use copy::{CopyFunction, CopyOption, CopyOptionMode};
 pub use scalar::{
     AggregateResolver, BindInput, BindLambda, BoundAggregateFunction, CollationHandling, FunctionData,

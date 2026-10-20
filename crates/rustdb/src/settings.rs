@@ -14,6 +14,7 @@ use rustdb_planner::{DefaultNullOrder, PlannerConfig};
 use rustdb_types::{LogicalType, Value};
 
 use crate::default_settings::{SETTINGS, SettingDefinition};
+use crate::query_profiler::ProfilerConfig;
 
 /// Options whose `SetGlobal`/`ResetGlobal` always fail
 /// (`DeltaOnlyVariantEncodingEnabledSetting`).
@@ -232,6 +233,9 @@ pub(crate) struct Settings {
     allowed_configs: Vec<&'static str>,
     /// `PRAGMA disable_optimizer` (DuckDB's `ClientConfig::enable_optimizer`, negated).
     pub optimizer_disabled: bool,
+    /// The profiling options (`enable_profiling`, `profiling_output`, `profiling_mode`,
+    /// `profiling_coverage`, `custom_profiling_settings`).
+    pub profiler: ProfilerConfig,
 }
 
 /// The canonical option `name` stands for, resolving aliases (`DBConfig::GetOptionByName`).
@@ -266,7 +270,7 @@ pub(crate) fn is_global_option(name: &str) -> bool {
 }
 
 /// `StringUtil::StringToEnum`'s error for an unknown value of enum `enum_name`.
-fn enum_value_error(value: &str, enum_name: &str, values: &[&str]) -> Error {
+pub(crate) fn enum_value_error(value: &str, enum_name: &str, values: &[&str]) -> Error {
     let candidates: Vec<String> = values.iter().map(|&value| value.to_owned()).collect();
     Error::not_implemented(format!(
         "Enum value: unrecognized value \"{value}\" for enum \"{enum_name}\"\n{}",
@@ -437,7 +441,7 @@ fn list_entries(value: &Value) -> Result<Vec<String>> {
 
 /// The checks of the options' `OnSet` / `SetGlobal` / `SetLocal` callbacks on the
 /// value (DuckDB's `custom_settings.cpp`).
-fn check_value(option: &str, value: &Value, profiling_output: Option<&Value>) -> Result<()> {
+fn check_value(option: &str, value: &Value) -> Result<()> {
     if let Some((_, enum_name, values)) = ENUM_SETTINGS.iter().find(|(name, _, _)| *name == option) {
         if value.is_null() {
             return Err(Error::invalid_input(format!("{option} setting cannot be NULL")));
@@ -445,44 +449,6 @@ fn check_value(option: &str, value: &Value, profiling_output: Option<&Value>) ->
         return check_enum_value(value, enum_name, values);
     }
     match option {
-        "profiling_mode" => {
-            let parameter = value.to_varchar()?.to_lowercase();
-            if !matches!(parameter.as_str(), "standard" | "detailed" | "all") {
-                return Err(Error::parser(format!(
-                    "Unrecognized profiling mode \"{parameter}\", supported formats: [standard, detailed]"
-                )));
-            }
-        }
-        "enable_profiling" => {
-            let parameter = value.to_varchar()?.to_lowercase();
-            let save_location = profiling_output
-                .filter(|location| !location.is_null())
-                .map(Value::to_varchar)
-                .transpose()?
-                .unwrap_or_default();
-            if parameter != "no_output" && !save_location.is_empty() {
-                // `FileSystem::ExtractExtension`.
-                let file_type = save_location
-                    .rsplit_once('.')
-                    .map_or("", |(_, extension)| extension);
-                if file_type != parameter && file_type != "txt" {
-                    return Err(Error::parser(format!(
-                        "Profiler file type ({save_location}) must either have the same file extension as the \
-                         profiling output type ({parameter}), or be a '.txt' file. Set 'profiling_output' to a \
-                         '{parameter}' file or run \"RESET profiling_output\" first."
-                    )));
-                }
-            }
-            if !matches!(
-                parameter.as_str(),
-                "json" | "query_tree" | "query_tree_optimizer" | "no_output" | "html" | "graphviz"
-            ) {
-                return Err(Error::parser(format!(
-                    "Unrecognized print format {parameter}, supported formats: [json, query_tree, \
-                     query_tree_optimizer, no_output, html, graphviz]"
-                )));
-            }
-        }
         "threads" => {
             let threads = value.default_cast_as(&LogicalType::BIGINT)?;
             if threads.as_i128().is_some_and(|threads| threads < 1) {
@@ -716,9 +682,20 @@ impl Settings {
     /// Applies the value of the option `option` (a canonical name).
     fn apply(&mut self, option: &'static str, value: &Value) -> Result<()> {
         let canonical = option_by_name(option).unwrap_or(option);
-        check_value(canonical, value, self.other.get("profiling_output"))?;
+        check_value(canonical, value)?;
         if canonical == "allowed_configs" {
             self.set_allowed_configs(value)?;
+        }
+        match canonical {
+            "enable_profiling" => return self.profiler.set_enable_profiling(value),
+            "profile_output" => return self.profiler.set_save_location(value),
+            "profiling_mode" => return self.profiler.set_mode(value),
+            "profiling_coverage" => return self.profiler.set_coverage(value),
+            "custom_profiling_settings" => {
+                let disabled = self.optimizer_config().disabled;
+                return self.profiler.set_custom_settings(value, &disabled);
+            }
+            _ => {}
         }
         match option {
             "default_order" => {
@@ -942,6 +919,14 @@ impl Settings {
         check_user_adjustable(option)?;
         self.assigned.retain(|(name, _)| *name != option);
         let defaults = PlannerConfig::default();
+        match option_by_name(option).unwrap_or(option) {
+            "enable_profiling" => self.profiler.reset_enable_profiling(),
+            "profile_output" => self.profiler.reset_save_location(),
+            "profiling_mode" => self.profiler.reset_mode(),
+            "profiling_coverage" => self.profiler.reset_coverage(),
+            "custom_profiling_settings" => self.profiler.reset_custom_settings(),
+            _ => {}
+        }
         match option {
             "default_order" => self.planner.default_order = defaults.default_order,
             "default_null_order" => self.planner.default_null_order = defaults.default_null_order,
@@ -1043,7 +1028,13 @@ impl SettingsSnapshot {
         if let Some(value) = crate::logging::setting_value(&self.logging, definition.name) {
             return Ok(value);
         }
+        let profiler = &self.settings.profiler;
         let value = match definition.name {
+            "enable_profiling" => profiler.enable_profiling_value(),
+            "profile_output" | "profiling_output" => Value::varchar(&profiler.save_location),
+            "profiling_mode" => profiler.mode_value(),
+            "profiling_coverage" => profiler.coverage_value(),
+            "custom_profiling_settings" => profiler.custom_settings_value(),
             "default_null_order" | "null_order" => {
                 Value::varchar(match self.settings.planner.default_null_order {
                     DefaultNullOrder::NullsFirst => "NULLS_FIRST",

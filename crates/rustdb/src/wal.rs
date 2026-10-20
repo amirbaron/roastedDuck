@@ -64,6 +64,9 @@ pub(crate) fn replay(database: &Database, attached: &Arc<AttachedDatabase>) -> R
     let Some(storage) = attached.storage.clone() else {
         return Ok(());
     };
+    // `SingleFileStorageManager::LoadDatabase` times the replay.
+    let _timer =
+        rustdb_common::profiling::start_timer(rustdb_common::profiling::MetricType::AttachReplayWalLatency);
     let (size, requires_truncate) = match WalReader::open(&storage.wal_path())? {
         None => (0, false),
         Some(reader) => replay_log(database, attached, &storage, reader)?,
@@ -129,9 +132,11 @@ fn entry_type(deserializer: &mut BinaryDeserializer<'_>) -> Result<WalType> {
 fn scan_log(reader: &mut WalReader, storage: &StorageManager) -> Result<ScanState> {
     let mut state = ScanState::default();
     let mut last_flush_end = 0;
+    let mut replay_entry_count = 0;
     let outcome = (|| -> Result<()> {
         check_header(reader, storage, &mut state)?;
         loop {
+            replay_entry_count += 1;
             state.current_position = reader.offset();
             let payload = reader.next_entry()?;
             let mut deserializer = BinaryDeserializer::new(&payload);
@@ -149,6 +154,10 @@ fn scan_log(reader: &mut WalReader, storage: &StorageManager) -> Result<ScanStat
                 WalType::WalFlush => {
                     last_flush_end = reader.offset();
                     if reader.finished() {
+                        rustdb_common::profiling::add_to_counter(
+                            rustdb_common::profiling::MetricType::WalReplayEntryCount,
+                            replay_entry_count,
+                        );
                         return Ok(());
                     }
                 }

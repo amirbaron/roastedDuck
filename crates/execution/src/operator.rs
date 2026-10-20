@@ -7,6 +7,7 @@ use rustdb_common::{Error, Result};
 use rustdb_types::{DataChunk, LogicalType};
 
 use crate::ExecutionContext;
+use crate::profiler::ScanMetrics;
 
 /// A shared handle to a physical operator.
 pub type PhysicalRef = Arc<dyn PhysicalOperator>;
@@ -259,6 +260,19 @@ pub trait Source: PhysicalOperator {
         Vec::new()
     }
 
+    /// What a thread's table scan read, for the profiler (`PhysicalTableScan::GetMetrics`
+    /// with the cardinality fallback of `FinalizeSourceProfiling`); `exhausted` tells
+    /// whether the thread read the source to its end. `None` for other sources.
+    fn scan_metrics(
+        &self,
+        global: &Self::Global,
+        local: &Self::Local,
+        exhausted: bool,
+    ) -> Option<ScanMetrics> {
+        let _ = (global, local, exhausted);
+        None
+    }
+
     /// The batch index of the chunk `get_data` just returned, counted from 0 in the
     /// source's row order (DuckDB's `GetPartitionData`); only called on sources that
     /// [support batch indices](PhysicalOperator::supports_batch_index).
@@ -429,6 +443,12 @@ pub trait ErasedSource {
         global: &(dyn Any + Send + Sync),
         local: &(dyn Any + Send),
     ) -> Result<Vec<(String, String)>>;
+    fn scan_metrics(
+        &self,
+        global: &(dyn Any + Send + Sync),
+        local: &(dyn Any + Send),
+        exhausted: bool,
+    ) -> Result<Option<ScanMetrics>>;
 }
 
 impl<T: Source> ErasedSource for T {
@@ -486,6 +506,23 @@ impl<T: Source> ErasedSource for T {
             .downcast_ref::<T::Local>()
             .ok_or_else(|| state_type_error(name))?;
         Ok(Source::extra_source_params(self, downcast(global, name)?, local))
+    }
+    fn scan_metrics(
+        &self,
+        global: &(dyn Any + Send + Sync),
+        local: &(dyn Any + Send),
+        exhausted: bool,
+    ) -> Result<Option<ScanMetrics>> {
+        let name = self.name();
+        let local = local
+            .downcast_ref::<T::Local>()
+            .ok_or_else(|| state_type_error(name))?;
+        Ok(Source::scan_metrics(
+            self,
+            downcast(global, name)?,
+            local,
+            exhausted,
+        ))
     }
 }
 

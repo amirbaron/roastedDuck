@@ -67,6 +67,23 @@ impl ObjectCache {
     }
 }
 
+/// A change of the connection's own configuration that a function makes when it runs
+/// (DuckDB's functions change the `ClientConfig` directly; ours hand the change to the
+/// connection, which applies it once the function has run).
+#[derive(Clone, Debug, PartialEq)]
+pub enum ClientRequest {
+    /// `enable_profiling(...)` (`EnableProfiling`): the options given.
+    EnableProfiling {
+        format: Option<String>,
+        coverage: Option<String>,
+        save_location: Option<String>,
+        mode: Option<String>,
+        metrics: Option<Value>,
+    },
+    /// `disable_profiling()` (`DisableProfiling`).
+    DisableProfiling,
+}
+
 /// Connection ids handed out so far (DuckDB's `ConnectionManager` counter).
 static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -93,6 +110,8 @@ pub struct FunctionClient {
     logger: Mutex<Option<Arc<dyn crate::logging::ClientLogger>>>,
     /// The database's object cache (`ObjectCache::GetObjectCache`).
     object_cache: Mutex<Option<Arc<ObjectCache>>>,
+    /// Configuration changes functions made, not yet applied by the connection.
+    client_requests: Mutex<Vec<ClientRequest>>,
 }
 
 impl Default for FunctionClient {
@@ -108,6 +127,7 @@ impl Default for FunctionClient {
             connections: Mutex::default(),
             logger: Mutex::default(),
             object_cache: Mutex::default(),
+            client_requests: Mutex::default(),
         }
     }
 }
@@ -180,6 +200,24 @@ impl FunctionClient {
     /// The connection's loggers, if the database logs.
     pub fn logger(&self) -> Option<Arc<dyn crate::logging::ClientLogger>> {
         self.logger.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    /// Hands a configuration change to the connection.
+    pub fn push_client_request(&self, request: ClientRequest) {
+        self.client_requests
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(request);
+    }
+
+    /// The configuration changes functions made since the last call, in order.
+    pub fn take_client_requests(&self) -> Vec<ClientRequest> {
+        std::mem::take(
+            &mut *self
+                .client_requests
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        )
     }
 
     /// Shares the database's object cache with this connection.

@@ -193,6 +193,20 @@ impl RowGroupCollection {
         self.row_groups().tree.len()
     }
 
+    /// The row groups holding rows; an append starts its row group before its first
+    /// row, which DuckDB's lazily initialized appends do not.
+    pub fn filled_row_group_count(&self) -> usize {
+        let row_groups = self.row_groups();
+        (0..row_groups.tree.len())
+            .filter(|&index| {
+                row_groups
+                    .tree
+                    .get(index)
+                    .is_some_and(|node| node.node.count() > 0)
+            })
+            .count()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.row_groups().tree.is_empty()
     }
