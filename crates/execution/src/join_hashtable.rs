@@ -154,7 +154,7 @@ const USE_SALT_THRESHOLD: usize = 8192;
 
 /// Pointer tables with more entries than this are probed with prefetching; smaller ones
 /// (and their rows) stay in the CPU cache, where loading every entry ahead only costs.
-const PREFETCH_THRESHOLD: usize = 1 << 16;
+const PREFETCH_THRESHOLD: usize = 1 << 20;
 
 /// One slot of the pointer table: a row pointer in the low 48 bits and the upper 16 bits
 /// of the row's hash (DuckDB's `ht_entry_t`). Zero means empty.
