@@ -287,6 +287,7 @@ impl DdlAction for AlterEntryAction {
                     IndexKeyExpressions::Columns(key_names),
                 )?;
                 storage.build_index(transaction, &mut art, true)?;
+                storage.check_main_table_for_index_creation()?;
                 if storage.indexes().find(index_name).is_some() {
                     return Err(Error::catalog(format!(
                         "an index with that name already exists for this table: {index_name}"
@@ -299,16 +300,14 @@ impl DdlAction for AlterEntryAction {
                     )));
                 }
                 self.check_dependents(transaction, entry)?;
-                storage.add_index(art)?;
-                let hook = StorageHook::CreatedIndex(Arc::clone(storage.info()), index_name.clone());
-                let result = self.replace(
-                    transaction,
-                    entry,
-                    definition.clone(),
-                    Some(Arc::clone(&storage)),
-                    hook,
-                );
+                // `DuckTableEntry::AddConstraint`: a new version of the storage, sharing
+                // the indexes, to which the key's index is added.
+                let new_storage = storage.add_unique_constraint(transaction);
+                new_storage.add_index(art)?;
+                let hook = StorageHook::AddedPrimaryKey(Arc::clone(&storage), index_name.clone());
+                let result = self.replace(transaction, entry, definition.clone(), Some(new_storage), hook);
                 if result.is_err() {
+                    storage.set_as_main_table();
                     storage.remove_index(index_name);
                 }
                 result

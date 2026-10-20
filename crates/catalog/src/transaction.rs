@@ -29,6 +29,9 @@ pub enum StorageHook {
     DroppedTable(Arc<rustdb_storage::DataTable>),
     /// A created index, removed from its table on rollback (`DuckIndexEntry::Rollback`).
     CreatedIndex(Arc<rustdb_storage::DataTableInfo>, String),
+    /// The previous storage of a table given a primary key and the key's index: the
+    /// storage is made the main table again and the index removed on rollback.
+    AddedPrimaryKey(Arc<rustdb_storage::DataTable>, String),
     /// A dropped index, removed from its table on commit (`DuckIndexEntry::CommitDrop`).
     DroppedIndex(Arc<rustdb_storage::DataTableInfo>, String),
 }
@@ -62,6 +65,10 @@ impl CatalogUndo for CatalogChange {
             StorageHook::RenamedTable(info, name) => info.set_table_name(name.clone()),
             StorageHook::CreatedIndex(info, name) => {
                 info.indexes().remove(name);
+            }
+            StorageHook::AddedPrimaryKey(table, name) => {
+                table.set_as_main_table();
+                table.info().indexes().remove(name);
             }
             StorageHook::None | StorageHook::DroppedIndex(..) => {}
         }

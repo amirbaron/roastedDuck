@@ -1003,6 +1003,17 @@ impl DataTable {
         Ok(table)
     }
 
+    /// `ALTER TABLE ADD PRIMARY KEY`: the new version of the table, whose index the
+    /// caller adds (`DataTable(parent, constraint)` with a UNIQUE constraint, which is
+    /// verified by building the index).
+    pub fn add_unique_constraint(self: &Arc<Self>, transaction: &Transaction) -> Arc<Self> {
+        let _lock = self.append_lock();
+        let table = Self::derived(self, self.columns.clone(), Arc::clone(&self.row_groups));
+        transaction.local_storage().move_storage(self, &table);
+        self.set_as_altered();
+        table
+    }
+
     /// `ALTER TABLE ALTER COLUMN SET NOT NULL`: verifies that column `column` holds no
     /// NULLs and returns the new version of the table (`DataTable(parent, constraint)`).
     pub fn add_not_null_constraint(

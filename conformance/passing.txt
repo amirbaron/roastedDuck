@@ -863,6 +863,7 @@ test/sql/alter/add_col/test_add_col_stats.test
 test/sql/alter/add_col/test_add_col_transactions.test
 test/sql/alter/add_col/test_add_col_user_type.test
 test/sql/alter/add_pk/test_add_multi_column_pk.test
+test/sql/alter/add_pk/test_add_pk.test
 test/sql/alter/add_pk/test_add_pk_alter_in_tx.test
 test/sql/alter/add_pk/test_add_pk_attach.test
 test/sql/alter/add_pk/test_add_pk_catalog_error.test
@@ -871,11 +872,13 @@ test/sql/alter/add_pk/test_add_pk_drop_and_reload.test
 test/sql/alter/add_pk/test_add_pk_gaps_in_rowids.test
 test/sql/alter/add_pk/test_add_pk_invalid_data.test
 test/sql/alter/add_pk/test_add_pk_invalid_type.test
+test/sql/alter/add_pk/test_add_pk_naming_conflict.test
 test/sql/alter/add_pk/test_add_pk_reclaim_storage.test_slow
 test/sql/alter/add_pk/test_add_pk_rollback.test
 test/sql/alter/add_pk/test_add_pk_storage.test
 test/sql/alter/add_pk/test_add_pk_wal.test
 test/sql/alter/add_pk/test_add_pk_with_generated_column.test
+test/sql/alter/add_pk/test_add_same_pk_simultaneously.test
 test/sql/alter/add_pk/test_add_same_pk_twice.test
 test/sql/alter/alter_col/test_drop_not_null.test
 test/sql/alter/alter_col/test_not_null_in_tran.test
@@ -2440,6 +2443,7 @@ test/sql/index/art/storage/test_art_checkpoint.test
 test/sql/index/art/storage/test_art_import.test
 test/sql/index/art/storage/test_art_import_export.test
 test/sql/index/art/storage/test_art_mem_limit.test
+test/sql/index/art/storage/test_art_names.test
 test/sql/index/art/storage/test_art_readonly.test
 test/sql/index/art/storage/test_art_reclaim_storage.test_slow
 test/sql/index/art/storage/test_art_reclaim_storage_pk_fk.test_slow

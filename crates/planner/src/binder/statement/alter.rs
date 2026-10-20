@@ -77,6 +77,13 @@ pub fn bind_alter(scope: &mut BindScope<'_>, info: &mut AlterInfo) -> Result<Bou
                 },
                 AlterInfoKind::AlterTable(alter) => {
                     let EntryKind::Table(table) = &found.entry.kind else {
+                        if is_add_primary_key(alter) {
+                            // `Binder::BindAlterAddIndex`.
+                            return Err(Error::binder(format!(
+                                "Cannot execute the `ALTER TABLE` statement on `{}`, only `Table` entries are accepted.",
+                                found.entry.catalog_type().display_name()
+                            )));
+                        }
                         return Err(Error::catalog("Can only modify view with ALTER VIEW statement"));
                     };
                     bind_alter_table(
@@ -693,6 +700,12 @@ fn unique_to_string(table: &TableEntry, unique: &UniqueConstraint) -> String {
         "UNIQUE("
     };
     format!("{base}{})", names.join(", "))
+}
+
+/// `AlterInfo::IsAddPrimaryKey`.
+fn is_add_primary_key(alter: &AlterTableInfo) -> bool {
+    matches!(alter, AlterTableInfo::AddConstraint(add)
+        if matches!(&*add.constraint, Constraint::Unique(unique) if unique.is_primary_key))
 }
 
 /// `ALTER TABLE ... ADD PRIMARY KEY` (`Binder::BindAlterAddIndex` with

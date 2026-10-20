@@ -332,7 +332,7 @@ fn create_index_on_existing_data() {
     let tx = manager.begin();
     let art = t.new_art("idx", IndexConstraintType::Unique, &[0]).unwrap();
     assert_eq!(
-        t.create_index(&tx, art).unwrap_err().to_string(),
+        t.create_index(&tx, art, true).unwrap_err().to_string(),
         "Constraint Error: Data contains duplicates on indexed column(s)"
     );
     manager.rollback(&tx);
@@ -343,7 +343,7 @@ fn create_index_on_existing_data() {
     manager.commit(&tx).unwrap();
     let tx = manager.begin();
     let art = t.new_art("idx", IndexConstraintType::Unique, &[0]).unwrap();
-    t.create_index(&tx, art).unwrap();
+    t.create_index(&tx, art, true).unwrap();
     assert_eq!(
         insert(&t, &tx, &[2]).unwrap_err(),
         "Constraint Error: Duplicate key \"i: 2\" violates unique constraint."
