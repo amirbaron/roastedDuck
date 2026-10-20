@@ -117,9 +117,14 @@ impl TaskScheduler {
         if workers.len() == wanted {
             return;
         }
-        while workers.len() > wanted {
-            if let Some(worker) = workers.pop() {
-                worker.marker.store(false, Ordering::Release);
+        if workers.len() > wanted {
+            // Cleared under the queue lock, like in `drop`, so no stopping worker misses
+            // the wake-up below.
+            let _queue = self.shared.lock();
+            while workers.len() > wanted {
+                if let Some(worker) = workers.pop() {
+                    worker.marker.store(false, Ordering::Release);
+                }
             }
         }
         while workers.len() < wanted {
@@ -158,8 +163,15 @@ impl TaskScheduler {
 impl Drop for TaskScheduler {
     fn drop(&mut self) {
         let workers = std::mem::take(self.workers.get_mut().unwrap_or_else(PoisonError::into_inner));
-        for worker in &workers {
-            worker.marker.store(false, Ordering::Release);
+        {
+            // The markers are cleared under the queue lock: a worker either sees the
+            // cleared marker before waiting, or is already waiting when notified. Clearing
+            // them outside the lock lost the wake-up of a worker between its check and its
+            // wait, and the join below then hung.
+            let _queue = self.shared.lock();
+            for worker in &workers {
+                worker.marker.store(false, Ordering::Release);
+            }
         }
         self.shared.signal.notify_all();
         for worker in workers {
