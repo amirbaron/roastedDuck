@@ -7,7 +7,7 @@ use rustdb_ast::{AttachInfo, OnCreateConflict};
 use rustdb_catalog::Catalog;
 use rustdb_common::{Error, ErrorKind, Result};
 use rustdb_storage::storage_manager::StorageManager;
-use rustdb_types::Value;
+use rustdb_types::{LogicalTypeId, Value};
 
 use crate::AccessMode;
 use crate::storage::{database_name, open_storage};
@@ -98,7 +98,20 @@ impl AttachOptions {
                 "storage_version" => options.storage_version = Some(value.clone()),
                 "block_size" => options.block_size = Some(value.clone()),
                 "row_group_size" => options.row_group_size = Some(value.clone()),
-                "encryption_key" | "encryption_cipher" | "debug_encryption_version" => {
+                "encryption_key" => {
+                    // `StorageOptions::Initialize` checks the key before anything is opened.
+                    if value.logical_type().id() != LogicalTypeId::Varchar {
+                        return Err(Error::binder(format!(
+                            "\"{}\" is not a valid key. A key must be of type VARCHAR",
+                            value.to_varchar()?
+                        )));
+                    }
+                    if value.to_varchar()?.is_empty() {
+                        return Err(Error::binder("Not a valid key. A key cannot be empty"));
+                    }
+                    return Err(Error::not_implemented("attaching encrypted databases"));
+                }
+                "encryption_cipher" | "debug_encryption_version" => {
                     return Err(Error::not_implemented("attaching encrypted databases"));
                 }
                 other => {

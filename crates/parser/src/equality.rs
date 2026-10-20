@@ -18,10 +18,7 @@ use rustdb_types::{LogicalType, TypeInfo, TypeParameter, TypeParameterValue, Unb
 
 /// Calls `callback` on each direct child of `expr`, in DuckDB's order; subqueries are
 /// not entered (only the child of `x IN (SELECT ...)` is visited).
-pub(crate) fn for_each_child_mut(
-    expr: &mut ParsedExpression,
-    callback: &mut dyn FnMut(&mut ParsedExpression),
-) {
+pub fn for_each_child_mut(expr: &mut ParsedExpression, callback: &mut dyn FnMut(&mut ParsedExpression)) {
     match &mut expr.kind {
         ParsedExpressionKind::Between(between) => {
             callback(&mut between.input);
@@ -111,7 +108,10 @@ fn any_child(expr: &ParsedExpression, predicate: &dyn Fn(&ParsedExpression) -> b
     copy_free
 }
 
-fn children(expr: &ParsedExpression, callback: &mut dyn FnMut(&ParsedExpression)) {
+/// Calls `callback` on each direct child of `expr`, in DuckDB's order (immutable
+/// `for_each_child_mut`, DuckDB's `ParsedExpressionIterator::EnumerateChildren`);
+/// subqueries are not entered.
+pub fn children(expr: &ParsedExpression, callback: &mut dyn FnMut(&ParsedExpression)) {
     match &expr.kind {
         ParsedExpressionKind::Between(between) => {
             callback(&between.input);
@@ -193,7 +193,7 @@ fn children(expr: &ParsedExpression, callback: &mut dyn FnMut(&ParsedExpression)
 }
 
 /// `ParsedExpression::IsScalar`: no column, subquery or positional references.
-pub(crate) fn is_scalar(expr: &ParsedExpression) -> bool {
+pub fn is_scalar(expr: &ParsedExpression) -> bool {
     match &expr.kind {
         ParsedExpressionKind::ColumnRef(_)
         | ParsedExpressionKind::Subquery(_)
@@ -205,8 +205,8 @@ pub(crate) fn is_scalar(expr: &ParsedExpression) -> bool {
     }
 }
 
-/// `ParsedExpression::HasSubquery`.
-pub(crate) fn has_subquery(expr: &ParsedExpression) -> bool {
+/// `ParsedExpression::HasSubquery`: whether `expr` contains a subquery.
+pub fn has_subquery(expr: &ParsedExpression) -> bool {
     match &expr.kind {
         ParsedExpressionKind::Subquery(_) => true,
         _ => any_child(expr, &has_subquery),
@@ -214,7 +214,7 @@ pub(crate) fn has_subquery(expr: &ParsedExpression) -> bool {
 }
 
 /// A hash consistent with [`expressions_equal`]: equal expressions hash equally.
-pub(crate) fn expression_hash(expr: &ParsedExpression) -> u64 {
+pub fn expression_hash(expr: &ParsedExpression) -> u64 {
     let mut hasher = DefaultHasher::new();
     (expr.expression_type as u8).hash(&mut hasher);
     (expr.expression_class() as u8).hash(&mut hasher);
@@ -360,7 +360,7 @@ fn statements_equal(a: &SelectStatement, b: &SelectStatement) -> bool {
 }
 
 /// `ParsedExpression::Equals`.
-pub(crate) fn expressions_equal(a: &ParsedExpression, b: &ParsedExpression) -> bool {
+pub fn expressions_equal(a: &ParsedExpression, b: &ParsedExpression) -> bool {
     if a.expression_class() != b.expression_class() || a.expression_type != b.expression_type {
         return false;
     }

@@ -53,12 +53,24 @@
 //! DuckDB's `Parser::ParseQuery` on a corpus file.
 
 mod candidates;
-mod equality;
-mod hash_order;
+pub mod equality;
+pub mod hash_order;
 pub mod highlight;
 pub mod json;
 mod lists;
 mod transformer;
+
+pub use transformer::build;
+pub use transformer::helpers::{get_value_f64, get_value_i64};
+pub use transformer::expression::{negate_comparison, operator_to_expression_type};
+pub use transformer::function::{
+    is_excludable_window_function, is_orderable_window_function, window_to_expression_type,
+};
+pub use transformer::star::{QualifiedColumnMap, serialized_exclude_list};
+
+/// `ParsedExpression::IsScalar`, `HasSubquery` and child enumeration, for the PEG
+/// transformer.
+pub use equality::{children as expression_children, has_subquery, is_scalar};
 
 use rustdb_ast::{CreateInfo, SqlStatement, SqlStatementKind};
 use rustdb_common::{Error, Result};
@@ -68,7 +80,9 @@ pub use lists::{
     parse_order_list, parse_update_list, parse_values_list,
 };
 pub use rustdb_pg_parser::keywords::{Keyword, KeywordCategory, keyword_list};
-pub use rustdb_pg_parser::{SimplifiedToken, SimplifiedTokenType, keyword_category, tokenize};
+pub use rustdb_pg_parser::{
+    SimplifiedToken, SimplifiedTokenType, keyword_category, strip_unicode_spaces, tokenize,
+};
 
 /// The `error_subtype` DuckDB attaches to errors of the grammar (`ParserException::SyntaxError`).
 pub const SYNTAX_ERROR: &str = "SYNTAX_ERROR";

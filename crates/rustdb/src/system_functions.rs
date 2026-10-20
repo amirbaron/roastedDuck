@@ -2711,6 +2711,54 @@ fn in_search_path_function() -> ScalarFunctionSet {
     set
 }
 
+/// The builtin pragma functions (DuckDB's `PragmaFunctions::RegisterFunction` and
+/// `PragmaQueries::RegisterFunction`); extensions add their own.
+pub(crate) const PRAGMA_FUNCTIONS: &[&str] = &[
+    "all_profiling_output",
+    "collations",
+    "copy_database",
+    "database_list",
+    "database_size",
+    "disable_checkpoint_on_shutdown",
+    "disable_object_cache",
+    "disable_optimizer",
+    "disable_print_progress_bar",
+    "disable_profile",
+    "disable_profiling",
+    "disable_progress_bar",
+    "disable_verification",
+    "disable_verify_external",
+    "disable_verify_fetch_row",
+    "disable_verify_parallelism",
+    "disable_verify_serializer",
+    "enable_checkpoint_on_shutdown",
+    "enable_object_cache",
+    "enable_optimizer",
+    "enable_print_progress_bar",
+    "enable_profile",
+    "enable_profiling",
+    "enable_progress_bar",
+    "enable_verification",
+    "extension_versions",
+    "force_checkpoint",
+    "functions",
+    "import_database",
+    "metadata_info",
+    "platform",
+    "show",
+    "show_databases",
+    "show_tables",
+    "show_tables_expanded",
+    "storage_info",
+    "table_info",
+    "user_agent",
+    "verify_external",
+    "verify_fetch_row",
+    "verify_parallelism",
+    "verify_serializer",
+    "version",
+];
+
 /// The SQL a `PRAGMA` stands for (DuckDB's `PragmaQueries`), if it is one.
 pub(crate) fn pragma_query(name: &str, parameters: &[Value]) -> Result<Option<String>> {
     let first = || -> Result<String> {

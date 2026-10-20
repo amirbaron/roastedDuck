@@ -202,9 +202,9 @@ impl Engine for RustEngine {
             ..Config::default()
         }
         .with_option("checkpoint_threshold", Value::varchar("0b"))
-            .with_option("allow_unsigned_extensions", Value::boolean(true))
-            .with_option("default_block_size", Value::ubigint(DEFAULT_BLOCK_SIZE))
-            .with_option("debug_verify_vector", Value::varchar("NONE"));
+        .with_option("allow_unsigned_extensions", Value::boolean(true))
+        .with_option("default_block_size", Value::ubigint(DEFAULT_BLOCK_SIZE))
+        .with_option("debug_verify_vector", Value::varchar("NONE"));
         if let Ok(threads) = std::env::var("SLT_THREADS") {
             let threads: u64 = threads
                 .parse()
@@ -259,11 +259,13 @@ impl Engine for RustEngine {
     }
 
     fn load_extension(&self, database: &Database, name: &str) -> Result<ExtensionLoad, String> {
-        Ok(match database.load_extension(name).map_err(|error| error.to_string())? {
-            rustdb::ExtensionLoad::Loaded => ExtensionLoad::Loaded,
-            rustdb::ExtensionLoad::NotAvailable => ExtensionLoad::NotLoaded,
-            rustdb::ExtensionLoad::Unknown => ExtensionLoad::Unknown,
-        })
+        Ok(
+            match database.load_extension(name).map_err(|error| error.to_string())? {
+                rustdb::ExtensionLoad::Loaded => ExtensionLoad::Loaded,
+                rustdb::ExtensionLoad::NotAvailable => ExtensionLoad::NotLoaded,
+                rustdb::ExtensionLoad::Unknown => ExtensionLoad::Unknown,
+            },
+        )
     }
 
     fn connect(&self, database: &Database) -> Result<Connection, String> {
