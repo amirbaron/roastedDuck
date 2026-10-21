@@ -16,10 +16,12 @@ mod appender;
 mod cast_function;
 mod catalog;
 mod config;
+mod copy_function;
 mod data_chunk;
 mod datetime;
 mod error_data;
 mod expression;
+mod file_system;
 mod function;
 mod helper;
 mod hugeint;
@@ -41,10 +43,12 @@ pub use appender::*;
 pub use cast_function::*;
 pub use catalog::*;
 pub use config::*;
+pub use copy_function::*;
 pub use data_chunk::*;
 pub use datetime::*;
 pub use error_data::*;
 pub use expression::*;
+pub use file_system::*;
 pub use function::{
     DuckdbBindInfo, DuckdbCopyCallback, DuckdbDeleteCallback, DuckdbFunctionInfo, DuckdbInitInfo,
 };
