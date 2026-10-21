@@ -4,7 +4,9 @@ use std::sync::Mutex;
 use rustdb_common::{Error, Result};
 use rustdb_types::{DataChunk, LogicalType};
 
-use crate::operator::{ErasedSink, PartitionInfo, PhysicalOperator, PhysicalRef, SinkState};
+use crate::operator::{
+    ErasedSink, OperatorPartitionInfo, PartitionInfo, PhysicalOperator, PhysicalRef, SinkState,
+};
 use crate::plan_generator::order_preservation::{preserve_insertion_order, use_batch_index};
 use crate::{ExecutionContext, Sink, SinkFinalize, SinkResult};
 
@@ -119,8 +121,11 @@ impl PhysicalOperator for PhysicalResultCollector {
             CollectorKind::Materialized { .. } | CollectorKind::Buffered { .. }
         )
     }
-    fn requires_batch_index(&self) -> bool {
-        self.kind == CollectorKind::Batch
+    fn required_partition_info(&self) -> OperatorPartitionInfo {
+        OperatorPartitionInfo {
+            batch_index: self.kind == CollectorKind::Batch,
+            partition_columns: Vec::new(),
+        }
     }
 }
 
@@ -186,7 +191,7 @@ impl Sink for PhysicalResultCollector {
         _: &ExecutionContext,
         _: &Self::Global,
         local: &mut Self::Local,
-        partition: PartitionInfo,
+        partition: &PartitionInfo,
     ) -> Result<()> {
         local.flush_batch();
         local.batch_index = partition.batch_index;

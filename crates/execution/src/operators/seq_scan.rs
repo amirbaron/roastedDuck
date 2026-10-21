@@ -12,7 +12,9 @@ use rustdb_storage::{
 };
 use rustdb_types::{DataChunk, LogicalType};
 
-use crate::operator::{ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
+use crate::operator::{
+    ErasedSource, OperatorPartitionData, OperatorPartitionInfo, PhysicalOperator, PhysicalRef, SinkState,
+};
 use crate::{ExecutionContext, ScanMetrics, Source, SourceResult};
 
 /// Scans a table's storage in parallel, one row group per morsel (DuckDB's
@@ -251,8 +253,8 @@ impl PhysicalOperator for PhysicalSeqScan {
     fn parallel_source(&self) -> bool {
         true
     }
-    fn supports_batch_index(&self) -> bool {
-        true
+    fn supports_partitioning(&self, partition_info: &OperatorPartitionInfo) -> bool {
+        !partition_info.requires_partition_columns()
     }
     fn table_filters(&self) -> Option<&TableFilterSet> {
         self.filters.as_ref().filter(|filters| !filters.is_empty())
@@ -480,15 +482,23 @@ impl Source for PhysicalSeqScan {
         })
     }
 
-    fn batch_index(&self, global: &Self::Global, local: &Self::Local) -> Result<u64> {
-        if let Some(batch) = local.index_batch {
-            return Ok(batch);
-        }
-        // After an index scan, the local rows' batches follow the indexed rows' vectors.
-        let index_batches = global
-            .index_rows
-            .as_ref()
-            .map_or(0, |rows| rows.len().div_ceil(STANDARD_VECTOR_SIZE) as u64);
-        Ok(index_batches + local.state.batch_index())
+    fn partition_data(
+        &self,
+        global: &Self::Global,
+        local: &Self::Local,
+        _: &OperatorPartitionInfo,
+    ) -> Result<OperatorPartitionData> {
+        let batch_index = local.index_batch.unwrap_or_else(|| {
+            // After an index scan, the local rows' batches follow the indexed rows' vectors.
+            let index_batches = global
+                .index_rows
+                .as_ref()
+                .map_or(0, |rows| rows.len().div_ceil(STANDARD_VECTOR_SIZE) as u64);
+            index_batches + local.state.batch_index()
+        });
+        Ok(OperatorPartitionData {
+            batch_index,
+            partition_data: Vec::new(),
+        })
     }
 }

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use rustdb_common::tree_renderer::{RenderParams, RenderTreeNode};
 use rustdb_common::{Error, Result};
-use rustdb_types::{DataChunk, LogicalType};
+use rustdb_types::{DataChunk, LogicalType, Value};
 
 use crate::ExecutionContext;
 use crate::profiler::ScanMetrics;
@@ -57,16 +57,67 @@ pub enum OrderPreservationType {
     FixedOrder,
 }
 
-/// The batch a sink's current input belongs to (DuckDB's `OperatorPartitionInfo` in the
-/// local sink state): sinks that require batch indices see their input split into batches
-/// numbered in source order.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// The batch a sink's current input belongs to (DuckDB's `SourcePartitionInfo` in the
+/// local sink state): sinks that require partition information see their input split into
+/// batches numbered in source order.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct PartitionInfo {
     /// The batch the next chunks belong to.
     pub batch_index: u64,
     /// The lowest batch index any thread of the pipeline is still working on: every batch
     /// below it is complete.
     pub min_batch_index: u64,
+    /// The value of each required partition column in the batch (DuckDB's
+    /// `ColumnPartitionData`, whose minimum and maximum are the same value here).
+    pub partition_data: Vec<Value>,
+}
+
+/// The partition information a sink requires of its input, or a source is asked to
+/// provide (DuckDB's `OperatorPartitionInfo`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OperatorPartitionInfo {
+    pub batch_index: bool,
+    /// The columns, by position in the source's output, whose value each batch reports.
+    pub partition_columns: Vec<u64>,
+}
+
+impl OperatorPartitionInfo {
+    pub const fn no_partition_info() -> Self {
+        Self {
+            batch_index: false,
+            partition_columns: Vec::new(),
+        }
+    }
+
+    pub const fn batch_index() -> Self {
+        Self {
+            batch_index: true,
+            partition_columns: Vec::new(),
+        }
+    }
+
+    pub const fn partition_columns(columns: Vec<u64>) -> Self {
+        Self {
+            batch_index: false,
+            partition_columns: columns,
+        }
+    }
+
+    pub const fn requires_partition_columns(&self) -> bool {
+        !self.partition_columns.is_empty()
+    }
+
+    pub const fn any_required(&self) -> bool {
+        self.requires_partition_columns() || self.batch_index
+    }
+}
+
+/// The batch of the chunk a source just produced, and the values of the requested
+/// partition columns in it (DuckDB's `OperatorPartitionData`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct OperatorPartitionData {
+    pub batch_index: u64,
+    pub partition_data: Vec<Value>,
 }
 
 /// A node of a physical plan. Its roles (source, streaming operator, sink) are exposed
@@ -75,7 +126,7 @@ pub struct PartitionInfo {
 /// The `parallel_*`, `*_order` and batch index methods tell the executor how a pipeline
 /// may be split across threads; their defaults are DuckDB's `PhysicalOperator` defaults
 /// (sequential, insertion order, no batch indices).
-pub trait PhysicalOperator: Send + Sync + fmt::Debug + 'static {
+pub trait PhysicalOperator: OperatorAny + Send + Sync + fmt::Debug + 'static {
     fn name(&self) -> &'static str;
     fn types(&self) -> &[LogicalType];
     fn children(&self) -> &[PhysicalRef];
@@ -115,14 +166,17 @@ pub trait PhysicalOperator: Send + Sync + fmt::Debug + 'static {
     fn sink_order_dependent(&self) -> bool {
         false
     }
-    /// Whether the source role numbers its output in batches that follow its row order
-    /// (`SupportsPartitioning(OperatorPartitionInfo::BatchIndex())`).
-    fn supports_batch_index(&self) -> bool {
+    /// Whether the source role can describe its output as `partition_info` asks: batches
+    /// that follow its row order, and the values of partition columns in each
+    /// (`SupportsPartitioning`).
+    fn supports_partitioning(&self, partition_info: &OperatorPartitionInfo) -> bool {
+        let _ = partition_info;
         false
     }
-    /// Whether the sink role needs the batch index of its input (`RequiredPartitionInfo`).
-    fn requires_batch_index(&self) -> bool {
-        false
+    /// What the sink role needs to know about the batches of its input
+    /// (`RequiredPartitionInfo`).
+    fn required_partition_info(&self) -> OperatorPartitionInfo {
+        OperatorPartitionInfo::no_partition_info()
     }
     /// The filters pushed into a table scan (`PhysicalTableScan::table_filters`); `None`
     /// for other operators and scans without filters.
@@ -167,6 +221,24 @@ pub trait PhysicalOperator: Send + Sync + fmt::Debug + 'static {
     fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
         let _ = estimated_cardinality;
         RenderParams::new()
+    }
+}
+
+/// The concrete type behind a [`PhysicalOperator`], for [`cast`](trait.PhysicalOperator.html#method.cast).
+pub trait OperatorAny: Any {
+    fn as_any(&self) -> &dyn Any;
+}
+
+impl<T: Any> OperatorAny for T {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+impl dyn PhysicalOperator {
+    /// The operator as a `T`, if it is one (DuckDB's `PhysicalOperator::Cast`).
+    pub fn cast<T: PhysicalOperator>(&self) -> Option<&T> {
+        OperatorAny::as_any(self).downcast_ref()
     }
 }
 
@@ -286,10 +358,16 @@ pub trait Source: PhysicalOperator {
     }
 
     /// The batch index of the chunk `get_data` just returned, counted from 0 in the
-    /// source's row order (DuckDB's `GetPartitionData`); only called on sources that
-    /// [support batch indices](PhysicalOperator::supports_batch_index).
-    fn batch_index(&self, global: &Self::Global, local: &Self::Local) -> Result<u64> {
-        let _ = (global, local);
+    /// source's row order, and the values of the partition columns `partition_info` asks
+    /// for (DuckDB's `GetPartitionData`); only called on sources that
+    /// [support](PhysicalOperator::supports_partitioning) `partition_info`.
+    fn partition_data(
+        &self,
+        global: &Self::Global,
+        local: &Self::Local,
+        partition_info: &OperatorPartitionInfo,
+    ) -> Result<OperatorPartitionData> {
+        let _ = (global, local, partition_info);
         Err(Error::internal(format!(
             "{} does not support batch indices",
             self.name()
@@ -374,14 +452,15 @@ pub trait Sink: PhysicalOperator {
     }
 
     /// The input moves on to the batch `partition.batch_index` (DuckDB's `NextBatch`);
-    /// only called on sinks that [require batch indices](PhysicalOperator::requires_batch_index),
-    /// once before the first chunk and whenever the batch changes.
+    /// only called on sinks that [require partition
+    /// information](PhysicalOperator::required_partition_info), once before the first chunk
+    /// and whenever the batch changes.
     fn next_batch(
         &self,
         ctx: &ExecutionContext,
         global: &Self::Global,
         local: &mut Self::Local,
-        partition: PartitionInfo,
+        partition: &PartitionInfo,
     ) -> Result<()> {
         let _ = (ctx, global, local, partition);
         Ok(())
@@ -449,7 +528,12 @@ pub trait ErasedSource {
         local: &mut (dyn Any + Send),
     ) -> Result<SourceResult>;
     fn max_threads(&self, global: &(dyn Any + Send + Sync)) -> Result<usize>;
-    fn batch_index(&self, global: &(dyn Any + Send + Sync), local: &(dyn Any + Send)) -> Result<u64>;
+    fn partition_data(
+        &self,
+        global: &(dyn Any + Send + Sync),
+        local: &(dyn Any + Send),
+        partition_info: &OperatorPartitionInfo,
+    ) -> Result<OperatorPartitionData>;
     fn progress(&self, global: &(dyn Any + Send + Sync)) -> Result<Option<f64>>;
     fn extra_source_params(
         &self,
@@ -502,12 +586,17 @@ impl<T: Source> ErasedSource for T {
     fn max_threads(&self, global: &(dyn Any + Send + Sync)) -> Result<usize> {
         Ok(Source::max_threads(self, downcast(global, self.name())?))
     }
-    fn batch_index(&self, global: &(dyn Any + Send + Sync), local: &(dyn Any + Send)) -> Result<u64> {
+    fn partition_data(
+        &self,
+        global: &(dyn Any + Send + Sync),
+        local: &(dyn Any + Send),
+        partition_info: &OperatorPartitionInfo,
+    ) -> Result<OperatorPartitionData> {
         let name = self.name();
         let local = local
             .downcast_ref::<T::Local>()
             .ok_or_else(|| state_type_error(name))?;
-        Source::batch_index(self, downcast(global, name)?, local)
+        Source::partition_data(self, downcast(global, name)?, local, partition_info)
     }
     fn progress(&self, global: &(dyn Any + Send + Sync)) -> Result<Option<f64>> {
         Ok(Source::progress(self, downcast(global, self.name())?))
@@ -656,7 +745,7 @@ pub trait ErasedSink {
         ctx: &ExecutionContext,
         global: &(dyn Any + Send + Sync),
         local: &mut (dyn Any + Send),
-        partition: PartitionInfo,
+        partition: &PartitionInfo,
     ) -> Result<()>;
     fn finalize_tasks(&self, ctx: &ExecutionContext, global: &(dyn Any + Send + Sync)) -> Result<usize>;
     fn execute_finalize_task(
@@ -724,7 +813,7 @@ impl<T: Sink> ErasedSink for T {
         ctx: &ExecutionContext,
         global: &(dyn Any + Send + Sync),
         local: &mut (dyn Any + Send),
-        partition: PartitionInfo,
+        partition: &PartitionInfo,
     ) -> Result<()> {
         let name = self.name();
         Sink::next_batch(

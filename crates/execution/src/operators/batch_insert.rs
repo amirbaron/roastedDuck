@@ -10,7 +10,9 @@ use rustdb_types::{DataChunk, LogicalType};
 
 use super::insert::{InsertTarget, append_collections};
 use super::modify::{ModifyResult, count_types};
-use crate::operator::{ErasedSink, ErasedSource, PartitionInfo, PhysicalOperator, PhysicalRef, SinkState};
+use crate::operator::{
+    ErasedSink, ErasedSource, OperatorPartitionInfo, PartitionInfo, PhysicalOperator, PhysicalRef, SinkState,
+};
 use crate::{ExecutionContext, Sink, SinkFinalize, SinkResult, Source, SourceResult};
 
 /// Appends its input to a table in the order of the input's batch indices while every
@@ -72,8 +74,8 @@ impl PhysicalOperator for PhysicalBatchInsert {
     fn parallel_sink(&self) -> bool {
         true
     }
-    fn requires_batch_index(&self) -> bool {
-        true
+    fn required_partition_info(&self) -> OperatorPartitionInfo {
+        OperatorPartitionInfo::batch_index()
     }
 }
 
@@ -352,7 +354,7 @@ impl Sink for PhysicalBatchInsert {
         _: &ExecutionContext,
         global: &Self::Global,
         local: &mut Self::Local,
-        partition: PartitionInfo,
+        partition: &PartitionInfo,
     ) -> Result<()> {
         if let (Some(table), Some(mut collection)) = (&global.table, local.collection.take()) {
             if local.current_index == partition.batch_index {

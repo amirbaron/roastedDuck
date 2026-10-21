@@ -2,10 +2,12 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use rustdb_common::tree_renderer::RenderParams;
 use rustdb_common::{Error, Result};
-use rustdb_function::{FunctionData, TableFunction, TableScanState};
+use rustdb_function::{FunctionData, TableFunction, TablePartitionInfo, TableScanState};
 use rustdb_types::{DataChunk, LogicalType, Vector};
 
-use crate::operator::{ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
+use crate::operator::{
+    ErasedSource, OperatorPartitionData, OperatorPartitionInfo, PhysicalOperator, PhysicalRef, SinkState,
+};
 use crate::{ExecutionContext, ScanMetrics, Source, SourceResult};
 
 /// Scans a table function (DuckDB's `PhysicalTableScan`): the function produces all of
@@ -51,6 +53,29 @@ impl PhysicalTableScan {
         }
     }
 
+    /// How the function partitions its data on the output columns `partition_columns`
+    /// (the table scan part of DuckDB's `CanUsePartitionedAggregate`). With projection
+    /// pushdown, the columns become positions in the column ids, which is how the scan
+    /// reports their values; `None` when one is not scanned.
+    pub fn partition_info(&self, partition_columns: &mut [u64]) -> Option<TablePartitionInfo> {
+        let get_partition_info = self.function.get_partition_info.as_ref()?;
+        // Non-pushdown scans output every base column in order.
+        let base_columns = if self.function.projection_pushdown {
+            if !self.projection.is_empty() {
+                for column in partition_columns.iter_mut() {
+                    *column = *self.projection.get(*column as usize)? as u64;
+                }
+            }
+            partition_columns
+                .iter()
+                .map(|&column| self.column_ids.get(column as usize).copied())
+                .collect::<Option<Vec<_>>>()?
+        } else {
+            partition_columns.to_vec()
+        };
+        Some(get_partition_info(self.bind_data.as_deref(), &base_columns))
+    }
+
     /// Outputs only the columns at `projection` (positions in the column ids).
     #[must_use]
     pub fn with_projection(mut self, projection: Vec<usize>) -> Self {
@@ -89,8 +114,10 @@ impl PhysicalOperator for PhysicalTableScan {
     fn parallel_source(&self) -> bool {
         self.function.parallel_scan.is_some()
     }
-    fn supports_batch_index(&self) -> bool {
-        self.function.parallel_scan.is_some()
+    fn supports_partitioning(&self, partition_info: &OperatorPartitionInfo) -> bool {
+        self.function.parallel_scan.as_ref().is_some_and(|parallel| {
+            !partition_info.requires_partition_columns() || parallel.partition_data.is_some()
+        })
     }
     fn table_filters(&self) -> Option<&rustdb_storage::TableFilterSet> {
         self.filters.as_ref().filter(|filters| !filters.is_empty())
@@ -275,11 +302,27 @@ impl Source for PhysicalTableScan {
         })
     }
 
-    fn batch_index(&self, global: &TableScanGlobal, local: &Self::Local) -> Result<u64> {
-        match (&self.function.parallel_scan, &global.parallel, local) {
-            (Some(parallel), Some(shared), Some(local)) => Ok((parallel.batch_index)(shared, local)),
-            _ => Err(Error::internal("table function scan without batch indices")),
-        }
+    fn partition_data(
+        &self,
+        global: &TableScanGlobal,
+        local: &Self::Local,
+        partition_info: &OperatorPartitionInfo,
+    ) -> Result<OperatorPartitionData> {
+        let (Some(parallel), Some(shared), Some(local)) =
+            (&self.function.parallel_scan, &global.parallel, local)
+        else {
+            return Err(Error::internal("table function scan without batch indices"));
+        };
+        let partition_data = match &parallel.partition_data {
+            Some(partition_data) if partition_info.requires_partition_columns() => {
+                partition_data(shared, local, &partition_info.partition_columns)?
+            }
+            _ => Vec::new(),
+        };
+        Ok(OperatorPartitionData {
+            batch_index: (parallel.batch_index)(shared, local),
+            partition_data,
+        })
     }
 
     fn get_data(

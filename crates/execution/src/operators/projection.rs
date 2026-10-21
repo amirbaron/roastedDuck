@@ -16,6 +16,11 @@ pub struct PhysicalProjection {
 }
 
 impl PhysicalProjection {
+    /// The projected expressions (DuckDB's `select_list`).
+    pub fn select_list(&self) -> &[Expression] {
+        &self.expressions
+    }
+
     pub fn new(types: Vec<LogicalType>, expressions: Vec<Expression>, child: PhysicalRef) -> Self {
         Self {
             types,
