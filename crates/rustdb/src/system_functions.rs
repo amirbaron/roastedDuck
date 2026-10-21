@@ -893,9 +893,11 @@ pub(crate) fn catalog_table_functions() -> Vec<TableFunctionSet> {
             PREPARED_STATEMENT_COLUMNS,
             prepared_statement_rows,
         ),
-        rows_function("duckdb_temporary_files", TEMPORARY_FILE_COLUMNS, |_| {
-            Ok(Vec::new())
-        }),
+        rows_function(
+            "duckdb_temporary_files",
+            TEMPORARY_FILE_COLUMNS,
+            temporary_file_rows,
+        ),
         rows_function("duckdb_dependencies", DEPENDENCY_COLUMNS, dependency_rows),
         rows_function("duckdb_types", TYPE_COLUMNS, type_rows),
         secrets_function(),
@@ -1489,6 +1491,25 @@ fn memory_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
         .memory_usage_info()
         .into_iter()
         .map(|info| vec![text(info.tag.name()), clamp(info.size), clamp(info.evicted_data)])
+        .collect())
+}
+
+/// `duckdb_temporary_files()` (`DuckDBTemporaryFilesFunction`): the temporary files of the
+/// buffer manager with their sizes.
+fn temporary_file_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    let Some(io) = context.catalogs.iter().find_map(|catalog| catalog.io().ok()) else {
+        return Ok(Vec::new());
+    };
+    Ok(io
+        .buffer_manager()
+        .temporary_files()
+        .into_iter()
+        .map(|file| {
+            vec![
+                text(&file.path),
+                Value::bigint(i64::try_from(file.size).unwrap_or(0)),
+            ]
+        })
         .collect())
 }
 

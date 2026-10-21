@@ -257,6 +257,16 @@ impl LocalStorage {
         !self.tables().is_empty()
     }
 
+    /// The memory of the indexes over the transaction's appended rows, part of the
+    /// estimated size of its changes (the index sizes of `LocalTableStorage::EstimatedSize`).
+    pub fn index_memory_size(&self) -> usize {
+        self.tables()
+            .iter()
+            .flat_map(|storage| storage.append_indexes.entries())
+            .map(|entry| entry.lock().index.in_memory_size())
+            .sum()
+    }
+
     /// Rows the transaction inserted into `table` and did not delete (`AddedRows`).
     pub fn added_rows(&self, table: &Arc<DataTable>) -> u64 {
         self.storage(table).map_or(0, |storage| storage.added_rows())
