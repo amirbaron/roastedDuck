@@ -1634,6 +1634,7 @@ test/sql/copy/hive_partition_null_overwrite.test
 test/sql/copy/hive_types.test_slow
 test/sql/copy/parquet/afl.test
 test/sql/copy/parquet/alltypes-dictionaries.test
+test/sql/copy/parquet/attach_parquet.test
 test/sql/copy/parquet/auto_glob_directory.test
 test/sql/copy/parquet/aws2.test
 test/sql/copy/parquet/aws_kinesis.test
@@ -3697,6 +3698,17 @@ test/sql/storage/partial_blocks/many_columns_validity.test
 test/sql/storage/partial_delete_checkpoint_mask.test
 test/sql/storage/partial_delete_pending_compress.test
 test/sql/storage/piecemeal_delete_checkpoint_compress.test
+test/sql/storage/read_duckdb/concurrent_duckdb_read.test_slow
+test/sql/storage/read_duckdb/read_duckdb_basic.test
+test/sql/storage/read_duckdb/read_duckdb_generated.test
+test/sql/storage/read_duckdb/read_duckdb_index.test
+test/sql/storage/read_duckdb/read_duckdb_schema.test
+test/sql/storage/read_duckdb/read_duckdb_suggested.test
+test/sql/storage/read_duckdb/read_duckdb_top_n.test
+test/sql/storage/read_duckdb/read_duckdb_tpch.test_slow
+test/sql/storage/read_duckdb/read_duckdb_transaction.test
+test/sql/storage/read_duckdb/read_duckdb_union_by_name.test
+test/sql/storage/read_duckdb/read_duckdb_virtual_columns.test
 test/sql/storage/reclaim_space/reclaim_space_drop_column_overflow_strings.test_slow
 test/sql/storage/reclaim_space/reclaim_space_drop_overflow_strings.test_slow
 test/sql/storage/reclaim_space/reclaim_space_lists.test_slow

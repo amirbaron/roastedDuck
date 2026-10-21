@@ -90,6 +90,38 @@ pub(crate) struct DatabaseInstance {
     loaded_extensions: Arc<Mutex<Vec<StaticExtension>>>,
 }
 
+/// What the database's own functions reach through the client context (DuckDB's
+/// `ClientContext::db`): the secret manager, and the instance for functions that attach
+/// databases (`read_duckdb`). The instance is held weakly, as bind data can outlive the
+/// statement (prepared statements).
+#[derive(Debug)]
+pub(crate) struct InstanceState {
+    pub(crate) secrets: Arc<crate::secrets::SecretManager>,
+    instance: std::sync::Weak<DatabaseInstance>,
+}
+
+impl InstanceState {
+    /// The instance, held weakly.
+    pub(crate) fn instance(&self) -> std::sync::Weak<DatabaseInstance> {
+        self.instance.clone()
+    }
+}
+
+impl rustdb_planner::DatabaseState for InstanceState {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// The instance state of the database a call is bound in.
+pub(crate) fn instance_state(context: &ClientContext) -> Result<&InstanceState> {
+    context
+        .database_state
+        .as_ref()
+        .and_then(|state| state.as_any().downcast_ref::<InstanceState>())
+        .ok_or_else(|| Error::internal("function bound without a database instance"))
+}
+
 /// The object cache key of the database's loaded extensions, read by `duckdb_extensions()`.
 const LOADED_EXTENSIONS_KEY: &str = "rustdb.loaded_extensions";
 
@@ -1039,6 +1071,7 @@ impl Database {
         for set in rustdb_csv::read_csv::read_csv_functions() {
             system_catalog.register_table_functions(set)?;
         }
+        system_catalog.register_table_functions(crate::read_duckdb::read_duckdb_functions())?;
         crate::system_functions::register_default_views(&system_catalog)?;
         crate::system_functions::register_default_macros(&system_catalog)?;
         let buffer_manager = rustdb_buffer::BufferManager::new(rustdb_buffer::BufferManagerConfig {
@@ -1171,6 +1204,59 @@ impl Database {
         Ok(Some(attached))
     }
 
+    /// Attaches the Parquet, CSV or JSON file at `path` as an in-memory database whose
+    /// `main` schema has the views `file` and `<name>` reading it
+    /// (`OpenFileStorageAttach` with `OpenFileDefaultGenerator`).
+    pub(crate) fn attach_open_file(
+        &self,
+        name: &str,
+        path: &str,
+        options: &AttachOptions,
+        on_conflict: rustdb_ast::OnCreateConflict,
+    ) -> Result<Option<Arc<AttachedDatabase>>> {
+        rustdb_function::file_system::verify_can_access_file(path)?;
+        let name = if name.is_empty() {
+            crate::storage::database_name(path)
+        } else {
+            name.to_owned()
+        };
+        let Some(attached) = self.instance.databases.attach(
+            &name,
+            "",
+            options,
+            on_conflict,
+            &self.instance.env.buffer_manager,
+            &self.instance.validity,
+        )?
+        else {
+            return Ok(None);
+        };
+        let sql = format!("SELECT * FROM '{}'", path.replace('\'', "''"));
+        let mut view_names = vec!["file".to_owned()];
+        if !name.eq_ignore_ascii_case("file") {
+            view_names.push(name);
+        }
+        for view_name in view_names {
+            let Some(rustdb_ast::SqlStatementKind::Select(query)) =
+                rustdb_parser::parse(&sql)?.pop().map(|statement| statement.kind)
+            else {
+                return Err(Error::internal("open file view is not a SELECT"));
+            };
+            let view = rustdb_catalog::ViewEntry {
+                query,
+                aliases: Vec::new(),
+                types: Vec::new(),
+                names: Vec::new(),
+                column_comments: rustdb_common::OrderedMap::default(),
+            };
+            attached.catalog.create_entry_committed(
+                rustdb_catalog::DEFAULT_SCHEMA,
+                rustdb_catalog::CatalogEntry::new(view_name, rustdb_catalog::EntryKind::View(view)),
+            )?;
+        }
+        Ok(Some(attached))
+    }
+
     pub fn open_in_memory() -> Result<Self> {
         Self::open("", &Config::default())
     }
@@ -1264,6 +1350,11 @@ impl Database {
 
     pub(crate) fn instance(&self) -> &DatabaseInstance {
         &self.instance
+    }
+
+    /// The database of an instance still open.
+    pub(crate) fn from_instance(instance: &std::sync::Weak<DatabaseInstance>) -> Option<Self> {
+        instance.upgrade().map(|instance| Self { instance })
     }
 }
 
@@ -1816,7 +1907,10 @@ impl Connection {
             function_client: Arc::clone(&self.function_client),
             user_variables: self.user_variables.clone(),
             dependency_recorder: Arc::default(),
-            database_state: Some(Arc::clone(&instance.secrets) as Arc<dyn rustdb_planner::DatabaseState>),
+            database_state: Some(Arc::new(InstanceState {
+                secrets: Arc::clone(&instance.secrets),
+                instance: Arc::downgrade(&self.database.instance),
+            }) as Arc<dyn rustdb_planner::DatabaseState>),
         })
     }
 
@@ -2584,9 +2678,29 @@ impl Connection {
             }
             LogicalKind::Attach(info) => {
                 let options = AttachOptions::from_info(info, crate::AccessMode::Automatic)?;
-                let attached = self
-                    .database
-                    .attach(&info.name, &info.path, &options, info.on_conflict)?;
+                // `PhysicalAttach::GetDataInternal`: a `duckdb:` prefix names the type;
+                // without a type, `DatabaseManager::GetDatabaseType` checks the file's
+                // magic bytes, and data files are attached as views on them.
+                let has_type = info
+                    .options
+                    .iter()
+                    .any(|(name, _)| name.eq_ignore_ascii_case("type"));
+                let mut path = info.path.as_str();
+                let mut duckdb_type = has_type;
+                if !has_type
+                    && let Some(prefix) = crate::attached::extension_prefix(path)
+                    && prefix.eq_ignore_ascii_case("duckdb")
+                {
+                    path = &path[prefix.len() + 1..];
+                    duckdb_type = true;
+                }
+                let attached = if !duckdb_type && crate::attached::is_open_file(path) {
+                    self.database
+                        .attach_open_file(&info.name, path, &options, info.on_conflict)?
+                } else {
+                    self.database
+                        .attach(&info.name, path, &options, info.on_conflict)?
+                };
                 if let Some(attached) = attached
                     && !self.transactions.is_auto_commit()
                 {

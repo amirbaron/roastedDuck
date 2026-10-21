@@ -2265,11 +2265,9 @@ fn type_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
 
 /// The secret manager of the database a call is bound in.
 fn secret_manager(context: &ClientContext) -> Result<&crate::secrets::SecretManager> {
-    context
-        .database_state
-        .as_ref()
-        .and_then(|state| state.as_any().downcast_ref::<crate::secrets::SecretManager>())
-        .ok_or_else(|| Error::internal("secret functions bound without a secret manager"))
+    crate::database::instance_state(context)
+        .map(|state| state.secrets.as_ref())
+        .map_err(|_| Error::internal("secret functions bound without a secret manager"))
 }
 
 const SECRET_COLUMNS: Columns = &[

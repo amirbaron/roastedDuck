@@ -412,12 +412,6 @@ fn provider_not_found(secret_type: &str, provider: &str, was_default: bool) -> E
     }
 }
 
-impl rustdb_planner::DatabaseState for SecretManager {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-}
-
 impl SecretManager {
     fn lock(&self) -> MutexGuard<'_, ManagerState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)

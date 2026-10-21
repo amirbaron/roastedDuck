@@ -20,6 +20,7 @@ mod extensions;
 mod log_functions;
 mod logging;
 mod query_profiler;
+mod read_duckdb;
 mod read_file;
 mod result;
 mod secrets;

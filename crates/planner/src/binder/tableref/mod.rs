@@ -315,7 +315,7 @@ fn replacement_full_path(base: &BaseTableRef) -> String {
 
 /// The CSV replacement scan (DuckDB's `ReadCSVReplacement` through
 /// `Binder::BindWithReplacementScan`): `FROM 'file.csv'` reads the file with
-/// `read_csv_auto`.
+/// `read_csv_auto`; DuckDB, Parquet and JSON files are read by their readers likewise.
 #[allow(
     clippy::case_sensitive_file_extension_comparisons,
     reason = "the name is lowercased"
@@ -328,13 +328,21 @@ fn csv_replacement_scan(base: &BaseTableRef, alias: &str) -> Option<TableRef> {
     } else if lower_name.ends_with(".zst") {
         lower_name.truncate(lower_name.len() - 4);
     }
-    // `ReplacementScan::CanReplace` for the CSV reader, then for the Parquet extension's
-    // `ParquetScanReplacement`.
+    // `ReplacementScan::CanReplace` for the CSV reader, then `read_duckdb`'s
+    // (`ReadDuckDBTableFunction::ReplacementScan`, on the whole name), then the Parquet
+    // extension's `ParquetScanReplacement`.
     let can_replace = |extension: &str| {
         lower_name.ends_with(&format!(".{extension}")) || lower_name.contains(&format!(".{extension}?"))
     };
+    let full_lower_name = full_path.to_lowercase();
+    let is_duckdb_file = ["db", "ddb", "duckdb"].iter().any(|extension| {
+        full_lower_name.ends_with(&format!(".{extension}"))
+            || full_lower_name.contains(&format!(".{extension}?"))
+    });
     let function_name = if can_replace("csv") || can_replace("tsv") {
         "read_csv_auto"
+    } else if is_duckdb_file {
+        "read_duckdb"
     } else if can_replace("parquet") {
         "parquet_scan"
     } else if can_replace("json") || can_replace("jsonl") || can_replace("ndjson") {
