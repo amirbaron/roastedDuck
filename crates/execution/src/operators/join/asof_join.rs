@@ -268,20 +268,19 @@ impl Sink for PhysicalAsOfJoin {
         local: AsOfLocalSinkState,
     ) -> Result<()> {
         let child = local.child;
-        global.strategies[child].combine(&global.states[child], local.state)?;
-        if child == 1 {
-            // The left side partitions like the right side, so hash groups correspond.
-            global.strategies[0].synchronize(&global.states[1], &global.states[0])?;
-            global.child.store(0, Ordering::Release);
-        }
-        Ok(())
+        global.strategies[child].combine(&global.states[child], local.state)
     }
 
+    /// Finalizes the input just sunk: the right one first, then the left one (the left
+    /// pipeline has its own finish event).
     fn finalize(&self, _: &ExecutionContext, global: &mut AsOfGlobalSinkState) -> Result<SinkFinalize> {
-        let [left, right] = &global.strategies;
-        let [left_state, right_state] = &mut global.states;
-        right.finalize(right_state)?;
-        left.finalize(left_state)?;
+        let child = global.child.load(Ordering::Acquire);
+        if child == 1 {
+            // The data is all in, so the left side can partition like the right side.
+            global.strategies[0].synchronize(&global.states[1], &global.states[0])?;
+        }
+        global.child.store(1 - child, Ordering::Release);
+        global.strategies[child].finalize(&mut global.states[child])?;
         Ok(SinkFinalize::Ready)
     }
 }

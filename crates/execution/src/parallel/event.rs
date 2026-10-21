@@ -23,8 +23,12 @@ pub(crate) enum EventKind {
     /// All input of the sink has arrived (`PipelinePrepareFinishEvent`); a no-op, as no
     /// sink negotiates memory before finalizing yet.
     PipelinePrepareFinish,
-    /// Finalizes the sink (`PipelineFinishEvent`).
-    PipelineFinish(Arc<Pipeline>),
+    /// Finalizes the sink (`PipelineFinishEvent`). With `finalizes_again`, another
+    /// pipeline sinks into it afterwards and finalizes it once more (`AddFinishEvent`).
+    PipelineFinish {
+        pipeline: Arc<Pipeline>,
+        finalizes_again: bool,
+    },
     /// One stage of parallel finalize work the sink asked for, with its number of tasks
     /// (DuckDB's sink-specific events, e.g. `HashJoinFinalizeEvent`).
     SinkFinalizeStage { pipeline: Arc<Pipeline>, tasks: usize },
@@ -135,7 +139,13 @@ impl Event {
                     return false;
                 }
             },
-            EventKind::PipelineFinish(pipeline) => vec![TaskKind::PipelineFinish(Arc::clone(pipeline))],
+            EventKind::PipelineFinish {
+                pipeline,
+                finalizes_again,
+            } => vec![TaskKind::PipelineFinish {
+                pipeline: Arc::clone(pipeline),
+                finalizes_again: *finalizes_again,
+            }],
             EventKind::SinkFinalizeStage { pipeline, tasks } => (0..*tasks)
                 .map(|task| TaskKind::SinkFinalizeStage {
                     pipeline: Arc::clone(pipeline),

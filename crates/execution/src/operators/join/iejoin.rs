@@ -177,26 +177,31 @@ impl Sink for PhysicalIEJoin {
         global: &IEJoinGlobalState,
         local: IEJoinLocalState,
     ) -> Result<()> {
-        global.tables[local.child].combine(local.table)?;
-        // The right input is sunk completely before the left one.
-        global.child.store(0, Ordering::Release);
-        Ok(())
+        global.tables[local.child].combine(local.table)
     }
 
+    /// Finalizes the input just sunk: the right one first, then the left one (the left
+    /// pipeline has its own finish event).
     fn finalize(&self, _: &ExecutionContext, global: &mut IEJoinGlobalState) -> Result<SinkFinalize> {
-        let [left, right] = &mut global.tables;
-        right.finalize()?;
-        left.finalize()?;
-        if propagates_build_side(self.join_type) {
-            right.initialize_matches();
+        let child = global.child.load(Ordering::Acquire);
+        let table = &mut global.tables[child];
+        table.finalize()?;
+        if (child == 1 && propagates_build_side(self.join_type))
+            || (child == 0 && is_left_outer_join(self.join_type))
+        {
+            // FULL/LEFT/RIGHT OUTER joins mark every row's matches.
+            table.initialize_matches();
         }
-        if is_left_outer_join(self.join_type) {
-            left.initialize_matches();
-        }
-        if right.count() == 0 && empty_result_if_rhs_is_empty(self.join_type) {
-            return Ok(SinkFinalize::NoOutputPossible);
-        }
-        Ok(SinkFinalize::Ready)
+        let result = if child == 1 && table.count() == 0 && empty_result_if_rhs_is_empty(self.join_type) {
+            SinkFinalize::NoOutputPossible
+        } else {
+            SinkFinalize::Ready
+        };
+        // Move to the next input.
+        global
+            .child
+            .store(if child == 1 { 0 } else { 2 }, Ordering::Release);
+        Ok(result)
     }
 }
 
