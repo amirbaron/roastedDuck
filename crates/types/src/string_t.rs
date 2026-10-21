@@ -103,6 +103,23 @@ impl StringT {
         [self.data[0], self.data[1], self.data[2], self.data[3]]
     }
 
+    /// A pointer to the string's bytes: inside `*this` for an inlined string, otherwise
+    /// the pointer it holds (DuckDB's `string_t::GetData`, as the C API hands it out).
+    ///
+    /// # Safety
+    /// `this` must point to a valid `StringT`; the result is only valid as long as that
+    /// value (inlined) or its heap (not inlined) is.
+    pub unsafe fn data_ptr(this: *const Self) -> *const u8 {
+        // SAFETY: guaranteed by the caller.
+        let value = unsafe { &*this };
+        if value.is_inlined() {
+            return value.data.as_ptr();
+        }
+        let mut ptr = [0u8; 8];
+        ptr.copy_from_slice(&value.data[4..]);
+        u64::from_ne_bytes(ptr) as usize as *const u8
+    }
+
     /// The string bytes.
     ///
     /// # Safety

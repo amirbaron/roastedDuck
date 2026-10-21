@@ -6,7 +6,7 @@ use rustdb_types::{ListEntry, LogicalType, LogicalTypeId, Vector, VectorKind};
 use super::{ColumnReader, ReaderContext};
 use crate::schema::ColumnSchema;
 use crate::thrift::RowGroup;
-use crate::vector_ops::{copy_rows, list_append};
+use rustdb_types::vector_ops::{copy_rows, list_append};
 
 /// `StructColumnReader`: one reader per projected field.
 #[derive(Debug)]

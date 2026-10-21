@@ -565,7 +565,7 @@ fn consecutive_child_list(vector: &Vector, count: usize) -> Result<(Vector, usiz
     }
     let sliced = child.slice(&SelectionVector::new(sel));
     let mut flat = Vector::flat(child.logical_type().clone(), total as usize);
-    crate::vector_ops::copy_rows(&sliced, 0, total as usize, &mut flat, 0)?;
+    rustdb_types::vector_ops::copy_rows(&sliced, 0, total as usize, &mut flat, 0)?;
     Ok((flat, total as usize))
 }
 

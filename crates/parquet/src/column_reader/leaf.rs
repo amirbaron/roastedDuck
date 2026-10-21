@@ -23,7 +23,7 @@ use crate::schema::ColumnSchema;
 use crate::thrift::{
     ColumnChunk, CompactReader, CompressionCodec, Encoding, PageHeader, PageType, RowGroup, ThriftValue, Type,
 };
-use crate::vector_ops::copy_rows;
+use rustdb_types::vector_ops::copy_rows;
 
 /// The minimum number of bytes fetched when a page header lies past the loaded chunk.
 const MIN_FETCH: usize = 1 << 16;

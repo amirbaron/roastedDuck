@@ -248,6 +248,17 @@ pub struct ParallelCollectionScanState {
     pub(crate) inner: Mutex<ParallelScanPosition>,
 }
 
+impl ParallelCollectionScanState {
+    /// The rows of the row groups handed out so far (`processed_rows`), which a table
+    /// scan reports its progress with.
+    pub fn processed_rows(&self) -> u64 {
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .processed_rows
+    }
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct ParallelScanPosition {
     pub row_groups: Option<Arc<RowGroupSegmentTree>>,

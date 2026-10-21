@@ -36,12 +36,27 @@ pub fn zero() -> Vec<u8> {
     result
 }
 
-/// A bignum from its magnitude bytes (big-endian, as many as given).
-fn from_magnitude(magnitude: &[u8], negative: bool) -> Vec<u8> {
+/// A bignum from its magnitude bytes (big-endian, as many as given)
+/// (`Bignum::FromByteArray`).
+pub fn from_magnitude(magnitude: &[u8], negative: bool) -> Vec<u8> {
     let mut result = Vec::with_capacity(HEADER_SIZE + magnitude.len());
     result.extend_from_slice(&header(magnitude.len(), negative));
     result.extend(magnitude.iter().map(|&byte| if negative { !byte } else { byte }));
     result
+}
+
+/// The magnitude bytes (big-endian) and the sign of a stored bignum
+/// (`Bignum::GetByteArray`).
+pub fn magnitude(bignum: &[u8]) -> Result<(Vec<u8>, bool)> {
+    if bignum.len() < HEADER_SIZE + 1 {
+        return Err(Error::invalid_input("Invalid blob size."));
+    }
+    let negative = is_negative(bignum);
+    let bytes = bignum[HEADER_SIZE..]
+        .iter()
+        .map(|&byte| if negative { !byte } else { byte })
+        .collect();
+    Ok((bytes, negative))
 }
 
 /// `ceil(log2(value) / 8)` computed in floating point like DuckDB.

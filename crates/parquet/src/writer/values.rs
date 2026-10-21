@@ -703,7 +703,7 @@ pub fn deep_flatten(vector: &Vector, count: usize) -> Result<Vector> {
         return Ok(vector.clone());
     }
     let mut flat = Vector::flat(vector.logical_type().clone(), count.max(1));
-    crate::vector_ops::copy_rows(vector, 0, count, &mut flat, 0)?;
+    rustdb_types::vector_ops::copy_rows(vector, 0, count, &mut flat, 0)?;
     Ok(flat)
 }
 
