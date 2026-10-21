@@ -1740,13 +1740,12 @@ fn dependency_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 rows.push(row(object.oid, dependent.oid, "n"));
             }
         }
-        for owned in &dependent.owned {
-            if let Some((_, object)) = entries
+        if let Some(owner) = &dependent.owned_by
+            && let Some((_, object)) = entries
                 .iter()
-                .find(|(schema, entry)| entry.is_described_by(schema, owned))
-            {
-                rows.push(row(dependent.oid, object.oid, "a"));
-            }
+                .find(|(schema, entry)| entry.is_described_by(schema, owner))
+        {
+            rows.push(row(object.oid, dependent.oid, "a"));
         }
     }
     Ok(rows)

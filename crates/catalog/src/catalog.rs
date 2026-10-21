@@ -462,9 +462,9 @@ impl Catalog {
         let created = self.create_entry_in_schema(transaction, schema, entry, on_conflict)?;
         if created {
             // The entry depends on its schema, which must still exist when it commits.
-            transaction.push_catalog_undo(Box::new(crate::transaction::CommitCheck::SchemaExists {
+            transaction.push_catalog_undo(Box::new(crate::transaction::CommitCheck::SubjectExists {
                 name: schema.to_owned(),
-                schemas: Arc::clone(&self.schemas),
+                set: Arc::clone(&self.schemas),
             }));
         }
         Ok(created)
@@ -610,11 +610,32 @@ impl Catalog {
                 entry.name()
             )));
         }
+        let previous = set.get(transaction, name);
+        let renamed = entry.info(schema);
         if !set.rename(transaction, name, entry, hook, info)? {
             return Err(Error::catalog(format!(
                 "{} with name {name} does not exist!",
                 ty.display_name()
             )));
+        }
+        // The entries it owns follow the new name (`DependencyManager::AlterObject`
+        // re-creates the ownership links).
+        if let Some(previous) = previous {
+            for (owned_schema, owned) in self.owned_entries(transaction, schema, &previous) {
+                let mut copy = owned
+                    .try_copy()
+                    .ok_or_else(|| Error::internal("an owned entry that cannot be copied"))?;
+                copy.owned_by = Some(renamed.clone());
+                self.alter_entry(
+                    transaction,
+                    &owned_schema,
+                    owned.catalog_type(),
+                    owned.name(),
+                    copy,
+                    StorageHook::None,
+                    None,
+                )?;
+            }
         }
         Ok(())
     }
@@ -704,33 +725,76 @@ impl Catalog {
         }
         set.drop_entry(transaction, name, false)?;
         // The entries it owns go with it (`DependencyManager::CheckDropDependencies`).
-        for owned in &existing.owned {
-            if let Some(owned_type) = CatalogType::from_ast(owned.catalog_type) {
-                self.drop_entry(transaction, owned_type, &owned.schema, &owned.name, cascade, true)?;
-            }
+        let schema_name = schema.to_owned();
+        for (owned_schema, owned) in self.owned_entries(transaction, &schema_name, &existing) {
+            self.drop_entry(transaction, owned.catalog_type(), &owned_schema, owned.name(), cascade, true)?;
         }
+        // `CatalogSet::CommitDrop`: entries other transactions made depend on it or
+        // owned by it since this one started make the drop fail to commit.
+        transaction.push_catalog_undo(Box::new(crate::transaction::CommitCheck::EntryDropped {
+            entry: existing.info(&schema_name),
+            sets: self.dependent_sets(transaction),
+        }));
         Ok(())
     }
 
-    /// The tables and sequences of this catalog that own `entry` of `schema`.
-    fn owners(
+    /// The sets of this catalog whose entries can depend on others or be owned.
+    fn dependent_sets(&self, transaction: &Transaction) -> Vec<Arc<CatalogSet>> {
+        let mut result = Vec::new();
+        for schema_entry in self.schemas.scan(transaction) {
+            let Some(contents) = schema_entry.as_schema() else {
+                continue;
+            };
+            result.extend(
+                [
+                    &contents.tables,
+                    &contents.functions,
+                    &contents.table_functions,
+                    &contents.sequences,
+                    &contents.types,
+                    &contents.indexes,
+                ]
+                .into_iter()
+                .map(Arc::clone),
+            );
+        }
+        result
+    }
+
+    /// The table or sequence that owns `entry`, if it is visible to `transaction`.
+    fn owner(&self, transaction: &Transaction, entry: &CatalogEntry) -> Option<Arc<CatalogEntry>> {
+        let owner = entry.owned_by.as_ref()?;
+        let schema_entry = self.schema(transaction, &owner.schema)?;
+        let contents = schema_entry.as_schema()?;
+        [&contents.tables, &contents.sequences]
+            .into_iter()
+            .filter_map(|set| set.get(transaction, &owner.name))
+            .find(|candidate| candidate.is_described_by(schema_entry.name(), owner))
+    }
+
+    /// The tables and sequences of this catalog that `entry` of `schema` owns, with
+    /// their schemas.
+    fn owned_entries(
         &self,
         transaction: &Transaction,
         schema: &str,
         entry: &CatalogEntry,
-    ) -> Vec<Arc<CatalogEntry>> {
+    ) -> Vec<(String, Arc<CatalogEntry>)> {
         let mut result = Vec::new();
         for schema_entry in self.schemas.scan(transaction) {
             let Some(contents) = schema_entry.as_schema() else {
                 continue;
             };
             for set in [&contents.tables, &contents.sequences] {
-                result.extend(set.scan(transaction).into_iter().filter(|candidate| {
-                    candidate
-                        .owned
-                        .iter()
-                        .any(|owned| entry.is_described_by(schema, owned))
-                }));
+                for candidate in set.scan(transaction) {
+                    if candidate
+                        .owned_by
+                        .as_ref()
+                        .is_some_and(|owner| entry.is_described_by(schema, owner))
+                    {
+                        result.push((schema_entry.name().to_owned(), candidate));
+                    }
+                }
             }
         }
         result
@@ -769,57 +833,54 @@ impl Catalog {
             .ok_or_else(missing)?;
         let owner_schema = owner_schema_entry.name().to_owned();
         let dependency_error = |message: String| Error::new(rustdb_common::ErrorKind::Dependency, message);
-        if let Some(other) = self.owners(transaction, &owner_schema, &owner).first() {
+        if let Some(other) = self.owner(transaction, &owner) {
             return Err(dependency_error(format!(
                 "{} can not become the owner, it is already owned by {}",
                 owner.name(),
                 other.name()
             )));
         }
-        if let Some(owned) = entry.owned.first() {
+        if let Some((_, owned)) = self.owned_entries(transaction, schema, entry).first() {
             return Err(dependency_error(format!(
                 "{} already owns {}. Cannot have circular dependencies",
                 entry.name(),
-                owned.name
+                owned.name()
             )));
         }
-        let mut already_owned = false;
-        for other in self.owners(transaction, schema, entry) {
+        if let Some(other) = self.owner(transaction, entry) {
             if Arc::ptr_eq(&other, &owner) {
-                already_owned = true;
-            } else {
-                return Err(dependency_error(format!(
-                    "{} is already owned by {}",
-                    entry.name(),
-                    other.name()
-                )));
+                return Ok(());
             }
+            return Err(dependency_error(format!(
+                "{} is already owned by {}",
+                entry.name(),
+                other.name()
+            )));
         }
-        if already_owned {
-            return Ok(());
-        }
-        let kind = match &owner.kind {
-            EntryKind::Table(table) => EntryKind::Table(table.clone()),
-            EntryKind::View(view) => EntryKind::View(view.clone()),
-            EntryKind::Sequence(sequence) => EntryKind::Sequence(sequence.clone()),
-            _ => return Err(missing()),
-        };
-        let mut new_owner = CatalogEntry::new(owner.name(), kind);
-        new_owner.inherit_links(&owner);
-        new_owner.owned.push(rustdb_ast::CatalogEntryInfo {
-            catalog_type: entry.dependency_type(),
-            schema: schema.to_owned(),
-            name: entry.name().to_owned(),
-        });
+        let mut owned = entry
+            .try_copy()
+            .ok_or_else(|| Error::internal("OWNED BY an entry that cannot be copied"))?;
+        owned.owned_by = Some(owner.info(&owner_schema));
         self.alter_entry(
             transaction,
-            &owner_schema,
-            owner.catalog_type(),
-            owner.name(),
-            new_owner,
+            schema,
+            entry.catalog_type(),
+            entry.name(),
+            owned,
             StorageHook::None,
             info,
-        )
+        )?;
+        // `VerifyExistence`: the owner must still exist when this commits.
+        let owner_set = if owner.catalog_type() == CatalogType::Table {
+            &contents.tables
+        } else {
+            &contents.sequences
+        };
+        transaction.push_catalog_undo(Box::new(crate::transaction::CommitCheck::SubjectExists {
+            name: owner.name().to_owned(),
+            set: Arc::clone(owner_set),
+        }));
+        Ok(())
     }
 
     /// `COMMENT ON`: a copy of `entry` with `comment` replaces it (the `SET_COMMENT` case
@@ -931,10 +992,10 @@ impl Catalog {
                         .dependencies
                         .iter()
                         .any(|dependency| entry.is_described_by(schema, &dependency.entry))
-                        || candidate
-                            .owned
-                            .iter()
-                            .any(|owned| entry.is_described_by(schema, owned))
+                        || entry
+                            .owned_by
+                            .as_ref()
+                            .is_some_and(|owner| candidate.is_described_by(schema_entry.name(), owner))
                     {
                         result.push((schema_entry.name().to_owned(), candidate));
                     }

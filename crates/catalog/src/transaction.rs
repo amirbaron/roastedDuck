@@ -131,9 +131,16 @@ pub(crate) enum CommitCheck {
         name: String,
         sets: Vec<Arc<CatalogSet>>,
     },
-    /// An entry created in a schema: no other transaction may have dropped the schema
-    /// since (`VerifyExistence`).
-    SchemaExists { name: String, schemas: Arc<CatalogSet> },
+    /// A dropped entry: no other transaction may have committed an entry depending on
+    /// it or owned by it since this one started (`VerifyCommitDrop`).
+    EntryDropped {
+        entry: rustdb_ast::CatalogEntryInfo,
+        sets: Vec<Arc<CatalogSet>>,
+    },
+    /// An entry created in a schema, or an entry given an owner: no other transaction
+    /// may have dropped the schema or the owner `name` of `set` since
+    /// (`VerifyExistence`).
+    SubjectExists { name: String, set: Arc<CatalogSet> },
 }
 
 impl CatalogUndo for CommitCheck {
@@ -144,7 +151,7 @@ impl CatalogUndo for CommitCheck {
     fn verify_commit(&self, start_time: u64) -> Result<()> {
         match self {
             Self::SchemaDropped { name, sets } => {
-                if sets.iter().any(|set| set.created_since(start_time).is_some()) {
+                if sets.iter().any(|set| set.created_since(start_time, |_| true).is_some()) {
                     return Err(rustdb_common::Error::new(
                         rustdb_common::ErrorKind::Dependency,
                         format!(
@@ -153,8 +160,29 @@ impl CatalogUndo for CommitCheck {
                     ));
                 }
             }
-            Self::SchemaExists { name, schemas } => {
-                if schemas.dropped_since(name, start_time) {
+            Self::EntryDropped { entry, sets } => {
+                let refers = |candidate: &crate::CatalogEntry| {
+                    candidate
+                        .dependencies
+                        .iter()
+                        .any(|dependency| crate::entry::same_entry(&dependency.entry, entry))
+                        || candidate
+                            .owned_by
+                            .as_ref()
+                            .is_some_and(|owner| crate::entry::same_entry(owner, entry))
+                };
+                if sets.iter().any(|set| set.created_since(start_time, refers).is_some()) {
+                    return Err(rustdb_common::Error::new(
+                        rustdb_common::ErrorKind::Dependency,
+                        format!(
+                            "Could not commit DROP of \"{}\" because a dependency was created after the transaction started",
+                            entry.name
+                        ),
+                    ));
+                }
+            }
+            Self::SubjectExists { name, set } => {
+                if set.dropped_since(name, start_time) {
                     return Err(rustdb_common::Error::new(
                         rustdb_common::ErrorKind::Dependency,
                         format!(

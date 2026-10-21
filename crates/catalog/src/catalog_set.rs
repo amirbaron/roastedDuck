@@ -364,13 +364,19 @@ impl CatalogSet {
         Ok(())
     }
 
-    /// Whether another transaction committed an entry into this set after `start_time`.
-    pub(crate) fn created_since(&self, start_time: u64) -> Option<String> {
+    /// The name of an entry matching `filter` that another transaction committed into
+    /// this set after `start_time`.
+    pub(crate) fn created_since(
+        &self,
+        start_time: u64,
+        filter: impl Fn(&CatalogEntry) -> bool,
+    ) -> Option<String> {
         self.lock().values().find_map(|chain| {
             let head = chain.first()?;
             let timestamp = head.timestamp();
             let entry = head.entry.as_ref()?;
-            (timestamp < TRANSACTION_ID_START && timestamp > start_time).then(|| entry.name().to_owned())
+            (timestamp < TRANSACTION_ID_START && timestamp > start_time && filter(entry))
+                .then(|| entry.name().to_owned())
         })
     }
 
