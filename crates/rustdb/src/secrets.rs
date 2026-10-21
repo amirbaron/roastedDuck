@@ -12,6 +12,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use rustdb_ast::{OnCreateConflict, OnEntryNotFound, SecretPersistType};
 use rustdb_common::{Error, ErrorKind, Result};
 use rustdb_function::cast::ValueCast;
+use rustdb_function::logging::FileSystemLogger;
 use rustdb_planner::operator::CreateSecretInput;
 use rustdb_serde::binary::{BinaryDeserializer, BinarySerializer};
 use rustdb_serde::{DeserializeObject, Deserializer, SerializationOptions, SerializeObject, Serializer};
@@ -226,7 +227,16 @@ impl LocalFileStorage {
             return Ok(Some(secret.clone()));
         }
         let path = self.file_path(&key);
-        let bytes = std::fs::read(&path).map_err(|error| {
+        // `BufferedFileReader`: one read of the whole file.
+        let logger = FileSystemLogger::open(&path);
+        let bytes = std::fs::read(&path);
+        if let Some(logger) = &logger {
+            if let Ok(bytes) = &bytes {
+                logger.read(bytes.len() as u64, 0);
+            }
+            logger.close();
+        }
+        let bytes = bytes.map_err(|error| {
             Error::new(
                 ErrorKind::Io,
                 format!(
@@ -287,7 +297,16 @@ impl LocalFileStorage {
             Error::new(ErrorKind::Io, format!("Could not write file \"{path}\": {error}"))
         };
         let _ = std::fs::remove_file(&path);
-        write_private_file(&temp_path, &bytes).map_err(io_error)?;
+        // `BufferedFileWriter`: one write when flushed.
+        let logger = FileSystemLogger::open(&temp_path);
+        let written = write_private_file(&temp_path, &bytes);
+        if let Some(logger) = &logger {
+            if written.is_ok() {
+                logger.write(bytes.len() as u64, 0);
+            }
+            logger.close();
+        }
+        written.map_err(io_error)?;
         std::fs::rename(&temp_path, &path).map_err(io_error)?;
         self.secrets.insert(key, Some(secret.clone()));
         Ok(())

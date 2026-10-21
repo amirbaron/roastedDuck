@@ -14,6 +14,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use rustdb_buffer::{BlockId, BlockManager, BlockRegistry, FileBuffer};
 use rustdb_common::profiling::{MetricType, add_to_counter};
 use rustdb_common::{Error, ErrorKind, Result};
+use rustdb_function::logging::FileSystemLogger;
 
 use crate::compression::CompressionConfig;
 use crate::metadata::{MetaBlockPointer, MetadataManager, MetadataReader, MetadataWriter};
@@ -32,13 +33,27 @@ fn io_error(message: impl Into<std::borrow::Cow<'static, str>>) -> Error {
 struct FileHandle {
     file: File,
     path: String,
+    /// The `FileSystem` log of the connection that opened the file.
+    logger: Option<FileSystemLogger>,
 }
 
 impl FileHandle {
+    /// A handle of `file`, opened now at `path`.
+    fn new(file: File, path: &str) -> Self {
+        Self {
+            file,
+            path: path.to_owned(),
+            logger: FileSystemLogger::open(path),
+        }
+    }
+
     /// Reads `buffer.len()` bytes at `location`; the running query counts them
     /// (`FileHandle::Read`'s `TOTAL_BYTES_READ`).
     fn read_at(&self, buffer: &mut [u8], location: u64) -> Result<()> {
         add_to_counter(MetricType::TotalBytesRead, buffer.len() as u64);
+        if let Some(logger) = &self.logger {
+            logger.read(buffer.len() as u64, location);
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::FileExt;
@@ -70,17 +85,70 @@ impl FileHandle {
     /// Writes `buffer` at `location`; the running query counts the bytes
     /// (`FileHandle::Write`'s `TOTAL_BYTES_WRITTEN`).
     fn write_at(&self, buffer: &[u8], location: u64) -> Result<()> {
-        add_to_counter(MetricType::TotalBytesWritten, buffer.len() as u64);
+        self.write_parts_at(&[], buffer, location)
+    }
+
+    /// Writes `header` followed by `data` at `location` as one write, as DuckDB writes a
+    /// block together with the checksum in front of it.
+    fn write_parts_at(&self, header: &[u8], data: &[u8], location: u64) -> Result<()> {
+        let total = header.len() + data.len();
+        add_to_counter(MetricType::TotalBytesWritten, total as u64);
+        if let Some(logger) = &self.logger {
+            logger.write(total as u64, location);
+        }
         #[cfg(unix)]
         {
-            use std::os::unix::fs::FileExt;
-            self.file
-                .write_all_at(buffer, location)
-                .map_err(|error| self.error("write to", location, &error))
+            use std::os::fd::AsRawFd;
+            let mut written = 0;
+            while written < total {
+                // The parts not written yet.
+                let (header_rest, data_rest) = if written < header.len() {
+                    (&header[written..], data)
+                } else {
+                    (&[][..], &data[written - header.len()..])
+                };
+                let parts = [
+                    libc::iovec {
+                        iov_base: header_rest.as_ptr().cast_mut().cast(),
+                        iov_len: header_rest.len(),
+                    },
+                    libc::iovec {
+                        iov_base: data_rest.as_ptr().cast_mut().cast(),
+                        iov_len: data_rest.len(),
+                    },
+                ];
+                let skip = usize::from(header_rest.is_empty());
+                let offset = libc::off_t::try_from(location + written as u64)
+                    .map_err(|_| io_error(format!("Could not write to file \"{}\": offset too large", self.path)))?;
+                // SAFETY: the iovecs point into `header` and `data`, which outlive the call.
+                let result = unsafe {
+                    libc::pwritev(
+                        self.file.as_raw_fd(),
+                        parts[skip..].as_ptr(),
+                        (parts.len() - skip) as libc::c_int,
+                        offset,
+                    )
+                };
+                match result {
+                    0 => {
+                        let error = std::io::Error::from(std::io::ErrorKind::WriteZero);
+                        return Err(self.error("write to", location, &error));
+                    }
+                    written_now if written_now > 0 => written += written_now.unsigned_abs(),
+                    _ => {
+                        let error = std::io::Error::last_os_error();
+                        if error.kind() != std::io::ErrorKind::Interrupted {
+                            return Err(self.error("write to", location, &error));
+                        }
+                    }
+                }
+            }
+            Ok(())
         }
         #[cfg(windows)]
         {
             use std::os::windows::fs::FileExt;
+            let buffer = [header, data].concat();
             let mut done = 0;
             while done < buffer.len() {
                 done += self
@@ -116,6 +184,14 @@ impl FileHandle {
         self.file
             .set_len(size)
             .map_err(|error| io_error(format!("Could not truncate file \"{}\": {error}", self.path)))
+    }
+}
+
+impl Drop for FileHandle {
+    fn drop(&mut self) {
+        if let Some(logger) = &self.logger {
+            logger.close();
+        }
     }
 }
 
@@ -228,10 +304,7 @@ impl SingleFileBlockManager {
             main_header.db_identifier = random_identifier();
         }
         let manager = Self {
-            handle: FileHandle {
-                file,
-                path: path.to_owned(),
-            },
+            handle: FileHandle::new(file, path),
             block_alloc_size: options.block_alloc_size,
             read_only: false,
             version_number,
@@ -285,10 +358,7 @@ impl SingleFileBlockManager {
                     io_error(format!("Cannot open file \"{path}\": {error}"))
                 }
             })?;
-        let handle = FileHandle {
-            file,
-            path: path.to_owned(),
-        };
+        let handle = FileHandle::new(file, path);
         // `MainHeader::CheckMagicBytes`.
         let not_a_database = || {
             io_error(format!(
@@ -717,9 +787,7 @@ impl SingleFileBlockManager {
         }
         let location = self.block_location(block_id)?;
         let sum = checksum(data);
-        self.handle.write_at(&sum.to_le_bytes(), location)?;
-        self.handle
-            .write_at(data, location + DEFAULT_BLOCK_HEADER_SIZE as u64)
+        self.handle.write_parts_at(&sum.to_le_bytes(), data, location)
     }
 
     fn block_location(&self, block_id: BlockId) -> Result<u64> {

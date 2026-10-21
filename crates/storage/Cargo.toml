@@ -15,5 +15,8 @@ rustdb-row = { path = "../row" }
 rustdb-serde = { path = "../serde" }
 ruzstd = "0.9"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [lints]
 workspace = true

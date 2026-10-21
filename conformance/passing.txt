@@ -2792,6 +2792,7 @@ test/sql/limit/test_parallel_limit_nulls.test_slow
 test/sql/limit/test_parallel_limit_strings.test_slow
 test/sql/limit/test_preserve_insertion_order.test
 test/sql/logging/enable_logging_file_no_path.test
+test/sql/logging/file_system_logging_attach.test
 test/sql/logging/file_system_logging_attach_deadlock.test
 test/sql/logging/http_log_timing.test
 test/sql/logging/logging.test
@@ -3256,6 +3257,7 @@ test/sql/sample/test_sample.test_slow
 test/sql/sample/test_sample_too_big.test
 test/sql/sample/test_sampling_stats.test_slow
 test/sql/secrets/create_secret_expression.test
+test/sql/secrets/create_secret_filesystem_logging.test
 test/sql/secrets/create_secret_hffs_autoload.test
 test/sql/secrets/create_secret_persistence_no_client_context.test
 test/sql/secrets/secret_autoloading_errors.test
