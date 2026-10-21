@@ -1574,6 +1574,7 @@ pub fn checkpoint_in_memory_table(
 
 /// What the vacuum knows about a table checkpoint (DuckDB's `VacuumState`).
 #[derive(Debug, Default)]
+#[allow(clippy::struct_excessive_bools, reason = "the flags of DuckDB's VacuumState")]
 struct VacuumState {
     can_vacuum_deletes: bool,
     can_change_row_ids: bool,
