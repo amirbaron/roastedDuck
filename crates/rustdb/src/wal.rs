@@ -3,9 +3,10 @@
 //!
 //! The WAL is read twice. The first pass only looks at the entries: it finds the end of
 //! the last complete commit and a checkpoint marker, if a checkpoint was interrupted. If
-//! that checkpoint completed, the WAL is obsolete. Otherwise the second pass applies the
-//! entries, committing at every `WAL_FLUSH`; a torn tail (a serialization error) ends the
-//! replay and is cut off before the next write.
+//! that checkpoint completed, the WAL is obsolete, except for the commits made while it
+//! ran, which are in the checkpoint WAL (`.wal.checkpoint`). Otherwise the second pass
+//! applies the entries, committing at every `WAL_FLUSH`; a torn tail (a serialization
+//! error) ends the replay and is cut off before the next write.
 
 use std::sync::Arc;
 
@@ -22,12 +23,14 @@ use rustdb_execution::operators::{
 };
 use rustdb_serde::Deserializer;
 use rustdb_storage::DataTable;
-use rustdb_storage::checkpoint::pointers::{deserialize_index_storage_info, deserialize_meta_block_pointer};
+use rustdb_storage::checkpoint::pointers::{
+    PersistentCollectionData, deserialize_index_storage_info, deserialize_meta_block_pointer,
+};
 use rustdb_storage::checkpoint::vector_serde::deserialize_chunk;
 use rustdb_storage::index::UnboundIndexStorage;
 use rustdb_storage::metadata::MetaBlockPointer;
-use rustdb_storage::storage_manager::StorageManager;
-use rustdb_storage::wal::{WAL_VERSION_NUMBER, WalReader, WalType, checkpoint_wal_path};
+use rustdb_storage::storage_manager::{CheckpointAbort, StorageManager};
+use rustdb_storage::wal::{WAL_VERSION_NUMBER, WalReader, WalType};
 use rustdb_types::DataChunk;
 
 use crate::attached::AttachedDatabase;
@@ -59,6 +62,16 @@ fn version_error(checkpoint_iteration: u64, expected: u64) -> Error {
     ))
 }
 
+/// Which WAL a replay reads (DuckDB's `WALReplayState`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WalFile {
+    /// The WAL of the database file.
+    Main,
+    /// The checkpoint WAL of a checkpoint that ran concurrently with commits, or the WAL
+    /// it was moved or merged into: it may belong to the next checkpoint iteration.
+    Checkpoint,
+}
+
 /// Replays the WAL of the database's file, if any, and sets up the WAL that commits are
 /// logged to from now on (`WriteAheadLog::Replay`).
 pub(crate) fn replay(database: &Database, attached: &Arc<AttachedDatabase>) -> Result<()> {
@@ -68,9 +81,18 @@ pub(crate) fn replay(database: &Database, attached: &Arc<AttachedDatabase>) -> R
     // `SingleFileStorageManager::LoadDatabase` times the replay.
     let _timer =
         rustdb_common::profiling::start_timer(rustdb_common::profiling::MetricType::AttachReplayWalLatency);
-    let (size, requires_truncate) = match WalReader::open(&storage.wal_path())? {
-        None => (0, false),
-        Some(reader) => replay_log(database, attached, &storage, reader)?,
+    let replayed = match WalReader::open(&storage.wal_path())? {
+        None => None,
+        Some(reader) => replay_log(database, attached, &storage, reader, WalFile::Main)?,
+    };
+    let (size, requires_truncate) = if let Some(kept) = replayed {
+        kept
+    } else {
+        // Nothing in the WAL is needed any more.
+        if !storage.is_read_only() {
+            remove_file(&storage.wal_path())?;
+        }
+        (0, false)
     };
     let wal = storage.init_wal(size, requires_truncate)?;
     if !storage.is_read_only() {
@@ -82,8 +104,8 @@ pub(crate) fn replay(database: &Database, attached: &Arc<AttachedDatabase>) -> R
 /// What the first pass found.
 #[derive(Debug, Default)]
 struct ScanState {
-    /// The root of an interrupted checkpoint, with where its marker ends.
-    checkpoint: Option<(MetaBlockPointer, u64)>,
+    /// The root of an interrupted checkpoint, with where its marker starts and ends.
+    checkpoint: Option<(MetaBlockPointer, u64, u64)>,
     /// The end of the last complete commit before the checkpoint marker.
     checkpoint_truncate_offset: u64,
     /// The start of the last entry read.
@@ -93,8 +115,14 @@ struct ScanState {
     expected_checkpoint: Option<u64>,
 }
 
-/// Checks the header against the database file (`ReplayVersion`).
-fn check_header(reader: &mut WalReader, storage: &StorageManager, state: &mut ScanState) -> Result<()> {
+/// Checks the header against the database file (`ReplayVersion`); returns the WAL's
+/// version.
+fn check_header(
+    reader: &mut WalReader,
+    storage: &StorageManager,
+    file: WalFile,
+    state: &mut ScanState,
+) -> Result<u64> {
     let header = reader.read_header()?;
     if !matches!(header.version, 1 | WAL_VERSION_NUMBER) {
         return Err(io_error(format!(
@@ -103,7 +131,7 @@ fn check_header(reader: &mut WalReader, storage: &StorageManager, state: &mut Sc
         )));
     }
     let (Some(identifier), Some(iteration)) = (header.db_identifier, header.checkpoint_iteration) else {
-        return Ok(());
+        return Ok(header.version);
     };
     let block_manager = storage.block_manager();
     if identifier != block_manager.db_identifier() {
@@ -114,11 +142,15 @@ fn check_header(reader: &mut WalReader, storage: &StorageManager, state: &mut Sc
         if iteration + 1 == expected {
             // The WAL was checkpointed, but not removed before the process stopped.
             state.expected_checkpoint = Some(expected);
-            return Ok(());
+            return Ok(header.version);
+        }
+        // The checkpoint WAL of a checkpoint that did not write its header yet.
+        if file == WalFile::Checkpoint && iteration == expected + 1 {
+            return Ok(header.version);
         }
         return Err(version_error(iteration, expected));
     }
-    Ok(())
+    Ok(header.version)
 }
 
 /// Opens an entry and reads its type.
@@ -133,6 +165,8 @@ enum ScannedEntry {
     Flush,
     /// A checkpoint marker with the root it announces.
     Checkpoint(MetaBlockPointer),
+    /// Row groups an optimistic write stored, whose blocks are in use.
+    RowGroupData(PersistentCollectionData),
     Other,
 }
 
@@ -144,6 +178,7 @@ fn scan_entry(d: &mut dyn Deserializer, whole: bool) -> Result<ScannedEntry> {
         return Ok(match parse_entry(d, "")? {
             WalEntry::Flush => ScannedEntry::Flush,
             WalEntry::Checkpoint(meta_block) => ScannedEntry::Checkpoint(meta_block),
+            WalEntry::RowGroupData(data) => ScannedEntry::RowGroupData(data),
             _ => ScannedEntry::Other,
         });
     }
@@ -154,18 +189,28 @@ fn scan_entry(d: &mut dyn Deserializer, whole: bool) -> Result<ScannedEntry> {
             "meta_block",
             deserialize_meta_block_pointer,
         )?),
+        WalType::RowGroupData => ScannedEntry::RowGroupData(read_row_group_data(d)?),
         _ => ScannedEntry::Other,
     })
 }
 
+/// Reads the row groups of a `ROW_GROUP_DATA` entry.
+fn read_row_group_data(d: &mut dyn Deserializer) -> Result<PersistentCollectionData> {
+    d.read_object_property(
+        101,
+        "row_group_data",
+        PersistentCollectionData::deserialize_fields,
+    )
+}
+
 /// The first pass (`ReplayLog` with `deserialize_only`).
-fn scan_log(reader: &mut WalReader, storage: &StorageManager) -> Result<ScanState> {
+fn scan_log(reader: &mut WalReader, storage: &StorageManager, file: WalFile) -> Result<ScanState> {
     let mut state = ScanState::default();
     let mut last_flush_end = 0;
     // DuckDB's loop also counts the version entry `check_header` reads.
     let mut replay_entry_count = 1;
     let outcome = (|| -> Result<()> {
-        check_header(reader, storage, &mut state)?;
+        check_header(reader, storage, file, &mut state)?;
         loop {
             replay_entry_count += 1;
             state.current_position = reader.offset();
@@ -175,8 +220,18 @@ fn scan_log(reader: &mut WalReader, storage: &StorageManager) -> Result<ScanStat
                     if state.checkpoint.is_some() {
                         return Err(io_error("WAL cannot contain more than one checkpoint marker"));
                     }
-                    state.checkpoint = Some((meta_block, reader.offset()));
+                    state.checkpoint = Some((meta_block, state.current_position, reader.offset()));
                     state.checkpoint_truncate_offset = last_flush_end;
+                }
+                ScannedEntry::RowGroupData(data) => {
+                    // The blocks are in use once the WAL is replayed; mark them now, so
+                    // that nothing the replay writes reuses them (`ReplayRowGroupData` in
+                    // `deserialize_only` mode).
+                    let block_manager = storage.block_manager();
+                    for block in data.block_ids() {
+                        block_manager.mark_block_as_used(block);
+                        block_manager.mark_block_as_checkpointed(block);
+                    }
                 }
                 ScannedEntry::Flush => {
                     last_flush_end = reader.offset();
@@ -200,22 +255,32 @@ fn scan_log(reader: &mut WalReader, storage: &StorageManager) -> Result<ScanStat
     }
 }
 
+/// Opens the WAL at `path`, which exists.
+fn open_wal(path: &str) -> Result<WalReader> {
+    WalReader::open(path)?.ok_or_else(|| io_error(format!("Cannot open file \"{path}\"")))
+}
+
 /// Replays the WAL read by `reader`; returns the size of the WAL to keep and whether the
-/// rest must be cut off (`WriteAheadLogReplayer::ReplayLog`).
+/// rest must be cut off, or `None` when the WAL is not needed any more
+/// (`WriteAheadLogReplayer::ReplayLog`).
+///
+/// A checkpoint marker shows a checkpoint that did not finish. If commits ran
+/// concurrently with it, their entries are in the checkpoint WAL: when the checkpoint
+/// wrote its header, only the checkpoint WAL is replayed (it becomes the WAL); otherwise
+/// the WAL up to the marker and the checkpoint WAL are merged into the WAL and replayed.
+/// A read-only database replays the files as they are.
 fn replay_log(
     database: &Database,
     attached: &AttachedDatabase,
     storage: &Arc<StorageManager>,
     mut reader: WalReader,
-) -> Result<(u64, bool)> {
+    file: WalFile,
+) -> Result<Option<(u64, bool)>> {
     let path = reader.path().to_owned();
     let read_only = storage.is_read_only();
     if reader.finished() {
         // An empty WAL.
-        if !read_only {
-            remove_file(&path)?;
-        }
-        return Ok((0, false));
+        return Ok(None);
     }
     let prefix = |error: Error| {
         Error::new(
@@ -226,25 +291,53 @@ fn replay_log(
             ),
         )
     };
-    let scan = scan_log(&mut reader, storage).map_err(prefix)?;
+    let scan = scan_log(&mut reader, storage, file).map_err(prefix)?;
     let mut truncate_failed_checkpoint = false;
-    if let Some((meta_block, checkpoint_end)) = scan.checkpoint {
+    // The checkpoint WAL a read-only database replays after this one.
+    let mut checkpoint_wal = None;
+    if let Some((meta_block, checkpoint_position, checkpoint_end)) = scan.checkpoint {
+        if file == WalFile::Checkpoint {
+            return Err(Error::invalid_input(format!(
+                "Failure while replaying checkpoint WAL file \"{path}\": checkpoint WAL cannot contain a \
+                 checkpoint marker"
+            )));
+        }
         if scan.current_position != checkpoint_end {
             return Err(io_error("WAL checkpoint marker must be at the end of the WAL"));
         }
-        if std::path::Path::new(&checkpoint_wal_path(storage.path())).exists() {
-            return Err(Error::not_implemented(
-                "recovering the WAL of a checkpoint that ran concurrently with commits",
-            ));
-        }
         // `IsCheckpointClean`: the header points at the checkpoint the marker announced.
-        if storage.meta_block().block_pointer == meta_block.block_pointer {
-            if !read_only {
-                remove_file(&path)?;
+        let checkpoint_succeeded = storage.meta_block().block_pointer == meta_block.block_pointer;
+        let checkpoint_wal_path = storage.checkpoint_wal_path();
+        if !std::path::Path::new(&checkpoint_wal_path).exists() {
+            if checkpoint_succeeded {
+                return Ok(None);
             }
-            return Ok((0, false));
+            truncate_failed_checkpoint = !read_only;
+        } else if checkpoint_succeeded {
+            // Only the commits made while the checkpoint ran are not in the file.
+            if read_only {
+                return replay_log(
+                    database,
+                    attached,
+                    storage,
+                    open_wal(&checkpoint_wal_path)?,
+                    WalFile::Checkpoint,
+                );
+            }
+            drop(reader);
+            std::fs::rename(&checkpoint_wal_path, &path).map_err(|error| {
+                io_error(format!(
+                    "Could not move file \"{checkpoint_wal_path}\" to \"{path}\": {error}"
+                ))
+            })?;
+            return replay_log(database, attached, storage, open_wal(&path)?, WalFile::Checkpoint);
+        } else if read_only {
+            checkpoint_wal = Some(checkpoint_wal_path);
+        } else {
+            drop(reader);
+            merge_into_recovery_wal(storage, &path, checkpoint_position, &checkpoint_wal_path)?;
+            return replay_log(database, attached, storage, open_wal(&path)?, WalFile::Checkpoint);
         }
-        truncate_failed_checkpoint = !read_only;
     }
     if let Some(expected) = scan.expected_checkpoint {
         return Err(version_error(expected - 1, expected));
@@ -259,9 +352,9 @@ fn replay_log(
             .and_then(|()| file.sync_all())
             .map_err(|error| io_error(format!("Could not truncate file \"{path}\": {error}")))?;
         if scan.checkpoint_truncate_offset == 0 {
-            return Ok((0, false));
+            return Ok(Some((0, false)));
         }
-        reader = WalReader::open(&path)?.ok_or_else(|| io_error(format!("Cannot open file \"{path}\"")))?;
+        reader = open_wal(&path)?;
     }
     reader.reset()?;
     let mut connection = database.connect()?;
@@ -294,7 +387,113 @@ fn replay_log(
             return Err(prefix(error));
         }
     }
-    Ok((successful_offset, !all_succeeded))
+    if all_succeeded && let Some(checkpoint_wal) = checkpoint_wal {
+        return replay_log(
+            database,
+            attached,
+            storage,
+            open_wal(&checkpoint_wal)?,
+            WalFile::Checkpoint,
+        );
+    }
+    Ok(Some((successful_offset, !all_succeeded)))
+}
+
+/// Copies `count` bytes from the position of `source` to the end of `target`
+/// (`CopyOverWAL`).
+fn copy_wal(
+    source: &mut std::fs::File,
+    source_path: &str,
+    count: u64,
+    target: &mut std::fs::File,
+    target_path: &str,
+) -> Result<()> {
+    use std::io::Read;
+    let copied = std::io::copy(&mut Read::by_ref(source).take(count), target).map_err(|error| {
+        io_error(format!(
+            "Could not copy \"{source_path}\" to \"{target_path}\": {error}"
+        ))
+    })?;
+    if copied != count {
+        return Err(io_error(format!(
+            "Could not read file \"{source_path}\": unexpected end of file"
+        )));
+    }
+    Ok(())
+}
+
+/// Merges the WAL at `wal_path` up to its checkpoint marker at `checkpoint_position` and
+/// the entries of the checkpoint WAL into the recovery WAL, which then replaces the WAL;
+/// the checkpoint WAL is removed (`MergeIntoRecoveryWAL`).
+fn merge_into_recovery_wal(
+    storage: &StorageManager,
+    wal_path: &str,
+    checkpoint_position: u64,
+    checkpoint_wal_path: &str,
+) -> Result<()> {
+    let recovery_path = storage.recovery_wal_path();
+    let open = |path: &str| {
+        std::fs::File::open(path).map_err(|error| io_error(format!("Cannot open file \"{path}\": {error}")))
+    };
+    let mut recovery = std::fs::File::create(&recovery_path)
+        .map_err(|error| io_error(format!("Cannot open file \"{recovery_path}\": {error}")))?;
+    let mut main = open(wal_path)?;
+    copy_wal(
+        &mut main,
+        wal_path,
+        checkpoint_position,
+        &mut recovery,
+        &recovery_path,
+    )?;
+    drop(main);
+    let mut checkpoint_reader = open_wal(checkpoint_wal_path)?;
+    if !checkpoint_reader.finished() {
+        // The checkpoint WAL's version entry is not copied; the versions must match.
+        let mut state = ScanState::default();
+        let version = check_header(&mut checkpoint_reader, storage, WalFile::Checkpoint, &mut state)?;
+        let main_version = open_wal(wal_path)?.read_header()?.version;
+        if version != main_version {
+            return Err(Error::invalid_input(format!(
+                "Failure while replaying checkpoint WAL file \"{checkpoint_wal_path}\": checkpoint WAL version is \
+                 different from main WAL version"
+            )));
+        }
+        let header_end = checkpoint_reader.offset();
+        let mut checkpoint = open(checkpoint_wal_path)?;
+        let size = checkpoint
+            .metadata()
+            .map_err(|error| io_error(format!("Cannot open file \"{checkpoint_wal_path}\": {error}")))?
+            .len();
+        std::io::Seek::seek(&mut checkpoint, std::io::SeekFrom::Start(header_end)).map_err(|error| {
+            io_error(format!(
+                "Could not seek in file \"{checkpoint_wal_path}\": {error}"
+            ))
+        })?;
+        copy_wal(
+            &mut checkpoint,
+            checkpoint_wal_path,
+            size - header_end,
+            &mut recovery,
+            &recovery_path,
+        )?;
+    }
+    recovery
+        .sync_all()
+        .map_err(|error| io_error(format!("Could not fsync file \"{recovery_path}\": {error}")))?;
+    drop(recovery);
+    let abort = storage.checkpoint_config().abort;
+    abort.check(CheckpointAbort::BeforeMovingRecovery)?;
+    std::fs::rename(&recovery_path, wal_path).map_err(|error| {
+        io_error(format!(
+            "Could not move file \"{recovery_path}\" to \"{wal_path}\": {error}"
+        ))
+    })?;
+    abort.check(CheckpointAbort::BeforeDeletingCheckpointWal)?;
+    std::fs::remove_file(checkpoint_wal_path).map_err(|error| {
+        io_error(format!(
+            "Could not remove file \"{checkpoint_wal_path}\": {error}"
+        ))
+    })
 }
 
 /// A WAL entry as read, before it is applied (the reading half of DuckDB's `Replay*`
@@ -325,6 +524,7 @@ enum WalEntry {
         name: String,
     },
     Insert(DataChunk),
+    RowGroupData(PersistentCollectionData),
     Delete(DataChunk),
     Update {
         column_path: Vec<u64>,
@@ -424,9 +624,7 @@ fn parse_entry(d: &mut dyn Deserializer, catalog: &str) -> Result<WalEntry> {
         WalType::Checkpoint => {
             WalEntry::Checkpoint(d.read_object_property(101, "meta_block", deserialize_meta_block_pointer)?)
         }
-        WalType::RowGroupData => {
-            return Err(Error::not_implemented("replaying ROW_GROUP_DATA WAL entries"));
-        }
+        WalType::RowGroupData => WalEntry::RowGroupData(read_row_group_data(d)?),
         WalType::WalVersion => return Err(Error::internal("Invalid WAL entry type!")),
     };
     d.on_object_end()?;
@@ -540,6 +738,10 @@ impl Replayer {
                 let table = self.current_table("insert")?;
                 // Appended without verifying constraints (`LocalWALAppend`).
                 table.append_chunk(&transaction, &chunk, rustdb_storage::TableConstraints::default())?;
+            }
+            WalEntry::RowGroupData(data) => {
+                // The stored row groups join the table directly (`ReplayRowGroupData`).
+                self.current_table("insert")?.replay_row_group_data(data)?;
             }
             WalEntry::Delete(chunk) => {
                 let table = self.current_table("delete")?;

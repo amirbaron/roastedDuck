@@ -266,3 +266,55 @@ fn indexes_survive_a_restart() {
         Config::default().with_option("storage_compatibility_version", rustdb::Value::varchar("v1.2.0"));
     check_indexes_survive(&temp_path("indexes-v12"), &config);
 }
+
+#[test]
+fn bulk_inserts_log_their_row_groups() {
+    let path = temp_path("optimistic");
+    {
+        let (_database, mut con) = open_without_checkpoint(&path);
+        con.query("SET checkpoint_threshold = '1TB'").unwrap();
+        con.query("CREATE TABLE t(i BIGINT, s VARCHAR)").unwrap();
+        // The row groups are written to the file while the insert runs; the WAL only
+        // records where they are.
+        con.query("INSERT INTO t SELECT i, 'row' || i FROM range(1000000) r(i)")
+            .unwrap();
+        assert!(wal_size(&path) < 64 * 1024);
+        con.query("INSERT INTO t VALUES (-1, NULL)").unwrap();
+        con.query("DELETE FROM t WHERE i % 100000 = 0").unwrap();
+    }
+    let check = |con: &mut Connection| {
+        assert_eq!(
+            rows(con, "SELECT count(*), sum(i), count(s), max(s) FROM t"),
+            vec![vec!["999991", "499994999999", "999990", "row999999"]]
+        );
+    };
+    {
+        let (_database, mut con) = open_without_checkpoint(&path);
+        check(&mut con);
+    }
+    let (_database, mut con) = open(&path);
+    check(&mut con);
+    con.query("CHECKPOINT").unwrap();
+    check(&mut con);
+}
+
+#[test]
+fn rolled_back_bulk_inserts_free_their_blocks() {
+    let path = temp_path("optimistic-rollback");
+    let (_database, mut con) = open(&path);
+    con.query("CREATE TABLE t(i BIGINT, s VARCHAR)").unwrap();
+    let mut total_blocks = Vec::new();
+    for _ in 0..5 {
+        con.query("BEGIN").unwrap();
+        con.query("INSERT INTO t SELECT i, 'row' || i FROM range(1000000) r(i)")
+            .unwrap();
+        con.query("ROLLBACK").unwrap();
+        total_blocks.push(rows(&mut con, "SELECT total_blocks FROM pragma_database_size()")[0][0].clone());
+    }
+    // The blocks the first insert wrote are reused by the next ones.
+    assert!(
+        total_blocks.iter().all(|blocks| *blocks == total_blocks[0]),
+        "{total_blocks:?}"
+    );
+    assert_eq!(rows(&mut con, "SELECT count(*) FROM t"), vec![vec!["0"]]);
+}

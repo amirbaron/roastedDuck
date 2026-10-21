@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rustdb_common::{Error, Result};
-use rustdb_storage::{DataTable, OptimisticCollection, TableConstraints, Transaction};
+use rustdb_storage::{DataTable, OptimisticCollection, OptimisticDataWriter, TableConstraints, Transaction};
 use rustdb_types::{DataChunk, LogicalType};
 
 use super::modify::{ModifyResult, SharedAppend, count_types};
@@ -42,7 +42,8 @@ impl InsertTarget {
 /// the `RETURNING` expressions).
 ///
 /// A parallel insert (whose input order does not matter) appends each thread's rows to a
-/// collection of its own and merges the collections into the local storage in `combine`.
+/// collection of its own, whose complete row groups the thread's optimistic writer writes
+/// to the database file, and merges the collections into the local storage in `combine`.
 #[derive(Debug)]
 pub struct PhysicalInsert {
     types: Vec<LogicalType>,
@@ -136,10 +137,11 @@ pub struct InsertGlobal {
     merge_lock: Mutex<()>,
 }
 
-/// A thread's rows of a parallel insert.
+/// A thread's rows of a parallel insert, and the writer of their complete row groups.
 #[derive(Debug, Default)]
 pub struct InsertLocal {
     collection: Option<OptimisticCollection>,
+    writer: Option<OptimisticDataWriter>,
 }
 
 impl Sink for PhysicalInsert {
@@ -181,13 +183,13 @@ impl Sink for PhysicalInsert {
         };
         if self.parallel {
             table.verify_append_constraints(&self.constraints, chunk)?;
-            let collection = match &mut local.collection {
-                Some(collection) => collection,
-                None => local
-                    .collection
-                    .insert(table.create_optimistic_collection(&self.transaction)?),
-            };
-            collection.append(chunk)?;
+            if local.collection.is_none() {
+                local.writer = Some(table.create_optimistic_writer(&self.transaction)?);
+                local.collection = Some(table.create_optimistic_collection(&self.transaction)?);
+            }
+            if let (Some(collection), Some(writer)) = (&mut local.collection, &mut local.writer) {
+                collection.append(chunk, writer)?;
+            }
             return Ok(SinkResult::NeedMoreInput);
         }
         let mut append = global.append.lock().unwrap_or_else(PoisonError::into_inner);
@@ -206,14 +208,22 @@ impl Sink for PhysicalInsert {
     }
 
     fn combine(&self, _: &ExecutionContext, global: &Self::Global, local: InsertLocal) -> Result<()> {
-        let (Some(table), Some(mut collection)) = (&global.table, local.collection) else {
+        let (Some(table), Some(mut collection), Some(mut writer)) =
+            (&global.table, local.collection, local.writer)
+        else {
             return Ok(());
         };
         collection.finalize();
         let count = collection.total_rows();
+        let row_group_size = table.row_groups().row_group_size();
+        if count >= row_group_size {
+            // Write the thread's remaining rows; the partially filled block the
+            // transaction's writers share is written when it commits.
+            collection.write_unflushed_row_groups(&mut writer)?;
+        }
         let _merge = global.merge_lock.lock().unwrap_or_else(PoisonError::into_inner);
         global.result.add_count(count);
-        if count < table.row_groups().row_group_size() {
+        if count < row_group_size {
             // Few rows: append them to the local storage directly.
             append_collections(
                 table,
@@ -222,6 +232,7 @@ impl Sink for PhysicalInsert {
                 std::iter::once(&collection),
             )
         } else {
+            // The rows were written: move their row groups into the local storage.
             table.local_merge(&self.transaction, &collection)
         }
     }

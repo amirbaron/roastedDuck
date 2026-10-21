@@ -61,6 +61,14 @@ impl DatabaseStorage {
         }
     }
 
+    /// Sets how large appends are written to the database file before they commit; an
+    /// in-memory database keeps them in memory.
+    pub fn set_optimistic_write_config(&self, config: rustdb_storage::OptimisticWriteConfig) {
+        if let Self::File(storage) = self {
+            storage.io().set_optimistic_write_config(config);
+        }
+    }
+
     /// Sets the settings checkpoints follow.
     pub fn set_checkpoint_config(&self, config: rustdb_storage::storage_manager::CheckpointConfig) {
         match self {
@@ -156,6 +164,19 @@ impl AttachedDatabase {
         )
     }
 
+    /// The error message of using the database once a failed checkpoint invalidated it or
+    /// the instance (`MetaTransaction::GetTransaction`, `ValidChecker`).
+    fn invalidated_message(&self) -> String {
+        match self.validity.invalidated() {
+            Some(message) => message,
+            None => crate::database::invalidated_database_error(
+                &self.instance_validity.invalidated().unwrap_or_default(),
+            )
+            .raw_message()
+            .to_owned(),
+        }
+    }
+
     /// Writes a checkpoint of the database if it is still valid
     /// (`SingleFileStorageManager::CreateCheckpoint`).
     pub fn create_checkpoint(
@@ -170,9 +191,14 @@ impl AttachedDatabase {
         }
         let failed = |error: Error| self.checkpoint_failed(&error);
         match &self.storage {
-            DatabaseStorage::File(storage) => {
-                crate::storage::create_checkpoint(&self.catalog, storage, mode, transactions, &failed)
-            }
+            DatabaseStorage::File(storage) => crate::storage::create_checkpoint(
+                &self.catalog,
+                storage,
+                mode,
+                transactions,
+                &failed,
+                &|| self.invalidated_message(),
+            ),
             DatabaseStorage::InMemory(storage) => crate::storage::create_in_memory_checkpoint(
                 &self.catalog,
                 storage,

@@ -11,7 +11,7 @@ use crate::data_table::DataTable;
 use crate::index::IndexRemovalType;
 use crate::table::{DeleteRecord, DeletedRows, UpdateRegistration};
 use crate::transaction::{NOT_DELETED_ID, TransactionData};
-use crate::wal::WalBatch;
+use crate::wal::{StorageCommitState, WalBatch};
 
 /// A catalog change in the undo log; implemented by the catalog for its version records
 /// (DuckDB's `CATALOG_ENTRY` undo entries).
@@ -41,6 +41,12 @@ pub trait CatalogUndo: Send + Sync + fmt::Debug {
     /// Whether the change drops an entry (affects checkpoint decisions).
     fn is_drop(&self) -> bool {
         false
+    }
+
+    /// What the change adds to the estimated size of the transaction's changes: the
+    /// in-memory size of a created index (`DuckIndexEntry::initial_index_size`).
+    fn estimated_size(&self) -> u64 {
+        0
     }
 
     /// Logs the change (`WALWriteState::WriteCatalogEntry`).
@@ -142,8 +148,15 @@ impl UndoBuffer {
     }
 
     /// Logs every change in order (`UndoBuffer::WriteToWAL`): catalog changes, appended
-    /// rows, deletes, the current values of updated rows and sequence states.
-    pub fn write_to_wal(&self, batch: &mut WalBatch, transaction: TransactionData) -> Result<()> {
+    /// rows, deletes, the current values of updated rows and sequence states. Appended
+    /// row groups an optimistic write stored (`commit_state`) are logged by where they
+    /// are.
+    pub fn write_to_wal(
+        &self,
+        batch: &mut WalBatch,
+        transaction: TransactionData,
+        commit_state: &StorageCommitState,
+    ) -> Result<()> {
         for entry in &self.entries {
             match entry {
                 UndoEntry::Catalog(change) => change.write_to_wal(batch)?,
@@ -151,11 +164,7 @@ impl UndoBuffer {
                     table,
                     start_row,
                     count,
-                } => {
-                    // `DataTable::WriteToLog` always names the table.
-                    batch.use_table(table.info())?;
-                    table.scan_table_segment(transaction, *start_row, *count, |chunk| batch.insert(chunk))?;
-                }
+                } => Self::write_append(batch, transaction, commit_state, table, *start_row, *count)?,
                 UndoEntry::Delete { table, record } => {
                     batch.switch_table(table.info())?;
                     batch.delete(&record.row_ids())?;
@@ -187,6 +196,39 @@ impl UndoBuffer {
         Ok(())
     }
 
+    /// Logs the rows `start_row..start_row + count` appended to `table`
+    /// (`DataTable::WriteToLog`): first the row groups an optimistic write stored, whose
+    /// blocks the WAL refers to from now on, then the other rows.
+    fn write_append(
+        batch: &mut WalBatch,
+        transaction: TransactionData,
+        commit_state: &StorageCommitState,
+        table: &Arc<DataTable>,
+        mut start_row: u64,
+        mut count: u64,
+    ) -> Result<()> {
+        batch.use_table(table.info())?;
+        if let Some((written, data)) = commit_state.row_group_data(table, start_row) {
+            batch.row_group_data(data)?;
+            if let Some(manager) = table.io().file_block_manager() {
+                for block in data.block_ids() {
+                    manager.mark_block_as_checkpointed(block);
+                }
+            }
+            if written > count {
+                return Err(rustdb_common::Error::internal(format!(
+                    "Optimistically written count cannot exceed actual count (got {written}, but expected count is {count})"
+                )));
+            }
+            start_row += written;
+            count -= written;
+        }
+        if count == 0 {
+            return Ok(());
+        }
+        table.scan_table_segment(transaction, start_row, count, |chunk| batch.insert(chunk))
+    }
+
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
@@ -199,6 +241,7 @@ impl UndoBuffer {
                 UndoEntry::Catalog(change) => {
                     properties.has_catalog_changes = true;
                     properties.has_dropped_entries |= change.is_drop();
+                    properties.estimated_size += change.estimated_size();
                     CATALOG_ENTRY_SIZE
                 }
                 UndoEntry::Delete { record, .. } => {

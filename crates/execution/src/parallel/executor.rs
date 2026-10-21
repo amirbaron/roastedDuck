@@ -103,6 +103,7 @@ impl QueryExecution {
         let shared = Arc::new(ExecutorShared {
             env,
             profiler: options.profiler.clone(),
+            opener: rustdb_function::file_system::opener(),
             client_interrupted: options.client_interrupted.clone(),
             estimates: options.estimates.clone(),
             producer,
@@ -317,6 +318,9 @@ pub(crate) struct ExecutorShared {
     client_interrupted: Option<Arc<AtomicBool>>,
     /// The estimated cardinality of the plan's operators.
     estimates: CardinalityEstimates,
+    /// The connection's function state the query runs with: worker threads see it as
+    /// the thread that started the query does, e.g. to log (the tasks' `ClientContext`).
+    opener: Option<Arc<rustdb_function::client::FunctionClient>>,
     producer: ProducerToken,
     pipelines: Vec<Arc<Pipeline>>,
     /// Set on the first error: tasks stop at their next chunk.
@@ -848,6 +852,11 @@ impl Task for ExecutorTask {
                 .as_ref()
                 .and_then(|profiler| profiler.query_metrics()),
         );
+        let _opener = self
+            .executor
+            .opener
+            .clone()
+            .map(rustdb_function::file_system::activate_opener);
         match catch_unwind(AssertUnwindSafe(|| self.execute_task(mode))) {
             Ok(Ok(result)) => result,
             Ok(Err(error)) => {

@@ -10,9 +10,9 @@
 //! (`experimental_metadata_reuse`), and so do tables whose row groups all do.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use rustdb_buffer::{BlockHandle, BlockId, MAXIMUM_BLOCK, MemoryTag};
+use rustdb_buffer::{BlockHandle, BlockId, BufferHandle, MAXIMUM_BLOCK, MemoryTag};
 use rustdb_common::{Error, Result};
 use rustdb_serde::binary::BinarySerializer;
 use rustdb_serde::{SerializationOptions, Serializer};
@@ -35,15 +35,71 @@ use crate::table::{
     PerColumnMetadataBlocks, RowGroup, RowGroupCollection, RowGroupMetadata, TableMetadataPointer,
 };
 
-/// The writer of data blocks of a checkpoint (DuckDB's `PartialBlockManager`): segments
-/// smaller than 80% of a block share blocks.
+/// The writer of data blocks of a checkpoint or of an optimistic write (DuckDB's
+/// `PartialBlockManager`): segments smaller than 80% of a block share blocks.
 #[derive(Debug)]
 pub struct BlockWriter {
     target: BlockTarget,
-    /// The block being filled: its id, contents and used size.
-    partial: Option<(BlockId, Vec<u8>, usize)>,
+    /// The block being filled (for optimistic writes, it is shared, see
+    /// [`AppendBlocks`]).
+    partial: Option<PartialBlock>,
     /// Every data block this checkpoint references, with the number of references.
     pub used_blocks: BTreeMap<BlockId, u32>,
+}
+
+/// The block segments are added to (DuckDB's `PartialBlock`).
+#[derive(Debug)]
+struct PartialBlock {
+    block_id: BlockId,
+    /// The bytes used so far.
+    used: usize,
+    data: PartialBlockData,
+}
+
+/// Where the contents of a partial block are until it is written.
+#[derive(Debug)]
+enum PartialBlockData {
+    /// The bytes, written by `flush` (`PartialBlockForCheckpoint`).
+    Bytes(Vec<u8>),
+    /// The pinned buffer of the registered block, which the segments already placed in it
+    /// read until `flush` writes it to the file (a `PartialBlock` of
+    /// `PartialBlockType::APPEND_TO_TABLE`).
+    Pinned(BufferHandle),
+}
+
+impl PartialBlock {
+    /// The byte offset a segment of `size` bytes is placed at, if it fits.
+    fn offset_for(&self, size: usize, block_size: usize) -> Option<usize> {
+        let start = self.used.next_multiple_of(8);
+        (start + size <= block_size).then_some(start)
+    }
+
+    /// Places `data` at `start` (`AddSegmentToTail`); the bytes before it stay zero.
+    fn add_segment(&mut self, start: usize, data: &[u8]) {
+        match &mut self.data {
+            PartialBlockData::Bytes(buffer) => {
+                buffer.resize(start, 0);
+                buffer.extend_from_slice(data);
+            }
+            PartialBlockData::Pinned(pin) => {
+                let end = (start + data.len()).min(pin.len());
+                // SAFETY: the pin keeps the zeroed buffer alive. The segments already in
+                // the block lie before `start` and are only read; nothing else accesses
+                // the bytes written here before the segment is handed out.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(data.as_ptr(), pin.as_ptr().add(start), end - start);
+                }
+            }
+        }
+        self.used = start + data.len();
+    }
+
+    fn pointer(&self, offset: usize) -> Result<BlockPointer> {
+        Ok(BlockPointer {
+            block_id: self.block_id,
+            offset: u32::try_from(offset).map_err(|_| Error::internal("block offset overflow"))?,
+        })
+    }
 }
 
 /// Where a [`BlockWriter`] puts its blocks (DuckDB's `PartialBlockType`).
@@ -53,6 +109,9 @@ enum BlockTarget {
     File(Arc<SingleFileBlockManager>),
     /// `IN_MEMORY_CHECKPOINT`: buffer-managed blocks of an in-memory database.
     InMemory(InMemoryBlocks),
+    /// `APPEND_TO_TABLE`: blocks of the database file an optimistic write adds before
+    /// its transaction commits.
+    AppendToTable(Arc<AppendBlocks>),
 }
 
 /// The blocks an in-memory checkpoint compressed segments into (the blocks of
@@ -74,10 +133,146 @@ impl InMemoryBlocks {
     }
 }
 
+/// The blocks the optimistic writes of one transaction add to the database file for one
+/// table (the `PartialBlockManager` of `PartialBlockType::APPEND_TO_TABLE` that DuckDB's
+/// writers merge into the transaction's, and the blocks its rollback frees): the
+/// writers of all threads share the partially filled block, and every block written is
+/// recorded. The blocks stay newly used until a commit logs them.
+#[derive(Debug)]
+pub struct AppendBlocks {
+    io: Arc<TableIoManager>,
+    manager: Arc<SingleFileBlockManager>,
+    state: Mutex<AppendBlocksState>,
+}
+
+#[derive(Debug, Default)]
+struct AppendBlocksState {
+    partial: Option<PartialBlock>,
+    written: BTreeSet<BlockId>,
+}
+
+impl AppendBlocks {
+    pub(crate) fn new(io: Arc<TableIoManager>, manager: Arc<SingleFileBlockManager>) -> Self {
+        Self {
+            io,
+            manager,
+            state: Mutex::default(),
+        }
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, AppendBlocksState> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn block_size(&self) -> usize {
+        rustdb_buffer::BlockManager::block_size(self.manager.as_ref())
+    }
+
+    /// A new block of the file, recorded as written (`GetFreeBlockId`).
+    fn new_block(&self, state: &mut AppendBlocksState) -> Result<BlockId> {
+        let block_id = self.manager.get_free_block_id()?;
+        state.written.insert(block_id);
+        Ok(block_id)
+    }
+
+    /// Stores the bytes of a segment and returns where (`GetBlockAllocation` and
+    /// `RegisterPartialBlock`).
+    fn write_segment(&self, data: &[u8]) -> Result<BlockPointer> {
+        let block_size = self.block_size();
+        let mut state = self.state();
+        if data.len() > block_size / 5 * 4 {
+            let block_id = self.new_block(&mut state)?;
+            drop(state);
+            self.write_block(block_id, data)?;
+            return Ok(BlockPointer { block_id, offset: 0 });
+        }
+        if let Some(partial) = &mut state.partial
+            && let Some(offset) = partial.offset_for(data.len(), block_size)
+        {
+            partial.add_segment(offset, data);
+            return partial.pointer(offset);
+        }
+        if let Some(full) = state.partial.take() {
+            self.write_partial(full)?;
+        }
+        let block_id = self.new_block(&mut state)?;
+        let block_manager: Arc<dyn rustdb_buffer::BlockManager> = Arc::clone(&self.manager) as _;
+        let pin = self
+            .io
+            .buffer_manager()
+            .create_persistent_block(&block_manager, block_id)?;
+        let mut partial = PartialBlock {
+            block_id,
+            used: 0,
+            data: PartialBlockData::Pinned(pin),
+        };
+        partial.add_segment(0, data);
+        let pointer = partial.pointer(0);
+        state.partial = Some(partial);
+        pointer
+    }
+
+    /// Writes a block, zero-padding it to the block size.
+    fn write_block(&self, block_id: BlockId, data: &[u8]) -> Result<()> {
+        let mut data = data.to_vec();
+        data.resize(self.block_size(), 0);
+        self.manager.write_block(block_id, &data)
+    }
+
+    /// Writes a partially filled block to the file and releases its buffer.
+    fn write_partial(&self, partial: PartialBlock) -> Result<()> {
+        match partial.data {
+            PartialBlockData::Bytes(buffer) => self.write_block(partial.block_id, &buffer),
+            PartialBlockData::Pinned(pin) => {
+                // SAFETY: the pin keeps the block's buffer of `pin.len()` bytes alive, and
+                // nothing writes to it any more.
+                let bytes = unsafe { std::slice::from_raw_parts(pin.as_ptr(), pin.len()) };
+                self.manager.write_block(partial.block_id, bytes)
+            }
+        }
+    }
+
+    /// Writes the partially filled block (`FinalFlush`).
+    pub(crate) fn flush(&self) -> Result<()> {
+        let partial = self.state().partial.take();
+        match partial {
+            Some(partial) => self.write_partial(partial),
+            None => Ok(()),
+        }
+    }
+
+    /// Forgets the written blocks: the table the row groups moved to owns them now.
+    pub(crate) fn hand_over(&self) {
+        self.state().written.clear();
+    }
+
+    /// Frees every written block and discards the partially filled one
+    /// (`OptimisticDataWriter::Rollback` and `CommitDropTable` of the rolled back
+    /// collections). The blocks are newly used, so they are free again at once, or when
+    /// the last handle to them goes.
+    pub(crate) fn rollback(&self) -> Result<()> {
+        let (partial, written) = {
+            let mut state = self.state();
+            (state.partial.take(), std::mem::take(&mut state.written))
+        };
+        drop(partial);
+        for block in written {
+            self.manager.mark_block_as_modified(block)?;
+        }
+        Ok(())
+    }
+}
+
 impl BlockWriter {
     pub fn new(manager: Arc<SingleFileBlockManager>) -> Self {
+        Self::with_target(BlockTarget::File(manager))
+    }
+
+    fn with_target(target: BlockTarget) -> Self {
         Self {
-            target: BlockTarget::File(manager),
+            target,
             partial: None,
             used_blocks: BTreeMap::new(),
         }
@@ -86,21 +281,23 @@ impl BlockWriter {
     /// A writer of the blocks of an in-memory checkpoint of the tables of `io`
     /// (`PartialBlockType::IN_MEMORY_CHECKPOINT`).
     pub fn in_memory(io: Arc<TableIoManager>, config: CompressionConfig) -> Self {
-        Self {
-            target: BlockTarget::InMemory(InMemoryBlocks {
-                io,
-                config,
-                blocks: HashMap::new(),
-            }),
-            partial: None,
-            used_blocks: BTreeMap::new(),
-        }
+        Self::with_target(BlockTarget::InMemory(InMemoryBlocks {
+            io,
+            config,
+            blocks: HashMap::new(),
+        }))
+    }
+
+    /// A writer of the blocks an optimistic write adds to the database file
+    /// (`PartialBlockType::APPEND_TO_TABLE`).
+    pub(crate) fn append_to_table(blocks: Arc<AppendBlocks>) -> Self {
+        Self::with_target(BlockTarget::AppendToTable(blocks))
     }
 
     /// The blocks of an in-memory checkpoint, `None` for a checkpoint of a file.
     pub(crate) fn in_memory_blocks(&self) -> Option<&InMemoryBlocks> {
         match &self.target {
-            BlockTarget::File(_) => None,
+            BlockTarget::File(_) | BlockTarget::AppendToTable(_) => None,
             BlockTarget::InMemory(blocks) => Some(blocks),
         }
     }
@@ -108,6 +305,7 @@ impl BlockWriter {
     pub(crate) fn block_size(&self) -> usize {
         match &self.target {
             BlockTarget::File(manager) => rustdb_buffer::BlockManager::block_size(manager.as_ref()),
+            BlockTarget::AppendToTable(blocks) => blocks.block_size(),
             BlockTarget::InMemory(blocks) => {
                 rustdb_buffer::BlockManager::block_size(blocks.io.block_manager().as_ref())
             }
@@ -119,6 +317,10 @@ impl BlockWriter {
     pub(crate) fn compression_info(&self) -> CompressionInfo {
         let (storage_version, config) = match &self.target {
             BlockTarget::File(manager) => (manager.storage_version(), manager.compression_config()),
+            BlockTarget::AppendToTable(blocks) => (
+                blocks.manager.storage_version(),
+                blocks.manager.compression_config(),
+            ),
             BlockTarget::InMemory(blocks) => (blocks.io.storage_version(), blocks.config),
         };
         CompressionInfo {
@@ -133,6 +335,7 @@ impl BlockWriter {
     pub(crate) fn new_block(&mut self) -> Result<BlockId> {
         let id = match &mut self.target {
             BlockTarget::File(manager) => manager.get_free_block_id_for_checkpoint()?,
+            BlockTarget::AppendToTable(blocks) => blocks.new_block(&mut blocks.state())?,
             BlockTarget::InMemory(blocks) => {
                 let pin = blocks.io.buffer_manager().allocate_for(
                     MemoryTag::InMemoryTable,
@@ -177,6 +380,7 @@ impl BlockWriter {
         data.resize(self.block_size(), 0);
         match &self.target {
             BlockTarget::File(manager) => manager.write_block(block_id, &data),
+            BlockTarget::AppendToTable(blocks) => blocks.write_block(block_id, &data),
             BlockTarget::InMemory(blocks) => {
                 let block = blocks.block(block_id)?;
                 let pin = blocks.io.buffer_manager().pin(block)?;
@@ -221,7 +425,7 @@ impl BlockWriter {
     /// Takes the blocks an in-memory checkpoint wrote, once its segments are built.
     pub fn into_in_memory_blocks(self) -> Option<InMemoryBlocks> {
         match self.target {
-            BlockTarget::File(_) => None,
+            BlockTarget::File(_) | BlockTarget::AppendToTable(_) => None,
             BlockTarget::InMemory(blocks) => Some(blocks),
         }
     }
@@ -234,34 +438,40 @@ impl BlockWriter {
                 "segment size exceeds block size in ColumnCheckpointState::FlushSegmentInternal",
             ));
         }
+        if let BlockTarget::AppendToTable(blocks) = &self.target {
+            return blocks.write_segment(data);
+        }
         if data.len() > block_size / 5 * 4 {
             let block_id = self.new_block()?;
             self.write_block(block_id, data.to_vec())?;
             return Ok(BlockPointer { block_id, offset: 0 });
         }
-        if let Some((block_id, buffer, used)) = &mut self.partial {
-            let start = used.next_multiple_of(8);
-            if start + data.len() <= block_size {
-                buffer.resize(start, 0);
-                buffer.extend_from_slice(data);
-                *used = start + data.len();
-                *self.used_blocks.entry(*block_id).or_insert(0) += 1;
-                return Ok(BlockPointer {
-                    block_id: *block_id,
-                    offset: u32::try_from(start).map_err(|_| Error::internal("block offset overflow"))?,
-                });
-            }
+        if let Some(partial) = &mut self.partial
+            && let Some(offset) = partial.offset_for(data.len(), block_size)
+        {
+            partial.add_segment(offset, data);
+            *self.used_blocks.entry(partial.block_id).or_insert(0) += 1;
+            return partial.pointer(offset);
         }
         self.flush()?;
         let block_id = self.new_block()?;
-        self.partial = Some((block_id, data.to_vec(), data.len()));
+        let mut partial = PartialBlock {
+            block_id,
+            used: 0,
+            data: PartialBlockData::Bytes(Vec::new()),
+        };
+        partial.add_segment(0, data);
+        self.partial = Some(partial);
         Ok(BlockPointer { block_id, offset: 0 })
     }
 
-    /// Writes the partially filled block (`FlushPartialBlocks`).
+    /// Writes the partially filled block (`FlushPartialBlocks`); the partially filled
+    /// block of optimistic writes is written when the transaction commits.
     pub fn flush(&mut self) -> Result<()> {
-        if let Some((block_id, buffer, _)) = self.partial.take() {
-            self.write_block(block_id, buffer)?;
+        if let Some(partial) = self.partial.take()
+            && let PartialBlockData::Bytes(buffer) = partial.data
+        {
+            self.write_block(partial.block_id, buffer)?;
         }
         Ok(())
     }
@@ -541,6 +751,9 @@ pub struct TableDataPointer {
     /// When row groups were vacuumed: the row groups the table consists of now, with
     /// their first row (relative to the collection's base row id), and its row count.
     pub vacuumed: Option<VacuumedLayout>,
+    /// The row groups of the table the checkpoint covered; those after them were
+    /// appended while it ran.
+    pub row_group_count: usize,
 }
 
 /// The row groups a table consists of after a vacuum, each with its first row (relative to
@@ -555,6 +768,58 @@ pub struct PersistedRowGroup {
     pub columns: Vec<PersistentColumnData>,
     /// Where the columns' metadata now is.
     pub metadata: RowGroupMetadata,
+}
+
+/// Writes the data of `row_groups` of a table's transaction-local collection to blocks
+/// of the database file (`RowGroup::WriteToDisk` of an optimistic write): column by
+/// column, so that the segments of a column lie next to each other. Returns, per row
+/// group, a row group sharing its versions that reads the written data (the
+/// `result_row_group`s the `OptimisticDataWriter` installs).
+pub(crate) fn write_row_groups_to_disk(
+    table: &DataTable,
+    collection: &RowGroupCollection,
+    row_groups: &[Arc<RowGroup>],
+    blocks: &mut BlockWriter,
+    geometry_minimum_shredding_size: i64,
+) -> Result<Vec<Arc<RowGroup>>> {
+    let io = collection.io();
+    let types = collection.types();
+    let compression_types: Vec<CompressionType> =
+        table.columns().iter().map(|column| column.compression).collect();
+    let table_name = format!("{}.{}", table.info().schema_name(), table.info().table_name());
+    let storage_version = blocks.compression_info().storage_version;
+    let mut columns: Vec<Vec<PersistentColumnData>> = row_groups
+        .iter()
+        .map(|_| Vec::with_capacity(types.len()))
+        .collect();
+    for index in 0..types.len() {
+        for (row_group, written) in row_groups.iter().zip(&mut columns) {
+            let column = row_group.column(index)?;
+            let mut context = CheckpointContext {
+                info: blocks.compression_info(),
+                writer: &mut *blocks,
+                io,
+                column_compression: compression_types
+                    .get(index)
+                    .copied()
+                    .unwrap_or(CompressionType::Auto),
+                table_name: &table_name,
+                storage_version,
+                geometry_minimum_shredding_size,
+            };
+            // Appended rows only join the row group's count when the append finishes; the
+            // column holds all of them already.
+            written.push(checkpoint_column(column, column.count(), 0, &mut context)?);
+        }
+    }
+    Ok(row_groups
+        .iter()
+        .zip(columns)
+        .map(|(row_group, data)| {
+            let types = column_types(collection, &data);
+            Arc::new(row_group.with_persistent(Arc::clone(io), types, data, RowGroupMetadata::default()))
+        })
+        .collect())
 }
 
 /// Hands the table what a completed checkpoint wrote (`RowGroupCollection::Checkpoint`
@@ -584,7 +849,17 @@ pub fn finish_table_checkpoint(
     let _append = table.append_lock();
     let collection = table.row_groups();
     collection.set_metadata_pointer(Some(metadata_pointer));
-    if replace_in_memory && let Some(columns) = data.statistics {
+    if replace_in_memory && let Some(mut columns) = data.statistics {
+        // The rows appended while the checkpoint ran keep their statistics.
+        for node in collection
+            .row_groups()
+            .tree()
+            .nodes()
+            .iter()
+            .skip(data.row_group_count)
+        {
+            node.node.merge_into_statistics(&mut columns)?;
+        }
         let mut stats = collection.statistics();
         stats.columns = columns;
         collection.set_statistics(stats);
@@ -856,11 +1131,16 @@ fn checkpoint_row_groups<W>(
     table: &DataTable,
     settings: TableWriteSettings,
     write_kept: bool,
+    row_group_limit: Option<usize>,
     mut write: impl FnMut(&Arc<RowGroup>, u64, bool) -> Result<W>,
 ) -> Result<(Vec<CheckpointedRowGroup<W>>, bool, u64)> {
     let collection = table.row_groups();
     let row_groups = collection.row_groups();
-    let nodes = row_groups.tree().nodes();
+    let mut nodes = row_groups.tree().nodes();
+    // Row groups appended while the checkpoint runs are logged in the checkpoint WAL.
+    if let Some(limit) = row_group_limit {
+        nodes.truncate(limit);
+    }
     let segment_count = nodes.len();
     // `CollectionCheckpointState`: the row group at each position, `None` once dropped.
     let mut segments: Vec<Option<Arc<RowGroup>>> =
@@ -961,10 +1241,19 @@ pub fn write_table_data(
         compression_types: &compression_types,
         table_name: &table_name,
     };
-    let (written, dropped_any, new_total_rows) =
-        checkpoint_row_groups(table, settings, true, |row_group, row_start, row_ids_changed| {
+    // A table appended to while the checkpoint runs is written as it was before
+    // (`CheckpointRowGroupCount`).
+    let row_group_limit = table.info().checkpoint_row_group_count(checkpoint_id);
+    let row_group_count = row_group_limit.unwrap_or_else(|| collection.row_group_count());
+    let (written, dropped_any, new_total_rows) = checkpoint_row_groups(
+        table,
+        settings,
+        true,
+        row_group_limit,
+        |row_group, row_start, row_ids_changed| {
             write_row_group_data(&context, row_group, row_start, blocks, row_ids_changed)
-        })?;
+        },
+    )?;
     let written: Vec<(Arc<RowGroup>, u64, RowGroupWriteData)> = written
         .into_iter()
         .map(|(row_group, row_start, data)| {
@@ -997,11 +1286,12 @@ pub fn write_table_data(
         metadata.clear_modified_blocks(&existing.blocks)?;
         return Ok(TableDataPointer {
             table_pointer: existing.pointer,
-            total_rows: collection.total_rows(),
+            total_rows: new_total_rows,
             persisted: Vec::new(),
             metadata_pointer: None,
             statistics: None,
             vacuumed: None,
+            row_group_count,
         });
     }
     // `TableStatistics::InitializeEmpty(other)`: empty statistics, the distinct
@@ -1155,6 +1445,7 @@ pub fn write_table_data(
         }),
         statistics: Some(table_stats),
         vacuumed: (settings.full_checkpoint && dropped_any).then_some((layout, new_total_rows)),
+        row_group_count,
     })
 }
 
@@ -1177,7 +1468,7 @@ pub fn checkpoint_in_memory_table(
     let table_name = format!("{}.{}", table.info().schema_name(), table.info().table_name());
     let mut blocks = BlockWriter::in_memory(Arc::clone(io), config);
     let (row_groups, _, new_total_rows) =
-        checkpoint_row_groups(table, settings, !vacuum_only, |row_group, row_start, _| {
+        checkpoint_row_groups(table, settings, !vacuum_only, None, |row_group, row_start, _| {
             let count = row_group.count();
             (0..row_group.column_count())
                 .map(|index| {
@@ -1426,7 +1717,8 @@ fn vacuum_row_groups(
     use crate::table::{
         CollectionScanState, ColumnDataType, RowGroupAppendState, ScanFilterInfo, StorageIndex, TableScanType,
     };
-    let _timer = rustdb_common::profiling::start_timer(rustdb_common::profiling::MetricType::CumulativeVacuumTime);
+    let _timer =
+        rustdb_common::profiling::start_timer(rustdb_common::profiling::MetricType::CumulativeVacuumTime);
     let row_group_size = collection.row_group_size();
     let types = collection.types();
     let io = collection.io();

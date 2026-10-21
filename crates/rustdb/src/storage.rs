@@ -206,39 +206,54 @@ pub(crate) enum CheckpointMode {
 }
 
 /// Writes a checkpoint if the WAL has entries (`SingleFileStorageManager::CreateCheckpoint`).
-/// The checkpoint lock is taken first (no transaction writes to the database while it is
-/// held), then the WAL lock, so commits wait; the WAL records the checkpoint's root
-/// before anything is written and is removed once the new header is in place. When no
-/// transaction writes to the database or needs data older than the last commit
-/// (`transactions`), the in-memory table data is replaced by the checkpointed data.
+/// The checkpoint lock is taken first (no transaction updates rows or changes the catalog
+/// while it is held, and no other checkpoint runs). Under the WAL lock, the WAL records
+/// the checkpoint's root and commits switch to the checkpoint WAL; commits then continue
+/// while the data is written (see [`write_checkpoint`]). Once the new header is in place,
+/// the checkpoint WAL, if commits wrote to it, replaces the WAL; otherwise the WAL is
+/// removed. When no transaction needs data older than the last commit (`transactions`),
+/// the in-memory table data is replaced by the checkpointed data.
+///
+/// A failure invalidates the database (`failed` returns the error reported); commits
+/// are refused from then on with the message `refused` returns.
 pub(crate) fn create_checkpoint(
     catalog: &Catalog,
     storage: &StorageManager,
     mode: CheckpointMode,
     transactions: Option<&rustdb_catalog::TransactionManager>,
     failed: &dyn Fn(Error) -> Error,
+    refused: &dyn Fn() -> String,
 ) -> Result<()> {
     if storage.is_read_only() {
         return Ok(());
     }
+    let Some(wal) = storage.wal() else {
+        return Ok(());
+    };
     // `FORCE CHECKPOINT` waits until the write transactions finished: a checkpoint
     // written beside them would store rows they appended but had not committed (as
     // deleted rows), so the row ids of their WAL entries would no longer match.
     let locks = catalog.locks();
-    let exclusive = storage.wal().and_then(|_| {
-        if mode == CheckpointMode::Force {
-            Some(locks.checkpoint.exclusive())
-        } else {
-            locks.checkpoint.try_exclusive()
+    let exclusive = if mode == CheckpointMode::Force {
+        Some(locks.checkpoint.exclusive())
+    } else {
+        locks.checkpoint.try_exclusive()
+    };
+    // Without the lock, another checkpoint runs, or a transaction updates rows or changes
+    // the catalog: there is no checkpoint (`CanCheckpoint`), except when the database
+    // closes (without `transactions`).
+    if exclusive.is_none() && transactions.is_some() {
+        if mode == CheckpointMode::Manual {
+            return Err(Error::new(
+                ErrorKind::Transaction,
+                "Cannot CHECKPOINT: there are other write transactions active. Try using FORCE CHECKPOINT to \
+                 wait until all active transactions are finished",
+            ));
         }
-    });
-    if mode == CheckpointMode::Manual && storage.wal().is_some() && exclusive.is_none() {
-        return Err(Error::new(
-            ErrorKind::Transaction,
-            "Cannot CHECKPOINT: there are other write transactions active. Try using FORCE CHECKPOINT to wait \
-             until all active transactions are finished",
-        ));
+        return Ok(());
     }
+    // A database that closes waits for a checkpoint that runs.
+    let _running = storage.checkpoint_running();
     let replace_in_memory = exclusive.is_some()
         && transactions
             .is_none_or(|transactions| transactions.last_commit() < transactions.lowest_active_start());
@@ -246,48 +261,51 @@ pub(crate) fn create_checkpoint(
     // (`TryGetVacuumLock`; otherwise it is a concurrent one), and no committed
     // transaction is being cleaned up (see `vacuum_allowed`).
     let vacuum_lock = if replace_in_memory && vacuum_allowed(transactions) {
-        storage.wal().and_then(|_| locks.vacuum.try_exclusive())
+        locks.vacuum.try_exclusive()
     } else {
         None
     };
-    let mut guard = storage.wal().map(|wal| wal.lock());
-    let wal_size = guard.as_ref().map_or(0, rustdb_storage::wal::WalGuard::size);
-    if wal_size == 0 {
+    if wal.size() == 0 {
         return Ok(());
     }
     let mut has_wal = false;
     // `SingleFileStorageManager::CreateCheckpoint` times writing the checkpoint.
     let mut timer = rustdb_common::profiling::start_timer(MetricType::CheckpointLatency);
-    write_checkpoint(
+    let written = write_checkpoint(
         catalog,
         storage,
         &Transaction::system(),
-        &mut |meta_block| {
-            if let Some(guard) = guard.as_mut() {
-                has_wal = guard.start_checkpoint(meta_block)?;
-            }
-            Ok(())
+        &mut |meta_block, hold_off_commits| {
+            // `WALStartCheckpoint`: the checkpoint includes the commits before commits
+            // switch to the checkpoint WAL.
+            let mut guard = wal.lock();
+            let checkpoint_id =
+                transactions.map_or(u64::MAX, rustdb_catalog::TransactionManager::last_commit);
+            storage.io().set_active_checkpoint(Some(checkpoint_id));
+            hold_off_commits();
+            has_wal = guard.start_checkpoint(meta_block)?;
+            Ok(checkpoint_id)
         },
         replace_in_memory,
         vacuum_lock.is_some(),
         transactions.map_or(u64::MAX, rustdb_catalog::TransactionManager::lowest_active_start),
-    )
-    .map_err(|error| {
-        let error = failed(error);
-        if let Some(guard) = guard.as_mut() {
-            guard.invalidate(error.raw_message().to_owned());
+    );
+    drop(vacuum_lock);
+    let finished = written.and_then(|()| {
+        if has_wal {
+            wal.lock().finish_checkpoint()
+        } else {
+            Ok(())
         }
-        error
-    })?;
-    timer.end();
+    });
+    storage.io().set_active_checkpoint(None);
     drop(exclusive);
-    if has_wal && let Some(guard) = guard.as_mut() {
-        guard.finish_checkpoint().map_err(|error| {
-            let error = failed(error);
-            guard.invalidate(error.raw_message().to_owned());
-            error
-        })?;
+    if let Err(error) = finished {
+        let error = failed(error);
+        wal.lock().invalidate(refused());
+        return Err(error);
     }
+    timer.end();
     Ok(())
 }
 

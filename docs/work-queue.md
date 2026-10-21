@@ -25,19 +25,16 @@ and the rest.
 
 ## Storage
 
-4. **Optimistic writes.** Inserts keep every row in memory until the checkpoint and log
-   them to the WAL; DuckDB's `OptimisticDataWriter` writes full row groups to blocks
-   during the insert and logs only their pointers (`ROW_GROUP_DATA`), and estimates the
-   WAL growth from those pointers. Affects peak memory of bulk loads and WAL size. Tests:
-   `optimistic_write_not_trigger_checkpoint`, `wal_size_unaligned_appends`,
-   `reclaim_space_insert_unique_idx_optimistic`, `buffer_managed_query_result` (an
-   800 MB table created under a 100 MB limit without a temporary directory). Replaying
-   `ROW_GROUP_DATA` entries is part of it: rustdb cannot replay a WAL in which DuckDB
-   logged an optimistically written insert. Starts after the in-memory checkpoint
-   work merges (shared code).
-   **Concurrent checkpoints** belong to the same WAL work: rustdb's checkpoint holds the
-   WAL lock, so commits wait for it, while DuckDB lets them continue into a new WAL and
-   recovers from `.wal.checkpoint` plus `.wal` (the `concurrent_wal` tests).
+4. **Bulk-load memory, the rest.** Optimistic writes and concurrent checkpoints are
+   ported. Three pieces remain:
+   - Query results are a `Vec<DataChunk>`, not a buffer-managed
+     `ColumnDataCollection`, so `FROM range(...)` over a large table does not run out
+     of memory under a small `memory_limit` the way DuckDB does
+     (`buffer_managed_query_result`).
+   - `PhysicalBatchInsert` has no `BatchMemoryManager`: batches are not throttled
+     against the memory limit.
+   - `auto_checkpoint_skip_wal_threshold` is accepted, but a commit that triggers a
+     checkpoint still writes its WAL entries.
 5. **Compression parity.** ZSTD strings compress about 16% worse than DuckDB's
    (`zstd_compression_ratio`). The cause is `ruzstd`'s encoder, not its match level: on
    concatenated UUIDs it reaches 1.72× (1.76× emitting literals only, about 4.56 bits per

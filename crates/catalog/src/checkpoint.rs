@@ -26,6 +26,7 @@ use rustdb_storage::checkpoint::table_reader::{load_row_groups, read_table_data}
 use rustdb_storage::checkpoint::table_writer::{
     BlockWriter, checkpoint_in_memory_table, finish_table_checkpoint, write_table_data,
 };
+use rustdb_storage::checkpoint_lock::ExclusiveCheckpointGuard;
 use rustdb_storage::index::art::{ArtStorageInfo, deprecated_index_block_ids};
 use rustdb_storage::index::{IndexConstraintType, IndexSlot, UnboundIndex, UnboundIndexStorage};
 use rustdb_storage::metadata::{MetaBlockPointer, MetadataReader, MetadataWriter};
@@ -464,16 +465,25 @@ fn reorder_by_dependencies(infos: Vec<CreateInfo>) -> Vec<CreateInfo> {
         .collect()
 }
 
+/// What a checkpoint does with the WAL before it writes anything (`WALStartCheckpoint`):
+/// called with the root the checkpoint will have and a function to call while commits
+/// wait, it records the root and makes commits go to the checkpoint WAL; it returns the
+/// last commit the checkpoint includes.
+pub type WalStart<'a> = dyn FnMut(MetaBlockPointer, &mut dyn FnMut()) -> Result<u64> + 'a;
+
 /// Writes a checkpoint: the catalog visible to `transaction` and all table data
 /// (`SingleFileCheckpointWriter::CreateCheckpoint`).
 ///
-/// `on_start` is called with the root the checkpoint will have before anything is
-/// written; the WAL records it (`WALStartCheckpoint`).
+/// `on_start` starts the checkpoint around the WAL (see [`WalStart`]). Commits continue
+/// while the tables are written: a commit that appends to a table waits while the
+/// checkpoint writes it, and rows appended earlier go to row groups the checkpoint leaves
+/// out. Tables with indexes are locked from the start, so that the written indexes hold
+/// the rows of the written data.
 pub fn write_checkpoint(
     catalog: &Catalog,
     storage: &StorageManager,
     transaction: &Transaction,
-    on_start: &mut dyn FnMut(MetaBlockPointer) -> Result<()>,
+    on_start: &mut WalStart<'_>,
     replace_in_memory: bool,
     vacuum: bool,
     lowest_active_start: u64,
@@ -486,7 +496,6 @@ pub fn write_checkpoint(
     let mut writer = MetadataWriter::new(metadata);
     let mut table_writer = MetadataWriter::new(metadata);
     let meta_block = writer.meta_block_pointer()?;
-    on_start(meta_block)?;
     let mut blocks = BlockWriter::new(Arc::clone(storage.block_manager()));
     let table_settings = storage.table_write_settings(replace_in_memory && vacuum, lowest_active_start);
     let catalog_name = catalog.name().to_owned();
@@ -541,6 +550,27 @@ pub fn write_checkpoint(
         for index in schema_entry.indexes.scan(transaction) {
             entries.push((schema_name.clone(), index));
         }
+    }
+
+    // The tables with indexes are locked before commits continue.
+    let indexed_tables: Vec<Arc<DataTable>> = entries
+        .iter()
+        .filter_map(|(_, entry)| match &entry.kind {
+            EntryKind::Table(table) => table.storage.clone(),
+            _ => None,
+        })
+        .filter(|table| table.has_indexes())
+        .collect();
+    let mut table_locks: Vec<Option<ExclusiveCheckpointGuard>> = Vec::new();
+    let checkpoint_id = on_start(meta_block, &mut || {
+        table_locks = indexed_tables
+            .iter()
+            .map(|table| Some(table.info().checkpoint_lock().exclusive()))
+            .collect();
+    })?;
+    let sleep_ms = storage.checkpoint_config().sleep_ms;
+    if sleep_ms > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
     }
 
     let mut serializer = BinarySerializer::new(options.clone());
@@ -600,13 +630,22 @@ pub fn write_checkpoint(
                         .storage
                         .as_ref()
                         .ok_or_else(|| Error::internal("checkpoint of a table without storage"))?;
+                    // Commits appending to the table wait while it is written
+                    // (`DataTable::GetCheckpointLock`).
+                    let table_lock = match indexed_tables
+                        .iter()
+                        .position(|indexed| Arc::ptr_eq(indexed, storage_table))
+                    {
+                        Some(position) => table_locks.get_mut(position).and_then(Option::take),
+                        None => Some(storage_table.info().checkpoint_lock().exclusive()),
+                    };
                     let data = write_table_data(
                         storage_table,
                         metadata,
                         &mut table_writer,
                         &mut blocks,
                         &options,
-                        u64::MAX,
+                        checkpoint_id,
                         table_settings,
                     )?;
                     serializer.write_object_property(101, "table_pointer", |s| {
@@ -615,6 +654,7 @@ pub fn write_checkpoint(
                     serializer.write_property(102, "total_rows", &data.total_rows)?;
                     persisted.push((Arc::clone(storage_table), data));
                     let index_infos = serialize_indexes(storage_table, storage, &options, &mut blocks)?;
+                    drop(table_lock);
                     // Empty block pointers for forwards compatibility.
                     serializer.on_property_begin(103, "index_pointers");
                     serializer.on_list_begin(0);
@@ -750,12 +790,7 @@ fn serialize_indexes(
             })
         };
         let info = match &slot {
-            IndexSlot::Bound(entry) => {
-                entry
-                    .lock()
-                    .index
-                    .serialize_to_disk(&index_options, &mut write)?
-            }
+            IndexSlot::Bound(entry) => entry.lock().index.serialize_to_disk(&index_options, &mut write)?,
             // An unbound index is written as it was stored; its blocks stay in use.
             IndexSlot::Unbound(index) => {
                 let mut kept = Vec::new();

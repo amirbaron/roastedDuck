@@ -458,12 +458,11 @@ impl KeyedRows {
         for row in 0..chunk.len() {
             let values: Vec<Value> = chunk.columns().iter().map(|column| column.get_value(row)).collect();
             let key: Vec<Value> = keys.iter().map(|&column| values[column].clone()).collect();
-            match self.index.get(&key) {
-                Some(&slot) => self.rows[slot] = values,
-                None => {
-                    self.index.insert(key, self.rows.len());
-                    self.rows.push(values);
-                }
+            if let Some(&slot) = self.index.get(&key) {
+                self.rows[slot] = values;
+            } else {
+                self.index.insert(key, self.rows.len());
+                self.rows.push(values);
             }
         }
     }

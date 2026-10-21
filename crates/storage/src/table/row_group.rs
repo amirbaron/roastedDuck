@@ -15,7 +15,7 @@ use super::row_version_manager::RowVersionManager;
 use super::scan_state::{CollectionScanState, ScanFilterInfo, StorageIndex};
 use super::segment_tree::Segment;
 use crate::VECTOR_SIZE;
-use crate::checkpoint::pointers::PersistentColumnData;
+use crate::checkpoint::pointers::{PersistentColumnData, PersistentRowGroupData};
 use crate::checkpoint::table_reader::read_column;
 use crate::checkpoint::table_writer::InMemoryBlocks;
 use crate::data_table::TableIoManager;
@@ -1084,12 +1084,42 @@ impl RowGroup {
         Ok(())
     }
 
-    /// Changes who owns the row group's data (`MoveToCollection`).
-    pub fn set_data_type(&self, data_type: ColumnDataType) -> Result<()> {
-        for column in self.columns()? {
+    /// Whether every column is stored in blocks only: an optimistic write wrote the row
+    /// group (`IsPersistent`). Columns not built yet are stored.
+    pub fn is_persistent(&self) -> bool {
+        self.loaded_columns().all(|column| column.is_persistent())
+    }
+
+    /// The stored segments of every column of a row group that is persistent, with
+    /// whether a column has updates, which keep it from being logged this way
+    /// (`SerializeRowGroupInfo`).
+    pub fn serialize_row_group_info(&self, start: u64) -> Result<(PersistentRowGroupData, bool)> {
+        let mut has_updates = false;
+        let mut column_data = Vec::with_capacity(self.column_count());
+        for index in 0..self.column_count() {
+            if let Some(stored) = self.unloaded_column_data(index)? {
+                column_data.push(stored);
+                continue;
+            }
+            let column = self.column(index)?;
+            has_updates |= column.has_any_updates();
+            column_data.push(column.persistent_data(0)?);
+        }
+        let data = PersistentRowGroupData {
+            types: Vec::new(),
+            column_data,
+            start,
+            count: self.count(),
+        };
+        Ok((data, has_updates))
+    }
+
+    /// Changes who owns the row group's data (`MoveToCollection`); columns not built yet
+    /// are built as main table columns.
+    pub fn set_data_type(&self, data_type: ColumnDataType) {
+        for column in self.loaded_columns() {
             column.set_data_type(data_type);
         }
-        Ok(())
     }
 
     /// Scans the whole row group (every row, including deleted ones) of the given columns

@@ -119,8 +119,12 @@ impl FileHandle {
                     },
                 ];
                 let skip = usize::from(header_rest.is_empty());
-                let offset = libc::off_t::try_from(location + written as u64)
-                    .map_err(|_| io_error(format!("Could not write to file \"{}\": offset too large", self.path)))?;
+                let offset = libc::off_t::try_from(location + written as u64).map_err(|_| {
+                    io_error(format!(
+                        "Could not write to file \"{}\": offset too large",
+                        self.path
+                    ))
+                })?;
                 // SAFETY: the iovecs point into `header` and `data`, which outlive the call.
                 let result = unsafe {
                     libc::pwritev(
@@ -221,6 +225,9 @@ struct BlockState {
     /// The data blocks the checkpoint on disk references (they become free once a
     /// newer checkpoint no longer does).
     checkpoint_blocks: BTreeSet<BlockId>,
+    /// While a checkpoint runs, the blocks of optimistic writes commits logged since it
+    /// started: the checkpoint does not write their rows, but they stay in use.
+    committed_during_checkpoint: Option<BTreeSet<BlockId>>,
 }
 
 /// How a block id is taken (`FreeBlockType`).
@@ -566,9 +573,24 @@ impl SingleFileBlockManager {
         state.free_list.iter().next().copied().unwrap_or(state.max_block)
     }
 
-    /// `MarkBlockAsCheckpointed`.
+    /// Marks a block written by an optimistic write as part of the persisted data once a
+    /// commit logged it to the WAL (`MarkBlockAsCheckpointed`): it is no longer free in
+    /// the free list the next checkpoint writes, and is freed once a checkpoint no longer
+    /// references it, like the blocks of the checkpoint on disk.
     pub fn mark_block_as_checkpointed(&self, block_id: BlockId) {
-        self.lock().newly_used_blocks.remove(&block_id);
+        let mut state = self.lock();
+        state.newly_used_blocks.remove(&block_id);
+        state.checkpoint_blocks.insert(block_id);
+        if let Some(committed) = &mut state.committed_during_checkpoint {
+            committed.insert(block_id);
+        }
+    }
+
+    /// Records that a checkpoint started while commits continue: the blocks they log
+    /// until it writes its header stay in use, although the checkpoint does not reference
+    /// them.
+    pub fn start_checkpoint(&self) {
+        self.lock().committed_during_checkpoint = Some(BTreeSet::new());
     }
 
     /// Marks a block read from the file as in use (`MarkBlockAsUsed`).
@@ -643,7 +665,8 @@ impl SingleFileBlockManager {
 
     /// Writes the free list and the database header of a checkpoint (`WriteHeader`).
     /// `data_blocks` are the data blocks the new checkpoint references; those of the
-    /// previous checkpoint it no longer uses are freed.
+    /// previous checkpoint it no longer uses are freed, except blocks commits logged
+    /// while it ran.
     pub fn write_header(
         &self,
         metadata: &MetadataManager,
@@ -653,11 +676,17 @@ impl SingleFileBlockManager {
     ) -> Result<()> {
         let released: Vec<BlockId> = {
             let mut state = self.lock();
-            let new_blocks: BTreeSet<BlockId> = data_blocks.keys().copied().collect();
+            let mut new_blocks: BTreeSet<BlockId> = data_blocks.keys().copied().collect();
+            new_blocks.extend(state.committed_during_checkpoint.take().unwrap_or_default());
             let previous = std::mem::replace(&mut state.checkpoint_blocks, new_blocks);
             let released: Vec<BlockId> = previous.difference(&state.checkpoint_blocks).copied().collect();
             for block in &released {
                 state.multi_use_blocks.remove(block);
+            }
+            // Blocks optimistic writes added that the checkpoint keeps are in use now
+            // (`CheckpointBlockIdMarker`).
+            for block in data_blocks.keys() {
+                state.newly_used_blocks.remove(block);
             }
             // Blocks shared by several segments are multi-use blocks (`IncreaseBlockReferenceCount`).
             for (&block, &uses) in data_blocks {
@@ -768,6 +797,12 @@ impl SingleFileBlockManager {
             allocated += block_size;
         }
         Ok(blocks)
+    }
+
+    /// Syncs the database file (`FileSync`): the blocks optimistic writes added must be
+    /// durable before a WAL entry refers to them.
+    pub fn file_sync(&self) -> Result<()> {
+        self.handle.sync()
     }
 
     /// Cuts free blocks off the end of the file (`Truncate`).

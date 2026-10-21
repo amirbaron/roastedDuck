@@ -590,6 +590,18 @@ impl ColumnData {
         any
     }
 
+    /// Whether the column and its children are stored in blocks only, without transient
+    /// segments (`IsPersistent` and its overrides).
+    pub fn is_persistent(&self) -> bool {
+        let mut persistent = self
+            .segments
+            .read()
+            .iter()
+            .all(|node| node.node.segment_type() == super::column_segment::SegmentType::Persistent);
+        self.for_each_child(|child| persistent &= child.is_persistent());
+        persistent
+    }
+
     /// The data pointers of the column's own persistent segments, the first starting at
     /// row `row_start` (`ColumnDataCheckpointer::WritePersistentSegments`).
     pub(crate) fn persistent_data_pointers(
