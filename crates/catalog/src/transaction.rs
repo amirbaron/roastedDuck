@@ -91,6 +91,16 @@ impl CatalogUndo for CatalogChange {
         self.version.is_tombstone()
     }
 
+    fn estimated_size(&self) -> u64 {
+        match &self.hook {
+            StorageHook::CreatedIndex(info, name) => info
+                .indexes()
+                .find(name)
+                .map_or(0, |entry| entry.lock().index.in_memory_size() as u64),
+            _ => 0,
+        }
+    }
+
     fn write_to_wal(&self, batch: &mut WalBatch) -> Result<()> {
         let catalog = self.set.catalog_name();
         let schema = self.set.schema_name();

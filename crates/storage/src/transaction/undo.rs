@@ -43,6 +43,12 @@ pub trait CatalogUndo: Send + Sync + fmt::Debug {
         false
     }
 
+    /// What the change adds to the estimated size of the transaction's changes: the
+    /// in-memory size of a created index (`DuckIndexEntry::initial_index_size`).
+    fn estimated_size(&self) -> u64 {
+        0
+    }
+
     /// Logs the change (`WALWriteState::WriteCatalogEntry`).
     fn write_to_wal(&self, batch: &mut WalBatch) -> Result<()> {
         let _ = batch;
@@ -235,6 +241,7 @@ impl UndoBuffer {
                 UndoEntry::Catalog(change) => {
                     properties.has_catalog_changes = true;
                     properties.has_dropped_entries |= change.is_drop();
+                    properties.estimated_size += change.estimated_size();
                     CATALOG_ENTRY_SIZE
                 }
                 UndoEntry::Delete { record, .. } => {
