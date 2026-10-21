@@ -19,6 +19,7 @@ mod plan_joinref;
 pub use plan_joinref::{JoinSide, create_join, extract_join_conditions};
 
 pub use plan_joinref::extract_join_conditions_from;
+pub(crate) use bind_table_function::bind_named_parameters;
 pub(crate) use plan_joinref::table_references;
 
 use super::bind_context::alias_column_names;

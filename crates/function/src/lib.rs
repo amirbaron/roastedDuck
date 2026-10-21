@@ -14,6 +14,7 @@ pub mod extension_entries;
 pub mod file_system;
 pub mod function_descriptions;
 pub mod logging;
+pub mod pragma;
 pub mod random;
 mod scalar;
 mod table;
@@ -27,6 +28,7 @@ pub use client::{
     TempCatalog,
 };
 pub use copy::{CopyFunction, CopyOption, CopyOptionMode};
+pub use pragma::{PragmaFunction, PragmaFunctionSet, PragmaType};
 pub use scalar::{
     AggregateResolver, BindInput, BindLambda, BoundAggregateFunction, CollationHandling, FunctionData,
     FunctionState, LambdaExecutor, LambdaInput, NullHandling, ScalarBind, ScalarFunction, ScalarFunctionSet,

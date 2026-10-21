@@ -198,14 +198,20 @@ impl StaticExtension {
         }
     }
 
-    /// The pragma functions the extension registers.
-    const fn pragma_functions(self) -> &'static [&'static str] {
-        match self {
-            Self::Parquet => &["add_parquet_key"],
-            Self::Json => &["json_execute_serialized_sql"],
-            Self::Tpch => &["tpch"],
-            Self::Autocomplete | Self::Icu => &[],
-        }
+    /// The pragmas the extension registers (`ExtensionLoader::RegisterFunction` of a
+    /// `PragmaFunction`).
+    fn pragma_functions(self) -> Vec<rustdb_function::PragmaFunctionSet> {
+        use rustdb_function::{PragmaFunction, PragmaFunctionSet};
+        let function = match self {
+            Self::Parquet => PragmaFunction::call(
+                "add_parquet_key",
+                vec![LogicalType::VARCHAR, LogicalType::VARCHAR],
+            ),
+            Self::Json => PragmaFunction::call("json_execute_serialized_sql", vec![LogicalType::VARCHAR]),
+            Self::Tpch => PragmaFunction::call("tpch", vec![LogicalType::BIGINT]),
+            Self::Autocomplete | Self::Icu => return Vec::new(),
+        };
+        vec![PragmaFunctionSet::single(function)]
     }
 
     /// Whether the extension has a pragma `name` that stands for a query.
@@ -229,6 +235,9 @@ impl StaticExtension {
     /// Registers the extension's functions, types and macros (its `Load`); `loaded` are
     /// the extensions loaded so far.
     fn register(self, system: &Catalog, loaded: &Arc<Mutex<Vec<Self>>>) -> Result<()> {
+        for set in self.pragma_functions() {
+            system.register_pragma_functions(set)?;
+        }
         match self {
             Self::Parquet => {
                 system.register_copy_function(rustdb_parquet::copy::parquet_copy_function())?;
@@ -294,10 +303,10 @@ impl StaticExtension {
 /// extensions (DuckDB's `PRAGMA_FUNCTION_ENTRY` catalog entries).
 fn pragma_function_names(loaded: &Mutex<Vec<StaticExtension>>) -> Vec<String> {
     let loaded = loaded.lock().unwrap_or_else(PoisonError::into_inner);
-    crate::system_functions::PRAGMA_FUNCTIONS
-        .iter()
+    crate::system_functions::builtin_pragma_functions()
+        .into_iter()
         .chain(loaded.iter().flat_map(|extension| extension.pragma_functions()))
-        .map(|name| (*name).to_owned())
+        .map(|set| set.name.to_string())
         .collect()
 }
 
@@ -1364,6 +1373,9 @@ impl Database {
         for set in crate::read_file::read_file_functions() {
             system_catalog.register_table_functions(set)?;
         }
+        for set in crate::system_functions::builtin_pragma_functions() {
+            system_catalog.register_pragma_functions(set)?;
+        }
         system_catalog.register_copy_function(rustdb_csv::copy_csv::csv_copy_function())?;
         system_catalog.register_copy_function(rustdb_csv::copy_blob::blob_copy_function())?;
         for set in rustdb_csv::multi_file::glob_functions() {
@@ -1920,11 +1932,49 @@ impl Connection {
         rustdb_parser::parse_with_options(sql, &options).map_err(|error| error.with_query_context(sql))
     }
 
+    /// The statements of `sql` as DuckDB's `ClientContext::ParseStatements` hands them out
+    /// (its `StatementPreprocessor`): every PRAGMA is bound, which fails for one the catalog
+    /// does not have, and a pragma that stands for a query is replaced by the statements of
+    /// that query (`TryReparsePragma`).
+    pub fn parse_statements(&mut self, sql: &str) -> Result<Vec<SqlStatement>> {
+        let statements = self.extract_statements(sql)?;
+        if !statements
+            .iter()
+            .any(|statement| matches!(statement.kind, rustdb_ast::SqlStatementKind::Pragma(_)))
+        {
+            return Ok(statements);
+        }
+        let mut result = Vec::with_capacity(statements.len());
+        for statement in statements {
+            let rustdb_ast::SqlStatementKind::Pragma(pragma) = &statement.kind else {
+                result.push(statement);
+                continue;
+            };
+            let name = pragma.name.clone();
+            let bound = self.bind_pragma_parameters(statement.clone());
+            let ended = self.transactions.end_statement(bound.is_ok(), false);
+            let parameters = bound
+                .and_then(|parameters| ended.map(|()| parameters))
+                .map_err(|error| self.process_error(error, sql))?;
+            let instance = self.database.instance();
+            let query = if instance.has_extension_pragma(&name) {
+                Some(instance.extension_pragma_query(&name, &parameters)?)
+            } else {
+                crate::system_functions::pragma_query(&name, &parameters)?
+            };
+            match query {
+                Some(query) => result.extend(rustdb_parser::parse(&query)?),
+                None => result.push(statement),
+            }
+        }
+        Ok(result)
+    }
+
     /// Runs every statement in `sql` and returns the result of the last one (DuckDB's
     /// `ClientContext::Query`).
     pub fn query(&mut self, sql: &str) -> Result<MaterializedResult> {
         self.sync_global_settings();
-        let statements = self.extract_statements(sql)?;
+        let statements = self.parse_statements(sql)?;
         self.execute_statements(statements)
     }
 
@@ -3564,25 +3614,6 @@ impl Connection {
                 }
                 if NO_OP_PRAGMAS.contains(&name.to_ascii_lowercase().as_str()) {
                     return Ok(StatementRun::Done(nothing()));
-                }
-                // `Binder::BindPragma`: a table function of the name is suggested.
-                let transaction = self.transactions.current();
-                if self
-                    .database
-                    .instance()
-                    .system_catalog
-                    .get_entry(
-                        &transaction,
-                        rustdb_catalog::CatalogType::TableFunction,
-                        "main",
-                        name,
-                    )
-                    .is_some()
-                {
-                    return Err(Error::catalog(format!(
-                        "Pragma Function with name {name} does not exist, but a table function with the same name \
-                         exists, try `CALL {name}(...)`"
-                    )));
                 }
                 return Err(Error::not_implemented(format!("PRAGMA {name}")));
             }

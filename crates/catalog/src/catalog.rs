@@ -198,6 +198,12 @@ impl Catalog {
         self.register_builtin(name, EntryKind::TableFunction(set))
     }
 
+    /// Registers a built-in pragma in `main`.
+    pub fn register_pragma_functions(&self, set: rustdb_function::PragmaFunctionSet) -> Result<()> {
+        let name = set.name.to_string();
+        self.register_builtin(name, EntryKind::PragmaFunction(set))
+    }
+
     /// Registers a built-in COPY file format in `main`.
     pub fn register_copy_function(&self, function: rustdb_function::CopyFunction) -> Result<()> {
         let name = function.name.to_string();
@@ -335,6 +341,7 @@ impl Catalog {
             CatalogType::TableFunction => &schema.table_functions,
             CatalogType::Table | CatalogType::View => &schema.tables,
             CatalogType::CopyFunction => &schema.copy_functions,
+            CatalogType::PragmaFunction => &schema.pragma_functions,
             _ => &schema.functions,
         };
         set.create_committed(entry)

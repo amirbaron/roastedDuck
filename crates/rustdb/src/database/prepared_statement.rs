@@ -74,7 +74,7 @@ impl Connection {
     /// Prepares the single statement in `query` (DuckDB's `ClientContext::Prepare`).
     pub fn prepare(&mut self, query: &str) -> Result<PreparedStatement> {
         self.initial_cleanup();
-        let mut statements = self.extract_statements(query)?;
+        let mut statements = self.parse_statements(query)?;
         if statements.len() > 1 {
             return Err(Error::invalid_input(
                 "Cannot prepare multiple statements at once!",

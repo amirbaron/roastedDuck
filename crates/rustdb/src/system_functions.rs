@@ -19,8 +19,8 @@ use rustdb_ast::{
 use rustdb_catalog::{Catalog, CatalogEntry, EntryKind, SchemaEntry, TableEntry};
 use rustdb_common::{CaseInsensitiveMap, Error, OrderedMap, Result, STANDARD_VECTOR_SIZE};
 use rustdb_function::{
-    FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet, Stability, TableFunction,
-    TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet,
+    FunctionData, FunctionState, PragmaFunction, PragmaFunctionSet, ScalarFunction, ScalarFunctionSet,
+    Stability, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet,
 };
 use rustdb_planner::ClientContext;
 use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Value, Vector};
@@ -1988,6 +1988,31 @@ fn entry_function_rows(
                 }
             })
             .collect(),
+        EntryKind::PragmaFunction(set) => set
+            .functions
+            .iter()
+            .map(|function| {
+                // `PragmaFunctionExtractor`.
+                let mut parameters = positional_names(function.arguments.len());
+                let mut parameter_types: Vec<Option<String>> =
+                    function.arguments.iter().map(|ty| Some(ty.to_string())).collect();
+                for (name, ty) in &function.named_parameters {
+                    parameters.push(name.clone());
+                    parameter_types.push(Some(ty.to_string()));
+                }
+                FunctionRow {
+                    function_type: "pragma",
+                    return_type: null_text(),
+                    parameters,
+                    parameter_types,
+                    varargs: varargs(function.varargs.as_ref()),
+                    macro_definition: null_text(),
+                    has_side_effects: Value::null(LogicalType::BOOLEAN),
+                    stability: null_text(),
+                    description: None,
+                }
+            })
+            .collect(),
         EntryKind::Macro(macro_entry) => macro_rows(macro_entry, false),
         EntryKind::TableMacro(macro_entry) => macro_rows(macro_entry, true),
         _ => Vec::new(),
@@ -2088,11 +2113,13 @@ fn function_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
         };
         let mut entries = contents.functions.scan(&context.transaction);
         entries.extend(contents.table_functions.scan(&context.transaction));
+        entries.extend(contents.pragma_functions.scan(&context.transaction));
         // `std::sort` by DuckDB's `CatalogType` value; a stable sort keeps the scan order.
         entries.sort_by_key(|entry| match entry.catalog_type() {
             rustdb_catalog::CatalogType::TableFunction => 25,
             rustdb_catalog::CatalogType::ScalarFunction => 26,
             rustdb_catalog::CatalogType::AggregateFunction => 27,
+            rustdb_catalog::CatalogType::PragmaFunction => 28,
             rustdb_catalog::CatalogType::Macro => 30,
             rustdb_catalog::CatalogType::TableMacro => 31,
             _ => 99,
@@ -2774,53 +2801,64 @@ fn in_search_path_function() -> ScalarFunctionSet {
     set
 }
 
-/// The builtin pragma functions (DuckDB's `PragmaFunctions::RegisterFunction` and
+/// The built-in pragmas (DuckDB's `PragmaFunctions::RegisterFunction` and
 /// `PragmaQueries::RegisterFunction`); extensions add their own.
-pub(crate) const PRAGMA_FUNCTIONS: &[&str] = &[
-    "all_profiling_output",
-    "collations",
-    "copy_database",
-    "database_list",
-    "database_size",
-    "disable_checkpoint_on_shutdown",
-    "disable_object_cache",
-    "disable_optimizer",
-    "disable_print_progress_bar",
-    "disable_profile",
-    "disable_profiling",
-    "disable_progress_bar",
-    "disable_verification",
-    "disable_verify_external",
-    "disable_verify_fetch_row",
-    "disable_verify_parallelism",
-    "disable_verify_serializer",
-    "enable_checkpoint_on_shutdown",
-    "enable_object_cache",
-    "enable_optimizer",
-    "enable_print_progress_bar",
-    "enable_profile",
-    "enable_profiling",
-    "enable_progress_bar",
-    "enable_verification",
-    "extension_versions",
-    "force_checkpoint",
-    "functions",
-    "import_database",
-    "metadata_info",
-    "platform",
-    "show",
-    "show_databases",
-    "show_tables",
-    "show_tables_expanded",
-    "storage_info",
-    "table_info",
-    "user_agent",
-    "verify_external",
-    "verify_fetch_row",
-    "verify_parallelism",
-    "verify_serializer",
-    "version",
-];
+pub(crate) fn builtin_pragma_functions() -> Vec<PragmaFunctionSet> {
+    let varchar = || LogicalType::VARCHAR;
+    let statements = [
+        "enable_profile",
+        "enable_profiling",
+        "disable_profile",
+        "disable_profiling",
+        "enable_verification",
+        "disable_verification",
+        "verify_external",
+        "disable_verify_external",
+        "verify_fetch_row",
+        "disable_verify_fetch_row",
+        "verify_serializer",
+        "disable_verify_serializer",
+        "verify_parallelism",
+        "disable_verify_parallelism",
+        "enable_object_cache",
+        "disable_object_cache",
+        "enable_optimizer",
+        "disable_optimizer",
+        "force_checkpoint",
+        "enable_progress_bar",
+        "disable_progress_bar",
+        "enable_print_progress_bar",
+        "disable_print_progress_bar",
+        "enable_checkpoint_on_shutdown",
+        "disable_checkpoint_on_shutdown",
+        "show_tables",
+        "show_tables_expanded",
+        "show_databases",
+        "database_list",
+        "collations",
+        "version",
+        "extension_versions",
+        "platform",
+        "database_size",
+        "functions",
+        "all_profiling_output",
+        "user_agent",
+    ];
+    let calls = [
+        PragmaFunction::call("table_info", vec![varchar()]),
+        PragmaFunction::call("storage_info", vec![varchar()]),
+        PragmaFunction::call("metadata_info", Vec::new()),
+        PragmaFunction::call("show", vec![varchar()]),
+        PragmaFunction::call("import_database", vec![varchar()]),
+        PragmaFunction::call("copy_database", vec![varchar(), varchar()]),
+    ];
+    statements
+        .into_iter()
+        .map(PragmaFunction::statement)
+        .chain(calls)
+        .map(PragmaFunctionSet::single)
+        .collect()
+}
 
 /// The SQL a `PRAGMA` stands for (DuckDB's `PragmaQueries`), if it is one.
 pub(crate) fn pragma_query(name: &str, parameters: &[Value]) -> Result<Option<String>> {
