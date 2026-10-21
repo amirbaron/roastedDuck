@@ -101,8 +101,8 @@ impl PhysicalPiecewiseMergeJoin {
         SortedTable::new(
             ctx,
             &[self.conditions[0].left.return_type.clone()],
-            vec![order_modifiers(self.descending)],
-            side_types.to_vec(),
+            &[order_modifiers(self.descending)],
+            side_types,
         )
     }
 
@@ -273,12 +273,12 @@ impl PhysicalPiecewiseMergeJoin {
             let lhs_run = lhs_table.sorted()?;
             let rhs_run = rhs_table.sorted()?;
             let result_count = rustdb_row::dispatch_sort_key!(sort_key_type, K => merge_join_complex_blocks::<K>(
-                MergeSide {
+                &mut MergeSide {
                     run: lhs_run,
                     iterator: lhs_iterator,
                     info: &mut left,
                 },
-                MergeSide {
+                &mut MergeSide {
                     run: rhs_run,
                     iterator: rhs_iterator,
                     info: &mut right,
@@ -430,8 +430,8 @@ struct MergeSide<'a> {
 /// right row: for each right row, every input row before it, resuming at the sides'
 /// positions (`TemplatedMergeJoinComplexBlocks`).
 fn merge_join_complex_blocks<K: SortKey>(
-    l: MergeSide<'_>,
-    r: MergeSide<'_>,
+    l: &mut MergeSide<'_>,
+    r: &mut MergeSide<'_>,
     strict: bool,
     prev_left_index: &mut usize,
     lsel: &mut Vec<u32>,

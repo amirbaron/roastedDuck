@@ -482,21 +482,17 @@ impl AsOfHashGroup {
     /// Releases the sorted sides once their readers are done (`FinishTask`, under the
     /// lock); returns whether every task of the group finished.
     fn finish_task(&self, schedule: &GroupSchedule, task: &AsOfSourceTask) -> bool {
+        let stage_done = |counter: &AtomicUsize| {
+            counter.load(Ordering::Acquire) >= schedule.stage_tasks[task.stage as usize]
+        };
         match task.stage {
-            Stage::Left => {
-                if self.left_completed.load(Ordering::Acquire) >= schedule.stage_tasks[Stage::Left as usize] {
-                    *lock(&self.left_group) = None;
-                    if !self.is_right_outer() {
-                        *lock(&self.right_group) = None;
-                    }
-                }
-            }
-            Stage::Right => {
-                if self.right_completed.load(Ordering::Acquire) >= schedule.stage_tasks[Stage::Right as usize]
-                {
+            Stage::Left if stage_done(&self.left_completed) => {
+                *lock(&self.left_group) = None;
+                if !self.is_right_outer() {
                     *lock(&self.right_group) = None;
                 }
             }
+            Stage::Right if stage_done(&self.right_completed) => *lock(&self.right_group) = None,
             _ => {}
         }
         let completed = self.materialized.load(Ordering::Acquire)
@@ -851,7 +847,7 @@ impl AsOfLocalSourceState {
 
 impl PhysicalAsOfJoin {
     /// Takes the next task, completing the previous one (`TryAssignTask`).
-    fn try_assign_task(&self, gsource: &AsOfSourceState, local: &mut AsOfLocalSourceState) -> Result<bool> {
+    fn try_assign_task(&self, gsource: &AsOfSourceState, local: &mut AsOfLocalSourceState) -> bool {
         // Because downstream operators may be using our internal buffers, we can't
         // "finish" a task until we are about to get the next one.
         if let Some(task) = local.task.take() {
@@ -861,19 +857,19 @@ impl PhysicalAsOfJoin {
             gsource.complete_task(&task);
         }
         let Some(task) = gsource.try_next_task() else {
-            return Ok(false);
+            return false;
         };
         local.task = Some(task);
         match task.stage {
-            Stage::Left => local.probe = Some(Box::new(self.begin_left_scan(gsource, task)?)),
+            Stage::Left => local.probe = Some(Box::new(self.begin_left_scan(gsource, task))),
             Stage::Right => local.right_scanner = self.begin_right_scan(gsource, &task),
             _ => {}
         }
-        Ok(true)
+        true
     }
 
     /// Sets up the probe of a left task (`BeginLeftScan`).
-    fn begin_left_scan(&self, gsource: &AsOfSourceState, task: AsOfSourceTask) -> Result<AsOfProbeBuffer> {
+    fn begin_left_scan(&self, gsource: &AsOfSourceState, task: AsOfSourceTask) -> AsOfProbeBuffer {
         let group = &gsource.groups[task.group_idx];
         let right_group = lock(&group.right_group).clone();
         let left_group = lock(&group.left_group).clone();
@@ -896,7 +892,7 @@ impl PhysicalAsOfJoin {
             decode_buffer: Vec::new(),
         };
         let Some(left_group) = left_group.filter(|run| run.count() > 0) else {
-            return Ok(probe);
+            return probe;
         };
         let mut scanner = AsOfPayloadScanner::new(Arc::clone(&left_group), self.left_types.len());
         scanner.seek_block(task.begin_idx);
@@ -915,7 +911,7 @@ impl PhysicalAsOfJoin {
             probe.rhs_itr = Some(ExternalBlockIteratorState::new(&right_group));
             probe.right_group = Some(right_group);
         }
-        Ok(probe)
+        probe
     }
 
     /// Sets up the scan of a right task (`BeginRightScan`).
@@ -1396,17 +1392,12 @@ impl Source for PhysicalAsOfJoin {
         chunk.set_columns(Vec::new(), 0);
         while gsource.has_unfinished_tasks() && chunk.is_empty() {
             ctx.check_interrupted()?;
-            let step = if local.task_finished() {
-                self.try_assign_task(gsource, local)
+            let assigned = !local.task_finished() || self.try_assign_task(gsource, local);
+            let step = if assigned {
+                self.execute_task(gsource, local, chunk).map(|()| true)
             } else {
-                Ok(true)
-            }
-            .and_then(|assigned| {
-                if assigned {
-                    self.execute_task(gsource, local, chunk)?;
-                }
-                Ok(assigned)
-            });
+                Ok(false)
+            };
             match step {
                 Ok(true) => continue,
                 Ok(false) => {}

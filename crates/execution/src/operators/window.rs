@@ -382,7 +382,7 @@ struct GroupReady {
 /// collection, and keeping the run saves converting rows twice.
 #[derive(Debug)]
 enum GroupRows {
-    Run(SortedRun),
+    Run(Box<SortedRun>),
     Collection(TupleDataCollection),
 }
 
@@ -740,7 +740,7 @@ impl PhysicalWindow {
     }
 
     /// Takes the next task, completing the previous one (`TryAssignTask`).
-    fn try_assign_task(&self, gsource: &WindowGlobalSourceState, local: &mut WindowLocalSourceState) -> bool {
+    fn try_assign_task(gsource: &WindowGlobalSourceState, local: &mut WindowLocalSourceState) -> bool {
         // Because downstream operators may be using our internal buffers, we can't
         // "finish" a task until we are about to get the next one.
         local.scan = None;
@@ -770,7 +770,7 @@ impl PhysicalWindow {
         let sink = gsource.sink_state()?;
         match task.stage {
             Stage::Sort => sink.strategy.sort_column_data(&sink.sink, group.hash_bin)?,
-            Stage::Materialize => self.materialize(sink, &group, task.end_idx - task.begin_idx)?,
+            Stage::Materialize => Self::materialize(sink, &group, task.end_idx - task.begin_idx)?,
             Stage::Mask => self.compute_masks(&group, task.begin_idx, task.end_idx)?,
             Stage::Sink => {
                 if task.thread_idx == 0 {
@@ -797,12 +797,7 @@ impl PhysicalWindow {
 
     /// Merges the group into its sorted run (or collects the unsorted rows); the task that
     /// completes the group takes them (`WindowLocalSourceState::Materialize`).
-    fn materialize(
-        &self,
-        sink: &WindowGlobalSinkState,
-        group: &WindowHashGroup,
-        blocks: usize,
-    ) -> Result<()> {
+    fn materialize(sink: &WindowGlobalSinkState, group: &WindowHashGroup, blocks: usize) -> Result<()> {
         let natural = matches!(sink.strategy, SortStrategy::Natural(_));
         if !natural {
             sink.strategy.materialize_sorted_run(&sink.sink, group.hash_bin)?;
@@ -824,7 +819,7 @@ impl PhysicalWindow {
         } else {
             sink.strategy
                 .get_sorted_run(&sink.sink, group.hash_bin)?
-                .map(GroupRows::Run)
+                .map(|run| GroupRows::Run(Box::new(run)))
         };
         match rows {
             Some(rows) if rows.count() == group.count => {
@@ -1131,14 +1126,12 @@ impl Source for PhysicalWindow {
         }
         // Largest groups first; equal sizes by descending bin (DuckDB sorts (blocks, bin)
         // pairs with std::greater).
-        groups.sort_unstable_by(|a, b| (b.0, b.1).cmp(&(a.0, a.1)));
+        groups.sort_unstable_by_key(|&(blocks, bin, ..)| std::cmp::Reverse((blocks, bin)));
         let threads = ctx.env.threads().max(1);
         let max_blocks = groups.first().map_or(0, |group| group.0);
-        // Masks are computed in parallel, so each thread's rows must cover whole mask
-        // entries (only matters if STANDARD_VECTOR_SIZE < 64).
-        let aligned_scale = (BITS_PER_ENTRY / STANDARD_VECTOR_SIZE).max(1);
-        let aligned_count = max_blocks.div_ceil(aligned_scale);
-        let per_thread = aligned_scale * aligned_count.div_ceil(threads);
+        // DuckDB aligns each thread's blocks to whole mask entries, which only matters if
+        // STANDARD_VECTOR_SIZE were smaller than an entry.
+        let per_thread = max_blocks.div_ceil(threads);
         let mut schedules = Vec::with_capacity(groups.len());
         let mut hash_groups_out = Vec::with_capacity(groups.len());
         let mut total_tasks = 0;
@@ -1214,7 +1207,7 @@ impl Source for PhysicalWindow {
         chunk.set_columns(Vec::new(), 0);
         while gsource.has_unfinished_tasks() && chunk.is_empty() {
             ctx.check_interrupted()?;
-            if !local.task_finished() || self.try_assign_task(gsource, local) {
+            if !local.task_finished() || Self::try_assign_task(gsource, local) {
                 if let Err(error) = self.execute_task(ctx, gsource, local, chunk) {
                     gsource.stopped.store(true, Ordering::Release);
                     gsource.changed.notify_all();

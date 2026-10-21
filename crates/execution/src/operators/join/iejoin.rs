@@ -166,8 +166,8 @@ impl Sink for PhysicalIEJoin {
         let modifiers = vec![order_modifiers(self.descending[0])];
         Ok(IEJoinGlobalState {
             tables: [
-                SortedTable::new(ctx, &key_type, modifiers.clone(), self.left_types.clone())?,
-                SortedTable::new(ctx, &key_type, modifiers, self.right_types.clone())?,
+                SortedTable::new(ctx, &key_type, &modifiers, &self.left_types)?,
+                SortedTable::new(ctx, &key_type, &modifiers, &self.right_types)?,
             ],
             child: AtomicUsize::new(1),
             materializing: AtomicUsize::new(1),
@@ -1088,15 +1088,15 @@ impl Source for PhysicalIEJoin {
         let l1 = SortedTable::new(
             ctx,
             &[order1_type, LogicalType::BOOLEAN],
-            vec![order_modifiers(self.descending[0]), order_modifiers(!strict1)],
-            vec![order2_type.clone(), LogicalType::BIGINT],
+            &[order_modifiers(self.descending[0]), order_modifiers(!strict1)],
+            &[order2_type.clone(), LogicalType::BIGINT],
         )?;
         // Sorting on the second condition gives the permutation array.
         let l2 = SortedTable::new(
             ctx,
             &[order2_type],
-            vec![order_modifiers(self.descending[1])],
-            vec![LogicalType::BIGINT],
+            &[order_modifiers(self.descending[1])],
+            &[LogicalType::BIGINT],
         )?;
         // The number of blocks in L2 is not quite the sum of the blocks of both tables.
         let join_count = left_table.count() + right_table.count();

@@ -193,8 +193,8 @@ impl SortedTable {
     pub(crate) fn new(
         ctx: &ExecutionContext,
         key_types: &[LogicalType],
-        modifiers: Vec<OrderModifiers>,
-        payload_types: Vec<LogicalType>,
+        modifiers: &[OrderModifiers],
+        payload_types: &[LogicalType],
     ) -> Result<Self> {
         let mut input_types = key_types.to_vec();
         input_types.extend(payload_types.iter().cloned());
