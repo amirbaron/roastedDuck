@@ -306,8 +306,7 @@ impl CatalogSet {
             match &entry.kind {
                 crate::EntryKind::Table(table) => {
                     if let Some(storage) = &table.storage {
-                        // Concurrent writers of the table now fail (`DuckTableEntry::OnDrop`).
-                        storage.set_as_dropped();
+                        // The storage is marked as dropped when the drop commits.
                         transaction.local_storage().drop_table(storage);
                         hook = StorageHook::DroppedTable(Arc::clone(storage));
                     }
@@ -323,6 +322,25 @@ impl CatalogSet {
         }
         transaction.push_catalog_change(Arc::clone(self), name, version, hook, WalRecord::Drop(dropped));
         Ok(true)
+    }
+
+    /// Fails if another transaction made a version of `name` that `transaction` may not
+    /// build on (the conflict check of `CatalogSet::GetEntryInternal`).
+    pub(crate) fn check_write_conflict(&self, transaction: &Transaction, name: &str) -> Result<()> {
+        let chains = self.lock();
+        let Some(head) = chains.get(&key(name)).and_then(|chain| chain.first()) else {
+            return Ok(());
+        };
+        if conflicts(transaction, head.timestamp()) {
+            return Err(Error::new(
+                ErrorKind::Transaction,
+                format!(
+                    "Catalog write-write conflict on alter with \"{}\"",
+                    display_name(head, &key(name))
+                ),
+            ));
+        }
+        Ok(())
     }
 
     /// Whether another transaction committed an entry into this set after `start_time`.

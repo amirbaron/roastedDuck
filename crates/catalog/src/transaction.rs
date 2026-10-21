@@ -49,13 +49,22 @@ struct CatalogChange {
 impl CatalogUndo for CatalogChange {
     fn commit(&self, commit_id: u64) {
         self.version.commit(commit_id);
-        if let StorageHook::DroppedIndex(info, name) = &self.hook {
-            info.indexes().remove(name);
+        match &self.hook {
+            StorageHook::DroppedIndex(info, name) => {
+                info.indexes().remove(name);
+            }
+            // `CatalogSet::CommitDrop` (`DuckTableEntry::OnDrop`): writes of other
+            // transactions to the table now fail to commit.
+            StorageHook::DroppedTable(table) => table.set_as_dropped(),
+            _ => {}
         }
     }
 
     fn revert_commit(&self, transaction_id: u64) {
         self.version.commit(transaction_id);
+        if let StorageHook::DroppedTable(table) = &self.hook {
+            table.set_as_main_table();
+        }
     }
 
     fn rollback(&self) {

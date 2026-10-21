@@ -633,6 +633,10 @@ impl Catalog {
                 "CatalogElement \"{owner_schema}.{owner_name}\" does not exist!"
             ))
         };
+        // `GetEntryInternal`: the entry is about to get a new version.
+        if let Some(contents) = self.schema(transaction, schema).as_deref().and_then(CatalogEntry::as_schema) {
+            Self::set_for(contents, entry.catalog_type()).check_write_conflict(transaction, entry.name())?;
+        }
         let owner_schema_entry = self.schema(transaction, owner_schema).ok_or_else(missing)?;
         let contents = owner_schema_entry.as_schema().ok_or_else(missing)?;
         let owner = contents

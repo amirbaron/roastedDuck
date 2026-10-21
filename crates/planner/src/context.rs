@@ -12,7 +12,7 @@ use rustdb_common::string_util::similarity_rating;
 use rustdb_common::{Error, Result};
 use rustdb_function::FunctionClient;
 use rustdb_function::cast::CastFunctionSet;
-use rustdb_types::Value;
+use rustdb_types::{LogicalType, Value};
 
 use crate::expression::Expression;
 use crate::prepared::PreparedStatementData;
@@ -60,6 +60,9 @@ pub struct PlannerConfig {
     /// Whether RIGHT joins are planned as LEFT joins with the sides swapped: the optimizer
     /// is enabled and `build_side_probe_side` is not disabled.
     pub flip_right_joins: bool,
+    /// `old_implicit_casting`: any type casts implicitly to VARCHAR, and types combine
+    /// even without a common type.
+    pub old_implicit_casting: bool,
 }
 
 /// The `default_null_order` setting (DuckDB's `DefaultOrderByNullType`).
@@ -87,6 +90,7 @@ impl Default for PlannerConfig {
             enable_macro_dependencies: false,
             allow_unredacted_secrets: false,
             flip_right_joins: true,
+            old_implicit_casting: false,
         }
     }
 }
@@ -160,6 +164,15 @@ pub struct EntryLookup {
 }
 
 impl ClientContext {
+    /// The common type of two types (DuckDB's `LogicalType::TryGetMaxLogicalType` with a
+    /// client context): with `old_implicit_casting` any two types combine.
+    pub fn try_max_logical_type(&self, left: &LogicalType, right: &LogicalType) -> Option<LogicalType> {
+        if self.config.old_implicit_casting {
+            return Some(LogicalType::force_max_logical_type(left, right));
+        }
+        LogicalType::try_max_logical_type(left, right)
+    }
+
     /// Starts recording the entries looked up; returns the recording it interrupts.
     pub fn start_recording_dependencies(&self) -> Option<Vec<EntryLookup>> {
         self.dependency_recorder

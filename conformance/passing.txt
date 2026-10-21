@@ -1051,6 +1051,7 @@ test/sql/binder/group_by_qualification.test
 test/sql/binder/integer_literal_binding.test
 test/sql/binder/missing_column_error.test
 test/sql/binder/not_similar_to.test
+test/sql/binder/old_implicit_cast.test
 test/sql/binder/old_implicit_cast_template.test
 test/sql/binder/order_by_view.test
 test/sql/binder/separate_schema_tables.test
@@ -3894,6 +3895,7 @@ test/sql/transactions/concurrent_drop_table.test
 test/sql/transactions/conflict_drop_then_delete.test
 test/sql/transactions/conflict_rename_append.test
 test/sql/transactions/count_star_transactions.test
+test/sql/transactions/delete_and_drop_in_same_transaction.test
 test/sql/transactions/delete_index_lookup_transactions.test
 test/sql/transactions/min_max_deletes.test
 test/sql/transactions/min_max_updates.test
@@ -3915,6 +3917,7 @@ test/sql/transactions/statement-preprocessor/multistatement_is_transactional_cha
 test/sql/transactions/statement-preprocessor/multistatement_is_transactional_chained_PRAGMA.test
 test/sql/transactions/statement-preprocessor/multistatement_is_transactional_chained_PRAGMA_BEGIN.test
 test/sql/transactions/statement-preprocessor/pivot_is_handled_correctly.test
+test/sql/transactions/test_alter_sequence_ownership_conflict.test
 test/sql/transactions/test_basic_transactions.test
 test/sql/transactions/test_create_drop_conflict.test
 test/sql/transactions/test_create_drop_conflict_variation1.test

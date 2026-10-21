@@ -92,7 +92,7 @@ fn bind_expression_list(
         types = vec![LogicalType::SQLNULL; list.values[0].len()];
         for row in &values {
             for (i, value) in row.iter().enumerate() {
-                types[i] = max_logical_type(&types[i], &expression_return_type(value))?;
+                types[i] = max_logical_type(&scope.context, &types[i], &expression_return_type(value))?;
             }
         }
         for ty in &mut types {

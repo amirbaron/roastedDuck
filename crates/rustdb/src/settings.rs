@@ -871,6 +871,10 @@ impl Settings {
                 let enabled = value.default_cast_as(&LogicalType::BOOLEAN)?;
                 self.planner.order_by_non_integer_literal = enabled.as_bool().unwrap_or(false);
             }
+            "old_implicit_casting" => {
+                let enabled = value.default_cast_as(&LogicalType::BOOLEAN)?;
+                self.planner.old_implicit_casting = enabled.as_bool().unwrap_or(false);
+            }
             "scalar_subquery_error_on_multiple_rows" => {
                 let enabled = value.default_cast_as(&LogicalType::BOOLEAN)?;
                 self.planner.scalar_subquery_error_on_multiple_rows = enabled.as_bool().unwrap_or(true);
@@ -1040,6 +1044,7 @@ impl Settings {
             "order_by_non_integer_literal" => {
                 self.planner.order_by_non_integer_literal = defaults.order_by_non_integer_literal;
             }
+            "old_implicit_casting" => self.planner.old_implicit_casting = defaults.old_implicit_casting,
             "scalar_subquery_error_on_multiple_rows" => {
                 self.planner.scalar_subquery_error_on_multiple_rows =
                     defaults.scalar_subquery_error_on_multiple_rows;

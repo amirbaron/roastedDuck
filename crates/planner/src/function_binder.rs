@@ -96,8 +96,8 @@ pub fn normalize_type(ty: &LogicalType) -> Result<LogicalType> {
 }
 
 /// The common type of two types, or a Not implemented error (DuckDB's `MaxLogicalType`).
-pub fn max_logical_type(left: &LogicalType, right: &LogicalType) -> Result<LogicalType> {
-    LogicalType::try_max_logical_type(left, right).ok_or_else(|| {
+pub fn max_logical_type(context: &ClientContext, left: &LogicalType, right: &LogicalType) -> Result<LogicalType> {
+    context.try_max_logical_type(left, right).ok_or_else(|| {
         Error::not_implemented(format!(
             "Cannot combine types {left} and {right} - an explicit cast is required"
         ))
@@ -147,6 +147,7 @@ fn switch_varchar_comparison(ty: &LogicalType) -> bool {
 /// The type two sides of a comparison are compared at; `None` if they cannot be compared
 /// (DuckDB's `BoundComparisonExpression::TryBindComparison`).
 pub fn try_bind_comparison(
+    context: &ClientContext,
     left: &LogicalType,
     right: &LogicalType,
     comparison: ExpressionType,
@@ -163,7 +164,7 @@ pub fn try_bind_comparison(
     let result = if is_equality {
         LogicalType::force_max_logical_type(left, right)
     } else {
-        match LogicalType::try_max_logical_type(left, right) {
+        match context.try_max_logical_type(left, right) {
             Some(result) => result,
             None => return Ok(None),
         }
@@ -324,7 +325,16 @@ impl<'a> FunctionBinder<'a> {
     }
 
     fn implicit_cast_cost(&self, from: &LogicalType, to: &LogicalType) -> i64 {
-        self.context.casts.implicit_cast_cost(from, to)
+        let cost = self.context.casts.implicit_cast_cost(from, to);
+        if cost < 0
+            && self.context.config.old_implicit_casting
+            && from.id() != LogicalTypeId::Blob
+            && to.id() == LogicalTypeId::Varchar
+        {
+            // Costlier than any other candidate, including binding a template.
+            return 10_000_000_000;
+        }
+        cost
     }
 
     /// The cost of calling a variadic overload (DuckDB's `BindVarArgsFunctionCost`).
@@ -595,6 +605,7 @@ impl<'a> FunctionBinder<'a> {
             &mut function.varargs,
             &mut function.return_type,
             &children,
+            self.context.config.old_implicit_casting,
         )?;
         let mut bind_info: Option<Arc<dyn FunctionData>> = None;
         if let Some(bind) = function.bind.clone() {
@@ -656,6 +667,7 @@ impl<'a> FunctionBinder<'a> {
             &mut function.varargs,
             &mut function.return_type,
             &children,
+            self.context.config.old_implicit_casting,
         )?;
         let mut bind_info = None;
         let mut children = children;
@@ -870,6 +882,8 @@ type TemplateBindings = CaseInsensitiveMap<Vec<LogicalType>>;
 struct TemplateContext<'a> {
     signature: &'a str,
     location: Option<u64>,
+    /// `old_implicit_casting`: bindings of any two types combine.
+    old_implicit_casting: bool,
 }
 
 /// Binds every unbound template inside `source` to `actual` (DuckDB's handling of
@@ -917,7 +931,12 @@ fn infer_template(
         if &last == actual {
             return Ok(());
         }
-        if let Some(promoted) = LogicalType::try_max_logical_type(&last, actual) {
+        let promoted = if context.old_implicit_casting {
+            Some(LogicalType::force_max_logical_type(&last, actual))
+        } else {
+            LogicalType::try_max_logical_type(&last, actual)
+        };
+        if let Some(promoted) = promoted {
             if promoted != last {
                 steps.push(actual.clone());
                 steps.push(promoted);
@@ -1018,6 +1037,7 @@ fn resolve_template_types(
     varargs: &mut Option<LogicalType>,
     return_type: &mut LogicalType,
     children: &[Expression],
+    old_implicit_casting: bool,
 ) -> Result<()> {
     let templated = arguments.iter().any(is_templated)
         || varargs.as_ref().is_some_and(is_templated)
@@ -1035,6 +1055,7 @@ fn resolve_template_types(
             let context = TemplateContext {
                 signature: &signature,
                 location: child.query_location,
+                old_implicit_casting,
             };
             infer_template(argument, &expression_return_type(child), &mut bindings, &context)?;
         }
@@ -1044,6 +1065,7 @@ fn resolve_template_types(
             let context = TemplateContext {
                 signature: &signature,
                 location: child.query_location,
+                old_implicit_casting,
             };
             infer_template(varargs, &expression_return_type(child), &mut bindings, &context)?;
         }
