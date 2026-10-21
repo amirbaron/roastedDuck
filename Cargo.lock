@@ -1139,6 +1139,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustdb-zstd"
+version = "1.5.6"
+dependencies = [
+ "ruzstd",
+]
+
+[[package]]
 name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
