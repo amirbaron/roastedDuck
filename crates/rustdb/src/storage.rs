@@ -103,7 +103,19 @@ fn storage_options(attach: &AttachOptions) -> Result<StorageOptions> {
             usize::try_from(size).map_err(|_| Error::invalid_input("block size too large"))?;
     }
     if let Some(size) = &attach.row_group_size {
-        options.row_group_size = unsigned(size, "row_group_size")?;
+        let size = unsigned(size, "row_group_size")?;
+        if size == 0 {
+            return Err(Error::not_implemented(format!(
+                "Invalid row group size: {size} - row group size must be bigger than 0"
+            )));
+        }
+        let vector_size = rustdb_common::STANDARD_VECTOR_SIZE as u64;
+        if size % vector_size != 0 {
+            return Err(Error::not_implemented(format!(
+                "Invalid row group size: {size} - row group size must be divisible by the vector size ({vector_size})"
+            )));
+        }
+        options.row_group_size = size;
     }
     Ok(options)
 }

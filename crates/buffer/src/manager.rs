@@ -210,16 +210,22 @@ impl ManagerShared {
             self.evicted(tag).fetch_add(size, Ordering::Relaxed);
             return Ok(());
         }
-        // Other sizes go into a file of their own: [size][header size][buffer].
+        // Other sizes go into a file of their own: [size][header size][buffer]. As in
+        // DuckDB, the file is created before the disk space is reserved: when the
+        // reservation fails, the empty file stays until the block is destroyed.
         let path = self.temporary_block_path(block_id);
         let file_size = buffer.alloc_size() as u64 + 16;
+        self.evicted(tag)
+            .fetch_add(buffer.alloc_size() as u64, Ordering::Relaxed);
+        let write_error = |err: std::io::Error| io_error(format!("Could not write file \"{}\": {err}", path.display()));
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)
+            .map_err(write_error)?;
         handle.manager.disk.increase(file_size)?;
         let write = || -> std::io::Result<()> {
-            let file = OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(&path)?;
             write_all_at(&file, &(buffer.size() as u64).to_le_bytes(), 0)?;
             write_all_at(&file, &(buffer.header_size() as u64).to_le_bytes(), 8)?;
             // SAFETY: the buffer is being evicted: no readers, lock held.
@@ -227,14 +233,12 @@ impl ManagerShared {
         };
         if let Err(err) = write() {
             handle.manager.disk.decrease(file_size);
+            self.evicted(tag)
+                .fetch_sub(buffer.alloc_size() as u64, Ordering::Relaxed);
+            drop(file);
             let _ = std::fs::remove_file(&path);
-            return Err(io_error(format!(
-                "Could not write file \"{}\": {err}",
-                path.display()
-            )));
+            return Err(write_error(err));
         }
-        self.evicted(tag)
-            .fetch_add(buffer.alloc_size() as u64, Ordering::Relaxed);
         Ok(())
     }
 

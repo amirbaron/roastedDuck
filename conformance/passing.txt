@@ -2903,6 +2903,7 @@ test/sql/ordinality/ordinality_constant.test
 test/sql/ordinality/ordinality_inout.test
 test/sql/outofcore/block_file_evicted_bytes_accounting.test_slow
 test/sql/outofcore/evicted_memory_bytes_updates.test_slow
+test/sql/outofcore/leftover_temp_files_issue_6420.test_slow
 test/sql/outofcore/out_of_core_aggregation.test_slow
 test/sql/outofcore/out_of_core_hash_join.test_slow
 test/sql/outofcore/out_of_core_sort.test_slow
@@ -3688,6 +3689,7 @@ test/sql/storage/parallel/batch_insert_filtered_row_groups.test_slow
 test/sql/storage/parallel/batch_insert_mix_batches.test_slow
 test/sql/storage/parallel/batch_insert_small_batches.test_slow
 test/sql/storage/parallel/batch_row_group_size_plus_one.test_slow
+test/sql/storage/parallel/custom_row_group_size.test_slow
 test/sql/storage/parallel/insert_many_compressible_batches.test_slow
 test/sql/storage/parallel/insert_many_grouping_sets.test_slow
 test/sql/storage/parallel/insert_non_order_preserving.test_slow
@@ -3750,6 +3752,7 @@ test/sql/storage/storage_version_65.test
 test/sql/storage/storage_versions.test
 test/sql/storage/store_group_order_all.test
 test/sql/storage/struct_default_entries.test_slow
+test/sql/storage/temp_directory/max_swap_space_error.test
 test/sql/storage/temp_directory/max_swap_space_explicit.test
 test/sql/storage/temp_directory/max_swap_space_inmemory.test
 test/sql/storage/temp_directory/max_swap_space_persistent.test
@@ -4003,6 +4006,7 @@ test/sql/table_function/duckdb_functions.test_slow
 test/sql/table_function/duckdb_functions_window.test
 test/sql/table_function/duckdb_indexes.test
 test/sql/table_function/duckdb_keywords.test
+test/sql/table_function/duckdb_memory.test_slow
 test/sql/table_function/duckdb_memory_convert_to_persistent.test
 test/sql/table_function/duckdb_optimizers.test
 test/sql/table_function/duckdb_prepared_statements.test
