@@ -9,9 +9,9 @@
 
 use rustdb_common::{Error, Result};
 use rustdb_function::{FunctionData, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, LogicalType, NativeType, PhysicalType, Vector};
+use rustdb_types::{DataChunk, LogicalType, NativeType, PhysicalType, StringT, Vector};
 
-use crate::scalar::executor::{Str, StrOut, unary};
+use crate::scalar::executor::{StrOut, unary};
 
 /// `CMUtils::Bind`.
 fn bind_internal(
@@ -214,6 +214,19 @@ fn compress_string(input: &[u8], size: usize) -> u128 {
     aligned | u128::from(input.len() as u8)
 }
 
+/// [`compress_string`] of a `string_t`. An inlined string is packed from its 16 bytes
+/// without looking at its characters one by one (`TemplatedReverseMemCpy`): byte-swapped,
+/// its first byte is the most significant, and shifting it down by the bytes the result
+/// lacks leaves the first `size - 1` bytes above an (empty) length byte.
+#[inline]
+fn compress_string_t(input: &StringT, size: usize) -> u128 {
+    if size == 1 || !input.is_inlined() {
+        // SAFETY: the kernel runs while the input vector, and so its string heap, lives.
+        return compress_string(unsafe { input.as_bytes() }, size);
+    }
+    (input.inlined_bits().swap_bytes() >> (8 * (16 - size))) | input.len() as u128
+}
+
 /// `StringDecompress` (and `MiniStringDecompress`).
 fn decompress_string(value: u128, size: usize, out: &mut Vec<u8>) {
     if size == 1 {
@@ -241,12 +254,15 @@ fn string_compress_function(result: &LogicalType) -> ScalarFunctionSet {
             result.clone(),
             move |args, _, out| {
                 macro_rules! run {
-                    ($t:ty) => {
-                        unary::<Str, $t>(args, out, |input, value| {
-                            *value = <$t as Bits>::from_bits(compress_string(input, size));
-                            Ok(true)
-                        })
-                    };
+                    ($t:ty) => {{
+                        rustdb_types::kernels::unary::<StringT, $t>(
+                            &args.columns()[0],
+                            args.len(),
+                            out,
+                            |input| <$t as Bits>::from_bits(compress_string_t(&input, size)),
+                        );
+                        Ok(())
+                    }};
                 }
                 match physical {
                     PhysicalType::UInt8 => run!(u8),
@@ -357,6 +373,31 @@ mod tests {
                 assert_eq!(
                     compress_string(input, size),
                     u128::from_le_bytes(bytes),
+                    "{size} {input:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn inlined_strings_compress_like_their_bytes() {
+        for size in [1usize, 2, 4, 8, 16] {
+            for input in [
+                &b""[..],
+                b"a",
+                b"ab",
+                b"abcdefg",
+                b"abcdefghijkl",
+                b"abcdefghijklmno",
+            ] {
+                if input.len() >= size && size > 1 || size == 1 && input.len() > 1 {
+                    continue;
+                }
+                // SAFETY: `input` outlives the value.
+                let value = unsafe { StringT::from_raw(input) };
+                assert_eq!(
+                    compress_string_t(&value, size),
+                    compress_string(input, size),
                     "{size} {input:?}"
                 );
             }
