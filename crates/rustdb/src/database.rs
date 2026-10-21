@@ -347,7 +347,7 @@ fn parse_force_variant_shredding(value: &Value) -> Result<LogicalType> {
         )));
     }
     check_shredding_type(&bound)?;
-    Ok(wrap_shredding_levels(&bound))
+    Ok(rustdb_storage::statistics::wrap_shredded_levels(&bound))
 }
 
 /// The type checks of `ForceVariantShredding::SetGlobal`.
@@ -408,29 +408,6 @@ fn check_shredding_type(ty: &LogicalType) -> Result<()> {
             "Variants can not be shredded on type: {ty}"
         ))),
     }
-}
-
-/// `TypeVisitor::VisitReplace` wrapping every level of a shredding in
-/// `STRUCT(typed_value <level>, untyped_value_index UINTEGER)`.
-fn wrap_shredding_levels(ty: &LogicalType) -> LogicalType {
-    use rustdb_types::LogicalTypeId as L;
-    let level = match ty.id() {
-        L::Struct => LogicalType::struct_type(
-            ty.struct_children()
-                .unwrap_or_default()
-                .iter()
-                .map(|(name, field)| (name.clone(), wrap_shredding_levels(field)))
-                .collect(),
-        ),
-        L::List => LogicalType::list(wrap_shredding_levels(
-            ty.child_type().unwrap_or(&LogicalType::INVALID),
-        )),
-        _ => ty.clone(),
-    };
-    LogicalType::struct_type(vec![
-        ("typed_value".to_owned(), level),
-        ("untyped_value_index".to_owned(), LogicalType::UINTEGER),
-    ])
 }
 
 /// Whether `name` is `force_compression`.

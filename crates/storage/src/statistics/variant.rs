@@ -250,6 +250,29 @@ pub fn structured_type(shredding: &LogicalType) -> LogicalType {
     }
 }
 
+/// The shredded type of a structured type (`TypeVisitor::VisitReplace` wrapping every
+/// level in `STRUCT(typed_value <level>, untyped_value_index UINTEGER)`), the inverse of
+/// [`structured_type`].
+pub fn wrap_shredded_levels(ty: &LogicalType) -> LogicalType {
+    let level = match ty.id() {
+        LogicalTypeId::Struct => LogicalType::struct_type(
+            ty.struct_children()
+                .unwrap_or_default()
+                .iter()
+                .map(|(name, field)| (name.clone(), wrap_shredded_levels(field)))
+                .collect(),
+        ),
+        LogicalTypeId::List => LogicalType::list(wrap_shredded_levels(
+            ty.child_type().unwrap_or(&LogicalType::INVALID),
+        )),
+        _ => ty.clone(),
+    };
+    LogicalType::struct_type(vec![
+        ("typed_value".to_owned(), level),
+        ("untyped_value_index".to_owned(), LogicalType::UINTEGER),
+    ])
+}
+
 /// `VariantStats::GetTypedStats`: the statistics of the typed values of a shredded level.
 pub fn typed_stats(stats: &BaseStatistics) -> &BaseStatistics {
     if stats.logical_type().id() != LogicalTypeId::Struct {

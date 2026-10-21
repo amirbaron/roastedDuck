@@ -7,8 +7,9 @@ use std::sync::Arc;
 use rustdb_common::Result;
 use rustdb_function::{FunctionState, ScalarKernel};
 use rustdb_planner::{Expression, ExpressionKind};
-use rustdb_storage::statistics::{BaseStatistics, NumericValue};
+use rustdb_storage::statistics::{BaseStatistics, NumericValue, find_child_stats, is_fully_shredded};
 use rustdb_types::kernels::binary;
+use rustdb_types::variant::VariantPathComponent;
 use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, PhysicalType, Value, Vector};
 
 use super::{StatisticsPropagator, greater, has_min_max, numeric_max, numeric_min, set_max, set_min};
@@ -65,6 +66,9 @@ pub(super) fn propagate_scalar_function(
         }
         "struct_extract" | "array_extract" if child_stats.len() == 2 => {
             Ok(propagate_struct_extract(expression, child_stats))
+        }
+        "variant_extract" if child_stats.len() == 2 => {
+            Ok(propagate_variant_extract(expression, child_stats))
         }
         "date_trunc" if child_stats.len() == 2 => {
             Ok(propagate_date_trunc(propagator, expression, child_stats))
@@ -280,6 +284,32 @@ fn propagate_struct_extract(
         .iter()
         .position(|(name, _)| name.to_lowercase() == key)?;
     child_stats.first()?.struct_children()?.get(index).cloned()
+}
+
+/// DuckDB's `VariantExtractPropagateStats`: the statistics of the field (by name) or
+/// element (by 1-based index) of a fully shredded VARIANT, when that is fully shredded too.
+fn propagate_variant_extract(
+    expression: &Expression,
+    child_stats: &[BaseStatistics],
+) -> Option<BaseStatistics> {
+    let ExpressionKind::Function(function) = &expression.kind else {
+        return None;
+    };
+    let path = function.children.get(1)?.as_constant()?;
+    let component = match path.logical_type().id() {
+        LogicalTypeId::Varchar => VariantPathComponent::Key(path.as_str()?.to_owned()),
+        _ => VariantPathComponent::Index(path.as_u32()?.checked_sub(1)?),
+    };
+    let variant_stats = child_stats.first()?;
+    let shredded = variant_stats.variant()?.shredded_stats()?;
+    if !is_fully_shredded(shredded) {
+        return None;
+    }
+    let field = find_child_stats(shredded, &component)?;
+    if !is_fully_shredded(field) {
+        return None;
+    }
+    Some(variant_stats.wrap_extracted_field_as_variant(field))
 }
 
 /// DuckDB's `DateTruncStatistics`: `date_trunc(part, x)` over a DATE or TIMESTAMP with a
