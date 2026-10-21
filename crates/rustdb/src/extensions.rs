@@ -317,6 +317,8 @@ pub(crate) fn extension_rows(is_loaded: impl Fn(&str) -> bool) -> Result<Vec<Vec
     }
     let directory = extension_path("");
     let directory = directory.rsplit_once('/').map_or("", |(directory, _)| directory);
+    // `fs.ListFiles` through the client's file system.
+    rustdb_function::file_system::verify_can_access_directory(directory)?;
     if let Ok(entries) = std::fs::read_dir(directory) {
         let mut files: Vec<String> = entries
             .filter_map(|entry| entry.ok()?.file_name().into_string().ok())

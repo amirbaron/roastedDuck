@@ -460,23 +460,26 @@ impl SecretManager {
         Ok(())
     }
 
-    /// `SecretManager::InitializeSecrets`: the storages, on first use.
-    fn initialize(state: &mut ManagerState) {
+    /// `SecretManager::InitializeSecrets`: the storages, on first use. Reading the
+    /// persistent secret directory needs file system access.
+    fn initialize(state: &mut ManagerState) -> Result<()> {
         if state.initialized {
-            return;
+            return Ok(());
         }
         if state.config.allow_persistent_secrets {
             let path = expand_home(&state.config.secret_path);
+            rustdb_function::file_system::verify_can_access_directory(&path)?;
             state.local_file = Some(LocalFileStorage::new(&path));
         }
         state.initialized = true;
+        Ok(())
     }
 
     /// `SecretManager::BindCreateSecret` and `CreateSecret`: runs the secret function of
     /// the type and provider, then stores the secret.
     pub fn create_secret(&self, input: &CreateSecretInput) -> Result<()> {
         let mut state = self.lock();
-        Self::initialize(&mut state);
+        Self::initialize(&mut state)?;
         // Without a provider the type must exist (its default provider is used);
         // otherwise the type's provider must.
         let was_default = input.provider.is_empty();
@@ -626,7 +629,7 @@ impl SecretManager {
         storage: &str,
     ) -> Result<()> {
         let mut state = self.lock();
-        Self::initialize(&mut state);
+        Self::initialize(&mut state)?;
         let key = name.to_lowercase();
         let in_local = state
             .local_file
@@ -695,7 +698,7 @@ impl SecretManager {
     /// `SecretManager::AllSecrets`: the storages in name order (`local_file`, `memory`).
     pub fn all_secrets(&self) -> Result<Vec<SecretEntry>> {
         let mut state = self.lock();
-        Self::initialize(&mut state);
+        Self::initialize(&mut state)?;
         // Each storage lists its secrets by upper-cased name, like a catalog set.
         let by_name = |secrets: &mut Vec<KeyValueSecret>| {
             secrets.sort_by_cached_key(|secret| secret.name.to_uppercase());
