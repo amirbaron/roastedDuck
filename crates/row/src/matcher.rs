@@ -455,34 +455,71 @@ unsafe fn match_fixed(
         rhs_all_valid: bool,
         no_match: &mut Option<&mut Vec<u32>>,
     ) -> usize {
+        #[allow(
+            clippy::inline_always,
+            reason = "called from several loops; each must inline it"
+        )]
+        #[inline(always)]
+        unsafe fn equal<T: MatchValue>(lhs: *const u8, rhs: *const u8) -> bool {
+            // SAFETY: both point to a `T` (caller contract).
+            unsafe { T::load(lhs).compare(T::load(rhs)) == Ordering::Equal }
+        }
+        /// Equality of the input value in `slot` with the stored one at `rhs`, where
+        /// NULLs match only NULLs, and only with `nulls_match` (`IS NOT DISTINCT FROM`).
+        #[allow(
+            clippy::inline_always,
+            reason = "called from several loops; each must inline it"
+        )]
+        #[inline(always)]
+        unsafe fn matches<T: MatchValue>(
+            lhs: &VectorFormat<'_>,
+            slot: usize,
+            rhs: *const u8,
+            rhs_null: bool,
+            nulls_match: bool,
+        ) -> bool {
+            let lhs_null = !lhs.slot_is_valid(slot);
+            if lhs_null || rhs_null {
+                nulls_match && lhs_null && rhs_null
+            } else {
+                // SAFETY: the slot and the row hold a `T` (caller contract).
+                unsafe { equal::<T>(lhs.slot_ptr(slot, size_of::<T>().max(1)), rhs) }
+            }
+        }
         let width = size_of::<T>().max(1);
         let lhs_all_valid = lhs.all_valid();
         // SAFETY: rows are pinned rows; slots come from the vector's selection.
         unsafe {
-            // With no NULL input value, `IS NOT DISTINCT FROM` is `=` (a NULL stored value
-            // differs from every input value).
-            if matches!(predicate, MatchPredicate::Equal | MatchPredicate::NotDistinctFrom) && lhs_all_valid {
+            let rhs = |idx: usize| rhs_rows[idx].as_ptr().add(offset);
+            if matches!(predicate, MatchPredicate::Equal | MatchPredicate::NotDistinctFrom) {
                 // The hot path of hash table probes and aggregate lookups: the input's
                 // selection and the stored rows' validity are resolved outside the loop.
-                #[allow(
-                    clippy::inline_always,
-                    reason = "called from three loops; each must inline it"
-                )]
-                #[inline(always)]
-                unsafe fn equal<T: MatchValue>(lhs: *const u8, rhs: *const u8) -> bool {
-                    // SAFETY: both point to a `T` (caller contract).
-                    unsafe { T::load(lhs).compare(T::load(rhs)) == Ordering::Equal }
+                if lhs_all_valid {
+                    // With no NULL input value, `IS NOT DISTINCT FROM` is `=` (a NULL stored
+                    // value differs from every input value).
+                    return match (&lhs.sel, rhs_all_valid) {
+                        (SlotMap::Identity, true) => compact(sel, count, no_match, |idx| {
+                            equal::<T>(lhs.slot_ptr(idx, width), rhs(idx))
+                        }),
+                        (SlotMap::Indices(indices), true) => compact(sel, count, no_match, |idx| {
+                            equal::<T>(lhs.slot_ptr(indices[idx] as usize, width), rhs(idx))
+                        }),
+                        _ => compact(sel, count, no_match, |idx| {
+                            !rhs_null(idx) && equal::<T>(lhs.slot_ptr(lhs.slot(idx), width), rhs(idx))
+                        }),
+                    };
                 }
-                let rhs = |idx: usize| rhs_rows[idx].as_ptr().add(offset);
-                return match (&lhs.sel, rhs_all_valid) {
-                    (SlotMap::Identity, true) => compact(sel, count, no_match, |idx| {
-                        equal::<T>(lhs.slot_ptr(idx, width), rhs(idx))
+                // NULLs match only NULLs, and only for `IS NOT DISTINCT FROM`.
+                let nulls_match = matches!(predicate, MatchPredicate::NotDistinctFrom);
+                return match &lhs.sel {
+                    SlotMap::Identity => compact(sel, count, no_match, |idx| {
+                        matches::<T>(lhs, idx, rhs(idx), rhs_null(idx), nulls_match)
                     }),
-                    (SlotMap::Indices(indices), true) => compact(sel, count, no_match, |idx| {
-                        equal::<T>(lhs.slot_ptr(indices[idx] as usize, width), rhs(idx))
+                    SlotMap::Indices(indices) => compact(sel, count, no_match, |idx| {
+                        matches::<T>(lhs, indices[idx] as usize, rhs(idx), rhs_null(idx), nulls_match)
                     }),
-                    _ => compact(sel, count, no_match, |idx| {
-                        !rhs_null(idx) && equal::<T>(lhs.slot_ptr(lhs.slot(idx), width), rhs(idx))
+                    SlotMap::Fixed(_) => compact(sel, count, no_match, |idx| {
+                        matches::<T>(lhs, lhs.slot(idx), rhs(idx), rhs_null(idx), nulls_match)
                     }),
                 };
             }
@@ -490,10 +527,7 @@ unsafe fn match_fixed(
                 let slot = lhs.slot(idx);
                 let lhs_null = !lhs_all_valid && !lhs.slot_is_valid(slot);
                 predicate.evaluate(
-                    || {
-                        T::load(lhs.slot_ptr(slot, width))
-                            .compare(T::load(rhs_rows[idx].as_ptr().add(offset)))
-                    },
+                    || T::load(lhs.slot_ptr(slot, width)).compare(T::load(rhs(idx))),
                     lhs_null,
                     rhs_null(idx),
                 )
