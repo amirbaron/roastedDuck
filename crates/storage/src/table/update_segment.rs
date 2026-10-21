@@ -366,6 +366,15 @@ impl UpdateSegment {
         self.ty.physical_type()
     }
 
+    /// The size of one updated value (`UpdateSegment::type_size`, `GetTypeIdSize`; a
+    /// validity value is a `bool`).
+    pub(crate) fn type_size(&self) -> usize {
+        match self.physical() {
+            PhysicalType::Bit => 1,
+            physical => physical.size(),
+        }
+    }
+
     fn read(&self) -> RwLockReadGuard<'_, Vec<Option<VectorUpdates>>> {
         self.vectors.read().unwrap_or_else(PoisonError::into_inner)
     }

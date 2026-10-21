@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGua
 use rustdb_ast::{AttachInfo, OnCreateConflict};
 use rustdb_catalog::Catalog;
 use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_storage::storage_manager::StorageManager;
+use rustdb_storage::storage_manager::{InMemoryStorageManager, StorageManager};
 use rustdb_types::{LogicalTypeId, Value};
 
 use crate::AccessMode;
@@ -35,6 +35,41 @@ impl ValidChecker {
     }
 }
 
+/// The storage of an attached database (DuckDB's `StorageManager`).
+#[derive(Debug)]
+pub(crate) enum DatabaseStorage {
+    /// A database file.
+    File(Arc<StorageManager>),
+    /// An in-memory database (`StorageManager::InMemory`).
+    InMemory(Arc<InMemoryStorageManager>),
+}
+
+impl DatabaseStorage {
+    /// The database file, unless the database is in memory.
+    pub fn file(&self) -> Option<&Arc<StorageManager>> {
+        match self {
+            Self::File(storage) => Some(storage),
+            Self::InMemory(_) => None,
+        }
+    }
+
+    /// Sets how checkpoints compress segments (`force_compression`).
+    pub fn set_compression_config(&self, config: rustdb_storage::compression::CompressionConfig) {
+        match self {
+            Self::File(storage) => storage.set_compression_config(config),
+            Self::InMemory(storage) => storage.set_compression_config(config),
+        }
+    }
+
+    /// Sets the settings checkpoints follow.
+    pub fn set_checkpoint_config(&self, config: rustdb_storage::storage_manager::CheckpointConfig) {
+        match self {
+            Self::File(storage) => storage.set_checkpoint_config(config),
+            Self::InMemory(storage) => storage.set_checkpoint_config(config),
+        }
+    }
+}
+
 /// How a database is closed (DuckDB's `DatabaseCloseAction`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CloseAction {
@@ -51,8 +86,7 @@ pub(crate) struct AttachedDatabase {
     /// The file, or `""` for an in-memory database.
     pub path: String,
     pub catalog: Arc<Catalog>,
-    /// The database file, unless the database is in memory.
-    pub storage: Option<Arc<StorageManager>>,
+    pub storage: DatabaseStorage,
     pub read_only: bool,
     /// Whether this is the database opened at start-up (`IsInitialDatabase`).
     pub is_initial: std::sync::atomic::AtomicBool,
@@ -89,7 +123,7 @@ impl AttachedDatabase {
 
     /// `AttachedDatabase::Invalidate` after a failed checkpoint.
     fn invalidate(&self, reason: &str) {
-        let recovery = if self.storage.is_none() {
+        let recovery = if matches!(self.storage, DatabaseStorage::InMemory(_)) {
             "It is an in-memory database, so its data cannot be recovered."
         } else {
             "Detach and reattach it before using it again."
@@ -122,24 +156,31 @@ impl AttachedDatabase {
         )
     }
 
-    /// Writes a checkpoint of the database if it has storage and is still valid
+    /// Writes a checkpoint of the database if it is still valid
     /// (`SingleFileStorageManager::CreateCheckpoint`).
     pub fn create_checkpoint(
         &self,
         mode: crate::storage::CheckpointMode,
         transactions: Option<&rustdb_catalog::TransactionManager>,
     ) -> Result<()> {
-        let Some(storage) = &self.storage else {
-            return Ok(());
-        };
         // `SingleFileCheckpointWriter::CreateCheckpoint`: no checkpoint of an invalidated
         // instance; an invalidated database is not written to any more either.
         if self.instance_validity.invalidated().is_some() || self.validity.invalidated().is_some() {
             return Ok(());
         }
-        crate::storage::create_checkpoint(&self.catalog, storage, mode, transactions, &|error| {
-            self.checkpoint_failed(&error)
-        })
+        let failed = |error: Error| self.checkpoint_failed(&error);
+        match &self.storage {
+            DatabaseStorage::File(storage) => {
+                crate::storage::create_checkpoint(&self.catalog, storage, mode, transactions, &failed)
+            }
+            DatabaseStorage::InMemory(storage) => crate::storage::create_in_memory_checkpoint(
+                &self.catalog,
+                storage,
+                mode,
+                transactions,
+                &failed,
+            ),
+        }
     }
 
     /// Closes the database, writing a checkpoint if `checkpoint` (`checkpoint_on_shutdown`)
@@ -157,10 +198,7 @@ impl AttachedDatabase {
     /// The checkpoint of [`AttachedDatabase::close`].
     fn close_checkpoint(&self, checkpoint: bool, action: CloseAction) -> Result<()> {
         let create_checkpoint = checkpoint
-            && self
-                .storage
-                .as_ref()
-                .is_some_and(|storage| !storage.is_read_only())
+            && self.storage.file().is_some_and(|storage| !storage.is_read_only())
             && self.instance_validity.invalidated().is_none()
             && self.validity.invalidated().is_none();
         if !create_checkpoint {
@@ -210,6 +248,9 @@ pub(crate) struct AttachOptions {
     /// `TYPE`: the storage type, lowercase (`AttachOptions::db_type`); `None` for DuckDB
     /// files.
     pub db_type: Option<String>,
+    /// `COMPRESS`: whether checkpoints of an in-memory database compress its tables;
+    /// `None` when not given (`CompressInMemory::AUTOMATIC`).
+    pub compress: Option<bool>,
 }
 
 impl AttachOptions {
@@ -267,7 +308,10 @@ impl AttachOptions {
                     };
                 }
                 "vacuum_rebuild_indexes" => {}
-                "compress" => options.kept.push((name.to_lowercase(), value.clone())),
+                "compress" => {
+                    options.compress = Some(value_as_bool(value)?);
+                    options.kept.push((name.to_lowercase(), value.clone()));
+                }
                 "storage_version" => {
                     options.storage_version = Some(value.clone());
                     options.kept.push((name.to_lowercase(), value.clone()));
@@ -587,22 +631,28 @@ impl DatabaseManager {
         }
         let catalog = Arc::new(Catalog::new(name.clone())?);
         let storage = if path.is_empty() {
-            catalog.set_io(Arc::new(rustdb_storage::TableIoManager::new(
+            let storage = Arc::new(InMemoryStorageManager::new(
                 buffer_manager.clone(),
-                Arc::new(rustdb_buffer::InMemoryBlockManager::default()),
-            )))?;
-            None
+                options.compress == Some(true),
+            ));
+            catalog.set_io(Arc::clone(storage.io()))?;
+            DatabaseStorage::InMemory(storage)
         } else {
+            if options.compress.is_some() {
+                return Err(Error::invalid_input(
+                    "COMPRESS can only be set for in-memory databases",
+                ));
+            }
             let storage = open_storage(&path, options, buffer_manager.clone(), &catalog)?;
             catalog.set_io(Arc::clone(storage.io()))?;
             catalog.set_storage(&storage);
-            Some(storage)
+            DatabaseStorage::File(storage)
         };
         if let Some((schema, table)) = &options.default_table {
             catalog.set_default_table(schema, table);
         }
         let tags = storage
-            .as_ref()
+            .file()
             .map(|storage| {
                 // `SingleFileBlockManager::AddStorageVersionTag`.
                 vec![(

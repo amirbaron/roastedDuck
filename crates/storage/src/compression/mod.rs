@@ -719,7 +719,10 @@ pub(crate) fn init_analyze(
         }
         CompressionType::Fsst if physical == PhysicalType::Varchar => fsst::init_analyze(ty, info),
         CompressionType::DictFsst if physical == PhysicalType::Varchar => dict_fsst::init_analyze(ty, info),
-        CompressionType::Zstd if physical == PhysicalType::Varchar => zstd::init_analyze(ty, info),
+        // `ZSTDStorage::StringInitAnalyze`: ZSTD pages are blocks of the database file.
+        CompressionType::Zstd if physical == PhysicalType::Varchar && !io.block_manager().in_memory() => {
+            zstd::init_analyze(ty, info)
+        }
         _ => None,
     })
 }

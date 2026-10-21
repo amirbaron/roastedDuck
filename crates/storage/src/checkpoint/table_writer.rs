@@ -9,10 +9,10 @@
 //! segments share blocks. Row groups without changes keep their metadata on disk
 //! (`experimental_metadata_reuse`), and so do tables whose row groups all do.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
-use rustdb_buffer::{BlockId, MAXIMUM_BLOCK};
+use rustdb_buffer::{BlockHandle, BlockId, MAXIMUM_BLOCK, MemoryTag};
 use rustdb_common::{Error, Result};
 use rustdb_serde::binary::BinarySerializer;
 use rustdb_serde::{SerializationOptions, Serializer};
@@ -24,53 +24,127 @@ use super::stream::StreamDeserializer;
 use crate::compression::uncompressed::{
     BIG_STRING_MARKER_SIZE, DICTIONARY_HEADER_SIZE, read_overflow_string_bytes,
 };
-use crate::compression::{CompressionInfo, CompressionType};
-use crate::data_table::DataTable;
+use crate::compression::{CompressionConfig, CompressionInfo, CompressionType};
+use crate::data_table::{DataTable, TableIoManager};
 use crate::metadata::{MetaBlockPointer, MetadataManager, MetadataReader, MetadataWriter};
 use crate::single_file_block_manager::SingleFileBlockManager;
 use crate::statistics::{BaseStatistics, serialize_table_statistics};
+use crate::table::column_data::ColumnData;
 use crate::table::column_segment::{ColumnSegment, Layout};
 use crate::table::{
     PerColumnMetadataBlocks, RowGroup, RowGroupCollection, RowGroupMetadata, TableMetadataPointer,
 };
 
-/// The writer of data blocks of a checkpoint (DuckDB's `PartialBlockManager` for full
-/// checkpoints): segments smaller than 80% of a block share blocks.
+/// The writer of data blocks of a checkpoint (DuckDB's `PartialBlockManager`): segments
+/// smaller than 80% of a block share blocks.
 #[derive(Debug)]
 pub struct BlockWriter {
-    manager: Arc<SingleFileBlockManager>,
+    target: BlockTarget,
     /// The block being filled: its id, contents and used size.
     partial: Option<(BlockId, Vec<u8>, usize)>,
     /// Every data block this checkpoint references, with the number of references.
     pub used_blocks: BTreeMap<BlockId, u32>,
 }
 
+/// Where a [`BlockWriter`] puts its blocks (DuckDB's `PartialBlockType`).
+#[derive(Debug)]
+enum BlockTarget {
+    /// `FULL_CHECKPOINT`: blocks of the database file.
+    File(Arc<SingleFileBlockManager>),
+    /// `IN_MEMORY_CHECKPOINT`: buffer-managed blocks of an in-memory database.
+    InMemory(InMemoryBlocks),
+}
+
+/// The blocks an in-memory checkpoint compressed segments into (the blocks of
+/// `InMemoryPartialBlock`s): transient `IN_MEMORY_TABLE` memory, found by the
+/// temporary block id the data pointers of the segments carry.
+#[derive(Debug)]
+pub struct InMemoryBlocks {
+    io: Arc<TableIoManager>,
+    config: CompressionConfig,
+    blocks: HashMap<BlockId, Arc<BlockHandle>>,
+}
+
+impl InMemoryBlocks {
+    /// The block with temporary id `block_id`.
+    pub(crate) fn block(&self, block_id: BlockId) -> Result<&Arc<BlockHandle>> {
+        self.blocks
+            .get(&block_id)
+            .ok_or_else(|| Error::internal(format!("in-memory checkpoint block {block_id} not found")))
+    }
+}
+
 impl BlockWriter {
     pub fn new(manager: Arc<SingleFileBlockManager>) -> Self {
         Self {
-            manager,
+            target: BlockTarget::File(manager),
             partial: None,
             used_blocks: BTreeMap::new(),
         }
     }
 
+    /// A writer of the blocks of an in-memory checkpoint of the tables of `io`
+    /// (`PartialBlockType::IN_MEMORY_CHECKPOINT`).
+    pub fn in_memory(io: Arc<TableIoManager>, config: CompressionConfig) -> Self {
+        Self {
+            target: BlockTarget::InMemory(InMemoryBlocks {
+                io,
+                config,
+                blocks: HashMap::new(),
+            }),
+            partial: None,
+            used_blocks: BTreeMap::new(),
+        }
+    }
+
+    /// The blocks of an in-memory checkpoint, `None` for a checkpoint of a file.
+    pub(crate) fn in_memory_blocks(&self) -> Option<&InMemoryBlocks> {
+        match &self.target {
+            BlockTarget::File(_) => None,
+            BlockTarget::InMemory(blocks) => Some(blocks),
+        }
+    }
+
     pub(crate) fn block_size(&self) -> usize {
-        rustdb_buffer::BlockManager::block_size(self.manager.as_ref())
+        match &self.target {
+            BlockTarget::File(manager) => rustdb_buffer::BlockManager::block_size(manager.as_ref()),
+            BlockTarget::InMemory(blocks) => {
+                rustdb_buffer::BlockManager::block_size(blocks.io.block_manager().as_ref())
+            }
+        }
     }
 
     /// What the codecs of this checkpoint need to know: the block size, the storage version
     /// written and the compression settings.
     pub(crate) fn compression_info(&self) -> CompressionInfo {
+        let (storage_version, config) = match &self.target {
+            BlockTarget::File(manager) => (manager.storage_version(), manager.compression_config()),
+            BlockTarget::InMemory(blocks) => (blocks.io.storage_version(), blocks.config),
+        };
         CompressionInfo {
             block_size: self.block_size(),
-            storage_version: self.manager.storage_version(),
-            config: self.manager.compression_config(),
+            storage_version,
+            config,
         }
     }
 
-    /// A new block id for checkpoint data.
+    /// A new block id for checkpoint data; an in-memory checkpoint allocates the block's
+    /// memory now.
     pub(crate) fn new_block(&mut self) -> Result<BlockId> {
-        let id = self.manager.get_free_block_id_for_checkpoint()?;
+        let id = match &mut self.target {
+            BlockTarget::File(manager) => manager.get_free_block_id_for_checkpoint()?,
+            BlockTarget::InMemory(blocks) => {
+                let pin = blocks.io.buffer_manager().allocate_for(
+                    MemoryTag::InMemoryTable,
+                    blocks.io.block_manager().as_ref(),
+                    false,
+                )?;
+                let block = Arc::clone(pin.block());
+                let id = block.block_id();
+                blocks.blocks.insert(id, block);
+                id
+            }
+        };
         self.used_blocks.insert(id, 1);
         Ok(id)
     }
@@ -101,7 +175,55 @@ impl BlockWriter {
     /// Writes a block, zero-padding it to the block size.
     pub(crate) fn write_block(&self, block_id: BlockId, mut data: Vec<u8>) -> Result<()> {
         data.resize(self.block_size(), 0);
-        self.manager.write_block(block_id, &data)
+        match &self.target {
+            BlockTarget::File(manager) => manager.write_block(block_id, &data),
+            BlockTarget::InMemory(blocks) => {
+                let block = blocks.block(block_id)?;
+                let pin = blocks.io.buffer_manager().pin(block)?;
+                // SAFETY: the block was allocated by this checkpoint and is not shared yet.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(data.as_ptr(), pin.as_ptr(), data.len().min(pin.len()));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Keeps the in-memory overflow string blocks of an uncompressed string segment of an
+    /// in-memory checkpoint, which the segment's strings keep pointing into.
+    pub(crate) fn keep_string_blocks(&mut self, string_blocks: &[Arc<BlockHandle>]) {
+        if let BlockTarget::InMemory(blocks) = &mut self.target {
+            for block in string_blocks {
+                blocks.blocks.insert(block.block_id(), Arc::clone(block));
+            }
+        }
+    }
+
+    /// Keeps the blocks of the persistent segments of `column` an in-memory checkpoint
+    /// keeps as they are (`WritePersistentSegments` moves them to the result column).
+    pub(crate) fn keep_segment_blocks(&mut self, column: &ColumnData) {
+        let BlockTarget::InMemory(blocks) = &mut self.target else {
+            return;
+        };
+        for node in column.segments().nodes() {
+            let segment = &node.node;
+            if let Some(block) = segment.block() {
+                blocks.blocks.insert(segment.block_id(), Arc::clone(block));
+            }
+            for overflow in &segment.string_state().memory_blocks {
+                blocks
+                    .blocks
+                    .insert(overflow.block.block_id(), Arc::clone(&overflow.block));
+            }
+        }
+    }
+
+    /// Takes the blocks an in-memory checkpoint wrote, once its segments are built.
+    pub fn into_in_memory_blocks(self) -> Option<InMemoryBlocks> {
+        match self.target {
+            BlockTarget::File(_) => None,
+            BlockTarget::InMemory(blocks) => Some(blocks),
+        }
     }
 
     /// Stores the bytes of a segment and returns where (`GetBlockAllocation`).
@@ -227,7 +349,8 @@ impl OverflowWriter {
 /// The bytes of a transient segment to store on disk (`FinalizeAppend`) and its overflow
 /// blocks: fixed-size values, validity masks per vector, or a string dictionary moved
 /// next to its offsets when the segment is less than 80% full. Big strings are moved to
-/// on-disk overflow blocks and their markers rewritten.
+/// on-disk overflow blocks and their markers rewritten; an in-memory checkpoint has no
+/// overflow writer and keeps them in the segment's in-memory overflow blocks.
 pub(crate) fn segment_bytes(
     segment: &ColumnSegment,
     writer: &mut BlockWriter,
@@ -262,11 +385,23 @@ pub(crate) fn segment_bytes(
             let mut dictionary =
                 unsafe { buffer.bytes(dictionary_end - dictionary_size, dictionary_size)? }.to_vec();
             let mut overflow = OverflowWriter::new();
+            let in_memory = writer.in_memory_blocks().is_some();
+            if in_memory {
+                // The strings keep pointing into the segment's in-memory overflow blocks.
+                let string_blocks: Vec<Arc<BlockHandle>> = segment
+                    .string_state()
+                    .memory_blocks
+                    .iter()
+                    .map(|block| Arc::clone(&block.block))
+                    .collect();
+                writer.keep_string_blocks(&string_blocks);
+                overflow.blocks = string_blocks.iter().map(|block| block.block_id()).collect();
+            }
             let mut previous = 0i32;
             for &offset in &offsets {
                 let is_marker = offset < 0 && offset.unsigned_abs() != previous.unsigned_abs();
                 previous = offset;
-                if !is_marker {
+                if !is_marker || in_memory {
                     continue;
                 }
                 let position = dictionary_size - offset.unsigned_abs() as usize;
@@ -706,25 +841,24 @@ fn merge_kept_column_statistics(
     }
 }
 
-/// Writes a table's committed data (`DataTable::Checkpoint`, `RowGroupCollection::Checkpoint`
-/// and `SingleFileTableDataWriter::FinalizeTable`): first the data of every row group,
-/// then, unless the whole table is unchanged and keeps its metadata, the metadata of the
-/// row groups, the table statistics and the row group pointers.
-pub fn write_table_data(
+/// A row group of a table checkpoint once the vacuum ran: the row group (a merged one is
+/// new), its first row (relative to the collection's base row id), and what writing it
+/// produced, `None` when it was not written.
+type CheckpointedRowGroup<W> = (Arc<RowGroup>, u64, Option<W>);
+
+/// `RowGroupCollection::Checkpoint` up to installing the result: drops the row groups
+/// without committed rows and merges row groups with deletes (`VacuumTask`), compresses
+/// the version information of the kept ones and writes (the `CheckpointTask`s) every
+/// merged row group and, with `write_kept`, every kept one; `write` gets the row group,
+/// its new first row and whether the row ids of the table moved so far. Returns the
+/// row groups, whether any was dropped or merged, and the table's new row count.
+fn checkpoint_row_groups<W>(
     table: &DataTable,
-    metadata: &MetadataManager,
-    table_writer: &mut MetadataWriter<'_>,
-    blocks: &mut BlockWriter,
-    options: &SerializationOptions,
-    checkpoint_id: u64,
     settings: TableWriteSettings,
-) -> Result<TableDataPointer> {
+    write_kept: bool,
+    mut write: impl FnMut(&Arc<RowGroup>, u64, bool) -> Result<W>,
+) -> Result<(Vec<CheckpointedRowGroup<W>>, bool, u64)> {
     let collection = table.row_groups();
-    let types = collection.types().to_vec();
-    // `RowGroupWriter::compression_types`: the declared compression of each column.
-    let compression_types: Vec<CompressionType> =
-        table.columns().iter().map(|column| column.compression).collect();
-    let table_name = format!("{}.{}", table.info().schema_name(), table.info().table_name());
     let row_groups = collection.row_groups();
     let nodes = row_groups.tree().nodes();
     let segment_count = nodes.len();
@@ -733,25 +867,11 @@ pub fn write_table_data(
         nodes.iter().map(|node| Some(Arc::clone(&node.node))).collect();
     let mut vacuum = initialize_vacuum_state(table, &nodes, &mut segments, settings);
     let mut dropped_any = segments.iter().any(Option::is_none);
-    // The data of every row group (the checkpoint tasks), with the first row each has
-    // once the row groups before it were vacuumed.
-    let mut written: Vec<(Arc<RowGroup>, u64, RowGroupWriteData)> = Vec::with_capacity(segment_count);
+    // Every row group with the first row it has once the row groups before it were
+    // vacuumed.
+    let mut written: Vec<CheckpointedRowGroup<W>> = Vec::with_capacity(segment_count);
     let mut new_total_rows = 0u64;
     let mut total_vacuum_tasks = 0u64;
-    let context = TableWriteContext {
-        collection,
-        metadata,
-        settings,
-        compression_types: &compression_types,
-        table_name: &table_name,
-    };
-    let write = |row_group: &Arc<RowGroup>,
-                 row_start: u64,
-                 row_ids_changed: bool,
-                 blocks: &mut BlockWriter|
-     -> Result<RowGroupWriteData> {
-        write_row_group_data(&context, row_group, row_start, blocks, row_ids_changed)
-    };
     for segment_idx in 0..segment_count {
         let schedule = total_vacuum_tasks < settings.max_vacuum_tasks;
         match schedule_vacuum(
@@ -782,9 +902,9 @@ pub fn write_table_data(
                 )?;
                 for (offset, target) in targets.into_iter().enumerate() {
                     segments[segment_idx + offset] = Some(Arc::clone(&target));
-                    let data = write(&target, new_total_rows, true, blocks)?;
+                    let data = write(&target, new_total_rows, true)?;
                     let count = target.count();
-                    written.push((target, new_total_rows, data));
+                    written.push((target, new_total_rows, Some(data)));
                     new_total_rows += count;
                 }
                 continue;
@@ -803,11 +923,55 @@ pub fn write_table_data(
         if let Some(version_info) = row_group.version_info() {
             version_info.compress_version_ids(settings.lowest_active_start);
         }
-        let data = write(&row_group, new_total_rows, vacuum.row_ids_changed, blocks)?;
+        let data = if write_kept {
+            Some(write(&row_group, new_total_rows, vacuum.row_ids_changed)?)
+        } else {
+            None
+        };
         let count = row_group.count();
         written.push((row_group, new_total_rows, data));
         new_total_rows += count;
     }
+    Ok((written, dropped_any, new_total_rows))
+}
+
+/// Writes a table's committed data (`DataTable::Checkpoint`, `RowGroupCollection::Checkpoint`
+/// and `SingleFileTableDataWriter::FinalizeTable`): first the data of every row group,
+/// then, unless the whole table is unchanged and keeps its metadata, the metadata of the
+/// row groups, the table statistics and the row group pointers.
+pub fn write_table_data(
+    table: &DataTable,
+    metadata: &MetadataManager,
+    table_writer: &mut MetadataWriter<'_>,
+    blocks: &mut BlockWriter,
+    options: &SerializationOptions,
+    checkpoint_id: u64,
+    settings: TableWriteSettings,
+) -> Result<TableDataPointer> {
+    let collection = table.row_groups();
+    let types = collection.types().to_vec();
+    // `RowGroupWriter::compression_types`: the declared compression of each column.
+    let compression_types: Vec<CompressionType> =
+        table.columns().iter().map(|column| column.compression).collect();
+    let table_name = format!("{}.{}", table.info().schema_name(), table.info().table_name());
+    let context = TableWriteContext {
+        collection,
+        metadata,
+        settings,
+        compression_types: &compression_types,
+        table_name: &table_name,
+    };
+    let (written, dropped_any, new_total_rows) =
+        checkpoint_row_groups(table, settings, true, |row_group, row_start, row_ids_changed| {
+            write_row_group_data(&context, row_group, row_start, blocks, row_ids_changed)
+        })?;
+    let written: Vec<(Arc<RowGroup>, u64, RowGroupWriteData)> = written
+        .into_iter()
+        .map(|(row_group, row_start, data)| {
+            data.map(|data| (row_group, row_start, data))
+                .ok_or_else(|| Error::internal("a row group of a table checkpoint was not written"))
+        })
+        .collect::<Result<_>>()?;
     let supports_per_column_writes = settings.supports_per_column_writes();
     // An unchanged table that exists on disk keeps its metadata.
     if settings.metadata_reuse
@@ -994,89 +1158,87 @@ pub fn write_table_data(
     })
 }
 
-/// Checkpoints a table of an in-memory database (DuckDB's `InMemoryCheckpointer::WriteTable`
-/// with `InMemoryTableDataWriter`): nothing is written, but a full checkpoint vacuums
-/// deleted rows, dropping and merging row groups, and the version information of the
-/// kept row groups is compressed.
-pub fn checkpoint_in_memory_table(table: &DataTable, settings: TableWriteSettings) -> Result<()> {
-    let _append = table.append_lock();
+/// Checkpoints a table of an in-memory database (`DataTable::Checkpoint` with an
+/// `InMemoryTableDataWriter`): its row groups are vacuumed, the merged ones and, unless
+/// `vacuum_only` (`CheckpointType::VACUUM_ONLY`), the kept ones too are compressed into
+/// in-memory blocks, and the table is made of the result, with statistics recomputed
+/// from its row groups. The caller guarantees that no transaction writes to the table,
+/// and for a full checkpoint (`settings`) that none needs an older version of its data.
+pub fn checkpoint_in_memory_table(
+    table: &DataTable,
+    config: CompressionConfig,
+    settings: TableWriteSettings,
+    vacuum_only: bool,
+) -> Result<()> {
     let collection = table.row_groups();
-    let row_groups = collection.row_groups();
-    let nodes = row_groups.tree().nodes();
-    let segment_count = nodes.len();
-    let mut segments: Vec<Option<Arc<RowGroup>>> =
-        nodes.iter().map(|node| Some(Arc::clone(&node.node))).collect();
-    let mut vacuum = initialize_vacuum_state(table, &nodes, &mut segments, settings);
-    let mut changed = segments.iter().any(Option::is_none);
-    let mut layout: Vec<(Arc<RowGroup>, u64)> = Vec::with_capacity(segment_count);
-    let mut new_total_rows = 0u64;
-    let mut total_vacuum_tasks = 0u64;
-    for segment_idx in 0..segment_count {
-        let schedule = total_vacuum_tasks < settings.max_vacuum_tasks;
-        match schedule_vacuum(
-            &mut vacuum,
-            &segments,
-            segment_idx,
-            schedule,
-            collection.row_group_size(),
-        ) {
-            VacuumDecision::Merge {
-                merge_count,
-                target_count,
-                merge_rows,
-            } => {
-                total_vacuum_tasks += 1;
-                changed = true;
-                let targets = vacuum_row_groups(
-                    collection,
-                    &vacuum,
-                    &mut segments,
-                    segment_idx,
-                    merge_count,
-                    target_count,
-                    merge_rows,
-                )?;
-                for target in targets {
-                    let count = target.count();
-                    layout.push((target, new_total_rows));
-                    new_total_rows += count;
-                }
-                continue;
-            }
-            VacuumDecision::Skip => {
-                total_vacuum_tasks += 1;
-                continue;
-            }
-            VacuumDecision::Keep => {}
-        }
-        let Some(row_group) = segments[segment_idx].clone() else {
-            continue;
-        };
-        if let Some(version_info) = row_group.version_info() {
-            version_info.compress_version_ids(settings.lowest_active_start);
-        }
-        let count = row_group.count();
-        layout.push((row_group, new_total_rows));
-        new_total_rows += count;
-    }
-    // `DataTable::Checkpoint`: appends start a new row group, which a later vacuum can
-    // merge.
+    let io = collection.io();
+    let compression_types: Vec<CompressionType> =
+        table.columns().iter().map(|column| column.compression).collect();
+    let table_name = format!("{}.{}", table.info().schema_name(), table.info().table_name());
+    let mut blocks = BlockWriter::in_memory(Arc::clone(io), config);
+    let (row_groups, _, new_total_rows) =
+        checkpoint_row_groups(table, settings, !vacuum_only, |row_group, row_start, _| {
+            let count = row_group.count();
+            (0..row_group.column_count())
+                .map(|index| {
+                    let mut context = CheckpointContext {
+                        info: blocks.compression_info(),
+                        writer: &mut blocks,
+                        io,
+                        column_compression: compression_types
+                            .get(index)
+                            .copied()
+                            .unwrap_or(CompressionType::Auto),
+                        table_name: &table_name,
+                        storage_version: settings.storage_version,
+                        geometry_minimum_shredding_size: settings.geometry_minimum_shredding_size,
+                    };
+                    checkpoint_column(row_group.column(index)?, count, row_start, &mut context)
+                })
+                .collect::<Result<Vec<_>>>()
+        })?;
+    // `InMemoryCheckpointer::WriteTable` flushes the partial blocks after each table.
+    blocks.flush()?;
+    let blocks = blocks
+        .into_in_memory_blocks()
+        .ok_or_else(|| Error::internal("in-memory checkpoint without in-memory blocks"))?;
+    // `DataTable::Checkpoint`: appends start a new row group.
     collection.set_append_mode(crate::table::RowGroupAppendMode::SuggestNew);
-    if !changed {
-        return Ok(());
-    }
-    // `RowGroupCollection::Checkpoint`: the table consists of the kept and merged row
-    // groups now.
-    let base = row_groups.base_row_id();
-    let nodes = layout
-        .into_iter()
-        .map(|(node, row_start)| crate::table::SegmentNode {
-            row_start: base + row_start,
-            node,
+    let _append = table.append_lock();
+    let types = collection.types();
+    // `TableStatistics::InitializeEmpty(other)`, then the statistics of every row group.
+    let mut stats = collection.statistics();
+    let mut columns: Vec<BaseStatistics> = types
+        .iter()
+        .enumerate()
+        .map(|(index, ty)| {
+            let mut column = BaseStatistics::create_empty(ty.clone());
+            if let Some(Some(distinct)) = stats.distinct.get(index) {
+                column.set_distinct_count(distinct.count());
+            }
+            column
         })
         .collect();
-    row_groups.tree().replace(nodes);
+    let tree = collection.row_groups();
+    let base = tree.base_row_id();
+    let mut nodes = Vec::with_capacity(row_groups.len());
+    for (row_group, row_start, written) in row_groups {
+        let node = match written {
+            Some(data) => Arc::new(row_group.with_in_memory_checkpoint(io, types, &data, &blocks)?),
+            None => row_group,
+        };
+        for (index, column) in columns.iter_mut().enumerate() {
+            node.column(index)?.merge_into_statistics(column)?;
+        }
+        nodes.push(crate::table::SegmentNode {
+            row_start: base + row_start,
+            node,
+        });
+    }
+    tree.tree().replace(nodes);
     collection.set_total_rows(new_total_rows);
+    stats.columns = columns;
+    collection.set_statistics(stats);
     Ok(())
 }
 

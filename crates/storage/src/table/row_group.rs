@@ -17,6 +17,7 @@ use super::segment_tree::Segment;
 use crate::VECTOR_SIZE;
 use crate::checkpoint::pointers::PersistentColumnData;
 use crate::checkpoint::table_reader::read_column;
+use crate::checkpoint::table_writer::InMemoryBlocks;
 use crate::data_table::TableIoManager;
 use crate::metadata::{MetaBlockPointer, MetadataManager};
 use crate::statistics::{BaseStatistics, FilterPropagateResult};
@@ -253,6 +254,32 @@ impl RowGroup {
             .clone_from(&self.version_info_lock());
         row_group.set_metadata(metadata);
         row_group
+    }
+
+    /// A row group sharing this one's versions whose columns an in-memory checkpoint
+    /// wrote to `blocks` as `data` (the `result_row_group` of `RowGroup::WriteToDisk` with
+    /// an `InMemoryRowGroupWriter`).
+    pub(crate) fn with_in_memory_checkpoint(
+        &self,
+        io: &Arc<TableIoManager>,
+        types: &[LogicalType],
+        data: &[PersistentColumnData],
+        blocks: &InMemoryBlocks,
+    ) -> Result<Self> {
+        let columns = data
+            .iter()
+            .zip(types)
+            .enumerate()
+            .map(|(index, (data, ty))| {
+                ColumnData::from_in_memory_checkpoint(Arc::clone(io), index, ty.clone(), data, blocks)
+                    .map(Arc::new)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let row_group = Self::from_columns(columns, self.count());
+        row_group
+            .version_info_lock()
+            .clone_from(&self.version_info_lock());
+        Ok(row_group)
     }
 
     /// A row group of `count` rows stored in the database file, whose columns are built

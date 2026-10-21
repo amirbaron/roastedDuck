@@ -62,7 +62,7 @@ fn version_error(checkpoint_iteration: u64, expected: u64) -> Error {
 /// Replays the WAL of the database's file, if any, and sets up the WAL that commits are
 /// logged to from now on (`WriteAheadLog::Replay`).
 pub(crate) fn replay(database: &Database, attached: &Arc<AttachedDatabase>) -> Result<()> {
-    let Some(storage) = attached.storage.clone() else {
+    let Some(storage) = attached.storage.file().cloned() else {
         return Ok(());
     };
     // `SingleFileStorageManager::LoadDatabase` times the replay.

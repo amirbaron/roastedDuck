@@ -5,11 +5,11 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
-use rustdb_common::Result;
+use rustdb_common::{Result, STANDARD_VECTOR_SIZE};
 
 use crate::data_table::DataTable;
 use crate::index::IndexRemovalType;
-use crate::table::{DeleteRecord, UpdateRegistration};
+use crate::table::{DeleteRecord, DeletedRows, UpdateRegistration};
 use crate::transaction::{NOT_DELETED_ID, TransactionData};
 use crate::wal::WalBatch;
 
@@ -87,10 +87,29 @@ pub(crate) enum UndoEntry {
 #[allow(clippy::struct_excessive_bools, reason = "independent flags, as in DuckDB")]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct UndoProperties {
+    /// The estimated size of the changes in bytes: what DuckDB's undo buffer holds for
+    /// them, plus the rows of consecutive deletes and the transaction-local rows.
+    pub estimated_size: u64,
     pub has_updates: bool,
     pub has_deletes: bool,
     pub has_catalog_changes: bool,
     pub has_dropped_entries: bool,
+}
+
+/// The flags and length in front of every entry of DuckDB's undo buffer
+/// (`UNDO_ENTRY_HEADER_SIZE`).
+const UNDO_ENTRY_HEADER_SIZE: u64 = 8;
+/// The sizes of the payloads of DuckDB's undo entries: a `CatalogEntry *`, a
+/// `DeleteInfo`, an `AppendInfo`, an `UpdateInfo` and a `SequenceValue`.
+const CATALOG_ENTRY_SIZE: u64 = 8;
+const DELETE_INFO_SIZE: u64 = 48;
+const APPEND_INFO_SIZE: u64 = 24;
+const UPDATE_INFO_SIZE: u64 = 88;
+const SEQUENCE_VALUE_SIZE: u64 = 24;
+
+/// The space an undo entry with a payload of `size` bytes takes (`UndoBuffer::CreateEntry`).
+const fn undo_entry_size(size: u64) -> u64 {
+    (size + UNDO_ENTRY_HEADER_SIZE).next_multiple_of(8)
 }
 
 /// The ordered undo log of a transaction.
@@ -172,18 +191,37 @@ impl UndoBuffer {
         self.entries.is_empty()
     }
 
+    /// `UndoBuffer::GetProperties`.
     pub fn properties(&self) -> UndoProperties {
         let mut properties = UndoProperties::default();
         for entry in &self.entries {
-            match entry {
+            let payload = match entry {
                 UndoEntry::Catalog(change) => {
                     properties.has_catalog_changes = true;
                     properties.has_dropped_entries |= change.is_drop();
+                    CATALOG_ENTRY_SIZE
                 }
-                UndoEntry::Delete { .. } => properties.has_deletes = true,
-                UndoEntry::Update { .. } => properties.has_updates = true,
-                UndoEntry::Append { .. } | UndoEntry::Sequence(_) => {}
-            }
+                UndoEntry::Delete { record, .. } => {
+                    properties.has_deletes = true;
+                    match &record.rows {
+                        // Consecutive deletes store no rows, but log a row id each.
+                        DeletedRows::Consecutive(count) => {
+                            properties.estimated_size += 8 * *count as u64;
+                            DELETE_INFO_SIZE
+                        }
+                        DeletedRows::Rows(rows) => DELETE_INFO_SIZE + 2 * rows.len() as u64,
+                    }
+                }
+                UndoEntry::Update { registration, .. } => {
+                    properties.has_updates = true;
+                    // `UpdateInfo::GetAllocSize`: a `sel_t` and a value per row of a vector.
+                    let row_size = 4 + registration.segment.type_size() as u64;
+                    (UPDATE_INFO_SIZE + row_size * STANDARD_VECTOR_SIZE as u64).next_multiple_of(8)
+                }
+                UndoEntry::Append { .. } => APPEND_INFO_SIZE,
+                UndoEntry::Sequence(_) => SEQUENCE_VALUE_SIZE,
+            };
+            properties.estimated_size += undo_entry_size(payload);
         }
         properties
     }

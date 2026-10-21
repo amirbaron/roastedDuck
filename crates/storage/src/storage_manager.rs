@@ -1,12 +1,15 @@
-//! The storage of an attached database file (DuckDB's `SingleFileStorageManager`): the
-//! block manager, the metadata manager and the I/O manager of its tables.
+//! The storage of an attached database (DuckDB's `SingleFileStorageManager`): of a file,
+//! the block manager, the metadata manager and the I/O manager of its tables; of an
+//! in-memory database, the I/O manager and the estimated size of its changes.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
-use rustdb_buffer::{BlockManager, BufferManager};
+use rustdb_buffer::{BlockManager, BufferManager, InMemoryBlockManager};
 use rustdb_common::Result;
 use rustdb_serde::{SerializationCompatibility, SerializationOptions};
 
+use crate::compression::CompressionConfig;
 use crate::data_table::TableIoManager;
 use crate::metadata::{MetaBlockPointer, MetadataManager};
 use crate::single_file_block_manager::{BlockManagerOptions, SingleFileBlockManager};
@@ -314,6 +317,114 @@ impl StorageManager {
             serialize_enum_as_string: false,
             serialize_default_values: false,
             compatibility: SerializationCompatibility::from_index(self.block_manager.storage_version()),
+        }
+    }
+}
+
+/// The storage of an in-memory database (DuckDB's `SingleFileStorageManager` of the
+/// `:memory:` path): an `InMemoryBlockManager` with the latest storage version and no
+/// WAL. Commits add an estimate of their changes to the WAL size instead, which decides
+/// when a commit checkpoints (vacuums and, with `COMPRESS`, compresses) the tables
+/// (`InMemoryCheckpointer`).
+#[derive(Debug)]
+pub struct InMemoryStorageManager {
+    io: Arc<TableIoManager>,
+    /// `ATTACH ... (COMPRESS)` (`CompressInMemory::COMPRESS`).
+    compress: bool,
+    /// The estimated size of the changes committed since the last checkpoint.
+    wal_size: AtomicU64,
+    checkpoint_config: Mutex<CheckpointConfig>,
+    compression_config: Mutex<CompressionConfig>,
+}
+
+impl InMemoryStorageManager {
+    /// `SingleFileStorageManager::LoadDatabase` of an in-memory database.
+    pub fn new(buffer_manager: BufferManager, compress: bool) -> Self {
+        let block_manager: Arc<dyn BlockManager> = Arc::new(InMemoryBlockManager::default());
+        Self {
+            io: Arc::new(TableIoManager::new(buffer_manager, block_manager)),
+            compress,
+            wal_size: AtomicU64::new(0),
+            checkpoint_config: Mutex::default(),
+            compression_config: Mutex::default(),
+        }
+    }
+
+    /// Where tables of this database keep their data.
+    pub fn io(&self) -> &Arc<TableIoManager> {
+        &self.io
+    }
+
+    /// Whether checkpoints compress the table data (`CompressionIsEnabled`).
+    pub fn compression_is_enabled(&self) -> bool {
+        self.compress
+    }
+
+    /// The estimated size of the changes committed since the last checkpoint
+    /// (`GetWALSize`).
+    pub fn wal_size(&self) -> u64 {
+        self.wal_size.load(Ordering::Acquire)
+    }
+
+    /// Adds the estimated size of a commit (`AddWALSize`).
+    pub fn add_wal_size(&self, size: u64) {
+        self.wal_size.fetch_add(size, Ordering::AcqRel);
+    }
+
+    /// `SetWALSize`.
+    pub fn set_wal_size(&self, size: u64) {
+        self.wal_size.store(size, Ordering::Release);
+    }
+
+    /// The settings checkpoints follow.
+    pub fn checkpoint_config(&self) -> CheckpointConfig {
+        *self
+            .checkpoint_config
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Sets the settings checkpoints follow.
+    pub fn set_checkpoint_config(&self, config: CheckpointConfig) {
+        *self
+            .checkpoint_config
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = config;
+    }
+
+    /// The compression settings checkpoints follow.
+    pub fn compression_config(&self) -> CompressionConfig {
+        *self
+            .compression_config
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Sets how checkpoints compress segments (`force_compression`).
+    pub fn set_compression_config(&self, config: CompressionConfig) {
+        *self
+            .compression_config
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = config;
+    }
+
+    /// How a checkpoint writes the data of tables: `full_checkpoint` when no transaction
+    /// needs older data (`CheckpointType::FULL_CHECKPOINT`), with the oldest active
+    /// transaction's start time.
+    pub fn table_write_settings(
+        &self,
+        full_checkpoint: bool,
+        lowest_active_start: u64,
+    ) -> crate::checkpoint::table_writer::TableWriteSettings {
+        let config = self.checkpoint_config();
+        crate::checkpoint::table_writer::TableWriteSettings {
+            metadata_reuse: false,
+            force_column_metadata_reuse: false,
+            storage_version: self.io.storage_version(),
+            full_checkpoint,
+            max_vacuum_tasks: config.max_vacuum_tasks,
+            lowest_active_start,
+            geometry_minimum_shredding_size: config.geometry_minimum_shredding_size,
         }
     }
 }

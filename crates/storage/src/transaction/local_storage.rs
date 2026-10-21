@@ -101,6 +101,35 @@ impl LocalTableStorage {
         self.collection().total_rows() - self.deleted_rows()
     }
 
+    /// The estimated size of the local rows (`LocalTableStorage::EstimatedSize`): rows
+    /// filling a row group without deletes are written optimistically, so only the data
+    /// pointers of the row groups written count (rustdb writes none optimistically, which
+    /// leaves the one being appended to); otherwise the fixed-size values of every row.
+    pub fn estimated_size(&self) -> u64 {
+        /// `sizeof` of DuckDB's `PersistentRowGroupData`, `PersistentColumnData` and
+        /// `DataPointer`.
+        const ROW_GROUP_DATA_SIZE: u64 = 64;
+        const COLUMN_DATA_SIZE: u64 = 88;
+        const DATA_POINTER_SIZE: u64 = 176;
+        let collection = self.collection();
+        let types = collection.types();
+        if collection.total_rows() >= collection.row_group_size() && self.deleted_rows() == 0 {
+            return ROW_GROUP_DATA_SIZE + types.len() as u64 * (COLUMN_DATA_SIZE + DATA_POINTER_SIZE);
+        }
+        let row_size: u64 = types.iter().map(|ty| ty.physical_type().size() as u64).sum();
+        self.added_rows() * row_size + self.index_memory_size() as u64
+    }
+
+    /// The memory of the indexes over the local rows (the index sizes of
+    /// `LocalTableStorage::EstimatedSize`).
+    fn index_memory_size(&self) -> usize {
+        self.append_indexes
+            .entries()
+            .iter()
+            .map(|entry| entry.lock().index.in_memory_size())
+            .sum()
+    }
+
     /// Appends the local rows to the table and registers the append in the undo log
     /// (`LocalStorage::Flush`).
     fn flush(&self, transaction: &Transaction) -> Result<()> {
@@ -262,9 +291,13 @@ impl LocalStorage {
     pub fn index_memory_size(&self) -> usize {
         self.tables()
             .iter()
-            .flat_map(|storage| storage.append_indexes.entries())
-            .map(|entry| entry.lock().index.in_memory_size())
+            .map(|storage| storage.index_memory_size())
             .sum()
+    }
+
+    /// The estimated size of the local rows of every table (`LocalStorage::EstimatedSize`).
+    pub fn estimated_size(&self) -> u64 {
+        self.tables().iter().map(|storage| storage.estimated_size()).sum()
     }
 
     /// Rows the transaction inserted into `table` and did not delete (`AddedRows`).

@@ -1,14 +1,14 @@
-//! Opening, checkpointing and closing database files (DuckDB's `AttachedDatabase`,
+//! Opening, checkpointing and closing databases (DuckDB's `AttachedDatabase`,
 //! `StorageManager::LoadDatabase` and `CreateCheckpoint`).
 
 use std::sync::Arc;
 
-use rustdb_catalog::checkpoint::{load_checkpoint, write_checkpoint};
+use rustdb_catalog::checkpoint::{checkpoint_in_memory, load_checkpoint, write_checkpoint};
 use rustdb_catalog::{Catalog, Transaction};
 use rustdb_common::profiling::MetricType;
 use rustdb_common::{Error, ErrorKind, Result};
 use rustdb_serde::SerializationCompatibility;
-use rustdb_storage::storage_manager::{StorageManager, StorageOptions};
+use rustdb_storage::storage_manager::{InMemoryStorageManager, StorageManager, StorageOptions};
 use rustdb_types::Value;
 
 use crate::Config;
@@ -51,6 +51,7 @@ pub(crate) fn startup_options(config: &Config) -> AttachOptions {
         default_table: None,
         no_wal_writes: false,
         db_type: None,
+        compress: None,
     }
 }
 
@@ -164,12 +165,6 @@ pub(crate) fn checkpoint(
     transactions: &rustdb_catalog::TransactionManager,
 ) -> Result<()> {
     database.check_valid()?;
-    if database.storage.is_none() {
-        if !current.changes_made() {
-            checkpoint_in_memory(&database.catalog, transactions)?;
-        }
-        return Ok(());
-    }
     if started && force {
         return Err(Error::new(
             ErrorKind::Transaction,
@@ -197,32 +192,6 @@ pub(crate) fn checkpoint(
         CheckpointMode::Manual
     };
     database.create_checkpoint(mode, Some(transactions))
-}
-
-/// Checkpoints an in-memory database (DuckDB's `InMemoryCheckpointer::CreateCheckpoint`):
-/// every table compresses its version information and, when no other transaction runs
-/// that may still need older data, vacuums its deleted rows.
-fn checkpoint_in_memory(catalog: &Catalog, transactions: &rustdb_catalog::TransactionManager) -> Result<()> {
-    let lowest_active_start = transactions.lowest_active_start();
-    let settings = rustdb_storage::checkpoint::table_writer::TableWriteSettings {
-        full_checkpoint: transactions.active_count() <= 1 && transactions.last_commit() < lowest_active_start,
-        lowest_active_start,
-        ..Default::default()
-    };
-    let system = Transaction::system();
-    for schema in catalog.schemas().scan(&system) {
-        let Some(schema_entry) = schema.as_schema() else {
-            continue;
-        };
-        for entry in schema_entry.tables.scan(&system) {
-            if let rustdb_catalog::EntryKind::Table(table) = &entry.kind
-                && let Some(storage) = &table.storage
-            {
-                rustdb_storage::checkpoint::table_writer::checkpoint_in_memory_table(storage, settings)?;
-            }
-        }
-    }
-    Ok(())
 }
 
 /// Why a checkpoint is written.
@@ -255,11 +224,12 @@ pub(crate) fn create_checkpoint(
     // `FORCE CHECKPOINT` waits until the write transactions finished: a checkpoint
     // written beside them would store rows they appended but had not committed (as
     // deleted rows), so the row ids of their WAL entries would no longer match.
-    let exclusive = storage.wal().and_then(|wal| {
+    let locks = catalog.locks();
+    let exclusive = storage.wal().and_then(|_| {
         if mode == CheckpointMode::Force {
-            Some(wal.checkpoint_lock().exclusive())
+            Some(locks.checkpoint.exclusive())
         } else {
-            wal.checkpoint_lock().try_exclusive()
+            locks.checkpoint.try_exclusive()
         }
     });
     if mode == CheckpointMode::Manual && storage.wal().is_some() && exclusive.is_none() {
@@ -273,9 +243,10 @@ pub(crate) fn create_checkpoint(
         && transactions
             .is_none_or(|transactions| transactions.last_commit() < transactions.lowest_active_start());
     // A full checkpoint only vacuums when no transaction inserting or deleting rows runs
-    // (`TryGetVacuumLock`; otherwise it is a concurrent one).
-    let vacuum_lock = if replace_in_memory {
-        storage.wal().and_then(|wal| wal.vacuum_lock().try_exclusive())
+    // (`TryGetVacuumLock`; otherwise it is a concurrent one), and no committed
+    // transaction is being cleaned up (see `vacuum_allowed`).
+    let vacuum_lock = if replace_in_memory && vacuum_allowed(transactions) {
+        storage.wal().and_then(|_| locks.vacuum.try_exclusive())
     } else {
         None
     };
@@ -317,6 +288,69 @@ pub(crate) fn create_checkpoint(
             error
         })?;
     }
+    Ok(())
+}
+
+/// Whether a checkpoint may vacuum: in DuckDB a committed transaction keeps its locks
+/// until its versions are cleaned up, so no vacuum sees their update chains.
+fn vacuum_allowed(transactions: Option<&rustdb_catalog::TransactionManager>) -> bool {
+    transactions.is_none_or(|transactions| !transactions.cleanup_in_progress())
+}
+
+/// Checkpoints an in-memory database if changes were committed since the last checkpoint
+/// (`SingleFileStorageManager::CreateCheckpoint` with an `InMemoryCheckpointer`): its
+/// tables are vacuumed and compressed, or only vacuumed by an automatic checkpoint of a
+/// database without `COMPRESS` (`CheckpointType::VACUUM_ONLY`). An in-memory checkpoint
+/// replaces the table data, so it only runs while no transaction writes to the database
+/// (it holds the checkpoint and vacuum locks); while a transaction needs data older than
+/// the last commit (`transactions`) it does not vacuum (`CONCURRENT_CHECKPOINT`).
+pub(crate) fn create_in_memory_checkpoint(
+    catalog: &Catalog,
+    storage: &InMemoryStorageManager,
+    mode: CheckpointMode,
+    transactions: Option<&rustdb_catalog::TransactionManager>,
+    failed: &dyn Fn(Error) -> Error,
+) -> Result<()> {
+    let locks = catalog.locks();
+    let exclusive = if mode == CheckpointMode::Force {
+        Some(locks.checkpoint.exclusive())
+    } else {
+        locks.checkpoint.try_exclusive()
+    };
+    if mode == CheckpointMode::Manual && exclusive.is_none() {
+        return Err(Error::new(
+            ErrorKind::Transaction,
+            "Cannot CHECKPOINT: there are other write transactions active. Try using FORCE CHECKPOINT to wait \
+             until all active transactions are finished",
+        ));
+    }
+    // `TryGetVacuumLock`: no transaction inserts or deletes rows.
+    let vacuum_lock = exclusive.as_ref().and_then(|_| locks.vacuum.try_exclusive());
+    if vacuum_lock.is_none() || storage.wal_size() == 0 {
+        return Ok(());
+    }
+    let full_checkpoint = vacuum_allowed(transactions)
+        && transactions
+            .is_none_or(|transactions| transactions.last_commit() < transactions.lowest_active_start());
+    // Committed updates older transactions must not see hold the checkpoint lock in
+    // DuckDB (`recently_committed_transactions`): compressing would fold them in.
+    if !full_checkpoint
+        && transactions.is_some_and(|transactions| transactions.retains_changes(u64::MAX, catalog.name()))
+    {
+        return Ok(());
+    }
+    let vacuum_only = mode == CheckpointMode::Automatic && !storage.compression_is_enabled();
+    // `SingleFileStorageManager::CreateCheckpoint` times writing the checkpoint.
+    let mut timer = rustdb_common::profiling::start_timer(MetricType::CheckpointLatency);
+    checkpoint_in_memory(
+        catalog,
+        storage,
+        full_checkpoint,
+        vacuum_only,
+        transactions.map_or(u64::MAX, rustdb_catalog::TransactionManager::lowest_active_start),
+    )
+    .map_err(failed)?;
+    timer.end();
     Ok(())
 }
 

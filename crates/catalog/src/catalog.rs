@@ -31,6 +31,8 @@ pub struct Catalog {
     default_table: std::sync::Mutex<Option<(String, String)>>,
     /// The storage of a database file (unset in memory), for `pragma_metadata_info`.
     storage: OnceLock<std::sync::Weak<rustdb_storage::storage_manager::StorageManager>>,
+    /// The locks transactions writing to the database hold and checkpoints take.
+    locks: rustdb_storage::checkpoint_lock::DatabaseLocks,
 }
 
 /// How a database is attached (the parts of DuckDB's `AttachedDatabase` the catalog
@@ -61,6 +63,7 @@ impl Catalog {
             attach_info: OnceLock::new(),
             default_table: std::sync::Mutex::default(),
             storage: OnceLock::new(),
+            locks: rustdb_storage::checkpoint_lock::DatabaseLocks::default(),
         };
         let mut catalog = catalog;
         if !catalog.name.eq_ignore_ascii_case("system") {
@@ -77,6 +80,12 @@ impl Catalog {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// The locks transactions writing to the database hold and checkpoints take
+    /// (`DuckTransactionManager::checkpoint_lock` and `vacuum_lock`).
+    pub fn locks(&self) -> &rustdb_storage::checkpoint_lock::DatabaseLocks {
+        &self.locks
     }
 
     /// The object id of the database.

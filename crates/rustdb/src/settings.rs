@@ -862,6 +862,12 @@ impl Settings {
         self.enabled("errors_as_json")
     }
 
+    /// `debug_skip_checkpoint_on_commit`: commits never checkpoint
+    /// (`DebugSkipCheckpointOnCommitSetting`).
+    pub(crate) fn skip_checkpoint_on_commit(&self) -> bool {
+        self.enabled("debug_skip_checkpoint_on_commit")
+    }
+
     /// Whether boolean option `option` was set to true.
     fn enabled(&self, option: &str) -> bool {
         self.assigned.iter().any(|(name, value)| {
