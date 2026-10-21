@@ -78,25 +78,6 @@ fn bind_extract(_: &mut ScalarFunction, input: &BindInput<'_>) -> Result<Option<
     Ok(Some(Arc::new(ExtractPath(component))))
 }
 
-/// `VariantUtils::VariantExtract` for one step: the child as a VARIANT rooted at it, or
-/// NULL if the value is not of the right kind, has no such child, or the child is NULL.
-fn extract_child(data: &VariantData, component: &VariantPathComponent) -> Result<Option<Value>> {
-    let expected = match component {
-        VariantPathComponent::Index(_) => VariantLogicalType::Array,
-        VariantPathComponent::Key(_) => VariantLogicalType::Object,
-    };
-    if data.type_id(0)? != expected {
-        return Ok(None);
-    }
-    let Some(child) = data.find_child(data.nested(0)?, component)? else {
-        return Ok(None);
-    };
-    if data.type_id(child)? == VariantLogicalType::VariantNull {
-        return Ok(None);
-    }
-    Ok(Some(data.rooted_at(child).to_value()))
-}
-
 fn extract_overload(path: LogicalType) -> ScalarFunction {
     ScalarFunction::new(
         "variant_extract",
@@ -108,11 +89,11 @@ fn extract_overload(path: LogicalType) -> ScalarFunction {
                 .as_ref()
                 .and_then(|data| data.as_any().downcast_ref::<ExtractPath>())
                 .ok_or_else(|| Error::internal("variant_extract without bind data"))?;
-            let ty = result.logical_type().clone();
-            *result = map_rows(args.column(0), args.len(), &ty, |data| match data {
-                Some(data) => extract_child(&data, &path.0),
-                None => Ok(None),
-            })?;
+            *result = rustdb_types::variant_vector::extract(
+                args.column(0),
+                std::slice::from_ref(&path.0),
+                args.len(),
+            )?;
             Ok(())
         },
     )

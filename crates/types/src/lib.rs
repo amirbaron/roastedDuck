@@ -40,6 +40,7 @@ mod validity;
 mod value;
 pub mod variant;
 pub mod variant_value;
+pub mod variant_vector;
 mod vector;
 pub mod vector_ops;
 

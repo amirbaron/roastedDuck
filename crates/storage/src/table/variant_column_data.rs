@@ -14,7 +14,9 @@ use std::collections::{BTreeMap, HashMap};
 
 use rustdb_common::libcxx::{UnorderedOrder, string_hash};
 use rustdb_common::{Error, Result};
-use rustdb_types::variant::{VariantData, VariantLogicalType as V, VariantNormalizer, unshredded_type};
+use rustdb_types::variant::{
+    VariantData, VariantLogicalType as V, VariantNormalizer, VariantPathComponent, unshredded_type,
+};
 use rustdb_types::variant_value::{VariantValue, to_variant_data};
 use rustdb_types::{ListEntry, LogicalType, LogicalTypeId, PhysicalType, Value, Vector};
 
@@ -855,28 +857,11 @@ pub(crate) fn unshred_rows(
 /// at the field; NULL where a level is not an OBJECT, lacks the field, or the field is a
 /// VARIANT NULL.
 pub(crate) fn extract_path(input: &Vector, path: &[&str], count: usize) -> Result<Vector> {
-    let mut rows = Vec::with_capacity(count);
-    for row in 0..count {
-        let mut current = VariantData::from_vector(input, row)?;
-        for key in path {
-            let Some(data) = current.take() else {
-                break;
-            };
-            if data.type_id(0)? != V::Object {
-                break;
-            }
-            let component = rustdb_types::variant::VariantPathComponent::Key((*key).to_owned());
-            let Some(child) = data.find_child(data.nested(0)?, &component)? else {
-                break;
-            };
-            if data.type_id(child)? == V::VariantNull {
-                break;
-            }
-            current = Some(data.rooted_at(child));
-        }
-        rows.push(current);
-    }
-    VariantData::write_vector(&rows, &LogicalType::variant())
+    let components: Vec<VariantPathComponent> = path
+        .iter()
+        .map(|key| VariantPathComponent::Key((*key).to_owned()))
+        .collect();
+    rustdb_types::variant_vector::extract(input, &components, count)
 }
 
 /// `Unshred` for row `row` of a shredded level.

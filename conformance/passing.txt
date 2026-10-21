@@ -3860,6 +3860,7 @@ test/sql/storage/types/variant/test_all_types.test
 test/sql/storage/types/variant/test_all_types_single_object.test
 test/sql/storage/types/variant/test_all_types_single_table.test
 test/sql/storage/types/variant/test_all_types_variant.test
+test/sql/storage/types/variant/tpch_sf1.test_slow
 test/sql/storage/types/variant/update.test
 test/sql/storage/types/variant/variant_case_sensitive_fields_shredded.test
 test/sql/storage/types/variant/variant_extract_stats.test
