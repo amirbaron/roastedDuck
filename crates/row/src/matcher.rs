@@ -435,8 +435,10 @@ unsafe fn match_fixed(
         let lhs_all_valid = lhs.all_valid();
         // SAFETY: rows are pinned rows; slots come from the vector's selection.
         unsafe {
-            if predicate == MatchPredicate::Equal && lhs_all_valid {
-                // The hot path of hash table probes.
+            // With no NULL input value, `IS NOT DISTINCT FROM` is `=` (a NULL stored value
+            // differs from every input value).
+            if matches!(predicate, MatchPredicate::Equal | MatchPredicate::NotDistinctFrom) && lhs_all_valid {
+                // The hot path of hash table probes and aggregate lookups.
                 return compact(sel, count, no_match, |idx| {
                     let l = T::load(lhs.slot_ptr(lhs.slot(idx), width));
                     let r = T::load(rhs_rows[idx].as_ptr().add(offset));

@@ -95,6 +95,28 @@ pub fn normalize_type(ty: &LogicalType) -> Result<LogicalType> {
     }
 }
 
+/// A function's rewrite of its bound call into another expression (see
+/// `ScalarFunction::rewrite_expression`, which holds it type-erased).
+pub struct RewriteExpression(
+    #[allow(clippy::type_complexity, reason = "a callback signature")]
+    pub Box<dyn Fn(&ClientContext, Expression) -> Result<Expression> + Send + Sync>,
+);
+
+impl std::fmt::Debug for RewriteExpression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RewriteExpression")
+    }
+}
+
+impl RewriteExpression {
+    /// The callback as the function's `rewrite_expression`.
+    pub fn erased(
+        rewrite: impl Fn(&ClientContext, Expression) -> Result<Expression> + Send + Sync + 'static,
+    ) -> Arc<dyn std::any::Any + Send + Sync> {
+        Arc::new(Self(Box::new(rewrite)))
+    }
+}
+
 /// The common type of two types, or a Not implemented error (DuckDB's `MaxLogicalType`).
 pub fn max_logical_type(context: &ClientContext, left: &LogicalType, right: &LogicalType) -> Result<LogicalType> {
     context.try_max_logical_type(left, right).ok_or_else(|| {
@@ -425,7 +447,8 @@ impl<'a> FunctionBinder<'a> {
             return Ok(Err(Error::binder(format!(
                 "No function matches the given name and argument types '{call}'. You might need to add \
                  explicit type casts.\n\tCandidate functions:\n{list}"
-            ))));
+            ))
+            .with_subtype("NO_MATCHING_FUNCTION")));
         };
         candidates.push(best);
         if candidates.len() > 1 {
@@ -649,7 +672,15 @@ impl<'a> FunctionBinder<'a> {
         let children = self.cast_to_arguments(&function.name, &mut arguments, &mut varargs, children)?;
         function.arguments = arguments;
         function.varargs = varargs;
-        Ok(Expression::function(function, children, bind_info, is_operator))
+        let rewrite = function.rewrite_expression.clone();
+        let bound = Expression::function(function, children, bind_info, is_operator);
+        match rewrite
+            .as_deref()
+            .and_then(|rewrite| rewrite.downcast_ref::<RewriteExpression>())
+        {
+            Some(rewrite) => (rewrite.0)(self.context, bound),
+            None => Ok(bound),
+        }
     }
 
     /// Binds an aggregate call to a chosen overload (DuckDB's `BindAggregateFunction`).

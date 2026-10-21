@@ -628,7 +628,9 @@ pub fn bind_table_function(
                 subquery: Box::new(select),
                 column_name_alias: function_ref.column_name_alias.clone(),
             };
-            return super::bind_subquery_ref(scope, &mut subquery, alias);
+            // Errors in the replacement point at the call (`error.AddQueryLocation(ref)`).
+            return super::bind_subquery_ref(scope, &mut subquery, alias)
+                .map_err(|error| error.with_position_override(location));
         }
     }
     let alias = function_alias(alias, function);

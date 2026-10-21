@@ -72,19 +72,71 @@ fn pop_heap<T>(heap: &mut [T], len: usize, less: &impl Fn(&T, &T) -> bool) {
 /// Heaps up to this size allocate exactly their size up front.
 const SMALL_HEAP: usize = 16;
 
+/// Heaps up to this size (e.g. `arg_max(x, y, 2)` per group) keep their entries in the
+/// state itself: a hash aggregate has one heap per group, and allocating (and, on
+/// another thread, freeing) each of them dominated such queries.
+const INLINE_HEAP: usize = 2;
+
+/// The entries of a [`TopN`].
+#[derive(Clone, Debug)]
+enum Entries<T> {
+    /// The first `len` slots are entries.
+    Inline { len: usize, slots: [T; INLINE_HEAP] },
+    Allocated(Vec<T>),
+}
+
+impl<T: Default> Entries<T> {
+    fn as_slice(&self) -> &[T] {
+        match self {
+            Self::Inline { len, slots } => &slots[..*len],
+            Self::Allocated(entries) => entries,
+        }
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [T] {
+        match self {
+            Self::Inline { len, slots } => &mut slots[..*len],
+            Self::Allocated(entries) => entries,
+        }
+    }
+
+    /// Appends an entry; a heap of at most `capacity` entries has room for it.
+    fn push(&mut self, entry: T, capacity: usize) {
+        match self {
+            Self::Inline { len, slots } => {
+                slots[*len] = entry;
+                *len += 1;
+            }
+            Self::Allocated(entries) => {
+                if entries.capacity() == 0 {
+                    // Small heaps allocate just their size rather than `Vec`'s first
+                    // growth step.
+                    entries.reserve_exact(capacity.min(SMALL_HEAP));
+                }
+                entries.push(entry);
+            }
+        }
+    }
+}
+
 /// A heap keeping the `capacity` best entries by `less` (the best are the smallest).
 #[derive(Clone, Debug)]
 pub(crate) struct TopN<T> {
     capacity: usize,
-    entries: Vec<T>,
+    entries: Entries<T>,
 }
 
-impl<T> TopN<T> {
+impl<T: Default> TopN<T> {
     pub(crate) fn new(capacity: usize) -> Self {
-        Self {
-            capacity,
-            entries: Vec::new(),
-        }
+        let entries = if capacity <= INLINE_HEAP {
+            Entries::Inline {
+                len: 0,
+                slots: std::array::from_fn(|_| T::default()),
+            }
+        } else {
+            Entries::Allocated(Vec::new())
+        };
+        Self { capacity, entries }
     }
 
     pub(crate) fn capacity(&self) -> usize {
@@ -92,11 +144,11 @@ impl<T> TopN<T> {
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.entries.as_slice().is_empty()
     }
 
     pub(crate) fn entries(&self) -> &[T] {
-        &self.entries
+        self.entries.as_slice()
     }
 
     /// Offers an entry; `make` builds it only when it is kept, `replace` overwrites the
@@ -108,31 +160,27 @@ impl<T> TopN<T> {
         make: impl FnOnce() -> T,
         replace: impl FnOnce(&mut T),
     ) {
-        if self.entries.len() < self.capacity {
-            if self.entries.capacity() == 0 {
-                // Small heaps (e.g. `arg_max(x, y, 2)` per group) allocate just their
-                // size rather than `Vec`'s first growth step.
-                self.entries.reserve_exact(self.capacity.min(SMALL_HEAP));
-            }
-            self.entries.push(make());
-            let len = self.entries.len();
-            sift_up(&mut self.entries, len, less);
-        } else if self.entries.first().is_some_and(is_better_than_top) {
-            let len = self.entries.len();
-            pop_heap(&mut self.entries, len, less);
-            replace(&mut self.entries[len - 1]);
-            sift_up(&mut self.entries, len, less);
+        let len = self.entries.as_slice().len();
+        if len < self.capacity {
+            self.entries.push(make(), self.capacity);
+            sift_up(self.entries.as_mut_slice(), len + 1, less);
+        } else if self.entries.as_slice().first().is_some_and(is_better_than_top) {
+            let entries = self.entries.as_mut_slice();
+            pop_heap(entries, len, less);
+            replace(&mut entries[len - 1]);
+            sift_up(entries, len, less);
         }
     }
 
     /// The entries in ascending order of `less` (libc++'s `sort_heap`).
     pub(crate) fn sorted(&mut self, less: &impl Fn(&T, &T) -> bool) -> &[T] {
-        let mut len = self.entries.len();
+        let entries = self.entries.as_mut_slice();
+        let mut len = entries.len();
         while len > 1 {
-            pop_heap(&mut self.entries, len, less);
+            pop_heap(entries, len, less);
             len -= 1;
         }
-        &self.entries
+        entries
     }
 }
 

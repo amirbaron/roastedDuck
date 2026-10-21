@@ -7,8 +7,8 @@ use rustdb_common::Result;
 use rustdb_types::{LogicalType, PhysicalType, Vector};
 
 use super::primitive::{
-    Primitive, align8, align8_floor, corrupt, fill_values, load, result_bytes, unified_values,
-    update_numeric_stats,
+    Primitive, align8, align8_floor, corrupt, load, result_bytes, unified_values, update_numeric_stats,
+    write_values,
 };
 use super::{Analyzer, CodecScan, CompressionInfo, CompressionType, Compressor, SegmentScan, Sequential};
 use crate::checkpoint::column_checkpointer::{FinishedSegment, SegmentSink};
@@ -221,7 +221,7 @@ impl<T: Primitive> CodecScan for RleScanState<T> {
             return Ok(None);
         }
         let mut result = Vector::flat(segment.logical_type().clone(), 1);
-        fill_values(&mut result, 0, 1, self.run_value(self.entry_pos)?)?;
+        write_values(&mut result, 0, &[self.run_value(self.entry_pos)?])?;
         result.make_constant();
         self.position_in_entry += count;
         if self.position_in_entry >= run_length {
@@ -236,21 +236,59 @@ impl<T: Primitive> CodecScan for RleScanState<T> {
         _segment: &ColumnSegment,
         count: usize,
         result: &mut Vector,
-        mut result_offset: usize,
+        result_offset: usize,
     ) -> Result<()> {
-        let result_end = result_offset + count;
-        while result_offset < result_end {
+        // The target is taken once: runs are often short.
+        let mut target = result_bytes::<T>(result, result_offset, count)?;
+        while !target.is_empty() {
             let run_end = self.run_length(self.entry_pos)?;
             let run_count = run_end.saturating_sub(self.position_in_entry);
-            let remaining = result_end - result_offset;
+            let remaining = target.len() / T::SIZE;
             let element = self.run_value(self.entry_pos)?;
+            let take = run_count.min(remaining);
+            let (run, rest) = target.split_at_mut(take * T::SIZE);
+            for slot in run.chunks_exact_mut(T::SIZE) {
+                element.store(slot);
+            }
+            target = rest;
             if run_count > remaining {
-                fill_values(result, result_offset, remaining, element)?;
                 self.position_in_entry += remaining;
                 break;
             }
-            fill_values(result, result_offset, run_count, element)?;
-            result_offset += run_count;
+            self.forward_to_next_run()?;
+        }
+        Ok(())
+    }
+
+    const SELECTS: bool = true;
+
+    /// `RLESelect`: writes the run value of the rows of `sel` only.
+    fn select_partial(
+        &mut self,
+        _segment: &ColumnSegment,
+        count: usize,
+        result: &mut Vector,
+        sel: &[u32],
+    ) -> Result<()> {
+        let target = result_bytes::<T>(result, 0, count)?;
+        let mut row = 0;
+        let mut selected = sel.iter().map(|&row| row as usize).peekable();
+        while row < count {
+            let run_end = self.run_length(self.entry_pos)?;
+            let run_count = run_end.saturating_sub(self.position_in_entry);
+            let remaining = count - row;
+            let end = row + run_count.min(remaining);
+            if selected.peek().is_some_and(|&next| next < end) {
+                let element = self.run_value(self.entry_pos)?;
+                while let Some(next) = selected.next_if(|&next| next < end) {
+                    element.store(&mut target[next * T::SIZE..(next + 1) * T::SIZE]);
+                }
+            }
+            row = end;
+            if run_count > remaining {
+                self.position_in_entry += remaining;
+                break;
+            }
             self.forward_to_next_run()?;
         }
         Ok(())

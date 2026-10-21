@@ -375,6 +375,15 @@ impl PhysicalOperator for PhysicalPiecewiseMergeJoin {
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         propagates_build_side(self.join_type).then_some(self as &dyn ErasedSource)
     }
+    fn parallel_operator(&self) -> bool {
+        true
+    }
+    fn parallel_sink(&self) -> bool {
+        true
+    }
+    fn parallel_source(&self) -> bool {
+        true
+    }
 
     fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
         super::comparison_join_params(self.join_type, &self.conditions, estimated_cardinality)
@@ -546,6 +555,12 @@ impl Source for PhysicalPiecewiseMergeJoin {
 
     fn local_source_state(&self, _: &ExecutionContext, _: &MergeJoinSourceState) -> Result<()> {
         Ok(())
+    }
+
+    /// `PiecewiseJoinScanState::MaxThreads`: one thread per chunk of the right side.
+    fn max_threads(&self, global: &MergeJoinSourceState) -> usize {
+        super::sink_state::<MergeJoinGlobalState>(&global.sink, "merge join")
+            .map_or(1, |sink| sink.table.count().div_ceil(STANDARD_VECTOR_SIZE))
     }
 
     fn get_data(

@@ -16,8 +16,9 @@ use super::scan_state::{CollectionScanState, ScanFilterInfo, StorageIndex};
 use super::segment_tree::Segment;
 use crate::VECTOR_SIZE;
 use crate::checkpoint::pointers::PersistentColumnData;
+use crate::checkpoint::table_reader::read_column;
 use crate::data_table::TableIoManager;
-use crate::metadata::MetaBlockPointer;
+use crate::metadata::{MetaBlockPointer, MetadataManager};
 use crate::statistics::{BaseStatistics, FilterPropagateResult};
 use crate::table_filter::TableFilter;
 use crate::transaction::TransactionData;
@@ -82,7 +83,8 @@ pub enum TableScanType {
 pub struct RowGroupMetadata {
     /// The start of each column's `PersistentColumnData`; empty when the row group has
     /// no metadata on disk.
-    pub column_pointers: Vec<MetaBlockPointer>,
+    /// Shared with the loader of the columns not built yet.
+    pub column_pointers: Arc<[MetaBlockPointer]>,
     /// Whether `extra_metadata_blocks` is known.
     pub has_metadata_blocks: bool,
     /// The metadata blocks of the columns besides those `column_pointers` point into.
@@ -98,7 +100,7 @@ impl RowGroupMetadata {
     /// blocks are known, with `columns` giving the source column of each target column.
     fn copied(&self, column_count: usize, columns: impl Fn(usize) -> Option<usize>) -> Self {
         let column_pointers = if self.column_pointers.is_empty() {
-            Vec::new()
+            Arc::default()
         } else {
             (0..column_count)
                 .map(|target| {
@@ -190,9 +192,19 @@ pub struct RowGroup {
 #[derive(Debug)]
 struct UnloadedColumns {
     io: Arc<TableIoManager>,
-    types: Vec<LogicalType>,
-    /// Taken when the column is built.
-    data: Vec<Mutex<Option<PersistentColumnData>>>,
+    /// The column types, shared by the row groups of a table.
+    types: Arc<[LogicalType]>,
+    /// Reads the columns stored as metadata pointers.
+    metadata: Option<Arc<MetadataManager>>,
+    /// Where each column's `PersistentColumnData` is in the database file's metadata
+    /// (shared with the row group's `RowGroupMetadata`): a column without `data` that is
+    /// not built yet is read from there when first used, like DuckDB's lazily loaded
+    /// `column_pointers` (keeping every column's segments and statistics in memory costs
+    /// ~2 KB per column and row group).
+    pointers: Arc<[MetaBlockPointer]>,
+    /// Per column, its segments as just written by a checkpoint; taken when the column is
+    /// built.
+    data: Vec<Mutex<Option<Box<PersistentColumnData>>>>,
 }
 
 impl Segment for RowGroup {
@@ -231,7 +243,7 @@ impl RowGroup {
     pub fn with_persistent(
         &self,
         io: Arc<TableIoManager>,
-        types: Vec<LogicalType>,
+        types: Arc<[LogicalType]>,
         data: Vec<PersistentColumnData>,
         metadata: RowGroupMetadata,
     ) -> Self {
@@ -247,7 +259,7 @@ impl RowGroup {
     /// from `data` when first used.
     pub fn from_persistent(
         io: Arc<TableIoManager>,
-        types: Vec<LogicalType>,
+        types: Arc<[LogicalType]>,
         data: Vec<PersistentColumnData>,
         count: u64,
     ) -> Self {
@@ -257,10 +269,43 @@ impl RowGroup {
             unloaded: Some(Box::new(UnloadedColumns {
                 io,
                 types,
-                data: data.into_iter().map(|column| Mutex::new(Some(column))).collect(),
+                metadata: None,
+                pointers: Arc::default(),
+                data: data
+                    .into_iter()
+                    .map(|column| Mutex::new(Some(Box::new(column))))
+                    .collect(),
             })),
             version_info: Mutex::default(),
             metadata: Mutex::default(),
+            has_changes: AtomicBool::new(false),
+        }
+    }
+
+    /// A row group of `count` rows stored in the database file whose columns' data is
+    /// read from the metadata at `stored.column_pointers` when first used (DuckDB's
+    /// `RowGroup` built from a `RowGroupPointer`); `stored` is kept for checkpoints to
+    /// reuse.
+    pub fn from_metadata(
+        io: Arc<TableIoManager>,
+        types: Arc<[LogicalType]>,
+        metadata: Arc<MetadataManager>,
+        stored: RowGroupMetadata,
+        count: u64,
+    ) -> Self {
+        let pointers = Arc::clone(&stored.column_pointers);
+        Self {
+            count: AtomicU64::new(count),
+            columns: (0..pointers.len()).map(|_| OnceLock::new()).collect(),
+            unloaded: Some(Box::new(UnloadedColumns {
+                io,
+                types,
+                metadata: Some(metadata),
+                data: (0..pointers.len()).map(|_| Mutex::new(None)).collect(),
+                pointers,
+            })),
+            version_info: Mutex::default(),
+            metadata: Mutex::new(stored),
             has_changes: AtomicBool::new(false),
         }
     }
@@ -325,17 +370,30 @@ impl RowGroup {
     }
 
     /// The stored segments of column `index` when it was not built yet.
-    pub fn unloaded_column_data(&self, index: usize) -> Option<PersistentColumnData> {
+    /// Columns stored as metadata pointers are read (without being built).
+    pub fn unloaded_column_data(&self, index: usize) -> Result<Option<PersistentColumnData>> {
         if self.column_is_loaded(index) {
-            return None;
+            return Ok(None);
         }
-        let unloaded = self.unloaded.as_ref()?;
-        unloaded
-            .data
-            .get(index)?
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+        let Some(unloaded) = self.unloaded.as_ref() else {
+            return Ok(None);
+        };
+        let Some(slot) = unloaded.data.get(index) else {
+            return Ok(None);
+        };
+        let data = slot.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(stored) = data.as_ref() {
+            return Ok(Some((**stored).clone()));
+        }
+        // Built meanwhile, or stored as a metadata pointer.
+        if self.column_is_loaded(index) {
+            return Ok(None);
+        }
+        let (Some(metadata), Some(pointer)) = (unloaded.metadata.as_ref(), unloaded.pointers.get(index))
+        else {
+            return Ok(None);
+        };
+        read_column(metadata, *pointer, &unloaded.types[index]).map(Some)
     }
 
     pub fn count(&self) -> u64 {
@@ -370,15 +428,21 @@ impl RowGroup {
         if let Some(column) = slot.get() {
             return Ok(column);
         }
-        let stored = data
-            .as_ref()
-            .ok_or_else(|| Error::internal("row group column stored data already taken"))?;
-        let column = ColumnData::from_persistent(
-            Arc::clone(&unloaded.io),
-            index,
-            unloaded.types[index].clone(),
-            stored,
-        )?;
+        let ty = &unloaded.types[index];
+        let read;
+        let stored = match (
+            data.as_ref(),
+            unloaded.metadata.as_ref(),
+            unloaded.pointers.get(index),
+        ) {
+            (Some(stored), _, _) => stored,
+            (None, Some(metadata), Some(pointer)) => {
+                read = read_column(metadata, *pointer, ty)?;
+                &read
+            }
+            (None, _, _) => return Err(Error::internal("row group column stored data already taken")),
+        };
+        let column = ColumnData::from_persistent(Arc::clone(&unloaded.io), index, ty.clone(), stored)?;
         let _ = slot.set(Arc::new(column));
         *data = None;
         drop(data);
@@ -683,6 +747,33 @@ impl RowGroup {
                 state.filter_sel = sel;
                 state.vector_index += 1;
                 continue;
+            }
+            if sel.len() == max_count {
+                // Every row passed: the filtered columns hold the whole vector, the others
+                // are scanned without a selection.
+                for (index, column_id) in column_ids.iter().enumerate() {
+                    if has_filters && filters.column_has_filters(index) {
+                        continue;
+                    }
+                    let vector = result.column_mut(index);
+                    if column_id.is_row_id() {
+                        *vector = row_id_vector(row_id_start, max_count);
+                        continue;
+                    }
+                    let column_state = &mut state.column_scans[index];
+                    column_state.update_scan_type = options.update_type;
+                    self.column(column_id.primary_index())?.scan(
+                        transaction,
+                        vector_index,
+                        column_state,
+                        vector,
+                        max_count,
+                    )?;
+                }
+                result.set_len(max_count);
+                state.filter_sel = sel;
+                state.vector_index += 1;
+                return Ok(());
             }
             let selection = SelectionVector::new(&sel[..]);
             for (index, column_id) in column_ids.iter().enumerate() {

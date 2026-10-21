@@ -710,6 +710,7 @@ impl ClientContext {
             "{} with name {name} does not exist!{hint}",
             ty.display_name()
         ))
+        .with_subtype("MISSING_ENTRY")
     }
 }
 

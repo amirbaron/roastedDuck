@@ -374,7 +374,22 @@ impl CastFunctionSet {
             L::SqlNull => Some(BoundCastInfo::null_source()),
             L::Geometry => geometry::cast_switch(source, target)?,
             L::Variant => variant::cast_switch(target),
+            L::AggregateState => Some(aggregate_state_to_blob(source, target)),
             _ => None,
         })
     }
+}
+
+/// DuckDB's `AggregateStateToBlobCast`: an exported aggregate state casts only to BLOB,
+/// which reuses its bytes; other targets fail when the cast runs.
+fn aggregate_state_to_blob(source: &LogicalType, target: &LogicalType) -> BoundCastInfo {
+    if target.id() == LogicalTypeId::Blob {
+        return BoundCastInfo::reinterpret();
+    }
+    let message = format!(
+        "Type {source} does not match with {target}. Cannot cast AGGREGATE_STATE to anything but BLOB"
+    );
+    BoundCastInfo::new(move |_, _, _, _| {
+        Err(Error::new(rustdb_common::ErrorKind::MismatchType, message.clone()))
+    })
 }

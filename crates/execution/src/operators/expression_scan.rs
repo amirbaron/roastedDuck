@@ -38,6 +38,9 @@ impl PhysicalOperator for PhysicalExpressionScan {
     fn as_operator(&self) -> Option<&dyn ErasedOperator> {
         Some(self)
     }
+    fn parallel_operator(&self) -> bool {
+        true
+    }
 }
 
 /// One executor per row list and the next list to evaluate (`ExpressionScanState`).

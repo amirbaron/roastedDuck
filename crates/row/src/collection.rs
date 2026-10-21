@@ -231,20 +231,26 @@ impl TupleDataCollection {
         sel: Option<&[u32]>,
         count: usize,
     ) -> Result<()> {
+        self.append_formatted_with(&mut state.pin_state, &mut state.chunk_state, formats, sel, count)
+    }
+
+    /// [`Self::append_formatted`] with the two parts of an append state.
+    pub(crate) fn append_formatted_with(
+        &mut self,
+        pin_state: &mut PinState,
+        chunk_state: &mut ChunkState,
+        formats: &ChunkFormat<'_>,
+        sel: Option<&[u32]>,
+        count: usize,
+    ) -> Result<()> {
         if count == 0 {
             return Ok(());
         }
         if !self.layout.all_constant() {
-            compute_heap_sizes(
-                &self.layout,
-                formats,
-                sel,
-                count,
-                &mut state.chunk_state.heap_sizes,
-            )?;
+            compute_heap_sizes(&self.layout, formats, sel, count, &mut chunk_state.heap_sizes)?;
         }
-        self.build(&mut state.pin_state, &mut state.chunk_state, 0, count)?;
-        self.scatter(&mut state.chunk_state, formats, sel, count);
+        self.build(pin_state, chunk_state, 0, count)?;
+        self.scatter(chunk_state, formats, sel, count);
         Ok(())
     }
 

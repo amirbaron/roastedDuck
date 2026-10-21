@@ -145,7 +145,7 @@ impl Default for CheckpointConfig {
 pub struct StorageManager {
     path: String,
     block_manager: Arc<SingleFileBlockManager>,
-    metadata: MetadataManager,
+    metadata: Arc<MetadataManager>,
     io: Arc<TableIoManager>,
     /// Whether the file was created by this open.
     created: bool,
@@ -183,7 +183,10 @@ impl StorageManager {
         } else {
             SingleFileBlockManager::load_existing(path, block_options)?
         });
-        let metadata = MetadataManager::new(Arc::clone(&block_manager), buffer_manager.clone());
+        let metadata = Arc::new(MetadataManager::new(
+            Arc::clone(&block_manager),
+            buffer_manager.clone(),
+        ));
         if !created {
             block_manager.load_free_list(&metadata)?;
         }
@@ -278,7 +281,7 @@ impl StorageManager {
         }
     }
 
-    pub fn metadata(&self) -> &MetadataManager {
+    pub fn metadata(&self) -> &Arc<MetadataManager> {
         &self.metadata
     }
 

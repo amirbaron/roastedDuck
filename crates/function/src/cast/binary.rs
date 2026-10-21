@@ -72,6 +72,8 @@ fn from_blob(target: &LogicalType) -> Option<BoundCastInfo> {
                 bit::from_blob(bytes, out).map_err(|message| RowError::Fatal(Error::conversion(message)))
             })
         }),
+        // An exported aggregate state read back from its bytes.
+        LogicalTypeId::AggregateState => BoundCastInfo::reinterpret(),
         _ => return None,
     })
 }

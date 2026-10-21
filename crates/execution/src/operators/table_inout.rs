@@ -93,6 +93,9 @@ impl PhysicalOperator for PhysicalTableInOutFunction {
     fn as_operator(&self) -> Option<&dyn ErasedOperator> {
         Some(self)
     }
+    fn parallel_operator(&self) -> bool {
+        true
+    }
 }
 
 /// A thread's progress (DuckDB's `TableInOutLocalState`).

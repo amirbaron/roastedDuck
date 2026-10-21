@@ -26,6 +26,7 @@ mod secrets;
 mod sequence;
 mod settings;
 mod storage;
+mod switch;
 mod system_functions;
 mod transaction;
 mod wal;

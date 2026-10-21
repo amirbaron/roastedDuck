@@ -230,7 +230,16 @@ fn bind_show_table(scope: &mut BindScope<'_>, show: &ShowRef) -> Result<BoundSta
                 catalog = std::mem::take(&mut schema);
             }
             if !schema.is_empty() {
-                // The default entry of the search path has an empty catalog name.
+                if catalog.is_empty() {
+                    // The catalog of the default search path entry, which is empty
+                    // without a `USE` or `SET search_path`.
+                    catalog = scope
+                        .context
+                        .search_path
+                        .first()
+                        .map(|(catalog, _)| catalog.clone())
+                        .unwrap_or_default();
+                }
                 let lookup = if catalog.is_empty() {
                     scope.context.default_catalog()
                 } else {

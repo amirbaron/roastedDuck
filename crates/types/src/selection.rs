@@ -96,20 +96,26 @@ pub fn partition_rows(
     match (true_sel, false_sel) {
         (Some(true_sel), Some(false_sel)) => {
             let (true_start, false_start) = (true_sel.len(), false_sel.len());
-            true_sel.resize(true_start + count, 0);
-            false_sel.resize(false_start + count, 0);
-            let (true_out, false_out) = (&mut true_sel[true_start..], &mut false_sel[false_start..]);
+            true_sel.reserve(count);
+            false_sel.reserve(count);
+            let true_out = &mut true_sel.spare_capacity_mut()[..count];
+            let false_out = &mut false_sel.spare_capacity_mut()[..count];
             let (mut true_count, mut false_count) = (0, 0);
             for row in 0..count {
                 let position = position(row);
                 let matched = matches(row);
-                true_out[true_count] = position;
-                false_out[false_count] = position;
+                // Both counts stay at most `row`, below `count`.
+                true_out[true_count].write(position);
+                false_out[false_count].write(position);
                 true_count += usize::from(matched);
                 false_count += usize::from(!matched);
             }
-            true_sel.truncate(true_start + true_count);
-            false_sel.truncate(false_start + false_count);
+            // SAFETY: slot `i` of each output was written when its count was `i`, so the
+            // first `true_count` / `false_count` spare slots are initialised.
+            unsafe {
+                true_sel.set_len(true_start + true_count);
+                false_sel.set_len(false_start + false_count);
+            }
             true_count
         }
         (Some(true_sel), None) => append_where(count, true_sel, position, &mut matches),
@@ -119,21 +125,26 @@ pub fn partition_rows(
 }
 
 /// Appends the positions of the rows for which `keep` holds to `out`; returns how many.
-fn append_where(
+/// Branch-free: every position is written to the next free slot, which only advances
+/// for kept rows (no zero-filling of the output first).
+pub fn append_where(
     count: usize,
     out: &mut Vec<u32>,
     position: impl Fn(usize) -> u32,
     mut keep: impl FnMut(usize) -> bool,
 ) -> usize {
     let start = out.len();
-    out.resize(start + count, 0);
-    let target = &mut out[start..];
+    out.reserve(count);
+    let target = &mut out.spare_capacity_mut()[..count];
     let mut kept = 0;
     for row in 0..count {
-        target[kept] = position(row);
+        // `kept` stays at most `row`, below `count`.
+        target[kept].write(position(row));
         kept += usize::from(keep(row));
     }
-    out.truncate(start + kept);
+    // SAFETY: spare slot `i` was written when `kept` was `i`, so the first `kept` are
+    // initialised.
+    unsafe { out.set_len(start + kept) };
     kept
 }
 

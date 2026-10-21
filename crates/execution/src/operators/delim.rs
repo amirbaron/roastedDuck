@@ -1,13 +1,15 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
 use rustdb_common::Result;
 use rustdb_planner::Expression;
-use rustdb_row::AppendState;
+use rustdb_row::{AppendState, PartitionedTupleData, TupleDataCollection};
 use rustdb_row::hash::hash_columns;
 use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
-use crate::aggregate_hashtable::{GroupedAggregateHashTable, initial_capacity};
+use crate::aggregate_hashtable::{GroupedAggregateHashTable, capacity_for_count, initial_capacity};
+use crate::operators::hash_aggregate::{repartitioned, table_data};
+use crate::operators::radix_sink::initial_radix_bits;
 use crate::column_data_collection::ColumnDataCollection;
 use rustdb_common::tree_renderer::RenderParams;
 
@@ -75,11 +77,20 @@ impl PhysicalOperator for PhysicalDelimJoin {
     }
 }
 
-/// Buffered chunks and the distinct-value table.
-#[derive(Debug)]
+/// Buffered chunks and the distinct values (DuckDB's `DelimJoinGlobalState` with the
+/// distinct aggregate's radix partitioned table).
+#[derive(Debug, Default)]
 pub struct DelimGlobal {
     chunks: Mutex<Vec<DataChunk>>,
-    distinct: Mutex<GroupedAggregateHashTable>,
+    /// The threads' radix partitioned distinct values.
+    distinct_parts: Mutex<Vec<PartitionedTupleData>>,
+    /// After finalize: each partition's rows from every thread, deduplicated by one
+    /// finalize task each.
+    partitions: Vec<Mutex<Vec<TupleDataCollection>>>,
+    /// The distinct values each finalize task found.
+    distinct: Vec<Mutex<Vec<DataChunk>>>,
+    /// Whether the partitions were handed out as finalize tasks.
+    scheduled: AtomicBool,
 }
 
 /// One thread's buffered input and distinct values.
@@ -95,19 +106,18 @@ pub struct DelimLocal {
 
 impl PhysicalDelimJoin {
     /// An empty table of the distinct duplicate-eliminated values.
-    fn distinct_table(&self, ctx: &ExecutionContext) -> Result<GroupedAggregateHashTable> {
+    fn distinct_table(
+        &self,
+        ctx: &ExecutionContext,
+        capacity: usize,
+        radix_bits: usize,
+    ) -> Result<GroupedAggregateHashTable> {
         let group_types = self
             .groups
             .iter()
             .map(|group| group.return_type.clone())
             .collect();
-        GroupedAggregateHashTable::new(
-            ctx.env.buffer_manager.clone(),
-            group_types,
-            &[],
-            initial_capacity(),
-            0,
-        )
+        GroupedAggregateHashTable::new(ctx.env.buffer_manager.clone(), group_types, &[], capacity, radix_bits)
     }
 }
 
@@ -127,11 +137,8 @@ impl Sink for PhysicalDelimJoin {
     type Global = DelimGlobal;
     type Local = DelimLocal;
 
-    fn global_sink_state(&self, ctx: &ExecutionContext) -> Result<DelimGlobal> {
-        Ok(DelimGlobal {
-            chunks: Mutex::default(),
-            distinct: Mutex::new(self.distinct_table(ctx)?),
-        })
+    fn global_sink_state(&self, _: &ExecutionContext) -> Result<DelimGlobal> {
+        Ok(DelimGlobal::default())
     }
 
     fn local_sink_state(&self, ctx: &ExecutionContext, _: &DelimGlobal) -> Result<DelimLocal> {
@@ -142,7 +149,7 @@ impl Sink for PhysicalDelimJoin {
             groups: ExpressionExecutor::new(self.groups.clone()),
             data,
             append,
-            distinct: self.distinct_table(ctx)?,
+            distinct: self.distinct_table(ctx, initial_capacity(), initial_radix_bits(ctx))?,
         })
     }
 
@@ -177,30 +184,77 @@ impl Sink for PhysicalDelimJoin {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .append(&mut chunks);
-        let mut distinct = global.distinct.lock().unwrap_or_else(PoisonError::into_inner);
-        local
-            .distinct
-            .finalize_into(|groups| add_groups(&mut distinct, &groups))
+        // The partitions are merged by the finalize tasks, not here under a lock.
+        let distinct = table_data(&mut local.distinct, None)?;
+        global
+            .distinct_parts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(distinct);
+        Ok(())
     }
 
+    /// Publishes the buffered input and splits the threads' distinct values into their
+    /// radix partitions, which the finalize tasks deduplicate in parallel (DuckDB's
+    /// distinct aggregate finalize).
     fn finalize(&self, _: &ExecutionContext, global: &mut DelimGlobal) -> Result<SinkFinalize> {
         let chunks = std::mem::take(global.chunks.get_mut().unwrap_or_else(PoisonError::into_inner));
-        let mut distinct = Vec::new();
-        global
-            .distinct
-            .get_mut()
-            .unwrap_or_else(PoisonError::into_inner)
-            .finalize_into(|chunk| {
-                distinct.push(chunk);
-                Ok(())
-            })?;
         *self.shared.cached.lock().unwrap_or_else(PoisonError::into_inner) = Arc::new(chunks);
+        let parts = std::mem::take(global.distinct_parts.get_mut().unwrap_or_else(PoisonError::into_inner));
+        let radix_bits = parts.iter().map(PartitionedTupleData::radix_bits).max().unwrap_or(0);
+        let mut partitions: Vec<Vec<TupleDataCollection>> = (0..1usize << radix_bits).map(|_| Vec::new()).collect();
+        for part in parts {
+            let mut part = repartitioned(part, radix_bits)?;
+            for (partition, collection) in part.take_partitions().into_iter().enumerate() {
+                if collection.count() > 0 {
+                    partitions[partition].push(collection);
+                }
+            }
+        }
+        partitions.retain(|data| !data.is_empty());
+        global.distinct = partitions.iter().map(|_| Mutex::default()).collect();
+        global.partitions = partitions.into_iter().map(Mutex::new).collect();
+        Ok(SinkFinalize::Ready)
+    }
+
+    /// One task per partition of distinct values; once they ran, the values are
+    /// published to the delim scans.
+    fn finalize_tasks(&self, _: &ExecutionContext, global: &DelimGlobal) -> Result<usize> {
+        if !global.scheduled.swap(true, Ordering::AcqRel) && !global.partitions.is_empty() {
+            return Ok(global.partitions.len());
+        }
+        let distinct = global
+            .distinct
+            .iter()
+            .flat_map(|chunks| std::mem::take(&mut *chunks.lock().unwrap_or_else(PoisonError::into_inner)))
+            .collect();
         *self
             .shared
             .distinct
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Arc::new(distinct);
-        Ok(SinkFinalize::Ready)
+        Ok(0)
+    }
+
+    /// Deduplicates one partition of the threads' distinct values.
+    fn execute_finalize_task(&self, ctx: &ExecutionContext, global: &DelimGlobal, task: usize) -> Result<()> {
+        let (Some(partition), Some(result)) = (global.partitions.get(task), global.distinct.get(task)) else {
+            return Err(rustdb_common::Error::internal("delim join finalize task out of range"));
+        };
+        let data = std::mem::take(&mut *partition.lock().unwrap_or_else(PoisonError::into_inner));
+        let rows = data.iter().map(TupleDataCollection::count).sum();
+        let mut table = self.distinct_table(ctx, capacity_for_count(rows), 0)?;
+        for collection in &data {
+            table.combine(collection)?;
+        }
+        drop(data);
+        let mut chunks = Vec::new();
+        table.finalize_into(|chunk| {
+            chunks.push(chunk);
+            Ok(())
+        })?;
+        *result.lock().unwrap_or_else(PoisonError::into_inner) = chunks;
+        Ok(())
     }
 }
 

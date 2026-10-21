@@ -502,7 +502,7 @@ pub fn finish_table_checkpoint(
             continue;
         }
         // The written columns are built again when first used.
-        let types = written
+        let types: Arc<[rustdb_types::LogicalType]> = written
             .columns
             .iter()
             .map(|data| data.logical_type.clone())
@@ -549,7 +549,7 @@ fn compute_per_column_metadata_blocks(
 /// The segments of column `index` of a row group whose column is not rewritten: its
 /// stored data when it was not built, otherwise its persistent segments.
 fn reused_column_data(row_group: &RowGroup, index: usize) -> Result<PersistentColumnData> {
-    if let Some(data) = row_group.unloaded_column_data(index) {
+    if let Some(data) = row_group.unloaded_column_data(index)? {
         return Ok(data);
     }
     row_group.column(index)?.persistent_data(0)
@@ -858,7 +858,7 @@ pub fn write_table_data(
             ..RowGroupPointer::default()
         };
         if data.action == RowGroupWriteAction::ReuseExistingRowGroupMetadata {
-            pointer.data_pointers.clone_from(&stored.column_pointers);
+            pointer.data_pointers = stored.column_pointers.to_vec();
             pointer.has_metadata_blocks = stored.has_metadata_blocks;
             pointer
                 .extra_metadata_blocks
@@ -936,7 +936,7 @@ pub fn write_table_data(
             count,
             columns,
             metadata: RowGroupMetadata {
-                column_pointers: pointer.data_pointers.clone(),
+                column_pointers: pointer.data_pointers.as_slice().into(),
                 has_metadata_blocks: pointer.has_metadata_blocks,
                 extra_metadata_blocks: pointer.extra_metadata_blocks.clone(),
                 has_per_column_metadata_blocks: pointer.has_per_column_metadata_blocks,
