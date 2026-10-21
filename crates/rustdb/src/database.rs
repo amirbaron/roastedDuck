@@ -1165,15 +1165,17 @@ impl Database {
                 rustdb_function::file_system::verify_can_write(path)?;
             }
         }
-        // A new database file gets the configured storage version
-        // (`serialization_compatibility`, also set by a global `SET`).
+        // A new database file gets the configured storage version and block size
+        // (`serialization_compatibility`, `default_block_alloc_size`, also set by a
+        // global `SET`); an existing file keeps its own.
         let mut options = options.clone();
-        if options.storage_version.is_none()
-            && !path.is_empty()
-            && !path.starts_with(":memory:")
-            && !std::path::Path::new(path).exists()
-        {
-            options.storage_version = self.global_setting("storage_compatibility_version");
+        if !path.is_empty() && !path.starts_with(":memory:") && !std::path::Path::new(path).exists() {
+            if options.storage_version.is_none() {
+                options.storage_version = self.global_setting("storage_compatibility_version");
+            }
+            if options.block_size.is_none() {
+                options.block_size = self.global_setting("default_block_size");
+            }
         }
         let options = &options;
         let Some(attached) = self.instance.databases.attach(

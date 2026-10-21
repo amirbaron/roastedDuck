@@ -610,12 +610,16 @@ fn continuous_function(ty: &LogicalType, list: bool) -> Result<AggregateFunction
 /// Replaces `function` by `bound`, appending the quantile argument type.
 fn install(
     function: &mut AggregateFunction,
+    name: &str,
     mut bound: AggregateFunction,
     quantile_type: Option<LogicalType>,
 ) {
     bound.arguments.extend(quantile_type);
     bound.bind.clone_from(&function.bind);
     function.replace_with(bound);
+    // The bound function is named after its implementation, also when called through
+    // an alias (`fun.name = "quantile_disc"`).
+    function.name = name.into();
 }
 
 fn quantile_argument(list: bool) -> LogicalType {
@@ -633,7 +637,7 @@ fn bind_discrete(
 {
     move |function, input| {
         let bound = discrete_function(&input.argument_types[0], list);
-        install(function, bound, Some(quantile_argument(list)));
+        install(function, "quantile_disc", bound, Some(quantile_argument(list)));
         bind_quantile(function, input).map(Some)
     }
 }
@@ -652,7 +656,7 @@ fn bind_continuous(
             function.arguments[0].clone()
         };
         let bound = continuous_function(&ty, list)?;
-        install(function, bound, Some(quantile_argument(list)));
+        install(function, "quantile_cont", bound, Some(quantile_argument(list)));
         bind_quantile(function, input).map(Some)
     }
 }
@@ -699,7 +703,7 @@ fn bind_median(
     } else {
         discrete_function(ty, false)
     };
-    install(function, bound, None);
+    install(function, "median", bound, None);
     Ok(Some(Arc::new(QuantileBindData::median())))
 }
 

@@ -1,6 +1,6 @@
 # rustdb conformance dashboard
 
-Rust passing: **4715 / 4874 files** (4640 pass on both engines). "Passing" means the Rust run passed, or both engines skipped the file for the same reason.
+Rust passing: **4717 / 4874 files** (4642 pass on both engines). "Passing" means the Rust run passed, or both engines skipped the file for the same reason.
 
 | group | files | C++ pass | C++ skip | C++ fail | Rust passing | both pass | Rust fail | Rust crash/timeout | Rust skip (C++ pass) | Rust % |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -14,7 +14,7 @@ Rust passing: **4715 / 4874 files** (4640 pass on both engines). "Passing" means
 | test/fuzzer/duckfuzz | 77 | 77 | 0 | 0 | 75 | 75 | 1 | 0 | 1 | 97.4% |
 | test/fuzzer/pedro | 133 | 133 | 0 | 0 | 133 | 133 | 0 | 0 | 0 | 100.0% |
 | test/fuzzer/public | 22 | 22 | 0 | 0 | 22 | 22 | 0 | 0 | 0 | 100.0% |
-| test/fuzzer/sqlsmith | 31 | 31 | 0 | 0 | 30 | 30 | 1 | 0 | 0 | 96.8% |
+| test/fuzzer/sqlsmith | 31 | 31 | 0 | 0 | 31 | 31 | 0 | 0 | 0 | 100.0% |
 | test/geoparquet | 8 | 8 | 0 | 0 | 6 | 6 | 2 | 0 | 0 | 75.0% |
 | test/issues/fuzz | 12 | 12 | 0 | 0 | 12 | 12 | 0 | 0 | 0 | 100.0% |
 | test/issues/general | 97 | 96 | 1 | 0 | 97 | 96 | 0 | 0 | 0 | 100.0% |
@@ -106,8 +106,8 @@ Rust passing: **4715 / 4874 files** (4640 pass on both engines). "Passing" means
 | test/sql/vacuum | 2 | 2 | 0 | 0 | 2 | 2 | 0 | 0 | 0 | 100.0% |
 | test/sql/variables | 1 | 1 | 0 | 0 | 1 | 1 | 0 | 0 | 0 | 100.0% |
 | test/sql/vector_types | 2 | 2 | 0 | 0 | 2 | 2 | 0 | 0 | 0 | 100.0% |
-| test/sql/window | 78 | 78 | 0 | 0 | 77 | 77 | 1 | 0 | 0 | 98.7% |
+| test/sql/window | 78 | 78 | 0 | 0 | 78 | 78 | 0 | 0 | 0 | 100.0% |
 | test/sqlite | 4 | 4 | 0 | 0 | 4 | 4 | 0 | 0 | 0 | 100.0% |
 | test/sqlite/tags | 4 | 0 | 4 | 0 | 4 | 0 | 0 | 0 | 0 | 100.0% |
 | test/sqlserver | 2 | 2 | 0 | 0 | 2 | 2 | 0 | 0 | 0 | 100.0% |
-| **total** | 4874 | 4794 | 75 | 5 | 4715 | 4640 | 132 | 1 | 26 | 96.7% |
+| **total** | 4874 | 4794 | 75 | 5 | 4717 | 4642 | 130 | 1 | 26 | 96.8% |

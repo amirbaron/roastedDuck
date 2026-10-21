@@ -278,6 +278,7 @@ test/fuzzer/sqlsmith/mad_overflow.test
 test/fuzzer/sqlsmith/makedate_overflow.test
 test/fuzzer/sqlsmith/nested_correlated_subquery.test
 test/fuzzer/sqlsmith/nullif_map.test
+test/fuzzer/sqlsmith/nullif_map_with_config.test
 test/fuzzer/sqlsmith/statistics_assertion_trigger.test
 test/fuzzer/sqlsmith/strptime_nullpointer.test
 test/fuzzer/sqlsmith/struct_null_coalesce_assert.test
@@ -4680,6 +4681,7 @@ test/sql/window/test_window_bool.test
 test/sql/window/test_window_clause.test
 test/sql/window/test_window_constant_aggregate.test
 test/sql/window/test_window_constant_allocator.test
+test/sql/window/test_window_cse.test
 test/sql/window/test_window_dbplyr.test
 test/sql/window/test_window_distinct.test
 test/sql/window/test_window_distinct.test_slow
