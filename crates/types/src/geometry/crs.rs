@@ -2,6 +2,8 @@
 //! and the default `COORDINATE_SYSTEM_ENTRY` catalog entries): a definition is an
 //! `AUTH:CODE`, a PROJJSON or WKT2:2019 document, or an opaque identifier.
 
+use std::fmt::Write as _;
+
 use rustdb_common::{Error, Result};
 
 use super::default_crs::{OGC_CRS83_PROJJSON, OGC_CRS83_WKT2_2019, OGC_CRS84_PROJJSON, OGC_CRS84_WKT2_2019};
@@ -199,15 +201,14 @@ impl WktParser<'_> {
         result.extend_from_slice(&self.text[start..self.pos]);
         self.match_char(b'"')?;
         self.skip_whitespace();
-        Ok(Some(WktValue::String(String::from_utf8_lossy(&result).into_owned())))
+        Ok(Some(WktValue::String(
+            String::from_utf8_lossy(&result).into_owned(),
+        )))
     }
 
     fn parse_children(&mut self, close: u8) -> Result<Vec<WktValue>> {
         let mut children = Vec::new();
-        loop {
-            let Some(child) = self.parse_node()? else {
-                break;
-            };
+        while let Some(child) = self.parse_node()? {
             children.push(child);
             if !self.try_match(b',') {
                 break;
@@ -282,6 +283,24 @@ fn wkt_id(children: &[WktValue]) -> String {
     String::new()
 }
 
+/// The WKT2:2019 keywords of coordinate systems (the WKT1 ones are not supported).
+const CRS_KEYWORDS: [&str; 14] = [
+    "BOUNDCRS",
+    "COMPOUNDCRS",
+    "ENGCRS",
+    "ENGINEERINGCRS",
+    "GEODCRS",
+    "GEODETICCRS",
+    "GEOGCRS",
+    "GEOGRAPHICCRS",
+    "PARAMETRICCRS",
+    "PROJCRS",
+    "PROJECTEDCRS",
+    "TIMECRS",
+    "VERTCRS",
+    "VERTICALCRS",
+];
+
 /// `TryParseWKT2`.
 fn try_parse_wkt2(text: &str) -> Result<Option<Crs>> {
     let mut parser = WktParser {
@@ -293,23 +312,11 @@ fn try_parse_wkt2(text: &str) -> Result<Option<Crs>> {
     let Some(WktValue::Keyword { name, children }) = parser.parse_node()? else {
         return Ok(None);
     };
-    const CRS_KEYWORDS: [&str; 14] = [
-        "BOUNDCRS",
-        "COMPOUNDCRS",
-        "ENGCRS",
-        "ENGINEERINGCRS",
-        "GEODCRS",
-        "GEODETICCRS",
-        "GEOGCRS",
-        "GEOGRAPHICCRS",
-        "PARAMETRICCRS",
-        "PROJCRS",
-        "PROJECTEDCRS",
-        "TIMECRS",
-        "VERTCRS",
-        "VERTICALCRS",
-    ];
-    if !CRS_KEYWORDS.iter().any(|keyword| keyword.eq_ignore_ascii_case(&name)) || children.is_empty() {
+    if !CRS_KEYWORDS
+        .iter()
+        .any(|keyword| keyword.eq_ignore_ascii_case(&name))
+        || children.is_empty()
+    {
         return Ok(None);
     }
     let identifier = if name.eq_ignore_ascii_case("BOUNDCRS") {
@@ -334,7 +341,9 @@ fn try_parse_wkt2(text: &str) -> Result<Option<Crs>> {
     };
     Ok(Some(Crs {
         crs_type: CrsType::Wkt2_2019,
-        definition: text.trim_matches(|c: char| c.is_ascii() && is_space(c as u8)).to_owned(),
+        definition: text
+            .trim_matches(|c: char| c.is_ascii() && is_space(c as u8))
+            .to_owned(),
         identifier,
     }))
 }
@@ -358,7 +367,10 @@ enum Json {
 impl Json {
     fn get(&self, key: &str) -> Option<&Self> {
         match self {
-            Self::Obj(members) => members.iter().find(|(name, _)| name == key).map(|(_, value)| value),
+            Self::Obj(members) => members
+                .iter()
+                .find(|(name, _)| name == key)
+                .map(|(_, value)| value),
             _ => None,
         }
     }
@@ -593,7 +605,9 @@ fn write_json_string(out: &mut String, text: &str) {
             '\n' => out.push_str("\\n"),
             '\u{c}' => out.push_str("\\f"),
             '\r' => out.push_str("\\r"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04X}", c as u32)),
+            c if (c as u32) < 0x20 => {
+                let _ = write!(out, "\\u{:04X}", c as u32);
+            }
             c => out.push(c),
         }
     }
@@ -679,6 +693,19 @@ fn write_json(out: &mut String, value: &Json) {
     }
 }
 
+/// The PROJJSON types that can be root coordinate systems.
+const PROJJSON_CRS_TYPES: [&str; 9] = [
+    "GeographicCRS",
+    "GeodeticCRS",
+    "ProjectedCRS",
+    "CompoundCRS",
+    "BoundCRS",
+    "VerticalCRS",
+    "EngineeringCRS",
+    "TemporalCRS",
+    "ParametricCRS",
+];
+
 /// `TryParsePROJJSON`: the definition is normalized by writing the document back.
 fn try_parse_projjson(text: &str) -> Option<Crs> {
     let root = read_json(text)?;
@@ -686,18 +713,10 @@ fn try_parse_projjson(text: &str) -> Option<Crs> {
         return None;
     };
     let crs_type = root.get("type")?.as_str()?;
-    const PROJJSON_CRS_TYPES: [&str; 9] = [
-        "GeographicCRS",
-        "GeodeticCRS",
-        "ProjectedCRS",
-        "CompoundCRS",
-        "BoundCRS",
-        "VerticalCRS",
-        "EngineeringCRS",
-        "TemporalCRS",
-        "ParametricCRS",
-    ];
-    if !PROJJSON_CRS_TYPES.iter().any(|name| name.eq_ignore_ascii_case(crs_type)) {
+    if !PROJJSON_CRS_TYPES
+        .iter()
+        .any(|name| name.eq_ignore_ascii_case(crs_type))
+    {
         return None;
     }
     // The transformation names a bound CRS.
@@ -721,8 +740,12 @@ fn try_parse_projjson(text: &str) -> Option<Crs> {
         authority.clone_into(&mut identifier);
         match id.get("code") {
             // `yyjson_is_int`: any integer; printed with `%d` of the `int` it holds.
-            Some(Json::UInt(code)) => identifier.push_str(&format!(":{}", *code as i32)),
-            Some(Json::SInt(code)) => identifier.push_str(&format!(":{}", *code as i32)),
+            Some(Json::UInt(code)) => {
+                let _ = write!(identifier, ":{}", *code as i32);
+            }
+            Some(Json::SInt(code)) => {
+                let _ = write!(identifier, ":{}", *code as i32);
+            }
             Some(Json::Str(code)) => {
                 identifier.push(':');
                 identifier.push_str(code);
@@ -747,7 +770,8 @@ fn try_parse_projjson(text: &str) -> Option<Crs> {
 fn try_parse_auth_code(text: &str) -> Option<Crs> {
     let trimmed = text.trim_matches(|c: char| c.is_ascii() && is_space(c as u8));
     let (authority, code) = trimmed.split_once(':')?;
-    if !authority.bytes().all(|c| c.is_ascii_alphabetic()) || !code.bytes().all(|c| c.is_ascii_alphanumeric()) {
+    if !authority.bytes().all(|c| c.is_ascii_alphabetic()) || !code.bytes().all(|c| c.is_ascii_alphanumeric())
+    {
         return None;
     }
     Some(Crs {
@@ -824,7 +848,12 @@ pub fn try_identify(definition: &str) -> Result<Option<Crs>> {
     if source.crs_type == CrsType::Invalid {
         return Ok(None);
     }
-    for target in [CrsType::AuthCode, CrsType::Srid, CrsType::Projjson, CrsType::Wkt2_2019] {
+    for target in [
+        CrsType::AuthCode,
+        CrsType::Srid,
+        CrsType::Projjson,
+        CrsType::Wkt2_2019,
+    ] {
         if let Some(converted) = try_convert(&source, target)? {
             return Ok(Some(converted));
         }
@@ -838,21 +867,32 @@ mod tests {
 
     #[test]
     fn identifies_known_and_complete_definitions() {
-        assert_eq!(try_identify("OGC:CRS84").unwrap().unwrap().definition, "OGC:CRS84");
+        assert_eq!(
+            try_identify("OGC:CRS84").unwrap().unwrap().definition,
+            "OGC:CRS84"
+        );
         assert_eq!(
             try_identify(OGC_CRS84_WKT2_2019).unwrap().unwrap().definition,
             "OGC:CRS84"
         );
-        assert_eq!(try_identify(OGC_CRS84_PROJJSON).unwrap().unwrap().definition, "OGC:CRS84");
+        assert_eq!(
+            try_identify(OGC_CRS84_PROJJSON).unwrap().unwrap().definition,
+            "OGC:CRS84"
+        );
         assert!(try_identify("EPSG:4326").unwrap().is_none());
         assert!(try_identify("foobar").unwrap().is_none());
         let error = try_identify(r#"GEOGCRS["WGS 84",foo[]"#).unwrap_err();
-        assert!(error.to_string().contains("Expected ']' but got end of input at position 22"));
+        assert!(
+            error
+                .to_string()
+                .contains("Expected ']' but got end of input at position 22")
+        );
     }
 
     #[test]
     fn projjson_is_normalized() {
-        let crs = Crs::parse(r#" { "type" : "GeographicCRS", "name": "x", "a": [1, -2, 2.50, 1e2, "°/"] } "#).unwrap();
+        let crs = Crs::parse(r#" { "type" : "GeographicCRS", "name": "x", "a": [1, -2, 2.50, 1e2, "°/"] } "#)
+            .unwrap();
         assert_eq!(crs.crs_type, CrsType::Projjson);
         assert_eq!(
             crs.definition,

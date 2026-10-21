@@ -168,7 +168,9 @@ impl Value {
                 match format {
                     GeometryStorageType::Wkb => blob::from_string(&text),
                     GeometryStorageType::Spatial => crate::geometry::from_spatial(&blob::from_string(&text)?),
-                    _ => Err(Error::internal("Unknown geometry format in value deserialization")),
+                    _ => Err(Error::internal(
+                        "Unknown geometry format in value deserialization",
+                    )),
                 }
             }
             _ => Ok(text),

@@ -84,6 +84,31 @@ fn write_vertices(target: &mut Vector, coords: &[Vec<f64>]) -> Result<()> {
     Ok(())
 }
 
+/// Fills the child of LIST level `level` of `list` (the nested LIST levels and the
+/// vertices, top down).
+fn fill_levels(
+    list: &mut Vector,
+    level: usize,
+    entries: &[Vec<ListEntry>],
+    coords: &[Vec<f64>],
+) -> Result<()> {
+    let child = list
+        .list_child_mut()
+        .ok_or_else(|| Error::internal("shredded geometry level is not a LIST"))?;
+    let size = if level + 1 == entries.len() {
+        write_vertices(child, coords)?;
+        coords.first().map_or(0, Vec::len)
+    } else {
+        let next = &entries[level + 1];
+        child.resize(next.len());
+        child.values_mut::<ListEntry>()[..next.len()].copy_from_slice(next);
+        fill_levels(child, level + 1, entries, coords)?;
+        next.len()
+    };
+    list.set_list_size(size);
+    Ok(())
+}
+
 /// `Geometry::ToVectorizedFormat(source, target, count, geom_type, vert_type)`: the first
 /// `count` rows of a GEOMETRY vector in the vectorized layout of `geometry`/`vertex`.
 fn to_vectorized_typed(
@@ -129,25 +154,7 @@ fn to_vectorized_typed(
         *entry = parse_level(&mut reader, 0, headers, &mut entries, &mut coords)?;
     }
     target.values_mut::<ListEntry>()[..count].copy_from_slice(&top);
-    // Fill the nested LIST levels and the vertices, top down.
-    fn fill(list: &mut Vector, level: usize, entries: &[Vec<ListEntry>], coords: &[Vec<f64>]) -> Result<()> {
-        let child = list
-            .list_child_mut()
-            .ok_or_else(|| Error::internal("shredded geometry level is not a LIST"))?;
-        let size = if level + 1 == entries.len() {
-            write_vertices(child, coords)?;
-            coords.first().map_or(0, Vec::len)
-        } else {
-            let next = &entries[level + 1];
-            child.resize(next.len());
-            child.values_mut::<ListEntry>()[..next.len()].copy_from_slice(next);
-            fill(child, level + 1, entries, coords)?;
-            next.len()
-        };
-        list.set_list_size(size);
-        Ok(())
-    }
-    fill(&mut target, 0, &entries, &coords)?;
+    fill_levels(&mut target, 0, &entries, &coords)?;
     Ok(target)
 }
 
@@ -207,7 +214,14 @@ impl<'a> VectorizedView<'a> {
     }
 
     /// Writes the count and the elements of LIST level `level` entry `index`.
-    fn write_level(&self, out: &mut Vec<u8>, level: usize, entry: ListEntry, headers: &[bool], part_meta: u32) {
+    fn write_level(
+        &self,
+        out: &mut Vec<u8>,
+        level: usize,
+        entry: ListEntry,
+        headers: &[bool],
+        part_meta: u32,
+    ) {
         out.extend_from_slice(&(entry.length as u32).to_le_bytes());
         for index in entry.range() {
             if headers[level] {
@@ -333,10 +347,20 @@ mod tests {
     fn shredding_round_trips() {
         round_trip(&[Some("POINT(1 2)"), None, Some("POINT(3 4)")]);
         round_trip(&[Some("POINT ZM (1 2 3 4)")]);
-        round_trip(&[Some("LINESTRING(0 0, 1 1)"), None, Some("LINESTRING(2 2, 3 3, 4 4)")]);
-        round_trip(&[Some("POLYGON((0 0, 1 0, 1 1, 0 0), (0 0, 1 1, 0 0))"), Some("POLYGON((5 5, 6 6, 5 5))")]);
+        round_trip(&[
+            Some("LINESTRING(0 0, 1 1)"),
+            None,
+            Some("LINESTRING(2 2, 3 3, 4 4)"),
+        ]);
+        round_trip(&[
+            Some("POLYGON((0 0, 1 0, 1 1, 0 0), (0 0, 1 1, 0 0))"),
+            Some("POLYGON((5 5, 6 6, 5 5))"),
+        ]);
         round_trip(&[Some("MULTIPOINT M (1 2 3, 4 5 6)"), None]);
-        round_trip(&[Some("MULTILINESTRING((0 0, 1 1), (2 2, 3 3, 4 4))"), Some("MULTILINESTRING((9 9, 8 8))")]);
+        round_trip(&[
+            Some("MULTILINESTRING((0 0, 1 1), (2 2, 3 3, 4 4))"),
+            Some("MULTILINESTRING((9 9, 8 8))"),
+        ]);
         round_trip(&[
             Some("MULTIPOLYGON(((0 0, 1 0, 1 1, 0 0)), ((5 5, 6 6, 5 5), (1 1, 2 2, 1 1)))"),
             None,

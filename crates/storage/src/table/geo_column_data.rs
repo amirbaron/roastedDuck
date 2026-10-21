@@ -79,14 +79,13 @@ pub(crate) fn interpret_layout_statistics(
         interpret_stats(layout, target, geometry, vertex);
         return;
     }
-    match layout.data() {
-        StatsData::Geometry(_) => target.merge(layout),
-        _ => {
-            // Just written in the legacy format (a BLOB with string statistics).
-            target.copy_base(layout);
-            if let Some(data) = target.geometry_mut() {
-                *data = GeometryStats::unknown();
-            }
-        }
+    if let StatsData::Geometry(_) = layout.data() {
+        target.merge(layout);
+        return;
+    }
+    // Just written in the legacy format (a BLOB with string statistics).
+    target.copy_base(layout);
+    if let Some(data) = target.geometry_mut() {
+        *data = GeometryStats::unknown();
     }
 }

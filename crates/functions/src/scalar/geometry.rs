@@ -7,9 +7,7 @@ use std::sync::Arc;
 use rustdb_common::{Error, Result};
 use rustdb_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
 use rustdb_types::geometry::{self, GeometryExtent};
-use rustdb_types::{
-    LogicalType, LogicalTypeId, TypeInfo, Value, Vector,
-};
+use rustdb_types::{LogicalType, LogicalTypeId, TypeInfo, Value, Vector};
 
 use crate::scalar::executor::{Str, StrOut, binary, unary};
 

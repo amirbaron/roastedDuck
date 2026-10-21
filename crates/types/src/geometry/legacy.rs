@@ -169,17 +169,19 @@ fn analyze_for_spatial(source: &[u8]) -> Result<SpatialAnalysis> {
                 ));
             }
         }
-        let vertex = |reader: &mut BlobReader<'_>, extent: &mut GeometryExtent, skip_nan: bool| -> Result<()> {
-            let x = reader.f64(true)?;
-            let y = reader.f64(true)?;
-            let z = if has_z { Some(reader.f64(true)?) } else { None };
-            let m = if has_m { Some(reader.f64(true)?) } else { None };
-            let all_nan = x.is_nan() && y.is_nan() && z.is_none_or(f64::is_nan) && m.is_none_or(f64::is_nan);
-            if !(skip_nan && all_nan) {
-                extent.extend(x, y, z, m);
-            }
-            Ok(())
-        };
+        let vertex =
+            |reader: &mut BlobReader<'_>, extent: &mut GeometryExtent, skip_nan: bool| -> Result<()> {
+                let x = reader.f64(true)?;
+                let y = reader.f64(true)?;
+                let z = if has_z { Some(reader.f64(true)?) } else { None };
+                let m = if has_m { Some(reader.f64(true)?) } else { None };
+                let all_nan =
+                    x.is_nan() && y.is_nan() && z.is_none_or(f64::is_nan) && m.is_none_or(f64::is_nan);
+                if !(skip_nan && all_nan) {
+                    extent.extend(x, y, z, m);
+                }
+                Ok(())
+            };
         match GeometryType::from_id(geometry_type) {
             Some(GeometryType::Point) => vertex(&mut reader, &mut state.extent, true)?,
             Some(GeometryType::LineString) => {
@@ -260,8 +262,10 @@ pub fn to_spatial(source: &[u8]) -> Result<Vec<u8>> {
             Some(GeometryType::Point) => {
                 let vertex = reader.reserve(vert_width)?;
                 let is_empty = vertex
-                    .chunks_exact(8)
-                    .all(|bytes| f64::from_le_bytes(bytes.try_into().unwrap_or_default()).is_nan());
+                    .as_chunks::<8>()
+                    .0
+                    .iter()
+                    .all(|bytes| f64::from_le_bytes(*bytes).is_nan());
                 if is_empty {
                     out.extend_from_slice(&0u32.to_le_bytes());
                 } else {
@@ -319,9 +323,14 @@ mod tests {
     #[test]
     fn legacy_round_trips() {
         assert_eq!(round_trip("POINT(1 2)"), "POINT (1 2)");
-        assert_eq!(round_trip("POLYGON Z ((1 2 3, 3 4 5, 5 6 7, 1 2 3))"), "POLYGON Z ((1 2 3, 3 4 5, 5 6 7, 1 2 3))");
         assert_eq!(
-            round_trip("MULTIPOLYGON M (((1 2 4, 3 4 6, 5 6 8, 1 2 4)), ((7 8 10, 9 10 12, 11 12 14, 7 8 10)))"),
+            round_trip("POLYGON Z ((1 2 3, 3 4 5, 5 6 7, 1 2 3))"),
+            "POLYGON Z ((1 2 3, 3 4 5, 5 6 7, 1 2 3))"
+        );
+        assert_eq!(
+            round_trip(
+                "MULTIPOLYGON M (((1 2 4, 3 4 6, 5 6 8, 1 2 4)), ((7 8 10, 9 10 12, 11 12 14, 7 8 10)))"
+            ),
             "MULTIPOLYGON M (((1 2 4, 3 4 6, 5 6 8, 1 2 4)), ((7 8 10, 9 10 12, 11 12 14, 7 8 10)))"
         );
         assert_eq!(

@@ -111,13 +111,19 @@ impl DataTableInfo {
             .unwrap_or_else(PoisonError::into_inner) = versions;
     }
 
-    /// The storage version index `name` was stored with, once (`Some(None)` when it was
-    /// stored without one); `None` for indexes not read from the file.
-    pub(crate) fn take_stored_index_version(&self, name: &str) -> Option<Option<u64>> {
-        self.stored_index_versions
+    /// The storage version of index `name` (`ART::ART`): the one it was stored with
+    /// (possibly none) when it is read from the file, else `new_index_version`. A stored
+    /// version is used once.
+    pub(crate) fn index_storage_version(&self, name: &str, new_index_version: u64) -> Option<u64> {
+        match self
+            .stored_index_versions
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(name)
+        {
+            Some(stored) => stored,
+            None => Some(new_index_version),
+        }
     }
 
     /// The table's indexes.

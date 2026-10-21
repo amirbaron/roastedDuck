@@ -308,20 +308,17 @@ impl PersistentColumnData {
     /// `PersistentColumnData::Serialize`.
     pub fn serialize_fields(&self, serializer: &mut dyn Serializer) -> Result<()> {
         // "extra_data" (99) is only written for VARIANT and GEOMETRY columns.
-        match self.geometry_storage {
-            Some(storage) => {
-                serializer.on_optional_property_begin(99, "extra_data", true);
-                serializer.on_nullable_begin(true);
-                serializer.on_object_begin();
-                write_geometry_extra_data(serializer, storage)?;
-                serializer.on_object_end();
-                serializer.on_nullable_end();
-                serializer.on_optional_property_end(true);
-            }
-            None => {
-                serializer.on_optional_property_begin(99, "extra_data", false);
-                serializer.on_optional_property_end(false);
-            }
+        if let Some(storage) = self.geometry_storage {
+            serializer.on_optional_property_begin(99, "extra_data", true);
+            serializer.on_nullable_begin(true);
+            serializer.on_object_begin();
+            write_geometry_extra_data(serializer, storage)?;
+            serializer.on_object_end();
+            serializer.on_nullable_end();
+            serializer.on_optional_property_end(true);
+        } else {
+            serializer.on_optional_property_begin(99, "extra_data", false);
+            serializer.on_optional_property_end(false);
         }
         self.write_pointers(serializer)?;
         if self.logical_type.id() == LogicalTypeId::Validity {
@@ -634,7 +631,7 @@ impl IndexStorageInfo {
         let storage_version = options
             .as_ref()
             .and_then(|options| options.get("storage_version"))
-            .and_then(|value| value.as_u64());
+            .and_then(rustdb_types::Value::as_u64);
         Ok(Self {
             name,
             root,

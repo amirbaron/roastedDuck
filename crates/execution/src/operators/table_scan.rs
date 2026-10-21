@@ -243,7 +243,12 @@ impl Source for PhysicalTableScan {
 
     /// A function without scan metrics reports its estimated cardinality as the rows
     /// scanned once the thread exhausted it (`AddEstimatedTableScanRowsScanned`).
-    fn scan_metrics(&self, global: &TableScanGlobal, local: &Self::Local, exhausted: bool) -> Option<ScanMetrics> {
+    fn scan_metrics(
+        &self,
+        global: &TableScanGlobal,
+        local: &Self::Local,
+        exhausted: bool,
+    ) -> Option<ScanMetrics> {
         let rows_scanned = if exhausted {
             self.function
                 .cardinality

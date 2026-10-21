@@ -707,15 +707,13 @@ fn serialize_indexes(
     for entry in table.info().indexes().entries() {
         let mut index_blocks = BlockWriter::new(Arc::clone(storage.block_manager()));
         let mut state = entry.lock();
-        let info = state
-            .index
-            .serialize_to_disk(&index_options, &mut |bytes| {
-                let pointer = index_blocks.write_segment(bytes)?;
-                Ok(rustdb_storage::index::fixed_size_allocator::BufferPointer {
-                    block_id: pointer.block_id,
-                    offset: pointer.offset,
-                })
-            })?;
+        let info = state.index.serialize_to_disk(&index_options, &mut |bytes| {
+            let pointer = index_blocks.write_segment(bytes)?;
+            Ok(rustdb_storage::index::fixed_size_allocator::BufferPointer {
+                block_id: pointer.block_id,
+                offset: pointer.offset,
+            })
+        })?;
         index_blocks.flush()?;
         for (block, count) in index_blocks.used_blocks {
             *blocks.used_blocks.entry(block).or_insert(0) += count;

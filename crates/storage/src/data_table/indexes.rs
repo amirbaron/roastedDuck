@@ -157,11 +157,7 @@ impl DataTable {
         )?;
         // A new ART has the storage version of its database, one read from the file the
         // version it was stored with (`ART::ART`).
-        let version = self
-            .info()
-            .take_stored_index_version(name)
-            .unwrap_or(Some(io.storage_version()));
-        art.set_storage_version(version);
+        art.set_storage_version(self.info().index_storage_version(name, io.storage_version()));
         Ok(art)
     }
 

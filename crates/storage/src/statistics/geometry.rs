@@ -189,7 +189,9 @@ impl PartialEq for GeometryStats {
             ]
             .map(f64::to_bits)
         };
-        self.types == other.types && self.flags == other.flags && extent(&self.extent) == extent(&other.extent)
+        self.types == other.types
+            && self.flags == other.flags
+            && extent(&self.extent) == extent(&other.extent)
     }
 }
 

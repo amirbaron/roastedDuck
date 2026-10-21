@@ -220,7 +220,13 @@ fn checkpoint_geometry(
         return Ok(result);
     }
     if ctx.storage_version < GEOMETRY_VERSION_ADDED {
-        return checkpoint_converted_geometry(column, count, GeometryStorageType::Spatial, row_group_start, ctx);
+        return checkpoint_converted_geometry(
+            column,
+            count,
+            GeometryStorageType::Spatial,
+            row_group_start,
+            ctx,
+        );
     }
     let threshold = ctx.geometry_minimum_shredding_size;
     let should_shred = threshold >= 0 && column.count() >= threshold as u64;
@@ -236,14 +242,12 @@ fn checkpoint_geometry(
             let storage = geometry::storage_type(geometry_type, vertex_type);
             (storage != GeometryStorageType::Wkb).then_some(storage)
         });
-    match shred_type {
-        Some(storage) => checkpoint_converted_geometry(column, count, storage, row_group_start, ctx),
-        None => {
-            let mut result = checkpoint_column_data(column, count, row_group_start, ctx)?;
-            result.geometry_storage = Some(GeometryStorageType::Wkb);
-            Ok(result)
-        }
+    if let Some(storage) = shred_type {
+        return checkpoint_converted_geometry(column, count, storage, row_group_start, ctx);
     }
+    let mut result = checkpoint_column_data(column, count, row_group_start, ctx)?;
+    result.geometry_storage = Some(GeometryStorageType::Wkb);
+    Ok(result)
 }
 
 /// [`checkpoint_column`] for the column classes other than GEOMETRY.

@@ -248,7 +248,16 @@ impl ColumnData {
         has_parent: bool,
         layout: Option<&crate::checkpoint::pointers::PersistentColumnData>,
     ) -> Self {
-        let validity = || Box::new(Self::create(Arc::clone(&io), 0, validity_type(), data_type, true, None));
+        let validity = || {
+            Box::new(Self::create(
+                Arc::clone(&io),
+                0,
+                validity_type(),
+                data_type,
+                true,
+                None,
+            ))
+        };
         let child_layout = |index: usize| layout.and_then(|data| data.child_columns.get(index));
         let geometry_storage = match layout {
             Some(data) if ty.id() == LogicalTypeId::Geometry => {
@@ -262,7 +271,9 @@ impl ColumnData {
             // `GeoColumnData::InitializeColumn`: the base column has the stored layout; the
             // legacy format is stored as GEOMETRY (or as its BLOB alias when just written).
             let base_type = match (geometry_storage, layout) {
-                (GeometryStorageType::Spatial, Some(data)) if data.logical_type.id() == LogicalTypeId::Blob => {
+                (GeometryStorageType::Spatial, Some(data))
+                    if data.logical_type.id() == LogicalTypeId::Blob =>
+                {
                     data.logical_type.clone()
                 }
                 (GeometryStorageType::Spatial, _) => LogicalType::GEOMETRY,

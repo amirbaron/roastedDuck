@@ -138,7 +138,10 @@ pub fn storage_type(geometry: GeometryType, vertex: VertexType) -> GeometryStora
 
 /// The STRUCT of DOUBLE coordinates of a vertex type (`Geometry::GetVectorizedType`).
 fn vertex_struct_type(vertex: VertexType) -> LogicalType {
-    let mut fields = vec![("x".to_owned(), LogicalType::DOUBLE), ("y".to_owned(), LogicalType::DOUBLE)];
+    let mut fields = vec![
+        ("x".to_owned(), LogicalType::DOUBLE),
+        ("y".to_owned(), LogicalType::DOUBLE),
+    ];
     if vertex.has_z() {
         fields.push(("z".to_owned(), LogicalType::DOUBLE));
     }
@@ -158,7 +161,9 @@ pub fn vectorized_type_of(geometry: GeometryType, vertex: VertexType) -> Result<
         GeometryType::Polygon | GeometryType::MultiLineString => LogicalType::list(LogicalType::list(vertex)),
         GeometryType::MultiPolygon => LogicalType::list(LogicalType::list(LogicalType::list(vertex))),
         GeometryType::GeometryCollection => {
-            return Err(Error::not_implemented("GEOMETRYCOLLECTION vectorized type not implemented"));
+            return Err(Error::not_implemented(
+                "GEOMETRYCOLLECTION vectorized type not implemented",
+            ));
         }
         GeometryType::Invalid => {
             return Err(Error::invalid_input(format!(
