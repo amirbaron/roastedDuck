@@ -18,7 +18,9 @@ use rustdb_storage::table::{OrderByColumnType, OrderByStatistics, RowGroupOrderO
 use rustdb_types::LogicalTypeId;
 
 use crate::Optimizer;
-use crate::join_filter_pushdown::{PushdownColumn, PushdownOptions, get_pushdown_filter_targets, operator_at_path};
+use crate::join_filter_pushdown::{
+    PushdownColumn, PushdownOptions, get_pushdown_filter_targets, operator_at_path,
+};
 
 /// Sets the scan order below every LIMIT over an ORDER BY that allows it
 /// (`RowGroupPruner::Optimize`).
@@ -130,7 +132,10 @@ fn find_logical_order(limit: &LogicalOperator) -> Option<Vec<usize>> {
 
 /// The scan the first order column comes from: the path below the ORDER BY and the
 /// position of the column in the scan's columns (`RowGroupPruner::FindLogicalGet`).
-fn find_logical_get(order: &LogicalOperator, primary_order: &BoundOrderByNode) -> Option<(Vec<usize>, usize)> {
+fn find_logical_get(
+    order: &LogicalOperator,
+    primary_order: &BoundOrderByNode,
+) -> Option<(Vec<usize>, usize)> {
     let ExpressionKind::ColumnRef(column) = &primary_order.expression.kind else {
         return None;
     };
@@ -236,7 +241,11 @@ fn partition_stats(optimizer: &Optimizer, get: &LogicalGet, column: usize) -> Op
         return None;
     };
     let storage = table.storage.as_ref()?;
-    let local_rows = optimizer.context().transaction.local_storage().added_rows(storage);
+    let local_rows = optimizer
+        .context()
+        .transaction
+        .local_storage()
+        .added_rows(storage);
     let mut partitions: Vec<RowGroupPartition> = storage
         .row_groups()
         .row_groups()

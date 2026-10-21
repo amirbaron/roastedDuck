@@ -251,7 +251,8 @@ pub fn order_row_groups(
             continue;
         }
         let key = retrieve_stat(&stats, options.order_by, options.column_type);
-        let Some(key) = key.filter(|_| !(options.null_order == NullOrder::NullsFirst && stats.can_have_null()))
+        let Some(key) =
+            key.filter(|_| !(options.null_order == NullOrder::NullsFirst && stats.can_have_null()))
         else {
             // No trustworthy order statistic, or NULLs that NULLS FIRST must scan first.
             ambiguous.push(position);
@@ -292,11 +293,7 @@ pub fn order_row_groups(
         }
     };
     if options.null_order == NullOrder::NullsFirst {
-        ordered.extend(
-            null_only
-                .iter()
-                .skip(options.leading_null_group_offset as usize),
-        );
+        ordered.extend(null_only.iter().skip(options.leading_null_group_offset as usize));
         ordered.extend(&ambiguous);
         add_ordered(&mut ordered);
     } else {
