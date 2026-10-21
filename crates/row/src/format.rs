@@ -188,6 +188,13 @@ impl<'a> VectorFormat<'a> {
         &self.data[slot * width..(slot + 1) * width]
     }
 
+    /// Pointer to the data of slot 0 of a fixed-width vector: slot `slot` is
+    /// `slot * width` bytes further.
+    #[inline]
+    pub(crate) fn data_ptr(&self) -> *const u8 {
+        self.data.as_ptr()
+    }
+
     /// Pointer to the data of slot `slot` of a fixed-width vector.
     #[inline]
     pub(crate) fn slot_ptr(&self, slot: usize, width: usize) -> *const u8 {

@@ -323,7 +323,17 @@ unsafe fn match_column(
     unsafe {
         match function {
             MatchFunction::Fixed { physical, predicate } => Ok(match_fixed(
-                *physical, *predicate, lhs, sel, count, rhs_rows, offset, &rhs_null, all_valid, no_match,
+                *physical,
+                *predicate,
+                lhs,
+                sel,
+                count,
+                rhs_rows,
+                offset,
+                &rhs_null,
+                // The byte and bit of the column's validity in a stored row.
+                (!all_valid).then_some((base + col / 8, (col % 8) as u32)),
+                no_match,
             )),
             MatchFunction::Varchar { predicate } => {
                 let equality = matches!(
@@ -436,7 +446,7 @@ unsafe fn match_fixed(
     rhs_rows: &[RowPtr],
     offset: usize,
     rhs_null: &impl Fn(usize) -> bool,
-    rhs_all_valid: bool,
+    rhs_validity: Option<(usize, u32)>,
     no_match: &mut Option<&mut Vec<u32>>,
 ) -> usize {
     #[allow(
@@ -452,7 +462,7 @@ unsafe fn match_fixed(
         rhs_rows: &[RowPtr],
         offset: usize,
         rhs_null: &impl Fn(usize) -> bool,
-        rhs_all_valid: bool,
+        rhs_validity: Option<(usize, u32)>,
         no_match: &mut Option<&mut Vec<u32>>,
     ) -> usize {
         #[allow(
@@ -497,14 +507,37 @@ unsafe fn match_fixed(
                 if lhs_all_valid {
                     // With no NULL input value, `IS NOT DISTINCT FROM` is `=` (a NULL stored
                     // value differs from every input value).
-                    return match (&lhs.sel, rhs_all_valid) {
-                        (SlotMap::Identity, true) => compact(sel, count, no_match, |idx| {
-                            equal::<T>(lhs.slot_ptr(idx, width), rhs(idx))
+                    // The loops capture plain pointers, which stay in registers.
+                    debug_assert!(
+                        count == 0 || sel[..count].iter().all(|&idx| (idx as usize) < rhs_rows.len())
+                    );
+                    let data = lhs.data_ptr();
+                    let rows = rhs_rows.as_ptr();
+                    let input = move |slot: usize| data.add(slot * width);
+                    let stored = move |idx: usize| (*rows.add(idx)).as_ptr();
+                    let stored_valid =
+                        move |idx: usize, byte: usize, bit: u32| (*stored(idx).add(byte) >> bit) & 1 == 1;
+                    return match (&lhs.sel, rhs_validity) {
+                        (SlotMap::Identity, None) => compact(sel, count, no_match, move |idx| {
+                            equal::<T>(input(idx), stored(idx).add(offset))
                         }),
-                        (SlotMap::Indices(indices), true) => compact(sel, count, no_match, |idx| {
-                            equal::<T>(lhs.slot_ptr(indices[idx] as usize, width), rhs(idx))
+                        (SlotMap::Indices(indices), None) => {
+                            let indices = indices.as_ptr();
+                            compact(sel, count, no_match, move |idx| {
+                                equal::<T>(input(*indices.add(idx) as usize), stored(idx).add(offset))
+                            })
+                        }
+                        (SlotMap::Identity, Some((byte, bit))) => compact(sel, count, no_match, move |idx| {
+                            stored_valid(idx, byte, bit) && equal::<T>(input(idx), stored(idx).add(offset))
                         }),
-                        _ => compact(sel, count, no_match, |idx| {
+                        (SlotMap::Indices(indices), Some((byte, bit))) => {
+                            let indices = indices.as_ptr();
+                            compact(sel, count, no_match, move |idx| {
+                                stored_valid(idx, byte, bit)
+                                    && equal::<T>(input(*indices.add(idx) as usize), stored(idx).add(offset))
+                            })
+                        }
+                        (SlotMap::Fixed(_), _) => compact(sel, count, no_match, |idx| {
                             !rhs_null(idx) && equal::<T>(lhs.slot_ptr(lhs.slot(idx), width), rhs(idx))
                         }),
                     };
@@ -546,7 +579,7 @@ unsafe fn match_fixed(
                     rhs_rows,
                     offset,
                     rhs_null,
-                    rhs_all_valid,
+                    rhs_validity,
                     no_match,
                 )
             }
