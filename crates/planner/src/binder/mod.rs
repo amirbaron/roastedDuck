@@ -18,6 +18,7 @@ pub(crate) mod query_node;
 pub(crate) mod statement;
 pub(crate) mod tableref;
 
+use std::collections::BTreeSet;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -203,12 +204,35 @@ pub enum BinderType {
     View,
 }
 
+/// What binding a statement is for (DuckDB's `BindingMode`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BindingMode {
+    /// Binding to plan the statement.
+    #[default]
+    Standard,
+    /// Binding only to find the tables the statement uses, by name.
+    ExtractNames,
+    /// Binding only to find the tables the statement uses, by qualified name.
+    ExtractQualifiedNames,
+}
+
+impl BindingMode {
+    /// Whether the binding only finds table names: columns and function calls bind as
+    /// NULL, and missing tables as dummy scans.
+    pub fn extracts_names(self) -> bool {
+        matches!(self, Self::ExtractNames | Self::ExtractQualifiedNames)
+    }
+}
+
 /// State shared by every binder of one statement (DuckDB's `GlobalBinderState`).
 #[derive(Debug, Default)]
 pub struct GlobalBinderState {
     bound_tables: AtomicU64,
     properties: Mutex<StatementProperties>,
     parameters: Mutex<Option<BoundParameterMap>>,
+    mode: Mutex<BindingMode>,
+    /// The tables found when extracting names (`table_names`).
+    table_names: Mutex<BTreeSet<String>>,
 }
 
 /// The binder of one query level (DuckDB's `Binder` members).
@@ -321,6 +345,36 @@ impl Binder {
             .properties
             .lock()
             .unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// Sets what the statement is bound for (`SetBindingMode`).
+    pub fn set_binding_mode(&self, mode: BindingMode) {
+        *self.global.mode.lock().unwrap_or_else(PoisonError::into_inner) = mode;
+    }
+
+    /// What the statement is bound for (`GetBindingMode`).
+    pub fn binding_mode(&self) -> BindingMode {
+        *self.global.mode.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Records a table the statement uses (`AddTableName`).
+    pub fn add_table_name(&self, name: String) {
+        self.global
+            .table_names
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(name);
+    }
+
+    /// The tables recorded while extracting names (`GetTableNames`).
+    pub fn take_table_names(&self) -> BTreeSet<String> {
+        std::mem::take(
+            &mut *self
+                .global
+                .table_names
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        )
     }
 
     /// A copy of the statement's properties.

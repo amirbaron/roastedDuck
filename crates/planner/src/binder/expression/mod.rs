@@ -10,7 +10,7 @@ mod bind_type;
 
 use rustdb_ast::{ExpressionType, ParsedExpression, ParsedExpressionKind};
 use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, LogicalTypeId};
+use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
 use crate::expression::{
     BoundBetweenExpression, BoundCaseCheck, BoundCaseExpression, Expression, ExpressionKind,
@@ -231,6 +231,9 @@ pub fn bind_column_ref<B: ExpressionBinder + ?Sized>(
     depth: u64,
     root_expression: bool,
 ) -> Result<BindResult> {
+    if binder.binder_ref().binding_mode().extracts_names() {
+        return Ok(Expression::constant(Value::null(LogicalType::SQLNULL)).into());
+    }
     let ParsedExpressionKind::ColumnRef(column) = &expr.kind else {
         return Err(Error::internal("expected a column reference"));
     };

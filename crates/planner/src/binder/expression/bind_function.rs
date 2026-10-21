@@ -6,7 +6,7 @@ use rustdb_ast::{
 use rustdb_catalog::EntryKind;
 use rustdb_common::{Error, Result};
 use rustdb_function::{BindLambda, LambdaInput, ScalarFunctionSet};
-use rustdb_types::{LogicalType, LogicalTypeId};
+use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
 use crate::binder::Binding;
 use crate::expression::{BoundLambdaExpression, Expression, ExpressionKind};
@@ -84,6 +84,9 @@ fn bind_scalar_function<B: ExpressionBinder + ?Sized>(
     }
     if let Some(error) = error {
         return Ok(BindResult::Unbound(error));
+    }
+    if binder.binder_ref().binding_mode().extracts_names() {
+        return Ok(Expression::constant(Value::null(LogicalType::SQLNULL)).into());
     }
     let mut children: Vec<Expression> = Vec::with_capacity(function.children.len());
     for child in &mut function.children {

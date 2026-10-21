@@ -25,7 +25,6 @@ pub mod snappy;
 pub mod statistics;
 pub mod thrift;
 pub mod variant;
-pub mod vector_ops;
 pub mod writer;
 
 use rustdb_function::{ScalarFunctionSet, TableFunctionSet};

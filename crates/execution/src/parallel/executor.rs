@@ -4,7 +4,8 @@
 //! stack of events (initialize → run the pipelines → prepare finish → finish → complete)
 //! linked by the pipelines' dependencies. Events without dependencies are scheduled
 //! first; the thread running the query works on the query's tasks until the last meta
-//! pipeline completes, while the scheduler's workers help.
+//! pipeline completes, while the scheduler's workers help. A [`QueryExecution`] lets the
+//! caller drive that work one task at a time (pending query results).
 
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -21,7 +22,7 @@ use super::pipeline_executor::{
 };
 use super::task_scheduler::{ProducerToken, Task, TaskExecutionMode, TaskExecutionResult};
 use crate::operator::{PhysicalRef, SinkFinalize, SinkState};
-use crate::{ClientEnv, ExecutionContext, QueryProfiler};
+use crate::{CardinalityEstimates, ClientEnv, ExecutionContext, QueryProfiler};
 
 /// Settings of one query run.
 #[derive(Clone, Debug)]
@@ -30,6 +31,12 @@ pub struct QueryOptions {
     pub profiler: Option<Arc<QueryProfiler>>,
     /// The `preserve_insertion_order` setting.
     pub preserve_insertion_order: bool,
+    /// The client's interrupt flag (DuckDB's `ClientContext::interrupted`): once set, the
+    /// query's tasks fail with `INTERRUPT Error: Interrupted!`.
+    pub client_interrupted: Option<Arc<AtomicBool>>,
+    /// The planner's estimated cardinality of the plan's operators, which weighs the
+    /// pipelines' progress.
+    pub estimates: CardinalityEstimates,
 }
 
 impl Default for QueryOptions {
@@ -37,7 +44,200 @@ impl Default for QueryOptions {
         Self {
             profiler: None,
             preserve_insertion_order: true,
+            client_interrupted: None,
+            estimates: CardinalityEstimates::default(),
         }
+    }
+}
+
+/// How far a query got: `done` of `total` rows, the sum of its pipelines' progress
+/// weighted by their sources' estimated cardinality (DuckDB's `ProgressData`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ProgressData {
+    pub done: f64,
+    pub total: f64,
+}
+
+impl ProgressData {
+    /// The progress as a percentage (`ProgressData::ProgressDone`, times 100).
+    pub fn percentage(&self) -> f64 {
+        if self.total > 0.0 {
+            self.done / self.total * 100.0
+        } else {
+            0.0
+        }
+    }
+}
+
+/// The state of a query after a step of work (DuckDB's `PendingExecutionResult` as the
+/// `Executor` reports it).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExecutionStep {
+    /// Every pipeline completed (`EXECUTION_FINISHED`).
+    Finished,
+    /// Work was done and more remains (`RESULT_NOT_READY`).
+    NotReady,
+    /// The remaining tasks are running on other threads (`NO_TASKS_AVAILABLE`).
+    NoTasksAvailable,
+}
+
+/// A physical plan being executed (DuckDB's `Executor` after `Initialize`): the pipelines
+/// are scheduled, and [`QueryExecution::execute_task`] works on the query's tasks on the
+/// calling thread while the scheduler's workers help. Dropping it cancels the query.
+pub struct QueryExecution {
+    root: PhysicalRef,
+    shared: Arc<ExecutorShared>,
+    /// The task the calling thread works on (`Executor::task`). Only accessed through
+    /// `&mut self`; the mutex makes the execution shareable like the connection owning it.
+    current: Mutex<Option<Box<dyn Task>>>,
+    /// Whether the query completed or failed.
+    done: bool,
+}
+
+impl QueryExecution {
+    /// Builds the pipelines of the plan rooted at `root` (a sink, e.g. a result collector)
+    /// and schedules the events whose dependencies are met (`Executor::Initialize`).
+    pub fn new(root: PhysicalRef, env: Arc<ClientEnv>, options: &QueryOptions) -> Result<Self> {
+        let graph = PipelineBuilder::build(&root, options.preserve_insertion_order)?;
+        let producer = env.scheduler.create_producer();
+        let shared = Arc::new(ExecutorShared {
+            env,
+            profiler: options.profiler.clone(),
+            client_interrupted: options.client_interrupted.clone(),
+            estimates: options.estimates.clone(),
+            producer,
+            pipelines: graph.pipelines.clone(),
+            interrupted: Arc::default(),
+            states: Mutex::default(),
+            error: Mutex::new(None),
+            completed_pipelines: AtomicUsize::new(0),
+            total_pipelines: AtomicUsize::new(0),
+            events: Mutex::default(),
+            executor_tasks: AtomicUsize::new(0),
+        });
+        shared.schedule(&graph);
+        Ok(Self {
+            root,
+            shared,
+            current: Mutex::new(None),
+            done: false,
+        })
+    }
+
+    /// The task the calling thread works on.
+    fn current(&mut self) -> &mut Option<Box<dyn Task>> {
+        self.current.get_mut().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Works on one task of the query for a while (`Executor::ExecuteTask`). A failure of
+    /// any of the query's tasks cancels the others and is returned.
+    pub fn execute_task(&mut self) -> Result<ExecutionStep> {
+        if self.done {
+            return Ok(ExecutionStep::Finished);
+        }
+        if let Some(error) = self.shared.take_error() {
+            return Err(self.fail(error));
+        }
+        if self.shared.is_complete() {
+            self.done = true;
+            return Ok(ExecutionStep::Finished);
+        }
+        let shared = Arc::clone(&self.shared);
+        let current = self.current();
+        if current.is_none() {
+            *current = shared.producer.take_task();
+        }
+        let Some(task) = current.as_mut() else {
+            return Ok(ExecutionStep::NoTasksAvailable);
+        };
+        if task.execute(TaskExecutionMode::ProcessPartial) != TaskExecutionResult::NotFinished {
+            *current = None;
+        }
+        if let Some(error) = self.shared.take_error() {
+            return Err(self.fail(error));
+        }
+        Ok(ExecutionStep::NotReady)
+    }
+
+    /// Blocks until a task of the query is queued or the query completed or failed
+    /// (`Executor::WaitForTask`).
+    pub fn wait_for_task(&self) {
+        let shared = &self.shared;
+        shared
+            .producer
+            .wait(|| shared.is_complete() || shared.is_cancelled());
+    }
+
+    /// Runs the query to completion and returns the root's finalized sink state.
+    pub fn finish(mut self) -> Result<SinkState> {
+        loop {
+            match self.execute_task()? {
+                ExecutionStep::Finished => break,
+                ExecutionStep::NotReady => {}
+                ExecutionStep::NoTasksAvailable => self.wait_for_task(),
+            }
+        }
+        self.shared.cancel_tasks();
+        self.shared.take_finalized_sink(&self.root)
+    }
+
+    /// The global state of the root sink once its pipeline is initialized: a streaming
+    /// result collector hands out its chunks from it while the query runs.
+    pub fn root_sink_state(&self) -> Option<SinkState> {
+        self.shared.sink_state(&self.root)
+    }
+
+    /// The progress of the query's pipelines, or `None` while a started pipeline's source
+    /// cannot tell (`Executor::GetPipelinesProgress` with `Pipeline::GetProgress`): a
+    /// pipeline counts as many rows as its source is estimated to produce.
+    pub fn progress(&self) -> Option<ProgressData> {
+        let mut progress = ProgressData {
+            done: 0.0,
+            total: 0.0,
+        };
+        for pipeline in &self.shared.pipelines {
+            let cardinality = self.shared.estimates.get(&pipeline.source).clamp(1, 1 << 48) as f64;
+            if let Some(state) = pipeline.source_state() {
+                let done = pipeline.source.as_source()?.progress(state.as_ref()).ok()??;
+                progress.done += done.clamp(0.0, 1.0) * cardinality;
+            }
+            progress.total += cardinality;
+        }
+        // `ProgressBar::Update`: very large totals are scaled down.
+        if progress.total > 1e15 {
+            progress.done = progress.done / progress.total * 1e15;
+            progress.total = 1e15;
+        }
+        Some(progress)
+    }
+
+    /// Cancels the remaining work after `error` and releases the operators' states now
+    /// (a failed COPY removes its files), not when a worker thread drops its last handle
+    /// on the query.
+    fn fail(&mut self, error: Error) -> Error {
+        self.done = true;
+        *self.current() = None;
+        self.shared.cancel_tasks();
+        drop(std::mem::take(&mut *lock(&self.shared.states)));
+        error
+    }
+}
+
+impl std::fmt::Debug for QueryExecution {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QueryExecution")
+            .field("root", &self.root.name())
+            .field("shared", &self.shared)
+            .field("done", &self.done)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Drop for QueryExecution {
+    fn drop(&mut self) {
+        // The task this thread held is dropped first: it may hold operator states.
+        *self.current() = None;
+        self.shared.cancel_tasks();
     }
 }
 
@@ -74,30 +274,7 @@ impl Executor {
         env: Arc<ClientEnv>,
         options: &QueryOptions,
     ) -> Result<SinkState> {
-        let graph = PipelineBuilder::build(root, options.preserve_insertion_order)?;
-        let producer = env.scheduler.create_producer();
-        let shared = Arc::new(ExecutorShared {
-            env,
-            profiler: options.profiler.clone(),
-            producer,
-            pipelines: graph.pipelines.clone(),
-            interrupted: Arc::default(),
-            states: Mutex::default(),
-            error: Mutex::new(None),
-            completed_pipelines: AtomicUsize::new(0),
-            total_pipelines: AtomicUsize::new(0),
-            events: Mutex::default(),
-            executor_tasks: AtomicUsize::new(0),
-        });
-        let result = shared.run(&graph);
-        shared.cancel_tasks();
-        if let Err(error) = result {
-            // Release the operators' states now (a failed COPY removes its files), not
-            // when a worker thread drops its last handle on the query.
-            drop(std::mem::take(&mut *lock(&shared.states)));
-            return Err(error);
-        }
-        shared.take_finalized_sink(root)
+        QueryExecution::new(Arc::clone(root), env, options)?.finish()
     }
 }
 
@@ -136,6 +313,10 @@ impl OperatorStates {
 pub(crate) struct ExecutorShared {
     env: Arc<ClientEnv>,
     profiler: Option<Arc<QueryProfiler>>,
+    /// The client's interrupt flag, if the client can interrupt the query.
+    client_interrupted: Option<Arc<AtomicBool>>,
+    /// The estimated cardinality of the plan's operators.
+    estimates: CardinalityEstimates,
     producer: ProducerToken,
     pipelines: Vec<Arc<Pipeline>>,
     /// Set on the first error: tasks stop at their next chunk.
@@ -217,38 +398,31 @@ impl ExecutorShared {
             Arc::clone(&self.env),
             self.profiler.clone(),
             Arc::clone(&self.interrupted),
+            self.client_interrupted.clone(),
             thread_index,
         )
     }
 
-    /// Schedules the events and works on the query's tasks until it is complete or fails
-    /// (`InitializeInternal` + the `ExecuteTask` loop).
-    fn run(self: &Arc<Self>, graph: &PipelineGraph) -> Result<()> {
-        let events = self.schedule_events(graph);
-        for event in &events {
+    /// The query's first error, if one was pushed (taken, so it is reported once).
+    fn take_error(&self) -> Option<Error> {
+        lock(&self.error).take()
+    }
+
+    /// Creates the event graph and schedules the events without dependencies
+    /// (`InitializeInternal`).
+    fn schedule(self: &Arc<Self>, graph: &PipelineGraph) {
+        for event in &self.schedule_events(graph) {
             if !event.has_dependencies() {
                 event.schedule_and_finish_if_empty();
             }
         }
-        let mut current: Option<Box<dyn Task>> = None;
-        loop {
-            if let Some(error) = lock(&self.error).take() {
-                return Err(error);
-            }
-            if self.is_complete() {
-                return Ok(());
-            }
-            if current.is_none() {
-                current = self.producer.take_task();
-            }
-            match current.as_mut() {
-                Some(task) => {
-                    if task.execute(TaskExecutionMode::ProcessPartial) != TaskExecutionResult::NotFinished {
-                        current = None;
-                    }
-                }
-                None => self.producer.wait(|| self.is_complete() || self.is_cancelled()),
-            }
+    }
+
+    /// The global state of `sink` while it receives input or once it is finalized.
+    fn sink_state(&self, sink: &PhysicalRef) -> Option<SharedState> {
+        match lock(&self.states).sinks.get(&operator_key(sink)) {
+            Some(SinkSlot::Building(state) | SinkSlot::Finalized { state, .. }) => Some(Arc::clone(state)),
+            _ => None,
         }
     }
 

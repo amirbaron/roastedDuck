@@ -9,5 +9,5 @@ mod pipeline;
 mod pipeline_executor;
 mod task_scheduler;
 
-pub use executor::{Executor, QueryOptions};
+pub use executor::{ExecutionStep, Executor, ProgressData, QueryExecution, QueryOptions};
 pub use task_scheduler::TaskScheduler;

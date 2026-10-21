@@ -26,8 +26,9 @@ pub use operator::{
     Operator, OperatorResult, OrderPreservationType, PartitionInfo, PhysicalOperator, PhysicalRef, Sink,
     SinkFinalize, SinkResult, Source, SourceResult,
 };
-pub use parallel::{Executor, QueryOptions, TaskScheduler};
+pub use parallel::{ExecutionStep, Executor, ProgressData, QueryExecution, QueryOptions, TaskScheduler};
 pub use plan_generator::{
-    ExplainOutput, JoinPlanSettings, PlanContext, create_physical_plan, create_physical_plan_with,
+    CardinalityEstimates, ExplainOutput, JoinPlanSettings, PhysicalPlan, PlanContext, create_physical_plan,
+    create_physical_plan_with,
 };
 pub use profiler::{OperatorProfile, QueryProfiler, ScanMetrics, operator_key};

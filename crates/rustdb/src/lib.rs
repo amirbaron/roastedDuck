@@ -28,15 +28,19 @@ mod sequence;
 mod settings;
 mod storage;
 mod switch;
-mod temp_catalog;
 mod system_functions;
+mod temp_catalog;
 mod transaction;
 mod wal;
 
-pub use config::{AccessMode, Config};
-pub use database::{Connection, Database, ExtensionLoad};
+pub use config::{AccessMode, Config, config_flags};
+pub use database::{
+    Appender, ClientHandle, ColumnDescription, Connection, Database, ExtensionLoad, PendingExecutionResult,
+    PendingQuery, PreparedStatement, QueryId, QueryProgress, QueryResult, StreamQueryResult,
+    TableDescription,
+};
 pub use result::MaterializedResult;
-pub use rustdb_ast::SqlStatement;
+pub use rustdb_ast::{SqlStatement, StatementType};
 pub use rustdb_common::{Error, ErrorKind, Result};
 pub use rustdb_planner::StatementReturnType;
 pub use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Value};

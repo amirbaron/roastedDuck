@@ -260,6 +260,13 @@ pub trait Source: PhysicalOperator {
         Vec::new()
     }
 
+    /// The share of its rows the source produced so far, in `[0, 1]`, or `None` if it
+    /// cannot tell (DuckDB's `GetProgress`, whose default is invalid progress).
+    fn progress(&self, global: &Self::Global) -> Option<f64> {
+        let _ = global;
+        None
+    }
+
     /// What a thread's table scan read, for the profiler (`PhysicalTableScan::GetMetrics`
     /// with the cardinality fallback of `FinalizeSourceProfiling`); `exhausted` tells
     /// whether the thread read the source to its end. `None` for other sources.
@@ -438,6 +445,7 @@ pub trait ErasedSource {
     ) -> Result<SourceResult>;
     fn max_threads(&self, global: &(dyn Any + Send + Sync)) -> Result<usize>;
     fn batch_index(&self, global: &(dyn Any + Send + Sync), local: &(dyn Any + Send)) -> Result<u64>;
+    fn progress(&self, global: &(dyn Any + Send + Sync)) -> Result<Option<f64>>;
     fn extra_source_params(
         &self,
         global: &(dyn Any + Send + Sync),
@@ -495,6 +503,9 @@ impl<T: Source> ErasedSource for T {
             .downcast_ref::<T::Local>()
             .ok_or_else(|| state_type_error(name))?;
         Source::batch_index(self, downcast(global, name)?, local)
+    }
+    fn progress(&self, global: &(dyn Any + Send + Sync)) -> Result<Option<f64>> {
+        Ok(Source::progress(self, downcast(global, self.name())?))
     }
     fn extra_source_params(
         &self,

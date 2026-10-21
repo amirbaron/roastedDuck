@@ -61,6 +61,79 @@ impl Vector {
         }
     }
 
+    /// The data buffer for writing in place, or null for vectors whose slots live in their
+    /// children (STRUCT and ARRAY parents) (DuckDB's `FlatVector::GetData`). Dictionaries
+    /// and sequences are flattened first. Like DuckDB's, the buffer is shared with the
+    /// vectors that reference it (clones of this one), which see writes through the
+    /// pointer; it stays valid until the vector is restructured or dropped.
+    pub fn data_ptr_mut(&mut self) -> *mut u8 {
+        let data = &self.storage_mut().data;
+        if data.len() == 0 {
+            return std::ptr::null_mut();
+        }
+        data.as_ptr().cast_mut()
+    }
+
+    /// The validity words for writing in place, covering the vector's capacity, or `None`
+    /// while every row is valid (DuckDB's `FlatVector::Validity(vector).GetData()`).
+    pub fn validity_words_mut(&mut self) -> Option<&mut [u64]> {
+        let storage = self.storage_mut();
+        storage.validity.writable_words(storage.capacity.max(1))
+    }
+
+    /// The validity words, materialised (all valid) to cover the vector's capacity
+    /// (DuckDB's `ValidityMask::EnsureWritable`).
+    pub fn ensure_validity_writable(&mut self) -> &mut [u64] {
+        let storage = self.storage_mut();
+        storage.validity.ensure_writable(storage.capacity.max(1))
+    }
+
+    /// Empties the vector for reuse as a flat vector of `capacity` rows (DuckDB's
+    /// `Vector::ResetFromCache`): every slot is valid again, string vectors let go of
+    /// their heaps and lists of their elements. A flat vector keeps a data buffer it owns
+    /// alone, so pointers into it stay valid; string slots are cleared, as they would
+    /// otherwise point into the released heaps.
+    pub fn reset_from_cache(&mut self, capacity: usize) {
+        let reusable = match &mut self.repr {
+            Repr::Flat(flat) => flat.capacity >= capacity && Arc::get_mut(&mut flat.data).is_some(),
+            _ => false,
+        };
+        if !reusable {
+            *self = Self::flat(self.ty.clone(), capacity);
+            return;
+        }
+        let Repr::Flat(flat) = &mut self.repr else {
+            unreachable!("checked to be flat above")
+        };
+        flat.validity = crate::ValidityMask::all_valid();
+        match &mut flat.aux {
+            Aux::Strings(heaps) => {
+                heaps.clear();
+                if let Some(data) = Arc::get_mut(&mut flat.data) {
+                    // SAFETY: the buffer is uniquely owned and `len` bytes long; all zero
+                    // bytes is the empty inline string.
+                    unsafe { std::ptr::write_bytes(data.as_mut_ptr(), 0, data.len()) };
+                }
+            }
+            Aux::List { child, size } => {
+                let child_capacity = child.capacity();
+                child.reset_from_cache(child_capacity);
+                *size = 0;
+            }
+            Aux::Struct(children) => {
+                for child in children {
+                    let child_capacity = child.capacity();
+                    child.reset_from_cache(child_capacity);
+                }
+            }
+            Aux::Array(child) => {
+                let child_capacity = child.capacity();
+                child.reset_from_cache(child_capacity);
+            }
+            Aux::None => {}
+        }
+    }
+
     /// Sets how many rows of a LIST/MAP vector's child are in use.
     pub fn set_list_size(&mut self, size: usize) {
         if let Aux::List { size: used, .. } = &mut self.storage_mut().aux {

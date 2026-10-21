@@ -71,4 +71,28 @@ impl ValidityMask {
     pub fn words(&self) -> Option<&[u64]> {
         self.words.as_deref().map(Vec::as_slice)
     }
+
+    /// The materialised words for writing, covering at least `capacity` rows (new rows
+    /// valid), or `None` while no words exist (DuckDB's `ValidityMask::GetData`). Shared
+    /// words are copied first, so writes affect this mask only.
+    pub fn writable_words(&mut self, capacity: usize) -> Option<&mut [u64]> {
+        let words = Arc::make_mut(self.words.as_mut()?);
+        if words.len() < capacity.div_ceil(64) {
+            words.resize(capacity.div_ceil(64), u64::MAX);
+        }
+        Some(words)
+    }
+
+    /// Materialises the words, all valid, for `capacity` rows (DuckDB's
+    /// `ValidityMask::EnsureWritable`).
+    pub fn ensure_writable(&mut self, capacity: usize) -> &mut [u64] {
+        let words = Arc::make_mut(
+            self.words
+                .get_or_insert_with(|| Arc::new(vec![u64::MAX; capacity.div_ceil(64)])),
+        );
+        if words.len() < capacity.div_ceil(64) {
+            words.resize(capacity.div_ceil(64), u64::MAX);
+        }
+        words
+    }
 }

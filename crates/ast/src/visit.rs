@@ -218,6 +218,6 @@ pub fn walk_table_ref<V: VisitorMut + ?Sized>(visitor: &mut V, table_ref: &mut T
                 visitor.visit_query_node(query);
             }
         }
-        TableRefKind::Empty => {}
+        TableRefKind::Empty | TableRefKind::ColumnData(_) => {}
     }
 }

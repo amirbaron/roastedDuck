@@ -1,8 +1,8 @@
 //! Copying rows between vectors of any type (DuckDB's `VectorOperations::Copy` and
 //! `ListVector::Append`), used to assemble nested values from their children.
 
+use crate::{ListEntry, PhysicalType, StringT, Vector, VectorKind};
 use rustdb_common::{Error, Result};
-use rustdb_types::{ListEntry, PhysicalType, StringT, Vector, VectorKind};
 
 /// Copies rows `src_start..src_start + count` of `src` into `dst` starting at row
 /// `dst_start`; `dst` must be flat and large enough.
@@ -142,7 +142,7 @@ pub fn list_append(list: &mut Vector, src: &Vector, count: usize) -> Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustdb_types::{LogicalType, Value};
+    use crate::{LogicalType, Value};
 
     #[test]
     fn copies_nested_rows() {

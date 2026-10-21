@@ -81,7 +81,7 @@ impl CppType {
                 Ok(Box::new(Self::parse(text)?))
             };
             return Ok(match name {
-                "unique_ptr" | "shared_ptr" => Self::Pointer(arg(0)?),
+                "unique_ptr" | "shared_ptr" | "optionally_owned_ptr" => Self::Pointer(arg(0)?),
                 "vector" | "unsafe_vector" => Self::Vector(arg(0)?),
                 "set" => Self::Set(arg(0)?),
                 // Keys of DuckDB's insertion-ordered map are case-insensitive too.

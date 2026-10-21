@@ -126,6 +126,13 @@ impl<'a> ConstantBinder<'a> {
             clause: clause.into(),
         }
     }
+
+    /// Casts the bound expression to `target` (DuckDB's `target_type`).
+    #[must_use]
+    pub fn with_target_type(mut self, target: LogicalType) -> Self {
+        self.base = self.base.with_target_type(target);
+        self
+    }
 }
 
 expression_binder_base!(ConstantBinder);

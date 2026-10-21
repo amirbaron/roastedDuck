@@ -993,6 +993,14 @@ impl fmt::Display for TableRef {
             TableRefKind::ExpressionList(list) => self.base_to_sql(values_to_sql(list), &list.expected_names),
             TableRefKind::Pivot(pivot) => pivot_to_sql(self, pivot),
             TableRefKind::Show(show) => show_to_sql(show),
+            TableRefKind::ColumnData(column_data) => {
+                let text = column_data
+                    .collection
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_default();
+                self.base_to_sql(text, &column_data.expected_names)
+            }
         };
         f.write_str(&text)
     }

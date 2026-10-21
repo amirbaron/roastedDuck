@@ -169,6 +169,7 @@ const fn rename(member: &'static str, to: &'static str) -> FieldConfig {
 pub const EXTERNAL_TYPES: &[(&str, &str, &str)] = &[
     ("LogicalType", "rustdb_types", "LogicalType"),
     ("Value", "rustdb_types", "Value"),
+    ("ColumnDataCollection", "rustdb_types", "ColumnDataCollection"),
     (
         "CoordinateReferenceSystem",
         "rustdb_types",
@@ -314,6 +315,7 @@ pub const TARGETS: &[Target] = &[
                         "TableFunctionRef",
                         "EmptyTableRef",
                         "ExpressionListRef",
+                        "ColumnDataRef",
                         "PivotRef",
                         "ShowRef",
                         "AtClause",
