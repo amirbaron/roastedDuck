@@ -190,6 +190,10 @@ impl ExpressionFilter for BloomTableFilter {
         })
     }
 
+    fn is_bloom_filter(&self) -> bool {
+        true
+    }
+
     fn check_statistics(&self, stats: &BaseStatistics) -> FilterPropagateResult {
         match stats.data() {
             StatsData::Numeric(numeric) if numeric.has_min_max() => match (numeric.min, numeric.max) {

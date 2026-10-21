@@ -52,6 +52,14 @@ pub trait IndexKeyExecutor: Send + Sync + fmt::Debug {
     fn execute(&self, table_chunk: &DataChunk) -> Result<DataChunk>;
     /// The display names of the key expressions (`Expression::GetName`).
     fn names(&self) -> &[String];
+
+    /// The predicates an index scan answers for the pushed-down `filter` on the one column
+    /// the key expression reads, if it compares the key expression with a constant
+    /// (`ART::TryInitializeScan` on the filter's `ToExpression`).
+    fn scan_predicates(&self, filter: &TableFilter) -> Option<Vec<IndexScanPredicate>> {
+        let _ = filter;
+        None
+    }
 }
 
 /// How an index computes its key columns from a table chunk.
@@ -906,6 +914,12 @@ fn extract_comparisons(
         TableFilter::Optional(child) => child
             .as_ref()
             .is_none_or(|child| extract_comparisons(child, comparisons, in_values)),
+        // A `SelectivityOptionalFilter` is an `OptionalFilter`.
+        TableFilter::SelectivityOptional(optional) => {
+            extract_comparisons(&optional.child, comparisons, in_values)
+        }
+        // Bloom filters cannot find comparisons or IN filters, but do not prevent them.
+        TableFilter::Expression(expression) => expression.is_bloom_filter(),
         _ => false,
     }
 }

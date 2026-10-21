@@ -287,7 +287,8 @@ impl DataTable {
                 return Err(error);
             }
         }
-        Ok(())
+        // `PhysicalCreateIndex::Finalize`: vacuum the excess memory of the build.
+        index.vacuum()
     }
 
     /// The distinct columns an index reads, sorted.
@@ -710,7 +711,8 @@ impl DataTable {
                 continue;
             }
             let state = entry.lock();
-            if !matches!(state.index.expressions(), IndexKeyExpressions::Columns(_)) {
+            // No index scans on compound keys.
+            if state.index.key_types().len() != 1 {
                 continue;
             }
             let indexed = entry.column_ids()[0];
@@ -723,7 +725,11 @@ impl DataTable {
             let Some(filter) = filters.filters.get(&position) else {
                 continue;
             };
-            let Some(predicates) = IndexScanPredicate::from_filter(filter) else {
+            let predicates = match state.index.expressions() {
+                IndexKeyExpressions::Columns(_) => IndexScanPredicate::from_filter(filter),
+                IndexKeyExpressions::Custom(executor) => executor.scan_predicates(filter),
+            };
+            let Some(predicates) = predicates else {
                 continue;
             };
             let mut row_ids = BTreeSet::new();

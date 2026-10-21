@@ -30,6 +30,12 @@ pub trait ExpressionFilter: Send + Sync + fmt::Debug {
         FilterPropagateResult::NoPruningPossible
     }
 
+    /// Whether this is a join's bloom filter (`TableFilterType::BLOOM_FILTER`), which an
+    /// index scan ignores.
+    fn is_bloom_filter(&self) -> bool {
+        false
+    }
+
     /// The filter as SQL text over `column_name`.
     fn to_sql(&self, column_name: &str) -> String;
 

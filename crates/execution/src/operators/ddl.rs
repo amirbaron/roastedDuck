@@ -16,11 +16,14 @@ use rustdb_catalog::{
 };
 use rustdb_common::{Error, Result};
 use rustdb_planner::{ClientContext, Expression, ExpressionKind};
+use rustdb_storage::TableFilter;
 use rustdb_storage::index::IndexConstraintType;
-use rustdb_storage::index::art::{Art, IndexKeyExecutor, IndexKeyExpressions};
+use rustdb_storage::index::art::{Art, IndexKeyExecutor, IndexKeyExpressions, IndexScanPredicate};
 use rustdb_storage::{ColumnDefinition, DataTable, TableIoManager, Transaction};
+use rustdb_types::compare::CompareOp;
 use rustdb_types::{DataChunk, LogicalType, LogicalTypeId};
 
+use super::ExecutableExpressionFilter;
 use super::insert::TableCreator;
 use crate::expression_executor::ExpressionExecutor;
 use crate::operator::{ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
@@ -463,6 +466,76 @@ impl DdlAction for DropAction {
 struct IndexExpressionExecutor {
     executor: std::sync::Mutex<ExpressionExecutor>,
     names: Vec<String>,
+    /// The single key expression with its column read as `BOUND_REF #0`, the form of
+    /// a pushed-down expression filter; `None` for compound keys or keys over several
+    /// columns.
+    scan_key: Option<Expression>,
+}
+
+impl IndexExpressionExecutor {
+    fn new(expressions: &[Expression]) -> Self {
+        Self {
+            executor: std::sync::Mutex::new(ExpressionExecutor::new(expressions.to_vec())),
+            names: expressions.iter().map(Expression::name).collect(),
+            scan_key: match expressions {
+                [expression] => single_column_key(expression),
+                _ => None,
+            },
+        }
+    }
+}
+
+/// `expression` with its column references renumbered to `#0`, if it reads exactly one
+/// column (`TryScanIndex` rebinds the index expression to the scanned column).
+fn single_column_key(expression: &Expression) -> Option<Expression> {
+    fn collect(expression: &Expression, columns: &mut Vec<u64>) {
+        if let ExpressionKind::Reference(reference) = &expression.kind
+            && !columns.contains(&reference.index)
+        {
+            columns.push(reference.index);
+        }
+        for child in expression.children() {
+            collect(child, columns);
+        }
+    }
+    fn renumber(expression: &mut Expression) {
+        if let ExpressionKind::Reference(reference) = &mut expression.kind {
+            reference.index = 0;
+        }
+        expression.for_each_child_mut(renumber);
+    }
+    let mut columns = Vec::new();
+    collect(expression, &mut columns);
+    if columns.len() != 1 {
+        return None;
+    }
+    let mut key = expression.clone();
+    renumber(&mut key);
+    Some(key)
+}
+
+/// The comparison of an index scan for a comparison expression type.
+fn scan_compare_op(expression_type: rustdb_planner::ExpressionType) -> Option<CompareOp> {
+    use rustdb_planner::ExpressionType as T;
+    Some(match expression_type {
+        T::CompareEqual => CompareOp::Equal,
+        T::CompareLessthan => CompareOp::LessThan,
+        T::CompareLessthanorequalto => CompareOp::LessThanOrEqual,
+        T::CompareGreaterthan => CompareOp::GreaterThan,
+        T::CompareGreaterthanorequalto => CompareOp::GreaterThanOrEqual,
+        _ => return None,
+    })
+}
+
+/// `FlipComparisonExpression`: the comparison with its sides swapped.
+fn flip_compare_op(op: CompareOp) -> CompareOp {
+    match op {
+        CompareOp::LessThan => CompareOp::GreaterThan,
+        CompareOp::LessThanOrEqual => CompareOp::GreaterThanOrEqual,
+        CompareOp::GreaterThan => CompareOp::LessThan,
+        CompareOp::GreaterThanOrEqual => CompareOp::LessThanOrEqual,
+        other => other,
+    }
 }
 
 impl IndexKeyExecutor for IndexExpressionExecutor {
@@ -477,6 +550,37 @@ impl IndexKeyExecutor for IndexExpressionExecutor {
 
     fn names(&self) -> &[String] {
         &self.names
+    }
+
+    /// `ART::TryInitializeScan` with the filter's `ToExpression`: a comparison of the key
+    /// expression with a constant.
+    fn scan_predicates(&self, filter: &TableFilter) -> Option<Vec<IndexScanPredicate>> {
+        let key = self.scan_key.as_ref()?;
+        let TableFilter::Expression(filter) = filter else {
+            return None;
+        };
+        let expression = filter
+            .as_any()
+            .downcast_ref::<ExecutableExpressionFilter>()
+            .map(ExecutableExpressionFilter::expression)?;
+        let ExpressionKind::Comparison(comparison) = &expression.kind else {
+            return None;
+        };
+        let op = scan_compare_op(expression.expression_type)?;
+        let (op, constant) = match (&comparison.left.kind, &comparison.right.kind) {
+            (_, ExpressionKind::Constant(constant)) if comparison.left.equals(key) => (op, constant),
+            (ExpressionKind::Constant(constant), _) if comparison.right.equals(key) => {
+                (flip_compare_op(op), constant)
+            }
+            _ => return None,
+        };
+        if constant.value.is_null() {
+            return None;
+        }
+        Some(vec![IndexScanPredicate::Single {
+            op,
+            value: constant.value.clone(),
+        }])
     }
 }
 
@@ -516,10 +620,7 @@ fn index_art(storage: &DataTable, index: &CreateIndexInfo, expressions: &[Expres
         .filter_map(|&c| usize::try_from(c).ok())
         .collect();
     let key_types = expressions.iter().map(|e| e.return_type.clone()).collect();
-    let executor = IndexExpressionExecutor {
-        executor: std::sync::Mutex::new(ExpressionExecutor::new(expressions.to_vec())),
-        names: expressions.iter().map(Expression::name).collect(),
-    };
+    let executor = IndexExpressionExecutor::new(expressions);
     storage.new_art_with_expressions(
         &index.name,
         constraint,

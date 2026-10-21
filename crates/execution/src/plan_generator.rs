@@ -253,6 +253,12 @@ impl PlanGenerator {
         }
         let projection = get.projection_ids.iter().map(|&id| id as usize).collect();
         let filters = table_filter_set(get)?;
+        // `TableScanInitGlobal` binds the ART indexes before it tries an index scan.
+        if (filters.is_some() || get.dynamic_filters.is_some())
+            && let Some(table_entry) = &get.table
+        {
+            bind_table_indexes(&context.client, table_entry)?;
+        }
         let explain = ScanExplainInfo {
             table: get
                 .table_schema
