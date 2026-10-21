@@ -11,32 +11,32 @@ pub(crate) const MAX_LL: u32 = 35;
 pub(crate) const MAX_ML: u32 = 52;
 pub(crate) const MAX_OFF: u32 = 31;
 const DEFAULT_MAX_OFF: u32 = 28;
-const LL_FSE_LOG: u32 = 9;
-const ML_FSE_LOG: u32 = 9;
-const OFF_FSE_LOG: u32 = 8;
+pub(crate) const LL_FSE_LOG: u32 = 9;
+pub(crate) const ML_FSE_LOG: u32 = 9;
+pub(crate) const OFF_FSE_LOG: u32 = 8;
 const MAX_SEQ: usize = 52;
 
 #[rustfmt::skip]
-const LL_DEFAULT_NORM: [i16; 36] = [
+pub(crate) const LL_DEFAULT_NORM: [i16; 36] = [
     4, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1,
     2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2, 1, 1, 1, 1, 1,
     -1, -1, -1, -1,
 ];
-const LL_DEFAULT_NORM_LOG: u32 = 6;
+pub(crate) const LL_DEFAULT_NORM_LOG: u32 = 6;
 #[rustfmt::skip]
-const ML_DEFAULT_NORM: [i16; 53] = [
+pub(crate) const ML_DEFAULT_NORM: [i16; 53] = [
     1, 4, 3, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1,
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1,
     -1, -1, -1, -1, -1,
 ];
-const ML_DEFAULT_NORM_LOG: u32 = 6;
+pub(crate) const ML_DEFAULT_NORM_LOG: u32 = 6;
 #[rustfmt::skip]
-const OF_DEFAULT_NORM: [i16; 29] = [
+pub(crate) const OF_DEFAULT_NORM: [i16; 29] = [
     1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1,
     1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1,
 ];
-const OF_DEFAULT_NORM_LOG: u32 = 5;
+pub(crate) const OF_DEFAULT_NORM_LOG: u32 = 5;
 
 /// `-log2(x / 256)` in 1/256 bits (`kInverseProbabilityLog256`).
 #[rustfmt::skip]

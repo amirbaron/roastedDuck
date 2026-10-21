@@ -15,8 +15,9 @@
 //   zstd_ref stream <level> <input> <output> <chunk>
 //       ZstdStreamWrapper (CSV/JSON writers): ZSTD_e_continue per <chunk> input bytes,
 //       then ZSTD_e_end; 0 as level keeps the default.
-//   zstd_ref bench <level> <input> <iterations>
-//       Compression (ZSTD_compress) and decompression (ZSTD_decompress) throughput.
+//   zstd_ref bench <level> <input> <iterations> [compress|decompress]
+//       Compression (ZSTD_compress) and decompression (ZSTD_decompress) throughput; the
+//       last argument repeats only that half (for profiling).
 #include "zstd.h"
 
 #include <chrono>
@@ -128,31 +129,33 @@ static int Stream(int level, const char *in, const char *out, size_t chunk) {
 	return 0;
 }
 
-static int Bench(int level, const char *in, int iterations) {
+static int Bench(int level, const char *in, int iterations, const std::string &only) {
 	auto src = ReadFile(in);
 	std::vector<char> dst(ZSTD_compressBound(src.size()));
 	std::vector<char> back(src.size());
 	size_t size = 0;
+	int compress_iterations = only == "decompress" ? 1 : iterations;
+	int decompress_iterations = only == "compress" ? 1 : iterations;
 	auto start = std::chrono::steady_clock::now();
-	for (int i = 0; i < iterations; i++) {
+	for (int i = 0; i < compress_iterations; i++) {
 		size = ZSTD_compress(dst.data(), dst.size(), src.data(), src.size(), level);
 		Check(size);
 	}
 	auto middle = std::chrono::steady_clock::now();
-	for (int i = 0; i < iterations; i++) {
+	for (int i = 0; i < decompress_iterations; i++) {
 		Check(ZSTD_decompress(back.data(), back.size(), dst.data(), size));
 	}
 	auto end = std::chrono::steady_clock::now();
-	double mb = double(src.size()) * iterations / (1 << 20);
+	double mb = double(src.size()) / (1 << 20);
 	printf("compressed %zu -> %zu: compress %.1f MB/s, decompress %.1f MB/s\n", src.size(), size,
-	       mb / std::chrono::duration<double>(middle - start).count(),
-	       mb / std::chrono::duration<double>(end - middle).count());
+	       mb * compress_iterations / std::chrono::duration<double>(middle - start).count(),
+	       mb * decompress_iterations / std::chrono::duration<double>(end - middle).count());
 	return 0;
 }
 
 int main(int argc, char **argv) {
 	if (argc >= 5 && std::string(argv[1]) == "bench") {
-		return Bench(atoi(argv[2]), argv[3], atoi(argv[4]));
+		return Bench(atoi(argv[2]), argv[3], atoi(argv[4]), argc >= 6 ? argv[5] : "");
 	}
 	if (argc >= 5 && std::string(argv[1]) == "oneshot") {
 		return OneShot(atoi(argv[2]), argv[3], argv[4]);
