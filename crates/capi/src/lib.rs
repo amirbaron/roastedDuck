@@ -13,6 +13,7 @@
 
 mod aggregate_function;
 mod appender;
+mod arrow;
 mod cast_function;
 mod catalog;
 mod config;
@@ -44,6 +45,7 @@ mod value_fetch;
 
 pub use aggregate_function::*;
 pub use appender::*;
+pub use arrow::*;
 pub use cast_function::*;
 pub use catalog::*;
 pub use config::*;
