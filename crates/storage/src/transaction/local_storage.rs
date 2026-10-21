@@ -233,9 +233,21 @@ impl LocalTableStorage {
         }
         let append_count = collection.total_rows() - deleted;
         let table = self.table();
+        // A checkpoint writing the table finishes first (`SharedLockTable`).
+        let table_lock = table.info().checkpoint_lock().shared();
         let append_lock = table.append_lock();
         table.check_main_table("insert into")?;
         let row_start = table.total_rows();
+        // A running checkpoint writes the row groups the table has now; the appended rows
+        // go to new ones, which the checkpoint WAL logs.
+        if table.info().append_requires_new_row_group(
+            table.row_groups().row_group_count(),
+            table.io().active_checkpoint(),
+        ) {
+            table
+                .row_groups()
+                .set_append_mode(crate::table::RowGroupAppendMode::RequireNew);
+        }
         let bulk = (row_start == 0 || collection.total_rows() >= collection.row_group_size()) && deleted == 0;
         if bulk {
             self.flush_blocks()?;
@@ -273,6 +285,7 @@ impl LocalTableStorage {
             self.rollback()?;
         }
         drop(append_lock);
+        drop(table_lock);
         transaction.push_append(Arc::clone(&table), row_start, append_count);
         Ok(())
     }

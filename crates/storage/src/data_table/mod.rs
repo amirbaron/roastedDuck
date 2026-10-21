@@ -8,7 +8,7 @@ pub use optimistic::OptimisticCollection;
 
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
 use rustdb_buffer::{BlockManager, BufferManager};
@@ -16,6 +16,7 @@ use rustdb_common::{Error, ErrorKind, Result, STANDARD_VECTOR_SIZE};
 use rustdb_types::{DataChunk, LogicalType, Vector};
 
 use crate::checkpoint::pointers::PersistentCollectionData;
+use crate::checkpoint_lock::CheckpointLock;
 use crate::index::TableIndexList;
 use crate::optimistic_data_writer::OptimisticWriteConfig;
 use crate::single_file_block_manager::SingleFileBlockManager;
@@ -42,6 +43,9 @@ pub struct TableIoManager {
     file: Option<Arc<SingleFileBlockManager>>,
     /// How appends to the tables are written to the database file before they commit.
     optimistic_write: Mutex<OptimisticWriteConfig>,
+    /// The last commit the running checkpoint of the database includes, `u64::MAX` when
+    /// none runs (`DuckTransactionManager::active_checkpoint`).
+    active_checkpoint: AtomicU64,
 }
 
 impl TableIoManager {
@@ -61,6 +65,7 @@ impl TableIoManager {
             storage_version: rustdb_serde::SerializationCompatibility::latest().serialization_version,
             file: None,
             optimistic_write: Mutex::default(),
+            active_checkpoint: AtomicU64::new(u64::MAX),
         }
     }
 
@@ -114,6 +119,20 @@ impl TableIoManager {
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = config;
     }
+
+    /// The last commit the running checkpoint of the database includes, if one runs
+    /// (`GetActiveCheckpoint`).
+    pub fn active_checkpoint(&self) -> Option<u64> {
+        let checkpoint = self.active_checkpoint.load(Ordering::Acquire);
+        (checkpoint != u64::MAX).then_some(checkpoint)
+    }
+
+    /// Records the running checkpoint, `None` once it ended (`GetNewCheckpointId` and
+    /// `ResetCheckpointId`).
+    pub fn set_active_checkpoint(&self, checkpoint: Option<u64>) {
+        self.active_checkpoint
+            .store(checkpoint.unwrap_or(u64::MAX), Ordering::Release);
+    }
 }
 
 /// Shared information about a table (DuckDB's `DataTableInfo`).
@@ -127,6 +146,13 @@ pub struct DataTableInfo {
     /// The storage versions recorded with the indexes read from the database file, until
     /// the indexes are built (`IndexStorageInfo::options`).
     stored_index_versions: Mutex<HashMap<String, Option<u64>>>,
+    /// Held shared by commits that append to the table or remove rows from its indexes,
+    /// exclusively by a checkpoint while it writes the table (`checkpoint_lock`).
+    checkpoint_lock: Arc<CheckpointLock>,
+    /// The checkpoint the table was last appended to during, with the table's row group
+    /// count when that happened: the checkpoint writes only those row groups
+    /// (`last_seen_checkpoint` and `checkpoint_row_group_count`).
+    checkpoint_row_groups: Mutex<Option<(u64, usize)>>,
 }
 
 impl DataTableInfo {
@@ -137,7 +163,49 @@ impl DataTableInfo {
             table: RwLock::new(table.into()),
             indexes: TableIndexList::default(),
             stored_index_versions: Mutex::default(),
+            checkpoint_lock: Arc::default(),
+            checkpoint_row_groups: Mutex::default(),
         }
+    }
+
+    /// The lock a checkpoint holds exclusively while it writes the table.
+    pub fn checkpoint_lock(&self) -> &Arc<CheckpointLock> {
+        &self.checkpoint_lock
+    }
+
+    /// Whether an append to a table of `row_group_count` row groups must start a new row
+    /// group because the checkpoint `checkpoint` runs, which writes the row groups that
+    /// existed when it saw the first append (`AppendRequiresNewRowGroup`).
+    pub(crate) fn append_requires_new_row_group(
+        &self,
+        row_group_count: usize,
+        checkpoint: Option<u64>,
+    ) -> bool {
+        let Some(checkpoint) = checkpoint else {
+            return false;
+        };
+        let mut seen = self
+            .checkpoint_row_groups
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        match *seen {
+            // An append reverted since may have left no new row group.
+            Some((last_seen, count)) if last_seen == checkpoint => row_group_count <= count,
+            _ => {
+                *seen = Some((checkpoint, row_group_count));
+                true
+            }
+        }
+    }
+
+    /// The row groups checkpoint `checkpoint` writes, if the table was appended to while
+    /// it ran (`CheckpointRowGroupCount`).
+    pub fn checkpoint_row_group_count(&self, checkpoint: u64) -> Option<usize> {
+        self.checkpoint_row_groups
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .filter(|&(last_seen, _)| last_seen == checkpoint)
+            .map(|(_, count)| count)
     }
 
     /// Records the storage versions of the indexes read with the table.

@@ -394,18 +394,23 @@ impl TransactionManager {
 
     /// Logs the undo log of `transaction` and stamps it with `commit_id`, holding the
     /// WAL lock so that a checkpoint sees either both or neither
-    /// (`DuckTransaction::WriteToWAL` + `UndoBuffer::Commit`). If stamping fails, the
-    /// logged entries are cut off again (`RevertCommit`).
-    fn log_and_commit(transaction: &Transaction, commit_id: u64, others_active: bool) -> Result<()> {
+    /// (`DuckTransaction::WriteToWAL` + `UndoBuffer::Commit`). The commit becomes the last
+    /// one before the WAL lock is released, so that a checkpoint starting later includes
+    /// it (`last_commit`). If stamping fails, the logged entries are cut off again
+    /// (`RevertCommit`).
+    fn log_and_commit(&self, transaction: &Transaction, commit_id: u64, others_active: bool) -> Result<()> {
         transaction.undo().verify_commit(transaction.start_time)?;
         let Some(wal) = transaction.wal() else {
             transaction.local_storage.commit(transaction, None)?;
-            return transaction
+            transaction
                 .undo()
-                .commit(commit_id, transaction.transaction_id, others_active);
+                .commit(commit_id, transaction.transaction_id, others_active)?;
+            self.last_commit.store(commit_id, Ordering::Release);
+            return Ok(());
         };
         // The transaction-local rows reach the table under the WAL lock, so a checkpoint
-        // (which holds it) never sees appended rows whose commit is not logged yet.
+        // (which takes it to start) sees either the rows and their WAL entries, or
+        // neither: rows appended after it started go to row groups it leaves out.
         let mut guard = wal.lock();
         let mut commit_state = StorageCommitState::default();
         let mut commit_timer = start_timer(MetricType::CommitLocalStorageLatency);
@@ -431,6 +436,7 @@ impl TransactionManager {
                 return Err(error);
             }
         }
+        self.last_commit.store(commit_id, Ordering::Release);
         Ok(())
     }
 
@@ -517,11 +523,10 @@ impl TransactionManager {
         transaction.commit_id.store(commit_id, Ordering::Release);
         // Deleted rows stay in a side index while other transactions may still see them.
         let others_active = state.active.len() > 1;
-        let result = Self::log_and_commit(transaction, commit_id, others_active);
+        let result = self.log_and_commit(transaction, commit_id, others_active);
         let undo = std::mem::take(&mut *transaction.undo());
         let outcome = match result {
             Ok(()) => {
-                self.last_commit.store(commit_id, Ordering::Release);
                 if !undo.is_empty() {
                     let properties = undo.properties();
                     state.recently_committed.push_back(CommittedUndo {

@@ -628,6 +628,10 @@ impl DataTable {
         if !self.has_indexes() || row_ids.is_empty() {
             return Ok(());
         }
+        // A checkpoint writing the table writes the indexes as of when it started: the
+        // removal waits for it.
+        let _checkpoint =
+            (removal != IndexRemovalType::DeletedRowsInUse).then(|| self.info().checkpoint_lock().shared());
         let columns = self.indexes().required_columns();
         let fetched = self.fetch_columns(&self.row_groups, &columns, row_ids)?;
         let table_chunk = self.index_table_chunk(&columns, &fetched);

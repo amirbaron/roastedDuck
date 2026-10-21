@@ -844,6 +844,17 @@ impl DatabaseInstance {
                 };
                 Box::new(move |config| config.max_vacuum_tasks = tasks)
             }
+            // `DebugCheckpointSleepMsSetting`.
+            ("debug_checkpoint_sleep_ms", value) => {
+                let sleep_ms = match value {
+                    Some(value) => value
+                        .default_cast_as(&rustdb_types::LogicalType::UBIGINT)?
+                        .as_u64()
+                        .unwrap_or(0),
+                    None => CheckpointConfig::default().sleep_ms,
+                };
+                Box::new(move |config| config.sleep_ms = sleep_ms)
+            }
             // `GeometryMinimumShreddingSize`.
             ("geometry_minimum_shredding_size", value) => {
                 let rows = match value {
@@ -3402,7 +3413,7 @@ fn parse_search_path(input: &str) -> Result<Vec<(String, String)>> {
 /// The databases a plan writes to: the catalog of DDL statements and the database of
 /// the table of DML statements.
 /// `ErrorManager::InvalidatedDatabase`: the error of using an invalidated instance.
-fn invalidated_database_error(message: &str) -> Error {
+pub(crate) fn invalidated_database_error(message: &str) -> Error {
     const BASE: &str = "Failed: database has been invalidated because of a previous fatal error. The database must \
                         be restarted prior to being used again.\n";
     if message.contains(BASE) {

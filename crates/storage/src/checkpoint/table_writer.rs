@@ -751,6 +751,9 @@ pub struct TableDataPointer {
     /// When row groups were vacuumed: the row groups the table consists of now, with
     /// their first row (relative to the collection's base row id), and its row count.
     pub vacuumed: Option<VacuumedLayout>,
+    /// The row groups of the table the checkpoint covered; those after them were
+    /// appended while it ran.
+    pub row_group_count: usize,
 }
 
 /// The row groups a table consists of after a vacuum, each with its first row (relative to
@@ -846,7 +849,17 @@ pub fn finish_table_checkpoint(
     let _append = table.append_lock();
     let collection = table.row_groups();
     collection.set_metadata_pointer(Some(metadata_pointer));
-    if replace_in_memory && let Some(columns) = data.statistics {
+    if replace_in_memory && let Some(mut columns) = data.statistics {
+        // The rows appended while the checkpoint ran keep their statistics.
+        for node in collection
+            .row_groups()
+            .tree()
+            .nodes()
+            .iter()
+            .skip(data.row_group_count)
+        {
+            node.node.merge_into_statistics(&mut columns)?;
+        }
         let mut stats = collection.statistics();
         stats.columns = columns;
         collection.set_statistics(stats);
@@ -1118,11 +1131,16 @@ fn checkpoint_row_groups<W>(
     table: &DataTable,
     settings: TableWriteSettings,
     write_kept: bool,
+    row_group_limit: Option<usize>,
     mut write: impl FnMut(&Arc<RowGroup>, u64, bool) -> Result<W>,
 ) -> Result<(Vec<CheckpointedRowGroup<W>>, bool, u64)> {
     let collection = table.row_groups();
     let row_groups = collection.row_groups();
-    let nodes = row_groups.tree().nodes();
+    let mut nodes = row_groups.tree().nodes();
+    // Row groups appended while the checkpoint runs are logged in the checkpoint WAL.
+    if let Some(limit) = row_group_limit {
+        nodes.truncate(limit);
+    }
     let segment_count = nodes.len();
     // `CollectionCheckpointState`: the row group at each position, `None` once dropped.
     let mut segments: Vec<Option<Arc<RowGroup>>> =
@@ -1223,10 +1241,19 @@ pub fn write_table_data(
         compression_types: &compression_types,
         table_name: &table_name,
     };
-    let (written, dropped_any, new_total_rows) =
-        checkpoint_row_groups(table, settings, true, |row_group, row_start, row_ids_changed| {
+    // A table appended to while the checkpoint runs is written as it was before
+    // (`CheckpointRowGroupCount`).
+    let row_group_limit = table.info().checkpoint_row_group_count(checkpoint_id);
+    let row_group_count = row_group_limit.unwrap_or_else(|| collection.row_group_count());
+    let (written, dropped_any, new_total_rows) = checkpoint_row_groups(
+        table,
+        settings,
+        true,
+        row_group_limit,
+        |row_group, row_start, row_ids_changed| {
             write_row_group_data(&context, row_group, row_start, blocks, row_ids_changed)
-        })?;
+        },
+    )?;
     let written: Vec<(Arc<RowGroup>, u64, RowGroupWriteData)> = written
         .into_iter()
         .map(|(row_group, row_start, data)| {
@@ -1259,11 +1286,12 @@ pub fn write_table_data(
         metadata.clear_modified_blocks(&existing.blocks)?;
         return Ok(TableDataPointer {
             table_pointer: existing.pointer,
-            total_rows: collection.total_rows(),
+            total_rows: new_total_rows,
             persisted: Vec::new(),
             metadata_pointer: None,
             statistics: None,
             vacuumed: None,
+            row_group_count,
         });
     }
     // `TableStatistics::InitializeEmpty(other)`: empty statistics, the distinct
@@ -1417,6 +1445,7 @@ pub fn write_table_data(
         }),
         statistics: Some(table_stats),
         vacuumed: (settings.full_checkpoint && dropped_any).then_some((layout, new_total_rows)),
+        row_group_count,
     })
 }
 
@@ -1439,7 +1468,7 @@ pub fn checkpoint_in_memory_table(
     let table_name = format!("{}.{}", table.info().schema_name(), table.info().table_name());
     let mut blocks = BlockWriter::in_memory(Arc::clone(io), config);
     let (row_groups, _, new_total_rows) =
-        checkpoint_row_groups(table, settings, !vacuum_only, |row_group, row_start, _| {
+        checkpoint_row_groups(table, settings, !vacuum_only, None, |row_group, row_start, _| {
             let count = row_group.count();
             (0..row_group.column_count())
                 .map(|index| {

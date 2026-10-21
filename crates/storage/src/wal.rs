@@ -8,6 +8,11 @@
 //! framed as `[u64 size][u64 checksum][payload]`; the payload is one object whose field
 //! 100 is the [`WalType`]. A commit appends its entries followed by a `WAL_FLUSH` entry
 //! and syncs the file; replay applies the entries up to the last complete flush.
+//!
+//! # Checkpoints
+//! A checkpoint appends a `CHECKPOINT` entry with the root it will write, and commits go
+//! to `db.duckdb.wal.checkpoint` while it runs. Once the checkpoint wrote its header, that
+//! file replaces the WAL (or the WAL is removed if no commit wrote to it).
 
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, ErrorKind as IoErrorKind, Read, Seek, SeekFrom, Write};
@@ -108,6 +113,12 @@ pub fn wal_path(path: &str) -> String {
 /// The path of the WAL written while a checkpoint runs (`GetCheckpointWALPath`).
 pub fn checkpoint_wal_path(path: &str) -> String {
     format!("{path}.wal.checkpoint")
+}
+
+/// The path the WAL and the checkpoint WAL of a failed checkpoint are merged into before
+/// they are replayed (`GetRecoveryWALPath`).
+pub fn recovery_wal_path(path: &str) -> String {
+    format!("{path}.wal.recovery")
 }
 
 // ------------------------------------------------------------------------------------
@@ -317,6 +328,11 @@ fn frame_entry(buffer: &mut Vec<u8>, payload: &[u8]) {
 struct WalState {
     /// The open file, opened by the first write (`Initialize`).
     file: Option<File>,
+    /// While a checkpoint runs, commits are written to the checkpoint WAL
+    /// (`.wal.checkpoint`), which becomes the WAL once the checkpoint completes: the
+    /// checkpoint iteration it belongs to, the one after the checkpoint's start
+    /// (`WriteAheadLog::checkpoint_iteration`).
+    checkpoint_iteration: Option<u64>,
     /// The size of the WAL (`StorageManager::GetWALSize`).
     size: u64,
     /// Entries written since the WAL was last emptied (`GetWALEntriesCount`).
@@ -338,6 +354,8 @@ struct WalState {
 #[derive(Debug)]
 pub struct WriteAheadLog {
     path: String,
+    /// The WAL commits are written to while a checkpoint runs (`GetCheckpointWALPath`).
+    checkpoint_path: String,
     block_manager: Arc<SingleFileBlockManager>,
     options: SerializationOptions,
     state: Mutex<WalState>,
@@ -346,8 +364,10 @@ pub struct WriteAheadLog {
 impl WriteAheadLog {
     /// The WAL at `path` whose existing contents are `size` bytes; with
     /// `requires_truncate` anything after them is cut off before the next write.
+    /// `checkpoint_path` is where commits go while a checkpoint runs.
     pub fn new(
         path: String,
+        checkpoint_path: String,
         block_manager: Arc<SingleFileBlockManager>,
         options: SerializationOptions,
         size: u64,
@@ -355,6 +375,7 @@ impl WriteAheadLog {
     ) -> Self {
         Self {
             path,
+            checkpoint_path,
             block_manager,
             options,
             state: Mutex::new(WalState {
@@ -380,7 +401,7 @@ impl WriteAheadLog {
     }
 
     /// Takes the WAL lock (`GetWALLock`): commits hold it while they write and publish
-    /// their changes, checkpoints for their whole duration.
+    /// their changes; checkpoints while they switch to the checkpoint WAL and back.
     pub fn lock(&self) -> WalGuard<'_> {
         WalGuard {
             wal: self,
@@ -393,8 +414,9 @@ impl WriteAheadLog {
         self.lock().state.size
     }
 
-    /// The header object (`WriteHeader`); it is not framed.
-    fn header(&self) -> Result<Vec<u8>> {
+    /// The header object (`WriteHeader`); it is not framed. A checkpoint WAL names its
+    /// `checkpoint_iteration`, the WAL the iteration of the database file.
+    fn header(&self, checkpoint_iteration: Option<u64>) -> Result<Vec<u8>> {
         let mut serializer = BinarySerializer::new(self.options.clone());
         serializer.begin();
         {
@@ -407,15 +429,22 @@ impl WriteAheadLog {
                     s.write_u8(identifier[index]);
                     Ok(())
                 })?;
-                s.write_property(
-                    103,
-                    "checkpoint_iteration",
-                    &self.block_manager.checkpoint_iteration(),
-                )?;
+                let iteration =
+                    checkpoint_iteration.unwrap_or_else(|| self.block_manager.checkpoint_iteration());
+                s.write_property(103, "checkpoint_iteration", &iteration)?;
             }
         }
         serializer.end();
         Ok(serializer.into_bytes())
+    }
+}
+
+/// Removes the file at `path` if it exists (`TryRemoveFile`).
+fn remove_if_exists(path: &str) -> Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == IoErrorKind::NotFound => Ok(()),
+        Err(error) => Err(io_error(format!("Could not remove file \"{path}\": {error}"))),
     }
 }
 
@@ -454,16 +483,25 @@ impl WalGuard<'_> {
         self.state.failed = Some(message);
     }
 
+    /// The file commits are written to.
+    fn path(&self) -> &str {
+        if self.state.checkpoint_iteration.is_some() {
+            &self.wal.checkpoint_path
+        } else {
+            &self.wal.path
+        }
+    }
+
     /// Opens the file for appending (`Initialize`).
     fn file(&mut self) -> Result<&mut File> {
         if self.state.file.is_none() {
-            let path = &self.wal.path;
+            let path = self.path().to_owned();
             let mut file = OpenOptions::new()
                 .read(true)
                 .write(true)
                 .create(true)
                 .truncate(false)
-                .open(path)
+                .open(&path)
                 .map_err(|error| io_error(format!("Cannot open file \"{path}\": {error}")))?;
             if self.state.requires_truncate {
                 file.set_len(self.state.size)
@@ -484,7 +522,7 @@ impl WalGuard<'_> {
 
     /// Writes `bytes` at the end of the WAL.
     fn append(&mut self, bytes: &[u8]) -> Result<()> {
-        let path = self.wal.path.clone();
+        let path = self.path().to_owned();
         self.file()?
             .write_all(bytes)
             .map_err(|error| io_error(format!("Could not write file \"{path}\": {error}")))?;
@@ -502,7 +540,7 @@ impl WalGuard<'_> {
         if self.state.size > 0 {
             return Ok(());
         }
-        let header = self.wal.header()?;
+        let header = self.wal.header(self.state.checkpoint_iteration)?;
         self.append(&header)
     }
 
@@ -541,7 +579,7 @@ impl WalGuard<'_> {
     }
 
     fn sync(&mut self) -> Result<()> {
-        let path = self.wal.path.clone();
+        let path = self.path().to_owned();
         self.file()?
             .sync_data()
             .map_err(|error| io_error(format!("Could not fsync file \"{path}\": {error}")))
@@ -549,7 +587,7 @@ impl WalGuard<'_> {
 
     /// Cuts the WAL to `size` bytes (`WriteAheadLog::Truncate`).
     pub fn truncate(&mut self, size: u64) -> Result<()> {
-        let path = self.wal.path.clone();
+        let path = self.path().to_owned();
         let file = self.file()?;
         file.set_len(size)
             .and_then(|()| file.seek(SeekFrom::Start(size)).map(|_| ()))
@@ -558,12 +596,20 @@ impl WalGuard<'_> {
         Ok(())
     }
 
-    /// Records that a checkpoint with root `meta_block` started (`WALStartCheckpoint`):
-    /// if the process dies before the WAL is removed, replay sees whether the checkpoint
-    /// completed. Returns whether the WAL had entries.
+    /// Records that a checkpoint with root `meta_block` started and switches commits to
+    /// the checkpoint WAL (`WALStartCheckpoint`): if the process dies before the
+    /// checkpoint finishes, replay sees whether it completed, and replays the commits it
+    /// did not include from the checkpoint WAL. Returns whether the WAL had entries;
+    /// without, nothing changes.
     pub fn start_checkpoint(&mut self, meta_block: MetaBlockPointer) -> Result<bool> {
         if self.state.size == 0 {
             return Ok(false);
+        }
+        if self.state.checkpoint_iteration.is_some() {
+            return Err(Error::internal(format!(
+                "Current WAL path \"{}\" does not match base WAL path \"{}\" in WALStartCheckpoint",
+                self.wal.checkpoint_path, self.wal.path
+            )));
         }
         let mut batch = self.wal.batch();
         batch.entry(WalType::Checkpoint, |s| {
@@ -574,24 +620,43 @@ impl WalGuard<'_> {
         let result = self.commit(batch);
         self.state.no_writes = no_writes;
         result?;
+        // A checkpoint WAL left by an earlier checkpoint is obsolete; the new one is
+        // created by the first commit.
+        remove_if_exists(&self.wal.checkpoint_path)?;
+        self.state.file = None;
+        self.state.checkpoint_iteration = Some(self.wal.block_manager.checkpoint_iteration() + 1);
+        self.reset_size();
+        self.wal.block_manager.start_checkpoint();
         Ok(true)
     }
 
-    /// Removes the WAL after a completed checkpoint (`WALFinishCheckpoint`).
+    /// Ends a checkpoint that switched to the checkpoint WAL (`WALFinishCheckpoint`):
+    /// the checkpoint WAL, if commits wrote to it, replaces the WAL; otherwise the WAL is
+    /// removed.
     pub fn finish_checkpoint(&mut self) -> Result<()> {
         self.state.file = None;
+        self.state.checkpoint_iteration = None;
+        self.reset_size();
+        if !std::path::Path::new(&self.wal.checkpoint_path).exists() {
+            return remove_if_exists(&self.wal.path);
+        }
+        std::fs::rename(&self.wal.checkpoint_path, &self.wal.path).map_err(|error| {
+            io_error(format!(
+                "Could not move file \"{}\" to \"{}\": {error}",
+                self.wal.checkpoint_path, self.wal.path
+            ))
+        })?;
+        // Open what is now the WAL again; it keeps the checkpoint WAL's entries.
+        self.file().map(|_| ())
+    }
+
+    /// An empty WAL (`WriteAheadLog(storage_manager, path)` resets the size and entry
+    /// count).
+    fn reset_size(&mut self) {
         self.state.size = 0;
         self.state.entries = 0;
         self.state.last_commit_entries = 0;
         self.state.requires_truncate = false;
-        match std::fs::remove_file(&self.wal.path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == IoErrorKind::NotFound => Ok(()),
-            Err(error) => Err(io_error(format!(
-                "Could not remove file \"{}\": {error}",
-                self.wal.path
-            ))),
-        }
     }
 }
 

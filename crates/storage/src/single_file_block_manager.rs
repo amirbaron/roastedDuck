@@ -225,6 +225,9 @@ struct BlockState {
     /// The data blocks the checkpoint on disk references (they become free once a
     /// newer checkpoint no longer does).
     checkpoint_blocks: BTreeSet<BlockId>,
+    /// While a checkpoint runs, the blocks of optimistic writes commits logged since it
+    /// started: the checkpoint does not write their rows, but they stay in use.
+    committed_during_checkpoint: Option<BTreeSet<BlockId>>,
 }
 
 /// How a block id is taken (`FreeBlockType`).
@@ -578,6 +581,16 @@ impl SingleFileBlockManager {
         let mut state = self.lock();
         state.newly_used_blocks.remove(&block_id);
         state.checkpoint_blocks.insert(block_id);
+        if let Some(committed) = &mut state.committed_during_checkpoint {
+            committed.insert(block_id);
+        }
+    }
+
+    /// Records that a checkpoint started while commits continue: the blocks they log
+    /// until it writes its header stay in use, although the checkpoint does not reference
+    /// them.
+    pub fn start_checkpoint(&self) {
+        self.lock().committed_during_checkpoint = Some(BTreeSet::new());
     }
 
     /// Marks a block read from the file as in use (`MarkBlockAsUsed`).
@@ -652,7 +665,8 @@ impl SingleFileBlockManager {
 
     /// Writes the free list and the database header of a checkpoint (`WriteHeader`).
     /// `data_blocks` are the data blocks the new checkpoint references; those of the
-    /// previous checkpoint it no longer uses are freed.
+    /// previous checkpoint it no longer uses are freed, except blocks commits logged
+    /// while it ran.
     pub fn write_header(
         &self,
         metadata: &MetadataManager,
@@ -662,7 +676,8 @@ impl SingleFileBlockManager {
     ) -> Result<()> {
         let released: Vec<BlockId> = {
             let mut state = self.lock();
-            let new_blocks: BTreeSet<BlockId> = data_blocks.keys().copied().collect();
+            let mut new_blocks: BTreeSet<BlockId> = data_blocks.keys().copied().collect();
+            new_blocks.extend(state.committed_during_checkpoint.take().unwrap_or_default());
             let previous = std::mem::replace(&mut state.checkpoint_blocks, new_blocks);
             let released: Vec<BlockId> = previous.difference(&state.checkpoint_blocks).copied().collect();
             for block in &released {

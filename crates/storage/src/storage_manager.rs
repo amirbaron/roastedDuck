@@ -3,7 +3,7 @@
 //! in-memory database, the I/O manager and the estimated size of its changes.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use rustdb_buffer::{BlockManager, BufferManager, InMemoryBlockManager};
 use rustdb_common::Result;
@@ -14,7 +14,7 @@ use crate::data_table::TableIoManager;
 use crate::metadata::{MetaBlockPointer, MetadataManager};
 use crate::single_file_block_manager::{BlockManagerOptions, SingleFileBlockManager};
 use crate::storage_info::DEFAULT_BLOCK_ALLOC_SIZE;
-use crate::wal::{WriteAheadLog, wal_path};
+use crate::wal::{WriteAheadLog, checkpoint_wal_path, recovery_wal_path, wal_path};
 
 /// How a database file is opened (DuckDB's `StorageManagerOptions`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -130,6 +130,9 @@ pub struct CheckpointConfig {
     pub max_vacuum_tasks: u64,
     /// `debug_checkpoint_abort`.
     pub abort: CheckpointAbort,
+    /// `debug_checkpoint_sleep_ms`: how long a checkpoint waits once commits went to the
+    /// checkpoint WAL, before it writes anything.
+    pub sleep_ms: u64,
     /// `geometry_minimum_shredding_size`: the rows a row group needs before its GEOMETRY
     /// columns are shredded; negative disables shredding.
     pub geometry_minimum_shredding_size: i64,
@@ -142,6 +145,7 @@ impl Default for CheckpointConfig {
             force_column_metadata_reuse: false,
             max_vacuum_tasks: 100,
             abort: CheckpointAbort::NoAbort,
+            sleep_ms: 0,
             geometry_minimum_shredding_size: 30_000,
         }
     }
@@ -159,6 +163,8 @@ pub struct StorageManager {
     /// The WAL, set up once the existing one was replayed.
     wal: OnceLock<Arc<WriteAheadLog>>,
     checkpoint_config: Mutex<CheckpointConfig>,
+    /// Held by the checkpoint that runs: checkpoints of the database run one at a time.
+    checkpoint_running: Mutex<()>,
 }
 
 impl StorageManager {
@@ -210,7 +216,17 @@ impl StorageManager {
             created,
             wal: OnceLock::new(),
             checkpoint_config: Mutex::default(),
+            checkpoint_running: Mutex::default(),
         })
+    }
+
+    /// Waits until no other checkpoint of the database runs; the checkpoint runs while the
+    /// guard is held. Checkpoints that hold the checkpoint lock exclusively exclude each
+    /// other already; one written when the database closes does not take it.
+    pub fn checkpoint_running(&self) -> MutexGuard<'_, ()> {
+        self.checkpoint_running
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// The path of the WAL (`GetWALPath`).
@@ -218,11 +234,24 @@ impl StorageManager {
         wal_path(&self.path)
     }
 
+    /// The path of the WAL commits are written to while a checkpoint runs
+    /// (`GetCheckpointWALPath`).
+    pub fn checkpoint_wal_path(&self) -> String {
+        checkpoint_wal_path(&self.path)
+    }
+
+    /// The path the WAL and the checkpoint WAL are merged into when a checkpoint that
+    /// ran concurrently with commits failed (`GetRecoveryWALPath`).
+    pub fn recovery_wal_path(&self) -> String {
+        recovery_wal_path(&self.path)
+    }
+
     /// Sets up the WAL after replay: `size` bytes of it are kept; with
     /// `requires_truncate` anything after them is cut off before the next write.
     pub fn init_wal(&self, size: u64, requires_truncate: bool) -> Result<Arc<WriteAheadLog>> {
         let wal = Arc::new(WriteAheadLog::new(
             self.wal_path(),
+            self.checkpoint_wal_path(),
             Arc::clone(&self.block_manager),
             self.serialization_options(),
             size,
