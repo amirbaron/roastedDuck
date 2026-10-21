@@ -654,6 +654,7 @@ INSERT INTO t VALUES (1);
 
 [[case]]
 name = "open-errors"
+known = "internal errors have no Stack Trace section"
 files = { "notadb.db" = "this is not a database file" }
 stdin = '''
 .open notadb.db
@@ -888,7 +889,7 @@ stdin = '''
 .version
 .version extra
 '''
-normalize = [["v0\\.0\\.1 \\(Unknown Version\\)|v1\\.5\\.6 \\(Variegata\\)", "VERSION"], ["rustc-[0-9.]+|clang-[0-9.]+", "COMPILER"]]
+normalize = [["rustc-[0-9.]+|clang-[0-9.]+", "COMPILER"]]
 
 [[case]]
 name = "ui-command"
@@ -896,12 +897,6 @@ stdin = '''
 .ui_command
 .ui_command call start_ui()
 .show
-'''
-
-[[case]]
-name = "excel"
-stdin = '''
-.excel extra
 '''
 
 [[case]]

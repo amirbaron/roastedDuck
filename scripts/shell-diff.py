@@ -19,6 +19,9 @@ Cases live in TOML files (default: scripts/shell-diff/*.toml), one `[[case]]` ta
              \u0000-ÿ stand for, to feed invalid UTF-8)
   merged     standard error goes to the same pipe as standard output, to compare how
              the two interleave (the buffering of stdout)
+  interrupt_after  seconds after which the shell gets SIGINT (Ctrl-C)
+  known      why the case differs (an engine difference recorded in docs/work-queue.md):
+             it is listed but does not count as a failure (--show prints it in full)
   files      {name = content} written to the scratch directory first
   home       {name = content} written to the empty HOME first (e.g. `.duckdbrc`)
   env        extra environment variables
@@ -126,13 +129,27 @@ def run_pipe(binary, work, case):
     _, env = prepare(work, case)
     stdin = case.get("stdin")
     encoding = case.get("encoding", "utf-8")
-    res = subprocess.run(["duckdb"] + case.get("args", []), executable=binary,
-                         input=stdin.encode(encoding) if stdin is not None else None,
-                         stdin=None if stdin is not None else subprocess.DEVNULL,
-                         stdout=subprocess.PIPE,
-                         stderr=subprocess.STDOUT if case.get("merged") else subprocess.PIPE,
-                         cwd=work, env=env, timeout=case.get("timeout", 60))
-    return {"stdout": res.stdout, "stderr": res.stderr or b"", "exit": res.returncode,
+    process = subprocess.Popen(["duckdb"] + case.get("args", []), executable=binary,
+                               stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
+                               stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT if case.get("merged") else subprocess.PIPE,
+                               cwd=work, env=env)
+    data = stdin.encode(encoding) if stdin is not None else None
+    if "interrupt_after" in case:
+        # Ctrl-C while the input is being processed: write it, wait, send SIGINT.
+        if data is not None:
+            process.stdin.write(data)
+            process.stdin.flush()
+        time.sleep(case["interrupt_after"])
+        process.send_signal(signal.SIGINT)
+        data = None
+    try:
+        stdout, stderr = process.communicate(data, timeout=case.get("timeout", 60))
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate()
+        raise
+    return {"stdout": stdout, "stderr": stderr or b"", "exit": process.returncode,
             "files": written_files(work, case)}
 
 
@@ -200,7 +217,9 @@ def run_pty(binary, work, case):
 
 
 def normalize(result, case):
-    rules = [(re.compile(p.encode()), r.encode()) for p, r in case.get("normalize", [])]
+    # The reference CLI is built from a source tarball, without the release's version.
+    rules = [(re.compile(rb"v0\.0\.1 \(Unknown Version\)|v1\.5\.6 \(Variegata\)"), b"VERSION")]
+    rules += [(re.compile(p.encode()), r.encode()) for p, r in case.get("normalize", [])]
     out = dict(result)
     for key in ("stdout", "stderr"):
         data = result[key]
@@ -280,7 +299,7 @@ def main():
 
     binary, reference = os.path.abspath(args.binary), os.path.abspath(args.reference)
     os.makedirs(args.work, exist_ok=True)
-    differ = 0
+    differ = known = 0
     # Pseudo-terminal sessions depend on timing and fork: they run one at a time, after the
     # others.
     piped = [(i, c) for i, c in enumerate(cases) if not c.get("pty")]
@@ -302,11 +321,14 @@ def main():
                 if ref != got:
                     show_bytes("binary stdout", got["stdout"])
                     show_bytes("binary stderr", got["stderr"])
-            if ref != got:
+            if ref != got and "known" in case and not args.show:
+                known += 1
+                print(f"=== {case['name']}: known difference: {case['known']}")
+            elif ref != got:
                 differ += 1
                 report(case, ref, got)
             sys.stdout.flush()
-    print(f"{differ} of {len(cases)} cases differ")
+    print(f"{differ} of {len(cases)} cases differ" + (f" ({known} more as known)" if known else ""))
     sys.exit(1 if differ else 0)
 
 

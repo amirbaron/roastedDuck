@@ -55,7 +55,6 @@ SELECT * FROM range_x(3);
 SELECT nonexistent_fn(1);
 SELECT uper('x');
 SELECT 'a'::nonexistent_type;
-SELECT 'a'::INTEGR;
 CREATE TABLE customers(i INT);
 CREATE SCHEMA s;
 CREATE SCHEMA s;

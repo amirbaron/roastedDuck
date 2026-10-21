@@ -15,12 +15,10 @@ args = ["--help"]
 [[case]]
 name = "cli-version"
 args = ["-version"]
-normalize = [["v0\\.0\\.1 \\(Unknown Version\\)|v1\\.5\\.6 \\(Variegata\\)", "VERSION"]]
 
 [[case]]
 name = "cli-version-double-dash"
 args = ["--version"]
-normalize = [["v0\\.0\\.1 \\(Unknown Version\\)|v1\\.5\\.6 \\(Variegata\\)", "VERSION"]]
 
 [[case]]
 name = "cli-unknown-option"
@@ -239,7 +237,6 @@ stdin = "SELECT 1 AS a;\n"
 name = "cli-interactive-flag-piped"
 args = ["-interactive"]
 stdin = "SELECT 1 AS a;\n.mode csv\nSELECT 2 AS b;\n"
-normalize = [["v0\\.0\\.1 \\(Unknown Version\\)|v1\\.5\\.6 \\(Variegata\\)", "VERSION"]]
 
 [[case]]
 name = "cli-unsigned-unredacted"

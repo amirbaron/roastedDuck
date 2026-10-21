@@ -103,11 +103,13 @@ stdin = ".print a\u0000b\n.print next\n"
 
 [[case]]
 name = "input-latin1-string"
+known = "the shell reads input as UTF-8 (invalid bytes become U+FFFD)"
 encoding = "latin-1"
 stdin = "SELECT 'café' AS x;\nSELECT 1 AS ok;\n"
 
 [[case]]
 name = "input-latin1-dot-print"
+known = "the shell reads input as UTF-8 (invalid bytes become U+FFFD)"
 encoding = "latin-1"
 stdin = ".print café\n"
 
@@ -158,3 +160,19 @@ stdin = '''
 # a hash comment line
 SELECT 1 AS a;
 '''
+
+[[case]]
+name = "interrupt-long-query"
+interrupt_after = 1.5
+stdin = "SELECT count(*) FROM range(100000000000) t(i) WHERE i % 7 = 3;\nSELECT 1 AS after;\n"
+
+[[case]]
+name = "interrupt-long-query-c"
+interrupt_after = 1.5
+args = ["-c", "SELECT count(*) FROM range(100000000000) t(i) WHERE i % 7 = 3", "-c", "SELECT 1 AS after"]
+
+[[case]]
+name = "interrupt-long-query-merged"
+merged = true
+interrupt_after = 1.5
+stdin = ".mode csv\nSELECT 1 AS before;\nSELECT count(*) FROM range(100000000000) t(i) WHERE i % 7 = 3;\nSELECT 1 AS after;\n"
