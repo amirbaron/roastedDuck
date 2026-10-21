@@ -28,8 +28,13 @@ that close it. Finished streams are removed; the commit history records them.
    `optimistic_write_not_trigger_checkpoint`, `wal_size_unaligned_appends`,
    `reclaim_space_insert_unique_idx_optimistic`. Starts after the in-memory checkpoint
    work merges (shared code).
-5. **Compression parity.** ZSTD uses `ruzstd`'s fastest level (about zstd level 1;
-   DuckDB uses 3), so strings compress about 16% worse (`zstd_compression_ratio`).
+5. **Compression parity.** ZSTD strings compress about 16% worse than DuckDB's
+   (`zstd_compression_ratio`). The cause is `ruzstd`'s encoder, not its match level: on
+   concatenated UUIDs it reaches 1.72× (1.76× emitting literals only, about 4.56 bits per
+   hex character) where zstd reaches 1.95× at levels 1 and 3, so its Huffman literal
+   coding is far from optimal. Needs a zstd block encoder of our own (length-limited
+   Huffman literals, FSE-coded sequences with custom tables, a level-3 matcher); check
+   `ruzstd`'s decoding speed against DuckDB's at the same time.
    Roaring and hugeint bitpacking produce different segment layouts than DuckDB
    (`roaring_compression_ratio`, `roaring_bool_compression_ratio`,
    `bitpacking_compression_ratio_hugeint`); compare files byte for byte with the C++
