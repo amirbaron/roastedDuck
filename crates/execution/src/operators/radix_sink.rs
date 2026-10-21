@@ -56,9 +56,11 @@ pub(crate) struct RadixSinkConfig {
     pub any_combined: AtomicBool,
 }
 
-/// The radix bits threads start with: enough partitions to finalize them on every thread.
+/// The radix bits threads start with: a partition per thread, to finalize them on every
+/// thread (`RadixHTConfig::InitialSinkRadixBits`); a single thread keeps one partition, so
+/// its groups come out in the order they arrived.
 pub(crate) fn initial_radix_bits(ctx: &ExecutionContext) -> usize {
-    RadixPartitioning::radix_bits(ctx.env.threads().next_power_of_two()).min(4)
+    RadixPartitioning::radix_bits_of_power_of_two(ctx.env.threads().next_power_of_two()).min(4)
 }
 
 impl RadixSinkConfig {

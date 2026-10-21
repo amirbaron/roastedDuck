@@ -1,0 +1,345 @@
+# duckbox layout: widths, row elision, footers, column rendering, number rendering.
+
+[[case]]
+name = "duckbox-many-columns"
+stdin = '''
+SELECT i AS c0, i+1 AS c1, i+2 AS c2, i+3 AS c3, i+4 AS c4, i+5 AS c5, i+6 AS c6, i+7 AS c7, i+8 AS c8, i+9 AS c9,
+  i+10 AS c10, i+11 AS c11, i+12 AS c12, i+13 AS c13, i+14 AS c14, i+15 AS c15, i+16 AS c16, i+17 AS c17,
+  i+18 AS c18, i+19 AS c19, i+20 AS c20, i+21 AS c21, i+22 AS c22, i+23 AS c23, i+24 AS c24, i+25 AS c25,
+  'some text value ' || i AS text_col, i * 1.5 AS dbl, [i, i] AS lst
+FROM range(5) t(i);
+'''
+
+[[case]]
+name = "duckbox-maxwidth-{w}"
+vary = { w = ["20", "40", "60", "80", "120", "200"] }
+stdin = '''
+.maxwidth {w}
+SELECT i AS c0, i+1 AS c1, i+2 AS c2, i+3 AS c3, i+4 AS c4, 'a long text value here ' || i AS txt,
+  'another long text value ' || i AS txt2, i * 1.5 AS dbl, {'a': i, 'b': 'x'} AS st, [i, i, i] AS lst
+FROM range(3) t(i);
+SELECT repeat('w', 300) AS very_wide;
+SELECT 'short' AS a, repeat('漢', 100) AS cjk, repeat('🦆', 50) AS emoji;
+'''
+
+[[case]]
+name = "duckbox-maxrows-{n}"
+vary = { n = ["1", "2", "3", "5", "10", "39", "40", "41", "100"] }
+stdin = '''
+.maxrows {n}
+SELECT i, 'row ' || i AS label FROM range(50) t(i);
+SELECT i FROM range(2) t(i);
+SELECT i FROM range(1000000) t(i);
+'''
+
+[[case]]
+name = "duckbox-row-counts"
+stdin = '''
+SELECT * FROM range(39);
+SELECT * FROM range(40);
+SELECT * FROM range(41);
+SELECT * FROM range(1000);
+SELECT * FROM range(123456);
+SELECT * FROM range(10000000);
+'''
+
+[[case]]
+name = "duckbox-footer-rows-columns-shown"
+stdin = '''
+.maxwidth 50
+SELECT i AS a, i AS b, i AS c, i AS d, i AS e, i AS f, i AS g, i AS h, i AS j, i AS k, i AS l, i AS m, i AS n FROM range(100) t(i);
+'''
+
+[[case]]
+name = "duckbox-types-row"
+stdin = '''
+SELECT 1::TINYINT a, 1::SMALLINT b, 1::INTEGER c, 1::BIGINT d, 1::HUGEINT e, 1::UTINYINT f, 1::FLOAT g,
+  1::DOUBLE h, 1::DECIMAL(5,2) i, DATE '2024-01-01' j, TIME '01:00' k, TIMESTAMP '2024-01-01' l,
+  TIMESTAMPTZ '2024-01-01' m, INTERVAL 1 DAY n, 'x'::BLOB o, gen_random_uuid() IS NOT NULL p,
+  [1] q, {'a': 1} r, MAP {1: 2} s, [1,2]::INT[2] t, '1'::BIT u, 1::UNION(a INT) v, NULL w, 'x'::VARCHAR x;
+'''
+
+[[case]]
+name = "duckbox-alignment"
+stdin = '''
+SELECT * FROM (VALUES (1, 'a', 1.5, NULL, true), (-100, 'longer text', -0.001, 'x', false), (NULL, NULL, NULL, NULL, NULL)) t(num, txt, dec, mixed, b);
+SELECT 12345678901234567890::HUGEINT AS big, -1e-10 AS small, 'nan'::DOUBLE AS nan, 'inf'::DOUBLE AS inf;
+'''
+
+[[case]]
+name = "duckbox-multiline-values"
+stdin = '''
+SELECT 'line1
+line2
+line3' AS ml, 'single' AS s, 'a' || chr(13) || chr(10) || 'b' AS crlf, 'tab	inside' AS t;
+SELECT 'x' || chr(10) AS trailing_nl, chr(10) AS only_nl, '' AS empty;
+'''
+
+[[case]]
+name = "duckbox-wide-chars"
+stdin = '''
+SELECT '漢字' AS a, '🦆' AS b, 'e' || chr(769) AS combining, '👨‍👩‍👧' AS zwj, 'ｆｕｌｌ' AS fullwidth, '🇮🇱' AS flag;
+SELECT repeat('漢', 40) AS long_cjk, 'x' AS y;
+.maxwidth 30
+SELECT repeat('漢', 40) AS long_cjk, repeat('🦆', 20) AS ducks;
+'''
+
+[[case]]
+name = "duckbox-long-strings-truncation"
+stdin = '''
+SELECT repeat('abcdefghij', 10) AS a, repeat('0123456789', 10) AS b, repeat('XYZ', 50) AS c;
+SELECT repeat('abcdefghij', 100) AS single_long;
+'''
+
+[[case]]
+name = "duckbox-column-names"
+stdin = '''
+SELECT 1 AS "a very long column name that is wider than its values", 2 AS "x";
+SELECT 1 AS "漢字の列名", 2 AS "🦆";
+SELECT 1 AS "", 2 AS " ";
+SELECT 1 AS "multi
+line name";
+'''
+
+[[case]]
+name = "duckbox-empty"
+stdin = '''
+SELECT 1 AS a WHERE false;
+SELECT * FROM range(0);
+CREATE TABLE t(a INT, b VARCHAR, c DOUBLE);
+SELECT * FROM t;
+SELECT count(*) FROM t;
+'''
+
+[[case]]
+name = "duckbox-no-columns"
+stdin = '''
+CREATE TABLE t AS SELECT 1 AS i;
+SELECT * EXCLUDE (i) FROM t;
+'''
+
+[[case]]
+name = "duckbox-large-numbers-{mode}"
+vary = { mode = ["all", "footer", "off"] }
+stdin = '''
+.large_number_rendering {mode}
+SELECT 1234567 AS a, 12345678901 AS b, 1234567890123456 AS c, 1.5e15 AS d, -98765432109 AS e, 123456789.123::DECIMAL(15,3) AS f;
+SELECT * FROM range(1234567);
+'''
+
+[[case]]
+name = "duckbox-columns-mode"
+stdin = '''
+.columns
+SELECT i, 'value ' || i AS v, i * 2.5 AS d FROM range(5) t(i);
+SELECT * FROM range(200) t(i);
+.maxrows 5
+SELECT i, 'value ' || i AS v FROM range(50) t(i);
+.maxwidth 40
+SELECT i, 'value ' || i AS v FROM range(50) t(i);
+'''
+
+[[case]]
+name = "duckbox-describe"
+stdin = '''
+CREATE TABLE t(i INTEGER PRIMARY KEY, s VARCHAR NOT NULL DEFAULT 'x', l INT[], st STRUCT(a INT, b VARCHAR));
+DESCRIBE t;
+DESCRIBE SELECT 1 AS a, 'x' AS b;
+DESCRIBE SELECT * FROM t;
+SUMMARIZE SELECT * FROM range(10) t(i);
+SHOW TABLES;
+SHOW ALL TABLES;
+SHOW t;
+PRAGMA table_info('t');
+'''
+
+[[case]]
+name = "duckbox-describe-wide"
+stdin = '''
+CREATE TABLE t AS SELECT i AS c0, i AS c1, i AS c2, i AS c3, i AS c4, i AS c5, i AS c6, i AS c7, i AS c8, i AS c9,
+  i AS c10, i AS c11, i AS c12, i AS c13, i AS c14, i AS c15, i AS c16, i AS c17, i AS c18, i AS c19,
+  i AS c20, i AS c21, i AS c22, i AS c23, i AS c24, i AS c25, i AS c26, i AS c27, i AS c28, i AS c29,
+  i AS c30, i AS c31, i AS c32, i AS c33, i AS c34, i AS c35, i AS c36, i AS c37, i AS c38, i AS c39,
+  i AS c40, i AS c41, i AS c42, i AS c43, i AS c44, i AS c45, i AS c46, i AS c47, i AS c48, i AS c49
+FROM range(1) t(i);
+DESCRIBE t;
+.maxrows 10
+DESCRIBE t;
+'''
+
+[[case]]
+name = "duckbox-explain"
+stdin = '''
+CREATE TABLE t(i INT, j VARCHAR);
+EXPLAIN SELECT i, count(*) FROM t WHERE j = 'x' GROUP BY i ORDER BY i;
+EXPLAIN SELECT 1;
+.mode csv
+EXPLAIN SELECT 1;
+.mode list
+EXPLAIN SELECT 1;
+'''
+
+[[case]]
+name = "duckbox-explain-analyze"
+stdin = '''
+EXPLAIN ANALYZE SELECT 1;
+'''
+normalize = [["\\d+\\.\\d+s", "Xs"], ["│ +[\\d.]+ ?s +│", "│ TIME │"], ["Total Time: [\\d.]+s", "Total Time: X"]]
+
+[[case]]
+name = "duckbox-pragma-version"
+stdin = '''
+SELECT source_id FROM pragma_version();
+'''
+
+[[case]]
+name = "duckbox-highlight-results-piped"
+stdin = '''
+.highlight_results on
+SELECT 1 AS a, NULL AS b, 'x' AS c;
+.highlight_results off
+SELECT 1 AS a, NULL AS b, 'x' AS c;
+'''
+
+[[case]]
+name = "duckbox-nested-long"
+stdin = '''
+SELECT [i for i in range(100)] AS long_list, {'a': repeat('x', 100), 'b': [1, 2, 3]} AS st FROM range(2);
+SELECT MAP {'key one': [1, 2], 'key two': NULL} AS m, [{'x': 'it''s'}, NULL] AS l;
+'''
+
+[[case]]
+name = "duckbox-string-with-escapes"
+stdin = '''
+SELECT 'a' || chr(0) || 'b' AS nul, chr(7) AS bell, chr(27) || '[31mred' || chr(27) || '[0m' AS ansi, chr(8) AS backspace;
+'''
+
+[[case]]
+name = "duckbox-numbers-alignment"
+stdin = '''
+SELECT * FROM (VALUES (1.5::DOUBLE), (-22.25), (333.125), (NULL), ('nan'::DOUBLE), (1e20), (1e-20)) t(d);
+SELECT * FROM (VALUES (1.50::DECIMAL(10,2)), (-22.25), (333.12), (NULL)) t(d);
+'''
+
+[[case]]
+name = "duckbox-maxrows-with-maxwidth"
+stdin = '''
+.maxrows 6
+.maxwidth 40
+SELECT i AS a, i * 2 AS b, 'text ' || i AS c, 'more text ' || i AS d, i AS e, i AS f FROM range(1000) t(i);
+'''
+
+[[case]]
+name = "duckbox-ordering-elision"
+stdin = '''
+.maxrows 8
+SELECT i, j FROM range(5) t(i), range(5) s(j) ORDER BY i, j;
+'''
+
+[[case]]
+name = "duckbox-renderer-modes-switch"
+stdin = '''
+.mode box
+SELECT 1 AS a;
+.mode duckbox
+SELECT 1 AS a;
+.mode table
+SELECT 1 AS a;
+'''
+
+[[case]]
+name = "duckbox-box-many-rows"
+stdin = '''
+.mode box
+SELECT * FROM range(60);
+.mode table
+SELECT * FROM range(60);
+.mode markdown
+SELECT * FROM range(60);
+'''
+
+[[case]]
+name = "duckbox-width-command"
+stdin = '''
+.width 20 5
+SELECT 1 AS a, 'abcdefghijkl' AS b;
+'''
+
+[[case]]
+name = "duckbox-thousand-sep-columns"
+stdin = '''
+.thousand_sep ,
+SELECT 1234567 AS a, 1234567.5 AS b, -1234 AS c, 999 AS d, 1234567::HUGEINT AS e, 12345.678::DECIMAL(10,3) AS f, 1234.5::FLOAT AS g;
+SELECT * FROM range(1234567);
+'''
+
+[[case]]
+name = "duckbox-many-rows-wide-values"
+stdin = '''
+SELECT i, repeat('x', i % 30) AS v, i * 1000000 AS big FROM range(100) t(i);
+'''
+
+[[case]]
+name = "duckbox-null-variants"
+stdin = '''
+SELECT NULL AS a, NULL::INT AS b, [NULL] AS c, {'a': NULL} AS d, 'NULL' AS e, '' AS f;
+.nullvalue NULL_TEXT
+SELECT NULL AS a, NULL::INT AS b, [NULL] AS c;
+.nullvalue ''
+SELECT NULL AS a, NULL::INT AS b, [NULL] AS c;
+'''
+
+[[case]]
+name = "duckbox-union-all-types"
+stdin = '''
+SELECT * FROM test_all_types();
+'''
+
+[[case]]
+name = "duckbox-test-all-types-{mode}"
+vary = { mode = ["csv", "json", "line", "list", "quote", "insert", "markdown", "box", "html", "jsonlines", "tabs", "tcl", "latex", "table", "column"] }
+stdin = '''
+.mode {mode}
+SELECT * FROM test_all_types();
+'''
+
+[[case]]
+name = "duckbox-test-all-types-columns"
+stdin = '''
+.columns
+SELECT * FROM test_all_types();
+'''
+
+[[case]]
+name = "duckbox-test-all-types-dump"
+stdin = '''
+CREATE TABLE t AS SELECT * EXCLUDE (varint, "union", fixed_int_array, fixed_varchar_array, fixed_nested_int_array, fixed_nested_varchar_array, fixed_struct_array, struct_of_fixed_array, fixed_array_of_int_list, list_of_fixed_int_array) FROM test_all_types();
+.dump
+'''
+
+[[case]]
+name = "duckbox-time-zones"
+stdin = '''
+SET TimeZone = 'Asia/Kolkata';
+SELECT TIMESTAMPTZ '2024-03-10 12:00:00+00' AS a, TIMESTAMPTZ '1900-01-01 00:00:00+00' AS b, TIMETZ '12:00:00-08' AS c;
+SET TimeZone = 'UTC';
+SELECT TIMESTAMPTZ '2024-03-10 12:00:00+00' AS a;
+SET TimeZone = 'America/St_Johns';
+SELECT TIMESTAMPTZ '2024-07-01 12:00:00+00' AS a;
+SET Calendar = 'japanese';
+SELECT TIMESTAMPTZ '2024-07-01 12:00:00+00' AS a;
+'''
+
+[[case]]
+name = "duckbox-pragma-database-size"
+stdin = '''
+PRAGMA database_size;
+'''
+normalize = [["│ \\d+\\.\\d+ [GMK]iB +│$", "│ MEM │"]]
+
+[[case]]
+name = "duckbox-settings"
+stdin = '''
+SELECT current_setting('max_memory') IS NOT NULL AS a;
+SELECT name, value FROM duckdb_settings() WHERE name IN ('enable_progress_bar', 'enable_progress_bar_print', 'progress_bar_time', 'errors_as_json', 'max_expression_depth') ORDER BY name;
+'''

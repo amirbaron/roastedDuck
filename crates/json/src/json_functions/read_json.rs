@@ -14,16 +14,18 @@ use crate::json_scan::{JsonScanData, json_parallel_scan, json_scan, json_virtual
 
 /// `JSONScan::TableFunctionDefaults`: the parameters of every JSON reader.
 fn default_parameters() -> Vec<(String, LogicalType)> {
-    let mut parameters: Vec<(String, LogicalType)> = [
-        ("maximum_object_size", LogicalType::UINTEGER),
-        ("ignore_errors", LogicalType::BOOLEAN),
-        ("format", LogicalType::VARCHAR),
-        ("compression", LogicalType::VARCHAR),
-    ]
-    .into_iter()
-    .map(|(name, ty)| (name.to_owned(), ty))
-    .collect();
-    parameters.extend(multi_file_parameters());
+    // The multi-file parameters come first (`MultiFileFunction`).
+    let mut parameters = multi_file_parameters();
+    parameters.extend(
+        [
+            ("maximum_object_size", LogicalType::UINTEGER),
+            ("ignore_errors", LogicalType::BOOLEAN),
+            ("format", LogicalType::VARCHAR),
+            ("compression", LogicalType::VARCHAR),
+        ]
+        .into_iter()
+        .map(|(name, ty)| (name.to_owned(), ty)),
+    );
     parameters
 }
 

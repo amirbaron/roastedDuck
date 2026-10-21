@@ -27,13 +27,48 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    the 392 tests of `tools/shell/tests` that pass on the C++ CLI pass on rustdb
    (`scripts/shell-tests.sh`), and interactive sessions (editing keys, history and its
    search, completion, highlighting, multi-line editing, the pager, `.edit`) match the
-   C++ CLI byte for byte under a pty. What still differs comes from the engine:
-   - `errors_as_json` objects carry `error_subtype` and `position` only; DuckDB adds the
-     exception's other extra info (`name`, `candidates`, `type`, `catalog`, `schema`,
-     `stack_trace`, ...) in the iteration order of libc++'s `unordered_map`.
-   - Internal errors have no `Stack Trace:` section.
+   C++ CLI byte for byte under a pty. `scripts/shell-diff.py` compares both binaries on
+   the cases of `scripts/shell-diff/*.toml` (every mode and type, duckbox layouts, dot
+   commands, options, errors, stream interleaving, Ctrl-C, pty sessions): all match but
+   the ones marked `known`, listed below. Errors carry DuckDB's
+   extra info (`error_subtype`, `position`, `name`, `type`, `candidates`, `catalog`,
+   `schema`, `call`) for missing entries, existing entries, missing columns, unmatched
+   functions and syntax errors, and `errors_as_json` lists it in DuckDB's order: libc++'s
+   `unordered_map`, rebuilt each time DuckDB catches the exception into an `ErrorData`
+   (`Error::with_extra_info_round_trip`, `Error::caught`). What still differs:
+   - Internal errors have no `Stack Trace:` section. DuckDB's `Exception::ToJSON` adds
+     the `backtrace()` addresses of an INTERNAL exception as `stack_trace_pointers`, and
+     `ErrorData::ConstructFinalMessage` appends them symbolized (`StackTrace::
+     ResolveStacktraceSymbols`): its own C++ frames, which rustdb cannot print. A
+     section of rustdb's frames needs a backtrace captured in `Error::internal` and
+     formatted like DuckDB's; its bytes would still differ.
    - `pragma database_size` reports a `memory_usage` of 0 bytes where DuckDB counts the
      buffer of the shell's last result (256 KiB): results are not buffer-managed (4).
+   - A streaming result: DuckDB's `PhysicalBufferedCollector` blocks its sink once
+     `streaming_buffer_size` (1 MB) is buffered, and each fetch runs the query until the
+     buffer is full again, so an error in a row-wise result (csv, json, ...) more than
+     1 MB in stops the output after the rows fetched so far, silently (the shell ignores
+     the result's error; rustdb's shell now does too). rustdb's collector never blocks:
+     the query runs ahead in tasks of 50 chunks, so the output stops at other rows (or
+     the error comes before any). Needs blocked sinks that the fetch unblocks
+     (`BlockSink`, `UnblockSinks`, `Executor::ResultCollectorIsBlocked`).
+   - The shell reads input and arguments as UTF-8, invalid bytes becoming U+FFFD;
+     DuckDB passes the bytes on (a string constant then fails with "Invalid unicode
+     (byte sequence mismatch) detected in value construction", `.print` writes them as
+     they are). Needs byte strings from the shell's input down to the parser.
+   - Functions rustdb lacks, which `duckdb_functions()`, `PRAGMA functions` and the
+     completion lists show: `icu_collate_<locale>` for each ICU collation (DuckDB's ICU
+     registers every collation as a scalar function too), `seq_scan`,
+     `duckdb_secret_types`, `duckdb_table_sample`, `duckdb_coordinate_systems`,
+     `duckdb_external_file_cache` (6), `json_serialize_plan` (8), `tpcds`, `dsdgen` (10).
+   - Object ids: the oid of a database (`PRAGMA database_list`'s `seq`) counts the
+     catalog entries created before it, more in DuckDB.
+   - "Did you mean" for a type name: DuckDB suggests among the default type entries it
+     created so far (`DefaultTypeGenerator` creates them on first use, e.g. `INTEGER`
+     after a table with an `INT` column, so `INTEGR` gets `main.INTEGER`); rustdb's
+     builtin types are not catalog entries and get no suggestion.
+   - A `memory_limit` far below an aggregate's state (`SELECT list(i) FROM range(1e7)`
+     under `1MB`) fails in DuckDB and succeeds in rustdb (4).
 
 ## Storage
 

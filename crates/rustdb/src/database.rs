@@ -1535,7 +1535,7 @@ impl Database {
         let options = crate::storage::startup_options(config);
         // A data file opens as an in-memory database with views on it, as with `ATTACH`
         // (`DatabaseManager::GetDatabaseType` resolving to `__open_file__`).
-        let main = if crate::attached::is_open_file(&path) {
+        let main = if crate::attached::is_open_file(&path)? {
             database.attach_open_file("", &path, &options, rustdb_ast::OnCreateConflict::ErrorOnConflict)?
         } else {
             database.attach("", &path, &options, rustdb_ast::OnCreateConflict::ErrorOnConflict)?
@@ -1563,13 +1563,13 @@ impl Database {
         // A database file is tracked by its canonical path
         // (`DatabaseManager::AttachDatabase` with `RequiresTrackingAttaches`).
         let canonical_path;
-        let path = if path.is_empty() || path.starts_with(":memory:") {
+        let path = if path.is_empty() || path == ":memory:" {
             path
         } else {
             canonical_path = rustdb_function::file_system::canonicalize_local_path(path);
             canonical_path.as_str()
         };
-        if !path.is_empty() && !path.starts_with(":memory:") {
+        if !path.is_empty() && path != ":memory:" {
             rustdb_function::file_system::verify_can_access_file(path)?;
             if !options.read_only() {
                 rustdb_function::file_system::verify_can_write(path)?;
@@ -1579,7 +1579,7 @@ impl Database {
         // (`serialization_compatibility`, `default_block_alloc_size`, also set by a
         // global `SET`); an existing file keeps its own.
         let mut options = options.clone();
-        if !path.is_empty() && !path.starts_with(":memory:") && !std::path::Path::new(path).exists() {
+        if !path.is_empty() && path != ":memory:" && !std::path::Path::new(path).exists() {
             if options.storage_version.is_none() {
                 options.storage_version = self.global_setting("storage_compatibility_version");
             }
@@ -2189,7 +2189,16 @@ impl Connection {
     /// Parses `sql` into its statements (DuckDB's `ClientContext::ExtractStatements` and
     /// `Parser::ParseQuery`): with `allow_parser_override_extension` set and the
     /// autocomplete extension loaded, its PEG parser goes first.
+    ///
+    /// A failure is processed (`ProcessError`: JSON under `errors_as_json`, else the
+    /// location in the query) and thrown again, as `ClientContext::ParseStatementsInternal`
+    /// does.
     pub fn extract_statements(&self, sql: &str) -> Result<Vec<SqlStatement>> {
+        self.extract_statements_internal(sql)
+            .map_err(|error| self.process_error(error, sql).rethrown())
+    }
+
+    fn extract_statements_internal(&self, sql: &str) -> Result<Vec<SqlStatement>> {
         use crate::settings::ParserOverride;
         let options = self.settings.parser_options();
         let mode = self.settings.parser_override();
@@ -2198,18 +2207,39 @@ impl Connection {
             let query = stripped.as_deref().unwrap_or(sql);
             match rustdb_autocomplete::parse_query(query, options) {
                 Ok(statements) => return Ok(statements),
-                Err(error) if mode == ParserOverride::Strict => return Err(error.with_query_context(sql)),
+                Err(error) if mode == ParserOverride::Strict => return Err(error),
                 // `FALLBACK`: the Postgres parser takes over.
                 Err(_) => {}
             }
         }
-        rustdb_parser::parse_with_options(sql, &options).map_err(|error| error.with_query_context(sql))
+        let error = match rustdb_parser::parse_with_options(sql, &options) {
+            Err(error)
+                if error.subtype() == Some(rustdb_parser::SYNTAX_ERROR)
+                    && self.database.instance().has_parser_extension() =>
+            {
+                error
+            }
+            parsed => return parsed,
+        };
+        // With a parser extension loaded, a query that does not parse is parsed again a
+        // statement at a time, for the extension to parse the one the grammar cannot. None
+        // does here, so that statement fails with the error of the whole query; but a
+        // statement before it is transformed, and fails with its own error if it cannot be.
+        for statement in rustdb_parser::split_queries(sql) {
+            match rustdb_parser::parse_with_options(&statement, &options) {
+                Ok(_) => {}
+                Err(failure) if failure.subtype() == Some(rustdb_parser::SYNTAX_ERROR) => break,
+                Err(failure) => return Err(failure),
+            }
+        }
+        Err(error)
     }
 
     /// The statements of `sql` as DuckDB's `ClientContext::ParseStatements` hands them out
     /// (its `StatementPreprocessor`): every PRAGMA is bound, which fails for one the catalog
     /// does not have, and a pragma that stands for a query is replaced by the statements of
-    /// that query (`TryReparsePragma`).
+    /// that query (`TryReparsePragma`). Failures are processed and thrown again like those
+    /// of [`Connection::extract_statements`].
     pub fn parse_statements(&mut self, sql: &str) -> Result<Vec<SqlStatement>> {
         let statements = self.extract_statements(sql)?;
         if !statements
@@ -2218,6 +2248,12 @@ impl Connection {
         {
             return Ok(statements);
         }
+        self.preprocess_pragmas(statements)
+            .map_err(|error| self.process_error(error, sql).rethrown())
+    }
+
+    /// The pragma part of `StatementPreprocessor::Preprocess`.
+    fn preprocess_pragmas(&mut self, statements: Vec<SqlStatement>) -> Result<Vec<SqlStatement>> {
         let mut result = Vec::with_capacity(statements.len());
         for statement in statements {
             let rustdb_ast::SqlStatementKind::Pragma(pragma) = &statement.kind else {
@@ -2227,9 +2263,7 @@ impl Connection {
             let name = pragma.name.clone();
             let bound = self.bind_pragma_parameters(statement.clone());
             let ended = self.transactions.end_statement(bound.is_ok(), false);
-            let parameters = bound
-                .and_then(|parameters| ended.map(|()| parameters))
-                .map_err(|error| self.process_error(error, sql))?;
+            let parameters = bound.and_then(|parameters| ended.map(|()| parameters))?;
             let instance = self.database.instance();
             let query = if instance.has_extension_pragma(&name) {
                 Some(instance.extension_pragma_query(&name, &parameters)?)
@@ -3643,7 +3677,7 @@ impl Connection {
                     self.load_storage_extension(&db_type)?;
                     return Err(Error::binder(format!("Unrecognized storage type \"{db_type}\"")));
                 }
-                let attached = if !duckdb_type && crate::attached::is_open_file(path) {
+                let attached = if !duckdb_type && crate::attached::is_open_file(path)? {
                     self.database
                         .attach_open_file(&info.name, path, &options, info.on_conflict)?
                 } else {

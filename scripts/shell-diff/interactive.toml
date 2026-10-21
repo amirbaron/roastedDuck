@@ -1,0 +1,237 @@
+# Interactive sessions under a pseudo-terminal: every byte both shells write to the
+# terminal, for the same keystrokes. "\r" is Enter, "\u0003" Ctrl-C, "\u0004" Ctrl-D,
+# "\u001b[A" the up arrow; a number waits that many seconds.
+
+[[case]]
+name = "pty-startup-exit"
+pty = true
+keys = ["\u0004"]
+
+[[case]]
+name = "pty-{name}-mode"
+pty = true
+args = ["-{name}-mode"]
+vary = { name = ["light", "dark"] }
+keys = ["SELECT 42 AS x, 'str' AS s, NULL AS n, DATE '2024-01-01' AS d;", "\r", "\u0004"]
+
+[[case]]
+name = "pty-typing-highlight"
+pty = true
+args = ["-dark-mode"]
+keys = ["SELECT 'str', 42, x FROM t WHERE", " ", "--c", "\r", "\u0003", "\u0004"]
+
+[[case]]
+name = "pty-multiline"
+pty = true
+args = ["-dark-mode"]
+keys = ["SELECT", "\r", "1", "\r", ";", "\r", "\u0004"]
+
+[[case]]
+name = "pty-ctrl-c"
+pty = true
+args = ["-dark-mode"]
+keys = ["\u0003", "\u0003", "SELECT 1", "\u0003", "\u0004"]
+
+[[case]]
+name = "pty-history"
+pty = true
+args = ["-dark-mode"]
+keys = ["SELECT 1;", "\r", "SELECT 2;", "\r", "\u001b[A", "\u001b[A", "\u001b[B", "\r", "SELECT 'apple';", "\r", "\u0012", "app", "\r", "\u0004"]
+
+[[case]]
+name = "pty-editing-keys"
+pty = true
+args = ["-dark-mode"]
+keys = ["SELECT 123;", "\u001b[D", "\u001b[D", "X", "\u0001", "Y", "\u0005", "\u0008", "\u001bb", "\u001bf", "\u0017", "\u000b", "\u0015", "SELECT abc def", "\u001bb", "\u001bu", "\u001bb", "\u001bc", "\u0014", "\u001b[H", "\u001b[F", "\u001b[3~", "\u0003", "\u0004"]
+
+[[case]]
+name = "pty-long-line-wraps-{cols}"
+vary = { cols = [40, 80] }
+pty = true
+args = ["-dark-mode"]
+cols = 40
+keys = ["SELECT 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' || 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' AS x", "\u0001", "\u001bf", "\u001bf", "Z", "\u0005", "\u001b[D", "\u001b[D", ";", "\r", "\u0004"]
+
+[[case]]
+name = "pty-resize"
+pty = true
+args = ["-dark-mode"]
+cols = 100
+keys = ["SELECT 'a long line that will need to wrap once the terminal is narrower' AS long_text,", " 42 AS answer", "\u0001", "\u001bf", ";", "\r", "SELECT * FROM range(3);", "\r", "\u0004"]
+resize = [[1, 30, 20], [4, 60, 20]]
+
+[[case]]
+name = "pty-multiline-history-edit"
+pty = true
+args = ["-dark-mode"]
+keys = ["SELECT 1,", "\r", "2,", "\r", "3;", "\r", "\u001b[A", "\u001b[A", "\u001b[A", "\u0005", " -- edited", "\u001b[B", "\u001b[B", "\r", "\u0004"]
+
+[[case]]
+name = "pty-completion-many"
+pty = true
+args = ["-dark-mode"]
+keys = ["SELECT * FROM read_", "\t", "\t", "\t", "\u0003", "SELECT ar", "\t", "\t", "\u0003", "SELECT * FROM pragma_", "\t", "\t", "\u0003", "\u0004"]
+
+[[case]]
+name = "pty-completion-tables"
+pty = true
+args = ["-dark-mode"]
+keys = ["CREATE TABLE lineitem(l_orderkey INT, l_partkey INT);", "\r", "SELECT l_", "\t", "\t", " FROM line", "\t", ";", "\r", ".mo", "\t", " csv", "\r", "\u0004"]
+
+[[case]]
+name = "pty-interrupt-long-query"
+pty = true
+args = ["-dark-mode", "-cmd", "SET enable_progress_bar = false"]
+keys = ["SELECT count(*) FROM range(100000000000) t(i) WHERE i % 7 = 3;", "\r", 1.0, "\u0003", 1.0, "SELECT 'after' AS a;", "\r", "\u0004"]
+
+[[case]]
+name = "pty-pager"
+pty = true
+args = ["-dark-mode"]
+env = { DUCKDB_PAGER = "cat" }
+keys = [".pager on", "\r", "SELECT * FROM range(5);", "\r", ".pager off", "\r", "SELECT * FROM range(100);", "\r", "\u0004"]
+
+[[case]]
+name = "pty-pager-automatic"
+pty = true
+args = ["-dark-mode"]
+env = { PAGER = "cat" }
+keys = ["SELECT * FROM range(200);", "\r", "\u0004"]
+
+[[case]]
+name = "pty-errors"
+pty = true
+args = ["-dark-mode"]
+keys = ["SELECT bogus;", "\r", "SELECT * FROM nonexistent;", "\r", "SELEC 1;", "\r", ".bogus", "\r", "\u0004"]
+
+[[case]]
+name = "pty-modes"
+pty = true
+args = ["-dark-mode"]
+keys = [".mode line", "\r", "SELECT 1 AS a, 'x' AS b;", "\r", ".mode csv", "\r", "SELECT 1 AS a;", "\r", ".mode box", "\r", "SELECT 1 AS a;", "\r", "\u0004"]
+
+[[case]]
+name = "pty-utf8-editing"
+pty = true
+args = ["-dark-mode"]
+keys = ["SELECT '🦆é漢字' AS u", "\u001b[D", "\u001b[D", "\u001b[D", "x", "\u0008", "\u0005", ";", "\r", "\u0004"]
+
+[[case]]
+name = "pty-paste"
+pty = true
+args = ["-dark-mode"]
+keys = ["SELECT 1;\rSELECT 2;\rSELECT\r3;\r", "\u0004"]
+
+[[case]]
+name = "pty-wide-result"
+pty = true
+args = ["-dark-mode"]
+cols = 60
+keys = ["SELECT i, 'value ' || i AS v, i * 1.5 AS d, repeat('x', 30) AS pad FROM range(60) t(i);", "\r", "\u0004"]
+
+[[case]]
+name = "pty-timer"
+pty = true
+args = ["-dark-mode"]
+keys = [".timer on", "\r", "SELECT 1;", "\r", "\u0004"]
+normalize = [["real \\d+\\.\\d+ user \\d+\\.\\d+ sys \\d+\\.\\d+", "real X user X sys X"]]
+
+[[case]]
+name = "pty-singleline"
+pty = true
+args = ["-dark-mode"]
+keys = [".singleline", "\r", "SELECT 1, 2,", "\r", "3;", "\r", "\u001b[A", "\r", "\u0004"]
+
+[[case]]
+name = "pty-fallback-readline"
+pty = true
+args = ["-dark-mode"]
+keys = [".read_line_version fallback", "\r", "SELECT 1;", "\r", "SELECT", "\r", "2;", "\r", "\u0004"]
+
+[[case]]
+name = "pty-edit"
+pty = true
+args = ["-dark-mode"]
+env = { EDITOR = "sh ed.sh" }
+files = { "ed.sh" = "printf 'SELECT 7 AS seven;' > \"$1\"\n" }
+keys = [".edit", "\r", 1.0, "\u0004"]
+
+[[case]]
+name = "pty-ctrl-l-and-ctrl-x"
+pty = true
+args = ["-dark-mode"]
+keys = ["SELECT 1", "\u000c", "\u0018", "+ 2;", "\r", "\u0004"]
+
+[[case]]
+name = "pty-prompt"
+pty = true
+args = ["-dark-mode"]
+keys = [".prompt '{color:red}x{color:reset}> ' 'more> '", "\r", "SELECT", "\r", "1;", "\r", "ATTACH ':memory:' AS other;", "\r", ".prompt '{database}.{schema}> '", "\r", "USE other;", "\r", "\u0004"]
+
+[[case]]
+name = "pty-highlight-off"
+pty = true
+args = ["-dark-mode"]
+keys = [".highlight off", "\r", "SELECT 'x', 1;", "\r", ".highlight_results off", "\r", "SELECT 'x', NULL;", "\r", "\u0004"]
+
+[[case]]
+name = "pty-c-{what}"
+vary = { what = ["result", "tables", "help", "error", "describe", "large-numbers", "summarize", "explain", "columns"] }
+pty = true
+args = ["-c", ".read {what}.sql"]
+files = { "result.sql" = "SELECT 1 AS a, NULL AS b, 'x' AS c, DATE '2024-01-01' AS d, [1, 2] AS l, 1.5 AS f;\n", "tables.sql" = "SET threads = 1;\nCREATE TABLE t(i INT PRIMARY KEY, s VARCHAR);\nCREATE VIEW v AS SELECT 1 AS x;\n.tables\n.schema\n.databases\n", "help.sql" = ".help mode\n.help -all\n", "error.sql" = "SELECT bogus FROM range(3) t(i);\nSELECT * FROM nonexistent;\n", "describe.sql" = "CREATE TABLE t(i INT PRIMARY KEY, s VARCHAR NOT NULL);\nDESCRIBE t;\n", "large-numbers.sql" = "SELECT 123456789 AS a, 1234567890123 AS b;\nSELECT * FROM range(1234567);\n", "summarize.sql" = "SUMMARIZE SELECT * FROM range(10) t(i);\n", "explain.sql" = "EXPLAIN SELECT 1;\n", "columns.sql" = ".columns\nSELECT 1 AS a, 'x' AS b;\n" }
+keys = []
+tail = 1.5
+
+[[case]]
+name = "pty-help-flag"
+pty = true
+args = ["-help"]
+keys = []
+
+[[case]]
+name = "pty-search-cancel"
+pty = true
+args = ["-dark-mode"]
+keys = ["SELECT 'one';", "\r", "SELECT 'two';", "\r", "\u0012", "zzz", "\u0007", "\u0012", "o", "\u0012", "\u001b[C", "\r", "\u0004"]
+
+[[case]]
+name = "pty-bracketed-paste"
+pty = true
+args = ["-dark-mode"]
+keys = ["\u001b[200~SELECT 1 AS a,\r2 AS b;\u001b[201~", "\r", "\u0004"]
+
+[[case]]
+name = "pty-tiny-terminal"
+pty = true
+args = ["-dark-mode"]
+cols = 12
+rows = 8
+keys = ["SELECT 'abcdefghijklmnop' AS x, 1 AS y;", "\r", "\u0004"]
+
+[[case]]
+name = "pty-wide-chars-wrap"
+pty = true
+args = ["-dark-mode"]
+cols = 20
+keys = ["SELECT '漢字漢字漢字漢字漢字漢字漢字漢字' AS k", "\u001b[D", "\u001b[D", "\u001b[D", "\u001b[D", "\u001b[D", "\u001b[D", "\u001b[D", "x", "\u0005", ";", "\r", "\u0004"]
+
+[[case]]
+name = "pty-completion-files"
+pty = true
+args = ["-dark-mode"]
+files = { "data_one.csv" = "a\n1\n", "data_two.csv" = "a\n2\n", "sub/inner.csv" = "a\n3\n" }
+keys = ["SELECT * FROM 'data", "\t", "\t", "\u0003", "SELECT * FROM 'sub/", "\t", "\u0003", ".read da", "\t", "\u0003", "\u0004"]
+
+[[case]]
+name = "pty-history-file-saved"
+pty = true
+args = ["-dark-mode"]
+keys = ["SELECT 1;", "\r", "SELECT\r2;", "\r", ".mode csv", "\r", "SELECT 'it''s';", "\r", "\u0004"]
+
+[[case]]
+name = "pty-duckdbrc"
+pty = true
+home = { ".duckdbrc" = ".mode markdown\nSELECT 'rc' AS source;\n" }
+keys = ["SELECT 1 AS a;", "\r", "\u0004"]
+normalize = [["-- Loading resources from [^\\n]*", "-- Loading resources from RC"]]

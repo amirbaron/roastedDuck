@@ -2,7 +2,7 @@
 //! unless it is a terminal) and `stderr` (unbuffered), and DuckDB's `Printer` queries of
 //! the terminal (`src/common/printer.cpp`).
 
-use std::io::{BufWriter, IsTerminal, Stdout, Write};
+use std::io::{IsTerminal, Stdout, Write};
 use std::sync::{LazyLock, Mutex, PoisonError};
 
 /// `Printer::IsTerminal(STREAM_STDOUT)`.
@@ -31,7 +31,69 @@ pub fn terminal_width() -> usize {
 #[derive(Debug)]
 enum StdoutBuffer {
     Terminal(Stdout),
-    Buffered(BufWriter<Stdout>),
+    Buffered(FullyBuffered),
+}
+
+/// A fully buffered C stream (`__sfvwrite`): the buffer, as large as the descriptor's
+/// `st_blksize` (a pipe's 16 KiB, a file's 4 KiB), goes out whenever it is full, so the
+/// output reaches the descriptor in blocks of that size between flushes, and interleaves
+/// with standard error (unbuffered) where C's does.
+#[derive(Debug)]
+struct FullyBuffered {
+    stdout: Stdout,
+    buffer: Vec<u8>,
+    capacity: usize,
+}
+
+impl FullyBuffered {
+    fn new(stdout: Stdout) -> Self {
+        // SAFETY: `fstat` writes a `stat` into the struct passed.
+        let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+        // SAFETY: as above; a failing call is checked.
+        let blksize = if unsafe { libc::fstat(1, &raw mut stat) } == 0 {
+            usize::try_from(stat.st_blksize).unwrap_or(0)
+        } else {
+            0
+        };
+        // `BUFSIZ` without a block size.
+        let capacity = if blksize == 0 { 1024 } else { blksize };
+        Self {
+            stdout,
+            buffer: Vec::with_capacity(capacity),
+            capacity,
+        }
+    }
+
+    fn write(&mut self, mut bytes: &[u8]) -> std::io::Result<()> {
+        while !bytes.is_empty() {
+            let space = self.capacity - self.buffer.len();
+            if !self.buffer.is_empty() && bytes.len() > space {
+                // fill and flush
+                self.buffer.extend_from_slice(&bytes[..space]);
+                bytes = &bytes[space..];
+                self.flush()?;
+            } else if bytes.len() >= self.capacity {
+                // write a block directly (through `Stdout`'s line buffer, flushed at once)
+                self.stdout.write_all(&bytes[..self.capacity])?;
+                self.stdout.flush()?;
+                bytes = &bytes[self.capacity..];
+            } else {
+                // fill and done
+                self.buffer.extend_from_slice(bytes);
+                bytes = &[];
+            }
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        let written = self
+            .stdout
+            .write_all(&self.buffer)
+            .and_then(|()| self.stdout.flush());
+        self.buffer.clear();
+        written
+    }
 }
 
 static STDOUT: LazyLock<Mutex<StdoutBuffer>> = LazyLock::new(|| {
@@ -39,7 +101,7 @@ static STDOUT: LazyLock<Mutex<StdoutBuffer>> = LazyLock::new(|| {
     Mutex::new(if stdout.is_terminal() {
         StdoutBuffer::Terminal(stdout)
     } else {
-        StdoutBuffer::Buffered(BufWriter::with_capacity(1 << 16, stdout))
+        StdoutBuffer::Buffered(FullyBuffered::new(stdout))
     })
 });
 
@@ -48,7 +110,7 @@ pub fn write_stdout(bytes: &[u8]) {
     let mut stdout = STDOUT.lock().unwrap_or_else(PoisonError::into_inner);
     let _ = match &mut *stdout {
         StdoutBuffer::Terminal(stdout) => stdout.write_all(bytes).and_then(|()| stdout.flush()),
-        StdoutBuffer::Buffered(buffer) => buffer.write_all(bytes),
+        StdoutBuffer::Buffered(buffer) => buffer.write(bytes),
     };
 }
 

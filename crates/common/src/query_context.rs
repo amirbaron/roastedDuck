@@ -8,7 +8,7 @@
 //! ```
 
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
+use unicode_width::UnicodeWidthChar;
 
 const MAX_LINE_RENDER_WIDTH: usize = 120;
 
@@ -56,7 +56,15 @@ pub(crate) fn format(query: &str, message: &str, position: u64) -> String {
         let mut breaks = Vec::new();
         for (offset, grapheme) in line.grapheme_indices(true) {
             positions.push(offset);
-            widths.push(grapheme.width());
+            // `Utf8Proc::RenderWidth`: the width of the cluster's first code point, zero for
+            // control characters such as a tab.
+            widths.push(
+                grapheme
+                    .chars()
+                    .next()
+                    .and_then(UnicodeWidthChar::width)
+                    .unwrap_or(0),
+            );
             let first = grapheme.as_bytes()[0];
             breaks.push(is_operator(first) || is_space(first));
         }

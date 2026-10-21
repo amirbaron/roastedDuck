@@ -209,6 +209,21 @@ impl<K> UnorderedOrder<K> {
     }
 }
 
+/// DuckDB's `StringUtil::CIHash`, the hash of `case_insensitive_map_t` keys: Jenkins'
+/// one-at-a-time hash of the lowercased bytes.
+pub fn ci_hash(text: &str) -> u64 {
+    let mut hash: u32 = 0;
+    for byte in text.bytes() {
+        hash = hash.wrapping_add(u32::from(byte.to_ascii_lowercase()));
+        hash = hash.wrapping_add(hash << 10);
+        hash ^= hash >> 6;
+    }
+    hash = hash.wrapping_add(hash << 3);
+    hash ^= hash >> 11;
+    hash = hash.wrapping_add(hash << 15);
+    u64::from(hash)
+}
+
 /// libc++'s `std::hash<std::string>` on 64-bit platforms
 /// (`__murmur2_or_cityhash<size_t, 64>`, i.e. `CityHash64`, without libc++'s ABI fix of the 4 to
 /// 8 byte case). The names follow libc++'s.

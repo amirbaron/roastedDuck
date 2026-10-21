@@ -72,6 +72,8 @@ pub enum FileExpandResult {
 }
 
 /// The named parameters of every multi-file reader (`MultiFileReader::AddParameters`).
+/// A reader (`MultiFileFunction`) adds them first, which decides where they come in the
+/// map of its named parameters.
 pub fn multi_file_parameters() -> Vec<(String, LogicalType)> {
     vec![
         ("filename".to_owned(), LogicalType::ANY),

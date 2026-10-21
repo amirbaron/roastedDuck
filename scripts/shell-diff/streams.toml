@@ -1,0 +1,184 @@
+# How standard output (fully buffered when piped) and standard error interleave, and
+# input bytes the shell reads as C strings.
+
+[[case]]
+name = "merged-error-same-line"
+merged = true
+stdin = '''
+SELECT 1 AS a; SELECT bogus;
+SELECT 2 AS b;
+SELECT 3 AS c; SELECT 4 AS d; SELECT bogus2;
+'''
+
+[[case]]
+name = "merged-error-next-line"
+merged = true
+stdin = '''
+SELECT 1 AS a;
+SELECT bogus;
+.print printed
+SELECT bogus2;
+'''
+
+[[case]]
+name = "merged-c-commands"
+merged = true
+args = ["-csv", "-c", "SELECT 1 AS a", "-c", ".shell echo from-child", "-c", "SELECT 2 AS b; SELECT bogus"]
+
+[[case]]
+name = "merged-cmd-then-stdin"
+merged = true
+args = ["-csv", "-cmd", "SELECT 1 AS a", "-cmd", "SELECT bogus"]
+stdin = "SELECT 2 AS b;\n"
+
+[[case]]
+name = "merged-large-output-then-error-{rows}"
+vary = { rows = ["100", "1500", "3000", "30000"] }
+merged = true
+stdin = '''
+.mode list
+SELECT * FROM range({rows}); SELECT bogus;
+'''
+
+[[case]]
+name = "merged-large-duckbox-then-error"
+merged = true
+stdin = '''
+.maxrows 1000
+SELECT i, repeat('x', 50) AS s FROM range(900) t(i); SELECT bogus;
+'''
+
+[[case]]
+name = "merged-shell-command-after-output"
+merged = true
+args = ["-csv", "-c", "SELECT 1 AS a", "-c", ".system echo child"]
+
+[[case]]
+name = "merged-output-pipe"
+merged = true
+args = ["-csv", "-c", "SELECT 1 AS a", "-c", ".output |cat", "-c", "SELECT 2 AS b", "-c", ".output", "-c", "SELECT bogus"]
+
+[[case]]
+name = "merged-echo-errors"
+merged = true
+args = ["-echo"]
+stdin = '''
+SELECT 1 AS a; SELECT bogus;
+.mode csv
+SELECT 2 AS b;
+'''
+
+[[case]]
+name = "merged-timer-error"
+merged = true
+stdin = '''
+.timer on
+SELECT 1 AS a; SELECT bogus;
+'''
+normalize = [["real \\d+\\.\\d+ user \\d+\\.\\d+ sys \\d+\\.\\d+", "real X user X sys X"]]
+
+[[case]]
+name = "merged-changes"
+merged = true
+stdin = '''
+.changes on
+CREATE TABLE t(i INT); INSERT INTO t VALUES (1); INSERT INTO t VALUES ('x');
+'''
+
+[[case]]
+name = "input-nul-byte"
+stdin = "SELECT 'a\u0000b';\nSELECT 1 AS a;\n"
+
+[[case]]
+name = "input-nul-byte-last-line"
+stdin = "SELECT 1 AS a;\nSELECT 'x\u0000y' AS b;"
+
+[[case]]
+name = "input-nul-at-start"
+stdin = "\u0000SELECT 1;\nSELECT 2 AS b;\n"
+
+[[case]]
+name = "input-nul-in-dot-command"
+stdin = ".print a\u0000b\n.print next\n"
+
+[[case]]
+name = "input-latin1-string"
+known = "the shell reads input as UTF-8 (invalid bytes become U+FFFD)"
+encoding = "latin-1"
+stdin = "SELECT 'café' AS x;\nSELECT 1 AS ok;\n"
+
+[[case]]
+name = "input-latin1-dot-print"
+known = "the shell reads input as UTF-8 (invalid bytes become U+FFFD)"
+encoding = "latin-1"
+stdin = ".print café\n"
+
+[[case]]
+name = "input-latin1-comment"
+encoding = "latin-1"
+stdin = "SELECT 1 AS a; -- café\n"
+
+[[case]]
+name = "input-cr-only"
+stdin = "SELECT 1 AS a;\rSELECT 2 AS b;\r"
+
+[[case]]
+name = "input-long-statement"
+stdin = '''
+SELECT 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' || 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' AS long_value, bogus;
+'''
+
+[[case]]
+name = "input-statement-after-dot-on-same-line"
+stdin = '''
+SELECT 1 AS a
+.mode csv
+;
+SELECT 2 AS b;
+'''
+
+[[case]]
+name = "input-dollar-quoted"
+stdin = '''
+SELECT $$a;b$$ AS x;
+SELECT $tag$it's; "quoted"$tag$ AS y;
+SELECT $$unterminated;
+SELECT 2;
+'''
+
+[[case]]
+name = "input-semicolon-in-comment"
+stdin = '''
+SELECT 1 -- ; not the end
+AS a;
+SELECT /* ; */ 2 AS b;
+'''
+
+[[case]]
+name = "input-hash-line"
+stdin = '''
+# a hash comment line
+SELECT 1 AS a;
+'''
+
+[[case]]
+name = "interrupt-long-query"
+interrupt_after = 1.5
+stdin = "SELECT count(*) FROM range(100000000000) t(i) WHERE i % 7 = 3;\nSELECT 1 AS after;\n"
+
+[[case]]
+name = "interrupt-long-query-c"
+interrupt_after = 1.5
+args = ["-c", "SELECT count(*) FROM range(100000000000) t(i) WHERE i % 7 = 3", "-c", "SELECT 1 AS after"]
+
+[[case]]
+name = "interrupt-long-query-merged"
+merged = true
+interrupt_after = 1.5
+stdin = ".mode csv\nSELECT 1 AS before;\nSELECT count(*) FROM range(100000000000) t(i) WHERE i % 7 = 3;\nSELECT 1 AS after;\n"
+
+[[case]]
+name = "argument-latin1"
+known = "the shell reads arguments as UTF-8 (invalid bytes become U+FFFD)"
+encoding = "latin-1"
+args = ["-c", "SELECT 'café' AS x"]

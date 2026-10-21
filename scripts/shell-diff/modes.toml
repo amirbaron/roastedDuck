@@ -1,0 +1,376 @@
+# Every output mode over values of every type.
+
+[[case]]
+name = "mode-{mode}-strings"
+vary = { mode = ["duckbox", "box", "csv", "column", "html", "insert", "json", "jsonlines", "latex", "line", "list", "markdown", "quote", "table", "tabs", "tcl", "trash", "ascii"] }
+stdin = '''
+.mode {mode}
+SELECT * FROM (VALUES
+  (1, NULL, 'null'),
+  (2, '', 'empty'),
+  (3, 'it''s', 'single quote'),
+  (4, 'say "hi"', 'double quote'),
+  (5, 'line1' || chr(10) || 'line2', 'newline'),
+  (6, 'a' || chr(9) || 'b', 'tab'),
+  (7, 'x' || chr(1) || chr(27) || chr(127) || 'y', 'control'),
+  (8, '🦆 duck', 'emoji'),
+  (9, '漢字テスト', 'cjk'),
+  (10, 'e' || chr(769) || 'te', 'combining'),
+  (11, 'back\slash', 'backslash'),
+  (12, 'a,b;c|d', 'separators'),
+  (13, '<b>&amp;</b>', 'html'),
+  (14, '  padded  ', 'spaces'),
+  (15, 'cr' || chr(13) || 'lf', 'carriage return'),
+  (16, 'NULL', 'literal NULL text'),
+  (17, '$x_{1}^2 % #', 'latex specials'),
+  (18, '{brace} [b]', 'tcl specials')
+) t(id, s, what) ORDER BY id;
+'''
+
+[[case]]
+name = "mode-{mode}-long-string"
+vary = { mode = ["duckbox", "box", "csv", "column", "json", "line", "list", "markdown", "table", "quote"] }
+stdin = '''
+.mode {mode}
+SELECT repeat('abcdefghij', 30) AS long_value, 'short' AS s, repeat('漢', 70) AS wide;
+'''
+
+[[case]]
+name = "mode-{mode}-numbers"
+vary = { mode = ["duckbox", "box", "csv", "column", "html", "insert", "json", "jsonlines", "latex", "line", "list", "markdown", "quote", "table", "tabs", "tcl", "ascii"] }
+stdin = '''
+.mode {mode}
+SELECT -128::TINYINT AS ti, 127::TINYINT AS ti2, -32768::SMALLINT AS si, 2147483647::INTEGER AS i,
+  -9223372036854775808::BIGINT AS bi, 170141183460469231731687303715884105727::HUGEINT AS hi,
+  -170141183460469231731687303715884105728::HUGEINT AS hi2,
+  340282366920938463463374607431768211455::UHUGEINT AS uhi, 255::UTINYINT AS uti,
+  18446744073709551615::UBIGINT AS ubi;
+SELECT 123.456::DECIMAL(18,3) AS d1, -0.001::DECIMAL(4,3) AS d2, 12345678901234567890.1234567890::DECIMAL(38,10) AS d3,
+  1.5::DECIMAL(2,1) AS d4, 0::DECIMAL(10,2) AS d5, -99999.9999::DECIMAL(9,4) AS d6;
+SELECT 0.1::DOUBLE AS a, 1/3 AS b, 3.141592653589793 AS c, 1e300 AS d, 1e-300 AS e, -0.0::DOUBLE AS f,
+  'nan'::DOUBLE AS g, 'inf'::DOUBLE AS h, '-inf'::DOUBLE AS k, 123456789012345678.0 AS l,
+  0.1::FLOAT AS m, 1.17549435e-38::FLOAT AS n, 3.4028235e38::FLOAT AS o, 'nan'::FLOAT AS p,
+  2.5e-7::DOUBLE AS q, 1e15::DOUBLE AS r, 1e16::DOUBLE AS s, 123.0::DOUBLE AS t;
+SELECT true AS t, false AS f, NULL::BOOLEAN AS n;
+'''
+
+[[case]]
+name = "mode-{mode}-temporal"
+vary = { mode = ["duckbox", "box", "csv", "column", "html", "insert", "json", "jsonlines", "latex", "line", "list", "markdown", "quote", "table", "tabs", "tcl"] }
+stdin = '''
+SET TimeZone = 'America/New_York';
+.mode {mode}
+SELECT DATE '2024-02-29' AS d, DATE '0044-03-15 (BC)' AS bc, 'infinity'::DATE AS inf, '-infinity'::DATE AS ninf,
+  TIME '23:59:59.999999' AS t, TIMETZ '12:34:56+05:30' AS ttz, TIMESTAMP '1970-01-01 00:00:00' AS ts,
+  TIMESTAMP '2024-06-01 12:34:56.789' AS ts2, TIMESTAMPTZ '2024-06-01 12:34:56+00' AS tstz,
+  TIMESTAMP_NS '2024-06-01 12:34:56.123456789' AS tsns, TIMESTAMP_MS '2024-06-01 12:34:56.123' AS tsms,
+  TIMESTAMP_S '2024-06-01 12:34:56' AS tss, 'infinity'::TIMESTAMP AS tsinf;
+SELECT INTERVAL 1 YEAR + INTERVAL 2 MONTH + INTERVAL 3 DAY + INTERVAL '04:05:06.789' AS i1,
+  INTERVAL '-1 day' AS i2, INTERVAL 0 SECOND AS i3, to_microseconds(1) AS i4, INTERVAL 1000 HOUR AS i5;
+'''
+
+[[case]]
+name = "mode-{mode}-misc-types"
+vary = { mode = ["duckbox", "box", "csv", "column", "html", "insert", "json", "jsonlines", "latex", "line", "list", "markdown", "quote", "table", "tabs", "tcl"] }
+stdin = '''
+CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy');
+.mode {mode}
+SELECT '\xAA\x00\xFFabc'::BLOB AS b, ''::BLOB AS eb, 'a''b'::BLOB AS qb,
+  '00000000-0000-0000-0000-000000000000'::UUID AS u0, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::UUID AS u,
+  '10101'::BIT AS bits, 'happy'::mood AS m, NULL::mood AS nm;
+'''
+
+[[case]]
+name = "mode-{mode}-nested"
+vary = { mode = ["duckbox", "box", "csv", "column", "html", "insert", "json", "jsonlines", "latex", "line", "list", "markdown", "quote", "table", "tabs", "tcl"] }
+stdin = '''
+.mode {mode}
+SELECT [1, 2, NULL] AS l, [] AS el, ['a', 'it''s', NULL, '', 'x,y'] AS sl, {'a': 1, 'b': 'two', 'c': NULL} AS s,
+  MAP {'k1': 1, 'k2': NULL} AS m, [1, 2, 3]::INTEGER[3] AS arr, union_value(num := 42)::UNION(num INT, str VARCHAR) AS u,
+  [{'x': [1, 2], 'y': MAP {'z': [NULL]}}] AS deep, {'quote"key': 'v', 'sp ace': [1.5, 2.25]} AS weird_keys,
+  [[]::INT[], [NULL::INT]] AS nested_empty, ['🦆', '漢字'] AS wide_list, {'': 1} AS empty_key,
+  [DATE '2024-01-01', NULL] AS dates, {'b': '\x00'::BLOB} AS blob_struct, ['a' || chr(10) || 'b'] AS nl_list;
+'''
+
+[[case]]
+name = "mode-{mode}-variant-geometry"
+vary = { mode = ["duckbox", "box", "csv", "json", "jsonlines", "line", "list", "markdown", "quote", "insert", "html"] }
+stdin = '''
+.mode {mode}
+SELECT 42::VARIANT AS v1, 'text'::VARIANT AS v2, {'a': [1, 2]}::VARIANT AS v3, NULL::VARIANT AS v4,
+  [1.5, NULL]::VARIANT AS v5, DATE '2024-01-01'::VARIANT AS v6;
+SELECT 'POINT(1 2)'::GEOMETRY AS g1, 'LINESTRING(0 0, 1 1, 2 1)'::GEOMETRY AS g2,
+  'POLYGON((0 0, 1 0, 1 1, 0 0))'::GEOMETRY AS g3, 'POINT EMPTY'::GEOMETRY AS g4, NULL::GEOMETRY AS g5;
+'''
+
+[[case]]
+name = "mode-{mode}-empty-result"
+vary = { mode = ["duckbox", "box", "csv", "column", "html", "insert", "json", "jsonlines", "latex", "line", "list", "markdown", "quote", "table", "tabs", "tcl", "ascii"] }
+stdin = '''
+.mode {mode}
+SELECT 1 AS a, 'x' AS b WHERE false;
+SELECT 42 AS only_column;
+CREATE TABLE t(i INT);
+INSERT INTO t VALUES (1), (2);
+'''
+
+[[case]]
+name = "mode-{mode}-headers-off"
+vary = { mode = ["duckbox", "box", "csv", "column", "html", "insert", "json", "latex", "line", "list", "markdown", "quote", "table", "tabs", "tcl"] }
+stdin = '''
+.headers off
+.mode {mode}
+SELECT 1 AS a, 'two' AS b, NULL AS c;
+.headers on
+SELECT 1 AS a, 'two' AS b, NULL AS c;
+'''
+
+[[case]]
+name = "mode-{mode}-nullvalue"
+vary = { mode = ["duckbox", "box", "csv", "column", "html", "insert", "json", "latex", "line", "list", "markdown", "quote", "table", "tabs", "tcl"] }
+stdin = '''
+.nullvalue (nil)
+.mode {mode}
+SELECT NULL AS a, [NULL] AS b, {'x': NULL} AS c, 'v' AS d;
+'''
+
+[[case]]
+name = "mode-{mode}-column-names"
+vary = { mode = ["duckbox", "box", "csv", "column", "html", "insert", "json", "line", "list", "markdown", "quote", "table", "tcl"] }
+stdin = '''
+.mode {mode}
+SELECT 1 AS "weird ""name""", 2 AS "a,b", 3 AS "🦆", 4 AS "漢字列", 5 AS "", 6 AS "line
+break", 7 AS "<tag>";
+'''
+
+[[case]]
+name = "mode-insert-table-name"
+stdin = '''
+.mode insert my_table
+SELECT 1 AS a, 'x' AS b;
+.mode insert "quoted table"
+SELECT 2 AS a;
+.mode insert
+SELECT 3 AS a;
+.mode insert select
+SELECT 4 AS a;
+'''
+
+[[case]]
+name = "mode-invalid"
+stdin = '''
+.mode bogus
+.mode
+.mode csv extra
+.mode
+SELECT 1;
+'''
+
+[[case]]
+name = "mode-show-current-{mode}"
+vary = { mode = ["duckbox", "box", "csv", "column", "html", "insert", "json", "jsonlines", "latex", "line", "list", "markdown", "quote", "table", "tabs", "tcl", "trash", "ascii"] }
+stdin = '''
+.mode {mode}
+.mode
+.show
+'''
+
+[[case]]
+name = "flag{flag}"
+vary = { flag = ["-csv", "-json", "-markdown", "-box", "-line", "-list", "-html", "-ascii", "-column", "-table", "-quote", "-jsonlines"] }
+args = ["{flag}"]
+stdin = '''
+SELECT 1 AS a, 'it''s' AS b, NULL AS c, [1, 2] AS d;
+.mode
+'''
+
+[[case]]
+name = "flag{flag}-c"
+vary = { flag = ["-csv", "-json", "-markdown", "-box", "-line", "-list", "-html", "-ascii", "-column", "-table", "-quote", "-jsonlines"] }
+args = ["{flag}", "-c", "SELECT 1 AS a, 'x y' AS b, NULL AS c"]
+
+[[case]]
+name = "flag-separator"
+args = ["-list", "-separator", ";;", "-c", "SELECT 1 AS a, 2 AS b"]
+
+[[case]]
+name = "flag-separator-csv-order"
+args = ["-separator", "\t", "-csv", "-c", "SELECT 1 AS a, 2 AS b"]
+
+[[case]]
+name = "flag-csv-separator-order"
+args = ["-csv", "-separator", "\t", "-c", "SELECT 1 AS a, 2 AS b"]
+
+[[case]]
+name = "flag-nullvalue"
+args = ["-list", "-nullvalue", "<null>", "-c", "SELECT NULL AS a, 1 AS b"]
+
+[[case]]
+name = "flag-nullvalue-duckbox"
+args = ["-nullvalue", "∅", "-c", "SELECT NULL AS a, 1 AS b"]
+
+[[case]]
+name = "flag-header-list"
+args = ["-list", "-header", "-c", "SELECT 1 AS a, 2 AS b"]
+
+[[case]]
+name = "flag-noheader-csv"
+args = ["-csv", "-noheader", "-c", "SELECT 1 AS a, 2 AS b"]
+
+[[case]]
+name = "flag-noheader-duckbox"
+args = ["-noheader", "-c", "SELECT 1 AS a, 2 AS b"]
+
+[[case]]
+name = "flag-newline"
+args = ["-list", "-newline", "<EOL>", "-c", "SELECT * FROM range(3)"]
+
+[[case]]
+name = "flag-newline-csv"
+args = ["-csv", "-newline", "\r\n", "-c", "SELECT * FROM range(3)"]
+
+[[case]]
+name = "separator-command"
+stdin = '''
+.mode list
+.separator ,
+SELECT 1 AS a, 2 AS b;
+.separator | ~
+SELECT 1 AS a, 2 AS b UNION ALL SELECT 3, 4;
+.separator
+.separator a b c
+.mode csv
+.separator ;
+SELECT 1 AS a, 'x;y' AS b;
+.mode tabs
+SELECT 1 AS a, 'x	y' AS b;
+'''
+
+[[case]]
+name = "separator-escapes"
+stdin = '''
+.mode list
+.separator \t \n\n
+SELECT 1 AS a, 2 AS b UNION ALL SELECT 3, 4;
+.separator "\x41" \r\n
+SELECT 1 AS a, 2 AS b;
+'''
+
+[[case]]
+name = "csv-quoting"
+stdin = '''
+.mode csv
+SELECT 'a b' AS x, ' lead' AS y, 'trail ' AS z, '"q"' AS q, 'semi;colon' AS s, '' AS e, NULL AS n, 'new
+line' AS nl, '1,000' AS c;
+.separator ;
+SELECT 'a;b' AS x, 'a,b' AS y;
+'''
+
+[[case]]
+name = "width-column-mode"
+stdin = '''
+.mode column
+.width 5 -10 3
+SELECT 1 AS a, 'right' AS b, 'truncated value' AS c, 'extra' AS d;
+.width
+SELECT 1 AS a, 'right' AS b;
+.width 0 0
+SELECT 'abc' AS a, 'abcdefgh' AS b;
+'''
+
+[[case]]
+name = "width-table-box"
+stdin = '''
+.width 8 -8
+.mode table
+SELECT 'abc' AS a, 'def' AS b, 'long value here' AS c;
+.mode box
+SELECT 'abc' AS a, 'def' AS b, 'long value here' AS c;
+.mode markdown
+SELECT 'abc' AS a, 'def' AS b, 'long value here' AS c;
+'''
+
+[[case]]
+name = "line-mode-alignment"
+stdin = '''
+.mode line
+SELECT 1 AS a, 2 AS longer_name, 'multi
+line' AS c;
+SELECT * FROM range(3) t(i);
+'''
+
+[[case]]
+name = "json-numbers-special"
+stdin = '''
+.mode json
+SELECT 'nan'::DOUBLE AS a, 'inf'::DOUBLE AS b, 1e300 AS c, 12345678901234567890::HUGEINT AS d, 1.50::DECIMAL(5,2) AS e, true AS f;
+.mode jsonlines
+SELECT 'nan'::DOUBLE AS a, 'inf'::DOUBLE AS b, 1e300 AS c, 12345678901234567890::HUGEINT AS d, 1.50::DECIMAL(5,2) AS e, true AS f;
+'''
+
+[[case]]
+name = "json-multiple-statements"
+stdin = '''
+.mode json
+SELECT 1 AS a;
+SELECT 2 AS b UNION ALL SELECT 3;
+SELECT 1 WHERE false;
+'''
+
+[[case]]
+name = "html-escaping"
+stdin = '''
+.mode html
+SELECT '<>&"' || chr(39) AS "<col>", 'x' AS "a&b";
+'''
+
+[[case]]
+name = "quote-mode-types"
+stdin = '''
+.mode quote
+SELECT 1.5 AS d, 1.5::DOUBLE AS f, '\x00\x01'::BLOB AS b, DATE '2024-01-01' AS dt, true AS t, NULL AS n, [1] AS l;
+'''
+
+[[case]]
+name = "insert-mode-types"
+stdin = '''
+.mode insert t
+SELECT 1.5 AS d, 1.5::DOUBLE AS f, '\x00\x01'::BLOB AS b, DATE '2024-01-01' AS dt, true AS t, NULL AS n, [1] AS l, 'it''s' AS s, 'nan'::DOUBLE AS nan, 'inf'::DOUBLE AS inf;
+'''
+
+[[case]]
+name = "binary-mode"
+stdin = '''
+.binary on
+.mode list
+SELECT '\xFF\x00a'::BLOB AS b;
+.binary off
+SELECT '\xFF\x00a'::BLOB AS b;
+.binary
+.binary maybe
+'''
+
+[[case]]
+name = "trash-mode-errors"
+stdin = '''
+.mode trash
+SELECT 1;
+SELECT nonexistent;
+SELECT 2;
+'''
+
+[[case]]
+name = "tabs-mode-headers"
+args = ["-header"]
+stdin = '''
+.mode tabs
+SELECT 1 AS a, 'b	c' AS b;
+'''
+
+[[case]]
+name = "ascii-mode-headers"
+stdin = '''
+.mode ascii
+.headers on
+SELECT 1 AS a, 2 AS b UNION ALL SELECT 3, 4;
+'''

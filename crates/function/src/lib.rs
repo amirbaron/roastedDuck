@@ -24,8 +24,8 @@ pub use aggregate::{
     UnaryAggregate,
 };
 pub use client::{
-    ClientRequest, ExtensionOption, ExtensionOptionSet, FunctionClient, SettingInfo, SettingScope, SettingsSource,
-    TempCatalog,
+    ClientRequest, ExtensionOption, ExtensionOptionSet, FunctionClient, SettingInfo, SettingScope,
+    SettingsSource, TempCatalog,
 };
 pub use copy::{CopyFunction, CopyOption, CopyOptionMode};
 pub use pragma::{PragmaFunction, PragmaFunctionSet, PragmaType};
@@ -40,5 +40,5 @@ pub use table::{
     TableFunctionBindOutput, TableFunctionBindReplace, TableFunctionPartitionInfo,
     TableFunctionPartitionStats, TableFunctionPushdownFilters, TableFunctionReplacement, TableFunctionScan,
     TableFunctionSet, TableFunctionStatistics, TableFunctionTypePushdown, TableFunctionVirtualColumns,
-    TableInOutFunction, TablePartitionInfo, TableScanState,
+    TableInOutFunction, TablePartitionInfo, TableScanState, named_parameters_in_map_order,
 };

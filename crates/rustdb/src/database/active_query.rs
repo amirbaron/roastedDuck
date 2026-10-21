@@ -121,14 +121,41 @@ impl PlanExecution {
         )
     }
 
+    /// Moves the chunks the streaming collector received into the buffer.
+    fn take_collected(&mut self) -> Result<()> {
+        if let Some(chunks) = self
+            .execution
+            .with_root_sink_state(PhysicalResultCollector::take_chunks)
+        {
+            self.buffered.extend(chunks?);
+        }
+        Ok(())
+    }
+
+    /// Runs the query's tasks until its streaming result is ready (DuckDB's
+    /// `PendingQueryResult::ExecuteInternal`): the query finished, or the collector holds
+    /// `buffer_size` bytes, where DuckDB's `PhysicalBufferedCollector` blocks. An error in
+    /// the first rows thus fails the query before the caller reads any of them.
+    fn fill_buffer(&mut self, buffer_size: u64) -> Result<()> {
+        loop {
+            self.take_collected()?;
+            let buffered: usize = self.buffered.iter().map(DataChunk::allocation_size).sum();
+            if self.finished || buffered as u64 >= buffer_size {
+                return Ok(());
+            }
+            match self.execution.execute_task()? {
+                ExecutionStep::Finished => self.finished = true,
+                ExecutionStep::NotReady => {}
+                ExecutionStep::NoTasksAvailable => self.execution.wait_for_task(),
+            }
+        }
+    }
+
     /// The next chunk of a streaming result, running the query's tasks until the
     /// collector has one; `None` once the query finished and every chunk was handed out.
     fn next_chunk(&mut self) -> Result<Option<DataChunk>> {
         loop {
-            if let Some(state) = self.execution.root_sink_state() {
-                self.buffered
-                    .extend(PhysicalResultCollector::take_chunks(&state)?);
-            }
+            self.take_collected()?;
             if let Some(chunk) = self.buffered.pop_front() {
                 return Ok(Some(chunk));
             }
@@ -499,6 +526,18 @@ impl Connection {
         }
         let streaming = matches!(&active.state, ActiveState::Running(run) if run.streaming);
         if streaming {
+            let buffer_size = self.settings.streaming_buffer_size();
+            let scope = self.query_scope();
+            let active = self.active(pending.id).ok_or_else(closed_pending_error)?;
+            let ActiveState::Running(run) = &mut active.state else {
+                unreachable!("checked to be running above")
+            };
+            let filled = run.fill_buffer(buffer_size);
+            drop(scope);
+            if let Err(error) = filled {
+                return Err(self.fail_active_query(error));
+            }
+            let active = self.active(pending.id).ok_or_else(closed_pending_error)?;
             let ActiveState::Running(run) = &active.state else {
                 unreachable!("checked to be running above")
             };

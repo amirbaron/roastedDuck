@@ -244,6 +244,24 @@ pub struct TableScanState {
     pub column_ids: Vec<u64>,
 }
 
+/// Named parameters in the iteration order of DuckDB's `named_parameter_type_map_t` (a
+/// `case_insensitive_map_t` filled in declaration order), which `Function::CallToString`
+/// and `duckdb_functions()` list them in.
+pub fn named_parameters_in_map_order(
+    named_parameters: &[(String, LogicalType)],
+) -> impl Iterator<Item = &(String, LogicalType)> {
+    let mut map = rustdb_common::libcxx::UnorderedOrder::default();
+    for (index, (name, _)) in named_parameters.iter().enumerate() {
+        map.insert(rustdb_common::libcxx::ci_hash(name), index, |a, b| {
+            named_parameters[*a]
+                .0
+                .eq_ignore_ascii_case(&named_parameters[*b].0)
+        });
+    }
+    let indices: Vec<usize> = map.order().into_iter().map(|node| map.keys()[node]).collect();
+    indices.into_iter().map(|index| &named_parameters[index])
+}
+
 /// One overload of a table function.
 #[derive(Clone)]
 #[allow(

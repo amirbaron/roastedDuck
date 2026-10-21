@@ -1982,7 +1982,7 @@ fn entry_function_rows(
                 let mut parameters = positional_names(function.arguments.len());
                 let mut parameter_types: Vec<Option<String>> =
                     function.arguments.iter().map(|ty| Some(ty.to_string())).collect();
-                for (name, ty) in &function.named_parameters {
+                for (name, ty) in rustdb_function::named_parameters_in_map_order(&function.named_parameters) {
                     parameters.push(name.clone());
                     parameter_types.push(Some(ty.to_string()));
                 }
@@ -2007,7 +2007,7 @@ fn entry_function_rows(
                 let mut parameters = positional_names(function.arguments.len());
                 let mut parameter_types: Vec<Option<String>> =
                     function.arguments.iter().map(|ty| Some(ty.to_string())).collect();
-                for (name, ty) in &function.named_parameters {
+                for (name, ty) in rustdb_function::named_parameters_in_map_order(&function.named_parameters) {
                     parameters.push(name.clone());
                     parameter_types.push(Some(ty.to_string()));
                 }
@@ -2884,6 +2884,7 @@ pub(crate) fn pragma_query(name: &str, parameters: &[Value]) -> Result<Option<St
     Ok(Some(match name.to_ascii_lowercase().as_str() {
         "table_info" => format!("SELECT * FROM pragma_table_info({});", quoted(&first()?)),
         "storage_info" => format!("SELECT * FROM pragma_storage_info({});", quoted(&first()?)),
+        "show_tables_expanded" => rustdb_planner::SHOW_TABLES_EXPANDED.to_owned(),
         "show_tables" => "with \"tables\" as (SELECT table_name as \"name\" FROM duckdb_tables WHERE in_search_path(database_name, schema_name)), \"views\" as (SELECT view_name as \"name\" FROM duckdb_views WHERE in_search_path(database_name, schema_name)), db_objects as (SELECT \"name\" FROM \"tables\" UNION ALL SELECT \"name\" FROM \"views\") SELECT \"name\" FROM db_objects ORDER BY \"name\";".to_owned(),
         "show_databases" => "SELECT database_name FROM duckdb_databases() WHERE NOT internal ORDER BY database_name;".to_owned(),
         "database_list" => "SELECT * FROM pragma_database_list;".to_owned(),

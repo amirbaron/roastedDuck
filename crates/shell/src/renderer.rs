@@ -208,9 +208,12 @@ impl RenderingQueryResult {
                 Some(chunk) => Some(renderer.convert_chunk(conn, chunk)?),
                 None => None,
             },
-            ResultSource::Stream(stream) => match conn.fetch(stream)? {
-                Some(chunk) => Some(renderer.convert_chunk(conn, &chunk)?),
-                None => None,
+            // A fetch that fails ends a streaming result: DuckDB's `QueryResult::Fetch` then
+            // returns nothing and keeps the error on the result, which the shell does not
+            // look at.
+            ResultSource::Stream(stream) => match conn.fetch(stream) {
+                Ok(Some(chunk)) => Some(renderer.convert_chunk(conn, &chunk)?),
+                Ok(None) | Err(_) => None,
             },
         };
         let Some(mut chunk) = fetched else {
@@ -408,11 +411,10 @@ pub trait ShellRenderer {
     fn render_query_result(
         &mut self,
         out: &mut dyn PrintStream,
-        state: &mut ShellState,
+        _state: &mut ShellState,
         result: &mut RenderingQueryResult,
         conn: &mut Connection,
     ) -> Result<SuccessState> {
-        let _ = state;
         render_rows(self, out, result, conn)
     }
 
@@ -468,8 +470,7 @@ pub trait ShellRenderer {
         false
     }
 
-    fn should_convert_value(&self, value: &str) -> bool {
-        let _ = value;
+    fn should_convert_value(&self, _value: &str) -> bool {
         false
     }
 

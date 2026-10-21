@@ -626,7 +626,6 @@ impl Shell {
     /// (`Connection::SendQuery`). On a terminal with the progress bar on, the progress of
     /// a long query is shown while it runs.
     fn send_statement(&mut self, statement: SqlStatement, materialize: bool) -> Result<QueryResult> {
-        printer::flush_stdout();
         let Self { db, conn, state } = self;
         let Some(conn) = conn.as_mut() else {
             return Err(rustdb::Error::internal(
@@ -1663,7 +1662,6 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
             return false;
         }
         let mut file = String::new();
-        let mut text_mode = false;
         let mut editor_mode = None;
         let mut bom = false;
         let once = match output_mode {
@@ -1716,13 +1714,10 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
                 crate::state::SEP_CRLF.clone_into(&mut state.row_separator);
             } else {
                 state.new_temp_file("txt");
-                text_mode = true;
             }
             file.clone_from(&state.temp_file);
         }
-        let _ = text_mode;
         if let Some(command) = file.strip_prefix('|') {
-            printer::flush_stdout();
             let child = std::process::Command::new("/bin/sh")
                 .arg("-c")
                 .arg(command)

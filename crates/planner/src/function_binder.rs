@@ -10,7 +10,7 @@ use rustdb_ast::ExpressionType;
 use rustdb_common::{CaseInsensitiveMap, Error, Result};
 use rustdb_function::{
     AggregateFunction, AggregateFunctionSet, BindInput, FunctionData, NullHandling, ScalarFunction,
-    ScalarFunctionSet, TableFunction, TableFunctionSet,
+    ScalarFunctionSet, TableFunction, TableFunctionSet, named_parameters_in_map_order,
 };
 use rustdb_types::{LogicalType, LogicalTypeId, TypeInfo, Value};
 
@@ -315,9 +315,7 @@ impl FunctionSignature for TableFunction {
     fn signature(&self) -> String {
         let mut parts: Vec<String> = self.arguments.iter().map(ToString::to_string).collect();
         parts.extend(
-            self.named_parameters
-                .iter()
-                .map(|(name, ty)| format!("{name} : {ty}")),
+            named_parameters_in_map_order(&self.named_parameters).map(|(name, ty)| format!("{name} : {ty}")),
         );
         format!("{}({})", self.name, parts.join(", "))
     }
@@ -343,8 +341,7 @@ impl FunctionSignature for rustdb_function::PragmaFunction {
             rustdb_function::PragmaType::Call => {
                 let mut parts: Vec<String> = self.arguments.iter().map(ToString::to_string).collect();
                 parts.extend(
-                    self.named_parameters
-                        .iter()
+                    named_parameters_in_map_order(&self.named_parameters)
                         .map(|(name, ty)| format!("{name} : {ty}")),
                 );
                 format!("PRAGMA {}({})", self.name, parts.join(", "))
@@ -470,15 +467,24 @@ impl<'a> FunctionBinder<'a> {
         }
         let Some(best) = best else {
             let call = call_to_string(name, arguments, None);
-            let list = functions.iter().fold(String::new(), |mut list, f| {
-                let _ = writeln!(list, "\t{}", f.signature());
+            let signatures: Vec<String> = functions.iter().map(FunctionSignature::signature).collect();
+            let list = signatures.iter().fold(String::new(), |mut list, signature| {
+                let _ = writeln!(list, "\t{signature}");
                 list
             });
+            // `BinderException::NoMatchingFunction`, caught into the binder's `ErrorData`;
+            // every function set lives in the system catalog's main schema.
             return Ok(Err(Error::binder(format!(
                 "No function matches the given name and argument types '{call}'. You might need to add \
                  explicit type casts.\n\tCandidate functions:\n{list}"
             ))
-            .with_subtype("NO_MATCHING_FUNCTION")));
+            .with_subtype("NO_MATCHING_FUNCTION")
+            .with_extra_info("name", name)
+            .with_extra_info("catalog", "system")
+            .with_extra_info("schema", "main")
+            .with_extra_info("call", call)
+            .with_extra_info("candidates", signatures.join(","))
+            .with_extra_info_round_trip()));
         };
         candidates.push(best);
         if candidates.len() > 1 {

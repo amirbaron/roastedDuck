@@ -1377,21 +1377,23 @@ fn read_parquet_pushdown_filters(
 
 /// The named parameters of `read_parquet`.
 fn read_parquet_parameters() -> Vec<(String, LogicalType)> {
-    let mut parameters: Vec<(String, LogicalType)> = [
-        ("binary_as_string", LogicalType::BOOLEAN),
-        ("file_row_number", LogicalType::BOOLEAN),
-        ("debug_use_openssl", LogicalType::BOOLEAN),
-        ("compression", LogicalType::VARCHAR),
-        ("explicit_cardinality", LogicalType::UBIGINT),
-        ("schema", LogicalType::ANY),
-        ("encryption_config", LogicalType::ANY),
-        ("parquet_version", LogicalType::VARCHAR),
-        ("can_have_nan", LogicalType::BOOLEAN),
-    ]
-    .into_iter()
-    .map(|(name, ty)| (name.to_owned(), ty))
-    .collect();
-    parameters.extend(multi_file_parameters());
+    // The multi-file parameters come first (`MultiFileFunction`).
+    let mut parameters = multi_file_parameters();
+    parameters.extend(
+        [
+            ("binary_as_string", LogicalType::BOOLEAN),
+            ("file_row_number", LogicalType::BOOLEAN),
+            ("debug_use_openssl", LogicalType::BOOLEAN),
+            ("compression", LogicalType::VARCHAR),
+            ("explicit_cardinality", LogicalType::UBIGINT),
+            ("schema", LogicalType::ANY),
+            ("encryption_config", LogicalType::ANY),
+            ("parquet_version", LogicalType::VARCHAR),
+            ("can_have_nan", LogicalType::BOOLEAN),
+        ]
+        .into_iter()
+        .map(|(name, ty)| (name.to_owned(), ty)),
+    );
     parameters
 }
 

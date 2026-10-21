@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use rustdb_common::libcxx::UnorderedOrder;
+use rustdb_common::libcxx::{UnorderedOrder, ci_hash};
 use rustdb_common::{Error, Result};
 use rustdb_types::variant::{VariantData, VariantLogicalType as V};
 use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, Value};
@@ -513,20 +513,6 @@ pub fn to_parquet_variant(
             Ok(Value::struct_value(values))
         })
         .collect()
-}
-
-/// `StringUtil::CIHash`: Jenkins' one-at-a-time hash of the lowercased bytes.
-fn ci_hash(text: &str) -> u64 {
-    let mut hash: u32 = 0;
-    for byte in text.bytes() {
-        hash = hash.wrapping_add(u32::from(byte.to_ascii_lowercase()));
-        hash = hash.wrapping_add(hash << 10);
-        hash ^= hash >> 6;
-    }
-    hash = hash.wrapping_add(hash << 3);
-    hash ^= hash >> 11;
-    hash = hash.wrapping_add(hash << 15);
-    u64::from(hash)
 }
 
 /// The OBJECT fields of a VARIANT analysis (`case_insensitive_map_t<VariantAnalyzeData>`):
