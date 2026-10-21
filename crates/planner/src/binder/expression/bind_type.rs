@@ -140,6 +140,15 @@ impl TypeBinder<'_> {
             )?;
             return Ok(ty);
         }
+        if qualified_in_main
+            && rustdb_types::builtin_type_id(&info.name) == Some(LogicalTypeId::Geometry)
+            && let [parameter] = info.parameters.as_slice()
+            && let rustdb_types::TypeParameterValue::Constant(crs) = &parameter.value
+            && crs.logical_type().id() == LogicalTypeId::Varchar
+            && let Some(crs) = crs.as_str()
+        {
+            return bind_geometry_crs(crs, self.context.config.ignore_unknown_crs);
+        }
         if qualified_in_main {
             // Nested type expressions are bound first (`BindExpression(TypeExpression &)`
             // binds its children), so `ENUM(...)[]` binds the ENUM here.
@@ -169,6 +178,24 @@ impl TypeBinder<'_> {
             .ok_or_else(|| Error::internal("type lookup returned nothing"))?;
         user_type(info, &found.entry)
     }
+}
+
+/// `BindGeometryType` with a connection: `GEOMETRY('crs')` with the coordinate system in
+/// its most compact known form (`CoordinateReferenceSystem::TryIdentify`).
+fn bind_geometry_crs(crs: &str, ignore_unknown_crs: bool) -> Result<LogicalType> {
+    let Some(identified) = rustdb_types::geometry::try_identify(crs)? else {
+        if ignore_unknown_crs {
+            return Ok(LogicalType::GEOMETRY);
+        }
+        return Err(Error::binder(format!(
+            "Encountered unrecognized coordinate system '{crs}' when trying to create GEOMETRY type\n\
+             The coordinate system definition may be incomplete or invalid. Your options are as follows:\n\
+             * Load an extension that can identify this coordinate system\n\
+             * Provide a full coordinate system definition in e.g. \"PROJJSON\" or \"WKT2\" format\n\
+             * Set the 'ignore_unknown_crs' configuration option to drop the coordinate system from the resulting geometry type and make this error go away"
+        )));
+    };
+    LogicalType::geometry_with_crs(identified.definition)
 }
 
 /// `ENUM(...)` through the binder (`BindEnumType` with the modifiers named by their

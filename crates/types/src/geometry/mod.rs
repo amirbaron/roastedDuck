@@ -6,9 +6,12 @@ use rustdb_common::{Error, Result};
 
 use crate::{GeometryStorageType, LogicalType};
 
+mod crs;
+mod default_crs;
 mod legacy;
 mod shred;
 
+pub use crs::{Crs, CrsType, try_convert, try_identify};
 pub use legacy::{from_spatial, is_spatial_type, spatial_type, to_spatial};
 pub use shred::{from_vectorized, to_vectorized};
 

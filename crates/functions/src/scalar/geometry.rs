@@ -8,7 +8,7 @@ use rustdb_common::{Error, Result};
 use rustdb_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
 use rustdb_types::geometry::{self, GeometryExtent};
 use rustdb_types::{
-    CoordinateReferenceSystem, GeoTypeInfo, LogicalType, LogicalTypeId, TypeInfo, Value, Vector,
+    LogicalType, LogicalTypeId, TypeInfo, Value, Vector,
 };
 
 use crate::scalar::executor::{Str, StrOut, binary, unary};
@@ -111,6 +111,18 @@ pub fn st_crs_functions() -> ScalarFunctionSet {
             function.arguments[0] = input.argument_types[0].clone();
         }
         Ok(None)
+    })
+    .with_bind_expression(|_, argument_types| {
+        // `BindCRSFunctionExpression`, which sees the argument cast to GEOMETRY: literals
+        // and NULLs become a GEOMETRY without CRS; parameters are not known yet.
+        let ty = argument_types.first()?;
+        match ty.id() {
+            LogicalTypeId::Geometry => Some(crs_value(ty)),
+            LogicalTypeId::StringLiteral | LogicalTypeId::Varchar | LogicalTypeId::SqlNull => {
+                Some(Value::null(LogicalType::VARCHAR))
+            }
+            _ => None,
+        }
     });
     function.null_handling = NullHandling::Special;
     single(function)
@@ -136,14 +148,12 @@ pub fn st_setcrs_functions() -> ScalarFunctionSet {
                 return Err(Error::binder("ST_SetCRS: CRS argument must be constant!"));
             };
             if !crs.is_null() {
-                function.return_type = LogicalType::with_info(
-                    LogicalTypeId::Geometry,
-                    TypeInfo::Geo(GeoTypeInfo {
-                        crs: CoordinateReferenceSystem {
-                            definition: crs.to_varchar()?,
-                        },
-                    }),
-                );
+                // The identified CRS, else the raw string (better than nothing).
+                let crs = crs.to_varchar()?;
+                function.return_type = match geometry::try_identify(&crs)? {
+                    Some(identified) => LogicalType::geometry_with_crs(identified.definition)?,
+                    None => LogicalType::geometry_with_crs(crs)?,
+                };
             }
             Ok(None)
         },

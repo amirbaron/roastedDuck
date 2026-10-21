@@ -234,6 +234,25 @@ impl LogicalType {
         )
     }
 
+    /// `GEOMETRY(crs)` (`LogicalType::GEOMETRY(const string &)`): the definition is kept in
+    /// the normalized form `CoordinateReferenceSystem` parses it to; an empty one gives
+    /// plain GEOMETRY. Fails on malformed WKT.
+    pub fn geometry_with_crs(definition: impl Into<String>) -> rustdb_common::Result<Self> {
+        let definition = definition.into();
+        if definition.is_empty() {
+            return Ok(Self::GEOMETRY);
+        }
+        let crs = crate::geometry::Crs::parse(&definition)?;
+        Ok(Self::with_info(
+            LogicalTypeId::Geometry,
+            TypeInfo::Geo(crate::GeoTypeInfo {
+                crs: crate::CoordinateReferenceSystem {
+                    definition: crs.definition,
+                },
+            }),
+        ))
+    }
+
     /// `INTEGER_LITERAL`: the literal value is kept so binding can pick the narrowest type.
     pub fn integer_literal(constant: Value) -> Self {
         Self::with_info(

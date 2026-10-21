@@ -70,8 +70,10 @@ impl SerializeObject for CoordinateReferenceSystem {
 
 impl DeserializeObject for CoordinateReferenceSystem {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let definition =
+        let definition: String =
             deserializer.read_property_with_explicit_default(100, "definition", String::new())?;
+        // `CoordinateReferenceSystem::Deserialize`: parsed again; unparsable is invalid.
+        let definition = crate::geometry::Crs::parse_lenient(&definition).definition;
         Ok(Self { definition })
     }
 }
