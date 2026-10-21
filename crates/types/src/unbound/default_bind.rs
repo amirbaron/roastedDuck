@@ -19,8 +19,7 @@ const MAX_UNION_MEMBERS: usize = 255;
 
 /// A type modifier with nested types bound (DuckDB's `TypeArgument`).
 struct TypeArgument {
-    /// The parameter's name: its alias, or else its SQL text (as `ParsedExpression::GetName`),
-    /// so it is never empty.
+    /// The parameter's name: its alias (`ParsedExpression::GetAlias`), empty without one.
     name: String,
     value: Value,
 }
@@ -164,25 +163,6 @@ impl UnboundTypeInfo {
             ))),
         }
     }
-
-    /// The type as SQL text (`TypeExpression::ToString`, without quoting rules).
-    fn sql_text(&self) -> String {
-        let mut text = String::new();
-        for qualifier in [&self.catalog, &self.schema] {
-            if !qualifier.is_empty() {
-                text.push_str(qualifier);
-                text.push('.');
-            }
-        }
-        text.push_str(&self.name);
-        if !self.parameters.is_empty() {
-            let parameters: Vec<String> = self.parameters.iter().map(TypeParameter::sql_text).collect();
-            text.push('(');
-            text.push_str(&parameters.join(", "));
-            text.push(')');
-        }
-        text
-    }
 }
 
 impl TypeParameter {
@@ -191,25 +171,10 @@ impl TypeParameter {
             TypeParameterValue::Type(ty) => Value::type_value(ty.default_bind()?),
             TypeParameterValue::Constant(value) => value.clone(),
         };
-        let name = if self.name.is_empty() {
-            self.sql_text()
-        } else {
-            self.name.clone()
-        };
-        Ok(TypeArgument { name, value })
-    }
-
-    /// The parameter as SQL text (the `ToString` of its expression).
-    fn sql_text(&self) -> String {
-        match &self.value {
-            TypeParameterValue::Type(ty) => ty.sql_text(),
-            TypeParameterValue::Constant(value) => match value.as_bytes() {
-                Some(bytes) if !value.is_null() => {
-                    format!("'{}'", String::from_utf8_lossy(bytes).replace('\'', "''"))
-                }
-                _ => value.to_varchar().unwrap_or_else(|_| "NULL".to_owned()),
-            },
-        }
+        Ok(TypeArgument {
+            name: self.name.clone(),
+            value,
+        })
     }
 }
 
@@ -330,8 +295,6 @@ fn bind_enum(arguments: &[TypeArgument]) -> Result<LogicalType> {
     }
     let mut values = Vec::with_capacity(arguments.len());
     for (index, argument) in arguments.iter().enumerate() {
-        // Every argument has a name (its SQL text if no alias), so DuckDB rejects every
-        // ENUM here and leaves it for the binder.
         if !argument.name.is_empty() {
             return Err(Error::binder(format!(
                 "ENUM type arguments cannot have names (argument {} has name \"{}\")",
@@ -407,12 +370,17 @@ fn bind_array(arguments: &[TypeArgument]) -> Result<LogicalType> {
     Ok(LogicalType::array(child.clone(), size as u32))
 }
 
-/// Named child types, rejecting duplicate names (case-insensitively).
-fn named_children(arguments: &[TypeArgument], duplicate: &str) -> Result<Vec<(String, LogicalType)>> {
+/// The child types with their names, rejecting duplicate names (case-insensitively)
+/// unless the children are `anonymous`.
+fn named_children(
+    arguments: &[TypeArgument],
+    duplicate: &str,
+    anonymous: bool,
+) -> Result<Vec<(String, LogicalType)>> {
     let mut names = CaseInsensitiveSet::new();
     let mut children = Vec::with_capacity(arguments.len());
     for argument in arguments {
-        if !names.insert(argument.name.as_str()) {
+        if !anonymous && !names.insert(argument.name.as_str()) {
             return Err(Error::binder(format!("{duplicate} \"{}\"", argument.name)));
         }
         let ty = argument
@@ -435,8 +403,14 @@ fn bind_struct(arguments: &[TypeArgument]) -> Result<LogicalType> {
             return Err(Error::binder("STRUCT type arguments cannot be NULL"));
         }
     }
-    // Arguments always have names, so DuckDB's anonymous-struct case cannot occur here.
-    let children = named_children(arguments, "Duplicate STRUCT type argument name")?;
+    let all_named = arguments.iter().all(|argument| !argument.name.is_empty());
+    let all_anonymous = arguments.iter().all(|argument| argument.name.is_empty());
+    if !all_named && !all_anonymous {
+        return Err(Error::binder(
+            "STRUCT type arguments must either all have names or all be anonymous",
+        ));
+    }
+    let children = named_children(arguments, "Duplicate STRUCT type argument name", all_anonymous)?;
     Ok(LogicalType::struct_type(children))
 }
 
@@ -470,6 +444,9 @@ fn bind_union(arguments: &[TypeArgument]) -> Result<LogicalType> {
         )));
     }
     for argument in arguments {
+        if argument.name.is_empty() {
+            return Err(Error::binder("UNION type modifiers must have names"));
+        }
         if argument.value.logical_type().id() != LogicalTypeId::Type {
             return Err(Error::binder("UNION type modifiers must be types"));
         }
@@ -477,7 +454,7 @@ fn bind_union(arguments: &[TypeArgument]) -> Result<LogicalType> {
             return Err(Error::binder("UNION type modifiers cannot be NULL"));
         }
     }
-    let members = named_children(arguments, "Duplicate UNION type member name")?;
+    let members = named_children(arguments, "Duplicate UNION type member name", false)?;
     Ok(LogicalType::union_type(members))
 }
 
