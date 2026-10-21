@@ -286,7 +286,11 @@ fn max_threads(data: &JsonScanData) -> usize {
     usize::try_from(size / RANGE_SIZE + 1).unwrap_or(1)
 }
 
-fn init_global(bind_data: Option<&dyn FunctionData>, column_ids: &[u64]) -> Result<ParallelScanGlobal> {
+fn init_global(
+    bind_data: Option<&dyn FunctionData>,
+    column_ids: &[u64],
+    _: &[rustdb_types::ColumnIndex],
+) -> Result<ParallelScanGlobal> {
     let data = scan_data(bind_data)?;
     Ok(Arc::new(ScanGlobal {
         projection: Projection::new(data, column_ids),

@@ -248,7 +248,11 @@ fn global_state(global: &ParallelScanGlobal) -> Result<&ArrowScanGlobalState> {
 }
 
 /// `ArrowScanInitGlobal`
-fn arrow_scan_init_global(bind: Option<&dyn FunctionData>, column_ids: &[u64]) -> Result<ParallelScanGlobal> {
+fn arrow_scan_init_global(
+    bind: Option<&dyn FunctionData>,
+    column_ids: &[u64],
+    _: &[rustdb_types::ColumnIndex],
+) -> Result<ParallelScanGlobal> {
     let stream = produce_arrow_scan(bind_data(bind)?, column_ids)?;
     Ok(Arc::new(ArrowScanGlobalState {
         stream: Mutex::new(StreamState {
@@ -405,7 +409,7 @@ fn arrow_scan(
     output: &mut DataChunk,
 ) -> Result<bool> {
     if state.local.is_none() {
-        let global = arrow_scan_init_global(bind, column_ids)?;
+        let global = arrow_scan_init_global(bind, column_ids, &[])?;
         let local = arrow_scan_init_local();
         state.local = Some(Box::new(SingleThreadScan { global, local }));
     }

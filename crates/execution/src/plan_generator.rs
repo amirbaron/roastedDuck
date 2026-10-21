@@ -1304,6 +1304,7 @@ impl PlanGenerator {
                 let projection = get.projection_ids.iter().map(|&id| id as usize).collect();
                 Arc::new(
                     PhysicalTableScan::new(types, get.function, bind_data, column_ids)
+                        .with_column_indexes(get.column_ids)
                         .with_projection(projection)
                         .with_filters(filters)
                         .with_explain_info(explain),

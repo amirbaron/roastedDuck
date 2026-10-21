@@ -19,8 +19,9 @@ use rustdb_function::{
 };
 use rustdb_planner::ClientContext;
 use rustdb_storage::{TableFilter, TableFilterSet};
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Value, Vector};
+use rustdb_types::{ColumnIndex, DataChunk, LogicalType, LogicalTypeId, Value, Vector};
 
+use crate::column_reader::ChildProjection;
 use crate::reader::{ColumnDefinition, ParquetReader, ReaderScanState, ScanColumn};
 use crate::schema::{ParquetColumnDefinition, ParquetOptions};
 
@@ -723,10 +724,38 @@ struct PreparedFile {
     rows_only: Option<u64>,
 }
 
+/// File column `local`, reading only the struct fields `children` names when the file's
+/// column has the requested type (`MultiFileColumnMapper` maps the child indexes; a
+/// column that is cast is read whole).
+fn scan_column(local: usize, same_type: bool, children: Option<&Vec<ChildProjection>>) -> ScanColumn {
+    let mut column = ScanColumn::column(local);
+    if same_type && let Some(children) = children {
+        column.children.clone_from(children);
+    }
+    column
+}
+
+/// The struct fields a column index reads, for the Parquet reader
+/// (`CreateReaderRecursive`'s indexes); empty when it reads the whole column or a
+/// VARIANT field.
+pub(crate) fn child_projections(column: &ColumnIndex) -> Vec<ChildProjection> {
+    if column.child_indexes.iter().any(|child| !child.has_primary_index()) {
+        return Vec::new();
+    }
+    column
+        .child_indexes
+        .iter()
+        .map(|child| ChildProjection {
+            index: usize::try_from(child.index).unwrap_or(usize::MAX),
+            children: child_projections(child),
+        })
+        .collect()
+}
+
 /// Opens file `file_index` and maps its columns onto the requested global columns
 /// (`CreateReader` + `CreateMapping` + `PrepareReader` + `InitializeScan`).
 fn open_file(data: &ParquetBindData, file_index: usize, column_ids: &[u64]) -> Result<FileScan> {
-    let file = prepare_file(data, file_index, column_ids)?;
+    let file = prepare_file(data, file_index, column_ids, &[])?;
     let state = file
         .reader
         .initialize_scan(file.row_groups, &file.scan_columns, file.reader_filters)?;
@@ -740,7 +769,14 @@ fn open_file(data: &ParquetBindData, file_index: usize, column_ids: &[u64]) -> R
 
 /// Opens file `file_index`, maps its columns onto the requested global columns and
 /// prunes its row groups (`CreateReader` + `CreateMapping` + `PrepareReader`).
-fn prepare_file(data: &ParquetBindData, file_index: usize, column_ids: &[u64]) -> Result<PreparedFile> {
+/// `children` has the struct fields to read of each requested column (empty: all of them,
+/// like a missing entry).
+fn prepare_file(
+    data: &ParquetBindData,
+    file_index: usize,
+    column_ids: &[u64],
+    children: &[Vec<ChildProjection>],
+) -> Result<PreparedFile> {
     let reader = data.open_reader(file_index)?;
     let path = data.files.files[file_index].clone();
     let hive_partitions = if data.reader_bind.hive_partitioning_indexes.is_empty() {
@@ -751,7 +787,7 @@ fn prepare_file(data: &ParquetBindData, file_index: usize, column_ids: &[u64]) -
     let mut scan_columns: Vec<ScanColumn> = Vec::new();
     let mut sources = Vec::with_capacity(column_ids.len());
     let mut row_number_column = None;
-    for &global_id in column_ids {
+    for (position, &global_id) in column_ids.iter().enumerate() {
         let is_row_number = match global_id {
             COLUMN_IDENTIFIER_FILENAME => {
                 sources.push(ColumnSource::Constant(Value::varchar(&path)));
@@ -828,7 +864,7 @@ fn prepare_file(data: &ParquetBindData, file_index: usize, column_ids: &[u64]) -
                     local_type: local_type.clone(),
                 })
             });
-            scan_columns.push(ScanColumn::column(local));
+            scan_columns.push(scan_column(local, cast.is_none(), children.get(position)));
             sources.push(ColumnSource::Reader {
                 index: scan_columns.len() - 1,
                 cast,
@@ -856,7 +892,7 @@ fn prepare_file(data: &ParquetBindData, file_index: usize, column_ids: &[u64]) -
                 local_type: local_type.clone(),
             })
         });
-        scan_columns.push(ScanColumn::column(local));
+        scan_columns.push(scan_column(local, cast.is_none(), children.get(position)));
         sources.push(ColumnSource::Reader {
             index: scan_columns.len() - 1,
             cast,
@@ -971,6 +1007,8 @@ struct ParallelGlobal {
 /// The position of a parallel scan.
 #[derive(Debug, Default)]
 struct Cursor {
+    /// The struct fields to read of each scanned column.
+    children: Vec<Vec<ChildProjection>>,
     file_index: usize,
     file: Option<Arc<PreparedFile>>,
     /// The position in the current file's row groups of the next morsel.
@@ -1022,7 +1060,12 @@ impl Cursor {
             if self.file_index >= data.files.files.len() {
                 return Ok(None);
             }
-            self.file = Some(Arc::new(prepare_file(data, self.file_index, column_ids)?));
+            self.file = Some(Arc::new(prepare_file(
+                data,
+                self.file_index,
+                column_ids,
+                &self.children,
+            )?));
         }
     }
 }
@@ -1056,13 +1099,17 @@ fn parquet_bind_data(bind_data: Option<&dyn FunctionData>) -> Result<&ParquetBin
 fn read_parquet_init_global(
     bind_data: Option<&dyn FunctionData>,
     column_ids: &[u64],
+    column_indexes: &[ColumnIndex],
 ) -> Result<ParallelScanGlobal> {
     let data = parquet_bind_data(bind_data)?;
-    let mut cursor = Cursor::default();
+    let mut cursor = Cursor {
+        children: column_indexes.iter().map(child_projections).collect(),
+        ..Cursor::default()
+    };
     let max_threads = match data.files.files.len() {
         0 => 1,
         1 => {
-            let file = prepare_file(data, 0, column_ids)?;
+            let file = prepare_file(data, 0, column_ids, &cursor.children)?;
             let threads = file.row_groups.len().max(1);
             cursor.file = Some(Arc::new(file));
             threads
