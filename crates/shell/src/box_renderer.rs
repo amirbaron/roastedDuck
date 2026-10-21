@@ -2205,7 +2205,7 @@ mod tests {
     #[test]
     fn large_numbers() {
         assert_eq!(try_format_large_number("1234567", None), "1.23 million");
-        assert_eq!(try_format_large_number("-999999999", None), "-1000.00 million");
+        assert_eq!(try_format_large_number("-999999999", None), "-1.00 billion");
         assert_eq!(try_format_large_number("12345", None), "");
         assert_eq!(try_format_large_number("1.5e7", None), "");
     }

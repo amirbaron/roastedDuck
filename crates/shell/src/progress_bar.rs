@@ -308,7 +308,7 @@ mod tests {
 
     #[test]
     fn eta() {
-        assert_eq!(format_eta(0.2, false), "(<1 second)               ");
+        assert_eq!(format_eta(0.2, false), "(<1 second remaining)     ");
         assert_eq!(format_eta(75.0, false), "(~1.2 minutes remaining)  ");
         assert_eq!(format_eta(3.5, true), "(00:00:03.50 elapsed)     ");
         assert_eq!(format_progress_bar(100).chars().count(), PROGRESS_BAR_WIDTH + 2);
