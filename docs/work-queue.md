@@ -139,22 +139,32 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
     sort into buffer-managed, spillable runs (`PhysicalRangeJoin` global sort state,
     `WindowHashGroup`), and the IEJoin/AsOf sinks finalize in two events
     (`AddFinishEvent`, see `docs/perf-backlog.md`).
-13. **VARIANT scans after the extract pushdown.** Struct and VARIANT extract pushdown are
-    ported one to one: `RemoveUnusedColumns` registers `struct_extract` / `variant_extract`
-    chains (under a cast) on scanned columns, scans read only the fields used
-    (`ColumnIndex` children, the scan's `Projections` list them), and a table scan of a
-    STRUCT or VARIANT column emits each extracted field as a column of its own
+13. **Struct and VARIANT extract pushdown, the rest.** The pushdown is ported one to one:
+    `RemoveUnusedColumns` registers `struct_extract` / `variant_extract` chains (under a
+    cast) on scanned columns, scans read only the fields used (`ColumnIndex` children;
+    the scan's `Projections` list them; Parquet reads only those fields), and a table
+    scan of a STRUCT or VARIANT column emits each extracted field as a column of its own
     (`PUSHDOWN_EXTRACT`: `StructColumnData` reads the field into the result, with a
     pushed-down cast; `VariantColumnData::PushdownShreddedFieldExtract` reads a fully
-    shredded field's typed column, else unshreds, extracts and casts). DuckDB's quirks
-    come along: a filter on a field disables the pushdown for the whole column;
-    `FindShreddedColumnInternal` stops one path element short, so a single-field path
-    (`v.a::INT`) never reads the typed column, and `v.a.b::INT` over a primitive `a`
-    returns `a`'s values where the extract should be NULL (C++ 1.5.6 does the same);
-    mixing a typed and an untyped path of the same field (`v.a.b::INT` with `v.a::INT`)
-    raises DuckDB's "This path wasn't found in the registered paths" internal error.
-    So `variant/tpch_sf1` spends its time unshredding (in DuckDB too), and rustdb's
-    unshredding must be faster than DuckDB's for it to finish in 300 s.
+    shredded field's typed column, else unshreds, extracts and casts). `variant/tpch_sf1`
+    passes in 33 s (DuckDB's `unittest`: 89 s). DuckDB's quirks come along: a filter on
+    a field disables the pushdown for the whole column; `FindShreddedColumnInternal`
+    stops one path element short, so a single-field path (`v.a::INT`) never reads the
+    typed column, and `v.a.b::INT` over a primitive `a` returns `a`'s values where the
+    extract should be NULL (C++ 1.5.6 does the same); a typed and an untyped path of the
+    same field in one query (`v.a.b::INT` with `v.a::INT`) raise DuckDB's "This path
+    wasn't found in the registered paths" internal error. Left:
+    - A VARIANT nested in a STRUCT has no column statistics of its own here (DuckDB asks
+      its parent, `GetStatisticsRef`), so its shredded fields are never read directly:
+      such scans unshred (same results).
+    - Zone maps of pushed-down fields: a filter on such a column (only a join's dynamic
+      filter can be one) does not prune row groups by the field's statistics
+      (`ColumnData::CheckZonemap` with `PushdownExtract`).
+    - Parquet reads only the needed struct fields when the file's column has the
+      requested type; with schema evolution (a cast per file) it reads the column whole,
+      where `MultiFileColumnMapper` maps the fields.
+    - `hash()` of a VARIANT differs from DuckDB's (also for unshredded values, so not a
+      layout difference).
 14. **Buffer eviction parity under tight limits** (`max_swap_space_error.test`, failing 4
     in 10 runs). After `CREATE TABLE t2 AS SELECT random() FROM range(200000)` under
     `memory_limit='1024KiB'`, two threads and a 4 MB swap limit, rustdb keeps 1,067,008
