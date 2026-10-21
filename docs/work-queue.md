@@ -71,11 +71,6 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
     (`EncryptionEngine`, `StorageManager` encryption options, the main header's
     encryption fields). Port it byte-compatibly with a pure-Rust AES-GCM, and check
     files both ways against the C++ CLI.
-16. **`vacuum_rebuild_indexes`** (`vacuum_rebuild_indexes_attach.test_slow`): with the
-    ATTACH option (or the setting) set, a checkpoint vacuums row groups of tables with
-    ART indexes, drops empty row groups and rebuilds the indexes afterwards
-    (`RowGroupCollection` vacuum state `can_rebuild_indexes`, the vacuum lock in
-    `table_scan.cpp`); rustdb keeps row ids fixed whenever a table has indexes.
 
 ## Planner and execution
 
