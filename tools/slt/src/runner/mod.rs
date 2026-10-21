@@ -252,6 +252,21 @@ impl<'a, E: Engine> Runner<'a, E> {
         }
         self.db = Some(database);
         self.reconnect()?;
+        if dbpath.is_empty() || dbpath == ":memory:" {
+            // An in-memory database spills to `.tmp` in the working directory, which the
+            // files running next to this one share (DuckDB's runner runs one file at a
+            // time); give it one of its own.
+            let temp_directory = self.environment.test_path(".tmp");
+            let connection = self
+                .con
+                .as_mut()
+                .ok_or_else(|| Failure::new("no open connection"))?;
+            let sql = format!("SET temp_directory='{temp_directory}'");
+            let result = self.engine.query(connection, &sql);
+            if let Some(error) = crate::backend::QueryResult::error(&result) {
+                return Err(Failure::new(format!("Failed to load database {dbpath}: {error}")));
+            }
+        }
         if load_extensions {
             let database = self.database()?;
             for extension in &self.extensions {
