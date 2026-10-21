@@ -575,10 +575,16 @@ mod tests {
             error(unbound("INTEGER", vec![constant(Value::integer(1))])),
             "Binder Error: Type 'INTEGER' does not take any type parameters"
         );
-        // Constants without an alias are named after their SQL text.
+        // A STRUCT mixes named and anonymous children only by mistake.
         assert_eq!(
-            error(unbound("ENUM", vec![constant(Value::varchar("a"))])),
-            "Binder Error: ENUM type arguments cannot have names (argument 1 has name \"'a'\")"
+            error(unbound(
+                "STRUCT",
+                vec![
+                    named_type("", unbound("INTEGER", vec![])),
+                    named_type("b", unbound("VARCHAR", vec![])),
+                ]
+            )),
+            "Binder Error: STRUCT type arguments must either all have names or all be anonymous"
         );
     }
 }
