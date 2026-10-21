@@ -3895,6 +3895,7 @@ test/sql/storage/vacuum/vacuum_partial_deletes_cleanup.test_slow
 test/sql/storage/vacuum/vacuum_partial_deletes_complex.test_slow
 test/sql/storage/vacuum/vacuum_partial_deletes_mixed.test_slow
 test/sql/storage/vacuum/vacuum_rebuild_indexes.test_slow
+test/sql/storage/vacuum/vacuum_rebuild_indexes_attach.test_slow
 test/sql/storage/vacuum/vacuum_rebuild_indexes_attach_overrides_global.test_slow
 test/sql/storage/vacuum/vacuum_rebuild_indexes_threshold.test_slow
 test/sql/storage/wal/dict_fsst_wal_replay.test_slow

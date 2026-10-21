@@ -195,6 +195,29 @@ pub struct HashAggregateGlobal {
     /// set and radix partition (DuckDB's `RadixHTGlobalSourceState` partitions), and the
     /// row an empty grouping set produces without input.
     finalized: OnceLock<FinalizedGroups>,
+    /// The sink's share of the memory limit, which decides when it goes out of core.
+    memory: Option<SinkMemory>,
+}
+
+/// The aggregate's claim on temporary memory while it sinks (DuckDB's
+/// `RadixHTGlobalSinkState::temporary_memory_state` and `minimum_reservation`).
+#[derive(Debug)]
+struct SinkMemory {
+    state: rustdb_buffer::TemporaryMemoryState,
+    context: rustdb_buffer::TemporaryMemoryContext,
+    /// What the threads' tables need at the least: a sink-capacity table per thread with
+    /// its partitions' blocks, and more partitions once out of core.
+    minimum_reservation: std::sync::atomic::AtomicU64,
+    threads: u64,
+    /// Serializes the reservation updates before going out of core (`gstate.Lock()`).
+    lock: Mutex<()>,
+}
+
+impl SinkMemory {
+    /// `GetThreadLimit`: how much a thread's tables may hold before they go out of core.
+    fn thread_limit(&self) -> usize {
+        usize::try_from(self.state.reservation() / self.threads / 10 * 8).unwrap_or(usize::MAX)
+    }
 }
 
 /// The finalized sink's output units.
@@ -254,9 +277,6 @@ pub struct HashAggregateLocal {
     /// memory share, in the external partitions and unpinned so that they can be spilled
     /// (DuckDB's `abandoned_data`).
     abandoned: Vec<Option<PartitionedTupleData>>,
-    /// The size above which the thread's tables are set aside under memory pressure: a
-    /// quarter of its share of the memory limit (DuckDB's `GetMaxThreadMemory`).
-    memory_limit: usize,
     groups: ExpressionExecutor,
     arguments: Vec<ExpressionExecutor>,
     filters: Vec<Option<ExpressionExecutor>>,
@@ -270,17 +290,19 @@ impl Sink for PhysicalHashAggregate {
         let external_bits = external_radix_bits(ctx, initial_radix_bits(ctx));
         // The widest row decides how many partitions the threads can fill without too
         // many cache misses (`MaximumSinkRadixBits`).
-        let row_width = self
+        let (row_width, all_constant) = self
             .grouping_sets
             .iter()
             .map(|set| {
                 self.new_table(ctx, set, initial_capacity(), 0)
-                    .map(|table| table.layout().row_width())
+                    .map(|table| (table.layout().row_width(), table.layout().all_constant()))
             })
             .collect::<Result<Vec<_>>>()?
             .into_iter()
-            .max()
-            .unwrap_or(0);
+            .max_by_key(|(row_width, _)| *row_width)
+            .unwrap_or((0, true));
+        let config = RadixSinkConfig::new(ctx, row_width, external_bits);
+        let memory = Self::sink_memory(ctx, &config, row_width, all_constant);
         let distinct_configs = self
             .grouping_sets
             .iter()
@@ -306,8 +328,9 @@ impl Sink for PhysicalHashAggregate {
                     .collect(),
             ),
             has_distinct: self.aggregates.iter().any(BoundAggregateExpression::is_distinct),
-            config: RadixSinkConfig::new(ctx, row_width, external_bits),
+            config,
             distinct_configs,
+            memory: Some(memory),
             ..HashAggregateGlobal::default()
         })
     }
@@ -319,7 +342,6 @@ impl Sink for PhysicalHashAggregate {
     ) -> Result<HashAggregateLocal> {
         let config = &global.config;
         let radix_bits = config.radix_bits.load(Ordering::Acquire);
-        let threads = ctx.env.threads().max(1) as u64;
         let tables = self
             .grouping_sets
             .iter()
@@ -336,8 +358,6 @@ impl Sink for PhysicalHashAggregate {
                 .map(|_| self.aggregates.iter().map(|_| None).collect())
                 .collect(),
             abandoned: self.grouping_sets.iter().map(|_| None).collect(),
-            memory_limit: usize::try_from(ctx.env.buffer_manager.max_memory() / threads / 4)
-                .unwrap_or(usize::MAX),
             tables,
             groups: ExpressionExecutor::new(self.groups.clone()),
             arguments: self
@@ -359,7 +379,7 @@ impl Sink for PhysicalHashAggregate {
 
     fn sink(
         &self,
-        ctx: &ExecutionContext,
+        _: &ExecutionContext,
         chunk: &DataChunk,
         global: &HashAggregateGlobal,
         local: &mut HashAggregateLocal,
@@ -426,15 +446,17 @@ impl Sink for PhysicalHashAggregate {
             table.table.add_chunk(&groups, &hashes, &inputs, &selections)?;
             table.after_add_chunk(&global.config)?;
         }
-        // Under memory pressure, a thread whose tables hold more than a quarter of its
-        // share of the memory limit sets their groups aside so that they can be spilled.
+        // A thread whose tables outgrow its share of the reservation sets their groups
+        // aside so that they can be spilled (`MaybeRepartition`).
         let size: usize = local
             .tables
             .iter()
             .chain(local.distinct.iter().flatten().flatten())
             .map(|table| table.table.size_in_bytes())
             .sum();
-        if size > local.memory_limit && memory_pressure(ctx) {
+        if let Some(memory) = &global.memory
+            && Self::over_thread_limit(global, memory, size)
+        {
             Self::go_external(global, local)?;
             for (tables, abandoned) in local.distinct.iter_mut().zip(&mut local.distinct_abandoned) {
                 for (table, abandoned) in tables.iter_mut().zip(abandoned) {
@@ -504,6 +526,10 @@ impl Sink for PhysicalHashAggregate {
         ctx: &ExecutionContext,
         global: &mut HashAggregateGlobal,
     ) -> Result<crate::SinkFinalize> {
+        // The sink is done: its reservation is released (`Finalize`'s `SetZero`).
+        if let Some(memory) = &global.memory {
+            memory.state.set_zero();
+        }
         if global.has_distinct {
             // The groups are complete only after the distinct tuples were fed in by the
             // finalize tasks.
@@ -830,13 +856,86 @@ pub(crate) fn repartitioned(
 }
 
 impl PhysicalHashAggregate {
+    /// Registers the sink with the temporary memory manager, reserving what the threads'
+    /// tables need at the least (`RadixHTGlobalSinkState` construction): a table of the
+    /// sink capacity per thread, with a block or two per partition.
+    fn sink_memory(
+        ctx: &ExecutionContext,
+        config: &RadixSinkConfig,
+        row_width: usize,
+        all_constant: bool,
+    ) -> SinkMemory {
+        let buffer_manager = &ctx.env.buffer_manager;
+        let threads = ctx.env.threads().max(1) as u64;
+        let context = buffer_manager.temporary_memory_context(threads, 1, false);
+        let state = buffer_manager.temporary_memory_manager().register(&context);
+        let block_alloc_size = buffer_manager.block_alloc_size() as u64;
+        let tuples_per_block = (block_alloc_size / row_width.max(1) as u64).max(1);
+        let ht_count = crate::aggregate_hashtable::resize_threshold(config.sink_capacity) as u64;
+        let partitions = 1u64 << config.maximum_sink_radix_bits;
+        let count_per_partition = ht_count / partitions;
+        let mut blocks_per_partition = (count_per_partition + tuples_per_block) / tuples_per_block;
+        if !all_constant {
+            blocks_per_partition += 1;
+        }
+        let ht_size = partitions * blocks_per_partition * block_alloc_size
+            + (config.sink_capacity * size_of::<u64>()) as u64;
+        let minimum_reservation = threads * ht_size;
+        state.set_minimum_reservation(minimum_reservation);
+        state.set_remaining_size_and_update_reservation(&context, minimum_reservation);
+        SinkMemory {
+            state,
+            context,
+            minimum_reservation: std::sync::atomic::AtomicU64::new(minimum_reservation),
+            threads,
+            lock: Mutex::default(),
+        }
+    }
+
+    /// Whether a thread whose tables hold `size` bytes must go out of core: it is over its
+    /// share of the reservation even after asking for twice what the threads need
+    /// (`MaybeRepartition`).
+    fn over_thread_limit(global: &HashAggregateGlobal, memory: &SinkMemory, size: usize) -> bool {
+        if size <= memory.thread_limit() {
+            return false;
+        }
+        if !global.config.external.load(Ordering::Acquire) {
+            let _guard = memory.lock.lock().unwrap_or_else(PoisonError::into_inner);
+            if size > memory.thread_limit() {
+                memory
+                    .state
+                    .set_minimum_reservation(memory.minimum_reservation.load(Ordering::Acquire));
+                let remaining = (memory.threads * size as u64).max(memory.state.remaining_size());
+                memory
+                    .state
+                    .set_remaining_size_and_update_reservation(&memory.context, 2 * remaining);
+            }
+        }
+        size > memory.thread_limit()
+    }
+}
+
+impl PhysicalHashAggregate {
     /// The thread's tables outgrew its memory share: their groups are set aside (unpinned,
     /// so they can be spilled) and the tables start over, and the aggregation switches to
     /// enough partitions to finalize them one at a time (DuckDB's `MaybeRepartition`
     /// abandoning the hash table when going external).
     fn go_external(global: &HashAggregateGlobal, local: &mut HashAggregateLocal) -> Result<()> {
         let config = &global.config;
-        config.external.store(true, Ordering::Release);
+        let current_bits = config.radix_bits.load(Ordering::Acquire);
+        if !config.external.swap(true, Ordering::AcqRel)
+            && let Some(memory) = &global.memory
+            && config.external_radix_bits > current_bits
+        {
+            // `SetRadixBitsInternal`: every thread now fills that many more partitions.
+            let multiplier = 1u64 << (config.external_radix_bits - current_bits);
+            memory
+                .minimum_reservation
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |minimum| {
+                    Some(minimum.saturating_mul(multiplier))
+                })
+                .ok();
+        }
         config
             .radix_bits
             .fetch_max(config.external_radix_bits, Ordering::AcqRel);
