@@ -13,6 +13,7 @@ rustdb-ast.workspace = true
 rustdb-planner = { path = "../planner" }
 rustdb-function = { path = "../function" }
 rustdb-catalog = { path = "../catalog" }
+rustdb-row = { path = "../row" }
 rustdb-storage = { path = "../storage" }
 regex-syntax = "0.8"
 

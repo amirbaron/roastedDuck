@@ -292,7 +292,10 @@ impl ParallelCollectionScanState {
 #[derive(Debug, Default)]
 pub(crate) struct ParallelScanPosition {
     pub row_groups: Option<Arc<RowGroupSegmentTree>>,
-    /// Position of the next row group to hand out.
+    /// The positions of the row groups in the order to hand them out, when the scan reads
+    /// them by a column's statistics (DuckDB's `reorderer`).
+    pub order: Option<Vec<usize>>,
+    /// The next row group to hand out: its position, or its index in `order`.
     pub next_row_group: usize,
     pub max_row: u64,
     pub batch_index: u64,

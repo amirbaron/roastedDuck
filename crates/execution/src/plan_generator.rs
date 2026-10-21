@@ -353,7 +353,8 @@ impl PlanGenerator {
         )
         .with_dynamic_filters(get.dynamic_filters.clone())
         .with_index_scan(Some(context.index_scan))
-        .with_explain_info(explain);
+        .with_explain_info(explain)
+        .with_row_group_order(get.row_group_order.clone());
         if let Some(sample) = &get.sample_options {
             // DuckDB's `ScanSamplingInfo`: the percentage as a fraction.
             let percentage = sample.sample_size.as_f64().unwrap_or(100.0);

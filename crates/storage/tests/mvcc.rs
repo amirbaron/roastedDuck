@@ -294,7 +294,7 @@ fn large_appends_span_row_groups_and_scan_in_parallel() {
     assert_eq!(table.row_group_count(), 3);
 
     let t2 = manager.begin();
-    let parallel = table.initialize_parallel_scan(&t2);
+    let parallel = table.initialize_parallel_scan(&t2, None);
     let sums: Vec<i64> = std::thread::scope(|scope| {
         let workers: Vec<_> = (0..4)
             .map(|_| {

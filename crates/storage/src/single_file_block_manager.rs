@@ -506,6 +506,23 @@ impl SingleFileBlockManager {
         self.lock().free_list.len() as u64
     }
 
+    /// Frees every loaded, unpinned block that holds no metadata: after loading a
+    /// checkpoint, the blocks that rebuilding its indexes read (DuckDB deserializes stored
+    /// indexes lazily, so attaching reads no table data; queries read it when they first
+    /// use it).
+    pub fn unload_data_blocks(&self, metadata: &MetadataManager) {
+        let metadata_blocks: BTreeSet<BlockId> = metadata
+            .metadata_info()
+            .iter()
+            .map(|block| block.block_id)
+            .collect();
+        for handle in self.registry.handles() {
+            if !metadata_blocks.contains(&handle.block_id()) {
+                handle.unload_if_unpinned();
+            }
+        }
+    }
+
     /// Reads the free list and the metadata block list (`LoadFreeList`). Every other block
     /// of the file holds data the checkpoint on disk references.
     pub fn load_free_list(&self, metadata: &MetadataManager) -> Result<()> {

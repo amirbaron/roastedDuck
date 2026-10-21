@@ -992,6 +992,7 @@ dependencies = [
  "rustdb-common",
  "rustdb-function",
  "rustdb-planner",
+ "rustdb-row",
  "rustdb-storage",
  "rustdb-types",
 ]

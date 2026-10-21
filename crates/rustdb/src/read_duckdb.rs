@@ -710,7 +710,7 @@ fn prepare_file(
     let parallel = if index_rows.is_some() {
         ParallelTableScanState::default()
     } else {
-        storage.initialize_parallel_scan(&data.transaction)
+        storage.initialize_parallel_scan(&data.transaction, None)
     };
     Ok(Some(FileScan {
         reader,

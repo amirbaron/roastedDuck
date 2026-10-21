@@ -43,6 +43,7 @@ pub mod logical_operator_deep_copy;
 mod optimizer;
 pub mod remove_duplicate_groups;
 pub mod remove_unused_columns;
+pub mod row_group_pruner;
 pub mod rule;
 pub mod sampling_pushdown;
 pub mod statistics_propagator;

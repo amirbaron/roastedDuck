@@ -388,6 +388,20 @@ impl BlockHandle {
         self.memory.tag()
     }
 
+    /// Frees the data of this persistent block if it is loaded and unpinned; it is read
+    /// from the file again when next pinned.
+    pub fn unload_if_unpinned(&self) {
+        if self.block_manager.is_none() {
+            return;
+        }
+        let memory = &self.memory;
+        let mut inner = memory.lock();
+        if memory.can_unload() {
+            // Persistent data: dropping it cannot fail.
+            let _ = memory.unload(&mut inner);
+        }
+    }
+
     pub fn buffer_type(&self) -> FileBufferType {
         self.memory.buffer_type()
     }

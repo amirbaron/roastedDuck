@@ -98,6 +98,12 @@ impl BlockRegistry {
         self.get(block_id).is_some()
     }
 
+    /// Every live handle.
+    pub fn handles(&self) -> Vec<Arc<BlockHandle>> {
+        let blocks = self.blocks.lock().unwrap_or_else(PoisonError::into_inner);
+        blocks.values().filter_map(Weak::upgrade).collect()
+    }
+
     pub fn unregister(&self, block_id: BlockId) {
         let mut blocks = self.blocks.lock().unwrap_or_else(PoisonError::into_inner);
         // A handle registered after the dropped one must stay.

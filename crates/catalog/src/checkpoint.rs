@@ -1048,6 +1048,7 @@ pub fn load_checkpoint(catalog: &Catalog, storage: &StorageManager) -> Result<()
     d.on_list_end()?;
     d.on_property_end()?;
     deserializer.end()?;
+    storage.block_manager().unload_data_blocks(metadata);
     Ok(())
 }
 

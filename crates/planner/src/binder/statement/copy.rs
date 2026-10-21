@@ -851,6 +851,7 @@ fn bind_copy_from(
         dynamic_filters: None,
         sample_options: None,
         file_filters: crate::operator::FileFilterInfo::default(),
+        row_group_order: None,
     };
     bound
         .plan

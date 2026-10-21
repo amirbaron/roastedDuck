@@ -79,19 +79,25 @@ impl PhysicalTopN {
             return Ok(());
         };
         let mut boundary = global.boundary.lock().unwrap_or_else(PoisonError::into_inner);
-        if boundary.as_ref().is_some_and(|current| **current <= *top.key) {
+        if boundary.key.as_ref().is_some_and(|current| **current <= *top.key) {
             return Ok(());
         }
-        *boundary = Some(top.key.clone());
+        boundary.key = Some(top.key.clone());
         let Some((data, op)) = &self.dynamic_filter else {
             return Ok(());
         };
         let Some(first) = self.orders.first() else {
             return Ok(());
         };
-        let mut columns = [Vector::flat(first.expression.return_type.clone(), 1)];
-        decode_sort_key(&top.key, &mut columns, 0, &heap.modifiers[..1])?;
-        data.set(*op, columns[0].get_value(0));
+        let values = boundary
+            .values
+            .get_or_insert_with(|| Vector::flat(first.expression.return_type.clone(), 1));
+        // Like DuckDB's `boundary_vector`, the vector is decoded into again: a NULL boundary
+        // stays NULL (decoding a value does not mark it valid), so the filter stays unset.
+        decode_sort_key(&top.key, std::slice::from_mut(values), 0, &heap.modifiers[..1])?;
+        let value = values.get_value(0);
+        drop(boundary);
+        data.set(*op, value);
         Ok(())
     }
 
@@ -519,9 +525,17 @@ struct TopNResult {
 #[derive(Debug)]
 pub struct TopNGlobalState {
     heap: Mutex<Option<TopNHeap>>,
-    /// The smallest boundary key of any full heap so far.
-    boundary: Mutex<Option<Box<[u8]>>>,
+    boundary: Mutex<GlobalBoundary>,
     result: Option<TopNResult>,
+}
+
+/// The boundary of the threads' heaps (DuckDB's `TopNBoundaryValue`).
+#[derive(Debug, Default)]
+struct GlobalBoundary {
+    /// The smallest boundary key of any full heap so far.
+    key: Option<Box<[u8]>>,
+    /// The first sort column of the boundary, decoded for the dynamic filter.
+    values: Option<Vector>,
 }
 
 impl Sink for PhysicalTopN {
@@ -534,7 +548,7 @@ impl Sink for PhysicalTopN {
         }
         Ok(TopNGlobalState {
             heap: Mutex::new(Some(self.heap()?)),
-            boundary: Mutex::new(None),
+            boundary: Mutex::default(),
             result: None,
         })
     }
@@ -554,6 +568,7 @@ impl Sink for PhysicalTopN {
             .boundary
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+            .key
             .clone();
         local.sink(chunk, boundary.as_deref())?;
         self.update_boundary(global, local)?;
