@@ -1,16 +1,18 @@
-"""Copies a Catch test file without the named TEST_CASEs.
+"""Copies a Catch test file without the named TEST_CASEs and SECTIONs.
 
-Usage: python3 -I strip_cases.py <source.cpp> <target.cpp> [test case name...]
+Usage: python3 -I strip_cases.py <source.cpp> <target.cpp> [name...]
 
-Used for the C API test cases that reach into DuckDB's C++ API (they cast C handles to
-duckdb::Vector or duckdb::Connection), which cannot compile against duckdb.h alone.
+A name removes the TEST_CASE of that name; `SECTION:<name>` removes every SECTION of that
+name instead. Used for the C API tests that reach into DuckDB's C++ API (they cast C
+handles to duckdb::Vector or duckdb::Connection), which cannot compile against duckdb.h
+alone.
 """
 
 import sys
 
 
-def case_end(text: str, start: int) -> int:
-    """The index just past the body of the TEST_CASE starting at `start`."""
+def block_end(text: str, start: int) -> int:
+    """The index just past the braced body of the TEST_CASE or SECTION at `start`."""
     i = text.index("{", text.index(")", start))
     depth = 0
     while i < len(text):
@@ -32,18 +34,25 @@ def case_end(text: str, start: int) -> int:
             if depth == 0:
                 return i + 1
         i += 1
-    raise ValueError("unbalanced TEST_CASE body")
+    raise ValueError("unbalanced block")
+
+
+def remove_blocks(text: str, marker: str, label: str) -> str:
+    """Replaces every block starting with `marker` by a comment naming `label`."""
+    while (start := text.find(marker)) >= 0:
+        text = text[:start] + f"// (removed: {label})" + text[block_end(text, start):]
+    return text
 
 
 def main() -> None:
     source, target, *names = sys.argv[1:]
     text = open(source, encoding="utf-8").read()
     for name in names:
-        marker = f'TEST_CASE("{name}"'
-        start = text.find(marker)
-        if start < 0:
-            continue
-        text = text[:start] + f"// (removed: {name})" + text[case_end(text, start):]
+        if name.startswith("SECTION:"):
+            section = name.removeprefix("SECTION:")
+            text = remove_blocks(text, f'SECTION("{section}"', name)
+        else:
+            text = remove_blocks(text, f'TEST_CASE("{name}"', name)
     open(target, "w", encoding="utf-8").write(text)
 
 
