@@ -1019,8 +1019,9 @@ impl DatabaseInstance {
 
     /// Checkpoints the database `name` a commit wrote to when its WAL grew beyond
     /// `checkpoint_threshold`, unless other transactions are running
-    /// (`DuckTransactionManager::CanCheckpoint`). `index_bytes` is the memory of the
-    /// indexes over the rows the transaction appended.
+    /// (`DuckTransactionManager::CanCheckpoint`). Like DuckDB, the WAL size before the
+    /// commit plus the commit's `estimated_size` is compared, which counts only the data
+    /// pointers of optimistically written row groups (`AutomaticCheckpoint`).
     ///
     /// `blocks_concurrent` tells whether the committed transaction updated rows or
     /// dropped catalog entries: then it does not checkpoint while other transactions run
@@ -1036,7 +1037,6 @@ impl DatabaseInstance {
         name: &str,
         blocks_concurrent: bool,
         estimated_size: u64,
-        index_bytes: u64,
         skip_checkpoint: bool,
     ) -> Result<()> {
         let threshold = self
@@ -1079,11 +1079,12 @@ impl DatabaseInstance {
             .load(std::sync::atomic::Ordering::Relaxed);
         let (size, entries) = {
             let guard = wal.lock();
-            (guard.size(), guard.entries_before_last_commit())
+            (
+                guard.size_before_last_commit(),
+                guard.entries_before_last_commit(),
+            )
         };
-        // The commit's estimated size counts the memory of the indexes over its appended
-        // rows (`LocalTableStorage::EstimatedSize`).
-        if size + index_bytes <= threshold && !(entry_limit > 0 && entries >= entry_limit) {
+        if size + estimated_size <= threshold && !(entry_limit > 0 && entries >= entry_limit) {
             return Ok(());
         }
         let no_wal_writes = wal.lock().no_writes();
@@ -1560,8 +1561,6 @@ struct CommittedChanges {
     /// The database it wrote to.
     database: String,
     properties: rustdb_storage::transaction::UndoProperties,
-    /// The memory of the indexes over its appended rows.
-    index_bytes: u64,
 }
 
 impl CommittedChanges {
@@ -1570,7 +1569,6 @@ impl CommittedChanges {
         transaction.modified_database().map(|database| Self {
             database,
             properties: transaction.undo_properties(),
-            index_bytes: transaction.local_storage().index_memory_size() as u64,
         })
     }
 }
@@ -1757,7 +1755,6 @@ impl Connection {
                 &committed.database,
                 committed.properties.has_updates || committed.properties.has_dropped_entries,
                 committed.properties.estimated_size,
-                committed.index_bytes,
                 self.settings.skip_checkpoint_on_commit(),
             )
         {

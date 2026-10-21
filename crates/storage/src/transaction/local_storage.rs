@@ -407,15 +407,6 @@ impl LocalStorage {
         !self.tables().is_empty()
     }
 
-    /// The memory of the indexes over the transaction's appended rows, part of the
-    /// estimated size of its changes (the index sizes of `LocalTableStorage::EstimatedSize`).
-    pub fn index_memory_size(&self) -> usize {
-        self.tables()
-            .iter()
-            .map(|storage| storage.index_memory_size())
-            .sum()
-    }
-
     /// The estimated size of the local rows of every table (`LocalStorage::EstimatedSize`).
     pub fn estimated_size(&self) -> u64 {
         self.tables().iter().map(|storage| storage.estimated_size()).sum()

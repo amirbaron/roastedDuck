@@ -339,6 +339,8 @@ struct WalState {
     entries: u64,
     /// The entries of the last commit.
     last_commit_entries: u64,
+    /// The bytes the last commit appended.
+    last_commit_size: u64,
     /// The file is cut to `size` when it is opened (`UNINITIALIZED_REQUIRES_TRUNCATE`):
     /// replay stopped at a torn or failed entry.
     requires_truncate: bool,
@@ -461,6 +463,12 @@ impl WalGuard<'_> {
         self.state.size
     }
 
+    /// The size of the WAL before the last commit: the size
+    /// `SingleFileStorageManager::AutomaticCheckpoint` sees when that commit starts.
+    pub fn size_before_last_commit(&self) -> u64 {
+        self.state.size - self.state.last_commit_size
+    }
+
     /// Entries written since the WAL was last emptied, before the last commit: the count
     /// `SingleFileStorageManager::AutomaticCheckpoint` sees when that commit starts.
     pub fn entries_before_last_commit(&self) -> u64 {
@@ -549,6 +557,7 @@ impl WalGuard<'_> {
     /// previous size (`StorageCommitState::RevertCommit`).
     pub fn commit(&mut self, mut batch: WalBatch) -> Result<()> {
         self.state.last_commit_entries = 0;
+        self.state.last_commit_size = 0;
         if batch.is_empty() {
             return Ok(());
         }
@@ -561,6 +570,7 @@ impl WalGuard<'_> {
         if self.state.no_writes {
             // `DuckTransaction::ShouldWriteToWAL` is false: only the size is counted.
             self.state.size += batch.buffer.len() as u64;
+            self.state.last_commit_size = batch.buffer.len() as u64;
             return Ok(());
         }
         batch.entry(WalType::WalFlush, |_| Ok(()))?;
@@ -574,6 +584,7 @@ impl WalGuard<'_> {
         } else {
             self.state.entries += batch.entries;
             self.state.last_commit_entries = batch.entries;
+            self.state.last_commit_size = self.state.size - initial_size;
         }
         result
     }
@@ -593,6 +604,7 @@ impl WalGuard<'_> {
             .and_then(|()| file.seek(SeekFrom::Start(size)).map(|_| ()))
             .map_err(|error| io_error(format!("Could not truncate file \"{path}\": {error}")))?;
         self.state.size = size;
+        self.state.last_commit_size = 0;
         Ok(())
     }
 
@@ -656,6 +668,7 @@ impl WalGuard<'_> {
         self.state.size = 0;
         self.state.entries = 0;
         self.state.last_commit_entries = 0;
+        self.state.last_commit_size = 0;
         self.state.requires_truncate = false;
     }
 }
