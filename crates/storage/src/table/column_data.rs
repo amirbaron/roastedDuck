@@ -1203,7 +1203,7 @@ impl ColumnData {
                 Ok(())
             }
             ColumnKind::Validity | ColumnKind::Standard { .. } => {
-                state.offset_in_column += count;
+                self.next_segment_position(state, count);
                 if let (ColumnKind::Standard { validity }, Some(validity_state)) =
                     (&self.kind, state.child_states.first_mut())
                 {
@@ -1211,6 +1211,26 @@ impl ColumnData {
                 }
                 Ok(())
             }
+        }
+    }
+
+    /// Moves `state` forward by `count` rows of this column's own segments without reading
+    /// them (`ColumnScanState::NextInternal`): segments passed over are left, so the
+    /// segment reached is not loaded unless it is scanned, and its zone map is checked
+    /// again.
+    fn next_segment_position(&self, state: &mut ColumnScanState, count: u64) {
+        state.offset_in_column += count;
+        while let Some((index, node)) = &state.current {
+            if state.offset_in_column < node.row_end() {
+                break;
+            }
+            let index = *index + 1;
+            let Some(next) = self.segments.get(index) else {
+                break;
+            };
+            state.current = Some((index, next));
+            state.segment_state = None;
+            state.segment_checked = false;
         }
     }
 

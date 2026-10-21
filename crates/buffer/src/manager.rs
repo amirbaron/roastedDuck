@@ -338,6 +338,12 @@ impl ManagerShared {
                 return;
             }
             if memory.releases_on_unpin() {
+                if memory.holds_several_segments() {
+                    let sequence = memory.next_release_sequence();
+                    drop(inner);
+                    self.pool.retain_released(&block.memory, sequence);
+                    return;
+                }
                 // Persistent data: reloaded from the file when pinned again.
                 let _ = memory.unload(&mut inner);
                 return;
