@@ -217,6 +217,27 @@ fn handle_define_levels(
 }
 
 impl ColumnWriter {
+    /// `ColumnWriter::HasTransform`: whether the column's values are transformed before
+    /// they are written (VARIANT); a transformed column below another one is not supported.
+    pub fn has_transform(&self) -> Result<bool> {
+        let children: &[ColumnWriter] = match self {
+            Self::Variant(_) => return Ok(true),
+            Self::Primitive(_) => return Ok(false),
+            Self::List(writer) => std::slice::from_ref(&writer.child),
+            Self::Struct(writer) => &writer.children,
+        };
+        for child in children {
+            if child.has_transform()? {
+                return Err(Error::not_implemented(format!(
+                    "ColumnWriter of type '{}' requires a transform, but is not a root column, this isn't \
+                     supported currently",
+                    child.schema().logical_type
+                )));
+            }
+        }
+        Ok(false)
+    }
+
     pub fn schema(&self) -> &WriterSchema {
         match self {
             Self::Primitive(writer) => &writer.schema,
