@@ -3132,6 +3132,7 @@ test/sql/pragma/profiling/test_all_profiling_settings.test
 test/sql/pragma/profiling/test_attach_and_checkpoint_latency.test
 test/sql/pragma/profiling/test_commit_write_wal_latency_and_count.test
 test/sql/pragma/profiling/test_cumulative_vacuum_time.test_slow
+test/sql/pragma/profiling/test_cumulative_vacuum_time_checkpoint_latency.test_slow
 test/sql/pragma/profiling/test_custom_profiling_blocked_thread_time.test
 test/sql/pragma/profiling/test_custom_profiling_disable_metrics.test
 test/sql/pragma/profiling/test_custom_profiling_errors.test

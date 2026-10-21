@@ -1178,6 +1178,7 @@ fn vacuum_row_groups(
     use crate::table::{
         CollectionScanState, ColumnDataType, RowGroupAppendState, ScanFilterInfo, StorageIndex, TableScanType,
     };
+    let _timer = rustdb_common::profiling::start_timer(rustdb_common::profiling::MetricType::CumulativeVacuumTime);
     let row_group_size = collection.row_group_size();
     let types = collection.types();
     let io = collection.io();
