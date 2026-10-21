@@ -81,6 +81,38 @@ pub(crate) struct DatabaseInstance {
     loaded_extensions: Arc<Mutex<Vec<StaticExtension>>>,
 }
 
+/// What the database's own functions reach through the client context (DuckDB's
+/// `ClientContext::db`): the secret manager, and the instance for functions that attach
+/// databases (`read_duckdb`). The instance is held weakly, as bind data can outlive the
+/// statement (prepared statements).
+#[derive(Debug)]
+pub(crate) struct InstanceState {
+    pub(crate) secrets: Arc<crate::secrets::SecretManager>,
+    instance: std::sync::Weak<DatabaseInstance>,
+}
+
+impl InstanceState {
+    /// The instance, held weakly.
+    pub(crate) fn instance(&self) -> std::sync::Weak<DatabaseInstance> {
+        self.instance.clone()
+    }
+}
+
+impl rustdb_planner::DatabaseState for InstanceState {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// The instance state of the database a call is bound in.
+pub(crate) fn instance_state(context: &ClientContext) -> Result<&InstanceState> {
+    context
+        .database_state
+        .as_ref()
+        .and_then(|state| state.as_any().downcast_ref::<InstanceState>())
+        .ok_or_else(|| Error::internal("function bound without a database instance"))
+}
+
 /// The object cache key of the database's loaded extensions, read by `duckdb_extensions()`.
 const LOADED_EXTENSIONS_KEY: &str = "rustdb.loaded_extensions";
 
@@ -967,8 +999,7 @@ impl Database {
 
     pub(crate) fn instance(&self) -> &DatabaseInstance {
         &self.instance
-    }
-}
+    }}
 
 /// A connection to a database (DuckDB's `Connection` and `ClientContext`). Each
 /// connection is used by one thread at a time; open one connection per thread for
@@ -1480,7 +1511,10 @@ impl Connection {
             function_client: Arc::clone(&self.function_client),
             user_variables: self.user_variables.clone(),
             dependency_recorder: Arc::default(),
-            database_state: Some(Arc::clone(&instance.secrets) as Arc<dyn rustdb_planner::DatabaseState>),
+            database_state: Some(Arc::new(InstanceState {
+                secrets: Arc::clone(&instance.secrets),
+                instance: Arc::downgrade(&self.database.instance),
+            }) as Arc<dyn rustdb_planner::DatabaseState>),
         })
     }
 
