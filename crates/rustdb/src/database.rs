@@ -93,6 +93,10 @@ pub(crate) struct DatabaseInstance {
     /// `write_buffer_row_group_memory_limit`; global settings): applied to the storage of
     /// every attached database.
     optimistic_write: std::sync::Mutex<rustdb_storage::OptimisticWriteConfig>,
+    /// How checkpoints shred VARIANT columns (`variant_minimum_shredding_size`,
+    /// `force_variant_shredding`; global settings): applied to the storage of every
+    /// attached database.
+    variant_shredding: std::sync::Mutex<rustdb_storage::table::VariantShreddingConfig>,
     /// The secrets (DuckDB's `DBConfig::secret_manager`).
     pub(crate) secrets: Arc<crate::secrets::SecretManager>,
     /// The number of open connections (DuckDB's `ConnectionManager`).
@@ -302,6 +306,109 @@ struct GlobalSettings {
 
 /// The default of `checkpoint_threshold` (16 MiB).
 const DEFAULT_CHECKPOINT_WAL_SIZE: u64 = 16 * 1024 * 1024;
+
+/// `ForceVariantShredding::SetGlobal`: the shredded type of a `force_variant_shredding`
+/// value, a type name whose every level is wrapped in `STRUCT(typed_value,
+/// untyped_value_index)`.
+fn parse_force_variant_shredding(value: &Value) -> Result<LogicalType> {
+    use rustdb_types::LogicalTypeId as L;
+    if value.logical_type().id() != L::Varchar {
+        return Err(Error::invalid_input(format!(
+            "The argument to 'force_variant_shredding' should be of type VARCHAR, not {}",
+            value.logical_type()
+        )));
+    }
+    let text = value.to_varchar()?;
+    // `UnboundType::TryParseAndDefaultBind`.
+    let parsed = if text.is_empty() {
+        None
+    } else {
+        let columns = rustdb_parser::parse_column_list(
+            &format!("dummy {text}"),
+            &rustdb_parser::ParserOptions::default(),
+        )
+        .map_err(|_| Error::invalid_input(format!("Could not parse type string '{text}'")))?;
+        columns
+            .columns
+            .into_iter()
+            .next()
+            .map(|column| column.logical_type)
+    };
+    let bound = match parsed {
+        Some(ty) => match ty.info() {
+            Some(rustdb_types::TypeInfo::Unbound(unbound)) => unbound.default_bind()?,
+            _ => ty,
+        },
+        None => LogicalType::INVALID,
+    };
+    if matches!(bound.id(), L::Invalid | L::Unbound) {
+        return Err(Error::invalid_input(format!(
+            "Could not parse the argument '{text}' to 'force_variant_shredding' as a built in type"
+        )));
+    }
+    check_shredding_type(&bound)?;
+    Ok(rustdb_storage::statistics::wrap_shredded_levels(&bound))
+}
+
+/// The type checks of `ForceVariantShredding::SetGlobal`.
+fn check_shredding_type(ty: &LogicalType) -> Result<()> {
+    use rustdb_types::LogicalTypeId as L;
+    if ty.is_nested() {
+        if !matches!(ty.id(), L::Struct | L::List) {
+            return Err(Error::invalid_input(format!(
+                "Shredding can consist of the nested types LIST (for ARRAY Variant values) or STRUCT (for OBJECT \
+                 Variant values), not {ty}"
+            )));
+        }
+        if ty.id() == L::Struct && ty.is_unnamed_struct() {
+            return Err(Error::invalid_input(
+                "STRUCT types in the shredding can not be empty",
+            ));
+        }
+        if let Some(child) = ty.child_type() {
+            check_shredding_type(child)?;
+        }
+        for (_, field) in ty.struct_children().unwrap_or_default() {
+            check_shredding_type(field)?;
+        }
+        return Ok(());
+    }
+    match ty.id() {
+        L::Boolean
+        | L::TinyInt
+        | L::SmallInt
+        | L::Integer
+        | L::BigInt
+        | L::HugeInt
+        | L::UTinyInt
+        | L::USmallInt
+        | L::UInteger
+        | L::UBigInt
+        | L::UHugeInt
+        | L::Float
+        | L::Double
+        | L::Decimal
+        | L::Date
+        | L::Time
+        | L::TimeTz
+        | L::TimestampTz
+        | L::Timestamp
+        | L::TimestampSec
+        | L::TimestampMs
+        | L::TimestampNs
+        | L::Blob
+        | L::Varchar
+        | L::Uuid
+        | L::Bignum
+        | L::TimeNs
+        | L::Interval
+        | L::Bit
+        | L::Geometry => Ok(()),
+        _ => Err(Error::invalid_input(format!(
+            "Variants can not be shredded on type: {ty}"
+        ))),
+    }
+}
 
 /// Whether `name` is `force_compression`.
 fn is_force_compression(name: &str) -> bool {
@@ -676,6 +783,48 @@ impl DatabaseInstance {
             }
             _ => Ok(()),
         }
+    }
+
+    /// `SET` / `RESET` (`None`) of `variant_minimum_shredding_size` and
+    /// `force_variant_shredding`; other names are ignored.
+    fn set_variant_shredding_setting(&self, name: &str, value: Option<&rustdb_types::Value>) -> Result<()> {
+        use rustdb_storage::table::VariantShreddingConfig;
+        let update: Box<dyn FnOnce(&mut VariantShreddingConfig)> =
+            if name.eq_ignore_ascii_case("variant_minimum_shredding_size") {
+                let rows = match value {
+                    Some(value) => value
+                        .default_cast_as(&rustdb_types::LogicalType::BIGINT)?
+                        .as_i64()
+                        .unwrap_or(0),
+                    None => VariantShreddingConfig::default().minimum_size,
+                };
+                Box::new(move |config| config.minimum_size = rows)
+            } else if name.eq_ignore_ascii_case("force_variant_shredding") {
+                let forced = value.map(parse_force_variant_shredding).transpose()?;
+                Box::new(move |config| config.forced_type = forced)
+            } else {
+                return Ok(());
+            };
+        let config = {
+            let mut config = self
+                .variant_shredding
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            update(&mut config);
+            config.clone()
+        };
+        for database in self.databases.all() {
+            database.storage.set_variant_shredding_config(config.clone());
+        }
+        Ok(())
+    }
+
+    /// How checkpoints shred VARIANT columns.
+    fn variant_shredding_config(&self) -> rustdb_storage::table::VariantShreddingConfig {
+        self.variant_shredding
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// `SET` / `RESET` (`None`) of `wal_autocheckpoint_entries`; other names are ignored.
@@ -1252,6 +1401,7 @@ impl Database {
                 threads: threads as u64,
                 ..rustdb_storage::OptimisticWriteConfig::default()
             }),
+            variant_shredding: std::sync::Mutex::default(),
             validity: Arc::default(),
             wal_autocheckpoint_entries: std::sync::atomic::AtomicU64::new(0),
             secrets: Arc::default(),
@@ -1287,6 +1437,7 @@ impl Database {
             }
             instance.set_checkpoint_setting(name, Some(value))?;
             instance.set_optimistic_write_setting(name, Some(value))?;
+            instance.set_variant_shredding_setting(name, Some(value))?;
             instance.set_disabled_compression_methods(name, Some(value))?;
             instance.set_wal_autocheckpoint_entries(name, Some(value))?;
         }
@@ -1355,6 +1506,9 @@ impl Database {
         attached
             .storage
             .set_optimistic_write_config(self.instance.optimistic_write_config());
+        attached
+            .storage
+            .set_variant_shredding_config(self.instance.variant_shredding_config());
         if let Err(error) = crate::wal::replay(self, &attached) {
             self.instance.databases.remove(&attached.name);
             return Err(error);
@@ -3206,6 +3360,9 @@ impl Connection {
                     .set_optimistic_write_setting(name, Some(value))?;
                 self.database
                     .instance()
+                    .set_variant_shredding_setting(name, Some(value))?;
+                self.database
+                    .instance()
                     .set_disabled_compression_methods(name, Some(value))?;
                 self.database
                     .instance()
@@ -3239,6 +3396,9 @@ impl Connection {
                 self.database
                     .instance()
                     .set_optimistic_write_setting(name, None)?;
+                self.database
+                    .instance()
+                    .set_variant_shredding_setting(name, None)?;
                 self.database
                     .instance()
                     .set_disabled_compression_methods(name, None)?;

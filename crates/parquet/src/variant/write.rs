@@ -5,6 +5,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
+use rustdb_common::libcxx::UnorderedOrder;
 use rustdb_common::{Error, Result};
 use rustdb_types::variant::{VariantData, VariantLogicalType as V};
 use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, Value};
@@ -559,148 +560,15 @@ impl ObjectFields {
     /// The fields in the iteration order of libc++'s `unordered_map` after inserting
     /// them in this order.
     fn iter_in_map_order(&self) -> impl Iterator<Item = (&str, &AnalyzeData)> {
-        let hashes: Vec<u64> = self.entries.iter().map(|(_, hash, _)| *hash).collect();
-        libcxx_unordered_order(&hashes)
+        let mut table = UnorderedOrder::default();
+        for (position, (_, hash, _)) in self.entries.iter().enumerate() {
+            table.insert(*hash, position, |a, b| a == b);
+        }
+        table
+            .order()
             .into_iter()
             .map(|position| (self.entries[position].0.as_str(), &self.entries[position].2))
     }
-}
-
-/// libc++'s `__next_prime`: the smallest prime at least `n`.
-fn next_prime(n: usize) -> usize {
-    let is_prime = |value: usize| {
-        if value < 2 {
-            return false;
-        }
-        let mut divisor = 2;
-        while divisor * divisor <= value {
-            if value.is_multiple_of(divisor) {
-                return false;
-            }
-            divisor += 1;
-        }
-        true
-    };
-    let mut candidate = n;
-    while !is_prime(candidate) {
-        candidate += 1;
-    }
-    candidate
-}
-
-/// The iteration order (positions) of keys with `hashes` inserted in order into a
-/// libc++ `unordered_map` with unique keys and the default maximum load factor 1
-/// (`__emplace_unique_key_args`, `__rehash_unique`, `__do_rehash`).
-fn libcxx_unordered_order(hashes: &[u64]) -> Vec<usize> {
-    /// The list head (`__p1_`, before the first node).
-    const BEFORE_BEGIN: usize = usize::MAX;
-    struct Table<'a> {
-        hashes: &'a [u64],
-        /// The successor of each node, and of the head.
-        next: Vec<Option<usize>>,
-        head: Option<usize>,
-        /// Per bucket, the node before its first node.
-        buckets: Vec<Option<usize>>,
-    }
-    impl Table<'_> {
-        fn constrain(&self, hash: u64) -> usize {
-            let count = self.buckets.len() as u64;
-            let constrained = if count.is_power_of_two() {
-                hash & (count - 1)
-            } else if hash < count {
-                hash
-            } else {
-                hash % count
-            };
-            constrained as usize
-        }
-        fn next_of(&self, node: usize) -> Option<usize> {
-            if node == BEFORE_BEGIN {
-                self.head
-            } else {
-                self.next[node]
-            }
-        }
-        fn set_next(&mut self, node: usize, value: Option<usize>) {
-            if node == BEFORE_BEGIN {
-                self.head = value;
-            } else {
-                self.next[node] = value;
-            }
-        }
-        /// `__do_rehash<true>`.
-        fn rehash(&mut self, count: usize) {
-            self.buckets = vec![None; count];
-            let Some(first) = self.head else {
-                return;
-            };
-            let mut previous_hash = self.constrain(self.hashes[first]);
-            self.buckets[previous_hash] = Some(BEFORE_BEGIN);
-            let mut previous = first;
-            while let Some(current) = self.next_of(previous) {
-                let hash = self.constrain(self.hashes[current]);
-                if hash == previous_hash {
-                    previous = current;
-                } else if let Some(bucket) = self.buckets[hash] {
-                    let after = self.next_of(current);
-                    self.set_next(previous, after);
-                    let bucket_next = self.next_of(bucket);
-                    self.set_next(current, bucket_next);
-                    self.set_next(bucket, Some(current));
-                } else {
-                    self.buckets[hash] = Some(previous);
-                    previous = current;
-                    previous_hash = hash;
-                }
-            }
-        }
-    }
-    let mut table = Table {
-        hashes,
-        next: vec![None; hashes.len()],
-        head: None,
-        buckets: Vec::new(),
-    };
-    for (node, &hash) in hashes.iter().enumerate() {
-        let size = node;
-        let bucket_count = table.buckets.len();
-        if bucket_count == 0 || size + 1 > bucket_count {
-            // `__is_hash_power2`: a power of two above 2.
-            let power2 = bucket_count > 2 && bucket_count.is_power_of_two();
-            let mut count = (2 * bucket_count + usize::from(!power2)).max(size + 1);
-            if count == 1 {
-                count = 2;
-            } else if !count.is_power_of_two() {
-                count = next_prime(count);
-            }
-            if count > bucket_count {
-                table.rehash(count);
-            }
-        }
-        let bucket = table.constrain(hash);
-        match table.buckets[bucket] {
-            None => {
-                table.next[node] = table.head;
-                table.head = Some(node);
-                table.buckets[bucket] = Some(BEFORE_BEGIN);
-                if let Some(following) = table.next[node] {
-                    let following_bucket = table.constrain(table.hashes[following]);
-                    table.buckets[following_bucket] = Some(node);
-                }
-            }
-            Some(previous) => {
-                table.next[node] = table.next_of(previous);
-                table.set_next(previous, Some(node));
-            }
-        }
-    }
-    let mut order = Vec::with_capacity(hashes.len());
-    let mut current = table.head;
-    while let Some(node) = current {
-        order.push(node);
-        current = table.next[node];
-    }
-    order
 }
 
 /// The type statistics of a VARIANT column (`VariantAnalyzeData`).

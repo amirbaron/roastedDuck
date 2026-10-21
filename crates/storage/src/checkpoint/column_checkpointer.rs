@@ -7,12 +7,14 @@
 //! into segments, which are written to blocks. A standard column is checkpointed together
 //! with its validity, so codecs that store NULLs themselves (`DICT_FSST`) can leave an
 //! empty validity segment. LIST columns checkpoint their offsets, validity and child;
-//! STRUCT and ARRAY columns only their validity and children.
+//! STRUCT and ARRAY columns only their validity and children; VARIANT columns may be
+//! shredded first.
 
 use std::sync::Arc;
 
 use rustdb_buffer::BlockId;
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use rustdb_types::variant::VariantData;
 use rustdb_types::{GeometryStorageType, LogicalType, LogicalTypeId, PhysicalType, Vector, geometry};
 
 use super::pointers::{BlockPointer, DataPointer, PersistentColumnData};
@@ -25,6 +27,7 @@ use crate::data_table::TableIoManager;
 use crate::statistics::BaseStatistics;
 use crate::table::column_data::{ColumnData, ColumnDataType, ColumnKind, ColumnScanState};
 use crate::table::geo_column_data::interpret_layout_statistics;
+use crate::table::variant_column_data::{ShreddingAnalysis, shred_rows};
 
 /// A segment a codec finished: its bytes (the first `segment_size` bytes of its block),
 /// row count, statistics, encoding and extra blocks.
@@ -145,10 +148,130 @@ pub(crate) fn checkpoint_column(
     row_group_start: u64,
     ctx: &mut CheckpointContext<'_>,
 ) -> Result<PersistentColumnData> {
-    if column.logical_type().id() == LogicalTypeId::Geometry {
-        return checkpoint_geometry(column, count, row_group_start, ctx);
+    match column.logical_type().id() {
+        LogicalTypeId::Geometry => checkpoint_geometry(column, count, row_group_start, ctx),
+        LogicalTypeId::Variant => checkpoint_variant(column, count, row_group_start, ctx),
+        _ => checkpoint_column_data(column, count, row_group_start, ctx),
     }
-    checkpoint_column_data(column, count, row_group_start, ctx)
+}
+
+/// Calls `callback` with the values of every vector of rows `0..count` of a VARIANT
+/// column (`None` for NULL rows), as `VariantColumnData::Checkpoint` scans them.
+fn scan_variant_rows(
+    column: &ColumnData,
+    count: u64,
+    mut callback: impl FnMut(&[Option<VariantData>]) -> Result<()>,
+) -> Result<()> {
+    let mut state = ColumnScanState::for_type(column.logical_type());
+    column.initialize_scan(&mut state);
+    let mut vector = Vector::flat(column.logical_type().clone(), STANDARD_VECTOR_SIZE);
+    let mut row = 0u64;
+    while row < count {
+        let rows = (count - row).min(STANDARD_VECTOR_SIZE as u64) as usize;
+        column.checkpoint_scan(&mut state, row, rows, &mut vector)?;
+        let values = (0..rows)
+            .map(|index| VariantData::from_vector(&vector, index))
+            .collect::<Result<Vec<_>>>()?;
+        callback(&values)?;
+        row += rows as u64;
+    }
+    Ok(())
+}
+
+/// `VariantColumnData::GetShreddedType`: the type the values of a VARIANT column suggest
+/// shredding on.
+fn variant_shredded_type(column: &ColumnData, count: u64) -> Result<Option<LogicalType>> {
+    let mut analysis = ShreddingAnalysis::new();
+    scan_variant_rows(column, count, |rows| {
+        for data in rows.iter().flatten() {
+            analysis.update(data)?;
+        }
+        Ok(())
+    })?;
+    analysis.shredded_type()
+}
+
+/// `VariantColumnData::WriteShreddedData`: the values of a VARIANT column shredded on
+/// `shredded_type`, as a new unshredded and a new shredded sub-column.
+fn write_shredded_data(
+    column: &ColumnData,
+    count: u64,
+    shredded_type: &LogicalType,
+    io: &Arc<TableIoManager>,
+) -> Result<(ColumnData, ColumnData)> {
+    let unshredded = ColumnData::new(
+        Arc::clone(io),
+        1,
+        rustdb_types::variant::unshredded_type(),
+        ColumnDataType::CheckpointTarget,
+    );
+    let shredded = ColumnData::new(
+        Arc::clone(io),
+        2,
+        shredded_type.clone(),
+        ColumnDataType::CheckpointTarget,
+    );
+    let mut unshredded_append = unshredded.initialize_append()?;
+    let mut shredded_append = shredded.initialize_append()?;
+    scan_variant_rows(column, count, |rows| {
+        let (unshredded_vector, shredded_vector) = shred_rows(rows, shredded_type)?;
+        unshredded.append(&mut unshredded_append, &unshredded_vector, rows.len())?;
+        shredded.append(&mut shredded_append, &shredded_vector, rows.len())
+    })?;
+    Ok((unshredded, shredded))
+}
+
+/// `VariantColumnData::Checkpoint`: a changed column of a row group with at least
+/// `variant_minimum_shredding_size` rows is shredded, on `force_variant_shredding` or else
+/// on the type its values suggest; other columns keep their sub-columns.
+fn checkpoint_variant(
+    column: &ColumnData,
+    count: u64,
+    row_group_start: u64,
+    ctx: &mut CheckpointContext<'_>,
+) -> Result<PersistentColumnData> {
+    let ColumnKind::Variant {
+        validity,
+        unshredded,
+        shredded,
+    } = column.kind()
+    else {
+        return Err(Error::internal("VARIANT column without its sub-columns"));
+    };
+    let mut result = PersistentColumnData::new(column.logical_type().clone());
+    result
+        .child_columns
+        .push(checkpoint_column(validity, count, row_group_start, ctx)?);
+    let config = ctx.io.variant_shredding_config();
+    let shredded_type = if column.has_any_changes() && config.enables_shredding(column.count()) {
+        match config.forced_type {
+            Some(forced) => Some(forced),
+            None => variant_shredded_type(column, count)?,
+        }
+    } else {
+        None
+    };
+    let Some(shredded_type) = shredded_type else {
+        result
+            .child_columns
+            .push(checkpoint_column(unshredded, count, row_group_start, ctx)?);
+        if let Some(shredded) = shredded {
+            result
+                .child_columns
+                .push(checkpoint_column(shredded, count, row_group_start, ctx)?);
+            result.variant_shredded_type = Some(shredded.logical_type().clone());
+        }
+        return Ok(result);
+    };
+    let (new_unshredded, new_shredded) = write_shredded_data(column, count, &shredded_type, ctx.io)?;
+    result
+        .child_columns
+        .push(checkpoint_column(&new_unshredded, count, row_group_start, ctx)?);
+    result
+        .child_columns
+        .push(checkpoint_column(&new_shredded, count, row_group_start, ctx)?);
+    result.variant_shredded_type = Some(shredded_type);
+    Ok(result)
 }
 
 /// The storage version that added GEOMETRY to the core (`Geometry::VERSION_ADDED`).
@@ -261,6 +384,7 @@ fn checkpoint_column_data(
     let mut result = PersistentColumnData::new(ty.clone());
     match column.kind() {
         ColumnKind::Geometry { .. } => return checkpoint_geometry(column, count, row_group_start, ctx),
+        ColumnKind::Variant { .. } => return checkpoint_variant(column, count, row_group_start, ctx),
         ColumnKind::Validity => {
             let [pointers] =
                 checkpoint_segments(column, count, &[ty], &LogicalType::BOOLEAN, row_group_start, ctx)?;
@@ -505,6 +629,27 @@ fn checkpoint_segments<const N: usize>(
 /// does (`InitializeColumn`): validity segments only contribute NULL information, LIST /
 /// ARRAY children and STRUCT fields their own statistics.
 pub(crate) fn merge_persistent_statistics(data: &PersistentColumnData, stats: &mut BaseStatistics) {
+    if data.logical_type.id() == LogicalTypeId::Variant {
+        // `VariantColumnCheckpointState::GetStatistics`: the validity and the statistics
+        // of the sub-columns; shredded once there is a shredded sub-column.
+        let mut row_group = BaseStatistics::create_empty(data.logical_type.clone());
+        let mut children = data.child_columns.iter();
+        if let Some(validity) = children.next() {
+            merge_persistent_statistics(validity, &mut row_group);
+        }
+        if let Some(variant) = row_group.variant_mut() {
+            if let Some(unshredded) = children.next() {
+                merge_persistent_statistics(unshredded, &mut variant.unshredded);
+            }
+            if let Some(shredded) = children.next() {
+                let mut shredded_stats = BaseStatistics::create_empty(shredded.logical_type.clone());
+                merge_persistent_statistics(shredded, &mut shredded_stats);
+                variant.set_shredded_stats(shredded_stats);
+            }
+        }
+        stats.merge(&row_group);
+        return;
+    }
     // `GeoColumnCheckpointState::GetStatistics`: the statistics of a shredded layout, or of
     // the legacy format just written as a BLOB, are interpreted.
     if stats.logical_type().id() == LogicalTypeId::Geometry

@@ -1086,9 +1086,6 @@ fn write_row_group_data(
     })
 }
 
-/// Merges the statistics of the columns of a row group whose data is not written again
-/// into `stats`: built columns contribute their statistics, the others are recorded in
-/// `incomplete` (`SetHasUnloadedColumn`), their statistics are the table's.
 /// The types of the columns of a written row group: the table's, as the stored data of a
 /// GEOMETRY column has the type of its storage layout.
 fn column_types(
@@ -1102,13 +1099,19 @@ fn column_types(
     columns.iter().map(|data| data.logical_type.clone()).collect()
 }
 
+/// Merges the statistics of the columns of a row group whose data is not written again
+/// into `stats`: built columns contribute their statistics, the others are recorded in
+/// `incomplete` (`SetHasUnloadedColumn`), their statistics are the table's.
 fn merge_kept_column_statistics(
     row_group: &RowGroup,
     index: usize,
     stats: &mut BaseStatistics,
     incomplete: &mut BTreeSet<usize>,
 ) -> Result<()> {
-    if row_group.column_is_loaded(index) {
+    // VARIANT columns are loaded for their statistics, whose shredding cannot be merged
+    // with the previous table statistics.
+    if row_group.column_is_loaded(index) || stats.logical_type().id() == rustdb_types::LogicalTypeId::Variant
+    {
         row_group.column(index)?.merge_into_statistics(stats)
     } else {
         incomplete.insert(index);

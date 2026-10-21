@@ -211,7 +211,7 @@ impl DdlAction for AlterEntryAction {
                 default,
             } => {
                 let storage = storage.ok_or_else(|| Error::internal("ALTER of a table without storage"))?;
-                super::ddl::check_type_is_supported(logical_type)?;
+                super::ddl::check_type_is_supported(logical_type, &self.catalog)?;
                 super::ddl::check_struct_columns(logical_type)?;
                 self.check_dependents(transaction, entry)?;
                 let column = ColumnDefinition::new(name.clone(), logical_type.clone());
@@ -236,7 +236,7 @@ impl DdlAction for AlterEntryAction {
                 bound_columns,
             } => {
                 let storage = storage.ok_or_else(|| Error::internal("ALTER of a table without storage"))?;
-                super::ddl::check_type_is_supported(target)?;
+                super::ddl::check_type_is_supported(target, &self.catalog)?;
                 storage.verify_alter_type(*column)?;
                 self.check_dependents(transaction, entry)?;
                 let mut scanned: Vec<StorageIndex> = bound_columns

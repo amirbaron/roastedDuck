@@ -213,10 +213,19 @@ pub struct PersistentColumnData {
     pub pointers: Vec<DataPointer>,
     /// Validity first, then the list/array child or the struct fields.
     pub child_columns: Vec<PersistentColumnData>,
-    /// The storage type of a GEOMETRY column (DuckDB's `GeometryPersistentColumnData`,
-    /// the only `extra_data` this port writes); `None` for other columns and for the
-    /// spatial extension's legacy GEOMETRY.
+    /// The storage type of a GEOMETRY column (DuckDB's `GeometryPersistentColumnData`
+    /// `extra_data`); `None` for other columns and for the spatial extension's legacy
+    /// GEOMETRY.
     pub geometry_storage: Option<GeometryStorageType>,
+    /// The type of the shredded sub-column of a shredded VARIANT column (DuckDB's
+    /// `VariantPersistentColumnData` `extra_data`); `None` for other columns.
+    pub variant_shredded_type: Option<LogicalType>,
+}
+
+/// The `extra_data` of a `PersistentColumnData` (`ExtraPersistentColumnData`).
+enum ExtraData {
+    Variant(LogicalType),
+    Geometry(GeometryStorageType),
 }
 
 /// `ExtraPersistentColumnDataType`.
@@ -241,8 +250,18 @@ fn write_geometry_extra_data(serializer: &mut dyn Serializer, storage: GeometryS
     serializer.write_optional(101, "storage_type", storage == GeometryStorageType::Wkb, &storage)
 }
 
-/// `ExtraPersistentColumnData::Deserialize`: the geometry storage type it records.
-fn read_extra_data(deserializer: &mut dyn Deserializer) -> Result<GeometryStorageType> {
+/// `ExtraPersistentColumnData::Serialize` of a `VariantPersistentColumnData`.
+fn write_variant_extra_data(serializer: &mut dyn Serializer, shredded_type: &LogicalType) -> Result<()> {
+    serializer.on_property_begin(100, "type");
+    rustdb_serde::write_enum(serializer, extra_data_type_name(EXTRA_DATA_VARIANT), |s| {
+        s.write_u8(EXTRA_DATA_VARIANT);
+    });
+    serializer.on_property_end();
+    serializer.write_property(101, "storage_type", shredded_type)
+}
+
+/// `ExtraPersistentColumnData::Deserialize`.
+fn read_extra_data(deserializer: &mut dyn Deserializer) -> Result<ExtraData> {
     let kind = if deserializer.on_optional_property_begin(100, "type")? {
         let kind = rustdb_serde::read_enum(
             deserializer,
@@ -262,11 +281,15 @@ fn read_extra_data(deserializer: &mut dyn Deserializer) -> Result<GeometryStorag
         0
     };
     match kind {
-        EXTRA_DATA_GEOMETRY => Ok(deserializer
-            .read_optional(101, "storage_type")?
-            .unwrap_or(GeometryStorageType::Wkb)),
-        EXTRA_DATA_VARIANT => Err(Error::not_implemented(
-            "reading shredded VARIANT columns from a database file",
+        EXTRA_DATA_GEOMETRY => Ok(ExtraData::Geometry(
+            deserializer
+                .read_optional(101, "storage_type")?
+                .unwrap_or(GeometryStorageType::Wkb),
+        )),
+        EXTRA_DATA_VARIANT => Ok(ExtraData::Variant(
+            deserializer
+                .read_optional(101, "storage_type")?
+                .unwrap_or_default(),
         )),
         _ => Err(Error::internal("Unknown PersistentColumnData type")),
     }
@@ -283,6 +306,7 @@ impl PersistentColumnData {
             pointers: Vec::new(),
             child_columns: Vec::new(),
             geometry_storage: None,
+            variant_shredded_type: None,
         }
     }
 
@@ -307,21 +331,32 @@ impl PersistentColumnData {
 
     /// `PersistentColumnData::Serialize`.
     pub fn serialize_fields(&self, serializer: &mut dyn Serializer) -> Result<()> {
-        // "extra_data" (99) is only written for VARIANT and GEOMETRY columns.
-        if let Some(storage) = self.geometry_storage {
-            serializer.on_optional_property_begin(99, "extra_data", true);
+        // "extra_data" (99) is only written for shredded VARIANT and GEOMETRY columns.
+        let has_extra_data = self.geometry_storage.is_some() || self.variant_shredded_type.is_some();
+        serializer.on_optional_property_begin(99, "extra_data", has_extra_data);
+        if has_extra_data {
             serializer.on_nullable_begin(true);
             serializer.on_object_begin();
-            write_geometry_extra_data(serializer, storage)?;
+            if let Some(shredded_type) = &self.variant_shredded_type {
+                write_variant_extra_data(serializer, shredded_type)?;
+            } else if let Some(storage) = self.geometry_storage {
+                write_geometry_extra_data(serializer, storage)?;
+            }
             serializer.on_object_end();
             serializer.on_nullable_end();
-            serializer.on_optional_property_end(true);
-        } else {
-            serializer.on_optional_property_begin(99, "extra_data", false);
-            serializer.on_optional_property_end(false);
         }
+        serializer.on_optional_property_end(has_extra_data);
         self.write_pointers(serializer)?;
         if self.logical_type.id() == LogicalTypeId::Validity {
+            return Ok(());
+        }
+        if self.logical_type.id() == LogicalTypeId::Variant {
+            // The validity, the unshredded and the (optional) shredded sub-columns.
+            serializer.write_object_property(101, "validity", |s| self.child(0)?.serialize_fields(s))?;
+            serializer.write_object_property(102, "unshredded", |s| self.child(1)?.serialize_fields(s))?;
+            if let Some(shredded) = self.child_columns.get(2) {
+                serializer.write_object_property(103, "shredded", |s| shredded.serialize_fields(s))?;
+            }
             return Ok(());
         }
         match self.logical_type.physical_type() {
@@ -364,18 +399,47 @@ impl PersistentColumnData {
     /// `PersistentColumnData::Deserialize` for a column of type `ty`.
     pub fn deserialize_fields(deserializer: &mut dyn Deserializer, ty: &LogicalType) -> Result<Self> {
         // `GetPersistentColumnDataType`: the extra data of a GEOMETRY column decides the
-        // type of the stored data.
-        let mut geometry_storage = None;
+        // type of the stored data; that of a VARIANT column the type of its shredded data.
+        let mut extra_data = None;
         if deserializer.on_optional_property_begin(99, "extra_data")? {
             if deserializer.on_nullable_begin()? {
                 deserializer.on_object_begin()?;
-                geometry_storage = Some(read_extra_data(deserializer)?);
+                extra_data = Some(read_extra_data(deserializer)?);
                 deserializer.on_object_end()?;
             }
             deserializer.on_nullable_end()?;
             deserializer.on_optional_property_end(true)?;
         } else {
             deserializer.on_optional_property_end(false)?;
+        }
+        let (geometry_storage, variant_shredded_type) = match extra_data {
+            Some(ExtraData::Geometry(storage)) => (Some(storage), None),
+            Some(ExtraData::Variant(shredded_type)) => (None, Some(shredded_type)),
+            None => (None, None),
+        };
+        if ty.id() == LogicalTypeId::Variant || variant_shredded_type.is_some() {
+            let read_child =
+                |d: &mut dyn Deserializer, field: u16, tag: &'static str, child_type: &LogicalType| {
+                    d.read_object_property(field, tag, |d| Self::deserialize_fields(d, child_type))
+                };
+            let mut result = Self::new(LogicalType::variant());
+            result.pointers = Self::read_pointers(deserializer, &result.logical_type)?;
+            result
+                .child_columns
+                .push(read_child(deserializer, 101, "validity", &validity_type())?);
+            result.child_columns.push(read_child(
+                deserializer,
+                102,
+                "unshredded",
+                &rustdb_types::variant::unshredded_type(),
+            )?);
+            if let Some(shredded_type) = &variant_shredded_type {
+                result
+                    .child_columns
+                    .push(read_child(deserializer, 103, "shredded", shredded_type)?);
+            }
+            result.variant_shredded_type = variant_shredded_type;
+            return Ok(result);
         }
         let stored_type = match geometry_storage {
             Some(storage) => rustdb_types::geometry::vectorized_type(storage)?,

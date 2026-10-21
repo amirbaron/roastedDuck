@@ -455,6 +455,29 @@ impl StatisticsPropagator<'_> {
     }
 }
 
+/// DuckDB's `StatisticsPropagateVariant`: a cast of a fully shredded VARIANT to a
+/// primitive type has the statistics of the typed values, cast if they are of another type.
+fn propagate_variant_cast(
+    stats: &BaseStatistics,
+    target: &rustdb_types::LogicalType,
+) -> Option<BaseStatistics> {
+    use rustdb_storage::statistics::{is_fully_shredded, structured_type, typed_stats};
+    if target.is_nested() || target.id() == LogicalTypeId::Variant {
+        return None;
+    }
+    let shredded = stats.variant()?.shredded_stats()?;
+    if !is_fully_shredded(shredded) {
+        // Partially shredded: no statistics.
+        return None;
+    }
+    let structured = structured_type(shredded.logical_type());
+    let typed = typed_stats(shredded);
+    if structured == *target {
+        return Some(typed.clone());
+    }
+    try_propagate_cast(typed, &structured, target)
+}
+
 /// Whether statistics survive a cast (DuckDB's `StatisticsPropagator::CanPropagateCast`):
 /// only between numeric types, and not between differently scaled timestamps.
 pub(super) fn can_propagate_cast(
@@ -510,14 +533,17 @@ pub(super) fn can_propagate_cast(
     }
 }
 
-/// The statistics of a cast of values with `stats` (DuckDB's `TryPropagateCast` for
-/// numeric to numeric casts).
+/// The statistics of a cast of values with `stats` (DuckDB's `TryPropagateCast`): of a
+/// shredded VARIANT, or of numeric to numeric casts.
 pub(super) fn try_propagate_cast(
     stats: &BaseStatistics,
     source: &rustdb_types::LogicalType,
     target: &rustdb_types::LogicalType,
 ) -> Option<BaseStatistics> {
     use rustdb_function::cast::ValueCast;
+    if source.id() == LogicalTypeId::Variant {
+        return propagate_variant_cast(stats, target);
+    }
     if !can_propagate_cast(source, target) {
         return None;
     }

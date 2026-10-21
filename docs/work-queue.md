@@ -4,9 +4,8 @@ Workstreams found while closing conformance failures (at most two agents run at 
 Each names the C++ it ports and the tests or checks that close it. Finished streams are
 removed; the commit history records them.
 
-Order of the next agents: VARIANT storage (13) once the running WAL (4) or performance
-(7) agent finishes, then the C API extension surface (2), the shell (3), compression (5)
-and the rest.
+Order of the next agents: the C API extension surface (2) once the running WAL (4) or
+performance (7) agent finishes, then the shell (3), compression (5) and the rest.
 
 ## Public surface (M8)
 
@@ -35,6 +34,10 @@ and the rest.
      against the memory limit.
    - `auto_checkpoint_skip_wal_threshold` is accepted, but a commit that triggers a
      checkpoint still writes its WAL entries.
+   - Block numbering of optimistic writes: a `CREATE TABLE AS` whose row group has both
+     small (partial-block) and full-block segments (e.g. a STRUCT with long strings) puts
+     the partial block before the full blocks; DuckDB numbers it after them. Offsets
+     match, block ids differ (compare `pragma_storage_info` of both engines).
 5. **Compression parity.** ZSTD strings compress about 16% worse than DuckDB's
    (`zstd_compression_ratio`). The cause is `ruzstd`'s encoder, not its match level: on
    concatenated UUIDs it reaches 1.72× (1.76× emitting literals only, about 4.56 bits per
@@ -73,11 +76,9 @@ and the rest.
     into `Catalog`, every `CatalogSet` and `AttachedDatabase`, so it has to become shared
     and mutable first (about 50 call sites); schedule when no other agent edits the
     catalog crate.
-13. **VARIANT storage and statistics.** Shredding VARIANT columns in storage
-    (`shredding_state: SHREDDED`, `typed_value_type`, `fully_shredded` in `stats()`),
-    statistics merging, empty keys, omitting untyped values, the storage-version check
-    (`variant_storage_version` expects an error), `variant_extract` with `TRY_CAST`
-    struct order, and the Parquet VARIANT writer and its statistics. `COPY (select
-    [123::VARIANT]) TO '...parquet'` panics today (a VARCHAR vector read as a list).
-    Tests: `test/sql/storage/types/variant/*`, `test/parquet/variant/*`,
-    `shredded_variant_stats`, `variant_extract_try_cast`.
+13. **VARIANT extract pushdown into shredded columns.** VARIANT columns are stored,
+    shredded and unshredded like DuckDB's; a scan of `col.a::INT` still unshreds whole
+    values and extracts afterwards. DuckDB scans the typed column of a fully shredded
+    field directly (`VariantColumnData::PushdownShreddedFieldExtract`,
+    `VariantStats::PushdownExtract`), which needs the storage `PushdownExtract` of struct
+    projection pushdown (7) first. Results are unaffected.

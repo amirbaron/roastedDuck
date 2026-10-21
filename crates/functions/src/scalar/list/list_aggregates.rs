@@ -22,7 +22,7 @@ use rustdb_types::{
     DataChunk, ListEntry, LogicalType, LogicalTypeId, PhysicalType, SelectionVector, StringT, Vector,
 };
 
-use crate::libcxx::UnorderedOrder;
+use rustdb_common::libcxx::UnorderedOrder;
 use crate::scalar::executor::addressable;
 use crate::scalar::nested::{ListInput, all_constant, list_child_type};
 use crate::signature::template;

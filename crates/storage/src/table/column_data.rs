@@ -1,6 +1,6 @@
 //! The data of one column within one row group (DuckDB's `ColumnData` and its
-//! `StandardColumnData`, `ValidityColumnData`, `ListColumnData`, `StructColumnData` and
-//! `ArrayColumnData` subclasses).
+//! `StandardColumnData`, `ValidityColumnData`, `ListColumnData`, `StructColumnData`,
+//! `ArrayColumnData` and `VariantColumnData` subclasses).
 //!
 //! Nested types are split like DuckDB's storage: every non-validity column has a validity
 //! child; LIST columns store cumulative `u64` end offsets plus a child column; STRUCT
@@ -80,6 +80,14 @@ pub enum ColumnKind {
     Geometry {
         base: Box<ColumnData>,
         storage: GeometryStorageType,
+    },
+    /// A VARIANT column (DuckDB's `VariantColumnData`): the values, unless a checkpoint
+    /// shredded them, are in `unshredded` (a STRUCT with the VARIANT layout); a shredded
+    /// column also has the `shredded` typed values (see `variant_column_data`).
+    Variant {
+        validity: Box<ColumnData>,
+        unshredded: Box<ColumnData>,
+        shredded: Option<Box<ColumnData>>,
     },
 }
 
@@ -273,6 +281,33 @@ impl ColumnData {
         };
         let kind = if ty.id() == LogicalTypeId::Validity {
             ColumnKind::Validity
+        } else if ty.id() == LogicalTypeId::Variant {
+            // `VariantColumnData`: the sub-columns start at index 1 (0 is the validity); a
+            // stored shredded column has the type its extra data records.
+            let shredded = layout
+                .and_then(|data| data.variant_shredded_type.clone())
+                .map(|shredded_type| {
+                    Box::new(Self::create(
+                        Arc::clone(&io),
+                        2,
+                        shredded_type,
+                        data_type,
+                        true,
+                        child_layout(2),
+                    ))
+                });
+            ColumnKind::Variant {
+                validity: validity(),
+                unshredded: Box::new(Self::create(
+                    Arc::clone(&io),
+                    1,
+                    rustdb_types::variant::unshredded_type(),
+                    data_type,
+                    true,
+                    child_layout(1),
+                )),
+                shredded,
+            }
         } else if geometry_storage != GeometryStorageType::Wkb {
             // `GeoColumnData::InitializeColumn`: the base column has the stored layout; the
             // legacy format is stored as GEOMETRY (or as its BLOB alias when just written).
@@ -400,6 +435,11 @@ impl ColumnData {
                     validity.allocation_size() + fields.iter().map(Self::allocation_size).sum::<u64>()
                 }
                 ColumnKind::Geometry { base, .. } => base.allocation_size(),
+                ColumnKind::Variant { .. } => {
+                    let mut size = 0;
+                    self.for_each_child(|child| size += child.allocation_size());
+                    size
+                }
             }
     }
 
@@ -426,6 +466,17 @@ impl ColumnData {
                 fields.iter().for_each(f);
             }
             ColumnKind::Geometry { base, .. } => f(base),
+            ColumnKind::Variant {
+                validity,
+                unshredded,
+                shredded,
+            } => {
+                f(validity);
+                f(unshredded);
+                if let Some(shredded) = shredded {
+                    f(shredded);
+                }
+            }
         }
     }
 
@@ -435,7 +486,8 @@ impl ColumnData {
             ColumnKind::Standard { validity }
             | ColumnKind::List { validity, .. }
             | ColumnKind::Struct { validity, .. }
-            | ColumnKind::Array { validity, .. } => Some(validity),
+            | ColumnKind::Array { validity, .. }
+            | ColumnKind::Variant { validity, .. } => Some(validity),
         }
     }
 
@@ -462,7 +514,10 @@ impl ColumnData {
     ) {
         if !matches!(
             self.kind,
-            ColumnKind::Struct { .. } | ColumnKind::Array { .. } | ColumnKind::Geometry { .. }
+            ColumnKind::Struct { .. }
+                | ColumnKind::Array { .. }
+                | ColumnKind::Geometry { .. }
+                | ColumnKind::Variant { .. }
         ) {
             self.own_segment_info(row_group_index, col_path, out);
         }
@@ -494,6 +549,17 @@ impl ColumnData {
                     field.column_segment_info(row_group_index, col_path, out);
                 }
                 col_path.pop();
+            }
+            ColumnKind::Variant { .. } => {
+                // `VariantColumnData::GetColumnSegmentInfo`: validity at 0, then the
+                // unshredded and shredded sub-columns.
+                let mut index = 0;
+                self.for_each_child(|child| {
+                    col_path.push(index);
+                    child.column_segment_info(row_group_index, col_path, out);
+                    col_path.pop();
+                    index += 1;
+                });
             }
         }
     }
@@ -664,7 +730,18 @@ impl ColumnData {
         if self.ty.id() == LogicalTypeId::Geometry {
             result.geometry_storage = Some(GeometryStorageType::Wkb);
         }
-        if !matches!(self.kind, ColumnKind::Struct { .. } | ColumnKind::Array { .. }) {
+        if let ColumnKind::Variant {
+            shredded: Some(shredded),
+            ..
+        } = &self.kind
+        {
+            // `VariantColumnData::Serialize`: the extra data records the shredded type.
+            result.variant_shredded_type = Some(shredded.ty.clone());
+        }
+        if !matches!(
+            self.kind,
+            ColumnKind::Struct { .. } | ColumnKind::Array { .. } | ColumnKind::Variant { .. }
+        ) {
             result.pointers = self.persistent_data_pointers(row_start)?;
         }
         let mut children = Vec::new();
@@ -760,6 +837,7 @@ impl ColumnData {
 
     /// Positions `state` at the start of the column (`InitializeScan`).
     pub fn initialize_scan(&self, state: &mut ColumnScanState) {
+        self.create_variant_scan_states(state);
         if let ColumnKind::Geometry { base, .. } = &self.kind {
             // `GeoColumnData::InitializeScan`: the child state is shaped for the base.
             state.offset_in_column = 0;
@@ -786,6 +864,7 @@ impl ColumnData {
             self.initialize_scan(state);
             return Ok(());
         }
+        self.create_variant_scan_states(state);
         if let ColumnKind::Geometry { base, .. } = &self.kind {
             state.offset_in_column = row;
             state.child_states = vec![ColumnScanState::for_type(&base.ty)];
@@ -814,6 +893,24 @@ impl ColumnData {
         }
         state.last_offset = child_offset;
         Ok(())
+    }
+
+    /// `VariantColumnData::CreateScanStates`: the scan states of a VARIANT column are made
+    /// for the sub-columns of the row group's column, which may or may not be shredded.
+    fn create_variant_scan_states(&self, state: &mut ColumnScanState) {
+        let ColumnKind::Variant {
+            unshredded, shredded, ..
+        } = &self.kind
+        else {
+            return;
+        };
+        state.child_states = vec![
+            ColumnScanState::default(),
+            ColumnScanState::for_type(&unshredded.ty),
+        ];
+        if let Some(shredded) = shredded {
+            state.child_states.push(ColumnScanState::for_type(&shredded.ty));
+        }
     }
 
     fn initialize_children(&self, state: &mut ColumnScanState, row: u64) {
@@ -849,6 +946,14 @@ impl ColumnData {
                         init(field, field_state, row);
                     }
                 }
+            }
+            ColumnKind::Variant { .. } => {
+                let mut child_states = states.iter_mut();
+                self.for_each_child(|child| {
+                    if let Some(child_state) = child_states.next() {
+                        init(child, child_state, row);
+                    }
+                });
             }
         }
     }
@@ -1074,6 +1179,51 @@ impl ColumnData {
                 state.offset_in_column += scanned as u64;
                 Ok(scanned)
             }
+            ColumnKind::Variant {
+                validity,
+                unshredded,
+                shredded,
+            } => {
+                let [validity_state, unshredded_state, shredded_states @ ..] =
+                    state.child_states.as_mut_slice()
+                else {
+                    return Err(Error::internal("variant scan state without children"));
+                };
+                let Some(shredded) = shredded else {
+                    // The values are in the unshredded STRUCT, which has the VARIANT layout.
+                    let scanned =
+                        validity.scan_into(updates, validity_state, result, count, result_offset)?;
+                    unshredded.scan_into(None, unshredded_state, result, count, result_offset)?;
+                    state.offset_in_column += count as u64;
+                    return Ok(scanned);
+                };
+                let shredded_state = shredded_states
+                    .first_mut()
+                    .ok_or_else(|| Error::internal("variant scan state without its shredded column"))?;
+                // `UnshredVariantData` of both sub-columns; the validity is that of the
+                // unshredded values.
+                let mut unshredded_values = Vector::flat(unshredded.ty.clone(), count.max(1));
+                unshredded.scan_into(None, unshredded_state, &mut unshredded_values, count, 0)?;
+                let mut shredded_values = Vector::flat(shredded.ty.clone(), count.max(1));
+                shredded.scan_into(None, shredded_state, &mut shredded_values, count, 0)?;
+                let mut validity_values = Vector::flat(LogicalType::BOOLEAN, count.max(1));
+                let scanned = validity.scan_into(updates, validity_state, &mut validity_values, count, 0)?;
+                let values = super::variant_column_data::unshred_rows(
+                    &unshredded_values,
+                    &shredded_values,
+                    scanned,
+                    &self.ty,
+                )?;
+                if result_offset == 0 {
+                    *result = values;
+                } else {
+                    for row in 0..scanned {
+                        result.set_value(result_offset + row, &values.get_value(row))?;
+                    }
+                }
+                state.offset_in_column += count as u64;
+                Ok(scanned)
+            }
             ColumnKind::Array { validity, child } => {
                 let [validity_state, child_state, ..] = state.child_states.as_mut_slice() else {
                     return Err(Error::internal("array scan state without children"));
@@ -1213,6 +1363,19 @@ impl ColumnData {
                     base.skip(base_state, count)?;
                 }
                 Ok(())
+            }
+            ColumnKind::Variant { .. } => {
+                state.offset_in_column += count;
+                let mut child_states = state.child_states.iter_mut();
+                let mut result = Ok(());
+                self.for_each_child(|child| {
+                    if let Some(child_state) = child_states.next()
+                        && result.is_ok()
+                    {
+                        result = child.skip(child_state, count);
+                    }
+                });
+                result
             }
             ColumnKind::Validity | ColumnKind::Standard { .. } => {
                 state.offset_in_column += count;
@@ -1607,10 +1770,44 @@ impl ColumnData {
                     }
                 }
             }
+            ColumnKind::Variant {
+                validity,
+                unshredded,
+                shredded,
+            } => {
+                // `VariantColumnData::InitializeColumn`.
+                validity.initialize_persistent(child(0)?, stats, blocks)?;
+                let mut unshredded_stats = BaseStatistics::create_empty(unshredded.ty.clone());
+                unshredded.initialize_persistent(child(1)?, &mut unshredded_stats, blocks)?;
+                let mut shredded_stats = None;
+                if let Some(shredded) = shredded {
+                    let mut layout_stats = BaseStatistics::create_empty(shredded.ty.clone());
+                    shredded.initialize_persistent(child(2)?, &mut layout_stats, blocks)?;
+                    shredded_stats = Some(layout_stats);
+                }
+                let variant = stats
+                    .variant_mut()
+                    .ok_or_else(|| Error::internal("VARIANT column without VARIANT statistics"))?;
+                variant.unshredded.merge(&unshredded_stats);
+                if let Some(layout_stats) = shredded_stats {
+                    match &mut variant.shredded {
+                        Some(target)
+                            if variant.shredding_state
+                                == crate::statistics::VariantShreddingState::Shredded =>
+                        {
+                            target.merge(&layout_stats);
+                        }
+                        _ => variant.set_shredded_stats(layout_stats),
+                    }
+                }
+            }
         }
-        // Struct and array columns store no segments of their own: their row count is
-        // their validity's (`StructColumnData::InitializeColumn`).
-        if let ColumnKind::Struct { validity, .. } | ColumnKind::Array { validity, .. } = &self.kind {
+        // Struct, array and variant columns store no segments of their own: their row
+        // count is their validity's (`StructColumnData::InitializeColumn`).
+        if let ColumnKind::Struct { validity, .. }
+        | ColumnKind::Array { validity, .. }
+        | ColumnKind::Variant { validity, .. } = &self.kind
+        {
             self.count.store(validity.count(), Ordering::Release);
         }
         Ok(())
@@ -1646,7 +1843,10 @@ impl ColumnData {
             return Err(Error::internal("appending to a shredded GEOMETRY column"));
         }
         let mut state = ColumnAppendState::default();
-        if !matches!(self.kind, ColumnKind::Struct { .. } | ColumnKind::Array { .. }) {
+        if !matches!(
+            self.kind,
+            ColumnKind::Struct { .. } | ColumnKind::Array { .. } | ColumnKind::Variant { .. }
+        ) {
             let last = self.segments.last();
             let current = match last {
                 Some(node)
@@ -1677,6 +1877,15 @@ impl ColumnData {
                 for field in fields {
                     push_child(field)?;
                 }
+            }
+            ColumnKind::Variant { .. } => {
+                let mut result = Ok(());
+                self.for_each_child(|child| {
+                    if result.is_ok() {
+                        result = push_child(child);
+                    }
+                });
+                result?;
             }
         }
         Ok(state)
@@ -1732,25 +1941,34 @@ impl ColumnData {
                 let children = vector
                     .struct_children()
                     .ok_or_else(|| Error::internal("struct append of a non-struct vector"))?;
-                // VARIANT columns are stored as their STRUCT layout but keep VARIANT
-                // statistics, which track no field statistics.
-                let mut scratch;
-                let child_stats = if stats.logical_type().id() == LogicalTypeId::Variant {
-                    scratch = fields
-                        .iter()
-                        .map(|field| BaseStatistics::create_empty(field.ty.clone()))
-                        .collect::<Vec<_>>();
-                    scratch.as_mut_slice()
-                } else {
-                    stats
-                        .struct_children_mut()
-                        .ok_or_else(|| Error::internal("struct column without struct statistics"))?
-                };
+                let child_stats = stats
+                    .struct_children_mut()
+                    .ok_or_else(|| Error::internal("struct column without struct statistics"))?;
                 for (((field, field_state), child), field_stats) in
                     fields.iter().zip(field_states).zip(children).zip(child_stats)
                 {
                     field.append_with_stats(field_stats, field_state, child, count)?;
                 }
+                self.count.fetch_add(count as u64, Ordering::AcqRel);
+                Ok(())
+            }
+            ColumnKind::Variant {
+                validity,
+                unshredded,
+                shredded,
+            } => {
+                if shredded.is_some() {
+                    return Err(Error::internal("Can't append to a shredded VariantColumnData"));
+                }
+                let [validity_state, unshredded_state, ..] = state.child_appends.as_mut_slice() else {
+                    return Err(Error::internal("variant append state without children"));
+                };
+                validity.append_data(stats, validity_state, vector, count)?;
+                let variant = stats
+                    .variant_mut()
+                    .ok_or_else(|| Error::internal("VARIANT column without VARIANT statistics"))?;
+                unshredded.append_with_stats(&mut variant.unshredded, unshredded_state, vector, count)?;
+                variant.mark_as_not_shredded();
                 self.count.fetch_add(count as u64, Ordering::AcqRel);
                 Ok(())
             }
@@ -1895,6 +2113,17 @@ impl ColumnData {
                 self.count.store(new_count, Ordering::Release);
                 return Ok(());
             }
+            ColumnKind::Variant { .. } => {
+                let mut result = Ok(());
+                self.for_each_child(|child| {
+                    if result.is_ok() {
+                        result = child.revert_append(new_count);
+                    }
+                });
+                result?;
+                self.count.store(new_count, Ordering::Release);
+                return Ok(());
+            }
             _ => {}
         }
         self.revert_segments(new_count)?;
@@ -1977,7 +2206,8 @@ impl ColumnData {
             ColumnKind::List { .. }
             | ColumnKind::Struct { .. }
             | ColumnKind::Array { .. }
-            | ColumnKind::Geometry { .. } => {
+            | ColumnKind::Geometry { .. }
+            | ColumnKind::Variant { .. } => {
                 // Nested and shredded rows are materialised through a scan of their vector.
                 let vector_start = row / VECTOR_SIZE * VECTOR_SIZE;
                 let mut state = ColumnScanState::for_type(&self.ty);
@@ -2027,6 +2257,9 @@ impl ColumnData {
             return self.update(transaction, update, row_ids, row_group_start);
         };
         let child = match (&self.kind, first) {
+            (ColumnKind::Variant { .. }, _) => {
+                return Err(Error::not_implemented("VARIANT Update Column is not supported"));
+            }
             (ColumnKind::Standard { validity } | ColumnKind::Struct { validity, .. }, 0) => validity,
             (ColumnKind::Struct { fields, .. }, index) => fields
                 .get(index - 1)
@@ -2114,6 +2347,9 @@ impl ColumnData {
             ColumnKind::List { .. } => return Err(Error::not_implemented("List Update is not supported.")),
             ColumnKind::Geometry { .. } => {
                 return Err(Error::not_implemented("GEOMETRY Update is not supported"));
+            }
+            ColumnKind::Variant { .. } => {
+                return Err(Error::not_implemented("VARIANT Update is not supported."));
             }
             ColumnKind::Array { .. } => return Err(not_implemented_nested("UPDATE", &self.ty)),
         }

@@ -465,6 +465,9 @@ fn transform_variant_columns(
 ) -> Result<()> {
     use rustdb_types::variant::VariantData;
     for (index, column) in columns.iter_mut().enumerate() {
+        if !column.has_transform()? {
+            continue;
+        }
         let ColumnWriter::Variant(writer) = column else {
             continue;
         };

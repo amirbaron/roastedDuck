@@ -38,6 +38,7 @@ pub mod uuid;
 mod validity;
 mod value;
 pub mod variant;
+pub mod variant_value;
 mod vector;
 pub mod vector_ops;
 

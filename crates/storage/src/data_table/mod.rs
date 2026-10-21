@@ -21,6 +21,7 @@ use crate::index::TableIndexList;
 use crate::optimistic_data_writer::OptimisticWriteConfig;
 use crate::single_file_block_manager::SingleFileBlockManager;
 use crate::statistics::BaseStatistics;
+use crate::table::variant_column_data::VariantShreddingConfig;
 use crate::table::{
     CollectionScanState, FetchType, ParallelTableScanState, RowGroupCollection, ScanOptions, StorageIndex,
     TableAppendState, TableScanState,
@@ -43,6 +44,8 @@ pub struct TableIoManager {
     file: Option<Arc<SingleFileBlockManager>>,
     /// How appends to the tables are written to the database file before they commit.
     optimistic_write: Mutex<OptimisticWriteConfig>,
+    /// How checkpoints shred VARIANT columns.
+    variant_shredding: Mutex<VariantShreddingConfig>,
     /// The last commit the running checkpoint of the database includes, `u64::MAX` when
     /// none runs (`DuckTransactionManager::active_checkpoint`).
     active_checkpoint: AtomicU64,
@@ -65,6 +68,7 @@ impl TableIoManager {
             storage_version: rustdb_serde::SerializationCompatibility::latest().serialization_version,
             file: None,
             optimistic_write: Mutex::default(),
+            variant_shredding: Mutex::default(),
             active_checkpoint: AtomicU64::new(u64::MAX),
         }
     }
@@ -116,6 +120,22 @@ impl TableIoManager {
     pub fn set_optimistic_write_config(&self, config: OptimisticWriteConfig) {
         *self
             .optimistic_write
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = config;
+    }
+
+    /// How checkpoints shred VARIANT columns.
+    pub fn variant_shredding_config(&self) -> VariantShreddingConfig {
+        self.variant_shredding
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Changes how checkpoints shred VARIANT columns.
+    pub fn set_variant_shredding_config(&self, config: VariantShreddingConfig) {
+        *self
+            .variant_shredding
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = config;
     }

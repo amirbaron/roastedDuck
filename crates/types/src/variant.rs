@@ -17,7 +17,8 @@ use std::collections::BTreeMap;
 use rustdb_common::{Error, Result};
 
 use crate::{
-    Date, Interval, LogicalType, LogicalTypeId, PhysicalType, Time, TimeNs, TimeTz, Timestamp, Uuid, Value,
+    Date, Interval, ListEntry, LogicalType, LogicalTypeId, PhysicalType, StringT, Time, TimeNs, TimeTz,
+    Timestamp, Uuid, Value, Vector,
 };
 
 /// The type tag of a value inside a VARIANT (DuckDB's `VariantLogicalType`).
@@ -320,6 +321,148 @@ impl VariantData {
             values,
             data: data.as_bytes().unwrap_or_default().to_vec(),
         }))
+    }
+
+    /// Unpacks row `row` of a vector with the VARIANT layout (a VARIANT or its unshredded
+    /// STRUCT) without building a `Value`; `None` for NULL.
+    pub fn from_vector(vector: &Vector, row: usize) -> Result<Option<Self>> {
+        if vector.is_null(row) {
+            return Ok(None);
+        }
+        let slot = vector.sel().slot(row);
+        let [keys, children, values, data] = vector.struct_children().ok_or_else(malformed_vector)? else {
+            return Err(malformed_vector());
+        };
+        let (key_rows, key_vector) = list_elements(keys, slot)?;
+        let keys = key_rows
+            .map(|index| String::from_utf8_lossy(key_vector.string_bytes(index)).into_owned())
+            .collect();
+        let (child_rows, child_vector) = list_elements(children, slot)?;
+        let (keys_index, values_index) = (struct_field(child_vector, 0)?, struct_field(child_vector, 1)?);
+        let children = child_rows
+            .map(|index| {
+                Ok(VariantChild {
+                    keys_index: u32_at(keys_index, index),
+                    values_index: u32_at(values_index, index).ok_or_else(malformed_vector)?,
+                })
+            })
+            .collect::<Result<_>>()?;
+        let (value_rows, value_vector) = list_elements(values, slot)?;
+        let (type_id, byte_offset) = (struct_field(value_vector, 0)?, struct_field(value_vector, 1)?);
+        let values = value_rows
+            .map(|index| {
+                if type_id.is_null(index) {
+                    return Err(malformed_vector());
+                }
+                Ok(VariantEntry {
+                    type_id: type_id.values::<u8>()[type_id.sel().slot(index)],
+                    byte_offset: u32_at(byte_offset, index).ok_or_else(malformed_vector)?,
+                })
+            })
+            .collect::<Result<_>>()?;
+        let data = if data.is_null(slot) {
+            Vec::new()
+        } else {
+            data.string_bytes(slot).to_vec()
+        };
+        Ok(Some(Self {
+            keys,
+            children,
+            values,
+            data,
+        }))
+    }
+
+    /// A flat vector of type `ty` (a VARIANT or its unshredded STRUCT) holding `rows`
+    /// (`None` for NULL), built without `Value`s.
+    pub fn write_vector(rows: &[Option<Self>], ty: &LogicalType) -> Result<Vector> {
+        let count = rows.len();
+        let present = || rows.iter().flatten();
+        let list_type = |index: usize| -> LogicalType {
+            ty.struct_children()
+                .and_then(|fields| fields.get(index))
+                .map_or(LogicalType::INVALID, |(_, field)| field.clone())
+        };
+        // A LIST vector whose row `i` has the `lengths[i]` elements that follow, with
+        // `child` as its elements.
+        let list_vector =
+            |list_type: LogicalType, lengths: &mut dyn Iterator<Item = usize>, child: Vector| {
+                let mut list = Vector::flat(list_type, count.max(1));
+                let mut offset = 0;
+                {
+                    let entries = list.values_mut::<ListEntry>();
+                    for (entry, length) in entries.iter_mut().zip(lengths) {
+                        *entry = ListEntry::new(offset, length);
+                        offset += length;
+                    }
+                }
+                list.set_list_child(child, offset);
+                list
+            };
+        let struct_vector = |struct_type: LogicalType, fields: Vec<Vector>, rows: usize| {
+            let mut vector = Vector::flat(struct_type, rows.max(1));
+            if let Some(children) = vector.struct_children_mut() {
+                for (child, field) in children.iter_mut().zip(fields) {
+                    *child = field;
+                }
+            }
+            vector
+        };
+        let lengths = |length: fn(&Self) -> usize| rows.iter().map(move |row| row.as_ref().map_or(0, length));
+
+        let total_keys: usize = present().map(|row| row.keys.len()).sum();
+        let mut key_vector = Vector::flat(LogicalType::VARCHAR, total_keys.max(1));
+        for (index, key) in present().flat_map(|row| &row.keys).enumerate() {
+            let string = key_vector.add_string(key.as_bytes());
+            key_vector.values_mut::<StringT>()[index] = string;
+        }
+        let keys = list_vector(list_type(0), &mut lengths(|row| row.keys.len()), key_vector);
+
+        let child_type = list_type(1).child_type().cloned().unwrap_or_default();
+        let total_children: usize = present().map(|row| row.children.len()).sum();
+        let mut keys_index = Vector::flat(LogicalType::UINTEGER, total_children.max(1));
+        let mut values_index = Vector::flat(LogicalType::UINTEGER, total_children.max(1));
+        for (index, child) in present().flat_map(|row| &row.children).enumerate() {
+            match child.keys_index {
+                Some(key) => keys_index.values_mut::<u32>()[index] = key,
+                None => keys_index.set_null(index),
+            }
+            values_index.values_mut::<u32>()[index] = child.values_index;
+        }
+        let children = list_vector(
+            list_type(1),
+            &mut lengths(|row| row.children.len()),
+            struct_vector(child_type, vec![keys_index, values_index], total_children),
+        );
+
+        let entry_type = list_type(2).child_type().cloned().unwrap_or_default();
+        let total_values: usize = present().map(|row| row.values.len()).sum();
+        let mut type_ids = Vector::flat(LogicalType::UTINYINT, total_values.max(1));
+        let mut byte_offsets = Vector::flat(LogicalType::UINTEGER, total_values.max(1));
+        for (index, entry) in present().flat_map(|row| &row.values).enumerate() {
+            type_ids.values_mut::<u8>()[index] = entry.type_id;
+            byte_offsets.values_mut::<u32>()[index] = entry.byte_offset;
+        }
+        let values = list_vector(
+            list_type(2),
+            &mut lengths(|row| row.values.len()),
+            struct_vector(entry_type, vec![type_ids, byte_offsets], total_values),
+        );
+
+        let mut data = Vector::flat(LogicalType::BLOB, count.max(1));
+        for (index, row) in rows.iter().enumerate() {
+            if let Some(row) = row {
+                let string = data.add_string(&row.data);
+                data.values_mut::<StringT>()[index] = string;
+            }
+        }
+        let mut result = struct_vector(ty.clone(), vec![keys, children, values, data], count);
+        for (index, row) in rows.iter().enumerate() {
+            if row.is_none() {
+                result.set_null(index);
+            }
+        }
+        Ok(result)
     }
 
     /// Packs this value into its STRUCT representation.
@@ -631,15 +774,37 @@ impl VariantData {
     /// The canonical form of this value (`VariantNormalizer::Normalize`): values in visit
     /// order, OBJECT fields sorted by key, no unused data.
     pub fn normalize(&self) -> Result<Self> {
-        let mut state = Normalizer::default();
+        let mut state = VariantNormalizer::default();
         state.visit(self, 0)?;
-        Ok(Self {
-            keys: state.keys,
-            children: state.children,
-            values: state.values,
-            data: state.data,
-        })
+        Ok(state.finish())
     }
+}
+
+/// The error for a vector without the VARIANT layout.
+fn malformed_vector() -> Error {
+    Error::internal("malformed VARIANT vector")
+}
+
+/// The element rows of row `slot` of a LIST vector, and its element vector.
+fn list_elements(list: &Vector, slot: usize) -> Result<(std::ops::Range<usize>, &Vector)> {
+    let (child, _) = list.list_child().ok_or_else(malformed_vector)?;
+    if list.is_null(slot) {
+        return Ok((0..0, child));
+    }
+    Ok((list.values::<ListEntry>()[list.sel().slot(slot)].range(), child))
+}
+
+/// Field `index` of a STRUCT vector.
+fn struct_field(vector: &Vector, index: usize) -> Result<&Vector> {
+    vector
+        .struct_children()
+        .and_then(|fields| fields.get(index))
+        .ok_or_else(malformed_vector)
+}
+
+/// Row `index` of a UINTEGER vector; `None` for NULL.
+fn u32_at(vector: &Vector, index: usize) -> Option<u32> {
+    (!vector.is_null(index)).then(|| vector.values::<u32>()[vector.sel().slot(index)])
 }
 
 /// The size of a DECIMAL payload of `width` digits.
@@ -653,6 +818,17 @@ fn decimal_size(width: u32) -> Result<usize> {
     })
 }
 
+/// The STRUCT with the layout of a VARIANT, which stores the values a shredded VARIANT
+/// column does not shred (`VariantShredding::GetUnshreddedType`).
+pub fn unshredded_type() -> LogicalType {
+    LogicalType::struct_type(
+        LogicalType::variant()
+            .struct_children()
+            .unwrap_or_default()
+            .to_vec(),
+    )
+}
+
 /// One step of a VARIANT path (DuckDB's `VariantPathComponent`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VariantPathComponent {
@@ -662,21 +838,37 @@ pub enum VariantPathComponent {
     Index(u32),
 }
 
-#[derive(Default)]
-struct Normalizer {
+/// Writes values of VARIANTs into one new VARIANT in canonical form (DuckDB's
+/// `VariantNormalizer` with its `VariantNormalizerState`): values in visit order, OBJECT
+/// fields sorted by key, no unused data.
+#[derive(Debug, Default)]
+pub struct VariantNormalizer {
     keys: Vec<String>,
     children: Vec<VariantChild>,
     values: Vec<VariantEntry>,
     data: Vec<u8>,
 }
 
-impl Normalizer {
-    fn visit(&mut self, source: &VariantData, value_index: u32) -> Result<()> {
+impl VariantNormalizer {
+    /// The number of values written so far (`values_size`).
+    pub fn value_count(&self) -> usize {
+        self.values.len()
+    }
+
+    /// The VARIANT written.
+    pub fn finish(self) -> VariantData {
+        VariantData {
+            keys: self.keys,
+            children: self.children,
+            values: self.values,
+            data: self.data,
+        }
+    }
+
+    /// Writes value `value_index` of `source` and its children (`VariantVisitor<VariantNormalizer>::Visit`).
+    pub fn visit(&mut self, source: &VariantData, value_index: u32) -> Result<()> {
         let type_id = source.type_id(value_index)?;
-        self.values.push(VariantEntry {
-            type_id: type_id as u8,
-            byte_offset: u32_of(self.data.len())?,
-        });
+        self.push_entry(type_id)?;
         match type_id {
             VariantLogicalType::Array => {
                 let nested = source.nested(value_index)?;
@@ -703,28 +895,74 @@ impl Normalizer {
                 if nested.child_count == 0 {
                     return Ok(());
                 }
-                let first_child = self.children.len();
-                let first_key = self.keys.len();
-                varint_encode(first_child as u64, &mut self.data);
-                self.children
-                    .resize(first_child + nested.child_count as usize, VariantChild::default());
-                self.keys
-                    .resize(first_key + nested.child_count as usize, String::new());
-                let mut sorted = BTreeMap::new();
-                for index in 0..nested.child_count {
-                    let child = source.child(nested, index)?;
-                    sorted.entry(source.child_key(child)?.as_bytes()).or_insert(child);
-                }
-                for (slot, (key, child)) in sorted.into_iter().enumerate() {
-                    self.keys[first_key + slot] = String::from_utf8_lossy(key).into_owned();
-                    self.children[first_child + slot] = VariantChild {
-                        keys_index: Some(u32_of(first_key + slot)?),
-                        values_index: u32_of(self.values.len())?,
-                    };
-                    self.visit(source, child.values_index)?;
-                }
+                let sorted = Self::sorted_fields(source, nested, 0..nested.child_count)?;
+                self.write_fields(source, sorted, nested.child_count as usize)?;
             }
             _ => self.data.extend_from_slice(source.raw_payload(value_index)?),
+        }
+        Ok(())
+    }
+
+    /// Writes the OBJECT value `value_index` of `source` with only its children at
+    /// `positions` (the `VisitObject` of `ShredVariantData`, for the fields of a
+    /// partially shredded OBJECT that are not shredded).
+    pub fn visit_object_fields(
+        &mut self,
+        source: &VariantData,
+        value_index: u32,
+        positions: &[u32],
+    ) -> Result<()> {
+        self.push_entry(VariantLogicalType::Object)?;
+        let nested = source.nested(value_index)?;
+        let sorted = Self::sorted_fields(source, nested, positions.iter().copied())?;
+        varint_encode(sorted.len() as u64, &mut self.data);
+        let count = sorted.len();
+        self.write_fields(source, sorted, count)
+    }
+
+    fn push_entry(&mut self, type_id: VariantLogicalType) -> Result<()> {
+        self.values.push(VariantEntry {
+            type_id: type_id as u8,
+            byte_offset: u32_of(self.data.len())?,
+        });
+        Ok(())
+    }
+
+    /// The children at `positions` of an OBJECT by key; the first of equal keys wins.
+    fn sorted_fields(
+        source: &VariantData,
+        nested: VariantNested,
+        positions: impl Iterator<Item = u32>,
+    ) -> Result<BTreeMap<&[u8], VariantChild>> {
+        let mut sorted = BTreeMap::new();
+        for index in positions {
+            let child = source.child(nested, index)?;
+            sorted.entry(source.child_key(child)?.as_bytes()).or_insert(child);
+        }
+        Ok(sorted)
+    }
+
+    /// Writes the first child index of an OBJECT, then its `fields` in order, with
+    /// `reserved` children and keys.
+    fn write_fields(
+        &mut self,
+        source: &VariantData,
+        fields: BTreeMap<&[u8], VariantChild>,
+        reserved: usize,
+    ) -> Result<()> {
+        let first_child = self.children.len();
+        let first_key = self.keys.len();
+        varint_encode(first_child as u64, &mut self.data);
+        self.children
+            .resize(first_child + reserved, VariantChild::default());
+        self.keys.resize(first_key + reserved, String::new());
+        for (slot, (key, child)) in fields.into_iter().enumerate() {
+            self.keys[first_key + slot] = String::from_utf8_lossy(key).into_owned();
+            self.children[first_child + slot] = VariantChild {
+                keys_index: Some(u32_of(first_key + slot)?),
+                values_index: u32_of(self.values.len())?,
+            };
+            self.visit(source, child.values_index)?;
         }
         Ok(())
     }
@@ -1261,5 +1499,33 @@ mod tests {
         let normalized = data.normalize().unwrap();
         assert_eq!(normalized.keys, ["a", "b"]);
         assert_eq!(normalized.type_name(0).unwrap(), "OBJECT(a, b)");
+    }
+
+    #[test]
+    fn vectors_roundtrip() {
+        let object = Value::struct_value(vec![
+            ("k".to_owned(), Value::varchar("text")),
+            (
+                "l".to_owned(),
+                Value::list(LogicalType::INTEGER, vec![Value::integer(1), Value::integer(2)]),
+            ),
+        ]);
+        let rows: Vec<Option<VariantData>> = [Some(object), None, Some(Value::bigint(7))]
+            .iter()
+            .map(|value| {
+                value
+                    .as_ref()
+                    .and_then(|value| encode_value(value).unwrap())
+                    .map(|encoded| VariantData::from_value(&encoded).unwrap().unwrap())
+            })
+            .collect();
+        for ty in [LogicalType::variant(), unshredded_type()] {
+            let vector = VariantData::write_vector(&rows, &ty).unwrap();
+            for (row, expected) in rows.iter().enumerate() {
+                assert_eq!(&VariantData::from_vector(&vector, row).unwrap(), expected);
+                let value = VariantData::from_value(&vector.get_value(row)).unwrap();
+                assert_eq!(&value, expected);
+            }
+        }
     }
 }
