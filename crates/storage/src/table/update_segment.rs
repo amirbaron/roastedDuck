@@ -84,7 +84,9 @@ trait UpdateType: NativeType {
         self
     }
     /// Accounts for a new value in the update statistics.
-    fn update_stats(_stats: &mut BaseStatistics, _value: Self, _source: &Vector) {}
+    fn update_stats(_stats: &mut BaseStatistics, _value: Self, _source: &Vector) -> Result<()> {
+        Ok(())
+    }
 }
 
 macro_rules! numeric_update_type {
@@ -103,10 +105,11 @@ macro_rules! numeric_update_type {
             fn same(self, other: Self, _: &Vector, _: &Vector) -> bool {
                 self == other
             }
-            fn update_stats(stats: &mut BaseStatistics, value: Self, _: &Vector) {
+            fn update_stats(stats: &mut BaseStatistics, value: Self, _: &Vector) -> Result<()> {
                 if let Some(numeric) = stats.numeric_mut() {
                     numeric.update([value]);
                 }
+                Ok(())
             }
         }
     )*};
@@ -152,11 +155,12 @@ impl UpdateType for StringT {
             heap.add(source.string_value(&self))
         }
     }
-    fn update_stats(stats: &mut BaseStatistics, value: Self, source: &Vector) {
+    fn update_stats(stats: &mut BaseStatistics, value: Self, source: &Vector) -> Result<()> {
         let check_unicode = stats.logical_type().id() == LogicalTypeId::Varchar;
         if let Some(string) = stats.string_mut() {
-            string.update(source.string_value(&value), check_unicode);
+            string.update(source.string_value(&value), check_unicode)?;
         }
+        Ok(())
     }
 }
 
@@ -559,7 +563,7 @@ impl UpdateSegment {
             for row in 0..ids.len() {
                 if let Some(value) = source.get(row) {
                     stats.set_has_no_null_fast();
-                    T::update_stats(&mut stats, value, update);
+                    T::update_stats(&mut stats, value, update)?;
                     rows.push(row as u32);
                 } else {
                     stats.set_has_null_fast();

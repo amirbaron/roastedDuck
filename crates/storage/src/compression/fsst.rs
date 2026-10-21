@@ -438,7 +438,7 @@ impl FsstCompressor {
     /// `UpdateState`.
     fn add_string(&mut self, sink: &mut SegmentSink<'_>, string: &[u8], compressed: &[u8]) -> Result<()> {
         self.reserve(sink, compressed.len())?;
-        update_string_stats(&mut self.stats, string);
+        update_string_stats(&mut self.stats, string)?;
         self.dict_size += compressed.len();
         let position = self.info.block_size - self.dict_size;
         self.buffer[position..position + compressed.len()].copy_from_slice(compressed);
@@ -457,7 +457,7 @@ impl FsstCompressor {
         if null {
             self.stats.set_has_null_fast();
         } else {
-            update_string_stats(&mut self.stats, b"");
+            update_string_stats(&mut self.stats, b"")?;
         }
         Ok(())
     }
