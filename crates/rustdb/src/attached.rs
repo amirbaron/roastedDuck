@@ -207,6 +207,9 @@ pub(crate) struct AttachOptions {
     pub default_table: Option<(String, String)>,
     /// `RECOVERY_MODE NO_WAL_WRITES`: commits are not written to the WAL.
     pub no_wal_writes: bool,
+    /// `TYPE`: the storage type, lowercase (`AttachOptions::db_type`); `None` for DuckDB
+    /// files.
+    pub db_type: Option<String>,
 }
 
 impl AttachOptions {
@@ -240,12 +243,7 @@ impl AttachOptions {
                 }
                 "type" => {
                     let ty = value.to_varchar()?.to_lowercase();
-                    if !ty.is_empty() && ty != "duckdb" {
-                        return Err(Error::new(
-                            ErrorKind::Binder,
-                            format!("Unknown database type \"{ty}\""),
-                        ));
-                    }
+                    options.db_type = (!ty.is_empty()).then_some(ty);
                 }
                 "hidden" => options.hidden = value_as_bool(value)?,
                 "default_table" => {

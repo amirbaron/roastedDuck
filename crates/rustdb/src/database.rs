@@ -2078,6 +2078,29 @@ impl Connection {
         Ok(MaterializedResult::default())
     }
 
+    /// `LOAD` / `INSTALL` (`PhysicalLoad`).
+    fn run_load(&mut self, info: &rustdb_ast::LoadInfo) -> Result<()> {
+        let config = crate::extensions::ExtensionConfig::from_settings(|name| self.database.global_setting(name));
+        if let Some(name) = crate::extensions::load_extension(info, &config)?
+            && let Some(extension) = StaticExtension::from_name(&name)
+        {
+            self.database.instance.load_static_extension(extension)?;
+        }
+        Ok(())
+    }
+
+    /// Loads the extension of the `ATTACH` storage type `db_type`
+    /// (`DatabaseManager::GetDatabaseType`'s `LoadExternalExtension`).
+    fn load_storage_extension(&mut self, db_type: &str) -> Result<()> {
+        self.run_load(&rustdb_ast::LoadInfo {
+            filename: db_type.to_owned(),
+            load_type: rustdb_ast::LoadType::Load,
+            repository: String::new(),
+            version: String::new(),
+            repo_is_alias: false,
+        })
+    }
+
     fn run_statement(&mut self, statement: SqlStatement) -> Result<MaterializedResult> {
         if let rustdb_ast::SqlStatementKind::Multi(statements) = statement.kind {
             return self.run_multi_statement(statements);
@@ -2086,12 +2109,7 @@ impl Connection {
             return self.copy_database(copy);
         }
         if let rustdb_ast::SqlStatementKind::Load(info) = &statement.kind {
-            let config = crate::extensions::ExtensionConfig::from_settings(|name| self.database.global_setting(name));
-            if let Some(name) = crate::extensions::load_extension(info, &config)?
-                && let Some(extension) = StaticExtension::from_name(&name)
-            {
-                self.database.instance.load_static_extension(extension)?;
-            }
+            self.run_load(info)?;
             return Ok(MaterializedResult::default());
         }
         // Pragmas that stand for a query run that query (DuckDB's `PragmaHandler`).
@@ -2739,21 +2757,23 @@ impl Connection {
             }
             LogicalKind::Attach(info) => {
                 let options = AttachOptions::from_info(info, crate::AccessMode::Automatic)?;
-                // `PhysicalAttach::GetDataInternal`: a `duckdb:` prefix names the type;
-                // without a type, `DatabaseManager::GetDatabaseType` checks the file's
-                // magic bytes, and data files are attached as views on them.
-                let has_type = info
-                    .options
-                    .iter()
-                    .any(|(name, _)| name.eq_ignore_ascii_case("type"));
+                // `PhysicalAttach::GetDataInternal`: a `type:` prefix names the type when
+                // the TYPE option does not; `DatabaseManager::GetDatabaseType` treats
+                // `duckdb` as no type, checks the file's magic bytes without one (data
+                // files are attached as views on them) and loads the extension of any
+                // other type, whose storage rustdb does not have.
                 let mut path = info.path.as_str();
-                let mut duckdb_type = has_type;
-                if !has_type
+                let mut db_type = options.db_type.clone();
+                if db_type.is_none()
                     && let Some(prefix) = crate::attached::extension_prefix(path)
-                    && prefix.eq_ignore_ascii_case("duckdb")
                 {
+                    db_type = Some(prefix.to_lowercase());
                     path = &path[prefix.len() + 1..];
-                    duckdb_type = true;
+                }
+                let duckdb_type = db_type.as_deref() == Some("duckdb");
+                if let Some(db_type) = db_type.filter(|db_type| db_type != "duckdb") {
+                    self.load_storage_extension(&db_type)?;
+                    return Err(Error::binder(format!("Unrecognized storage type \"{db_type}\"")));
                 }
                 let attached = if !duckdb_type && crate::attached::is_open_file(path) {
                     self.database

@@ -50,6 +50,7 @@ pub(crate) fn startup_options(config: &Config) -> AttachOptions {
         kept: Vec::new(),
         default_table: None,
         no_wal_writes: false,
+        db_type: None,
     }
 }
 
