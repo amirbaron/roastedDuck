@@ -33,10 +33,6 @@ impl SlotMap<'_> {
         }
     }
 
-    pub(crate) fn is_identity(&self) -> bool {
-        matches!(self, Self::Identity)
-    }
-
     fn from_sel(sel: Sel<'_>) -> SlotMap<'_> {
         match sel {
             Sel::Identity => SlotMap::Identity,

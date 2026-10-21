@@ -8,7 +8,7 @@ use rustdb_types::compare::SqlOrd;
 use rustdb_types::{LogicalType, PhysicalType, StringT, Vector};
 
 use crate::compare::{Interval, compare_rows};
-use crate::format::{ChunkFormat, VectorFormat};
+use crate::format::{ChunkFormat, SlotMap, VectorFormat};
 use crate::gather::gather_column;
 use crate::layout::TupleDataLayout;
 use crate::row::{RowPtr, is_valid, load};
@@ -196,7 +196,11 @@ impl MatchValue for Interval {
 
 /// Removes the non-matching entries from `sel[..count]` (keeping the order) and appends
 /// them to `no_match`; returns the number of matches.
-#[inline]
+#[allow(
+    clippy::inline_always,
+    reason = "the per-row predicate must be inlined into the loop"
+)]
+#[inline(always)]
 fn compact(
     sel: &mut [u32],
     count: usize,
@@ -204,15 +208,33 @@ fn compact(
     mut matches: impl FnMut(usize) -> bool,
 ) -> usize {
     let mut match_count = 0;
+    let Some(no_match) = no_match.as_deref_mut() else {
+        for i in 0..count {
+            let idx = sel[i];
+            if matches(idx as usize) {
+                sel[match_count] = idx;
+                match_count += 1;
+            }
+        }
+        return match_count;
+    };
+    // Written by index like DuckDB's `no_match_sel`, into reserved space.
+    no_match.reserve(count);
+    let start = no_match.len();
+    let spare = &mut no_match.spare_capacity_mut()[..count];
+    let mut no_match_count = 0;
     for i in 0..count {
         let idx = sel[i];
         if matches(idx as usize) {
             sel[match_count] = idx;
             match_count += 1;
-        } else if let Some(no_match) = no_match.as_deref_mut() {
-            no_match.push(idx);
+        } else {
+            spare[no_match_count].write(idx);
+            no_match_count += 1;
         }
     }
+    // SAFETY: the first `no_match_count` reserved slots were written above.
+    unsafe { no_match.set_len(start + no_match_count) };
     match_count
 }
 
@@ -301,7 +323,7 @@ unsafe fn match_column(
     unsafe {
         match function {
             MatchFunction::Fixed { physical, predicate } => Ok(match_fixed(
-                *physical, *predicate, lhs, sel, count, rhs_rows, offset, &rhs_null, no_match,
+                *physical, *predicate, lhs, sel, count, rhs_rows, offset, &rhs_null, all_valid, no_match,
             )),
             MatchFunction::Varchar { predicate } => {
                 let equality = matches!(
@@ -414,6 +436,7 @@ unsafe fn match_fixed(
     rhs_rows: &[RowPtr],
     offset: usize,
     rhs_null: &impl Fn(usize) -> bool,
+    rhs_all_valid: bool,
     no_match: &mut Option<&mut Vec<u32>>,
 ) -> usize {
     #[allow(
@@ -429,6 +452,7 @@ unsafe fn match_fixed(
         rhs_rows: &[RowPtr],
         offset: usize,
         rhs_null: &impl Fn(usize) -> bool,
+        rhs_all_valid: bool,
         no_match: &mut Option<&mut Vec<u32>>,
     ) -> usize {
         let width = size_of::<T>().max(1);
@@ -438,12 +462,29 @@ unsafe fn match_fixed(
             // With no NULL input value, `IS NOT DISTINCT FROM` is `=` (a NULL stored value
             // differs from every input value).
             if matches!(predicate, MatchPredicate::Equal | MatchPredicate::NotDistinctFrom) && lhs_all_valid {
-                // The hot path of hash table probes and aggregate lookups.
-                return compact(sel, count, no_match, |idx| {
-                    let l = T::load(lhs.slot_ptr(lhs.slot(idx), width));
-                    let r = T::load(rhs_rows[idx].as_ptr().add(offset));
-                    !rhs_null(idx) && l.compare(r) == Ordering::Equal
-                });
+                // The hot path of hash table probes and aggregate lookups: the input's
+                // selection and the stored rows' validity are resolved outside the loop.
+                #[allow(
+                    clippy::inline_always,
+                    reason = "called from three loops; each must inline it"
+                )]
+                #[inline(always)]
+                unsafe fn equal<T: MatchValue>(lhs: *const u8, rhs: *const u8) -> bool {
+                    // SAFETY: both point to a `T` (caller contract).
+                    unsafe { T::load(lhs).compare(T::load(rhs)) == Ordering::Equal }
+                }
+                let rhs = |idx: usize| rhs_rows[idx].as_ptr().add(offset);
+                return match (&lhs.sel, rhs_all_valid) {
+                    (SlotMap::Identity, true) => compact(sel, count, no_match, |idx| {
+                        equal::<T>(lhs.slot_ptr(idx, width), rhs(idx))
+                    }),
+                    (SlotMap::Indices(indices), true) => compact(sel, count, no_match, |idx| {
+                        equal::<T>(lhs.slot_ptr(indices[idx] as usize, width), rhs(idx))
+                    }),
+                    _ => compact(sel, count, no_match, |idx| {
+                        !rhs_null(idx) && equal::<T>(lhs.slot_ptr(lhs.slot(idx), width), rhs(idx))
+                    }),
+                };
             }
             compact(sel, count, no_match, |idx| {
                 let slot = lhs.slot(idx);
@@ -464,7 +505,15 @@ unsafe fn match_fixed(
             // SAFETY: forwarded from the caller.
             unsafe {
                 run::<$ty>(
-                    predicate, lhs, sel, count, rhs_rows, offset, rhs_null, no_match,
+                    predicate,
+                    lhs,
+                    sel,
+                    count,
+                    rhs_rows,
+                    offset,
+                    rhs_null,
+                    rhs_all_valid,
+                    no_match,
                 )
             }
         };
