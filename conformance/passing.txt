@@ -103,6 +103,7 @@ test/fuzzer/duckfuzz/try_cast_string_to_list.test_slow
 test/fuzzer/duckfuzz/tuple_data_empty_heap.test
 test/fuzzer/duckfuzz/union_dict_tag.test
 test/fuzzer/duckfuzz/unpivot_multiple_in.test
+test/fuzzer/duckfuzz/vector_size_out_of_range.test
 test/fuzzer/duckfuzz/vector_type.test
 test/fuzzer/duckfuzz/visit_operator_expressions_in_column_lifetime_analyzer.test
 test/fuzzer/duckfuzz/window_expression_equality.test
@@ -3326,6 +3327,7 @@ test/sql/settings/allowed_configs.test
 test/sql/settings/allowed_configs_extensions.test
 test/sql/settings/allowed_directories.test
 test/sql/settings/allowed_paths.test
+test/sql/settings/block_allocator_memory.test
 test/sql/settings/connection_local_settings.test
 test/sql/settings/default_null_order_extended.test
 test/sql/settings/drop_set_schema.test

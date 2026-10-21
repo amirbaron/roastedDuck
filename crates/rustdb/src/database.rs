@@ -762,8 +762,8 @@ impl DatabaseInstance {
     }
 
     /// `SET`/`RESET` (`None`) of the buffer manager's options: `memory_limit` (alias
-    /// `max_memory`), `temp_directory` and `max_temp_directory_size`; other names are
-    /// ignored.
+    /// `max_memory`), `temp_directory`, `max_temp_directory_size` and
+    /// `block_allocator_memory`; other names are ignored.
     fn set_buffer_setting(&self, name: &str, value: Option<&rustdb_types::Value>) -> Result<()> {
         let buffer_manager = &self.env.buffer_manager;
         let name = name.to_ascii_lowercase();
@@ -793,6 +793,13 @@ impl DatabaseInstance {
                     .map(|value| rustdb_buffer::parse_memory_limit(&value.to_varchar()?))
                     .transpose()?;
                 buffer_manager.set_swap_limit(limit)
+            }
+            "block_allocator_memory" => {
+                let size = match value {
+                    Some(value) => crate::settings::block_allocator_size(value, buffer_manager.max_memory())?,
+                    None => 0,
+                };
+                buffer_manager.pool().allocator().resize(size as usize)
             }
             _ => Ok(()),
         }
@@ -1733,7 +1740,10 @@ impl Database {
             return Ok(ExtensionLoad::Loaded);
         }
         Ok(match name {
-            "core_functions" | "icu" | "tpcds" | "httpfs" | "fts" | "inet" | "excel" | "sqlsmith"
+            // The core function library is part of the system catalog, loaded at start-up
+            // as the reference build's statically linked `core_functions` is.
+            "core_functions" => ExtensionLoad::Loaded,
+            "icu" | "tpcds" | "httpfs"| "fts" | "inet" | "excel" | "sqlsmith"
             | "spatial" | "delta" | "iceberg" | "aws" | "azure" | "motherduck" | "postgres_scanner"
             | "mysql_scanner" | "sqlite_scanner" | "vss" | "ui" | "encodings" | "ducklake" | "avro"
             | "demo_capi" => ExtensionLoad::NotAvailable,
@@ -3047,6 +3057,7 @@ impl Connection {
             memory_limit: buffer_manager.max_memory(),
             temp_directory: buffer_manager.temporary_directory(),
             max_swap: buffer_manager.max_swap(),
+            block_allocator_memory: buffer_manager.pool().allocator().physical_memory_size() as u64,
             threads: self.database.instance().env.threads() as u64,
             extensions: self
                 .database
