@@ -8,6 +8,7 @@ pub mod collections;
 mod error;
 mod index;
 pub mod libcxx;
+pub mod libcxx_sort;
 pub mod profiling;
 mod query_context;
 pub mod string_util;
@@ -15,7 +16,7 @@ pub mod tree_renderer;
 pub mod utf8;
 
 pub use collections::{CaseInsensitiveMap, CaseInsensitiveSet, OrderedMap};
-pub use error::{Error, ErrorKind, Result};
+pub use error::{Error, ErrorKind, Result, os_error_text};
 pub use index::{LogicalIndex, PhysicalIndex};
 
 /// DuckDB's `idx_t`: the index/count type used throughout the engine.

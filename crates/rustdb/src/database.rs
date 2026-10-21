@@ -1514,6 +1514,15 @@ impl Database {
         options: &AttachOptions,
         on_conflict: rustdb_ast::OnCreateConflict,
     ) -> Result<Option<Arc<AttachedDatabase>>> {
+        // A database file is tracked by its canonical path
+        // (`DatabaseManager::AttachDatabase` with `RequiresTrackingAttaches`).
+        let canonical_path;
+        let path = if path.is_empty() || path.starts_with(":memory:") {
+            path
+        } else {
+            canonical_path = rustdb_function::file_system::canonicalize_local_path(path);
+            canonical_path.as_str()
+        };
         if !path.is_empty() && !path.starts_with(":memory:") {
             rustdb_function::file_system::verify_can_access_file(path)?;
             if !options.read_only() {
@@ -1579,6 +1588,9 @@ impl Database {
         options: &AttachOptions,
         on_conflict: rustdb_ast::OnCreateConflict,
     ) -> Result<Option<Arc<AttachedDatabase>>> {
+        // Its path is canonical, as the database type is only known after
+        // `RequiresTrackingAttaches` canonicalized it.
+        let path = &rustdb_function::file_system::canonicalize_local_path(path);
         rustdb_function::file_system::verify_can_access_file(path)?;
         let name = if name.is_empty() {
             crate::storage::database_name(path)

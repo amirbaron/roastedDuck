@@ -347,7 +347,12 @@ fn replay_log(
         let file = std::fs::OpenOptions::new()
             .write(true)
             .open(&path)
-            .map_err(|error| io_error(format!("Cannot open file \"{path}\": {error}")))?;
+            .map_err(|error| {
+                io_error(format!(
+                    "Cannot open file \"{path}\": {}",
+                    rustdb_common::os_error_text(&error)
+                ))
+            })?;
         file.set_len(scan.checkpoint_truncate_offset)
             .and_then(|()| file.sync_all())
             .map_err(|error| io_error(format!("Could not truncate file \"{path}\": {error}")))?;
@@ -433,7 +438,12 @@ fn merge_into_recovery_wal(
 ) -> Result<()> {
     let recovery_path = storage.recovery_wal_path();
     let open = |path: &str| {
-        std::fs::File::open(path).map_err(|error| io_error(format!("Cannot open file \"{path}\": {error}")))
+        std::fs::File::open(path).map_err(|error| {
+            io_error(format!(
+                "Cannot open file \"{path}\": {}",
+                rustdb_common::os_error_text(&error)
+            ))
+        })
     };
     let mut recovery = std::fs::File::create(&recovery_path)
         .map_err(|error| io_error(format!("Cannot open file \"{recovery_path}\": {error}")))?;

@@ -295,7 +295,12 @@ impl SingleFileBlockManager {
             .create(true)
             .truncate(true)
             .open(path)
-            .map_err(|error| io_error(format!("Cannot open file \"{path}\": {error}")))?;
+            .map_err(|error| {
+                io_error(format!(
+                    "Cannot open file \"{path}\": {}",
+                    rustdb_common::os_error_text(&error)
+                ))
+            })?;
         let storage_version = options
             .storage_version
             .unwrap_or(crate::storage_info::DEFAULT_SERIALIZATION_VERSION);
@@ -364,7 +369,10 @@ impl SingleFileBlockManager {
                         "Cannot open database \"{path}\" in read-only mode: database does not exist"
                     ))
                 } else {
-                    io_error(format!("Cannot open file \"{path}\": {error}"))
+                    io_error(format!(
+                        "Cannot open file \"{path}\": {}",
+                        rustdb_common::os_error_text(&error)
+                    ))
                 }
             })?;
         let handle = FileHandle::new(file, path);

@@ -309,3 +309,15 @@ mod tests {
         );
     }
 }
+
+/// The message of an operating system error as C's `strerror` gives it (Rust's
+/// `io::Error` adds ` (os error N)`).
+pub fn os_error_text(error: &std::io::Error) -> String {
+    let text = error.to_string();
+    match error.raw_os_error() {
+        Some(code) => text
+            .strip_suffix(&format!(" (os error {code})"))
+            .map_or_else(|| text.clone(), str::to_owned),
+        None => text,
+    }
+}
