@@ -160,6 +160,11 @@ impl QueryExecution {
         Ok(ExecutionStep::NotReady)
     }
 
+    /// Whether every pipeline completed or a task failed (`Executor::ExecutionIsFinished`).
+    pub fn execution_is_finished(&self) -> bool {
+        self.done || self.shared.is_complete() || lock(&self.shared.error).is_some()
+    }
+
     /// Blocks until a task of the query is queued or the query completed or failed
     /// (`Executor::WaitForTask`).
     pub fn wait_for_task(&self) {

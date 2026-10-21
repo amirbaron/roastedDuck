@@ -465,7 +465,7 @@ impl ZstdCompressor {
                     self.stats.set_has_null_fast();
                 }
             } else {
-                update_string_stats(&mut self.stats, &rows[position..end]);
+                update_string_stats(&mut self.stats, &rows[position..end])?;
             }
             position = end;
         }

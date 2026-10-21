@@ -271,13 +271,13 @@ struct BoundParameters {
 }
 
 /// Checks and casts named parameters (DuckDB's `Binder::BindNamedParameters`).
-fn bind_named_parameters(
+pub(crate) fn bind_named_parameters(
     declared: &[(String, LogicalType)],
-    values: &mut NamedParameters,
+    values: &mut [(String, Value)],
     location: Option<u64>,
     function_name: &str,
 ) -> Result<()> {
-    for (name, value) in &mut values.0 {
+    for (name, value) in values {
         let Some((_, ty)) = declared
             .iter()
             .find(|(declared, _)| declared.eq_ignore_ascii_case(name))
@@ -554,7 +554,7 @@ pub fn bind_table_function(
         .map_err(|error| error.with_position(location))?;
     bind_named_parameters(
         &table_function.named_parameters,
-        &mut named,
+        &mut named.0,
         location,
         &table_function.name,
     )?;

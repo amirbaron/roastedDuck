@@ -19,6 +19,7 @@ mod plan_joinref;
 pub use plan_joinref::{JoinSide, create_join, extract_join_conditions};
 
 pub use plan_joinref::extract_join_conditions_from;
+pub(crate) use bind_table_function::bind_named_parameters;
 pub(crate) use plan_joinref::table_references;
 
 use super::bind_context::alias_column_names;
@@ -417,6 +418,43 @@ fn csv_replacement_scan(base: &BaseTableRef, alias: &str) -> Option<TableRef> {
     })
 }
 
+/// The replacement scans clients added (the rest of `Binder::BindWithReplacementScan`):
+/// the first that reads the table names the reference to bind in its place, which takes
+/// the user's alias, else the table's name, and the user's column aliases. A scan's error
+/// fails the bind.
+fn client_replacement_scan(
+    context: &crate::ClientContext,
+    base: &BaseTableRef,
+    alias: &str,
+) -> Result<Option<TableRef>> {
+    let input = crate::context::ReplacementScanInput {
+        catalog_name: &base.catalog_name,
+        schema_name: &base.schema_name,
+        table_name: &base.table_name,
+    };
+    for scan in &context.replacement_scans {
+        let Some(mut replacement) = (scan.0)(&input)? else {
+            continue;
+        };
+        if !alias.is_empty() {
+            alias.clone_into(&mut replacement.alias);
+        } else if replacement.alias.is_empty() {
+            replacement.alias.clone_from(&base.table_name);
+        }
+        match &mut replacement.kind {
+            TableRefKind::TableFunction(function) => {
+                function.column_name_alias.clone_from(&base.column_name_alias);
+            }
+            TableRefKind::Subquery(subquery) => {
+                subquery.column_name_alias.clone_from(&base.column_name_alias);
+            }
+            _ => {}
+        }
+        return Ok(Some(replacement));
+    }
+    Ok(None)
+}
+
 /// A table found while extracting table names: the name is recorded and the table binds
 /// as a dummy scan (DuckDB's `EXTRACT_NAMES` branch of `Binder::Bind(BaseTableRef &)`).
 fn bind_extracted_table_name(
@@ -516,6 +554,9 @@ fn bind_base_table(
     }
     let Some(found) = found else {
         if let Some(mut replacement) = csv_replacement_scan(base, alias) {
+            return bind_table_ref(scope, &mut replacement);
+        }
+        if let Some(mut replacement) = client_replacement_scan(&context, base, alias)? {
             return bind_table_ref(scope, &mut replacement);
         }
         // An existing file no replacement scan reads (`ExtensionHelper::IsFullPath`).

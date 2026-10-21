@@ -107,6 +107,11 @@ impl ResultData {
         self.state = ResultState::Failed;
     }
 
+    /// The connection the result came from.
+    pub(crate) fn context(&self) -> &Arc<SharedConnection> {
+        &self.context
+    }
+
     pub(crate) fn has_error(&self) -> bool {
         self.error.is_some()
     }
@@ -185,7 +190,7 @@ impl Drop for ResultData {
 
 /// Packs the rows of `chunks` into flat chunks of `STANDARD_VECTOR_SIZE` rows, like
 /// appending them to a `ColumnDataCollection`.
-fn pack_chunks(types: &[LogicalType], chunks: &[DataChunk]) -> Vec<DataChunk> {
+pub(crate) fn pack_chunks(types: &[LogicalType], chunks: &[DataChunk]) -> Vec<DataChunk> {
     let mut packed = Vec::new();
     let mut current = DataChunk::with_types(types, STANDARD_VECTOR_SIZE);
     for chunk in chunks {

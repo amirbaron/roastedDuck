@@ -12,7 +12,9 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -35,10 +37,10 @@ template <class T, class D = std::default_delete<T>>
 using unique_ptr = std::unique_ptr<T, D>;
 template <class T>
 using shared_ptr = std::shared_ptr<T>;
-template <class T>
-using unordered_set = std::unordered_set<T>;
-template <class K, class V>
-using unordered_map = std::unordered_map<K, V>;
+using std::map;
+using std::mutex;
+using std::unordered_map;
+using std::unordered_set;
 template <class T>
 using child_list_t = vector<pair<string, T>>;
 typedef uint32_t sel_t;
@@ -187,6 +189,47 @@ struct NumericLimits {
 		return std::numeric_limits<T>::max();
 	}
 };
+
+//! The profiling metrics the tests name (DuckDB's `MetricType`), spelled like
+//! `EnumUtil::ToString` renders them.
+enum class MetricType {
+	BLOCKED_THREAD_TIME,
+	EXTRA_INFO,
+	LATENCY,
+	OPERATOR_CARDINALITY,
+	OPERATOR_NAME,
+	OPERATOR_ROWS_SCANNED,
+	OPERATOR_ROW_GROUPS_SCANNED,
+	OPERATOR_TIMING,
+	OPERATOR_TOTAL_ROW_GROUPS_TO_SCAN,
+	OPERATOR_TYPE,
+	QUERY_NAME,
+	ROWS_RETURNED,
+};
+
+struct EnumUtil {
+	static string ToString(MetricType metric) {
+		static const char *const NAMES[] = {"BLOCKED_THREAD_TIME",
+		                                    "EXTRA_INFO",
+		                                    "LATENCY",
+		                                    "OPERATOR_CARDINALITY",
+		                                    "OPERATOR_NAME",
+		                                    "OPERATOR_ROWS_SCANNED",
+		                                    "OPERATOR_ROW_GROUPS_SCANNED",
+		                                    "OPERATOR_TIMING",
+		                                    "OPERATOR_TOTAL_ROW_GROUPS_TO_SCAN",
+		                                    "OPERATOR_TYPE",
+		                                    "QUERY_NAME",
+		                                    "ROWS_RETURNED"};
+		return NAMES[static_cast<int>(metric)];
+	}
+};
+
+//! DuckDB's `NumericCast` (numeric_utils.hpp), unchecked.
+template <class TO, class FROM>
+TO NumericCast(FROM value) {
+	return static_cast<TO>(value);
+}
 
 struct Printer {
 	static void Print(const string &message) {

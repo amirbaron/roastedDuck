@@ -23,6 +23,7 @@ use crate::{Config, MaterializedResult};
 mod active_query;
 mod appender;
 mod prepared_statement;
+mod registration;
 
 pub use active_query::{
     ClientHandle, PendingExecutionResult, PendingQuery, QueryId, QueryProgress, QueryResult,
@@ -111,6 +112,9 @@ pub(crate) struct DatabaseInstance {
     global_settings: Mutex<GlobalSettings>,
     /// The statically linked extensions whose catalog entries are registered.
     loaded_extensions: Arc<Mutex<Vec<StaticExtension>>>,
+    /// The replacement scans clients added (DuckDB's `DBConfig::replacement_scans` after
+    /// the built-in ones).
+    replacement_scans: std::sync::RwLock<Vec<rustdb_planner::ReplacementScan>>,
 }
 
 /// What the database's own functions reach through the client context (DuckDB's
@@ -194,14 +198,20 @@ impl StaticExtension {
         }
     }
 
-    /// The pragma functions the extension registers.
-    const fn pragma_functions(self) -> &'static [&'static str] {
-        match self {
-            Self::Parquet => &["add_parquet_key"],
-            Self::Json => &["json_execute_serialized_sql"],
-            Self::Tpch => &["tpch"],
-            Self::Autocomplete | Self::Icu => &[],
-        }
+    /// The pragmas the extension registers (`ExtensionLoader::RegisterFunction` of a
+    /// `PragmaFunction`).
+    fn pragma_functions(self) -> Vec<rustdb_function::PragmaFunctionSet> {
+        use rustdb_function::{PragmaFunction, PragmaFunctionSet};
+        let function = match self {
+            Self::Parquet => PragmaFunction::call(
+                "add_parquet_key",
+                vec![LogicalType::VARCHAR, LogicalType::VARCHAR],
+            ),
+            Self::Json => PragmaFunction::call("json_execute_serialized_sql", vec![LogicalType::VARCHAR]),
+            Self::Tpch => PragmaFunction::call("tpch", vec![LogicalType::BIGINT]),
+            Self::Autocomplete | Self::Icu => return Vec::new(),
+        };
+        vec![PragmaFunctionSet::single(function)]
     }
 
     /// Whether the extension has a pragma `name` that stands for a query.
@@ -225,6 +235,9 @@ impl StaticExtension {
     /// Registers the extension's functions, types and macros (its `Load`); `loaded` are
     /// the extensions loaded so far.
     fn register(self, system: &Catalog, loaded: &Arc<Mutex<Vec<Self>>>) -> Result<()> {
+        for set in self.pragma_functions() {
+            system.register_pragma_functions(set)?;
+        }
         match self {
             Self::Parquet => {
                 system.register_copy_function(rustdb_parquet::copy::parquet_copy_function())?;
@@ -290,10 +303,10 @@ impl StaticExtension {
 /// extensions (DuckDB's `PRAGMA_FUNCTION_ENTRY` catalog entries).
 fn pragma_function_names(loaded: &Mutex<Vec<StaticExtension>>) -> Vec<String> {
     let loaded = loaded.lock().unwrap_or_else(PoisonError::into_inner);
-    crate::system_functions::PRAGMA_FUNCTIONS
-        .iter()
+    crate::system_functions::builtin_pragma_functions()
+        .into_iter()
         .chain(loaded.iter().flat_map(|extension| extension.pragma_functions()))
-        .map(|name| (*name).to_owned())
+        .map(|set| set.name.to_string())
         .collect()
 }
 
@@ -1360,6 +1373,12 @@ impl Database {
         for set in crate::read_file::read_file_functions() {
             system_catalog.register_table_functions(set)?;
         }
+        for set in crate::system_functions::builtin_pragma_functions() {
+            system_catalog.register_pragma_functions(set)?;
+        }
+        for set in rustdb_arrow::arrow_table_functions() {
+            system_catalog.register_table_functions(set)?;
+        }
         system_catalog.register_copy_function(rustdb_csv::copy_csv::csv_copy_function())?;
         system_catalog.register_copy_function(rustdb_csv::copy_blob::blob_copy_function())?;
         for set in rustdb_csv::multi_file::glob_functions() {
@@ -1380,12 +1399,13 @@ impl Database {
         })?;
         let env = Arc::new(rustdb_execution::ClientEnv::new(buffer_manager));
         let threads = env.threads();
+        let log_manager = Arc::new(crate::logging::LogManager::default());
         let instance = DatabaseInstance {
             path: path.clone(),
             config: config.clone(),
             transactions: Arc::default(),
             system_catalog: Arc::new(system_catalog),
-            databases: DatabaseManager::default(),
+            databases: DatabaseManager::new(Arc::clone(&log_manager)),
             default_database: std::sync::OnceLock::new(),
             casts: std::sync::RwLock::new(Arc::new(json_casts())),
             client_casts: std::sync::atomic::AtomicBool::new(false),
@@ -1407,9 +1427,10 @@ impl Database {
             secrets: Arc::default(),
             connections: Arc::default(),
             object_cache: Arc::default(),
-            log_manager: Arc::default(),
+            log_manager,
             global_settings: Mutex::default(),
             loaded_extensions: Arc::default(),
+            replacement_scans: std::sync::RwLock::default(),
         };
         instance.object_cache.put(
             LOADED_EXTENSIONS_KEY.to_owned(),
@@ -1602,7 +1623,6 @@ impl Database {
     }
 
     pub fn connect(&self) -> Result<Connection> {
-        let transactions = TransactionContext::new(Arc::clone(&self.instance.transactions));
         let mut settings = Settings::default();
         for (name, value) in &self.instance.config.options {
             if is_extension_setting(name) {
@@ -1611,6 +1631,10 @@ impl Database {
             settings.set(name, value)?;
         }
         let function_client = Arc::new(rustdb_function::FunctionClient::default());
+        let transactions = TransactionContext::new(
+            Arc::clone(&self.instance.transactions),
+            Arc::clone(&function_client),
+        );
         function_client.set_database(self.instance.default_database_name());
         self.instance
             .connections
@@ -1653,6 +1677,53 @@ impl Database {
             next_query_id: 0,
             client: Arc::default(),
         })
+    }
+
+    /// Adds a configuration option (`DBConfig::AddExtensionOption`, as
+    /// `duckdb_register_config_option` does): returns `false`, adding nothing, if an option
+    /// of that name exists (`HasExtensionOption`).
+    pub fn add_extension_option(&self, option: rustdb_function::ExtensionOption) -> bool {
+        if self.instance.extension_option(&option.name).is_some() {
+            return false;
+        }
+        self.instance.add_extension_option(option);
+        true
+    }
+
+    /// Runs queued tasks of the database's queries on the calling thread (DuckDB's
+    /// `TaskScheduler::ExecuteTasks`): at most `max_tasks`, until none is queued or
+    /// `marker` (if given) is cleared; returns how many ran.
+    pub fn execute_tasks(&self, marker: Option<&std::sync::atomic::AtomicBool>, max_tasks: usize) -> usize {
+        self.instance.env.scheduler.execute_tasks(marker, max_tasks)
+    }
+
+    /// Runs queued tasks of the database's queries on the calling thread until `marker`
+    /// is cleared, waiting for tasks meanwhile (`TaskScheduler::ExecuteForever`).
+    pub fn execute_tasks_forever(&self, marker: &std::sync::atomic::AtomicBool) {
+        self.instance.env.scheduler.execute_forever(marker);
+    }
+
+    /// Wakes the threads in [`Database::execute_tasks_forever`] to see their cleared marker
+    /// (`TaskScheduler::Signal`).
+    pub fn signal_task_threads(&self) {
+        self.instance.env.scheduler.signal();
+    }
+
+    /// Registers a log storage that `logging_storage` can then select by `name`
+    /// (`LogManager::RegisterLogStorage`); returns `false`, registering nothing, if a
+    /// storage of that name was registered before.
+    pub fn register_log_storage(&self, name: &str, storage: Arc<dyn crate::logging::LogStorage>) -> bool {
+        self.instance.log_manager.register_storage(name, storage)
+    }
+
+    /// Adds a replacement scan, tried after the built-in ones and those added before
+    /// (`DBConfig::replacement_scans.push_back`).
+    pub fn add_replacement_scan(&self, scan: rustdb_planner::ReplacementScan) {
+        self.instance
+            .replacement_scans
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(scan);
     }
 
     /// Loads a (statically linked) extension, like `LOAD name`.
@@ -1826,6 +1897,40 @@ impl Connection {
         assigned
     }
 
+    /// The profile of the latest query (`Connection::GetProfilingTree`): `None` if
+    /// profiling is off or the query was not profiled.
+    pub fn profiling_tree(&self) -> Option<Arc<crate::query_profiler::ProfilingTree>> {
+        if !self.settings.profiler.enable_profiler {
+            return None;
+        }
+        self.profiler.tree().cloned()
+    }
+
+    /// The settings results are converted for clients with, such as their Arrow form
+    /// (DuckDB's `ClientContext::GetClientProperties`).
+    pub fn client_properties(&self) -> rustdb_arrow::ClientProperties {
+        let settings = self.settings_snapshot();
+        let setting = |name: &str| rustdb_function::SettingsSource::current_setting(&settings, name).ok();
+        let enabled = |name: &str| setting(name).and_then(|value| value.as_bool()).unwrap_or(false);
+        let mut properties = rustdb_arrow::ClientProperties::default();
+        if let Some(time_zone) = setting("TimeZone").and_then(|value| value.to_varchar().ok()) {
+            properties.time_zone = time_zone;
+        }
+        if enabled("arrow_large_buffer_size") {
+            properties.arrow_offset_size = rustdb_arrow::ArrowOffsetSize::Large;
+        }
+        properties.arrow_use_list_view = enabled("arrow_output_list_view");
+        properties.arrow_lossless_conversion = enabled("arrow_lossless_conversion");
+        properties.produce_arrow_string_view = enabled("produce_arrow_string_view");
+        if let Some(version) = setting("arrow_output_version")
+            .and_then(|value| value.to_varchar().ok())
+            .and_then(|version| rustdb_arrow::ArrowFormatVersion::from_setting(&version))
+        {
+            properties.arrow_output_version = version;
+        }
+        properties
+    }
+
     /// The connection's id (DuckDB's `ClientContext::GetConnectionId`).
     pub fn connection_id(&self) -> u64 {
         self.function_client.connection_id()
@@ -1855,11 +1960,61 @@ impl Connection {
         rustdb_parser::parse_with_options(sql, &options).map_err(|error| error.with_query_context(sql))
     }
 
+    /// The statements of `sql` as DuckDB's `ClientContext::ParseStatements` hands them out
+    /// (its `StatementPreprocessor`): every PRAGMA is bound, which fails for one the catalog
+    /// does not have, and a pragma that stands for a query is replaced by the statements of
+    /// that query (`TryReparsePragma`).
+    pub fn parse_statements(&mut self, sql: &str) -> Result<Vec<SqlStatement>> {
+        let statements = self.extract_statements(sql)?;
+        if !statements
+            .iter()
+            .any(|statement| matches!(statement.kind, rustdb_ast::SqlStatementKind::Pragma(_)))
+        {
+            return Ok(statements);
+        }
+        let mut result = Vec::with_capacity(statements.len());
+        for statement in statements {
+            let rustdb_ast::SqlStatementKind::Pragma(pragma) = &statement.kind else {
+                result.push(statement);
+                continue;
+            };
+            let name = pragma.name.clone();
+            let bound = self.bind_pragma_parameters(statement.clone());
+            let ended = self.transactions.end_statement(bound.is_ok(), false);
+            let parameters = bound
+                .and_then(|parameters| ended.map(|()| parameters))
+                .map_err(|error| self.process_error(error, sql))?;
+            let instance = self.database.instance();
+            let query = if instance.has_extension_pragma(&name) {
+                Some(instance.extension_pragma_query(&name, &parameters)?)
+            } else {
+                crate::system_functions::pragma_query(&name, &parameters)?
+            };
+            let Some(query) = query else {
+                result.push(statement);
+                continue;
+            };
+            let mut reparsed = rustdb_parser::parse(&query)?;
+            if reparsed.len() <= 1 {
+                result.append(&mut reparsed);
+                continue;
+            }
+            // Several statements run as one (`GetTransactionHandling`): in an implicit
+            // transaction outside an explicit one, under `ALL_ERRORS_INVALIDATE_TRANSACTION`
+            // inside one; the multi-statement run decides which when it executes.
+            result.push(SqlStatement {
+                kind: rustdb_ast::SqlStatementKind::Multi(reparsed),
+                ..statement
+            });
+        }
+        Ok(result)
+    }
+
     /// Runs every statement in `sql` and returns the result of the last one (DuckDB's
     /// `ClientContext::Query`).
     pub fn query(&mut self, sql: &str) -> Result<MaterializedResult> {
         self.sync_global_settings();
-        let statements = self.extract_statements(sql)?;
+        let statements = self.parse_statements(sql)?;
         self.execute_statements(statements)
     }
 
@@ -1980,6 +2135,10 @@ impl Connection {
             None => outcome,
         };
         let ended = self.transactions.end_statement(outcome.is_ok(), invalidates);
+        // Between statements, the connection's functions (and C API clients reading its
+        // options) see the settings the statement left.
+        self.function_client
+            .set_settings(Arc::new(self.settings_snapshot()));
         // `EndQueryInternal`: the profile is written before the logger is refreshed.
         drop(metrics_guard);
         let profiled = self
@@ -2085,7 +2244,8 @@ impl Connection {
     }
 
     /// `PhysicalSet::SetExtensionVariable`: the option's callback checks the value, which
-    /// is then set for the session (the default scope) or globally.
+    /// is then set for the session or globally (without a scope, as the option's default
+    /// scope says).
     fn set_extension_variable(&mut self, name: &str, value: &Value, scope: SetScope) -> Result<()> {
         let instance = self.database.instance();
         let option = instance.extension_option(name).ok_or_else(|| {
@@ -2097,7 +2257,7 @@ impl Connection {
         if let Some(set_function) = &option.set_function {
             set_function(&mut target_value)?;
         }
-        if scope == SetScope::Global {
+        if scope == SetScope::Global || (scope == SetScope::Automatic && option.global_by_default) {
             instance.set_extension_global(&option, Some(target_value));
         } else {
             self.extension_session.insert(&option.name, target_value);
@@ -2106,7 +2266,8 @@ impl Connection {
     }
 
     /// `PhysicalReset::ResetExtensionVariable`: the option's callback checks the default,
-    /// which then becomes the session's (or the global) value.
+    /// which then becomes the session's or the global value (without a scope, as the
+    /// option's default scope says).
     fn reset_extension_variable(&mut self, name: &str, scope: SetScope) -> Result<()> {
         let instance = self.database.instance();
         let option = instance.extension_option(name).ok_or_else(|| {
@@ -2118,7 +2279,7 @@ impl Connection {
             let mut default_value = option.default_value.clone();
             set_function(&mut default_value)?;
         }
-        if scope == SetScope::Global {
+        if scope == SetScope::Global || (scope == SetScope::Automatic && option.global_by_default) {
             instance.set_extension_global(&option, None);
         } else {
             self.extension_session
@@ -2295,7 +2456,7 @@ impl Connection {
                 transaction: Arc::clone(&transaction),
             }));
         let instance = self.database.instance();
-        Arc::new(ClientContext {
+        let context = Arc::new(ClientContext {
             catalogs: self.catalogs(instance.default_database_name()),
             search_path: self.search_path.clone(),
             view_search_path: Vec::new(),
@@ -2315,12 +2476,21 @@ impl Connection {
             prepared_statements: self.prepared_statements.clone(),
             function_client: Arc::clone(&self.function_client),
             user_variables: self.user_variables.clone(),
+            replacement_scans: instance
+                .replacement_scans
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone(),
             dependency_recorder: Arc::default(),
             database_state: Some(Arc::new(InstanceState {
                 secrets: Arc::clone(&instance.secrets),
                 instance: Arc::downgrade(&self.database.instance),
             }) as Arc<dyn rustdb_planner::DatabaseState>),
-        })
+        });
+        let any: Arc<dyn std::any::Any + Send + Sync> = Arc::clone(&context) as _;
+        self.function_client
+            .set_transaction_context(Some(Arc::downgrade(&any)));
+        context
     }
 
     /// `IMPORT DATABASE 'dir'` (DuckDB's `PragmaImportDatabase`): runs the directory's
@@ -3484,25 +3654,6 @@ impl Connection {
                 }
                 if NO_OP_PRAGMAS.contains(&name.to_ascii_lowercase().as_str()) {
                     return Ok(StatementRun::Done(nothing()));
-                }
-                // `Binder::BindPragma`: a table function of the name is suggested.
-                let transaction = self.transactions.current();
-                if self
-                    .database
-                    .instance()
-                    .system_catalog
-                    .get_entry(
-                        &transaction,
-                        rustdb_catalog::CatalogType::TableFunction,
-                        "main",
-                        name,
-                    )
-                    .is_some()
-                {
-                    return Err(Error::catalog(format!(
-                        "Pragma Function with name {name} does not exist, but a table function with the same name \
-                         exists, try `CALL {name}(...)`"
-                    )));
                 }
                 return Err(Error::not_implemented(format!("PRAGMA {name}")));
             }

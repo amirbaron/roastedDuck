@@ -2,6 +2,8 @@
 
 use std::cmp::Ordering;
 
+use rustdb_common::Result;
+use rustdb_common::utf8::{UnicodeType, analyze, invalid_unicode_error};
 use rustdb_types::compare::CompareOp;
 
 use super::FilterPropagateResult;
@@ -51,9 +53,33 @@ impl StringStats {
         }
     }
 
-    /// Accounts for one value. `check_unicode` is set for VARCHAR (not BLOB) columns.
+    /// Accounts for one value (`StringStats::Update`). `check_unicode` is set for VARCHAR
+    /// (not BLOB) columns: until a value with non-ASCII characters is met, each value is
+    /// validated, and invalid UTF-8 is an error.
     #[inline]
-    pub fn update(&mut self, bytes: &[u8], check_unicode: bool) {
+    pub fn update(&mut self, bytes: &[u8], check_unicode: bool) -> Result<()> {
+        self.update_bounds(bytes);
+        if check_unicode && !self.has_unicode && !bytes.is_ascii() {
+            if let UnicodeType::Invalid(_) = analyze(bytes) {
+                return Err(invalid_unicode_error(bytes, "segment statistics update"));
+            }
+            self.has_unicode = true;
+        }
+        Ok(())
+    }
+
+    /// Accounts for the string of a `Value`, which is valid UTF-8 when it is a VARCHAR:
+    /// DuckDB's `Value` constructor validates it, so `Update` cannot fail on it.
+    pub fn update_from_value(&mut self, bytes: &[u8], is_varchar: bool) {
+        self.update_bounds(bytes);
+        if is_varchar && !bytes.is_ascii() {
+            self.has_unicode = true;
+        }
+    }
+
+    /// The min/max prefix and length part of `Update`.
+    #[inline]
+    fn update_bounds(&mut self, bytes: &[u8]) {
         let target = prefix(bytes);
         if target < self.min {
             self.min = target;
@@ -63,9 +89,6 @@ impl StringStats {
         }
         if bytes.len() > self.max_string_length as usize {
             self.max_string_length = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
-        }
-        if check_unicode && !self.has_unicode && !bytes.is_ascii() {
-            self.has_unicode = true;
         }
     }
 
@@ -163,13 +186,18 @@ mod tests {
     #[test]
     fn prefixes_and_lengths_are_tracked() {
         let mut stats = StringStats::empty();
-        stats.update(b"hello world", true);
-        stats.update(b"abc", true);
+        stats.update(b"hello world", true).unwrap();
+        stats.update(b"abc", true).unwrap();
         assert_eq!(stats.min_bytes(), b"abc");
         assert_eq!(stats.max_bytes(), b"hello wo");
         assert_eq!(stats.max_string_length, 11);
         assert!(!stats.has_unicode);
-        stats.update("ünï".as_bytes(), true);
+        let error = stats.update(b"a\xff\xfeb", true).unwrap_err();
+        assert_eq!(
+            error.raw_message(),
+            "Invalid unicode (byte sequence mismatch) detected in segment statistics update"
+        );
+        stats.update("ünï".as_bytes(), true).unwrap();
         assert!(stats.has_unicode);
         assert_eq!(
             stats.check_zonemap(CompareOp::Equal, &[b"aaa"]),

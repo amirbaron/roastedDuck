@@ -14,6 +14,7 @@ use rustdb_ast::{
     SqlStatementKind, TableRefKind,
 };
 use rustdb_catalog::{CatalogType, EntryKind};
+use rustdb_common::utf8::invalid_unicode_error;
 use rustdb_common::{Error, Result};
 use rustdb_function::cast::ValueCast;
 use rustdb_parser::build;
@@ -22,6 +23,8 @@ use rustdb_planner::expression_binder::{ConstantBinder, ExpressionBinder};
 use rustdb_types::{ColumnDataCollection, DataChunk, LogicalType, STANDARD_VECTOR_SIZE, Value};
 
 use super::Connection;
+
+mod cast;
 
 /// A column of a table as clients see it (DuckDB's `ColumnDefinition` in a
 /// `TableDescription`).
@@ -280,6 +283,43 @@ impl Appender {
             value.clone()
         } else {
             value.default_cast_as(&ty)?
+        };
+        let row = self.chunk.len();
+        self.chunk.column_mut(self.column).set_value(row, &value)?;
+        self.column += 1;
+        Ok(())
+    }
+
+    /// Appends `value`, a value of one of the C types of the typed appends, to the next
+    /// column of the row (`Append<T>`, `AppendValueInternal<T>`): columns of the common
+    /// types take it through DuckDB's direct casts (see [`cast`]), others as
+    /// [`Appender::append_value`] does.
+    pub fn append_typed(&mut self, value: &Value) -> Result<()> {
+        let Some(ty) = self.active_types().get(self.column) else {
+            return Err(invalid_input("Too many appends for chunk!"));
+        };
+        let Some(value) = cast::cast_operation(value, ty)? else {
+            return self.append_value(value);
+        };
+        let row = self.chunk.len();
+        self.chunk.column_mut(self.column).set_value(row, &value)?;
+        self.column += 1;
+        Ok(())
+    }
+
+    /// Appends the string `bytes` to the next column of the row (`Append(const char *,
+    /// uint32_t)`, `AppendValueInternal<string_t>`). A VARCHAR column takes the bytes as
+    /// they are, as DuckDB's `StringCast` does; invalid UTF-8 is caught by the segment
+    /// statistics when the rows are flushed. The columns without a direct cast take the
+    /// VARCHAR value, whose construction validates the bytes.
+    pub fn append_string(&mut self, bytes: &[u8]) -> Result<()> {
+        let Some(ty) = self.active_types().get(self.column) else {
+            return Err(invalid_input("Too many appends for chunk!"));
+        };
+        let input = Value::bytes(LogicalType::VARCHAR, bytes);
+        let Some(value) = cast::cast_operation(&input, ty)? else {
+            let text = std::str::from_utf8(bytes).map_err(|_| invalid_unicode_error(bytes, "value construction"))?;
+            return self.append_value(&Value::varchar(text));
         };
         let row = self.chunk.len();
         self.chunk.column_mut(self.column).set_value(row, &value)?;

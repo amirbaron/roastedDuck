@@ -25,6 +25,7 @@ rustdb-parquet = { path = "../parquet" }
 rustdb-json = { path = "../json" }
 rustdb-tpch = { path = "../tpch" }
 rustdb-icu = { path = "../icu" }
+rustdb-arrow = { path = "../arrow" }
 rustdb-autocomplete = { path = "../autocomplete" }
 
 [lints]

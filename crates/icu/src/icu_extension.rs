@@ -93,6 +93,7 @@ pub(crate) fn extension_options() -> Vec<ExtensionOption> {
             input_type: LogicalType::VARCHAR,
             default_value: Value::varchar(tz_string),
             set_function: Some(Arc::new(set_icu_time_zone)),
+            global_by_default: false,
         },
         ExtensionOption {
             name: "Calendar".to_owned(),
@@ -100,6 +101,7 @@ pub(crate) fn extension_options() -> Vec<ExtensionOption> {
             input_type: LogicalType::VARCHAR,
             default_value: Value::varchar("gregorian"),
             set_function: Some(Arc::new(set_icu_calendar)),
+            global_by_default: false,
         },
     ]
 }

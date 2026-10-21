@@ -393,4 +393,19 @@ impl TableFunctionSet {
     pub fn add(&mut self, function: TableFunction) {
         self.functions.push(function);
     }
+
+    /// Adds the overloads of `new_functions` (DuckDB's `FunctionSet::MergeFunctionSet`
+    /// without override): fails, leaving the set unchanged and returning `false`, if one
+    /// has the same arguments and varargs as an existing overload (`TableFunction::Equal`).
+    pub fn merge_function_set(&mut self, new_functions: Self) -> bool {
+        if new_functions.functions.iter().any(|function| {
+            self.functions.iter().any(|existing| {
+                existing.arguments == function.arguments && existing.varargs == function.varargs
+            })
+        }) {
+            return false;
+        }
+        self.functions.extend(new_functions.functions);
+        true
+    }
 }

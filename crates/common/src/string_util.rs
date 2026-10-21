@@ -190,6 +190,31 @@ pub fn candidates_error_message(strings: &[String], target: &str, label: &str) -
     candidates_message(&top_n_levenshtein(strings, target), label)
 }
 
+/// `value` as a JSON string literal, escaped as yyjson writes it: quotes, backslashes
+/// and control characters are escaped, everything else is kept as UTF-8.
+pub fn json_quote(value: &str) -> String {
+    let mut result = String::with_capacity(value.len() + 2);
+    result.push('"');
+    for c in value.chars() {
+        match c {
+            '"' => result.push_str("\\\""),
+            '\\' => result.push_str("\\\\"),
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            '\u{8}' => result.push_str("\\b"),
+            '\u{c}' => result.push_str("\\f"),
+            c if (c as u32) < 0x20 => {
+                use std::fmt::Write;
+                let _ = write!(result, "\\u{:04x}", c as u32);
+            }
+            c => result.push(c),
+        }
+    }
+    result.push('"');
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,29 +241,4 @@ mod tests {
             "\nCandidate bindings: \"x\", \"y\""
         );
     }
-}
-
-/// `value` as a JSON string literal, escaped as yyjson writes it: quotes, backslashes
-/// and control characters are escaped, everything else is kept as UTF-8.
-pub fn json_quote(value: &str) -> String {
-    let mut result = String::with_capacity(value.len() + 2);
-    result.push('"');
-    for c in value.chars() {
-        match c {
-            '"' => result.push_str("\\\""),
-            '\\' => result.push_str("\\\\"),
-            '\n' => result.push_str("\\n"),
-            '\r' => result.push_str("\\r"),
-            '\t' => result.push_str("\\t"),
-            '\u{8}' => result.push_str("\\b"),
-            '\u{c}' => result.push_str("\\f"),
-            c if (c as u32) < 0x20 => {
-                use std::fmt::Write;
-                let _ = write!(result, "\\u{:04x}", c as u32);
-            }
-            c => result.push(c),
-        }
-    }
-    result.push('"');
-    result
 }

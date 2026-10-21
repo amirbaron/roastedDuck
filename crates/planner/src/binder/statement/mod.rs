@@ -360,18 +360,75 @@ fn bind_deallocate(scope: &BindScope<'_>, drop: &DropInfo) -> BoundStatement {
     }))
 }
 
-/// `PRAGMA name(args)` without a result (DuckDB's `Bind(PragmaStatement &)`): the
-/// arguments must be constants.
+/// `PRAGMA name(args)` without a result (DuckDB's `Bind(PragmaStatement &)` over
+/// `Binder::BindPragma`): the arguments are constants, and the catalog must hold the
+/// pragma with an overload for them.
 fn bind_pragma(scope: &mut BindScope<'_>, pragma: &mut PragmaInfo) -> Result<BoundStatement> {
-    let mut parameters = Vec::with_capacity(pragma.parameters.len());
-    for parameter in &mut pragma.parameters {
+    let constant = |scope: &mut BindScope<'_>, parameter: &mut rustdb_ast::ParsedExpression| {
         let bound = {
             let (inner, outer) = scope.split();
             let mut binder = ConstantBinder::new(inner, outer, "PRAGMA value");
             binder.bind(parameter, true)?
         };
-        parameters.push(scope.context.evaluator.evaluate_scalar(&bound)?);
+        scope.context.evaluator.evaluate_scalar(&bound)
+    };
+    let mut parameters = Vec::with_capacity(pragma.parameters.len());
+    for parameter in &mut pragma.parameters {
+        parameters.push(constant(scope, parameter)?);
     }
+    let mut named_parameters = Vec::with_capacity(pragma.named_parameters.len());
+    for (name, parameter) in pragma.named_parameters.iter_mut() {
+        named_parameters.push((name.to_owned(), constant(scope, parameter)?));
+    }
+    let context = Arc::clone(&scope.context);
+    let lookup = |if_exists| {
+        context.get_entry(
+            "",
+            rustdb_catalog::DEFAULT_SCHEMA,
+            rustdb_catalog::CatalogType::PragmaFunction,
+            &pragma.name,
+            if_exists,
+        )
+    };
+    let entry = if let Some(entry) = lookup(true)? {
+        entry
+    } else {
+        let table_function = context.get_entry(
+            "",
+            rustdb_catalog::DEFAULT_SCHEMA,
+            rustdb_catalog::CatalogType::TableFunction,
+            &pragma.name,
+            true,
+        )?;
+        if table_function.is_some() {
+            return Err(Error::catalog(format!(
+                "Pragma Function with name {0} does not exist, but a table function with the same name \
+                 exists, try `CALL {0}(...)`",
+                pragma.name
+            )));
+        }
+        // The lookup again, for its error.
+        lookup(false)?.ok_or_else(|| Error::internal("pragma lookup"))?
+    };
+    let rustdb_catalog::EntryKind::PragmaFunction(functions) = &entry.entry.kind else {
+        return Err(Error::internal(format!("\"{}\" is not a pragma", pragma.name)));
+    };
+    let types: Vec<LogicalType> = parameters
+        .iter()
+        .map(|value| value.logical_type().clone())
+        .collect();
+    let index = crate::function_binder::FunctionBinder::new(&context).bind_function(
+        entry.entry.name(),
+        &functions.functions,
+        &types,
+    )??;
+    let function = &functions.functions[index];
+    super::tableref::bind_named_parameters(
+        &function.named_parameters,
+        &mut named_parameters,
+        None,
+        &function.name,
+    )?;
     scope.with_properties(|properties| properties.return_type = StatementReturnType::Nothing);
     Ok(success(LogicalOperator::new(LogicalKind::Pragma {
         name: pragma.name.clone(),

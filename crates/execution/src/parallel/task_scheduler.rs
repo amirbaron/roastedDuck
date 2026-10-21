@@ -147,6 +147,37 @@ impl TaskScheduler {
         self.shared.work.notify_all();
     }
 
+    /// Runs queued tasks of any query on the calling thread, at most `max_tasks`, until
+    /// none is queued or `marker` (if given) is cleared; returns how many ran
+    /// (`ExecuteTasks`, for threads a client lends the database).
+    pub fn execute_tasks(&self, marker: Option<&AtomicBool>, max_tasks: usize) -> usize {
+        let mut completed = 0;
+        while completed < max_tasks && marker.is_none_or(|marker| marker.load(Ordering::Acquire)) {
+            let Some(mut queued) = self.shared.lock().tasks.pop_front() else {
+                break;
+            };
+            if queued.task.execute(TaskExecutionMode::ProcessAll) == TaskExecutionResult::NotFinished {
+                self.shared.lock().tasks.push_back(queued);
+            }
+            completed += 1;
+        }
+        completed
+    }
+
+    /// Runs queued tasks of any query on the calling thread until `marker` is cleared,
+    /// waiting for tasks when none is queued (`ExecuteForever`, for threads a client lends
+    /// the database); [`TaskScheduler::signal`] wakes it to see the cleared marker.
+    pub fn execute_forever(&self, marker: &AtomicBool) {
+        execute_forever(&self.shared, marker);
+    }
+
+    /// Wakes the threads waiting for tasks in [`TaskScheduler::execute_forever`] after
+    /// their marker was cleared (`Signal`).
+    pub fn signal(&self) {
+        drop(self.shared.lock());
+        self.shared.work.notify_all();
+    }
+
     /// A token under which an executor queues its tasks (`CreateProducer`). Makes sure
     /// the background workers for the current `threads` setting are running.
     pub(crate) fn create_producer(&self) -> ProducerToken {

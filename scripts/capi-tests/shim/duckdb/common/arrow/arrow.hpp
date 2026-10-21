@@ -1,4 +1,5 @@
-// Stand-in for DuckDB's arrow.hpp: the Arrow C data interface structs (arrow/c/abi.h).
+// Stand-in for DuckDB's arrow.hpp: the Arrow C data interface structs (arrow/c/abi.h) with
+// the `Init()` helpers DuckDB adds to them, and `ArrowSchemaWrapper` (arrow_wrapper.hpp).
 #pragma once
 
 #include <cstdint>
@@ -16,6 +17,13 @@ struct ArrowSchema {
 	struct ArrowSchema *dictionary;
 	void (*release)(struct ArrowSchema *);
 	void *private_data;
+
+	void Init() {
+		flags = 0;
+		n_children = 0;
+		release = nullptr;
+		private_data = nullptr;
+	}
 };
 
 struct ArrowArray {
@@ -29,6 +37,48 @@ struct ArrowArray {
 	struct ArrowArray *dictionary;
 	void (*release)(struct ArrowArray *);
 	void *private_data;
+
+	void Init() {
+		length = 0;
+		null_count = 0;
+		offset = 0;
+		n_buffers = 0;
+		n_children = 0;
+		release = nullptr;
+		private_data = nullptr;
+	}
 };
 
 #endif
+
+#ifndef ARROW_C_STREAM_INTERFACE
+#define ARROW_C_STREAM_INTERFACE
+
+struct ArrowArrayStream {
+	int (*get_schema)(struct ArrowArrayStream *, struct ArrowSchema *out);
+	int (*get_next)(struct ArrowArrayStream *, struct ArrowArray *out);
+	const char *(*get_last_error)(struct ArrowArrayStream *);
+	void (*release)(struct ArrowArrayStream *);
+	void *private_data;
+};
+
+#endif
+
+namespace duckdb {
+
+//! An `ArrowSchema` released when it goes out of scope.
+class ArrowSchemaWrapper {
+public:
+	ArrowSchema arrow_schema;
+
+	ArrowSchemaWrapper() {
+		arrow_schema.release = nullptr;
+	}
+	~ArrowSchemaWrapper() {
+		if (arrow_schema.release) {
+			arrow_schema.release(&arrow_schema);
+		}
+	}
+};
+
+} // namespace duckdb
