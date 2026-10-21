@@ -14,7 +14,7 @@ Dependencies point downwards only.
 | `crates/serde` | `rustdb-serde` | `common/serializer` (binary + JSON) |
 | `crates/ast` | `rustdb-ast` | `parser/*` node classes (generated from serialization specs) |
 | `crates/pg-parser` | `rustdb-pg-parser` | `third_party/libpg_query` |
-| `crates/zstd` | `rustdb-zstd` | `third_party/zstd/compress` (zstd 1.5.6's encoder, frame for frame) |
+| `crates/zstd` | `rustdb-zstd` | `third_party/zstd` (zstd 1.5.6: the encoder, frame for frame, and the decoder) |
 | `crates/buffer` | `rustdb-buffer` | `storage/buffer`, `StandardBufferManager`, temporary files, `TemporaryMemoryManager`, `ArenaAllocator` |
 | `crates/row` | `rustdb-row` | `common/types/row` (TupleDataCollection, partitioning, row matcher, row aggregates), `common/sort` |
 | `crates/function` | `rustdb-function` | `function/*` definitions (ScalarFunction, cast functions, ...) |
