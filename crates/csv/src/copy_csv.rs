@@ -162,12 +162,43 @@ fn write_csv_bind(
     }))
 }
 
+/// A created file whose writes are logged to the connection's `FileSystem` log
+/// (the `DUCKDB_LOG_FILE_SYSTEM_*` calls of a local file handle).
+pub(crate) struct LoggedFile {
+    file: File,
+    logger: Option<rustdb_function::logging::FileSystemLogger>,
+    position: u64,
+}
+
+impl Write for LoggedFile {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        let written = self.file.write(data)?;
+        if let Some(logger) = &self.logger {
+            logger.write(written as u64, self.position);
+        }
+        self.position += written as u64;
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.file.flush()
+    }
+}
+
+impl Drop for LoggedFile {
+    fn drop(&mut self) {
+        if let Some(logger) = &self.logger {
+            logger.close();
+        }
+    }
+}
+
 /// Where the writer's bytes go: a plain or compressed file.
 pub(crate) enum CsvSink {
-    Plain(BufWriter<File>),
-    Gzip(flate2::write::GzEncoder<BufWriter<File>>),
+    Plain(BufWriter<LoggedFile>),
+    Gzip(flate2::write::GzEncoder<BufWriter<LoggedFile>>),
     /// Zstandard output is compressed when the file is closed.
-    Zstd(Vec<u8>, BufWriter<File>),
+    Zstd(Vec<u8>, BufWriter<LoggedFile>),
     Closed,
 }
 
@@ -176,6 +207,11 @@ impl CsvSink {
     /// (`FileSystem::OpenFile` with `FILE_FLAGS_FILE_CREATE_NEW` and the compression).
     pub(crate) fn create(path: &str, compression: FileCompressionType) -> Result<Self> {
         let file = File::create(path).map_err(|error| crate::buffer::open_error(path, &error))?;
+        let file = LoggedFile {
+            file,
+            logger: rustdb_function::logging::FileSystemLogger::open(path),
+            position: 0,
+        };
         let file = BufWriter::with_capacity(1 << 15, file);
         Ok(match compression.resolve(path) {
             FileCompressionType::Gzip => Self::Gzip(flate2::write::GzEncoder::new(file, flate2::Compression::default())),
@@ -198,6 +234,7 @@ impl CsvSink {
 
     pub(crate) fn close(&mut self) -> std::io::Result<()> {
         match std::mem::replace(self, Self::Closed) {
+            // Dropping the file after the flush logs its `CLOSE`.
             Self::Plain(mut file) => file.flush(),
             Self::Gzip(encoder) => encoder.finish()?.flush(),
             Self::Zstd(buffer, mut file) => {

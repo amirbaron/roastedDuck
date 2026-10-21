@@ -2719,6 +2719,7 @@ test/sql/logging/logging_context_ids.test
 test/sql/logging/logging_csv.test
 test/sql/logging/logging_file_bind_replace.test
 test/sql/logging/logging_file_persistence.test
+test/sql/logging/logging_types.test
 test/sql/logging/test_logging_function.test
 test/sql/logging/test_logging_function_large.test_slow
 test/sql/merge/merge_into.test
