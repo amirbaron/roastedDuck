@@ -77,6 +77,27 @@ impl DatabaseStorage {
         }
     }
 
+    /// `vacuum_rebuild_indexes` of the database (`GetVacuumRebuildIndexThreshold`).
+    pub fn vacuum_rebuild_index_threshold(&self) -> u64 {
+        match self {
+            Self::File(storage) => storage.io().vacuum_rebuild_index_threshold(),
+            Self::InMemory(storage) => storage.io().vacuum_rebuild_index_threshold(),
+        }
+    }
+
+    /// Sets `vacuum_rebuild_indexes` of the database and the vacuum lock its index scans
+    /// take while it is set.
+    pub fn set_vacuum_rebuild_index_threshold(
+        &self,
+        threshold: u64,
+        vacuum_lock: &Arc<rustdb_storage::checkpoint_lock::CheckpointLock>,
+    ) {
+        match self {
+            Self::File(storage) => storage.io().set_vacuum_rebuild_index_threshold(threshold, vacuum_lock),
+            Self::InMemory(storage) => storage.io().set_vacuum_rebuild_index_threshold(threshold, vacuum_lock),
+        }
+    }
+
     /// Sets the settings checkpoints follow.
     pub fn set_checkpoint_config(&self, config: rustdb_storage::storage_manager::CheckpointConfig) {
         match self {
@@ -300,6 +321,9 @@ pub(crate) struct AttachOptions {
     /// `COMPRESS`: whether checkpoints of an in-memory database compress its tables;
     /// `None` when not given (`CompressInMemory::AUTOMATIC`).
     pub compress: Option<bool>,
+    /// `VACUUM_REBUILD_INDEXES`: the database's `vacuum_rebuild_indexes`, overriding the
+    /// global setting (`vacuum_rebuild_indexes_threshold`).
+    pub vacuum_rebuild_indexes: Option<u64>,
 }
 
 impl AttachOptions {
@@ -356,7 +380,21 @@ impl AttachOptions {
                         }
                     };
                 }
-                "vacuum_rebuild_indexes" => {}
+                "vacuum_rebuild_indexes" => {
+                    use rustdb_function::cast::ValueCast;
+                    let threshold = value
+                        .default_cast_as(&rustdb_types::LogicalType::UBIGINT)?
+                        .as_u64()
+                        .unwrap_or(0);
+                    // An `optional_idx` cannot hold the largest value.
+                    if threshold == u64::MAX {
+                        return Err(Error::invalid_input(format!(
+                            "Invalid setting for vacuum_rebuild_indexes: {threshold} (valid range is 0 - {})",
+                            u64::MAX - 1
+                        )));
+                    }
+                    options.vacuum_rebuild_indexes = Some(threshold);
+                }
                 "compress" => {
                     options.compress = Some(value_as_bool(value)?);
                     options.kept.push((name.to_lowercase(), value.clone()));
@@ -659,6 +697,17 @@ impl DatabaseManager {
             }
             if let Some((schema, table)) = &options.default_table {
                 existing.catalog.set_default_table(schema, table);
+            }
+            // A replacing attach needs the threshold of the attached database.
+            if on_conflict == OnCreateConflict::ReplaceOnConflict
+                && let Some(new) = options.vacuum_rebuild_indexes
+            {
+                let previous = existing.storage.vacuum_rebuild_index_threshold();
+                if previous != new {
+                    return Err(Error::binder(format!(
+                        "Cannot re-attach with a different vacuum_rebuild_indexes setting (previous: {previous}, new: {new})"
+                    )));
+                }
             }
             if on_conflict == OnCreateConflict::IgnoreOnConflict {
                 return Ok(None);

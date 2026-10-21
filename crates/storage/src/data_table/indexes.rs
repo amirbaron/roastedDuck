@@ -18,7 +18,7 @@ use crate::index::{
     VerifyExistenceType,
 };
 use crate::table::{
-    CollectionScanState, FetchType, RowGroupCollection, ScanFilterInfo, StorageIndex, TableScanType,
+    CollectionScanState, FetchType, RowGroup, RowGroupCollection, ScanFilterInfo, StorageIndex, TableScanType,
 };
 use crate::table_filter::TableFilterSet;
 use crate::transaction::{LocalStorage, LocalTableStorage, Transaction, TransactionData};
@@ -293,6 +293,73 @@ impl DataTable {
         }
         // `PhysicalCreateIndex::Finalize`: vacuum the excess memory of the build.
         index.vacuum()
+    }
+
+    /// `DataTable::RebuildIndexes`: the table's indexes built anew over the committed rows
+    /// of `layout`, the row groups a vacuum leaves with their first rows (relative to the
+    /// base row id), so that they hold the row ids the rows have after it.
+    pub(crate) fn rebuild_indexes(&self, layout: &[(Arc<RowGroup>, u64)]) -> Result<Vec<Art>> {
+        let base = self.row_groups.row_groups().base_row_id();
+        let options = RowGroup::scan_options(
+            TableScanType::CommittedRows,
+            TransactionData::new(0, crate::transaction::TRANSACTION_ID_START),
+        );
+        let mut rebuilt = Vec::new();
+        for entry in self.indexes().entries() {
+            let mut index = entry.lock().index.empty_like()?;
+            let columns = Self::index_columns(&index);
+            let column_ids: Vec<StorageIndex> = columns
+                .iter()
+                .map(|&c| StorageIndex::from(c))
+                .chain(std::iter::once(StorageIndex::row_id()))
+                .collect();
+            let mut types: Vec<LogicalType> = columns.iter().map(|&c| self.columns[c].ty.clone()).collect();
+            types.push(LogicalType::BIGINT);
+            for (row_group, row_start) in layout {
+                let mut filters = ScanFilterInfo::default();
+                let mut scan = CollectionScanState {
+                    max_row: u64::MAX,
+                    column_scans: RowGroup::column_scan_states(self.row_groups.types(), &column_ids),
+                    ..CollectionScanState::default()
+                };
+                if !row_group.initialize_scan(&mut scan, &column_ids, &mut filters, 0, 0)? {
+                    continue;
+                }
+                let mut chunk = DataChunk::with_types(&types, STANDARD_VECTOR_SIZE);
+                loop {
+                    chunk.reset();
+                    row_group.scan(options, &mut scan, &column_ids, &mut filters, base + row_start, &mut chunk)?;
+                    if chunk.is_empty() {
+                        break;
+                    }
+                    let row_id_column = chunk.column(columns.len()).flattened(chunk.len());
+                    let row_ids = row_id_column.values::<i64>()[..chunk.len()].to_vec();
+                    let data = DataChunk::new(chunk.columns()[..columns.len()].to_vec(), chunk.len());
+                    let table_chunk = self.index_table_chunk(&columns, &data);
+                    index
+                        .append(&table_chunk, &row_ids, &[], IndexAppendMode::Default)
+                        .map_err(|error| {
+                            Error::internal(format!(
+                                "Failed to rebuild index '{}' after vacuum: {}",
+                                index.name(),
+                                error.raw_message()
+                            ))
+                        })?;
+                }
+            }
+            rebuilt.push(index);
+        }
+        Ok(rebuilt)
+    }
+
+    /// Replaces the table's indexes by `rebuilt` (from [`DataTable::rebuild_indexes`], in
+    /// the same order) once the vacuumed row groups are the table's.
+    pub(crate) fn install_rebuilt_indexes(&self, rebuilt: Vec<Art>) {
+        for (entry, index) in self.indexes().entries().into_iter().zip(rebuilt) {
+            let mut state = entry.lock();
+            state.index = index;
+            state.deleted_rows_in_use = None;
+        }
     }
 
     /// The distinct columns an index reads, sorted.

@@ -1605,6 +1605,14 @@ impl Database {
         attached
             .storage
             .set_checkpoint_config(self.instance.checkpoint_config());
+        // The `VACUUM_REBUILD_INDEXES` option, else the setting the database started with.
+        let vacuum_rebuild_indexes = match options.vacuum_rebuild_indexes {
+            Some(threshold) => threshold,
+            None => self.startup_vacuum_rebuild_indexes()?,
+        };
+        attached
+            .storage
+            .set_vacuum_rebuild_index_threshold(vacuum_rebuild_indexes, &attached.catalog.locks().vacuum);
         attached
             .storage
             .set_optimistic_write_config(self.instance.optimistic_write_config());
@@ -1691,6 +1699,24 @@ impl Database {
 
     /// The value a global `SET` gave option `name` (canonical name), if any (the
     /// instance's `DBConfig` options).
+    /// `VacuumRebuildIndexesSetting`, which can only be set when the database starts.
+    fn startup_vacuum_rebuild_indexes(&self) -> Result<u64> {
+        use rustdb_function::cast::ValueCast;
+        let Some((_, value)) = self
+            .instance
+            .config
+            .options
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("vacuum_rebuild_indexes"))
+        else {
+            return Ok(0);
+        };
+        Ok(value
+            .default_cast_as(&LogicalType::UBIGINT)?
+            .as_u64()
+            .unwrap_or(0))
+    }
+
     pub fn global_setting(&self, name: &str) -> Option<Value> {
         self.instance
             .global_settings

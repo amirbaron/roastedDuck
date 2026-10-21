@@ -52,6 +52,7 @@ pub(crate) fn startup_options(config: &Config) -> AttachOptions {
         no_wal_writes: false,
         db_type: None,
         compress: None,
+        vacuum_rebuild_indexes: None,
     }
 }
 

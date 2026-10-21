@@ -134,6 +134,26 @@ impl Art {
         Ok(art)
     }
 
+    /// An empty index with this one's definition, layout included (a copy after
+    /// `BoundIndex::ResetStorage`).
+    pub fn empty_like(&self) -> Result<Self> {
+        let mut art = Self {
+            name: self.name.clone(),
+            constraint: self.constraint,
+            column_ids: self.column_ids.clone(),
+            key_types: self.key_types.clone(),
+            expressions: self.expressions.clone(),
+            tree: Node::default(),
+            allocators: Vec::with_capacity(ALLOCATOR_COUNT),
+            prefix_count: self.prefix_count,
+            storage_version: self.storage_version,
+            buffer_manager: self.buffer_manager.clone(),
+            block_size: self.block_size,
+        };
+        art.init_allocators()?;
+        Ok(art)
+    }
+
     /// `ART::SetPrefixCount` for a new index: the aligned compound key size minus one,
     /// capped so that a prefix segment stays below 256 bytes.
     fn default_prefix_count(compound_size: usize) -> u8 {

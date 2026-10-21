@@ -312,6 +312,10 @@ pub struct SeqScanGlobal {
     total_row_groups: u64,
     /// The rows of the table when the scan started (`DuckTableScanState::total_rows`).
     total_rows: u64,
+    /// An index scan holds the database's vacuum lock shared while it fetches the row
+    /// ids it found: with `vacuum_rebuild_indexes`, a vacuum moves row ids and rebuilds
+    /// the indexes (`IndexScanGlobalState::vacuum_lock`).
+    _vacuum_lock: Option<rustdb_storage::checkpoint_lock::SharedCheckpointGuard>,
 }
 
 /// A thread's scan: its storage scan state and, with a projection, the scanned chunk.
@@ -336,6 +340,9 @@ impl Source for PhysicalSeqScan {
         let filters = self.scan_filters();
         let total_row_groups = self.table.row_group_count_with_local_storage(&self.transaction) as u64;
         let total_rows = self.table.total_rows();
+        // Taken before the index is read, so the row ids match the row groups they are
+        // fetched from.
+        let vacuum_lock = self.table.io().index_scan_vacuum_guard();
         if let Some(row_ids) = self.index_scan_row_ids(filters.as_ref())? {
             self.is_index_scan.store(true, Ordering::Relaxed);
             // Fetch the indexed rows, then scan only the transaction-local rows.
@@ -346,6 +353,7 @@ impl Source for PhysicalSeqScan {
                 filters,
                 total_row_groups,
                 total_rows,
+                _vacuum_lock: vacuum_lock,
             });
         }
         Ok(SeqScanGlobal {
@@ -357,6 +365,7 @@ impl Source for PhysicalSeqScan {
             filters,
             total_row_groups,
             total_rows,
+            _vacuum_lock: None,
         })
     }
 

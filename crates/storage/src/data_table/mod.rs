@@ -49,6 +49,13 @@ pub struct TableIoManager {
     /// The last commit the running checkpoint of the database includes, `u64::MAX` when
     /// none runs (`DuckTransactionManager::active_checkpoint`).
     active_checkpoint: AtomicU64,
+    /// `vacuum_rebuild_indexes` of the database (`GetVacuumRebuildIndexThreshold`): tables
+    /// with indexes of at most this many rows are vacuumed and their indexes rebuilt; 0
+    /// keeps their row ids fixed.
+    vacuum_rebuild_index_threshold: AtomicU64,
+    /// The database's vacuum lock (`DuckTransactionManager::vacuum_lock`), which index
+    /// scans hold shared while a vacuum may rebuild indexes.
+    vacuum_lock: std::sync::OnceLock<Arc<CheckpointLock>>,
 }
 
 impl TableIoManager {
@@ -70,7 +77,31 @@ impl TableIoManager {
             optimistic_write: Mutex::default(),
             variant_shredding: Mutex::default(),
             active_checkpoint: AtomicU64::new(u64::MAX),
+            vacuum_rebuild_index_threshold: AtomicU64::new(0),
+            vacuum_lock: std::sync::OnceLock::new(),
         }
+    }
+
+    /// `vacuum_rebuild_indexes` of the database.
+    pub fn vacuum_rebuild_index_threshold(&self) -> u64 {
+        self.vacuum_rebuild_index_threshold.load(Ordering::Relaxed)
+    }
+
+    /// Sets `vacuum_rebuild_indexes` of the database, and its vacuum lock.
+    pub fn set_vacuum_rebuild_index_threshold(&self, threshold: u64, vacuum_lock: &Arc<CheckpointLock>) {
+        self.vacuum_rebuild_index_threshold
+            .store(threshold, Ordering::Relaxed);
+        let _ = self.vacuum_lock.set(Arc::clone(vacuum_lock));
+    }
+
+    /// Held by an index scan while it uses the row ids it found: with
+    /// `vacuum_rebuild_indexes` set, a vacuum moves row ids and rebuilds the indexes, and
+    /// waits for the scan (`TableScanState::vacuum_lock`). `None` when no vacuum can.
+    pub fn index_scan_vacuum_guard(&self) -> Option<crate::checkpoint_lock::SharedCheckpointGuard> {
+        if self.vacuum_rebuild_index_threshold() == 0 {
+            return None;
+        }
+        self.vacuum_lock.get().map(CheckpointLock::shared)
     }
 
     /// The I/O manager of the tables of the database file of `block_manager`.

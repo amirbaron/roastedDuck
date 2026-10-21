@@ -637,7 +637,7 @@ pub fn write_checkpoint(
                         Some(position) => table_locks.get_mut(position).and_then(Option::take),
                         None => Some(storage_table.info().checkpoint_lock().exclusive()),
                     };
-                    let data = write_table_data(
+                    let mut data = write_table_data(
                         storage_table,
                         metadata,
                         &mut table_writer,
@@ -650,8 +650,14 @@ pub fn write_checkpoint(
                         serialize_meta_block_pointer(s, data.table_pointer)
                     })?;
                     serializer.write_property(102, "total_rows", &data.total_rows)?;
+                    let index_infos = serialize_indexes(
+                        storage_table,
+                        data.rebuilt_indexes.as_deref_mut(),
+                        storage,
+                        &options,
+                        &mut blocks,
+                    )?;
                     persisted.push((Arc::clone(storage_table), data));
-                    let index_infos = serialize_indexes(storage_table, storage, &options, &mut blocks)?;
                     drop(table_lock);
                     // Empty block pointers for forwards compatibility.
                     serializer.on_property_begin(103, "index_pointers");
@@ -769,6 +775,7 @@ pub fn checkpoint_in_memory(
 /// index fills its own partial blocks.
 fn serialize_indexes(
     table: &DataTable,
+    mut rebuilt: Option<&mut [rustdb_storage::index::art::Art]>,
     storage: &StorageManager,
     options: &rustdb_serde::SerializationOptions,
     blocks: &mut BlockWriter,
@@ -778,6 +785,8 @@ fn serialize_indexes(
         index_options.insert("v1_0_0_storage", Value::boolean(false));
     }
     let mut infos = Vec::new();
+    // The position of the next bound index in `rebuilt`.
+    let mut bound = 0;
     for slot in table.info().indexes().slots() {
         let mut index_blocks = BlockWriter::new(Arc::clone(storage.block_manager()));
         let mut write = |bytes: &[u8]| {
@@ -788,7 +797,16 @@ fn serialize_indexes(
             })
         };
         let info = match &slot {
-            IndexSlot::Bound(entry) => entry.lock().index.serialize_to_disk(&index_options, &mut write)?,
+            // Indexes rebuilt by a vacuum are written instead of the table's current ones,
+            // which the table replaces by them once the checkpoint is complete.
+            IndexSlot::Bound(_) if let Some(index) = rebuilt.as_deref_mut().and_then(|rebuilt| rebuilt.get_mut(bound)) => {
+                bound += 1;
+                index.serialize_to_disk(&index_options, &mut write)?
+            }
+            IndexSlot::Bound(entry) => {
+                bound += 1;
+                entry.lock().index.serialize_to_disk(&index_options, &mut write)?
+            }
             // An unbound index is written as it was stored; its blocks stay in use.
             IndexSlot::Unbound(index) => {
                 let mut kept = Vec::new();

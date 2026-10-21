@@ -751,6 +751,9 @@ pub struct TableDataPointer {
     /// When row groups were vacuumed: the row groups the table consists of now, with
     /// their first row (relative to the collection's base row id), and its row count.
     pub vacuumed: Option<VacuumedLayout>,
+    /// The table's indexes built over the vacuumed row groups, in the order of its index
+    /// list, when the vacuum moved row ids (`vacuum_rebuild_indexes`).
+    pub rebuilt_indexes: Option<Vec<crate::index::Art>>,
     /// The row groups of the table the checkpoint covered; those after them were
     /// appended while it ran.
     pub row_group_count: usize,
@@ -892,6 +895,9 @@ pub fn finish_table_checkpoint(
         }
         row_groups.tree().replace(nodes);
         collection.set_total_rows(total_rows);
+        if let Some(rebuilt) = data.rebuilt_indexes {
+            table.install_rebuilt_indexes(rebuilt);
+        }
         return Ok(());
     }
     if data.persisted.is_empty() {
@@ -1129,14 +1135,15 @@ type CheckpointedRowGroup<W> = (Arc<RowGroup>, u64, Option<W>);
 /// the version information of the kept ones and writes (the `CheckpointTask`s) every
 /// merged row group and, with `write_kept`, every kept one; `write` gets the row group,
 /// its new first row and whether the row ids of the table moved so far. Returns the
-/// row groups, whether any was dropped or merged, and the table's new row count.
+/// row groups, whether any was dropped or merged, the table's new row count and whether
+/// its indexes must be rebuilt (row ids moved under `vacuum_rebuild_indexes`).
 fn checkpoint_row_groups<W>(
     table: &DataTable,
     settings: TableWriteSettings,
     write_kept: bool,
     row_group_limit: Option<usize>,
     mut write: impl FnMut(&Arc<RowGroup>, u64, bool) -> Result<W>,
-) -> Result<(Vec<CheckpointedRowGroup<W>>, bool, u64)> {
+) -> Result<(Vec<CheckpointedRowGroup<W>>, bool, u64, bool)> {
     let collection = table.row_groups();
     let row_groups = collection.row_groups();
     let mut nodes = row_groups.tree().nodes();
@@ -1215,7 +1222,8 @@ fn checkpoint_row_groups<W>(
         written.push((row_group, new_total_rows, data));
         new_total_rows += count;
     }
-    Ok((written, dropped_any, new_total_rows))
+    let rebuild_indexes = vacuum.can_rebuild_indexes && vacuum.row_ids_changed;
+    Ok((written, dropped_any, new_total_rows, rebuild_indexes))
 }
 
 /// Writes a table's committed data (`DataTable::Checkpoint`, `RowGroupCollection::Checkpoint`
@@ -1248,7 +1256,7 @@ pub fn write_table_data(
     // (`CheckpointRowGroupCount`).
     let row_group_limit = table.info().checkpoint_row_group_count(checkpoint_id);
     let row_group_count = row_group_limit.unwrap_or_else(|| collection.row_group_count());
-    let (written, dropped_any, new_total_rows) = checkpoint_row_groups(
+    let (written, dropped_any, new_total_rows, rebuild_indexes) = checkpoint_row_groups(
         table,
         settings,
         true,
@@ -1294,6 +1302,7 @@ pub fn write_table_data(
             metadata_pointer: None,
             statistics: None,
             vacuumed: None,
+            rebuilt_indexes: None,
             row_group_count,
         });
     }
@@ -1318,6 +1327,16 @@ pub fn write_table_data(
         .iter()
         .map(|(row_group, row_start, _)| (Arc::clone(row_group), *row_start))
         .collect();
+    // `DataTable::Checkpoint`: with row ids moved, the indexes are built anew before
+    // they are written; the table takes them with the vacuumed row groups.
+    let rebuilt_indexes = if rebuild_indexes {
+        let _timer = rustdb_common::profiling::start_timer(
+            rustdb_common::profiling::MetricType::CumulativeVacuumTime,
+        );
+        Some(table.rebuild_indexes(&layout)?)
+    } else {
+        None
+    };
     for (row_group, row_start, data) in written {
         let row_group = &row_group;
         let count = row_group.count();
@@ -1448,6 +1467,7 @@ pub fn write_table_data(
         }),
         statistics: Some(table_stats),
         vacuumed: (settings.full_checkpoint && dropped_any).then_some((layout, new_total_rows)),
+        rebuilt_indexes,
         row_group_count,
     })
 }
@@ -1470,7 +1490,7 @@ pub fn checkpoint_in_memory_table(
         table.columns().iter().map(|column| column.compression).collect();
     let table_name = format!("{}.{}", table.info().schema_name(), table.info().table_name());
     let mut blocks = BlockWriter::in_memory(Arc::clone(io), config);
-    let (row_groups, _, new_total_rows) =
+    let (row_groups, _, new_total_rows, rebuild_indexes) =
         checkpoint_row_groups(table, settings, !vacuum_only, None, |row_group, row_start, _| {
             let count = row_group.count();
             (0..row_group.column_count())
@@ -1529,10 +1549,26 @@ pub fn checkpoint_in_memory_table(
             node,
         });
     }
+    // `DataTable::Checkpoint`: with row ids moved, the indexes are built anew.
+    let rebuilt_indexes = if rebuild_indexes {
+        let _timer = rustdb_common::profiling::start_timer(
+            rustdb_common::profiling::MetricType::CumulativeVacuumTime,
+        );
+        let layout: Vec<(Arc<RowGroup>, u64)> = nodes
+            .iter()
+            .map(|node| (Arc::clone(&node.node), node.row_start - base))
+            .collect();
+        Some(table.rebuild_indexes(&layout)?)
+    } else {
+        None
+    };
     tree.tree().replace(nodes);
     collection.set_total_rows(new_total_rows);
     stats.columns = columns;
     collection.set_statistics(stats);
+    if let Some(rebuilt) = rebuilt_indexes {
+        table.install_rebuilt_indexes(rebuilt);
+    }
     Ok(())
 }
 
@@ -1541,6 +1577,9 @@ pub fn checkpoint_in_memory_table(
 struct VacuumState {
     can_vacuum_deletes: bool,
     can_change_row_ids: bool,
+    /// Whether the table's indexes are rebuilt after the vacuum, so that its row ids may
+    /// move (`vacuum_rebuild_indexes`).
+    can_rebuild_indexes: bool,
     /// Whether dropping or merging row groups moved row ids.
     row_ids_changed: bool,
     next_vacuum_idx: usize,
@@ -1586,8 +1625,9 @@ fn initialize_vacuum_state(
         }
         return state;
     }
-    // With indexes, row ids cannot move (`vacuum_rebuild_indexes` is not supported).
-    state.can_change_row_ids = !table.has_indexes();
+    // With indexes, row ids cannot move, unless the indexes are rebuilt afterwards.
+    state.can_rebuild_indexes = can_rebuild_indexes_after_vacuum(table);
+    state.can_change_row_ids = !table.has_indexes() || state.can_rebuild_indexes;
     let mut committed_counts: Vec<Option<u64>> = Vec::with_capacity(nodes.len());
     let mut dropped_any = false;
     for (index, node) in nodes.iter().enumerate() {
@@ -1624,6 +1664,17 @@ fn initialize_vacuum_state(
         }
     }
     state
+}
+
+/// `CanRebuildExistingIndexesAfterVacuum`: `vacuum_rebuild_indexes` is set and the table
+/// has at most that many rows and only bound (ART) indexes.
+fn can_rebuild_indexes_after_vacuum(table: &DataTable) -> bool {
+    let indexes = table.info().indexes();
+    if indexes.is_empty() || indexes.has_unbound() {
+        return false;
+    }
+    let threshold = table.row_groups().io().vacuum_rebuild_index_threshold();
+    threshold != 0 && table.row_groups().total_rows() <= threshold
 }
 
 /// `RowGroupCollection::ScheduleVacuumTasks`: whether the row groups from `segment_idx`
