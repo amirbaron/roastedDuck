@@ -13,7 +13,8 @@ use rustdb_row::sort::{
 use rustdb_types::{DataChunk, LogicalType};
 
 use crate::operator::{
-    ErasedSink, ErasedSource, OrderPreservationType, PhysicalOperator, PhysicalRef, SinkState,
+    ErasedSink, ErasedSource, OperatorPartitionData, OperatorPartitionInfo, OrderPreservationType,
+    PhysicalOperator, PhysicalRef, SinkState,
 };
 use crate::{ExecutionContext, ExpressionExecutor, Sink, SinkFinalize, SinkResult, Source, SourceResult};
 
@@ -129,8 +130,8 @@ impl PhysicalOperator for PhysicalOrder {
     fn parallel_source(&self) -> bool {
         true
     }
-    fn supports_batch_index(&self) -> bool {
-        true
+    fn supports_partitioning(&self, partition_info: &OperatorPartitionInfo) -> bool {
+        !partition_info.requires_partition_columns()
     }
     fn source_order(&self) -> OrderPreservationType {
         OrderPreservationType::FixedOrder
@@ -290,12 +291,21 @@ impl Source for PhysicalOrder {
             .map_or(1, SortSource::max_threads)
     }
 
-    fn batch_index(&self, _: &OrderSourceState, local: &Self::Local) -> Result<u64> {
+    fn partition_data(
+        &self,
+        _: &OrderSourceState,
+        local: &Self::Local,
+        _: &OperatorPartitionInfo,
+    ) -> Result<OperatorPartitionData> {
         let local = local.lock().unwrap_or_else(PoisonError::into_inner);
-        local
+        let batch_index = local
             .as_ref()
             .and_then(MergerLocalState::partition_index)
             .map(|partition| partition as u64)
-            .ok_or_else(|| Error::internal("ORDER BY batch index requested before any output"))
+            .ok_or_else(|| Error::internal("ORDER BY batch index requested before any output"))?;
+        Ok(OperatorPartitionData {
+            batch_index,
+            partition_data: Vec::new(),
+        })
     }
 }

@@ -15,7 +15,7 @@ use rustdb_csv::multi_file::{
 use rustdb_function::cast::{CastFunctionSet, CastParameters};
 use rustdb_function::{
     FunctionData, ParallelScanGlobal, ParallelScanLocal, ParallelTableScan, TableFunction,
-    TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet, TableScanState,
+    TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet, TablePartitionInfo, TableScanState,
 };
 use rustdb_planner::ClientContext;
 use rustdb_storage::{TableFilter, TableFilterSet};
@@ -1227,6 +1227,29 @@ fn read_parquet_dynamic_to_string(
     rustdb_csv::multi_file::dynamic_to_string(files_loaded, display)
 }
 
+/// The values of the scanned columns at `partition_columns` in the thread's current
+/// file (the partition data of `MultiFileGetPartitionData`,
+/// `MultiFileReader::GetPartitionData`): they are constants of the file.
+fn read_parquet_partition_data(
+    _: &ParallelScanGlobal,
+    local: &ParallelScanLocal,
+    partition_columns: &[u64],
+) -> Result<Vec<Value>> {
+    let file = local
+        .downcast_ref::<ParallelLocal>()
+        .and_then(|local| local.file.as_ref())
+        .ok_or_else(|| Error::internal("read_parquet partition data requested before any output"))?;
+    partition_columns
+        .iter()
+        .map(|&column| match file.sources.get(column as usize) {
+            Some(ColumnSource::Constant(value)) => Ok(value.clone()),
+            _ => Err(Error::internal(
+                "MultiFileReader::GetPartitionData - did not find constant for the given partition",
+            )),
+        })
+        .collect()
+}
+
 /// The `read_parquet` scan by several threads (`MultiFileFunction` with
 /// `ParquetScanMaxThreads` / `ParquetScanGetBatchIndex`).
 fn read_parquet_parallel() -> ParallelTableScan {
@@ -1240,6 +1263,7 @@ fn read_parquet_parallel() -> ParallelTableScan {
                 .downcast_ref::<ParallelLocal>()
                 .map_or(0, |local| local.batch_index)
         }),
+        partition_data: Some(Arc::new(read_parquet_partition_data)),
         dynamic_to_string: Some(Arc::new(read_parquet_dynamic_to_string)),
         row_group_metrics: Some(Arc::new(read_parquet_row_group_metrics)),
     }
@@ -1397,6 +1421,14 @@ fn read_parquet_function(name: &'static str, argument: LogicalType) -> TableFunc
     function.get_virtual_columns = Some(Arc::new(read_parquet_virtual_columns));
     function.statistics = Some(Arc::new(read_parquet_statistics));
     function.get_partition_stats = Some(Arc::new(read_parquet_partition_stats));
+    // `MultiFileGetPartitionInfo`.
+    function.get_partition_info = Some(Arc::new(|bind_data, partition_ids| {
+        bind_data
+            .and_then(|data| data.as_any().downcast_ref::<ParquetBindData>())
+            .map_or(TablePartitionInfo::NotPartitioned, |data| {
+                data.reader_bind.partition_info(partition_ids)
+            })
+    }));
     function.projected_output = true;
     function.parallel_scan = Some(read_parquet_parallel());
     function.file_filter_pushdown = Some(read_parquet_file_filter_pushdown());

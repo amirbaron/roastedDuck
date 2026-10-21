@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BinaryHeap, HashMap};
 use std::path::Path;
 
 use rustdb_common::{Error, ErrorKind, Result};
+use rustdb_function::TablePartitionInfo;
 use rustdb_function::cast::{CastFunctionSet, ValueCast};
 use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
@@ -268,6 +269,24 @@ pub struct MultiFileBindData {
     pub filename_idx: Option<usize>,
     /// (partition key, column index).
     pub hive_partitioning_indexes: Vec<(String, usize)>,
+}
+
+impl MultiFileBindData {
+    /// How the files partition the columns `partition_ids` (DuckDB's
+    /// `MultiFileReader::GetPartitionInfo`): hive partitioning gives each file a single
+    /// value of its partition columns; other columns are not partitioned.
+    pub fn partition_info(&self, partition_ids: &[u64]) -> TablePartitionInfo {
+        let partitioned = partition_ids.iter().all(|&column| {
+            self.hive_partitioning_indexes
+                .iter()
+                .any(|(_, index)| *index as u64 == column)
+        });
+        if partitioned {
+            TablePartitionInfo::SingleValuePartitions
+        } else {
+            TablePartitionInfo::NotPartitioned
+        }
+    }
 }
 
 /// `MultiFileReader::BindOptions`: adds the filename and hive partition columns.

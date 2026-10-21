@@ -7,8 +7,8 @@ use rustdb_planner::{BoundLimitNode, Expression};
 use rustdb_types::{DataChunk, LogicalType, SelectionVector, Value};
 
 use crate::operator::{
-    ErasedOperator, ErasedSink, ErasedSource, OrderPreservationType, PartitionInfo, PhysicalOperator,
-    PhysicalRef, SinkState,
+    ErasedOperator, ErasedSink, ErasedSource, OperatorPartitionInfo, OrderPreservationType, PartitionInfo,
+    PhysicalOperator, PhysicalRef, SinkState,
 };
 use crate::{
     ExecutionContext, ExpressionExecutor, Operator, OperatorResult, Sink, SinkFinalize, SinkResult, Source,
@@ -257,8 +257,8 @@ impl PhysicalOperator for PhysicalLimit {
     fn sink_order_dependent(&self) -> bool {
         true
     }
-    fn requires_batch_index(&self) -> bool {
-        true
+    fn required_partition_info(&self) -> OperatorPartitionInfo {
+        OperatorPartitionInfo::batch_index()
     }
 }
 
@@ -305,7 +305,7 @@ impl Sink for PhysicalLimit {
         _: &ExecutionContext,
         _: &Self::Global,
         local: &mut LimitLocal,
-        partition: PartitionInfo,
+        partition: &PartitionInfo,
     ) -> Result<()> {
         local.batch_index = partition.batch_index;
         Ok(())
