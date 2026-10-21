@@ -103,22 +103,8 @@ pub fn run_files(
     let results = Mutex::new(Vec::with_capacity(files.len()));
     let scratch = std::env::temp_dir().join(format!("slt-{}", std::process::id()));
     thread::scope(|scope| {
-        for slot in 0..options.jobs.max(1) {
-            let scratch = &scratch;
-            let queue = &queue;
-            let results = &results;
-            scope.spawn(move || {
-                // Each slot runs its workers in a directory of its own, so that what the
-                // engine writes relative to its working directory (the `.tmp` temporary
-                // directory of in-memory databases, the test directory) is not shared
-                // with the files running next to it; DuckDB's runner runs one at a time.
-                let root = match slot_root(&options.root, &scratch.join(format!("slot-{slot}"))) {
-                    Ok(root) => root,
-                    Err(error) => {
-                        eprintln!("cannot prepare the working directory of slot {slot}: {error}");
-                        return;
-                    }
-                };
+        for _ in 0..options.jobs.max(1) {
+            scope.spawn(|| {
                 loop {
                     // Take the next file in its own statement so the queue lock is released
                     // before the (long) run.
@@ -126,7 +112,7 @@ pub fn run_files(
                     let Some(file) = next else {
                         break;
                     };
-                    let result = run_one(options, &root, scratch, &file);
+                    let result = run_one(options, &scratch, &file);
                     on_result(&result);
                     results
                         .lock()
@@ -142,40 +128,14 @@ pub fn run_files(
     results
 }
 
-/// A working directory for the workers of one slot: links to every entry of `root`
-/// except the per-run directories the workers create themselves.
-fn slot_root(root: &Path, slot: &Path) -> io::Result<PathBuf> {
-    fs::create_dir_all(slot)?;
-    for entry in fs::read_dir(root)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        if name == TESTING_DIRECTORY_NAME || name == ".tmp" {
-            continue;
-        }
-        let link = slot.join(&name);
-        if fs::symlink_metadata(&link).is_err() {
-            #[cfg(unix)]
-            std::os::unix::fs::symlink(entry.path(), &link)?;
-            #[cfg(windows)]
-            if entry.file_type()?.is_dir() {
-                std::os::windows::fs::symlink_dir(entry.path(), &link)?;
-            } else {
-                std::os::windows::fs::symlink_file(entry.path(), &link)?;
-            }
-        }
-    }
-    Ok(slot.to_path_buf())
-}
-
-/// Runs one file in a worker process with `root` as its working directory and
-/// interprets the outcome.
-fn run_one(options: &RunOptions, root: &Path, scratch: &Path, file: &str) -> FileResult {
+/// Runs one file in a worker process and interprets the outcome.
+fn run_one(options: &RunOptions, scratch: &Path, file: &str) -> FileResult {
     let started = Instant::now();
     let log_path = match &options.log_dir {
         Some(dir) => dir.join(format!("{}.log", file.replace('/', "__"))),
         None => scratch.join(format!("{}.log", file.replace('/', "__"))),
     };
-    let outcome = spawn_and_wait(options, root, file, &log_path);
+    let outcome = spawn_and_wait(options, file, &log_path);
     let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let output = fs::read(&log_path).map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
     if options.log_dir.is_none() {
@@ -203,12 +163,7 @@ fn run_one(options: &RunOptions, root: &Path, scratch: &Path, file: &str) -> Fil
 }
 
 /// Spawns the worker with stdout and stderr in `log_path`; `Ok(None)` means it timed out.
-fn spawn_and_wait(
-    options: &RunOptions,
-    root: &Path,
-    file: &str,
-    log_path: &Path,
-) -> io::Result<Option<ExitStatus>> {
+fn spawn_and_wait(options: &RunOptions, file: &str, log_path: &Path) -> io::Result<Option<ExitStatus>> {
     if let Some(parent) = log_path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -220,7 +175,7 @@ fn spawn_and_wait(
                 .arg("exec")
                 .args(args)
                 .arg("--root")
-                .arg(root)
+                .arg(&options.root)
                 .arg(file);
             command
         }
@@ -231,7 +186,7 @@ fn spawn_and_wait(
         }
     };
     let child = command
-        .current_dir(root)
+        .current_dir(&options.root)
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log)
@@ -239,7 +194,7 @@ fn spawn_and_wait(
     let pid = child.id();
     let status = wait_with_timeout(child, options.timeout);
     // A worker that crashed or was killed cannot clean up its temporary directory.
-    let _ = fs::remove_dir_all(root.join(TESTING_DIRECTORY_NAME).join(pid.to_string()));
+    let _ = fs::remove_dir_all(options.root.join(TESTING_DIRECTORY_NAME).join(pid.to_string()));
     status
 }
 
