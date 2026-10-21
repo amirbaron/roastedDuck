@@ -501,6 +501,7 @@ impl Database {
         for set in crate::sequence::sequence_functions() {
             system_catalog.register_scalar_functions(set)?;
         }
+        system_catalog.register_scalar_functions(crate::switch::switch_functions())?;
         for set in crate::checkpoint::checkpoint_functions() {
             system_catalog.register_table_functions(set)?;
         }

@@ -201,6 +201,10 @@ pub struct ScalarFunction {
     /// types (DuckDB's `bind_expression` callback, for functions such as `getvariable` or
     /// `typeof` that resolve completely while binding).
     pub bind_expression: Option<BindExpression>,
+    /// Replaces the bound call by another expression (DuckDB's `bind_expression` callback
+    /// returning an expression, e.g. `switch` becoming a CASE). Planner expressions are not
+    /// known here: the planner downcasts this to its `RewriteExpression`.
+    pub rewrite_expression: Option<Arc<dyn Any + Send + Sync>>,
     /// The kernel statistics propagation switches to when the first argument cannot
     /// contain unicode (the `SetFunctionCallback` of DuckDB's `ILikePropagateStats`).
     pub ascii_kernel: Option<ScalarKernel>,
@@ -230,6 +234,7 @@ impl ScalarFunction {
             lambda_cast: None,
             collation_handling: CollationHandling::PropagateCollations,
             bind_expression: None,
+            rewrite_expression: None,
             ascii_kernel: None,
         }
     }

@@ -2903,6 +2903,7 @@ test/sql/parser/join_alias.test
 test/sql/parser/pg_err_pos_reset.test
 test/sql/parser/position_prepare.test
 test/sql/parser/star_expression.test
+test/sql/parser/switch_case.test
 test/sql/parser/test_columns.test
 test/sql/parser/test_columns_lists.test
 test/sql/parser/test_columns_order.test
