@@ -19,6 +19,7 @@ use rustdb_planner::{ClientContext, Expression, ExpressionKind};
 use rustdb_storage::TableFilter;
 use rustdb_storage::index::IndexConstraintType;
 use rustdb_storage::index::art::{Art, IndexKeyExecutor, IndexKeyExpressions, IndexScanPredicate};
+use rustdb_storage::storage_info::storage_version_name;
 use rustdb_storage::{ColumnDefinition, DataTable, TableIoManager, Transaction};
 use rustdb_types::compare::CompareOp;
 use rustdb_types::{DataChunk, LogicalType, LogicalTypeId};
@@ -199,13 +200,34 @@ fn visit_types(ty: &LogicalType, visit: &mut dyn FnMut(&LogicalType) -> Result<(
     Ok(())
 }
 
-/// `CheckTypeIsSupported` (`DuckTableEntry`): a table cannot hold TYPE values.
-pub(crate) fn check_type_is_supported(ty: &LogicalType) -> Result<()> {
+/// The storage version that added VARIANT to the core (`Variant::VERSION_ADDED`).
+const VARIANT_VERSION_ADDED: u64 = 7;
+
+/// `CheckTypeIsSupported` (`DuckTableEntry`): a table cannot hold TYPE values, nor
+/// VARIANT values in a database file written with a storage version before v1.5.0
+/// (in-memory databases use the latest version).
+pub(crate) fn check_type_is_supported(ty: &LogicalType, catalog: &Catalog) -> Result<()> {
     visit_types(ty, &mut |ty| {
-        if ty.id() == LogicalTypeId::Type {
-            return Err(Error::invalid_input(
-                "A table cannot be created with a 'TYPE' column",
-            ));
+        match ty.id() {
+            LogicalTypeId::Type => {
+                return Err(Error::invalid_input(
+                    "A table cannot be created with a 'TYPE' column",
+                ));
+            }
+            LogicalTypeId::Variant => {
+                if let Some(version) = catalog.storage_version()
+                    && version < VARIANT_VERSION_ADDED
+                {
+                    return Err(Error::invalid_input(format!(
+                        "VARIANT columns are not supported in storage versions prior to {} (database \"{}\" \
+                         is using storage version {})",
+                        storage_version_name(VARIANT_VERSION_ADDED, false),
+                        catalog.name(),
+                        storage_version_name(version, false)
+                    )));
+                }
+            }
+            _ => {}
         }
         Ok(())
     })
@@ -275,7 +297,7 @@ impl TableCreator for CatalogTableCreator {
                 .filter(|c| c.category != TableColumnType::Generated)
         };
         for column in physical() {
-            check_type_is_supported(&column.logical_type)?;
+            check_type_is_supported(&column.logical_type, &self.catalog)?;
         }
         for column in physical() {
             check_struct_columns(&column.logical_type)?;
