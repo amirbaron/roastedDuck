@@ -1990,10 +1990,22 @@ impl Connection {
             } else {
                 crate::system_functions::pragma_query(&name, &parameters)?
             };
-            match query {
-                Some(query) => result.extend(rustdb_parser::parse(&query)?),
-                None => result.push(statement),
+            let Some(query) = query else {
+                result.push(statement);
+                continue;
+            };
+            let mut reparsed = rustdb_parser::parse(&query)?;
+            if reparsed.len() <= 1 {
+                result.append(&mut reparsed);
+                continue;
             }
+            // Several statements run as one (`GetTransactionHandling`): in an implicit
+            // transaction outside an explicit one, under `ALL_ERRORS_INVALIDATE_TRANSACTION`
+            // inside one; the multi-statement run decides which when it executes.
+            result.push(SqlStatement {
+                kind: rustdb_ast::SqlStatementKind::Multi(reparsed),
+                ..statement
+            });
         }
         Ok(result)
     }
