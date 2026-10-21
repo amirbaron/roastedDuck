@@ -1,7 +1,7 @@
 //! The match window and the memory the match finders read (`ZSTD_window_t`,
 //! `ZSTD_matchState_t` and the helpers of `zstd_compress_internal.h`).
 
-use crate::params::CParams;
+use crate::params::{CParams, Strategy};
 
 /// `HASH_READ_SIZE`.
 pub(crate) const HASH_READ_SIZE: usize = 8;
@@ -9,6 +9,11 @@ pub(crate) const HASH_READ_SIZE: usize = 8;
 pub(crate) const SEARCH_STRENGTH: u32 = 8;
 /// The first index of a new window (`ZSTD_WINDOW_START_INDEX`).
 const WINDOW_START_INDEX: u32 = 2;
+/// The largest index before the window is moved down (`ZSTD_CURRENT_MAX` of 64-bit
+/// builds).
+const CURRENT_MAX: i64 = (3 << 29) + (1 << 31);
+/// The rows the hash tables are reduced by (`ZSTD_ROWSIZE`).
+const ROW_SIZE: usize = 16;
 
 /// The buffer a segment of the window is in. Indexes of the same buffer may be adjacent;
 /// different buffers never overlap (zstd compares their addresses).
@@ -103,6 +108,44 @@ impl Window {
         }
     }
 
+    /// `ZSTD_window_needOverflowCorrection`: whether the index of `end` (a position of
+    /// the current segment) passes `ZSTD_CURRENT_MAX`.
+    pub(crate) fn need_overflow_correction(&self, end: usize) -> bool {
+        end as i64 + self.base > CURRENT_MAX
+    }
+
+    /// `ZSTD_window_correctOverflow`: moves the indexes down so that the index of `pos`
+    /// keeps its position in a cycle of `2^cycle_log` and the full window stays
+    /// addressable; returns the correction.
+    pub(crate) fn correct_overflow(&mut self, cycle_log: u32, max_dist: u32, pos: usize) -> u32 {
+        let cycle_size = 1u32 << cycle_log;
+        let cycle_mask = cycle_size - 1;
+        let current = (pos as i64 + self.base) as u32;
+        let current_cycle = current & cycle_mask;
+        let current_cycle_correction = if current_cycle < WINDOW_START_INDEX {
+            cycle_size.max(WINDOW_START_INDEX)
+        } else {
+            0
+        };
+        let new_current = current_cycle + current_cycle_correction + max_dist.max(cycle_size);
+        let correction = current - new_current;
+        debug_assert!(max_dist.is_power_of_two());
+        debug_assert!(correction > 1 << 28);
+        self.base -= i64::from(correction);
+        self.dict_base -= i64::from(correction);
+        self.low_limit = if self.low_limit < correction + WINDOW_START_INDEX {
+            WINDOW_START_INDEX
+        } else {
+            self.low_limit - correction
+        };
+        self.dict_limit = if self.dict_limit < correction + WINDOW_START_INDEX {
+            WINDOW_START_INDEX
+        } else {
+            self.dict_limit - correction
+        };
+        correction
+    }
+
     /// `ZSTD_window_hasExtDict`.
     pub(crate) fn has_ext_dict(&self) -> bool {
         self.low_limit < self.dict_limit
@@ -162,6 +205,32 @@ impl MatchState {
         if chain_table {
             self.chain_table.resize(1 << params.chain_log, 0);
         }
+    }
+
+    /// `ZSTD_overflowCorrectIfNeeded` for the block `start..end` of the current segment:
+    /// before an index would pass `ZSTD_CURRENT_MAX`, the window and every table entry
+    /// move down by the same correction.
+    pub(crate) fn overflow_correct_if_needed(&mut self, start: usize, end: usize) {
+        if !self.window.need_overflow_correction(end) {
+            return;
+        }
+        // `ZSTD_cycleLog`.
+        let cycle_log = self.params.chain_log - u32::from(self.params.strategy >= Strategy::BtLazy2);
+        let max_dist = 1u32 << self.params.window_log;
+        let correction = self.window.correct_overflow(cycle_log, max_dist, start);
+        reduce_table(&mut self.hash_table, correction);
+        reduce_table(&mut self.chain_table, correction);
+        self.next_to_update = self.next_to_update.saturating_sub(correction);
+    }
+}
+
+/// `ZSTD_reduceTable`: entries below the correction (and the reserved indexes above it)
+/// become 0, the others move down.
+fn reduce_table(table: &mut [u32], reducer: u32) {
+    debug_assert!(table.len().is_multiple_of(ROW_SIZE));
+    let threshold = reducer + WINDOW_START_INDEX;
+    for entry in table {
+        *entry = if *entry < threshold { 0 } else { *entry - reducer };
     }
 }
 

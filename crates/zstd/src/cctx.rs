@@ -208,6 +208,7 @@ impl Compressor {
                 block_size = remaining;
             }
             let ms = &mut self.blocks.ms;
+            ms.overflow_correct_if_needed(ip, ip + block_size);
             let index = (ip as i64 + ms.window.base) as u32;
             ms.window.enforce_max_dist(index, max_dist);
             if ms.next_to_update < ms.window.low_limit {
