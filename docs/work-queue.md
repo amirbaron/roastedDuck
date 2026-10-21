@@ -4,8 +4,9 @@ Workstreams found while closing conformance failures (at most two agents run at 
 Each names the C++ it ports and the tests or checks that close it. Finished streams are
 removed; the commit history records them.
 
-Order of the next agents: the shell (3), compression (5) and the rest; the C API
-leftovers (2) when a client needs them.
+Order of the next agents: the shell (3) first — the owner's top priority (2026-10-21):
+it must be DuckDB's shell one to one, interactive editing included — then compression
+(5) and the rest; the C API leftovers (2) when a client needs them.
 
 ## Public surface (M8)
 
@@ -21,9 +22,13 @@ leftovers (2) when a client needs them.
    - `parse_statements` hands a PRAGMA's expansion of several statements out as one
      multi-statement, where DuckDB's `StatementPreprocessor` adds `BEGIN`/`COMMIT`
      statements around them, so `duckdb_extract_statements` counts fewer statements.
-3. **CLI shell.** `crates/shell` is a stub that prints `a|b` rows; DuckDB's shell renders
-   duckbox tables (also for `-c` and piped output), dot commands and modes. Port
-   `tools/shell` with byte-identical rendering.
+3. **CLI shell** (top priority). `crates/shell` is a stub that prints `a|b` rows;
+   DuckDB's shell renders duckbox tables (also for `-c` and piped output), dot commands
+   and modes. Port `tools/shell` one to one: byte-identical rendering, every option and
+   dot command, and the interactive editor (linenoise: keys, history, multi-line
+   editing, completion, highlighting). Done when every test of `tools/shell/tests` that
+   passes on the C++ CLI passes on rustdb, and interactive sessions match byte for byte
+   under a pty.
 
 ## Storage
 
@@ -54,6 +59,18 @@ leftovers (2) when a client needs them.
    writer.
 6. **External file cache.** `CachingFileSystem`, `duckdb_external_file_cache()`,
    `validate_external_file_cache` (`external_file_cache_*` tests).
+15. **Database encryption** (`dict_fsst_expression_filter`, which attaches a database
+    with `ENCRYPTION_KEY`; the other encryption tests `require httpfs` and are skipped
+    on both engines). DuckDB encrypts blocks, the WAL and temporary files with
+    AES-256-GCM (or CTR) through mbedtls when httpfs is not loaded
+    (`EncryptionEngine`, `StorageManager` encryption options, the main header's
+    encryption fields). Port it byte-compatibly with a pure-Rust AES-GCM, and check
+    files both ways against the C++ CLI.
+16. **`vacuum_rebuild_indexes`** (`vacuum_rebuild_indexes_attach.test_slow`): with the
+    ATTACH option (or the setting) set, a checkpoint vacuums row groups of tables with
+    ART indexes, drops empty row groups and rebuilds the indexes afterwards
+    (`RowGroupCollection` vacuum state `can_rebuild_indexes`, the vacuum lock in
+    `table_scan.cpp`); rustdb keeps row ids fixed whenever a table has indexes.
 
 ## Planner and execution
 
@@ -65,7 +82,14 @@ leftovers (2) when a client needs them.
    `struct_projection_pushdown_in_storage`, `deliver_child_columns`, `top_n_pruning`,
    `test_top_n_nulls_row_group_pruner_extensive`, `unnest_rewriter`).
 8. **Logical plan serialization** (`json_serialize_plan`).
-9. **Physical operator logging** (`physical_operator_logging`).
+9. **Physical operator logging** (`physical_operator_logging`): the
+   `PhysicalOperator` log type is registered, but nothing writes it. DuckDB logs from
+   the hash join (`Finalize` with `external`, `Repartition`, `GetData` with
+   `total_probe_matches`), `JoinHashTable::Build`, the Parquet writer
+   (`FlushRowGroup`) and reader (`ReadRowGroup` / `SkipRowGroup`), each with the
+   operator's type and `ParamsToString()`. The test also needs
+   `debug_force_external` to force the external hash join (16 partition builds with 4
+   radix bits).
 10. **TPC-DS** (`test/sql/tpcds`, the `tpcds` extension).
 11. **ICU collation of `as`, `kok` and `mr`** (`test_icu_extensive`). DuckDB embeds ICU
     66's data; rustdb matches it for 127 of the 130 collations (tailorings ICU4X's
@@ -74,12 +98,13 @@ leftovers (2) when a client needs them.
     conjuncts such as `ক্ষ` and `क्ष` after `হ`/`ह`, newer CLDR does not, and
     `icu4x-datagen` cannot read ICU export data before its own format (the
     `release-71-1` export is a 404). Needs ICU4X data built from ICU 66's tailoring rules.
-12. **`ALTER DATABASE ... SET ALIAS TO` / `RENAME TO`** (`test_alter_database_rename`):
-    DuckDB re-keys the attached database (`DatabaseManager::RenameDatabase`,
-    `AttachedDatabase::SetName`) and the catalog name follows it. rustdb copies the name
-    into `Catalog`, every `CatalogSet` and `AttachedDatabase`, so it has to become shared
-    and mutable first (about 50 call sites); schedule when no other agent edits the
-    catalog crate.
+12. **Out-of-core IEJoin, AsOf join and window** (`out_of_core_ie_join`,
+    `out_of_core_asof_join`, `out_of_core_window`): over TPC-H SF1 `lineitem` under a
+    300 MiB limit at 1, 2 and 8 threads rustdb runs out of memory ("failed to pin
+    block") where DuckDB spills. Their sinks keep the sorted input pinned; DuckDB's
+    sort into buffer-managed, spillable runs (`PhysicalRangeJoin` global sort state,
+    `WindowHashGroup`), and the IEJoin/AsOf sinks finalize in two events
+    (`AddFinishEvent`, see `docs/perf-backlog.md`).
 13. **VARIANT extract pushdown into shredded columns.** VARIANT columns are stored,
     shredded and unshredded like DuckDB's; a scan of `col.a::INT` still unshreds whole
     values and extracts afterwards. DuckDB scans the typed column of a fully shredded

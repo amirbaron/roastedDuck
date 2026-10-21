@@ -446,7 +446,7 @@ pub fn bind_update(scope: &mut BindScope<'_>, stmt: &mut UpdateStatement) -> Res
         && let TableRefKind::BaseTable(base) = &stmt.table.kind
     {
         let catalog = if base.catalog_name.is_empty() {
-            scope.context.default_catalog().to_owned()
+            scope.context.default_catalog()
         } else {
             base.catalog_name.clone()
         };

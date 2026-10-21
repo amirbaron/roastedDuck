@@ -236,10 +236,13 @@ impl ClientContext {
 
     /// The name of the default catalog (`DatabaseManager::GetDefaultDatabase`): the
     /// catalog of the first `search_path` entry, else the database opened first.
-    pub fn default_catalog(&self) -> &str {
+    pub fn default_catalog(&self) -> String {
         match self.search_path.first() {
-            Some((catalog, _)) => catalog,
-            None => self.catalogs.first().map_or("", |catalog| catalog.name()),
+            Some((catalog, _)) => catalog.clone(),
+            None => self
+                .catalogs
+                .first()
+                .map_or_else(String::new, |catalog| catalog.name().to_string()),
         }
     }
 
@@ -257,7 +260,7 @@ impl ClientContext {
             .map(|(path_catalog, _)| path_catalog.clone())
             .collect();
         if catalog_names.is_empty() {
-            catalog_names.push(self.default_catalog().to_owned());
+            catalog_names.push(self.default_catalog());
         }
         for catalog_name in catalog_names {
             if self
@@ -297,10 +300,7 @@ impl ClientContext {
         self.search_path
             .iter()
             .find(|(_, path_schema)| path_schema.eq_ignore_ascii_case(schema))
-            .map_or_else(
-                || self.default_catalog().to_owned(),
-                |(catalog, _)| catalog.clone(),
-            )
+            .map_or_else(|| self.default_catalog(), |(catalog, _)| catalog.clone())
     }
 
     /// Every `(catalog, schema)` searched for unqualified names, in order
@@ -313,7 +313,7 @@ impl ClientContext {
             paths.push((TEMP_CATALOG.to_owned(), DEFAULT_SCHEMA.to_owned()));
         }
         paths.extend(self.search_path.iter().cloned());
-        paths.push((self.default_catalog().to_owned(), DEFAULT_SCHEMA.to_owned()));
+        paths.push((self.default_catalog(), DEFAULT_SCHEMA.to_owned()));
         paths.push(("system".to_owned(), DEFAULT_SCHEMA.to_owned()));
         paths.push(("system".to_owned(), "pg_catalog".to_owned()));
         let mut unique: Vec<(String, String)> = Vec::with_capacity(paths.len());
@@ -361,7 +361,7 @@ impl ClientContext {
         }
         paths.extend(self.view_search_path.iter().cloned());
         paths.extend(self.search_path.iter().cloned());
-        paths.push((self.default_catalog().to_owned(), DEFAULT_SCHEMA.to_owned()));
+        paths.push((self.default_catalog(), DEFAULT_SCHEMA.to_owned()));
         paths.push(("system".to_owned(), DEFAULT_SCHEMA.to_owned()));
         paths.push(("system".to_owned(), "pg_catalog".to_owned()));
         let mut unique: Vec<(String, String)> = Vec::with_capacity(paths.len());
@@ -423,7 +423,7 @@ impl ClientContext {
                     let default = self
                         .view_search_path
                         .first()
-                        .map_or_else(|| self.default_catalog().to_owned(), |(c, _)| c.clone());
+                        .map_or_else(|| self.default_catalog(), |(c, _)| c.clone());
                     entries.push((default, schema.to_owned()));
                 }
                 unique(entries)
@@ -469,7 +469,7 @@ impl ClientContext {
         let (schema, table) = catalog.default_table()?;
         let entry = catalog.get_entry(&self.transaction, CatalogType::Table, &schema, &table)?;
         Some(EntryLookup {
-            catalog: catalog.name().to_owned(),
+            catalog: catalog.name().to_string(),
             schema,
             entry,
         })
@@ -605,7 +605,7 @@ impl ClientContext {
                     results.clear();
                 }
                 best = entry_score;
-                results.push((catalog.name().to_owned(), schema_name.clone(), entry_name));
+                results.push((catalog.name().to_string(), schema_name.clone(), entry_name));
             }
         }
         (best, results)
@@ -706,7 +706,7 @@ impl ClientContext {
         let mut unseen_schemas = Vec::new();
         for catalog in &self.catalogs {
             for schema in catalog.schemas().scan(&self.transaction) {
-                let key = (catalog.name().to_owned(), schema.name().to_owned());
+                let key = (catalog.name().to_string(), schema.name().to_owned());
                 if unseen_schemas.len() < self.config.catalog_error_max_schemas {
                     unseen_schemas.push(key);
                 }

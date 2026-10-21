@@ -224,7 +224,7 @@ pub fn table_catalog_schema(scope: &BindScope<'_>, table: &TableEntry) -> Option
         .catalogs
         .iter()
         .find(|catalog| catalog.io().is_ok_and(|io| Arc::ptr_eq(io, storage.io())))?;
-    Some((catalog.name().to_owned(), storage.info().schema_name()))
+    Some((catalog.name().to_string(), storage.info().schema_name()))
 }
 
 /// Binds one `DEFAULT` expression with target type `ty`.

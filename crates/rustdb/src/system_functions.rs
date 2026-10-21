@@ -205,7 +205,7 @@ fn database_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
         rows.push((
             catalog.name().to_lowercase(),
             vec![
-                text(catalog.name()),
+                text(&*catalog.name()),
                 oid(catalog.oid()),
                 path,
                 null_text(),
@@ -261,7 +261,7 @@ fn schema_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
     };
     for (catalog, schema) in schemas(context) {
         push(
-            catalog.name(),
+            &catalog.name(),
             catalog.oid(),
             schema.name(),
             schema.oid,
@@ -368,7 +368,7 @@ fn table_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 .count();
             let info = table_create_info("", schema.name(), &entry, table);
             rows.push(vec![
-                text(catalog.name()),
+                text(&*catalog.name()),
                 oid(catalog.oid()),
                 text(schema.name()),
                 oid(schema.oid),
@@ -431,7 +431,7 @@ fn view_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 })),
             );
             rows.push(vec![
-                text(catalog.name()),
+                text(&*catalog.name()),
                 oid(catalog.oid()),
                 text(schema.name()),
                 oid(schema.oid),
@@ -491,7 +491,7 @@ fn index_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 CreateInfoKind::Index(Box::new(index.info.clone())),
             );
             rows.push(vec![
-                text(catalog.name()),
+                text(&*catalog.name()),
                 oid(catalog.oid()),
                 text(schema.name()),
                 oid(schema.oid),
@@ -562,7 +562,7 @@ fn sequence_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 cycle: data.cycle,
             });
             rows.push(vec![
-                text(catalog.name()),
+                text(&*catalog.name()),
                 oid(catalog.oid()),
                 text(schema.name()),
                 oid(schema.oid),
@@ -651,7 +651,7 @@ fn column_row(
 ) -> Vec<Value> {
     let [precision, radix, scale] = numeric_properties(ty);
     vec![
-        text(catalog.name()),
+        text(&*catalog.name()),
         oid(catalog.oid()),
         text(schema.name()),
         oid(schema.oid),
@@ -1089,7 +1089,7 @@ fn getvariable_function() -> ScalarFunctionSet {
 /// `current_database()`, `current_schema()`, `in_search_path()` and `getvariable()`.
 pub(crate) fn context_scalar_functions() -> Vec<ScalarFunctionSet> {
     vec![
-        context_function("current_database", |context| context.default_catalog().to_owned()),
+        context_function("current_database", rustdb_planner::ClientContext::default_catalog),
         context_function("current_schema", |context| context.default_schema().to_owned()),
         in_search_path_function(),
         getvariable_function(),
@@ -1462,7 +1462,7 @@ fn database_size_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
         let buffer_manager = io.buffer_manager();
         let limit = buffer_manager.max_memory();
         rows.push(vec![
-            text(catalog.name()),
+            text(&*catalog.name()),
             text(rustdb_buffer::format_bytes(total * block_size)),
             Value::bigint(i64::try_from(block_size).unwrap_or(i64::MAX)),
             Value::bigint(i64::try_from(total).unwrap_or(i64::MAX)),
@@ -1752,13 +1752,12 @@ fn dependency_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 rows.push(row(object.oid, dependent.oid, "n"));
             }
         }
-        for owned in &dependent.owned {
-            if let Some((_, object)) = entries
+        if let Some(owner) = &dependent.owned_by
+            && let Some((_, object)) = entries
                 .iter()
-                .find(|(schema, entry)| entry.is_described_by(schema, owned))
-            {
-                rows.push(row(dependent.oid, object.oid, "a"));
-            }
+                .find(|(schema, entry)| entry.is_described_by(schema, owner))
+        {
+            rows.push(row(object.oid, dependent.oid, "a"));
         }
     }
     Ok(rows)
@@ -2147,7 +2146,7 @@ fn function_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
             .flatten();
             for row in entry_function_rows(&entry, info.as_ref()) {
                 push(
-                    catalog.name(),
+                    &catalog.name(),
                     catalog.oid(),
                     schema.name(),
                     entry.name(),
@@ -2299,7 +2298,7 @@ fn type_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 |values| Value::list(LogicalType::VARCHAR, values.iter().map(text).collect()),
             );
             rows.push(vec![
-                text(catalog.name()),
+                text(&*catalog.name()),
                 oid(catalog.oid()),
                 text(schema.name()),
                 oid(schema.oid),
@@ -2553,7 +2552,7 @@ fn constraint_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                     _ => null_text(),
                 };
                 rows.push(vec![
-                    text(catalog.name()),
+                    text(&*catalog.name()),
                     oid(catalog.oid()),
                     text(schema.name()),
                     oid(schema.oid),
@@ -2707,7 +2706,7 @@ fn metadata_info_rows(context: &ClientContext, name: &str) -> Result<Vec<Vec<Val
 fn metadata_info_functions() -> TableFunctionSet {
     let name = "pragma_metadata_info";
     let mut set = rows_function(name, METADATA_INFO_COLUMNS, |context| {
-        metadata_info_rows(context, context.default_catalog())
+        metadata_info_rows(context, &context.default_catalog())
     });
     set.add(
         TableFunction::new(name, vec![LogicalType::VARCHAR])
@@ -2720,7 +2719,7 @@ fn metadata_info_functions() -> TableFunctionSet {
                         ));
                     }
                     Some(value) => value.to_varchar()?,
-                    None => context.default_catalog().to_owned(),
+                    None => context.default_catalog(),
                 };
                 let types: Vec<LogicalType> = METADATA_INFO_COLUMNS.iter().map(|(_, ty)| ty()).collect();
                 let rows = metadata_info_rows(context, &database)?;

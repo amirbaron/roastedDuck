@@ -98,7 +98,6 @@ pub(crate) enum CloseAction {
 /// One attached database.
 #[derive(Debug)]
 pub(crate) struct AttachedDatabase {
-    pub name: String,
     /// The file, or `""` for an in-memory database.
     pub path: String,
     pub catalog: Arc<Catalog>,
@@ -120,6 +119,11 @@ pub(crate) struct AttachedDatabase {
 }
 
 impl AttachedDatabase {
+    /// The database's name, which is its catalog's (`AttachedDatabase::GetName`).
+    pub fn name(&self) -> Arc<str> {
+        self.catalog.name()
+    }
+
     /// Whether the database was closed.
     pub fn is_closed(&self) -> bool {
         self.closed.load(std::sync::atomic::Ordering::Acquire)
@@ -148,7 +152,7 @@ impl AttachedDatabase {
         };
         self.validity.invalidate(format!(
             "Database \"{}\" has been invalidated because checkpointing failed. {recovery} Original error: {reason}",
-            self.name
+            self.name()
         ));
     }
 
@@ -169,7 +173,7 @@ impl AttachedDatabase {
             ErrorKind::Io,
             format!(
                 "Checkpoint failed for database \"{}\". The database has been invalidated. Original error: {reason}",
-                self.name
+                self.name()
             ),
         )
     }
@@ -257,7 +261,7 @@ impl AttachedDatabase {
                 error.kind(),
                 format!(
                     "Detached database '{}', but CHECKPOINT during DETACH failed. \n{}",
-                    self.name,
+                    self.name(),
                     error.raw_message()
                 ),
             )),
@@ -511,7 +515,7 @@ impl DatabaseManager {
     pub fn get(&self, name: &str) -> Option<Arc<AttachedDatabase>> {
         self.read()
             .iter()
-            .find(|database| database.name.eq_ignore_ascii_case(name))
+            .find(|database| database.name().eq_ignore_ascii_case(name))
             .cloned()
     }
 
@@ -562,12 +566,33 @@ impl DatabaseManager {
     /// Detaches `database` if it is still attached (`ptr_eq`) under its name.
     pub fn detach_if_current(&self, database: &Arc<AttachedDatabase>, checkpoint: bool) {
         let _guard = self.attach_lock.lock().unwrap_or_else(PoisonError::into_inner);
-        let current = self.get(&database.name);
+        let current = self.get(&database.name());
         if current.is_some_and(|current| Arc::ptr_eq(&current, database))
-            && let Some(removed) = self.remove(&database.name)
+            && let Some(removed) = self.remove(&database.name())
         {
             let _ = removed.close(checkpoint, CloseAction::TryCheckpoint);
         }
+    }
+
+    /// Renames the database called `name` to `new_name` (`DatabaseManager::RenameDatabase`).
+    /// `Ok(false)` if there is no such database.
+    pub fn rename(&self, name: &str, new_name: &str) -> Result<bool> {
+        if is_reserved_name(new_name) {
+            return Err(Error::binder(format!(
+                "Database name \"{new_name}\" cannot be used because it is a reserved name"
+            )));
+        }
+        let _guard = self.attach_lock.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(database) = self.get(name) else {
+            return Ok(false);
+        };
+        if self.get(new_name).is_some() {
+            return Err(Error::binder(format!(
+                "Failed to rename database \"{name}\" to \"{new_name}\": database with new name already exists"
+            )));
+        }
+        database.catalog.rename(new_name);
+        Ok(true)
     }
 
     /// Removes the database called `name`.
@@ -575,7 +600,7 @@ impl DatabaseManager {
         let mut databases = self.write();
         let position = databases
             .iter()
-            .position(|database| database.name.eq_ignore_ascii_case(name))?;
+            .position(|database| database.name().eq_ignore_ascii_case(name))?;
         Some(databases.remove(position))
     }
 
@@ -644,7 +669,7 @@ impl DatabaseManager {
         let name_taken = if on_conflict == OnCreateConflict::ReplaceOnConflict {
             None
         } else {
-            self.get(&name).map(|existing| existing.name.clone())
+            self.get(&name).map(|existing| existing.name().clone())
         };
         // `DatabaseFilePathManager::InsertDatabasePath`: a file is attached once, unless
         // every attach is read-only.
@@ -657,13 +682,13 @@ impl DatabaseManager {
                     canonical_path(&database.path) == canonical_path(&path)
                         && !(database.read_only && options.read_only())
                         && !(on_conflict == OnCreateConflict::ReplaceOnConflict
-                            && database.name.eq_ignore_ascii_case(&name))
+                            && database.name().eq_ignore_ascii_case(&name))
                 })
         {
             // `DatabaseFilePathManager::InsertDatabasePath`: the same name with IF NOT
             // EXISTS finds the file still held by the detached database.
             if on_conflict == OnCreateConflict::IgnoreOnConflict
-                && existing.name.eq_ignore_ascii_case(&name)
+                && existing.name().eq_ignore_ascii_case(&name)
                 && !existing.is_closed()
                 && self
                     .get(&name)
@@ -677,7 +702,7 @@ impl DatabaseManager {
             return Err(Error::binder(format!(
                 "Unique file handle conflict: Cannot attach \"{name}\" - the database file \"{path}\" is already \
                  attached by database \"{}\"",
-                existing.name
+                existing.name()
             )));
         }
         if let Some(existing) = name_taken {
@@ -732,7 +757,6 @@ impl DatabaseManager {
             tags,
         });
         let database = Arc::new(AttachedDatabase {
-            name: name.clone(),
             path,
             catalog,
             storage,
@@ -747,7 +771,7 @@ impl DatabaseManager {
         let mut databases = self.write();
         if let Some(position) = databases
             .iter()
-            .position(|existing| existing.name.eq_ignore_ascii_case(&name))
+            .position(|existing| existing.name().eq_ignore_ascii_case(&name))
         {
             // `ATTACH OR REPLACE`.
             let old = databases.remove(position);

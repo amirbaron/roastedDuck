@@ -241,7 +241,7 @@ fn bind_show_table(scope: &mut BindScope<'_>, show: &ShowRef) -> Result<BoundSta
                         .unwrap_or_default();
                 }
                 let lookup = if catalog.is_empty() {
-                    scope.context.default_catalog()
+                    &scope.context.default_catalog()
                 } else {
                     catalog.as_str()
                 };

@@ -103,6 +103,7 @@ test/fuzzer/duckfuzz/try_cast_string_to_list.test_slow
 test/fuzzer/duckfuzz/tuple_data_empty_heap.test
 test/fuzzer/duckfuzz/union_dict_tag.test
 test/fuzzer/duckfuzz/unpivot_multiple_in.test
+test/fuzzer/duckfuzz/vector_size_out_of_range.test
 test/fuzzer/duckfuzz/vector_type.test
 test/fuzzer/duckfuzz/visit_operator_expressions_in_column_lifetime_analyzer.test
 test/fuzzer/duckfuzz/window_expression_equality.test
@@ -980,6 +981,7 @@ test/sql/alter/struct/drop_col_nested_struct.test
 test/sql/alter/struct/drop_col_struct.test
 test/sql/alter/struct/rename_col_nested_struct.test
 test/sql/alter/struct/rename_col_struct.test
+test/sql/alter/test_alter_database_rename.test
 test/sql/alter/test_alter_if_exists.test
 test/sql/append/test_big_append.test_slow
 test/sql/attach/attach_all_types.test
@@ -3326,6 +3328,7 @@ test/sql/settings/allowed_configs.test
 test/sql/settings/allowed_configs_extensions.test
 test/sql/settings/allowed_directories.test
 test/sql/settings/allowed_paths.test
+test/sql/settings/block_allocator_memory.test
 test/sql/settings/connection_local_settings.test
 test/sql/settings/default_null_order_extended.test
 test/sql/settings/drop_set_schema.test
@@ -4157,6 +4160,8 @@ test/sql/transactions/statement-preprocessor/multistatement_is_transactional_cha
 test/sql/transactions/statement-preprocessor/multistatement_is_transactional_chained_PRAGMA_BEGIN.test
 test/sql/transactions/statement-preprocessor/pivot_is_handled_correctly.test
 test/sql/transactions/test_alter_sequence_ownership_conflict.test
+test/sql/transactions/test_alter_sequence_ownership_conflict2.test
+test/sql/transactions/test_alter_sequence_ownership_conflict3.test
 test/sql/transactions/test_basic_transactions.test
 test/sql/transactions/test_create_drop_conflict.test
 test/sql/transactions/test_create_drop_conflict_variation1.test

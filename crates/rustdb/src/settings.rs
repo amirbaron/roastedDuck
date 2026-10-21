@@ -502,20 +502,7 @@ pub(crate) fn check_value(option: &str, value: &Value) -> Result<()> {
             }
         }
         "block_allocator_memory" => {
-            let input = value.to_varchar()?;
-            if let Some(percentage) = input.strip_suffix('%') {
-                let valid = percentage
-                    .trim()
-                    .parse::<f64>()
-                    .is_ok_and(|percentage| (0.0..=100.0).contains(&percentage));
-                if !valid {
-                    return Err(Error::invalid_input(format!(
-                        "Unable to parse valid percentage (input: {input})"
-                    )));
-                }
-            } else {
-                rustdb_buffer::parse_memory_limit(&input)?;
-            }
+            block_allocator_size(value, 0)?;
         }
         "max_memory" => {
             rustdb_buffer::parse_memory_limit(&value.to_varchar()?)?;
@@ -1206,6 +1193,8 @@ pub(crate) struct SettingsSnapshot {
     pub memory_limit: u64,
     pub temp_directory: String,
     pub max_swap: Option<u64>,
+    /// The memory set aside for blocks (`block_allocator_memory`).
+    pub block_allocator_memory: u64,
     pub threads: u64,
     /// The options extensions added, with their current value and whether the session
     /// set it (`LOCAL` scope) rather than reading the global value.
@@ -1223,6 +1212,24 @@ fn input_type(definition: &SettingDefinition) -> LogicalType {
         "FLOAT" => LogicalType::FLOAT,
         "VARCHAR[]" => LogicalType::list(LogicalType::VARCHAR),
         _ => LogicalType::VARCHAR,
+    }
+}
+
+/// The size `block_allocator_memory` sets: a byte size, or a percentage of the memory
+/// limit `maximum_memory` (`BlockAllocatorMemorySetting::SetGlobal`).
+pub(crate) fn block_allocator_size(value: &Value, maximum_memory: u64) -> Result<u64> {
+    let input = value.to_varchar()?;
+    let Some(percentage) = input.strip_suffix('%') else {
+        return rustdb_buffer::parse_memory_limit(&input);
+    };
+    match percentage.trim().parse::<f64>() {
+        // `LossyNumericCast<idx_t>(percentage) * maximum_memory / 100`.
+        Ok(percentage) if (0.0..=100.0).contains(&percentage) => {
+            Ok((u128::from(percentage as u64) * u128::from(maximum_memory) / 100) as u64)
+        }
+        _ => Err(Error::invalid_input(format!(
+            "Unable to parse valid percentage (input: {input})"
+        ))),
     }
 }
 
@@ -1292,6 +1299,9 @@ impl SettingsSnapshot {
                 Some(value) => normalized_bytes(value)?,
                 None => Value::varchar(rustdb_buffer::format_bytes(self.memory_limit)),
             },
+            "block_allocator_memory" => {
+                Value::varchar(rustdb_buffer::format_bytes(self.block_allocator_memory))
+            }
             "max_temp_directory_size" => match (assigned, self.max_swap) {
                 (Some(value), _) => normalized_bytes(value)?,
                 (None, Some(limit)) => Value::varchar(rustdb_buffer::format_bytes(limit)),

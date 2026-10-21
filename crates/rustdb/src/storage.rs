@@ -179,7 +179,7 @@ pub(crate) fn checkpoint(
     }
     // A committed transaction with updates or catalog changes that older transactions
     // still need holds the checkpoint lock (`recently_committed_transactions`).
-    if !force && transactions.retains_changes(current.transaction_id, &database.name) {
+    if !force && transactions.retains_changes(current.transaction_id, &database.name()) {
         return Err(Error::new(
             ErrorKind::Transaction,
             "Cannot CHECKPOINT: there are other write transactions active. Try using FORCE CHECKPOINT to wait \
@@ -353,7 +353,7 @@ pub(crate) fn create_in_memory_checkpoint(
     // Committed updates older transactions must not see hold the checkpoint lock in
     // DuckDB (`recently_committed_transactions`): compressing would fold them in.
     if !full_checkpoint
-        && transactions.is_some_and(|transactions| transactions.retains_changes(u64::MAX, catalog.name()))
+        && transactions.is_some_and(|transactions| transactions.retains_changes(u64::MAX, &catalog.name()))
     {
         return Ok(());
     }

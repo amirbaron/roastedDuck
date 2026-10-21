@@ -652,7 +652,7 @@ struct Replayer {
 impl Replayer {
     /// Applies one entry; returns whether it was a `WAL_FLUSH` (`ReplayEntry`).
     fn replay_entry(&mut self, connection: &mut Connection, d: &mut dyn Deserializer) -> Result<bool> {
-        let entry = parse_entry(d, self.catalog.name())?;
+        let entry = parse_entry(d, &self.catalog.name())?;
         self.apply(connection, entry)
     }
 
@@ -685,7 +685,7 @@ impl Replayer {
                 .execute(&transaction)?;
             }
             WalEntry::CreateSchema(schema) => {
-                let mut info = rustdb_catalog::checkpoint::schema_create_info(self.catalog.name(), &schema);
+                let mut info = rustdb_catalog::checkpoint::schema_create_info(&self.catalog.name(), &schema);
                 info.on_conflict = rustdb_ast::OnCreateConflict::ErrorOnConflict;
                 CreateSchemaAction {
                     catalog: Arc::clone(&self.catalog),
@@ -806,7 +806,7 @@ impl Replayer {
             catalog: Arc::clone(&self.catalog),
             info: DropInfo {
                 catalog_type,
-                catalog: self.catalog.name().to_owned(),
+                catalog: self.catalog.name().to_string(),
                 schema,
                 name,
                 if_not_found: OnEntryNotFound::ThrowException,
@@ -828,7 +828,7 @@ impl Replayer {
         ) {
             return Ok(());
         }
-        self.catalog.name().clone_into(&mut info.catalog);
+        info.catalog = self.catalog.name().to_string();
         let statement = SqlStatement::new(SqlStatementKind::Alter(Box::new(info.clone())));
         connection.execute_statement("", statement)?;
         Ok(())

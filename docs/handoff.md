@@ -92,7 +92,8 @@ affected corpus directories, merge into main, and run the full corpus.
 
 ## Next steps, in order
 
-1. Salvage and finish performance round 5 and the shell port (above); merge each.
+1. Salvage and finish the shell port — the owner's top priority: DuckDB's shell one to
+   one — and performance round 5 (above); merge each.
 2. Close the real gaps in `docs/work-queue.md`, at most two agents at a time:
    compression parity (zstd encoder, roaring/bitpacking layouts), the in-memory result
    collection and buffer eviction under tight limits, plan serialization, operator

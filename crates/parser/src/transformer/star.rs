@@ -118,6 +118,7 @@ pub(crate) fn is_star(expr: &ParsedExpression) -> bool {
 
 impl<'a> Transformer<'a> {
     /// `TransformColumnRef`.
+    #[inline(never)]
     pub(crate) fn transform_column_ref(&mut self, root: &'a ColumnRef) -> Result<ParsedExpression> {
         let Some(head) = root.fields.first() else {
             return Err(Error::internal("Unexpected field length"));
@@ -140,6 +141,7 @@ impl<'a> Transformer<'a> {
 
     /// `TransformStarExpression`: `*`, `t.*`, `COLUMNS(...)` with `EXCLUDE`, `REPLACE`
     /// and `RENAME`.
+    #[inline(never)]
     pub(crate) fn transform_star_expression(&mut self, star: &'a AStar) -> Result<ParsedExpression> {
         let mut result = build::star_expression(star.relation.clone().unwrap_or_default());
         let mut exclude: QualifiedColumnMap<()> = QualifiedColumnMap::default();

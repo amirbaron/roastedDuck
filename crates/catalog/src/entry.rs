@@ -108,7 +108,7 @@ pub struct SchemaEntry {
 
 impl SchemaEntry {
     /// The empty schema `schema` of catalog `catalog`.
-    pub fn new(catalog: &str, schema: &str) -> Self {
+    pub fn new(catalog: &crate::CatalogName, schema: &str) -> Self {
         let set = || Arc::new(CatalogSet::new(catalog, schema));
         Self {
             tables: set(),
@@ -463,9 +463,11 @@ pub struct CatalogEntry {
     /// The entries this one depends on (DuckDB's dependency manager subjects); dropping
     /// one of them requires CASCADE.
     pub dependencies: Vec<rustdb_ast::LogicalDependency>,
-    /// The entries this one owns (`ALTER SEQUENCE ... OWNED BY`): they depend on it and
-    /// are dropped along with it.
-    pub owned: Vec<rustdb_ast::CatalogEntryInfo>,
+    /// The table or sequence that owns this entry (`ALTER SEQUENCE ... OWNED BY`), which
+    /// drops it along with itself. The link is part of the owned entry's version, as
+    /// DuckDB keeps it in a dependency entry of its own: giving an entry an owner does
+    /// not write a new version of the owner.
+    pub owned_by: Option<rustdb_ast::CatalogEntryInfo>,
     /// `COMMENT ON` (NULL without one).
     pub comment: rustdb_types::Value,
 }
@@ -479,7 +481,7 @@ impl CatalogEntry {
             temporary: false,
             kind,
             dependencies: Vec::new(),
-            owned: Vec::new(),
+            owned_by: None,
             comment: rustdb_types::Value::default(),
         }
     }
@@ -504,12 +506,21 @@ impl CatalogEntry {
     }
 
     /// Carries the catalog links of `previous` (the version this one replaces) over:
-    /// temporariness, dependencies, owned entries and the comment.
+    /// temporariness, dependencies, the owner and the comment.
     pub fn inherit_links(&mut self, previous: &Self) {
         self.temporary = previous.temporary;
         self.dependencies.clone_from(&previous.dependencies);
-        self.owned.clone_from(&previous.owned);
+        self.owned_by.clone_from(&previous.owned_by);
         self.comment.clone_from(&previous.comment);
+    }
+
+    /// This entry of `schema` as the subject of a dependency.
+    pub fn info(&self, schema: &str) -> rustdb_ast::CatalogEntryInfo {
+        rustdb_ast::CatalogEntryInfo {
+            catalog_type: self.dependency_type(),
+            schema: schema.to_owned(),
+            name: self.name.clone(),
+        }
     }
 
     /// Whether `info` names this entry of `schema`.
@@ -553,4 +564,11 @@ impl CatalogEntry {
             _ => None,
         }
     }
+}
+
+/// Whether `a` and `b` name the same entry.
+pub(crate) fn same_entry(a: &rustdb_ast::CatalogEntryInfo, b: &rustdb_ast::CatalogEntryInfo) -> bool {
+    a.catalog_type == b.catalog_type
+        && a.schema.eq_ignore_ascii_case(&b.schema)
+        && a.name.eq_ignore_ascii_case(&b.name)
 }

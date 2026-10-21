@@ -55,7 +55,7 @@ impl rustdb_function::TempCatalog for StatementTempCatalog {
             })
             .collect();
         let info = CreateInfo {
-            catalog: self.catalog.name().to_owned(),
+            catalog: self.catalog.name().to_string(),
             schema: DEFAULT_SCHEMA.to_owned(),
             temporary: true,
             internal: false,

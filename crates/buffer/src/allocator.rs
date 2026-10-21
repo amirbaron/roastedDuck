@@ -11,6 +11,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use rustdb_common::{Error, Result};
+
 use crate::os;
 
 /// How long a freed large mapping stays mapped for reuse: the decay time DuckDB gives its
@@ -101,6 +103,10 @@ pub struct BlockAllocator {
     shards: Box<[Mutex<Vec<PooledBlock>>]>,
     pooled: AtomicUsize,
     retain_blocks: AtomicUsize,
+    /// The memory set aside for blocks that is never given back (the
+    /// `block_allocator_memory` setting, DuckDB's `physical_memory_size`): freed blocks
+    /// up to this size stay pooled whatever the retention limit.
+    physical_memory_size: AtomicUsize,
     mapped_bytes: AtomicUsize,
 }
 
@@ -123,8 +129,42 @@ impl BlockAllocator {
             shards: (0..SHARDS).map(|_| Mutex::new(Vec::new())).collect(),
             pooled: AtomicUsize::new(0),
             retain_blocks: AtomicUsize::new(retain_bytes / block_size.max(1)),
+            physical_memory_size: AtomicUsize::new(0),
             mapped_bytes: AtomicUsize::new(0),
         }
+    }
+
+    /// The memory set aside for blocks (`block_allocator_memory`).
+    pub fn physical_memory_size(&self) -> usize {
+        self.physical_memory_size.load(Ordering::Relaxed)
+    }
+
+    /// Sets the memory set aside for blocks (DuckDB's `BlockAllocator::Resize`): it can
+    /// only grow, and only up to the virtual memory DuckDB reserves for blocks, 80% of
+    /// the system's memory.
+    pub fn resize(&self, size: usize) -> Result<()> {
+        let virtual_memory_size =
+            (crate::default_memory_limit() as usize).next_multiple_of(self.block_size.max(1));
+        self.physical_memory_size
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                (size >= current && size <= virtual_memory_size).then_some(size)
+            })
+            .map(|_| ())
+            .map_err(|current| {
+                Error::invalid_input(if size < current {
+                    format!("The \"block_allocator_size\" setting cannot be reduced (current: {current})")
+                } else {
+                    format!(
+                        "The \"block_allocator_size\" setting cannot be greater than the virtual memory size (virtual memory size: {virtual_memory_size})"
+                    )
+                })
+            })
+    }
+
+    /// How many freed blocks are kept for reuse.
+    fn retained_blocks(&self) -> usize {
+        let set_aside = self.physical_memory_size.load(Ordering::Relaxed) / self.block_size.max(1);
+        self.retain_blocks.load(Ordering::Relaxed).max(set_aside)
     }
 
     /// The size of recycled blocks.
@@ -149,7 +189,7 @@ impl BlockAllocator {
         let excess = self
             .pooled
             .load(Ordering::Relaxed)
-            .saturating_sub(self.retain_blocks.load(Ordering::Relaxed));
+            .saturating_sub(self.retained_blocks());
         self.release_blocks(excess);
     }
 
@@ -172,9 +212,7 @@ impl BlockAllocator {
     /// `ptr` and `size` must come from one `allocate` call on this allocator, and the
     /// memory must not be used afterwards.
     pub(crate) unsafe fn free(&self, ptr: NonNull<u8>, size: usize) {
-        if size == self.block_size
-            && self.pooled.load(Ordering::Relaxed) < self.retain_blocks.load(Ordering::Relaxed)
-        {
+        if size == self.block_size && self.pooled.load(Ordering::Relaxed) < self.retained_blocks() {
             let shard = os::thread_slot() % SHARDS;
             if let Ok(mut blocks) = self.shards[shard].lock() {
                 blocks.push(PooledBlock(ptr));
@@ -187,9 +225,11 @@ impl BlockAllocator {
         self.mapped_bytes.fetch_sub(size, Ordering::Relaxed);
     }
 
-    /// Returns every pooled block to the OS.
+    /// Returns the pooled blocks to the OS, except those of the memory set aside for
+    /// blocks (`block_allocator_memory`).
     pub fn flush(&self) {
-        self.release_blocks(usize::MAX);
+        let set_aside = self.physical_memory_size.load(Ordering::Relaxed) / self.block_size.max(1);
+        self.release_blocks(self.pooled.load(Ordering::Relaxed).saturating_sub(set_aside));
     }
 
     /// Returns pooled blocks covering at least `bytes` to the OS (DuckDB's
@@ -239,7 +279,7 @@ impl BlockAllocator {
 
 impl Drop for BlockAllocator {
     fn drop(&mut self) {
-        self.flush();
+        self.release_blocks(usize::MAX);
     }
 }
 

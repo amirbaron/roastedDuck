@@ -206,7 +206,7 @@ fn all_schemas(context: &ClientContext) -> Vec<(String, Arc<CatalogEntry>)> {
                 .schemas()
                 .scan(&context.transaction)
                 .into_iter()
-                .map(|schema| (catalog.name().to_owned(), schema))
+                .map(|schema| (catalog.name().to_string(), schema))
         })
         .collect();
     schemas.sort_by(|(left_catalog, left), (right_catalog, right)| {
@@ -263,7 +263,7 @@ fn suggest_catalog_name(context: &ClientContext) -> Vec<AutoCompleteCandidate> {
         .iter()
         .map(|catalog| {
             with_extra_char(
-                AutoCompleteCandidate::identifier(catalog.name(), SuggestionState::CatalogName, 0),
+                AutoCompleteCandidate::identifier(&*catalog.name(), SuggestionState::CatalogName, 0),
                 '.',
             )
         })

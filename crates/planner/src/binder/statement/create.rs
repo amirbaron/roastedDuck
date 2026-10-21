@@ -230,8 +230,8 @@ fn bind_create_type(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Result<
 /// The catalog a schema is created in (`Binder::BindCatalog`).
 fn bind_catalog(scope: &BindScope<'_>, catalog: &str) -> String {
     match scope.context.catalog(catalog) {
-        Some(found) if !catalog.is_empty() => found.name().to_owned(),
-        _ => scope.context.default_catalog().to_owned(),
+        Some(found) if !catalog.is_empty() => found.name().to_string(),
+        _ => scope.context.default_catalog(),
     }
 }
 
@@ -284,7 +284,7 @@ pub fn bind_create_schema(scope: &BindScope<'_>, info: &mut CreateInfo) -> Resul
             "Schema with name {schema} does not exist!"
         )));
     };
-    found.name().clone_into(&mut info.catalog);
+    info.catalog = found.name().to_string();
     schema_entry.name().clone_into(&mut info.schema);
     Ok(())
 }
@@ -1117,10 +1117,10 @@ pub fn bind_drop(scope: &mut BindScope<'_>, drop: &mut DropInfo) -> Result<Bound
             drop.schema = found.schema;
         } else {
             drop.schema = if schema.is_empty() {
-                scope.context.default_schema_for(if catalog.is_empty() {
+                scope.context.default_schema_for(&if catalog.is_empty() {
                     scope.context.default_catalog()
                 } else {
-                    &catalog
+                    catalog.clone()
                 })
             } else {
                 schema
