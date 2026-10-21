@@ -3074,6 +3074,7 @@ test/sql/pragma/test_pragma_database_size.test
 test/sql/pragma/test_pragma_functions.test
 test/sql/pragma/test_pragma_parsing.test
 test/sql/pragma/test_pragma_sanitized_inputs.test
+test/sql/pragma/test_pragma_version.test
 test/sql/pragma/test_query_log.test
 test/sql/pragma/test_show_tables.test
 test/sql/pragma/test_show_tables_from.test
@@ -3829,6 +3830,7 @@ test/sql/table_function/duckdb_constraints_issue11284.test
 test/sql/table_function/duckdb_constraints_issue12863.test
 test/sql/table_function/duckdb_databases.test
 test/sql/table_function/duckdb_dependencies.test
+test/sql/table_function/duckdb_extensions.test
 test/sql/table_function/duckdb_functions.test_slow
 test/sql/table_function/duckdb_functions_window.test
 test/sql/table_function/duckdb_indexes.test

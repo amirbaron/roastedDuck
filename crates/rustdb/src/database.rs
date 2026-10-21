@@ -68,6 +68,25 @@ pub(crate) struct DatabaseInstance {
     loaded_extensions: Arc<Mutex<Vec<StaticExtension>>>,
 }
 
+/// The object cache key of the database's loaded extensions, read by `duckdb_extensions()`.
+const LOADED_EXTENSIONS_KEY: &str = "rustdb.loaded_extensions";
+
+/// Whether the statically linked extension `name` is loaded (`ExtensionManager`).
+/// Extensions linked without functions of their own are always loaded.
+pub(crate) fn static_extension_loaded(cache: &rustdb_function::ObjectCache, name: &str) -> bool {
+    let Some(extension) = StaticExtension::from_name(name) else {
+        return true;
+    };
+    cache
+        .get::<Mutex<Vec<StaticExtension>>>(LOADED_EXTENSIONS_KEY)
+        .is_some_and(|loaded| {
+            loaded
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .contains(&extension)
+        })
+}
+
 /// An extension linked into the engine whose functions are registered on load.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StaticExtension {
@@ -560,6 +579,10 @@ impl Database {
             global_settings: Mutex::default(),
             loaded_extensions: Arc::default(),
         };
+        instance.object_cache.put(
+            LOADED_EXTENSIONS_KEY.to_owned(),
+            Arc::clone(&instance.loaded_extensions),
+        );
         if config.load_extensions {
             for extension in StaticExtension::ALL {
                 instance.load_static_extension(extension)?;

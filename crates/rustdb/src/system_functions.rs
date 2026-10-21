@@ -1356,6 +1356,28 @@ fn version_rows(_: &ClientContext) -> Result<Vec<Vec<Value>>> {
     ]])
 }
 
+const EXTENSIONS_COLUMNS: Columns = &[
+    ("extension_name", varchar),
+    ("loaded", boolean),
+    ("installed", boolean),
+    ("install_path", varchar),
+    ("description", varchar),
+    ("aliases", varchar_list),
+    ("extension_version", varchar),
+    ("install_mode", varchar),
+    ("installed_from", varchar),
+];
+
+/// `duckdb_extensions()`.
+fn extensions_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    let cache = context.function_client.object_cache();
+    crate::extensions::extension_rows(|name| {
+        cache
+            .as_deref()
+            .is_none_or(|cache| crate::database::static_extension_loaded(cache, name))
+    })
+}
+
 const PLATFORM_COLUMNS: Columns = &[("platform", varchar)];
 
 /// `pragma_platform()`.
@@ -2657,6 +2679,7 @@ pub(crate) fn pragma_table_functions() -> Vec<TableFunctionSet> {
         rows_function("pragma_version", VERSION_COLUMNS, version_rows),
         rows_function("pragma_platform", PLATFORM_COLUMNS, platform_rows),
         rows_function("pragma_user_agent", USER_AGENT_COLUMNS, user_agent_rows),
+        rows_function("duckdb_extensions", EXTENSIONS_COLUMNS, extensions_rows),
     ]
 }
 
@@ -2791,6 +2814,9 @@ pub(crate) fn pragma_query(name: &str, parameters: &[Value]) -> Result<Option<St
         "json_execute_serialized_sql" => rustdb_json::execute_serialized_sql_pragma(&first()?)?,
         "version" => "SELECT * FROM pragma_version();".to_owned(),
         "platform" => "SELECT * FROM pragma_platform();".to_owned(),
+        "extension_versions" => "select extension_name, extension_version, install_mode, installed_from from \
+                                 duckdb_extensions() where installed"
+            .to_owned(),
         "user_agent" => "SELECT * FROM pragma_user_agent()".to_owned(),
         "functions" => "SELECT function_name AS name, upper(function_type) AS type, parameter_types AS parameters, \
                         varargs, return_type, has_side_effects AS side_effects FROM duckdb_functions() WHERE \
