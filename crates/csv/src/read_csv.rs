@@ -950,7 +950,14 @@ fn read_csv_function(name: &'static str, argument: LogicalType) -> TableFunction
     let mut function = TableFunction::new(name, vec![argument])
         .with_bind(move |input| read_csv_bind(name, input))
         .with_scan(read_csv_scan);
-    function.named_parameters = read_csv_parameters();
+    // `MultiFileFunction` adds the multi-file parameters before `ReadCSVAddNamedParameters`
+    // adds the others (and the multi-file ones again).
+    function.named_parameters = multi_file_parameters();
+    for parameter in read_csv_parameters() {
+        if !function.named_parameters.contains(&parameter) {
+            function.named_parameters.push(parameter);
+        }
+    }
     function.projection_pushdown = true;
     function.projected_output = true;
     function.empty_column = true;

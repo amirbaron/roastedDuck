@@ -10,7 +10,7 @@ use rustdb_ast::ExpressionType;
 use rustdb_common::{CaseInsensitiveMap, Error, Result};
 use rustdb_function::{
     AggregateFunction, AggregateFunctionSet, BindInput, FunctionData, NullHandling, ScalarFunction,
-    ScalarFunctionSet, TableFunction, TableFunctionSet,
+    ScalarFunctionSet, TableFunction, TableFunctionSet, named_parameters_in_map_order,
 };
 use rustdb_types::{LogicalType, LogicalTypeId, TypeInfo, Value};
 
@@ -315,9 +315,7 @@ impl FunctionSignature for TableFunction {
     fn signature(&self) -> String {
         let mut parts: Vec<String> = self.arguments.iter().map(ToString::to_string).collect();
         parts.extend(
-            self.named_parameters
-                .iter()
-                .map(|(name, ty)| format!("{name} : {ty}")),
+            named_parameters_in_map_order(&self.named_parameters).map(|(name, ty)| format!("{name} : {ty}")),
         );
         format!("{}({})", self.name, parts.join(", "))
     }
@@ -343,8 +341,7 @@ impl FunctionSignature for rustdb_function::PragmaFunction {
             rustdb_function::PragmaType::Call => {
                 let mut parts: Vec<String> = self.arguments.iter().map(ToString::to_string).collect();
                 parts.extend(
-                    self.named_parameters
-                        .iter()
+                    named_parameters_in_map_order(&self.named_parameters)
                         .map(|(name, ty)| format!("{name} : {ty}")),
                 );
                 format!("PRAGMA {}({})", self.name, parts.join(", "))

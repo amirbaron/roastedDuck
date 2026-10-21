@@ -196,19 +196,7 @@ impl HashOrder {
     }
 }
 
-/// `StringUtil::CIHash`: the hash of `case_insensitive_map_t` keys.
-pub(crate) fn ci_hash(text: &str) -> u64 {
-    let mut hash: u32 = 0;
-    for &byte in text.as_bytes() {
-        hash = hash.wrapping_add(u32::from(byte.to_ascii_lowercase()));
-        hash = hash.wrapping_add(hash << 10);
-        hash ^= hash >> 6;
-    }
-    hash = hash.wrapping_add(hash << 3);
-    hash ^= hash >> 11;
-    hash = hash.wrapping_add(hash << 15);
-    u64::from(hash)
-}
+pub(crate) use rustdb_common::libcxx::ci_hash;
 
 /// A `case_insensitive_map_t` or `case_insensitive_set_t` whose iteration order follows
 /// libc++, built by unique insertions.

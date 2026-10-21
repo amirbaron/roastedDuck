@@ -1982,7 +1982,7 @@ fn entry_function_rows(
                 let mut parameters = positional_names(function.arguments.len());
                 let mut parameter_types: Vec<Option<String>> =
                     function.arguments.iter().map(|ty| Some(ty.to_string())).collect();
-                for (name, ty) in &function.named_parameters {
+                for (name, ty) in rustdb_function::named_parameters_in_map_order(&function.named_parameters) {
                     parameters.push(name.clone());
                     parameter_types.push(Some(ty.to_string()));
                 }
@@ -2007,7 +2007,7 @@ fn entry_function_rows(
                 let mut parameters = positional_names(function.arguments.len());
                 let mut parameter_types: Vec<Option<String>> =
                     function.arguments.iter().map(|ty| Some(ty.to_string())).collect();
-                for (name, ty) in &function.named_parameters {
+                for (name, ty) in rustdb_function::named_parameters_in_map_order(&function.named_parameters) {
                     parameters.push(name.clone());
                     parameter_types.push(Some(ty.to_string()));
                 }

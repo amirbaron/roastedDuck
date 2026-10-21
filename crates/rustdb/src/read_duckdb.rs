@@ -1089,12 +1089,13 @@ fn read_duckdb_function(argument: LogicalType) -> TableFunction {
                     .map_or(file_count, |rows| file_count * rows),
             )
         });
-    // `ReadDuckDBAddNamedParameters`.
-    function.named_parameters = vec![
+    // `ReadDuckDBAddNamedParameters`, after the multi-file parameters `MultiFileFunction`
+    // adds first.
+    function.named_parameters = multi_file_parameters();
+    function.named_parameters.extend([
         ("schema_name".to_owned(), LogicalType::VARCHAR),
         ("table_name".to_owned(), LogicalType::VARCHAR),
-    ];
-    function.named_parameters.extend(multi_file_parameters());
+    ]);
     function.projection_pushdown = true;
     function.filter_pushdown = true;
     function.filter_prune = true;
