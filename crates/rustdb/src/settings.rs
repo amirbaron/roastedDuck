@@ -1037,6 +1037,9 @@ pub(crate) struct SettingsSnapshot {
     pub temp_directory: String,
     pub max_swap: Option<u64>,
     pub threads: u64,
+    /// The options extensions added, with their current value and whether the session
+    /// set it (`LOCAL` scope) rather than reading the global value.
+    pub extensions: Vec<(rustdb_function::ExtensionOption, Value, bool)>,
 }
 
 /// The SQL type an option's value has (its `input_type`).
@@ -1142,7 +1145,16 @@ impl rustdb_function::SettingsSource for SettingsSnapshot {
     fn current_setting(&self, name: &str) -> Result<Value> {
         let definition = SETTINGS
             .iter()
-            .find(|definition| definition.name.eq_ignore_ascii_case(name))
+            .find(|definition| definition.name.eq_ignore_ascii_case(name));
+        if definition.is_none()
+            && let Some((_, value, _)) = self
+                .extensions
+                .iter()
+                .find(|(option, _, _)| option.name.eq_ignore_ascii_case(name))
+        {
+            return Ok(value.clone());
+        }
+        let definition = definition
             .ok_or_else(|| {
                 unrecognized(name, |option| {
                     self.current_setting(option)
@@ -1178,6 +1190,18 @@ impl rustdb_function::SettingsSource for SettingsSnapshot {
                     .map(|alias| (*alias).to_owned())
                     .collect(),
             })
+            .chain(self.extensions.iter().map(|(option, value, local)| rustdb_function::SettingInfo {
+                name: option.name.clone(),
+                value: if value.is_null() {
+                    String::new()
+                } else {
+                    value.to_varchar().unwrap_or_default()
+                },
+                description: option.description.clone(),
+                input_type: option.input_type.to_string(),
+                global: !local,
+                aliases: Vec::new(),
+            }))
             .collect()
     }
 }

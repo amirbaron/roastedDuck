@@ -295,8 +295,11 @@ impl Engine for RustEngine {
             for column in 0..result.column_count() {
                 let value = result.value(column, row);
                 // Like DuckDB's runner (`Value::CastAs(context, VARCHAR)`): types with
-                // extension casts (JSON) are rendered through the database's casts.
-                let value = if contains_json(value.logical_type()) && !value.is_null() {
+                // extension casts (JSON, and TIMESTAMPTZ with ICU) are rendered through
+                // the connection's casts.
+                let value = if (contains_json(value.logical_type()) || context.has_extension_cast(value.logical_type()))
+                    && !value.is_null()
+                {
                     context
                         .cast_value(&value, &LogicalType::VARCHAR)
                         .map_err(|error| error.to_string())?

@@ -24,6 +24,7 @@ rustdb-csv = { path = "../csv" }
 rustdb-parquet = { path = "../parquet" }
 rustdb-json = { path = "../json" }
 rustdb-tpch = { path = "../tpch" }
+rustdb-icu = { path = "../icu" }
 rustdb-autocomplete = { path = "../autocomplete" }
 
 [lints]
