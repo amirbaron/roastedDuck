@@ -198,6 +198,16 @@ fn canonical_name(name: &str) -> Option<&'static str> {
     OPTION_NAMES.iter().copied().find(|option| *option == lower)
 }
 
+/// The options of the parquet extension, in the order it adds them; DuckDB lists them
+/// with the other extensions' options.
+const PARQUET_OPTION_NAMES: [&str; 5] = [
+    "binary_as_string",
+    "disable_parquet_prefetching",
+    "prefetch_all_parquet_files",
+    "parquet_metadata_cache",
+    "enable_geoparquet_conversion",
+];
+
 /// DuckDB's `Catalog::UnrecognizedConfigurationError`; `enabled` reads the boolean
 /// options `autoload_known_extensions` and `autoinstall_known_extensions`.
 fn unrecognized(name: &str, enabled: impl Fn(&str) -> bool) -> Error {
@@ -222,8 +232,25 @@ pub(crate) fn unrecognized_with(
             enabled("autoinstall_known_extensions"),
         ));
     }
-    let mut names: Vec<String> = OPTION_NAMES.iter().map(|name| (*name).to_owned()).collect();
-    names.extend(extension_options.iter().cloned());
+    let mut names: Vec<String> = OPTION_NAMES
+        .iter()
+        .filter(|name| !PARQUET_OPTION_NAMES.contains(name))
+        .map(|name| (*name).to_owned())
+        .collect();
+    // `GetExtensionSettings`: the extensions' options follow, in the iteration order of
+    // their `case_insensitive_map_t` (ICU's are added before parquet's).
+    let mut extension_settings = rustdb_common::libcxx::UnorderedOrder::default();
+    for option in extension_options.iter().map(String::as_str).chain(PARQUET_OPTION_NAMES) {
+        extension_settings.insert(rustdb_common::libcxx::ci_hash(option), option, |a, b| {
+            a.eq_ignore_ascii_case(b)
+        });
+    }
+    names.extend(
+        extension_settings
+            .order()
+            .into_iter()
+            .map(|index| extension_settings.keys()[index].to_owned()),
+    );
     // `CatalogException::MissingEntry("configuration parameter", ...)`, thrown while the
     // SET executes (so caught and thrown again), with every option as a candidate.
     Error::catalog(format!(
