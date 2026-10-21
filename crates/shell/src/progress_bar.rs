@@ -2,6 +2,8 @@
 //! with `TerminalProgressBarDisplay::FormatProgressBar` / `FormatETA`): components such
 //! as the percentage, the bar, the time remaining and the memory used, each a prompt.
 
+use std::fmt::Write as _;
+
 use rustdb::{Error, Result};
 
 use crate::prompt::{PROMPT_SETTINGS, Prompt, PromptContext, PromptOptions};
@@ -42,6 +44,10 @@ pub fn format_progress_bar(percentage: i32) -> String {
 
 /// `TerminalProgressBarDisplay::FormatETA`: the time remaining (or elapsed), padded to a
 /// constant width.
+#[allow(
+    clippy::float_cmp,
+    reason = "`INT_MAX` seconds is DuckDB's marker of an unknown time"
+)]
 pub fn format_eta(seconds: f64, elapsed: bool) -> String {
     const RENDER_SIZE: usize = 26;
     if seconds < 0.0 || seconds == 2_147_483_647.0 || (!elapsed && seconds > 3600.0 * 99.0) {
@@ -56,18 +62,21 @@ pub fn format_eta(seconds: f64, elapsed: bool) -> String {
     let secs = total_seconds % 60;
     let mut result = String::from("(");
     if elapsed {
-        result += &format!("{hours:02}:{minutes:02}:{secs:02}.{centiseconds:02} elapsed");
+        let _ = write!(
+            result,
+            "{hours:02}:{minutes:02}:{secs:02}.{centiseconds:02} elapsed"
+        );
     } else {
         if hours == 0 && minutes == 0 && secs == 0 {
             result += "<1 second";
         } else if hours == 0 && minutes == 0 {
-            result += &format!("~{secs} second{}", if secs > 1 { "s" } else { "" });
+            let _ = write!(result, "~{secs} second{}", if secs > 1 { "s" } else { "" });
         } else if hours == 0 {
             let minute_fraction = (secs as f64 / 60.0 * 10.0) as u32;
-            result += &format!("~{minutes}.{minute_fraction} minutes");
+            let _ = write!(result, "~{minutes}.{minute_fraction} minutes");
         } else {
             let hour_fraction = (minutes as f64 / 60.0 * 10.0) as u32;
-            result += &format!("~{hours}.{hour_fraction} hours");
+            let _ = write!(result, "~{hours}.{hour_fraction} hours");
         }
         result += " remaining";
     }
@@ -207,7 +216,7 @@ impl PromptContext for ProgressBarContext<'_> {
                 if self.status.percentage < 10 {
                     result.push(' ');
                 }
-                result += &format!("{}%", self.status.percentage);
+                let _ = write!(result, "{}%", self.status.percentage);
                 Ok(result)
             }
             "progress_bar" => Ok(format_progress_bar(self.status.percentage)),

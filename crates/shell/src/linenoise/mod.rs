@@ -74,6 +74,7 @@ fn completion_type(name: &str) -> CompletionType {
 
 /// A completion of the line (`Completion`).
 #[derive(Clone, Debug)]
+#[allow(clippy::struct_field_names, reason = "DuckDB's field names")]
 pub struct Completion {
     /// The whole line with the completion applied.
     completion: Vec<u8>,
@@ -387,6 +388,7 @@ pub fn compute_render_width(buf: &[u8]) -> usize {
 }
 
 /// The state of the line being edited (`Linenoise`).
+#[allow(clippy::struct_excessive_bools, reason = "DuckDB's flags")]
 pub struct Linenoise<'a> {
     ifd: i32,
     ofd: i32,
@@ -783,7 +785,7 @@ impl<'a> Linenoise<'a> {
         }
         loop {
             self.pos = self.prev_char();
-            if !(self.pos > 0 && !Self::is_word_boundary(self.byte(self.pos))) {
+            if self.pos == 0 || Self::is_word_boundary(self.byte(self.pos)) {
                 break;
             }
         }
@@ -796,7 +798,7 @@ impl<'a> Linenoise<'a> {
         }
         loop {
             self.pos = self.next_char();
-            if !(self.pos != self.len() && !Self::is_word_boundary(self.byte(self.pos))) {
+            if self.pos == self.len() || Self::is_word_boundary(self.byte(self.pos)) {
                 break;
             }
         }
@@ -1157,7 +1159,7 @@ impl<'a> Linenoise<'a> {
                 self.accept_search();
                 return KeyPress::action(key::ENTER);
             }
-            key::CTRL_R | key::CTRL_S => self.search_next(),
+            key::CTRL_R | key::CTRL_S | key::CTRL_N => self.search_next(),
             key::ESC => match key_press.sequence {
                 EscapeSequence::Escape => {
                     self.accept_search();
@@ -1197,7 +1199,6 @@ impl<'a> Linenoise<'a> {
             }
             key::CTRL_L => terminal::clear_screen(),
             key::CTRL_P => self.search_prev(),
-            key::CTRL_N => self.search_next(),
             key::CTRL_C | key::CTRL_G => {
                 self.cancel_search();
                 return KeyPress::action(key::KEY_NULL);
@@ -1488,12 +1489,15 @@ impl<'a> Linenoise<'a> {
 
     /// `Linenoise::EditFileWithEditor`: `DUCKDB_EDITOR`, `EDITOR`, `VISUAL` or `vi`.
     fn edit_file_with_editor(file_name: &str, editor: Option<&str>) -> bool {
-        let editor = editor.map(str::to_owned).unwrap_or_else(|| {
-            ["DUCKDB_EDITOR", "EDITOR", "VISUAL"]
-                .iter()
-                .find_map(|name| std::env::var(name).ok())
-                .unwrap_or_else(|| "vi".to_owned())
-        });
+        let editor = editor.map_or_else(
+            || {
+                ["DUCKDB_EDITOR", "EDITOR", "VISUAL"]
+                    .iter()
+                    .find_map(|name| std::env::var(name).ok())
+                    .unwrap_or_else(|| "vi".to_owned())
+            },
+            str::to_owned,
+        );
         // The editor is not quoted: it may have options (`EDITOR="pico -t"`).
         crate::state::run_system(&format!("exec {editor} '{file_name}'")) == 0
     }

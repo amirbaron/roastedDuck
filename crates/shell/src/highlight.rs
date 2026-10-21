@@ -2,6 +2,7 @@
 //! colors of the elements (keywords, layout, errors, ...), terminal color codes, and
 //! highlighted error messages.
 
+use std::fmt::Write as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, PoisonError};
 
@@ -580,7 +581,9 @@ pub fn terminal_code(color: PrintColor, intensity: PrintIntensity) -> String {
             // The bright colors are \033[90m through \033[97m.
             8..=15 => terminal_code.push_str(&(82 + u16::from(code)).to_string()),
             // The extended colors (and black) are \033[38;5;{code}m.
-            _ => terminal_code.push_str(&format!("38;5;{code}")),
+            _ => {
+                let _ = write!(terminal_code, "38;5;{code}");
+            }
         }
         terminal_code.push('m');
     }

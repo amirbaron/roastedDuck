@@ -203,7 +203,7 @@ fn print_stdout(text: &str) {
     crate::printer::flush_stdout();
 }
 
-/// `Terminal::EnableMouseTracking`: XTerm's normal tracking.
+/// `Terminal::EnableMouseTracking`: `XTerm`'s normal tracking.
 pub fn enable_mouse_tracking() {
     if !raw_mode() {
         return;

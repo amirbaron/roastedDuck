@@ -2,6 +2,7 @@
 //! executing statements, rendering their results, and the dot commands that query the
 //! database.
 
+use std::fmt::Write as _;
 use std::fs::File;
 use std::io::BufReader;
 use std::time::Instant;
@@ -570,7 +571,7 @@ impl Shell {
         match self.query(&query) {
             Ok(result) => (0..result.row_count())
                 .map(|row| value_to_string(&result.value(0, row)))
-                .last()
+                .next_back()
                 .unwrap_or_default(),
             Err(_) => String::new(),
         }
@@ -928,7 +929,7 @@ impl Shell {
                 (".csv", "read_csv"),
                 (".parquet", "read_parquet"),
             ];
-            function = FUNCTIONS
+            FUNCTIONS
                 .iter()
                 .find(|(extension, _)| {
                     ["", ".gz", ".zst"]
@@ -936,7 +937,7 @@ impl Shell {
                         .any(|compression| file_name.ends_with(&format!("{extension}{compression}")))
                 })
                 .map_or("read_csv", |(_, reader)| reader)
-                .to_owned();
+                .clone_into(&mut function);
         }
         if function == "read_csv" && !generic_parameters.contains("ignore_errors") {
             generic_parameters.set("ignore_errors", "true");
@@ -954,9 +955,13 @@ impl Shell {
         } else {
             format!("CREATE TABLE {} AS ", sql_identifier(&table_name))
         };
-        import_query += &format!("SELECT * FROM {function}({}", sql_string(&file_name));
+        let _ = write!(
+            import_query,
+            "SELECT * FROM {function}({}",
+            sql_string(&file_name)
+        );
         for (name, value) in generic_parameters.iter() {
-            import_query += &format!(", {}={}", sql_identifier(name), sql_string(value));
+            let _ = write!(import_query, ", {}={}", sql_identifier(name), sql_string(value));
         }
         import_query.push(')');
         match self.query(&import_query) {
@@ -1634,17 +1639,16 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
 
     /// `ProcessDuckDBRC`: the init file, `~/.duckdbrc` by default.
     pub fn process_duckdbrc(&mut self, file: Option<&str>) -> bool {
-        let (path, is_default) = match file {
-            Some(file) => (file.to_owned(), false),
-            None => {
-                let home = home_directory();
-                if home.is_empty() {
-                    self.state
-                        .print_err("-- warning: cannot find home directory; cannot read ~/.duckdbrc\n");
-                    return true;
-                }
-                (format!("{home}/.duckdbrc"), true)
+        let (path, is_default) = if let Some(file) = file {
+            (file.to_owned(), false)
+        } else {
+            let home = home_directory();
+            if home.is_empty() {
+                self.state
+                    .print_err("-- warning: cannot find home directory; cannot read ~/.duckdbrc\n");
+                return true;
             }
+            (format!("{home}/.duckdbrc"), true)
         };
         self.state.duckdb_rc_path.clone_from(&path);
         self.process_file(&path, InputMode::DuckdbRc, is_default)

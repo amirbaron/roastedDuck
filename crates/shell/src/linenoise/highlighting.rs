@@ -101,8 +101,8 @@ fn parse_tokens(buf: &[u8]) -> Vec<HighlightToken> {
 /// `GetDotCommandTokens`: the command as a keyword, every argument as a string.
 fn dot_command_tokens(buf: &[u8]) -> Vec<HighlightToken> {
     let mut tokens = vec![HighlightToken::new(TokenType::Keyword, 0)];
-    for i in 0..buf.len().saturating_sub(1) {
-        if Linenoise::is_space(buf[i]) {
+    for (i, &c) in buf[..buf.len().saturating_sub(1)].iter().enumerate() {
+        if Linenoise::is_space(c) {
             tokens.push(HighlightToken::new(TokenType::StringConstant, i + 1));
         }
     }

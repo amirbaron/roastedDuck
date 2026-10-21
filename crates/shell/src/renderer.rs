@@ -3,6 +3,7 @@
 //! `box`, `latex`), row renderers that print rows as they stream (`line`, `list`, `csv`,
 //! `json`, `insert`, ...), the duckbox renderer, the `DESCRIBE` renderer and `trash`.
 
+use std::fmt::Write as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -254,15 +255,12 @@ impl RenderingQueryResult {
             row_index: cursor.row_index,
         };
         for column in &chunk.columns {
-            match &column[cursor.row_in_chunk] {
-                Some(value) => {
-                    row.data.push(value.clone());
-                    row.is_null.push(false);
-                }
-                None => {
-                    row.data.push(renderer.null_value().to_owned());
-                    row.is_null.push(true);
-                }
+            if let Some(value) = &column[cursor.row_in_chunk] {
+                row.data.push(value.clone());
+                row.is_null.push(false);
+            } else {
+                row.data.push(renderer.null_value().to_owned());
+                row.is_null.push(true);
             }
         }
         cursor.row_index += 1;
@@ -1315,7 +1313,7 @@ impl ShellRenderer for ModeQuoteRenderer {
         out.print(&self.settings.row_sep);
     }
 
-    fn null_value(&self) -> &str {
+    fn null_value(&self) -> &'static str {
         "NULL"
     }
 }
@@ -1341,7 +1339,9 @@ fn escape_json_string(text: &str) -> String {
             '\n' => result.push_str("\\n"),
             '\r' => result.push_str("\\r"),
             '\t' => result.push_str("\\t"),
-            '\u{0}'..='\u{1f}' => result.push_str(&format!("\\u{:04x}", c as u32)),
+            '\u{0}'..='\u{1f}' => {
+                let _ = write!(result, "\\u{:04x}", c as u32);
+            }
             _ => result.push(c),
         }
     }
@@ -1433,7 +1433,7 @@ impl ShellRenderer for ModeJsonRenderer {
         out.print(if self.json_array { "]\n" } else { "\n" });
     }
 
-    fn null_value(&self) -> &str {
+    fn null_value(&self) -> &'static str {
         "null"
     }
 }

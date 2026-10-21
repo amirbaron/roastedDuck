@@ -65,6 +65,10 @@ impl UnscentedKalmanFilter {
     }
 
     /// `Update`: a progress measurement at `time` seconds.
+    #[allow(
+        clippy::float_cmp,
+        reason = "a new measurement is a changed one, as in DuckDB"
+    )]
     fn update(&mut self, progress: f64, time: f64) {
         let progress = progress * self.scale_factor;
         if !self.initialized {
@@ -130,6 +134,10 @@ impl UnscentedKalmanFilter {
     }
 
     /// `Predict`.
+    #[allow(
+        clippy::needless_range_loop,
+        reason = "matrix arithmetic, indexed as DuckDB's"
+    )]
     fn predict(&mut self, current_time: f64) {
         let dt = current_time - self.last_time;
         self.last_time = current_time;
@@ -161,6 +169,10 @@ impl UnscentedKalmanFilter {
     }
 
     /// `UpdateInternal`: corrects the state with a measured progress.
+    #[allow(
+        clippy::needless_range_loop,
+        reason = "matrix arithmetic, indexed as DuckDB's"
+    )]
     fn update_internal(&mut self, measured_progress: f64) {
         let sigma_points = self.generate_sigma_points();
         // The measurement is the progress.

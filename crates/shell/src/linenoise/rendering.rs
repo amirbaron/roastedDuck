@@ -224,9 +224,10 @@ impl Linenoise<'_> {
                 let (shown, search_render_pos) =
                     render_text(&search_text, search_text.len(), max_render_size, 0, false);
                 search_prompt = shown;
-                for _ in search_render_pos..max_render_size {
-                    search_prompt.push(b' ');
-                }
+                search_prompt.resize(
+                    search_prompt.len() + max_render_size.saturating_sub(search_render_pos),
+                    b' ',
+                );
                 if render_matches {
                     search_prompt.extend_from_slice(matches_text.as_bytes());
                 }
@@ -307,9 +308,10 @@ impl Linenoise<'_> {
             let continuation_len = prompt.len();
             let continuation_render = compute_render_width(prompt.as_bytes());
             // Spaces before the prompt, to the width of the main prompt.
-            for _ in continuation_render as i32..plen {
-                result.push(b' ');
-            }
+            result.resize(
+                result.len() + (plen - continuation_render as i32).max(0) as usize,
+                b' ',
+            );
             result.extend_from_slice(prompt.as_bytes());
             let continuation_bytes = (plen as usize)
                 .wrapping_sub(continuation_render)
@@ -410,8 +412,7 @@ impl Linenoise<'_> {
                     b'$' if i + 1 < len => {
                         // Is this a dollar-quoted string?
                         let mut next_dollar = 0;
-                        for idx in i + 1..len {
-                            let d = buf[idx];
+                        for (idx, &d) in buf.iter().enumerate().take(len).skip(i + 1) {
                             if d == b'$' {
                                 next_dollar = idx;
                                 break;

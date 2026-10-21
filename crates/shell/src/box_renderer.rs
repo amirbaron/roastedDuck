@@ -3,6 +3,7 @@
 //! footer that counts the rows and columns.
 
 use std::collections::{BTreeMap, HashSet};
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use rustdb::{LogicalType, LogicalTypeId, MaterializedResult, Result};
@@ -319,7 +320,7 @@ impl BoxRendererState {
         self.footer.row_count_str = format!("{} rows", self.format_number(&row_count.to_string()));
         let has_limited_rows = self.config.limit > 0 && row_count == self.config.limit;
         if has_limited_rows {
-            self.footer.row_count_str = "? rows".to_owned();
+            "? rows".clone_into(&mut self.footer.row_count_str);
         }
         if self.config.large_number_rendering == LargeNumberRendering::Footer && !has_limited_rows {
             let readable_str = self.try_format_large_number(&row_count.to_string());
@@ -332,10 +333,10 @@ impl BoxRendererState {
         if self.footer.has_hidden_rows {
             if has_limited_rows {
                 let limit = self.format_number(&(self.config.limit - 1).to_string());
-                self.footer.shown_str += &format!(">{limit} rows, ");
+                let _ = write!(self.footer.shown_str, ">{limit} rows, ");
             }
             let shown = self.format_number(&rendered_rows.to_string());
-            self.footer.shown_str += &format!("{shown} shown");
+            let _ = write!(self.footer.shown_str, "{shown} shown");
         }
         self.footer.must_show_footer = has_limited_rows || self.footer.has_hidden_rows || row_count == 0;
         self.footer.render_length = self
@@ -360,7 +361,7 @@ impl BoxRendererState {
         } else {
             self.footer.has_hidden_columns = true;
             let shown_column_count = column_count - self.pruned_columns.len();
-            self.footer.column_count_str += &format!(" ({shown_column_count} shown)");
+            let _ = write!(self.footer.column_count_str, " ({shown_column_count} shown)");
         }
     }
 
@@ -388,17 +389,17 @@ impl BoxRendererState {
             self.top_rows = row_count;
             self.bottom_rows = 0;
         } else {
-            self.top_rows = rows_to_render / 2 + usize::from(rows_to_render % 2 != 0);
+            self.top_rows = rows_to_render / 2 + usize::from(!rows_to_render.is_multiple_of(2));
             self.bottom_rows = rows_to_render - self.top_rows;
         }
         self.compute_row_footer(row_count, self.top_rows + self.bottom_rows);
 
         let collections = self.fetch_render_collections(context)?;
-        self.render_collections = collections;
-        if self.config.render_mode == BoxRenderMode::Columns && rows_to_render > 0 {
-            let collections = std::mem::take(&mut self.render_collections);
-            self.render_collections = self.pivot_collections(collections, row_count, context);
-        }
+        self.render_collections = if self.config.render_mode == BoxRenderMode::Columns && rows_to_render > 0 {
+            self.pivot_collections(&collections, row_count, context)
+        } else {
+            collections
+        };
 
         // The width of every column: its name, its type and its values.
         let min_width = if self.footer.must_show_footer {
@@ -449,8 +450,11 @@ impl BoxRendererState {
     }
 
     /// `RenderValue`.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the parameters of DuckDB's `RenderValue`"
+    )]
     fn render_value(
-        &self,
         ss: &mut ResultRenderer<'_>,
         value: &str,
         column_width: usize,
@@ -667,7 +671,7 @@ impl BoxRendererState {
     /// name, its type and its values.
     fn pivot_collections(
         &mut self,
-        input: Vec<RenderDataCollection>,
+        input: &[RenderDataCollection],
         row_count: usize,
         context: &dyn RenderContext,
     ) -> Vec<RenderDataCollection> {
@@ -699,7 +703,7 @@ impl BoxRendererState {
                     text: Some(type_name),
                 },
             ];
-            for collection in &input {
+            for collection in input {
                 row.extend(collection.iter().map(|values| values[c].clone()));
             }
             result.push(row);
@@ -880,7 +884,7 @@ impl BoxRendererState {
                     );
                 } else {
                     // The last row takes all the remaining text.
-                    extra_value.text = full_value[current_pos..].to_owned();
+                    full_value[current_pos..].clone_into(&mut extra_value.text);
                     current_render_width = render_width(&extra_value.text);
                     current_pos = full_value.len();
                 }
@@ -1069,14 +1073,14 @@ impl BoxRendererState {
                 }
                 // Space left after pruning widens the shortened columns again.
                 let mut space_left = max_width - self.total_render_length;
-                for c in 0..self.column_widths.len() {
+                for (c, &original_width) in original_widths.iter().enumerate() {
                     if space_left == 0 {
                         break;
                     }
-                    if self.pruned_columns.contains(&c) || self.column_widths[c] >= original_widths[c] {
+                    if self.pruned_columns.contains(&c) || self.column_widths[c] >= original_width {
                         continue;
                     }
-                    let increase_amount = space_left.min(original_widths[c] - self.column_widths[c]);
+                    let increase_amount = space_left.min(original_width - self.column_widths[c]);
                     self.column_widths[c] += increase_amount;
                     space_left -= increase_amount;
                     self.total_render_length += increase_amount;
@@ -1245,7 +1249,7 @@ impl BoxRendererState {
                     self.highlight_value(render_value);
                 }
             }
-            self.render_value(
+            Self::render_value(
                 ss,
                 &render_value.text,
                 self.column_widths[column_idx],
@@ -1419,7 +1423,7 @@ impl BoxRendererState {
         if has_hidden_rows && padding >= shown_size {
             extra_render_str = format!(" ({shown_str}");
             if !readable_rows_str.is_empty() {
-                extra_render_str += &format!(", {readable_rows_str}");
+                let _ = write!(extra_render_str, ", {readable_rows_str}");
             }
             extra_render_str.push(')');
             padding -= shown_size;
@@ -1480,7 +1484,7 @@ impl BoxRendererState {
             if text.is_empty() {
                 continue;
             }
-            self.render_value(
+            Self::render_value(
                 ss,
                 &format!("({text})"),
                 total - 4,
@@ -1527,6 +1531,13 @@ pub fn truncate_value(
 /// `BoxRenderer::TryFormatLargeNumber`: a readable rendering of a number of a million or
 /// more ("1.23 million"), empty for other input.
 pub fn try_format_large_number(numeric: &str, decimal_sep: Option<u8>) -> String {
+    const BASES: [(u64, &str); 5] = [
+        (1_000_000, "million"),
+        (1_000_000_000, "billion"),
+        (1_000_000_000_000, "trillion"),
+        (1_000_000_000_000_000, "quadrillion"),
+        (1_000_000_000_000_000_000, "quintillion"),
+    ];
     if numeric.len() <= 5 {
         // Too small for sure.
         return String::new();
@@ -1548,13 +1559,6 @@ pub fn try_format_large_number(numeric: &str, decimal_sep: Option<u8>) -> String
         }
         number = number * 10 + u64::from(c - b'0');
     }
-    const BASES: [(u64, &str); 5] = [
-        (1_000_000, "million"),
-        (1_000_000_000, "billion"),
-        (1_000_000_000_000, "trillion"),
-        (1_000_000_000_000_000, "quadrillion"),
-        (1_000_000_000_000_000_000, "quintillion"),
-    ];
     let mut base = 0;
     let mut unit = "";
     for (candidate, name) in BASES {
@@ -2091,11 +2095,13 @@ impl JsonFormatter {
                     }
                     if inline_comma {
                         Self::add_space(format_state);
-                        for inline_idx in c + 1..peek_idx {
+                        for (inline_idx, inline_component) in
+                            components.iter().enumerate().take(peek_idx).skip(c + 1)
+                        {
                             format_state.component_idx = inline_idx;
                             self.format_component(
                                 format_state,
-                                &components[inline_idx],
+                                inline_component,
                                 InlineMode::InlinedSingleLine,
                             );
                         }

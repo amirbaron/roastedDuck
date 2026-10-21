@@ -4,6 +4,8 @@
 //! in DuckDB's order. This is the variant for non-arithmetic elements (no branchless
 //! sorting networks or bitset partitioning).
 
+#![allow(clippy::many_single_char_names, reason = "libc++'s names, to compare with it")]
+
 /// `std::sort(first, last, comp)` with `less` as the comparison.
 pub fn sort<T: Clone>(v: &mut [T], less: &mut impl FnMut(&T, &T) -> bool) {
     if v.is_empty() {
@@ -134,6 +136,7 @@ fn insertion_sort_incomplete<T: Clone>(
     last: usize,
     c: &mut impl FnMut(&T, &T) -> bool,
 ) -> bool {
+    const LIMIT: u32 = 8;
     match last - first {
         0 | 1 => return true,
         2 => {
@@ -158,7 +161,6 @@ fn insertion_sort_incomplete<T: Clone>(
     }
     let mut j = first + 2;
     sort3(v, first, first + 1, j, c);
-    const LIMIT: u32 = 8;
     let mut count = 0;
     let mut i = j + 1;
     while i != last {
@@ -266,7 +268,7 @@ fn partition_with_equals_on_left<T: Clone>(
     } else {
         loop {
             first += 1;
-            if !(first < last && !c(&pivot, &v[first])) {
+            if first >= last || c(&pivot, &v[first]) {
                 break;
             }
         }
@@ -514,6 +516,8 @@ fn introsort<T: Clone>(
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+
     use super::*;
 
     #[test]
@@ -544,7 +548,7 @@ mod tests {
                 let mut v: Vec<(u32, u32)> = (0..n).map(|i| (next() % keys, i)).collect();
                 sort(&mut v, &mut |a, b| a.0 < b.0);
                 for (_, index) in v {
-                    output += &format!("{index} ");
+                    let _ = write!(output, "{index} ");
                 }
                 output.push('\n');
             }

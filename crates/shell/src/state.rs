@@ -3,6 +3,7 @@
 //! pager, highlighting options and the input being read. The database and its connection
 //! live beside it in [`crate::shell::Shell`].
 
+use std::fmt::Write as _;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read};
 use std::process::{Command, Stdio};
@@ -194,6 +195,7 @@ pub enum MetadataResult {
 
 /// Whether errors stop processing (`BailOnError`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names, reason = "DuckDB's names")]
 pub enum BailOnError {
     Automatic,
     BailOnError,
@@ -241,6 +243,7 @@ const MAX_PROMPT_SIZE: usize = 20;
 
 /// DuckDB's `ShellState`, except the database and connection.
 #[derive(Debug)]
+#[allow(clippy::struct_excessive_bools, reason = "DuckDB's flags")]
 pub struct ShellState {
     /// The configuration databases are opened with.
     pub config: Config,
@@ -501,7 +504,9 @@ impl ShellState {
                 b'\r' => result.push_str("\\r"),
                 // `isprint` in the C locale.
                 0x20..=0x7e => result.push(char::from(c)),
-                _ => result.push_str(&format!("\\{c:03o}")),
+                _ => {
+                    let _ = write!(result, "\\{c:03o}");
+                }
             }
         }
         result.push('"');
@@ -529,7 +534,7 @@ impl ShellState {
 
     /// `SetTableName`: the table name of `.mode insert`, quoted if needed.
     pub fn set_table_name(&mut self, name: Option<&str>) {
-        self.dest_table = name.map(|name| sql_identifier(name)).unwrap_or_default();
+        self.dest_table = name.map(sql_identifier).unwrap_or_default();
     }
 
     /// `StringToInt`: an integer with an optional sign, hexadecimal with `0x`, and an
@@ -800,13 +805,14 @@ impl ShellState {
             "stdout" => Some(OutputTarget::Stdout),
             "stderr" => Some(OutputTarget::Stderr),
             "off" => None,
-            _ => match File::create(expand_path(file)) {
-                Ok(handle) => Some(OutputTarget::File(BufWriter::new(handle))),
-                Err(_) => {
+            _ => {
+                if let Ok(handle) = File::create(expand_path(file)) {
+                    Some(OutputTarget::File(BufWriter::new(handle)))
+                } else {
                     self.print_err(format!("Error: cannot open \"{file}\"\n"));
                     None
                 }
-            },
+            }
         }
     }
 

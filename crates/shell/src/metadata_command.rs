@@ -1,6 +1,13 @@
 //! The dot commands (DuckDB's `tools/shell/shell_metadata_command.cpp`): their table,
 //! callbacks, `.help` and the completion of their names.
 
+#![allow(
+    clippy::unnecessary_wraps,
+    reason = "every callback has the signature of the command table, `MetadataCommandFn`"
+)]
+
+use std::fmt::Write as _;
+
 use rustdb::Result;
 
 use crate::highlight::{
@@ -26,7 +33,7 @@ pub struct MetadataCommand {
     pub command: &'static str,
     /// The exact number of arguments, the command included; 0 for any.
     pub argument_count: usize,
-    /// `None` for commands of DuckDB's shell this one does not support.
+    /// `None` for `.edit`, which the line editor runs; as a command it is unsupported.
     pub callback: Option<MetadataCommandFn>,
     pub usage: &'static str,
     pub description: &'static str,
@@ -698,6 +705,10 @@ fn set_keyword_color(shell: &mut Shell, args: &[String]) -> Result<MetadataResul
 }
 
 /// `GetHue`.
+#[allow(
+    clippy::float_cmp,
+    reason = "the channel that is the maximum, as DuckDB compares"
+)]
 fn hue(input: &ColorInfo) -> f64 {
     let r = f64::from(input.r) / 255.0;
     let g = f64::from(input.g) / 255.0;
@@ -736,7 +747,22 @@ fn find_color_group(groups: &[&[&str]], name: &str) -> Result<usize> {
 }
 
 /// `.display_colors [bold|underline]`: every color in its own color, by group.
+#[allow(clippy::float_cmp, reason = "DuckDB's comparator compares the hues exactly")]
 fn display_colors(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+    // The order the groups are displayed in.
+    const COLOR_GROUPS: [&[&str]; 11] = [
+        &["red", "maroon", "coral"],
+        &["orange"],
+        &["yellow", "gold", "khaki", "wheat"],
+        &["green", "chartreuse", "lime", "honeydew", "olive"],
+        &["cyan", "aqua", "turquoise"],
+        &["blue", "navy"],
+        &["pink", "orchid", "rose", "thistle", "salmon", "tan"],
+        &["purple", "magenta", "plum", "fuchsia", "violet"],
+        &["brown"],
+        &["grey", "gray", "black"],
+        &["white", "silver", "cornsilk"],
+    ];
     let mut bold = false;
     let mut underline = false;
     for arg in &args[1..] {
@@ -752,20 +778,6 @@ fn display_colors(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> 
         (false, true) => PrintIntensity::Underline,
         (false, false) => PrintIntensity::Standard,
     };
-    // The order the groups are displayed in.
-    const COLOR_GROUPS: [&[&str]; 11] = [
-        &["red", "maroon", "coral"],
-        &["orange"],
-        &["yellow", "gold", "khaki", "wheat"],
-        &["green", "chartreuse", "lime", "honeydew", "olive"],
-        &["cyan", "aqua", "turquoise"],
-        &["blue", "navy"],
-        &["pink", "orchid", "rose", "thistle", "salmon", "tan"],
-        &["purple", "magenta", "plum", "fuchsia", "violet"],
-        &["brown"],
-        &["grey", "gray", "black"],
-        &["white", "silver", "cornsilk"],
-    ];
     let mut color_list = Vec::with_capacity(COLOR_INFO.len());
     for (code, info) in COLOR_INFO.iter().enumerate() {
         color_list.push((find_color_group(&COLOR_GROUPS, info.color_name)?, code, info));
@@ -820,7 +832,11 @@ fn set_pager(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
             if state.max_width == 0 {
                 page_mode += " or result set is wider than terminal";
             } else {
-                page_mode += &format!(" or result set is wider than {} characters", state.max_width);
+                let _ = write!(
+                    page_mode,
+                    " or result set is wider than {} characters",
+                    state.max_width
+                );
             }
             state.print(page_mode);
         }
