@@ -17,7 +17,9 @@ use rustdb_row::sort::{
 };
 use rustdb_storage::table_filter::DynamicFilterData;
 use rustdb_types::compare::CompareOp;
-use rustdb_types::{DataChunk, LogicalType, PhysicalType, SelectionVector, StringT, Vector, append_where};
+use rustdb_types::{
+    DataChunk, LogicalType, PhysicalType, SelectionVector, StringT, Vector, VectorKind, append_where,
+};
 
 use crate::operator::{
     ErasedSink, ErasedSource, OrderPreservationType, PhysicalOperator, PhysicalRef, SinkState, order_names,
@@ -287,9 +289,18 @@ pub struct TopNHeap {
     data: Payload,
     /// Arrival counter for tie-breaking.
     sequence: u64,
-    /// The global boundary key last seen and the length of its first column's key
-    /// (DuckDB's `boundary_val` / `boundary_values`).
-    boundary: Option<(Box<[u8]>, usize)>,
+    /// The global boundary key last seen (DuckDB's `boundary_val` / `boundary_values`).
+    boundary: Option<Boundary>,
+}
+
+/// A decoded global boundary key.
+#[derive(Debug)]
+struct Boundary {
+    key: Box<[u8]>,
+    /// The length of the first column's part of `key`.
+    first_length: usize,
+    /// The first column's value, as a constant vector.
+    first: Vector,
 }
 
 impl TopNHeap {
@@ -321,20 +332,66 @@ impl TopNHeap {
     /// boundary's (`CheckBoundaryValues` on the first column): only they can enter the
     /// heap. `None` when every row may.
     fn rows_within_boundary(&mut self, sort_chunk: &DataChunk, boundary: &[u8]) -> Result<Option<Vec<u32>>> {
-        if self.boundary.as_ref().is_none_or(|(known, _)| **known != *boundary) {
+        if self.boundary.as_ref().is_none_or(|known| *known.key != *boundary) {
             let mut columns = [Vector::flat(sort_chunk.column(0).logical_type().clone(), 1)];
-            let length = decode_sort_key(boundary, &mut columns, 0, &self.modifiers[..1])?;
-            self.boundary = Some((boundary.into(), length));
+            let first_length = decode_sort_key(boundary, &mut columns, 0, &self.modifiers[..1])?;
+            let [mut first] = columns;
+            first.make_constant();
+            self.boundary = Some(Boundary {
+                key: boundary.into(),
+                first_length,
+                first,
+            });
         }
-        let Some((known, length)) = &self.boundary else {
+        let Some(known) = &self.boundary else {
             return Ok(None);
         };
-        let limit = &known[..*length];
         let count = sort_chunk.len();
-        let firsts = create_sort_keys(&[sort_chunk.column(0)], &self.modifiers[..1], count)?;
+        let column = sort_chunk.column(0);
         let mut rows = Vec::new();
-        append_where(count, &mut rows, |row| row as u32, |row| firsts.key(row) <= limit);
+        if Self::compares_typed(column, &known.first) {
+            // `VectorOperations::DistinctLessThan` and friends: without NULLs, a value
+            // orders at most as the boundary's when it compares so.
+            let op = if self.modifiers[0].order == SortOrder::Descending {
+                CompareOp::GreaterThanOrEqual
+            } else {
+                CompareOp::LessThanOrEqual
+            };
+            rows.reserve(count);
+            rustdb_types::compare::select(op, column, &known.first, count, None, Some(&mut rows), None)?;
+        } else {
+            let limit = &known.key[..known.first_length];
+            let firsts = create_sort_keys(&[column], &self.modifiers[..1], count)?;
+            append_where(count, &mut rows, |row| row as u32, |row| firsts.key(row) <= limit);
+        }
         Ok((rows.len() < count).then_some(rows))
+    }
+
+    /// Whether the rows of `column` can be checked against the boundary value `first` by
+    /// comparing values instead of sort keys: neither has NULLs (whose position depends
+    /// on `NULLS FIRST/LAST`) and the type compares like its sort key.
+    fn compares_typed(column: &Vector, first: &Vector) -> bool {
+        let comparable = matches!(
+            column.logical_type().physical_type(),
+            PhysicalType::Bool
+                | PhysicalType::Int8
+                | PhysicalType::Int16
+                | PhysicalType::Int32
+                | PhysicalType::Int64
+                | PhysicalType::Int128
+                | PhysicalType::UInt8
+                | PhysicalType::UInt16
+                | PhysicalType::UInt32
+                | PhysicalType::UInt64
+                | PhysicalType::UInt128
+                | PhysicalType::Float
+                | PhysicalType::Double
+                | PhysicalType::Varchar
+        );
+        comparable
+            && !first.is_null(0)
+            && column.kind() == VectorKind::Flat
+            && column.validity().is_all_valid()
     }
 
     /// DuckDB's `TopNHeap::Sink`; `boundary` is the global boundary key, if any.
@@ -353,7 +410,10 @@ impl TopNHeap {
             }
             let sel = SelectionVector::new(rows);
             let slice = |chunk: &DataChunk| {
-                DataChunk::new(chunk.columns().iter().map(|column| column.slice(&sel)).collect(), sel.len())
+                DataChunk::new(
+                    chunk.columns().iter().map(|column| column.slice(&sel)).collect(),
+                    sel.len(),
+                )
             };
             sort_chunk = slice(&sort_chunk);
             sliced = Some(slice(input));
