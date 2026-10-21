@@ -408,8 +408,11 @@ impl PhysicalWindow {
         sink: &WindowGlobalSinkState,
         bin: usize,
     ) -> Result<WindowHashGroup> {
-        sink.strategy.sort_hash_group(&sink.sink, bin)?;
-        let chunks = sink.strategy.group_chunks(&sink.sink, bin)?;
+        sink.strategy.sort_column_data(&sink.sink, bin)?;
+        let chunks = match sink.strategy.group_rows(&sink.sink, bin)? {
+            Some(rows) => rows.to_chunks()?,
+            None => Vec::new(),
+        };
         let count = chunks.iter().map(DataChunk::len).sum();
         let (partition_mask, order_masks) = self.compute_masks(&chunks, count)?;
 

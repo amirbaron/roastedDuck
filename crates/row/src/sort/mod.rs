@@ -36,7 +36,8 @@ use rustdb_types::LogicalType;
 
 pub use block_iterator::ExternalBlockIteratorState;
 pub use encode::{
-    NullOrder, OrderModifiers, OrderType, SortKeyBuffer, create_sort_keys, decode_sort_key, sort_key_type_for,
+    NullOrder, OrderModifiers, OrderType, SortKeyBuffer, create_sort_keys, decode_sort_key,
+    decode_sort_key_column, sort_key_type_for,
 };
 pub use key::{SortKey, SortKeyType};
 pub use merger::{DEFAULT_ROW_GROUP_SIZE, MergerLocalState, SortedRunMerger};

@@ -628,13 +628,23 @@ fn materialized_sorted_run() {
 
 fn strategy_rows(strategy: &SortStrategy, global: &StrategyGlobalState) -> Vec<Vec<Vec<TestValue>>> {
     let groups = strategy.hash_groups(global);
+    // Several threads share each group's stages, as the window and as-of sources do.
     std::thread::scope(|scope| {
         for group in 0..groups.len() {
-            scope.spawn(move || strategy.sort_hash_group(global, group).unwrap());
+            for _ in 0..3 {
+                scope.spawn(move || strategy.sort_column_data(global, group).unwrap());
+            }
+        }
+    });
+    std::thread::scope(|scope| {
+        for group in 0..groups.len() {
+            for _ in 0..3 {
+                scope.spawn(move || strategy.materialize_column_data(global, group).unwrap());
+            }
         }
     });
     (0..groups.len())
-        .filter_map(|group| strategy.group_rows(global, group).unwrap())
+        .filter_map(|group| strategy.get_column_data(global, group).unwrap())
         .map(|rows| read_rows(&rows.to_chunks().unwrap()))
         .collect()
 }
@@ -776,7 +786,7 @@ fn strategy_sorted_runs() {
     let groups = strategy.hash_groups(&global);
     let mut total = 0;
     for group in 0..groups.len() {
-        strategy.sort_hash_group(&global, group).unwrap();
+        strategy.sort_column_data(&global, group).unwrap();
         if let Some(run) = strategy.sorted_run(&global, group).unwrap() {
             total += run.count();
         }

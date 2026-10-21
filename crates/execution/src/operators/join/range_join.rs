@@ -10,7 +10,7 @@ use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_planner::operator::JoinCondition;
 use rustdb_row::sort::{
     ExternalBlockIteratorState, NullOrder, OrderModifiers, OrderType, Sort, SortColumn, SortConfig,
-    SortGlobalSinkState, SortKeyType, SortLocalSinkState, SortSource, SortedRun, create_sort_keys,
+    SortGlobalSinkState, SortKeyType, SortLocalSinkState, SortSource, SortedRun,
 };
 use rustdb_row::{
     ChunkIterator, HeapKeepAlive, PinProperties, RowPtr, TupleDataCollection, TupleDataLayout, ValidityType,
@@ -30,47 +30,6 @@ pub(crate) fn order_modifiers(descending: bool) -> OrderModifiers {
         },
         NullOrder::NullsLast,
     )
-}
-
-/// Normalized sort keys of a column: byte strings that compare like the values in the
-/// sort order.
-#[derive(Debug, Default)]
-pub(crate) struct KeyBytes {
-    data: Vec<u8>,
-    offsets: Vec<usize>,
-}
-
-impl KeyBytes {
-    /// Appends the keys of the first `count` rows of `columns` sorted with `modifiers`.
-    pub(crate) fn push_columns(
-        &mut self,
-        columns: &[&Vector],
-        modifiers: &[OrderModifiers],
-        count: usize,
-    ) -> Result<()> {
-        let keys = create_sort_keys(columns, modifiers, count)?;
-        if self.offsets.is_empty() {
-            self.offsets.push(0);
-        }
-        for row in 0..count {
-            self.data.extend_from_slice(keys.key(row));
-            self.offsets.push(self.data.len());
-        }
-        Ok(())
-    }
-
-    /// The key of row `row`.
-    #[inline]
-    pub(crate) fn get(&self, row: usize) -> &[u8] {
-        &self.data[self.offsets[row]..self.offsets[row + 1]]
-    }
-}
-
-/// `lhs` sorts before `rhs`, or (unless `strict`) is equal to it (`MergeJoinBefore` /
-/// `IEJoinUnion::Compare` on sort keys).
-#[inline]
-pub(crate) fn sorts_before(lhs: &[u8], rhs: &[u8], strict: bool) -> bool {
-    if strict { lhs < rhs } else { lhs <= rhs }
 }
 
 /// `lhs` sorts before `rhs`, or (unless `strict`) is equal to it, for sort keys
@@ -486,25 +445,21 @@ pub(crate) fn slice_sorted_payload(
     })
 }
 
-/// Sorted rows with random access by position: their normalized keys and their payload
-/// columns, kept pinned (the positional join's buffered right side).
+/// Rows with random access by position, kept pinned (the positional join's buffered
+/// right side).
 #[derive(Debug)]
-pub struct SortedRows {
-    keys: KeyBytes,
+pub struct MaterializedRows {
     payload_types: Vec<LogicalType>,
     payload: TupleDataCollection,
     rows: Vec<RowPtr>,
     keep_alive: HeapKeepAlive,
 }
 
-impl SortedRows {
-    /// Materializes sorted `chunks`: the keys of columns `key_columns` sorted with
-    /// `modifiers`, and payload columns `payload_columns`.
+impl MaterializedRows {
+    /// Materializes columns `payload_columns` of `chunks`.
     pub(crate) fn materialize(
         buffer_manager: &BufferManager,
         chunks: &[DataChunk],
-        key_columns: &[usize],
-        modifiers: &[OrderModifiers],
         payload_columns: &[usize],
         payload_types: Vec<LogicalType>,
     ) -> Result<Self> {
@@ -516,13 +471,9 @@ impl SortedRows {
         let layout = Arc::new(TupleDataLayout::new(layout_types, ValidityType::CanHaveNull)?);
         let mut payload = TupleDataCollection::new(buffer_manager.clone(), layout, MemoryTag::OrderBy)?;
         let mut append = payload.initialize_append(PinProperties::KeepEverythingPinned);
-        let mut keys = KeyBytes::default();
-        keys.offsets.push(0);
         let mut total = 0;
         for chunk in chunks {
             let count = chunk.len();
-            let columns: Vec<&Vector> = key_columns.iter().map(|&column| chunk.column(column)).collect();
-            keys.push_columns(&columns, modifiers, count)?;
             let columns: Vec<Vector> = if payload_types.is_empty() {
                 vec![Vector::flat(LogicalType::BOOLEAN, count)]
             } else {
@@ -547,7 +498,6 @@ impl SortedRows {
         }
         let keep_alive = payload.heap_keep_alive();
         Ok(Self {
-            keys,
             payload_types,
             payload,
             rows,
@@ -560,13 +510,7 @@ impl SortedRows {
         self.rows.len()
     }
 
-    /// The normalized key of row `row`.
-    #[inline]
-    pub(crate) fn key(&self, row: usize) -> &[u8] {
-        self.keys.get(row)
-    }
-
-    /// Gathers the payload of rows `indices` into `result` (`SliceSortedPayload`).
+    /// Gathers the payload of rows `indices` into `result`.
     pub(crate) fn gather(&self, indices: &[u32], result: &mut DataChunk) -> Result<()> {
         let count = indices.len();
         let mut columns: Vec<Vector> = self

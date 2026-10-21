@@ -7,7 +7,7 @@ use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_types::{DataChunk, LogicalType, Vector};
 
 use super::null_columns;
-use super::range_join::SortedRows;
+use super::range_join::MaterializedRows;
 use crate::join_hashtable::flatten_sequences;
 use crate::operator::{ErasedOperator, ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
 use crate::{
@@ -35,7 +35,7 @@ impl PhysicalPositionalJoin {
     }
 
     /// Right rows `start..start + count` (NULL past the end) as columns.
-    fn right_rows(&self, rows: &SortedRows, start: usize, count: usize) -> Result<Vec<Vector>> {
+    fn right_rows(&self, rows: &MaterializedRows, start: usize, count: usize) -> Result<Vec<Vector>> {
         let available = rows.count().saturating_sub(start).min(count);
         if available == 0 {
             return Ok(null_columns(&self.right_types));
@@ -84,7 +84,7 @@ impl PhysicalOperator for PhysicalPositionalJoin {
 #[derive(Debug)]
 pub struct PositionalJoinGlobalState {
     chunks: Mutex<Vec<DataChunk>>,
-    rows: Option<SortedRows>,
+    rows: Option<MaterializedRows>,
     /// The next right row to emit.
     source_offset: Mutex<usize>,
 }
@@ -133,11 +133,9 @@ impl Sink for PhysicalPositionalJoin {
     ) -> Result<SinkFinalize> {
         let chunks = std::mem::take(global.chunks.get_mut().unwrap_or_else(PoisonError::into_inner));
         let columns: Vec<usize> = (0..self.right_types.len()).collect();
-        global.rows = Some(SortedRows::materialize(
+        global.rows = Some(MaterializedRows::materialize(
             &ctx.env.buffer_manager,
             &chunks,
-            &[],
-            &[],
             &columns,
             self.right_types.clone(),
         )?);

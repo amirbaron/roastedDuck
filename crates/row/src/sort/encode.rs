@@ -458,6 +458,19 @@ pub fn decode_sort_key(
     Ok(position)
 }
 
+/// Decodes the first column of `key` into row `row` of `column`; returns the bytes it
+/// takes up in the key (`CreateSortKeyHelpers::DecodeSortKey` of one column).
+pub fn decode_sort_key_column(
+    key: &[u8],
+    column: &mut Vector,
+    row: usize,
+    modifiers: OrderModifiers,
+) -> Result<usize> {
+    let mut position = 0;
+    decode_value(key, &mut position, column, row, modifiers)?;
+    Ok(position)
+}
+
 fn corrupt() -> Error {
     Error::invalid_input("Failed to decode sort key: unexpected end of key")
 }
