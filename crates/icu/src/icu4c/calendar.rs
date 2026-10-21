@@ -6,7 +6,7 @@
 //! The calendar systems' hooks (`handleComputeFields`, `handleComputeMonthStart`, ...)
 //! live in [`super::calsys`].
 
-use super::calsys::CalendarSystem;
+use super::calsys::{CalendarSystem, GREGORIAN_LIMITS};
 use super::grego::{
     self, EPOCH_START_AS_JULIAN_DAY, MAX_MILLIS, MIN_MILLIS, ONE_DAY, ONE_HOUR, ONE_MINUTE, ONE_SECOND,
     ONE_WEEK,
@@ -653,6 +653,9 @@ impl Calendar {
 
     /// `Calendar::add`.
     pub fn add(&mut self, field: usize, amount: i32, status: &mut Status) {
+        if self.subclass_add(field, amount, status) {
+            return;
+        }
         if amount == 0 {
             return; // Do nothing!
         }
@@ -771,7 +774,7 @@ impl Calendar {
     }
 
     /// `Calendar::pinField`.
-    fn pin_field(&mut self, field: usize, status: &mut Status) {
+    pub(super) fn pin_field(&mut self, field: usize, status: &mut Status) {
         let max = self.get_actual_maximum(field, status);
         let min = self.get_actual_minimum(field, status);
         if self.fields[field] > max {
@@ -972,6 +975,9 @@ impl Calendar {
 
     /// `Calendar::getActualMaximum` (with `GregorianCalendar`'s special case for YEAR).
     pub fn get_actual_maximum(&mut self, field: usize, status: &mut Status) -> i32 {
+        if field == F::YEAR && matches!(self.system, CalendarSystem::Japanese(_)) {
+            return self.japanese_actual_maximum_year(status);
+        }
         if field == F::YEAR && self.system.is_gregorian_family() {
             return self.gregorian_actual_maximum_year(status);
         }
@@ -1029,8 +1035,8 @@ impl Calendar {
 
         // Perform a binary search, with the invariant that lowGood is a valid year, and
         // highBad is an out of range year.
-        let mut low_good = self.system.handle_get_limit(F::YEAR, Limit::GreatestMinimum);
-        let mut high_bad = self.system.handle_get_limit(F::YEAR, Limit::LeastMaximum) + 1;
+        let mut low_good = GREGORIAN_LIMITS[F::YEAR][Limit::GreatestMinimum as usize];
+        let mut high_bad = GREGORIAN_LIMITS[F::YEAR][Limit::LeastMaximum as usize] + 1;
         while (low_good + 1) < high_bad {
             let y = (low_good + high_bad) / 2;
             cal.set(F::YEAR, y);
@@ -1305,7 +1311,7 @@ impl Calendar {
         let month = if self.is_set(F::MONTH) {
             self.internal_get(F::MONTH)
         } else {
-            self.system.get_default_month_in_year(year)
+            self.get_default_month_in_year(year)
         };
 
         let mut julian_day = self.handle_compute_month_start(year, if use_month { month } else { 0 }, use_month);
@@ -1315,7 +1321,7 @@ impl Calendar {
             let day_of_month = if self.is_set(F::DAY_OF_MONTH) {
                 self.internal_get_or(F::DAY_OF_MONTH, 1)
             } else {
-                self.system.get_default_day_in_month(year, month)
+                self.get_default_day_in_month(year, month)
             };
             return julian_day.wrapping_add(day_of_month);
         }

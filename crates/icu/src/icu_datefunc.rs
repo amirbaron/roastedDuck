@@ -10,7 +10,7 @@ use rustdb_function::{BindInput, FunctionClient, FunctionData, ScalarFunction};
 use rustdb_types::{Interval, Timestamp};
 
 use crate::icu4c::calendar::{Calendar, Status, field};
-use crate::icu4c::calsys::{CalendarSystem, GregorianState};
+use crate::icu4c::calsys::CalendarSystem;
 use crate::icu4c::timezone::TimeZone;
 use crate::icu_helpers;
 
@@ -32,11 +32,10 @@ fn now_millis() -> f64 {
 /// `proleptic`, Gregorian calendars get `ucal_setGregorianChange(U_DATE_MIN)` (which
 /// only succeeds for plain `GregorianCalendar`s: `gregorian` and `iso8601`).
 pub(crate) fn create_calendar_with_cutover(zone: TimeZone, cal_setting: &str, proleptic: bool) -> Calendar {
-    let system = if proleptic {
-        CalendarSystem::Gregorian(GregorianState::proleptic())
-    } else {
-        CalendarSystem::Gregorian(GregorianState::papal())
-    };
+    // `Calendar::createInstance(tz, Locale("@calendar=" + cal_setting))`; calendars
+    // without a port (the astronomical islamic, chinese and dangi) fall back to Gregorian.
+    let system = CalendarSystem::for_keyword(cal_setting, proleptic)
+        .unwrap_or_else(|| CalendarSystem::for_keyword("gregorian", proleptic).expect("gregorian"));
     let mut calendar = Calendar::new(zone, system, now_millis());
     if cal_setting.eq_ignore_ascii_case("iso8601") {
         calendar.set_first_day_of_week(crate::icu4c::grego::MONDAY);

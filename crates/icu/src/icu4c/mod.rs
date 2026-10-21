@@ -4,5 +4,6 @@
 pub mod calendar;
 pub mod calsys;
 pub mod grego;
+pub mod japanese_eras;
 pub mod timezone;
 pub mod zone_names;
