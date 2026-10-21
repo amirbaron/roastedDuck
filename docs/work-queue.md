@@ -47,10 +47,6 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      against the memory limit.
    - `auto_checkpoint_skip_wal_threshold` is accepted, but a commit that triggers a
      checkpoint still writes its WAL entries.
-   - Block numbering of optimistic writes: a `CREATE TABLE AS` whose row group has both
-     small (partial-block) and full-block segments (e.g. a STRUCT with long strings) puts
-     the partial block before the full blocks; DuckDB numbers it after them. Offsets
-     match, block ids differ (compare `pragma_storage_info` of both engines).
 5. **Compression parity.** ZSTD strings compress about 16% worse than DuckDB's
    (`zstd_compression_ratio`). The cause is `ruzstd`'s encoder, not its match level: on
    concatenated UUIDs it reaches 1.72× (1.76× emitting literals only, about 4.56 bits per
@@ -58,10 +54,15 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    coding is far from optimal. Needs a zstd block encoder of our own (length-limited
    Huffman literals, FSE-coded sequences with custom tables, a level-3 matcher); check
    `ruzstd`'s decoding speed against DuckDB's at the same time.
-   Roaring and hugeint bitpacking produce different segment layouts than DuckDB
+   Roaring and hugeint bitpacking segments are DuckDB's, block for block
    (`roaring_compression_ratio`, `roaring_bool_compression_ratio`,
-   `bitpacking_compression_ratio_hugeint`); compare files byte for byte with the C++
-   writer.
+   `bitpacking_compression_ratio_hugeint` pass): checkpoints and optimistic writes share
+   partially filled blocks the way `PartialBlockManager` does (best fit by free space, a
+   block stays open while at least 20% is free, ids assigned when a block is flushed,
+   per-column managers of inserts merged into the checkpoint's), and unchanged index
+   buffers keep their blocks.
+   FSST segments of the same strings hold slightly different counts than DuckDB's
+   (5878 against 5877 strings in a 256 KiB segment): the symbol tables differ.
 6. **External file cache.** `CachingFileSystem`, `duckdb_external_file_cache()`,
    `validate_external_file_cache` (`external_file_cache_*` tests).
 15. **Database encryption** (`dict_fsst_expression_filter`, which attaches a database
