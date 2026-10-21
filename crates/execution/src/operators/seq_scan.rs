@@ -5,14 +5,16 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use rustdb_common::{Result, STANDARD_VECTOR_SIZE};
 use rustdb_function::random::RandomEngine;
-use rustdb_storage::table::{ScanRandom, ScanSampling};
+use rustdb_storage::table::{RowGroupOrderOptions, ScanRandom, ScanSampling};
 use rustdb_storage::table_filter::DynamicTableFilterSet;
 use rustdb_storage::{
     DataTable, ParallelTableScanState, StorageIndex, TableFilterSet, TableScanState, Transaction,
 };
 use rustdb_types::{DataChunk, LogicalType};
 
-use crate::operator::{ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
+use crate::operator::{
+    ErasedSource, OperatorPartitionData, OperatorPartitionInfo, PhysicalOperator, PhysicalRef, SinkState,
+};
 use crate::{ExecutionContext, ScanMetrics, Source, SourceResult};
 
 /// Scans a table's storage in parallel, one row group per morsel (DuckDB's
@@ -49,6 +51,8 @@ pub struct PhysicalSeqScan {
     /// SYSTEM sampling pushed into the scan: the fraction of vectors to keep and the
     /// `REPEATABLE` seed (DuckDB's `extra_info.sample_options`).
     sampling: Option<(f64, Option<u64>)>,
+    /// The order to read the row groups in (DuckDB's `TableScanBindData::order_options`).
+    row_group_order: Option<RowGroupOrderOptions>,
 }
 
 /// [`RandomEngine`] as the storage's sampling random source.
@@ -161,7 +165,16 @@ impl PhysicalSeqScan {
             is_index_scan: AtomicBool::new(false),
             explain: ScanExplainInfo::default(),
             sampling: None,
+            row_group_order: None,
         }
+    }
+
+    /// Reads the row groups in the order of a column's statistics (DuckDB's
+    /// `SetScanOrder`).
+    #[must_use]
+    pub fn with_row_group_order(mut self, order: Option<RowGroupOrderOptions>) -> Self {
+        self.row_group_order = order;
+        self
     }
 
     /// Sets the run-time filters operators above set (DuckDB's `dynamic_filters`), keyed
@@ -251,8 +264,8 @@ impl PhysicalOperator for PhysicalSeqScan {
     fn parallel_source(&self) -> bool {
         true
     }
-    fn supports_batch_index(&self) -> bool {
-        true
+    fn supports_partitioning(&self, partition_info: &OperatorPartitionInfo) -> bool {
+        !partition_info.requires_partition_columns()
     }
     fn table_filters(&self) -> Option<&TableFilterSet> {
         self.filters.as_ref().filter(|filters| !filters.is_empty())
@@ -336,7 +349,9 @@ impl Source for PhysicalSeqScan {
             });
         }
         Ok(SeqScanGlobal {
-            parallel: self.table.initialize_parallel_scan(&self.transaction),
+            parallel: self
+                .table
+                .initialize_parallel_scan(&self.transaction, self.row_group_order.as_ref()),
             index_rows: None,
             next_index_row: AtomicUsize::new(0),
             filters,
@@ -480,15 +495,23 @@ impl Source for PhysicalSeqScan {
         })
     }
 
-    fn batch_index(&self, global: &Self::Global, local: &Self::Local) -> Result<u64> {
-        if let Some(batch) = local.index_batch {
-            return Ok(batch);
-        }
-        // After an index scan, the local rows' batches follow the indexed rows' vectors.
-        let index_batches = global
-            .index_rows
-            .as_ref()
-            .map_or(0, |rows| rows.len().div_ceil(STANDARD_VECTOR_SIZE) as u64);
-        Ok(index_batches + local.state.batch_index())
+    fn partition_data(
+        &self,
+        global: &Self::Global,
+        local: &Self::Local,
+        _: &OperatorPartitionInfo,
+    ) -> Result<OperatorPartitionData> {
+        let batch_index = local.index_batch.unwrap_or_else(|| {
+            // After an index scan, the local rows' batches follow the indexed rows' vectors.
+            let index_batches = global
+                .index_rows
+                .as_ref()
+                .map_or(0, |rows| rows.len().div_ceil(STANDARD_VECTOR_SIZE) as u64);
+            index_batches + local.state.batch_index()
+        });
+        Ok(OperatorPartitionData {
+            batch_index,
+            partition_data: Vec::new(),
+        })
     }
 }

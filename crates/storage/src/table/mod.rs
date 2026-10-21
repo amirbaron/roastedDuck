@@ -9,6 +9,7 @@ pub(crate) mod geo_column_data;
 pub mod per_column_metadata_blocks;
 pub mod row_group;
 pub mod row_group_collection;
+pub mod row_group_reorderer;
 pub mod row_version_manager;
 pub mod scan_state;
 pub mod segment_tree;
@@ -31,6 +32,9 @@ pub use row_group::{
 pub use row_group_collection::{
     FetchType, RowGroupAppendMode, RowGroupCollection, RowGroupSegmentTree, TableAppendState,
     TableMetadataPointer, TableStatistics,
+};
+pub use row_group_reorderer::{
+    OffsetPruningResult, OrderByColumnType, OrderByStatistics, RowGroupOrderOptions, RowGroupPartition,
 };
 pub use row_version_manager::RowVersionManager;
 pub use scan_state::{

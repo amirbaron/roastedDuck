@@ -402,7 +402,7 @@ impl PipelineBuilder {
             Some(&sink),
             self.preserve_insertion_order,
         ) || sink.sink_order_dependent()
-            || sink.requires_batch_index()
+            || sink.required_partition_info().batch_index
             || !sink.parallel_sink();
         let union_pipelines: Vec<usize> = (1..children.len())
             .map(|_| self.create_union_pipeline(meta, current, order_matters))

@@ -4,7 +4,6 @@
 
 use std::sync::Arc;
 
-use rustdb_buffer::BlockId;
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_types::LogicalType;
 
@@ -163,14 +162,13 @@ fn read_deletes(metadata: &MetadataManager, pointer: MetaBlockPointer) -> Result
     ))
 }
 
-/// Builds the row groups of a table from its checkpoint data; `blocks` receives every
-/// data block the table references.
+/// Builds the row groups of a table from its checkpoint data; their columns are read when
+/// first used.
 pub fn load_row_groups(
     io: &Arc<TableIoManager>,
     metadata: &Arc<MetadataManager>,
     types: &[LogicalType],
     data: PersistentTableData,
-    blocks: &mut Vec<BlockId>,
 ) -> Result<RowGroupCollection> {
     let collection = RowGroupCollection::new(Arc::clone(io), types.to_vec(), 0);
     let shared_types: Arc<[LogicalType]> = Arc::from(types);
@@ -179,11 +177,6 @@ pub fn load_row_groups(
             return Err(Error::serialization(
                 "row group column count does not match the table",
             ));
-        }
-        // The columns are read again and built when first used; here only their blocks
-        // are collected.
-        for (column_pointer, ty) in pointer.data_pointers.iter().zip(types) {
-            read_column(metadata, *column_pointer, ty)?.collect_blocks(blocks);
         }
         let row_group = RowGroup::from_metadata(
             Arc::clone(io),

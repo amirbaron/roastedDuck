@@ -11,6 +11,7 @@ use super::chunk_info::ScanOptions;
 use super::column_data::{ColumnData, ColumnDataType};
 use super::row_group::{DeleteRecord, RowGroup, RowGroupAppendState, TableScanType, UpdateRecord};
 use super::scan_state::{CollectionScanState, ParallelCollectionScanState, ScanFilterInfo, StorageIndex};
+use super::row_group_reorderer::{RowGroupOrderOptions, order_row_groups};
 use super::segment_tree::{SegmentNode, SegmentTree};
 use crate::checkpoint::pointers::PersistentCollectionData;
 use crate::data_table::TableIoManager;
@@ -482,11 +483,19 @@ impl RowGroupCollection {
         )
     }
 
-    /// Prepares a parallel scan (`InitializeParallelScan`).
-    pub fn initialize_parallel_scan(&self, state: &ParallelCollectionScanState) {
+    /// Prepares a parallel scan (`InitializeParallelScan`), reading the row groups in the
+    /// order of `order`'s column statistics if given (`RowGroupReorderer`).
+    pub fn initialize_parallel_scan(
+        &self,
+        state: &ParallelCollectionScanState,
+        order: Option<(&RowGroupOrderOptions, TransactionData)>,
+    ) {
         let row_groups = self.row_groups();
         let mut inner = state.inner.lock().unwrap_or_else(PoisonError::into_inner);
         inner.max_row = row_groups.base_row_id + self.total_rows();
+        inner.order = order.map(|(options, transaction)| {
+            order_row_groups(&row_groups.tree.nodes(), options, transaction)
+        });
         inner.row_groups = Some(row_groups);
         inner.next_row_group = 0;
         inner.batch_index = 0;
@@ -508,7 +517,10 @@ impl RowGroupCollection {
                 let Some(row_groups) = inner.row_groups.clone() else {
                     return Ok(false);
                 };
-                let position = inner.next_row_group;
+                let position = match &inner.order {
+                    Some(order) => order.get(inner.next_row_group).copied().unwrap_or(usize::MAX),
+                    None => inner.next_row_group,
+                };
                 let Some(node) = row_groups.tree.get(position) else {
                     scan_state.batch_index = inner.batch_index;
                     return Ok(false);

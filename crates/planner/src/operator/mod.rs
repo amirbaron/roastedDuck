@@ -155,6 +155,9 @@ pub struct LogicalGet {
     /// The filters that pruned the scanned files, for `EXPLAIN` (the rest of DuckDB's
     /// `ExtraOperatorInfo`).
     pub file_filters: FileFilterInfo,
+    /// The order a table scan reads its row groups in (DuckDB's
+    /// `row_group_order_options`, set by the `RowGroupPruner`).
+    pub row_group_order: Option<rustdb_storage::table::RowGroupOrderOptions>,
 }
 
 /// The file filters of a scan (DuckDB's `ExtraOperatorInfo::file_filters`, `total_files`

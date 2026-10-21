@@ -14,11 +14,12 @@ use rustdb_row::{PartitionedTupleData, TupleDataCollection};
 use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
 use crate::aggregate_hashtable::{GroupedAggregateHashTable, initial_capacity};
-use crate::operators::radix_sink::{RadixSinkConfig, RadixSinkTable, initial_radix_bits};
 use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
 use crate::operators::hash_aggregate::{
-    abandon_table, external_radix_bits, memory_pressure, repartitioned, table_data, thread_memory_limit,
+    abandon_table, external_radix_bits, finalize_capacity, memory_pressure, repartitioned, table_data,
+    thread_memory_limit,
 };
+use crate::operators::radix_sink::{RadixSinkConfig, RadixSinkTable, initial_radix_bits};
 use crate::{ExecutionContext, ExpressionExecutor, Sink, SinkFinalize, SinkResult, Source, SourceResult};
 
 /// One state per aggregate, allocated together in a single aligned buffer.
@@ -43,7 +44,7 @@ impl std::fmt::Debug for AggregateStates {
 }
 
 impl AggregateStates {
-    fn new(aggregates: &[BoundAggregate]) -> Self {
+    pub(crate) fn new(aggregates: &[BoundAggregate]) -> Self {
         let mut layout = Layout::new::<()>();
         let mut offsets = Vec::with_capacity(aggregates.len());
         for aggregate in aggregates {
@@ -76,6 +77,135 @@ impl AggregateStates {
     fn state(&self, index: usize) -> StatePtr {
         // SAFETY: offsets come from `Layout::extend` over this buffer's layout.
         unsafe { StatePtr::new(self.memory.add(self.offsets[index])) }
+    }
+
+    /// Adds `count` rows of the arguments of aggregate `index` to its state.
+    fn simple_update(
+        &self,
+        aggregate: &BoundAggregate,
+        index: usize,
+        arguments: &[Vector],
+        count: usize,
+    ) -> Result<()> {
+        let data = AggregateInput {
+            bind_data: aggregate.bind_info.as_deref().map(|d| d as _),
+        };
+        // SAFETY: the state was initialised for this aggregate; its owner is the only one
+        // updating it.
+        unsafe {
+            aggregate
+                .function
+                .ops
+                .simple_update(arguments, data, self.state(index), count)
+        }
+    }
+
+    /// Combines these states of the non-DISTINCT `aggregates` into `target` (DuckDB's
+    /// `GlobalUngroupedAggregateState::Combine`).
+    pub(crate) fn combine_into(&self, aggregates: &[BoundAggregate], target: &Self) -> Result<()> {
+        for (index, aggregate) in aggregates.iter().enumerate() {
+            if aggregate.is_distinct() {
+                continue;
+            }
+            let data = AggregateInput {
+                bind_data: aggregate.bind_info.as_deref().map(|d| d as _),
+            };
+            // SAFETY: both states are initialised; the caller holds `target` exclusively.
+            unsafe {
+                aggregate
+                    .function
+                    .ops
+                    .combine(&[self.state(index)], &[target.state(index)], data)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The result of each aggregate, as a vector of one row (DuckDB's
+    /// `GlobalUngroupedAggregateState::Finalize`).
+    pub(crate) fn finalize(&self, aggregates: &[BoundAggregate]) -> Result<Vec<Vector>> {
+        let mut columns = Vec::with_capacity(aggregates.len());
+        for (index, aggregate) in aggregates.iter().enumerate() {
+            let mut result = Vector::flat(aggregate.function.return_type.clone(), 1);
+            let data = AggregateInput {
+                bind_data: aggregate.bind_info.as_deref().map(|d| d as _),
+            };
+            // SAFETY: the state is initialised and not updated concurrently.
+            unsafe {
+                aggregate
+                    .function
+                    .ops
+                    .finalize(&[self.state(index)], data, &mut result, 0)?;
+            };
+            columns.push(result);
+        }
+        Ok(columns)
+    }
+}
+
+/// Evaluates the arguments and filters of a set of aggregates (DuckDB's
+/// `UngroupedAggregateExecuteState`).
+#[derive(Debug)]
+pub(crate) struct UngroupedAggregateExecuteState {
+    arguments: Vec<ExpressionExecutor>,
+    filters: Vec<Option<ExpressionExecutor>>,
+    selection: Vec<u32>,
+}
+
+impl UngroupedAggregateExecuteState {
+    pub(crate) fn new(aggregates: &[BoundAggregate]) -> Self {
+        Self {
+            arguments: aggregates
+                .iter()
+                .map(|a| ExpressionExecutor::new(a.children.clone()))
+                .collect(),
+            filters: aggregates
+                .iter()
+                .map(|a| {
+                    a.filter
+                        .as_ref()
+                        .map(|f| ExpressionExecutor::new(vec![f.clone()]))
+                })
+                .collect(),
+            selection: Vec::new(),
+        }
+    }
+
+    /// The arguments of aggregate `index` over the rows of `chunk` that pass its filter,
+    /// with their count; `None` when no row passes (the state stays as it is: constant
+    /// arguments must not be counted for zero rows).
+    fn aggregate_input(&mut self, index: usize, chunk: &DataChunk) -> Result<Option<(DataChunk, usize)>> {
+        let mut input = chunk.clone();
+        if let Some(filter) = &mut self.filters[index] {
+            let passed = filter.select(chunk, &mut self.selection)?;
+            if passed == 0 {
+                return Ok(None);
+            }
+            let sel = rustdb_types::SelectionVector::new(std::mem::take(&mut self.selection));
+            input = DataChunk::new(chunk.columns().iter().map(|c| c.slice(&sel)).collect(), passed);
+        }
+        let mut arguments = DataChunk::default();
+        self.arguments[index].execute(&input, &mut arguments)?;
+        Ok(Some((arguments, input.len())))
+    }
+
+    /// Adds the rows of `chunk` to the states of the non-DISTINCT `aggregates` (DuckDB's
+    /// `UngroupedAggregateExecuteState::Sink`).
+    pub(crate) fn sink(
+        &mut self,
+        aggregates: &[BoundAggregate],
+        states: &AggregateStates,
+        chunk: &DataChunk,
+    ) -> Result<()> {
+        for (index, aggregate) in aggregates.iter().enumerate() {
+            if aggregate.is_distinct() {
+                continue;
+            }
+            if let Some((arguments, count)) = self.aggregate_input(index, chunk)? {
+                states.simple_update(aggregate, index, arguments.columns(), count)?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -198,9 +328,7 @@ pub struct UngroupedLocal {
     memory_limit: usize,
     /// The radix bits of tuples set aside (an out-of-core aggregation's partitions).
     external_bits: usize,
-    arguments: Vec<ExpressionExecutor>,
-    filters: Vec<Option<ExpressionExecutor>>,
-    selection: Vec<u32>,
+    execute_state: UngroupedAggregateExecuteState,
 }
 
 fn poisoned() -> Error {
@@ -263,21 +391,7 @@ impl Sink for PhysicalUngroupedAggregate {
             memory_limit: thread_memory_limit(ctx),
             external_bits: external_radix_bits(ctx, radix_bits),
             distinct,
-            arguments: self
-                .aggregates
-                .iter()
-                .map(|a| ExpressionExecutor::new(a.children.clone()))
-                .collect(),
-            filters: self
-                .aggregates
-                .iter()
-                .map(|a| {
-                    a.filter
-                        .as_ref()
-                        .map(|f| ExpressionExecutor::new(vec![f.clone()]))
-                })
-                .collect(),
-            selection: Vec::new(),
+            execute_state: UngroupedAggregateExecuteState::new(&self.aggregates),
         })
     }
 
@@ -289,43 +403,27 @@ impl Sink for PhysicalUngroupedAggregate {
         local: &mut UngroupedLocal,
     ) -> Result<SinkResult> {
         for (index, aggregate) in self.aggregates.iter().enumerate() {
-            let mut input = chunk.clone();
-            if let Some(filter) = &mut local.filters[index] {
-                let passed = filter.select(chunk, &mut local.selection)?;
-                let sel = rustdb_types::SelectionVector::new(std::mem::take(&mut local.selection));
-                input = DataChunk::new(chunk.columns().iter().map(|c| c.slice(&sel)).collect(), passed);
-                if passed == 0 {
-                    // No row passed the FILTER: the state stays as it is (constant
-                    // arguments must not be counted for zero rows).
-                    continue;
-                }
-            }
-            let mut arguments = DataChunk::default();
-            local.arguments[index].execute(&input, &mut arguments)?;
+            let Some((arguments, count)) = local.execute_state.aggregate_input(index, chunk)? else {
+                continue;
+            };
             if let Some(distinct) = &mut local.distinct[index] {
-                let arguments = DataChunk::new(arguments.columns().to_vec(), input.len());
+                let arguments = DataChunk::new(arguments.columns().to_vec(), count);
                 add_distinct(&mut distinct.table, &arguments)?;
                 if let Some(config) = &global.distinct_configs[index] {
                     distinct.after_add_chunk(config)?;
                 }
                 if distinct.table.size_in_bytes() > local.memory_limit && memory_pressure(ctx) {
-                    abandon_table(&mut distinct.table, &mut local.abandoned[index], local.external_bits)?;
+                    abandon_table(
+                        &mut distinct.table,
+                        &mut local.abandoned[index],
+                        local.external_bits,
+                    )?;
                 }
                 continue;
             }
-            let data = AggregateInput {
-                bind_data: aggregate.bind_info.as_deref().map(|d| d as _),
-            };
-            // SAFETY: the local state was initialised for this aggregate and is only used by
-            // this thread.
-            unsafe {
-                aggregate.function.ops.simple_update(
-                    arguments.columns(),
-                    data,
-                    local.states.state(index),
-                    input.len(),
-                )?;
-            }
+            local
+                .states
+                .simple_update(aggregate, index, arguments.columns(), count)?;
         }
         Ok(SinkResult::NeedMoreInput)
     }
@@ -345,19 +443,7 @@ impl Sink for PhysicalUngroupedAggregate {
             }
         }
         let global = global.states.lock().map_err(|_| poisoned())?;
-        for (index, aggregate) in self.aggregates.iter().enumerate() {
-            let data = AggregateInput {
-                bind_data: aggregate.bind_info.as_deref().map(|d| d as _),
-            };
-            // SAFETY: both states are initialised; the global one is protected by the lock.
-            unsafe {
-                aggregate
-                    .function
-                    .ops
-                    .combine(&[local.states.state(index)], &[global.state(index)], data)?;
-            }
-        }
-        Ok(())
+        local.states.combine_into(&self.aggregates, &global)
     }
 
     /// Splits the threads' distinct tuples into one unit per DISTINCT aggregate and radix
@@ -462,7 +548,7 @@ impl Sink for PhysicalUngroupedAggregate {
                 }
             }
         } else {
-            let mut table = Self::distinct_table(ctx, aggregate, initial_capacity(), 0)?;
+            let mut table = Self::distinct_table(ctx, aggregate, finalize_capacity(ctx, &data), 0)?;
             for collection in &data {
                 table.combine(collection)?;
             }
@@ -547,21 +633,6 @@ fn finalize_ungrouped(
     chunk: &mut DataChunk,
 ) -> Result<()> {
     let states = states.lock().map_err(|_| poisoned())?;
-    let mut columns = Vec::with_capacity(op.aggregates.len());
-    for (index, aggregate) in op.aggregates.iter().enumerate() {
-        let mut result = Vector::flat(aggregate.function.return_type.clone(), 1);
-        let data = AggregateInput {
-            bind_data: aggregate.bind_info.as_deref().map(|d| d as _),
-        };
-        // SAFETY: the global state is initialised and protected by the lock.
-        unsafe {
-            aggregate
-                .function
-                .ops
-                .finalize(&[states.state(index)], data, &mut result, 0)?;
-        };
-        columns.push(result);
-    }
-    chunk.set_columns(columns, 1);
+    chunk.set_columns(states.finalize(&op.aggregates)?, 1);
     Ok(())
 }

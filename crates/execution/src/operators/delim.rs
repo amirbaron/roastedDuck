@@ -3,12 +3,12 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
 use rustdb_common::Result;
 use rustdb_planner::Expression;
-use rustdb_row::{AppendState, PartitionedTupleData, TupleDataCollection};
+use rustdb_row::{AppendState, PartitionedTupleData, PinProperties, TupleDataCollection};
 use rustdb_row::hash::hash_columns;
 use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
-use crate::aggregate_hashtable::{GroupedAggregateHashTable, capacity_for_count, initial_capacity};
-use crate::operators::hash_aggregate::{repartitioned, table_data};
+use crate::aggregate_hashtable::{GroupedAggregateHashTable, initial_capacity};
+use crate::operators::hash_aggregate::{finalize_capacity, repartitioned, table_data};
 use crate::operators::radix_sink::initial_radix_bits;
 use crate::column_data_collection::ColumnDataCollection;
 use rustdb_common::tree_renderer::RenderParams;
@@ -27,8 +27,8 @@ use crate::{ExecutionContext, ExpressionExecutor, Sink, SinkFinalize, SinkResult
 /// on every finalize.
 #[derive(Debug, Default)]
 pub struct DelimShared {
-    cached: Mutex<Arc<Vec<DataChunk>>>,
-    distinct: Mutex<Arc<Vec<DataChunk>>>,
+    cached: Mutex<Arc<BufferedRows>>,
+    distinct: Mutex<Arc<BufferedRows>>,
     /// The sink filling this data, so scans can make their pipelines wait for it.
     sink: OnceLock<Weak<PhysicalDelimJoin>>,
 }
@@ -77,18 +77,61 @@ impl PhysicalOperator for PhysicalDelimJoin {
     }
 }
 
+/// Rows a delim join's sink produced: buffer-managed collections, read back chunk by chunk
+/// in order (the input in the order of the threads' combines, DuckDB's `lhs_data`; the
+/// distinct values partition by partition).
+#[derive(Debug, Default)]
+pub struct BufferedRows {
+    collections: Vec<TupleDataCollection>,
+    /// The columns of the rows to read.
+    columns: Vec<usize>,
+    /// The index of the first chunk of every collection, plus the total chunk count.
+    chunk_starts: Vec<usize>,
+}
+
+impl BufferedRows {
+    fn new(collections: Vec<TupleDataCollection>, columns: Vec<usize>) -> Self {
+        let mut chunk_starts = Vec::with_capacity(collections.len() + 1);
+        let mut total = 0;
+        chunk_starts.push(0);
+        for collection in &collections {
+            total += collection.chunk_count();
+            chunk_starts.push(total);
+        }
+        Self {
+            collections,
+            columns,
+            chunk_starts,
+        }
+    }
+
+    fn chunk_count(&self) -> usize {
+        self.chunk_starts.last().copied().unwrap_or(0)
+    }
+
+    /// Reads chunk `index` (counting over all collections) into `result`.
+    fn fetch_chunk(&self, index: usize, result: &mut DataChunk) -> Result<()> {
+        let collection = self.chunk_starts.partition_point(|&start| start <= index) - 1;
+        let rows = &self.collections[collection];
+        let mut scan = rows.initialize_scan_columns(self.columns.clone(), PinProperties::UnpinAfterDone);
+        rows.seek(&mut scan, index - self.chunk_starts[collection]);
+        rows.scan(&mut scan, result)?;
+        Ok(())
+    }
+}
+
 /// Buffered chunks and the distinct values (DuckDB's `DelimJoinGlobalState` with the
 /// distinct aggregate's radix partitioned table).
 #[derive(Debug, Default)]
 pub struct DelimGlobal {
-    chunks: Mutex<Vec<DataChunk>>,
+    buffered: Mutex<Vec<ColumnDataCollection>>,
     /// The threads' radix partitioned distinct values.
     distinct_parts: Mutex<Vec<PartitionedTupleData>>,
     /// After finalize: each partition's rows from every thread, deduplicated by one
     /// finalize task each.
     partitions: Vec<Mutex<Vec<TupleDataCollection>>>,
     /// The distinct values each finalize task found.
-    distinct: Vec<Mutex<Vec<DataChunk>>>,
+    distinct: Vec<Mutex<Option<TupleDataCollection>>>,
     /// Whether the partitions were handed out as finalize tasks.
     scheduled: AtomicBool,
 }
@@ -168,22 +211,14 @@ impl Sink for PhysicalDelimJoin {
         Ok(SinkResult::NeedMoreInput)
     }
 
-    /// Hands the thread's chunks and distinct values to the global state.
+    /// Hands the thread's buffered input and distinct values to the global state.
     fn combine(&self, _: &ExecutionContext, global: &DelimGlobal, mut local: DelimLocal) -> Result<()> {
         local.data.finalize_append(&mut local.append);
-        let columns: Vec<usize> = (0..self.children[0].types().len()).collect();
-        let mut chunks = Vec::with_capacity(local.data.chunk_count());
-        for index in 0..local.data.chunk_count() {
-            let mut chunk = DataChunk::default();
-            local.data.fetch_chunk(index, &columns, &mut chunk)?;
-            chunks.push(chunk);
-        }
-        drop(local.data);
         global
-            .chunks
+            .buffered
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .append(&mut chunks);
+            .push(local.data);
         // The partitions are merged by the finalize tasks, not here under a lock.
         let distinct = table_data(&mut local.distinct, None)?;
         global
@@ -198,8 +233,14 @@ impl Sink for PhysicalDelimJoin {
     /// radix partitions, which the finalize tasks deduplicate in parallel (DuckDB's
     /// distinct aggregate finalize).
     fn finalize(&self, _: &ExecutionContext, global: &mut DelimGlobal) -> Result<SinkFinalize> {
-        let chunks = std::mem::take(global.chunks.get_mut().unwrap_or_else(PoisonError::into_inner));
-        *self.shared.cached.lock().unwrap_or_else(PoisonError::into_inner) = Arc::new(chunks);
+        let buffered: Vec<TupleDataCollection> =
+            std::mem::take(global.buffered.get_mut().unwrap_or_else(PoisonError::into_inner))
+                .into_iter()
+                .map(ColumnDataCollection::into_rows)
+                .collect();
+        let columns = (0..self.children[0].types().len()).collect();
+        *self.shared.cached.lock().unwrap_or_else(PoisonError::into_inner) =
+            Arc::new(BufferedRows::new(buffered, columns));
         let parts = std::mem::take(global.distinct_parts.get_mut().unwrap_or_else(PoisonError::into_inner));
         let radix_bits = parts.iter().map(PartitionedTupleData::radix_bits).max().unwrap_or(0);
         let mut partitions: Vec<Vec<TupleDataCollection>> = (0..1usize << radix_bits).map(|_| Vec::new()).collect();
@@ -226,13 +267,14 @@ impl Sink for PhysicalDelimJoin {
         let distinct = global
             .distinct
             .iter()
-            .flat_map(|chunks| std::mem::take(&mut *chunks.lock().unwrap_or_else(PoisonError::into_inner)))
+            .filter_map(|rows| rows.lock().unwrap_or_else(PoisonError::into_inner).take())
             .collect();
+        let columns = (0..self.groups.len()).collect();
         *self
             .shared
             .distinct
             .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Arc::new(distinct);
+            .unwrap_or_else(PoisonError::into_inner) = Arc::new(BufferedRows::new(distinct, columns));
         Ok(0)
     }
 
@@ -242,18 +284,14 @@ impl Sink for PhysicalDelimJoin {
             return Err(rustdb_common::Error::internal("delim join finalize task out of range"));
         };
         let data = std::mem::take(&mut *partition.lock().unwrap_or_else(PoisonError::into_inner));
-        let rows = data.iter().map(TupleDataCollection::count).sum();
-        let mut table = self.distinct_table(ctx, capacity_for_count(rows), 0)?;
+        let mut table = self.distinct_table(ctx, finalize_capacity(ctx, &data), 0)?;
         for collection in &data {
             table.combine(collection)?;
         }
         drop(data);
-        let mut chunks = Vec::new();
-        table.finalize_into(|chunk| {
-            chunks.push(chunk);
-            Ok(())
-        })?;
-        *result.lock().unwrap_or_else(PoisonError::into_inner) = chunks;
+        // The groups have no aggregate states: the table's rows are the distinct values.
+        let rows = table_data(&mut table, None)?.take_partitions().into_iter().next();
+        *result.lock().unwrap_or_else(PoisonError::into_inner) = rows;
         Ok(())
     }
 }
@@ -394,7 +432,7 @@ impl SinkData for DelimShared {
 
 impl Source for PhysicalDelimScan {
     /// The data when the scan started and the next chunk to hand out.
-    type Global = (Arc<Vec<DataChunk>>, AtomicUsize);
+    type Global = (Arc<BufferedRows>, AtomicUsize);
     type Local = ();
 
     fn global_source_state(&self, _: &ExecutionContext, _: Option<&SinkState>) -> Result<Self::Global> {
@@ -402,8 +440,8 @@ impl Source for PhysicalDelimScan {
             DelimData::Cached => &self.shared.cached,
             DelimData::Distinct => &self.shared.distinct,
         };
-        let chunks = Arc::clone(&lock.lock().unwrap_or_else(PoisonError::into_inner));
-        Ok((chunks, AtomicUsize::new(0)))
+        let rows = Arc::clone(&lock.lock().unwrap_or_else(PoisonError::into_inner));
+        Ok((rows, AtomicUsize::new(0)))
     }
 
     fn local_source_state(&self, _: &ExecutionContext, _: &Self::Global) -> Result<()> {
@@ -414,21 +452,22 @@ impl Source for PhysicalDelimScan {
         &self,
         _: &ExecutionContext,
         chunk: &mut DataChunk,
-        (chunks, next): &Self::Global,
+        (rows, next): &Self::Global,
         (): &mut (),
     ) -> Result<SourceResult> {
         let index = next.fetch_add(1, Ordering::Relaxed);
-        if let Some(source) = chunks.get(index) {
-            chunk.set_columns(source.columns().to_vec(), source.len());
+        let count = rows.chunk_count();
+        if index < count {
+            rows.fetch_chunk(index, chunk)?;
         }
-        Ok(if index + 1 < chunks.len() {
+        Ok(if index + 1 < count {
             SourceResult::HaveMoreOutput
         } else {
             SourceResult::Finished
         })
     }
 
-    fn max_threads(&self, (chunks, _): &Self::Global) -> usize {
-        chunks.len().max(1)
+    fn max_threads(&self, (rows, _): &Self::Global) -> usize {
+        rows.chunk_count().max(1)
     }
 }

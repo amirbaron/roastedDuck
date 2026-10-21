@@ -5,11 +5,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::operators::{MergeIntoOperator, PhysicalMergeInto, PhysicalPerfectHashAggregate, SharedAppend};
+use crate::operators::{
+    MergeIntoOperator, PhysicalMergeInto, PhysicalPartitionedAggregate, PhysicalPerfectHashAggregate,
+    SharedAppend,
+};
 use rustdb_ast::MergeActionType;
 use rustdb_ast::{JoinType, OrderByNullType, OrderType};
 use rustdb_catalog::{Catalog, CatalogEntry, EntryKind, Transaction};
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use rustdb_function::TablePartitionInfo;
 use rustdb_functions::aggregate::distributive::first_last_any::first_function;
 use rustdb_functions::aggregate::sorted::{
     self, NullOrder, OrderModifiers, OrderType as SortOrderType, SortedOrder,
@@ -18,8 +22,8 @@ use rustdb_planner::expression::{
     AggregateType, BoundAggregateExpression, BoundConjunctionExpression, BoundOrderByNode, BoundOrderModifier,
 };
 use rustdb_planner::operator::{
-    COLUMN_IDENTIFIER_ROW_ID, JoinCondition, LogicalAggregate, LogicalComparisonJoin, LogicalDelete,
-    LogicalGet, LogicalInsert, LogicalMergeInto, LogicalUpdate,
+    COLUMN_IDENTIFIER_ROW_ID, GroupingSet, JoinCondition, LogicalAggregate, LogicalComparisonJoin,
+    LogicalDelete, LogicalGet, LogicalInsert, LogicalMergeInto, LogicalUpdate,
 };
 use rustdb_planner::{
     BoundLimitNode, Expression, ExpressionKind, ExpressionType, LogicalKind, LogicalOperator,
@@ -349,7 +353,8 @@ impl PlanGenerator {
         )
         .with_dynamic_filters(get.dynamic_filters.clone())
         .with_index_scan(Some(context.index_scan))
-        .with_explain_info(explain);
+        .with_explain_info(explain)
+        .with_row_group_order(get.row_group_order.clone());
         if let Some(sample) = &get.sample_options {
             // DuckDB's `ScanSamplingInfo`: the percentage as a fraction.
             let percentage = sample.sample_size.as_f64().unwrap_or(100.0);
@@ -1312,6 +1317,19 @@ impl PlanGenerator {
                 } = *aggregate;
                 let child = self.extract_aggregate_expressions(child, &mut aggregates, &mut groups);
                 if !groups.is_empty()
+                    && let Some(partitions) = partitioned_aggregate_columns(
+                        &groups,
+                        &grouping_sets,
+                        &grouping_functions,
+                        &aggregates,
+                        &child,
+                    )
+                {
+                    return Ok(Arc::new(PhysicalPartitionedAggregate::new(
+                        types, aggregates, groups, partitions, child,
+                    )));
+                }
+                if !groups.is_empty()
                     && grouping_sets.len() <= 1
                     && grouping_functions.is_empty()
                     && let Some((minima, required_bits)) = perfect_hash_groups(
@@ -1596,6 +1614,51 @@ fn distinct_on_all_columns(types: Vec<LogicalType>, child: PhysicalRef) -> Resul
 
 /// Replaces an aggregate with `ORDER BY` arguments by its sorted wrapper (DuckDB's
 /// `FunctionBinder::BindSortedAggregate`, called from `ExtractAggregateExpressions`).
+/// The columns of the source that partition the input by the groups, if a partitioned
+/// aggregate can compute the aggregate (DuckDB's `CanUsePartitionedAggregate`): a single
+/// grouping set of plain column references, no DISTINCT aggregates, and a table function
+/// scan, below projections of column references and filters, whose batches hold a single
+/// value of those columns.
+fn partitioned_aggregate_columns(
+    groups: &[Expression],
+    grouping_sets: &[GroupingSet],
+    grouping_functions: &[Vec<u64>],
+    aggregates: &[BoundAggregateExpression],
+    child: &PhysicalRef,
+) -> Option<Vec<u64>> {
+    if grouping_sets.len() > 1
+        || !grouping_functions.is_empty()
+        || aggregates.iter().any(BoundAggregateExpression::is_distinct)
+    {
+        return None;
+    }
+    let reference_index = |expression: &Expression| match &expression.kind {
+        ExpressionKind::Reference(reference) => Some(reference.index),
+        _ => None,
+    };
+    let mut partition_columns = groups.iter().map(reference_index).collect::<Option<Vec<_>>>()?;
+    // Walk down to the source operator.
+    let mut current: &dyn PhysicalOperator = child.as_ref();
+    let table_scan = loop {
+        if let Some(table_scan) = current.cast::<PhysicalTableScan>() {
+            break table_scan;
+        }
+        if let Some(projection) = current.cast::<PhysicalProjection>() {
+            let select_list = projection.select_list();
+            partition_columns = partition_columns
+                .iter()
+                .map(|&column| select_list.get(column as usize).and_then(reference_index))
+                .collect::<Option<Vec<_>>>()?;
+        } else if current.cast::<PhysicalFilter>().is_none() {
+            // Unsupported operator for partition pass-through.
+            return None;
+        }
+        current = current.children().first()?.as_ref();
+    };
+    (table_scan.partition_info(&mut partition_columns)? == TablePartitionInfo::SingleValuePartitions)
+        .then_some(partition_columns)
+}
+
 /// The minimum and slot index bits of every group, if a perfect hash aggregate can
 /// compute the aggregate (DuckDB's `CanUsePerfectHashAggregate`): every group is an
 /// integer whose statistics bound it (small types are bounded by their type), the bits

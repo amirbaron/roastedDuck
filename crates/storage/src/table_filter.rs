@@ -52,8 +52,12 @@ pub struct DynamicFilterData {
 }
 
 impl DynamicFilterData {
-    /// Sets (or replaces) the comparison.
+    /// Sets (or replaces) the comparison; a NULL constant leaves it as it is
+    /// (`DynamicFilterData::SetValue`).
     pub fn set(&self, op: CompareOp, constant: Value) {
+        if constant.is_null() {
+            return;
+        }
         *self.filter.lock().unwrap_or_else(PoisonError::into_inner) = Some((op, constant));
     }
 

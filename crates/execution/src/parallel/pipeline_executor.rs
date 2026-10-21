@@ -11,7 +11,9 @@ use rustdb_common::{Error, Result};
 use rustdb_types::{DataChunk, STANDARD_VECTOR_SIZE};
 
 use super::pipeline::{BATCH_INCREMENT, Pipeline, SharedState};
-use crate::operator::{ErasedOperator, ErasedSink, ErasedSource, PartitionInfo, PhysicalRef};
+use crate::operator::{
+    ErasedOperator, ErasedSink, ErasedSource, OperatorPartitionInfo, PartitionInfo, PhysicalRef,
+};
 use crate::{ExecutionContext, OperatorResult, SinkResult, SourceResult};
 
 /// How many chunks a partial execution processes before returning
@@ -106,7 +108,9 @@ pub(crate) struct PipelineExecutor {
     /// Set when an operator (its 1-based position) or the sink (`usize::MAX`) declared
     /// the pipeline finished.
     finished_processing_idx: Option<usize>,
-    requires_batch_index: bool,
+    /// What the sink needs to know about the batches of its input
+    /// (`required_partition_info`).
+    required_partition_info: OperatorPartitionInfo,
     partition_info: PartitionInfo,
     exhausted_pipeline: bool,
     /// The source returned its last chunk (DuckDB's `exhausted_source`).
@@ -132,10 +136,13 @@ impl PipelineExecutor {
         let sink = role(&pipeline.sink, |op| op.as_sink())?;
         let source = role(&pipeline.source, |op| op.as_source())?;
         let mut local_sink_state = sink.local_sink_state(&ctx, states.sink.as_ref())?;
-        let requires_batch_index = pipeline.sink.requires_batch_index();
+        let required_partition_info = pipeline.sink.required_partition_info();
         let mut partition_info = PartitionInfo::default();
-        if requires_batch_index {
-            if !pipeline.source.supports_batch_index() {
+        if required_partition_info.any_required() {
+            if !pipeline
+                .source
+                .supports_partitioning(&OperatorPartitionInfo::batch_index())
+            {
                 return Err(Error::internal(
                     "Attempting to schedule a pipeline where the sink requires batch index but source does not support it",
                 ));
@@ -147,7 +154,7 @@ impl PipelineExecutor {
                 &ctx,
                 states.sink.as_ref(),
                 local_sink_state.as_mut(),
-                partition_info,
+                &partition_info,
             )?;
         }
         let local_source_state = source.local_source_state(&ctx, states.source.as_ref())?;
@@ -187,7 +194,7 @@ impl PipelineExecutor {
             chunks,
             in_process_operators: Vec::new(),
             finished_processing_idx,
-            requires_batch_index,
+            required_partition_info,
             partition_info,
             exhausted_pipeline: false,
             exhausted_source: false,
@@ -274,7 +281,7 @@ impl PipelineExecutor {
                     self.exhausted_pipeline = true;
                     self.exhausted_source = true;
                 }
-                if self.requires_batch_index {
+                if self.required_partition_info.any_required() {
                     self.next_batch(source_result == SourceResult::HaveMoreOutput)?;
                 }
                 if self.exhausted_pipeline && self.chunks[0].is_empty() {
@@ -350,16 +357,21 @@ impl PipelineExecutor {
         let base = self.pipeline.base_batch_index;
         let max_batch_index = base + BATCH_INCREMENT - 1;
         let current = self.partition_info.batch_index;
+        let mut partition_data = Vec::new();
         let next = if !self.chunks[0].is_empty() {
-            let batch_index = self
-                .source()?
-                .batch_index(self.states.source.as_ref(), self.local_source_state.as_ref())?;
-            let next = base + batch_index + 1;
+            let data = self.source()?.partition_data(
+                self.states.source.as_ref(),
+                self.local_source_state.as_ref(),
+                &self.required_partition_info,
+            )?;
+            let next = base + data.batch_index + 1;
             if next >= max_batch_index {
                 return Err(Error::internal(format!(
-                    "Pipeline batch index - invalid batch index {batch_index} returned by source operator"
+                    "Pipeline batch index - invalid batch index {} returned by source operator",
+                    data.batch_index
                 )));
             }
+            partition_data = data.partition_data;
             next
         } else if have_more_output {
             current
@@ -375,6 +387,7 @@ impl PipelineExecutor {
             )));
         }
         self.partition_info.batch_index = next;
+        self.partition_info.partition_data = partition_data;
         // The sink sees the new batch before the minimum moves, so it can flush the
         // previous one.
         let local = self
@@ -385,7 +398,7 @@ impl PipelineExecutor {
             &self.ctx,
             self.states.sink.as_ref(),
             local.as_mut(),
-            self.partition_info,
+            &self.partition_info,
         )?;
         self.partition_info.min_batch_index = self.pipeline.update_batch_index(current, next)?;
         Ok(())

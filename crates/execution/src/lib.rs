@@ -23,8 +23,8 @@ pub use constraints::table_constraints;
 pub use context::{ClientEnv, ExecutionContext, default_threads};
 pub use expression_executor::{ExpressionExecutor, ScalarEvaluator};
 pub use operator::{
-    Operator, OperatorResult, OrderPreservationType, PartitionInfo, PhysicalOperator, PhysicalRef, Sink,
-    SinkFinalize, SinkResult, Source, SourceResult,
+    Operator, OperatorPartitionData, OperatorPartitionInfo, OperatorResult, OrderPreservationType,
+    PartitionInfo, PhysicalOperator, PhysicalRef, Sink, SinkFinalize, SinkResult, Source, SourceResult,
 };
 pub use parallel::{ExecutionStep, Executor, ProgressData, QueryExecution, QueryOptions, TaskScheduler};
 pub use plan_generator::{

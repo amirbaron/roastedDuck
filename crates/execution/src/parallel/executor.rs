@@ -21,7 +21,7 @@ use super::pipeline_executor::{
     PARTIAL_CHUNK_COUNT, PipelineExecuteResult, PipelineExecutor, PipelineStates,
 };
 use super::task_scheduler::{ProducerToken, Task, TaskExecutionMode, TaskExecutionResult};
-use crate::operator::{PhysicalRef, SinkFinalize, SinkState};
+use crate::operator::{OperatorPartitionInfo, PhysicalRef, SinkFinalize, SinkState};
 use crate::{CardinalityEstimates, ClientEnv, ExecutionContext, QueryProfiler};
 
 /// Settings of one query run.
@@ -596,7 +596,11 @@ impl ExecutorShared {
         {
             return Ok(1);
         }
-        if pipeline.sink.requires_batch_index() && !pipeline.source.supports_batch_index() {
+        if pipeline.sink.required_partition_info().batch_index
+            && !pipeline
+                .source
+                .supports_partitioning(&OperatorPartitionInfo::batch_index())
+        {
             return Err(Error::internal(
                 "Attempting to schedule a pipeline where the sink requires batch index but source does not support it",
             ));

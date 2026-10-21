@@ -534,6 +534,23 @@ impl LogicalType {
         )
     }
 
+    /// Whether this is a date, time or timestamp type (`IsTemporal`).
+    pub fn is_temporal(&self) -> bool {
+        use LogicalTypeId as L;
+        matches!(
+            self.id,
+            L::Date
+                | L::Time
+                | L::TimeNs
+                | L::Timestamp
+                | L::TimeTz
+                | L::TimestampTz
+                | L::TimestampSec
+                | L::TimestampMs
+                | L::TimestampNs
+        )
+    }
+
     /// Whether this is a signed or unsigned integer type.
     pub fn is_integral(&self) -> bool {
         use LogicalTypeId as L;

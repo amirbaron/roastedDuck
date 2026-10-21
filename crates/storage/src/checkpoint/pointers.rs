@@ -785,17 +785,6 @@ pub fn deserialize_index_storage_info(
     })
 }
 
-/// The data blocks an index description references.
-pub fn index_storage_block_ids(
-    info: &crate::index::art::ArtStorageInfo,
-) -> impl Iterator<Item = BlockId> + '_ {
-    info.allocator_infos
-        .iter()
-        .flat_map(|allocator| allocator.block_pointers.iter())
-        .filter(|pointer| pointer.block_id != INVALID_BLOCK)
-        .map(|pointer| pointer.block_id)
-}
-
 /// Writes `values` as list property `field` unless it is empty (`WritePropertyWithDefault`).
 fn write_u64_list(
     serializer: &mut dyn Serializer,

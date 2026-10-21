@@ -6,7 +6,6 @@
 //! (referenced tables before referencing ones), views and indexes. Each entry is its
 //! `CreateInfo`; tables are followed by the pointer to their data.
 
-use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use rustdb_ast::{
@@ -15,11 +14,10 @@ use rustdb_ast::{
     IndexConstraintType as AstIndexConstraintType, LogicalDependencyList, OnCreateConflict,
     ParsedExpressionKind, TableColumnType,
 };
-use rustdb_buffer::BlockId;
 use rustdb_common::{CaseInsensitiveMap, Error, OrderedMap, Result};
 use rustdb_serde::binary::BinarySerializer;
 use rustdb_serde::{Deserializer, Serializer};
-use rustdb_storage::checkpoint::pointers::{deserialize_index_storage_info, index_storage_block_ids};
+use rustdb_storage::checkpoint::pointers::deserialize_index_storage_info;
 use rustdb_storage::checkpoint::pointers::{deserialize_meta_block_pointer, serialize_meta_block_pointer};
 use rustdb_storage::checkpoint::stream::StreamDeserializer;
 use rustdb_storage::checkpoint::table_reader::{load_row_groups, read_table_data};
@@ -27,7 +25,7 @@ use rustdb_storage::checkpoint::table_writer::{
     BlockWriter, checkpoint_in_memory_table, finish_table_checkpoint, write_table_data,
 };
 use rustdb_storage::checkpoint_lock::ExclusiveCheckpointGuard;
-use rustdb_storage::index::art::{ArtStorageInfo, deprecated_index_block_ids};
+use rustdb_storage::index::art::ArtStorageInfo;
 use rustdb_storage::index::{IndexConstraintType, IndexSlot, UnboundIndex, UnboundIndexStorage};
 use rustdb_storage::metadata::{MetaBlockPointer, MetadataReader, MetadataWriter};
 use rustdb_storage::storage_info::{DatabaseHeader, STANDARD_VECTOR_SIZE};
@@ -874,7 +872,6 @@ pub fn load_checkpoint(catalog: &Catalog, storage: &StorageManager) -> Result<()
     }
     let metadata = storage.metadata();
     let transaction = Transaction::system();
-    let mut data_blocks: Vec<BlockId> = Vec::new();
     // The stored index data per table, taken by the index entries that follow
     // (`DataTableInfo::ExtractIndexStorageInfo`).
     let mut index_storage: Vec<(String, String, Vec<ArtStorageInfo>)> = Vec::new();
@@ -919,31 +916,19 @@ pub fn load_checkpoint(catalog: &Catalog, storage: &StorageManager) -> Result<()
                 let table_pointer: MetaBlockPointer =
                     d.read_object_property(101, "table_pointer", deserialize_meta_block_pointer)?;
                 let total_rows: u64 = d.read_property(102, "total_rows")?;
-                let index_pointers: Option<Vec<rustdb_storage::checkpoint::pointers::BlockPointer>> =
-                    read_block_pointer_list(d, 103, "index_pointers")?;
                 // Files of DuckDB versions before v0.10 point to each index's root
-                // (`index_pointers`, with deprecated storage).
-                for pointer in index_pointers.unwrap_or_default() {
-                    if pointer.is_valid() {
-                        data_blocks.extend(deprecated_index_block_ids(
-                            metadata,
-                            pointer.block_id,
-                            pointer.offset,
-                        )?);
-                    }
-                }
+                // (`index_pointers`, with deprecated storage); the indexes are rebuilt
+                // from the table.
+                read_block_pointer_list(d, 103, "index_pointers")?;
                 let mut index_versions = std::collections::HashMap::new();
                 let mut stored_indexes = Vec::new();
                 if d.on_optional_property_begin(104, "index_storage_infos")? {
-                    // The indexes are rebuilt from the table below; their stored data
-                    // keeps its blocks in use until the next checkpoint, or longer for
-                    // an index that is not bound by then.
+                    // The indexes are rebuilt from the table below.
                     let stored = d.on_list_begin()?;
                     for _ in 0..stored {
                         d.on_object_begin()?;
                         let info = deserialize_index_storage_info(d)?;
                         d.on_object_end()?;
-                        data_blocks.extend(index_storage_block_ids(&info));
                         // The storage version the index was created with, recorded
                         // since v1.5.0.
                         let version = info
@@ -969,7 +954,7 @@ pub fn load_checkpoint(catalog: &Catalog, storage: &StorageManager) -> Result<()
                     .collect();
                 let types: Vec<LogicalType> = columns.iter().map(|c| c.ty.clone()).collect();
                 let data = read_table_data(metadata, table_pointer, &types, total_rows)?;
-                let collection = load_row_groups(storage.io(), metadata, &types, data, &mut data_blocks)?;
+                let collection = load_row_groups(storage.io(), metadata, &types, data)?;
                 let table = DataTable::from_collection(
                     Arc::clone(storage.io()),
                     info.schema.clone(),
@@ -1045,14 +1030,7 @@ pub fn load_checkpoint(catalog: &Catalog, storage: &StorageManager) -> Result<()
                     None
                 };
                 let stored = match root {
-                    Some(pointer) => {
-                        data_blocks.extend(deprecated_index_block_ids(
-                            metadata,
-                            pointer.block_id,
-                            pointer.offset,
-                        )?);
-                        UnboundIndexStorage::Deprecated
-                    }
+                    Some(_) => UnboundIndexStorage::Deprecated,
                     None => UnboundIndexStorage::Disk(extract_index_storage(&mut index_storage, &info)),
                 };
                 load_index(catalog, &transaction, &info, stored)?;
@@ -1070,8 +1048,6 @@ pub fn load_checkpoint(catalog: &Catalog, storage: &StorageManager) -> Result<()
     d.on_list_end()?;
     d.on_property_end()?;
     deserializer.end()?;
-    let blocks: BTreeSet<BlockId> = data_blocks.into_iter().collect();
-    storage.block_manager().set_checkpoint_blocks(blocks);
     Ok(())
 }
 

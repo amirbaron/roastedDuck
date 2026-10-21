@@ -2,7 +2,7 @@
 //! `PhysicalPlanGenerator::PreserveInsertionOrder` / `UseBatchIndex`, `plan_insert.cpp`,
 //! and `PhysicalOperator::GetSources`).
 
-use crate::operator::{OrderPreservationType, PhysicalOperator};
+use crate::operator::{OperatorPartitionInfo, OrderPreservationType, PhysicalOperator};
 
 /// The order of the rows `op` produces: that of the first source below it that does not
 /// simply keep insertion order (`OrderPreservationRecursive`).
@@ -43,7 +43,9 @@ pub fn use_batch_index(op: &dyn PhysicalOperator, threads: usize) -> bool {
 pub fn all_sources_support_batch_index(op: &dyn PhysicalOperator) -> bool {
     let mut sources = Vec::new();
     collect_sources(op, &mut sources);
-    sources.iter().all(|source| source.supports_batch_index())
+    sources
+        .iter()
+        .all(|source| source.supports_partitioning(&OperatorPartitionInfo::batch_index()))
 }
 
 /// The operators that start the pipelines feeding `op`'s output (`GetSources`): a sink

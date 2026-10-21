@@ -24,6 +24,7 @@ mod limit;
 mod merge_into;
 mod modify;
 mod order;
+mod partitioned_aggregate;
 mod perfect_hash_aggregate;
 mod pivot;
 mod projection;
@@ -75,6 +76,9 @@ pub use limit::{
 pub use merge_into::{MergeGlobal, MergeIntoOperator, PhysicalMergeInto};
 pub use modify::{ModifyResult, SharedAppend};
 pub use order::{OrderGlobalState, OrderLocalState, OrderSourceState, PhysicalOrder};
+pub use partitioned_aggregate::{
+    PartitionedAggregateGlobal, PartitionedAggregateLocal, PhysicalPartitionedAggregate,
+};
 pub use perfect_hash_aggregate::{
     PerfectHashAggregateGlobal, PerfectHashAggregateLocal, PhysicalPerfectHashAggregate,
 };

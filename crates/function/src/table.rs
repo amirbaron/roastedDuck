@@ -116,6 +116,21 @@ pub struct PartitionStatistics {
 pub type TableFunctionPartitionStats =
     Arc<dyn Fn(Option<&dyn FunctionData>) -> Vec<PartitionStatistics> + Send + Sync>;
 
+/// How a call's data is partitioned on a set of columns (DuckDB's `TablePartitionInfo`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TablePartitionInfo {
+    /// The data is not partitioned by the given set of columns.
+    NotPartitioned,
+    /// Each partition has exactly one unique value of the columns (e.g. bounds
+    /// `[1,1][2,2][3,3]`).
+    SingleValuePartitions,
+}
+
+/// How a call's data is partitioned on its columns `partition_ids` (DuckDB's
+/// `table_function_get_partition_info_t`).
+pub type TableFunctionPartitionInfo =
+    Arc<dyn Fn(Option<&dyn FunctionData>, &[u64]) -> TablePartitionInfo + Send + Sync>;
+
 /// Filter pushdown into the file list of a multi-file scan whose paths determine column
 /// values: hive partitions and the `filename` column (DuckDB's `pushdown_complex_filter`
 /// of `MultiFileFunction`, `MultiFileList::ComplexFilterPushdown`).
@@ -177,6 +192,12 @@ pub struct ParallelTableScan {
     /// The batch index of the chunk the thread produced last, increasing in the
     /// function's row order (`GetPartitionData`).
     pub batch_index: Arc<dyn Fn(&ParallelScanGlobal, &ParallelScanLocal) -> u64 + Send + Sync>,
+    /// The values of the scanned columns at positions `partition_columns` of the column
+    /// ids in the chunk the thread produced last, on which the function reports single
+    /// value partitions (the partition data of `GetPartitionData`).
+    pub partition_data: Option<
+        Arc<dyn Fn(&ParallelScanGlobal, &ParallelScanLocal, &[u64]) -> Result<Vec<Value>> + Send + Sync>,
+    >,
     /// What `EXPLAIN ANALYZE` shows about the finished scan (`dynamic_to_string`).
     pub dynamic_to_string: Option<
         Arc<dyn Fn(Option<&dyn FunctionData>, &ParallelScanGlobal) -> Vec<(String, String)> + Send + Sync>,
@@ -271,6 +292,8 @@ pub struct TableFunction {
     pub statistics: Option<TableFunctionStatistics>,
     /// Partition statistics (`get_partition_stats`).
     pub get_partition_stats: Option<TableFunctionPartitionStats>,
+    /// How the data is partitioned on some of its columns (`get_partition_info`).
+    pub get_partition_info: Option<TableFunctionPartitionInfo>,
     /// A scan by several threads at once; used instead of `scan` when set.
     pub parallel_scan: Option<ParallelTableScan>,
     /// Filter pushdown into the scanned files (`pushdown_complex_filter`).
@@ -305,6 +328,7 @@ impl TableFunction {
             get_virtual_columns: None,
             statistics: None,
             get_partition_stats: None,
+            get_partition_info: None,
             parallel_scan: None,
             file_filter_pushdown: None,
             get_row_id_columns: None,

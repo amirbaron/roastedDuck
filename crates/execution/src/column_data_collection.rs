@@ -93,6 +93,12 @@ impl ColumnDataCollection {
         self.chunk_starts[index]
     }
 
+    /// The rows, for reading them back chunk by chunk like
+    /// [`ColumnDataCollection::fetch_chunk`] does (call after `finalize_append`).
+    pub fn into_rows(self) -> TupleDataCollection {
+        self.rows
+    }
+
     /// Reads columns `columns` of chunk `index` into `result`.
     pub fn fetch_chunk(&self, index: usize, columns: &[usize], result: &mut DataChunk) -> Result<()> {
         if self.types.is_empty() {

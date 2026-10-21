@@ -23,8 +23,8 @@ use crate::single_file_block_manager::SingleFileBlockManager;
 use crate::statistics::BaseStatistics;
 use crate::table::variant_column_data::VariantShreddingConfig;
 use crate::table::{
-    CollectionScanState, FetchType, ParallelTableScanState, RowGroupCollection, ScanOptions, StorageIndex,
-    TableAppendState, TableScanState,
+    CollectionScanState, FetchType, ParallelTableScanState, RowGroupCollection, RowGroupOrderOptions, ScanOptions,
+    StorageIndex, TableAppendState, TableScanState,
 };
 use crate::table_filter::TableFilterSet;
 use crate::transaction::{LocalStorage, LocalTableStorage, Transaction, TransactionData};
@@ -602,12 +602,18 @@ impl DataTable {
     }
 
     /// Prepares a parallel scan of the table and the transaction's local rows
-    /// (`InitializeParallelScan`).
-    pub fn initialize_parallel_scan(self: &Arc<Self>, transaction: &Transaction) -> ParallelTableScanState {
+    /// (`InitializeParallelScan`), reading the row groups of both in the order of
+    /// `order`'s column statistics if given (`TableScanInitGlobal` with `order_options`).
+    pub fn initialize_parallel_scan(
+        self: &Arc<Self>,
+        transaction: &Transaction,
+        order: Option<&RowGroupOrderOptions>,
+    ) -> ParallelTableScanState {
         let state = ParallelTableScanState::default();
-        self.row_groups.initialize_parallel_scan(&state.scan_state);
+        let order = order.map(|options| (options, transaction.data()));
+        self.row_groups.initialize_parallel_scan(&state.scan_state, order);
         if let Some(local) = transaction.local_storage().storage(self) {
-            local.collection().initialize_parallel_scan(&state.local_state);
+            local.collection().initialize_parallel_scan(&state.local_state, order);
         }
         state
     }
@@ -620,7 +626,7 @@ impl DataTable {
     ) -> ParallelTableScanState {
         let state = ParallelTableScanState::default();
         if let Some(local) = transaction.local_storage().storage(self) {
-            local.collection().initialize_parallel_scan(&state.local_state);
+            local.collection().initialize_parallel_scan(&state.local_state, None);
         }
         state
     }

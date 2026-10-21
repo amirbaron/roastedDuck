@@ -14,7 +14,9 @@ use rustdb_function::{CopyFunction, FunctionData};
 use rustdb_planner::operator::{CopyFunctionReturnType, CopyOverwriteMode, FilenamePattern};
 use rustdb_types::{DataChunk, LogicalType, SelectionVector, Value, Vector};
 
-use crate::operator::{ErasedSink, ErasedSource, PartitionInfo, PhysicalOperator, PhysicalRef, SinkState};
+use crate::operator::{
+    ErasedSink, ErasedSource, OperatorPartitionInfo, PartitionInfo, PhysicalOperator, PhysicalRef, SinkState,
+};
 use crate::{ExecutionContext, Sink, SinkFinalize, SinkResult, Source, SourceResult};
 
 fn io_error(message: String) -> Error {
@@ -943,8 +945,11 @@ impl PhysicalOperator for PhysicalCopyToFile {
     fn parallel_sink(&self) -> bool {
         self.options.per_thread_output || self.batch || self.parallel
     }
-    fn requires_batch_index(&self) -> bool {
-        self.batch
+    fn required_partition_info(&self) -> OperatorPartitionInfo {
+        OperatorPartitionInfo {
+            batch_index: self.batch,
+            partition_columns: Vec::new(),
+        }
     }
 }
 
@@ -1117,7 +1122,7 @@ impl Sink for PhysicalCopyToFile {
         _: &ExecutionContext,
         global: &CopyGlobal,
         local: &mut CopyLocal,
-        partition: PartitionInfo,
+        partition: &PartitionInfo,
     ) -> Result<()> {
         local.min_batch_index = partition.min_batch_index;
         self.add_local_batch(global, local)?;

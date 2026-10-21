@@ -1,16 +1,18 @@
 //! Removing the delim join of a lateral UNNEST (DuckDB's `UnnestRewriter`): a correlated
 //! `UNNEST` of the outer rows' lists is decorrelated into a delim join numbering the outer
 //! rows; the UNNEST can instead run directly on the outer rows, carrying their columns.
-//!
-//! Only DuckDB's first pattern (UNNEST over the delim scan) occurs here: the binder does
-//! not bind the `unnest` table function with lateral parameters, which yields the second.
 
 use rustdb_ast::JoinType;
 use rustdb_common::{Error, Result};
+use rustdb_planner::expression::BoundUnnestExpression;
+use rustdb_planner::expression_binder::is_unnest_function;
 use rustdb_planner::{
-    ColumnBinding, Expression, ExpressionKind, LogicalKind, LogicalOperator, LogicalOperatorType,
+    ColumnBinding, Expression, ExpressionKind, ExpressionType, LogicalKind, LogicalOperator,
+    LogicalOperatorType,
 };
 use rustdb_types::LogicalType;
+
+use crate::column_binding_replacer::{ColumnBindingReplacer, ReplacementBinding};
 
 /// A column of the delim join's input (DuckDB's `LHSBinding`).
 struct LhsBinding {
@@ -59,7 +61,7 @@ struct UnnestRewriter {
 /// Rewrites the lateral UNNESTs of `plan` (DuckDB's `UnnestRewriter::Optimize`).
 pub fn rewrite_unnests(plan: &mut LogicalOperator) -> Result<()> {
     let mut candidates = Vec::new();
-    find_candidates(plan, &mut candidates);
+    find_candidates(plan, &mut Vec::new(), &mut candidates)?;
     for candidate in candidates {
         let Some(path) = find_path(plan, candidate) else {
             continue;
@@ -100,12 +102,23 @@ fn delim_sides(delim_join: &LogicalOperator) -> (usize, usize) {
 
 /// The operators whose child is a delim join of a numbered input (a window) with an
 /// UNNEST of the delim scan under projections, bottom-up (DuckDB's `FindCandidates`).
-fn find_candidates(op: &LogicalOperator, candidates: &mut Vec<u64>) {
-    for child in &op.children {
-        find_candidates(child, candidates);
+/// The `unnest` table function over a projection of the delim scan is turned into that
+/// shape first.
+fn find_candidates(
+    root: &mut LogicalOperator,
+    path: &mut Vec<usize>,
+    candidates: &mut Vec<u64>,
+) -> Result<()> {
+    let child_count = node_at_mut(root, path)?.children.len();
+    for index in 0..child_count {
+        path.push(index);
+        find_candidates(root, path, candidates)?;
+        path.pop();
     }
+    let op = node_at_mut(root, path)?;
+    let node_id = op.node_id();
     let Some(delim_join) = candidate_delim_join(op) else {
-        return;
+        return Ok(());
     };
     let (delim_index, other_index) = delim_sides(delim_join);
     if delim_join
@@ -114,23 +127,133 @@ fn find_candidates(op: &LogicalOperator, candidates: &mut Vec<u64>) {
         .map(LogicalOperator::operator_type)
         != Some(LogicalOperatorType::LogicalWindow)
     {
-        return;
+        return Ok(());
     }
-    let Some(mut current) = delim_join.children.get(other_index) else {
-        return;
+    let Some(other) = delim_join.children.get(other_index) else {
+        return Ok(());
     };
+    let mut current = other;
     while current.operator_type() == LogicalOperatorType::LogicalProjection {
         let [child] = current.children.as_slice() else {
             break;
         };
         current = child;
     }
+    // Pattern 1: delim scan -> UNNEST -> projections.
     if current.operator_type() == LogicalOperatorType::LogicalUnnest
         && current.children.first().map(LogicalOperator::operator_type)
             == Some(LogicalOperatorType::LogicalDelimGet)
     {
-        candidates.push(op.node_id());
+        candidates.push(node_id);
+        return Ok(());
     }
+    // Pattern 2: delim scan -> projection -> `unnest` table function.
+    let LogicalKind::Get(get) = &other.kind else {
+        return Ok(());
+    };
+    // With ORDINALITY the delim index would be unnested too.
+    if !is_unnest_function(&get.function.name) || get.ordinality_index.is_some() {
+        return Ok(());
+    }
+    let Some(projection) = other.children.first() else {
+        return Ok(());
+    };
+    if projection.operator_type() != LogicalOperatorType::LogicalProjection
+        || projection.children.first().map(LogicalOperator::operator_type)
+            != Some(LogicalOperatorType::LogicalDelimGet)
+    {
+        return Ok(());
+    }
+    let Some(replacer) = unnest_function_to_operator(op, other_index)? else {
+        return Ok(());
+    };
+    let stop_operator = node_at_mut(root, path)?.children[0].children[other_index].node_id();
+    replacer.visit_operator_until(root, Some(stop_operator));
+    candidates.push(node_id);
+    Ok(())
+}
+
+/// Turns the `unnest` table function on the `other_index` side of `op`'s delim join into
+/// an UNNEST operator below its argument projection (DuckDB's pattern 2 conversion in
+/// `FindCandidates`). Returns the rewrite of the references to the function's columns,
+/// or `None` when an argument is not a plain column (deeply nested struct paths project
+/// struct extractions instead).
+fn unnest_function_to_operator(
+    op: &mut LogicalOperator,
+    other_index: usize,
+) -> Result<Option<ColumnBindingReplacer>> {
+    let missing = || Error::internal("UnnestRewriter: unexpected plan shape");
+    let delim_join = op.children.first_mut().ok_or_else(missing)?;
+    let slot = delim_join.children.get_mut(other_index).ok_or_else(missing)?;
+    slot.resolve_operator_types()?;
+    let get_columns = slot.column_bindings();
+    let LogicalKind::Get(get) = &slot.kind else {
+        return Err(missing());
+    };
+    let get_table_index = get.table_index;
+    let projection = slot.children.first().ok_or_else(missing)?;
+    let is_column_ref = |column: u64| {
+        projection
+            .expressions
+            .get(column as usize)
+            .is_some_and(|expression| matches!(expression.kind, ExpressionKind::ColumnRef(_)))
+    };
+    if get_columns
+        .iter()
+        .any(|binding| binding.table_index == get_table_index && !is_column_ref(binding.column_index))
+    {
+        return Ok(None);
+    }
+
+    let mut unnest_get = std::mem::replace(slot, LogicalOperator::new(LogicalKind::CrossProduct));
+    let mut projection = unnest_get.children.swap_remove(0);
+    let LogicalKind::Projection {
+        table_index: projection_index,
+    } = projection.kind
+    else {
+        return Err(missing());
+    };
+    let delim_get = std::mem::replace(
+        projection.children.first_mut().ok_or_else(missing)?,
+        LogicalOperator::new(LogicalKind::CrossProduct),
+    );
+    let mut unnest = LogicalOperator::new(LogicalKind::Unnest {
+        unnest_index: get_table_index,
+    });
+    unnest.children.push(delim_get);
+    let mut replacer = ColumnBindingReplacer::default();
+    for (binding, ty) in get_columns.iter().zip(&unnest_get.types) {
+        if binding.table_index != get_table_index {
+            continue;
+        }
+        let column = binding.column_index as usize;
+        let argument = &projection.expressions[column];
+        let ExpressionKind::ColumnRef(argument_ref) = &argument.kind else {
+            return Err(missing());
+        };
+        let alias = argument.alias.clone();
+        let depth = argument_ref.depth;
+        unnest.expressions.push(Expression::new(
+            ExpressionType::BoundUnnest,
+            ty.clone(),
+            ExpressionKind::Unnest(Box::new(BoundUnnestExpression {
+                child: argument.clone(),
+            })),
+        ));
+        let unnest_column = ColumnBinding::new(get_table_index, unnest.expressions.len() as u64 - 1);
+        projection.expressions[column] = Expression::column_ref(alias, ty.clone(), unnest_column, depth);
+        if let Some(projection_type) = projection.types.get_mut(column) {
+            *projection_type = ty.clone();
+        }
+        replacer.replacement_bindings.push(ReplacementBinding::with_type(
+            *binding,
+            ColumnBinding::new(projection_index, binding.column_index),
+            ty.clone(),
+        ));
+    }
+    projection.children[0] = unnest;
+    *slot = projection;
+    Ok(Some(replacer))
 }
 
 impl UnnestRewriter {

@@ -37,8 +37,8 @@ pub use scalar::{
 pub use table::{
     FileFilterPushdown, InOutResult, ParallelScanGlobal, ParallelScanLocal, ParallelTableScan,
     PartitionRowGroup, PartitionStatistics, TableFunction, TableFunctionBind, TableFunctionBindInput,
-    TableFunctionBindOutput, TableFunctionBindReplace, TableFunctionPartitionStats,
-    TableFunctionPushdownFilters, TableFunctionReplacement, TableFunctionScan, TableFunctionSet,
-    TableFunctionStatistics, TableFunctionTypePushdown, TableFunctionVirtualColumns, TableInOutFunction,
-    TableScanState,
+    TableFunctionBindOutput, TableFunctionBindReplace, TableFunctionPartitionInfo,
+    TableFunctionPartitionStats, TableFunctionPushdownFilters, TableFunctionReplacement, TableFunctionScan,
+    TableFunctionSet, TableFunctionStatistics, TableFunctionTypePushdown, TableFunctionVirtualColumns,
+    TableInOutFunction, TablePartitionInfo, TableScanState,
 };

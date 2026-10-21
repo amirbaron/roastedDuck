@@ -371,6 +371,11 @@ impl Optimizer {
         let plan = self.run(OptimizerType::LimitPushdown, plan, |_, plan| {
             Ok(crate::limit_pushdown::optimize(plan))
         })?;
+        // ORDER BY ... LIMIT over a table scan reads the row groups in the order's
+        // direction, leaving out those that cannot reach the result.
+        let plan = self.run(OptimizerType::RowGroupPruner, plan, |optimizer, plan| {
+            Ok(crate::row_group_pruner::optimize(optimizer, plan))
+        })?;
         // SYSTEM samples of table scans skip vectors in the scan.
         let plan = self.run(OptimizerType::SamplingPushdown, plan, |_, mut plan| {
             crate::sampling_pushdown::push_down_sampling(&mut plan);
