@@ -59,3 +59,10 @@ that close it. Finished streams are removed; the commit history records them.
 8. **Logical plan serialization** (`json_serialize_plan`).
 9. **Physical operator logging** (`physical_operator_logging`).
 10. **TPC-DS** (`test/sql/tpcds`, the `tpcds` extension).
+11. **ICU collation data parity** (`test_icu_extensive`). Sorting a mixed sample under each
+    of the 130 collations differs from DuckDB for 12: DuckDB applies tailorings that
+    ICU4X's compiled data lacks for `as`, `haw`, `kl`, `kok`, `lkt`, `mr`, `se`, `smn`
+    (e.g. Assamese sorts `ক্ষ` after `হ`), while for `nb`, `nn`, `nb_no` and `sr_me`
+    DuckDB's trimmed ICU data has no tailoring (root order) and ICU4X applies Norwegian
+    and Serbian rules. Generate the collation data from ICU 77's export data with
+    `icu4x-datagen` for DuckDB's locale list and pin the root-order locales to root.
