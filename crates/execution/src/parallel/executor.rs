@@ -187,10 +187,12 @@ impl QueryExecution {
         self.shared.take_finalized_sink(&self.root)
     }
 
-    /// The global state of the root sink once its pipeline is initialized: a streaming
-    /// result collector hands out its chunks from it while the query runs.
-    pub fn root_sink_state(&self) -> Option<SinkState> {
-        self.shared.sink_state(&self.root)
+    /// Runs `f` on the global state of the root sink once its pipeline is initialized: a
+    /// streaming result collector hands out its chunks from it while the query runs. `f`
+    /// runs under the executor's lock of the states, so the thread that completes the
+    /// pipeline cannot finalize the sink meanwhile (which needs the state to itself).
+    pub fn with_root_sink_state<R>(&self, f: impl FnOnce(&SinkState) -> R) -> Option<R> {
+        self.shared.with_sink_state(&self.root, f)
     }
 
     /// The progress of the query's pipelines, or `None` while a started pipeline's source
@@ -427,10 +429,11 @@ impl ExecutorShared {
         }
     }
 
-    /// The global state of `sink` while it receives input or once it is finalized.
-    fn sink_state(&self, sink: &PhysicalRef) -> Option<SharedState> {
+    /// Runs `f` on the global state of `sink` while it receives input or once it is
+    /// finalized, holding the lock of the states.
+    fn with_sink_state<R>(&self, sink: &PhysicalRef, f: impl FnOnce(&SharedState) -> R) -> Option<R> {
         match lock(&self.states).sinks.get(&operator_key(sink)) {
-            Some(SinkSlot::Building(state) | SinkSlot::Finalized { state, .. }) => Some(Arc::clone(state)),
+            Some(SinkSlot::Building(state) | SinkSlot::Finalized { state, .. }) => Some(f(state)),
             _ => None,
         }
     }

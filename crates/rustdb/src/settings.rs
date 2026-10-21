@@ -861,6 +861,17 @@ impl Settings {
         self.enabled("enable_progress_bar")
     }
 
+    /// `streaming_buffer_size`: how many bytes a streaming result buffers before its query
+    /// waits for the caller to fetch (`ClientConfig::streaming_buffer_size`, 1 MB).
+    pub(crate) fn streaming_buffer_size(&self) -> u64 {
+        self.assigned
+            .iter()
+            .find(|(name, _)| *name == "streaming_buffer_size")
+            .and_then(|(_, value)| value.to_varchar().ok())
+            .and_then(|text| rustdb_buffer::parse_memory_limit(&text).ok())
+            .unwrap_or(1_000_000)
+    }
+
     /// Whether boolean option `option` was set to true.
     fn enabled(&self, option: &str) -> bool {
         self.assigned.iter().any(|(name, value)| {
