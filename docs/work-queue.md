@@ -4,8 +4,9 @@ Workstreams found while closing conformance failures (at most two agents run at 
 Each names the C++ it ports and the tests or checks that close it. Finished streams are
 removed; the commit history records them.
 
-Order of the next agents: the shell (3), compression (5) and the rest; the C API
-leftovers (2) when a client needs them.
+Order of the next agents: the shell (3) first — the owner's top priority (2026-10-21):
+it must be DuckDB's shell one to one, interactive editing included — then compression
+(5) and the rest; the C API leftovers (2) when a client needs them.
 
 ## Public surface (M8)
 
@@ -21,9 +22,13 @@ leftovers (2) when a client needs them.
    - `parse_statements` hands a PRAGMA's expansion of several statements out as one
      multi-statement, where DuckDB's `StatementPreprocessor` adds `BEGIN`/`COMMIT`
      statements around them, so `duckdb_extract_statements` counts fewer statements.
-3. **CLI shell.** `crates/shell` is a stub that prints `a|b` rows; DuckDB's shell renders
-   duckbox tables (also for `-c` and piped output), dot commands and modes. Port
-   `tools/shell` with byte-identical rendering.
+3. **CLI shell** (top priority). `crates/shell` is a stub that prints `a|b` rows;
+   DuckDB's shell renders duckbox tables (also for `-c` and piped output), dot commands
+   and modes. Port `tools/shell` one to one: byte-identical rendering, every option and
+   dot command, and the interactive editor (linenoise: keys, history, multi-line
+   editing, completion, highlighting). Done when every test of `tools/shell/tests` that
+   passes on the C++ CLI passes on rustdb, and interactive sessions match byte for byte
+   under a pty.
 
 ## Storage
 
