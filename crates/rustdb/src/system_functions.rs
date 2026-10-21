@@ -143,7 +143,10 @@ fn text_map(entries: &[(String, String)]) -> Value {
     Value::map(
         LogicalType::VARCHAR,
         LogicalType::VARCHAR,
-        entries.iter().map(|(key, value)| (text(key.clone()), text(value.clone()))).collect(),
+        entries
+            .iter()
+            .map(|(key, value)| (text(key.clone()), text(value.clone())))
+            .collect(),
     )
 }
 
@@ -1735,11 +1738,25 @@ fn dependency_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
 
 /// `pragma_collations()`: the builtin collations (`PragmaCollations`; the ICU collations
 /// come with the ICU extension).
-fn collation_rows(_: &ClientContext) -> Result<Vec<Vec<Value>>> {
-    Ok(["nocase", "noaccent", "nfc"]
+fn collation_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    let mut names: Vec<String> = ["nocase", "noaccent", "nfc"]
         .into_iter()
-        .map(|name| vec![Value::varchar(name)])
-        .collect())
+        .map(str::to_owned)
+        .collect();
+    if let Some(system) = context.catalog("system")
+        && let Some(schema) = system.schema(&context.transaction, rustdb_catalog::DEFAULT_SCHEMA)
+        && let Some(schema) = schema.as_schema()
+    {
+        names.extend(
+            schema
+                .collations
+                .scan(&context.transaction)
+                .iter()
+                .map(|entry| entry.name().to_owned()),
+        );
+    }
+    names.sort();
+    Ok(names.into_iter().map(|name| vec![Value::varchar(name)]).collect())
 }
 
 /// `duckdb_connection_count()`: the number of open connections

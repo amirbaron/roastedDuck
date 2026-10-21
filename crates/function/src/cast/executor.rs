@@ -13,7 +13,7 @@ use super::CastParameters;
 
 /// Why a single row failed to convert.
 #[derive(Debug, PartialEq)]
-pub(super) enum RowError {
+pub enum RowError {
     /// The row cannot be converted: `CAST` raises this message, `TRY_CAST` yields NULL.
     Invalid(String),
     /// An error raised even under `TRY_CAST` (DuckDB throws these directly).
@@ -32,10 +32,10 @@ impl From<Error> for RowError {
 }
 
 /// The result of converting one row.
-pub(super) type RowResult<T> = std::result::Result<T, RowError>;
+pub type RowResult<T> = std::result::Result<T, RowError>;
 
 /// `source` with sequences expanded, so that slot-based access works.
-pub(super) fn addressable(source: &Vector, count: usize) -> std::borrow::Cow<'_, Vector> {
+pub fn addressable(source: &Vector, count: usize) -> std::borrow::Cow<'_, Vector> {
     if source.kind() == VectorKind::Sequence {
         std::borrow::Cow::Owned(source.flattened(count))
     } else {
@@ -47,7 +47,7 @@ pub(super) fn addressable(source: &Vector, count: usize) -> std::borrow::Cow<'_,
 ///
 /// Returns `Ok(false)` if some rows failed under `TRY_CAST` (they are NULL), and an error
 /// for the first failing row under `CAST`.
-pub(super) fn cast_rows<O: NativeType>(
+pub fn cast_rows<O: NativeType>(
     source: &Vector,
     result: &mut Vector,
     count: usize,
@@ -122,7 +122,7 @@ pub(super) fn cast_rows<O: NativeType>(
 
 /// Like [`cast_rows`] for VARCHAR-like results: `convert(slot, out)` appends the text of a
 /// row to a reused scratch buffer.
-pub(super) fn cast_rows_to_string(
+pub fn cast_rows_to_string(
     source: &Vector,
     result: &mut Vector,
     count: usize,
@@ -141,7 +141,7 @@ pub(super) fn cast_rows_to_string(
 }
 
 /// Converts the values of a fixed-width vector with a fallible function.
-pub(super) fn try_map_values<I: NativeType, O: NativeType>(
+pub fn try_map_values<I: NativeType, O: NativeType>(
     source: &Vector,
     result: &mut Vector,
     count: usize,
@@ -154,7 +154,7 @@ pub(super) fn try_map_values<I: NativeType, O: NativeType>(
 }
 
 /// Renders the values of a fixed-width vector as text.
-pub(super) fn values_to_string<I: NativeType>(
+pub fn values_to_string<I: NativeType>(
     source: &Vector,
     result: &mut Vector,
     count: usize,
@@ -170,7 +170,7 @@ pub(super) fn values_to_string<I: NativeType>(
 }
 
 /// Renders the values of a fixed-width vector as text with a fallible function.
-pub(super) fn try_values_to_string<I: NativeType>(
+pub fn try_values_to_string<I: NativeType>(
     source: &Vector,
     result: &mut Vector,
     count: usize,
@@ -185,7 +185,7 @@ pub(super) fn try_values_to_string<I: NativeType>(
 }
 
 /// Converts the strings of a VARCHAR/BLOB vector with a fallible function.
-pub(super) fn try_map_strings<O: NativeType>(
+pub fn try_map_strings<O: NativeType>(
     source: &Vector,
     result: &mut Vector,
     count: usize,
@@ -199,7 +199,7 @@ pub(super) fn try_map_strings<O: NativeType>(
 }
 
 /// Converts the strings of a VARCHAR/BLOB vector into new strings.
-pub(super) fn try_map_strings_to_string(
+pub fn try_map_strings_to_string(
     source: &Vector,
     result: &mut Vector,
     count: usize,

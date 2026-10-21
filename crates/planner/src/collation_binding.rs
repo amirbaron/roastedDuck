@@ -25,6 +25,7 @@ pub enum CollationType {
 
 /// A builtin collation (DuckDB's `CollateCatalogEntry`, registered by
 /// `BuiltinFunctions::AddCollation`).
+#[derive(Debug)]
 struct Collation {
     name: &'static str,
     /// The scalar function computing the collated value.
@@ -60,6 +61,33 @@ fn type_collation(ty: &LogicalType) -> &str {
     }
 }
 
+/// A collation a collation string names: a builtin one, or one an extension registered in
+/// the system catalog (`CollateCatalogEntry`).
+#[derive(Clone, Debug)]
+enum ResolvedCollation {
+    Builtin(&'static Collation),
+    Extension {
+        name: String,
+        entry: Box<rustdb_catalog::CollationEntry>,
+    },
+}
+
+impl ResolvedCollation {
+    fn name(&self) -> &str {
+        match self {
+            Self::Builtin(collation) => collation.name,
+            Self::Extension { name, .. } => name,
+        }
+    }
+
+    fn combinable(&self) -> bool {
+        match self {
+            Self::Builtin(collation) => collation.combinable,
+            Self::Extension { entry, .. } => entry.combinable,
+        }
+    }
+}
+
 /// Wraps `source` in the single overload of the system function `name`.
 fn wrap(context: &ClientContext, name: &str, source: Expression) -> Result<Expression> {
     let entry = context
@@ -91,51 +119,92 @@ fn push_varchar_collation(
         collation => collation,
     }
     .to_lowercase();
-    let entries = resolve_collations(&collation)?;
+    let entries = resolve_collations(&collation, |argument| {
+        let entry = context.get_entry("system", "main", CatalogType::Collation, argument, true)?;
+        Ok(entry.and_then(|entry| match &entry.entry.kind {
+            EntryKind::Collation(collation) => Some(collation.clone()),
+            _ => None,
+        }))
+    })?;
     if entries.is_empty() {
         return Ok((source, false));
     }
     let mut source = source;
     for entry in entries {
-        if !entry.combinable && kind == CollationType::CombinableCollations {
+        if !entry.combinable() && kind == CollationType::CombinableCollations {
             return Ok((source, false));
         }
-        source = wrap(context, entry.function, source)?;
+        source = match entry {
+            ResolvedCollation::Builtin(collation) => wrap(context, collation.function, source)?,
+            ResolvedCollation::Extension { entry, .. } => {
+                FunctionBinder::new(context).bind_scalar_overload(entry.function, vec![source], false)?
+            }
+        };
     }
     Ok((source, true))
 }
 
-/// Checks that `collation` names builtin collations that can be combined (the check
-/// `ExpressionBinder::TestCollation` makes for `SET default_collation`).
-pub fn test_collation(collation: &str) -> Result<()> {
-    resolve_collations(&collation.to_lowercase()).map(|_| ())
+/// Checks that `collation` names collations that can be combined (the check
+/// `ExpressionBinder::TestCollation` makes for `SET default_collation`); `extensions` are
+/// the collations extensions registered, with whether they are combinable.
+pub fn test_collation(collation: &str, extensions: &[(String, bool)]) -> Result<()> {
+    resolve_collations(&collation.to_lowercase(), |argument| {
+        Ok(extensions
+            .iter()
+            .find(|(name, _)| name == argument)
+            .map(|(_, combinable)| rustdb_catalog::CollationEntry {
+                function: rustdb_function::ScalarFunction::new(
+                    "",
+                    vec![],
+                    LogicalType::VARCHAR,
+                    |_, _, _| Ok(()),
+                ),
+                combinable: *combinable,
+                not_required_for_equality: false,
+            }))
+    })
+    .map(|_| ())
 }
 
 /// The collations a lowercase `a.b.c` collation applies, combinable ones first;
-/// none for the binary collations.
-fn resolve_collations(collation: &str) -> Result<Vec<&'static Collation>> {
+/// none for the binary collations. `lookup` finds the collations extensions registered.
+fn resolve_collations(
+    collation: &str,
+    lookup: impl Fn(&str) -> Result<Option<rustdb_catalog::CollationEntry>>,
+) -> Result<Vec<ResolvedCollation>> {
     if collation.is_empty() || matches!(collation, "binary" | "c" | "posix") {
         return Ok(Vec::new());
     }
-    let mut entries: Vec<&'static Collation> = Vec::new();
+    let mut entries: Vec<ResolvedCollation> = Vec::new();
     let mut seen: Vec<&str> = Vec::new();
     for argument in collation.split('.') {
         if seen.contains(&argument) {
             continue;
         }
-        let entry = COLLATIONS
-            .iter()
-            .find(|entry| entry.name == argument)
-            .ok_or_else(|| Error::catalog(format!("Collation with name {argument} does not exist!")))?;
-        if entry.combinable {
+        let entry = match COLLATIONS.iter().find(|entry| entry.name == argument) {
+            Some(entry) => ResolvedCollation::Builtin(entry),
+            None => match lookup(argument)? {
+                Some(entry) => ResolvedCollation::Extension {
+                    name: argument.to_owned(),
+                    entry: Box::new(entry),
+                },
+                None => {
+                    return Err(Error::catalog(format!(
+                        "Collation with name {argument} does not exist!"
+                    )));
+                }
+            },
+        };
+        if entry.combinable() {
             entries.insert(0, entry);
         } else {
             if let Some(last) = entries.last()
-                && !last.combinable
+                && !last.combinable()
             {
                 return Err(Error::binder(format!(
                     "Cannot combine collation types \"{}\" and \"{}\"",
-                    last.name, entry.name
+                    last.name(),
+                    entry.name()
                 )));
             }
             entries.push(entry);

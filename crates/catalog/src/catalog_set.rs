@@ -122,6 +122,27 @@ impl CatalogSet {
         Ok(())
     }
 
+    /// Replaces the built-in entry of that name by `entry`, or adds it, visible to every
+    /// transaction (an extension altering a built-in, DuckDB's `ALTER_ON_CONFLICT` on the
+    /// system catalog). Transactions holding the old entry keep it.
+    pub fn replace_committed(&self, entry: CatalogEntry) {
+        let mut chains = self.lock();
+        chains.insert(key(entry.name()), vec![Version::new(0, Some(Arc::new(entry)))]);
+    }
+
+    /// The built-in (committed) entry called `name`, ignoring transactions.
+    pub fn get_committed(&self, name: &str) -> Option<Arc<CatalogEntry>> {
+        let chains = self.lock();
+        chains
+            .get(&key(name))
+            .and_then(|chain| {
+                chain
+                    .iter()
+                    .find(|version| version.timestamp() < TRANSACTION_ID_START)
+            })
+            .and_then(|version| version.entry.clone())
+    }
+
     /// Creates `entry` in `transaction`. Returns `false` if a visible entry with that name
     /// already exists (callers turn this into the appropriate "already exists" error).
     pub fn create(self: &Arc<Self>, transaction: &Transaction, entry: CatalogEntry) -> Result<bool> {

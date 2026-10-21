@@ -412,13 +412,15 @@ fn bind_base_table(
         });
         return Ok(BoundStatement::new(plan, names, types));
     }
-    if let Some(at_clause) = &mut base.at_clause {
-        // `Binder::BindAtClause`: a constant, evaluated while binding.
-        let mut binder = scope.binder.child()?;
-        let expression = crate::expression_binder::ConstantBinder::new(&mut binder, None, "AT clause")
-            .bind(&mut at_clause.expr, true)?;
-        scope.context.evaluator.evaluate_scalar(&expression)?;
-        // `Catalog::TryLookupEntryInternal`: DuckDB catalogs have no time travel.
+    if let Some(at_clause) = base.at_clause.as_mut() {
+        // `Binder::BindAtClause`: the clause binds and evaluates as a constant; DuckDB's own
+        // catalogs then refuse it (`Catalog::LookupEntry`).
+        let bound = {
+            let (inner, outer) = scope.split();
+            let mut binder = crate::expression_binder::ConstantBinder::new(inner, outer, "AT clause");
+            binder.bind(&mut at_clause.expr, true)?
+        };
+        scope.context.evaluator.evaluate_scalar(&bound)?;
         return Err(Error::binder("Catalog type does not support time travel"));
     }
     if !base.schema_name.is_empty()

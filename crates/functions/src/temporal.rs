@@ -6,7 +6,7 @@ use rustdb_common::{Error, Result};
 use rustdb_types::{Date, Interval, Time, TimeTz, Timestamp};
 
 /// Microseconds in a day.
-pub(crate) const MICROS_PER_DAY: i64 = Interval::MICROS_PER_DAY;
+pub const MICROS_PER_DAY: i64 = Interval::MICROS_PER_DAY;
 
 fn date_out_of_range() -> Error {
     Error::out_of_range("Date out of range")
@@ -15,7 +15,7 @@ fn date_out_of_range() -> Error {
 /// `time + interval` wrapping around midnight; returns the new time and the number of days
 /// carried (DuckDB's `Interval::Add(dtime_t, interval_t, date_t &)`). Only the micros of the
 /// interval apply.
-pub(crate) fn time_add_interval(time: Time, interval: Interval) -> (Time, i32) {
+pub fn time_add_interval(time: Time, interval: Interval) -> (Time, i32) {
     let diff = interval.micros - (interval.micros / MICROS_PER_DAY) * MICROS_PER_DAY;
     let mut micros = time.0 + diff;
     let mut carry = 0;
@@ -31,13 +31,13 @@ pub(crate) fn time_add_interval(time: Time, interval: Interval) -> (Time, i32) {
 
 /// The UTC time of day of a TIME WITH TIME ZONE in microseconds (DuckDB's
 /// `Time::NormalizeTimeTZ`).
-pub(crate) fn time_tz_normalized_micros(value: TimeTz) -> i64 {
+pub fn time_tz_normalized_micros(value: TimeTz) -> i64 {
     let offset = Interval::new(0, 0, -i64::from(value.offset()) * Interval::MICROS_PER_SEC);
     time_add_interval(value.time(), offset).0.0
 }
 
 /// `date + days` (DuckDB's `AddOperator<date_t, int32_t>`): infinities stay infinite.
-pub(crate) fn date_add_days(date: Date, days: i32) -> Result<Date> {
+pub fn date_add_days(date: Date, days: i32) -> Result<Date> {
     if !date.is_finite() {
         return Ok(date);
     }
@@ -50,7 +50,7 @@ pub(crate) fn date_add_days(date: Date, days: i32) -> Result<Date> {
 }
 
 /// `date - days` (DuckDB's `SubtractOperator<date_t, int32_t>`).
-pub(crate) fn date_subtract_days(date: Date, days: i32) -> Result<Date> {
+pub fn date_subtract_days(date: Date, days: i32) -> Result<Date> {
     if !date.is_finite() {
         return Ok(date);
     }
@@ -63,13 +63,13 @@ pub(crate) fn date_subtract_days(date: Date, days: i32) -> Result<Date> {
 }
 
 /// `Date::FromDate` with its conversion error.
-pub(crate) fn date_from_ymd(year: i32, month: i32, day: i32) -> Result<Date> {
+pub fn date_from_ymd(year: i32, month: i32, day: i32) -> Result<Date> {
     Date::from_ymd(year, month, day)
         .ok_or_else(|| Error::conversion(format!("Date out of range: {year}-{month}-{day}")))
 }
 
 /// `date + interval` on the calendar (DuckDB's `Interval::Add(date_t, interval_t)`).
-pub(crate) fn date_add_interval(date: Date, interval: Interval) -> Result<Date> {
+pub fn date_add_interval(date: Date, interval: Interval) -> Result<Date> {
     if !date.is_finite() {
         return Ok(date);
     }
@@ -109,20 +109,20 @@ pub(crate) fn date_add_interval(date: Date, interval: Interval) -> Result<Date> 
 }
 
 /// `Timestamp::FromDatetime` with its conversion error.
-pub(crate) fn timestamp_from_datetime(date: Date, time: Time) -> Result<Timestamp> {
+pub fn timestamp_from_datetime(date: Date, time: Time) -> Result<Timestamp> {
     Timestamp::from_datetime(date, time)
         .ok_or_else(|| Error::conversion("Date and time not in timestamp range"))
 }
 
 /// `Timestamp::Convert` with its conversion error.
-pub(crate) fn timestamp_to_datetime(timestamp: Timestamp) -> Result<(Date, Time)> {
+pub fn timestamp_to_datetime(timestamp: Timestamp) -> Result<(Date, Time)> {
     timestamp
         .to_datetime()
         .ok_or_else(|| Error::conversion("Date out of range in timestamp conversion"))
 }
 
 /// `timestamp + interval` (DuckDB's `Interval::Add(timestamp_t, interval_t)`).
-pub(crate) fn timestamp_add_interval(timestamp: Timestamp, interval: Interval) -> Result<Timestamp> {
+pub fn timestamp_add_interval(timestamp: Timestamp, interval: Interval) -> Result<Timestamp> {
     if !timestamp.is_finite() {
         return Ok(timestamp);
     }
@@ -133,7 +133,7 @@ pub(crate) fn timestamp_add_interval(timestamp: Timestamp, interval: Interval) -
 }
 
 /// `date + interval` as a TIMESTAMP (DuckDB's `AddOperator<date_t, interval_t, timestamp_t>`).
-pub(crate) fn date_add_interval_timestamp(date: Date, interval: Interval) -> Result<Timestamp> {
+pub fn date_add_interval_timestamp(date: Date, interval: Interval) -> Result<Timestamp> {
     if date == Date::INFINITY {
         return Ok(Timestamp::INFINITY);
     }
@@ -144,7 +144,7 @@ pub(crate) fn date_add_interval_timestamp(date: Date, interval: Interval) -> Res
 }
 
 /// `date + time` (DuckDB's `AddOperator<date_t, dtime_t, timestamp_t>`).
-pub(crate) fn date_add_time(date: Date, time: Time) -> Result<Timestamp> {
+pub fn date_add_time(date: Date, time: Time) -> Result<Timestamp> {
     if date == Date::INFINITY {
         return Ok(Timestamp::INFINITY);
     }
@@ -155,7 +155,7 @@ pub(crate) fn date_add_time(date: Date, time: Time) -> Result<Timestamp> {
 }
 
 /// `date + timetz` (DuckDB's `AddOperator<date_t, dtime_tz_t, timestamp_t>`).
-pub(crate) fn date_add_time_tz(date: Date, time: TimeTz) -> Result<Timestamp> {
+pub fn date_add_time_tz(date: Date, time: TimeTz) -> Result<Timestamp> {
     if date == Date::INFINITY {
         return Ok(Timestamp::INFINITY);
     }
@@ -167,7 +167,7 @@ pub(crate) fn date_add_time_tz(date: Date, time: TimeTz) -> Result<Timestamp> {
 }
 
 /// `timestamp - timestamp` (DuckDB's `Interval::GetDifference`).
-pub(crate) fn timestamp_difference(left: Timestamp, right: Timestamp) -> Result<Interval> {
+pub fn timestamp_difference(left: Timestamp, right: Timestamp) -> Result<Interval> {
     if !left.is_finite() || !right.is_finite() {
         return Err(Error::invalid_input("Cannot subtract infinite timestamps"));
     }
@@ -179,7 +179,7 @@ pub(crate) fn timestamp_difference(left: Timestamp, right: Timestamp) -> Result<
 }
 
 /// DuckDB's `Interval::FromMicro`.
-pub(crate) fn interval_from_micros(micros: i64) -> Interval {
+pub fn interval_from_micros(micros: i64) -> Interval {
     Interval {
         months: 0,
         days: (micros / MICROS_PER_DAY) as i32,
@@ -188,7 +188,7 @@ pub(crate) fn interval_from_micros(micros: i64) -> Interval {
 }
 
 /// DuckDB's `Interval::Invert`.
-pub(crate) fn interval_invert(interval: Interval) -> Interval {
+pub fn interval_invert(interval: Interval) -> Interval {
     Interval {
         months: interval.months.wrapping_neg(),
         days: interval.days.wrapping_neg(),
@@ -197,7 +197,7 @@ pub(crate) fn interval_invert(interval: Interval) -> Interval {
 }
 
 /// `-interval` (DuckDB's `NegateOperator` on intervals).
-pub(crate) fn interval_negate(interval: Interval) -> Result<Interval> {
+pub fn interval_negate(interval: Interval) -> Result<Interval> {
     let overflow = || Error::out_of_range("Overflow in negation of numeric value!");
     Ok(Interval {
         months: interval.months.checked_neg().ok_or_else(overflow)?,
@@ -218,7 +218,7 @@ fn outside_i32(value: f64) -> bool {
 
 /// `interval * factor` (DuckDB's `TryMultiplyOperator<interval_t, double>`, from PostgreSQL's
 /// `interval_mul`), with the reference build's fused multiply-adds.
-pub(crate) fn interval_multiply_double(interval: Interval, factor: f64) -> Option<Interval> {
+pub fn interval_multiply_double(interval: Interval, factor: f64) -> Option<Interval> {
     let months_product = f64::from(interval.months) * factor;
     if outside_i32(months_product) {
         return None;
@@ -258,12 +258,12 @@ pub(crate) fn interval_multiply_double(interval: Interval, factor: f64) -> Optio
 }
 
 /// `interval * factor` raising DuckDB's error.
-pub(crate) fn interval_multiply_double_checked(interval: Interval, factor: f64) -> Result<Interval> {
+pub fn interval_multiply_double_checked(interval: Interval, factor: f64) -> Result<Interval> {
     interval_multiply_double(interval, factor)
         .ok_or_else(|| Error::out_of_range("Overflow in multiplication of INTERVAL."))
 }
 
 /// `interval * factor` for a BIGINT factor.
-pub(crate) fn interval_multiply_bigint(interval: Interval, factor: i64) -> Result<Interval> {
+pub fn interval_multiply_bigint(interval: Interval, factor: i64) -> Result<Interval> {
     crate::operator::interval_multiply(interval, factor)
 }

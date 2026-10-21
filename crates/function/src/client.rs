@@ -23,6 +23,30 @@ pub struct SettingInfo {
     pub aliases: Vec<String>,
 }
 
+/// Checks a new value of an extension option and may normalise it (DuckDB's
+/// `set_option_callback_t`).
+pub type ExtensionOptionSet = std::sync::Arc<dyn Fn(&mut Value) -> Result<()> + Send + Sync>;
+
+/// A configuration option an extension adds (DuckDB's `ExtensionOption`, registered with
+/// `DBConfig::AddExtensionOption`); its scope defaults to the session.
+#[derive(Clone)]
+pub struct ExtensionOption {
+    pub name: String,
+    pub description: String,
+    pub input_type: rustdb_types::LogicalType,
+    pub default_value: Value,
+    pub set_function: Option<ExtensionOptionSet>,
+}
+
+impl std::fmt::Debug for ExtensionOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExtensionOption")
+            .field("name", &self.name)
+            .field("default_value", &self.default_value)
+            .finish_non_exhaustive()
+    }
+}
+
 /// The connection's configuration as functions see it (DuckDB's
 /// `ClientContext::TryGetCurrentSetting` and `DBConfig::GetOptions`).
 pub trait SettingsSource: Send + Sync + std::fmt::Debug {

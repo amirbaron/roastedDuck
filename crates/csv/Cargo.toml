@@ -12,6 +12,7 @@ rustdb-types.workspace = true
 rustdb-ast.workspace = true
 rustdb-parser.workspace = true
 rustdb-planner.workspace = true
+rustdb-catalog = { path = "../catalog" }
 rustdb-function = { path = "../function" }
 rustdb-functions = { path = "../functions" }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }

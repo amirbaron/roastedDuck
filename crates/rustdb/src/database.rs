@@ -40,8 +40,21 @@ pub(crate) struct DatabaseInstance {
     pub(crate) databases: DatabaseManager,
     /// The name of the database opened at start-up (the default database).
     default_database: std::sync::OnceLock<String>,
-    /// The cast functions (DuckDB's `DBConfig::GetCastFunctions`).
-    pub(crate) casts: Arc<CastFunctionSet>,
+    /// The cast functions (DuckDB's `DBConfig::GetCastFunctions`); extensions replace
+    /// the set when they register casts.
+    casts: std::sync::RwLock<Arc<CastFunctionSet>>,
+    /// Whether registered casts depend on the connection's settings (the ICU casts): the
+    /// connections then bind casts for themselves.
+    client_casts: std::sync::atomic::AtomicBool,
+    /// The options extensions added (DuckDB's `DBConfig::extension_parameters`).
+    extension_options: std::sync::RwLock<Vec<rustdb_function::ExtensionOption>>,
+    /// The global values of the extension options (DuckDB's global user settings),
+    /// starting at their defaults.
+    extension_globals: Mutex<CaseInsensitiveMap<Value>>,
+    /// Options given at start-up that no option knows yet (DuckDB's
+    /// `DBConfigOptions::unrecognized_options`); an extension option of that name takes
+    /// the value when its extension loads.
+    unrecognized_options: Mutex<Vec<(String, Value)>>,
     /// Buffer manager and thread count used by every query.
     pub(crate) env: Arc<rustdb_execution::ClientEnv>,
     /// Set by `PRAGMA disable_checkpoint_on_shutdown`.
@@ -94,10 +107,17 @@ enum StaticExtension {
     Json,
     Tpch,
     Autocomplete,
+    Icu,
 }
 
 impl StaticExtension {
-    const ALL: [Self; 4] = [Self::Parquet, Self::Json, Self::Tpch, Self::Autocomplete];
+    const ALL: [Self; 5] = [
+        Self::Parquet,
+        Self::Json,
+        Self::Tpch,
+        Self::Autocomplete,
+        Self::Icu,
+    ];
 
     fn from_name(name: &str) -> Option<Self> {
         match name {
@@ -105,6 +125,7 @@ impl StaticExtension {
             "json" => Some(Self::Json),
             rustdb_tpch::EXTENSION_NAME => Some(Self::Tpch),
             rustdb_autocomplete::EXTENSION_NAME => Some(Self::Autocomplete),
+            rustdb_icu::EXTENSION_NAME => Some(Self::Icu),
             _ => None,
         }
     }
@@ -115,7 +136,7 @@ impl StaticExtension {
             Self::Parquet => &["add_parquet_key"],
             Self::Json => &["json_execute_serialized_sql"],
             Self::Tpch => &["tpch"],
-            Self::Autocomplete => &[],
+            Self::Autocomplete | Self::Icu => &[],
         }
     }
 
@@ -123,7 +144,7 @@ impl StaticExtension {
     fn has_pragma(self, name: &str) -> bool {
         match self {
             Self::Tpch => name.eq_ignore_ascii_case("tpch"),
-            Self::Parquet | Self::Json | Self::Autocomplete => false,
+            Self::Parquet | Self::Json | Self::Autocomplete | Self::Icu => false,
         }
     }
 
@@ -131,7 +152,7 @@ impl StaticExtension {
     fn pragma_query(self, name: &str, parameters: &[Value]) -> Result<String> {
         match self {
             Self::Tpch => rustdb_tpch::pragma_tpch_query(parameters),
-            Self::Parquet | Self::Json | Self::Autocomplete => {
+            Self::Parquet | Self::Json | Self::Autocomplete | Self::Icu => {
                 Err(Error::internal(format!("no pragma {name}")))
             }
         }
@@ -172,6 +193,28 @@ impl StaticExtension {
                 let pragma_names = Arc::new(move || pragma_function_names(&loaded));
                 for set in rustdb_autocomplete::autocomplete_table_functions(pragma_names) {
                     system.register_table_functions(set)?;
+                }
+            }
+            Self::Icu => {
+                use rustdb_icu::IcuExtension;
+                for set in IcuExtension::scalar_functions() {
+                    system.register_scalar_functions_merged(set)?;
+                }
+                for set in IcuExtension::table_functions() {
+                    system.register_table_functions_merged(set)?;
+                }
+                for name in rustdb_icu::PATCHED_FUNCTIONS {
+                    system.alter_builtin_scalar_functions(name, IcuExtension::patch_function)?;
+                }
+                for (name, collation) in IcuExtension::collations() {
+                    system.register_collation(
+                        &name,
+                        rustdb_catalog::CollationEntry {
+                            function: collation,
+                            combinable: false,
+                            not_required_for_equality: false,
+                        },
+                    )?;
                 }
             }
         }
@@ -256,6 +299,41 @@ fn default_temp_directory(path: &str) -> String {
     }
 }
 
+/// Whether `name` is an option an extension adds rather than a built-in option (DuckDB
+/// keeps such start-up options as `unrecognized_options` until the extension loads).
+fn is_extension_setting(name: &str) -> bool {
+    crate::settings::canonical_option(name).is_none()
+        && rustdb_function::extension_entries::find_extension(
+            name,
+            rustdb_function::extension_entries::EXTENSION_SETTINGS,
+        )
+        .is_some()
+}
+
+/// Whether `ty` is or contains a type of id `id`.
+fn contains_type(ty: &LogicalType, id: rustdb_types::LogicalTypeId) -> bool {
+    use rustdb_types::LogicalTypeId as L;
+    if ty.id() == id {
+        return true;
+    }
+    match ty.id() {
+        L::List => ty.child_type().is_some_and(|child| contains_type(child, id)),
+        L::Array => ty
+            .array_child()
+            .is_some_and(|(child, _)| contains_type(child, id)),
+        L::Map => ty
+            .map_key_value()
+            .is_some_and(|(key, value)| contains_type(key, id) || contains_type(value, id)),
+        L::Struct => ty
+            .struct_children()
+            .is_some_and(|children| children.iter().any(|(_, child)| contains_type(child, id))),
+        L::Union => ty
+            .union_members()
+            .is_some_and(|members| members.iter().any(|(_, member)| contains_type(member, id))),
+        _ => false,
+    }
+}
+
 /// Whether `name` is `threads` or its alias `worker_threads`.
 fn is_threads_setting(name: &str) -> bool {
     name.eq_ignore_ascii_case("threads") || name.eq_ignore_ascii_case("worker_threads")
@@ -296,9 +374,153 @@ impl DatabaseInstance {
             .unwrap_or_else(PoisonError::into_inner);
         if !loaded.contains(&extension) {
             extension.register(&self.system_catalog, &self.loaded_extensions)?;
+            if extension == StaticExtension::Icu {
+                self.load_icu_config();
+            }
             loaded.push(extension);
         }
         Ok(())
+    }
+
+    /// The configuration parts of `IcuExtension::Load`: the casts and the `TimeZone` and
+    /// `Calendar` options.
+    fn load_icu_config(&self) {
+        let mut casts = (*self.casts()).clone();
+        rustdb_icu::IcuExtension::register_casts(&mut casts);
+        *self.casts.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(casts);
+        self.client_casts
+            .store(true, std::sync::atomic::Ordering::Release);
+        for option in rustdb_icu::IcuExtension::options() {
+            self.add_extension_option(option);
+        }
+    }
+
+    /// The collations extensions registered in the system catalog, with whether they are
+    /// combinable.
+    pub(crate) fn extension_collations(&self) -> Vec<(String, bool)> {
+        let Some(schema) = self.system_catalog.schema(
+            &rustdb_catalog::Transaction::system(),
+            rustdb_catalog::DEFAULT_SCHEMA,
+        ) else {
+            return Vec::new();
+        };
+        let Some(schema) = schema.as_schema() else {
+            return Vec::new();
+        };
+        schema
+            .collations
+            .scan(&rustdb_catalog::Transaction::system())
+            .iter()
+            .filter_map(|entry| match &entry.kind {
+                rustdb_catalog::EntryKind::Collation(collation) => {
+                    Some((entry.name().to_owned(), collation.combinable))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The cast functions.
+    pub(crate) fn casts(&self) -> Arc<CastFunctionSet> {
+        Arc::clone(&self.casts.read().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// `DBConfig::AddExtensionOption`: a start-up value given under the option's name, or
+    /// else its default, becomes its global value.
+    fn add_extension_option(&self, option: rustdb_function::ExtensionOption) {
+        let mut globals = self
+            .extension_globals
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let mut unrecognized = self
+            .unrecognized_options
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(position) = unrecognized
+            .iter()
+            .position(|(name, _)| name.eq_ignore_ascii_case(&option.name))
+        {
+            let (_, value) = unrecognized.remove(position);
+            globals.insert(&option.name, value);
+        }
+        if !option.default_value.is_null() && globals.get(&option.name).is_none() {
+            globals.insert(&option.name, option.default_value.clone());
+        }
+        let mut options = self
+            .extension_options
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
+        options.retain(|existing| !existing.name.eq_ignore_ascii_case(&option.name));
+        options.push(option);
+    }
+
+    /// The extension option called `name` (case-insensitive), if an extension added it
+    /// (`DBConfig::TryGetExtensionOption`).
+    pub(crate) fn extension_option(&self, name: &str) -> Option<rustdb_function::ExtensionOption> {
+        self.extension_options
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .find(|option| option.name.eq_ignore_ascii_case(name))
+            .cloned()
+    }
+
+    /// Every extension option with its global value.
+    pub(crate) fn extension_option_values(&self) -> Vec<(rustdb_function::ExtensionOption, Value)> {
+        let globals = self
+            .extension_globals
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        self.extension_options
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .map(|option| {
+                let value = globals
+                    .get(&option.name)
+                    .cloned()
+                    .unwrap_or_else(|| option.default_value.clone());
+                (option.clone(), value)
+            })
+            .collect()
+    }
+
+    /// Sets (`Some`) or resets (`None`, to the default) the global value of extension
+    /// option `option` (`DBConfig::SetOption` / `ResetOption`).
+    pub(crate) fn set_extension_global(
+        &self,
+        option: &rustdb_function::ExtensionOption,
+        value: Option<Value>,
+    ) {
+        let mut globals = self
+            .extension_globals
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        match value {
+            Some(value) => {
+                globals.insert(&option.name, value);
+            }
+            None if !option.default_value.is_null() => {
+                globals.insert(&option.name, option.default_value.clone());
+            }
+            None => {
+                globals.remove(&option.name);
+            }
+        }
+    }
+
+    /// Keeps a start-up option no option knows (yet) for the extension that adds it.
+    pub(crate) fn add_unrecognized_option(&self, name: &str, value: Value) {
+        if let Some(option) = self.extension_option(name) {
+            self.set_extension_global(&option, Some(value));
+            return;
+        }
+        let mut unrecognized = self
+            .unrecognized_options
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        unrecognized.retain(|(existing, _)| !existing.eq_ignore_ascii_case(name));
+        unrecognized.push((name.to_owned(), value));
     }
 
     /// Whether a loaded extension registers a parser override (DuckDB's
@@ -577,7 +799,11 @@ impl Database {
             system_catalog: Arc::new(system_catalog),
             databases: DatabaseManager::default(),
             default_database: std::sync::OnceLock::new(),
-            casts: Arc::new(json_casts()),
+            casts: std::sync::RwLock::new(Arc::new(json_casts())),
+            client_casts: std::sync::atomic::AtomicBool::new(false),
+            extension_options: std::sync::RwLock::default(),
+            extension_globals: Mutex::default(),
+            unrecognized_options: Mutex::default(),
             env,
             shutdown_checkpoint_disabled: std::sync::atomic::AtomicBool::new(false),
             checkpoint_wal_size: std::sync::atomic::AtomicU64::new(DEFAULT_CHECKPOINT_WAL_SIZE),
@@ -612,6 +838,11 @@ impl Database {
             }
             if is_force_compression(name) {
                 instance.set_force_compression(Some(value))?;
+            }
+        }
+        for (name, value) in &config.options {
+            if is_extension_setting(name) {
+                instance.add_unrecognized_option(name, value.clone());
             }
         }
         let database = Self {
@@ -674,6 +905,9 @@ impl Database {
         let transactions = TransactionContext::new(Arc::clone(&self.instance.transactions));
         let mut settings = Settings::default();
         for (name, value) in &self.instance.config.options {
+            if is_extension_setting(name) {
+                continue;
+            }
             settings.set(name, value)?;
         }
         let function_client = Arc::new(rustdb_function::FunctionClient::default());
@@ -711,6 +945,8 @@ impl Database {
             user_variables: CaseInsensitiveMap::default(),
             profiler: crate::query_profiler::QueryProfiler::default(),
             log_query_writer: None,
+            extension_session: CaseInsensitiveMap::default(),
+            bound_casts: Mutex::default(),
         })
     }
 
@@ -771,6 +1007,12 @@ pub struct Connection {
     /// The file `log_query_path` names, which every statement is written to (DuckDB's
     /// `ClientData::log_query_writer`).
     log_query_writer: Option<std::fs::File>,
+    /// The session values of extension options (DuckDB's `ClientConfig::user_settings`
+    /// for extension parameters).
+    extension_session: CaseInsensitiveMap<Value>,
+    /// The database's casts bound for this connection, with the set they were made from
+    /// (only when extension casts depend on the connection's settings).
+    bound_casts: Mutex<Option<(Arc<CastFunctionSet>, Arc<CastFunctionSet>)>>,
 }
 
 impl Drop for Connection {
@@ -787,17 +1029,56 @@ impl Connection {
     /// (DuckDB's `Value::CastAs(ClientContext &, ...)`).
     pub fn cast_value(&self, value: &Value, target: &rustdb_types::LogicalType) -> Result<Value> {
         use rustdb_function::cast::ValueCast;
+        self.function_client
+            .set_settings(Arc::new(self.settings_snapshot()));
         let mut params = rustdb_function::cast::CastParameters::new();
-        value.cast_with(&self.database.instance.casts, target, &mut params)
+        value.cast_with(&self.casts(), target, &mut params)
+    }
+
+    /// The database's casts as this connection binds them (DuckDB's
+    /// `CastFunctionSet::Get(context)` with the context in `BindCastInput`): when
+    /// extension casts read the connection's settings, they are bound for it.
+    fn casts(&self) -> Arc<CastFunctionSet> {
+        let instance = self.database.instance();
+        let casts = instance.casts();
+        if !instance.client_casts.load(std::sync::atomic::Ordering::Acquire) {
+            return casts;
+        }
+        let mut bound = self.bound_casts.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((base, bound)) = bound.as_ref()
+            && Arc::ptr_eq(base, &casts)
+        {
+            return Arc::clone(bound);
+        }
+        let client_casts = Arc::new(casts.with_client(Arc::clone(&self.function_client)));
+        *bound = Some((casts, Arc::clone(&client_casts)));
+        client_casts
+    }
+
+    /// Whether the cast of `ty` to VARCHAR depends on the connection (an extension
+    /// registered casts for it): TIMESTAMP WITH TIME ZONE with ICU loaded.
+    pub fn has_extension_cast(&self, ty: &rustdb_types::LogicalType) -> bool {
+        self.database
+            .instance()
+            .client_casts
+            .load(std::sync::atomic::Ordering::Acquire)
+            && contains_type(ty, rustdb_types::LogicalTypeId::TimestampTz)
     }
 
     /// The options set on this connection (and not reset since), by canonical name,
     /// like the values DuckDB's `RestartCommand` carries over to the restarted database.
     pub fn assigned_settings(&self) -> Vec<(String, Value)> {
-        self.settings
+        let mut assigned: Vec<(String, Value)> = self
+            .settings
             .assigned()
             .map(|(name, value)| (name.to_owned(), value.clone()))
-            .collect()
+            .collect();
+        for (option, _) in self.database.instance().extension_option_values() {
+            if let Some(value) = self.extension_session.get(&option.name) {
+                assigned.push((option.name.clone(), value.clone()));
+            }
+        }
+        assigned
     }
 
     pub fn database(&self) -> &Database {
@@ -972,6 +1253,49 @@ impl Connection {
         self.synced_globals = current;
     }
 
+    /// `PhysicalSet::SetExtensionVariable`: the option's callback checks the value, which
+    /// is then set for the session (the default scope) or globally.
+    fn set_extension_variable(&mut self, name: &str, value: &Value, scope: SetScope) -> Result<()> {
+        let instance = self.database.instance();
+        let option = instance.extension_option(name).ok_or_else(|| {
+            Error::invalid_input(format!(
+                "Extension parameter {name} was not found after autoloading"
+            ))
+        })?;
+        let mut target_value = self.cast_value(value, &option.input_type)?;
+        if let Some(set_function) = &option.set_function {
+            set_function(&mut target_value)?;
+        }
+        if scope == SetScope::Global {
+            instance.set_extension_global(&option, Some(target_value));
+        } else {
+            self.extension_session.insert(&option.name, target_value);
+        }
+        Ok(())
+    }
+
+    /// `PhysicalReset::ResetExtensionVariable`: the option's callback checks the default,
+    /// which then becomes the session's (or the global) value.
+    fn reset_extension_variable(&mut self, name: &str, scope: SetScope) -> Result<()> {
+        let instance = self.database.instance();
+        let option = instance.extension_option(name).ok_or_else(|| {
+            Error::invalid_input(format!(
+                "Extension parameter {name} was not found after autoloading"
+            ))
+        })?;
+        if let Some(set_function) = &option.set_function {
+            let mut default_value = option.default_value.clone();
+            set_function(&mut default_value)?;
+        }
+        if scope == SetScope::Global {
+            instance.set_extension_global(&option, None);
+        } else {
+            self.extension_session
+                .insert(&option.name, option.default_value.clone());
+        }
+        Ok(())
+    }
+
     /// Records a `SET` / `RESET` (`value` `None`) of option `name` with `scope`: a global
     /// one is shared with the other connections, a local one overrides the global value.
     fn record_setting(&mut self, name: &str, value: Option<&Value>, scope: SetScope) {
@@ -1140,7 +1464,7 @@ impl Connection {
             search_path: self.search_path.clone(),
             view_search_path: Vec::new(),
             transaction,
-            casts: Arc::clone(&instance.casts),
+            casts: self.casts(),
             evaluator: Arc::new(ScalarEvaluator),
             config: {
                 let optimizer = self.settings.optimizer_config();
@@ -1612,6 +1936,21 @@ impl Connection {
             temp_directory: buffer_manager.temporary_directory(),
             max_swap: buffer_manager.max_swap(),
             threads: self.database.instance().env.threads() as u64,
+            extensions: self
+                .database
+                .instance()
+                .extension_option_values()
+                .into_iter()
+                .map(
+                    |(option, global)| match self.extension_session.get(&option.name) {
+                        Some(value) => {
+                            let value = value.clone();
+                            (option, value, true)
+                        }
+                        None => (option, global, false),
+                    },
+                )
+                .collect(),
         }
     }
 
@@ -1774,11 +2113,13 @@ impl Connection {
         match &plan.kind {
             LogicalKind::Set { name, value, scope } if *scope != SetScope::Variable => {
                 self.settings.check_lock(name)?;
+                Settings::check_scope(name, *scope, false)?;
                 Settings::check_running_set(name, value)?;
                 crate::settings::check_setting_scope(name, *scope, false)?;
             }
             LogicalKind::Reset { name, scope } if *scope != SetScope::Variable => {
                 self.settings.check_lock(name)?;
+                Settings::check_scope(name, *scope, true)?;
                 Settings::check_running_reset(name)?;
                 crate::settings::check_setting_scope(name, *scope, true)?;
             }
@@ -1891,6 +2232,39 @@ impl Connection {
                 self.search_path_set.clear();
                 return Ok(nothing());
             }
+            LogicalKind::Set { name, value, scope }
+                if crate::settings::canonical_option(name).is_none()
+                    && self.database.instance().extension_option(name).is_some() =>
+            {
+                let (name, value, scope) = (name.clone(), value.clone(), *scope);
+                self.set_extension_variable(&name, &value, scope)?;
+                return Ok(nothing());
+            }
+            LogicalKind::Reset { name, scope }
+                if crate::settings::canonical_option(name).is_none()
+                    && self.database.instance().extension_option(name).is_some() =>
+            {
+                let (name, scope) = (name.clone(), *scope);
+                self.reset_extension_variable(&name, scope)?;
+                return Ok(nothing());
+            }
+            LogicalKind::Set { name, .. } | LogicalKind::Reset { name, .. }
+                if crate::settings::canonical_option(name).is_none()
+                    && !is_extension_setting(name)
+                    && !self.database.instance().extension_option_values().is_empty() =>
+            {
+                // `Catalog::UnrecognizedConfigurationError` suggests the extensions' options too.
+                let extension_names: Vec<String> = self
+                    .database
+                    .instance()
+                    .extension_option_values()
+                    .into_iter()
+                    .map(|(option, _)| option.name)
+                    .collect();
+                return Err(crate::settings::unrecognized_with(name, &extension_names, |_| {
+                    false
+                }));
+            }
             LogicalKind::Set { name, value, scope } => {
                 if is_secret_setting(name) {
                     self.database.instance().secrets.set_option(name, Some(value))?;
@@ -1908,6 +2282,9 @@ impl Connection {
                 self.database.instance().set_buffer_setting(name, Some(value))?;
                 if crate::logging::is_logging_setting(name) {
                     crate::logging::apply_setting(&self.database.instance().log_manager, name, Some(value))?;
+                }
+                if name.eq_ignore_ascii_case("default_collation") {
+                    self.settings.extension_collations = self.database.instance().extension_collations();
                 }
                 self.settings.set(name, value)?;
                 let (option, set_value, set_scope) = (name.clone(), value.clone(), *scope);

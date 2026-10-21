@@ -27,7 +27,7 @@ const MONTHS_PER_MILLENNIUM: i64 = 12_000;
 
 /// A date part (DuckDB's `DatePartSpecifier`), in DuckDB's order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum Part {
+pub enum Part {
     Year,
     Month,
     Day,
@@ -56,7 +56,7 @@ pub(crate) enum Part {
 
 impl Part {
     /// DuckDB's `TryGetDatePartSpecifier`.
-    pub(crate) fn try_parse(specifier: &str) -> Option<Self> {
+    pub fn try_parse(specifier: &str) -> Option<Self> {
         Some(match specifier.to_lowercase().as_str() {
             "year" | "yr" | "y" | "years" | "yrs" => Self::Year,
             "month" | "mon" | "months" | "mons" => Self::Month,
@@ -91,13 +91,13 @@ impl Part {
     }
 
     /// DuckDB's `GetDatePartSpecifier`.
-    pub(crate) fn parse(specifier: &str) -> Result<Self> {
+    pub fn parse(specifier: &str) -> Result<Self> {
         Self::try_parse(specifier)
             .ok_or_else(|| Error::conversion(format!("extract specifier \"{specifier}\" not recognized")))
     }
 
     /// Whether the part is a BIGINT (the others are DOUBLE).
-    pub(crate) const fn is_bigint(self) -> bool {
+    pub const fn is_bigint(self) -> bool {
         !matches!(self, Self::Epoch | Self::JulianDay)
     }
 

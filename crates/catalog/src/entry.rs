@@ -410,6 +410,19 @@ pub enum EntryKind {
     Macro(MacroEntry),
     /// `CREATE MACRO ... AS TABLE ...` (`TableMacroCatalogEntry`).
     TableMacro(MacroEntry),
+    /// A collation an extension registers (`CollateCatalogEntry`).
+    Collation(CollationEntry),
+}
+
+/// A collation (DuckDB's `CollateCatalogEntry`): the function computing the collated
+/// value of a string.
+#[derive(Clone, Debug)]
+pub struct CollationEntry {
+    pub function: rustdb_function::ScalarFunction,
+    /// Whether the collation can be combined with other collations.
+    pub combinable: bool,
+    /// Whether equality comparisons can skip the collation.
+    pub not_required_for_equality: bool,
 }
 
 /// The next object id handed out (DuckDB's `DatabaseManager::NextOid`; ids below
@@ -511,6 +524,7 @@ impl CatalogEntry {
             EntryKind::Type(_) => CatalogType::Type,
             EntryKind::Macro(_) => CatalogType::Macro,
             EntryKind::TableMacro(_) => CatalogType::TableMacro,
+            EntryKind::Collation(_) => CatalogType::Collation,
         }
     }
 

@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use rustdb_ast::OrderType;
+use rustdb_ast::{OrderType, SetScope};
 use rustdb_common::string_util::candidates_error_message;
 use rustdb_common::{Error, ErrorKind, Result};
 use rustdb_execution::{ExplainOutput, JoinPlanSettings};
@@ -201,6 +201,15 @@ fn canonical_name(name: &str) -> Option<&'static str> {
 /// DuckDB's `Catalog::UnrecognizedConfigurationError`; `enabled` reads the boolean
 /// options `autoload_known_extensions` and `autoinstall_known_extensions`.
 fn unrecognized(name: &str, enabled: impl Fn(&str) -> bool) -> Error {
+    unrecognized_with(name, &[], enabled)
+}
+
+/// [`unrecognized`] with the options extensions added as candidates too.
+pub(crate) fn unrecognized_with(
+    name: &str,
+    extension_options: &[String],
+    enabled: impl Fn(&str) -> bool,
+) -> Error {
     use rustdb_function::extension_entries::{EXTENSION_SETTINGS, add_install_hint, find_extension};
     if let Some(extension) = find_extension(name, EXTENSION_SETTINGS) {
         let message = format!(
@@ -213,7 +222,8 @@ fn unrecognized(name: &str, enabled: impl Fn(&str) -> bool) -> Error {
             enabled("autoinstall_known_extensions"),
         ));
     }
-    let names: Vec<String> = OPTION_NAMES.iter().map(|name| (*name).to_owned()).collect();
+    let mut names: Vec<String> = OPTION_NAMES.iter().map(|name| (*name).to_owned()).collect();
+    names.extend(extension_options.iter().cloned());
     Error::catalog(format!(
         "unrecognized configuration parameter \"{name}\"\n{}",
         candidates_error_message(&names, name, "Did you mean")
@@ -243,6 +253,11 @@ pub(crate) struct Settings {
     /// The options that stay changeable under `lock_configuration`, by canonical name
     /// (`DBConfigOptions::allowed_configs`).
     allowed_configs: Vec<&'static str>,
+    /// The extension options among `allowed_configs`.
+    allowed_extension_configs: Vec<String>,
+    /// The collations extensions registered, with whether they are combinable (what
+    /// `SET default_collation` may name besides the builtin ones).
+    pub(crate) extension_collations: Vec<(String, bool)>,
     /// `PRAGMA disable_optimizer` (DuckDB's `ClientConfig::enable_optimizer`, negated).
     pub optimizer_disabled: bool,
     /// The profiling options (`enable_profiling`, `profiling_output`, `profiling_mode`,
@@ -606,6 +621,13 @@ impl Settings {
                 return Ok(());
             }
         }
+        if self
+            .allowed_extension_configs
+            .iter()
+            .any(|allowed| allowed.eq_ignore_ascii_case(name))
+        {
+            return Ok(());
+        }
         Err(Error::invalid_input(format!(
             "Cannot change configuration option \"{name}\" - the configuration has been locked"
         )))
@@ -669,6 +691,77 @@ impl Settings {
         }
     }
 
+    /// `PhysicalSet` / `PhysicalReset` for options with only a session (`set_local`) or
+    /// only a global (`set_global`) callback: the other explicit scope is an error.
+    pub(crate) fn check_scope(name: &str, scope: SetScope, reset: bool) -> Result<()> {
+        /// The options DuckDB can only set per session.
+        const LOCAL_ONLY: [&str; 15] = [
+            "custom_profiling_settings",
+            "debug_force_external",
+            "enable_caching_operators",
+            "enable_http_logging",
+            "enable_profiling",
+            "enable_progress_bar",
+            "enable_progress_bar_print",
+            "http_logging_output",
+            "profile_output",
+            "profiling_coverage",
+            "profiling_mode",
+            "progress_bar_time",
+            "schema",
+            "search_path",
+            "streaming_buffer_size",
+        ];
+        /// The options DuckDB can only set globally.
+        const GLOBAL_ONLY: [&str; 32] = [
+            "__delta_only_variant_encoding_enabled",
+            "access_mode",
+            "allocator_bulk_deallocation_flush_threshold",
+            "allocator_flush_threshold",
+            "allow_persistent_secrets",
+            "allowed_configs",
+            "allowed_directories",
+            "allowed_paths",
+            "block_allocator_memory",
+            "checkpoint_threshold",
+            "custom_user_agent",
+            "default_secret_storage",
+            "disabled_compression_methods",
+            "disabled_filesystems",
+            "disabled_log_types",
+            "disabled_optimizers",
+            "enable_logging",
+            "enabled_log_types",
+            "extension_directories",
+            "force_mbedtls_unsafe",
+            "force_variant_shredding",
+            "http_proxy",
+            "logging_level",
+            "logging_mode",
+            "logging_storage",
+            "max_memory",
+            "max_temp_directory_size",
+            "secret_directory",
+            "storage_compatibility_version",
+            "temp_directory",
+            "threads",
+            "write_buffer_row_group_memory_limit",
+        ];
+        let Some(option) = option_by_name(name) else {
+            return Ok(());
+        };
+        let verb = if reset { "reset" } else { "set" };
+        match scope {
+            SetScope::Global if LOCAL_ONLY.contains(&option) => Err(Error::catalog(format!(
+                "option \"{name}\" cannot be {verb} globally"
+            ))),
+            SetScope::Session | SetScope::Local if GLOBAL_ONLY.contains(&option) => Err(Error::catalog(
+                format!("option \"{name}\" cannot be {verb} locally"),
+            )),
+            _ => Ok(()),
+        }
+    }
+
     /// The `ResetGlobal` / `ResetLocal` checks of options that cannot be reset.
     pub(crate) fn check_running_reset(name: &str) -> Result<()> {
         match option_by_name(name).unwrap_or_default() {
@@ -694,6 +787,7 @@ impl Settings {
     fn set_allowed_configs(&mut self, value: &Value) -> Result<()> {
         use rustdb_function::extension_entries::{EXTENSION_SETTINGS, find_extension};
         let mut allowed = Vec::new();
+        let mut allowed_extensions = Vec::new();
         for entry in value.children().unwrap_or_default() {
             let name = entry.to_varchar()?;
             if name.is_empty() {
@@ -713,9 +807,12 @@ impl Settings {
                 return Err(Error::invalid_input(format!(
                     "Unknown configuration option '{name}' in allowed_configs"
                 )));
+            } else {
+                allowed_extensions.push(name);
             }
         }
         self.allowed_configs = allowed;
+        self.allowed_extension_configs = allowed_extensions;
         Ok(())
     }
 
@@ -859,7 +956,7 @@ impl Settings {
             "default_collation" => {
                 let collation = value.to_varchar()?.to_lowercase();
                 // `DefaultCollationSetting::OnSet` binds a dummy collation.
-                rustdb_planner::collation_binding::test_collation(&collation)?;
+                rustdb_planner::collation_binding::test_collation(&collation, &self.extension_collations)?;
                 self.planner.default_collation = collation;
             }
             "pivot_filter_threshold" | "pivot_limit" => {
@@ -1095,6 +1192,9 @@ pub(crate) struct SettingsSnapshot {
     pub temp_directory: String,
     pub max_swap: Option<u64>,
     pub threads: u64,
+    /// The options extensions added, with their current value and whether the session
+    /// set it (`LOCAL` scope) rather than reading the global value.
+    pub extensions: Vec<(rustdb_function::ExtensionOption, Value, bool)>,
 }
 
 /// The SQL type an option's value has (its `input_type`).
@@ -1200,15 +1300,28 @@ impl rustdb_function::SettingsSource for SettingsSnapshot {
     fn current_setting(&self, name: &str) -> Result<Value> {
         let definition = SETTINGS
             .iter()
-            .find(|definition| definition.name.eq_ignore_ascii_case(name))
-            .ok_or_else(|| {
-                unrecognized(name, |option| {
-                    self.current_setting(option)
-                        .ok()
-                        .and_then(|value| value.as_bool())
-                        .unwrap_or(false)
-                })
-            })?;
+            .find(|definition| definition.name.eq_ignore_ascii_case(name));
+        if definition.is_none()
+            && let Some((_, value, _)) = self
+                .extensions
+                .iter()
+                .find(|(option, _, _)| option.name.eq_ignore_ascii_case(name))
+        {
+            return Ok(value.clone());
+        }
+        let definition = definition.ok_or_else(|| {
+            let extension_names: Vec<String> = self
+                .extensions
+                .iter()
+                .map(|(option, _, _)| option.name.clone())
+                .collect();
+            unrecognized_with(name, &extension_names, |option| {
+                self.current_setting(option)
+                    .ok()
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false)
+            })
+        })?;
         self.value(definition)
     }
 
@@ -1236,6 +1349,22 @@ impl rustdb_function::SettingsSource for SettingsSnapshot {
                     .map(|alias| (*alias).to_owned())
                     .collect(),
             })
+            .chain(
+                self.extensions
+                    .iter()
+                    .map(|(option, value, local)| rustdb_function::SettingInfo {
+                        name: option.name.clone(),
+                        value: if value.is_null() {
+                            String::new()
+                        } else {
+                            value.to_varchar().unwrap_or_default()
+                        },
+                        description: option.description.clone(),
+                        input_type: option.input_type.to_string(),
+                        global: !local,
+                        aliases: Vec::new(),
+                    }),
+            )
             .collect()
     }
 }

@@ -12,7 +12,7 @@ use rustdb_common::Result;
 use rustdb_types::{DataChunk, NativeType, Sel, StringHeap, StringT, Unified, Vector, VectorKind};
 
 /// How a kernel argument of some physical type is presented to the kernel.
-pub(crate) trait ScalarArg: 'static {
+pub trait ScalarArg: 'static {
     /// The native type stored in the vector.
     type Native: NativeType;
     /// What the kernel receives for one row.
@@ -33,7 +33,7 @@ impl<T: NativeType> ScalarArg for T {
 
 /// A VARCHAR/BLOB/BIT argument, presented as its bytes.
 #[derive(Debug)]
-pub(crate) struct Str;
+pub struct Str;
 
 impl ScalarArg for Str {
     type Native = StringT;
@@ -46,7 +46,7 @@ impl ScalarArg for Str {
 }
 
 /// `vector` with sequences expanded, so that unified access works.
-pub(crate) fn addressable(vector: &Vector, count: usize) -> Cow<'_, Vector> {
+pub fn addressable(vector: &Vector, count: usize) -> Cow<'_, Vector> {
     if vector.kind() == VectorKind::Sequence {
         Cow::Owned(vector.flattened(count))
     } else {
@@ -55,7 +55,7 @@ pub(crate) fn addressable(vector: &Vector, count: usize) -> Cow<'_, Vector> {
 }
 
 /// The bytes of row `row` of a (non-sequence) VARCHAR/BLOB/BIT vector, `None` if NULL.
-pub(crate) fn str_at(vector: &Vector, row: usize) -> Option<&[u8]> {
+pub fn str_at(vector: &Vector, row: usize) -> Option<&[u8]> {
     Input::<Str>::new(vector).get(row)
 }
 
@@ -89,7 +89,7 @@ impl<'a, A: ScalarArg> Input<'a, A> {
 }
 
 /// A kernel result type: a fixed-width value or bytes written into a string heap.
-pub(crate) trait ScalarOutput {
+pub trait ScalarOutput {
     /// What the kernel produces for one row.
     type Value;
 
@@ -133,7 +133,7 @@ impl<T: NativeType> ScalarOutput for T {
 const MAX_STRING_SIZE: u64 = u32::MAX as u64;
 
 /// The error for a string result longer than DuckDB supports (`StringHeap::EmptyString`).
-pub(crate) fn string_too_large(size: u64) -> rustdb_common::Error {
+pub fn string_too_large(size: u64) -> rustdb_common::Error {
     rustdb_common::Error::out_of_range(format!(
         "Cannot create a string of size: '{size}', the maximum supported string size is: '{MAX_STRING_SIZE}'"
     ))
@@ -141,7 +141,7 @@ pub(crate) fn string_too_large(size: u64) -> rustdb_common::Error {
 
 /// A string result: the kernel appends the row's bytes to the given buffer.
 #[derive(Debug)]
-pub(crate) struct StrOut;
+pub struct StrOut;
 
 impl ScalarOutput for StrOut {
     type Value = Vec<u8>;
@@ -194,7 +194,7 @@ fn finish(result: &mut Vector, constant: bool) {
 
 /// Applies `f` to every row of a one-argument call; NULL inputs give NULL. `f` writes the
 /// result into its second argument and returns `false` for NULL.
-pub(crate) fn unary<A: ScalarArg, O: ScalarOutput>(
+pub fn unary<A: ScalarArg, O: ScalarOutput>(
     args: &DataChunk,
     result: &mut Vector,
     mut f: impl FnMut(A::Item<'_>, &mut O::Value) -> Result<bool>,
@@ -218,7 +218,7 @@ pub(crate) fn unary<A: ScalarArg, O: ScalarOutput>(
 }
 
 /// Like [`unary`] for two arguments.
-pub(crate) fn binary<A: ScalarArg, B: ScalarArg, O: ScalarOutput>(
+pub fn binary<A: ScalarArg, B: ScalarArg, O: ScalarOutput>(
     args: &DataChunk,
     result: &mut Vector,
     mut f: impl FnMut(A::Item<'_>, B::Item<'_>, &mut O::Value) -> Result<bool>,
@@ -264,7 +264,7 @@ pub(crate) fn binary<A: ScalarArg, B: ScalarArg, O: ScalarOutput>(
 }
 
 /// Like [`unary`] for three arguments.
-pub(crate) fn ternary<A: ScalarArg, B: ScalarArg, C: ScalarArg, O: ScalarOutput>(
+pub fn ternary<A: ScalarArg, B: ScalarArg, C: ScalarArg, O: ScalarOutput>(
     args: &DataChunk,
     result: &mut Vector,
     mut f: impl FnMut(A::Item<'_>, B::Item<'_>, C::Item<'_>, &mut O::Value) -> Result<bool>,
@@ -289,7 +289,7 @@ pub(crate) fn ternary<A: ScalarArg, B: ScalarArg, C: ScalarArg, O: ScalarOutput>
 
 /// Applies `f` to every row of a call with any number of arguments of one kind; rows with a
 /// NULL argument are NULL unless `nulls` is set, in which case `f` sees them as `None`.
-pub(crate) fn variadic<A: ScalarArg, O: ScalarOutput>(
+pub fn variadic<A: ScalarArg, O: ScalarOutput>(
     args: &DataChunk,
     result: &mut Vector,
     nulls: bool,
