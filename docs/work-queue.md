@@ -57,13 +57,13 @@ leftovers (2) when a client needs them.
 
 ## Planner and execution
 
-7. **Performance round 5.** The aggregate hash table's lookups and resizes, re-reading
-   table blocks, the hash join probe, partitioned aggregate, struct projection pushdown,
-   Top-N row group reordering (`RowGroupPruner`, `RowGroupReorderer`)
-   (`docs/perf-backlog.md`); the EXPLAIN tests that check these plans
-   (`partitioned_group_by`, `plan_struct_projection_pushdown`,
-   `struct_projection_pushdown_in_storage`, `deliver_child_columns`, `top_n_pruning`,
-   `test_top_n_nulls_row_group_pruner_extensive`, `unnest_rewriter`).
+7. **Performance round 6.** Round 5 (`docs/perf-backlog.md`) ported the Top-N row group
+   order, the partitioned aggregate and the UnnestRewriter's `unnest` pattern, and showed
+   that caching table blocks like DuckDB makes rustdb's memory DuckDB's. Left: cheaper
+   table block re-reads (caching is ruled out by the memory target), the aggregate hash
+   table's lookups and resizes, the hash join probe, and struct projection pushdown with
+   the EXPLAIN tests that check it (`plan_struct_projection_pushdown`,
+   `struct_projection_pushdown_in_storage`, `deliver_child_columns`).
 8. **Logical plan serialization** (`json_serialize_plan`).
 9. **Physical operator logging** (`physical_operator_logging`).
 10. **TPC-DS** (`test/sql/tpcds`, the `tpcds` extension).
