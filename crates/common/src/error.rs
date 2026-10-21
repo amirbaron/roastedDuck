@@ -116,6 +116,9 @@ pub struct Error {
     position: Option<u64>,
     /// DuckDB's `error_subtype` extra info (`"SYNTAX_ERROR"` for parse failures).
     subtype: Option<&'static str>,
+    /// Whether the message is the error as a JSON object (`errors_as_json`), which
+    /// clients see without the `"<Kind> Error: "` prefix.
+    json: bool,
 }
 
 /// Engine-wide result alias.
@@ -132,6 +135,7 @@ impl Error {
             message: message.into(),
             position: None,
             subtype: None,
+            json: false,
         }
     }
 
@@ -151,6 +155,16 @@ impl Error {
     #[must_use]
     pub fn with_position(mut self, position: Option<u64>) -> Self {
         if self.position.is_none() {
+            self.position = position;
+        }
+        self
+    }
+
+    /// Replaces the query position with `position`, if any (DuckDB's
+    /// `ErrorData::AddQueryLocation`, which overwrites the `position` extra info).
+    #[must_use]
+    pub fn with_position_override(mut self, position: Option<u64>) -> Self {
+        if position.is_some() {
             self.position = position;
         }
         self
@@ -179,6 +193,36 @@ impl Error {
         if let Some(position) = self.position.take() {
             self.message = crate::query_context::format(query, &self.message, position).into();
         }
+        self
+    }
+
+    /// The error as a JSON object of its type, message and extra info, which becomes
+    /// its whole message (`ErrorData::ConvertErrorToJSON` under `errors_as_json`).
+    #[must_use]
+    pub fn into_json(mut self) -> Self {
+        if self.json || self.message.starts_with('{') {
+            return self;
+        }
+        let mut json = String::from("{");
+        let mut field = |key: &str, value: &str| {
+            if json.len() > 1 {
+                json.push(',');
+            }
+            json.push_str(&crate::string_util::json_quote(key));
+            json.push(':');
+            json.push_str(&crate::string_util::json_quote(value));
+        };
+        field("exception_type", self.kind.display_name());
+        field("exception_message", &self.message);
+        if let Some(subtype) = self.subtype {
+            field("error_subtype", subtype);
+        }
+        if let Some(position) = self.position.take() {
+            field("position", &position.to_string());
+        }
+        json.push('}');
+        self.message = json.into();
+        self.json = true;
         self
     }
 
@@ -232,6 +276,9 @@ impl Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.json {
+            return f.write_str(&self.message);
+        }
         if self.kind != ErrorKind::UnknownType {
             write!(f, "{} ", self.kind.display_name())?;
         }

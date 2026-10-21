@@ -1910,6 +1910,7 @@ test/sql/detailed_profiler/test_detailed_profiler.test
 test/sql/error/aggregate_order_by.test
 test/sql/error/correlated_at_clause.test
 test/sql/error/error_location_not_duplicated.test
+test/sql/error/error_position.test
 test/sql/error/escape_percent_sign.test
 test/sql/error/incorrect_sql.test
 test/sql/error/lineitem_errors.test
@@ -3205,6 +3206,7 @@ test/sql/settings/allowed_paths.test
 test/sql/settings/connection_local_settings.test
 test/sql/settings/default_null_order_extended.test
 test/sql/settings/drop_set_schema.test
+test/sql/settings/errors_as_json.test
 test/sql/settings/integer_division_setting.test
 test/sql/settings/lock_configuration_schema.test
 test/sql/settings/reset/reset_threads.test

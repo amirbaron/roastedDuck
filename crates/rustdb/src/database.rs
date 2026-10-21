@@ -861,7 +861,7 @@ impl Connection {
         {
             result = Err(error);
         }
-        result.map_err(|error| error.with_query_context(query))
+        result.map_err(|error| self.process_error(error, query))
     }
 
     /// Applies the configuration changes functions made (`enable_profiling` /
@@ -1066,7 +1066,17 @@ impl Connection {
         let ended = self.transactions.end_statement(outcome.is_ok(), false);
         outcome
             .and_then(|plan| ended.map(|()| plan))
-            .map_err(|error| error.with_query_context(query))
+            .map_err(|error| self.process_error(error, query))
+    }
+
+    /// `ClientContext::ProcessError`: the error as JSON under `errors_as_json`, else with
+    /// the location in the query.
+    fn process_error(&self, error: Error, query: &str) -> Error {
+        if self.settings.errors_as_json() {
+            error.into_json()
+        } else {
+            error.with_query_context(query)
+        }
     }
 
     /// The transaction the next statement runs in, started if needed.

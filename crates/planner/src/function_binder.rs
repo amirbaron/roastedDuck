@@ -447,7 +447,8 @@ impl<'a> FunctionBinder<'a> {
             return Ok(Err(Error::binder(format!(
                 "No function matches the given name and argument types '{call}'. You might need to add \
                  explicit type casts.\n\tCandidate functions:\n{list}"
-            ))));
+            ))
+            .with_subtype("NO_MATCHING_FUNCTION")));
         };
         candidates.push(best);
         if candidates.len() > 1 {

@@ -762,6 +762,11 @@ impl Settings {
         }
     }
 
+    /// `errors_as_json`: errors of statements are reported as JSON objects.
+    pub(crate) fn errors_as_json(&self) -> bool {
+        self.enabled("errors_as_json")
+    }
+
     /// Whether boolean option `option` was set to true.
     fn enabled(&self, option: &str) -> bool {
         self.assigned.iter().any(|(name, value)| {

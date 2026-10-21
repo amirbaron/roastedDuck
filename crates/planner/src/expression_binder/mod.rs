@@ -94,7 +94,9 @@ impl BindError {
             )
         };
         Self {
-            error: Error::binder(message).with_position(location),
+            error: Error::binder(message)
+                .with_subtype("COLUMN_NOT_FOUND")
+                .with_position(location),
             missing_column: Some(MissingColumn {
                 name: name.to_owned(),
                 candidates,

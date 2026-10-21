@@ -488,7 +488,8 @@ impl<'a> SelectBinder<'a> {
         for child in &mut function.children {
             children.push(take_bound(child)?);
         }
-        let types = FunctionBinder::argument_types(&children);
+        // The arguments' own types: unlike scalar calls, constants are not literals here.
+        let types: Vec<LogicalType> = children.iter().map(|child| child.return_type.clone()).collect();
         let binder = FunctionBinder::new(&context);
         let overload = binder
             .bind_aggregate_overload(functions, &types)?
