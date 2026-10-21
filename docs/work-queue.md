@@ -47,22 +47,18 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      against the memory limit.
    - `auto_checkpoint_skip_wal_threshold` is accepted, but a commit that triggers a
      checkpoint still writes its WAL entries.
-5. **Compression parity.** ZSTD strings compress about 16% worse than DuckDB's
-   (`zstd_compression_ratio`). The cause is `ruzstd`'s encoder, not its match level: on
-   concatenated UUIDs it reaches 1.72× (1.76× emitting literals only, about 4.56 bits per
-   hex character) where zstd reaches 1.95× at levels 1 and 3, so its Huffman literal
-   coding is far from optimal. Needs a zstd block encoder of our own (length-limited
-   Huffman literals, FSE-coded sequences with custom tables, a level-3 matcher); check
-   `ruzstd`'s decoding speed against DuckDB's at the same time.
-   Roaring and hugeint bitpacking segments are DuckDB's, block for block
-   (`roaring_compression_ratio`, `roaring_bool_compression_ratio`,
-   `bitpacking_compression_ratio_hugeint` pass): checkpoints and optimistic writes share
-   partially filled blocks the way `PartialBlockManager` does (best fit by free space, a
-   block stays open while at least 20% is free, ids assigned when a block is flushed,
-   per-column managers of inserts merged into the checkpoint's), and unchanged index
-   buffers keep their blocks.
-   FSST segments of the same strings hold slightly different counts than DuckDB's
-   (5878 against 5877 strings in a 256 KiB segment): the symbol tables differ.
+5. **Compression parity, the rest.** ZSTD, roaring and hugeint bitpacking segments are
+   DuckDB's (`zstd_compression_ratio`, `roaring_compression_ratio`,
+   `roaring_bool_compression_ratio`, `bitpacking_compression_ratio_hugeint` pass;
+   `crates/zstd` ports zstd 1.5.6's encoder and decoder, partial blocks are shared as
+   `PartialBlockManager` shares them). Left:
+   - zstd's greedy, lazy and binary-tree match finders: levels that pick them (5 and up,
+     4 on inputs of 16 KiB or less and of 128–256 KiB) compress with the double-fast
+     finder, so their frames are valid but not zstd's (Parquet `COMPRESSION_LEVEL` above
+     3, spill files at levels 4 and 5).
+   - FSST segments of the same strings hold slightly different counts than DuckDB's
+     (5878 against 5877 strings in a 256 KiB segment): the symbol tables differ.
+   - zstd throughput is 0.88–1.0× DuckDB's (`docs/perf-backlog.md`).
 6. **External file cache.** `CachingFileSystem`, `duckdb_external_file_cache()`,
    `validate_external_file_cache` (`external_file_cache_*` tests).
 15. **Database encryption** (`dict_fsst_expression_filter`, which attaches a database
