@@ -994,6 +994,11 @@ struct Cursor {
     batch_index: u64,
     /// Whether a thread failed, so the others stop.
     failed: bool,
+    /// The current file's row groups handed out so far, pruned ones included
+    /// (`TryInitializeScan` hands out every row group; the reader skips pruned ones).
+    claimed_groups: usize,
+    /// `total_row_groups_to_scan`: the row groups of all files handed out so far.
+    total_row_groups: u64,
 }
 
 /// A unit of a parallel scan: a file (with its index) and one of its row groups, or
@@ -1011,10 +1016,20 @@ impl Cursor {
                 };
                 if let Some(group) = group {
                     self.next_group += 1;
+                    // The pruned row groups before this one were handed out too.
+                    let claimed = match (group, file.rows_only) {
+                        (Some(group), _) => group + 1,
+                        (None, _) => file.reader.num_row_groups(),
+                    };
+                    self.total_row_groups += claimed.saturating_sub(self.claimed_groups) as u64;
+                    self.claimed_groups = self.claimed_groups.max(claimed);
                     let batch = self.batch_index;
                     self.batch_index += 1;
                     return Ok(Some((Arc::clone(file), self.file_index, group, batch)));
                 }
+                let groups = file.reader.num_row_groups();
+                self.total_row_groups += groups.saturating_sub(self.claimed_groups) as u64;
+                self.claimed_groups = 0;
                 self.file = None;
                 self.file_index += 1;
                 self.next_group = 0;
@@ -1040,6 +1055,8 @@ struct ParallelLocal {
     batch_index: u64,
     /// Whether a morsel is being read.
     active: bool,
+    /// `row_groups_scanned`: the row groups this thread read.
+    row_groups_scanned: u64,
 }
 
 /// The bind data of a `read_parquet` scan.
@@ -1139,6 +1156,9 @@ fn read_parquet_parallel_scan(
         };
         local.batch_index = batch_index;
         local.file_index = file_index;
+        if group.is_some() {
+            local.row_groups_scanned += 1;
+        }
         match group {
             None => {
                 local.state = None;
@@ -1164,6 +1184,22 @@ fn read_parquet_parallel_scan(
         local.file = Some(file);
         local.active = true;
     }
+}
+
+/// `ParquetGetMetrics`: the row groups the thread read, and the row groups of all files
+/// handed out so far.
+fn read_parquet_row_group_metrics(global: &ParallelScanGlobal, local: &ParallelScanLocal) -> (u64, u64) {
+    let scanned = local
+        .downcast_ref::<ParallelLocal>()
+        .map_or(0, |local| local.row_groups_scanned);
+    let total = parallel_global(global).map_or(0, |global| {
+        global
+            .cursor
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .total_row_groups
+    });
+    (scanned, total)
 }
 
 /// The file filter pushdown of `read_parquet` (`MultiFileComplexFilterPushdown`).
@@ -1233,6 +1269,7 @@ fn read_parquet_parallel() -> ParallelTableScan {
                 .map_or(0, |local| local.batch_index)
         }),
         dynamic_to_string: Some(Arc::new(read_parquet_dynamic_to_string)),
+        row_group_metrics: Some(Arc::new(read_parquet_row_group_metrics)),
     }
 }
 

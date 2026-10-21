@@ -243,7 +243,7 @@ impl Source for PhysicalTableScan {
 
     /// A function without scan metrics reports its estimated cardinality as the rows
     /// scanned once the thread exhausted it (`AddEstimatedTableScanRowsScanned`).
-    fn scan_metrics(&self, _: &TableScanGlobal, _: &Self::Local, exhausted: bool) -> Option<ScanMetrics> {
+    fn scan_metrics(&self, global: &TableScanGlobal, local: &Self::Local, exhausted: bool) -> Option<ScanMetrics> {
         let rows_scanned = if exhausted {
             self.function
                 .cardinality
@@ -252,9 +252,18 @@ impl Source for PhysicalTableScan {
         } else {
             None
         };
+        // `get_metrics`: functions that report the row groups they read.
+        let row_groups = match (&self.function.parallel_scan, &global.parallel, local) {
+            (Some(parallel), Some(shared), Some(local)) => parallel
+                .row_group_metrics
+                .as_ref()
+                .map(|metrics| metrics(shared, local)),
+            _ => None,
+        };
         Some(ScanMetrics {
             rows_scanned,
-            ..ScanMetrics::default()
+            row_groups_scanned: row_groups.map(|(scanned, _)| scanned),
+            total_row_groups: row_groups.map(|(_, total)| total),
         })
     }
 

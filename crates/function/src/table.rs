@@ -181,6 +181,9 @@ pub struct ParallelTableScan {
     pub dynamic_to_string: Option<
         Arc<dyn Fn(Option<&dyn FunctionData>, &ParallelScanGlobal) -> Vec<(String, String)> + Send + Sync>,
     >,
+    /// The row groups the thread read and the row groups handed out to all threads
+    /// (`get_metrics`: `OPERATOR_ROW_GROUPS_SCANNED`, `OPERATOR_TOTAL_ROW_GROUPS_TO_SCAN`).
+    pub row_group_metrics: Option<Arc<dyn Fn(&ParallelScanGlobal, &ParallelScanLocal) -> (u64, u64) + Send + Sync>>,
 }
 
 impl fmt::Debug for ParallelTableScan {
