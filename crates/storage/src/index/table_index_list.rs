@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use rustdb_common::Result;
 
 use super::Art;
+use super::unbound_index::UnboundIndex;
 
 /// Which side of a foreign key an index lookup is for (`ForeignKeyType`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,41 +90,107 @@ impl IndexEntry {
     }
 }
 
+/// One slot of the index list: a bound index, or one whose expressions are not bound
+/// yet (DuckDB's `IndexEntry` with its `IndexBindState`).
+#[derive(Clone, Debug)]
+pub enum IndexSlot {
+    Bound(Arc<IndexEntry>),
+    Unbound(Arc<UnboundIndex>),
+}
+
+impl IndexSlot {
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Bound(entry) => entry.name(),
+            Self::Unbound(index) => index.name(),
+        }
+    }
+
+    pub fn column_ids(&self) -> &[usize] {
+        match self {
+            Self::Bound(entry) => entry.column_ids(),
+            Self::Unbound(index) => index.column_ids(),
+        }
+    }
+
+    pub fn is_unique(&self) -> bool {
+        match self {
+            Self::Bound(entry) => entry.is_unique(),
+            Self::Unbound(index) => index.is_unique(),
+        }
+    }
+
+    fn is_constraint(&self) -> bool {
+        match self {
+            Self::Bound(entry) => entry.is_primary || entry.is_foreign || entry.is_unique,
+            Self::Unbound(index) => index.constraint_type() != super::IndexConstraintType::None,
+        }
+    }
+
+    fn reset(&self) {
+        // An unbound index owns no memory; its blocks are released by the next
+        // checkpoint (`UnboundIndex::ResetStorage`).
+        if let Self::Bound(entry) = self {
+            entry.lock().index.reset();
+        }
+    }
+}
+
 /// The indexes of a table.
 #[derive(Debug, Default)]
 pub struct TableIndexList {
-    entries: RwLock<Vec<Arc<IndexEntry>>>,
+    entries: RwLock<Vec<IndexSlot>>,
+    /// Serializes binding (the `BINDING` state of `TableIndexList::Bind`).
+    bind_lock: Mutex<()>,
 }
 
 impl TableIndexList {
-    fn read(&self) -> std::sync::RwLockReadGuard<'_, Vec<Arc<IndexEntry>>> {
+    fn read(&self) -> std::sync::RwLockReadGuard<'_, Vec<IndexSlot>> {
         self.entries.read().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn write(&self) -> std::sync::RwLockWriteGuard<'_, Vec<Arc<IndexEntry>>> {
+    fn write(&self) -> std::sync::RwLockWriteGuard<'_, Vec<IndexSlot>> {
         self.entries.write().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Adds an index (`AddIndex`).
     pub fn add(&self, index: Art) -> Arc<IndexEntry> {
         let entry = Arc::new(IndexEntry::new(index));
-        self.write().push(Arc::clone(&entry));
+        self.write().push(IndexSlot::Bound(Arc::clone(&entry)));
         entry
+    }
+
+    /// Adds an index whose expressions are bound later (`AddIndex` of an `UnboundIndex`).
+    pub fn add_unbound(&self, index: UnboundIndex) {
+        self.write().push(IndexSlot::Unbound(Arc::new(index)));
     }
 
     /// Removes the index named `name` and frees its memory (`RemoveIndex`).
     pub fn remove(&self, name: &str) -> bool {
         let mut entries = self.write();
-        let Some(pos) = entries.iter().position(|e| e.name == name) else {
+        let Some(pos) = entries.iter().position(|e| e.name() == name) else {
             return false;
         };
         let entry = entries.remove(pos);
-        entry.lock().index.reset();
+        entry.reset();
         true
     }
 
-    /// A snapshot of the entries (`IndexEntries`).
+    /// A snapshot of the bound indexes (`IndexEntries` after `Bind`). Unbound indexes are
+    /// skipped: rustdb rebuilds them from the table when they are bound, so changes
+    /// made before need not reach them (`BufferChunk`).
     pub fn entries(&self) -> Vec<Arc<IndexEntry>> {
+        self.read()
+            .iter()
+            .filter_map(|slot| match slot {
+                IndexSlot::Bound(entry) => Some(Arc::clone(entry)),
+                IndexSlot::Unbound(_) => None,
+            })
+            .collect()
+    }
+
+    /// A snapshot of every index, bound or not, in order.
+    pub fn slots(&self) -> Vec<IndexSlot> {
         self.read().clone()
     }
 
@@ -131,18 +198,34 @@ impl TableIndexList {
         self.read().is_empty()
     }
 
+    /// The number of indexes, bound or not (`Count`).
     pub fn len(&self) -> usize {
         self.read().len()
     }
 
-    /// Whether any index enforces uniqueness.
-    pub fn has_unique(&self) -> bool {
-        self.read().iter().any(|e| e.is_unique)
+    /// Whether some index is not bound yet (`unbound_count != 0`).
+    pub fn has_unbound(&self) -> bool {
+        self.read()
+            .iter()
+            .any(|slot| matches!(slot, IndexSlot::Unbound(_)))
     }
 
-    /// The index named `name` (`Find`).
+    /// Whether any index enforces uniqueness.
+    pub fn has_unique(&self) -> bool {
+        self.read().iter().any(IndexSlot::is_unique)
+    }
+
+    /// The bound index named `name` (`Find`).
     pub fn find(&self, name: &str) -> Option<Arc<IndexEntry>> {
-        self.read().iter().find(|e| e.name == name).cloned()
+        self.read().iter().find_map(|slot| match slot {
+            IndexSlot::Bound(entry) if entry.name == name => Some(Arc::clone(entry)),
+            _ => None,
+        })
+    }
+
+    /// Whether an index, bound or not, is named `name`.
+    pub fn contains(&self, name: &str) -> bool {
+        self.read().iter().any(|slot| slot.name() == name)
     }
 
     /// Whether no constraint index is named `name` (`NameIsUnique`).
@@ -150,25 +233,34 @@ impl TableIndexList {
         !self
             .read()
             .iter()
-            .any(|e| (e.is_primary || e.is_foreign || e.is_unique) && e.name == name)
+            .any(|slot| slot.is_constraint() && slot.name() == name)
     }
 
     /// The index enforcing a foreign key over `keys` (`FindForeignKeyIndex`).
     pub fn find_foreign_key_index(&self, keys: &[usize], fk_type: ForeignKeyType) -> Option<Arc<IndexEntry>> {
-        self.read()
-            .iter()
-            .find(|e| e.is_foreign_key_index(keys, fk_type))
-            .cloned()
+        self.read().iter().find_map(|slot| match slot {
+            IndexSlot::Bound(entry) if entry.is_foreign_key_index(keys, fk_type) => Some(Arc::clone(entry)),
+            _ => None,
+        })
     }
 
-    /// Every column some index reads (`GetRequiredColumns`), sorted.
+    /// Every column some bound index reads (`GetRequiredColumns`), sorted.
     pub fn required_columns(&self) -> Vec<usize> {
         let columns: BTreeSet<usize> = self
-            .read()
+            .entries()
             .iter()
             .flat_map(|e| e.column_ids.iter().copied())
             .collect();
         columns.into_iter().collect()
+    }
+
+    /// The key columns of each unique index, bound or not, in index order.
+    pub fn unique_column_sets(&self) -> Vec<Vec<usize>> {
+        self.read()
+            .iter()
+            .filter(|slot| slot.is_unique())
+            .map(|slot| slot.column_ids().to_vec())
+            .collect()
     }
 
     /// Empty copies of every constraint index, for transaction-local appends or deletes
@@ -189,15 +281,43 @@ impl TableIndexList {
     pub fn clear(&self) {
         let mut entries = self.write();
         for entry in entries.iter() {
-            entry.lock().index.reset();
+            entry.reset();
         }
         entries.clear();
     }
 
-    /// Whether some index reads one of `columns` (`IndexIsUpdated`).
+    /// Whether some index, bound or not, reads one of `columns` (`IndexIsUpdated`).
     pub fn any_index_on(&self, columns: &[usize]) -> bool {
         self.read()
             .iter()
-            .any(|e| e.column_ids.iter().any(|c| columns.contains(c)))
+            .any(|slot| slot.column_ids().iter().any(|c| columns.contains(c)))
+    }
+
+    /// Binds every unbound index with `bind`, which returns the built index
+    /// (`TableIndexList::Bind`). One caller binds at a time; the others wait and find the
+    /// indexes bound.
+    pub fn bind(&self, bind: &mut dyn FnMut(&UnboundIndex) -> Result<Art>) -> Result<()> {
+        if !self.has_unbound() {
+            return Ok(());
+        }
+        let _binding = self.bind_lock.lock().unwrap_or_else(PoisonError::into_inner);
+        loop {
+            let next = self.read().iter().find_map(|slot| match slot {
+                IndexSlot::Unbound(index) => Some(Arc::clone(index)),
+                IndexSlot::Bound(_) => None,
+            });
+            let Some(unbound) = next else {
+                return Ok(());
+            };
+            let index = bind(&unbound)?;
+            let mut entries = self.write();
+            // The index may have been dropped meanwhile.
+            if let Some(slot) = entries
+                .iter_mut()
+                .find(|slot| matches!(slot, IndexSlot::Unbound(other) if Arc::ptr_eq(other, &unbound)))
+            {
+                *slot = IndexSlot::Bound(Arc::new(IndexEntry::new(index)));
+            }
+        }
     }
 }

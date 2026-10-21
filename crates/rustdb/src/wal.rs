@@ -13,7 +13,7 @@ use rustdb_ast::{
     AlterInfo, AlterInfoKind, AlterTableInfo, CatalogType as AstCatalogType, CreateInfo, DropInfo,
     OnEntryNotFound, SqlStatement, SqlStatementKind,
 };
-use rustdb_catalog::checkpoint::{IndexExpressionLoader, read_create_info_property, replay_create_index};
+use rustdb_catalog::checkpoint::{read_create_info_property, replay_create_index};
 use rustdb_catalog::{Catalog, CatalogType, EntryKind, Transaction};
 use rustdb_common::{Error, ErrorKind, Result};
 use rustdb_execution::operators::{
@@ -23,8 +23,9 @@ use rustdb_execution::operators::{
 use rustdb_serde::Deserializer;
 use rustdb_serde::binary::BinaryDeserializer;
 use rustdb_storage::DataTable;
-use rustdb_storage::checkpoint::pointers::{IndexStorageInfo, deserialize_meta_block_pointer};
+use rustdb_storage::checkpoint::pointers::{deserialize_index_storage_info, deserialize_meta_block_pointer};
 use rustdb_storage::checkpoint::vector_serde::deserialize_chunk;
+use rustdb_storage::index::UnboundIndexStorage;
 use rustdb_storage::metadata::MetaBlockPointer;
 use rustdb_storage::storage_manager::StorageManager;
 use rustdb_storage::wal::{WAL_VERSION_NUMBER, WalReader, WalType, checkpoint_wal_path};
@@ -280,23 +281,6 @@ struct Replayer {
     current_table: Option<Arc<DataTable>>,
 }
 
-/// Builds expression indexes of replayed `CREATE INDEX` entries (needs the binder; not
-/// supported yet).
-struct NoExpressionIndexes;
-
-impl IndexExpressionLoader for NoExpressionIndexes {
-    fn load_expression_index(
-        &self,
-        _table: &Arc<DataTable>,
-        info: &rustdb_ast::CreateIndexInfo,
-    ) -> Result<()> {
-        Err(Error::not_implemented(format!(
-            "replaying the expression index \"{}\" from a WAL",
-            info.name
-        )))
-    }
-}
-
 impl Replayer {
     /// Applies one entry; returns whether it was a `WAL_FLUSH` (`ReplayEntry`).
     fn replay_entry(&mut self, connection: &mut Connection, payload: &[u8]) -> Result<bool> {
@@ -347,8 +331,8 @@ impl Replayer {
             }
             WalType::CreateIndex => {
                 let info = self.read_create_info(d, AstCatalogType::IndexEntry, "index_catalog_entry")?;
-                skip_index_storage(d)?;
-                replay_create_index(&self.catalog, &transaction, &info, &NoExpressionIndexes)?;
+                let stored = read_index_storage(d)?;
+                replay_create_index(&self.catalog, &transaction, &info, stored)?;
             }
             WalType::DropTable
             | WalType::DropView
@@ -560,23 +544,33 @@ fn is_add_primary_key(info: &AlterInfo) -> bool {
     )
 }
 
-/// Reads past the stored index data of an index entry (`ReplayIndexData`); rustdb
-/// rebuilds the index from its table instead.
-fn skip_index_storage(d: &mut dyn Deserializer) -> Result<()> {
-    let info = d.read_object_property(102, "index_storage_info", IndexStorageInfo::deserialize_fields)?;
+/// Reads the stored index data of an index entry: its description and the bytes of its
+/// buffers per allocator (`ReplayIndexData`).
+fn read_index_storage(d: &mut dyn Deserializer) -> Result<UnboundIndexStorage> {
+    let info = d.read_object_property(102, "index_storage_info", deserialize_index_storage_info)?;
     d.on_property_begin(103, "index_storage")?;
     let count = d.on_list_begin()?;
+    let mut buffers = Vec::with_capacity(count);
     for index in 0..count {
         let sizes = info
-            .allocators
+            .allocator_infos
             .get(index)
             .map(|allocator| allocator.allocation_sizes.as_slice())
             .unwrap_or_default();
+        let mut allocator = Vec::with_capacity(sizes.len());
         for &size in sizes {
             let size = usize::try_from(size).map_err(|_| Error::serialization("index buffer too large"))?;
-            d.read_data(size)?;
+            allocator.push(d.read_data(size)?);
         }
+        buffers.push(allocator);
     }
     d.on_list_end()?;
-    d.on_property_end()
+    d.on_property_end()?;
+    Ok(UnboundIndexStorage::Wal(info, buffers))
+}
+
+/// Reads past the stored index data of an index entry (`ReplayIndexData`); rustdb
+/// rebuilds the index from its table instead.
+fn skip_index_storage(d: &mut dyn Deserializer) -> Result<()> {
+    read_index_storage(d).map(drop)
 }

@@ -587,10 +587,9 @@ fn unique_index_columns(table: &TableEntry) -> Vec<HashSet<usize>> {
     table.storage.as_ref().map_or_else(Vec::new, |storage| {
         storage
             .indexes()
-            .entries()
-            .iter()
-            .filter(|index| index.is_unique())
-            .map(|index| index.column_ids().iter().copied().collect())
+            .unique_column_sets()
+            .into_iter()
+            .map(|columns| columns.into_iter().collect())
             .collect()
     })
 }

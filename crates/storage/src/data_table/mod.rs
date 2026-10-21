@@ -955,8 +955,8 @@ impl DataTable {
         if column >= self.columns.len() {
             return Err(Error::internal("dropping a column that does not exist"));
         }
-        for entry in self.indexes().entries() {
-            for &indexed in entry.column_ids() {
+        for slot in self.indexes().slots() {
+            for &indexed in slot.column_ids() {
                 if indexed == column {
                     return Err(Error::catalog("Cannot drop this column: an index depends on it!"));
                 }
@@ -975,9 +975,9 @@ impl DataTable {
     pub fn verify_alter_type(&self, column: usize) -> Result<()> {
         if self
             .indexes()
-            .entries()
+            .slots()
             .iter()
-            .any(|entry| entry.column_ids().contains(&column))
+            .any(|slot| slot.column_ids().contains(&column))
         {
             return Err(Error::catalog(
                 "Cannot change the type of this column: an index depends on it!",

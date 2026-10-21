@@ -15,7 +15,7 @@ use rustdb_catalog::{
     Catalog, CatalogEntry, CatalogType, EntryKind, IndexEntry, SequenceEntry, TableEntry, ViewEntry,
 };
 use rustdb_common::{Error, Result};
-use rustdb_planner::{Expression, ExpressionKind};
+use rustdb_planner::{ClientContext, Expression, ExpressionKind};
 use rustdb_storage::index::IndexConstraintType;
 use rustdb_storage::index::art::{Art, IndexKeyExecutor, IndexKeyExpressions};
 use rustdb_storage::{ColumnDefinition, DataTable, TableIoManager, Transaction};
@@ -491,44 +491,82 @@ pub struct CreateIndexAction {
     pub expressions: Vec<Expression>,
 }
 
-impl CreateIndexAction {
-    /// An empty ART over the keys.
-    fn new_art(&self, storage: &DataTable, index: &CreateIndexInfo) -> Result<Art> {
-        let constraint = match index.constraint_type {
-            AstIndexConstraintType::Unique => IndexConstraintType::Unique,
-            AstIndexConstraintType::Primary => IndexConstraintType::Primary,
-            AstIndexConstraintType::Foreign => IndexConstraintType::Foreign,
-            AstIndexConstraintType::None => IndexConstraintType::None,
-        };
-        let references: Option<Vec<usize>> = self
-            .expressions
-            .iter()
-            .map(|expression| match &expression.kind {
-                ExpressionKind::Reference(reference) => usize::try_from(reference.index).ok(),
-                _ => None,
-            })
-            .collect();
-        if let Some(columns) = references {
-            return storage.new_art(&index.name, constraint, &columns);
-        }
-        let columns: Vec<usize> = index
-            .column_ids
-            .iter()
-            .filter_map(|&c| usize::try_from(c).ok())
-            .collect();
-        let key_types = self.expressions.iter().map(|e| e.return_type.clone()).collect();
-        let executor = IndexExpressionExecutor {
-            executor: std::sync::Mutex::new(ExpressionExecutor::new(self.expressions.clone())),
-            names: self.expressions.iter().map(Expression::name).collect(),
-        };
-        storage.new_art_with_expressions(
-            &index.name,
-            constraint,
-            &columns,
-            key_types,
-            IndexKeyExpressions::Custom(Arc::new(executor)),
-        )
+/// An empty ART of index `index` over `storage` whose keys are `expressions` over the
+/// table's physical columns (`IndexType::create_instance` of the ART).
+fn index_art(storage: &DataTable, index: &CreateIndexInfo, expressions: &[Expression]) -> Result<Art> {
+    let constraint = match index.constraint_type {
+        AstIndexConstraintType::Unique => IndexConstraintType::Unique,
+        AstIndexConstraintType::Primary => IndexConstraintType::Primary,
+        AstIndexConstraintType::Foreign => IndexConstraintType::Foreign,
+        AstIndexConstraintType::None => IndexConstraintType::None,
+    };
+    let references: Option<Vec<usize>> = expressions
+        .iter()
+        .map(|expression| match &expression.kind {
+            ExpressionKind::Reference(reference) => usize::try_from(reference.index).ok(),
+            _ => None,
+        })
+        .collect();
+    if let Some(columns) = references {
+        return storage.new_art(&index.name, constraint, &columns);
     }
+    let columns: Vec<usize> = index
+        .column_ids
+        .iter()
+        .filter_map(|&c| usize::try_from(c).ok())
+        .collect();
+    let key_types = expressions.iter().map(|e| e.return_type.clone()).collect();
+    let executor = IndexExpressionExecutor {
+        executor: std::sync::Mutex::new(ExpressionExecutor::new(expressions.to_vec())),
+        names: expressions.iter().map(Expression::name).collect(),
+    };
+    storage.new_art_with_expressions(
+        &index.name,
+        constraint,
+        &columns,
+        key_types,
+        IndexKeyExpressions::Custom(Arc::new(executor)),
+    )
+}
+
+/// Binds the indexes of table `entry` that were read from storage and not bound yet,
+/// building each from the table's rows (DuckDB's `DataTableInfo::BindIndexes` with
+/// `IndexBinder::BindIndex`). Called before a statement changes the table.
+pub fn bind_table_indexes(client: &Arc<ClientContext>, entry: &Arc<CatalogEntry>) -> Result<()> {
+    let EntryKind::Table(table) = &entry.kind else {
+        return Ok(());
+    };
+    let Some(storage) = &table.storage else {
+        return Ok(());
+    };
+    if !storage.indexes().has_unbound() {
+        return Ok(());
+    }
+    storage.bind_indexes(&mut |unbound| {
+        let Some(info) = unbound.create_info().downcast_ref::<CreateInfo>() else {
+            return Err(Error::internal("unbound index without a CreateInfo"));
+        };
+        let CreateInfoKind::Index(index) = &info.kind else {
+            return Err(Error::internal("unbound index without a CreateIndexInfo"));
+        };
+        if !unbound.index_type().eq_ignore_ascii_case("ART") {
+            return Err(Error::new(
+                rustdb_common::ErrorKind::MissingExtension,
+                format!(
+                    "Cannot bind index '{}', unknown index type '{}'. You need to load the extension that provides this index type before table '{}' can be modified.",
+                    index.table,
+                    unbound.index_type(),
+                    index.table
+                ),
+            ));
+        }
+        let expressions = rustdb_planner::bind_index_expressions(Arc::clone(client), entry, index)?;
+        let mut art = index_art(storage, index, &expressions)?;
+        // The index holds the latest committed rows, like the stored one plus the
+        // replayed changes (`ApplyBufferedReplays`).
+        storage.build_index(&Transaction::system(), &mut art, false)?;
+        Ok(art)
+    })
 }
 
 impl DdlAction for CreateIndexAction {
@@ -572,7 +610,7 @@ impl DdlAction for CreateIndexAction {
             .storage
             .clone()
             .ok_or_else(|| Error::binder("Indexes can only be created on DuckDB tables."))?;
-        let art = self.new_art(&storage, index)?;
+        let art = index_art(&storage, index, &self.expressions)?;
         storage.create_index(
             transaction,
             art,

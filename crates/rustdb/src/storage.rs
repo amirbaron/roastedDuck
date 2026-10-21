@@ -3,13 +3,11 @@
 
 use std::sync::Arc;
 
-use rustdb_ast::CreateIndexInfo;
-use rustdb_catalog::checkpoint::{IndexExpressionLoader, load_checkpoint, write_checkpoint};
+use rustdb_catalog::checkpoint::{load_checkpoint, write_checkpoint};
 use rustdb_catalog::{Catalog, Transaction};
 use rustdb_common::profiling::MetricType;
 use rustdb_common::{Error, ErrorKind, Result};
 use rustdb_serde::SerializationCompatibility;
-use rustdb_storage::DataTable;
 use rustdb_storage::storage_manager::{StorageManager, StorageOptions};
 use rustdb_types::Value;
 
@@ -108,18 +106,6 @@ fn storage_options(attach: &AttachOptions) -> Result<StorageOptions> {
     Ok(options)
 }
 
-/// Builds expression indexes of a loaded database (needs the binder; not supported yet).
-struct NoExpressionIndexes;
-
-impl IndexExpressionLoader for NoExpressionIndexes {
-    fn load_expression_index(&self, _table: &Arc<DataTable>, info: &CreateIndexInfo) -> Result<()> {
-        Err(Error::not_implemented(format!(
-            "loading the expression index \"{}\" from a database file",
-            info.name
-        )))
-    }
-}
-
 /// Opens the database file at `path` and loads its catalog into `catalog`.
 pub(crate) fn open_storage(
     path: &str,
@@ -149,7 +135,7 @@ pub(crate) fn open_storage(
     }
     // `SingleFileStorageManager::LoadDatabase` times loading the checkpoint.
     let timer = rustdb_common::profiling::start_timer(MetricType::AttachLoadStorageLatency);
-    load_checkpoint(catalog, &storage, &NoExpressionIndexes)?;
+    load_checkpoint(catalog, &storage)?;
     drop(timer);
     Ok(Arc::new(storage))
 }

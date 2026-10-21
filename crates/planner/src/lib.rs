@@ -46,6 +46,7 @@ pub mod prepared;
 pub mod subquery;
 
 pub use binder::expression::bind_logical_type;
+pub use binder::statement::bind_index_expressions;
 pub use binder::tableref::deduplicate_columns;
 pub use binder::tableref::{JoinSide, create_join, extract_join_conditions};
 pub use binder::{Binder, BoundStatement};

@@ -192,6 +192,23 @@ impl DataTable {
         Ok(())
     }
 
+    /// Adds an index read from storage whose expressions are bound later
+    /// (`TableIndexList::AddIndex` of an `UnboundIndex`).
+    pub fn add_unbound_index(&self, index: crate::index::UnboundIndex) -> Result<()> {
+        self.check_main_table("add an index to")?;
+        self.indexes().add_unbound(index);
+        Ok(())
+    }
+
+    /// Binds every unbound index with `bind`, which returns the index built over the
+    /// table's rows (`DataTableInfo::BindIndexes`).
+    pub fn bind_indexes(
+        &self,
+        bind: &mut dyn FnMut(&crate::index::UnboundIndex) -> Result<Art>,
+    ) -> Result<()> {
+        self.indexes().bind(bind)
+    }
+
     /// Removes the index `name` (DROP INDEX, or rollback of CREATE INDEX).
     pub fn remove_index(&self, name: &str) -> bool {
         self.indexes().remove(name)
@@ -209,7 +226,7 @@ impl DataTable {
     ) -> Result<()> {
         self.build_index(transaction, &mut index, false)?;
         self.check_main_table_for_index_creation()?;
-        if check_unique_name && self.indexes().find(index.name()).is_some() {
+        if check_unique_name && self.indexes().contains(index.name()) {
             return Err(Error::catalog(format!(
                 "An index with the name {} already exists!",
                 index.name()

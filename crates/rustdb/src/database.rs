@@ -2153,6 +2153,21 @@ impl Connection {
                     .iter()
                     .any(|database| Arc::ptr_eq(database, &attached));
             let transaction = self.transactions.current();
+            // Explicit checkpoints bind the indexes first, so the written indexes hold
+            // the changes replayed from the WAL (`SingleFileCheckpointWriter::WriteTable`
+            // with a bind connection).
+            if attached.storage.is_some() {
+                let client = self.client_context(Arc::clone(&transaction));
+                let system = Transaction::system();
+                for schema in attached.catalog.schemas().scan(&system) {
+                    let Some(schema_entry) = schema.as_schema() else {
+                        continue;
+                    };
+                    for table in schema_entry.tables.scan(&system) {
+                        rustdb_execution::operators::bind_table_indexes(&client, &table)?;
+                    }
+                }
+            }
             crate::storage::checkpoint(&attached, &transaction, started, force, &instance.transactions)?;
         }
         Ok(result)
@@ -2800,7 +2815,9 @@ impl Connection {
                 }
                 if name.eq_ignore_ascii_case("disabled_filesystems") {
                     let list = value.to_varchar()?;
-                    self.database.instance().set_disabled_file_systems(&list.split(',').collect::<Vec<_>>())?;
+                    self.database
+                        .instance()
+                        .set_disabled_file_systems(&list.split(',').collect::<Vec<_>>())?;
                 }
                 self.database.instance().set_buffer_setting(name, Some(value))?;
                 if crate::logging::is_logging_setting(name) {

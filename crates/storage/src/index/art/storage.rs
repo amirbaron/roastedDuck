@@ -254,3 +254,66 @@ impl Art {
         Ok((info, buffers))
     }
 }
+
+/// Reads a `BlockPointer` stored as raw bytes (`Read<BlockPointer>`: block id, offset
+/// and four bytes of padding).
+fn read_raw_block_pointer(reader: &mut crate::metadata::MetadataReader<'_>) -> Result<(i64, u32)> {
+    let block_id = reader.read_i64()?;
+    let offset = reader.read_u32()?;
+    let _padding = reader.read_u32()?;
+    Ok((block_id, offset))
+}
+
+/// The metadata pointer of a block pointer into metadata (`MetadataManager::FromBlockPointer`).
+fn metadata_pointer(
+    metadata: &crate::metadata::MetadataManager,
+    block_id: i64,
+    offset: u32,
+) -> crate::metadata::MetaBlockPointer {
+    let block_size = metadata.metadata_block_size() as u64;
+    let index = u64::from(offset) / block_size;
+    let offset = u64::from(offset) % block_size;
+    crate::metadata::MetaBlockPointer::new(block_id as u64 | (index << 56), offset as u32)
+}
+
+/// The data blocks of an index stored by DuckDB versions before v0.10, whose root block
+/// pointer leads to the root node and the allocators (`ART::Deserialize` and
+/// `FixedSizeAllocator::Deserialize`). rustdb rebuilds the index from its table; the
+/// blocks only stay in use until the next checkpoint.
+pub fn deprecated_index_block_ids(
+    metadata: &crate::metadata::MetadataManager,
+    root_block_id: i64,
+    root_offset: u32,
+) -> Result<Vec<rustdb_buffer::BlockId>> {
+    use crate::metadata::MetadataReader;
+    let mut reader = MetadataReader::new(
+        metadata,
+        metadata_pointer(metadata, root_block_id, root_offset),
+        false,
+    )?;
+    let _root = reader.read_u64()?;
+    let mut allocators = Vec::with_capacity(DEPRECATED_ALLOCATOR_COUNT);
+    for _ in 0..DEPRECATED_ALLOCATOR_COUNT {
+        allocators.push(read_raw_block_pointer(&mut reader)?);
+    }
+    let mut blocks = Vec::new();
+    for (block_id, offset) in allocators {
+        if block_id < 0 {
+            continue;
+        }
+        let mut reader = MetadataReader::new(metadata, metadata_pointer(metadata, block_id, offset), false)?;
+        let _segment_size = reader.read_u64()?;
+        let buffer_count = reader.read_u64()?;
+        let _buffers_with_free_space = reader.read_u64()?;
+        for _ in 0..buffer_count {
+            let _buffer_id = reader.read_u64()?;
+            let (buffer_block, _) = read_raw_block_pointer(&mut reader)?;
+            let _segment_count = reader.read_u64()?;
+            let _allocation_size = reader.read_u64()?;
+            if buffer_block >= 0 {
+                blocks.push(buffer_block);
+            }
+        }
+    }
+    Ok(blocks)
+}
