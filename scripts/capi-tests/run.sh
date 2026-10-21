@@ -31,29 +31,25 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# The C API test files of the core surface. Skipped files and why:
-#   capi_aggregate_functions.cpp, capi_scalar_functions.cpp, capi_table_functions.cpp,
-#   capi_copy_function.cpp, capi_custom_type.cpp, capi_file_system.cpp, capi_catalog.cpp,
-#   capi_config_options.cpp, test_capi_replacement_scan.cpp, test_capi_logging.cpp,
-#   test_capi_profiling.cpp, test_capi_arrow.cpp
-#       the extension surface (functions, types, file systems, catalog, config options,
-#       replacement scans, logging, profiling, Arrow), a later task.
-#   test_capi_geometry.cpp, test_capi_variant.cpp
-#       need the GEOMETRY / VARIANT C API (extension surface).
-#   test_capi_instance_cache.cpp, test_starting_database.cpp,
-#   test_without_disabled_functions.cpp
+# DuckDB's C API test files. Skipped files and why:
+#   test_starting_database.cpp, test_without_disabled_functions.cpp
 #       use the C++ API (DuckDB, Connection, DBConfig) beside the C API.
-CORE=(
+TESTS=(
   test_capi.cpp test_capi_prepared.cpp test_capi_pending.cpp test_capi_streaming.cpp
   test_capi_values.cpp test_capi_complex_types.cpp test_capi_data_chunk.cpp test_capi_vector.cpp
   test_capi_appender.cpp test_capi_append_data_chunk.cpp test_capi_table_description.cpp
   test_capi_to_decimal.cpp test_capi_extract.cpp test_capi_any_invalid_type.cpp test_capi_website.cpp
+  capi_scalar_functions.cpp capi_aggregate_functions.cpp capi_table_functions.cpp
+  capi_copy_function.cpp capi_custom_type.cpp capi_file_system.cpp capi_catalog.cpp
+  capi_config_options.cpp test_capi_replacement_scan.cpp test_capi_logging.cpp
+  test_capi_profiling.cpp test_capi_arrow.cpp test_capi_geometry.cpp test_capi_variant.cpp
+  test_capi_instance_cache.cpp
 )
-[[ ${#FILES[@]} -eq 0 ]] && FILES=("${CORE[@]}")
+[[ ${#FILES[@]} -eq 0 ]] && FILES=("${TESTS[@]}")
 
-# Test cases that use the C++ API or the extension surface, removed from the copies of their
-# files that are built (strip_cases.py); linking with -dead_strip drops the helpers only
-# they call:
+# Test cases (and `SECTION:` sections) that use the C++ API, removed from the copies of
+# their files that are built (strip_cases.py); linking with -dead_strip drops the helpers
+# only they call:
 EXCLUDED=(
   # creates the database through duckdb::DuckDB and reads DBConfig internals
   "Test C API config"
@@ -62,17 +58,14 @@ EXCLUDED=(
   # cast duckdb_vector to duckdb::Vector to check the values
   "Test DataChunk populate ListVector in C API"
   "Test DataChunk populate ArrayVector in C API"
-  # Arrow export of streaming results (extension surface)
-  "Test streaming arrow results in C API"
   # reads the statements of duckdb_extracted_statements through ExtractStatementsWrapper
   "Test extract statements for \`ALTER TABLE ... ADD COLUMN ... DEFAULT\` in C API"
   # builds its table from the C++ test_all_types() type list (TestAllTypesFun)
   "Test the appender with parallel appends and multiple data types in the C API"
-  # Arrow query results (duckdb_query_arrow; extension surface)
-  "Test errors in C API"
-  # register scalar / table functions (extension surface)
-  "Test scalar functions with INVALID and ANY types"
-  "Test table functions with INVALID and ANY types"
+  # lists the test directory through duckdb::FileSystem
+  "Test the database instance cache with case-insensitive FS"
+  # builds its Arrow input with the C++ ArrowConverter and ArrowAppender
+  "SECTION:test scan"
 )
 
 if [[ "$LIB" == rust ]]; then

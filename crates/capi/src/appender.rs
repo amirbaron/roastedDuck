@@ -284,16 +284,16 @@ pub unsafe extern "C" fn duckdb_appender_end_row(appender: DuckdbAppender) -> Du
     wrapper.run(|appender, context| with_connection(appender, context, Appender::end_row))
 }
 
-/// Appends `value` to the next column (`duckdb_append_internal`).
+/// Appends `value` to the next column (`duckdb_append_internal<Value>`).
 ///
 /// # Safety
 /// `appender` must be NULL or a live `duckdb_appender`.
-unsafe fn append(appender: DuckdbAppender, value: rustdb::Result<Value>) -> DuckdbState {
+unsafe fn append(appender: DuckdbAppender, value: &Value) -> DuckdbState {
     // SAFETY: guaranteed by the caller.
     let Some(wrapper) = (unsafe { appender_ref(appender) }) else {
         return DuckdbState::DuckDBError;
     };
-    wrapper.run(|appender, _| appender.append_value(&value?))
+    wrapper.run(|appender, _| appender.append_value(value))
 }
 
 macro_rules! append_functions {
@@ -303,7 +303,10 @@ macro_rules! append_functions {
         pub unsafe extern "C" fn $name(appender: DuckdbAppender, value: $c) -> DuckdbState {
             let make: fn($c) -> Value = $make;
             // SAFETY: `appender` is NULL or a live handle.
-            unsafe { append(appender, Ok(make(value))) }
+            let Some(wrapper) = (unsafe { appender_ref(appender) }) else {
+                return DuckdbState::DuckDBError;
+            };
+            wrapper.run(|appender, _| appender.append_typed(&make(value)))
         }
     )*};
 }
@@ -407,13 +410,13 @@ pub unsafe extern "C" fn duckdb_append_varchar_length(
     val: *const c_char,
     length: Idx,
 ) -> DuckdbState {
+    // SAFETY: `appender` is NULL or a live handle.
+    let Some(wrapper) = (unsafe { appender_ref(appender) }) else {
+        return DuckdbState::DuckDBError;
+    };
     // SAFETY: `val` points to `length` bytes.
     let text = unsafe { bytes(val.cast(), length) };
-    let value = std::str::from_utf8(text).map(Value::varchar).map_err(|_| {
-        Error::invalid_input("Invalid unicode (byte sequence mismatch) detected in value construction")
-    });
-    // SAFETY: `appender` is NULL or a live handle.
-    unsafe { append(appender, value) }
+    wrapper.run(|appender, _| appender.append_string(text))
 }
 
 /// `duckdb_state duckdb_append_blob(duckdb_appender appender, const void *data, idx_t length)`
@@ -427,7 +430,7 @@ pub unsafe extern "C" fn duckdb_append_blob(
     // SAFETY: `data` points to `length` bytes.
     let value = Value::blob(unsafe { bytes(data, length) });
     // SAFETY: `appender` is NULL or a live handle.
-    unsafe { append(appender, Ok(value)) }
+    unsafe { append(appender, &value) }
 }
 
 /// `duckdb_state duckdb_append_value(duckdb_appender appender, duckdb_value value)`
@@ -439,7 +442,7 @@ pub unsafe extern "C" fn duckdb_append_value(appender: DuckdbAppender, value: Du
         return DuckdbState::DuckDBError;
     };
     // SAFETY: `appender` is NULL or a live handle.
-    unsafe { append(appender, Ok(value.clone())) }
+    unsafe { append(appender, value) }
 }
 
 /// `duckdb_state duckdb_append_data_chunk(duckdb_appender appender, duckdb_data_chunk chunk)`

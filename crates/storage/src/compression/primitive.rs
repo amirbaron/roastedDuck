@@ -241,8 +241,8 @@ pub(crate) fn unified_strings(input: &Vector, count: usize) -> impl Iterator<Ite
 }
 
 /// `UncompressedStringStorage::UpdateStringStats`.
-pub(crate) fn update_string_stats(stats: &mut BaseStatistics, bytes: &[u8]) {
+pub(crate) fn update_string_stats(stats: &mut BaseStatistics, bytes: &[u8]) -> Result<()> {
     stats.set_has_no_null_fast();
     let check_unicode = stats.logical_type().id() == rustdb_types::LogicalTypeId::Varchar;
-    stats.update_string(bytes, check_unicode);
+    stats.update_string(bytes, check_unicode)
 }

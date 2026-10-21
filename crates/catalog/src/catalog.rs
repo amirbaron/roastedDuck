@@ -198,6 +198,12 @@ impl Catalog {
         self.register_builtin(name, EntryKind::TableFunction(set))
     }
 
+    /// Registers a built-in pragma in `main`.
+    pub fn register_pragma_functions(&self, set: rustdb_function::PragmaFunctionSet) -> Result<()> {
+        let name = set.name.to_string();
+        self.register_builtin(name, EntryKind::PragmaFunction(set))
+    }
+
     /// Registers a built-in COPY file format in `main`.
     pub fn register_copy_function(&self, function: rustdb_function::CopyFunction) -> Result<()> {
         let name = function.name.to_string();
@@ -243,17 +249,7 @@ impl Catalog {
             )));
         };
         let mut merged = current.clone();
-        for function in set.functions {
-            let same = merged.functions.iter_mut().find(|existing| {
-                existing.arguments == function.arguments
-                    && existing.return_type == function.return_type
-                    && existing.varargs == function.varargs
-            });
-            match same {
-                Some(existing) => *existing = function,
-                None => merged.functions.push(function),
-            }
-        }
+        merged.merge_function_set(set, true);
         let mut entry = CatalogEntry::new(existing.name(), EntryKind::ScalarFunction(merged));
         entry.oid = existing.oid;
         entry.internal = true;
@@ -279,16 +275,11 @@ impl Catalog {
             )));
         };
         let mut merged = current.clone();
-        for function in set.functions {
-            if merged.functions.iter().any(|existing| {
-                existing.arguments == function.arguments && existing.varargs == function.varargs
-            }) {
-                return Err(rustdb_common::Error::catalog(format!(
-                    "Failed to add new function overloads to function \"{}\": function overload already exists",
-                    set.name
-                )));
-            }
-            merged.functions.push(function);
+        let name = Arc::clone(&set.name);
+        if !merged.merge_function_set(set) {
+            return Err(rustdb_common::Error::catalog(format!(
+                "Failed to add new function overloads to function \"{name}\": function overload already exists"
+            )));
         }
         let mut entry = CatalogEntry::new(existing.name(), EntryKind::TableFunction(merged));
         entry.oid = existing.oid;
@@ -350,6 +341,7 @@ impl Catalog {
             CatalogType::TableFunction => &schema.table_functions,
             CatalogType::Table | CatalogType::View => &schema.tables,
             CatalogType::CopyFunction => &schema.copy_functions,
+            CatalogType::PragmaFunction => &schema.pragma_functions,
             _ => &schema.functions,
         };
         set.create_committed(entry)

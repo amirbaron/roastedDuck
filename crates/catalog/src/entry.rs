@@ -411,6 +411,8 @@ pub enum EntryKind {
     TableFunction(TableFunctionSet),
     /// A COPY file format (`CopyFunctionCatalogEntry`).
     CopyFunction(Box<rustdb_function::CopyFunction>),
+    /// A pragma (`PragmaFunctionCatalogEntry`).
+    PragmaFunction(rustdb_function::PragmaFunctionSet),
     Table(TableEntry),
     View(ViewEntry),
     Index(IndexEntry),
@@ -528,6 +530,7 @@ impl CatalogEntry {
             EntryKind::AggregateFunction(_) => CatalogType::AggregateFunction,
             EntryKind::TableFunction(_) => CatalogType::TableFunction,
             EntryKind::CopyFunction(_) => CatalogType::CopyFunction,
+            EntryKind::PragmaFunction(_) => CatalogType::PragmaFunction,
             EntryKind::Table(_) => CatalogType::Table,
             EntryKind::View(_) => CatalogType::View,
             EntryKind::Index(_) => CatalogType::Index,

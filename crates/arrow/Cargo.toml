@@ -1,0 +1,18 @@
+[package]
+name = "rustdb-arrow"
+description = "The Arrow C data interface: DuckDB data chunks to and from Arrow arrays, and the arrow_scan table function (DuckDB's src/common/arrow and src/function/table/arrow*)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rustdb-common.workspace = true
+rustdb-types.workspace = true
+rustdb-planner.workspace = true
+rustdb-function = { path = "../function" }
+rustdb-storage = { path = "../storage" }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[lints]
+workspace = true

@@ -830,7 +830,7 @@ impl Compressor for DictFsstCompressor {
                 }
             }
             match strings[index] {
-                Some(bytes) => update_string_stats(&mut self.stats, bytes),
+                Some(bytes) => update_string_stats(&mut self.stats, bytes)?,
                 None => self.stats.set_has_null_fast(),
             }
             self.tuple_count += 1;

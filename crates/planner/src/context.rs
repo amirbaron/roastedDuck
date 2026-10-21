@@ -129,6 +129,31 @@ pub trait DatabaseState: std::fmt::Debug + Send + Sync {
     fn as_any(&self) -> &dyn std::any::Any;
 }
 
+/// What a replacement scan is asked about (DuckDB's `ReplacementScanInput`): a table
+/// that does not exist.
+#[derive(Clone, Copy, Debug)]
+pub struct ReplacementScanInput<'a> {
+    pub catalog_name: &'a str,
+    pub schema_name: &'a str,
+    pub table_name: &'a str,
+}
+
+/// What a replacement scan computes: the table reference to read in place of a table
+/// that does not exist, if it has one.
+pub type ReplacementScanFunction =
+    dyn Fn(&ReplacementScanInput<'_>) -> Result<Option<rustdb_ast::TableRef>> + Send + Sync;
+
+/// A replacement scan a client added to the database (DuckDB's `ReplacementScan` in
+/// `DBConfig::replacement_scans`).
+#[derive(Clone)]
+pub struct ReplacementScan(pub Arc<ReplacementScanFunction>);
+
+impl fmt::Debug for ReplacementScan {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ReplacementScan")
+    }
+}
+
 /// The context a statement is bound in.
 #[derive(Clone, Debug)]
 pub struct ClientContext {
@@ -157,6 +182,8 @@ pub struct ClientContext {
     pub database_state: Option<Arc<dyn DatabaseState>>,
     /// `SET VARIABLE` values of the connection (DuckDB's `ClientConfig::user_variables`).
     pub user_variables: rustdb_common::CaseInsensitiveMap<Value>,
+    /// The replacement scans clients added, tried in order after the built-in ones.
+    pub replacement_scans: Vec<ReplacementScan>,
 }
 
 /// A catalog entry found by a lookup, with where it was found.

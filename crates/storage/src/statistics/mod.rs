@@ -21,6 +21,7 @@ pub use variant::{
 
 use std::fmt;
 
+use rustdb_common::Result;
 use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, Value};
 
 /// What a filter evaluates to on a set of values, judged from statistics
@@ -280,7 +281,7 @@ impl BaseStatistics {
             }
             StatsData::String(string) => {
                 if let Some(bytes) = value.as_bytes() {
-                    string.update(bytes, value.logical_type().id() == LogicalTypeId::Varchar);
+                    string.update_from_value(bytes, value.logical_type().id() == LogicalTypeId::Varchar);
                 }
             }
             StatsData::Geometry(geometry) => {
@@ -472,12 +473,13 @@ impl BaseStatistics {
     /// Accounts for one non-NULL string value in string or GEOMETRY statistics
     /// (`UncompressedStringStorage::UpdateStringStats` without the validity flag).
     #[inline]
-    pub fn update_string(&mut self, bytes: &[u8], check_unicode: bool) {
+    pub fn update_string(&mut self, bytes: &[u8], check_unicode: bool) -> Result<()> {
         match &mut self.data {
-            StatsData::String(string) => string.update(bytes, check_unicode),
+            StatsData::String(string) => string.update(bytes, check_unicode)?,
             StatsData::Geometry(geometry) => geometry.update(bytes),
             _ => {}
         }
+        Ok(())
     }
 
     /// Copies the NULL flags and distinct count of `other` (`CopyBase`).

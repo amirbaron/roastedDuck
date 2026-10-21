@@ -44,6 +44,7 @@ test/fuzzer/duckfuzz/array_serialization_flattening.test
 test/fuzzer/duckfuzz/array_slice_nullness.test
 test/fuzzer/duckfuzz/array_slice_underflow.test
 test/fuzzer/duckfuzz/array_slice_vector_type.test
+test/fuzzer/duckfuzz/arrow_scan_subquery_nullptr.test
 test/fuzzer/duckfuzz/bind_limit_num.test_slow
 test/fuzzer/duckfuzz/bitstring_agg_minmax.test
 test/fuzzer/duckfuzz/bitstring_agg_uhugeint.test

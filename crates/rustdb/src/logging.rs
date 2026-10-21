@@ -170,6 +170,15 @@ impl LogEntry {
     }
 }
 
+/// A log storage a client adds (DuckDB's `LogStorage` registered with
+/// `LogManager::RegisterLogStorage`, such as the C API's `CallbackLogStorage`): it receives
+/// every entry as it is written, unbuffered.
+pub trait LogStorage: Send + Sync + std::fmt::Debug {
+    /// `LogStorage::WriteLogEntry`: the time in microseconds since the epoch, the level,
+    /// the log type and the message.
+    fn write_log_entry(&self, timestamp: i64, level: LogLevel, log_type: &str, message: &str);
+}
+
 /// Which storage implementation backs the log (DuckDB's `LogStorage` subclasses).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StorageKind {
@@ -713,6 +722,11 @@ struct ManagerState {
     config: LogConfig,
     next_context_id: u64,
     storage: BufferingStorage,
+    /// The storages clients registered, by name (`registered_log_storages`).
+    client_storages: Vec<(String, Arc<dyn LogStorage>)>,
+    /// The client storage in use, if `config.storage` names one; it then receives the
+    /// entries instead of `storage`.
+    client_storage: Option<Arc<dyn LogStorage>>,
     log_types: Vec<LogTypeInfo>,
     /// The context of the database's global logger.
     global: RegisteredContext,
@@ -741,17 +755,28 @@ impl ManagerState {
             return Ok(());
         }
         let kind = match lower.as_str() {
-            MEMORY_STORAGE => StorageKind::Memory,
-            STDOUT_STORAGE => StorageKind::Stdout,
-            FILE_STORAGE => StorageKind::File,
-            _ => {
-                return Err(Error::invalid_input(format!(
-                    "Log storage '{name}' is not yet registered"
-                )));
-            }
+            MEMORY_STORAGE => Some(StorageKind::Memory),
+            STDOUT_STORAGE => Some(StorageKind::Stdout),
+            FILE_STORAGE => Some(StorageKind::File),
+            _ => None,
+        };
+        let client_storage = match kind {
+            Some(_) => None,
+            None => Some(
+                self.client_storages
+                    .iter()
+                    .find(|(registered, _)| registered.eq_ignore_ascii_case(&lower))
+                    .map(|(_, storage)| Arc::clone(storage))
+                    .ok_or_else(|| {
+                        Error::invalid_input(format!("Log storage '{name}' is not yet registered"))
+                    })?,
+            ),
         };
         self.storage.flush_all()?;
-        self.storage = BufferingStorage::new(kind);
+        if let Some(kind) = kind {
+            self.storage = BufferingStorage::new(kind);
+        }
+        self.client_storage = client_storage;
         self.config.storage = lower;
         Ok(())
     }
@@ -867,6 +892,8 @@ impl Default for LogManager {
             config: LogConfig::default(),
             next_context_id: 0,
             storage: BufferingStorage::new(StorageKind::Memory),
+            client_storages: Vec::new(),
+            client_storage: None,
             log_types: default_log_types(),
             global: RegisteredContext {
                 id: 0,
@@ -912,14 +939,44 @@ impl LogManager {
         if level == LogLevel::Warning && self.warnings_as_errors.load(std::sync::atomic::Ordering::Relaxed) {
             return Err(Error::invalid_input(message.to_owned()));
         }
+        let timestamp = now_micros();
+        let mut state = self.lock();
+        if let Some(storage) = &state.client_storage {
+            storage.write_log_entry(timestamp, level, log_type, message);
+            return Ok(());
+        }
         let entry = LogEntry {
             context_id: context.id,
-            timestamp: now_micros(),
+            timestamp,
             log_type: log_type.to_owned(),
             level,
             message: message.to_owned(),
         };
-        self.lock().storage.write_entry(entry, context)
+        state.storage.write_entry(entry, context)
+    }
+
+    /// `LogManager::RegisterLogStorage`: returns `false`, registering nothing, if a
+    /// storage of that name was registered before.
+    pub(crate) fn register_storage(&self, name: &str, storage: Arc<dyn LogStorage>) -> bool {
+        let mut state = self.lock();
+        if state
+            .client_storages
+            .iter()
+            .any(|(registered, _)| registered.eq_ignore_ascii_case(name))
+        {
+            return false;
+        }
+        state.client_storages.push((name.to_owned(), storage));
+        true
+    }
+
+    /// Logs `message` with the database's global logger if it logs the type at that
+    /// level (DuckDB's `DUCKDB_LOG_INTERNAL` on the database); a failure to log is
+    /// ignored, as the `catch (...)` around such calls does.
+    pub(crate) fn log_global(&self, log_type: &str, level: LogLevel, message: &str) {
+        if self.global_should_log(log_type, level) {
+            let _ = self.write_entry(self.global_context(), log_type, level, message);
+        }
     }
 
     /// `LogManager::Flush`.

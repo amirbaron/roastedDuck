@@ -14,6 +14,7 @@ pub mod extension_entries;
 pub mod file_system;
 pub mod function_descriptions;
 pub mod logging;
+pub mod pragma;
 pub mod random;
 mod scalar;
 mod table;
@@ -23,9 +24,11 @@ pub use aggregate::{
     UnaryAggregate,
 };
 pub use client::{
-    ClientRequest, ExtensionOption, ExtensionOptionSet, FunctionClient, SettingInfo, SettingsSource, TempCatalog,
+    ClientRequest, ExtensionOption, ExtensionOptionSet, FunctionClient, SettingInfo, SettingScope, SettingsSource,
+    TempCatalog,
 };
 pub use copy::{CopyFunction, CopyOption, CopyOptionMode};
+pub use pragma::{PragmaFunction, PragmaFunctionSet, PragmaType};
 pub use scalar::{
     AggregateResolver, BindInput, BindLambda, BoundAggregateFunction, CollationHandling, FunctionData,
     FunctionState, LambdaExecutor, LambdaInput, NullHandling, ScalarBind, ScalarFunction, ScalarFunctionSet,

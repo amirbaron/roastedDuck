@@ -115,6 +115,8 @@ pub(crate) struct AttachedDatabase {
     closing: std::sync::atomic::AtomicBool,
     /// Set once the database is closed: its file is free for another attach.
     closed: std::sync::atomic::AtomicBool,
+    /// The instance's log manager, which records a failed checkpoint on close.
+    log_manager: Arc<crate::logging::LogManager>,
 }
 
 impl AttachedDatabase {
@@ -240,8 +242,14 @@ impl AttachedDatabase {
         }
         match self.create_checkpoint(crate::storage::CheckpointMode::Automatic, None) {
             Ok(()) => Ok(()),
-            // DuckDB logs the error.
-            Err(_) if action == CloseAction::TryCheckpoint => Ok(()),
+            Err(error) if action == CloseAction::TryCheckpoint => {
+                self.log_manager.log_global(
+                    "",
+                    rustdb_function::logging::LogLevel::Error,
+                    &format!("Silent exception in AttachedDatabase::Close():\t{}", error.raw_message()),
+                );
+                Ok(())
+            }
             Err(error) => Err(Error::new(
                 error.kind(),
                 format!(
@@ -463,7 +471,7 @@ fn value_as_bool(value: &Value) -> Result<bool> {
 }
 
 /// The attached databases of an instance, in attach order.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct DatabaseManager {
     databases: RwLock<Vec<Arc<AttachedDatabase>>>,
     /// Serializes attaching and detaching, so that a file is never opened while another
@@ -474,9 +482,20 @@ pub(crate) struct DatabaseManager {
     /// they are closed (`DatabaseFilePathManager`).
     /// With whether to checkpoint when closing (the `checkpoint` of the detach).
     detached: Mutex<Vec<(std::sync::Weak<AttachedDatabase>, bool)>>,
+    /// The instance's log manager, which the databases log to.
+    log_manager: Arc<crate::logging::LogManager>,
 }
 
 impl DatabaseManager {
+    pub(crate) fn new(log_manager: Arc<crate::logging::LogManager>) -> Self {
+        Self {
+            databases: RwLock::default(),
+            attach_lock: Mutex::default(),
+            detached: Mutex::default(),
+            log_manager,
+        }
+    }
+
     fn read(&self) -> RwLockReadGuard<'_, Vec<Arc<AttachedDatabase>>> {
         self.databases.read().unwrap_or_else(PoisonError::into_inner)
     }
@@ -720,6 +739,7 @@ impl DatabaseManager {
             instance_validity: Arc::clone(instance_validity),
             closing: std::sync::atomic::AtomicBool::new(false),
             closed: std::sync::atomic::AtomicBool::new(false),
+            log_manager: Arc::clone(&self.log_manager),
         });
         let mut databases = self.write();
         if let Some(position) = databases

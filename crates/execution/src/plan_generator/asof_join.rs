@@ -107,6 +107,7 @@ fn bind_arg_min_max(
                 names: &names,
                 client: &client,
                 binder: None,
+                arguments: None,
                 aggregates: None,
                 lambda: None,
             },

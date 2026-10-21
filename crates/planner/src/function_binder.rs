@@ -323,6 +323,36 @@ impl FunctionSignature for TableFunction {
     }
 }
 
+impl FunctionSignature for rustdb_function::PragmaFunction {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn arguments(&self) -> &[LogicalType] {
+        &self.arguments
+    }
+
+    fn varargs(&self) -> Option<&LogicalType> {
+        self.varargs.as_ref()
+    }
+
+    /// `PragmaFunction::ToString`.
+    fn signature(&self) -> String {
+        match self.pragma_type {
+            rustdb_function::PragmaType::Statement => format!("PRAGMA {}", self.name),
+            rustdb_function::PragmaType::Call => {
+                let mut parts: Vec<String> = self.arguments.iter().map(ToString::to_string).collect();
+                parts.extend(
+                    self.named_parameters
+                        .iter()
+                        .map(|(name, ty)| format!("{name} : {ty}")),
+                );
+                format!("PRAGMA {}({})", self.name, parts.join(", "))
+            }
+        }
+    }
+}
+
 /// Binds calls against function sets (DuckDB's `FunctionBinder`).
 #[derive(Debug)]
 pub struct FunctionBinder<'a> {
@@ -644,6 +674,7 @@ impl<'a> FunctionBinder<'a> {
                     names: &names,
                     client: &self.context.function_client,
                     binder: Some(self.context as &dyn std::any::Any),
+                    arguments: Some(&children as &dyn std::any::Any),
                     aggregates: Some(self.context as &dyn rustdb_function::AggregateResolver),
                     lambda: self.lambda.as_ref(),
                 },
@@ -716,6 +747,7 @@ impl<'a> FunctionBinder<'a> {
                     names: &names,
                     client: &self.context.function_client,
                     binder: Some(self.context as &dyn std::any::Any),
+                    arguments: Some(&children as &dyn std::any::Any),
                     aggregates: Some(self.context as &dyn rustdb_function::AggregateResolver),
                     lambda: self.lambda.as_ref(),
                 },

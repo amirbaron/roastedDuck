@@ -6,6 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use rustdb::{ClientHandle, Config, Connection, Database, LogicalType, Value};
+use rustdb_function::FunctionClient;
 
 use crate::config::{DuckdbConfig, capi_config};
 use crate::helper::{c_string, catch, opt_str};
@@ -25,17 +26,20 @@ pub type DuckdbDatabase = *mut DatabaseWrapper;
 
 /// A connection shared by the objects made from it (DuckDB's `ClientContext`, which
 /// prepared statements, results and appenders hold on to): the connection, used by one
-/// thread at a time, and the handle that interrupts its query from any thread.
+/// thread at a time, the handle that interrupts its query from any thread, and the state
+/// its functions see, which callbacks reach while it runs a query.
 #[derive(Debug)]
 pub(crate) struct SharedConnection {
     connection: Mutex<Connection>,
     client: Arc<ClientHandle>,
+    function_client: Arc<FunctionClient>,
 }
 
 impl SharedConnection {
     pub(crate) fn new(connection: Connection) -> Arc<Self> {
         Arc::new(Self {
             client: connection.client_handle(),
+            function_client: connection.function_client(),
             connection: Mutex::new(connection),
         })
     }
@@ -48,12 +52,18 @@ impl SharedConnection {
     pub(crate) fn client(&self) -> &ClientHandle {
         &self.client
     }
+
+    pub(crate) fn function_client(&self) -> &Arc<FunctionClient> {
+        &self.function_client
+    }
 }
 
 /// What a `duckdb_connection` points to (DuckDB's `Connection`).
 #[derive(Debug)]
 pub struct ConnectionWrapper {
     pub(crate) context: Arc<SharedConnection>,
+    /// The profile `duckdb_get_profiling_info` handed out last, which its pointers read.
+    pub(crate) profiling: Mutex<Option<Arc<rustdb::ProfilingTree>>>,
 }
 
 /// `duckdb_connection`
@@ -68,10 +78,28 @@ pub(crate) unsafe fn connection_ref<'a>(connection: DuckdbConnection) -> Option<
     unsafe { connection.as_ref() }.map(|wrapper| &wrapper.context)
 }
 
-/// What a `duckdb_client_context` points to (DuckDB's `CClientContextWrapper`).
+/// What a `duckdb_client_context` points to (DuckDB's `CClientContextWrapper`): the
+/// connection's state as functions see it, which does not lock the connection, so
+/// callbacks of the query it runs can use it.
 #[derive(Debug)]
 pub struct ClientContextWrapper {
-    context: Arc<SharedConnection>,
+    pub(crate) client: Arc<FunctionClient>,
+}
+
+/// Hands a client context to C (`new CClientContextWrapper(context)`).
+pub(crate) fn wrap_client_context(client: &Arc<FunctionClient>) -> DuckdbClientContext {
+    Box::into_raw(Box::new(ClientContextWrapper {
+        client: Arc::clone(client),
+    }))
+}
+
+/// The connection state behind a client context handle.
+///
+/// # Safety
+/// `context` must be NULL or a live `duckdb_client_context`.
+pub(crate) unsafe fn client_context_ref<'a>(context: DuckdbClientContext) -> Option<&'a Arc<FunctionClient>> {
+    // SAFETY: guaranteed by the caller.
+    unsafe { context.as_ref() }.map(|wrapper| &wrapper.client)
 }
 
 /// `duckdb_client_context`
@@ -295,8 +323,12 @@ pub unsafe extern "C" fn duckdb_connect(
     match catch(|| wrapper.database.connect()) {
         Ok(connection) => {
             let context = SharedConnection::new(connection);
+            let wrapper = ConnectionWrapper {
+                context,
+                profiling: Mutex::default(),
+            };
             // SAFETY: checked non-null above.
-            unsafe { *out_connection = Box::into_raw(Box::new(ConnectionWrapper { context })) };
+            unsafe { *out_connection = Box::into_raw(Box::new(wrapper)) };
             DuckdbState::DuckDBSuccess
         }
         Err(_) => DuckdbState::DuckDBError,
@@ -360,11 +392,8 @@ pub unsafe extern "C" fn duckdb_connection_get_client_context(
     if out_context.is_null() {
         return;
     }
-    let wrapper = ClientContextWrapper {
-        context: Arc::clone(context),
-    };
     // SAFETY: checked non-null above.
-    unsafe { *out_context = Box::into_raw(Box::new(wrapper)) };
+    unsafe { *out_context = wrap_client_context(context.function_client()) };
 }
 
 /// `idx_t duckdb_client_context_get_connection_id(duckdb_client_context context)`
@@ -372,7 +401,7 @@ pub unsafe extern "C" fn duckdb_connection_get_client_context(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn duckdb_client_context_get_connection_id(context: DuckdbClientContext) -> Idx {
     // SAFETY: `context` is NULL or a live handle.
-    unsafe { context.as_ref() }.map_or(0, |wrapper| wrapper.context.lock().connection_id())
+    unsafe { client_context_ref(context) }.map_or(0, |client| client.connection_id())
 }
 
 /// `void duckdb_destroy_client_context(duckdb_client_context *context)` (capi/duckdb-c.cpp)

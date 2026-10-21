@@ -12,6 +12,7 @@ pub mod profiling;
 mod query_context;
 pub mod string_util;
 pub mod tree_renderer;
+pub mod utf8;
 
 pub use collections::{CaseInsensitiveMap, CaseInsensitiveSet, OrderedMap};
 pub use error::{Error, ErrorKind, Result};

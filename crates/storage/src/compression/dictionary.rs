@@ -315,8 +315,8 @@ trait DictionaryState {
     fn calculate_space_requirements(&mut self, new_string: bool, size: usize) -> bool;
     fn flush(&mut self, sink: Option<&mut SegmentSink<'_>>) -> Result<()>;
     fn add_null(&mut self);
-    fn add_new_string(&mut self, string: &[u8]);
-    fn add_last_lookup(&mut self, string: &[u8]);
+    fn add_new_string(&mut self, string: &[u8]) -> Result<()>;
+    fn add_last_lookup(&mut self, string: &[u8]) -> Result<()>;
 
     /// `UpdateState`; `false` when a string is too big for dictionary compression.
     fn update_state(
@@ -347,8 +347,8 @@ trait DictionaryState {
             }
             match string {
                 None => self.add_null(),
-                Some(bytes) if new_string => self.add_new_string(bytes),
-                Some(bytes) => self.add_last_lookup(bytes),
+                Some(bytes) if new_string => self.add_new_string(bytes)?,
+                Some(bytes) => self.add_last_lookup(bytes)?,
             }
         }
         Ok(true)
@@ -411,16 +411,18 @@ impl DictionaryState for DictionaryAnalyzer {
         self.tuple_count += 1;
     }
 
-    fn add_new_string(&mut self, string: &[u8]) {
+    fn add_new_string(&mut self, string: &[u8]) -> Result<()> {
         self.tuple_count += 1;
         self.unique_count += 1;
         self.dict_size += string.len();
         self.set.insert(string.to_vec());
         self.current_width = self.next_width;
+        Ok(())
     }
 
-    fn add_last_lookup(&mut self, _string: &[u8]) {
+    fn add_last_lookup(&mut self, _string: &[u8]) -> Result<()> {
         self.tuple_count += 1;
+        Ok(())
     }
 }
 
@@ -589,8 +591,8 @@ impl DictionaryState for DictionaryCompressor {
         self.count += 1;
     }
 
-    fn add_new_string(&mut self, string: &[u8]) {
-        update_string_stats(&mut self.stats, string);
+    fn add_new_string(&mut self, string: &[u8]) -> Result<()> {
+        update_string_stats(&mut self.stats, string)?;
         self.dict_size += string.len();
         let position = self.info.block_size - self.dict_size;
         self.buffer[position..position + string.len()].copy_from_slice(string);
@@ -599,12 +601,14 @@ impl DictionaryState for DictionaryCompressor {
         self.map.insert(string.to_vec(), self.map.len() as u32);
         self.current_width = self.next_width;
         self.count += 1;
+        Ok(())
     }
 
-    fn add_last_lookup(&mut self, string: &[u8]) {
-        update_string_stats(&mut self.stats, string);
+    fn add_last_lookup(&mut self, string: &[u8]) -> Result<()> {
+        update_string_stats(&mut self.stats, string)?;
         self.selection_buffer.push(u64::from(self.latest_lookup));
         self.count += 1;
+        Ok(())
     }
 }
 

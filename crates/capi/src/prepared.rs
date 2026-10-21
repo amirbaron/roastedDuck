@@ -127,14 +127,14 @@ pub unsafe extern "C" fn duckdb_extract_statements(
     }
     // SAFETY: `query` is a NUL-terminated string.
     let query = unsafe { lossy_str(query) };
-    let (statements, error) = match catch(|| context.lock().extract_statements(&query)) {
+    let (statements, error) = match catch(|| context.lock().parse_statements(&query)) {
         Ok(statements) => (statements, None),
         Err(error) => (Vec::new(), Some(to_cstring(&error.to_string()))),
     };
     let count = statements.len() as Idx;
     // SAFETY: checked non-null above.
     unsafe {
-        *out_extracted_statements = Box::into_raw(Box::new(ExtractStatementsWrapper { statements, error }))
+        *out_extracted_statements = Box::into_raw(Box::new(ExtractStatementsWrapper { statements, error }));
     };
     count
 }
