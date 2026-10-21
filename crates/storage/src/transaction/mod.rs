@@ -77,8 +77,9 @@ pub struct Transaction {
     /// (`MetaTransaction::modified_database`).
     modified_database: Mutex<Option<(String, Option<Arc<WriteAheadLog>>)>>,
     /// The attached databases the transaction looked into (DuckDB's `MetaTransaction`
-    /// has a transaction of each), by lower-cased name.
-    accessed_databases: Mutex<Vec<String>>,
+    /// has a transaction of each), by lower-cased name; shared with the manager's list of
+    /// running transactions.
+    accessed_databases: Arc<Mutex<Vec<String>>>,
     /// The shared hold of the written database's checkpoint lock, until the transaction
     /// ends (`DuckTransaction::write_lock`).
     checkpoint_guard: Mutex<Option<crate::checkpoint_lock::SharedCheckpointGuard>>,
@@ -97,7 +98,7 @@ impl Transaction {
             undo: Mutex::default(),
             local_storage: Arc::default(),
             modified_database: Mutex::new(None),
-            accessed_databases: Mutex::default(),
+            accessed_databases: Arc::default(),
             checkpoint_guard: Mutex::new(None),
             vacuum_guard: Mutex::new(None),
             lowest_active: None,
@@ -336,13 +337,33 @@ struct CommittedUndo {
     database: Option<String>,
 }
 
+/// A running transaction as its manager sees it.
+#[derive(Debug)]
+struct ActiveTransaction {
+    id: u64,
+    start: u64,
+    /// The databases it looked into (its `accessed_databases`): in DuckDB it runs in the
+    /// transaction manager of each of them only.
+    databases: Arc<Mutex<Vec<String>>>,
+}
+
+impl ActiveTransaction {
+    fn accessed(&self, database: &str) -> bool {
+        self.databases
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .any(|accessed| accessed.eq_ignore_ascii_case(database))
+    }
+}
+
 #[derive(Debug)]
 struct ManagerState {
     /// The next start timestamp / commit id.
     current_start_timestamp: u64,
     current_transaction_id: u64,
-    /// `(transaction_id, start_time)` of every running transaction.
-    active: Vec<(u64, u64)>,
+    /// Every running transaction.
+    active: Vec<ActiveTransaction>,
     /// Ordered by commit id.
     recently_committed: VecDeque<CommittedUndo>,
 }
@@ -438,8 +459,12 @@ impl TransactionManager {
             self.lowest_active.start.store(start_time, Ordering::Release);
             self.lowest_active.id.store(transaction_id, Ordering::Release);
         }
-        state.active.push((transaction_id, start_time));
         let mut transaction = Transaction::new(start_time, transaction_id);
+        state.active.push(ActiveTransaction {
+            id: transaction_id,
+            start: start_time,
+            databases: Arc::clone(&transaction.accessed_databases),
+        });
         transaction.lowest_active = Some(Arc::clone(&self.lowest_active));
         transaction
     }
@@ -484,11 +509,13 @@ impl TransactionManager {
     /// (`recently_committed_transactions`).
     pub fn retains_changes(&self, except: u64, database: &str) -> bool {
         let state = self.lock();
+        // DuckDB keeps a transaction manager per database: only the transactions that
+        // looked into `database` run in its manager.
         let lowest_start = state
             .active
             .iter()
-            .filter(|&&(id, _)| id != except)
-            .map(|&(_, start)| start)
+            .filter(|active| active.id != except && active.accessed(database))
+            .map(|active| active.start)
             .min()
             .unwrap_or(TRANSACTION_ID_START);
         state.recently_committed.iter().any(|committed| {
@@ -568,17 +595,17 @@ impl TransactionManager {
     /// cleaned up with [`TransactionManager::run_cleanup`].
     fn remove_transaction(&self, state: &mut ManagerState, transaction_id: u64) -> Vec<CleanupTask> {
         self.cleanups.fetch_add(1, Ordering::AcqRel);
-        state.active.retain(|&(id, _)| id != transaction_id);
+        state.active.retain(|active| active.id != transaction_id);
         let lowest_start = state
             .active
             .iter()
-            .map(|&(_, start)| start)
+            .map(|active| active.start)
             .min()
             .unwrap_or(TRANSACTION_ID_START);
         let lowest_id = state
             .active
             .iter()
-            .map(|&(id, _)| id)
+            .map(|active| active.id)
             .min()
             .unwrap_or(MAX_TRANSACTION_ID);
         self.lowest_active.start.store(lowest_start, Ordering::Release);
