@@ -4,6 +4,14 @@
 
 use rustdb_common::{Error, Result};
 
+use crate::{GeometryStorageType, LogicalType};
+
+mod legacy;
+mod shred;
+
+pub use legacy::{from_spatial, is_spatial_type, spatial_type, to_spatial};
+pub use shred::{from_vectorized, to_vectorized};
+
 /// The deepest nesting of geometry collections (`Geometry::MAX_RECURSION_DEPTH`).
 pub const MAX_RECURSION_DEPTH: u32 = 16;
 
@@ -11,6 +19,7 @@ pub const MAX_RECURSION_DEPTH: u32 = 16;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum GeometryType {
+    Invalid = 0,
     Point = 1,
     LineString = 2,
     Polygon = 3,
@@ -18,6 +27,187 @@ pub enum GeometryType {
     MultiLineString = 5,
     MultiPolygon = 6,
     GeometryCollection = 7,
+}
+
+impl GeometryType {
+    /// The geometry type with WKB type id `id` (`static_cast<GeometryType>`), if any.
+    pub const fn from_id(id: u32) -> Option<Self> {
+        Some(match id {
+            0 => Self::Invalid,
+            1 => Self::Point,
+            2 => Self::LineString,
+            3 => Self::Polygon,
+            4 => Self::MultiPoint,
+            5 => Self::MultiLineString,
+            6 => Self::MultiPolygon,
+            7 => Self::GeometryCollection,
+            _ => return None,
+        })
+    }
+}
+
+/// `VertexType`: which of Z and M the vertices carry besides X and Y.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum VertexType {
+    Xy = 0,
+    Xyz = 1,
+    Xym = 2,
+    Xyzm = 3,
+}
+
+impl VertexType {
+    /// The vertex type of WKB flag `flag` (`static_cast<VertexType>`), if any.
+    pub const fn from_flag(flag: u32) -> Option<Self> {
+        Some(match flag {
+            0 => Self::Xy,
+            1 => Self::Xyz,
+            2 => Self::Xym,
+            3 => Self::Xyzm,
+            _ => return None,
+        })
+    }
+
+    pub const fn has_z(self) -> bool {
+        matches!(self, Self::Xyz | Self::Xyzm)
+    }
+
+    pub const fn has_m(self) -> bool {
+        matches!(self, Self::Xym | Self::Xyzm)
+    }
+
+    /// Coordinates per vertex (`V::WIDTH`).
+    pub const fn width(self) -> usize {
+        2 + self.has_z() as usize + self.has_m() as usize
+    }
+
+    /// The WKB type id offset of the flags (`(HAS_Z ? 1000 : 0) + (HAS_M ? 2000 : 0)`).
+    pub const fn wkb_offset(self) -> u32 {
+        (self as u32) * 1000
+    }
+}
+
+/// `Geometry::GetSpecializedType`: the geometry and vertex type a shredded storage type
+/// holds, or `None` for WKB and SPATIAL.
+pub const fn specialized_type(storage: GeometryStorageType) -> Option<(GeometryType, VertexType)> {
+    let raw = storage as u8;
+    if raw < 16 {
+        return None;
+    }
+    let vertex = match raw / 32 {
+        0 => VertexType::Xy,
+        1 => VertexType::Xyz,
+        2 => VertexType::Xym,
+        _ => VertexType::Xyzm,
+    };
+    let geometry = match raw % 16 {
+        1 => GeometryType::Point,
+        2 => GeometryType::LineString,
+        3 => GeometryType::Polygon,
+        4 => GeometryType::MultiPoint,
+        5 => GeometryType::MultiLineString,
+        6 => GeometryType::MultiPolygon,
+        _ => return None,
+    };
+    Some((geometry, vertex))
+}
+
+/// `GetStorageType` (`geo_column_data.cpp`): the shredded storage type of a geometry and
+/// vertex type; WKB for geometry collections and invalid types, which are not shredded.
+pub fn storage_type(geometry: GeometryType, vertex: VertexType) -> GeometryStorageType {
+    let base = match geometry {
+        GeometryType::Point => 1,
+        GeometryType::LineString => 2,
+        GeometryType::Polygon => 3,
+        GeometryType::MultiPoint => 4,
+        GeometryType::MultiLineString => 5,
+        GeometryType::MultiPolygon => 6,
+        GeometryType::GeometryCollection | GeometryType::Invalid => return GeometryStorageType::Wkb,
+    };
+    let offset = match vertex {
+        VertexType::Xy => 16,
+        VertexType::Xyz => 32,
+        VertexType::Xym => 64,
+        VertexType::Xyzm => 96,
+    };
+    GeometryStorageType::from_repr(base + offset).unwrap_or(GeometryStorageType::Wkb)
+}
+
+/// The STRUCT of DOUBLE coordinates of a vertex type (`Geometry::GetVectorizedType`).
+fn vertex_struct_type(vertex: VertexType) -> LogicalType {
+    let mut fields = vec![("x".to_owned(), LogicalType::DOUBLE), ("y".to_owned(), LogicalType::DOUBLE)];
+    if vertex.has_z() {
+        fields.push(("z".to_owned(), LogicalType::DOUBLE));
+    }
+    if vertex.has_m() {
+        fields.push(("m".to_owned(), LogicalType::DOUBLE));
+    }
+    LogicalType::struct_type(fields)
+}
+
+/// `Geometry::GetVectorizedType(GeometryType, VertexType)`: the layout a shredded column
+/// stores (`GetVectorizedTypeInternal`).
+pub fn vectorized_type_of(geometry: GeometryType, vertex: VertexType) -> Result<LogicalType> {
+    let vertex = vertex_struct_type(vertex);
+    Ok(match geometry {
+        GeometryType::Point => vertex,
+        GeometryType::LineString | GeometryType::MultiPoint => LogicalType::list(vertex),
+        GeometryType::Polygon | GeometryType::MultiLineString => LogicalType::list(LogicalType::list(vertex)),
+        GeometryType::MultiPolygon => LogicalType::list(LogicalType::list(LogicalType::list(vertex))),
+        GeometryType::GeometryCollection => {
+            return Err(Error::not_implemented("GEOMETRYCOLLECTION vectorized type not implemented"));
+        }
+        GeometryType::Invalid => {
+            return Err(Error::invalid_input(format!(
+                "Unsupported geometry type {}",
+                geometry as u32
+            )));
+        }
+    })
+}
+
+/// `Geometry::GetVectorizedType(GeometryStorageType)`: the type of the column a geometry
+/// column of storage type `storage` stores.
+pub fn vectorized_type(storage: GeometryStorageType) -> Result<LogicalType> {
+    match storage {
+        GeometryStorageType::Wkb => Ok(LogicalType::GEOMETRY),
+        GeometryStorageType::Spatial => Ok(spatial_type()),
+        _ => match specialized_type(storage) {
+            Some((geometry, vertex)) => vectorized_type_of(geometry, vertex),
+            None => Err(Error::invalid_input(format!(
+                "Unsupported GeometryStorageType {}",
+                storage as u8
+            ))),
+        },
+    }
+}
+
+/// `Geometry::GetType`: the geometry and vertex type of little-endian WKB.
+pub fn get_type(wkb: &[u8]) -> Result<(GeometryType, VertexType)> {
+    let mut reader = BlobReader::new(wkb);
+    let byte_order = reader.u8()?;
+    if byte_order != 1 {
+        return Err(Error::invalid_input(format!(
+            "Unsupported byte order {byte_order} in WKB"
+        )));
+    }
+    let meta = reader.u32(true)?;
+    let type_id = (meta & 0xFFFF) % 1000;
+    let flag = (meta & 0xFFFF) / 1000;
+    if !(1..=7).contains(&type_id) {
+        return Err(Error::invalid_input(format!(
+            "Unsupported geometry type {type_id} in WKB"
+        )));
+    }
+    if flag > 3 {
+        return Err(Error::invalid_input(format!(
+            "Unsupported geometry flag {flag} in WKB"
+        )));
+    }
+    match (GeometryType::from_id(type_id), VertexType::from_flag(flag)) {
+        (Some(geometry), Some(vertex)) => Ok((geometry, vertex)),
+        _ => Err(Error::invalid_input("Unsupported geometry type in WKB")),
+    }
 }
 
 /// Appends little-endian WKB (`BlobWriter`).
@@ -103,6 +293,18 @@ impl<'a> BlobReader<'a> {
         }
         self.pos += size;
         Ok(())
+    }
+
+    /// The next `size` bytes (`Reserve`).
+    fn reserve(&mut self, size: usize) -> Result<&'a [u8]> {
+        let bytes = self.data.get(self.pos..self.pos + size).ok_or_else(|| {
+            Error::invalid_input(format!(
+                "Reserving beyond end of binary data at position {}",
+                self.pos
+            ))
+        })?;
+        self.pos += size;
+        Ok(bytes)
     }
 
     fn at_end(&self) -> bool {
@@ -401,6 +603,7 @@ fn from_text_recursive(
             reader.match_char(b')')?;
             writer.patch(count, parts);
         }
+        GeometryType::Invalid => return Err(reader.error("Unknown geometry type")),
     }
     Ok(())
 }
@@ -808,6 +1011,70 @@ fn max_value(a: f64, b: f64) -> f64 {
 }
 
 impl GeometryExtent {
+    /// `GeometryExtent::Unknown`: every axis spans everything.
+    pub const fn unknown() -> Self {
+        Self {
+            x_min: f64::NEG_INFINITY,
+            y_min: f64::NEG_INFINITY,
+            z_min: f64::NEG_INFINITY,
+            m_min: f64::NEG_INFINITY,
+            x_max: f64::INFINITY,
+            y_max: f64::INFINITY,
+            z_max: f64::INFINITY,
+            m_max: f64::INFINITY,
+        }
+    }
+
+    /// `HasX`: the X range is neither empty nor unknown.
+    pub fn has_x(&self) -> bool {
+        self.x_min.is_finite() && self.x_max.is_finite()
+    }
+
+    /// `HasY`.
+    pub fn has_y(&self) -> bool {
+        self.y_min.is_finite() && self.y_max.is_finite()
+    }
+
+    /// `HasXY`.
+    pub fn has_xy(&self) -> bool {
+        self.has_x() && self.has_y()
+    }
+
+    /// `CanPruneXY`: one finite axis is enough to prune on.
+    pub fn can_prune_xy(&self) -> bool {
+        self.has_x() || self.has_y()
+    }
+
+    /// `HasZ`.
+    pub fn has_z(&self) -> bool {
+        self.z_min.is_finite() && self.z_max.is_finite()
+    }
+
+    /// `HasM`.
+    pub fn has_m(&self) -> bool {
+        self.m_min.is_finite() && self.m_max.is_finite()
+    }
+
+    /// `Merge`.
+    pub fn merge(&mut self, other: &Self) {
+        self.x_min = min_value(self.x_min, other.x_min);
+        self.y_min = min_value(self.y_min, other.y_min);
+        self.z_min = min_value(self.z_min, other.z_min);
+        self.m_min = min_value(self.m_min, other.m_min);
+        self.x_max = max_value(self.x_max, other.x_max);
+        self.y_max = max_value(self.y_max, other.y_max);
+        self.z_max = max_value(self.z_max, other.z_max);
+        self.m_max = max_value(self.m_max, other.m_max);
+    }
+
+    /// `ContainsXY`.
+    pub fn contains_xy(&self, other: &Self) -> bool {
+        self.x_min <= other.x_min
+            && self.x_max >= other.x_max
+            && self.y_min <= other.y_min
+            && self.y_max >= other.y_max
+    }
+
     /// `GeometryExtent::Empty`.
     pub const fn empty() -> Self {
         Self {
@@ -823,7 +1090,7 @@ impl GeometryExtent {
     }
 
     /// `Extend` with a vertex whose optional Z and M are given.
-    fn extend(&mut self, x: f64, y: f64, z: Option<f64>, m: Option<f64>) {
+    pub fn extend(&mut self, x: f64, y: f64, z: Option<f64>, m: Option<f64>) {
         self.x_min = min_value(self.x_min, x);
         self.x_max = max_value(self.x_max, x);
         self.y_min = min_value(self.y_min, y);
@@ -882,6 +1149,13 @@ fn parse_vertices(
 
 /// `Geometry::GetExtent`: extends `extent` with every vertex and returns their count.
 pub fn extent(wkb: &[u8], extent: &mut GeometryExtent) -> Result<u32> {
+    let mut has_any_empty = false;
+    extent_with_empty(wkb, extent, &mut has_any_empty)
+}
+
+/// `Geometry::GetExtent` with `has_any_empty`: also records whether any (part of the)
+/// geometry is empty.
+pub fn extent_with_empty(wkb: &[u8], extent: &mut GeometryExtent, has_any_empty: &mut bool) -> Result<u32> {
     let mut reader = BlobReader::new(wkb);
     let mut vertices = 0;
     while !reader.at_end() {
@@ -898,19 +1172,40 @@ pub fn extent(wkb: &[u8], extent: &mut GeometryExtent) -> Result<u32> {
             )));
         }
         match type_id {
-            1 => vertices += parse_vertices(&mut reader, extent, 1, has_z, has_m, true)?,
+            1 => {
+                let parsed = parse_vertices(&mut reader, extent, 1, has_z, has_m, true)?;
+                if parsed == 0 {
+                    *has_any_empty = true;
+                }
+                vertices += parsed;
+            }
             2 => {
                 let count = reader.u32(true)?;
+                if count == 0 {
+                    *has_any_empty = true;
+                    continue;
+                }
                 vertices += parse_vertices(&mut reader, extent, count, has_z, has_m, false)?;
             }
             3 => {
-                for _ in 0..reader.u32(true)? {
+                let rings = reader.u32(true)?;
+                if rings == 0 {
+                    *has_any_empty = true;
+                    continue;
+                }
+                for _ in 0..rings {
                     let count = reader.u32(true)?;
+                    if count == 0 {
+                        *has_any_empty = true;
+                        continue;
+                    }
                     vertices += parse_vertices(&mut reader, extent, count, has_z, has_m, false)?;
                 }
             }
             _ => {
-                reader.u32(true)?;
+                if reader.u32(true)? == 0 {
+                    *has_any_empty = true;
+                }
             }
         }
     }
