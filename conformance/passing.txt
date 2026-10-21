@@ -3345,6 +3345,7 @@ test/sql/storage/attach/attach_invalidation.test
 test/sql/storage/attach/attach_invalidation_default_db.test
 test/sql/storage/attach/attach_invalidation_sibling_commit.test
 test/sql/storage/attach/attach_invalidation_sibling_rollback.test
+test/sql/storage/bc/internal_schemas_0102.test
 test/sql/storage/bc/test_broken_view_v092.test
 test/sql/storage/bc/test_view_v092.test
 test/sql/storage/buffer_manager.test_slow

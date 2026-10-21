@@ -402,10 +402,13 @@ impl Catalog {
         if self.schema(&Transaction::system(), name).is_some() {
             return Ok(());
         }
-        self.schemas.create_committed(CatalogEntry::new(
-            name,
-            EntryKind::Schema(SchemaEntry::new(&self.name, name)),
-        ))
+        let mut entry = CatalogEntry::new(name, EntryKind::Schema(SchemaEntry::new(&self.name, name)));
+        // Every catalog generates these schemas on demand, as internal ones; older files
+        // stored them (`DefaultSchemaGenerator`).
+        entry.internal = ["information_schema", "pg_catalog"]
+            .iter()
+            .any(|schema| schema.eq_ignore_ascii_case(name));
+        self.schemas.create_committed(entry)
     }
 
     /// Adds an entry read from a checkpoint or replayed from the WAL to `schema`, visible
