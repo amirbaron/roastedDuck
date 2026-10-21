@@ -1,6 +1,6 @@
 # rustdb conformance dashboard
 
-Rust passing: **4779 / 4874 files** (4703 pass on both engines). "Passing" means the Rust run passed, or both engines skipped the file for the same reason.
+Rust passing: **4780 / 4874 files** (4704 pass on both engines). "Passing" means the Rust run passed, or both engines skipped the file for the same reason.
 
 | group | files | C++ pass | C++ skip | C++ fail | Rust passing | both pass | Rust fail | Rust crash/timeout | Rust skip (C++ pass) | Rust % |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -8,7 +8,7 @@ Rust passing: **4779 / 4874 files** (4703 pass on both engines). "Passing" means
 | test/bwc/utils | 1 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 | 0.0% |
 | test/common | 3 | 3 | 0 | 0 | 3 | 3 | 0 | 0 | 0 | 100.0% |
 | test/db-benchmark | 2 | 0 | 2 | 0 | 2 | 0 | 0 | 0 | 0 | 100.0% |
-| test/extension | 24 | 17 | 7 | 0 | 12 | 5 | 12 | 0 | 0 | 50.0% |
+| test/extension | 24 | 17 | 7 | 0 | 13 | 6 | 11 | 0 | 0 | 54.2% |
 | test/fuzzer | 4 | 4 | 0 | 0 | 4 | 4 | 0 | 0 | 0 | 100.0% |
 | test/fuzzer/afl | 15 | 15 | 0 | 0 | 15 | 15 | 0 | 0 | 0 | 100.0% |
 | test/fuzzer/duckfuzz | 77 | 77 | 0 | 0 | 75 | 75 | 1 | 0 | 1 | 97.4% |
@@ -110,4 +110,4 @@ Rust passing: **4779 / 4874 files** (4703 pass on both engines). "Passing" means
 | test/sqlite | 4 | 4 | 0 | 0 | 4 | 4 | 0 | 0 | 0 | 100.0% |
 | test/sqlite/tags | 4 | 0 | 4 | 0 | 4 | 0 | 0 | 0 | 0 | 100.0% |
 | test/sqlserver | 2 | 2 | 0 | 0 | 2 | 2 | 0 | 0 | 0 | 100.0% |
-| **total** | 4874 | 4794 | 75 | 5 | 4779 | 4703 | 68 | 1 | 26 | 98.1% |
+| **total** | 4874 | 4794 | 75 | 5 | 4780 | 4704 | 67 | 1 | 26 | 98.1% |

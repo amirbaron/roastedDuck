@@ -6,6 +6,7 @@ test/common/test_local_file_urls.test
 test/db-benchmark/groupby.test_slow
 test/db-benchmark/join.test_slow
 test/extension/autoloading_copy_function.test
+test/extension/autoloading_copy_function_target.test
 test/extension/autoloading_encodings.test
 test/extension/autoloading_types.test
 test/extension/duckdb_extensions.test

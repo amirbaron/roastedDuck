@@ -192,7 +192,41 @@ fn verify_can_access(path: &str, directory: bool) -> rustdb_common::Result<()> {
             format!("File system {name} has been disabled by configuration"),
         ));
     }
-    Ok(())
+    verify_file_system_loaded(&client, path)
+}
+
+/// Path prefixes of the file systems extensions register, with the extension
+/// (`EXTENSION_FILE_PREFIXES`).
+const EXTENSION_FILE_PREFIXES: [(&str, &str); 12] = [
+    ("http://", "httpfs"),
+    ("https://", "httpfs"),
+    ("s3://", "httpfs"),
+    ("s3a://", "httpfs"),
+    ("s3n://", "httpfs"),
+    ("gcs://", "httpfs"),
+    ("gs://", "httpfs"),
+    ("r2://", "httpfs"),
+    ("azure://", "azure"),
+    ("az://", "azure"),
+    ("abfss://", "azure"),
+    ("hf://", "httpfs"),
+];
+
+/// `VirtualFileSystem::FindFileSystem`: a path of a file system an extension registers
+/// needs that extension, and rustdb loads none of them.
+fn verify_file_system_loaded(client: &crate::FunctionClient, path: &str) -> rustdb_common::Result<()> {
+    let Some((_, extension)) = EXTENSION_FILE_PREFIXES
+        .iter()
+        .find(|(prefix, _)| path.starts_with(prefix))
+    else {
+        return Ok(());
+    };
+    let message = crate::extension_entries::add_client_install_hint(
+        client,
+        &format!("File {path} requires the extension {extension} to be loaded"),
+        extension,
+    );
+    Err(rustdb_common::Error::new(rustdb_common::ErrorKind::MissingExtension, message))
 }
 
 /// The name of the file system that handles `path` (`FileSystem::GetName` of the one
@@ -283,7 +317,10 @@ pub fn verify_can_write(path: &str) -> rustdb_common::Result<()> {
             ),
         ));
     }
-    Ok(())
+    match opener() {
+        Some(client) => verify_file_system_loaded(&client, path),
+        None => Ok(()),
+    }
 }
 
 /// `OpenerFileSystem::VerifyCanAccessFile`: a Permission Error if the configuration
