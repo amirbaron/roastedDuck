@@ -42,12 +42,9 @@ pub(crate) fn setting_bool(context: &ClientContext, name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// The virtual `filename` column (`MultiFileReader::COLUMN_IDENTIFIER_FILENAME`).
-pub const COLUMN_IDENTIFIER_FILENAME: u64 = 1 << 63;
+pub use rustdb_csv::multi_file::{COLUMN_IDENTIFIER_FILE_INDEX, COLUMN_IDENTIFIER_FILENAME};
 /// The virtual `file_row_number` column (`COLUMN_IDENTIFIER_FILE_ROW_NUMBER`).
 pub const COLUMN_IDENTIFIER_FILE_ROW_NUMBER: u64 = (1 << 63) + 1;
-/// The virtual `file_index` column (`COLUMN_IDENTIFIER_FILE_INDEX`).
-pub const COLUMN_IDENTIFIER_FILE_INDEX: u64 = (1 << 63) + 2;
 
 /// `MultiFileScanStats`: the statistics of a column from the metadata already read
 /// while binding: of the single file, or merged over all files with `union_by_name`.
@@ -1195,7 +1192,6 @@ fn read_parquet_dynamic_to_string(
     bind_data: Option<&dyn FunctionData>,
     global: &ParallelScanGlobal,
 ) -> Vec<(String, String)> {
-    const FILE_NAME_LIST_LIMIT: usize = 5;
     let (Ok(data), Ok(global)) = (parquet_bind_data(bind_data), parallel_global(global)) else {
         return Vec::new();
     };
@@ -1203,20 +1199,8 @@ fn read_parquet_dynamic_to_string(
         let cursor = global.cursor.lock().unwrap_or_else(PoisonError::into_inner);
         cursor.file_index + usize::from(cursor.file.is_some())
     };
-    let mut result = vec![("Total Files Read".to_owned(), files_loaded.to_string())];
     let display = data.display_paths.as_ref().unwrap_or(&data.files.files);
-    if !display.is_empty() {
-        let mut names: Vec<&str> = display
-            .iter()
-            .take(FILE_NAME_LIST_LIMIT)
-            .map(String::as_str)
-            .collect();
-        if files_loaded > FILE_NAME_LIST_LIMIT {
-            names.push("...");
-        }
-        result.push(("Filename(s)".to_owned(), names.join(", ")));
-    }
-    result
+    rustdb_csv::multi_file::dynamic_to_string(files_loaded, display)
 }
 
 /// The `read_parquet` scan by several threads (`MultiFileFunction` with

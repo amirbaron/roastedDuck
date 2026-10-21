@@ -55,6 +55,32 @@ pub fn multi_file_parameters() -> Vec<(String, LogicalType)> {
     ]
 }
 
+/// The virtual `filename` column of every multi-file reader
+/// (`MultiFileReader::COLUMN_IDENTIFIER_FILENAME`).
+pub const COLUMN_IDENTIFIER_FILENAME: u64 = 1 << 63;
+/// The virtual `file_index` column (`MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX`).
+pub const COLUMN_IDENTIFIER_FILE_INDEX: u64 = (1 << 63) + 2;
+
+/// What `EXPLAIN ANALYZE` shows about a finished multi-file scan
+/// (`MultiFileDynamicToString`): the number of files opened and the first file names
+/// (`display`: the patterns given, or the files left after pruning).
+pub fn dynamic_to_string(files_loaded: usize, display: &[String]) -> Vec<(String, String)> {
+    const FILE_NAME_LIST_LIMIT: usize = 5;
+    let mut result = vec![("Total Files Read".to_owned(), files_loaded.to_string())];
+    if !display.is_empty() {
+        let mut names: Vec<&str> = display
+            .iter()
+            .take(FILE_NAME_LIST_LIMIT)
+            .map(String::as_str)
+            .collect();
+        if files_loaded > FILE_NAME_LIST_LIMIT {
+            names.push("...");
+        }
+        result.push(("Filename(s)".to_owned(), names.join(", ")));
+    }
+    result
+}
+
 /// DuckDB's `IOException`.
 fn io_error(message: impl Into<String>) -> Error {
     Error::new(ErrorKind::Io, message.into())

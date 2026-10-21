@@ -22,10 +22,7 @@ use crate::json_reader::{ByteRange, JsonReader, ScanBatch};
 use crate::json_reader_options::JsonReaderOptions;
 use crate::yyjson::Doc;
 
-/// The virtual `filename` column (`MultiFileReader::COLUMN_IDENTIFIER_FILENAME`).
-pub const COLUMN_IDENTIFIER_FILENAME: u64 = 1 << 63;
-/// The virtual `file_index` column (`COLUMN_IDENTIFIER_FILE_INDEX`).
-pub const COLUMN_IDENTIFIER_FILE_INDEX: u64 = (1 << 63) + 2;
+pub use rustdb_csv::multi_file::{COLUMN_IDENTIFIER_FILE_INDEX, COLUMN_IDENTIFIER_FILENAME};
 /// The empty column of multi-file readers (`COLUMN_IDENTIFIER_EMPTY`).
 const COLUMN_IDENTIFIER_EMPTY: u64 = u64::MAX - 1;
 
