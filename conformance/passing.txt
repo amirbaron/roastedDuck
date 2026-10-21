@@ -661,6 +661,7 @@ test/optimizer/topn_window_elimination.test_slow
 test/optimizer/topn_window_elimination_parquet.test_slow
 test/optimizer/transitive_filters.test
 test/optimizer/union_exclude.test
+test/optimizer/unnest_rewriter.test_slow
 test/optimizer/unnest_rewriter_issue_14542.test
 test/optimizer/unused_columns/cte_unused_columns.test
 test/optimizer/unused_columns/distinct_on_projection_pushdown.test
@@ -1856,6 +1857,7 @@ test/sql/copy/partitioned/hive_partitioned_write.test
 test/sql/copy/partitioned/hive_partitioned_write.test_slow
 test/sql/copy/partitioned/hive_partitioning_overwrite.test
 test/sql/copy/partitioned/partition_issue_6304.test
+test/sql/copy/partitioned/partitioned_group_by.test
 test/sql/copy/partitioned/partitioned_write_tpch.test_slow
 test/sql/copy/partitioned/skip_partition_column_writes.test
 test/sql/copy/per_thread_output.test
@@ -4097,10 +4099,12 @@ test/sql/topn/test_top_n_nulls_first_row_group_reorderer_edge_cases.test
 test/sql/topn/test_top_n_nulls_large.test_slow
 test/sql/topn/test_top_n_nulls_medium.test_slow
 test/sql/topn/test_top_n_nulls_row_group_pruner.test
+test/sql/topn/test_top_n_nulls_row_group_pruner_extensive.test
 test/sql/topn/test_top_n_nulls_small.test
 test/sql/topn/test_top_n_offset_no_limit_pruner.test
 test/sql/topn/test_top_n_structs.test
 test/sql/topn/top_n_materialization.test
+test/sql/topn/top_n_pruning.test
 test/sql/topn/topn_nulls_first.test
 test/sql/topn/tpcds_q14_topn.test
 test/sql/topn/tpcds_q59_topn.test
