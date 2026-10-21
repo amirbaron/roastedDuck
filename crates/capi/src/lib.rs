@@ -11,28 +11,43 @@
 #![allow(clippy::missing_safety_doc)] // Safety contracts are those of duckdb.h.
 #![allow(clippy::wildcard_imports)] // The modules share the `duckdb.h` vocabulary of `types`.
 
+mod aggregate_function;
 mod appender;
+mod cast_function;
+mod catalog;
 mod config;
 mod data_chunk;
 mod datetime;
 mod error_data;
+mod expression;
+mod function;
 mod helper;
 mod hugeint;
 mod logical_types;
 mod open;
 mod pending;
 mod prepared;
+mod replacement_scan;
 mod result;
+mod scalar_function;
 mod table_description;
+mod table_function;
 mod types;
 mod value;
 mod value_fetch;
 
+pub use aggregate_function::*;
 pub use appender::*;
+pub use cast_function::*;
+pub use catalog::*;
 pub use config::*;
 pub use data_chunk::*;
 pub use datetime::*;
 pub use error_data::*;
+pub use expression::*;
+pub use function::{
+    DuckdbBindInfo, DuckdbCopyCallback, DuckdbDeleteCallback, DuckdbFunctionInfo, DuckdbInitInfo,
+};
 pub use helper::{
     duckdb_free, duckdb_malloc, duckdb_string_is_inlined, duckdb_string_t_data, duckdb_string_t_length,
     duckdb_valid_utf8_check, duckdb_vector_size,
@@ -42,8 +57,11 @@ pub use logical_types::*;
 pub use open::*;
 pub use pending::*;
 pub use prepared::*;
+pub use replacement_scan::*;
 pub use result::*;
+pub use scalar_function::*;
 pub use table_description::*;
+pub use table_function::*;
 pub use types::*;
 pub use value::*;
 pub use value_fetch::*;

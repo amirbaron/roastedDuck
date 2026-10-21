@@ -453,3 +453,28 @@ pub unsafe extern "C" fn duckdb_logical_type_set_alias(ty: DuckdbLogicalType, al
     let alias = unsafe { lossy_str(alias) };
     *ty = ty.clone().with_alias(alias);
 }
+
+/// `duckdb_create_type_info`: reserved by `duckdb_register_logical_type`.
+pub type DuckdbCreateTypeInfo = *mut std::ffi::c_void;
+
+/// `duckdb_state duckdb_register_logical_type(duckdb_connection con, duckdb_logical_type
+/// type, duckdb_create_type_info info)` (capi/logical_types-c.cpp): creates a type named
+/// after the type's alias, in the system catalog; `info` is unused.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn duckdb_register_logical_type(
+    con: crate::open::DuckdbConnection,
+    ty: DuckdbLogicalType,
+    _info: DuckdbCreateTypeInfo,
+) -> DuckdbState {
+    // SAFETY: both handles are NULL or live.
+    let (Some(context), Some(ty)) = (unsafe { (crate::open::connection_ref(con), type_ref(ty)) }) else {
+        return DuckdbState::DuckDBError;
+    };
+    let Some(name) = ty.alias() else {
+        return DuckdbState::DuckDBError;
+    };
+    if is_unresolved(ty) {
+        return DuckdbState::DuckDBError;
+    }
+    DuckdbState::from_ok(crate::helper::catch(|| context.lock().create_type(name, ty.clone())).is_ok())
+}

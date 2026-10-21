@@ -134,7 +134,7 @@ pub unsafe extern "C" fn duckdb_extract_statements(
     let count = statements.len() as Idx;
     // SAFETY: checked non-null above.
     unsafe {
-        *out_extracted_statements = Box::into_raw(Box::new(ExtractStatementsWrapper { statements, error }))
+        *out_extracted_statements = Box::into_raw(Box::new(ExtractStatementsWrapper { statements, error }));
     };
     count
 }

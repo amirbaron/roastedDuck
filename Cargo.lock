@@ -861,6 +861,7 @@ dependencies = [
  "libc",
  "rustdb",
  "rustdb-ast",
+ "rustdb-catalog",
  "rustdb-common",
  "rustdb-function",
  "rustdb-planner",
