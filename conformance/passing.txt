@@ -3094,6 +3094,7 @@ test/sql/pivot/pivot_in_boolean.test
 test/sql/pivot/pivot_in_subquery.test
 test/sql/pivot/pivot_operator_expression.test
 test/sql/pivot/pivot_prepare.test
+test/sql/pivot/pivot_query_text.test
 test/sql/pivot/pivot_star.test
 test/sql/pivot/pivot_storage.test
 test/sql/pivot/pivot_struct_aggregate.test
@@ -3883,6 +3884,7 @@ test/sql/subquery/any_all/test_simple_not_in.test
 test/sql/subquery/any_all/test_uncorrelated_all_subquery.test
 test/sql/subquery/any_all/test_uncorrelated_any_subquery.test
 test/sql/subquery/complex/complex_correlated_subquery_issue.test
+test/sql/subquery/complex/correlated_internal_issue_5975.test
 test/sql/subquery/complex/correlated_list_aggregate.test_slow
 test/sql/subquery/complex/correlated_list_any_join.test
 test/sql/subquery/complex/expensive_deduplication_3593.test_slow

@@ -2391,6 +2391,10 @@ impl Connection {
         }
         let mut result = MaterializedResult::default();
         for statement in statements {
+            // Each statement runs as its own query (`PendingQuery` with its text).
+            if !statement.query.is_empty() {
+                self.function_client.set_query(&statement.query);
+            }
             match self.run_statement(statement) {
                 Ok(statement_result) => result = statement_result,
                 Err(error) => {

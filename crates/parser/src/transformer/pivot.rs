@@ -163,6 +163,8 @@ fn generate_create_enum_statement(entry: PivotEntry) -> SqlStatementKind {
 fn statement_to_string(statement: &SqlStatement) -> String {
     match &statement.kind {
         SqlStatementKind::Select(select) => select.to_string(),
+        // `CreateStatement::ToString`.
+        SqlStatementKind::Create(info) => info.to_sql().unwrap_or_default(),
         _ => String::new(),
     }
 }

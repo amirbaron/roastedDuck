@@ -251,6 +251,16 @@ fn translate(pattern: &str) -> String {
                         out.push(other);
                     }
                 }
+                // RE2 reads a `-` after a class escape (`[\w-.]`) as a literal, which
+                // the expanded class would turn into a range.
+                if in_class
+                    && matches!(next, 'd' | 'D' | 'w' | 'W' | 's' | 'S')
+                    && chars.get(i) == Some(&'-')
+                    && chars.get(i + 1).is_some_and(|&c| c != ']')
+                {
+                    out.push_str("\\-");
+                    i += 1;
+                }
             }
             '[' if !in_class => {
                 in_class = true;
