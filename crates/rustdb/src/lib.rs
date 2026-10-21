@@ -40,6 +40,7 @@ pub use database::{
     TableDescription,
 };
 pub use logging::LogStorage;
+pub use query_profiler::ProfilingTree;
 pub use result::MaterializedResult;
 pub use rustdb_ast::{SqlStatement, StatementType};
 pub use rustdb_common::{Error, ErrorKind, Result};

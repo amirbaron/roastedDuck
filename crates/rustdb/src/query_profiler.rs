@@ -757,6 +757,32 @@ impl ProfilingNode {
     }
 }
 
+/// A node of the latest query's profile as clients read it (DuckDB's `ProfilingNode`
+/// behind `duckdb_profiling_info`): the metrics the node shows, by name, with their values
+/// as text (`ProfilingInfo::GetMetricAsString`), and the nodes of its child operators.
+#[derive(Clone, Debug)]
+pub struct ProfilingTree {
+    pub metrics: Vec<(String, String)>,
+    pub children: Vec<ProfilingTree>,
+}
+
+impl ProfilingTree {
+    fn of(node: &ProfilingNode) -> Self {
+        Self {
+            metrics: node
+                .info
+                .settings
+                .iter()
+                .map(|&metric| {
+                    let text = node.info.get(metric).to_value().to_varchar().unwrap_or_default();
+                    (metric.name().to_owned(), text)
+                })
+                .collect(),
+            children: node.children.iter().map(Self::of).collect(),
+        }
+    }
+}
+
 /// Renders the profile as a tree (DuckDB's `RenderTree::CreateRenderTree(ProfilingNode)`).
 impl RenderSource for &ProfilingNode {
     fn render_node(&self) -> RenderTreeNode {
@@ -873,6 +899,8 @@ pub(crate) struct QueryProfiler {
     phase_stack: Vec<MetricType>,
     phase_start: Option<Instant>,
     root: Option<ProfilingNode>,
+    /// The finished profile of the latest query, as clients read it.
+    tree: Option<Arc<ProfilingTree>>,
 }
 
 impl QueryProfiler {
@@ -901,6 +929,21 @@ impl QueryProfiler {
             || self.is_detailed_enabled(config)
     }
 
+    /// The profile of the latest query, if it was profiled (`QueryProfiler::GetRoot`).
+    pub fn tree(&self) -> Option<&Arc<ProfilingTree>> {
+        self.tree.as_ref()
+    }
+
+    /// `QueryProfiler::Reset`: no profile, as after a statement that failed to prepare.
+    pub fn reset(&mut self) {
+        self.root = None;
+        self.tree = None;
+        self.phase_timings.clear();
+        self.phase_stack.clear();
+        self.running = false;
+        self.metrics_finalized = false;
+    }
+
     /// Whether the statement is being profiled.
     pub fn is_running(&self) -> bool {
         self.running
@@ -921,6 +964,7 @@ impl QueryProfiler {
         }
         // `QueryProfiler::Start` after `Reset`.
         self.root = None;
+        self.tree = None;
         self.phase_timings.clear();
         self.phase_stack.clear();
         self.global_info.clear();
@@ -1279,6 +1323,7 @@ impl QueryProfiler {
         }
         self.finalize_metrics(config);
         self.running = false;
+        self.tree = self.root.as_ref().map(|root| Arc::new(ProfilingTree::of(root)));
         let emit_output = !self.is_explain_analyze && config.emit_output;
         let save_location = if self.is_explain_analyze {
             String::new()

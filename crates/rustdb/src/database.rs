@@ -1863,6 +1863,15 @@ impl Connection {
         assigned
     }
 
+    /// The profile of the latest query (`Connection::GetProfilingTree`): `None` if
+    /// profiling is off or the query was not profiled.
+    pub fn profiling_tree(&self) -> Option<Arc<crate::query_profiler::ProfilingTree>> {
+        if !self.settings.profiler.enable_profiler {
+            return None;
+        }
+        self.profiler.tree().cloned()
+    }
+
     /// The connection's id (DuckDB's `ClientContext::GetConnectionId`).
     pub fn connection_id(&self) -> u64 {
         self.function_client.connection_id()

@@ -62,6 +62,8 @@ impl SharedConnection {
 #[derive(Debug)]
 pub struct ConnectionWrapper {
     pub(crate) context: Arc<SharedConnection>,
+    /// The profile `duckdb_get_profiling_info` handed out last, which its pointers read.
+    pub(crate) profiling: Mutex<Option<Arc<rustdb::ProfilingTree>>>,
 }
 
 /// `duckdb_connection`
@@ -321,8 +323,12 @@ pub unsafe extern "C" fn duckdb_connect(
     match catch(|| wrapper.database.connect()) {
         Ok(connection) => {
             let context = SharedConnection::new(connection);
+            let wrapper = ConnectionWrapper {
+                context,
+                profiling: Mutex::default(),
+            };
             // SAFETY: checked non-null above.
-            unsafe { *out_connection = Box::into_raw(Box::new(ConnectionWrapper { context })) };
+            unsafe { *out_connection = Box::into_raw(Box::new(wrapper)) };
             DuckdbState::DuckDBSuccess
         }
         Err(_) => DuckdbState::DuckDBError,

@@ -126,7 +126,11 @@ impl Connection {
                 query,
                 data: Arc::new(data),
             }),
-            Err(error) => Err(self.process_error(error, &query)),
+            Err(error) => {
+                // A statement that fails to prepare leaves no profile behind.
+                self.profiler.reset();
+                Err(self.process_error(error, &query))
+            }
         }
     }
 
