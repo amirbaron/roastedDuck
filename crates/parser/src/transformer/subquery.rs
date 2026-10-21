@@ -41,6 +41,7 @@ fn subquery_expression(
 
 impl<'a> Transformer<'a> {
     /// `TransformSubquery`: `EXISTS (...)`, `x op ANY/ALL (...)`, `(SELECT ...)`, `ARRAY(...)`.
+    #[inline(never)]
     pub(crate) fn transform_subquery(&mut self, root: &'a SubLink) -> Result<ParsedExpression> {
         let location = u64::try_from(root.location).ok();
         let wrap = |subquery: SubqueryExpression| {

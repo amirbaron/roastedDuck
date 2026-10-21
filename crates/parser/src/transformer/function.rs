@@ -245,6 +245,7 @@ impl<'a> Transformer<'a> {
     }
 
     /// `TransformFuncCall`.
+    #[inline(never)]
     pub(crate) fn transform_func_call(&mut self, root: &'a FuncCall) -> Result<ParsedExpression> {
         let names: Vec<&str> = root.funcname.iter().map(node_string).collect::<Result<_>>()?;
         let (catalog, schema, function_name) = match names.as_slice() {

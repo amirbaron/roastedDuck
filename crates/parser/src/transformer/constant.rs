@@ -14,6 +14,7 @@ const MAX_WIDTH_DECIMAL: usize = 38;
 
 impl Transformer<'_> {
     /// `TransformConstant`.
+    #[inline(never)]
     pub(crate) fn transform_constant(constant: &AConst) -> Result<ParsedExpression> {
         let mut result = Self::transform_value(&constant.val)?;
         set_location(&mut result, constant.location);
@@ -21,6 +22,7 @@ impl Transformer<'_> {
     }
 
     /// `TransformValue`: the constant a literal stands for.
+    #[inline(never)]
     pub(crate) fn transform_value(value: &Value) -> Result<ParsedExpression> {
         Ok(build::constant(match value {
             Value::Integer(integer) => DuckValue::integer(*integer as i32),

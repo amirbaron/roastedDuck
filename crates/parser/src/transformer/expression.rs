@@ -76,6 +76,10 @@ impl<'a> Transformer<'a> {
         self.transform_expression(required(node, what)?)
     }
 
+    /// Every nesting level of an expression goes through here, so the functions it
+    /// dispatches to are `#[inline(never)]`: inlined, all their locals would be on the
+    /// stack of each level (7 KB a level, which overflowed a 2 MiB thread stack long
+    /// before `max_expression_depth`).
     fn transform_expression_inner(&mut self, node: &'a Node) -> Result<ParsedExpression> {
         match node {
             Node::ColumnRef(column_ref) => self.transform_column_ref(column_ref),
@@ -135,6 +139,7 @@ impl<'a> Transformer<'a> {
     }
 
     /// `TransformResTarget`.
+    #[inline(never)]
     fn transform_res_target(&mut self, root: &'a ResTarget) -> Result<ParsedExpression> {
         let mut expr = self.transform_required(root.val.as_ref(), "target value")?;
         if let Some(name) = &root.name {
@@ -144,6 +149,7 @@ impl<'a> Transformer<'a> {
     }
 
     /// `TransformNamedArg`.
+    #[inline(never)]
     fn transform_named_arg(&mut self, root: &'a NamedArgExpr) -> Result<ParsedExpression> {
         let mut expr = self.transform_required(root.arg.as_ref(), "named argument")?;
         if let Some(name) = &root.name {
@@ -153,6 +159,7 @@ impl<'a> Transformer<'a> {
     }
 
     /// `TransformBoolExpr`.
+    #[inline(never)]
     fn transform_bool_expr(&mut self, root: &'a BoolExpr) -> Result<ParsedExpression> {
         let mut result: Option<ParsedExpression> = None;
         for node in &root.args {
@@ -199,6 +206,7 @@ impl<'a> Transformer<'a> {
     }
 
     /// `TransformBooleanTest`.
+    #[inline(never)]
     fn transform_boolean_test(&mut self, node: &'a BooleanTest) -> Result<ParsedExpression> {
         let argument = self.transform_required(node.arg.as_ref(), "boolean test argument")?;
         let comparison = |comparison_type: ExpressionType, value: bool, argument: ParsedExpression| {
@@ -228,6 +236,7 @@ impl<'a> Transformer<'a> {
     }
 
     /// `TransformCase`.
+    #[inline(never)]
     fn transform_case(&mut self, root: &'a CaseExpr) -> Result<ParsedExpression> {
         let root_arg = self.transform_opt_expression(root.arg.as_ref())?;
         let mut checks = Vec::with_capacity(root.args.len());
@@ -254,6 +263,7 @@ impl<'a> Transformer<'a> {
     }
 
     /// `TransformTypeCast`.
+    #[inline(never)]
     fn transform_type_cast(&mut self, root: &'a TypeCast) -> Result<ParsedExpression> {
         let type_name = required(root.type_name.as_deref(), "cast type")?;
         let target_type = self.transform_type_name(type_name)?;
@@ -277,6 +287,7 @@ impl<'a> Transformer<'a> {
     }
 
     /// `TransformCoalesce`: `COALESCE(a, b, ...)` is an `OPERATOR_COALESCE`.
+    #[inline(never)]
     fn transform_coalesce(&mut self, root: &'a CoalesceExpr) -> Result<ParsedExpression> {
         let mut children = Vec::with_capacity(root.args.len());
         for node in &root.args {
@@ -286,6 +297,7 @@ impl<'a> Transformer<'a> {
     }
 
     /// `TransformNullTest`.
+    #[inline(never)]
     fn transform_null_test(&mut self, root: &'a NullTest) -> Result<ParsedExpression> {
         let arg = self.transform_required(root.arg.as_ref(), "IS NULL argument")?;
         if root.argisrow {
@@ -302,6 +314,7 @@ impl<'a> Transformer<'a> {
     }
 
     /// `TransformCollateExpr`.
+    #[inline(never)]
     pub(crate) fn transform_collate_expr(&mut self, collate: &'a CollateClause) -> Result<ParsedExpression> {
         let child = self.transform_required(collate.arg.as_ref(), "COLLATE argument")?;
         let collation = Self::transform_collation(Some(collate))?;
@@ -335,6 +348,7 @@ impl<'a> Transformer<'a> {
     }
 
     /// `TransformLambda`: `lambda x, y: expr`.
+    #[inline(never)]
     fn transform_lambda(&mut self, node: &'a LambdaFunction) -> Result<ParsedExpression> {
         let parameters = super::string_list(&node.lhs)?;
         let rhs = self.transform_required(node.rhs.as_ref(), "lambda body")?;
@@ -360,6 +374,7 @@ impl<'a> Transformer<'a> {
     }
 
     /// `TransformSingleArrow`: `x -> expr`.
+    #[inline(never)]
     fn transform_single_arrow(&mut self, node: &'a SingleArrowFunction) -> Result<ParsedExpression> {
         let lhs = self.transform_required(node.lhs.as_ref(), "lambda parameters")?;
         let rhs = self.transform_required(node.rhs.as_ref(), "lambda body")?;
@@ -376,6 +391,7 @@ impl<'a> Transformer<'a> {
     }
 
     /// `TransformPositionalReference`: `#n`.
+    #[inline(never)]
     fn transform_positional_reference(node: &PositionalReference) -> Result<ParsedExpression> {
         let index = u64::try_from(node.position)
             .ok()
@@ -387,6 +403,7 @@ impl<'a> Transformer<'a> {
     }
 
     /// `TransformGroupingFunction`: `GROUPING(a, b)`.
+    #[inline(never)]
     fn transform_grouping_function(&mut self, grouping: &'a GroupingFunc) -> Result<ParsedExpression> {
         let mut children = Vec::with_capacity(grouping.args.len());
         for node in &grouping.args {
@@ -398,6 +415,7 @@ impl<'a> Transformer<'a> {
     }
 
     /// `TransformMultiAssignRef`: one column of `SET (a, b) = (x, y)`.
+    #[inline(never)]
     fn transform_multi_assign_ref(&mut self, root: &'a MultiAssignRef) -> Result<ParsedExpression> {
         let source = required(root.source.as_ref(), "assignment source")?;
         let Node::FuncCall(func) = source else {
@@ -430,6 +448,7 @@ impl<'a> Transformer<'a> {
     }
 
     /// `TransformParamRef`: `?`, `$1`, `$name`.
+    #[inline(never)]
     fn transform_param_ref(&mut self, node: &ParamRef) -> Result<ParsedExpression> {
         let (param_type, mut identifier) = if let Some(name) = &node.name {
             (ParamType::Named, name.clone())
@@ -469,6 +488,7 @@ impl<'a> Transformer<'a> {
     }
 
     /// `TransformArrayAccess`: `x[i]`, `x[a:b:c]`, `x.field`, `x.f(...)`.
+    #[inline(never)]
     fn transform_array_access(&mut self, node: &'a AIndirection) -> Result<ParsedExpression> {
         let mut result = self.transform_required(node.arg.as_ref(), "indirection source")?;
         let mut list_size = 0;
@@ -522,6 +542,7 @@ impl<'a> Transformer<'a> {
     }
 
     /// `TransformInterval`: `INTERVAL x unit`.
+    #[inline(never)]
     fn transform_interval(&mut self, node: &'a IntervalConstant) -> Result<ParsedExpression> {
         use interval_field as f;
         // `val_type` is the node tag of the value: an expression, a string or an integer.
