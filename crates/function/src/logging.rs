@@ -104,8 +104,14 @@ pub struct FileSystemLogger {
 impl FileSystemLogger {
     /// The logger of a file opened now, if the thread runs a statement; logs `OPEN`.
     pub fn open(path: &str) -> Option<Self> {
+        Self::open_for(crate::file_system::opener().as_deref(), path)
+    }
+
+    /// The logger of a file opened now for the connection `client` (which may run the
+    /// statement on another thread); logs `OPEN`.
+    pub fn open_for(client: Option<&crate::FunctionClient>, path: &str) -> Option<Self> {
         let logger = Self {
-            logger: crate::file_system::opener()?.logger()?,
+            logger: client?.logger()?,
             path: path.to_owned(),
         };
         logger.log("OPEN", None);

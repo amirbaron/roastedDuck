@@ -104,6 +104,7 @@ pub struct FileSink {
 
 impl FileSink {
     fn create(path: &str) -> Result<Self> {
+        rustdb_function::file_system::verify_can_write(path)?;
         let file = File::create(path).map_err(|error| {
             Error::new(
                 ErrorKind::Io,

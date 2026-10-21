@@ -15,6 +15,8 @@ use crate::options::FileCompressionType;
 #[derive(Debug)]
 struct WriteBlobData {
     compression: FileCompressionType,
+    /// The connection writing, whose loggers see the file operations.
+    client: Option<Arc<rustdb_function::FunctionClient>>,
 }
 
 impl FunctionData for WriteBlobData {
@@ -64,7 +66,10 @@ fn write_blob_bind(
             )));
         }
     }
-    Ok(Arc::new(WriteBlobData { compression }))
+    Ok(Arc::new(WriteBlobData {
+        compression,
+        client: rustdb_function::file_system::opener(),
+    }))
 }
 
 /// `WriteBlobGlobalState`: the open file.
@@ -96,7 +101,7 @@ pub fn blob_copy_function() -> CopyFunction {
             .as_any()
             .downcast_ref::<WriteBlobData>()
             .ok_or_else(|| Error::internal("blob write without bind data"))?;
-        let sink = CsvSink::create(path, data.compression)?;
+        let sink = CsvSink::create(path, data.compression, data.client.as_deref())?;
         Ok(Box::new(WriteBlobGlobal {
             sink: Mutex::new(sink),
             path: path.to_owned(),

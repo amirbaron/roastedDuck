@@ -519,6 +519,7 @@ test/issues/rigger/test_value_binop.test
 test/issues/rigger/timestamp_overflow.test
 test/issues/rigger/zonemap_column_out_of_range.test
 test/ldbc/ldbc-empty.test
+test/logging/warnings_as_errors.test
 test/optimizer/arithmetic_simplification.test
 test/optimizer/case_simplification.test
 test/optimizer/column_binding_error.test
@@ -2002,6 +2003,7 @@ test/sql/export/parquet_export.test
 test/sql/extensions/attach_type_alias_conflict.test
 test/sql/extensions/checked_load.test
 test/sql/extensions/load_arbitrary_path.test
+test/sql/extensions/permissions_duckdb_extension.test
 test/sql/extensions/sqlite_alter_table_add_pk.test
 test/sql/extensions/version_is_valid_sqlite.test
 test/sql/filter/filter_cache.test

@@ -271,6 +271,21 @@ impl DisabledFileSystems {
     }
 }
 
+/// `OpenerFileSystem::VerifyCanAccessExtension`: files ending with `.duckdb_extension`
+/// are only written by `INSTALL`.
+pub fn verify_can_write(path: &str) -> rustdb_common::Result<()> {
+    if path.ends_with(".duckdb_extension") {
+        return Err(rustdb_common::Error::new(
+            rustdb_common::ErrorKind::Permission,
+            format!(
+                "File '{path}' cannot be opened for writing since files ending with '.duckdb_extension' are \
+                 reserved for DuckDB extensions, and these can only be installed through the INSTALL command"
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// `OpenerFileSystem::VerifyCanAccessFile`: a Permission Error if the configuration
 /// forbids accessing the file `path`.
 pub fn verify_can_access_file(path: &str) -> rustdb_common::Result<()> {

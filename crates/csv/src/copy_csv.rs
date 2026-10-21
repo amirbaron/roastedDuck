@@ -138,6 +138,8 @@ pub struct WriteCsvData {
     writer_options: CsvWriterOptions,
     formats: Vec<ColumnFormat>,
     casts: Arc<CastFunctionSet>,
+    /// The connection writing, whose loggers see the file operations.
+    client: Option<Arc<rustdb_function::FunctionClient>>,
 }
 
 impl FunctionData for WriteCsvData {
@@ -230,6 +232,7 @@ fn write_csv_bind(
         writer_options,
         formats,
         casts: Arc::clone(&context.casts),
+        client: Some(Arc::clone(&context.function_client)),
     }))
 }
 
@@ -276,15 +279,20 @@ pub(crate) enum CsvSink {
 impl CsvSink {
     /// Creates `path` (replacing an existing file), compressed as `compression` says
     /// (`FileSystem::OpenFile` with `FILE_FLAGS_FILE_CREATE_NEW` and the compression).
-    pub(crate) fn create(path: &str, compression: FileCompressionType) -> Result<Self> {
+    pub(crate) fn create(
+        path: &str,
+        compression: FileCompressionType,
+        client: Option<&rustdb_function::FunctionClient>,
+    ) -> Result<Self> {
         let compression = compression.resolve(path);
         if compression == FileCompressionType::Zstd {
             rustdb_function::file_system::verify_zstd_file_system()?;
         }
+        rustdb_function::file_system::verify_can_write(path)?;
         let file = File::create(path).map_err(|error| crate::buffer::open_error(path, &error))?;
         let file = LoggedFile {
             file,
-            logger: rustdb_function::logging::FileSystemLogger::open(path),
+            logger: rustdb_function::logging::FileSystemLogger::open_for(client, path),
             position: 0,
         };
         let file = BufWriter::with_capacity(1 << 15, file);
@@ -476,7 +484,7 @@ fn write_csv_initialize_global(bind_data: &dyn FunctionData, path: &str) -> Resu
         .as_any()
         .downcast_ref::<WriteCsvData>()
         .ok_or_else(|| Error::internal("csv write without bind data"))?;
-    let sink = CsvSink::create(path, data.options.compression)?;
+    let sink = CsvSink::create(path, data.options.compression, data.client.as_deref())?;
     let mut writer = CsvWriter {
         sink,
         path: path.to_owned(),

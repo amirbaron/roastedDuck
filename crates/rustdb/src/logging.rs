@@ -767,6 +767,7 @@ pub(crate) fn is_logging_setting(name: &str) -> bool {
             | "logging_storage"
             | "enabled_log_types"
             | "disabled_log_types"
+            | "warnings_as_errors"
     )
 }
 
@@ -806,6 +807,26 @@ pub(crate) fn apply_setting(manager: &LogManager, name: &str, value: Option<&Val
         ("enabled_log_types", None) => manager.set_enabled_log_types(Vec::new()),
         ("disabled_log_types", Some(value)) => manager.set_disabled_log_types(split_types(value)?),
         ("disabled_log_types", None) => manager.set_disabled_log_types(Vec::new()),
+        ("warnings_as_errors", Some(value)) => {
+            let enabled = value
+                .default_cast_as(&LogicalType::BOOLEAN)?
+                .as_bool()
+                .unwrap_or(false);
+            // `WarningsAsErrorsSetting::OnSet`.
+            if enabled && !manager.config().enabled {
+                return Err(Error::new(
+                    rustdb_common::ErrorKind::Settings,
+                    "Can not set 'warnings_as_errors=true'; no logger is available. To solve, run: 'SET \
+                     enable_logging=true;'",
+                ));
+            }
+            manager
+                .warnings_as_errors
+                .store(enabled, std::sync::atomic::Ordering::Relaxed);
+        }
+        ("warnings_as_errors", None) => manager
+            .warnings_as_errors
+            .store(false, std::sync::atomic::Ordering::Relaxed),
         _ => {}
     }
     Ok(())
@@ -829,6 +850,8 @@ pub(crate) fn setting_value(config: &LogConfig, name: &str) -> Option<Value> {
 #[derive(Debug)]
 pub(crate) struct LogManager {
     state: Mutex<ManagerState>,
+    /// `warnings_as_errors`: warnings are raised as errors instead of logged.
+    warnings_as_errors: std::sync::atomic::AtomicBool,
 }
 
 fn now_micros() -> i64 {
@@ -853,6 +876,7 @@ impl Default for LogManager {
         state.global = state.register(LoggingContext::new(ContextScope::Database));
         Self {
             state: Mutex::new(state),
+            warnings_as_errors: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
@@ -885,6 +909,9 @@ impl LogManager {
         level: LogLevel,
         message: &str,
     ) -> Result<()> {
+        if level == LogLevel::Warning && self.warnings_as_errors.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(Error::invalid_input(message.to_owned()));
+        }
         let entry = LogEntry {
             context_id: context.id,
             timestamp: now_micros(),

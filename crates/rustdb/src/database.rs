@@ -1128,6 +1128,9 @@ impl Database {
     ) -> Result<Option<Arc<AttachedDatabase>>> {
         if !path.is_empty() && !path.starts_with(":memory:") {
             rustdb_function::file_system::verify_can_access_file(path)?;
+            if !options.read_only() {
+                rustdb_function::file_system::verify_can_write(path)?;
+            }
         }
         // A new database file gets the configured storage version
         // (`serialization_compatibility`, also set by a global `SET`).

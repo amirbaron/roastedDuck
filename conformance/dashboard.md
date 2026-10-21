@@ -1,6 +1,6 @@
 # rustdb conformance dashboard
 
-Rust passing: **4697 / 4874 files** (4622 pass on both engines). "Passing" means the Rust run passed, or both engines skipped the file for the same reason.
+Rust passing: **4699 / 4874 files** (4624 pass on both engines). "Passing" means the Rust run passed, or both engines skipped the file for the same reason.
 
 | group | files | C++ pass | C++ skip | C++ fail | Rust passing | both pass | Rust fail | Rust crash/timeout | Rust skip (C++ pass) | Rust % |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -22,7 +22,7 @@ Rust passing: **4697 / 4874 files** (4622 pass on both engines). "Passing" means
 | test/issues/monetdb | 12 | 12 | 0 | 0 | 12 | 12 | 0 | 0 | 0 | 100.0% |
 | test/issues/rigger | 96 | 96 | 0 | 0 | 96 | 96 | 0 | 0 | 0 | 100.0% |
 | test/ldbc | 1 | 1 | 0 | 0 | 1 | 1 | 0 | 0 | 0 | 100.0% |
-| test/logging | 1 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0.0% |
+| test/logging | 1 | 1 | 0 | 0 | 1 | 1 | 0 | 0 | 0 | 100.0% |
 | test/optimizer | 61 | 61 | 0 | 0 | 58 | 58 | 1 | 0 | 2 | 95.1% |
 | test/optimizer/column_lifetime_analyzer | 3 | 3 | 0 | 0 | 3 | 3 | 0 | 0 | 0 | 100.0% |
 | test/optimizer/expression_rewriter | 2 | 2 | 0 | 0 | 2 | 2 | 0 | 0 | 0 | 100.0% |
@@ -58,7 +58,7 @@ Rust passing: **4697 / 4874 files** (4622 pass on both engines). "Passing" means
 | test/sql/error | 15 | 15 | 0 | 0 | 15 | 15 | 0 | 0 | 0 | 100.0% |
 | test/sql/explain | 6 | 6 | 0 | 0 | 6 | 6 | 0 | 0 | 0 | 100.0% |
 | test/sql/export | 22 | 22 | 0 | 0 | 22 | 22 | 0 | 0 | 0 | 100.0% |
-| test/sql/extensions | 7 | 4 | 3 | 0 | 5 | 2 | 2 | 0 | 0 | 71.4% |
+| test/sql/extensions | 7 | 4 | 3 | 0 | 6 | 3 | 1 | 0 | 0 | 85.7% |
 | test/sql/filter | 14 | 14 | 0 | 0 | 14 | 14 | 0 | 0 | 0 | 100.0% |
 | test/sql/function | 361 | 359 | 2 | 0 | 360 | 358 | 1 | 0 | 0 | 99.7% |
 | test/sql/generated_columns | 39 | 39 | 0 | 0 | 39 | 39 | 0 | 0 | 0 | 100.0% |
@@ -110,4 +110,4 @@ Rust passing: **4697 / 4874 files** (4622 pass on both engines). "Passing" means
 | test/sqlite | 4 | 4 | 0 | 0 | 4 | 4 | 0 | 0 | 0 | 100.0% |
 | test/sqlite/tags | 4 | 0 | 4 | 0 | 4 | 0 | 0 | 0 | 0 | 100.0% |
 | test/sqlserver | 2 | 2 | 0 | 0 | 2 | 2 | 0 | 0 | 0 | 100.0% |
-| **total** | 4874 | 4794 | 75 | 5 | 4697 | 4622 | 150 | 1 | 26 | 96.4% |
+| **total** | 4874 | 4794 | 75 | 5 | 4699 | 4624 | 148 | 1 | 26 | 96.4% |
