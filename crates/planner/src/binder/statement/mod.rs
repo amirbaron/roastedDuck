@@ -41,7 +41,10 @@ fn success(plan: LogicalOperator) -> BoundStatement {
 pub fn bind_statement(scope: &mut BindScope<'_>, statement: &mut SqlStatement) -> Result<BoundStatement> {
     match &mut statement.kind {
         SqlStatementKind::Select(select) => {
-            scope.with_properties(|properties| properties.return_type = StatementReturnType::QueryResult);
+            scope.with_properties(|properties| {
+                properties.allow_stream_result = true;
+                properties.return_type = StatementReturnType::QueryResult;
+            });
             bind_node(scope, &mut select.node)
         }
         SqlStatementKind::Explain(explain) => bind_explain(scope, explain),
@@ -123,7 +126,9 @@ fn bind_vacuum(scope: &mut BindScope<'_>, info: &mut rustdb_ast::VacuumInfo) -> 
     let mut select_list = Vec::with_capacity(info.columns.len());
     for name in &info.columns {
         let Some((logical, column)) = table.column(name) else {
-            return Err(Error::binder(format!("Column with name \"{name}\" does not exist")));
+            return Err(Error::binder(format!(
+                "Column with name \"{name}\" does not exist"
+            )));
         };
         if column.generated.is_some() {
             return Err(Error::binder(format!(
@@ -131,7 +136,10 @@ fn bind_vacuum(scope: &mut BindScope<'_>, info: &mut rustdb_ast::VacuumInfo) -> 
                 column.name
             )));
         }
-        if column_ids.iter().any(|existing: &crate::operator::ColumnIndex| existing.index as usize == logical) {
+        if column_ids
+            .iter()
+            .any(|existing: &crate::operator::ColumnIndex| existing.index as usize == logical)
+        {
             return Err(Error::binder(
                 "cannot vacuum or analyze the same column twice, i.e., there is a duplicate entry in the list of column names",
             ));
@@ -387,11 +395,9 @@ fn bind_prepare(scope: &mut BindScope<'_>, prepare: &mut PrepareStatement) -> Re
     })))
 }
 
-/// `EXECUTE name(values)` (DuckDB's `Bind(ExecuteStatement &)`). The statement is bound
-/// again with the values, so the plan uses them as constants.
 /// `PreparedStatement::VerifyParameters`: the supplied values name exactly the
 /// statement's parameters (`MissingValuesException` / `ExcessValuesException`).
-fn verify_parameters<V, E>(
+pub fn verify_parameters<V, E>(
     provided: &rustdb_common::CaseInsensitiveMap<V>,
     expected: &rustdb_common::CaseInsensitiveMap<E>,
 ) -> Result<()> {
@@ -425,6 +431,8 @@ fn verify_parameters<V, E>(
     )))
 }
 
+/// `EXECUTE name(values)` (DuckDB's `Bind(ExecuteStatement &)`). The statement is bound
+/// again with the values, so the plan uses them as constants.
 fn bind_execute(scope: &mut BindScope<'_>, execute: &mut ExecuteStatement) -> Result<BoundStatement> {
     let Some(prepared) = scope.context.prepared_statements.get(&execute.name).cloned() else {
         return Err(Error::binder(format!(

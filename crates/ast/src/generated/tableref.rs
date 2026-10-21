@@ -7,7 +7,7 @@ use crate::{
 use rustdb_serde::{
     DeserializeObject, Deserializer, Error, OptionalIdx, Result, SerializeObject, Serializer, required,
 };
-use rustdb_types::LogicalType;
+use rustdb_types::{ColumnDataCollection, LogicalType};
 
 /// DuckDB's `TableRef`: the members shared by all subclasses, with the subclass in `kind`.
 #[derive(Clone, Debug, PartialEq)]
@@ -44,6 +44,8 @@ pub enum TableRefKind {
     Empty,
     /// `ExpressionListRef` (`TableReferenceType::EXPRESSION_LIST`).
     ExpressionList(Box<ExpressionListRef>),
+    /// `ColumnDataRef` (`TableReferenceType::COLUMN_DATA`).
+    ColumnData(ColumnDataRef),
     /// `PivotRef` (`TableReferenceType::PIVOT`).
     Pivot(Box<PivotRef>),
     /// `ShowRef` (`TableReferenceType::SHOW_REF`).
@@ -60,6 +62,7 @@ impl TableRefKind {
             Self::TableFunction(_) => TableReferenceType::TableFunction,
             Self::Empty => TableReferenceType::EmptyFrom,
             Self::ExpressionList(_) => TableReferenceType::ExpressionList,
+            Self::ColumnData(_) => TableReferenceType::ColumnData,
             Self::Pivot(_) => TableReferenceType::Pivot,
             Self::Show(_) => TableReferenceType::ShowRef,
         }
@@ -72,6 +75,7 @@ impl TableRefKind {
             Self::Subquery(value) => value.serialize_fields(serializer),
             Self::TableFunction(value) => value.serialize_fields(serializer),
             Self::ExpressionList(value) => value.serialize_fields(serializer),
+            Self::ColumnData(value) => value.serialize_fields(serializer),
             Self::Pivot(value) => value.serialize_fields(serializer),
             Self::Show(value) => value.serialize_fields(serializer),
             Self::Empty => Ok(()),
@@ -119,6 +123,9 @@ impl DeserializeObject for TableRef {
             TableReferenceType::ExpressionList => {
                 TableRefKind::ExpressionList(Box::new(ExpressionListRef::deserialize_fields(deserializer)?))
             }
+            TableReferenceType::ColumnData => {
+                TableRefKind::ColumnData(ColumnDataRef::deserialize_fields(deserializer)?)
+            }
             TableReferenceType::Pivot => {
                 TableRefKind::Pivot(Box::new(PivotRef::deserialize_fields(deserializer)?))
             }
@@ -127,7 +134,6 @@ impl DeserializeObject for TableRef {
             }
             TableReferenceType::Invalid
             | TableReferenceType::Cte
-            | TableReferenceType::ColumnData
             | TableReferenceType::DelimGet
             | TableReferenceType::BoundTableRef => {
                 return Err(Error::serialization(
@@ -379,6 +385,35 @@ impl DeserializeObject for ExpressionListRef {
             expected_names,
             expected_types,
             values,
+        })
+    }
+}
+
+/// DuckDB's `ColumnDataRef`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ColumnDataRef {
+    /// `expected_names` (property 200).
+    pub expected_names: Vec<String>,
+    /// `collection` (property 202).
+    pub collection: Option<Box<ColumnDataCollection>>,
+}
+
+impl SerializeObject for ColumnDataRef {
+    fn serialize_fields(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        serializer.write_property_with_default(200, "expected_names", &self.expected_names)?;
+        serializer.write_property_with_default(202, "collection", &self.collection)?;
+        Ok(())
+    }
+}
+
+impl DeserializeObject for ColumnDataRef {
+    fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
+        let expected_names: Vec<String> = deserializer.read_property_with_default(200, "expected_names")?;
+        let collection: Option<Box<ColumnDataCollection>> =
+            deserializer.read_property_with_default(202, "collection")?;
+        Ok(Self {
+            expected_names,
+            collection,
         })
     }
 }

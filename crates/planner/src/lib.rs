@@ -46,10 +46,10 @@ pub mod prepared;
 pub mod subquery;
 
 pub use binder::expression::bind_logical_type;
-pub use binder::statement::bind_index_expressions;
+pub use binder::statement::{bind_index_expressions, verify_parameters};
 pub use binder::tableref::deduplicate_columns;
 pub use binder::tableref::{JoinSide, create_join, extract_join_conditions};
-pub use binder::{Binder, BoundStatement};
+pub use binder::{Binder, BindingMode, BoundStatement};
 pub use column_binding::{ColumnBinding, generate_column_bindings};
 pub use column_binding_resolver::ColumnBindingResolver;
 pub use context::{ClientContext, DatabaseState, DefaultNullOrder, ExpressionEvaluator, PlannerConfig};

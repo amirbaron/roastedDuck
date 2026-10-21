@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, PoisonError};
 
-use rustdb_ast::{BaseTableRef, ExpressionListRef, SubqueryRef, TableRef, TableRefKind};
+use rustdb_ast::{BaseTableRef, ColumnDataRef, ExpressionListRef, SubqueryRef, TableRef, TableRefKind};
 use rustdb_catalog::{CatalogType, EntryKind};
 use rustdb_common::{Error, Result};
 use rustdb_function::TableFunction;
@@ -24,7 +24,7 @@ pub(crate) use plan_joinref::table_references;
 use super::bind_context::alias_column_names;
 use super::binding::{Binding, BindingAlias, BindingKind};
 use super::query_node::{bind_node, plan_subqueries};
-use super::{BindScope, Binder, BinderType, BoundStatement, Scope};
+use super::{BindScope, Binder, BinderType, BindingMode, BoundStatement, Scope};
 use crate::expression_binder::{ExpressionBinder, InsertBinder, expression_return_type};
 use crate::function_binder::{add_cast_to_type, max_logical_type, normalize_type};
 use crate::operator::{ColumnIndex, LogicalGet, LogicalKind, LogicalOperator};
@@ -53,12 +53,42 @@ pub fn bind_table_ref(scope: &mut BindScope<'_>, table_ref: &mut TableRef) -> Re
         ),
         TableRefKind::Pivot(pivot) => bind_pivot::bind_pivot(scope, pivot, &table_ref.alias),
         TableRefKind::Show(show) => bind_showref::bind_show(scope, show),
+        TableRefKind::ColumnData(column_data) => bind_column_data(scope, column_data, &table_ref.alias),
     }?;
     if let Some(sample_options) = table_ref.sample.take() {
         result.plan =
             LogicalOperator::new(LogicalKind::Sample { sample_options }).with_children(vec![result.plan]);
     }
     Ok(result)
+}
+
+/// Rows carried by the statement, e.g. an appender's (DuckDB's
+/// `Binder::Bind(ColumnDataRef &)`).
+fn bind_column_data(
+    scope: &mut BindScope<'_>,
+    column_data: &ColumnDataRef,
+    alias: &str,
+) -> Result<BoundStatement> {
+    let collection = column_data
+        .collection
+        .as_ref()
+        .ok_or_else(|| Error::internal("ColumnDataRef without a collection"))?;
+    let types = collection.types().to_vec();
+    let mut names = column_data.expected_names.clone();
+    for i in names.len()..types.len() {
+        names.push(format!("col{}", i + 1));
+    }
+    let table_index = scope.binder.generate_table_index();
+    scope
+        .binder
+        .bind_context
+        .add_generic_binding(table_index, alias, names.clone(), types.clone())?;
+    let plan = LogicalOperator::new(LogicalKind::ChunkGet {
+        table_index,
+        chunk_types: types.clone(),
+        collection: Arc::clone(collection.chunks()),
+    });
+    Ok(BoundStatement::new(plan, names, types))
 }
 
 /// `VALUES (...), (...)` (DuckDB's `Binder::Bind(ExpressionListRef &)`).
@@ -387,6 +417,37 @@ fn csv_replacement_scan(base: &BaseTableRef, alias: &str) -> Option<TableRef> {
     })
 }
 
+/// A table found while extracting table names: the name is recorded and the table binds
+/// as a dummy scan (DuckDB's `EXTRACT_NAMES` branch of `Binder::Bind(BaseTableRef &)`).
+fn bind_extracted_table_name(
+    scope: &mut BindScope<'_>,
+    base: &BaseTableRef,
+    alias: &str,
+    mode: BindingMode,
+) -> Result<BoundStatement> {
+    let name = if mode == BindingMode::ExtractQualifiedNames {
+        TableRef {
+            alias: alias.to_owned(),
+            sample: None,
+            query_location: None,
+            kind: TableRefKind::BaseTable(Box::new(base.clone())),
+        }
+        .to_string()
+    } else {
+        base.table_name.clone()
+    };
+    scope.binder.add_table_name(name);
+    let table_index = scope.generate_table_index();
+    let binding_alias = if alias.is_empty() { &base.table_name } else { alias };
+    let types = vec![LogicalType::INTEGER];
+    let names = vec![format!("__dummy_col{table_index}")];
+    scope
+        .bind_context
+        .add_generic_binding(table_index, binding_alias, names.clone(), types.clone())?;
+    let plan = LogicalOperator::new(LogicalKind::DummyScan { table_index });
+    Ok(BoundStatement::new(plan, names, types))
+}
+
 /// A table, view or CTE name in FROM (DuckDB's `Binder::Bind(BaseTableRef &)`).
 fn bind_base_table(
     scope: &mut BindScope<'_>,
@@ -445,6 +506,14 @@ fn bind_base_table(
         &base.table_name,
         true,
     )?;
+    let mode = scope.binder.binding_mode();
+    if mode.extracts_names()
+        && found
+            .as_ref()
+            .is_none_or(|found| matches!(found.entry.kind, EntryKind::Table(_)))
+    {
+        return bind_extracted_table_name(scope, base, alias, mode);
+    }
     let Some(found) = found else {
         if let Some(mut replacement) = csv_replacement_scan(base, alias) {
             return bind_table_ref(scope, &mut replacement);

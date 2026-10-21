@@ -1,5 +1,6 @@
 //! The entry point from statements to logical plans (DuckDB's `Planner`).
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use rustdb_ast::SqlStatement;
@@ -7,7 +8,7 @@ use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
 use rustdb_types::LogicalType;
 
 use crate::binder::statement::bind_statement;
-use crate::binder::{BindScope, Binder};
+use crate::binder::{BindScope, Binder, BindingMode};
 use crate::context::ClientContext;
 use crate::expression::BoundParameterData;
 use crate::operator::LogicalOperator;
@@ -103,6 +104,19 @@ impl Planner {
             properties,
             parameters,
         })
+    }
+
+    /// The tables `statement` uses, by name or by qualified name (the binding in DuckDB's
+    /// `ClientContext::GetTableNames`).
+    pub fn table_names(&self, mut statement: SqlStatement, qualified: bool) -> Result<BTreeSet<String>> {
+        let mut binder = Binder::new(Arc::clone(&self.context))?;
+        binder.set_binding_mode(if qualified {
+            BindingMode::ExtractQualifiedNames
+        } else {
+            BindingMode::ExtractNames
+        });
+        bind_statement(&mut BindScope::root(&mut binder), &mut statement)?;
+        Ok(binder.take_table_names())
     }
 
     /// Binds and plans `statement` (DuckDB's `Planner::CreatePlan`).

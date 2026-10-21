@@ -84,7 +84,9 @@ pub fn find_star_expression(
                     "STAR expression with RENAME list is only allowed as the root element of COLUMNS",
                 ));
             }
-            let list = scope.bind_context.generate_all_column_expressions(current)?;
+            let list = scope
+                .bind_context
+                .generate_all_column_expressions(current, scope.binder.binding_mode())?;
             let values = list
                 .iter()
                 .map(|e| Value::varchar(columns_string_value(e)))
@@ -344,7 +346,9 @@ pub fn expand_star_expression(
         new_select_list.push(expr);
         return Ok(());
     };
-    let mut star_list = scope.bind_context.generate_all_column_expressions(&star)?;
+    let mut star_list = scope
+        .bind_context
+        .generate_all_column_expressions(&star, scope.binder.binding_mode())?;
     let mut regex = None;
     if let Some(columns_expr) = &star.expr {
         let mut child = (**columns_expr).clone();

@@ -10,6 +10,7 @@ use rustdb_common::string_util::{candidates_message, similarity_rating, top_n_ja
 use rustdb_common::{CaseInsensitiveMap, CaseInsensitiveSet, Error, Result};
 use rustdb_types::{LogicalType, LogicalTypeId};
 
+use super::BindingMode;
 use super::binding::{Binding, BindingAlias, BindingKind};
 use crate::expression::Expression;
 
@@ -442,8 +443,13 @@ impl BindContext {
     }
 
     /// Expands `*` / `t.*` / `struct.*` into column references (DuckDB's
-    /// `GenerateAllColumnExpressions`).
-    pub fn generate_all_column_expressions(&self, star: &StarExpression) -> Result<Vec<ParsedExpression>> {
+    /// `GenerateAllColumnExpressions`); binding to extract table names does not verify the
+    /// EXCLUDE and REPLACE lists.
+    pub fn generate_all_column_expressions(
+        &self,
+        star: &StarExpression,
+        mode: BindingMode,
+    ) -> Result<Vec<ParsedExpression>> {
         if self.bindings.is_empty() {
             return Err(Error::binder("* expression without FROM clause!"));
         }
@@ -569,6 +575,9 @@ impl BindContext {
                     }
                 }
             }
+        }
+        if mode.extracts_names() {
+            return Ok(list);
         }
         let location = if star.relation_name.is_empty() {
             "FROM clause".to_owned()
