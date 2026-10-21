@@ -1,7 +1,7 @@
 # Handoff
 
-State of the DuckDB 1.5.6 → Rust port ("rustdb") at main `37d66fe`, written 2026-10-21 to
-continue the work in a new session.
+State of the DuckDB 1.5.6 → Rust port ("rustdb") on the main line
+(`amirbaron/rust-duckdb-port`), updated 2026-10-22, to continue the work in a new session.
 
 ## Goal
 
@@ -31,55 +31,60 @@ performance targets of `docs/porting-plan.md` (≥ 1.3× C++ speed, ≤ 0.6× me
 
 ## Where things stand
 
-- **Corpus** (`scripts/conformance.sh`, last full run on main): 4726 of 4870 files pass,
-  42 fail, 101 skip, 1 timeout (`variant/tpch_sf1`, which C++ cannot finish in 300 s
-  either). C++ DuckDB passes 4794; 4725 pass on both. Of the 69 files C++ passes and
-  rustdb does not:
+- **Corpus** (`scripts/conformance.sh`, last full run on main): 4741 of 4870 files pass,
+  28 fail, 100 skip, 1 timeout (`variant/tpch_sf1`, which takes C++ 400 s). C++ DuckDB
+  passes 4794. Of the files C++ passes and rustdb does not:
   - 25 skip with `require tpcds` (the `tpcds` extension is not ported; its `dsdgen` is
-    TPC-licensed code, see below), 1 with `require core_functions` (likely a naming fix);
-  - about 14 are accepted divergences (`conformance/divergences.md`);
-  - about 30 are real gaps, each in `docs/work-queue.md`.
-  The ratchet `conformance/passing.txt` lists 4802 files and must never shrink:
+    TPC-licensed code, see below);
+  - 15 are accepted divergences (`conformance/divergences.md`: extension binaries, and
+    out-of-memory errors rustdb avoids);
+  - the rest are real gaps, each in `docs/work-queue.md`: struct projection pushdown (3)
+    and the VARIANT TPC-H timeout, out-of-core IEJoin/AsOf/window (3) — agents are on
+    these —, `buffer_managed_query_result`, `json_serialize_plan`,
+    `physical_operator_logging`, external file cache (2), encryption
+    (`dict_fsst_expression_filter`), ICU `as`/`kok`/`mr`.
+  The ratchet `conformance/passing.txt` lists 4816 files and must never shrink:
   `target/release/slt ratchet update target/slt/rust.jsonl` after a run.
-- **Flaky:** `test/sql/storage/temp_directory/max_swap_space_error.test` (4 in 10 runs;
-  work-queue item 14). Rerun it alone before treating it as a regression.
+- **Flaky:** `test/sql/storage/temp_directory/max_swap_space_error.test` fails under load
+  (work-queue item 14); `external_file_cache_low_mem.test_slow` failed once under load.
+  Rerun alone before treating either as a regression.
 - **C API:** 546 of 547 functions; all 30 `test/api/capi` files pass
   (`scripts/capi-tests/run.sh`, `--lib cpp` runs them against the C++ library). ADBC is
   missing.
-- **CLI shell:** `crates/shell` (`rustdb`) is DuckDB's shell one to one, linenoise included:
-  392 of the 392 `tools/shell/tests` that pass on the C++ CLI pass
-  (`scripts/shell-tests.sh --binary rust|cpp`), and 717 of the 726 cases of
+- **CLI shell (the owner's top priority, done):** `crates/shell` (`rustdb`) is DuckDB's
+  shell one to one, linenoise included: all 392 `tools/shell/tests` that pass on the C++
+  CLI pass (`scripts/shell-tests.sh --binary rust|cpp`), and 717 of the 726 cases of
   `scripts/shell-diff.py` (modes, types, dot commands, options, errors, pty sessions)
-  match byte for byte, the other 9 differ for reasons work-queue item 3 records, with the
-  engine's other leftovers.
-- **Performance** (`docs/perf-backlog.md`, round 4; speed = C++ time ÷ rustdb time, higher
+  match byte for byte; the 9 others are engine differences (work-queue item 3).
+  `duckdb_functions()` matches DuckDB's except TPC-DS, `json_serialize_plan` and
+  `duckdb_external_file_cache`.
+- **Compression:** `crates/zstd` ports zstd 1.5.6's encoder and decoder (zstd's frames at
+  levels -5..3; ruzstd is gone); roaring, hugeint bitpacking and partial blocks match
+  DuckDB's layouts (work-queue item 5 lists what is left).
+- **Performance** (`docs/perf-backlog.md`, round 5; speed = C++ time ÷ rustdb time, higher
   is better; memory = rustdb ÷ C++, lower is better):
 
-  | suite | speed 14 / 1 threads | memory |
+  | suite | speed 14 / 1 threads | memory 14 / 1 threads |
   |---|---|---|
-  | TPC-H SF10 | 0.86× / 0.93× | 0.28× |
-  | ClickBench | 0.85× / 0.85× | 0.35× |
-  | h2o group-by | 1.00× / 0.98× | 0.73× |
-  | h2o joins | 1.12× / 1.20× | 0.79× |
+  | TPC-H SF10 | 0.84× / 0.92× | 0.28× / 0.20× |
+  | ClickBench | 0.88× / 0.90× | 0.35× / 0.28× |
+  | h2o group-by | 1.01× / 1.07× | 0.73× / 0.36× |
+  | h2o joins | 1.10× / 1.22× | 0.78× / 0.63× |
 
-## Unmerged work (resume or salvage first)
+  Caching table blocks like DuckDB was measured and dropped (memory rises to DuckDB's).
 
-Both agents stopped at a usage limit; their work is in worktrees under
-`/Users/amirbaron/src/duckdb-rust/.claude/worktrees/`:
+## Agents at work (2026-10-22)
 
-- `agent-a567619c4a383073a` (branch `worktree-agent-a567619c4a383073a`, performance
-  round 5, base `4f57ddc`): six commits — UnnestRewriter pattern 2, PhysicalPartitionedAggregate,
-  checkpoint data blocks from the free list, **unpinned persistent blocks kept in the
-  eviction queue** (the block-caching change), buffer-managed delim join input, finalize
-  table sizing — plus 26 uncommitted files (it was editing Top-N and `DynamicFilterData`).
-  Not benchmarked or corpus-tested yet.
-- `agent-a88c4fa503c8056f3` (branch `worktree-agent-a88c4fa503c8056f3`, CLI shell port,
-  base `96d68d7`): no commits, 17 uncommitted files (a duckbox renderer and the start of the
-  shell's execution module).
+Worktrees under `/Users/amirbaron/src/duckdb-rust/.claude/worktrees/`, briefs in
+`.context/briefs/`:
 
-To continue one in a new session, start an agent in that worktree with a brief that says
-what it was doing, or review and commit the work there yourself; then build, sign, run the
-affected corpus directories, merge into main, and run the full corpus.
+- struct and VARIANT extract pushdown (`struct-variant-pushdown.md`, base `2c359ab`);
+- out-of-core IEJoin, AsOf join and window (`outofcore-range-window.md`, base `6fc79ad`).
+
+Queued: `buffer-memory.md` (buffer-managed results, streaming backpressure, batch insert
+memory, eviction parity, the aggregate's source reservations). If a session ends while
+an agent runs, its worktree holds its commits: review, finish or salvage, merge, run the
+full corpus.
 
 ## How to work
 
@@ -93,20 +98,20 @@ affected corpus directories, merge into main, and run the full corpus.
 - Merging an agent branch: conflicts in `conformance/dashboard.md` take main's side (it is
   regenerated); check `conformance/passing.txt` stays sorted without duplicates; run
   `cargo check --workspace --all-targets`, the affected corpus directories, then a full run.
-- Unit tests: `cargo test --workspace --release` (all green at `37d66fe`).
+- Unit tests: `cargo test --workspace --release --no-fail-fast` (668+ pass; the parser's
+  deep-expression test and a racy scheduler test were fixed on 2026-10-21).
 
 ## Next steps, in order
 
-1. Salvage and finish the shell port — the owner's top priority: DuckDB's shell one to
-   one — and performance round 5 (above); merge each.
-2. Close the real gaps in `docs/work-queue.md`, at most two agents at a time:
-   compression parity (zstd encoder, roaring/bitpacking layouts), the in-memory result
-   collection and buffer eviction under tight limits, plan serialization, operator
-   logging, external file cache, `ALTER DATABASE` rename, sequence ownership, ICU
-   collation for as/kok/mr, VARIANT extract pushdown.
+1. Merge the running agents' branches (pushdown, out-of-core), then run the queued
+   buffer-memory brief.
+2. Close the remaining gaps in `docs/work-queue.md`, at most two agents at a time:
+   operator logging and the external file cache (both touch the Parquet reader — after
+   the pushdown merge), plan serialization (`json_serialize_plan`), encryption, ICU
+   collation for as/kok/mr and its sort key bytes.
 3. TPC-DS (25 tests): port the `tpcds` extension. Its `dsdgen` (like TPC-H's `dbgen`,
    already in `crates/tpch`) carries TPC's license, not MIT — the owner should review
    the TPC terms before rustdb is published; keeping both generators as optional
    extensions keeps the core MIT.
-4. Performance rounds until the targets hold; then differential fuzzing against C++
-   (M9 in `docs/porting-plan.md`).
+4. Performance rounds until the targets hold (≥ 1.3× C++ speed, ≤ 0.6× memory); then
+   differential fuzzing against C++ (M9 in `docs/porting-plan.md`).
