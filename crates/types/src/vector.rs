@@ -94,6 +94,32 @@ pub struct StringHeap {
 impl StringHeap {
     const MIN_CHUNK: usize = 4096;
 
+    /// A heap holding `bytes` (filled up), whose strings are taken with
+    /// [`StringHeap::string_at`]: a writer can build many strings in one buffer.
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        let used = bytes.len();
+        Self {
+            chunks: vec![bytes.into_boxed_slice()],
+            used,
+            keep_alive: None,
+        }
+    }
+
+    /// The string of `len` bytes at `offset` of the heap's last chunk (built with
+    /// [`StringHeap::from_bytes`]).
+    pub fn string_at(&self, offset: usize, len: usize) -> StringT {
+        let Some(chunk) = self.chunks.last() else {
+            return StringT::inline(&[]);
+        };
+        let bytes = &chunk[offset..offset + len];
+        if len <= StringT::INLINE_LENGTH {
+            return StringT::inline(bytes);
+        }
+        // SAFETY: `bytes` lives in a boxed chunk owned by this heap; it never moves and is
+        // only freed when the heap is dropped. Vectors keep the heap alive while referenced.
+        unsafe { StringT::from_raw(bytes) }
+    }
+
     /// Copies `bytes` into the heap and returns a `StringT` referencing them.
     pub fn add(&mut self, bytes: &[u8]) -> StringT {
         if bytes.len() <= StringT::INLINE_LENGTH {

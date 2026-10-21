@@ -9,7 +9,7 @@
 use rustdb_common::{Error, Result};
 
 use super::{BlobReader, GeometryType, VertexType, legacy, specialized_type, vectorized_type};
-use crate::{GeometryStorageType, ListEntry, StringT, Vector};
+use crate::{GeometryStorageType, ListEntry, StringHeap, StringT, Vector};
 
 /// The nesting of a shredded geometry type: whether the elements of each LIST level start
 /// with their own WKB header (the parts of multi-geometries), and the type id of those
@@ -207,6 +207,21 @@ impl<'a> VectorizedView<'a> {
         Ok(Self { levels, coords })
     }
 
+    /// The WKB bytes of LIST level `level` entry `entry` (its count and elements).
+    fn level_size(&self, level: usize, entry: ListEntry, headers: &[bool], vertex_size: usize) -> usize {
+        let header = if headers[level] { 1 + 4 } else { 0 };
+        let elements = entry.length as usize;
+        let mut size = 4 + elements * header;
+        if level + 1 == self.levels.len() {
+            size += elements * vertex_size;
+        } else {
+            for index in entry.range() {
+                size += self.level_size(level + 1, self.levels[level + 1][index], headers, vertex_size);
+            }
+        }
+        size
+    }
+
     fn write_vertex(&self, out: &mut Vec<u8>, index: usize) {
         for dim in &self.coords {
             out.extend_from_slice(&dim[index].to_le_bytes());
@@ -254,24 +269,49 @@ fn from_vectorized_typed(
     let meta = geometry as u32 + vertex.wkb_offset();
     let part_meta = part_type + vertex.wkb_offset();
     let sel = source.sel();
-    let mut out = Vec::new();
+    // The WKB of all rows goes into one heap of the exact size.
+    let vertex_size = vertex.width() * 8;
+    let mut total = 0;
+    for row in 0..count {
+        if !source.is_null(row) {
+            total += 1 + 4;
+            total += if headers.is_empty() {
+                vertex_size
+            } else {
+                view.level_size(0, view.levels[0][sel.slot(row)], headers, vertex_size)
+            };
+        }
+    }
+    let mut buffer = Vec::with_capacity(total);
+    let mut rows = Vec::with_capacity(count);
+    let mut nulls = Vec::new();
     for row in 0..count {
         let target_row = result_offset + row;
         if source.is_null(row) {
-            target.set_null(target_row);
+            nulls.push(target_row);
             continue;
         }
         let slot = sel.slot(row);
-        out.clear();
-        out.push(1);
-        out.extend_from_slice(&meta.to_le_bytes());
+        let start = buffer.len();
+        buffer.push(1);
+        buffer.extend_from_slice(&meta.to_le_bytes());
         if headers.is_empty() {
-            view.write_vertex(&mut out, slot);
+            view.write_vertex(&mut buffer, slot);
         } else {
-            view.write_level(&mut out, 0, view.levels[0][slot], headers, part_meta);
+            view.write_level(&mut buffer, 0, view.levels[0][slot], headers, part_meta);
         }
-        let value = target.add_string(&out);
-        target.values_mut::<StringT>()[target_row] = value;
+        rows.push((target_row, start, buffer.len() - start));
+    }
+    let heap = StringHeap::from_bytes(buffer);
+    {
+        let values = target.values_mut::<StringT>();
+        for (row, start, len) in rows {
+            values[row] = heap.string_at(start, len);
+        }
+    }
+    target.add_heap(heap);
+    for row in nulls {
+        target.set_null(row);
     }
     Ok(())
 }

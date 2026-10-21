@@ -33,17 +33,16 @@ pub fn st_geomfromwkb_functions() -> ScalarFunctionSet {
     ))
 }
 
-/// `st_aswkb(geometry)`: the stored WKB.
+/// `st_aswkb(geometry)`: the stored WKB, shared with the input (`ToWKBFunction` adds a
+/// heap reference instead of copying).
 pub fn st_aswkb_functions() -> ScalarFunctionSet {
     single(ScalarFunction::new(
         "st_aswkb",
         vec![LogicalType::GEOMETRY],
         LogicalType::BLOB,
         |args, _, result| {
-            unary::<Str, StrOut>(args, result, |wkb, out| {
-                out.extend_from_slice(wkb);
-                Ok(true)
-            })
+            *result = args.column(0).reinterpret(LogicalType::BLOB)?;
+            Ok(())
         },
     ))
 }
