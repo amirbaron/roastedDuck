@@ -24,5 +24,6 @@ Rust engine cannot load them. Tests that `LOAD` the extension files of the C++ b
 (`test/extension/load_extension.test`, `loadable_parser_override.test`,
 `test_alias_point.test`, `test_custom_type_modifier*.test`, `test_tags.test`,
 `load_test_alias.test`, `reset_global_extension_option.test`,
-`consistent_semicolon_extension_parse.test`, `install_extension.test_slow`) fail with
+`consistent_semicolon_extension_parse.test`, `install_extension.test_slow`,
+`concurrent_load_extension.test`) fail with
 "Not implemented: loading the extension file".
