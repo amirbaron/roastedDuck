@@ -3013,8 +3013,10 @@ impl Connection {
                         .and_then(|value| value.as_bool())
                             == Some(true)
                         {
+                            let transaction = self.transactions.current();
                             for database in self.database.instance().databases.all() {
                                 if database.validity.invalidated().is_none() {
+                                    transaction.access_database(&database.name);
                                     self.use_database(&database);
                                 }
                             }
