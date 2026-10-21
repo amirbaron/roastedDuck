@@ -182,7 +182,7 @@ pub(crate) fn checkpoint(
     }
     // A committed transaction with updates or catalog changes that older transactions
     // still need holds the checkpoint lock (`recently_committed_transactions`).
-    if !force && transactions.retains_changes(current.transaction_id) {
+    if !force && transactions.retains_changes(current.transaction_id, &database.name) {
         return Err(Error::new(
             ErrorKind::Transaction,
             "Cannot CHECKPOINT: there are other write transactions active. Try using FORCE CHECKPOINT to wait \

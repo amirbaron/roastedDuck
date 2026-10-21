@@ -963,7 +963,7 @@ impl DatabaseInstance {
             // transaction made changes they must not see; the checkpoint lock must be free,
             // also of committed changes older transactions still need.
             if blocks_concurrent
-                || self.transactions.retains_changes(u64::MAX)
+                || self.transactions.retains_changes(u64::MAX, &database.name)
                 || wal.checkpoint_lock().try_exclusive().is_none()
             {
                 return Ok(());

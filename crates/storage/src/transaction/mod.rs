@@ -324,6 +324,9 @@ struct CommittedUndo {
     /// `recently_committed_transactions` until no running transaction needs the older
     /// versions, which blocks checkpoints.
     blocks_checkpoint: bool,
+    /// The database the transaction wrote to; every attached database has its own
+    /// recently committed transactions in DuckDB. `None` blocks every checkpoint.
+    database: Option<String>,
 }
 
 #[derive(Debug)]
@@ -449,10 +452,11 @@ impl TransactionManager {
         self.lock().active.len()
     }
 
-    /// Whether a committed transaction that updated rows or changed the catalog is kept
-    /// for a running transaction other than `except` (by id), which in DuckDB holds the
-    /// checkpoint lock shared until it is cleaned up (`recently_committed_transactions`).
-    pub fn retains_changes(&self, except: u64) -> bool {
+    /// Whether a committed transaction that updated rows or changed the catalog of
+    /// `database` is kept for a running transaction other than `except` (by id), which in
+    /// DuckDB holds the checkpoint lock shared until it is cleaned up
+    /// (`recently_committed_transactions`).
+    pub fn retains_changes(&self, except: u64, database: &str) -> bool {
         let state = self.lock();
         let lowest_start = state
             .active
@@ -464,7 +468,14 @@ impl TransactionManager {
         state
             .recently_committed
             .iter()
-            .any(|committed| committed.blocks_checkpoint && committed.commit_id >= lowest_start)
+            .any(|committed| {
+                committed.blocks_checkpoint
+                    && committed.commit_id >= lowest_start
+                    && committed
+                        .database
+                        .as_deref()
+                        .is_none_or(|written| written.eq_ignore_ascii_case(database))
+            })
     }
 
     /// Commits `transaction` (`CommitTransaction`). If flushing its local storage or
@@ -487,6 +498,7 @@ impl TransactionManager {
                         commit_id,
                         undo,
                         blocks_checkpoint: properties.has_updates || properties.has_catalog_changes,
+                        database: transaction.modified_database(),
                     });
                 }
                 Ok(())
