@@ -74,8 +74,7 @@ fn valid_prefix(bytes: &[u8], limit: usize) -> &str {
     let window = &bytes[..limit.min(bytes.len())];
     match std::str::from_utf8(window) {
         Ok(text) => text,
-        // SAFETY: `valid_up_to` bytes were validated.
-        Err(error) => unsafe { std::str::from_utf8_unchecked(&window[..error.valid_up_to()]) },
+        Err(error) => std::str::from_utf8(&window[..error.valid_up_to()]).unwrap_or_default(),
     }
 }
 

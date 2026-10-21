@@ -408,11 +408,10 @@ pub trait ShellRenderer {
     fn render_query_result(
         &mut self,
         out: &mut dyn PrintStream,
-        state: &mut ShellState,
+        _state: &mut ShellState,
         result: &mut RenderingQueryResult,
         conn: &mut Connection,
     ) -> Result<SuccessState> {
-        let _ = state;
         render_rows(self, out, result, conn)
     }
 
@@ -468,8 +467,7 @@ pub trait ShellRenderer {
         false
     }
 
-    fn should_convert_value(&self, value: &str) -> bool {
-        let _ = value;
+    fn should_convert_value(&self, _value: &str) -> bool {
         false
     }
 
