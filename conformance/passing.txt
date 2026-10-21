@@ -52,6 +52,7 @@ test/fuzzer/duckfuzz/compressed_materialization_json.test
 test/fuzzer/duckfuzz/correlated_subqueries.test
 test/fuzzer/duckfuzz/corrupted_parquet.test
 test/fuzzer/duckfuzz/create_sort_key_strings.test
+test/fuzzer/duckfuzz/duckdb_fuzzer_4430.test
 test/fuzzer/duckfuzz/empty_result_pullup_delim_joins.test
 test/fuzzer/duckfuzz/enum_const_cast.test
 test/fuzzer/duckfuzz/filter_combiner_assert.test

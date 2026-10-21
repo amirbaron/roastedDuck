@@ -1445,11 +1445,7 @@ impl Connection {
     fn detach(&mut self, info: &rustdb_ast::DetachInfo) -> Result<()> {
         // `PhysicalDetach`: not while this transaction has work on the database.
         if !self.transactions.is_auto_commit()
-            && self
-                .transactions
-                .current()
-                .modified_database()
-                .is_some_and(|name| name.eq_ignore_ascii_case(&info.name))
+            && self.transactions.current().has_accessed_database(&info.name)
         {
             return Err(Error::new(
                 ErrorKind::Transaction,

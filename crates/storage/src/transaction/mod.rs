@@ -76,6 +76,9 @@ pub struct Transaction {
     /// The attached database the transaction writes to, and its WAL
     /// (`MetaTransaction::modified_database`).
     modified_database: Mutex<Option<(String, Option<Arc<WriteAheadLog>>)>>,
+    /// The attached databases the transaction looked into (DuckDB's `MetaTransaction`
+    /// has a transaction of each), by lower-cased name.
+    accessed_databases: Mutex<Vec<String>>,
     /// The shared hold of the written database's checkpoint lock, until the transaction
     /// ends (`DuckTransaction::write_lock`).
     checkpoint_guard: Mutex<Option<crate::checkpoint_lock::SharedCheckpointGuard>>,
@@ -92,6 +95,7 @@ impl Transaction {
             undo: Mutex::default(),
             local_storage: Arc::default(),
             modified_database: Mutex::new(None),
+            accessed_databases: Mutex::default(),
             checkpoint_guard: Mutex::new(None),
             lowest_active: None,
         }
@@ -159,6 +163,31 @@ impl Transaction {
             }
         }
         Ok(())
+    }
+
+    /// Records that the transaction looked into database `name`
+    /// (`MetaTransaction::GetTransaction`).
+    pub fn access_database(&self, name: &str) {
+        let mut accessed = self
+            .accessed_databases
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if !accessed.iter().any(|accessed| accessed.eq_ignore_ascii_case(name)) {
+            accessed.push(name.to_lowercase());
+        }
+    }
+
+    /// Whether the transaction looked into or wrote to database `name`
+    /// (`MetaTransaction::TryGetTransaction`).
+    pub fn has_accessed_database(&self, name: &str) -> bool {
+        self.accessed_databases
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .any(|accessed| accessed.eq_ignore_ascii_case(name))
+            || self
+                .modified_database()
+                .is_some_and(|modified| modified.eq_ignore_ascii_case(name))
     }
 
     /// The database the transaction writes to (`MetaTransaction::ModifiedDatabase`).

@@ -420,6 +420,7 @@ impl ClientContext {
 
     /// Records `lookup` for the dependencies of an entry being created.
     fn record_lookup(&self, lookup: EntryLookup) -> EntryLookup {
+        self.transaction.access_database(&lookup.catalog);
         if let Some(recorded) = self
             .dependency_recorder
             .lock()
