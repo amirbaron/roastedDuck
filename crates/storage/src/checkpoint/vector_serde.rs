@@ -4,9 +4,12 @@
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_serde::{Deserializer, Serializer};
 use rustdb_types::{
-    DataChunk, ListEntry, LogicalType, LogicalTypeId, PhysicalType, SelectionVector, StringT, ValidityMask,
-    Vector,
+    DataChunk, GeometryStorageType, ListEntry, LogicalType, LogicalTypeId, PhysicalType, SelectionVector,
+    StringT, ValidityMask, Vector, geometry,
 };
+
+/// The serialization version that added GEOMETRY to the core (`Geometry::VERSION_ADDED`).
+const GEOMETRY_VERSION_ADDED: u64 = 7;
 
 /// Bytes of a validity mask of `count` rows (`ValidityMask::ValidityMaskSize`).
 fn mask_size(count: usize) -> usize {
@@ -24,8 +27,10 @@ fn is_constant_size(ty: &LogicalType) -> bool {
 /// `Vector::Serialize` of the first `count` rows (always flat).
 pub fn serialize_vector(serializer: &mut dyn Serializer, vector: &Vector, count: usize) -> Result<()> {
     let ty = vector.logical_type().clone();
-    if ty.id() == LogicalTypeId::Geometry {
-        return Err(Error::not_implemented("serializing GEOMETRY vectors"));
+    let is_geometry = ty.id() == LogicalTypeId::Geometry;
+    let wkb_geometry = is_geometry && serializer.should_serialize(GEOMETRY_VERSION_ADDED);
+    if wkb_geometry {
+        serializer.write_property(99, "geometry_format", &GeometryStorageType::Wkb)?;
     }
     let flat = vector.flattened(count);
     let has_validity_mask = count > 0 && (0..count).any(|row| flat.is_null(row));
@@ -49,6 +54,17 @@ pub fn serialize_vector(serializer: &mut dyn Serializer, vector: &Vector, count:
         serializer.write_data(bytes.get(..count * width).unwrap_or(bytes));
         serializer.on_property_end();
         return Ok(());
+    }
+    if is_geometry && !wkb_geometry {
+        // Older serialization versions get the spatial extension's legacy format.
+        return serializer.write_list_property(102, "data", count, |s, row| {
+            if flat.is_null(row) {
+                s.write_string_bytes(&[]);
+            } else {
+                s.write_string_bytes(&geometry::to_spatial(flat.string_bytes(row))?);
+            }
+            Ok(())
+        });
     }
     match ty.physical_type() {
         PhysicalType::Varchar => serializer.write_list_property(102, "data", count, |s, row| {
@@ -138,9 +154,16 @@ pub fn deserialize_vector(
         }
         _ => {}
     }
-    if ty.id() == LogicalTypeId::Geometry {
-        return Err(Error::not_implemented("deserializing GEOMETRY vectors"));
-    }
+    // Vectors without a format predate GEOMETRY in the core: the spatial extension's format.
+    let geometry_format = if ty.id() == LogicalTypeId::Geometry {
+        Some(deserializer.read_property_with_explicit_default(
+            99,
+            "geometry_format",
+            GeometryStorageType::Spatial,
+        )?)
+    } else {
+        None
+    };
     let capacity = count.max(STANDARD_VECTOR_SIZE);
     let mut vector = Vector::flat(ty.clone(), capacity);
     let has_validity_mask: bool = deserializer.read_property(100, "has_validity_mask")?;
@@ -172,8 +195,24 @@ pub fn deserialize_vector(
                     strings.push(d.read_string_bytes()?);
                     Ok(())
                 })?;
+                let legacy = match geometry_format {
+                    None | Some(GeometryStorageType::Wkb) => false,
+                    Some(GeometryStorageType::Spatial) => true,
+                    Some(_) => {
+                        return Err(Error::internal(
+                            "Unsupported geometry format in vector serialization",
+                        ));
+                    }
+                };
                 for (row, bytes) in strings.iter().enumerate() {
-                    let value: StringT = vector.add_string(bytes);
+                    let value: StringT = if legacy {
+                        if validity.as_ref().is_some_and(|mask| !mask.is_valid(row)) {
+                            continue;
+                        }
+                        vector.add_string(&geometry::from_spatial(bytes)?)
+                    } else {
+                        vector.add_string(bytes)
+                    };
                     vector.values_mut::<StringT>()[row] = value;
                 }
             }
