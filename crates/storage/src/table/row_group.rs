@@ -743,8 +743,13 @@ impl RowGroup {
                 sel.extend_from_slice(&valid_sel);
             }
             state.valid_sel = valid_sel;
+            let filter_start = filters.begin_filter();
             if has_filters {
-                for entry in filters.filters().iter().filter(|entry| !entry.always_true) {
+                for &filter_index in filters.permutation() {
+                    let entry = &filters.filters()[filter_index];
+                    if entry.always_true {
+                        continue;
+                    }
                     let index = entry.scan_column_index;
                     if sel.is_empty() {
                         if !entry.table_column_index.is_row_id() {
@@ -808,6 +813,7 @@ impl RowGroup {
                         max_count,
                     )?;
                 }
+                filters.end_filter(filter_start);
                 result.set_len(max_count);
                 state.filter_sel = sel;
                 state.vector_index += 1;
@@ -834,6 +840,7 @@ impl RowGroup {
                     &selection,
                 )?;
             }
+            filters.end_filter(filter_start);
             result.set_len(sel.len());
             state.filter_sel = sel;
             state.vector_index += 1;
