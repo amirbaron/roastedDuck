@@ -1953,6 +1953,7 @@ test/sql/delete/delete_compression_after_restart.test
 test/sql/delete/delete_compression_blocked_by_old_snapshot.test
 test/sql/delete/full_vector_delete_conflict.test
 test/sql/delete/full_vector_delete_rollback.test
+test/sql/delete/in_memory_bulk_delete.test_slow
 test/sql/delete/in_memory_truncate.test_slow
 test/sql/delete/large_deletes_transactions.test
 test/sql/delete/list_delete.test
@@ -3357,6 +3358,7 @@ test/sql/storage/alter/alter_add_col_defaultexpr_sequence.test
 test/sql/storage/alter/alter_based_on_unfinished_insert_fails.test
 test/sql/storage/alter/alter_column_constraint.test
 test/sql/storage/append_strings_to_persistent.test
+test/sql/storage/attach/attach_autocheckpoint_in_memory.test
 test/sql/storage/attach/attach_autocheckpoint_no_wal_writes.test
 test/sql/storage/attach/attach_autocheckpoint_propagation.test
 test/sql/storage/attach/attach_invalidation.test
@@ -3654,6 +3656,7 @@ test/sql/storage/list_dictionary.test_slow
 test/sql/storage/many_checkpoints.test
 test/sql/storage/many_checkpoints_leak.test_slow
 test/sql/storage/many_self_append.test
+test/sql/storage/memory/in_memory_compress.test
 test/sql/storage/memory/in_memory_disabled_zstd.test
 test/sql/storage/metadata/full_table_metadata_reuse.test
 test/sql/storage/metadata/full_table_metadata_reuse_nested.test_slow
