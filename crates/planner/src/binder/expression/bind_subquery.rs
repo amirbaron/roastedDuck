@@ -160,7 +160,7 @@ pub fn bind_subquery_expression<B: ExpressionBinder + ?Sized>(
             let context = binder.binder_ref().context.clone();
             for (child, subquery_type) in child_expressions.into_iter().zip(&types) {
                 let child_type = expression_return_type(&child);
-                let compare_type = LogicalType::try_max_logical_type(&child_type, subquery_type).ok_or_else(|| {
+                let compare_type = context.try_max_logical_type(&child_type, subquery_type).ok_or_else(|| {
                     Error::binder(format!(
                         "Cannot compare values of type {child_type} and {subquery_type} in IN/ANY/ALL clause - an \
                          explicit cast is required"

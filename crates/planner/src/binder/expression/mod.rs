@@ -349,7 +349,8 @@ fn bind_comparison<B: ExpressionBinder + ?Sized>(
     let right = take_bound(&mut comparison.right)?;
     let left_type = crate::expression_binder::expression_return_type(&left);
     let right_type = crate::expression_binder::expression_return_type(&right);
-    let Some(input_type) = try_bind_comparison(&left_type, &right_type, comparison_type)? else {
+    let context = binder.binder_ref().context.clone();
+    let Some(input_type) = try_bind_comparison(&context, &left_type, &right_type, comparison_type)? else {
         return Ok(BindResult::Unbound(
             Error::binder(format!(
                 "Cannot compare values of type {left_type} and type {right_type} - an explicit cast is required"
@@ -444,9 +445,10 @@ fn bind_case<B: ExpressionBinder + ?Sized>(
         ));
     }
     let mut return_type = crate::expression_binder::expression_return_type(&else_expr);
+    let context = binder.binder_ref().context.clone();
     for (_, then) in &checks {
         let then_type = crate::expression_binder::expression_return_type(then);
-        return_type = LogicalType::try_max_logical_type(&return_type, &then_type).ok_or_else(|| {
+        return_type = context.try_max_logical_type(&return_type, &then_type).ok_or_else(|| {
             Error::binder(format!(
                 "Cannot mix values of type {return_type} and {then_type} in CASE expression - an explicit cast is \
                  required"
@@ -501,11 +503,11 @@ fn bind_between<B: ExpressionBinder + ?Sized>(
         ))
         .with_position(location)
     };
-    let common = try_bind_comparison(&input_type, &lower_type, between_type)?
-        .ok_or_else(|| mismatch(&input_type, &lower_type))?;
-    let common = try_bind_comparison(&common, &upper_type, between_type)?
-        .ok_or_else(|| mismatch(&common, &upper_type))?;
     let context = binder.binder_ref().context.clone();
+    let common = try_bind_comparison(&context, &input_type, &lower_type, between_type)?
+        .ok_or_else(|| mismatch(&input_type, &lower_type))?;
+    let common = try_bind_comparison(&context, &common, &upper_type, between_type)?
+        .ok_or_else(|| mismatch(&common, &upper_type))?;
     let input = push_collation(
         &context,
         add_cast_to_type(&context, input, &common, false)?,
@@ -824,9 +826,9 @@ fn resolve_coalesce_type(
     for child in children.iter().skip(1) {
         let child_type = crate::expression_binder::expression_return_type(child);
         let next = if is_in {
-            try_bind_comparison(&max_type, &child_type, operator_type)?
+            try_bind_comparison(context, &max_type, &child_type, operator_type)?
         } else {
-            LogicalType::try_max_logical_type(&max_type, &child_type)
+            context.try_max_logical_type(&max_type, &child_type)
         };
         max_type = next.ok_or_else(|| {
             let message = if is_in {

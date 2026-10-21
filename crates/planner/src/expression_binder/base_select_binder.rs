@@ -1131,10 +1131,10 @@ impl SelectBinder<'_> {
             // The ORDER BY expression and the boundaries are compared at one type.
             let mut order_type = orders[0].return_type.clone();
             if start_expr.is_some() {
-                order_type = crate::function_binder::max_logical_type(&order_type, &start_type)?;
+                order_type = crate::function_binder::max_logical_type(&context, &order_type, &start_type)?;
             }
             if end_expr.is_some() {
-                order_type = crate::function_binder::max_logical_type(&order_type, &end_type)?;
+                order_type = crate::function_binder::max_logical_type(&context, &order_type, &end_type)?;
             }
             let order = std::mem::replace(&mut orders[0], Expression::constant(Value::default()));
             orders[0] = add_cast_to_type(&context, order, &order_type, false)?;
