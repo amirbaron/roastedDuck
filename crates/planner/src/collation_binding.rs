@@ -53,6 +53,12 @@ const COLLATIONS: &[Collation] = &[
     },
 ];
 
+/// The names of the builtin collations, which are entries of the system catalog's main
+/// schema in DuckDB.
+pub(crate) fn builtin_collation_names() -> impl Iterator<Item = &'static str> {
+    COLLATIONS.iter().map(|collation| collation.name)
+}
+
 /// The collation of a VARCHAR type (`StringType::GetCollation`), empty without one.
 fn type_collation(ty: &LogicalType) -> &str {
     match ty.info() {
@@ -119,8 +125,10 @@ fn push_varchar_collation(
         collation => collation,
     }
     .to_lowercase();
+    // `Catalog::GetEntry<CollateCatalogEntry>`: a missing collation fails with the
+    // catalog's missing-entry error.
     let entries = resolve_collations(&collation, |argument| {
-        let entry = context.get_entry("system", "main", CatalogType::Collation, argument, true)?;
+        let entry = context.get_entry("system", "main", CatalogType::Collation, argument, false)?;
         Ok(entry.and_then(|entry| match &entry.entry.kind {
             EntryKind::Collation(collation) => Some(collation.clone()),
             _ => None,

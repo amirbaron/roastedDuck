@@ -122,6 +122,11 @@ pub fn columns_to_sql(columns: &ColumnList, constraints: &[Constraint]) -> Strin
         out.push_str(&write_optionally_quoted(&column.name));
         out.push(' ');
         out.push_str(&logical_type_to_string(&column.logical_type));
+        if let Some(rustdb_types::TypeInfo::String(info)) = column.logical_type.info()
+            && !info.collation.is_empty()
+        {
+            let _ = write!(out, " COLLATE {}", info.collation);
+        }
         if column.category == TableColumnType::Generated {
             if let Some(expression) = &column.expression {
                 // The generated expression is wrapped in a cast to the column type.

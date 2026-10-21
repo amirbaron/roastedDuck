@@ -594,6 +594,11 @@ impl ClientContext {
                     consider(builtin);
                 }
             }
+            if ty == CatalogType::Collation && catalog_name == "system" {
+                for builtin in crate::collation_binding::builtin_collation_names() {
+                    consider(builtin);
+                }
+            }
             for entry in set.scan(&self.transaction) {
                 consider(entry.name());
             }
