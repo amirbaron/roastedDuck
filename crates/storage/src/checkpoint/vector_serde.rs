@@ -11,6 +11,9 @@ use rustdb_types::{
 /// The serialization version that added GEOMETRY to the core (`Geometry::VERSION_ADDED`).
 const GEOMETRY_VERSION_ADDED: u64 = 7;
 
+/// The string DuckDB writes for a NULL string (`NullValue<string_t>`, `str_nil`).
+const NULL_STRING: &[u8] = b"\x80";
+
 /// Bytes of a validity mask of `count` rows (`ValidityMask::ValidityMaskSize`).
 fn mask_size(count: usize) -> usize {
     count.div_ceil(64) * 8
@@ -59,7 +62,7 @@ pub fn serialize_vector(serializer: &mut dyn Serializer, vector: &Vector, count:
         // Older serialization versions get the spatial extension's legacy format.
         return serializer.write_list_property(102, "data", count, |s, row| {
             if flat.is_null(row) {
-                s.write_string_bytes(&[]);
+                s.write_string_bytes(NULL_STRING);
             } else {
                 s.write_string_bytes(&geometry::to_spatial(flat.string_bytes(row))?);
             }
@@ -69,7 +72,7 @@ pub fn serialize_vector(serializer: &mut dyn Serializer, vector: &Vector, count:
     match ty.physical_type() {
         PhysicalType::Varchar => serializer.write_list_property(102, "data", count, |s, row| {
             if flat.is_null(row) {
-                s.write_string_bytes(&[]);
+                s.write_string_bytes(NULL_STRING);
             } else {
                 s.write_string_bytes(flat.string_bytes(row));
             }
