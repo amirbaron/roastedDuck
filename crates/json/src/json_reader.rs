@@ -7,6 +7,7 @@
 
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::sync::Arc;
 
 use rustdb_common::{Error, ErrorKind, Result};
 use rustdb_csv::options::FileCompressionType;
@@ -35,9 +36,45 @@ impl std::fmt::Debug for JsonFileHandle {
     }
 }
 
+/// Whether `path` is a pipe (`LocalFileSystem::IsPipe`: a FIFO).
+pub(crate) fn is_pipe(path: &str) -> bool {
+    use std::os::unix::fs::FileTypeExt;
+    std::fs::metadata(path).is_ok_and(|metadata| metadata.file_type().is_fifo())
+}
+
+/// Reads the whole pipe at `path`, still compressed.
+pub(crate) fn read_pipe(path: &str) -> Result<Vec<u8>> {
+    rustdb_function::file_system::verify_can_access_file(path)?;
+    let mut file = File::open(path).map_err(|error| rustdb_csv::buffer::open_error(path, &error))?;
+    let mut contents = Vec::new();
+    file.read_to_end(&mut contents)
+        .map_err(|error| Error::new(ErrorKind::Io, error.to_string()))?;
+    Ok(contents)
+}
+
 impl JsonFileHandle {
-    /// Opens `path` (`FileSystem::OpenFile` with the compression of the options).
-    pub(crate) fn open(path: &str, compression: FileCompressionType, start: u64) -> Result<Self> {
+    /// Opens `path` (`FileSystem::OpenFile` with the compression of the options); a pipe
+    /// read at bind time is read from its `contents`.
+    pub(crate) fn open(
+        path: &str,
+        compression: FileCompressionType,
+        start: u64,
+        contents: Option<Arc<[u8]>>,
+    ) -> Result<Self> {
+        if let Some(contents) = contents {
+            let compression = compression.resolve(path);
+            let raw: Box<dyn Read + Send> = Box::new(std::io::Cursor::new(contents));
+            let reader: Box<dyn Read + Send> = match compression {
+                FileCompressionType::Gzip => Box::new(flate2::read::MultiGzDecoder::new(raw)),
+                FileCompressionType::Zstd => Box::new(
+                    ruzstd::decoding::StreamingDecoder::new(raw)
+                        .map_err(rustdb_csv::buffer::zstd_open_error)?,
+                ),
+                _ => raw,
+            };
+            // `GetFileSize` of a pipe.
+            return Ok(Self { reader, file_size: 0 });
+        }
         rustdb_function::file_system::verify_can_access_file(path)?;
         let mut file = File::open(path).map_err(|error| rustdb_csv::buffer::open_error(path, &error))?;
         let metadata = file
@@ -276,6 +313,8 @@ pub(crate) struct JsonReader {
     buffer_file_offset: u64,
     /// A partial reader skips to the first line that starts in its range.
     skip_to_line_start: bool,
+    /// The contents of the file if it is a pipe, read when binding.
+    pipe_contents: Option<Arc<[u8]>>,
 }
 
 impl std::fmt::Debug for JsonReader {
@@ -313,6 +352,7 @@ impl JsonReader {
             range,
             buffer_file_offset: 0,
             skip_to_line_start: range.is_some_and(|range| range.start > 0),
+            pipe_contents: options.pipe_contents.get(path),
         }
     }
 
@@ -328,7 +368,12 @@ impl JsonReader {
         }
         self.initialized = true;
         let start = self.range.map_or(0, |range| range.start.saturating_sub(1));
-        self.handle = Some(JsonFileHandle::open(&self.path, self.compression, start)?);
+        self.handle = Some(JsonFileHandle::open(
+            &self.path,
+            self.compression,
+            start,
+            self.pipe_contents.clone(),
+        )?);
         self.buffer_file_offset = start;
         if self.range.is_none()
             && (self.record_type == JsonRecordType::AutoDetect || self.format == JsonFormat::AutoDetect)
@@ -724,7 +769,7 @@ fn append_up_to(handle: &mut JsonFileHandle, data: &mut Vec<u8>, size: usize) ->
 /// The number of values (non-blank lines) of a newline-delimited file before `offset`,
 /// for line numbers of errors found by partial readers.
 fn count_lines_before(path: &str, offset: u64) -> Result<u64> {
-    let mut handle = JsonFileHandle::open(path, FileCompressionType::Uncompressed, 0)?;
+    let mut handle = JsonFileHandle::open(path, FileCompressionType::Uncompressed, 0, None)?;
     let mut remaining = offset;
     let mut buffer = vec![0u8; 1 << 16];
     let mut count = 0;

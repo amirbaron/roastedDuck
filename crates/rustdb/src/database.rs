@@ -1491,7 +1491,13 @@ impl Database {
             instance: Arc::new(instance),
         };
         let options = crate::storage::startup_options(config);
-        let main = database.attach("", &path, &options, rustdb_ast::OnCreateConflict::ErrorOnConflict)?;
+        // A data file opens as an in-memory database with views on it, as with `ATTACH`
+        // (`DatabaseManager::GetDatabaseType` resolving to `__open_file__`).
+        let main = if crate::attached::is_open_file(&path) {
+            database.attach_open_file("", &path, &options, rustdb_ast::OnCreateConflict::ErrorOnConflict)?
+        } else {
+            database.attach("", &path, &options, rustdb_ast::OnCreateConflict::ErrorOnConflict)?
+        };
         if let Some(main) = main {
             main.is_initial.store(true, std::sync::atomic::Ordering::Release);
             let _ = database.instance.default_database.set(main.name.clone());

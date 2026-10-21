@@ -1,6 +1,9 @@
 //! The options of the JSON reader (DuckDB's `json_reader_options.hpp` and the option
 //! parsing of `json_multi_file_info.cpp`).
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use rustdb_common::{Error, Result};
 use rustdb_csv::options::FileCompressionType;
 use rustdb_functions::strtime::StrpTimeFormat;
@@ -41,6 +44,19 @@ pub struct JsonReaderOptions {
     pub sql_type_list: Vec<LogicalType>,
     pub date_format: String,
     pub timestamp_format: String,
+    /// The contents of the files that are pipes, read once when binding so that sampling
+    /// and scanning see the same data (the `cached_buffers` of DuckDB's `JSONFileHandle`).
+    pub pipe_contents: PipeContents,
+}
+
+/// The contents of piped files, by path.
+#[derive(Clone, Debug, Default)]
+pub struct PipeContents(pub Arc<HashMap<String, Arc<[u8]>>>);
+
+impl PipeContents {
+    pub(crate) fn get(&self, path: &str) -> Option<Arc<[u8]>> {
+        self.0.get(path).cloned()
+    }
 }
 
 impl Default for JsonReaderOptions {
@@ -63,6 +79,7 @@ impl Default for JsonReaderOptions {
             sql_type_list: Vec::new(),
             date_format: String::new(),
             timestamp_format: String::new(),
+            pipe_contents: PipeContents::default(),
         }
     }
 }

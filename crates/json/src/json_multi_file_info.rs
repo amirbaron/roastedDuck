@@ -321,6 +321,16 @@ pub(crate) fn bind_json_files(
         }
     }
     let date_format_map = initialize_formats(&options)?;
+    // Pipes are read once, here: sampling and scanning read the same data.
+    let mut pipe_contents = HashMap::new();
+    for path in &files.files {
+        if crate::json_reader::is_pipe(path) && !pipe_contents.contains_key(path) {
+            pipe_contents.insert(path.clone(), Arc::from(crate::json_reader::read_pipe(path)?));
+        }
+    }
+    if !pipe_contents.is_empty() {
+        options.pipe_contents = crate::json_reader_options::PipeContents(Arc::new(pipe_contents));
+    }
     let mut estimated_cardinality_per_file = None;
     if options.auto_detect || options.record_type == JsonRecordType::AutoDetect {
         estimated_cardinality_per_file = auto_detect(
