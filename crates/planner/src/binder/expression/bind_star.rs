@@ -42,7 +42,7 @@ fn columns_string_value(expr: &ParsedExpression) -> String {
 pub fn find_star_expression(
     scope: &BindScope<'_>,
     expr: &mut ParsedExpression,
-    star: &mut Option<StarExpression>,
+    star: &mut Option<(StarExpression, Option<u64>)>,
     is_root: bool,
     in_columns: bool,
 ) -> Result<StarExpressionType> {
@@ -66,7 +66,7 @@ pub fn find_star_expression(
     if let ParsedExpressionKind::Star(current) = &expr.kind {
         if !current.columns {
             if is_root {
-                *star = Some((**current).clone());
+                *star = Some(((**current).clone(), expr.query_location));
                 return Ok(StarExpressionType::Star);
             }
             if !in_columns {
@@ -100,7 +100,7 @@ pub fn find_star_expression(
             ));
         }
         in_columns = true;
-        if let Some(existing) = star {
+        if let Some((existing, _)) = star {
             if !stars_equal(existing, current) {
                 return Err(Error::binder(
                     "Multiple different STAR/COLUMNS in the same expression are not supported",
@@ -109,7 +109,7 @@ pub fn find_star_expression(
             }
             return Ok(StarExpressionType::Star);
         }
-        *star = Some((**current).clone());
+        *star = Some(((**current).clone(), expr.query_location));
         has_star = StarExpressionType::Star;
     }
     let found_here = has_star == StarExpressionType::Star;
@@ -123,7 +123,7 @@ pub fn find_star_expression(
     // DuckDB keeps a pointer to the COLUMNS star, so a `*` replaced inside its expression
     // (e.g. `COLUMNS(lambda c: ...)`, i.e. `list_filter(*, ...)`) is seen by the caller.
     if found_here && let ParsedExpressionKind::Star(current) = &expr.kind {
-        *star = Some((**current).clone());
+        *star = Some(((**current).clone(), expr.query_location));
     }
     Ok(has_star)
 }
@@ -342,7 +342,7 @@ pub fn expand_star_expression(
     try_transform_star_like(&mut expr)?;
     let mut star = None;
     let star_type = find_star_expression(scope, &mut expr, &mut star, true, false)?;
-    let Some(star) = star.filter(|_| star_type != StarExpressionType::None) else {
+    let Some((star, star_location)) = star.filter(|_| star_type != StarExpressionType::None) else {
         new_select_list.push(expr);
         return Ok(());
     };
@@ -366,7 +366,6 @@ pub fn expand_star_expression(
             }
             scope.context.evaluator.evaluate_scalar(&result)?
         };
-        let star_location = None;
         match value.logical_type().id() {
             LogicalTypeId::Varchar => {
                 if value.is_null() {
@@ -400,7 +399,8 @@ pub fn expand_star_expression(
                     };
                     return Err(Error::binder(format!(
                         "No matching columns found that match regex \"{pattern}\"{suggestion}"
-                    )));
+                    ))
+                    .with_position(star_location));
                 }
                 star_list = new_list;
                 regex = Some(compiled);
@@ -412,14 +412,16 @@ pub fn expand_star_expression(
                 if value.is_null() || children.is_empty() {
                     return Err(Error::binder(format!(
                         "Star expression \"{star}\" resulted in an empty set of columns"
-                    )));
+                    ))
+                    .with_position(star_location));
                 }
                 let mut selected: Vec<(String, bool)> = Vec::new();
                 for child in children {
                     if child.is_null() {
                         return Err(Error::binder(
                             "Columns expression does not support NULL input parameters",
-                        ));
+                        )
+                        .with_position(star_location));
                     }
                     let name = child.to_varchar()?;
                     if !selected
@@ -447,7 +449,8 @@ pub fn expand_star_expression(
             _ => {
                 return Err(Error::binder(
                     "COLUMNS expects either a VARCHAR argument (regex) or a LIST of VARCHAR (list of columns)",
-                ));
+                )
+                .with_position(star_location));
             }
         }
     }
