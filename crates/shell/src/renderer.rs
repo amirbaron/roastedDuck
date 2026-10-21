@@ -1207,8 +1207,8 @@ struct ModeCsvRenderer {
 }
 
 impl ModeCsvRenderer {
-    /// `PrintEscapedCSV`: a value quoted as an identifier if it holds a control or quote
-    /// character, a byte above 127 or the separator.
+    /// `PrintEscapedCSV`: a value holding a control or quote character, a byte above 127
+    /// or the separator is written as an identifier.
     fn print_escaped_csv(&self, out: &mut dyn PrintStream, text: &str) {
         let separator = self.settings.col_sep.as_bytes();
         let bytes = text.as_bytes();
@@ -1217,7 +1217,8 @@ impl ModeCsvRenderer {
             c <= 31 || c == b'"' || c == b'\'' || c >= 127 || bytes[idx..].starts_with(separator)
         });
         if needs_quote {
-            out.print(&rustdb_types::identifier::write_quoted(text, '"'));
+            // `SQLIdentifier`: quoted only if it is not a plain identifier.
+            out.print(&sql_identifier(text));
         } else {
             out.print(text);
         }

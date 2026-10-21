@@ -301,8 +301,10 @@ impl TableMetadataLine {
                     for (component_idx, component) in column.iter().enumerate() {
                         print(&component.text, component.element_type);
                         // Padding between the components.
-                        let mut padding =
-                            " ".repeat(self.max_component_widths[component_idx] - component.render_width + 1);
+                        // (A table with more components than its line: DuckDB reads past
+                        // the line's widths; they count as empty here.)
+                        let max_width = self.max_component_widths.get(component_idx).copied().unwrap_or(0);
+                        let mut padding = " ".repeat(max_width.saturating_sub(component.render_width) + 1);
                         if extra_render_width > 0 {
                             let render_count = if is_last {
                                 extra_render_width
@@ -434,7 +436,7 @@ impl ShellState {
         for schemas in grouped_tables.values_mut() {
             for result in schemas.values_mut() {
                 // From the tallest table to the smallest.
-                result.sort_by_key(|table| std::cmp::Reverse(table.line_count()));
+                rustdb_common::libcxx_sort::sort(result, &mut |a, b| a.line_count() > b.line_count());
                 // Place tables next to each other, greedily.
                 let mut displayed_tables: HashSet<usize> = HashSet::new();
                 for table_idx in 0..result.len() {
@@ -468,20 +470,16 @@ impl ShellState {
                             if existing_line.render_height + render_height > metadata_display.render_height {
                                 continue;
                             }
-                            // The line stretches to fit the table. (DuckDB reads past the
-                            // end of the shorter list when only one of the tables has
-                            // constraints; missing components count as empty here.)
-                            let component_count = existing_line
+                            // The line stretches to fit the table, over the components of
+                            // the line. (DuckDB reads past the end of the table's widths
+                            // when only the line has constraints; they count as empty here.)
+                            let new_max_component_widths: Vec<usize> = existing_line
                                 .max_component_widths
-                                .len()
-                                .max(current_table.max_component_widths.len());
-                            let new_max_component_widths: Vec<usize> = (0..component_count)
-                                .map(|i| {
-                                    let existing =
-                                        existing_line.max_component_widths.get(i).copied().unwrap_or(0);
-                                    let current =
-                                        current_table.max_component_widths.get(i).copied().unwrap_or(0);
-                                    existing.max(current)
+                                .iter()
+                                .enumerate()
+                                .map(|(i, &existing)| {
+                                    existing
+                                        .max(current_table.max_component_widths.get(i).copied().unwrap_or(0))
                                 })
                                 .collect();
                             let new_column_render_width = 3 + new_max_component_widths
@@ -517,9 +515,9 @@ impl ShellState {
                             displayed_tables.insert(next_idx);
                         }
                     }
-                    metadata_display
-                        .display_lines
-                        .sort_by_key(|line| std::cmp::Reverse(line.render_height));
+                    rustdb_common::libcxx_sort::sort(&mut metadata_display.display_lines, &mut |a, b| {
+                        a.render_height > b.render_height
+                    });
                     metadata_displays.push(metadata_display);
                 }
             }

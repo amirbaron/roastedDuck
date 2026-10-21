@@ -68,7 +68,7 @@ fn toggle_changes(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> 
 }
 
 fn show_databases(shell: &mut Shell, _args: &[String]) -> Result<MetadataResult> {
-    Ok(success_or_fail(shell.show_databases()))
+    Ok(success_or_fail(shell.show_databases()?))
 }
 
 fn success_or_fail(result: SuccessState) -> MetadataResult {
@@ -170,7 +170,8 @@ fn dump_table(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
          NOT LIKE 'pg_%' AND table_schema != 'information_schema' AND table_name IN (SELECT name FROM \
          sqlite_schema WHERE ({like}) AND type=='table') ORDER BY table_schema"
     );
-    if let Ok(result) = shell.conn().query(&query) {
+    // (Like DuckDB, after `BEGIN TRANSACTION;`, a missing connection is an error.)
+    if let Ok(result) = shell.conn()?.query(&query) {
         for row in 0..result.row_count() {
             let schema = value_to_string(&result.value(0, row));
             let create_schema = format!("CREATE SCHEMA IF NOT EXISTS {};", sql_identifier(&schema));
@@ -386,7 +387,7 @@ fn set_row_rendering(shell: &mut Shell, _args: &[String]) -> Result<MetadataResu
 }
 
 fn import_data(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
-    Ok(success_or_fail_bool(shell.import_data(args)))
+    Ok(success_or_fail_bool(shell.import_data(args)?))
 }
 
 fn success_or_fail_bool(success: bool) -> MetadataResult {
@@ -398,7 +399,7 @@ fn success_or_fail_bool(success: bool) -> MetadataResult {
 }
 
 fn open_database(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
-    Ok(success_or_fail_bool(shell.open_database(args)))
+    Ok(success_or_fail_bool(shell.open_database(args)?))
 }
 
 fn print_arguments(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
@@ -477,7 +478,7 @@ fn read_from_file(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> 
 }
 
 fn display_schemas(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
-    Ok(success_or_fail_bool(shell.display_schemas(args)))
+    Ok(success_or_fail_bool(shell.display_schemas(args)?))
 }
 
 /// `.shell` / `.system CMD ARGS...`: arguments without spaces are double-quoted.
@@ -560,7 +561,7 @@ fn set_widths(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
 }
 
 fn show_indexes(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
-    Ok(shell.display_entries(args, 'i'))
+    shell.display_entries(args, 'i')
 }
 
 fn show_tables(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
@@ -769,12 +770,16 @@ fn display_colors(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> 
     for (code, info) in COLOR_INFO.iter().enumerate() {
         color_list.push((find_color_group(&COLOR_GROUPS, info.color_name)?, code, info));
     }
-    // By group, then hue, then luminosity (a stable sort, as the comparison is a strict
-    // weak order).
-    color_list.sort_by(|a, b| {
-        a.0.cmp(&b.0)
-            .then_with(|| hue(a.2).total_cmp(&hue(b.2)))
-            .then_with(|| luminosity(a.2).total_cmp(&luminosity(b.2)))
+    // By group, then hue, then luminosity.
+    rustdb_common::libcxx_sort::sort(&mut color_list, &mut |a, b| {
+        if a.0 != b.0 {
+            return a.0 < b.0;
+        }
+        let (a_hue, b_hue) = (hue(a.2), hue(b.2));
+        if a_hue != b_hue {
+            return a_hue < b_hue;
+        }
+        luminosity(a.2) < luminosity(b.2)
     });
     let highlighter = ShellHighlight::new(&shell.state.out);
     for (_, code, info) in color_list {

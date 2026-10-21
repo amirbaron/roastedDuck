@@ -105,7 +105,9 @@ fn run_shell(shell: &mut Shell, args: &[String]) -> i32 {
     if shell.state.db_filename.is_empty() {
         ":memory:".clone_into(&mut shell.state.db_filename);
     }
-    shell.open_db(ShellOpenFlags::ExitOnFailure);
+    if let Err(error) = shell.open_db(ShellOpenFlags::ExitOnFailure) {
+        shell::fatal(&error);
+    }
 
     // The init file (`~/.duckdbrc` unless `-init` names one).
     if shell.state.run_init {

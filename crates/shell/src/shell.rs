@@ -405,13 +405,17 @@ impl Shell {
     }
 
     /// The connection, opening the database first if needed.
-    pub fn conn(&mut self) -> &mut Connection {
-        if self.conn.is_none() {
-            self.open_db(ShellOpenFlags::ExitOnFailure);
-        }
+    /// The connection; DuckDB's shell dereferences its null `conn` after an `.open`
+    /// whose in-memory fallback failed too, which is an internal error.
+    pub fn conn(&mut self) -> Result<&mut Connection> {
         self.conn
             .as_mut()
-            .unwrap_or_else(|| unreachable!("OpenDB exits when it cannot connect"))
+            .ok_or_else(|| rustdb::Error::internal("Attempted to dereference unique_ptr that is NULL!"))
+    }
+
+    /// `Connection::Query` on the connection.
+    pub fn query(&mut self, sql: &str) -> Result<rustdb::MaterializedResult> {
+        self.conn()?.query(sql)
     }
 
     /// `ShellState::AddError`.
@@ -448,18 +452,17 @@ impl Shell {
 
     /// `OpenDB`: opens the database if it is not open, loads the shell extension and
     /// applies safe mode and the progress bar.
-    pub fn open_db(&mut self, flags: ShellOpenFlags) {
+    /// The in-memory fallback of `KeepAliveOnFailure` failing too is an error, and leaves
+    /// no database open.
+    pub fn open_db(&mut self, flags: ShellOpenFlags) -> Result<()> {
         if self.db.is_some() {
-            return;
+            return Ok(());
         }
         let filename = self.state.db_filename.clone();
         if let Err(error) = self.connect(&filename) {
             self.print_database_error(&error.to_string());
             if flags == ShellOpenFlags::KeepAliveOnFailure {
-                if let Err(error) = self.connect(":memory:") {
-                    self.print_database_error(&error.to_string());
-                    exit(1);
-                }
+                self.connect(":memory:")?;
             } else {
                 exit(1);
             }
@@ -477,6 +480,7 @@ impl Shell {
             self.execute_query("PRAGMA enable_progress_bar");
             self.execute_query("PRAGMA enable_print_progress_bar");
         }
+        Ok(())
     }
 
     /// `EnableSafeMode` (`-safe` and `.safe_mode`): an open database loses external
@@ -513,7 +517,7 @@ impl Shell {
 
     /// `ExecuteQuery`: runs `query`, reporting a failure to stderr.
     pub fn execute_query(&mut self, query: &str) -> SuccessState {
-        match self.conn().query(query) {
+        match self.query(query) {
             Ok(_) => SuccessState::Success,
             Err(error) => {
                 self.state
@@ -525,7 +529,7 @@ impl Shell {
 
     /// `RunTableDumpQuery`: prints the SQL `select` returns, a statement per row.
     pub fn run_table_dump_query(&mut self, select: &str) {
-        let result = match self.conn().query(select) {
+        let result = match self.query(select) {
             Ok(result) => result,
             Err(error) => {
                 self.state.print(format!("/**** ERROR: {error} *****/\n"));
@@ -548,7 +552,7 @@ impl Shell {
     /// `TableColumnList`: the column names of `table`.
     fn table_column_list(&mut self, table: &str) -> Vec<String> {
         let query = format!("PRAGMA table_info={}", sql_string(table));
-        match self.conn().query(&query) {
+        match self.query(&query) {
             Ok(result) => (0..result.row_count())
                 .map(|row| value_to_string(&result.value(1, row)))
                 .collect(),
@@ -563,7 +567,7 @@ impl Shell {
              ORDER BY (table_schema='main') DESC LIMIT 1",
             sql_string(table)
         );
-        match self.conn().query(&query) {
+        match self.query(&query) {
             Ok(result) => (0..result.row_count())
                 .map(|row| value_to_string(&result.value(0, row)))
                 .last()
@@ -575,7 +579,7 @@ impl Shell {
     /// `RunSchemaDumpQuery`: prints the schema of the tables `query` lists and their
     /// rows as INSERT statements.
     pub fn run_schema_dump_query(&mut self, query: &str) {
-        let Ok(result) = self.conn().query(query) else {
+        let Ok(result) = self.query(query) else {
             return;
         };
         for row in 0..result.row_count() {
@@ -622,10 +626,11 @@ impl Shell {
     /// a long query is shown while it runs.
     fn send_statement(&mut self, statement: SqlStatement, materialize: bool) -> Result<QueryResult> {
         printer::flush_stdout();
-        self.conn();
         let Self { db, conn, state } = self;
         let Some(conn) = conn.as_mut() else {
-            return Err(rustdb::Error::internal("no connection"));
+            return Err(rustdb::Error::internal(
+                "Attempted to dereference unique_ptr that is NULL!",
+            ));
         };
         let query = statement.query.clone();
         let pending = conn.pending_query(&query, statement, !materialize)?;
@@ -713,11 +718,11 @@ impl Shell {
         if return_type == StatementReturnType::ChangedRows {
             let first_chunk = match &source {
                 ResultSource::Materialized(scanned) => scanned.fetch().cloned(),
-                ResultSource::Stream(stream) => self.conn().fetch(stream)?,
+                ResultSource::Stream(stream) => self.conn()?.fetch(stream)?,
             };
             if let Some(chunk) = first_chunk.filter(|chunk| chunk.len() == 1) {
                 let row_changes = chunk.column(0).get_value(0);
-                if let Some(changes) = changed_row_count(self.conn(), &row_changes) {
+                if let Some(changes) = changed_row_count(self.conn()?, &row_changes) {
                     self.state.last_changes = changes;
                     self.state.total_changes = self.state.total_changes.wrapping_add(changes);
                 }
@@ -726,7 +731,7 @@ impl Shell {
         if return_type != StatementReturnType::QueryResult {
             // Only queries render results.
             if let ResultSource::Stream(stream) = &source {
-                self.conn().close_query(stream.id());
+                self.conn()?.close_query(stream.id());
             }
             return Ok(SuccessState::Success);
         }
@@ -738,6 +743,10 @@ impl Shell {
 
     /// `ExecuteSQL`: runs every statement of `sql`, stopping at the first that fails.
     pub fn execute_sql(&mut self, sql: &str) -> SuccessState {
+        // DuckDB dereferences the connection outside its error handling.
+        if let Err(error) = self.conn() {
+            fatal(&error);
+        }
         match self.execute_sql_statements(sql) {
             Ok(state) => state,
             Err(error) => {
@@ -748,7 +757,7 @@ impl Shell {
     }
 
     fn execute_sql_statements(&mut self, sql: &str) -> Result<SuccessState> {
-        let statements = self.conn().parse_statements(sql)?;
+        let statements = self.conn()?.parse_statements(sql)?;
         for statement in statements {
             // The statement's text, without leading whitespace.
             let start = usize::try_from(statement.location).unwrap_or(0);
@@ -786,7 +795,7 @@ impl Shell {
         query: &str,
         pager: PagerMode,
     ) -> Result<SuccessState> {
-        let mut statements = match self.conn().parse_statements(query) {
+        let mut statements = match self.conn()?.parse_statements(query) {
             Ok(statements) => statements,
             Err(error) => {
                 self.print_database_error(&error.to_string());
@@ -797,7 +806,7 @@ impl Shell {
             return Ok(SuccessState::Success);
         };
         let result = self
-            .conn()
+            .conn()?
             .execute_statements(statements)
             .and_then(|_| self.send_statement(last, false));
         let source = match result {
@@ -820,7 +829,7 @@ impl Shell {
         pager_overwrite: PagerMode,
     ) -> Result<SuccessState> {
         let mut result = RenderingQueryResult::new(source);
-        self.conn();
+        self.conn()?;
         let (Some(conn), state) = (self.conn.as_mut(), &mut self.state) else {
             return Ok(SuccessState::Failure);
         };
@@ -846,14 +855,14 @@ impl Shell {
 
     /// `ImportData` (`.import FILE TABLE`): creates or appends to TABLE with a reader of
     /// FILE.
-    pub fn import_data(&mut self, args: &[String]) -> bool {
+    pub fn import_data(&mut self, args: &[String]) -> Result<bool> {
         if self.state.safe_mode {
             self.state.print_err(".import cannot be used in -safe mode\n");
-            return false;
+            return Ok(false);
         }
         let mut table_name = String::new();
         let mut file_name = String::new();
-        let mut generic_parameters: Vec<(String, String)> = Vec::new();
+        let mut generic_parameters = GenericParameters::default();
         let mut function = String::new();
         let mut i = 1;
         while i < args.len() {
@@ -870,7 +879,7 @@ impl Shell {
                     self.state
                         .print(format!("ERROR: extra argument: \"{z}\".  Usage:\n"));
                     metadata_command::print_help(&self.state, Some("import"));
-                    return false;
+                    return Ok(false);
                 }
             } else if z == "-v" {
                 // Verbose: ignored.
@@ -891,10 +900,10 @@ impl Shell {
                         "ERROR: expected an argument for generic parameter: \"{name}\".  Usage:\n"
                     ));
                     metadata_command::print_help(&self.state, Some("import"));
-                    return false;
+                    return Ok(false);
                 }
                 i += 1;
-                set_parameter(&mut generic_parameters, name, &args[i]);
+                generic_parameters.set(name, &args[i]);
             }
             i += 1;
         }
@@ -903,7 +912,7 @@ impl Shell {
             self.state
                 .print(format!("ERROR: missing {missing} argument. Usage:\n"));
             metadata_command::print_help(&self.state, Some("import"));
-            return false;
+            return Ok(false);
         }
         if function.is_empty() {
             // The reader of the file's extension (`function_map`, in its iteration
@@ -929,51 +938,52 @@ impl Shell {
                 .map_or("read_csv", |(_, reader)| reader)
                 .to_owned();
         }
-        if function == "read_csv" && !generic_parameters.iter().any(|(name, _)| name == "ignore_errors") {
-            set_parameter(&mut generic_parameters, "ignore_errors", "true");
+        if function == "read_csv" && !generic_parameters.contains("ignore_errors") {
+            generic_parameters.set("ignore_errors", "true");
         }
         ShellState::clear_interrupt();
-        let conn = self.conn();
+        let conn = self.conn()?;
         let need_commit = conn.is_auto_commit();
         if need_commit {
-            let _ = conn.query("BEGIN TRANSACTION");
+            conn.query("BEGIN TRANSACTION")?;
         }
-        let table_exists = conn.table_info("", "", &table_name).ok().flatten().is_some();
+        // `Connection::TableInfo(table_name)`: in the default schema.
+        let table_exists = conn.table_info("", "main", &table_name)?.is_some();
         let mut import_query = if table_exists {
             format!("INSERT INTO {} ", sql_identifier(&table_name))
         } else {
             format!("CREATE TABLE {} AS ", sql_identifier(&table_name))
         };
         import_query += &format!("SELECT * FROM {function}({}", sql_string(&file_name));
-        for (name, value) in &generic_parameters {
+        for (name, value) in generic_parameters.iter() {
             import_query += &format!(", {}={}", sql_identifier(name), sql_string(value));
         }
         import_query.push(')');
-        match self.conn().query(&import_query) {
+        match self.query(&import_query) {
             Ok(_) => {
                 if need_commit {
-                    let _ = self.conn().query("COMMIT");
+                    self.query("COMMIT")?;
                 }
-                true
+                Ok(true)
             }
             Err(error) => {
                 if need_commit {
-                    let _ = self.conn().query("ROLLBACK");
+                    self.query("ROLLBACK")?;
                 }
                 self.print_database_error(&format!(
                     "Failed To Import Error: Failed to import from file '{file_name}'\n"
                 ));
                 self.print_database_error(&error.to_string());
-                false
+                Ok(false)
             }
         }
     }
 
     /// `OpenDatabase` (`.open ?OPTIONS? ?FILE?`).
-    pub fn open_database(&mut self, args: &[String]) -> bool {
+    pub fn open_database(&mut self, args: &[String]) -> Result<bool> {
         if self.state.safe_mode {
             self.state.print_err(".open cannot be used in -safe mode\n");
-            return false;
+            return Ok(false);
         }
         let mut new_filename = String::new();
         let mut new_flag = false;
@@ -992,15 +1002,15 @@ impl Shell {
             } else if option_match(z, "sql") {
                 if has_sql {
                     self.state.print_err("Error: --sql provided multiple times\n");
-                    return false;
+                    return Ok(false);
                 }
                 if name_index + 1 >= args.len() {
                     self.state.print_err("Error: missing SQL query after --sql\n");
-                    return false;
+                    return Ok(false);
                 }
                 name_index += 1;
                 let query = args[name_index].clone();
-                let (result, value) = execute_sql_single_value(self.conn(), &query);
+                let (result, value) = execute_sql_single_value(self.conn()?, &query);
                 let error = match result {
                     ExecuteSqlSingleValueResult::ExecutionError => Some(format!(
                         "Error: failed to evaluate --sql query '{query}': {value}\n"
@@ -1021,20 +1031,20 @@ impl Shell {
                 };
                 if let Some(error) = error {
                     self.state.print_err(error);
-                    return false;
+                    return Ok(false);
                 }
                 new_filename = value;
                 has_sql = true;
             } else {
                 self.state.print_err(format!("unknown option: {z}\n"));
-                return false;
+                return Ok(false);
             }
             name_index += 1;
         }
         if has_sql && args.len() > name_index {
             self.state
                 .print_err("Error: cannot use both --sql and a FILE argument\n");
-            return false;
+            return Ok(false);
         }
         if !has_sql && args.len() > name_index {
             new_filename.clone_from(&args[name_index]);
@@ -1046,7 +1056,7 @@ impl Shell {
                 let _ = std::fs::remove_file(&new_filename);
             }
             self.state.db_filename.clone_from(&new_filename);
-            self.open_db(ShellOpenFlags::KeepAliveOnFailure);
+            self.open_db(ShellOpenFlags::KeepAliveOnFailure)?;
             if self.db.is_none() {
                 self.state
                     .print_err(format!("Error: cannot open '{new_filename}'\n"));
@@ -1055,9 +1065,9 @@ impl Shell {
         if self.db.is_none() {
             // Fall back to an in-memory database.
             self.state.db_filename.clear();
-            self.open_db(ShellOpenFlags::ExitOnFailure);
+            self.open_db(ShellOpenFlags::ExitOnFailure)?;
         }
-        true
+        Ok(true)
     }
 
     /// `ReadFromFile` (`.read FILE`).
@@ -1086,7 +1096,7 @@ impl Shell {
     }
 
     /// `DisplaySchemas` (`.schema ?--indent? ?PATTERN?`).
-    pub fn display_schemas(&mut self, args: &[String]) -> bool {
+    pub fn display_schemas(&mut self, args: &[String]) -> Result<bool> {
         let mut name: Option<&str> = None;
         let mut debug = false;
         let mut mode = RenderMode::Semi;
@@ -1099,7 +1109,7 @@ impl Shell {
                 name = Some(arg);
             } else {
                 self.state.print_err("Usage: .schema ?--indent? ?LIKE-PATTERN?\n");
-                return false;
+                return Ok(false);
             }
         }
         let mut renderer = renderer_for(&self.state, mode);
@@ -1124,17 +1134,13 @@ impl Shell {
             self.state.print(format!("SQL: {select};\n"));
             SuccessState::Success
         } else {
-            self.render_query(renderer.as_mut(), &select, PagerMode::Off)
-                .unwrap_or_else(|error| {
-                    self.print_database_error(&error.to_string());
-                    SuccessState::Failure
-                })
+            self.render_query(renderer.as_mut(), &select, PagerMode::Off)?
         };
         if rc == SuccessState::Failure {
             self.state.print_err("Error: querying schema information\n");
-            return false;
+            return Ok(false);
         }
-        true
+        Ok(true)
     }
 
     /// `DisplayTables` (`.tables ?PATTERN?`): the tables and views as boxes of their
@@ -1175,7 +1181,7 @@ WHERE NOT columns.internal{schema_filter_str}{name_filter}
 GROUP BY ALL;
 "
         );
-        let result = match self.conn().query(&query) {
+        let result = match self.query(&query) {
             Ok(result) => result,
             Err(error) => {
                 self.print_database_error(&error.to_string());
@@ -1214,9 +1220,9 @@ GROUP BY ALL;
 
     /// `DisplayEntries` (`.indexes ?TABLE?`, and the table names of `.tables` in older
     /// versions): names printed in columns.
-    pub fn display_entries(&mut self, args: &[String], entry_type: char) -> MetadataResult {
+    pub fn display_entries(&mut self, args: &[String], entry_type: char) -> Result<MetadataResult> {
         if args.len() > 2 {
-            return MetadataResult::PrintUsage;
+            return Ok(MetadataResult::PrintUsage);
         }
         let filter_pattern = args.get(1).cloned().unwrap_or_else(|| "%".to_owned());
         let mut schema_filter = String::new();
@@ -1277,12 +1283,11 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
                 vec![args.get(1).cloned().unwrap_or_else(|| "%".to_owned())],
             )
         };
-        let conn = self.conn();
-        let prepared = match conn.prepare(&query) {
+        let prepared = match self.conn()?.prepare(&query) {
             Ok(prepared) => prepared,
             Err(error) => {
                 self.print_database_error(&error.to_string());
-                return MetadataResult::Fail;
+                return Ok(MetadataResult::Fail);
             }
         };
         let mut values = rustdb_common::CaseInsensitiveMap::default();
@@ -1290,13 +1295,13 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
             values.insert((index + 1).to_string(), Value::varchar(value));
         }
         let mut names = Vec::new();
-        match self.conn().execute_prepared(&prepared, &values, false) {
+        match self.conn()?.execute_prepared(&prepared, &values, false) {
             Ok(QueryResult::Materialized(result)) => {
                 for row in 0..result.row_count() {
                     names.push(value_to_string(&result.value(0, row)));
                 }
             }
-            Ok(QueryResult::Stream(stream)) => match self.conn().materialize(&stream) {
+            Ok(QueryResult::Stream(stream)) => match self.conn()?.materialize(&stream) {
                 Ok(result) => {
                     for row in 0..result.row_count() {
                         names.push(value_to_string(&result.value(0, row)));
@@ -1325,17 +1330,18 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
                 self.state.print("\n");
             }
         }
-        MetadataResult::Success
+        Ok(MetadataResult::Success)
     }
 
     /// `ShowDatabases` (`.databases`).
-    pub fn show_databases(&mut self) -> SuccessState {
-        self.open_db(ShellOpenFlags::ExitOnFailure);
-        let result = match self.conn().query("SELECT name, file FROM pragma_database_list") {
+    pub fn show_databases(&mut self) -> Result<SuccessState> {
+        self.open_db(ShellOpenFlags::ExitOnFailure)?;
+        // (`Query` dereferences the connection: an error when there is none.)
+        let result = match self.conn()?.query("SELECT name, file FROM pragma_database_list") {
             Ok(result) => result,
             Err(error) => {
                 self.print_database_error(&error.to_string());
-                return SuccessState::Failure;
+                return Ok(SuccessState::Failure);
             }
         };
         let mut table = ShellTableInfo {
@@ -1355,7 +1361,7 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
             });
         }
         self.state.render_table_metadata(vec![table]);
-        SuccessState::Success
+        Ok(SuccessState::Success)
     }
 
     /// `DoMetaCommand`: runs a dot command; 1 on error, 2 to exit, 0 otherwise.
@@ -1477,23 +1483,25 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
         ShellState::read_line(&mut std::io::stdin().lock())
     }
 
-    /// The main prompt with its color codes (`Prompt::GeneratePrompt`); a prompt that
-    /// fails shows its error.
+    /// The main prompt with its color codes (`Prompt::GeneratePrompt`); DuckDB does not
+    /// catch an error of it.
     fn generate_prompt(&mut self) -> String {
         let prompt = self.state.main_prompt.clone();
-        let mut context = ConnectionPromptContext(self.conn());
-        prompt
-            .generate_prompt(&mut context)
-            .unwrap_or_else(|error| error.to_string())
+        let generated = self
+            .conn()
+            .and_then(|conn| prompt.generate_prompt(&mut ConnectionPromptContext(conn)));
+        generated.unwrap_or_else(|error| fatal(&error))
     }
 
     /// `Prompt::PrintPrompt` of the main prompt.
     fn print_prompt(&mut self) {
         let prompt = self.state.main_prompt.clone();
         let out = self.state.out.clone();
-        let mut context = ConnectionPromptContext(self.conn());
-        if let Err(error) = prompt.print_prompt(&mut context, &out, PrintOutput::Stdout) {
-            out.print(PrintOutput::Stdout, error.to_string());
+        let printed = self.conn().and_then(|conn| {
+            prompt.print_prompt(&mut ConnectionPromptContext(conn), &out, PrintOutput::Stdout)
+        });
+        if let Err(error) = printed {
+            fatal(&error);
         }
     }
 
@@ -1850,11 +1858,41 @@ fn progress_bar_wait_time(conn: &Connection) -> Option<std::time::Duration> {
     Some(std::time::Duration::from_millis(wait_time))
 }
 
-/// Sets generic parameter `name` of `.import` (an `unordered_map` entry).
-fn set_parameter(parameters: &mut Vec<(String, String)>, name: &str, value: &str) {
-    match parameters.iter_mut().find(|(existing, _)| existing == name) {
-        Some(entry) => value.clone_into(&mut entry.1),
-        None => parameters.push((name.to_owned(), value.to_owned())),
+/// An error DuckDB's shell does not catch: `main` reports it and exits with code 1.
+pub fn fatal(error: &rustdb::Error) -> ! {
+    crate::printer::write_stderr(format!("Exited due to error: {error}").as_bytes());
+    exit(1)
+}
+
+/// The generic parameters of `.import` (an `unordered_map<string, string>`), iterated in
+/// libc++'s order.
+#[derive(Debug, Default)]
+struct GenericParameters {
+    order: rustdb_common::libcxx::UnorderedOrder<String>,
+    values: Vec<String>,
+}
+
+impl GenericParameters {
+    /// `generic_parameters[name] = value`.
+    fn set(&mut self, name: &str, value: &str) {
+        let hash = rustdb_common::libcxx::string_hash(name.as_bytes());
+        let (inserted, index) = self.order.insert(hash, name.to_owned(), |a, b| a == b);
+        if inserted {
+            self.values.push(value.to_owned());
+        } else {
+            value.clone_into(&mut self.values[index]);
+        }
+    }
+
+    fn contains(&self, name: &str) -> bool {
+        self.order.keys().iter().any(|key| key == name)
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (&String, &String)> {
+        self.order
+            .order()
+            .into_iter()
+            .map(|index| (&self.order.keys()[index], &self.values[index]))
     }
 }
 

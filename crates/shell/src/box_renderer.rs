@@ -1147,22 +1147,21 @@ impl BoxRendererState {
         left_corner: &str,
         right_corner: &str,
     ) {
-        let mut line = String::with_capacity(self.total_render_length * 3 + 1);
-        line.push_str(left_corner);
+        // Every piece is rendered (and highlighted) by itself, as DuckDB's `ss <<` does.
+        ss.layout(left_corner);
         let mut column_index = 0;
         for k in 0..self.total_render_length - 2 {
             if column_index < self.column_boundary_positions.len()
                 && k == self.column_boundary_positions[column_index]
             {
-                line.push_str(boundary);
+                ss.layout(boundary);
                 column_index += 1;
             } else {
-                line.push_str(layout);
+                ss.layout(layout);
             }
         }
-        line.push_str(right_corner);
-        line.push('\n');
-        ss.layout(&line);
+        ss.layout(right_corner);
+        ss.layout("\n");
     }
 
     /// `RenderDivider`: three rows of dots between the top and the bottom rows.
