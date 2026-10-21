@@ -1950,13 +1950,16 @@ test/sql/cte/warn_deprecated_union_in_using_key.test
 test/sql/delete/bulk_delete_version_info_memory.test
 test/sql/delete/cleanup_delete_on_conflict.test
 test/sql/delete/delete_compression_after_restart.test
+test/sql/delete/delete_compression_blocked_by_old_snapshot.test
 test/sql/delete/full_vector_delete_conflict.test
 test/sql/delete/full_vector_delete_rollback.test
+test/sql/delete/in_memory_truncate.test_slow
 test/sql/delete/large_deletes_transactions.test
 test/sql/delete/list_delete.test
 test/sql/delete/masked_vector_further_delete.test
 test/sql/delete/masked_vector_rollback.test
 test/sql/delete/partial_delete_version_info_memory.test
+test/sql/delete/piecemeal_delete_checkpoint_compress.test_slow
 test/sql/delete/test_delete.test
 test/sql/delete/test_delete_indexed.test
 test/sql/delete/test_large_delete.test
@@ -2485,6 +2488,7 @@ test/sql/index/art/insert_update_delete/test_art_update_with_dict_fsst.test
 test/sql/index/art/insert_update_delete/test_art_update_with_dict_fsst_and_replay.test
 test/sql/index/art/issues/test_art_fuzzer.test
 test/sql/index/art/issues/test_art_fuzzer_persisted.test
+test/sql/index/art/issues/test_art_internal_issue_4742.test
 test/sql/index/art/issues/test_art_issue_21394.test
 test/sql/index/art/issues/test_art_issue_24246.test
 test/sql/index/art/issues/test_art_issue_4976.test
@@ -2493,6 +2497,9 @@ test/sql/index/art/issues/test_art_issue_6799.test
 test/sql/index/art/issues/test_art_issue_7349.test
 test/sql/index/art/issues/test_art_issue_7530.test
 test/sql/index/art/issues/test_art_issue_8066.test_slow
+test/sql/index/art/issues/test_art_view_col_binding.test
+test/sql/index/art/memory/test_art_linear.test_slow
+test/sql/index/art/memory/test_art_non_linear.test_slow
 test/sql/index/art/memory/test_art_varchar.test_slow
 test/sql/index/art/multi_column/test_art_multi_column.test
 test/sql/index/art/multi_column/test_art_multi_column.test_slow
@@ -2524,14 +2531,17 @@ test/sql/index/art/scan/test_art_scan_duplicate_filters.test
 test/sql/index/art/scan/test_art_scan_filter_column.test
 test/sql/index/art/scan/test_art_scan_normal_to_nested.test
 test/sql/index/art/scan/test_art_scan_thresholds.test
+test/sql/index/art/scan/test_hash_join_in_filter_index_scan.test
 test/sql/index/art/scan/test_in_filter_index_scan.test
 test/sql/index/art/scan/test_random_uuid.test
+test/sql/index/art/storage/test_art_auto_checkpoint.test
 test/sql/index/art/storage/test_art_buffered_replays_chunk_edges.test
 test/sql/index/art/storage/test_art_buffered_replays_interleaved.test
 test/sql/index/art/storage/test_art_buffered_replays_interval_merging.test
 test/sql/index/art/storage/test_art_buffered_replays_mod2.test_slow
 test/sql/index/art/storage/test_art_buffered_replays_multi_col.test
 test/sql/index/art/storage/test_art_checkpoint.test
+test/sql/index/art/storage/test_art_duckdb_versions.test
 test/sql/index/art/storage/test_art_import.test
 test/sql/index/art/storage/test_art_import_export.test
 test/sql/index/art/storage/test_art_mem_limit.test
@@ -2545,6 +2555,8 @@ test/sql/index/art/storage/test_art_storage_multi_checkpoint.test
 test/sql/index/art/storage/test_art_wal_checkpoint_minimal.test
 test/sql/index/art/storage/test_art_wal_replay_drop_table.test
 test/sql/index/art/storage/test_art_wal_replay_in_tx.test
+test/sql/index/art/storage/test_art_wal_replay_with_buffer.test
+test/sql/index/art/storage/test_art_wal_replay_with_buffer_concurrent.test
 test/sql/index/art/storage/test_upsert_reclaim_space.test_slow
 test/sql/index/art/test_art_empty_close_range.test
 test/sql/index/art/test_art_tx_update_key.test
@@ -2560,6 +2572,7 @@ test/sql/index/art/types/test_art_real_pk.test
 test/sql/index/art/types/test_art_smallint.test_slow
 test/sql/index/art/types/test_art_tinyint.test_slow
 test/sql/index/art/types/test_art_types.test_slow
+test/sql/index/art/types/test_art_union.test
 test/sql/index/art/types/test_art_varchar.test
 test/sql/index/art/vacuum/test_art_vacuum.test_slow
 test/sql/index/art/vacuum/test_art_vacuum_integers.test_slow
@@ -3405,8 +3418,10 @@ test/sql/storage/commit_abort_large.test_slow
 test/sql/storage/commit_abort_medium.test
 test/sql/storage/commit_index_deletes.test
 test/sql/storage/compact_block_size/block_size_with_rollback.test
+test/sql/storage/compact_block_size/compact_block_size.test
 test/sql/storage/compact_block_size/compact_vector_size.test
 test/sql/storage/compact_block_size/create_table_compression.test
+test/sql/storage/compact_block_size/default_block_size.test
 test/sql/storage/compact_block_size/ensure_bitpacking.test
 test/sql/storage/compact_block_size/ensure_no_bitpacking.test
 test/sql/storage/compact_block_size/insertion_order_odd_batches.test
@@ -3829,6 +3844,7 @@ test/sql/storage/types/variant/variant_null_shredding_inconsistency_issue.test
 test/sql/storage/types/variant/variant_parquet_shredding_bug.test
 test/sql/storage/types/variant/variant_shredding_inconsistent.test
 test/sql/storage/unicode_filename.test
+test/sql/storage/unzip.test
 test/sql/storage/update/dictionary_update_null.test
 test/sql/storage/update/large_repeated_updates.test_slow
 test/sql/storage/update/larger_than_memory_update.test_slow
@@ -3853,6 +3869,7 @@ test/sql/storage/wal/dict_fsst_wal_replay.test_slow
 test/sql/storage/wal/wal_autocheckpoint_entries.test
 test/sql/storage/wal/wal_blob_storage.test
 test/sql/storage/wal/wal_check_constraint.test
+test/sql/storage/wal/wal_create_index.test
 test/sql/storage/wal/wal_create_insert_drop.test
 test/sql/storage/wal/wal_drop_table.test
 test/sql/storage/wal/wal_empty_table.test
@@ -3873,6 +3890,7 @@ test/sql/storage/wal/wal_replay_consistency_add_column_random.test
 test/sql/storage/wal/wal_replay_unbound_index_create_index_during_wal.test
 test/sql/storage/wal/wal_replay_unbound_index_generated_column.test
 test/sql/storage/wal/wal_replay_unbound_index_mixed_inserts.test
+test/sql/storage/wal/wal_replay_unbound_index_multi_index.test
 test/sql/storage/wal/wal_sequence_uncommitted_transaction.test
 test/sql/storage/wal/wal_storage_types.test
 test/sql/storage/wal/wal_store_add_column.test

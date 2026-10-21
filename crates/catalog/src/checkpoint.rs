@@ -9,20 +9,22 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use rustdb_ast::{
-    CatalogType as AstCatalogType, ColumnDefinition, ColumnList, Constraint, CreateIndexInfo, CreateInfo,
-    CreateInfoKind, CreateMacroInfo, CreateSequenceInfo, CreateTableInfo, CreateTypeInfo, CreateViewInfo,
-    ForeignKeyType, IndexConstraintType as AstIndexConstraintType, LogicalDependencyList, OnCreateConflict,
+    CatalogType as AstCatalogType, ColumnDefinition, ColumnList, Constraint, CreateInfo, CreateInfoKind,
+    CreateMacroInfo, CreateSequenceInfo, CreateTableInfo, CreateTypeInfo, CreateViewInfo, ForeignKeyType,
+    IndexConstraintType as AstIndexConstraintType, LogicalDependencyList, OnCreateConflict,
     ParsedExpressionKind, TableColumnType,
 };
 use rustdb_buffer::BlockId;
 use rustdb_common::{CaseInsensitiveMap, Error, OrderedMap, Result};
 use rustdb_serde::binary::BinarySerializer;
 use rustdb_serde::{Deserializer, Serializer};
+use rustdb_storage::checkpoint::pointers::{deserialize_index_storage_info, index_storage_block_ids};
 use rustdb_storage::checkpoint::pointers::{deserialize_meta_block_pointer, serialize_meta_block_pointer};
 use rustdb_storage::checkpoint::stream::StreamDeserializer;
 use rustdb_storage::checkpoint::table_reader::{load_row_groups, read_table_data};
 use rustdb_storage::checkpoint::table_writer::{BlockWriter, finish_table_checkpoint, write_table_data};
-use rustdb_storage::index::IndexConstraintType;
+use rustdb_storage::index::art::{ArtStorageInfo, deprecated_index_block_ids};
+use rustdb_storage::index::{IndexConstraintType, IndexSlot, UnboundIndex, UnboundIndexStorage};
 use rustdb_storage::metadata::{MetaBlockPointer, MetadataReader, MetadataWriter};
 use rustdb_storage::storage_info::{DatabaseHeader, STANDARD_VECTOR_SIZE};
 use rustdb_storage::storage_manager::{CheckpointAbort, StorageManager};
@@ -33,12 +35,6 @@ use crate::{
     Catalog, CatalogEntry, CatalogType, EntryKind, IndexEntry, MacroEntry, SequenceEntry, TableEntry,
     Transaction, TypeEntry, ViewEntry,
 };
-
-/// Builds the ART of an index whose keys are expressions (they need the binder).
-pub trait IndexExpressionLoader {
-    /// Builds and adds the index described by `info` to `table`.
-    fn load_expression_index(&self, table: &Arc<DataTable>, info: &CreateIndexInfo) -> Result<()>;
-}
 
 pub(crate) fn base_info(catalog: &str, schema: &str, temporary: bool, kind: CreateInfoKind) -> CreateInfo {
     CreateInfo {
@@ -704,16 +700,32 @@ fn serialize_indexes(
         index_options.insert("v1_0_0_storage", Value::boolean(false));
     }
     let mut infos = Vec::new();
-    for entry in table.info().indexes().entries() {
+    for slot in table.info().indexes().slots() {
         let mut index_blocks = BlockWriter::new(Arc::clone(storage.block_manager()));
-        let mut state = entry.lock();
-        let info = state.index.serialize_to_disk(&index_options, &mut |bytes| {
+        let mut write = |bytes: &[u8]| {
             let pointer = index_blocks.write_segment(bytes)?;
             Ok(rustdb_storage::index::fixed_size_allocator::BufferPointer {
                 block_id: pointer.block_id,
                 offset: pointer.offset,
             })
-        })?;
+        };
+        let info = match &slot {
+            IndexSlot::Bound(entry) => {
+                entry
+                    .lock()
+                    .index
+                    .serialize_to_disk(&index_options, &mut write)?
+            }
+            // An unbound index is written as it was stored; its blocks stay in use.
+            IndexSlot::Unbound(index) => {
+                let mut kept = Vec::new();
+                let info = index.serialize_to_disk(&mut write, &mut |block| kept.push(block))?;
+                for block in kept {
+                    *blocks.used_blocks.entry(block).or_insert(0) += 1;
+                }
+                info
+            }
+        };
         index_blocks.flush()?;
         for (block, count) in index_blocks.used_blocks {
             *blocks.used_blocks.entry(block).or_insert(0) += count;
@@ -780,11 +792,7 @@ pub fn read_create_info_property(
 
 /// Loads the catalog of the last checkpoint (`SingleFileCheckpointReader::LoadFromStorage`).
 /// Entries are created as committed system entries.
-pub fn load_checkpoint(
-    catalog: &Catalog,
-    storage: &StorageManager,
-    index_loader: &dyn IndexExpressionLoader,
-) -> Result<()> {
+pub fn load_checkpoint(catalog: &Catalog, storage: &StorageManager) -> Result<()> {
     let meta_block = storage.meta_block();
     if !meta_block.is_valid() {
         return Ok(());
@@ -792,6 +800,9 @@ pub fn load_checkpoint(
     let metadata = storage.metadata();
     let transaction = Transaction::system();
     let mut data_blocks: Vec<BlockId> = Vec::new();
+    // The stored index data per table, taken by the index entries that follow
+    // (`DataTableInfo::ExtractIndexStorageInfo`).
+    let mut index_storage: Vec<(String, String, Vec<ArtStorageInfo>)> = Vec::new();
     let mut reader = MetadataReader::new(metadata, meta_block, true)?;
     let mut deserializer = StreamDeserializer::new(&mut reader);
     deserializer.begin()?;
@@ -835,23 +846,37 @@ pub fn load_checkpoint(
                 let total_rows: u64 = d.read_property(102, "total_rows")?;
                 let index_pointers: Option<Vec<rustdb_storage::checkpoint::pointers::BlockPointer>> =
                     read_block_pointer_list(d, 103, "index_pointers")?;
-                if index_pointers.is_some_and(|pointers| !pointers.is_empty()) {
-                    return Err(Error::not_implemented(
-                        "reading indexes of database files written by old DuckDB versions",
-                    ));
+                // Files of DuckDB versions before v0.10 point to each index's root
+                // (`index_pointers`, with deprecated storage).
+                for pointer in index_pointers.unwrap_or_default() {
+                    if pointer.is_valid() {
+                        data_blocks.extend(deprecated_index_block_ids(
+                            metadata,
+                            pointer.block_id,
+                            pointer.offset,
+                        )?);
+                    }
                 }
                 let mut index_versions = std::collections::HashMap::new();
+                let mut stored_indexes = Vec::new();
                 if d.on_optional_property_begin(104, "index_storage_infos")? {
                     // The indexes are rebuilt from the table below; their stored data
-                    // only keeps its blocks in use until the next checkpoint.
+                    // keeps its blocks in use until the next checkpoint, or longer for
+                    // an index that is not bound by then.
                     let stored = d.on_list_begin()?;
                     for _ in 0..stored {
                         d.on_object_begin()?;
-                        let info =
-                            rustdb_storage::checkpoint::pointers::IndexStorageInfo::deserialize_fields(d)?;
+                        let info = deserialize_index_storage_info(d)?;
                         d.on_object_end()?;
-                        data_blocks.extend(info.block_ids());
-                        index_versions.insert(info.name, info.storage_version);
+                        data_blocks.extend(index_storage_block_ids(&info));
+                        // The storage version the index was created with, recorded
+                        // since v1.5.0.
+                        let version = info
+                            .options
+                            .get("storage_version")
+                            .and_then(rustdb_types::Value::as_u64);
+                        index_versions.insert(info.name.clone(), version);
+                        stored_indexes.push(info);
                     }
                     d.on_list_end()?;
                     d.on_optional_property_end(true)?;
@@ -902,6 +927,9 @@ pub fn load_checkpoint(
                     }
                 }
                 entry.storage = Some(table);
+                if !stored_indexes.is_empty() {
+                    index_storage.push((info.schema.clone(), create.table.clone(), stored_indexes));
+                }
                 let mut catalog_entry = CatalogEntry::new(create.table.clone(), EntryKind::Table(entry));
                 catalog_entry.temporary = info.temporary;
                 catalog_entry.dependencies.clone_from(&info.dependencies.set);
@@ -930,21 +958,29 @@ pub fn load_checkpoint(
             }
             AstCatalogType::IndexEntry => {
                 let info = read_create_info(d, ty, "index")?;
-                let root: Option<Vec<u8>> = if d.on_optional_property_begin(101, "root_block_pointer")? {
+                // Files of DuckDB versions before v0.10 store the index behind a root
+                // block pointer (`ReadIndex`).
+                let root = if d.on_optional_property_begin(101, "root_block_pointer")? {
                     d.on_object_begin()?;
                     let pointer = rustdb_storage::checkpoint::pointers::BlockPointer::deserialize_fields(d)?;
                     d.on_object_end()?;
                     d.on_optional_property_end(true)?;
-                    pointer.is_valid().then(Vec::new)
+                    pointer.is_valid().then_some(pointer)
                 } else {
                     None
                 };
-                if root.is_some() {
-                    return Err(Error::not_implemented(
-                        "reading indexes of database files written by old DuckDB versions",
-                    ));
-                }
-                load_index(catalog, &transaction, &info, index_loader)?;
+                let stored = match root {
+                    Some(pointer) => {
+                        data_blocks.extend(deprecated_index_block_ids(
+                            metadata,
+                            pointer.block_id,
+                            pointer.offset,
+                        )?);
+                        UnboundIndexStorage::Deprecated
+                    }
+                    None => UnboundIndexStorage::Disk(extract_index_storage(&mut index_storage, &info)),
+                };
+                load_index(catalog, &transaction, &info, stored)?;
             }
             other => {
                 let _ = other;
@@ -983,25 +1019,52 @@ fn read_block_pointer_list(
     Ok(Some(result))
 }
 
-/// Creates an index entry read from a checkpoint and builds its ART from the table's rows.
+/// Takes the stored data of index `info` from those read with its table
+/// (`DataTableInfo::ExtractIndexStorageInfo`); an index without one gets an empty
+/// description.
+fn extract_index_storage(
+    index_storage: &mut [(String, String, Vec<ArtStorageInfo>)],
+    info: &CreateInfo,
+) -> ArtStorageInfo {
+    let CreateInfoKind::Index(index) = &info.kind else {
+        return ArtStorageInfo::default();
+    };
+    index_storage
+        .iter_mut()
+        .filter(|(schema, table, _)| {
+            schema.eq_ignore_ascii_case(&info.schema) && table.eq_ignore_ascii_case(&index.table)
+        })
+        .find_map(|(_, _, stored)| {
+            let position = stored.iter().position(|stored| stored.name == index.name)?;
+            Some(stored.remove(position))
+        })
+        .unwrap_or_else(|| ArtStorageInfo {
+            name: index.name.clone(),
+            ..ArtStorageInfo::default()
+        })
+}
+
+/// Creates an index entry read from a checkpoint (`CheckpointReader::ReadIndex`).
 fn load_index(
     catalog: &Catalog,
     transaction: &Transaction,
     info: &CreateInfo,
-    index_loader: &dyn IndexExpressionLoader,
+    stored: UnboundIndexStorage,
 ) -> Result<()> {
-    let (mut entry, _) = build_index_entry(catalog, transaction, info, index_loader)?;
+    let (mut entry, _) = build_index_entry(catalog, transaction, info, stored)?;
     entry.comment.clone_from(&info.comment);
     catalog.create_entry_committed(&info.schema, entry)
 }
 
-/// Builds the ART of the index `info` from its table's rows, adds it to the table and
-/// returns the index's catalog entry and the table.
+/// Adds the index `info` to its table and returns the index's catalog entry and the
+/// table. An index over plain columns is built from the table's rows; an index over
+/// expressions waits unbound until a connection binds it (`UnboundIndex`), keeping its
+/// `stored` data meanwhile.
 fn build_index_entry(
     catalog: &Catalog,
     transaction: &Transaction,
     info: &CreateInfo,
-    index_loader: &dyn IndexExpressionLoader,
+    stored: UnboundIndexStorage,
 ) -> Result<(CatalogEntry, Arc<DataTable>)> {
     let CreateInfoKind::Index(index) = &info.kind else {
         return Err(Error::internal("expected an index"));
@@ -1045,7 +1108,28 @@ fn build_index_entry(
             storage.build_index(transaction, &mut art, false)?;
             storage.add_index(art)?;
         }
-        _ => index_loader.load_expression_index(&storage, index)?,
+        _ => {
+            let column_ids = index
+                .column_ids
+                .iter()
+                .map(|&column| {
+                    usize::try_from(column).map_err(|_| Error::serialization("invalid index column"))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let index_type = if index.index_type_name.is_empty() {
+                "ART"
+            } else {
+                index.index_type_name.as_str()
+            };
+            storage.add_unbound_index(UnboundIndex::new(
+                index.name.clone(),
+                index_type,
+                constraint,
+                column_ids,
+                Arc::new(info.clone()),
+                stored,
+            ))?;
+        }
     }
     let mut entry = CatalogEntry::new(
         index.name.clone(),
@@ -1059,15 +1143,16 @@ fn build_index_entry(
     Ok((entry, storage))
 }
 
-/// Recreates an index of a WAL in `transaction` (`ReplayCreateIndex`): the index is
-/// rebuilt from its table.
+/// Recreates an index of a WAL in `transaction` (`ReplayCreateIndex`): an index over plain
+/// columns is rebuilt from its table, one over expressions stays unbound with the
+/// `stored` description and buffers of the WAL entry.
 pub fn replay_create_index(
     catalog: &Catalog,
     transaction: &Transaction,
     info: &CreateInfo,
-    index_loader: &dyn IndexExpressionLoader,
+    stored: UnboundIndexStorage,
 ) -> Result<()> {
-    let (entry, storage) = build_index_entry(catalog, transaction, info, index_loader)?;
+    let (entry, storage) = build_index_entry(catalog, transaction, info, stored)?;
     let name = entry.name().to_owned();
     match catalog.create_entry(
         transaction,

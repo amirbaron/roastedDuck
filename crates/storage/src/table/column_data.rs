@@ -228,6 +228,11 @@ fn not_implemented_nested(what: &str, ty: &LogicalType) -> Error {
 }
 
 impl ColumnData {
+    /// The I/O manager of the column's table.
+    pub(crate) fn io_manager(&self) -> &Arc<TableIoManager> {
+        &self.io
+    }
+
     /// An empty top-level column (`ColumnData::CreateColumn`).
     pub fn new(
         io: Arc<TableIoManager>,

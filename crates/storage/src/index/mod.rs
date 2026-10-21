@@ -6,11 +6,13 @@ pub mod art;
 pub mod conflict_manager;
 pub mod fixed_size_allocator;
 pub mod table_index_list;
+pub mod unbound_index;
 
 pub use art::{Art, ArtKey, IndexKeyExpressions};
 pub use conflict_manager::ConflictManager;
 pub use fixed_size_allocator::{BufferLoader, BufferPointer, FixedSizeAllocator, FixedSizeAllocatorInfo};
-pub use table_index_list::{IndexEntry, TableIndexList};
+pub use table_index_list::{IndexEntry, IndexSlot, TableIndexList};
+pub use unbound_index::{UnboundIndex, UnboundIndexStorage};
 
 /// The constraint an index enforces (DuckDB's `IndexConstraintType`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

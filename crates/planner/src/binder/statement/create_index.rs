@@ -1,14 +1,17 @@
 //! `CREATE INDEX` (DuckDB's `INDEX_ENTRY` case of `Binder::Bind(CreateStatement &)` and
 //! `IndexBinder::BindCreateIndex`).
 
-use rustdb_ast::{BaseTableRef, CreateInfo, CreateInfoKind, TableRef, TableRefKind};
-use rustdb_catalog::TableEntry;
+use std::sync::Arc;
+
+use rustdb_ast::{BaseTableRef, CreateIndexInfo, CreateInfo, CreateInfoKind, TableRef, TableRefKind};
+use rustdb_catalog::{CatalogEntry, TableEntry};
 use rustdb_common::{Error, Result};
 use rustdb_types::LogicalType;
 
-use super::super::BindScope;
 use super::super::tableref::bind_table_ref;
+use super::super::{BindScope, Binder, Binding, BindingAlias, BindingKind};
 use super::table::table_of;
+use crate::context::ClientContext;
 use crate::expression::{Expression, ExpressionKind};
 use crate::expression_binder::{ExpressionBinder, IndexBinder};
 use crate::operator::{
@@ -162,4 +165,52 @@ fn to_physical_references(
         }
     });
     result
+}
+
+/// Binds the key expressions of an index stored with table `entry` (DuckDB's
+/// `TableIndexList::Bind`: the table is added to a fresh binder, then
+/// `IndexBinder::BindIndex` binds the parsed expressions). The column references
+/// become references to the table's physical columns.
+pub fn bind_index_expressions(
+    context: Arc<ClientContext>,
+    entry: &Arc<CatalogEntry>,
+    index: &CreateIndexInfo,
+) -> Result<Vec<Expression>> {
+    let table = table_of(entry)?;
+    let mut binder = Binder::new(context)?;
+    let mut scope = BindScope::root(&mut binder);
+    let table_index = scope.generate_table_index();
+    let types: Vec<LogicalType> = table
+        .columns
+        .iter()
+        .map(|column| column.logical_type.clone())
+        .collect();
+    let names: Vec<String> = table.columns.iter().map(|column| column.name.clone()).collect();
+    let shared_column_ids = crate::operator::SharedColumnIds::default();
+    scope.bind_context.add_binding(Binding::new(
+        BindingKind::Table {
+            bound_column_ids: Arc::clone(&shared_column_ids),
+            entry: Some(Arc::clone(entry)),
+            virtual_columns: Vec::new(),
+        },
+        BindingAlias::new(entry.name()),
+        types,
+        names,
+        table_index,
+    )?);
+    let mut expressions = Vec::with_capacity(index.parsed_expressions.len());
+    for parsed in &index.parsed_expressions {
+        let mut parsed = parsed.clone();
+        let (inner, outer) = scope.split();
+        let mut binder = IndexBinder::new(inner, outer);
+        expressions.push(binder.bind(&mut parsed, true)?);
+    }
+    let column_ids = shared_column_ids
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    for expression in &mut expressions {
+        to_physical_references(expression, table_index, &column_ids, table)?;
+    }
+    Ok(expressions)
 }

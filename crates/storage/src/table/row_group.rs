@@ -487,8 +487,19 @@ impl RowGroup {
         *self.version_info_lock() = Some(info);
     }
 
+    /// The version info, created if needed, for a change; its per-row ids are charged to
+    /// the buffer manager.
     fn get_or_create_version_info(&self) -> Arc<RowVersionManager> {
-        Arc::clone(self.version_info_lock().get_or_insert_with(Arc::default))
+        let info = Arc::clone(self.version_info_lock().get_or_insert_with(Arc::default));
+        let io = self.unloaded.as_ref().map(|unloaded| &unloaded.io).or_else(|| {
+            self.columns
+                .iter()
+                .find_map(|column| column.get().map(|column| column.io_manager()))
+        });
+        if let Some(io) = io {
+            info.track_memory(io.buffer_manager());
+        }
+        info
     }
 
     // ----------------------------------------------------------------------------------

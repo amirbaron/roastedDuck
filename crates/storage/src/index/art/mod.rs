@@ -16,6 +16,7 @@ mod prefix;
 mod storage;
 #[cfg(test)]
 mod tests;
+mod vacuum;
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -30,7 +31,7 @@ pub use key::{
     ArtKey, ROW_ID_SIZE, create_key, decode_row_id, generate_keys, is_supported_key_type, row_id_key,
 };
 pub use node::{GateStatus, NType, Node, Slot};
-pub use storage::ArtStorageInfo;
+pub use storage::{ArtStorageInfo, deprecated_index_block_ids};
 
 use self::node::{ALLOCATOR_COUNT, read_node, write_node};
 use super::conflict_manager::ConflictManager;
@@ -51,6 +52,14 @@ pub trait IndexKeyExecutor: Send + Sync + fmt::Debug {
     fn execute(&self, table_chunk: &DataChunk) -> Result<DataChunk>;
     /// The display names of the key expressions (`Expression::GetName`).
     fn names(&self) -> &[String];
+
+    /// The predicates an index scan answers for the pushed-down `filter` on the one column
+    /// the key expression reads, if it compares the key expression with a constant
+    /// (`ART::TryInitializeScan` on the filter's `ToExpression`).
+    fn scan_predicates(&self, filter: &TableFilter) -> Option<Vec<IndexScanPredicate>> {
+        let _ = filter;
+        None
+    }
 }
 
 /// How an index computes its key columns from a table chunk.
@@ -942,6 +951,12 @@ fn extract_comparisons(
         TableFilter::Optional(child) => child
             .as_ref()
             .is_none_or(|child| extract_comparisons(child, comparisons, in_values)),
+        // A `SelectivityOptionalFilter` is an `OptionalFilter`.
+        TableFilter::SelectivityOptional(optional) => {
+            extract_comparisons(&optional.child, comparisons, in_values)
+        }
+        // Bloom filters cannot find comparisons or IN filters, but do not prevent them.
+        TableFilter::Expression(expression) => expression.is_bloom_filter(),
         _ => false,
     }
 }

@@ -938,13 +938,14 @@ impl DatabaseInstance {
 
     /// Checkpoints the database `name` a commit wrote to when its WAL grew beyond
     /// `checkpoint_threshold`, unless other transactions are running
-    /// (`DuckTransactionManager::CanCheckpoint`).
+    /// (`DuckTransactionManager::CanCheckpoint`). `index_bytes` is the memory of the
+    /// indexes over the rows the transaction appended.
     ///
     /// `blocks_concurrent` tells whether the committed transaction updated rows or
     /// dropped catalog entries: then it does not checkpoint while other transactions run
     /// (`GetCheckpointType`). A failing checkpoint reports that the commit succeeded
     /// (`BuildAutocheckpointError`).
-    fn auto_checkpoint(&self, name: &str, blocks_concurrent: bool) -> Result<()> {
+    fn auto_checkpoint(&self, name: &str, blocks_concurrent: bool, index_bytes: u64) -> Result<()> {
         let threshold = self
             .checkpoint_wal_size
             .load(std::sync::atomic::Ordering::Relaxed);
@@ -965,7 +966,9 @@ impl DatabaseInstance {
             let guard = wal.lock();
             (guard.size(), guard.entries())
         };
-        if size <= threshold && !(entry_limit > 0 && entries >= entry_limit) {
+        // The commit's estimated size counts the memory of the indexes over its appended
+        // rows (`LocalTableStorage::EstimatedSize`).
+        if size + index_bytes <= threshold && !(entry_limit > 0 && entries >= entry_limit) {
             return Ok(());
         }
         let no_wal_writes = wal.lock().no_writes();
@@ -1562,15 +1565,16 @@ impl Connection {
             .as_ref()
             .is_err_and(|error| invalidates_transaction(error.kind()));
         // The database the transaction wrote to, which its commit may checkpoint.
-        let (modified, blocks_concurrent) = if self.transactions.has_current() {
+        let (modified, blocks_concurrent, index_bytes) = if self.transactions.has_current() {
             let current = self.transactions.current();
             let properties = current.undo_properties();
             (
                 current.modified_database(),
                 properties.has_updates || properties.has_dropped_entries,
+                current.local_storage().index_memory_size() as u64,
             )
         } else {
-            (None, false)
+            (None, false, 0)
         };
         // A transaction that used an invalidated database cannot commit
         // (`MetaTransaction::Commit`); it is rolled back.
@@ -1601,10 +1605,10 @@ impl Connection {
         if result.is_ok()
             && !self.transactions.has_current()
             && let Some(modified) = modified
-            && let Err(error) = self
-                .database
-                .instance()
-                .auto_checkpoint(&modified, blocks_concurrent)
+            && let Err(error) =
+                self.database
+                    .instance()
+                    .auto_checkpoint(&modified, blocks_concurrent, index_bytes)
         {
             result = Err(error);
         }
@@ -2156,7 +2160,35 @@ impl Connection {
             },
             _ => None,
         });
+        // `VACUUM tbl` compacts the table's indexes (`PhysicalVacuum::Finalize`).
+        let vacuum_table = match &statement.kind {
+            rustdb_ast::SqlStatementKind::Vacuum(info) if info.has_table => info
+                .table_ref
+                .as_deref()
+                .and_then(|table_ref| match &table_ref.kind {
+                    rustdb_ast::TableRefKind::BaseTable(base) => Some((**base).clone()),
+                    _ => None,
+                }),
+            _ => None,
+        };
         let result = self.run_planned(statement)?;
+        if let Some(base) = vacuum_table {
+            let transaction = self.transactions.current();
+            let client = self.client_context(transaction);
+            let found = client.get_entry(
+                &base.catalog_name,
+                &base.schema_name,
+                rustdb_catalog::CatalogType::Table,
+                &base.table_name,
+                true,
+            )?;
+            if let Some(found) = found
+                && let rustdb_catalog::EntryKind::Table(table) = &found.entry.kind
+                && let Some(storage) = &table.storage
+            {
+                storage.vacuum_indexes()?;
+            }
+        }
         if let Some(force) = checkpoint {
             let instance = self.database.instance();
             let name = database.unwrap_or_else(|| self.default_catalog());
@@ -2167,6 +2199,21 @@ impl Connection {
                     .iter()
                     .any(|database| Arc::ptr_eq(database, &attached));
             let transaction = self.transactions.current();
+            // Explicit checkpoints bind the indexes first, so the written indexes hold
+            // the changes replayed from the WAL (`SingleFileCheckpointWriter::WriteTable`
+            // with a bind connection).
+            if attached.storage.is_some() {
+                let client = self.client_context(Arc::clone(&transaction));
+                let system = Transaction::system();
+                for schema in attached.catalog.schemas().scan(&system) {
+                    let Some(schema_entry) = schema.as_schema() else {
+                        continue;
+                    };
+                    for table in schema_entry.tables.scan(&system) {
+                        rustdb_execution::operators::bind_table_indexes(&client, &table)?;
+                    }
+                }
+            }
             crate::storage::checkpoint(&attached, &transaction, started, force, &instance.transactions)?;
         }
         Ok(result)
@@ -2814,7 +2861,9 @@ impl Connection {
                 }
                 if name.eq_ignore_ascii_case("disabled_filesystems") {
                     let list = value.to_varchar()?;
-                    self.database.instance().set_disabled_file_systems(&list.split(',').collect::<Vec<_>>())?;
+                    self.database
+                        .instance()
+                        .set_disabled_file_systems(&list.split(',').collect::<Vec<_>>())?;
                 }
                 self.database.instance().set_buffer_setting(name, Some(value))?;
                 if crate::logging::is_logging_setting(name) {

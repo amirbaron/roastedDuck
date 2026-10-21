@@ -3,13 +3,11 @@
 
 use std::sync::Arc;
 
-use rustdb_ast::CreateIndexInfo;
-use rustdb_catalog::checkpoint::{IndexExpressionLoader, load_checkpoint, write_checkpoint};
+use rustdb_catalog::checkpoint::{load_checkpoint, write_checkpoint};
 use rustdb_catalog::{Catalog, Transaction};
 use rustdb_common::profiling::MetricType;
 use rustdb_common::{Error, ErrorKind, Result};
 use rustdb_serde::SerializationCompatibility;
-use rustdb_storage::DataTable;
 use rustdb_storage::storage_manager::{StorageManager, StorageOptions};
 use rustdb_types::Value;
 
@@ -120,18 +118,6 @@ fn storage_options(attach: &AttachOptions) -> Result<StorageOptions> {
     Ok(options)
 }
 
-/// Builds expression indexes of a loaded database (needs the binder; not supported yet).
-struct NoExpressionIndexes;
-
-impl IndexExpressionLoader for NoExpressionIndexes {
-    fn load_expression_index(&self, _table: &Arc<DataTable>, info: &CreateIndexInfo) -> Result<()> {
-        Err(Error::not_implemented(format!(
-            "loading the expression index \"{}\" from a database file",
-            info.name
-        )))
-    }
-}
-
 /// Opens the database file at `path` and loads its catalog into `catalog`.
 pub(crate) fn open_storage(
     path: &str,
@@ -161,7 +147,7 @@ pub(crate) fn open_storage(
     }
     // `SingleFileStorageManager::LoadDatabase` times loading the checkpoint.
     let timer = rustdb_common::profiling::start_timer(MetricType::AttachLoadStorageLatency);
-    load_checkpoint(catalog, &storage, &NoExpressionIndexes)?;
+    load_checkpoint(catalog, &storage)?;
     drop(timer);
     Ok(Arc::new(storage))
 }
@@ -178,6 +164,9 @@ pub(crate) fn checkpoint(
 ) -> Result<()> {
     database.check_valid()?;
     if database.storage.is_none() {
+        if !current.changes_made() {
+            checkpoint_in_memory(&database.catalog, transactions)?;
+        }
         return Ok(());
     }
     if started && force {
@@ -207,6 +196,32 @@ pub(crate) fn checkpoint(
         CheckpointMode::Manual
     };
     database.create_checkpoint(mode, Some(transactions))
+}
+
+/// Checkpoints an in-memory database (DuckDB's `InMemoryCheckpointer::CreateCheckpoint`):
+/// every table compresses its version information and, when no other transaction runs
+/// that may still need older data, vacuums its deleted rows.
+fn checkpoint_in_memory(catalog: &Catalog, transactions: &rustdb_catalog::TransactionManager) -> Result<()> {
+    let lowest_active_start = transactions.lowest_active_start();
+    let settings = rustdb_storage::checkpoint::table_writer::TableWriteSettings {
+        full_checkpoint: transactions.active_count() <= 1 && transactions.last_commit() < lowest_active_start,
+        lowest_active_start,
+        ..Default::default()
+    };
+    let system = Transaction::system();
+    for schema in catalog.schemas().scan(&system) {
+        let Some(schema_entry) = schema.as_schema() else {
+            continue;
+        };
+        for entry in schema_entry.tables.scan(&system) {
+            if let rustdb_catalog::EntryKind::Table(table) = &entry.kind
+                && let Some(storage) = &table.storage
+            {
+                rustdb_storage::checkpoint::table_writer::checkpoint_in_memory_table(storage, settings)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Why a checkpoint is written.

@@ -23,6 +23,8 @@ mod merge_into;
 mod modify;
 mod table;
 
+pub use create_index::bind_index_expressions;
+
 use super::query_node::{bind_node, bind_statement_with_ctes};
 use super::{BindScope, Binder, BoundStatement};
 use crate::expression::BoundParameterData;

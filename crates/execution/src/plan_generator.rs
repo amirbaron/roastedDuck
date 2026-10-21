@@ -45,7 +45,7 @@ use crate::operators::{
     CreateViewAction, DdlAction, DropAction, InsertTarget, PhysicalBatchInsert, PhysicalCreateTable,
     PhysicalDdl, PhysicalDelete, PhysicalInsert, PhysicalSeqScan, PhysicalUpdate, ScanExplainInfo,
 };
-use crate::operators::{CreateEntryAction, PhysicalCreateType, PhysicalCrossProduct};
+use crate::operators::{CreateEntryAction, PhysicalCreateType, PhysicalCrossProduct, bind_table_indexes};
 use crate::operators::{CteData, PhysicalCte, PhysicalCteScan, PhysicalRecursiveCte};
 use crate::operators::{
     DelimShared, PhysicalBlockwiseNLJoin, PhysicalDelimJoin, PhysicalDelimScan, PhysicalHashJoin,
@@ -253,6 +253,12 @@ impl PlanGenerator {
         }
         let projection = get.projection_ids.iter().map(|&id| id as usize).collect();
         let filters = table_filter_set(get)?;
+        // `TableScanInitGlobal` binds the ART indexes before it tries an index scan.
+        if (filters.is_some() || get.dynamic_filters.is_some())
+            && let Some(table_entry) = &get.table
+        {
+            bind_table_indexes(&context.client, table_entry)?;
+        }
         let explain = ScanExplainInfo {
             table: get
                 .table_schema
@@ -306,6 +312,8 @@ impl PlanGenerator {
     /// from the input are computed by a projection (`PhysicalInsert::ResolveDefaults`).
     fn plan_insert(&self, insert: &LogicalInsert, child: PhysicalRef) -> Result<PhysicalRef> {
         let context = self.context()?;
+        // `BindIndexes` of the operator's initialization.
+        bind_table_indexes(&context.client, &insert.table)?;
         let storage = table_storage(&insert.table)?;
         let child = if insert.column_index_map.is_empty() {
             child
@@ -357,6 +365,8 @@ impl PlanGenerator {
         child: PhysicalRef,
     ) -> Result<PhysicalRef> {
         let context = self.context()?;
+        // `BindIndexes` of the operator's initialization.
+        bind_table_indexes(&context.client, &delete.table)?;
         let storage = table_storage(&delete.table)?;
         let row_id_index = match expressions.first().map(|expression| &expression.kind) {
             Some(ExpressionKind::Reference(reference)) => reference.index as usize,
@@ -390,6 +400,8 @@ impl PlanGenerator {
         child: PhysicalRef,
     ) -> Result<PhysicalRef> {
         let context = self.context()?;
+        // `BindIndexes` of the operator's initialization.
+        bind_table_indexes(&context.client, &update.table)?;
         let storage = table_storage(&update.table)?;
         let row_id = child
             .types()
@@ -435,6 +447,8 @@ impl PlanGenerator {
     /// operators that append share one append.
     fn plan_merge_into(&self, merge: LogicalMergeInto, child: PhysicalRef) -> Result<PhysicalRef> {
         let context = self.context()?;
+        // `BindIndexes` of the operator's initialization.
+        bind_table_indexes(&context.client, &merge.table)?;
         let storage = table_storage(&merge.table)?;
         let table_types = storage.types();
         let constraints = table_constraints(

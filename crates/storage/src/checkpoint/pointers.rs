@@ -567,87 +567,76 @@ impl RowGroupPointer {
     }
 }
 
-/// One allocator of a stored index (DuckDB's `FixedSizeAllocatorInfo`), as far as rustdb
-/// reads it: where its buffers are and how large they are.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct AllocatorInfo {
-    pub block_pointers: Vec<BlockPointer>,
-    /// The size of each buffer; WAL entries carry the buffers inline.
-    pub allocation_sizes: Vec<u64>,
-}
-
-/// The storage of an index (DuckDB's `IndexStorageInfo`). rustdb rebuilds indexes from
-/// their tables, so the index data itself is only accounted for, not read.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct IndexStorageInfo {
-    pub name: String,
-    pub root: u64,
-    pub allocators: Vec<AllocatorInfo>,
-    /// The `storage_version` option: the storage version the index was created with,
-    /// recorded since v1.5.0.
-    pub storage_version: Option<u64>,
-}
-
-impl IndexStorageInfo {
-    /// `IndexStorageInfo::Deserialize` (the object's fields).
-    pub fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let name: String = deserializer.read_optional(100, "name")?.unwrap_or_default();
-        let root: u64 = deserializer.read_optional(101, "root")?.unwrap_or(0);
-        let mut allocators = Vec::new();
-        if deserializer.on_optional_property_begin(102, "allocator_infos")? {
-            let count = deserializer.on_list_begin()?;
-            for _ in 0..count {
-                deserializer.on_object_begin()?;
-                let _segment_size: Option<u64> = deserializer.read_optional(100, "segment_size")?;
-                let _buffer_ids: Option<Vec<u64>> = deserializer.read_optional(101, "buffer_ids")?;
-                let mut block_pointers = Vec::new();
-                if deserializer.on_optional_property_begin(102, "block_pointers")? {
-                    let pointers = deserializer.on_list_begin()?;
-                    for _ in 0..pointers {
-                        deserializer.on_object_begin()?;
-                        block_pointers.push(BlockPointer::deserialize_fields(deserializer)?);
-                        deserializer.on_object_end()?;
-                    }
-                    deserializer.on_list_end()?;
-                    deserializer.on_optional_property_end(true)?;
+/// `IndexStorageInfo::Deserialize` (the object's fields) of an ART.
+pub fn deserialize_index_storage_info(
+    deserializer: &mut dyn Deserializer,
+) -> Result<crate::index::art::ArtStorageInfo> {
+    use crate::index::fixed_size_allocator::{BufferPointer, FixedSizeAllocatorInfo};
+    let name: String = deserializer.read_optional(100, "name")?.unwrap_or_default();
+    let root: u64 = deserializer.read_optional(101, "root")?.unwrap_or(0);
+    let mut allocator_infos = Vec::new();
+    if deserializer.on_optional_property_begin(102, "allocator_infos")? {
+        let count = deserializer.on_list_begin()?;
+        for _ in 0..count {
+            deserializer.on_object_begin()?;
+            let segment_size: u64 = deserializer.read_optional(100, "segment_size")?.unwrap_or(0);
+            let buffer_ids: Vec<u64> = deserializer.read_optional(101, "buffer_ids")?.unwrap_or_default();
+            let mut block_pointers = Vec::new();
+            if deserializer.on_optional_property_begin(102, "block_pointers")? {
+                let pointers = deserializer.on_list_begin()?;
+                for _ in 0..pointers {
+                    deserializer.on_object_begin()?;
+                    let pointer = BlockPointer::deserialize_fields(deserializer)?;
+                    block_pointers.push(BufferPointer {
+                        block_id: pointer.block_id,
+                        offset: pointer.offset,
+                    });
+                    deserializer.on_object_end()?;
                 }
-                let _segment_counts: Option<Vec<u64>> = deserializer.read_optional(103, "segment_counts")?;
-                let allocation_sizes: Vec<u64> = deserializer
-                    .read_optional(104, "allocation_sizes")?
-                    .unwrap_or_default();
-                let _free_space: Option<Vec<u64>> =
-                    deserializer.read_optional(105, "buffers_with_free_space")?;
-                deserializer.on_object_end()?;
-                allocators.push(AllocatorInfo {
-                    block_pointers,
-                    allocation_sizes,
-                });
+                deserializer.on_list_end()?;
+                deserializer.on_optional_property_end(true)?;
             }
-            deserializer.on_list_end()?;
-            deserializer.on_optional_property_end(true)?;
+            let segment_counts: Vec<u64> = deserializer
+                .read_optional(103, "segment_counts")?
+                .unwrap_or_default();
+            let allocation_sizes: Vec<u64> = deserializer
+                .read_optional(104, "allocation_sizes")?
+                .unwrap_or_default();
+            let buffers_with_free_space: Vec<u64> = deserializer
+                .read_optional(105, "buffers_with_free_space")?
+                .unwrap_or_default();
+            deserializer.on_object_end()?;
+            allocator_infos.push(FixedSizeAllocatorInfo {
+                segment_size,
+                buffer_ids,
+                block_pointers,
+                segment_counts,
+                allocation_sizes,
+                buffers_with_free_space,
+            });
         }
-        let options: Option<rustdb_common::CaseInsensitiveMap<rustdb_types::Value>> =
-            deserializer.read_optional(103, "options")?;
-        let storage_version = options
-            .as_ref()
-            .and_then(|options| options.get("storage_version"))
-            .and_then(rustdb_types::Value::as_u64);
-        Ok(Self {
-            name,
-            root,
-            allocators,
-            storage_version,
-        })
+        deserializer.on_list_end()?;
+        deserializer.on_optional_property_end(true)?;
     }
+    let options: rustdb_common::CaseInsensitiveMap<rustdb_types::Value> =
+        deserializer.read_optional(103, "options")?.unwrap_or_default();
+    Ok(crate::index::art::ArtStorageInfo {
+        name,
+        root,
+        allocator_infos,
+        options,
+    })
+}
 
-    /// The blocks holding the index data.
-    pub fn block_ids(&self) -> impl Iterator<Item = BlockId> + '_ {
-        self.allocators
-            .iter()
-            .flat_map(|allocator| allocator.block_pointers.iter())
-            .filter(|pointer| pointer.is_valid())
-            .map(|pointer| pointer.block_id)
-    }
+/// The data blocks an index description references.
+pub fn index_storage_block_ids(
+    info: &crate::index::art::ArtStorageInfo,
+) -> impl Iterator<Item = BlockId> + '_ {
+    info.allocator_infos
+        .iter()
+        .flat_map(|allocator| allocator.block_pointers.iter())
+        .filter(|pointer| pointer.block_id != INVALID_BLOCK)
+        .map(|pointer| pointer.block_id)
 }
 
 /// Writes `values` as list property `field` unless it is empty (`WritePropertyWithDefault`).

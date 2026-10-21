@@ -288,7 +288,7 @@ impl DdlAction for AlterEntryAction {
                 )?;
                 storage.build_index(transaction, &mut art, true)?;
                 storage.check_main_table_for_index_creation()?;
-                if storage.indexes().find(index_name).is_some() {
+                if storage.indexes().contains(index_name) {
                     return Err(Error::catalog(format!(
                         "an index with that name already exists for this table: {index_name}"
                     )));

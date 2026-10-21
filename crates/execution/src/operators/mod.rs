@@ -26,8 +26,8 @@ mod modify;
 mod order;
 mod perfect_hash_aggregate;
 mod pivot;
-mod radix_sink;
 mod projection;
+mod radix_sink;
 mod result_collector;
 mod sample;
 mod seq_scan;
@@ -52,7 +52,7 @@ pub use cross_product::{CrossProductExecutor, CrossProductGlobal, PhysicalCrossP
 pub use cte::{CteData, PhysicalCte, PhysicalCteScan, PhysicalRecursiveCte, RecursiveCteState};
 pub use ddl::{
     CatalogTableCreator, CreateEntryAction, CreateIndexAction, CreateSchemaAction, CreateSequenceAction,
-    CreateViewAction, DdlAction, DropAction, PhysicalDdl,
+    CreateViewAction, DdlAction, DropAction, PhysicalDdl, bind_table_indexes,
 };
 pub use delete::PhysicalDelete;
 pub use delim::{DelimData, DelimGlobal, DelimShared, PhysicalDelimJoin, PhysicalDelimScan};

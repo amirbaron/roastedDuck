@@ -17,6 +17,13 @@ pub struct ExecutableExpressionFilter {
     filter: ExpressionTableFilter,
 }
 
+impl ExecutableExpressionFilter {
+    /// The predicate, reading the column as `BOUND_REF #0`.
+    pub(crate) fn expression(&self) -> &rustdb_planner::Expression {
+        &self.filter.expression
+    }
+}
+
 impl ExpressionFilter for ExecutableExpressionFilter {
     fn select(&self, vector: &Vector, count: usize, sel: &mut Vec<u32>) -> Result<()> {
         if sel.is_empty() {

@@ -196,6 +196,31 @@ impl DataTable {
         Ok(())
     }
 
+    /// Adds an index read from storage whose expressions are bound later
+    /// (`TableIndexList::AddIndex` of an `UnboundIndex`).
+    pub fn add_unbound_index(&self, index: crate::index::UnboundIndex) -> Result<()> {
+        self.check_main_table("add an index to")?;
+        self.indexes().add_unbound(index);
+        Ok(())
+    }
+
+    /// Binds every unbound index with `bind`, which returns the index built over the
+    /// table's rows (`DataTableInfo::BindIndexes`).
+    pub fn bind_indexes(
+        &self,
+        bind: &mut dyn FnMut(&crate::index::UnboundIndex) -> Result<Art>,
+    ) -> Result<()> {
+        self.indexes().bind(bind)
+    }
+
+    /// Compacts the memory of every bound index (`DataTable::VacuumIndexes`).
+    pub fn vacuum_indexes(&self) -> Result<()> {
+        for entry in self.indexes().entries() {
+            entry.lock().index.vacuum()?;
+        }
+        Ok(())
+    }
+
     /// Removes the index `name` (DROP INDEX, or rollback of CREATE INDEX).
     pub fn remove_index(&self, name: &str) -> bool {
         self.indexes().remove(name)
@@ -213,7 +238,7 @@ impl DataTable {
     ) -> Result<()> {
         self.build_index(transaction, &mut index, false)?;
         self.check_main_table_for_index_creation()?;
-        if check_unique_name && self.indexes().find(index.name()).is_some() {
+        if check_unique_name && self.indexes().contains(index.name()) {
             return Err(Error::catalog(format!(
                 "An index with the name {} already exists!",
                 index.name()
@@ -266,7 +291,8 @@ impl DataTable {
                 return Err(error);
             }
         }
-        Ok(())
+        // `PhysicalCreateIndex::Finalize`: vacuum the excess memory of the build.
+        index.vacuum()
     }
 
     /// The distinct columns an index reads, sorted.
@@ -689,7 +715,8 @@ impl DataTable {
                 continue;
             }
             let state = entry.lock();
-            if !matches!(state.index.expressions(), IndexKeyExpressions::Columns(_)) {
+            // No index scans on compound keys.
+            if state.index.key_types().len() != 1 {
                 continue;
             }
             let indexed = entry.column_ids()[0];
@@ -702,7 +729,11 @@ impl DataTable {
             let Some(filter) = filters.filters.get(&position) else {
                 continue;
             };
-            let Some(predicates) = IndexScanPredicate::from_filter(filter) else {
+            let predicates = match state.index.expressions() {
+                IndexKeyExpressions::Columns(_) => IndexScanPredicate::from_filter(filter),
+                IndexKeyExpressions::Custom(executor) => executor.scan_predicates(filter),
+            };
+            let Some(predicates) = predicates else {
                 continue;
             };
             let mut row_ids = BTreeSet::new();

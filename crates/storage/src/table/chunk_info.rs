@@ -400,6 +400,22 @@ impl ChunkVectorInfo {
         }
     }
 
+    /// The bytes of per-row version ids and delete masks this vector holds (what DuckDB
+    /// allocates from the row group's version allocator, tagged `BASE_TABLE`).
+    pub fn memory_size(&self) -> u64 {
+        let ids = std::mem::size_of::<u64>() as u64;
+        let inserted = match &self.inserted {
+            InsertIds::Constant(_) => 0,
+            InsertIds::PerRow(row_ids) => row_ids.len() as u64 * ids,
+        };
+        let deleted = match &self.deleted {
+            DeleteIds::Constant(_) => 0,
+            DeleteIds::Masked { mask, .. } => mask.len() as u64 * ids,
+            DeleteIds::PerRow(row_ids) => row_ids.len() as u64 * ids,
+        };
+        inserted + deleted
+    }
+
     /// Collapses per-row ids that behave identically for every transaction starting at or
     /// after `lowest_active_start` (`CompressVersionIds`).
     pub fn compress_version_ids(&mut self, lowest_active_start: u64) -> VersionCompression {

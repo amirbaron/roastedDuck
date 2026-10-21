@@ -994,6 +994,92 @@ pub fn write_table_data(
     })
 }
 
+/// Checkpoints a table of an in-memory database (DuckDB's `InMemoryCheckpointer::WriteTable`
+/// with `InMemoryTableDataWriter`): nothing is written, but a full checkpoint vacuums
+/// deleted rows, dropping and merging row groups, and the version information of the
+/// kept row groups is compressed.
+pub fn checkpoint_in_memory_table(table: &DataTable, settings: TableWriteSettings) -> Result<()> {
+    let _append = table.append_lock();
+    let collection = table.row_groups();
+    let row_groups = collection.row_groups();
+    let nodes = row_groups.tree().nodes();
+    let segment_count = nodes.len();
+    let mut segments: Vec<Option<Arc<RowGroup>>> =
+        nodes.iter().map(|node| Some(Arc::clone(&node.node))).collect();
+    let mut vacuum = initialize_vacuum_state(table, &nodes, &mut segments, settings);
+    let mut changed = segments.iter().any(Option::is_none);
+    let mut layout: Vec<(Arc<RowGroup>, u64)> = Vec::with_capacity(segment_count);
+    let mut new_total_rows = 0u64;
+    let mut total_vacuum_tasks = 0u64;
+    for segment_idx in 0..segment_count {
+        let schedule = total_vacuum_tasks < settings.max_vacuum_tasks;
+        match schedule_vacuum(
+            &mut vacuum,
+            &segments,
+            segment_idx,
+            schedule,
+            collection.row_group_size(),
+        ) {
+            VacuumDecision::Merge {
+                merge_count,
+                target_count,
+                merge_rows,
+            } => {
+                total_vacuum_tasks += 1;
+                changed = true;
+                let targets = vacuum_row_groups(
+                    collection,
+                    &vacuum,
+                    &mut segments,
+                    segment_idx,
+                    merge_count,
+                    target_count,
+                    merge_rows,
+                )?;
+                for target in targets {
+                    let count = target.count();
+                    layout.push((target, new_total_rows));
+                    new_total_rows += count;
+                }
+                continue;
+            }
+            VacuumDecision::Skip => {
+                total_vacuum_tasks += 1;
+                continue;
+            }
+            VacuumDecision::Keep => {}
+        }
+        let Some(row_group) = segments[segment_idx].clone() else {
+            continue;
+        };
+        if let Some(version_info) = row_group.version_info() {
+            version_info.compress_version_ids(settings.lowest_active_start);
+        }
+        let count = row_group.count();
+        layout.push((row_group, new_total_rows));
+        new_total_rows += count;
+    }
+    // `DataTable::Checkpoint`: appends start a new row group, which a later vacuum can
+    // merge.
+    collection.set_append_mode(crate::table::RowGroupAppendMode::SuggestNew);
+    if !changed {
+        return Ok(());
+    }
+    // `RowGroupCollection::Checkpoint`: the table consists of the kept and merged row
+    // groups now.
+    let base = row_groups.base_row_id();
+    let nodes = layout
+        .into_iter()
+        .map(|(node, row_start)| crate::table::SegmentNode {
+            row_start: base + row_start,
+            node,
+        })
+        .collect();
+    row_groups.tree().replace(nodes);
+    collection.set_total_rows(new_total_rows);
+    Ok(())
+}
+
 /// What the vacuum knows about a table checkpoint (DuckDB's `VacuumState`).
 #[derive(Debug, Default)]
 struct VacuumState {

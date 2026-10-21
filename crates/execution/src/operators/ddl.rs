@@ -15,12 +15,15 @@ use rustdb_catalog::{
     Catalog, CatalogEntry, CatalogType, EntryKind, IndexEntry, SequenceEntry, TableEntry, ViewEntry,
 };
 use rustdb_common::{Error, Result};
-use rustdb_planner::{Expression, ExpressionKind};
+use rustdb_planner::{ClientContext, Expression, ExpressionKind};
+use rustdb_storage::TableFilter;
 use rustdb_storage::index::IndexConstraintType;
-use rustdb_storage::index::art::{Art, IndexKeyExecutor, IndexKeyExpressions};
+use rustdb_storage::index::art::{Art, IndexKeyExecutor, IndexKeyExpressions, IndexScanPredicate};
 use rustdb_storage::{ColumnDefinition, DataTable, TableIoManager, Transaction};
+use rustdb_types::compare::CompareOp;
 use rustdb_types::{DataChunk, LogicalType, LogicalTypeId};
 
+use super::ExecutableExpressionFilter;
 use super::insert::TableCreator;
 use crate::expression_executor::ExpressionExecutor;
 use crate::operator::{ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
@@ -463,6 +466,76 @@ impl DdlAction for DropAction {
 struct IndexExpressionExecutor {
     executor: std::sync::Mutex<ExpressionExecutor>,
     names: Vec<String>,
+    /// The single key expression with its column read as `BOUND_REF #0`, the form of
+    /// a pushed-down expression filter; `None` for compound keys or keys over several
+    /// columns.
+    scan_key: Option<Expression>,
+}
+
+impl IndexExpressionExecutor {
+    fn new(expressions: &[Expression]) -> Self {
+        Self {
+            executor: std::sync::Mutex::new(ExpressionExecutor::new(expressions.to_vec())),
+            names: expressions.iter().map(Expression::name).collect(),
+            scan_key: match expressions {
+                [expression] => single_column_key(expression),
+                _ => None,
+            },
+        }
+    }
+}
+
+/// `expression` with its column references renumbered to `#0`, if it reads exactly one
+/// column (`TryScanIndex` rebinds the index expression to the scanned column).
+fn single_column_key(expression: &Expression) -> Option<Expression> {
+    fn collect(expression: &Expression, columns: &mut Vec<u64>) {
+        if let ExpressionKind::Reference(reference) = &expression.kind
+            && !columns.contains(&reference.index)
+        {
+            columns.push(reference.index);
+        }
+        for child in expression.children() {
+            collect(child, columns);
+        }
+    }
+    fn renumber(expression: &mut Expression) {
+        if let ExpressionKind::Reference(reference) = &mut expression.kind {
+            reference.index = 0;
+        }
+        expression.for_each_child_mut(renumber);
+    }
+    let mut columns = Vec::new();
+    collect(expression, &mut columns);
+    if columns.len() != 1 {
+        return None;
+    }
+    let mut key = expression.clone();
+    renumber(&mut key);
+    Some(key)
+}
+
+/// The comparison of an index scan for a comparison expression type.
+fn scan_compare_op(expression_type: rustdb_planner::ExpressionType) -> Option<CompareOp> {
+    use rustdb_planner::ExpressionType as T;
+    Some(match expression_type {
+        T::CompareEqual => CompareOp::Equal,
+        T::CompareLessthan => CompareOp::LessThan,
+        T::CompareLessthanorequalto => CompareOp::LessThanOrEqual,
+        T::CompareGreaterthan => CompareOp::GreaterThan,
+        T::CompareGreaterthanorequalto => CompareOp::GreaterThanOrEqual,
+        _ => return None,
+    })
+}
+
+/// `FlipComparisonExpression`: the comparison with its sides swapped.
+fn flip_compare_op(op: CompareOp) -> CompareOp {
+    match op {
+        CompareOp::LessThan => CompareOp::GreaterThan,
+        CompareOp::LessThanOrEqual => CompareOp::GreaterThanOrEqual,
+        CompareOp::GreaterThan => CompareOp::LessThan,
+        CompareOp::GreaterThanOrEqual => CompareOp::LessThanOrEqual,
+        other => other,
+    }
 }
 
 impl IndexKeyExecutor for IndexExpressionExecutor {
@@ -478,6 +551,37 @@ impl IndexKeyExecutor for IndexExpressionExecutor {
     fn names(&self) -> &[String] {
         &self.names
     }
+
+    /// `ART::TryInitializeScan` with the filter's `ToExpression`: a comparison of the key
+    /// expression with a constant.
+    fn scan_predicates(&self, filter: &TableFilter) -> Option<Vec<IndexScanPredicate>> {
+        let key = self.scan_key.as_ref()?;
+        let TableFilter::Expression(filter) = filter else {
+            return None;
+        };
+        let expression = filter
+            .as_any()
+            .downcast_ref::<ExecutableExpressionFilter>()
+            .map(ExecutableExpressionFilter::expression)?;
+        let ExpressionKind::Comparison(comparison) = &expression.kind else {
+            return None;
+        };
+        let op = scan_compare_op(expression.expression_type)?;
+        let (op, constant) = match (&comparison.left.kind, &comparison.right.kind) {
+            (_, ExpressionKind::Constant(constant)) if comparison.left.equals(key) => (op, constant),
+            (ExpressionKind::Constant(constant), _) if comparison.right.equals(key) => {
+                (flip_compare_op(op), constant)
+            }
+            _ => return None,
+        };
+        if constant.value.is_null() {
+            return None;
+        }
+        Some(vec![IndexScanPredicate::Single {
+            op,
+            value: constant.value.clone(),
+        }])
+    }
 }
 
 /// `CREATE INDEX` (DuckDB's `PhysicalCreateIndex` with the ART build): builds the index
@@ -491,44 +595,79 @@ pub struct CreateIndexAction {
     pub expressions: Vec<Expression>,
 }
 
-impl CreateIndexAction {
-    /// An empty ART over the keys.
-    fn new_art(&self, storage: &DataTable, index: &CreateIndexInfo) -> Result<Art> {
-        let constraint = match index.constraint_type {
-            AstIndexConstraintType::Unique => IndexConstraintType::Unique,
-            AstIndexConstraintType::Primary => IndexConstraintType::Primary,
-            AstIndexConstraintType::Foreign => IndexConstraintType::Foreign,
-            AstIndexConstraintType::None => IndexConstraintType::None,
-        };
-        let references: Option<Vec<usize>> = self
-            .expressions
-            .iter()
-            .map(|expression| match &expression.kind {
-                ExpressionKind::Reference(reference) => usize::try_from(reference.index).ok(),
-                _ => None,
-            })
-            .collect();
-        if let Some(columns) = references {
-            return storage.new_art(&index.name, constraint, &columns);
-        }
-        let columns: Vec<usize> = index
-            .column_ids
-            .iter()
-            .filter_map(|&c| usize::try_from(c).ok())
-            .collect();
-        let key_types = self.expressions.iter().map(|e| e.return_type.clone()).collect();
-        let executor = IndexExpressionExecutor {
-            executor: std::sync::Mutex::new(ExpressionExecutor::new(self.expressions.clone())),
-            names: self.expressions.iter().map(Expression::name).collect(),
-        };
-        storage.new_art_with_expressions(
-            &index.name,
-            constraint,
-            &columns,
-            key_types,
-            IndexKeyExpressions::Custom(Arc::new(executor)),
-        )
+/// An empty ART of index `index` over `storage` whose keys are `expressions` over the
+/// table's physical columns (`IndexType::create_instance` of the ART).
+fn index_art(storage: &DataTable, index: &CreateIndexInfo, expressions: &[Expression]) -> Result<Art> {
+    let constraint = match index.constraint_type {
+        AstIndexConstraintType::Unique => IndexConstraintType::Unique,
+        AstIndexConstraintType::Primary => IndexConstraintType::Primary,
+        AstIndexConstraintType::Foreign => IndexConstraintType::Foreign,
+        AstIndexConstraintType::None => IndexConstraintType::None,
+    };
+    let references: Option<Vec<usize>> = expressions
+        .iter()
+        .map(|expression| match &expression.kind {
+            ExpressionKind::Reference(reference) => usize::try_from(reference.index).ok(),
+            _ => None,
+        })
+        .collect();
+    if let Some(columns) = references {
+        return storage.new_art(&index.name, constraint, &columns);
     }
+    let columns: Vec<usize> = index
+        .column_ids
+        .iter()
+        .filter_map(|&c| usize::try_from(c).ok())
+        .collect();
+    let key_types = expressions.iter().map(|e| e.return_type.clone()).collect();
+    let executor = IndexExpressionExecutor::new(expressions);
+    storage.new_art_with_expressions(
+        &index.name,
+        constraint,
+        &columns,
+        key_types,
+        IndexKeyExpressions::Custom(Arc::new(executor)),
+    )
+}
+
+/// Binds the indexes of table `entry` that were read from storage and not bound yet,
+/// building each from the table's rows (DuckDB's `DataTableInfo::BindIndexes` with
+/// `IndexBinder::BindIndex`). Called before a statement changes the table.
+pub fn bind_table_indexes(client: &Arc<ClientContext>, entry: &Arc<CatalogEntry>) -> Result<()> {
+    let EntryKind::Table(table) = &entry.kind else {
+        return Ok(());
+    };
+    let Some(storage) = &table.storage else {
+        return Ok(());
+    };
+    if !storage.indexes().has_unbound() {
+        return Ok(());
+    }
+    storage.bind_indexes(&mut |unbound| {
+        let Some(info) = unbound.create_info().downcast_ref::<CreateInfo>() else {
+            return Err(Error::internal("unbound index without a CreateInfo"));
+        };
+        let CreateInfoKind::Index(index) = &info.kind else {
+            return Err(Error::internal("unbound index without a CreateIndexInfo"));
+        };
+        if !unbound.index_type().eq_ignore_ascii_case("ART") {
+            return Err(Error::new(
+                rustdb_common::ErrorKind::MissingExtension,
+                format!(
+                    "Cannot bind index '{}', unknown index type '{}'. You need to load the extension that provides this index type before table '{}' can be modified.",
+                    index.table,
+                    unbound.index_type(),
+                    index.table
+                ),
+            ));
+        }
+        let expressions = rustdb_planner::bind_index_expressions(Arc::clone(client), entry, index)?;
+        let mut art = index_art(storage, index, &expressions)?;
+        // The index holds the latest committed rows, like the stored one plus the
+        // replayed changes (`ApplyBufferedReplays`).
+        storage.build_index(&Transaction::system(), &mut art, false)?;
+        Ok(art)
+    })
 }
 
 impl DdlAction for CreateIndexAction {
@@ -572,7 +711,7 @@ impl DdlAction for CreateIndexAction {
             .storage
             .clone()
             .ok_or_else(|| Error::binder("Indexes can only be created on DuckDB tables."))?;
-        let art = self.new_art(&storage, index)?;
+        let art = index_art(&storage, index, &self.expressions)?;
         storage.create_index(
             transaction,
             art,

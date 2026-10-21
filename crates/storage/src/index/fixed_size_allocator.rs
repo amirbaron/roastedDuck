@@ -17,6 +17,9 @@ use super::IndexPointer;
 const BITS_PER_WORD: usize = 64;
 /// Bytes per bitmask word.
 const WORD_SIZE: usize = 8;
+/// The share of free memory, in percent, from which a vacuum empties buffers
+/// (`VACUUM_THRESHOLD`).
+const VACUUM_THRESHOLD: u8 = 10;
 
 /// Where a buffer lives on disk: a block and the offset of the buffer in it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,6 +93,8 @@ pub struct FixedSizeAllocator {
     pub(crate) buffers: BTreeMap<u64, FixedSizeBuffer>,
     buffers_with_free_space: BTreeSet<u64>,
     buffer_with_free_space: Option<u64>,
+    /// The buffers a running vacuum empties (`vacuum_buffers`).
+    vacuum_buffers: BTreeSet<u64>,
 }
 
 impl FixedSizeAllocator {
@@ -130,6 +135,7 @@ impl FixedSizeAllocator {
             buffers: BTreeMap::new(),
             buffers_with_free_space: BTreeSet::new(),
             buffer_with_free_space: None,
+            vacuum_buffers: BTreeSet::new(),
         })
     }
 
@@ -160,7 +166,7 @@ impl FixedSizeAllocator {
                 let id = self.available_buffer_id();
                 let reservation = self
                     .buffer_manager
-                    .reserve_tagged(MemoryTag::ArtIndex, self.block_size as u64)?;
+                    .reserve_tagged(MemoryTag::ArtIndex, buffer_memory_size(self.block_size))?;
                 let mut bytes = vec![0u8; self.block_size].into_boxed_slice();
                 // All segments start free.
                 set_all_valid(&mut bytes, self.available_segments_per_buffer);
@@ -312,6 +318,72 @@ impl FixedSizeAllocator {
         self.next_buffer_with_free_space();
     }
 
+    /// Chooses the buffers a vacuum empties; returns whether there are any
+    /// (`InitializeVacuum`). An empty allocator frees all its memory instead. Buffers not
+    /// in memory are not vacuumed.
+    pub fn initialize_vacuum(&mut self) -> bool {
+        if self.total_segment_count == 0 {
+            self.reset();
+            return false;
+        }
+        self.remove_empty_buffers();
+        // (free segments, buffer id) of every buffer in memory, least full last.
+        let mut candidates: Vec<(usize, u64)> = Vec::new();
+        let mut available_in_memory = 0;
+        for (&id, buffer) in &self.buffers {
+            if buffer.is_loaded() {
+                let available = self.available_segments_per_buffer - buffer.segment_count;
+                available_in_memory += available;
+                candidates.push((available, id));
+            }
+        }
+        if candidates.is_empty() {
+            return false;
+        }
+        let excess_buffer_count = available_in_memory / self.available_segments_per_buffer;
+        // The threshold is adaptive: vacuum once the excess is VACUUM_THRESHOLD percent.
+        let memory_usage = self.in_memory_size();
+        let excess_memory_usage = excess_buffer_count * self.block_size;
+        let excess_percentage = excess_memory_usage as f64 / memory_usage as f64;
+        if excess_percentage < f64::from(VACUUM_THRESHOLD) / 100.0 {
+            return false;
+        }
+        // Vacuum the buffers with the most free space (`multimap` order: the
+        // smallest keys are erased first, the same key in insertion order).
+        candidates.sort_by_key(|&(available, _)| available);
+        let skip = candidates.len() - excess_buffer_count;
+        for &(_, id) in &candidates[skip..] {
+            self.buffers_with_free_space.remove(&id);
+            self.vacuum_buffers.insert(id);
+        }
+        self.next_buffer_with_free_space();
+        true
+    }
+
+    /// Whether the segment at `ptr` lives in a buffer being vacuumed (`NeedsVacuum`).
+    pub fn needs_vacuum(&self, ptr: IndexPointer) -> bool {
+        self.vacuum_buffers.contains(&ptr.buffer_id())
+    }
+
+    /// Moves the segment at `ptr` to a buffer that stays and returns its new pointer
+    /// (`VacuumPointer`). The old buffer's bitmask is left as is: the whole buffer is
+    /// freed by [`FixedSizeAllocator::finalize_vacuum`].
+    pub fn vacuum_pointer(&mut self, ptr: IndexPointer) -> Result<IndexPointer> {
+        let new_ptr = self.new_segment()?;
+        // `new_segment` counted the segment, which is only moved.
+        self.total_segment_count -= 1;
+        let bytes = self.segment(ptr)?.to_vec();
+        self.segment_mut(new_ptr)?.copy_from_slice(&bytes);
+        Ok(new_ptr)
+    }
+
+    /// Frees the vacuumed buffers (`FinalizeVacuum`).
+    pub fn finalize_vacuum(&mut self) {
+        for id in std::mem::take(&mut self.vacuum_buffers) {
+            self.buffers.remove(&id);
+        }
+    }
+
     /// The smallest id not used by a buffer, searching down from the buffer count
     /// (`GetAvailableBufferId`).
     fn available_buffer_id(&self) -> u64 {
@@ -447,7 +519,7 @@ impl FixedSizeAllocator {
     pub fn insert_buffer(&mut self, id: u64, data: &[u8], segment_count: usize) -> Result<()> {
         let reservation = self
             .buffer_manager
-            .reserve_tagged(MemoryTag::ArtIndex, self.block_size as u64)?;
+            .reserve_tagged(MemoryTag::ArtIndex, buffer_memory_size(self.block_size))?;
         let mut bytes = vec![0u8; self.block_size].into_boxed_slice();
         let len = data.len().min(self.block_size);
         bytes[..len].copy_from_slice(&data[..len]);
@@ -503,7 +575,7 @@ fn load_buffer(
         .ok_or_else(|| Error::internal("invalid or missing buffer in FixedSizeAllocator"))?;
     let loader = loader.ok_or_else(|| Error::internal("no loader for a persisted index buffer"))?;
     let data = loader.load(pointer, buffer.allocation_size)?;
-    let reservation = buffer_manager.reserve_tagged(MemoryTag::ArtIndex, block_size as u64)?;
+    let reservation = buffer_manager.reserve_tagged(MemoryTag::ArtIndex, buffer_memory_size(block_size))?;
     let mut bytes = vec![0u8; block_size].into_boxed_slice();
     let len = data.len().min(block_size);
     bytes[..len].copy_from_slice(&data[..len]);
@@ -512,6 +584,13 @@ fn load_buffer(
     let _ = buffer.memory.set(bytes);
     let _ = buffer.reservation.set(reservation);
     Ok(())
+}
+
+/// The memory a buffer of `block_size` bytes is accounted with: a block with its header,
+/// like the blocks DuckDB allocates for it (`BufferManager::Allocate` with the block
+/// manager's block size).
+fn buffer_memory_size(block_size: usize) -> u64 {
+    (block_size + crate::storage_info::DEFAULT_BLOCK_HEADER_SIZE) as u64
 }
 
 fn buffer_bytes<'a>(
