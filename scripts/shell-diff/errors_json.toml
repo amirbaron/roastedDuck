@@ -1,0 +1,173 @@
+# errors_as_json: the extra info of every kind of error, in DuckDB's key order.
+
+[[case]]
+name = "json-errors-binder"
+stdin = '''
+SET errors_as_json = true;
+CREATE TABLE t(abc INT, abd INT);
+CREATE TABLE u(abc INT, xyz INT);
+SELECT x FROM (SELECT 1 AS y);
+SELECT bogus;
+SELECT ab FROM t;
+SELECT t.zzz FROM t;
+SELECT zzz.abc FROM t;
+SELECT abc FROM t WHERE bogus = 1;
+SELECT abc FROM t GROUP BY bogus;
+SELECT abc FROM t ORDER BY bogus;
+SELECT abc FROM t HAVING bogus > 1;
+SELECT * FROM t GROUP BY abc;
+SELECT abc FROM t, u;
+SELECT abx FROM t, u;
+SELECT (SELECT bogus FROM u) FROM t;
+SELECT (SELECT abq) FROM t;
+SELECT * FROM t WHERE abc IN (SELECT 1, 2);
+SELECT abc, count(*) FROM t;
+SELECT * FROM (SELECT 1) sub(a, b);
+SELECT * FROM t, t;
+SELECT abc FROM t a, t b;
+SELECT abc FROM t JOIN u USING (bogus);
+SELECT sum(abc) OVER (PARTITION BY bogus) FROM t;
+SELECT [x + bogus FOR x IN [1, 2]];
+SELECT bogus.*;
+SELECT COLUMNS('nomatch') FROM t;
+'''
+
+[[case]]
+name = "json-errors-catalog"
+stdin = '''
+SET errors_as_json = true;
+CREATE TABLE t(abc INT, abd INT);
+CREATE TABLE customers(customer_id INT);
+SELECT * FROM nonexistent_table;
+SELECT * FROM customer;
+SELECT * FROM nope.customers;
+SELECT * FROM nope.main.t;
+SELECT * FROM memory.nope.t;
+DROP TABLE nope;
+DROP VIEW customers;
+DROP SCHEMA nope;
+DROP SEQUENCE nope;
+DROP MACRO nope;
+DROP TYPE nope;
+DROP INDEX nope;
+DROP TABLE IF EXISTS nope.x;
+SELECT * FROM range_x(3);
+SELECT nonexistent_fn(1);
+SELECT uper('x');
+SELECT 'a'::nonexistent_type;
+SELECT 'a'::INTEGR;
+CREATE TABLE customers(i INT);
+CREATE SCHEMA s;
+CREATE SCHEMA s;
+CREATE VIEW customers AS SELECT 1;
+CREATE TYPE mood AS ENUM ('a');
+CREATE TYPE mood AS ENUM ('b');
+CREATE SEQUENCE seq;
+CREATE SEQUENCE seq;
+CREATE MACRO m(x) AS x;
+CREATE MACRO m(x) AS x;
+USE nope;
+ALTER TABLE nope ADD COLUMN x INT;
+ALTER TABLE t ADD COLUMN abc INT;
+ALTER TABLE t DROP COLUMN nope;
+ALTER TABLE t RENAME COLUMN nope TO x;
+ALTER TABLE t RENAME TO customers;
+CREATE INDEX i ON t(nope);
+COPY nope TO 'x.csv';
+INSERT INTO nope VALUES (1);
+WITH cte AS (SELECT 1) SELECT * FROM ctx;
+SELECT nextval('nope');
+PRAGMA tabel_info('t');
+PRAGMA table_info('nope');
+SELECT * FROM read_cvs('x');
+CALL nope();
+'''
+
+[[case]]
+name = "json-errors-functions"
+stdin = '''
+SET errors_as_json = true;
+CREATE MACRO two(a, b) AS a + b;
+SELECT substring();
+SELECT upper(1, 2);
+SELECT sum('a');
+SELECT abs('x');
+SELECT list_value(1, 'a') + 1;
+SELECT two(1);
+SELECT two(1, 2, 3);
+SELECT * FROM range('a');
+SELECT * FROM read_csv();
+SELECT strftime(1, 2);
+SELECT count(*, 1);
+SELECT 1 + 'a';
+SELECT [1] + 1;
+SELECT {'a': 1} = 1;
+SELECT date_part('nope', DATE '2024-01-01');
+'''
+
+[[case]]
+name = "json-errors-execution"
+stdin = '''
+SET errors_as_json = true;
+CREATE TABLE p(i INT PRIMARY KEY, j INT NOT NULL CHECK (j > 0));
+INSERT INTO p VALUES (1, 1), (1, 2);
+INSERT INTO p VALUES (2, NULL);
+INSERT INTO p VALUES (3, -1);
+SELECT 'abc'::INTEGER;
+SELECT 1 // 0;
+SELECT error('boom');
+SELECT [1,2][5];
+SELECT 300::TINYINT;
+SELECT 9223372036854775807 + 1;
+SELECT DATE '2024-02-30';
+SELECT '{bad json'::JSON;
+SELECT INTERVAL 'bogus';
+SELECT * FROM read_csv('missing.csv');
+CREATE SEQUENCE s MAXVALUE 1;
+SELECT nextval('s');
+SELECT nextval('s');
+BEGIN;
+BEGIN;
+COMMIT;
+COMMIT;
+SET threads = 'abc';
+SET thread = 4;
+SET memory_limit = 'lots';
+RESET nope;
+'''
+
+[[case]]
+name = "json-errors-parser"
+stdin = '''
+SET errors_as_json = true;
+SELECT * FORM t;
+SELECT (1;
+SELECT 1 +;
+CREATE TABLE (i INT);
+CREATE SEQUENCE s2 MAXVALUE 1;
+SELECT 'ok' AS still_running;
+SELECT 'unterminated;
+'''
+
+[[case]]
+name = "json-errors-c-flag"
+args = ["-c", "SET errors_as_json = true", "-c", "SELECT * FORM t", "-c", "SELECT bogus"]
+
+[[case]]
+name = "json-errors-bail"
+args = ["-bail"]
+stdin = '''
+SET errors_as_json = true;
+SELECT * FROM nope;
+SELECT 'not reached';
+'''
+
+[[case]]
+name = "json-errors-off-again"
+stdin = '''
+SET errors_as_json = true;
+SELECT bogus;
+SET errors_as_json = false;
+SELECT bogus;
+SELECT * FORM t;
+'''

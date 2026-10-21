@@ -1,0 +1,946 @@
+# Dot commands with valid and invalid arguments.
+
+[[case]]
+name = "help"
+stdin = ".help\n"
+
+[[case]]
+name = "help-all"
+stdin = ".help -all\n"
+
+[[case]]
+name = "help-{cmd}"
+vary = { cmd = ["mode", "import", "dump", "open", "output", "once", "pager", "schema", "indexes", "progress_bar", "edit", "excel", "width", "large_number_rendering", "m", "s", "nonexistent", "*", "h?lp", "--all", "-a"] }
+stdin = ".help {cmd}\n"
+
+[[case]]
+name = "help-extra-args"
+stdin = ".help mode extra\n"
+
+[[case]]
+name = "unknown-command"
+stdin = '''
+.bogus
+.
+.x y z
+SELECT 1;
+'''
+
+[[case]]
+name = "unknown-command-bail"
+args = ["-bail"]
+stdin = '''
+.bogus
+SELECT 1;
+'''
+
+[[case]]
+name = "command-prefix"
+stdin = '''
+.he
+.ta
+.sch
+.mod csv
+SELECT 1 AS a;
+.e
+.s
+'''
+
+[[case]]
+name = "tables"
+args = ["-cmd", "SET threads = 1"]
+stdin = '''
+CREATE TABLE b(i INT);
+CREATE TABLE a(i INT);
+CREATE VIEW v AS SELECT 1;
+CREATE SCHEMA s;
+CREATE TABLE s.c(i INT);
+CREATE TABLE "Quoted Name"(i INT);
+CREATE TEMP TABLE tmp(i INT);
+.tables
+.tables a%
+.tables %c
+.tables nomatch
+.tables a b
+'''
+
+[[case]]
+name = "tables-many"
+args = ["-cmd", "SET threads = 1"]
+stdin = '''
+
+CREATE TABLE t01(i INT); CREATE TABLE t02(i INT); CREATE TABLE t03(i INT); CREATE TABLE t04(i INT);
+CREATE TABLE t05(i INT); CREATE TABLE t06(i INT); CREATE TABLE t07(i INT); CREATE TABLE t08(i INT);
+CREATE TABLE t09(i INT); CREATE TABLE t10(i INT); CREATE TABLE a_much_longer_table_name(i INT);
+CREATE TABLE t12(i INT); CREATE TABLE t13(i INT); CREATE TABLE t14(i INT); CREATE TABLE t15(i INT);
+.tables
+.mode list
+.tables
+'''
+
+[[case]]
+name = "tables-attached"
+args = ["-cmd", "SET threads = 1"]
+stdin = '''
+ATTACH ':memory:' AS other;
+CREATE TABLE other.x(i INT);
+CREATE TABLE other.y(i INT);
+CREATE TABLE main_t(i INT);
+CREATE SCHEMA other.s2;
+CREATE TABLE other.s2.z(i INT);
+.tables
+.databases
+USE other;
+.tables
+'''
+
+[[case]]
+name = "tables-empty"
+stdin = ".tables\n"
+
+[[case]]
+name = "schema"
+stdin = '''
+CREATE TABLE t(i INTEGER PRIMARY KEY, s VARCHAR DEFAULT 'x', d DECIMAL(10,2) NOT NULL, CHECK (i > 0));
+CREATE TABLE u(a INT REFERENCES t(i), b VARCHAR UNIQUE);
+CREATE VIEW v AS SELECT i, s FROM t WHERE i > 1;
+CREATE INDEX idx ON t(s);
+CREATE SEQUENCE seq START 5 INCREMENT 2;
+CREATE MACRO m(x) AS x + 1;
+CREATE TYPE e AS ENUM ('a', 'b');
+CREATE TABLE "weird ""table"""(x INT);
+.schema
+.schema t
+.schema v%
+.schema nomatch
+.schema --indent
+.schema --indent t
+.schema --bogus
+.schema a b
+'''
+
+[[case]]
+name = "schema-empty"
+stdin = ".schema\n"
+
+[[case]]
+name = "indexes"
+stdin = '''
+CREATE TABLE t(i INT PRIMARY KEY, j INT);
+CREATE INDEX idx_j ON t(j);
+CREATE TABLE u(k INT);
+CREATE UNIQUE INDEX idx_k ON u(k);
+CREATE INDEX "Quoted Idx" ON u(k);
+.indexes
+.indexes t
+.indexes u%
+.indexes nomatch
+.indices
+.indexes a b
+'''
+
+[[case]]
+name = "databases"
+stdin = '''
+.databases
+ATTACH ':memory:' AS mem2;
+ATTACH 'file.db' AS f;
+.databases
+DETACH f;
+.databases
+.databases extra
+'''
+
+[[case]]
+name = "dump-types"
+stdin = '''
+CREATE TYPE mood AS ENUM ('sad', 'happy');
+CREATE TABLE t(
+  b BOOLEAN, ti TINYINT, si SMALLINT, i INTEGER, bi BIGINT, hi HUGEINT, ut UTINYINT, us USMALLINT,
+  ui UINTEGER, ub UBIGINT, uh UHUGEINT, f FLOAT, d DOUBLE, dec DECIMAL(10,3), dec2 DECIMAL(38,5),
+  v VARCHAR, bl BLOB, dt DATE, tm TIME, ts TIMESTAMP, tstz TIMESTAMPTZ, tns TIMESTAMP_NS,
+  iv INTERVAL, u UUID, bt BIT, m mood, l INTEGER[], s STRUCT(a INT, b VARCHAR), mp MAP(VARCHAR, INT),
+  arr INTEGER[2], un UNION(n INT, s VARCHAR), j JSON
+);
+INSERT INTO t VALUES (true, -1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1.5, 2.25, 3.125, 12345.67891,
+  'it''s "x"', '\x00\xFFa', DATE '2024-01-02', TIME '01:02:03', TIMESTAMP '2024-01-02 03:04:05',
+  TIMESTAMPTZ '2024-01-02 03:04:05+00', TIMESTAMP_NS '2024-01-02 03:04:05.123456789',
+  INTERVAL 3 DAY, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '1010', 'happy', [1, NULL],
+  {'a': 1, 'b': 'x'}, MAP {'k': 1}, [1, 2], 42::UNION(n INT, s VARCHAR), '{"a": 1}');
+INSERT INTO t (v) VALUES (NULL), ('line
+break'), (''), ('tab	here');
+INSERT INTO t (d) VALUES ('nan'), ('inf'), ('-inf');
+.dump
+'''
+
+[[case]]
+name = "dump-objects"
+stdin = '''
+CREATE SCHEMA s;
+CREATE TABLE s.t(i INT PRIMARY KEY, j VARCHAR NOT NULL DEFAULT 'd');
+INSERT INTO s.t VALUES (1, 'a'), (2, 'b');
+CREATE TABLE "Mixed Case"("Col A" INT, "select" INT);
+INSERT INTO "Mixed Case" VALUES (1, 2);
+CREATE VIEW v AS SELECT * FROM s.t;
+CREATE INDEX idx ON s.t(j);
+CREATE SEQUENCE seq START WITH 10;
+CREATE MACRO add_one(x) AS x + 1;
+CREATE TABLE fk_parent(id INT PRIMARY KEY);
+CREATE TABLE fk_child(pid INT REFERENCES fk_parent(id));
+INSERT INTO fk_parent VALUES (1);
+INSERT INTO fk_child VALUES (1);
+CREATE TABLE empty_t(x INT);
+.dump
+'''
+
+[[case]]
+name = "dump-patterns"
+stdin = '''
+CREATE TABLE abc(i INT);
+CREATE TABLE abd(i INT);
+CREATE TABLE xyz(i INT);
+INSERT INTO abc VALUES (1);
+INSERT INTO xyz VALUES (2);
+.dump ab%
+.dump xyz abc
+.dump nomatch
+.dump --newlines
+.dump --bogus
+'''
+
+[[case]]
+name = "dump-newlines"
+stdin = '''
+CREATE TABLE t(s VARCHAR);
+INSERT INTO t VALUES ('a
+b'), ('c' || chr(13) || 'd');
+.dump
+.dump --newlines
+'''
+
+[[case]]
+name = "dump-roundtrip"
+stdin = '''
+CREATE TABLE t(i INT, s VARCHAR, l INT[]);
+INSERT INTO t VALUES (1, 'x', [1, 2]), (NULL, NULL, NULL);
+.output dump.sql
+.dump
+.output
+'''
+
+[[case]]
+name = "dump-many-rows"
+stdin = '''
+CREATE TABLE t AS SELECT i, 'v' || i AS s FROM range(2500) t(i);
+.dump
+'''
+
+[[case]]
+name = "import-csv"
+files = { "data.csv" = "a,b\n1,hello\n2,\"quoted, value\"\n3,\n" }
+stdin = '''
+.import data.csv t
+SELECT * FROM t;
+DESCRIBE t;
+CREATE TABLE u(x INT, y VARCHAR);
+.import data.csv u
+SELECT * FROM u;
+.import --csv data.csv u
+SELECT count(*) FROM u;
+'''
+
+[[case]]
+name = "import-options"
+files = { "data.csv" = "skip me\nskip me too\na|b\n1|x\n2|y\n", "data.tsv" = "a\tb\n1\tx\n", "data.txt" = "1;2\n3;4\n" }
+stdin = '''
+.import --skip 2 --delim | data.csv t
+SELECT * FROM t;
+.mode tabs
+.import data.tsv t2
+SELECT * FROM t2;
+.mode list
+.separator ;
+.import data.txt t3
+SELECT * FROM t3;
+.import --header false data.txt t4
+SELECT * FROM t4;
+'''
+
+[[case]]
+name = "import-ascii-mode"
+files = { "data.ascii" = "a\u001fb\u001e1\u001fx\u001e" }
+stdin = '''
+.mode ascii
+.import data.ascii t
+.mode list
+SELECT * FROM t;
+'''
+
+[[case]]
+name = "import-json-parquet"
+files = { "data.json" = "[{\"a\": 1, \"b\": \"x\"}, {\"a\": 2, \"b\": null}]\n", "data.ndjson" = "{\"a\": 3}\n{\"a\": 4}\n" }
+stdin = '''
+.import data.json t
+SELECT * FROM t;
+.import --json data.ndjson t2
+SELECT * FROM t2;
+COPY t TO 'out.parquet';
+.import out.parquet t3
+SELECT * FROM t3;
+.import --parquet out.parquet t4
+SELECT * FROM t4;
+'''
+
+[[case]]
+name = "import-errors"
+files = { "data.csv" = "a,b\n1,2\n", "bad.csv" = "a,b\nx,y\n" }
+stdin = '''
+.import
+.import data.csv
+.import missing.csv t
+.import data.csv t too many
+CREATE TABLE ints(a INT, b INT);
+.import bad.csv ints
+.import --bogus 1 data.csv t2
+.import --skip
+.import --csv --json data.csv t3
+.import data.csv "quoted name"
+SELECT * FROM "quoted name";
+.import data.csv s.nope
+'''
+
+[[case]]
+name = "import-schema-table"
+files = { "data.csv" = "a,b\n1,2\n" }
+stdin = '''
+CREATE SCHEMA s;
+.import data.csv s.t
+SELECT * FROM s.t;
+'''
+
+[[case]]
+name = "read"
+files = { "script.sql" = "SELECT 1 AS a;\n.mode csv\nSELECT 2 AS b;\nSELECT bogus;\nSELECT 3 AS c;\n", "nested.sql" = ".read script.sql\nSELECT 'after' AS x;\n" }
+stdin = '''
+.read script.sql
+SELECT 'between' AS x;
+.read nested.sql
+.read missing.sql
+.read
+.read a b
+SELECT 'end';
+'''
+
+[[case]]
+name = "read-bail"
+args = ["-bail"]
+files = { "script.sql" = "SELECT 1 AS a;\nSELECT bogus;\nSELECT 3 AS c;\n" }
+stdin = '''
+.read script.sql
+SELECT 'not reached';
+'''
+
+[[case]]
+name = "read-pipe"
+stdin = '''
+.read |echo "SELECT 42 AS answer;"
+'''
+
+[[case]]
+name = "output-once"
+stdin = '''
+.output out.txt
+SELECT 1 AS a;
+.mode csv
+SELECT 2 AS b;
+.output
+SELECT 3 AS c;
+.once once.txt
+SELECT 4 AS d;
+SELECT 5 AS e;
+.output stdout
+SELECT 6 AS f;
+.output nested/dir/file.txt
+SELECT 7;
+.once
+SELECT 8;
+.output a b
+'''
+
+[[case]]
+name = "output-pipe"
+stdin = '''
+.output |tr a-z A-Z
+SELECT 'hello' AS greeting;
+.output
+SELECT 'after' AS x;
+.once |cat -n
+.mode csv
+SELECT 'numbered' AS x;
+'''
+
+[[case]]
+name = "output-bom"
+stdin = '''
+.output --bom bom.txt
+SELECT 1 AS a;
+.output
+.once --bom once.txt
+SELECT 2 AS b;
+.once --bogus x.txt
+'''
+
+[[case]]
+name = "timer"
+stdin = '''
+.timer on
+SELECT 1 AS a;
+CREATE TABLE t(i INT);
+.timer off
+SELECT 2;
+.timer
+.timer maybe
+'''
+normalize = [["real \\d+\\.\\d+ user \\d+\\.\\d+ sys \\d+\\.\\d+", "real X user X sys X"]]
+
+[[case]]
+name = "echo"
+stdin = '''
+.echo on
+SELECT 1 AS a;
+-- a comment
+.mode csv
+SELECT 2 AS b; SELECT 3 AS c;
+.echo off
+SELECT 4;
+.echo
+.echo bogus
+'''
+
+[[case]]
+name = "echo-flag"
+args = ["-echo"]
+stdin = '''
+SELECT 1 AS a;
+.print hello
+'''
+
+[[case]]
+name = "bail"
+stdin = '''
+.bail on
+SELECT 1 AS a;
+SELECT bogus;
+SELECT 2 AS b;
+'''
+
+[[case]]
+name = "bail-off"
+stdin = '''
+.bail off
+SELECT bogus;
+SELECT 2 AS b;
+.bail
+.bail what
+'''
+
+[[case]]
+name = "changes"
+stdin = '''
+.changes on
+CREATE TABLE t(i INT);
+INSERT INTO t VALUES (1), (2), (3);
+UPDATE t SET i = i + 1 WHERE i > 1;
+DELETE FROM t;
+SELECT 1;
+.changes off
+INSERT INTO t VALUES (1);
+.changes
+.changes maybe
+'''
+
+[[case]]
+name = "nullvalue"
+stdin = '''
+.nullvalue NIL
+SELECT NULL AS a;
+.mode list
+SELECT NULL AS a;
+.nullvalue
+.nullvalue a b
+.nullvalue ''
+SELECT NULL AS a;
+'''
+
+[[case]]
+name = "print"
+stdin = '''
+.print hello world
+.print "quoted string" 'single quoted'
+.print
+.print a\tb\nc
+.print "a\tb"
+.mode csv
+.print x,y
+'''
+
+[[case]]
+name = "show"
+stdin = '''
+.show
+.mode csv
+.headers off
+.nullvalue N
+.separator ; !
+.width 1 2 3
+.timer on
+.echo on
+.show
+.show extra
+'''
+
+[[case]]
+name = "headers"
+stdin = '''
+.mode list
+.headers on
+SELECT 1 AS a;
+.headers off
+SELECT 1 AS a;
+.headers
+.headers maybe
+.headers 1
+SELECT 1 AS a;
+.headers 0
+SELECT 1 AS a;
+.headers yes
+SELECT 1 AS a;
+.headers no
+SELECT 1 AS a;
+.headers true
+SELECT 1 AS a;
+'''
+
+[[case]]
+name = "exit-codes"
+stdin = '''
+SELECT 1;
+.exit 3
+SELECT 2;
+'''
+
+[[case]]
+name = "exit-{arg}"
+vary = { arg = ["", "0", "1", "255", "256", "-1", "abc", "1 2"] }
+stdin = '''
+.exit {arg}
+SELECT 'not reached';
+'''
+
+[[case]]
+name = "quit"
+stdin = '''
+SELECT 1;
+.quit
+SELECT 2;
+'''
+
+[[case]]
+name = "quit-args"
+stdin = '''
+.quit 5
+SELECT 2;
+'''
+
+[[case]]
+name = "safe-mode"
+files = { "data.csv" = "a\n1\n" }
+stdin = '''
+.safe_mode
+.import data.csv t
+.read x.sql
+.output out.txt
+.once out.txt
+.shell echo hi
+.system echo hi
+.cd /
+.open other.db
+.log out.log
+SELECT * FROM read_csv('data.csv');
+COPY (SELECT 1) TO 'x.csv';
+ATTACH 'x.db';
+SELECT 1 AS still_works;
+.safe_mode
+.excel
+'''
+
+[[case]]
+name = "safe-flag"
+args = ["-safe"]
+stdin = '''
+.shell echo hi
+SELECT 1 AS a;
+.mode csv
+SELECT 2 AS b;
+'''
+
+[[case]]
+name = "shell-system"
+stdin = '''
+.shell echo hello from shell
+.system printf 'a\nb\n'
+.shell
+.system exit 3
+.shell "echo" "quoted arg"
+SELECT 1 AS after;
+'''
+
+[[case]]
+name = "cd"
+files = { "sub/script.sql" = "SELECT 'from sub' AS x;\n" }
+stdin = '''
+.cd sub
+.read script.sql
+.cd ..
+.cd nonexistent
+.cd
+.cd a b
+'''
+
+[[case]]
+name = "log"
+stdin = '''
+.log log.txt
+SELECT 1 AS a;
+.mode csv
+SELECT 2 AS b;
+.log off
+SELECT 3;
+.log
+.log stdout
+SELECT 4 AS c;
+.log stderr
+SELECT 5 AS d;
+.log off
+'''
+
+[[case]]
+name = "open-memory"
+stdin = '''
+CREATE TABLE t(i INT);
+.open
+.tables
+.open :memory:
+.tables
+SELECT 1 AS a;
+'''
+
+[[case]]
+name = "open-file"
+stdin = '''
+.open test.db
+CREATE TABLE t(i INT);
+INSERT INTO t VALUES (42);
+.open
+.open test.db
+SELECT * FROM t;
+.databases
+.open --readonly test.db
+SELECT * FROM t;
+INSERT INTO t VALUES (1);
+.open --new test.db
+.tables
+'''
+
+[[case]]
+name = "open-errors"
+files = { "notadb.db" = "this is not a database file" }
+stdin = '''
+.open notadb.db
+SELECT 1 AS a;
+.open --bogus x.db
+.open a.db b.db
+.open nonexistent_dir/x.db
+SELECT 2 AS b;
+.open --readonly does_not_exist.db
+SELECT 3 AS c;
+'''
+
+[[case]]
+name = "open-sql"
+stdin = '''
+.open --sql "SELECT 'sql.db'"
+.databases
+'''
+
+[[case]]
+name = "open-nofollow"
+stdin = '''
+.open --nofollow x.db
+.databases
+'''
+
+[[case]]
+name = "width"
+stdin = '''
+.width
+.width 10
+.width -5 abc 3
+.show
+'''
+
+[[case]]
+name = "maxrows-maxwidth"
+stdin = '''
+.maxrows 4
+SELECT * FROM range(10);
+.maxrows 0
+SELECT * FROM range(50);
+.maxrows -1
+.maxrows abc
+.maxrows
+.maxwidth 40
+SELECT repeat('x', 100) AS a, repeat('y', 100) AS b;
+.maxwidth 0
+.maxwidth
+.maxwidth abc
+'''
+
+[[case]]
+name = "last"
+stdin = '''
+.last
+.maxrows 3
+SELECT * FROM range(10);
+.last
+.mode csv
+.last
+SELECT 1 AS x;
+.last
+CREATE TABLE t(i INT);
+.last
+.last extra
+'''
+
+[[case]]
+name = "columns-rows"
+stdin = '''
+.columns
+SELECT 1 AS a, 'two' AS b, [3] AS c;
+SELECT * FROM range(3) t(i);
+.rows
+SELECT 1 AS a, 'two' AS b;
+.columns extra
+'''
+
+[[case]]
+name = "columns-wide"
+stdin = '''
+.columns
+SELECT * FROM range(100) t(i);
+SELECT i, i * 2 AS j, 'value ' || i AS s FROM range(60) t(i);
+'''
+
+[[case]]
+name = "prompt"
+stdin = '''
+.prompt "a> " "b> "
+.prompt x
+.prompt
+.prompt a b c
+SELECT 1 AS a;
+'''
+
+[[case]]
+name = "decimal-thousand-sep"
+stdin = '''
+.decimal_sep ,
+.thousand_sep .
+SELECT 1234567.891 AS a, 1234567 AS b, 1234.5::DOUBLE AS c;
+.decimal_sep
+.thousand_sep
+.decimal_sep ab
+.thousand_sep ' '
+SELECT 1234567.891 AS a;
+.thousand_sep none
+.decimal_sep .
+SELECT 1234567.891 AS a;
+'''
+
+[[case]]
+name = "large-number-rendering"
+stdin = '''
+.large_number_rendering all
+SELECT 123456789 AS a, 1234567890123 AS b, 12.5 AS c, -98765432 AS d;
+.large_number_rendering footer
+SELECT 123456789 AS a;
+SELECT count(*) FROM range(12345678);
+.large_number_rendering off
+SELECT 123456789 AS a;
+.large_number_rendering bogus
+.large_number_rendering
+'''
+
+[[case]]
+name = "highlight-commands"
+stdin = '''
+.highlight on
+.highlight off
+.highlight bogus
+.highlight_results on
+.highlight_results off
+.highlight_errors on
+.highlight_errors off
+.highlight_mode dark
+.highlight_mode light
+.highlight_mode mixed
+.highlight_mode bogus
+.render_errors on
+.render_completion off
+.render_errors bogus
+SELECT 1 AS a;
+'''
+
+[[case]]
+name = "highlight-colors"
+stdin = '''
+.highlight_colors
+.highlight_colors keyword red
+.highlight_colors keyword bogus
+.highlight_colors bogus red
+.highlight_colors keyword red bold
+.highlight_colors keyword red bogus
+.highlight_colors constant brightblue underline
+.keyword green
+.constant yellow
+.comment
+.keyword bogus
+.error red
+.cont blue
+.cont_sel magenta
+'''
+
+[[case]]
+name = "display-colors"
+stdin = '''
+.display_colors
+.display_colors bold
+.display_colors underline
+.display_colors bogus
+'''
+
+[[case]]
+name = "startup-text"
+stdin = '''
+.startup_text none
+.startup_text version
+.startup_text all
+.startup_text bogus
+'''
+
+[[case]]
+name = "read-line-version"
+stdin = '''
+.read_line_version fallback
+.read_line_version linenoise
+.read_line_version bogus
+.read_line_version
+'''
+
+[[case]]
+name = "pager-commands"
+stdin = '''
+.pager off
+.pager on
+.pager automatic
+.pager set_row_threshold 10
+.pager set_column_threshold 3
+.pager set_row_threshold
+.pager cat
+.pager
+.pager a b c d
+SELECT 1 AS a;
+'''
+
+[[case]]
+name = "progress-bar-commands"
+stdin = '''
+.progress_bar
+.progress_bar --clear
+.progress_bar --add bogus
+.progress_bar --add
+.progress_bar --bogus
+SELECT 1 AS a;
+'''
+
+[[case]]
+name = "multiline-singleline"
+stdin = '''
+.multiline
+.singleline
+.multiline extra
+SELECT 1 AS a;
+'''
+
+[[case]]
+name = "version"
+stdin = '''
+.version
+.version extra
+'''
+normalize = [["v0\\.0\\.1 \\(Unknown Version\\)|v1\\.5\\.6 \\(Variegata\\)", "VERSION"], ["rustc-[0-9.]+|clang-[0-9.]+", "COMPILER"]]
+
+[[case]]
+name = "ui-command"
+stdin = '''
+.ui_command
+.ui_command call start_ui()
+.show
+'''
+
+[[case]]
+name = "excel"
+stdin = '''
+.excel extra
+'''
+
+[[case]]
+name = "edit-noninteractive"
+stdin = '''
+.edit
+\e
+SELECT 1 AS a;
+'''
+
+[[case]]
+name = "comments-and-blank-lines"
+stdin = '''
+
+-- comment only
+/* block
+comment */
+SELECT 1 AS a; -- trailing comment
+SELECT /* inline */ 2 AS b;
+   .mode csv
+SELECT 3 AS c;
+	.print tab-indented
+'''
+
+[[case]]
+name = "dot-command-quoting"
+stdin = '''
+.print "a b" 'c d' e\ f
+.print "unterminated
+.print 'single "inner"'
+.print "escape \" quote"
+.print "\x41\101B"
+'''
+
+[[case]]
+name = "dot-command-trailing-semicolon"
+stdin = '''
+.mode csv;
+.mode csv
+.headers off;
+SELECT 1 AS a;
+'''
