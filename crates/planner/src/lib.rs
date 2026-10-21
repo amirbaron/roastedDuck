@@ -52,7 +52,10 @@ pub use binder::tableref::{JoinSide, create_join, extract_join_conditions};
 pub use binder::{Binder, BindingMode, BoundStatement};
 pub use column_binding::{ColumnBinding, generate_column_bindings};
 pub use column_binding_resolver::ColumnBindingResolver;
-pub use context::{ClientContext, DatabaseState, DefaultNullOrder, ExpressionEvaluator, PlannerConfig};
+pub use context::{
+    ClientContext, DatabaseState, DefaultNullOrder, ExpressionEvaluator, PlannerConfig, ReplacementScan,
+    ReplacementScanInput,
+};
 pub use expression::{Expression, ExpressionKind};
 pub use generated::enums::{DistinctType, LogicalOperatorType};
 pub use operator::{BoundLimitNode, LogicalKind, LogicalOperator, render_plan};

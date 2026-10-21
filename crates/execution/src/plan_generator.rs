@@ -1171,7 +1171,7 @@ impl PlanGenerator {
                 )?)
             }
             LogicalKind::Get(get)
-                if get.function.scan.is_some()
+                if (get.function.scan.is_some() || get.function.parallel_scan.is_some())
                     && (get.projection_ids.is_empty() || get.function.pushdown_filters.is_some()) =>
             {
                 let column_ids: Vec<u64> = get.column_ids.iter().map(|column| column.index).collect();

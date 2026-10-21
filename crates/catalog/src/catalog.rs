@@ -243,17 +243,7 @@ impl Catalog {
             )));
         };
         let mut merged = current.clone();
-        for function in set.functions {
-            let same = merged.functions.iter_mut().find(|existing| {
-                existing.arguments == function.arguments
-                    && existing.return_type == function.return_type
-                    && existing.varargs == function.varargs
-            });
-            match same {
-                Some(existing) => *existing = function,
-                None => merged.functions.push(function),
-            }
-        }
+        merged.merge_function_set(set, true);
         let mut entry = CatalogEntry::new(existing.name(), EntryKind::ScalarFunction(merged));
         entry.oid = existing.oid;
         entry.internal = true;
@@ -279,16 +269,11 @@ impl Catalog {
             )));
         };
         let mut merged = current.clone();
-        for function in set.functions {
-            if merged.functions.iter().any(|existing| {
-                existing.arguments == function.arguments && existing.varargs == function.varargs
-            }) {
-                return Err(rustdb_common::Error::catalog(format!(
-                    "Failed to add new function overloads to function \"{}\": function overload already exists",
-                    set.name
-                )));
-            }
-            merged.functions.push(function);
+        let name = Arc::clone(&set.name);
+        if !merged.merge_function_set(set) {
+            return Err(rustdb_common::Error::catalog(format!(
+                "Failed to add new function overloads to function \"{name}\": function overload already exists"
+            )));
         }
         let mut entry = CatalogEntry::new(existing.name(), EntryKind::TableFunction(merged));
         entry.oid = existing.oid;

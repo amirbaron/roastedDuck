@@ -163,6 +163,10 @@ pub struct BindInput<'a> {
     /// The binder's client context (`ScalarFunctionBindInput::binder`), for functions
     /// that look up catalog entries; the database crate downcasts it.
     pub binder: Option<&'a dyn Any>,
+    /// The bound argument expressions (the planner's `Vec<Expression>`, the `arguments`
+    /// of DuckDB's `bind_scalar_function_t`), for functions that inspect them; the C API
+    /// downcasts them.
+    pub arguments: Option<&'a dyn Any>,
     /// Aggregate resolution for functions that run an aggregate (`None` outside a binder).
     pub aggregates: Option<&'a dyn AggregateResolver>,
     /// The lambda argument, for lambda functions.
@@ -307,5 +311,36 @@ impl ScalarFunctionSet {
 
     pub fn add(&mut self, function: ScalarFunction) {
         self.functions.push(function);
+    }
+
+    /// Adds the overloads of `new_functions` (DuckDB's `FunctionSet::MergeFunctionSet`): an
+    /// overload with the same arguments, return type and varargs (`ScalarFunction::Equal`)
+    /// replaces the existing one in place if `override_existing`, otherwise the merge fails,
+    /// leaving the set unchanged, and `false` is returned; the others are appended.
+    pub fn merge_function_set(&mut self, new_functions: Self, override_existing: bool) -> bool {
+        let same = |existing: &ScalarFunction, function: &ScalarFunction| {
+            existing.arguments == function.arguments
+                && existing.return_type == function.return_type
+                && existing.varargs == function.varargs
+        };
+        if !override_existing
+            && new_functions
+                .functions
+                .iter()
+                .any(|function| self.functions.iter().any(|existing| same(existing, function)))
+        {
+            return false;
+        }
+        for function in new_functions.functions {
+            match self
+                .functions
+                .iter_mut()
+                .find(|existing| same(existing, &function))
+            {
+                Some(existing) => *existing = function,
+                None => self.functions.push(function),
+            }
+        }
+        true
     }
 }

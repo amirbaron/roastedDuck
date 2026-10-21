@@ -23,6 +23,7 @@ use crate::{Config, MaterializedResult};
 mod active_query;
 mod appender;
 mod prepared_statement;
+mod registration;
 
 pub use active_query::{
     ClientHandle, PendingExecutionResult, PendingQuery, QueryId, QueryProgress, QueryResult,
@@ -111,6 +112,9 @@ pub(crate) struct DatabaseInstance {
     global_settings: Mutex<GlobalSettings>,
     /// The statically linked extensions whose catalog entries are registered.
     loaded_extensions: Arc<Mutex<Vec<StaticExtension>>>,
+    /// The replacement scans clients added (DuckDB's `DBConfig::replacement_scans` after
+    /// the built-in ones).
+    replacement_scans: std::sync::RwLock<Vec<rustdb_planner::ReplacementScan>>,
 }
 
 /// What the database's own functions reach through the client context (DuckDB's
@@ -1410,6 +1414,7 @@ impl Database {
             log_manager: Arc::default(),
             global_settings: Mutex::default(),
             loaded_extensions: Arc::default(),
+            replacement_scans: std::sync::RwLock::default(),
         };
         instance.object_cache.put(
             LOADED_EXTENSIONS_KEY.to_owned(),
@@ -1602,7 +1607,6 @@ impl Database {
     }
 
     pub fn connect(&self) -> Result<Connection> {
-        let transactions = TransactionContext::new(Arc::clone(&self.instance.transactions));
         let mut settings = Settings::default();
         for (name, value) in &self.instance.config.options {
             if is_extension_setting(name) {
@@ -1611,6 +1615,10 @@ impl Database {
             settings.set(name, value)?;
         }
         let function_client = Arc::new(rustdb_function::FunctionClient::default());
+        let transactions = TransactionContext::new(
+            Arc::clone(&self.instance.transactions),
+            Arc::clone(&function_client),
+        );
         function_client.set_database(self.instance.default_database_name());
         self.instance
             .connections
@@ -1653,6 +1661,16 @@ impl Database {
             next_query_id: 0,
             client: Arc::default(),
         })
+    }
+
+    /// Adds a replacement scan, tried after the built-in ones and those added before
+    /// (`DBConfig::replacement_scans.push_back`).
+    pub fn add_replacement_scan(&self, scan: rustdb_planner::ReplacementScan) {
+        self.instance
+            .replacement_scans
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(scan);
     }
 
     /// Loads a (statically linked) extension, like `LOAD name`.
@@ -2295,7 +2313,7 @@ impl Connection {
                 transaction: Arc::clone(&transaction),
             }));
         let instance = self.database.instance();
-        Arc::new(ClientContext {
+        let context = Arc::new(ClientContext {
             catalogs: self.catalogs(instance.default_database_name()),
             search_path: self.search_path.clone(),
             view_search_path: Vec::new(),
@@ -2315,12 +2333,21 @@ impl Connection {
             prepared_statements: self.prepared_statements.clone(),
             function_client: Arc::clone(&self.function_client),
             user_variables: self.user_variables.clone(),
+            replacement_scans: instance
+                .replacement_scans
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone(),
             dependency_recorder: Arc::default(),
             database_state: Some(Arc::new(InstanceState {
                 secrets: Arc::clone(&instance.secrets),
                 instance: Arc::downgrade(&self.database.instance),
             }) as Arc<dyn rustdb_planner::DatabaseState>),
-        })
+        });
+        let any: Arc<dyn std::any::Any + Send + Sync> = Arc::clone(&context) as _;
+        self.function_client
+            .set_transaction_context(Some(Arc::downgrade(&any)));
+        context
     }
 
     /// `IMPORT DATABASE 'dir'` (DuckDB's `PragmaImportDatabase`): runs the directory's

@@ -318,6 +318,12 @@ impl Connection {
         Arc::clone(&self.client)
     }
 
+    /// The connection's state as its functions see it (the parts of DuckDB's
+    /// `ClientContext` that function callbacks reach), usable from any thread.
+    pub fn function_client(&self) -> Arc<rustdb_function::FunctionClient> {
+        Arc::clone(&self.function_client)
+    }
+
     /// Closes the active query, if any, and clears the interrupt flag; every query starts
     /// with this (`ClientContext::InitialCleanup`).
     pub(crate) fn initial_cleanup(&mut self) {

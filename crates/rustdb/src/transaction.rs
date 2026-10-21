@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use rustdb_catalog::{Transaction, TransactionManager};
 use rustdb_common::{Error, ErrorKind, Result};
+use rustdb_function::FunctionClient;
 
 /// A connection's transaction state (DuckDB's `TransactionContext`).
 ///
@@ -15,6 +16,9 @@ pub(crate) struct TransactionContext {
     invalidated: bool,
     /// `BEGIN TRANSACTION READ ONLY`.
     read_only: bool,
+    /// The connection's function state, which sees the binder's context of the open
+    /// transaction until the transaction ends.
+    client: Arc<FunctionClient>,
 }
 
 fn transaction_error(message: &'static str) -> Error {
@@ -34,14 +38,22 @@ fn commit_error(error: Error) -> Error {
 }
 
 impl TransactionContext {
-    pub fn new(manager: Arc<TransactionManager>) -> Self {
+    pub fn new(manager: Arc<TransactionManager>, client: Arc<FunctionClient>) -> Self {
         Self {
             manager,
             current: None,
             auto_commit: true,
             invalidated: false,
             read_only: false,
+            client,
         }
+    }
+
+    /// Ends the open transaction's time as the current one: functions no longer see its
+    /// context.
+    fn take_current(&mut self) -> Option<Arc<Transaction>> {
+        self.client.set_transaction_context(None);
+        self.current.take()
     }
 
     /// Whether the explicit transaction was started read-only.
@@ -91,7 +103,7 @@ impl TransactionContext {
     /// transaction aborts it.
     pub fn end_statement(&mut self, success: bool, invalidates: bool) -> Result<()> {
         if self.auto_commit {
-            return match self.current.take() {
+            return match self.take_current() {
                 Some(transaction) if success => self.manager.commit(&transaction).map_err(commit_error),
                 Some(transaction) => {
                     self.manager.rollback(&transaction);
@@ -134,7 +146,7 @@ impl TransactionContext {
         }
         self.auto_commit = true;
         let invalidated = std::mem::take(&mut self.invalidated);
-        match self.current.take() {
+        match self.take_current() {
             Some(transaction) if invalidated => {
                 self.manager.rollback(&transaction);
                 Ok(())
@@ -151,7 +163,7 @@ impl TransactionContext {
         }
         self.auto_commit = true;
         self.invalidated = false;
-        if let Some(transaction) = self.current.take() {
+        if let Some(transaction) = self.take_current() {
             self.manager.rollback(&transaction);
         }
         Ok(())
@@ -161,7 +173,7 @@ impl TransactionContext {
 impl Drop for TransactionContext {
     fn drop(&mut self) {
         // A connection closed mid-transaction rolls back, as in DuckDB.
-        if let Some(transaction) = self.current.take() {
+        if let Some(transaction) = self.take_current() {
             self.manager.rollback(&transaction);
         }
     }
@@ -173,7 +185,7 @@ mod tests {
 
     #[test]
     fn explicit_transactions_follow_duckdb_rules() {
-        let mut context = TransactionContext::new(Arc::default());
+        let mut context = TransactionContext::new(Arc::default(), Arc::default());
         assert_eq!(
             context.commit().unwrap_err().to_string(),
             "TransactionContext Error: cannot commit - no transaction is active"
