@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
@@ -304,6 +305,11 @@ impl Source for PhysicalCteScan {
 /// table), until an iteration produces no new rows. Without `ALL`, rows already produced
 /// are discarded.
 ///
+/// With `USING KEY`, every produced row replaces the row of its key in a keyed table (the
+/// other columns keep their last value, DuckDB's `LAST` aggregates), which is the result
+/// once the recursion ends. `recurring.<name>` reads the recurring table: the rows of
+/// all iterations so far, or the keyed table with `USING KEY`.
+///
 /// Both parts run as nested executions; data they read from outside the CTE (delim
 /// joins, materialised CTEs) is produced by the outer plan first.
 #[derive(Debug)]
@@ -316,9 +322,14 @@ pub struct PhysicalRecursiveCte {
     external: Vec<Arc<dyn SinkData>>,
     ctename: String,
     table_index: u64,
+    /// The key columns of `USING KEY` (`distinct_idx`), if any.
+    key_columns: Option<Vec<usize>>,
+    /// The table `recurring.<name>` reads, when the recursive part reads it.
+    recurring_table: Option<Arc<CteData>>,
 }
 
 impl PhysicalRecursiveCte {
+    #[allow(clippy::too_many_arguments, reason = "mirrors the fields of DuckDB's operator")]
     pub fn new(
         (ctename, table_index): (String, u64),
         types: Vec<LogicalType>,
@@ -326,6 +337,8 @@ impl PhysicalRecursiveCte {
         working_table: Arc<CteData>,
         parts: [PhysicalRef; 2],
         external: Vec<Arc<dyn SinkData>>,
+        key_columns: Option<Vec<usize>>,
+        recurring_table: Option<Arc<CteData>>,
     ) -> Self {
         Self {
             types,
@@ -335,6 +348,8 @@ impl PhysicalRecursiveCte {
             external,
             ctename,
             table_index,
+            key_columns,
+            recurring_table,
         }
     }
 
@@ -421,6 +436,52 @@ struct Iteration {
     chunks: Vec<DataChunk>,
     /// The next chunk of `chunks` to return.
     next: usize,
+    /// The rows of the recurring table without `USING KEY`.
+    recurring: Vec<DataChunk>,
+    /// The keyed table of `USING KEY`.
+    keyed: KeyedRows,
+    /// Whether the recursion ended; `chunks` then holds the keyed table's rows.
+    finished: bool,
+}
+
+/// The rows of a `USING KEY` recursion, one per key in the order the keys first
+/// appeared (DuckDB's hash table grouped on the keys with `LAST` of the other columns).
+#[derive(Debug, Default)]
+struct KeyedRows {
+    index: HashMap<Vec<Value>, usize>,
+    rows: Vec<Vec<Value>>,
+}
+
+impl KeyedRows {
+    /// Every row of `chunk` replaces the row with its key.
+    fn upsert(&mut self, chunk: &DataChunk, keys: &[usize]) {
+        for row in 0..chunk.len() {
+            let values: Vec<Value> = chunk.columns().iter().map(|column| column.get_value(row)).collect();
+            let key: Vec<Value> = keys.iter().map(|&column| values[column].clone()).collect();
+            match self.index.get(&key) {
+                Some(&slot) => self.rows[slot] = values,
+                None => {
+                    self.index.insert(key, self.rows.len());
+                    self.rows.push(values);
+                }
+            }
+        }
+    }
+
+    /// The rows as chunks of `types`.
+    fn chunks(&self, types: &[LogicalType]) -> Result<Vec<DataChunk>> {
+        let mut result = Vec::with_capacity(self.rows.len().div_ceil(STANDARD_VECTOR_SIZE));
+        for rows in self.rows.chunks(STANDARD_VECTOR_SIZE) {
+            let mut columns: Vec<Vector> = types.iter().map(|ty| Vector::flat(ty.clone(), rows.len())).collect();
+            for (row, values) in rows.iter().enumerate() {
+                for (column, value) in columns.iter_mut().zip(values) {
+                    column.set_value(row, value)?;
+                }
+            }
+            result.push(DataChunk::new(columns, rows.len()));
+        }
+        Ok(result)
+    }
 }
 
 impl PhysicalRecursiveCte {
@@ -429,8 +490,16 @@ impl PhysicalRecursiveCte {
     fn iteration_rows(
         &self,
         seen: &mut GroupedAggregateHashTable,
+        keyed: &mut KeyedRows,
         produced: Vec<DataChunk>,
     ) -> Result<Vec<DataChunk>> {
+        if let Some(keys) = &self.key_columns {
+            let produced: Vec<DataChunk> = produced.into_iter().filter(|chunk| !chunk.is_empty()).collect();
+            for chunk in &produced {
+                keyed.upsert(chunk, keys);
+            }
+            return Ok(produced);
+        }
         if self.union_all {
             Ok(produced.into_iter().filter(|chunk| !chunk.is_empty()).collect())
         } else {
@@ -469,29 +538,53 @@ impl Source for PhysicalRecursiveCte {
                 initial_capacity(),
                 0,
             )?;
+            let mut keyed = KeyedRows::default();
             let anchor = Self::run(&self.parts[0], &ctx.env)?;
-            let chunks = self.iteration_rows(&mut seen, anchor)?;
+            let chunks = self.iteration_rows(&mut seen, &mut keyed, anchor)?;
             *guard = Some(Iteration {
                 seen,
                 chunks,
                 next: 0,
+                recurring: Vec::new(),
+                keyed,
+                finished: false,
             });
         }
         let Some(iteration) = guard.as_mut() else {
             return Err(Error::internal("recursive CTE without an iteration"));
         };
+        // With `USING KEY` the rows are only returned once the recursion ends.
+        let returns_iterations = self.key_columns.is_none();
         loop {
-            if let Some(source) = iteration.chunks.get(iteration.next) {
+            if (returns_iterations || iteration.finished)
+                && let Some(source) = iteration.chunks.get(iteration.next)
+            {
                 iteration.next += 1;
                 chunk.set_columns(source.columns().to_vec(), source.len());
                 return Ok(SourceResult::HaveMoreOutput);
             }
-            if iteration.chunks.is_empty() {
+            if iteration.finished {
                 return Ok(SourceResult::Finished);
+            }
+            if iteration.chunks.is_empty() {
+                iteration.finished = true;
+                if !returns_iterations {
+                    iteration.chunks = iteration.keyed.chunks(&self.types)?;
+                    iteration.next = 0;
+                }
+                continue;
+            }
+            if let Some(recurring) = &self.recurring_table {
+                if returns_iterations {
+                    iteration.recurring.extend(iteration.chunks.iter().cloned());
+                    recurring.set(iteration.recurring.clone());
+                } else {
+                    recurring.set(iteration.keyed.chunks(&self.types)?);
+                }
             }
             self.working_table.set(std::mem::take(&mut iteration.chunks));
             let produced = Self::run(&self.parts[1], &ctx.env)?;
-            iteration.chunks = self.iteration_rows(&mut iteration.seen, produced)?;
+            iteration.chunks = self.iteration_rows(&mut iteration.seen, &mut iteration.keyed, produced)?;
             iteration.next = 0;
         }
     }

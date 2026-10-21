@@ -33,6 +33,38 @@ fn recursive_binding(
 }
 
 /// `left UNION [ALL] right` of `WITH RECURSIVE` (DuckDB's `Binder::BindNode(RecursiveCTENode &)`).
+/// `USING KEY` with `UNION` (which acts as `UNION ALL`) is deprecated: unless
+/// `deprecated_using_key_syntax` accepts it, a warning is logged.
+fn warn_deprecated_using_key_union(scope: &BindScope<'_>, union_all: bool) -> Result<()> {
+    const MESSAGE: &str = "Deprecated UNION in USING KEY CTE detected.Please transition to using UNION ALL, before \
+                           DuckDB's next release. \nUse SET deprecated_using_key_syntax='UNION_AS_UNION_ALL' to \
+                           enable the deprecated behavior. \nFor more information, see \
+                           https://duckdb.org/docs/stable/sql/query_syntax/with#recursive-ctes-with-using-key.";
+    if union_all {
+        return Ok(());
+    }
+    let client = &scope.context.function_client;
+    let setting = match client.settings() {
+        Some(settings) => settings
+            .current_setting("deprecated_using_key_syntax")?
+            .as_str()
+            .map(str::to_uppercase)
+            .unwrap_or_default(),
+        None => "DEFAULT".to_owned(),
+    };
+    if setting != "DEFAULT" {
+        return Ok(());
+    }
+    // `DUCKDB_LOG_WARNING(context, msg)`.
+    if let Some(logger) = client.logger() {
+        use rustdb_function::logging::{LogLevel, LogScope};
+        if logger.should_log(LogScope::Connection, "", LogLevel::Warning) {
+            logger.write_log(LogScope::Connection, "", LogLevel::Warning, MESSAGE)?;
+        }
+    }
+    Ok(())
+}
+
 pub fn bind_recursive_cte(scope: &mut BindScope<'_>, node: &mut QueryNode) -> Result<BoundStatement> {
     if !node.modifiers.is_empty() {
         return Err(Error::not_implemented("FIXME: bind modifiers in recursive CTE"));
@@ -40,6 +72,9 @@ pub fn bind_recursive_cte(scope: &mut BindScope<'_>, node: &mut QueryNode) -> Re
     let QueryNodeKind::RecursiveCte(statement) = &mut node.kind else {
         return Err(Error::internal("expected a recursive CTE"));
     };
+    if !statement.key_targets.is_empty() {
+        warn_deprecated_using_key_union(scope, statement.union_all)?;
+    }
     let ctename = statement.cte_name.clone();
     let union_all = statement.union_all;
     let setop_index = scope.binder.generate_table_index();

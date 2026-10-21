@@ -181,6 +181,8 @@ struct PlanGenerator {
     /// Recursive CTE working tables and their types by table index
     /// (`recursive_cte_tables`).
     working_tables: HashMap<u64, (Arc<CteData>, Vec<LogicalType>)>,
+    /// The recurring tables of recursive CTEs (`recurring.<name>`), by table index.
+    recurring_tables: HashMap<u64, (Arc<CteData>, Vec<LogicalType>)>,
     /// Per recursive CTE being planned (outermost first), the data from outside it that
     /// its parts read.
     external: Vec<Vec<Arc<dyn SinkData>>>,
@@ -893,13 +895,28 @@ impl PlanGenerator {
                 ref_recurring,
                 ..
             } => {
-                if !key_targets.is_empty() || ref_recurring {
-                    return Err(Error::not_implemented("recursive CTE with USING KEY"));
-                }
+                // `distinct_idx`: the key columns, as references into the CTE's columns.
+                let key_columns = if key_targets.is_empty() {
+                    None
+                } else {
+                    Some(
+                        key_targets
+                            .iter()
+                            .map(|target| match &target.kind {
+                                ExpressionKind::Reference(reference) => usize::try_from(reference.index)
+                                    .map_err(|_| Error::internal("USING KEY column out of range")),
+                                _ => Err(Error::internal("USING KEY target is not a column reference")),
+                            })
+                            .collect::<Result<Vec<_>>>()?,
+                    )
+                };
                 let [anchor, recursive] = two_children(children, "recursive CTE")?;
                 let working_table = Arc::new(CteData::default());
                 self.working_tables
                     .insert(table_index, (Arc::clone(&working_table), types.clone()));
+                let recurring_table = Arc::new(CteData::default());
+                self.recurring_tables
+                    .insert(table_index, (Arc::clone(&recurring_table), types.clone()));
                 self.external.push(Vec::new());
                 let parts = self
                     .plan(anchor)
@@ -913,6 +930,8 @@ impl PlanGenerator {
                     working_table,
                     [anchor, recursive],
                     external,
+                    key_columns,
+                    ref_recurring.then_some(recurring_table),
                 )));
             }
             LogicalKind::CteRef {
@@ -930,13 +949,17 @@ impl PlanGenerator {
                         cte_index,
                     )));
                 }
-                if is_recurring {
+                let tables = if is_recurring {
+                    &self.recurring_tables
+                } else {
+                    &self.working_tables
+                };
+                if is_recurring && !tables.contains_key(&cte_index) {
                     return Err(Error::invalid_input(
                         "RECURRING can only be used with USING KEY in recursive CTE.",
                     ));
                 }
-                let (data, types) = self
-                    .working_tables
+                let (data, types) = tables
                     .get(&cte_index)
                     .ok_or_else(|| Error::invalid_input("Referenced recursive CTE does not exist."))?;
                 return Ok(Arc::new(PhysicalCteScan::working_table(
