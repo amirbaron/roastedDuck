@@ -54,8 +54,11 @@ pub struct ExecutionContext {
     /// Collects per-operator rows and timings under `EXPLAIN ANALYZE`.
     pub profiler: Option<Arc<crate::QueryProfiler>>,
     /// Set when the query fails on another thread: work stops at the next chunk (DuckDB's
-    /// `ClientContext::interrupted`).
+    /// `ClientContext::interrupted` as `Executor::PushError` sets it).
     interrupted: Arc<AtomicBool>,
+    /// Set when the client interrupts the query (`duckdb_interrupt`, DuckDB's
+    /// `ClientContext::Interrupt`).
+    client_interrupted: Option<Arc<AtomicBool>>,
 }
 
 impl ExecutionContext {
@@ -65,14 +68,17 @@ impl ExecutionContext {
             thread_index: 0,
             profiler: None,
             interrupted: Arc::default(),
+            client_interrupted: None,
         }
     }
 
-    /// A context for one task of a query whose interruption flag is `interrupted`.
+    /// A context for one task of a query whose interruption flags are `interrupted` (the
+    /// query's) and `client_interrupted` (the client's).
     pub(crate) fn for_task(
         env: Arc<ClientEnv>,
         profiler: Option<Arc<crate::QueryProfiler>>,
         interrupted: Arc<AtomicBool>,
+        client_interrupted: Option<Arc<AtomicBool>>,
         thread_index: usize,
     ) -> Self {
         Self {
@@ -80,12 +86,22 @@ impl ExecutionContext {
             thread_index,
             profiler,
             interrupted,
+            client_interrupted,
         }
+    }
+
+    /// Whether the query was interrupted, by a failure or by the client.
+    fn is_interrupted(&self) -> bool {
+        self.interrupted.load(Ordering::Relaxed)
+            || self
+                .client_interrupted
+                .as_ref()
+                .is_some_and(|flag| flag.load(Ordering::Relaxed))
     }
 
     /// Fails with DuckDB's `InterruptException` once the query was interrupted.
     pub fn check_interrupted(&self) -> Result<()> {
-        if self.interrupted.load(Ordering::Relaxed) {
+        if self.is_interrupted() {
             return Err(Error::new(ErrorKind::Interrupt, "Interrupted!"));
         }
         Ok(())

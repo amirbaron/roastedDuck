@@ -468,7 +468,7 @@ fn list_entries(value: &Value) -> Result<Vec<String>> {
 
 /// The checks of the options' `OnSet` / `SetGlobal` / `SetLocal` callbacks on the
 /// value (DuckDB's `custom_settings.cpp`).
-fn check_value(option: &str, value: &Value) -> Result<()> {
+pub(crate) fn check_value(option: &str, value: &Value) -> Result<()> {
     if let Some((_, enum_name, values)) = ENUM_SETTINGS.iter().find(|(name, _, _)| *name == option) {
         if value.is_null() {
             return Err(Error::invalid_input(format!("{option} setting cannot be NULL")));
@@ -860,6 +860,12 @@ impl Settings {
     /// `errors_as_json`: errors of statements are reported as JSON objects.
     pub(crate) fn errors_as_json(&self) -> bool {
         self.enabled("errors_as_json")
+    }
+
+    /// `enable_progress_bar`: the progress of running queries is tracked
+    /// (`ClientConfig::enable_progress_bar`).
+    pub(crate) fn enable_progress_bar(&self) -> bool {
+        self.enabled("enable_progress_bar")
     }
 
     /// Whether boolean option `option` was set to true.

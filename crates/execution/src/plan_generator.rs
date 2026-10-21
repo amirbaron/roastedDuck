@@ -70,14 +70,40 @@ pub fn create_physical_plan(mut op: LogicalOperator) -> Result<PhysicalRef> {
 
 /// Converts a logical plan into a physical plan running in `context`'s transaction
 /// (DuckDB's `PhysicalPlanGenerator::PlanInternal`).
-pub fn create_physical_plan_with(mut op: LogicalOperator, context: &PlanContext) -> Result<PhysicalRef> {
+pub fn create_physical_plan_with(mut op: LogicalOperator, context: &PlanContext) -> Result<PhysicalPlan> {
     let estimate = op.estimate_cardinality();
     op.estimated_cardinality = Some(estimate);
-    PlanGenerator {
+    let mut generator = PlanGenerator {
         context: Some(context.clone()),
         ..PlanGenerator::default()
+    };
+    let root = generator.plan(op)?;
+    Ok(PhysicalPlan {
+        root,
+        estimates: CardinalityEstimates(Arc::new(std::mem::take(&mut generator.estimates))),
+    })
+}
+
+/// A physical plan with the planner's estimated cardinality of its operators.
+#[derive(Debug)]
+pub struct PhysicalPlan {
+    pub root: PhysicalRef,
+    pub estimates: CardinalityEstimates,
+}
+
+/// The estimated cardinality of the operators of a physical plan (DuckDB keeps it in
+/// `PhysicalOperator::estimated_cardinality`).
+#[derive(Clone, Debug, Default)]
+pub struct CardinalityEstimates(Arc<HashMap<usize, u64>>);
+
+impl CardinalityEstimates {
+    /// The estimate for `op`, 0 if it has none.
+    pub fn get(&self, op: &PhysicalRef) -> u64 {
+        self.0
+            .get(&explain::operator_key(op.as_ref()))
+            .copied()
+            .unwrap_or(0)
     }
-    .plan(op)
 }
 
 /// What planning statements on tables and the catalog needs (DuckDB's `ClientContext`

@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use rustdb_common::{Error, Result};
 use rustdb_types::{DataChunk, LogicalType};
 
-use crate::operator::{ErasedSink, PartitionInfo, PhysicalOperator, PhysicalRef};
+use crate::operator::{ErasedSink, PartitionInfo, PhysicalOperator, PhysicalRef, SinkState};
 use crate::plan_generator::order_preservation::{preserve_insertion_order, use_batch_index};
 use crate::{ExecutionContext, Sink, SinkFinalize, SinkResult};
 
@@ -26,6 +26,9 @@ pub enum CollectorKind {
     /// Rows in the order of their batch indices, collected by any number of threads
     /// (`PhysicalBatchCollector`).
     Batch,
+    /// Rows handed out while the query runs, as soon as they arrive (`PhysicalBufferedCollector`
+    /// of a streaming result); `parallel` when the order does not matter.
+    Buffered { parallel: bool },
 }
 
 /// Collects the final query result (DuckDB's `PhysicalMaterializedCollector` and
@@ -65,8 +68,29 @@ impl PhysicalResultCollector {
         Self::with_kind(plan, kind)
     }
 
+    /// The collector of a streaming result for `plan` (`GetResultCollector` with
+    /// `ALLOW_STREAMING`): parallel when the plan's order does not matter, otherwise the
+    /// final pipeline runs on one thread so that rows arrive in order (DuckDB's
+    /// `PhysicalBufferedBatchCollector` reorders the batches of several threads instead).
+    pub fn streaming(plan: PhysicalRef, preserve_order_setting: bool) -> Self {
+        let parallel = !preserve_insertion_order(plan.as_ref(), preserve_order_setting);
+        Self::with_kind(plan, CollectorKind::Buffered { parallel })
+    }
+
     pub fn kind(&self) -> CollectorKind {
         self.kind
+    }
+
+    /// Takes the chunks collected so far from the collector's global state: those a
+    /// streaming collector buffered while the query runs (`BufferedData::Scan`), or the
+    /// whole result once the query finished.
+    pub fn take_chunks(global: &SinkState) -> Result<Vec<DataChunk>> {
+        let collected = global
+            .downcast_ref::<Mutex<CollectedResult>>()
+            .ok_or_else(|| Error::internal("result collector state has an unexpected type"))?;
+        Ok(std::mem::take(
+            &mut collected.lock().map_err(|_| poisoned())?.chunks,
+        ))
     }
 }
 
@@ -85,12 +109,15 @@ impl PhysicalOperator for PhysicalResultCollector {
     }
     fn parallel_sink(&self) -> bool {
         match self.kind {
-            CollectorKind::Materialized { parallel } => parallel,
+            CollectorKind::Materialized { parallel } | CollectorKind::Buffered { parallel } => parallel,
             CollectorKind::Batch => true,
         }
     }
     fn sink_order_dependent(&self) -> bool {
-        matches!(self.kind, CollectorKind::Materialized { .. })
+        matches!(
+            self.kind,
+            CollectorKind::Materialized { .. } | CollectorKind::Buffered { .. }
+        )
     }
     fn requires_batch_index(&self) -> bool {
         self.kind == CollectorKind::Batch
@@ -139,10 +166,18 @@ impl Sink for PhysicalResultCollector {
         &self,
         _: &ExecutionContext,
         chunk: &DataChunk,
-        _: &Self::Global,
+        global: &Self::Global,
         local: &mut Self::Local,
     ) -> Result<SinkResult> {
-        local.chunks.push(chunk.compacted());
+        if let CollectorKind::Buffered { .. } = self.kind {
+            global
+                .lock()
+                .map_err(|_| poisoned())?
+                .chunks
+                .push(chunk.compacted());
+        } else {
+            local.chunks.push(chunk.compacted());
+        }
         Ok(SinkResult::NeedMoreInput)
     }
 

@@ -1,8 +1,9 @@
+use rustdb_ast::StatementType;
 use rustdb_planner::StatementReturnType;
 use rustdb_types::{DataChunk, LogicalType, Value};
 
 /// A fully materialised query result (DuckDB's `MaterializedQueryResult`).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct MaterializedResult {
     names: Vec<String>,
     types: Vec<LogicalType>,
@@ -11,6 +12,15 @@ pub struct MaterializedResult {
     row_index: Vec<(u32, u32)>,
     /// What the statement returns: rows, a changed-row count or nothing.
     return_type: StatementReturnType,
+    /// The kind of statement that produced the result (`QueryResult::statement_type`).
+    statement_type: StatementType,
+}
+
+impl Default for MaterializedResult {
+    /// An empty result without columns.
+    fn default() -> Self {
+        Self::new(Vec::new(), Vec::new(), Vec::new())
+    }
 }
 
 impl MaterializedResult {
@@ -26,6 +36,7 @@ impl MaterializedResult {
             chunks,
             row_index,
             return_type: StatementReturnType::QueryResult,
+            statement_type: StatementType::InvalidStatement,
         }
     }
 
@@ -34,6 +45,18 @@ impl MaterializedResult {
     pub fn with_return_type(mut self, return_type: StatementReturnType) -> Self {
         self.return_type = return_type;
         self
+    }
+
+    /// The result of a statement of type `statement_type`.
+    #[must_use]
+    pub fn with_statement_type(mut self, statement_type: StatementType) -> Self {
+        self.statement_type = statement_type;
+        self
+    }
+
+    /// The kind of statement that produced the result.
+    pub fn statement_type(&self) -> StatementType {
+        self.statement_type
     }
 
     /// What the statement returns; shells print only query results.

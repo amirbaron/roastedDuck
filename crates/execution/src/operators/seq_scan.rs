@@ -294,6 +294,8 @@ pub struct SeqScanGlobal {
     /// The row groups of the table and the transaction's local rows when the scan
     /// started (`total_row_groups_to_scan`).
     total_row_groups: u64,
+    /// The rows of the table when the scan started (`DuckTableScanState::total_rows`).
+    total_rows: u64,
 }
 
 /// A thread's scan: its storage scan state and, with a projection, the scanned chunk.
@@ -317,6 +319,7 @@ impl Source for PhysicalSeqScan {
     fn global_source_state(&self, _: &ExecutionContext, _: Option<&SinkState>) -> Result<Self::Global> {
         let filters = self.scan_filters();
         let total_row_groups = self.table.row_group_count_with_local_storage(&self.transaction) as u64;
+        let total_rows = self.table.total_rows();
         if let Some(row_ids) = self.index_scan_row_ids(filters.as_ref())? {
             self.is_index_scan.store(true, Ordering::Relaxed);
             // Fetch the indexed rows, then scan only the transaction-local rows.
@@ -326,6 +329,7 @@ impl Source for PhysicalSeqScan {
                 next_index_row: AtomicUsize::new(0),
                 filters,
                 total_row_groups,
+                total_rows,
             });
         }
         Ok(SeqScanGlobal {
@@ -334,6 +338,7 @@ impl Source for PhysicalSeqScan {
             next_index_row: AtomicUsize::new(0),
             filters,
             total_row_groups,
+            total_rows,
         })
     }
 
@@ -438,6 +443,25 @@ impl Source for PhysicalSeqScan {
 
     fn max_threads(&self, _: &Self::Global) -> usize {
         self.table.max_threads()
+    }
+
+    /// `TableScanProgress`: the indexed rows fetched (`DuckIndexScanState`), or the rows of
+    /// the row groups handed out (`DuckTableScanState`), of all rows.
+    fn progress(&self, global: &Self::Global) -> Option<f64> {
+        let (scanned, total) = match &global.index_rows {
+            Some(row_ids) => (
+                global.next_index_row.load(Ordering::Relaxed) as u64,
+                row_ids.len() as u64,
+            ),
+            None => (
+                global.parallel.scan_state.processed_rows() + global.parallel.local_state.processed_rows(),
+                global.total_rows,
+            ),
+        };
+        if total == 0 {
+            return Some(1.0);
+        }
+        Some((scanned as f64 / total as f64).min(1.0))
     }
 
     /// `TableScanGetMetrics`: the rows and row groups the thread scanned and the row

@@ -3,8 +3,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 use rustdb_ast::{SetScope, SqlStatement, TransactionType};
 use rustdb_catalog::{Catalog, Transaction, TransactionManager};
 use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
-use rustdb_execution::operators::{CollectedResult, PhysicalResultCollector};
-use rustdb_execution::{Executor, PhysicalRef, PlanContext, ScalarEvaluator, create_physical_plan_with};
+use rustdb_execution::operators::PhysicalResultCollector;
+use rustdb_execution::{
+    PhysicalRef, PlanContext, QueryExecution, ScalarEvaluator, create_physical_plan_with,
+};
 use rustdb_function::cast::{CastFunctionSet, ValueCast};
 use rustdb_optimizer::Optimizer;
 use rustdb_planner::{
@@ -17,6 +19,18 @@ use crate::attached::{AttachOptions, AttachedDatabase, DatabaseManager};
 use crate::settings::Settings;
 use crate::transaction::TransactionContext;
 use crate::{Config, MaterializedResult};
+
+mod active_query;
+mod appender;
+mod prepared_statement;
+
+pub use active_query::{
+    ClientHandle, PendingExecutionResult, PendingQuery, QueryId, QueryProgress, QueryResult,
+    StreamQueryResult,
+};
+pub(crate) use active_query::{PlanExecution, RunMode, StatementRun};
+pub use appender::{Appender, ColumnDescription, TableDescription};
+pub use prepared_statement::PreparedStatement;
 
 /// Outcome of loading an extension by name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1018,6 +1032,12 @@ impl DatabaseInstance {
     }
 }
 
+/// The thread-local context of a running query (see [`Connection::query_scope`]).
+pub(crate) struct QueryScope {
+    _metrics: rustdb_common::profiling::ActiveMetricsGuard,
+    _opener: rustdb_function::file_system::OpenerGuard,
+}
+
 /// A database instance (DuckDB's `DuckDB`). Cheap to clone; clones share the instance.
 #[derive(Clone, Debug)]
 pub struct Database {
@@ -1034,6 +1054,7 @@ fn json_casts() -> CastFunctionSet {
 impl Database {
     /// Opens (or creates) the database at `path`; `""` or `":memory:"` is in-memory.
     pub fn open(path: &str, config: &Config) -> Result<Self> {
+        config.check_recognized()?;
         let path = if path == ":memory:" {
             String::new()
         } else {
@@ -1346,6 +1367,9 @@ impl Database {
             log_query_writer: None,
             extension_session: CaseInsensitiveMap::default(),
             bound_casts: Mutex::default(),
+            active_query: None,
+            next_query_id: 0,
+            client: Arc::default(),
         })
     }
 
@@ -1420,10 +1444,19 @@ pub struct Connection {
     /// The database's casts bound for this connection, with the set they were made from
     /// (only when extension casts depend on the connection's settings).
     bound_casts: Mutex<Option<(Arc<CastFunctionSet>, Arc<CastFunctionSet>)>>,
+    /// The query a pending or streaming result belongs to (DuckDB's `active_query`).
+    active_query: Option<active_query::ActiveQuery>,
+    /// The id of the last query made active.
+    next_query_id: u64,
+    /// The interrupt flag and progress other threads may use (DuckDB's
+    /// `ClientContext::interrupted` and `query_progress`).
+    client: Arc<ClientHandle>,
 }
 
 impl Drop for Connection {
     fn drop(&mut self) {
+        // `ClientContext::Destroy`: a query still running is ended first.
+        self.cleanup_active_query();
         self.database
             .instance
             .connections
@@ -1488,6 +1521,11 @@ impl Connection {
         assigned
     }
 
+    /// The connection's id (DuckDB's `ClientContext::GetConnectionId`).
+    pub fn connection_id(&self) -> u64 {
+        self.function_client.connection_id()
+    }
+
     pub fn database(&self) -> &Database {
         &self.database
     }
@@ -1535,7 +1573,22 @@ impl Connection {
     /// `ExecutePendingQueryInternal`): bind and plan, resolve column bindings, build the
     /// physical plan and run it, all inside the connection's transaction.
     pub fn execute_statement(&mut self, query: &str, statement: SqlStatement) -> Result<MaterializedResult> {
-        // `BeginQueryInternal`: nothing runs on an invalidated instance.
+        self.initial_cleanup();
+        let statement_type = statement.statement_type();
+        self.begin_query(query, &statement)?;
+        let outcome = self.in_query_scope(|connection| {
+            connection.begin_query_logging(query);
+            connection
+                .start_statement(statement, RunMode::Materialize)
+                .and_then(StatementRun::into_materialized)
+        });
+        self.end_query(query, outcome)
+            .map(|result| result.with_statement_type(statement_type))
+    }
+
+    /// `ClientContext::BeginQueryInternal` up to the logging: nothing runs on an invalidated
+    /// instance; the statement sees the latest global settings, and the profiler starts.
+    pub(crate) fn begin_query(&mut self, query: &str, statement: &SqlStatement) -> Result<()> {
         if let Some(message) = self.database.instance().validity.invalidated() {
             return Err(invalidated_database_error(&message).with_query_context(query));
         }
@@ -1551,19 +1604,56 @@ impl Connection {
         );
         self.profiler
             .start_query(&self.settings.profiler, query, is_explain_analyze);
+        Ok(())
+    }
+
+    /// Activates the running query's thread-local context until the returned scope is
+    /// dropped: the metrics its profiler records into, and the connection as the opener of
+    /// the files it opens (they read its settings and log to its loggers).
+    pub(crate) fn query_scope(&self) -> QueryScope {
+        let metrics = self.profiler.active_metrics().cloned();
+        QueryScope {
+            _metrics: rustdb_common::profiling::activate(metrics.as_ref()),
+            _opener: rustdb_function::file_system::activate_opener(Arc::clone(&self.function_client)),
+        }
+    }
+
+    /// Runs `work` within the running query's [scope](Connection::query_scope).
+    pub(crate) fn in_query_scope<T>(&mut self, work: impl FnOnce(&mut Self) -> T) -> T {
+        let _scope = self.query_scope();
+        work(self)
+    }
+
+    /// `ClientContext::EndQueryInternal`: applies the configuration changes functions made,
+    /// ends the statement in its transaction (committing or rolling back an auto-commit
+    /// one), writes the profile, checkpoints automatically and releases the databases the
+    /// transaction used. Errors are put in the context of `query`.
+    pub(crate) fn end_query(
+        &mut self,
+        query: &str,
+        outcome: Result<MaterializedResult>,
+    ) -> Result<MaterializedResult> {
+        self.end_query_internal(query, outcome, true)
+    }
+
+    /// [`Connection::end_query`]; a failure invalidates an explicit transaction only if
+    /// `invalidate_transaction` (a query whose result was closed unread does not).
+    pub(crate) fn end_query_internal(
+        &mut self,
+        query: &str,
+        outcome: Result<MaterializedResult>,
+        invalidate_transaction: bool,
+    ) -> Result<MaterializedResult> {
         let metrics = self.profiler.active_metrics().cloned();
         let metrics_guard = rustdb_common::profiling::activate(metrics.as_ref());
-        // The connection is the opener of the files the statement opens: they read its
-        // settings and log to its loggers.
         let _opener_guard = rustdb_function::file_system::activate_opener(Arc::clone(&self.function_client));
-        self.begin_query_logging(query);
-        let outcome = self.run_statement(statement);
         // Functions that changed the connection's configuration did so while running.
         let requests = self.function_client.take_client_requests();
         let outcome = outcome.and_then(|result| self.apply_client_requests(requests).map(|()| result));
-        let invalidates = outcome
-            .as_ref()
-            .is_err_and(|error| invalidates_transaction(error.kind()));
+        let invalidates = invalidate_transaction
+            && outcome
+                .as_ref()
+                .is_err_and(|error| invalidates_transaction(error.kind()));
         // The database the transaction wrote to, which its commit may checkpoint.
         let (modified, blocks_concurrent, index_bytes) = if self.transactions.has_current() {
             let current = self.transactions.current();
@@ -2079,20 +2169,29 @@ impl Connection {
     }
 
     fn run_statement(&mut self, statement: SqlStatement) -> Result<MaterializedResult> {
+        self.start_statement(statement, RunMode::Materialize)
+            .and_then(StatementRun::into_materialized)
+    }
+
+    /// Starts one parsed statement (DuckDB's `PendingStatementInternal`): statements the
+    /// connection runs itself complete right away; a query's physical plan runs to
+    /// completion or, in [`RunMode::Pending`], is left to the caller to execute.
+    pub(crate) fn start_statement(&mut self, statement: SqlStatement, mode: RunMode) -> Result<StatementRun> {
         if let rustdb_ast::SqlStatementKind::Multi(statements) = statement.kind {
-            return self.run_multi_statement(statements);
+            return self.run_multi_statement(statements).map(StatementRun::Done);
         }
         if let rustdb_ast::SqlStatementKind::CopyDatabase(copy) = &statement.kind {
-            return self.copy_database(copy);
+            return self.copy_database(copy).map(StatementRun::Done);
         }
         if let rustdb_ast::SqlStatementKind::Load(info) = &statement.kind {
-            let config = crate::extensions::ExtensionConfig::from_settings(|name| self.database.global_setting(name));
+            let config =
+                crate::extensions::ExtensionConfig::from_settings(|name| self.database.global_setting(name));
             if let Some(name) = crate::extensions::load_extension(info, &config)?
                 && let Some(extension) = StaticExtension::from_name(&name)
             {
                 self.database.instance.load_static_extension(extension)?;
             }
-            return Ok(MaterializedResult::default());
+            return Ok(StatementRun::Done(MaterializedResult::default()));
         }
         // Pragmas that stand for a query run that query (DuckDB's `PragmaHandler`).
         if let rustdb_ast::SqlStatementKind::Pragma(pragma) = &statement.kind
@@ -2105,7 +2204,7 @@ impl Connection {
                 .database
                 .instance
                 .extension_pragma_query(&name, &parameters)?;
-            return self.run_pragma_query(&query);
+            return self.run_pragma_query(&query).map(StatementRun::Done);
         }
         if let rustdb_ast::SqlStatementKind::Pragma(pragma) = &statement.kind {
             let constants: Option<Vec<rustdb_types::Value>> = pragma
@@ -2122,14 +2221,14 @@ impl Connection {
             if let Some(constants) = &constants
                 && pragma.name.eq_ignore_ascii_case("import_database")
             {
-                return self.import_database(constants);
+                return self.import_database(constants).map(StatementRun::Done);
             }
             let query = match &constants {
                 Some(constants) => crate::system_functions::pragma_query(&pragma.name, constants)?,
                 None => None,
             };
             if let Some(query) = query {
-                return self.run_pragma_query(&query);
+                return self.run_pragma_query(&query).map(StatementRun::Done);
             }
         }
         // `CHECKPOINT` is `CALL checkpoint()`: the call is bound and run like any table
@@ -2171,6 +2270,10 @@ impl Connection {
                 }),
             _ => None,
         };
+        if checkpoint.is_none() && vacuum_table.is_none() {
+            return self.start_planned(statement, mode);
+        }
+        // The connection finishes these statements itself once their plan ran.
         let result = self.run_planned(statement)?;
         if let Some(base) = vacuum_table {
             let transaction = self.transactions.current();
@@ -2216,7 +2319,7 @@ impl Connection {
             }
             crate::storage::checkpoint(&attached, &transaction, started, force, &instance.transactions)?;
         }
-        Ok(result)
+        Ok(StatementRun::Done(result))
     }
 
     /// Runs the statements of the query a pragma stands for; the result is the last
@@ -2482,6 +2585,12 @@ impl Connection {
     }
 
     fn run_planned(&mut self, statement: SqlStatement) -> Result<MaterializedResult> {
+        self.start_planned(statement, RunMode::Materialize)
+            .and_then(StatementRun::into_materialized)
+    }
+
+    /// Binds and plans `statement` (`CreatePreparedStatementInternal`) and starts its plan.
+    fn start_planned(&mut self, statement: SqlStatement, mode: RunMode) -> Result<StatementRun> {
         use rustdb_common::profiling::MetricType;
         let statement_type = statement.kind.statement_type();
         let transaction = self.transactions.current();
@@ -2516,10 +2625,31 @@ impl Connection {
             Some(plan) if properties.bound_all_parameters => plan,
             _ => return Err(Error::invalid_input("Not all parameters were bound")),
         };
-        let return_type = properties.return_type;
+        self.start_bound_plan(plan, names, types, &properties, statement_type, mode)
+    }
+
+    /// Starts the bound plan of a statement (`PendingPreparedStatementInternal`): the
+    /// databases it writes join the transaction, and the result streams only if both the
+    /// caller and the statement allow it.
+    pub(crate) fn start_bound_plan(
+        &mut self,
+        plan: LogicalOperator,
+        names: Vec<String>,
+        types: Vec<LogicalType>,
+        properties: &rustdb_planner::StatementProperties,
+        statement_type: rustdb_ast::StatementType,
+        mode: RunMode,
+    ) -> Result<StatementRun> {
         self.register_modifications(&plan, &properties.modified_databases, statement_type)?;
-        self.run_plan(plan, names, types)
-            .map(|result| result.with_return_type(return_type))
+        let mode = match mode {
+            RunMode::Pending { stream } => RunMode::Pending {
+                stream: stream && properties.allow_stream_result,
+            },
+            RunMode::Materialize => RunMode::Materialize,
+        };
+        Ok(self
+            .start_plan(plan, names, types, mode)?
+            .with_return_type(properties.return_type))
     }
 
     /// The statements a statement was rewritten into (DuckDB's `UnpackMultiStatement`):
@@ -2634,15 +2764,27 @@ impl Connection {
         Ok(())
     }
 
-    /// Runs a bound plan: statements that act on the connection are executed here
+    /// Runs a bound plan to completion (see [`Connection::start_plan`]).
+    fn run_plan(
+        &mut self,
+        plan: LogicalOperator,
+        names: Vec<String>,
+        types: Vec<LogicalType>,
+    ) -> Result<MaterializedResult> {
+        self.start_plan(plan, names, types, RunMode::Materialize)
+            .and_then(StatementRun::into_materialized)
+    }
+
+    /// Starts a bound plan: statements that act on the connection are executed here
     /// (DuckDB's `PhysicalTransaction`, `PhysicalSet`, `PhysicalPrepare`, ...); queries go
     /// through the physical planner and executor.
-    fn run_plan(
+    fn start_plan(
         &mut self,
         mut plan: LogicalOperator,
         names: Vec<String>,
         types: Vec<LogicalType>,
-    ) -> Result<MaterializedResult> {
+        mode: RunMode,
+    ) -> Result<StatementRun> {
         let nothing =
             || MaterializedResult::new(vec!["Success".to_owned()], vec![LogicalType::BOOLEAN], Vec::new());
         // `PhysicalSet` / `PhysicalReset`: `DBConfig::CheckLock`, then the checks of options
@@ -2735,7 +2877,7 @@ impl Connection {
                         return Err(Error::not_implemented("Unrecognized transaction type!"));
                     }
                 }
-                return Ok(nothing());
+                return Ok(StatementRun::Done(nothing()));
             }
             LogicalKind::Attach(info) => {
                 let options = AttachOptions::from_info(info, crate::AccessMode::Automatic)?;
@@ -2767,11 +2909,11 @@ impl Connection {
                 {
                     self.transaction_attaches.push(attached);
                 }
-                return Ok(nothing());
+                return Ok(StatementRun::Done(nothing()));
             }
             LogicalKind::Detach(info) => {
                 self.detach(info)?;
-                return Ok(nothing());
+                return Ok(StatementRun::Done(nothing()));
             }
             LogicalKind::Set {
                 name,
@@ -2798,23 +2940,23 @@ impl Connection {
                         ));
                     }
                 }
-                return Ok(nothing());
+                return Ok(StatementRun::Done(nothing()));
             }
             LogicalKind::Reset {
                 name,
                 scope: SetScope::Variable,
             } => {
                 self.user_variables.remove(name);
-                return Ok(nothing());
+                return Ok(StatementRun::Done(nothing()));
             }
             LogicalKind::Set { name, value, .. } if is_search_path_setting(name) => {
                 self.set_search_path(name, value)?;
-                return Ok(nothing());
+                return Ok(StatementRun::Done(nothing()));
             }
             LogicalKind::Reset { name, .. } if is_search_path_setting(name) => {
                 self.search_path.clear();
                 self.search_path_set.clear();
-                return Ok(nothing());
+                return Ok(StatementRun::Done(nothing()));
             }
             LogicalKind::Set { name, value, scope }
                 if crate::settings::canonical_option(name).is_none()
@@ -2822,7 +2964,7 @@ impl Connection {
             {
                 let (name, value, scope) = (name.clone(), value.clone(), *scope);
                 self.set_extension_variable(&name, &value, scope)?;
-                return Ok(nothing());
+                return Ok(StatementRun::Done(nothing()));
             }
             LogicalKind::Reset { name, scope }
                 if crate::settings::canonical_option(name).is_none()
@@ -2830,7 +2972,7 @@ impl Connection {
             {
                 let (name, scope) = (name.clone(), *scope);
                 self.reset_extension_variable(&name, scope)?;
-                return Ok(nothing());
+                return Ok(StatementRun::Done(nothing()));
             }
             LogicalKind::Set { name, .. } | LogicalKind::Reset { name, .. }
                 if crate::settings::canonical_option(name).is_none()
@@ -2890,7 +3032,7 @@ impl Connection {
                 self.database
                     .instance()
                     .set_wal_autocheckpoint_entries(name, Some(value))?;
-                return Ok(nothing());
+                return Ok(StatementRun::Done(nothing()));
             }
             LogicalKind::Reset { name, scope } => {
                 if is_secret_setting(name) {
@@ -2928,26 +3070,26 @@ impl Connection {
                         .checkpoint_wal_size
                         .store(DEFAULT_CHECKPOINT_WAL_SIZE, std::sync::atomic::Ordering::Relaxed);
                 }
-                return Ok(nothing());
+                return Ok(StatementRun::Done(nothing()));
             }
             LogicalKind::Prepare { name, prepared } => {
                 self.prepared_statements
                     .insert(name.clone(), Arc::clone(prepared));
-                return Ok(nothing());
+                return Ok(StatementRun::Done(nothing()));
             }
             LogicalKind::Deallocate { name } => {
                 self.prepared_statements.remove(name);
-                return Ok(nothing());
+                return Ok(StatementRun::Done(nothing()));
             }
             LogicalKind::CreateSecret(input) => {
                 // `PhysicalCreateSecret`: one row with `true`.
                 self.database.instance().secrets.create_secret(input)?;
                 let column = rustdb_types::Vector::constant(&rustdb_types::Value::boolean(true))?;
-                return Ok(MaterializedResult::new(
+                return Ok(StatementRun::Done(MaterializedResult::new(
                     names,
                     types,
                     vec![rustdb_types::DataChunk::new(vec![column], 1)],
-                ));
+                )));
             }
             LogicalKind::Drop(info) if info.catalog_type == rustdb_ast::CatalogType::SecretEntry => {
                 let (persist_type, storage) = match info.extra_drop_info.as_deref() {
@@ -2962,7 +3104,7 @@ impl Connection {
                     persist_type,
                     &storage,
                 )?;
-                return Ok(nothing());
+                return Ok(StatementRun::Done(nothing()));
             }
             LogicalKind::Pragma { name, parameters } => {
                 let lower = name.to_ascii_lowercase();
@@ -2983,7 +3125,7 @@ impl Connection {
                         &key_name.to_varchar()?,
                         &key.to_varchar()?,
                     )?;
-                    return Ok(nothing());
+                    return Ok(StatementRun::Done(nothing()));
                 }
                 if lower == "enable_optimizer" || lower == "disable_optimizer" {
                     self.settings.optimizer_disabled = lower == "disable_optimizer";
@@ -3000,7 +3142,7 @@ impl Connection {
                         .store(lower.starts_with("disable"), std::sync::atomic::Ordering::Relaxed);
                 }
                 if NO_OP_PRAGMAS.contains(&name.to_ascii_lowercase().as_str()) {
-                    return Ok(nothing());
+                    return Ok(StatementRun::Done(nothing()));
                 }
                 // `Binder::BindPragma`: a table function of the name is suggested.
                 let transaction = self.transactions.current();
@@ -3039,8 +3181,11 @@ impl Connection {
             }
             _ => None,
         };
+        let Some((catalog, schema)) = dropped_schema else {
+            return self.start_execution(plan, names, types, mode);
+        };
         let result = self.execute_plan(plan, names, types)?;
-        if let Some((catalog, schema)) = dropped_schema {
+        {
             let (current_catalog, current_schema) = self
                 .search_path
                 .first()
@@ -3053,16 +3198,30 @@ impl Connection {
                 )?;
             }
         }
-        Ok(result)
+        Ok(StatementRun::Done(result))
     }
 
     /// Plans and runs a logical plan, collecting its result.
     fn execute_plan(
         &mut self,
-        mut plan: LogicalOperator,
+        plan: LogicalOperator,
         names: Vec<String>,
         types: Vec<LogicalType>,
     ) -> Result<MaterializedResult> {
+        self.start_execution(plan, names, types, RunMode::Materialize)
+            .and_then(StatementRun::into_materialized)
+    }
+
+    /// Optimizes a logical plan, plans it physically and initializes its executor
+    /// (`PendingPreparedStatementInternal`); in [`RunMode::Materialize`] the plan also runs
+    /// to completion.
+    fn start_execution(
+        &mut self,
+        mut plan: LogicalOperator,
+        names: Vec<String>,
+        types: Vec<LogicalType>,
+        mode: RunMode,
+    ) -> Result<StatementRun> {
         use rustdb_common::profiling::MetricType;
         let transaction = self.transactions.current();
         let client = self.client_context(transaction);
@@ -3117,14 +3276,25 @@ impl Connection {
         let physical = create_physical_plan_with(plan, &context);
         self.profiler.end_phase(&self.settings.profiler);
         self.profiler.end_phase(&self.settings.profiler);
-        let physical = physical?;
+        let rustdb_execution::PhysicalPlan {
+            root: physical,
+            estimates,
+        } = physical?;
         let explain_analyze = physical.name() == "EXPLAIN_ANALYZE";
         let env = Arc::clone(&self.database.instance().env);
-        let root: PhysicalRef = Arc::new(PhysicalResultCollector::for_plan(
-            physical,
-            env.threads(),
-            preserve_insertion_order,
-        ));
+        let streaming = mode == (RunMode::Pending { stream: true });
+        let root: PhysicalRef = if streaming {
+            Arc::new(PhysicalResultCollector::streaming(
+                physical,
+                preserve_insertion_order,
+            ))
+        } else {
+            Arc::new(PhysicalResultCollector::for_plan(
+                physical,
+                env.threads(),
+                preserve_insertion_order,
+            ))
+        };
         // `Executor::Initialize`; EXPLAIN ANALYZE and profiled queries record what every
         // operator did.
         self.profiler.initialize(&self.settings.profiler, &root);
@@ -3141,17 +3311,35 @@ impl Connection {
         let options = rustdb_execution::QueryOptions {
             profiler: profiler.clone(),
             preserve_insertion_order,
+            client_interrupted: Some(self.client.interrupt_flag()),
+            estimates,
         };
-        let state = Executor::execute_with(&root, env, &options);
+        let execution = match QueryExecution::new(root, env, &options) {
+            Ok(execution) => execution,
+            Err(error) => {
+                if let Some(profiler) = &profiler {
+                    self.profiler.flush(&self.settings.profiler, profiler);
+                }
+                return Err(error);
+            }
+        };
+        let run = PlanExecution::new(execution, names, types, profiler, streaming);
+        match mode {
+            RunMode::Materialize => self.finish_execution(run).map(StatementRun::Done),
+            RunMode::Pending { .. } => Ok(StatementRun::Executing(Box::new(run))),
+        }
+    }
+
+    /// Runs the remaining tasks of a plan and collects its result
+    /// (`ClientContext::ExecutePendingQueryInternal`).
+    pub(crate) fn finish_execution(&mut self, run: PlanExecution) -> Result<MaterializedResult> {
+        let (execution, names, types, profiler, return_type) = run.into_parts();
+        let state = execution.finish();
         if let Some(profiler) = &profiler {
             self.profiler.flush(&self.settings.profiler, profiler);
         }
-        let state = state?;
-        let collected = state
-            .downcast_ref::<Mutex<CollectedResult>>()
-            .ok_or_else(|| Error::internal("result collector state has an unexpected type"))?;
-        let chunks = std::mem::take(&mut collected.lock().unwrap_or_else(PoisonError::into_inner).chunks);
-        Ok(MaterializedResult::new(names, types, chunks))
+        let chunks = PhysicalResultCollector::take_chunks(&state?)?;
+        Ok(MaterializedResult::new(names, types, chunks).with_return_type(return_type))
     }
 }
 
