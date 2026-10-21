@@ -4,6 +4,8 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use rustdb_common::{Result, STANDARD_VECTOR_SIZE};
 
+use rustdb_buffer::{BufferManager, MemoryReservation, MemoryTag};
+
 use super::chunk_info::{ChunkVectorInfo, DeletedRows, ScanOptions, VersionCompression};
 use crate::VECTOR_SIZE;
 use crate::metadata::{MetaBlockPointer, MetadataManager, MetadataWriter};
@@ -20,9 +22,28 @@ struct VersionState {
     /// The metadata blocks the deletes are stored in, as of the last checkpoint that
     /// wrote or read them.
     storage_pointers: Vec<MetaBlockPointer>,
+    /// The charge for the per-row version ids, once the row group is part of a table.
+    memory: Option<MemoryReservation>,
 }
 
 impl VersionState {
+    /// Charges the memory of the per-row version ids (DuckDB allocates them from the row
+    /// group's `FixedSizeAllocator` with `MemoryTag::BASE_TABLE`).
+    fn update_memory(&mut self) {
+        if self.memory.is_none() {
+            return;
+        }
+        let size = self
+            .vectors
+            .iter()
+            .flatten()
+            .map(ChunkVectorInfo::memory_size)
+            .sum();
+        if let Some(memory) = &mut self.memory {
+            memory.resize(size);
+        }
+    }
+
     fn fill(&mut self, vector_index: usize) {
         if self.vectors.len() <= vector_index {
             self.vectors.resize_with(vector_index + 1, || None);
@@ -67,9 +88,48 @@ fn vector_ranges(start: u64, count: u64) -> impl Iterator<Item = (usize, usize, 
     })
 }
 
+/// The locked state of a change: the charged memory follows the change when the guard is
+/// dropped.
+struct ChangeGuard<'a>(MutexGuard<'a, VersionState>);
+
+impl std::ops::Deref for ChangeGuard<'_> {
+    type Target = VersionState;
+
+    fn deref(&self) -> &VersionState {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for ChangeGuard<'_> {
+    fn deref_mut(&mut self) -> &mut VersionState {
+        &mut self.0
+    }
+}
+
+impl Drop for ChangeGuard<'_> {
+    fn drop(&mut self) {
+        self.0.update_memory();
+    }
+}
+
 impl RowVersionManager {
     fn lock(&self) -> MutexGuard<'_, VersionState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Locks the state for a change of the version ids.
+    fn lock_change(&self) -> ChangeGuard<'_> {
+        ChangeGuard(self.lock())
+    }
+
+    /// Charges the memory of the per-row version ids to `BASE_TABLE` of `buffer_manager`
+    /// from now on.
+    pub fn track_memory(&self, buffer_manager: &BufferManager) {
+        let mut state = self.lock();
+        if state.memory.is_none() {
+            state.memory = Some(buffer_manager.track_memory(MemoryTag::BaseTable));
+            state.update_memory();
+        }
     }
 
     /// Version info read from disk, stored in the metadata blocks `storage_pointers`
@@ -84,6 +144,7 @@ impl RowVersionManager {
                 uncheckpointed_delete_commit: None,
                 needs_compression_check: false,
                 storage_pointers,
+                memory: None,
             }),
         }
     }
@@ -139,7 +200,7 @@ impl RowVersionManager {
 
     /// Records rows `start..end` as inserted by the transaction (`AppendVersionInfo`).
     pub fn append_version_info(&self, transaction: TransactionData, start: u64, end: u64) {
-        let mut state = self.lock();
+        let mut state = self.lock_change();
         state.needs_compression_check = true;
         for (vector, vector_start, vector_end) in vector_ranges(start, end - start) {
             state.fill(vector);
@@ -155,7 +216,7 @@ impl RowVersionManager {
     }
 
     pub fn commit_append(&self, commit_id: u64, start: u64, count: u64) {
-        let mut state = self.lock();
+        let mut state = self.lock_change();
         for (vector, vector_start, vector_end) in vector_ranges(start, count) {
             if let Some(Some(info)) = state.vectors.get_mut(vector) {
                 info.commit_append(commit_id, vector_start, vector_end);
@@ -166,7 +227,7 @@ impl RowVersionManager {
     /// Drops version info for vectors whose rows are visible to everybody
     /// (`CleanupAppend`).
     pub fn cleanup_append(&self, lowest_active_transaction: u64, start: u64, count: u64) {
-        let mut state = self.lock();
+        let mut state = self.lock_change();
         for (vector, _, vector_end) in vector_ranges(start, count) {
             if vector_end != STANDARD_VECTOR_SIZE {
                 continue;
@@ -183,7 +244,7 @@ impl RowVersionManager {
 
     /// Forgets the versions of rows at and after `new_count` (`RevertAppend`).
     pub fn revert_append(&self, new_count: u64) {
-        let mut state = self.lock();
+        let mut state = self.lock_change();
         let first_vector = new_count.div_ceil(VECTOR_SIZE) as usize;
         for slot in state.vectors.iter_mut().skip(first_vector) {
             *slot = None;
@@ -198,13 +259,13 @@ impl RowVersionManager {
         transaction_id: u64,
         rows: &mut Vec<u16>,
     ) -> Result<usize> {
-        let mut state = self.lock();
+        let mut state = self.lock_change();
         state.needs_compression_check = true;
         state.vector_info(vector_index).delete(transaction_id, rows)
     }
 
     pub fn commit_delete(&self, vector_index: usize, commit_id: u64, rows: &DeletedRows) {
-        let mut state = self.lock();
+        let mut state = self.lock_change();
         state.needs_compression_check = true;
         if state
             .uncheckpointed_delete_commit
@@ -217,7 +278,7 @@ impl RowVersionManager {
 
     /// Collapses per-row ids where possible (`CompressVersionIds`).
     pub fn compress_version_ids(&self, lowest_active_start: u64) {
-        let mut state = self.lock();
+        let mut state = self.lock_change();
         if !state.needs_compression_check {
             return;
         }

@@ -152,6 +152,9 @@ pub(crate) fn checkpoint(
 ) -> Result<()> {
     database.check_valid()?;
     if database.storage.is_none() {
+        if !current.changes_made() {
+            checkpoint_in_memory(&database.catalog, transactions)?;
+        }
         return Ok(());
     }
     if started && force {
@@ -181,6 +184,32 @@ pub(crate) fn checkpoint(
         CheckpointMode::Manual
     };
     database.create_checkpoint(mode, Some(transactions))
+}
+
+/// Checkpoints an in-memory database (DuckDB's `InMemoryCheckpointer::CreateCheckpoint`):
+/// every table compresses its version information and, when no other transaction runs
+/// that may still need older data, vacuums its deleted rows.
+fn checkpoint_in_memory(catalog: &Catalog, transactions: &rustdb_catalog::TransactionManager) -> Result<()> {
+    let lowest_active_start = transactions.lowest_active_start();
+    let settings = rustdb_storage::checkpoint::table_writer::TableWriteSettings {
+        full_checkpoint: transactions.active_count() <= 1 && transactions.last_commit() < lowest_active_start,
+        lowest_active_start,
+        ..Default::default()
+    };
+    let system = Transaction::system();
+    for schema in catalog.schemas().scan(&system) {
+        let Some(schema_entry) = schema.as_schema() else {
+            continue;
+        };
+        for entry in schema_entry.tables.scan(&system) {
+            if let rustdb_catalog::EntryKind::Table(table) = &entry.kind
+                && let Some(storage) = &table.storage
+            {
+                rustdb_storage::checkpoint::table_writer::checkpoint_in_memory_table(storage, settings)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Why a checkpoint is written.

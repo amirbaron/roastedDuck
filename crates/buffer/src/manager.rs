@@ -733,6 +733,12 @@ impl BufferManager {
         Ok(())
     }
 
+    /// An empty charge to `tag` that follows the size of memory owned outside the buffer
+    /// pool as it grows and shrinks ([`MemoryReservation::resize`]), without evicting.
+    pub fn track_memory(&self, tag: MemoryTag) -> MemoryReservation {
+        MemoryReservation::empty(Arc::clone(&self.shared.pool), tag)
+    }
+
     /// Charges `size` bytes to `tag` for memory owned outside the buffer pool (such as the
     /// buffers of an index's fixed-size allocators), evicting if needed. The charge is
     /// released when the returned reservation is dropped.
