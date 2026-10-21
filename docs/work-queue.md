@@ -1,8 +1,12 @@
 # Work queue
 
-Workstreams found while closing conformance failures, in the order they are scheduled
-(at most two agents run at once). Each names the C++ it ports and the tests or checks
-that close it. Finished streams are removed; the commit history records them.
+Workstreams found while closing conformance failures (at most two agents run at once).
+Each names the C++ it ports and the tests or checks that close it. Finished streams are
+removed; the commit history records them.
+
+Order of the next agents: the performance round (7) and VARIANT storage (13) once the
+running C API (1) and WAL (4) agents finish, then the C API extension surface (2), the
+shell (3), compression (5) and the rest.
 
 ## Public surface (M8)
 
@@ -72,3 +76,11 @@ that close it. Finished streams are removed; the commit history records them.
     into `Catalog`, every `CatalogSet` and `AttachedDatabase`, so it has to become shared
     and mutable first (about 50 call sites); schedule when no other agent edits the
     catalog crate.
+13. **VARIANT storage and statistics.** Shredding VARIANT columns in storage
+    (`shredding_state: SHREDDED`, `typed_value_type`, `fully_shredded` in `stats()`),
+    statistics merging, empty keys, omitting untyped values, the storage-version check
+    (`variant_storage_version` expects an error), `variant_extract` with `TRY_CAST`
+    struct order, and the Parquet VARIANT writer and its statistics. `COPY (select
+    [123::VARIANT]) TO '...parquet'` panics today (a VARCHAR vector read as a list).
+    Tests: `test/sql/storage/types/variant/*`, `test/parquet/variant/*`,
+    `shredded_variant_stats`, `variant_extract_try_cast`.
