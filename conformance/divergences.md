@@ -14,6 +14,7 @@ happens (the porting goal is peak memory at most C++'s, never spilling more).
 |---|---|---|
 | `test/sql/tpch/dbgen_error.test` | `CALL dbgen(sf=1)` under `memory_limit='100MB'` spills to an uncreatable `temp_directory` and fails | generates SF1 within 100 MB, never touching the directory |
 | `test/issues/internal/test_5457.test` | `EXPLAIN SELECT 42` fails under `memory_limit='300KiB'` | explains it within the limit |
+| `test/sql/settings/enable_caching_operators.test_slow` | a hash-join probe over 8 MB strings with caching operators enabled runs out of memory under `memory_limit='300mb'` | streams the strings through within the limit |
 | `test/sql/json/issues/read_json_memory_usage.test` | `read_json_objects` with 8 threads runs out of memory under `memory_limit='50MiB'` | reads the file within the limit |
 
 ## C++ extension binaries
