@@ -138,6 +138,64 @@ impl AttachOptions {
     }
 }
 
+/// The database type an `ATTACH` path names with a `type:` prefix
+/// (`ExtensionHelper::ExtractExtensionPrefixFromPath`): at least two alphanumeric
+/// characters (a single one is a Windows drive) before a colon not starting `://`.
+pub(crate) fn extension_prefix(path: &str) -> Option<&str> {
+    let first_colon = path.find(':')?;
+    if first_colon < 2 || path[first_colon..].starts_with("://") {
+        return None;
+    }
+    let extension = &path[..first_colon];
+    extension
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        .then_some(extension)
+}
+
+/// Whether `ATTACH` opens the file at `path` as a file to query rather than a database
+/// (`DBPathAndType::CheckMagicBytes` resolving to `__open_file__`): a Parquet file, or a
+/// file of unknown type, whose name a replacement scan reads
+/// (`ReplacementScan::CanReplace` with Parquet, CSV and JSON suffixes).
+#[allow(
+    clippy::case_sensitive_file_extension_comparisons,
+    reason = "the name is lowercased"
+)]
+pub(crate) fn is_open_file(path: &str) -> bool {
+    use std::io::Read as _;
+    // `MagicBytes::CheckMagicBytes`.
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut buffer = [0u8; 16];
+    let mut read = 0;
+    while read < buffer.len() {
+        match file.read(&mut buffer[read..]) {
+            Ok(0) | Err(_) => break,
+            Ok(count) => read += count,
+        }
+    }
+    let magic_offset = rustdb_storage::storage_info::MAGIC_BYTE_OFFSET;
+    let duckdb_magic = rustdb_storage::storage_info::MAGIC_BYTES;
+    if &buffer == b"SQLite format 3\0"
+        || (&buffer[..4] != b"PAR1"
+            && &buffer[magic_offset..magic_offset + duckdb_magic.len()] == duckdb_magic)
+    {
+        return false;
+    }
+    let mut lower_name = path.to_lowercase();
+    if lower_name.ends_with(".gz") {
+        lower_name.truncate(lower_name.len() - 3);
+    } else if lower_name.ends_with(".zst") {
+        lower_name.truncate(lower_name.len() - 4);
+    }
+    ["parquet", "csv", "tsv", "json", "jsonl", "ndjson"]
+        .iter()
+        .any(|suffix| {
+            lower_name.ends_with(&format!(".{suffix}")) || lower_name.contains(&format!(".{suffix}?"))
+        })
+}
+
 /// `DefaultCastAs(BOOLEAN)` of an option value.
 fn value_as_bool(value: &Value) -> Result<bool> {
     if let Some(flag) = value.as_bool() {
@@ -328,7 +386,10 @@ impl DatabaseManager {
                 // `SingleFileBlockManager::AddStorageVersionTag`.
                 vec![(
                     "storage_version".to_owned(),
-                    rustdb_storage::storage_info::storage_version_name(storage.block_manager().storage_version(), true),
+                    rustdb_storage::storage_info::storage_version_name(
+                        storage.block_manager().storage_version(),
+                        true,
+                    ),
                 )]
             })
             .unwrap_or_default();

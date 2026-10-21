@@ -921,6 +921,58 @@ impl Database {
         Ok(Some(attached))
     }
 
+    /// Attaches the Parquet, CSV or JSON file at `path` as an in-memory database whose
+    /// `main` schema has the views `file` and `<name>` reading it
+    /// (`OpenFileStorageAttach` with `OpenFileDefaultGenerator`).
+    pub(crate) fn attach_open_file(
+        &self,
+        name: &str,
+        path: &str,
+        options: &AttachOptions,
+        on_conflict: rustdb_ast::OnCreateConflict,
+    ) -> Result<Option<Arc<AttachedDatabase>>> {
+        rustdb_function::file_system::verify_can_access_file(path)?;
+        let name = if name.is_empty() {
+            crate::storage::database_name(path)
+        } else {
+            name.to_owned()
+        };
+        let Some(attached) = self.instance.databases.attach(
+            &name,
+            "",
+            options,
+            on_conflict,
+            &self.instance.env.buffer_manager,
+        )?
+        else {
+            return Ok(None);
+        };
+        let sql = format!("SELECT * FROM '{}'", path.replace('\'', "''"));
+        let mut view_names = vec!["file".to_owned()];
+        if !name.eq_ignore_ascii_case("file") {
+            view_names.push(name);
+        }
+        for view_name in view_names {
+            let Some(rustdb_ast::SqlStatementKind::Select(query)) =
+                rustdb_parser::parse(&sql)?.pop().map(|statement| statement.kind)
+            else {
+                return Err(Error::internal("open file view is not a SELECT"));
+            };
+            let view = rustdb_catalog::ViewEntry {
+                query,
+                aliases: Vec::new(),
+                types: Vec::new(),
+                names: Vec::new(),
+                column_comments: rustdb_common::OrderedMap::default(),
+            };
+            attached.catalog.create_entry_committed(
+                rustdb_catalog::DEFAULT_SCHEMA,
+                rustdb_catalog::CatalogEntry::new(view_name, rustdb_catalog::EntryKind::View(view)),
+            )?;
+        }
+        Ok(Some(attached))
+    }
+
     pub fn open_in_memory() -> Result<Self> {
         Self::open("", &Config::default())
     }
@@ -1005,7 +1057,8 @@ impl Database {
     /// The database of an instance still open.
     pub(crate) fn from_instance(instance: &std::sync::Weak<DatabaseInstance>) -> Option<Self> {
         instance.upgrade().map(|instance| Self { instance })
-    }}
+    }
+}
 
 /// A connection to a database (DuckDB's `Connection` and `ClientContext`). Each
 /// connection is used by one thread at a time; open one connection per thread for
@@ -2215,9 +2268,29 @@ impl Connection {
             }
             LogicalKind::Attach(info) => {
                 let options = AttachOptions::from_info(info, crate::AccessMode::Automatic)?;
-                let attached = self
-                    .database
-                    .attach(&info.name, &info.path, &options, info.on_conflict)?;
+                // `PhysicalAttach::GetDataInternal`: a `duckdb:` prefix names the type;
+                // without a type, `DatabaseManager::GetDatabaseType` checks the file's
+                // magic bytes, and data files are attached as views on them.
+                let has_type = info
+                    .options
+                    .iter()
+                    .any(|(name, _)| name.eq_ignore_ascii_case("type"));
+                let mut path = info.path.as_str();
+                let mut duckdb_type = has_type;
+                if !has_type
+                    && let Some(prefix) = crate::attached::extension_prefix(path)
+                    && prefix.eq_ignore_ascii_case("duckdb")
+                {
+                    path = &path[prefix.len() + 1..];
+                    duckdb_type = true;
+                }
+                let attached = if !duckdb_type && crate::attached::is_open_file(path) {
+                    self.database
+                        .attach_open_file(&info.name, path, &options, info.on_conflict)?
+                } else {
+                    self.database
+                        .attach(&info.name, path, &options, info.on_conflict)?
+                };
                 if let Some(attached) = attached
                     && !self.transactions.is_auto_commit()
                 {
