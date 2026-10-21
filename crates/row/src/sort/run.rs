@@ -130,6 +130,23 @@ impl SortedRun {
         self.layouts.scan_keys(keys, decode_buffer, keep_alive, chunk)
     }
 
+    /// [`Self::scan`] for output columns `columns` only, in that order: key columns among
+    /// them are decoded, payload columns gathered.
+    ///
+    /// # Safety
+    /// As for [`Self::scan`].
+    pub unsafe fn scan_columns<K: SortKey>(
+        &self,
+        keys: &[K],
+        columns: &[usize],
+        decode_buffer: &mut Vec<u8>,
+        keep_alive: Option<&crate::gather::HeapKeepAlive>,
+        chunk: &mut rustdb_types::DataChunk,
+    ) -> Result<()> {
+        self.layouts
+            .scan_key_columns(keys, Some(columns), decode_buffer, keep_alive, chunk)
+    }
+
     /// Bytes held by keys and payload.
     pub fn size_in_bytes(&self) -> usize {
         self.key_data.size_in_bytes()
