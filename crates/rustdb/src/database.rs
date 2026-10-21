@@ -1376,6 +1376,9 @@ impl Database {
         for set in crate::system_functions::builtin_pragma_functions() {
             system_catalog.register_pragma_functions(set)?;
         }
+        for set in rustdb_arrow::arrow_table_functions() {
+            system_catalog.register_table_functions(set)?;
+        }
         system_catalog.register_copy_function(rustdb_csv::copy_csv::csv_copy_function())?;
         system_catalog.register_copy_function(rustdb_csv::copy_blob::blob_copy_function())?;
         for set in rustdb_csv::multi_file::glob_functions() {
@@ -1901,6 +1904,31 @@ impl Connection {
             return None;
         }
         self.profiler.tree().cloned()
+    }
+
+    /// The settings results are converted for clients with, such as their Arrow form
+    /// (DuckDB's `ClientContext::GetClientProperties`).
+    pub fn client_properties(&self) -> rustdb_arrow::ClientProperties {
+        let settings = self.settings_snapshot();
+        let setting = |name: &str| rustdb_function::SettingsSource::current_setting(&settings, name).ok();
+        let enabled = |name: &str| setting(name).and_then(|value| value.as_bool()).unwrap_or(false);
+        let mut properties = rustdb_arrow::ClientProperties::default();
+        if let Some(time_zone) = setting("TimeZone").and_then(|value| value.to_varchar().ok()) {
+            properties.time_zone = time_zone;
+        }
+        if enabled("arrow_large_buffer_size") {
+            properties.arrow_offset_size = rustdb_arrow::ArrowOffsetSize::Large;
+        }
+        properties.arrow_use_list_view = enabled("arrow_output_list_view");
+        properties.arrow_lossless_conversion = enabled("arrow_lossless_conversion");
+        properties.produce_arrow_string_view = enabled("produce_arrow_string_view");
+        if let Some(version) = setting("arrow_output_version")
+            .and_then(|value| value.to_varchar().ok())
+            .and_then(|version| rustdb_arrow::ArrowFormatVersion::from_setting(&version))
+        {
+            properties.arrow_output_version = version;
+        }
+        properties
     }
 
     /// The connection's id (DuckDB's `ClientContext::GetConnectionId`).
