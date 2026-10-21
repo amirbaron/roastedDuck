@@ -478,6 +478,69 @@ fn propagate_variant_cast(
     try_propagate_cast(typed, &structured, target)
 }
 
+/// The statistics of the field a pushed-down extract reads out of a column with `stats`
+/// (DuckDB's `BaseStatistics::PushdownExtract`, with `StructStats::PushdownExtract` and
+/// `VariantStats::PushdownExtract`): `index` is the extract's path below the column.
+pub(crate) fn pushdown_extract_statistics(
+    stats: &BaseStatistics,
+    index: &rustdb_types::ColumnIndex,
+) -> Option<BaseStatistics> {
+    use rustdb_storage::statistics::{StatisticsType, find_child_stats, is_fully_shredded, typed_stats};
+    use rustdb_types::variant::VariantPathComponent;
+    match stats.stats_type() {
+        StatisticsType::Struct => {
+            let child_index = usize::try_from(index.index).ok()?;
+            let child_stats = stats.struct_children()?.get(child_index)?;
+            let child_type = stats.logical_type().struct_children()?.get(child_index)?.1.clone();
+            match index.child_indexes.first() {
+                None if index.ty != child_type => try_propagate_cast(child_stats, &child_type, &index.ty),
+                None => Some(child_stats.clone()),
+                Some(child) => pushdown_extract_statistics(child_stats, child),
+            }
+        }
+        StatisticsType::Variant => {
+            let variant = stats.variant()?;
+            if !variant.is_shredded() {
+                // Not shredded at all: no statistics.
+                return None;
+            }
+            let mut result = variant.shredded_stats()?;
+            if !is_fully_shredded(result) {
+                return None;
+            }
+            // Like DuckDB's, the path does not advance: a path of several fields looks the
+            // first one up repeatedly.
+            let current = index;
+            loop {
+                let component = VariantPathComponent::Key(current.field_name().to_owned());
+                result = find_child_stats(result, &component)?;
+                if !is_fully_shredded(result) {
+                    return None;
+                }
+                if current.child_indexes.is_empty() {
+                    break;
+                }
+            }
+            let shredded_child_stats = result;
+            let typed_value_stats = typed_stats(shredded_child_stats);
+            let last_index = current;
+            if !last_index.has_type() || last_index.ty.id() == LogicalTypeId::Variant {
+                // No cast pushed down: the VARIANT statistics of the field.
+                return Some(stats.wrap_extracted_field_as_variant(shredded_child_stats));
+            }
+            if !is_fully_shredded(shredded_child_stats) {
+                return None;
+            }
+            let child_type = typed_value_stats.logical_type();
+            if *child_type != last_index.ty {
+                return try_propagate_cast(typed_value_stats, child_type, &last_index.ty);
+            }
+            Some(typed_value_stats.clone())
+        }
+        _ => None,
+    }
+}
+
 /// Whether statistics survive a cast (DuckDB's `StatisticsPropagator::CanPropagateCast`):
 /// only between numeric types, and not between differently scaled timestamps.
 pub(super) fn can_propagate_cast(

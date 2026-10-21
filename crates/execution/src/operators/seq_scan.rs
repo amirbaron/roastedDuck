@@ -5,7 +5,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use rustdb_common::{Result, STANDARD_VECTOR_SIZE};
 use rustdb_function::random::RandomEngine;
-use rustdb_storage::table::{RowGroupOrderOptions, ScanRandom, ScanSampling};
+use rustdb_function::cast::CastFunctionSet;
+use rustdb_storage::table::{RowGroupOrderOptions, ScanCasts, ScanRandom, ScanSampling};
 use rustdb_storage::table_filter::DynamicTableFilterSet;
 use rustdb_storage::{
     DataTable, ParallelTableScanState, StorageIndex, TableFilterSet, TableScanState, Transaction,
@@ -53,6 +54,9 @@ pub struct PhysicalSeqScan {
     sampling: Option<(f64, Option<u64>)>,
     /// The order to read the row groups in (DuckDB's `TableScanBindData::order_options`).
     row_group_order: Option<RowGroupOrderOptions>,
+    /// The client's casts, for the casts of extracts pushed into the scan (the client
+    /// context of DuckDB's scan states).
+    casts: Option<Arc<CastFunctionSet>>,
 }
 
 /// [`RandomEngine`] as the storage's sampling random source.
@@ -73,6 +77,10 @@ pub struct ScanExplainInfo {
     pub table: String,
     /// The name of each scanned column, by position in the scan's column list.
     pub column_names: Vec<String>,
+    /// What `Projections` lists for each scanned column, by position in the scan's
+    /// column list: its name, or the fields read (`AddProjectionNames`); empty for the
+    /// names themselves.
+    pub projection_names: Vec<String>,
     /// Positions of virtual columns (`rowid`), which DuckDB does not list as projections
     /// (`AddProjectionNames` skips ids past the table's columns).
     pub virtual_columns: Vec<usize>,
@@ -83,6 +91,14 @@ pub struct ScanExplainInfo {
 }
 
 impl ScanExplainInfo {
+    /// What `Projections` lists for scanned column `index`.
+    pub fn projection_name(&self, index: usize) -> Option<&str> {
+        self.projection_names
+            .get(index)
+            .or_else(|| self.column_names.get(index))
+            .map(String::as_str)
+    }
+
     /// DuckDB's `PhysicalTableScan::ParamsToString` for a scan with projection and filter
     /// pushdown.
     pub fn params(
@@ -99,7 +115,7 @@ impl ScanExplainInfo {
         }
         let projected_name = |index: usize| {
             (!self.virtual_columns.contains(&index))
-                .then(|| self.column_names.get(index).map(String::as_str))
+                .then(|| self.projection_name(index))
                 .flatten()
         };
         let projected: Vec<&str> = if projection.is_empty() {
@@ -166,7 +182,15 @@ impl PhysicalSeqScan {
             explain: ScanExplainInfo::default(),
             sampling: None,
             row_group_order: None,
+            casts: None,
         }
+    }
+
+    /// Sets the client's casts, which bind the casts of extracts pushed into the scan.
+    #[must_use]
+    pub fn with_casts(mut self, casts: Arc<CastFunctionSet>) -> Self {
+        self.casts = Some(casts);
+        self
     }
 
     /// Reads the row groups in the order of a column's statistics (DuckDB's
@@ -373,6 +397,9 @@ impl Source for PhysicalSeqScan {
         let mut state = TableScanState::default();
         state.initialize(self.column_ids.clone(), global.filters.as_ref());
         state.set_projection(&self.projection);
+        if let Some(casts) = &self.casts {
+            state.set_casts(ScanCasts(Arc::clone(casts)));
+        }
         if let Some((sample_rate, seed)) = self.sampling {
             // DuckDB seeds the committed data's engine only.
             let table_random = seed.map_or_else(RandomEngine::default, RandomEngine::new);

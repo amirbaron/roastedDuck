@@ -4,19 +4,30 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use super::adaptive_filter::AdaptiveFilter;
-use super::column_data::ColumnScanState;
+use super::column_data::{ColumnScanState, ScanCasts};
 use super::row_group::RowGroup;
 use super::row_group_collection::RowGroupSegmentTree;
 use super::segment_tree::SegmentNode;
 use crate::COLUMN_IDENTIFIER_ROW_ID;
 use crate::table_filter::{TableFilter, TableFilterSet};
+use rustdb_types::{ColumnIndex, LogicalType, LogicalTypeId};
 
-/// A column to scan, possibly a field path into a STRUCT (DuckDB's `StorageIndex`).
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+/// A column to scan, possibly a field path into a STRUCT or VARIANT (DuckDB's
+/// `StorageIndex`).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct StorageIndex {
-    /// The column's physical index in the table, or [`COLUMN_IDENTIFIER_ROW_ID`].
+    /// The column's physical index in the table (or the field index in a STRUCT), or
+    /// [`COLUMN_IDENTIFIER_ROW_ID`].
     pub index: u64,
-    /// Struct fields to scan (all when empty).
+    /// The field name of a VARIANT path element (DuckDB's `has_index` false).
+    pub field: Option<String>,
+    /// The type the index produces (a pushdown extract), `INVALID` if unset.
+    pub ty: LogicalType,
+    /// Whether the scan extracts the (single) child path and emits it directly
+    /// (`StorageIndexType::PUSHDOWN_EXTRACT`); otherwise the children only say which
+    /// fields to read.
+    pub pushdown_extract: bool,
+    /// Struct fields to scan (all when empty), or the extracted path.
     pub children: Vec<StorageIndex>,
 }
 
@@ -24,6 +35,9 @@ impl StorageIndex {
     pub const fn new(index: u64) -> Self {
         Self {
             index,
+            field: None,
+            ty: LogicalType::INVALID,
+            pushdown_extract: false,
             children: Vec::new(),
         }
     }
@@ -34,12 +48,56 @@ impl StorageIndex {
     }
 
     pub const fn is_row_id(&self) -> bool {
-        self.index == COLUMN_IDENTIFIER_ROW_ID
+        self.field.is_none() && self.index == COLUMN_IDENTIFIER_ROW_ID
     }
 
     /// The physical column index as a `usize`.
     pub fn primary_index(&self) -> usize {
         usize::try_from(self.index).unwrap_or(usize::MAX)
+    }
+
+    /// The storage index of a planner column index whose primary index is
+    /// `primary_index` (DuckDB's `StorageIndex::FromColumnIndex`, with the logical index
+    /// already mapped to the physical one).
+    pub fn from_column_index(column: &ColumnIndex, primary_index: u64) -> Self {
+        Self {
+            index: primary_index,
+            field: column.field.clone(),
+            ty: column.ty.clone(),
+            pushdown_extract: column.is_pushdown_extract(),
+            children: column
+                .child_indexes
+                .iter()
+                .map(|child| Self::from_column_index(child, child.index))
+                .collect(),
+        }
+    }
+
+    pub fn has_type(&self) -> bool {
+        self.ty.id() != LogicalTypeId::Invalid
+    }
+
+    /// The field name of a VARIANT path element.
+    pub fn field_name(&self) -> &str {
+        self.field.as_deref().unwrap_or_default()
+    }
+
+    /// The type a scan of this index produces (`GetScanType`).
+    pub fn scan_type(&self) -> &LogicalType {
+        if self.pushdown_extract
+            && let Some(child) = self.children.first()
+        {
+            return child.scan_type();
+        }
+        &self.ty
+    }
+}
+
+impl Default for StorageIndex {
+    /// Column 0, which a scan state reading a whole (child) column refers to
+    /// (`ColumnScanState::Initialize` without an index).
+    fn default() -> Self {
+        Self::new(0)
     }
 }
 
@@ -206,6 +264,8 @@ pub struct CollectionScanState {
     /// SYSTEM sampling pushed into the scan (DuckDB's `ScanSamplingInfo` with the
     /// state's `random`): the vectors to skip.
     pub sampling: Option<ScanSampling>,
+    /// The client's casts, for the casts of extracts pushed into the scan.
+    pub casts: Option<ScanCasts>,
 }
 
 /// A source of random numbers in `[0, 1)` for scan sampling (DuckDB's `RandomEngine`,
@@ -251,6 +311,12 @@ impl TableScanState {
     /// See [`ScanFilterInfo::set_projection`].
     pub fn set_projection(&mut self, projection: &[usize]) {
         self.filters.set_projection(projection);
+    }
+
+    /// Sets the client's casts, which bind the casts of extracts pushed into the scan.
+    pub fn set_casts(&mut self, casts: ScanCasts) {
+        self.local_state.casts = Some(casts.clone());
+        self.table_state.casts = Some(casts);
     }
 
     pub fn column_ids(&self) -> &[StorageIndex] {

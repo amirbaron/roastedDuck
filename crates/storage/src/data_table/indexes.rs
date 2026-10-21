@@ -319,7 +319,7 @@ impl DataTable {
                 let mut filters = ScanFilterInfo::default();
                 let mut scan = CollectionScanState {
                     max_row: u64::MAX,
-                    column_scans: RowGroup::column_scan_states(self.row_groups.types(), &column_ids),
+                    column_scans: RowGroup::column_scan_states(self.row_groups.types(), &column_ids, None)?,
                     ..CollectionScanState::default()
                 };
                 if !row_group.initialize_scan(&mut scan, &column_ids, &mut filters, 0, 0)? {

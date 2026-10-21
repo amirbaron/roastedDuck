@@ -15,6 +15,7 @@ pub mod blob;
 mod buffer;
 pub mod cast_rules;
 mod chunk;
+mod column_index;
 mod column_data_collection;
 pub mod compare;
 pub mod date;
@@ -44,6 +45,7 @@ pub mod vector_ops;
 
 pub use cast_rules::implicit_cast_cost;
 pub use chunk::DataChunk;
+pub use column_index::{ColumnIndex, ColumnIndexType};
 pub use column_data_collection::ColumnDataCollection;
 pub use date::{Date, DateParseError, ParsedDate};
 pub use generated::enums::{ExtraTypeInfoType, GeometryStorageType, LogicalTypeId};

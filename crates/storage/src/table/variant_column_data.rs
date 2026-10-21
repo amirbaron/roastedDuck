@@ -851,6 +851,34 @@ pub(crate) fn unshred_rows(
     VariantData::write_vector(&to_variant_data(&values)?, ty)
 }
 
+/// `VariantUtils::VariantExtract` along a path of OBJECT fields: each row's value rooted
+/// at the field; NULL where a level is not an OBJECT, lacks the field, or the field is a
+/// VARIANT NULL.
+pub(crate) fn extract_path(input: &Vector, path: &[&str], count: usize) -> Result<Vector> {
+    let mut rows = Vec::with_capacity(count);
+    for row in 0..count {
+        let mut current = VariantData::from_vector(input, row)?;
+        for key in path {
+            let Some(data) = current.take() else {
+                break;
+            };
+            if data.type_id(0)? != V::Object {
+                break;
+            }
+            let component = rustdb_types::variant::VariantPathComponent::Key((*key).to_owned());
+            let Some(child) = data.find_child(data.nested(0)?, &component)? else {
+                break;
+            };
+            if data.type_id(child)? == V::VariantNull {
+                break;
+            }
+            current = Some(data.rooted_at(child));
+        }
+        rows.push(current);
+    }
+    VariantData::write_vector(&rows, &LogicalType::variant())
+}
+
 /// `Unshred` for row `row` of a shredded level.
 fn unshred(variant: Option<&VariantData>, level: &Vector, row: usize) -> Result<VariantValue> {
     let (typed, typed_row, untyped) = if level.logical_type().id() == LogicalTypeId::Struct {

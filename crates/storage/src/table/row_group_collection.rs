@@ -377,7 +377,7 @@ impl RowGroupCollection {
     ) -> Result<()> {
         let row_groups = self.row_groups();
         state.max_row = row_groups.base_row_id + self.total_rows();
-        state.column_scans = RowGroup::column_scan_states(&self.types, column_ids);
+        state.column_scans = RowGroup::column_scan_states(&self.types, column_ids, state.casts.as_ref())?;
         state.row_group = None;
         let mut position = 0;
         while let Some(node) = row_groups.tree.get(position) {
@@ -405,7 +405,7 @@ impl RowGroupCollection {
     ) -> Result<()> {
         let row_groups = self.row_groups();
         state.max_row = end_row;
-        state.column_scans = RowGroup::column_scan_states(&self.types, column_ids);
+        state.column_scans = RowGroup::column_scan_states(&self.types, column_ids, state.casts.as_ref())?;
         let (position, node) = row_groups
             .tree
             .find(start_row)
@@ -538,7 +538,7 @@ impl RowGroupCollection {
             };
             scan_state.max_row = max_row;
             if scan_state.column_scans.is_empty() {
-                scan_state.column_scans = RowGroup::column_scan_states(&self.types, column_ids);
+                scan_state.column_scans = RowGroup::column_scan_states(&self.types, column_ids, scan_state.casts.as_ref())?;
             }
             scan_state.row_groups = Some(row_groups);
             if node
@@ -1139,7 +1139,7 @@ impl RowGroupCollection {
             let mut filters = ScanFilterInfo::default();
             let mut state = CollectionScanState {
                 max_row: node.row_end(),
-                column_scans: RowGroup::column_scan_states(&self.types, bound_columns),
+                column_scans: RowGroup::column_scan_states(&self.types, bound_columns, None)?,
                 ..CollectionScanState::default()
             };
             if node

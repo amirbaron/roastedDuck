@@ -136,7 +136,7 @@ impl PhysicalOperator for PhysicalTableScan {
             // Virtual columns are not listed (`column_id >= names.size()`).
             let name = |index: usize| {
                 (!self.explain.virtual_columns.contains(&index))
-                    .then(|| self.explain.column_names.get(index).map(String::as_str))
+                    .then(|| self.explain.projection_name(index))
                     .flatten()
             };
             let names: Vec<&str> = if self.projection.is_empty() {
