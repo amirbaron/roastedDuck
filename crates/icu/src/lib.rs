@@ -7,6 +7,7 @@
 //! (`IcuExtension::Load`).
 
 pub mod icu4c;
+mod icu_collation;
 mod icu_current;
 mod icu_dateadd;
 mod icu_datefunc;
@@ -41,7 +42,7 @@ impl IcuExtension {
     /// add their overloads to it, replacing overloads with the same signature
     /// (`ExtensionLoader::RegisterFunction` with `ALTER_ON_CONFLICT`).
     pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
-        let mut sets = Vec::new();
+        let mut sets = vec![icu_collation::icu_sort_key_functions()];
         sets.extend(icu_current::current_functions());
         sets.extend(icu_dateadd::date_add_functions());
         sets.extend(icu_datepart::date_part_functions());
@@ -80,7 +81,7 @@ impl IcuExtension {
     /// The collations, by name, with the function computing a string's collation key
     /// (`RegisterCollation`).
     pub fn collations() -> Vec<(String, rustdb_function::ScalarFunction)> {
-        Vec::new()
+        icu_collation::collations()
     }
 
     /// The extension's configuration options (`AddExtensionOption`).

@@ -251,6 +251,9 @@ pub(crate) struct Settings {
     allowed_configs: Vec<&'static str>,
     /// The extension options among `allowed_configs`.
     allowed_extension_configs: Vec<String>,
+    /// The collations extensions registered, with whether they are combinable (what
+    /// `SET default_collation` may name besides the builtin ones).
+    pub(crate) extension_collations: Vec<(String, bool)>,
     /// `PRAGMA disable_optimizer` (DuckDB's `ClientConfig::enable_optimizer`, negated).
     pub optimizer_disabled: bool,
     /// The profiling options (`enable_profiling`, `profiling_output`, `profiling_mode`,
@@ -891,7 +894,7 @@ impl Settings {
             "default_collation" => {
                 let collation = value.to_varchar()?.to_lowercase();
                 // `DefaultCollationSetting::OnSet` binds a dummy collation.
-                rustdb_planner::collation_binding::test_collation(&collation)?;
+                rustdb_planner::collation_binding::test_collation(&collation, &self.extension_collations)?;
                 self.planner.default_collation = collation;
             }
             "pivot_filter_threshold" | "pivot_limit" => {

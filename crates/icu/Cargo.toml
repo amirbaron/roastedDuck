@@ -12,6 +12,8 @@ rustdb-types.workspace = true
 rustdb-function = { path = "../function" }
 rustdb-functions = { path = "../functions" }
 rustdb-planner.workspace = true
+icu_collator = "2.3"
+icu_locale_core = "2.3"
 jiff = { version = "0.2.38", default-features = false, features = ["std", "tz-fat", "tzdb-bundle-always"] }
 
 [lints]

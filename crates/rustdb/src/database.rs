@@ -355,6 +355,31 @@ impl DatabaseInstance {
         }
     }
 
+    /// The collations extensions registered in the system catalog, with whether they are
+    /// combinable.
+    pub(crate) fn extension_collations(&self) -> Vec<(String, bool)> {
+        let Some(schema) = self
+            .system_catalog
+            .schema(&rustdb_catalog::Transaction::system(), rustdb_catalog::DEFAULT_SCHEMA)
+        else {
+            return Vec::new();
+        };
+        let Some(schema) = schema.as_schema() else {
+            return Vec::new();
+        };
+        schema
+            .collations
+            .scan(&rustdb_catalog::Transaction::system())
+            .iter()
+            .filter_map(|entry| match &entry.kind {
+                rustdb_catalog::EntryKind::Collation(collation) => {
+                    Some((entry.name().to_owned(), collation.combinable))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The cast functions.
     pub(crate) fn casts(&self) -> Arc<CastFunctionSet> {
         Arc::clone(&self.casts.read().unwrap_or_else(PoisonError::into_inner))
@@ -2190,6 +2215,9 @@ impl Connection {
                 self.database.instance().set_buffer_setting(name, Some(value))?;
                 if crate::logging::is_logging_setting(name) {
                     crate::logging::apply_setting(&self.database.instance().log_manager, name, Some(value))?;
+                }
+                if name.eq_ignore_ascii_case("default_collation") {
+                    self.settings.extension_collations = self.database.instance().extension_collations();
                 }
                 self.settings.set(name, value)?;
                 let (option, set_value, set_scope) = (name.clone(), value.clone(), *scope);
