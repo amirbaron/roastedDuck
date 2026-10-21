@@ -126,7 +126,7 @@ pub fn parse_with_options(query: &str, options: &ParserOptions) -> Result<Vec<Sq
     let pg_options = rustdb_pg_parser::ParserOptions {
         preserve_identifier_case: options.preserve_identifier_case,
     };
-    let raw = rustdb_pg_parser::parse_with_options(query, &pg_options).map_err(syntax_error)?;
+    let raw = rustdb_pg_parser::parse_with_options(query, &pg_options).map_err(|error| syntax_error(&error))?;
     if raw.is_empty() {
         return Ok(Vec::new());
     }
@@ -164,9 +164,12 @@ fn set_create_sql(info: &mut CreateInfo, sql: &str) {
 }
 
 /// `ParserException::SyntaxError`: grammar errors keep their message and position and
-/// are tagged as syntax errors.
-fn syntax_error(error: Error) -> Error {
-    error.with_subtype(SYNTAX_ERROR)
+/// are tagged as syntax errors (the subtype set before the position).
+fn syntax_error(error: &Error) -> Error {
+    let position = error.position();
+    Error::new(error.kind(), error.raw_message().to_owned())
+        .with_subtype(SYNTAX_ERROR)
+        .with_position(position)
 }
 
 #[cfg(test)]

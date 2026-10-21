@@ -738,11 +738,22 @@ impl ClientContext {
         } else {
             format!("\nDid you mean \"{did_you_mean}\"?")
         };
-        Error::catalog(format!(
+        // `CatalogException::MissingEntry`, caught into the lookup's `ErrorData`; the
+        // position of the lookup follows the subtype.
+        let error = Error::catalog(format!(
             "{} with name {name} does not exist!{hint}",
             ty.display_name()
         ))
         .with_subtype("MISSING_ENTRY")
+        .with_extra_info_slot("position")
+        .with_extra_info("name", name)
+        .with_extra_info("type", ty.display_name());
+        let error = if did_you_mean.is_empty() {
+            error
+        } else {
+            error.with_extra_info("candidates", did_you_mean)
+        };
+        error.with_extra_info_round_trip()
     }
 }
 

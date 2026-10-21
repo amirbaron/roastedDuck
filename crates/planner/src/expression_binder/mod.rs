@@ -82,21 +82,13 @@ impl BindError {
         Error::binder(message.into()).into()
     }
 
-    /// "Referenced column ... not found" (DuckDB's `BinderException::ColumnNotFound`).
+    /// "Referenced column ... not found" as binding a column reference reports it: DuckDB's
+    /// `BinderException::ColumnNotFound` without a position, caught into an `ErrorData`
+    /// that then gets the reference's position (`AddQueryLocation`).
     pub fn column_not_found(name: &str, candidates: Vec<String>, location: Option<u64>) -> Self {
-        let message = if candidates.is_empty() {
-            format!("Referenced column \"{name}\" was not found because the FROM clause is missing")
-        } else {
-            let quoted: Vec<String> = candidates.iter().map(|c| format!("\"{c}\"")).collect();
-            format!(
-                "Referenced column \"{name}\" not found in FROM clause!\nCandidate bindings: {}",
-                quoted.join(", ")
-            )
-        };
+        let error = column_not_found_error(name, &candidates, None).with_position(location);
         Self {
-            error: Error::binder(message)
-                .with_subtype("COLUMN_NOT_FOUND")
-                .with_position(location),
+            error,
             missing_column: Some(MissingColumn {
                 name: name.to_owned(),
                 candidates,
@@ -143,8 +135,35 @@ impl BindError {
             scores.push((candidate.clone(), score));
         }
         let location = self.error.position().or(new.error.position());
-        Self::column_not_found(&name, top_n_strings(scores, 5, 0.5), location)
+        let candidates = top_n_strings(scores, 5, 0.5);
+        Self {
+            error: column_not_found_error(&name, &candidates, location),
+            missing_column: Some(MissingColumn { name, candidates }),
+        }
     }
+}
+
+/// DuckDB's `BinderException::ColumnNotFound`, caught into an `ErrorData`.
+fn column_not_found_error(name: &str, candidates: &[String], location: Option<u64>) -> Error {
+    let message = if candidates.is_empty() {
+        format!("Referenced column \"{name}\" was not found because the FROM clause is missing")
+    } else {
+        let quoted: Vec<String> = candidates.iter().map(|c| format!("\"{c}\"")).collect();
+        format!(
+            "Referenced column \"{name}\" not found in FROM clause!\nCandidate bindings: {}",
+            quoted.join(", ")
+        )
+    };
+    let error = Error::binder(message)
+        .with_subtype("COLUMN_NOT_FOUND")
+        .with_position(location)
+        .with_extra_info("name", name);
+    let error = if candidates.is_empty() {
+        error
+    } else {
+        error.with_extra_info("candidates", candidates.join(","))
+    };
+    error.with_extra_info_round_trip()
 }
 
 /// The outcome of binding an expression at one query level (DuckDB's `BindResult`).

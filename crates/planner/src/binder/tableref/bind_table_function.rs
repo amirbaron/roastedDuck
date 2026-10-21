@@ -606,7 +606,7 @@ pub fn bind_table_function(
             input_table_names: &input_table.names,
             binder: Some(context.as_ref() as &dyn std::any::Any),
         })
-        .map_err(|error| error.with_position(location))?;
+        .map_err(|error| error.caught().with_position(location))?;
         if let Some(replacement) = replacement {
             // The query replaces the call, keeping the reference's aliases.
             let mut statements = rustdb_parser::parse(&replacement.query)?;
@@ -630,7 +630,7 @@ pub fn bind_table_function(
             };
             // Errors in the replacement point at the call (`error.AddQueryLocation(ref)`).
             return super::bind_subquery_ref(scope, &mut subquery, alias)
-                .map_err(|error| error.with_position_override(location));
+                .map_err(|error| error.caught().with_position_override(location));
         }
     }
     let alias = function_alias(alias, function);
@@ -643,7 +643,7 @@ pub fn bind_table_function(
         named.0,
         input_table,
     )
-    .map_err(|error| error.with_position(location))?;
+    .map_err(|error| error.caught().with_position(location))?;
     if let Some(subquery) = subquery {
         attach_input(&mut get, subquery)?;
     }
@@ -739,7 +739,7 @@ fn bind_in_out_function(
         Vec::new(),
         input_table,
     )
-    .map_err(|error| error.with_position(location))?;
+    .map_err(|error| error.caught().with_position(location))?;
     // The subquery is the input of the scan at the bottom of the (linear) plan.
     attach_input(&mut get, subquery)?;
     Ok(get)
@@ -796,7 +796,7 @@ fn bind_table_macro_ref(
             binder: &mut binder,
             outer: Some(&mut *scope),
         };
-        bind_node(&mut child_scope, &mut node).map_err(|error| error.with_position(location))?
+        bind_node(&mut child_scope, &mut node).map_err(|error| error.caught().with_position(location))?
     };
     let bind_index = bound.plan.root_index()?;
     let subquery_alias = if alias.is_empty() {

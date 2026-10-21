@@ -111,14 +111,138 @@ impl ErrorKind {
 pub struct Error {
     kind: ErrorKind,
     message: Cow<'static, str>,
-    /// Byte offset in the query the error refers to (DuckDB's `position` extra info);
-    /// rendered as `LINE n:` context once the query text is attached.
-    position: Option<u64>,
-    /// DuckDB's `error_subtype` extra info (`"SYNTAX_ERROR"` for parse failures).
-    subtype: Option<&'static str>,
+    /// DuckDB's extra info: `error_subtype`, the query `position` (rendered as `LINE n:`
+    /// context once the query text is attached), the `name` and `type` of a missing
+    /// entry, `candidates`, ...
+    extra_info: ExtraInfo,
     /// Whether the message is the error as a JSON object (`errors_as_json`), which
     /// clients see without the `"<Kind> Error: "` prefix.
     json: bool,
+}
+
+/// DuckDB's exception extra info, an `unordered_map<string, string>` whose iteration
+/// order the JSON of `errors_as_json` follows. That order is libc++'s: it depends on the
+/// order the keys were set in and on how often the map was rebuilt, as DuckDB rebuilds it
+/// each time an exception is caught into an `ErrorData` (which parses the exception's
+/// JSON into a fresh map). So this keeps that history: the keys in the order DuckDB sets
+/// them, and the round trips in between.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ExtraInfo {
+    steps: Vec<ExtraInfoStep>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ExtraInfoStep {
+    /// The key is set (`extra_info[key] = value`); a key whose value is not known yet
+    /// holds its place for a value DuckDB has at that point (`None` until then).
+    Entry {
+        key: &'static str,
+        value: Option<String>,
+    },
+    /// The exception is caught into an `ErrorData` (`ErrorData(const std::exception &)`).
+    RoundTrip,
+}
+
+impl ExtraInfo {
+    fn get(&self, key: &str) -> Option<&str> {
+        self.steps.iter().find_map(|step| match step {
+            ExtraInfoStep::Entry {
+                key: entry,
+                value: Some(value),
+            } if *entry == key => Some(value.as_str()),
+            _ => None,
+        })
+    }
+
+    /// Sets `key`, in its place if it has one.
+    fn set(&mut self, key: &'static str, value: Option<String>) {
+        for step in &mut self.steps {
+            if let ExtraInfoStep::Entry {
+                key: entry,
+                value: slot,
+            } = step
+                && *entry == key
+            {
+                *slot = value;
+                return;
+            }
+        }
+        self.steps.push(ExtraInfoStep::Entry { key, value });
+    }
+
+    /// The entries in the iteration order of DuckDB's map after the history, and one more
+    /// round trip: the client catching the error.
+    fn iteration_order(&self) -> Vec<(&'static str, &str)> {
+        let mut order: Vec<(&'static str, &str)> = Vec::new();
+        let mut table = crate::libcxx::UnorderedOrder::default();
+        for step in self
+            .steps
+            .iter()
+            .chain(std::iter::once(&ExtraInfoStep::RoundTrip))
+        {
+            match step {
+                ExtraInfoStep::Entry {
+                    key,
+                    value: Some(value),
+                } => {
+                    let (inserted, index) =
+                        table.insert(crate::libcxx::string_hash(key.as_bytes()), *key, |a, b| a == b);
+                    if inserted {
+                        order.push((key, value));
+                    } else {
+                        order[index].1 = value;
+                    }
+                }
+                ExtraInfoStep::Entry { value: None, .. } => {}
+                ExtraInfoStep::RoundTrip => {
+                    let entries: Vec<(&'static str, &str)> =
+                        table.order().into_iter().map(|index| order[index]).collect();
+                    (table, order) = round_trip(&entries);
+                }
+            }
+        }
+        table.order().into_iter().map(|index| order[index]).collect()
+    }
+}
+
+/// Rebuilds a map of `entries` (in iteration order) as `ErrorData` does from the
+/// exception's JSON: the JSON object, with `exception_type` and `exception_message`
+/// first, is parsed into a map (`ComplexJSON`), that one is flattened into another, whose
+/// entries but the type and message make the new extra info.
+fn round_trip<'a>(
+    entries: &[(&'static str, &'a str)],
+) -> (
+    crate::libcxx::UnorderedOrder<&'static str>,
+    Vec<(&'static str, &'a str)>,
+) {
+    const TYPE_AND_MESSAGE: [(&str, &str); 2] = [("exception_type", ""), ("exception_message", "")];
+    let rebuild = |entries: &[(&'static str, &'a str)]| {
+        let mut table = crate::libcxx::UnorderedOrder::default();
+        for (key, _) in entries {
+            table.insert(crate::libcxx::string_hash(key.as_bytes()), *key, |a, b| a == b);
+        }
+        let ordered: Vec<(&'static str, &'a str)> =
+            table.order().into_iter().map(|index| entries[index]).collect();
+        ordered
+    };
+    let json: Vec<(&'static str, &'a str)> = TYPE_AND_MESSAGE
+        .iter()
+        .copied()
+        .chain(entries.iter().copied())
+        .collect();
+    let flattened = rebuild(&rebuild(&json));
+    let mut table = crate::libcxx::UnorderedOrder::default();
+    let mut order = Vec::with_capacity(entries.len());
+    for entry in flattened {
+        if TYPE_AND_MESSAGE.iter().any(|(key, _)| *key == entry.0) {
+            continue;
+        }
+        table.insert(crate::libcxx::string_hash(entry.0.as_bytes()), entry.0, |a, b| {
+            a == b
+        });
+        order.push(entry);
+    }
+    (table, order)
 }
 
 /// Engine-wide result alias.
@@ -133,65 +257,105 @@ impl Error {
         Self {
             kind,
             message: message.into(),
-            position: None,
-            subtype: None,
+            extra_info: ExtraInfo::default(),
             json: false,
         }
     }
 
     /// Tags the error with DuckDB's `error_subtype` extra info (such as `"SYNTAX_ERROR"`).
     #[must_use]
-    pub const fn with_subtype(mut self, subtype: &'static str) -> Self {
-        self.subtype = Some(subtype);
-        self
+    pub fn with_subtype(self, subtype: &'static str) -> Self {
+        self.with_extra_info("error_subtype", subtype)
     }
 
     /// The `error_subtype` extra info, if any.
-    pub const fn subtype(&self) -> Option<&'static str> {
-        self.subtype
+    pub fn subtype(&self) -> Option<&str> {
+        self.extra_info.get("error_subtype")
+    }
+
+    /// Sets extra info `key` (`extra_info[key] = value`).
+    #[must_use]
+    pub fn with_extra_info(mut self, key: &'static str, value: impl Into<String>) -> Self {
+        self.extra_info.set(key, Some(value.into()));
+        self
+    }
+
+    /// Holds the place of extra info `key` that DuckDB sets at this point, when the value
+    /// is attached later (the `position` of a catalog lookup).
+    #[must_use]
+    pub fn with_extra_info_slot(mut self, key: &'static str) -> Self {
+        self.extra_info.set(key, None);
+        self
+    }
+
+    /// Marks where DuckDB catches the exception into an `ErrorData` and throws it again,
+    /// which rebuilds the extra info in a new order. A held place keeps its place: the
+    /// value DuckDB had there is attached later.
+    #[must_use]
+    pub fn with_extra_info_round_trip(mut self) -> Self {
+        self.extra_info.steps.push(ExtraInfoStep::RoundTrip);
+        self
+    }
+
+    /// The error caught into an `ErrorData` to be thrown again with more context, as a
+    /// binder's `catch` that adds the location of a reference (`AddQueryLocation`): DuckDB's
+    /// exception had no value for a held place, so a value attached from now on comes
+    /// after the round trip.
+    #[must_use]
+    pub fn caught(mut self) -> Self {
+        self.extra_info
+            .steps
+            .retain(|step| !matches!(step, ExtraInfoStep::Entry { value: None, .. }));
+        self.extra_info.steps.push(ExtraInfoStep::RoundTrip);
+        self
     }
 
     /// Attaches a query position, unless one is already set.
     #[must_use]
-    pub fn with_position(mut self, position: Option<u64>) -> Self {
-        if self.position.is_none() {
-            self.position = position;
+    pub fn with_position(self, position: Option<u64>) -> Self {
+        match position {
+            Some(position) if self.position().is_none() => {
+                self.with_extra_info("position", position.to_string())
+            }
+            _ => self,
         }
-        self
     }
 
     /// Replaces the query position with `position`, if any (DuckDB's
     /// `ErrorData::AddQueryLocation`, which overwrites the `position` extra info).
     #[must_use]
-    pub fn with_position_override(mut self, position: Option<u64>) -> Self {
-        if position.is_some() {
-            self.position = position;
+    pub fn with_position_override(self, position: Option<u64>) -> Self {
+        match position {
+            Some(position) => self.with_extra_info("position", position.to_string()),
+            None => self,
         }
-        self
     }
 
-    pub const fn position(&self) -> Option<u64> {
-        self.position
+    pub fn position(&self) -> Option<u64> {
+        self.extra_info
+            .get("position")
+            .and_then(|position| position.parse().ok())
     }
 
     /// Sets the query position (used by the parser for syntax errors).
     #[must_use]
-    pub fn with_query_location(mut self, location: usize) -> Self {
-        self.position = Some(location as u64);
-        self
+    pub fn with_query_location(self, location: usize) -> Self {
+        self.with_extra_info("position", location.to_string())
     }
 
     /// The query position the error refers to, if known.
     pub fn query_location(&self) -> Option<usize> {
-        self.position.and_then(|position| usize::try_from(position).ok())
+        self.position()
+            .and_then(|position| usize::try_from(position).ok())
     }
 
     /// Renders the position as `LINE n: ...` context within `query`
-    /// (DuckDB's `ErrorData::AddErrorLocation`).
+    /// (DuckDB's `ErrorData::AddErrorLocation`, which erases the `position`).
     #[must_use]
     pub fn with_query_context(mut self, query: &str) -> Self {
-        if let Some(position) = self.position.take() {
+        if let Some(position) = self.position() {
             self.message = crate::query_context::format(query, &self.message, position).into();
+            self.extra_info.set("position", None);
         }
         self
     }
@@ -214,15 +378,22 @@ impl Error {
         };
         field("exception_type", self.kind.display_name());
         field("exception_message", &self.message);
-        if let Some(subtype) = self.subtype {
-            field("error_subtype", subtype);
-        }
-        if let Some(position) = self.position.take() {
-            field("position", &position.to_string());
+        for (key, value) in self.extra_info.iteration_order() {
+            field(key, value);
         }
         json.push('}');
         self.message = json.into();
+        self.extra_info.set("position", None);
         self.json = true;
+        self
+    }
+
+    /// The error as DuckDB throws a processed `ErrorData` again (`ErrorData::Throw`): a
+    /// JSON message (`errors_as_json`) becomes the message of an error of its type, which
+    /// prints with the type's prefix.
+    #[must_use]
+    pub fn rethrown(mut self) -> Self {
+        self.json = false;
         self
     }
 
@@ -307,6 +478,87 @@ pub fn os_error_text(error: &std::io::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn json_keys(error: Error) -> Vec<String> {
+        let json = error.into_json();
+        let text = json.raw_message();
+        let mut keys = Vec::new();
+        for part in text.split("\",\"") {
+            if let Some((key, _)) = part.trim_start_matches("{\"").split_once("\":\"") {
+                keys.push(key.to_owned());
+            }
+        }
+        keys.retain(|key| key != "exception_type" && key != "exception_message");
+        keys
+    }
+
+    #[test]
+    fn extra_info_json_order_matches_duckdb() {
+        // The key orders of DuckDB 1.5.6's `errors_as_json` objects.
+        let column = |candidates: bool| {
+            let error = Error::binder("m").with_subtype("COLUMN_NOT_FOUND");
+            if candidates {
+                error
+                    .with_extra_info("position", "7")
+                    .with_extra_info("name", "x")
+                    .with_extra_info("candidates", "y")
+                    .with_extra_info_round_trip()
+            } else {
+                error
+                    .with_extra_info("name", "x")
+                    .with_extra_info_round_trip()
+                    .with_position(Some(7))
+            }
+        };
+        assert_eq!(
+            json_keys(column(true)),
+            ["candidates", "position", "error_subtype", "name"]
+        );
+        assert_eq!(json_keys(column(false)), ["error_subtype", "position", "name"]);
+        let missing = |position: Option<u64>| {
+            Error::catalog("m")
+                .with_subtype("MISSING_ENTRY")
+                .with_extra_info_slot("position")
+                .with_extra_info("name", "t")
+                .with_extra_info("type", "Table")
+                .with_extra_info("candidates", "s")
+                .with_extra_info_round_trip()
+                .with_position(position)
+        };
+        assert_eq!(
+            json_keys(missing(Some(14))),
+            ["candidates", "position", "type", "error_subtype", "name"]
+        );
+        assert_eq!(
+            json_keys(missing(None)),
+            ["candidates", "type", "error_subtype", "name"]
+        );
+        let function = Error::binder("m")
+            .with_subtype("NO_MATCHING_FUNCTION")
+            .with_extra_info("name", "f")
+            .with_extra_info("catalog", "system")
+            .with_extra_info("schema", "main")
+            .with_extra_info("call", "f()")
+            .with_extra_info("candidates", "f(INTEGER)")
+            .with_extra_info_round_trip()
+            .with_position(Some(7));
+        assert_eq!(
+            json_keys(function),
+            [
+                "catalog",
+                "candidates",
+                "call",
+                "error_subtype",
+                "position",
+                "schema",
+                "name"
+            ]
+        );
+        let syntax = Error::parser("m")
+            .with_subtype("SYNTAX_ERROR")
+            .with_query_location(14);
+        assert_eq!(json_keys(syntax), ["error_subtype", "position"]);
+    }
 
     #[test]
     fn final_message_matches_duckdb() {

@@ -2163,7 +2163,16 @@ impl Connection {
     /// Parses `sql` into its statements (DuckDB's `ClientContext::ExtractStatements` and
     /// `Parser::ParseQuery`): with `allow_parser_override_extension` set and the
     /// autocomplete extension loaded, its PEG parser goes first.
+    ///
+    /// A failure is processed (`ProcessError`: JSON under `errors_as_json`, else the
+    /// location in the query) and thrown again, as `ClientContext::ParseStatementsInternal`
+    /// does.
     pub fn extract_statements(&self, sql: &str) -> Result<Vec<SqlStatement>> {
+        self.extract_statements_internal(sql)
+            .map_err(|error| self.process_error(error, sql).rethrown())
+    }
+
+    fn extract_statements_internal(&self, sql: &str) -> Result<Vec<SqlStatement>> {
         use crate::settings::ParserOverride;
         let options = self.settings.parser_options();
         let mode = self.settings.parser_override();
@@ -2172,18 +2181,19 @@ impl Connection {
             let query = stripped.as_deref().unwrap_or(sql);
             match rustdb_autocomplete::parse_query(query, options) {
                 Ok(statements) => return Ok(statements),
-                Err(error) if mode == ParserOverride::Strict => return Err(error.with_query_context(sql)),
+                Err(error) if mode == ParserOverride::Strict => return Err(error),
                 // `FALLBACK`: the Postgres parser takes over.
                 Err(_) => {}
             }
         }
-        rustdb_parser::parse_with_options(sql, &options).map_err(|error| error.with_query_context(sql))
+        rustdb_parser::parse_with_options(sql, &options)
     }
 
     /// The statements of `sql` as DuckDB's `ClientContext::ParseStatements` hands them out
     /// (its `StatementPreprocessor`): every PRAGMA is bound, which fails for one the catalog
     /// does not have, and a pragma that stands for a query is replaced by the statements of
-    /// that query (`TryReparsePragma`).
+    /// that query (`TryReparsePragma`). Failures are processed and thrown again like those
+    /// of [`Connection::extract_statements`].
     pub fn parse_statements(&mut self, sql: &str) -> Result<Vec<SqlStatement>> {
         let statements = self.extract_statements(sql)?;
         if !statements
@@ -2192,6 +2202,12 @@ impl Connection {
         {
             return Ok(statements);
         }
+        self.preprocess_pragmas(statements)
+            .map_err(|error| self.process_error(error, sql).rethrown())
+    }
+
+    /// The pragma part of `StatementPreprocessor::Preprocess`.
+    fn preprocess_pragmas(&mut self, statements: Vec<SqlStatement>) -> Result<Vec<SqlStatement>> {
         let mut result = Vec::with_capacity(statements.len());
         for statement in statements {
             let rustdb_ast::SqlStatementKind::Pragma(pragma) = &statement.kind else {
@@ -2201,9 +2217,7 @@ impl Connection {
             let name = pragma.name.clone();
             let bound = self.bind_pragma_parameters(statement.clone());
             let ended = self.transactions.end_statement(bound.is_ok(), false);
-            let parameters = bound
-                .and_then(|parameters| ended.map(|()| parameters))
-                .map_err(|error| self.process_error(error, sql))?;
+            let parameters = bound.and_then(|parameters| ended.map(|()| parameters))?;
             let instance = self.database.instance();
             let query = if instance.has_extension_pragma(&name) {
                 Some(instance.extension_pragma_query(&name, &parameters)?)

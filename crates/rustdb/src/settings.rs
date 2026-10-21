@@ -224,10 +224,17 @@ pub(crate) fn unrecognized_with(
     }
     let mut names: Vec<String> = OPTION_NAMES.iter().map(|name| (*name).to_owned()).collect();
     names.extend(extension_options.iter().cloned());
+    // `CatalogException::MissingEntry("configuration parameter", ...)`, thrown while the
+    // SET executes (so caught and thrown again), with every option as a candidate.
     Error::catalog(format!(
         "unrecognized configuration parameter \"{name}\"\n{}",
         candidates_error_message(&names, name, "Did you mean")
     ))
+    .with_subtype("MISSING_ENTRY")
+    .with_extra_info("name", name)
+    .with_extra_info("type", "configuration parameter")
+    .with_extra_info("candidates", names.join(", "))
+    .with_extra_info_round_trip()
 }
 
 /// Whether a parser extension replaces the Postgres parser

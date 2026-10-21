@@ -401,7 +401,7 @@ impl Catalog {
 
     fn schema_entry(&self, transaction: &Transaction, schema: &str) -> Result<Arc<CatalogEntry>> {
         self.schema(transaction, schema)
-            .ok_or_else(|| Error::catalog(format!("Schema with name {schema} does not exist!")))
+            .ok_or_else(|| missing_entry(CatalogType::Schema, schema))
     }
 
     /// Creates a schema read from a checkpoint, visible to every transaction; an existing
@@ -451,9 +451,7 @@ impl Catalog {
                 }
                 Ok(())
             }
-            _ => Err(Error::catalog(format!(
-                "Schema with name \"{name}\" already exists!"
-            ))),
+            _ => Err(entry_already_exists(CatalogType::Schema, name)),
         }
     }
 
@@ -495,9 +493,7 @@ impl Catalog {
             return match on_conflict {
                 OnCreateConflict::IgnoreOnConflict => Ok(false),
                 OnCreateConflict::ReplaceOnConflict => Err(internal_entry_error(&name)),
-                _ => Err(Error::catalog(format!(
-                    "Type with name \"{name}\" already exists!"
-                ))),
+                _ => Err(entry_already_exists(CatalogType::Type, &name)),
             };
         }
         if on_conflict == OnCreateConflict::IgnoreOnConflict && set.get(transaction, &name).is_some() {
@@ -531,10 +527,7 @@ impl Catalog {
         let existing = set
             .get(transaction, &name)
             .map_or(ty, |existing| existing.catalog_type());
-        Err(Error::catalog(format!(
-            "{} with name \"{name}\" already exists!",
-            existing.display_name()
-        )))
+        Err(entry_already_exists(existing, &name))
     }
 
     /// Replaces the entry `name` of type `ty` in `schema` by `entry` (DuckDB's `Alter`).
@@ -550,10 +543,7 @@ impl Catalog {
         let schema_entry = schema_entry.as_schema().ok_or_else(missing_main)?;
         let set = Self::set_for(schema_entry, ty);
         if !set.alter(transaction, name, entry)? {
-            return Err(Error::catalog(format!(
-                "{} with name {name} does not exist!",
-                ty.display_name()
-            )));
+            return Err(missing_entry(ty, name));
         }
         Ok(())
     }
@@ -576,10 +566,7 @@ impl Catalog {
         let schema_entry = schema_entry.as_schema().ok_or_else(missing_main)?;
         let set = Self::set_for(schema_entry, ty);
         if !set.alter_with_hook(transaction, name, entry, hook, info)? {
-            return Err(Error::catalog(format!(
-                "{} with name {name} does not exist!",
-                ty.display_name()
-            )));
+            return Err(missing_entry(ty, name));
         }
         Ok(())
     }
@@ -604,10 +591,7 @@ impl Catalog {
         // (`CatalogSet::AlterEntry` skips `RenameEntryInternal`).
         if entry.name().eq_ignore_ascii_case(name) {
             if !set.alter_with_hook(transaction, name, entry, hook, info)? {
-                return Err(Error::catalog(format!(
-                    "{} with name {name} does not exist!",
-                    ty.display_name()
-                )));
+                return Err(missing_entry(ty, name));
             }
             return Ok(());
         }
@@ -620,10 +604,7 @@ impl Catalog {
         let previous = set.get(transaction, name);
         let renamed = entry.info(schema);
         if !set.rename(transaction, name, entry, hook, info)? {
-            return Err(Error::catalog(format!(
-                "{} with name {name} does not exist!",
-                ty.display_name()
-            )));
+            return Err(missing_entry(ty, name));
         }
         // The entries it owns follow the new name (`DependencyManager::AlterObject`
         // re-creates the ownership links).
@@ -696,10 +677,7 @@ impl Catalog {
             if if_exists {
                 return Ok(());
             }
-            return Err(Error::catalog(format!(
-                "{} with name {name} does not exist!",
-                ty.display_name()
-            )));
+            return Err(missing_entry(ty, name));
         };
         if existing.catalog_type() != ty {
             return Err(Error::catalog(format!(
@@ -1087,7 +1065,7 @@ impl Catalog {
             if if_exists {
                 return Ok(());
             }
-            return Err(Error::catalog(format!("Schema with name {name} does not exist!")));
+            return Err(missing_entry(CatalogType::Schema, name));
         };
         if schema.internal {
             return Err(Error::catalog(format!(
@@ -1184,6 +1162,30 @@ fn internal_entry_error(name: &str) -> Error {
 
 fn missing_main() -> Error {
     Error::internal("the main schema is missing from the catalog")
+}
+
+/// `CatalogException::MissingEntry` of a lookup without suggestions, caught into the
+/// lookup's `ErrorData` (the position of the lookup, if any, follows the subtype).
+fn missing_entry(ty: CatalogType, name: &str) -> Error {
+    Error::catalog(format!("{} with name {name} does not exist!", ty.display_name()))
+        .with_subtype("MISSING_ENTRY")
+        .with_extra_info_slot("position")
+        .with_extra_info("name", name)
+        .with_extra_info("type", ty.display_name())
+        .with_extra_info_round_trip()
+}
+
+/// `CatalogException::EntryAlreadyExists`, thrown while the statement executes, so that
+/// it is caught into an `ErrorData` and thrown again before the client sees it.
+fn entry_already_exists(ty: CatalogType, name: &str) -> Error {
+    Error::catalog(format!(
+        "{} with name \"{name}\" already exists!",
+        ty.display_name()
+    ))
+    .with_subtype("ENTRY_ALREADY_EXISTS")
+    .with_extra_info("name", name)
+    .with_extra_info("type", ty.display_name())
+    .with_extra_info_round_trip()
 }
 
 #[cfg(test)]
