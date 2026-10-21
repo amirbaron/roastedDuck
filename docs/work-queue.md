@@ -4,20 +4,22 @@ Workstreams found while closing conformance failures (at most two agents run at 
 Each names the C++ it ports and the tests or checks that close it. Finished streams are
 removed; the commit history records them.
 
-Order of the next agents: the C API extension surface (2) once the running WAL (4) or
-performance (7) agent finishes, then the shell (3), compression (5) and the rest.
+Order of the next agents: the shell (3), compression (5) and the rest; the C API
+leftovers (2) when a client needs them.
 
 ## Public surface (M8)
 
-2. **C API, extension surface.** The core C API exports 334 of DuckDB's 547 functions
-   and passes DuckDB's core `test/api/capi` files (`scripts/capi-tests/run.sh`). Missing:
-   scalar, aggregate, table, cast and copy functions, replacement scans, custom types,
-   file system, catalog, config options, logging, profiling, instance cache, the
-   threading API (`duckdb_execute_tasks*`), the Arrow C data interface
-   (`duckdb_arrow_*`, `arrow_scan`) and ADBC; also a PRAGMA function catalog (the
-   extract-statements PRAGMA case of `test_capi_extract`). Typed appends go through
-   `Value`, so an overflowing DECIMAL append errors and invalid UTF-8 is rejected where
-   DuckDB writes them.
+2. **C API, the rest.** The C API exports 546 of DuckDB's 547 functions, and all 30
+   `test/api/capi` files pass (`scripts/capi-tests/run.sh`, as against the C++ library).
+   Left:
+   - ADBC (`duckdb_adbc_init`, `src/common/adbc`). Its test, `test/api/adbc/test_adbc.cpp`,
+     needs `arrow_test_helper.hpp`, nanoarrow and the ADBC driver manager in the harness.
+   - Arrow filter pushdown by column type (`ArrowPushdownType`): `arrow_scan` hands
+     filters on every type to the producer, as `TableFunction` has no per-type hook.
+   - `duckdb_result_get_arrow_options` reads the connection's settings when called, not
+     those the result was created with.
+   - `parse_statements` expands a PRAGMA into its query, but does not wrap expansions of
+     several statements in an implicit `BEGIN`/`COMMIT` (`StatementPreprocessor`).
 3. **CLI shell.** `crates/shell` is a stub that prints `a|b` rows; DuckDB's shell renders
    duckbox tables (also for `-c` and piped output), dot commands and modes. Port
    `tools/shell` with byte-identical rendering.
