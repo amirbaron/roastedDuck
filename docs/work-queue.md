@@ -130,6 +130,10 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
     conjuncts such as `ক্ষ` and `क्ष` after `হ`/`ह`, newer CLDR does not, and
     `icu4x-datagen` cannot read ICU export data before its own format (the
     `release-71-1` export is a 404). Needs ICU4X data built from ICU 66's tailoring rules.
+    The sort keys `icu_collate_<locale>` and `icu_sort_key` return (hex) are ICU4X's,
+    not ICU 66's bytes (`icu_collate_de('Äpfel')`: `2B4935…` vs `2A4834…`): orders
+    agree, the strings differ. Matching them needs ICU4C's sort key format
+    (`CollationKeys::writeSortKeyUpToQuaternary`) over the same collation elements.
 12. **Out-of-core IEJoin, AsOf join and window** (`out_of_core_ie_join`,
     `out_of_core_asof_join`, `out_of_core_window`): over TPC-H SF1 `lineitem` under a
     300 MiB limit at 1, 2 and 8 threads rustdb runs out of memory ("failed to pin
