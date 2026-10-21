@@ -16,7 +16,6 @@ rustdb-catalog = { path = "../catalog" }
 rustdb-function = { path = "../function" }
 rustdb-functions = { path = "../functions" }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
-ruzstd = "0.9"
 rustdb-zstd = { path = "../zstd" }
 unicode-normalization = "0.1"
 

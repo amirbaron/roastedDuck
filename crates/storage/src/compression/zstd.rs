@@ -7,7 +7,6 @@
 //! is continued ends with the id of the next page. The extra pages are the segment state
 //! (`overflow_blocks`).
 
-use std::io::Read;
 use std::sync::Arc;
 
 use rustdb_buffer::{BlockId, INVALID_BLOCK};
@@ -67,6 +66,8 @@ pub(crate) struct ZstdScanState {
     count: usize,
     offsets: [usize; 4],
     current: Option<DecodedVector>,
+    /// `decompression_context`, created at the first vector.
+    decompressor: Option<Box<rustdb_zstd::Decompressor>>,
 }
 
 impl ZstdScanState {
@@ -77,6 +78,7 @@ impl ZstdScanState {
             count,
             offsets: metadata_offsets(count.div_ceil(ZSTD_VECTOR_SIZE)),
             current: None,
+            decompressor: None,
         })
     }
 
@@ -90,7 +92,7 @@ impl ZstdScanState {
     }
 
     /// `LoadVector` + `DecompressString` for the whole vector.
-    fn load_vector(&self, segment: &ColumnSegment, index: usize) -> Result<DecodedVector> {
+    fn load_vector(&mut self, segment: &ColumnSegment, index: usize) -> Result<DecodedVector> {
         let bytes = self.data.bytes();
         let [page_ids, page_offsets, uncompressed_sizes, compressed_sizes] = self.offsets;
         let page_id: i64 = load(bytes, page_ids + 8 * index)?;
@@ -156,12 +158,12 @@ impl ZstdScanState {
             next_id_offset = take;
             current_page = Some(next);
         }
-        let mut strings = Vec::with_capacity(uncompressed_size);
-        let mut decoder = ruzstd::decoding::StreamingDecoder::new(compressed.as_slice())
+        let mut strings = vec![0u8; uncompressed_size];
+        let decompressor = self.decompressor.get_or_insert_with(Box::default);
+        let size = decompressor
+            .decompress(&mut strings, &compressed)
             .map_err(|error| corrupt(format!("ZSTD Decompression failed: {error}")))?;
-        decoder
-            .read_to_end(&mut strings)
-            .map_err(|error| corrupt(format!("ZSTD Decompression failed: {error}")))?;
+        strings.truncate(size);
         let mut ranges = Vec::with_capacity(vector_size);
         let mut offset = 0;
         for length in lengths {

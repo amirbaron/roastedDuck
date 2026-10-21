@@ -13,7 +13,6 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{File, OpenOptions};
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -474,11 +473,14 @@ fn decompress_slot(slot: &[u8], target: &mut [u8]) -> Result<()> {
             frame.len()
         ))
     })?;
-    let mut decoder = ruzstd::decoding::StreamingDecoder::new(frame)
+    let size = rustdb_zstd::decompress(target, frame)
         .map_err(|error| corrupt(format!("failed to decompress block ({error})")))?;
-    decoder
-        .read_exact(target)
-        .map_err(|error| corrupt(format!("failed to decompress block ({error})")))?;
+    if size != target.len() {
+        return Err(corrupt(format!(
+            "decompressed block is {size} bytes but expected {}",
+            target.len()
+        )));
+    }
     Ok(())
 }
 

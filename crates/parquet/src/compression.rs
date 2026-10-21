@@ -1,6 +1,6 @@
 //! Page compression codecs (`ColumnReader::DecompressInternal` and the writer's
 //! `ColumnWriter::CompressPage`), all in pure Rust: snappy (our own decoder, `snap` to compress), gzip (`miniz_oxide`
-//! through `flate2`), zstd (`rustdb-zstd`, decoded with `ruzstd`), LZ4 raw blocks (`lz4_flex`) and brotli (`brotli`).
+//! through `flate2`), zstd (`rustdb-zstd`), LZ4 raw blocks (`lz4_flex`) and brotli (`brotli`).
 
 use std::io::{Read as _, Write as _};
 
@@ -47,8 +47,7 @@ pub fn decompress(codec: CompressionCodec, src: &[u8], dst: &mut [u8], file_name
         }),
         CompressionCodec::ZSTD => {
             let failure = || read_failure(file_name, "ZSTD Decompression failure");
-            let mut decoder = ruzstd::decoding::FrameDecoder::new();
-            let written = decoder.decode_all(src, dst).map_err(|_| failure())?;
+            let written = rustdb_zstd::decompress(dst, src).map_err(|_| failure())?;
             if written != dst.len() {
                 return Err(failure());
             }

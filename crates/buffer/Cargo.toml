@@ -9,7 +9,6 @@ rust-version.workspace = true
 [dependencies]
 rustdb-common.workspace = true
 libc = "0.2"
-ruzstd = "0.9"
 rustdb-zstd = { path = "../zstd" }
 
 [lints]
