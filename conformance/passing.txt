@@ -3224,6 +3224,9 @@ test/sql/settings/setting_order.test
 test/sql/settings/setting_preserve_identifier_case.test
 test/sql/settings/setting_profiling_mode.test
 test/sql/settings/setting_threads.test
+test/sql/settings/test_disabled_file_systems.test
+test/sql/settings/test_disabled_local_filesystem_metadata.test
+test/sql/settings/test_disabled_local_filesystem_secrets.test
 test/sql/settings/test_external_access_metadata.test
 test/sql/settings/test_external_access_secrets.test
 test/sql/settings/test_lock_configuration.test

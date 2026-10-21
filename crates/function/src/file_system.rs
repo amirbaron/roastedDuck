@@ -166,19 +166,89 @@ pub fn external_access_enabled() -> bool {
 }
 
 fn verify_can_access(path: &str, directory: bool) -> rustdb_common::Result<()> {
-    let Some(settings) = opener().and_then(|client| client.settings()) else {
+    let Some(client) = opener() else {
         return Ok(());
     };
-    if can_access(settings.as_ref(), path, directory) {
-        return Ok(());
+    if let Some(settings) = client.settings()
+        && !can_access(settings.as_ref(), path, directory)
+    {
+        return Err(rustdb_common::Error::new(
+            rustdb_common::ErrorKind::Permission,
+            format!(
+                "Cannot access {} \"{path}\" - file system operations are disabled by configuration",
+                if directory { "directory" } else { "file" }
+            ),
+        ));
     }
-    Err(rustdb_common::Error::new(
-        rustdb_common::ErrorKind::Permission,
-        format!(
-            "Cannot access {} \"{path}\" - file system operations are disabled by configuration",
-            if directory { "directory" } else { "file" }
-        ),
-    ))
+    // `VirtualFileSystem::FindFileSystem`: the file system of the path may be disabled.
+    let name = file_system_name(path);
+    let disabled = client
+        .object_cache()
+        .and_then(|cache| cache.get::<DisabledFileSystems>(DISABLED_FILE_SYSTEMS_KEY))
+        .is_some_and(|disabled| disabled.contains(name));
+    if disabled {
+        return Err(rustdb_common::Error::new(
+            rustdb_common::ErrorKind::Permission,
+            format!("File system {name} has been disabled by configuration"),
+        ));
+    }
+    Ok(())
+}
+
+/// The name of the file system that handles `path` (`FileSystem::GetName` of the one
+/// `FindFileSystem` picks): the local file system unless the path has a URL scheme.
+fn file_system_name(path: &str) -> &'static str {
+    let lower = path.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        "HTTPFileSystem"
+    } else if ["s3://", "s3a://", "s3n://", "gcs://", "gs://", "r2://"]
+        .iter()
+        .any(|scheme| lower.starts_with(scheme))
+    {
+        "S3FileSystem"
+    } else {
+        "LocalFileSystem"
+    }
+}
+
+/// The object cache key of the database's [`DisabledFileSystems`].
+pub const DISABLED_FILE_SYSTEMS_KEY: &str = "rustdb.disabled_filesystems";
+
+/// The file systems the `disabled_filesystems` setting disabled
+/// (`FileSystemRegistry::disabled_file_systems`); once disabled they stay disabled.
+#[derive(Debug, Default)]
+pub struct DisabledFileSystems(std::sync::Mutex<std::collections::BTreeSet<String>>);
+
+impl DisabledFileSystems {
+    fn contains(&self, name: &str) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(name)
+    }
+
+    /// `FileSystemRegistry::SetDisabledFileSystems`.
+    pub fn set(&self, names: &[&str]) -> rustdb_common::Result<()> {
+        let mut new = std::collections::BTreeSet::new();
+        for &name in names {
+            if name.is_empty() {
+                continue;
+            }
+            if !new.insert(name.to_owned()) {
+                return Err(rustdb_common::Error::invalid_input(format!(
+                    "Duplicate disabled file system \"{name}\""
+                )));
+            }
+        }
+        let mut current = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(previous) = current.iter().find(|previous| !new.contains(*previous)) {
+            return Err(rustdb_common::Error::invalid_input(format!(
+                "File system \"{previous}\" has been disabled previously, it cannot be re-enabled"
+            )));
+        }
+        *current = new;
+        Ok(())
+    }
 }
 
 /// `OpenerFileSystem::VerifyCanAccessFile`: a Permission Error if the configuration

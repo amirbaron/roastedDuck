@@ -279,6 +279,16 @@ impl Drop for DatabaseInstance {
 
 impl DatabaseInstance {
     /// Registers a statically linked extension's catalog entries once.
+    /// `DisabledFilesystemsSetting::SetGlobal` / `ResetGlobal`.
+    fn set_disabled_file_systems(&self, names: &[&str]) -> Result<()> {
+        self.object_cache
+            .get::<rustdb_function::file_system::DisabledFileSystems>(
+                rustdb_function::file_system::DISABLED_FILE_SYSTEMS_KEY,
+            )
+            .ok_or_else(|| Error::internal("database without a file system registry"))?
+            .set(names)
+    }
+
     fn load_static_extension(&self, extension: StaticExtension) -> Result<()> {
         let mut loaded = self
             .loaded_extensions
@@ -582,6 +592,10 @@ impl Database {
         instance.object_cache.put(
             LOADED_EXTENSIONS_KEY.to_owned(),
             Arc::clone(&instance.loaded_extensions),
+        );
+        instance.object_cache.put(
+            rustdb_function::file_system::DISABLED_FILE_SYSTEMS_KEY.to_owned(),
+            Arc::new(rustdb_function::file_system::DisabledFileSystems::default()),
         );
         if config.load_extensions {
             for extension in StaticExtension::ALL {
@@ -1891,6 +1905,10 @@ impl Connection {
                 if name.eq_ignore_ascii_case("log_query_path") {
                     self.set_log_query_path(Some(value))?;
                 }
+                if name.eq_ignore_ascii_case("disabled_filesystems") {
+                    let list = value.to_varchar()?;
+                    self.database.instance().set_disabled_file_systems(&list.split(',').collect::<Vec<_>>())?;
+                }
                 self.database.instance().set_buffer_setting(name, Some(value))?;
                 if crate::logging::is_logging_setting(name) {
                     crate::logging::apply_setting(&self.database.instance().log_manager, name, Some(value))?;
@@ -1912,6 +1930,9 @@ impl Connection {
                 }
                 if crate::logging::is_logging_setting(name) {
                     crate::logging::apply_setting(&self.database.instance().log_manager, name, None)?;
+                }
+                if name.eq_ignore_ascii_case("disabled_filesystems") {
+                    self.database.instance().set_disabled_file_systems(&[])?;
                 }
                 self.settings.reset(name)?;
                 if name.eq_ignore_ascii_case("log_query_path") {
