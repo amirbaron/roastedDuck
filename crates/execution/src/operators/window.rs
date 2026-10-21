@@ -3,8 +3,8 @@
 //! The sink hands its input (plus computed PARTITION BY / ORDER BY keys) to a
 //! [`SortStrategy`], which radix-partitions it into hash groups. The source works through
 //! the hash groups, largest first, in DuckDB's `WindowHashGroup` stages, as tasks shared
-//! by all threads: `SORT` sorts a group, `MATERIALIZE` merges it into a buffer-managed
-//! collection of rows (which can spill), `MASK` computes its partition and peer boundary
+//! by all threads: `SORT` sorts a group, `MATERIALIZE` merges it into buffer-managed column
+//! data (which can spill), `MASK` computes its partition and peer boundary
 //! masks, `SINK` materialises the shared argument expressions and feeds the executors,
 //! `FINALIZE` lets them build their structures, and `GETDATA` evaluates the functions
 //! chunk by chunk. Each stage of a group has one task per block range; the largest group
@@ -18,13 +18,12 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use rustdb_common::{Error, Result};
 use rustdb_planner::{Expression, ExpressionKind};
 use rustdb_row::sort::{
-    ExternalBlockIteratorState, SortColumn, SortConfig, SortStrategy, SortedRun, StrategyGlobalState,
+    GroupData, GroupDataScanner, SortColumn, SortConfig, SortStrategy, StrategyGlobalState,
     StrategyLocalState,
 };
-use rustdb_row::{PinProperties, ScanState, TupleDataCollection};
 use rustdb_types::{DataChunk, LogicalType, Vector};
 
 use crate::operator::{
@@ -376,108 +375,16 @@ struct GroupReady {
     global_states: Vec<ExecutorGlobalState>,
 }
 
-/// The sorted rows of a hash group: the sort's materialized run (its payload is in key
-/// order, chunk for chunk), or the input as collected when nothing is sorted. DuckDB
-/// materializes them into a `ColumnDataCollection`; rustdb has no columnar buffer-managed
-/// collection, and keeping the run saves converting rows twice.
-#[derive(Debug)]
-enum GroupRows {
-    Run(Box<SortedRun>),
-    Collection(TupleDataCollection),
-}
-
-impl GroupRows {
-    fn count(&self) -> usize {
-        match self {
-            Self::Run(run) => run.count(),
-            Self::Collection(rows) => rows.count(),
-        }
+/// The first row of every chunk of a group's rows, and the row count.
+fn chunk_starts(rows: &GroupData) -> Vec<usize> {
+    let mut starts = Vec::with_capacity(rows.chunk_count() + 1);
+    starts.push(0);
+    let mut total = 0;
+    for count in rows.chunk_row_counts() {
+        total += count;
+        starts.push(total);
     }
-
-    /// The first row of every chunk, and the row count.
-    fn chunk_starts(&self) -> Vec<usize> {
-        let mut starts = vec![0];
-        let mut total = 0;
-        match self {
-            Self::Run(run) => {
-                let count = run.count();
-                while total < count {
-                    total = (total + STANDARD_VECTOR_SIZE).min(count);
-                    starts.push(total);
-                }
-            }
-            Self::Collection(rows) => {
-                for count in rows.chunk_row_counts() {
-                    total += count;
-                    starts.push(total);
-                }
-            }
-        }
-        starts
-    }
-}
-
-/// Reads columns of a group's rows chunk by chunk from a starting chunk (DuckDB's
-/// `WindowCollectionChunkScanner`).
-#[derive(Debug)]
-struct GroupScanner {
-    columns: Vec<usize>,
-    next_chunk: usize,
-    run_state: Option<ExternalBlockIteratorState>,
-    collection_state: Option<ScanState>,
-    decode_buffer: Vec<u8>,
-}
-
-impl GroupScanner {
-    fn new(rows: &GroupRows, columns: Vec<usize>, begin_chunk: usize) -> Self {
-        let (run_state, collection_state) = match rows {
-            GroupRows::Run(run) => (Some(ExternalBlockIteratorState::new(run)), None),
-            GroupRows::Collection(rows) => {
-                let mut scan = rows.initialize_scan_columns(columns.clone(), PinProperties::UnpinAfterDone);
-                rows.seek(&mut scan, begin_chunk);
-                (None, Some(scan))
-            }
-        };
-        Self {
-            columns,
-            next_chunk: begin_chunk,
-            run_state,
-            collection_state,
-            decode_buffer: Vec::new(),
-        }
-    }
-
-    /// The next chunk; `false` past the end.
-    fn scan(&mut self, rows: &GroupRows, starts: &[usize], chunk: &mut DataChunk) -> Result<bool> {
-        let index = self.next_chunk;
-        if index + 1 >= starts.len() {
-            chunk.set_columns(Vec::new(), 0);
-            return Ok(false);
-        }
-        self.next_chunk += 1;
-        match (rows, &mut self.run_state, &mut self.collection_state) {
-            (GroupRows::Run(run), Some(state), _) => {
-                // Release the previous chunk's blocks.
-                state.repin();
-                let (begin, end) = (starts[index], starts[index + 1]);
-                rustdb_row::dispatch_sort_key!(run.key_type(), K => {
-                    let mut keys: Vec<K> = Vec::with_capacity(end - begin);
-                    for row in begin..end {
-                        keys.push(state.get::<K>(run, row)?);
-                    }
-                    let keep_alive = state.keep_alive();
-                    // SAFETY: the chunk's keys and payload stay pinned by the iteration
-                    // state, whose pins `keep_alive` holds.
-                    unsafe {
-                        run.scan_columns(&keys, &self.columns, &mut self.decode_buffer, Some(&keep_alive), chunk)?;
-                    }
-                });
-                Ok(true)
-            }
-            (GroupRows::Collection(rows), _, Some(scan)) => rows.scan(scan, chunk),
-            _ => Err(Error::internal("window scanner of the wrong kind")),
-        }
-    }
+    starts
 }
 
 /// One hash group (DuckDB's `WindowHashGroup`).
@@ -491,7 +398,7 @@ struct WindowHashGroup {
     /// The output batch index the group starts at.
     batch_base: usize,
     /// The sorted rows (from `MATERIALIZE`).
-    rows: OnceLock<GroupRows>,
+    rows: OnceLock<GroupData>,
     /// The first row of every chunk of `rows`, and the row count.
     chunk_starts: OnceLock<Vec<usize>>,
     /// The masks while `MASK` tasks fill them in.
@@ -562,7 +469,7 @@ impl WindowHashGroup {
         })
     }
 
-    fn rows(&self) -> Result<&GroupRows> {
+    fn rows(&self) -> Result<&GroupData> {
         self.rows
             .get()
             .ok_or_else(|| Error::internal("window hash group read before it was materialized"))
@@ -702,7 +609,7 @@ pub struct WindowLocalSourceState {
     task: Option<WindowSourceTask>,
     /// The `GETDATA` task's group, scan and executor states.
     group: Option<Arc<WindowHashGroup>>,
-    scan: Option<GroupScanner>,
+    scan: Option<GroupDataScanner>,
     local_states: Vec<ExecutorLocalState>,
     /// The batch index of the last chunk (output reordering).
     batch_index: u64,
@@ -795,13 +702,11 @@ impl PhysicalWindow {
         Ok(())
     }
 
-    /// Merges the group into its sorted run (or collects the unsorted rows); the task that
-    /// completes the group takes them (`WindowLocalSourceState::Materialize`).
+    /// Merges the partitions of the group this thread claims into column data; the task
+    /// that completes the group takes it (`WindowLocalSourceState::Materialize`).
     fn materialize(sink: &WindowGlobalSinkState, group: &WindowHashGroup, blocks: usize) -> Result<()> {
-        let natural = matches!(sink.strategy, SortStrategy::Natural(_));
-        if !natural {
-            sink.strategy.materialize_sorted_run(&sink.sink, group.hash_bin)?;
-        }
+        sink.strategy
+            .materialize_column_data(&sink.sink, group.hash_bin)?;
         // Mark this range as done.
         let materialized = group.materialized.fetch_add(blocks, Ordering::AcqRel) + blocks;
         if materialized < group.blocks {
@@ -812,18 +717,9 @@ impl PhysicalWindow {
         if group.rows.get().is_some() {
             return Ok(());
         }
-        let rows = if natural {
-            sink.strategy
-                .get_column_data(&sink.sink, group.hash_bin)?
-                .map(GroupRows::Collection)
-        } else {
-            sink.strategy
-                .get_sorted_run(&sink.sink, group.hash_bin)?
-                .map(|run| GroupRows::Run(Box::new(run)))
-        };
-        match rows {
+        match sink.strategy.get_column_data(&sink.sink, group.hash_bin)? {
             Some(rows) if rows.count() == group.count => {
-                let _ = group.chunk_starts.set(rows.chunk_starts());
+                let _ = group.chunk_starts.set(chunk_starts(&rows));
                 let _ = group.rows.set(rows);
                 Ok(())
             }
@@ -849,10 +745,10 @@ impl PhysicalWindow {
         let mut chunks = Vec::with_capacity(block_end - first);
         let sorted = !(over.partitions.is_empty() && over.orders.is_empty());
         if sorted {
-            let mut scanner = GroupScanner::new(rows, self.sort_ids.clone(), first);
+            let mut scanner = GroupDataScanner::new(rows, self.sort_ids.clone(), first);
             for _ in first..block_end {
                 let mut chunk = DataChunk::default();
-                if !scanner.scan(rows, starts, &mut chunk)? {
+                if !scanner.scan(rows, &mut chunk)? {
                     break;
                 }
                 chunks.push(chunk);
@@ -943,12 +839,12 @@ impl PhysicalWindow {
         let starts = group.chunk_starts()?;
         // Without expressions to compute, the executors only need the chunks' sizes.
         let needs_rows = coll_exec.is_some() || sink_exec.is_some();
-        let mut scanner = GroupScanner::new(rows, (0..self.input_width).collect(), 0);
+        let mut scanner = GroupDataScanner::new(rows, (0..self.input_width).collect(), 0);
         let mut input_idx = 0;
         for chunk_index in 0..starts.len() - 1 {
             let mut input = DataChunk::default();
             if needs_rows {
-                scanner.scan(rows, starts, &mut input)?;
+                scanner.scan(rows, &mut input)?;
             } else {
                 input.set_columns(Vec::new(), starts[chunk_index + 1] - starts[chunk_index]);
             }
@@ -1048,7 +944,7 @@ impl PhysicalWindow {
             .is_some_and(|current| Arc::ptr_eq(current, group));
         if !same_group || local.scan.is_none() {
             // A new task: scan from its first block, with this thread's executor states.
-            local.scan = Some(GroupScanner::new(
+            local.scan = Some(GroupDataScanner::new(
                 rows,
                 (0..self.input_width).collect(),
                 task.begin_idx,
@@ -1065,7 +961,7 @@ impl PhysicalWindow {
         let position = starts[task.begin_idx];
         let mut input = DataChunk::default();
         if let Some(scanner) = &mut local.scan {
-            scanner.scan(rows, starts, &mut input)?;
+            scanner.scan(rows, &mut input)?;
         }
         let mut eval_chunk = DataChunk::new(Vec::new(), input.len());
         if let Some(executor) = &mut local.eval {

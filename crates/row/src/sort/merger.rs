@@ -784,26 +784,12 @@ impl SortLayouts {
         keep_alive: Option<&HeapKeepAlive>,
         chunk: &mut DataChunk,
     ) -> Result<()> {
-        self.scan_key_columns(keys, None, buffer, keep_alive, chunk)
-    }
-
-    /// [`Self::scan_keys`] for output columns `columns` only (all if `None`), in that
-    /// order.
-    pub(crate) fn scan_key_columns<K: SortKey>(
-        &self,
-        keys: &[K],
-        columns: Option<&[usize]>,
-        buffer: &mut Vec<u8>,
-        keep_alive: Option<&HeapKeepAlive>,
-        chunk: &mut DataChunk,
-    ) -> Result<()> {
         let count = keys.len();
-        let wanted = |output: usize| columns.is_none_or(|columns| columns.contains(&output));
-        let mut result: Vec<Option<Vector>> = vec![None; self.output_types.len()];
+        let mut columns: Vec<Option<Vector>> = vec![None; self.output_types.len()];
         let needs_keys = self
             .outputs
             .iter()
-            .any(|output| matches!(output.source, ColumnSource::Key(_)) && wanted(output.output));
+            .any(|output| matches!(output.source, ColumnSource::Key(_)));
         if needs_keys {
             let mut decoded: Vec<Vector> = self
                 .key_types
@@ -831,19 +817,15 @@ impl SortLayouts {
                 }
             }
             for output in &self.outputs {
-                if let ColumnSource::Key(key) = output.source
-                    && wanted(output.output)
-                {
-                    result[output.output] = Some(decoded[key].clone());
+                if let ColumnSource::Key(key) = output.source {
+                    columns[output.output] = Some(decoded[key].clone());
                 }
             }
         }
         if let Some(layout) = self.payload_layout.as_deref() {
             let rows: Vec<RowPtr> = keys.iter().map(|key| RowPtr::from_ptr(key.payload())).collect();
             for output in &self.outputs {
-                if let ColumnSource::Payload(column) = output.source
-                    && wanted(output.output)
-                {
+                if let ColumnSource::Payload(column) = output.source {
                     let ty = self.output_types[output.output].clone();
                     let mut vector = Vector::flat_for_overwrite(ty, count.max(1));
                     // SAFETY: the payload rows the keys point to are pinned (in-memory runs
@@ -865,21 +847,14 @@ impl SortLayouts {
                     {
                         vector.add_keep_alive(Arc::clone(keep_alive));
                     }
-                    result[output.output] = Some(vector);
+                    columns[output.output] = Some(vector);
                 }
             }
         }
-        let missing = || Error::internal("sort output column was not produced");
-        let columns = match columns {
-            None => result
-                .into_iter()
-                .map(|column| column.ok_or_else(missing))
-                .collect::<Result<Vec<_>>>()?,
-            Some(columns) => columns
-                .iter()
-                .map(|&output| result.get(output).cloned().flatten().ok_or_else(missing))
-                .collect::<Result<Vec<_>>>()?,
-        };
+        let columns = columns
+            .into_iter()
+            .map(|column| column.ok_or_else(|| Error::internal("sort output column was not produced")))
+            .collect::<Result<Vec<_>>>()?;
         chunk.set_columns(columns, count);
         Ok(())
     }

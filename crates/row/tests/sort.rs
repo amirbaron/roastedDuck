@@ -669,10 +669,30 @@ fn sink_strategy(strategy: &SortStrategy, chunks: &[DataChunk], threads: usize) 
 
 #[test]
 fn hashed_sort_groups_partitions_and_sorts_them() {
+    check_hashed_sort(
+        &[LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::BIGINT],
+        13,
+    );
+}
+
+/// Groups with a nested column keep rows rather than columns.
+#[test]
+fn hashed_sort_with_a_nested_payload() {
+    check_hashed_sort(
+        &[
+            LogicalType::INTEGER,
+            LogicalType::list(LogicalType::VARCHAR),
+            LogicalType::BIGINT,
+        ],
+        16,
+    );
+}
+
+/// Partitions on column 0 and sorts on column 2 of rows of `types`.
+fn check_hashed_sort(types: &[LogicalType], seed: u64) {
     let bm = buffer_manager();
-    let types = [LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::BIGINT];
-    let mut rng = Rng::new(13);
-    let mut rows = random_rows(&types, 30_000, &mut rng, 5);
+    let mut rng = Rng::new(seed);
+    let mut rows = random_rows(types, 30_000, &mut rng, 5);
     for row in &mut rows {
         if let TestValue::Fixed(bytes) = &mut row[0] {
             *bytes = (i32::from_ne_bytes(bytes[..4].try_into().unwrap()) % 50)
@@ -683,7 +703,7 @@ fn hashed_sort_groups_partitions_and_sorts_them() {
     let orders = vec![order(2, ALL_MODIFIERS[3])];
     let strategy =
         SortStrategy::new(bm, vec![0], &[None], orders, types.to_vec(), rows.len(), false).unwrap();
-    let chunks = build_chunks(&types, &rows, 2048);
+    let chunks = build_chunks(types, &rows, 2048);
     let global = sink_strategy(&strategy, &chunks, 4);
     let groups = strategy_rows(&strategy, &global);
     assert!(groups.len() > 1, "expected several hash groups");
@@ -692,7 +712,7 @@ fn hashed_sort_groups_partitions_and_sorts_them() {
     let mut seen: HashMap<String, usize> = HashMap::new();
     let mut all = Vec::new();
     for (index, group) in groups.iter().enumerate() {
-        let keys = keys_of(&types, group, &effective);
+        let keys = keys_of(types, group, &effective);
         for (i, pair) in keys.windows(2).enumerate() {
             assert!(
                 pair[0] <= pair[1],

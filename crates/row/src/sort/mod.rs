@@ -19,6 +19,7 @@
 pub(crate) mod algorithm;
 mod block_iterator;
 pub mod encode;
+mod group_data;
 pub mod key;
 mod merger;
 mod pdqsort;
@@ -39,6 +40,7 @@ pub use encode::{
     NullOrder, OrderModifiers, OrderType, SortKeyBuffer, create_sort_keys, decode_sort_key,
     decode_sort_key_column, sort_key_type_for,
 };
+pub use group_data::{GroupData, GroupDataAppend, GroupDataScanner};
 pub use key::{SortKey, SortKeyType};
 pub use merger::{DEFAULT_ROW_GROUP_SIZE, MergerLocalState, SortedRunMerger};
 pub use run::SortedRun;

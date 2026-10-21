@@ -13,7 +13,7 @@
 //! [`SortStrategy::materialize_column_data`] / [`SortStrategy::materialize_sorted_run`]
 //! merge it (each caller merges the partitions it claims), and
 //! [`SortStrategy::get_column_data`] / [`SortStrategy::get_sorted_run`] hand out the result
-//! as a buffer-managed collection of rows or as one sorted run.
+//! as buffer-managed [`GroupData`] or as one sorted run.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -23,6 +23,7 @@ use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
 use super::encode::{NullOrder, OrderModifiers, OrderType};
+use super::group_data::{GroupData, GroupDataAppend};
 use super::merger::DEFAULT_ROW_GROUP_SIZE;
 use super::run::SortedRun;
 use super::sorter::{
@@ -67,7 +68,7 @@ pub enum StrategyGlobalState {
 pub enum StrategyLocalState {
     Hashed(Box<HashedLocalState>),
     Full(Box<SortLocalSinkState>),
-    Natural(Option<TupleDataCollection>),
+    Natural(Option<Box<(GroupData, GroupDataAppend)>>),
 }
 
 /// Appends a constant NULL BOOLEAN column, the forced payload when every input column is
@@ -95,7 +96,7 @@ fn needs_forced_payload(require_payload: bool, sort_columns: &[usize], column_co
 struct GroupSource {
     source: Option<Arc<SortSource>>,
     /// Materialized column data per merge partition (`BatchedDataCollection`).
-    column_data: Vec<(usize, TupleDataCollection)>,
+    column_data: Vec<(usize, GroupData)>,
 }
 
 impl GroupSource {
@@ -112,11 +113,11 @@ impl GroupSource {
 fn materialize_column_data(
     source: &SortSource,
     buffer_manager: &BufferManager,
-    layout: &Arc<TupleDataLayout>,
-) -> Result<Vec<(usize, TupleDataCollection)>> {
-    let mut result: Vec<(usize, TupleDataCollection)> = Vec::new();
+    types: &[LogicalType],
+) -> Result<Vec<(usize, GroupData)>> {
+    let mut result: Vec<(usize, GroupData)> = Vec::new();
     let mut local = source.local_state();
-    let mut current: Option<(usize, TupleDataCollection, crate::state::AppendState)> = None;
+    let mut current: Option<(usize, GroupData, GroupDataAppend)> = None;
     loop {
         let mut chunk = DataChunk::default();
         if !source.get_data(&mut chunk, &mut local)? {
@@ -124,31 +125,28 @@ fn materialize_column_data(
         }
         let partition = local.partition_index().unwrap_or(0);
         if current.as_ref().is_none_or(|(index, ..)| *index != partition) {
-            if let Some((index, rows, mut append)) = current.take() {
-                rows.finalize_pin_state(&mut append.pin_state);
-                result.push((index, rows));
+            if let Some((index, data, mut append)) = current.take() {
+                data.finalize_append(&mut append);
+                result.push((index, data));
             }
-            let mut rows =
-                TupleDataCollection::new(buffer_manager.clone(), Arc::clone(layout), MemoryTag::Window)?;
-            let append = rows.initialize_append(PinProperties::UnpinAfterDone);
-            current = Some((partition, rows, append));
+            let mut data = GroupData::new(buffer_manager.clone(), types.to_vec(), MemoryTag::ColumnData)?;
+            let append = data.initialize_append();
+            current = Some((partition, data, append));
         }
-        if let Some((_, rows, append)) = &mut current {
-            rows.append(append, &chunk)?;
+        if let Some((_, data, append)) = &mut current {
+            data.append(append, &chunk)?;
         }
     }
-    if let Some((index, rows, mut append)) = current.take() {
-        rows.finalize_pin_state(&mut append.pin_state);
-        result.push((index, rows));
+    if let Some((index, data, mut append)) = current.take() {
+        data.finalize_append(&mut append);
+        result.push((index, data));
     }
     Ok(result)
 }
 
 /// Combines materialized partitions into one collection in partition order
 /// (`BatchedDataCollection::FetchCollection`).
-fn combine_column_data(
-    mut column_data: Vec<(usize, TupleDataCollection)>,
-) -> Result<Option<TupleDataCollection>> {
+fn combine_column_data(mut column_data: Vec<(usize, GroupData)>) -> Result<Option<GroupData>> {
     column_data.sort_by_key(|(index, _)| *index);
     let mut partitions = column_data.into_iter().map(|(_, rows)| rows);
     let Some(mut result) = partitions.next() else {
@@ -303,8 +301,8 @@ impl SortStrategy {
             StrategyGlobalState::Natural(global) => {
                 let rows = lock(&global.rows);
                 vec![ChunkRow {
-                    chunks: rows.as_ref().map_or(0, TupleDataCollection::chunk_count),
-                    count: rows.as_ref().map_or(0, TupleDataCollection::count),
+                    chunks: rows.as_ref().map_or(0, GroupData::chunk_count),
+                    count: rows.as_ref().map_or(0, GroupData::count),
                 }]
             }
         }
@@ -390,24 +388,16 @@ impl SortStrategy {
         let Some(source) = source else {
             return Ok(());
         };
-        let layout = Arc::new(TupleDataLayout::new(
-            source_types(self),
-            ValidityType::CanHaveNull,
-        )?);
         let buffer_manager = self.sort()?.layouts().buffer_manager.clone();
-        let column_data = materialize_column_data(&source, &buffer_manager, &layout)?;
+        let column_data = materialize_column_data(&source, &buffer_manager, &source_types(self))?;
         lock(group_source).column_data.extend(column_data);
         Ok(())
     }
 
-    /// Group `group` as rows in order, once every materializing thread is done
+    /// Group `group` in order, once every materializing thread is done
     /// (`GetColumnData`); `None` if another caller took it or the group is empty. The
     /// columns are the input columns, as passed to the strategy.
-    pub fn get_column_data(
-        &self,
-        global: &StrategyGlobalState,
-        group: usize,
-    ) -> Result<Option<TupleDataCollection>> {
+    pub fn get_column_data(&self, global: &StrategyGlobalState, group: usize) -> Result<Option<GroupData>> {
         if let StrategyGlobalState::Natural(global) = global {
             return Ok(lock(&global.rows).take());
         }
@@ -422,13 +412,9 @@ impl SortStrategy {
         combine_column_data(column_data)
     }
 
-    /// Group `group` as rows in order, merged by the calling thread alone. Hashed groups
-    /// must be sorted first ([`Self::sort_column_data`]).
-    pub fn group_rows(
-        &self,
-        global: &StrategyGlobalState,
-        group: usize,
-    ) -> Result<Option<TupleDataCollection>> {
+    /// Group `group` in order, merged by the calling thread alone. Hashed groups must be
+    /// sorted first ([`Self::sort_column_data`]).
+    pub fn group_rows(&self, global: &StrategyGlobalState, group: usize) -> Result<Option<GroupData>> {
         self.materialize_column_data(global, group)?;
         self.get_column_data(global, group)
     }
@@ -896,7 +882,7 @@ pub struct NaturalSort {
 /// Global state of a [`NaturalSort`].
 #[derive(Debug, Default)]
 pub struct NaturalGlobalState {
-    rows: Mutex<Option<TupleDataCollection>>,
+    rows: Mutex<Option<GroupData>>,
 }
 
 impl NaturalSort {
@@ -911,29 +897,30 @@ impl NaturalSort {
         &self,
         chunk: &DataChunk,
         _global: &NaturalGlobalState,
-        local: &mut Option<TupleDataCollection>,
+        local: &mut Option<Box<(GroupData, GroupDataAppend)>>,
     ) -> Result<()> {
         if local.is_none() {
-            let layout = Arc::new(TupleDataLayout::new(
-                self.types.clone(),
-                ValidityType::CanHaveNull,
-            )?);
-            *local = Some(TupleDataCollection::new(
+            let mut data = GroupData::new(
                 self.buffer_manager.clone(),
-                layout,
-                MemoryTag::Window,
-            )?);
+                self.types.clone(),
+                MemoryTag::ColumnData,
+            )?;
+            let append = data.initialize_append();
+            *local = Some(Box::new((data, append)));
         }
-        if let Some(rows) = local {
-            rows.append_chunk(chunk)?;
+        if let Some(local) = local {
+            let (data, append) = &mut **local;
+            data.append(append, chunk)?;
         }
         Ok(())
     }
 
-    fn combine(global: &NaturalGlobalState, local: Option<TupleDataCollection>) -> Result<()> {
+    fn combine(global: &NaturalGlobalState, local: Option<Box<(GroupData, GroupDataAppend)>>) -> Result<()> {
         let Some(local) = local else {
             return Ok(());
         };
+        let (local, mut append) = *local;
+        local.finalize_append(&mut append);
         let mut rows = lock(&global.rows);
         if let Some(rows) = &mut *rows {
             rows.combine(local)
