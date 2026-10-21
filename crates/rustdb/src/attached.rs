@@ -61,7 +61,9 @@ pub(crate) struct AttachedDatabase {
     /// The instance's validity (a failed checkpoint of the initial database invalidates
     /// the instance).
     pub instance_validity: Arc<ValidChecker>,
-    /// Set once the database was closed (`is_closed`).
+    /// Set when closing starts (`is_closed`), so the database is closed once.
+    closing: std::sync::atomic::AtomicBool,
+    /// Set once the database is closed: its file is free for another attach.
     closed: std::sync::atomic::AtomicBool,
 }
 
@@ -144,9 +146,16 @@ impl AttachedDatabase {
     /// is on and the database and instance are still valid (`AttachedDatabase::Close`).
     /// With `CloseAction::Checkpoint` (`DETACH`) a failing checkpoint is an error.
     pub fn close(&self, checkpoint: bool, action: CloseAction) -> Result<()> {
-        if self.closed.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        if self.closing.swap(true, std::sync::atomic::Ordering::AcqRel) {
             return Ok(());
         }
+        let result = self.close_checkpoint(checkpoint, action);
+        self.closed.store(true, std::sync::atomic::Ordering::Release);
+        result
+    }
+
+    /// The checkpoint of [`AttachedDatabase::close`].
+    fn close_checkpoint(&self, checkpoint: bool, action: CloseAction) -> Result<()> {
         let create_checkpoint = checkpoint
             && self
                 .storage
@@ -478,6 +487,20 @@ impl DatabaseManager {
                             && database.name.eq_ignore_ascii_case(&name))
                 })
         {
+            // `DatabaseFilePathManager::InsertDatabasePath`: the same name with IF NOT
+            // EXISTS finds the file still held by the detached database.
+            if on_conflict == OnCreateConflict::IgnoreOnConflict
+                && existing.name.eq_ignore_ascii_case(&name)
+                && !existing.is_closed()
+                && self
+                    .get(&name)
+                    .is_none_or(|current| !Arc::ptr_eq(&current, existing))
+            {
+                return Err(Error::binder(format!(
+                    "Unique file handle conflict: Cannot attach \"{name}\" - the database file \"{path}\" is in the \
+                     process of being detached"
+                )));
+            }
             return Err(Error::binder(format!(
                 "Unique file handle conflict: Cannot attach \"{name}\" - the database file \"{path}\" is already \
                  attached by database \"{}\"",
@@ -538,6 +561,7 @@ impl DatabaseManager {
             is_initial: std::sync::atomic::AtomicBool::new(false),
             validity: ValidChecker::default(),
             instance_validity: Arc::clone(instance_validity),
+            closing: std::sync::atomic::AtomicBool::new(false),
             closed: std::sync::atomic::AtomicBool::new(false),
         });
         let mut databases = self.write();

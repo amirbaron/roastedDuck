@@ -290,11 +290,11 @@ impl Transaction {
 struct CommittedUndo {
     commit_id: u64,
     undo: UndoBuffer,
-    /// The checkpoint lock of a transaction that updated or changed the catalog: it is
-    /// held until no running transaction needs the older versions (DuckDB keeps the
-    /// `DuckTransaction`, and with it its checkpoint lock, in
-    /// `recently_committed_transactions`).
-    checkpoint_guard: Option<crate::checkpoint_lock::SharedCheckpointGuard>,
+    /// Whether the transaction updated rows or changed the catalog: DuckDB keeps such a
+    /// `DuckTransaction`, and with it its shared checkpoint lock, in
+    /// `recently_committed_transactions` until no running transaction needs the older
+    /// versions, which blocks checkpoints.
+    blocks_checkpoint: bool,
 }
 
 #[derive(Debug)]
@@ -420,6 +420,24 @@ impl TransactionManager {
         self.lock().active.len()
     }
 
+    /// Whether a committed transaction that updated rows or changed the catalog is kept
+    /// for a running transaction other than `except` (by id), which in DuckDB holds the
+    /// checkpoint lock shared until it is cleaned up (`recently_committed_transactions`).
+    pub fn retains_changes(&self, except: u64) -> bool {
+        let state = self.lock();
+        let lowest_start = state
+            .active
+            .iter()
+            .filter(|&&(id, _)| id != except)
+            .map(|&(_, start)| start)
+            .min()
+            .unwrap_or(TRANSACTION_ID_START);
+        state
+            .recently_committed
+            .iter()
+            .any(|committed| committed.blocks_checkpoint && committed.commit_id >= lowest_start)
+    }
+
     /// Commits `transaction` (`CommitTransaction`). If flushing its local storage or
     /// stamping its versions fails, the transaction is rolled back and the error returned.
     pub fn commit(&self, transaction: &Transaction) -> Result<()> {
@@ -435,22 +453,11 @@ impl TransactionManager {
             Ok(()) => {
                 self.last_commit.store(commit_id, Ordering::Release);
                 if !undo.is_empty() {
-                    // DuckDB stores the transactions that updated or changed the catalog
-                    // (`RemoveTransaction`'s `store_transaction`), checkpoint lock and all.
                     let properties = undo.properties();
-                    let checkpoint_guard = if properties.has_updates || properties.has_catalog_changes {
-                        transaction
-                            .checkpoint_guard
-                            .lock()
-                            .unwrap_or_else(PoisonError::into_inner)
-                            .take()
-                    } else {
-                        None
-                    };
                     state.recently_committed.push_back(CommittedUndo {
                         commit_id,
                         undo,
-                        checkpoint_guard,
+                        blocks_checkpoint: properties.has_updates || properties.has_catalog_changes,
                     });
                 }
                 Ok(())
@@ -524,7 +531,6 @@ impl TransactionManager {
                 cleanup.push(CleanupTask {
                     undo: committed.undo,
                     lowest_active_start: lowest_start,
-                    _checkpoint_guard: committed.checkpoint_guard,
                 });
             }
         }
@@ -537,8 +543,6 @@ impl TransactionManager {
 struct CleanupTask {
     undo: UndoBuffer,
     lowest_active_start: u64,
-    /// Released once the task is done.
-    _checkpoint_guard: Option<crate::checkpoint_lock::SharedCheckpointGuard>,
 }
 
 #[cfg(test)]

@@ -180,6 +180,15 @@ pub(crate) fn checkpoint(
             "Cannot CHECKPOINT: the current transaction has transaction local changes",
         ));
     }
+    // A committed transaction with updates or catalog changes that older transactions
+    // still need holds the checkpoint lock (`recently_committed_transactions`).
+    if !force && transactions.retains_changes(current.transaction_id) {
+        return Err(Error::new(
+            ErrorKind::Transaction,
+            "Cannot CHECKPOINT: there are other write transactions active. Try using FORCE CHECKPOINT to wait \
+             until all active transactions are finished",
+        ));
+    }
     let mode = if force {
         CheckpointMode::Force
     } else {

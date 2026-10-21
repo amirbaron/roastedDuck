@@ -670,8 +670,12 @@ impl DatabaseInstance {
         let no_wal_writes = wal.lock().no_writes();
         if self.transactions.active_count() > 0 {
             // Other transactions may need older data: a concurrent checkpoint, unless this
-            // transaction made changes they must not see; the checkpoint lock must be free.
-            if blocks_concurrent || wal.checkpoint_lock().try_exclusive().is_none() {
+            // transaction made changes they must not see; the checkpoint lock must be free,
+            // also of committed changes older transactions still need.
+            if blocks_concurrent
+                || self.transactions.retains_changes(u64::MAX)
+                || wal.checkpoint_lock().try_exclusive().is_none()
+            {
                 return Ok(());
             }
         }
