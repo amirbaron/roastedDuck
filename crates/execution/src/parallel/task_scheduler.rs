@@ -335,13 +335,30 @@ mod tests {
         }
     }
 
+    /// A task that counts its runs and wakes the query thread, as an executor's tasks
+    /// do when they finish (`ProducerToken::notify`).
+    struct NotifyingCounter(Arc<AtomicUsize>, Arc<Shared>);
+
+    impl Task for NotifyingCounter {
+        fn execute(&mut self, _: TaskExecutionMode) -> TaskExecutionResult {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            drop(self.1.lock());
+            self.1.done.notify_all();
+            TaskExecutionResult::Finished
+        }
+    }
+
     #[test]
     fn workers_and_the_producer_run_every_task() {
         let scheduler = TaskScheduler::new(4);
         let producer = scheduler.create_producer();
         let count = Arc::new(AtomicUsize::new(0));
+        // The workers' last tasks may finish after the producer started waiting: they
+        // must wake it.
         let tasks: Vec<Box<dyn Task>> = (0..100)
-            .map(|_| Box::new(Counter(Arc::clone(&count), 0)) as Box<dyn Task>)
+            .map(|_| {
+                Box::new(NotifyingCounter(Arc::clone(&count), Arc::clone(&scheduler.shared))) as Box<dyn Task>
+            })
             .collect();
         producer.schedule_tasks(tasks);
         while let Some(mut task) = producer.take_task() {
