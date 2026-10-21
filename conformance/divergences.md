@@ -12,7 +12,6 @@ happens (the porting goal is peak memory at most C++'s, never spilling more).
 
 | test | asserts | rustdb |
 |---|---|---|
-| `test/sql/outofcore/leftover_temp_files_issue_6420.test_slow` | a temporary copy of SF1 `lineitem` spills under `memory_limit='1GB'` | holds it in 996 MB without spilling (C++: 994 MB in memory + 93 MB spilled) |
 | `test/sql/tpch/dbgen_error.test` | `CALL dbgen(sf=1)` under `memory_limit='100MB'` spills to an uncreatable `temp_directory` and fails | generates SF1 within 100 MB, never touching the directory |
 | `test/issues/internal/test_5457.test` | `EXPLAIN SELECT 42` fails under `memory_limit='300KiB'` | explains it within the limit |
 | `test/sql/json/issues/read_json_memory_usage.test` | `read_json_objects` with 8 threads runs out of memory under `memory_limit='50MiB'` | reads the file within the limit |
