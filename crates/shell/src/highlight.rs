@@ -16,8 +16,6 @@ pub enum PrintIntensity {
     Bold,
     Underline,
     BoldUnderline,
-    Italic,
-    BoldItalic,
 }
 
 /// A terminal color (`PrintColor`): one of the 256 colors of most terminals, of which
@@ -570,8 +568,6 @@ pub fn try_get_print_color(name: &str) -> Result<PrintColor, String> {
 pub fn terminal_code(color: PrintColor, intensity: PrintIntensity) -> String {
     let mut terminal_code = match intensity {
         PrintIntensity::Bold => "\x1b[1m".to_owned(),
-        PrintIntensity::Italic => "\x1b[3m".to_owned(),
-        PrintIntensity::BoldItalic => "\x1b[1m\x1b[3m".to_owned(),
         PrintIntensity::Underline => "\x1b[4m".to_owned(),
         PrintIntensity::BoldUnderline => "\x1b[1m\x1b[4m".to_owned(),
         PrintIntensity::Standard => String::new(),
@@ -670,7 +666,13 @@ impl<'a> ShellHighlight<'a> {
     }
 
     /// `PrintText(text, output, color, intensity)`.
-    pub fn print_text_colored(&self, text: &str, output: PrintOutput, color: PrintColor, intensity: PrintIntensity) {
+    pub fn print_text_colored(
+        &self,
+        text: &str,
+        output: PrintOutput,
+        color: PrintColor,
+        intensity: PrintIntensity,
+    ) {
         if (color == PrintColor::STANDARD && intensity == PrintIntensity::Standard) || !is_enabled() {
             self.out.print(output, text);
             return;
@@ -703,7 +705,8 @@ impl<'a> ShellHighlight<'a> {
             error_msg = &error_msg[error_location + 7..];
         }
         let mut tokens = tokenize_error(error_msg);
-        if tokens.first().is_some_and(|token| token.start > 0) || (tokens.is_empty() && !error_msg.is_empty()) {
+        if tokens.first().is_some_and(|token| token.start > 0) || (tokens.is_empty() && !error_msg.is_empty())
+        {
             tokens.insert(
                 0,
                 HighlightToken {
@@ -738,7 +741,12 @@ impl<'a> ShellHighlight<'a> {
                 self.print_text(text, PrintOutput::Stderr, element_type);
             }
         }
-        self.print_text_colored("\n", PrintOutput::Stderr, PrintColor::STANDARD, PrintIntensity::Standard);
+        self.print_text_colored(
+            "\n",
+            PrintOutput::Stderr,
+            PrintColor::STANDARD,
+            PrintIntensity::Standard,
+        );
     }
 }
 
@@ -748,10 +756,22 @@ mod tests {
 
     #[test]
     fn terminal_codes() {
-        assert_eq!(terminal_code(PrintColor::RED, PrintIntensity::Standard), "\x1b[31m");
-        assert_eq!(terminal_code(PrintColor::GRAY, PrintIntensity::Standard), "\x1b[90m");
-        assert_eq!(terminal_code(PrintColor::DARKORANGE, PrintIntensity::Bold), "\x1b[1m\x1b[38;5;208m");
-        assert_eq!(terminal_code(PrintColor::STANDARD, PrintIntensity::Underline), "\x1b[4m");
+        assert_eq!(
+            terminal_code(PrintColor::RED, PrintIntensity::Standard),
+            "\x1b[31m"
+        );
+        assert_eq!(
+            terminal_code(PrintColor::GRAY, PrintIntensity::Standard),
+            "\x1b[90m"
+        );
+        assert_eq!(
+            terminal_code(PrintColor::DARKORANGE, PrintIntensity::Bold),
+            "\x1b[1m\x1b[38;5;208m"
+        );
+        assert_eq!(
+            terminal_code(PrintColor::STANDARD, PrintIntensity::Underline),
+            "\x1b[4m"
+        );
         assert_eq!(COLOR_INFO[208].color_name, "darkorange");
         assert_eq!(try_get_print_color("GOLD1"), Ok(PrintColor::GOLD1));
     }

@@ -152,6 +152,26 @@ pub(crate) fn instance_state(context: &ClientContext) -> Result<&InstanceState> 
 /// The object cache key of the database's loaded extensions, read by `duckdb_extensions()`.
 const LOADED_EXTENSIONS_KEY: &str = "rustdb.loaded_extensions";
 
+/// The object cache key of the extensions the client loaded itself, read by
+/// `duckdb_extensions()`.
+pub(crate) const CLIENT_EXTENSIONS_KEY: &str = "rustdb.client_extensions";
+
+/// The name and description of each extension the client loaded itself.
+pub(crate) type ClientExtensions = Mutex<Vec<(String, String)>>;
+
+/// The memory of a database's buffer manager, in bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MemoryStatus {
+    /// `memory_limit`.
+    pub memory_limit: u64,
+    /// The memory in use.
+    pub memory_usage: u64,
+    /// The bytes in the temporary directory.
+    pub swap_usage: u64,
+    /// The limit of the temporary directory, once it is in use; `None` for no limit.
+    pub swap_max: Option<u64>,
+}
+
 /// Whether the statically linked extension `name` is loaded (`ExtensionManager`).
 /// Extensions linked without functions of their own are always loaded.
 pub(crate) fn static_extension_loaded(cache: &rustdb_function::ObjectCache, name: &str) -> bool {
@@ -1759,6 +1779,43 @@ impl Database {
         }
     }
 
+    /// Records an extension the client linked and loaded itself, such as the shell's
+    /// (`DatabaseInstance::SetExtensionLoaded` after `DuckDB::LoadStaticExtension`):
+    /// `duckdb_extensions()` lists it as loaded and statically linked.
+    pub fn set_extension_loaded(&self, name: &str, description: &str) {
+        let extensions = self.client_extensions();
+        let mut extensions = extensions.lock().unwrap_or_else(PoisonError::into_inner);
+        if !extensions.iter().any(|(existing, _)| existing == name) {
+            extensions.push((name.to_owned(), description.to_owned()));
+        }
+    }
+
+    /// The extensions the client loaded, as [`Database::set_extension_loaded`] records them.
+    fn client_extensions(&self) -> Arc<ClientExtensions> {
+        self.instance
+            .object_cache
+            .get::<ClientExtensions>(CLIENT_EXTENSIONS_KEY)
+            .unwrap_or_else(|| {
+                let extensions = Arc::new(ClientExtensions::default());
+                self.instance
+                    .object_cache
+                    .put(CLIENT_EXTENSIONS_KEY.to_owned(), Arc::clone(&extensions));
+                extensions
+            })
+    }
+
+    /// The memory the database's buffer manager uses and may use
+    /// (`BufferManager::GetUsedMemory`, `GetUsedSwap`, `GetMaxSwap` and the memory limit).
+    pub fn memory_status(&self) -> MemoryStatus {
+        let buffer_manager = &self.instance.env.buffer_manager;
+        MemoryStatus {
+            memory_limit: buffer_manager.max_memory(),
+            memory_usage: buffer_manager.used_memory(),
+            swap_usage: buffer_manager.used_swap(),
+            swap_max: buffer_manager.max_swap(),
+        }
+    }
+
     /// Adds a replacement scan, tried after the built-in ones and those added before
     /// (`DBConfig::replacement_scans.push_back`).
     pub fn add_replacement_scan(&self, scan: rustdb_planner::ReplacementScan) {
@@ -1913,6 +1970,37 @@ impl Connection {
     /// transaction (DuckDB's `Connection::IsAutoCommit`).
     pub fn is_auto_commit(&self) -> bool {
         self.transactions.is_auto_commit()
+    }
+
+    /// The current value of option `name` for this connection, or DuckDB's error for an
+    /// unknown option (`ClientContext::TryGetCurrentSetting`).
+    pub fn current_setting(&self, name: &str) -> Result<Value> {
+        use rustdb_function::SettingsSource;
+        self.settings_snapshot().current_setting(name)
+    }
+
+    /// The default database and schema of the connection
+    /// (`DatabaseManager::GetDefaultDatabase` and the default of its catalog search path).
+    pub fn current_database_and_schema(&self) -> (String, String) {
+        let schema = self.search_path.first().map_or_else(
+            || rustdb_catalog::DEFAULT_SCHEMA.to_owned(),
+            |(_, schema)| schema.clone(),
+        );
+        (self.default_catalog(), schema)
+    }
+
+    /// The bytes the latest profiled query read from database files
+    /// (`QueryProfiler::GetBytesRead`).
+    pub fn bytes_read(&self) -> u64 {
+        self.profiler
+            .bytes(rustdb_common::profiling::MetricType::TotalBytesRead)
+    }
+
+    /// The bytes the latest profiled query wrote to database files
+    /// (`QueryProfiler::GetBytesWritten`).
+    pub fn bytes_written(&self) -> u64 {
+        self.profiler
+            .bytes(rustdb_common::profiling::MetricType::TotalBytesWritten)
     }
 
     /// The database's casts as this connection binds them (DuckDB's
@@ -3702,6 +3790,18 @@ impl Connection {
                     )?;
                     return Ok(StatementRun::Done(nothing()));
                 }
+                // `PragmaEnableProgressBar` and friends set the client's configuration.
+                let progress_setting = match lower.as_str() {
+                    "enable_progress_bar" => Some(("enable_progress_bar", true)),
+                    "disable_progress_bar" => Some(("enable_progress_bar", false)),
+                    "enable_print_progress_bar" => Some(("enable_progress_bar_print", true)),
+                    "disable_print_progress_bar" => Some(("enable_progress_bar_print", false)),
+                    _ => None,
+                };
+                if let Some((setting, enabled)) = progress_setting {
+                    self.settings.set(setting, &Value::boolean(enabled))?;
+                    return Ok(StatementRun::Done(nothing()));
+                }
                 if lower == "enable_optimizer" || lower == "disable_optimizer" {
                     self.settings.optimizer_disabled = lower == "disable_optimizer";
                 }
@@ -4133,10 +4233,6 @@ const NO_OP_PRAGMAS: &[&str] = &[
     "enable_profile",
     "disable_profiling",
     "disable_profile",
-    "enable_progress_bar",
-    "disable_progress_bar",
-    "enable_print_progress_bar",
-    "disable_print_progress_bar",
     "enable_object_cache",
     "disable_object_cache",
     "enable_optimizer",

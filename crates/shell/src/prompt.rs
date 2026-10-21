@@ -134,8 +134,13 @@ impl Prompt {
 
     /// `AddLiteral`.
     fn add_literal(&mut self, text: &str) {
-        if self.components.last().is_none_or(|last| last.kind != PromptComponentType::Literal) {
-            self.components.push(PromptComponent::new(PromptComponentType::Literal));
+        if self
+            .components
+            .last()
+            .is_none_or(|last| last.kind != PromptComponentType::Literal)
+        {
+            self.components
+                .push(PromptComponent::new(PromptComponentType::Literal));
         }
         if let Some(last) = self.components.last_mut() {
             last.literal.push_str(text);
@@ -143,7 +148,12 @@ impl Prompt {
     }
 
     /// `AddComponent`.
-    fn add_component(&mut self, options: &mut dyn PromptOptions, bracket_type: &str, value: &str) -> Result<()> {
+    fn add_component(
+        &mut self,
+        options: &mut dyn PromptOptions,
+        bracket_type: &str,
+        value: &str,
+    ) -> Result<()> {
         let requires_parameter = || Error::invalid_input(format!("{bracket_type} requires a parameter"));
         let component = match bracket_type {
             "setting" => {
@@ -186,7 +196,8 @@ impl Prompt {
                     "reset" => PromptComponent::new(PromptComponentType::ResetColor),
                     _ => {
                         let mut component = PromptComponent::new(PromptComponentType::SetColor);
-                        component.color = highlight::try_get_print_color(value).map_err(Error::invalid_input)?;
+                        component.color =
+                            highlight::try_get_print_color(value).map_err(Error::invalid_input)?;
                         component
                     }
                 }
@@ -204,7 +215,9 @@ impl Prompt {
                 if options.parse_setting(self, bracket_type, value)? {
                     return Ok(());
                 }
-                return Err(Error::invalid_input(format!("Unknown bracket type {bracket_type}")));
+                return Err(Error::invalid_input(format!(
+                    "Unknown bracket type {bracket_type}"
+                )));
             }
         };
         self.components.push(component);
@@ -286,7 +299,9 @@ impl Prompt {
             return String::new();
         }
         match component.kind {
-            PromptComponentType::SetColor => highlight::terminal_code(component.color, PrintIntensity::Standard),
+            PromptComponentType::SetColor => {
+                highlight::terminal_code(component.color, PrintIntensity::Standard)
+            }
             PromptComponentType::SetIntensity => {
                 highlight::terminal_code(PrintColor::STANDARD, component.intensity)
             }
@@ -360,7 +375,12 @@ impl Prompt {
     }
 
     /// `PrintPrompt`: the prompt printed piece by piece with its highlighting.
-    pub fn print_prompt(&self, context: &mut dyn PromptContext, out: &Output, output: PrintOutput) -> Result<()> {
+    pub fn print_prompt(
+        &self,
+        context: &mut dyn PromptContext,
+        out: &Output,
+        output: PrintOutput,
+    ) -> Result<()> {
         let highlight = ShellHighlight::new(out);
         let mut color = PrintColor::STANDARD;
         let mut intensity = PrintIntensity::Standard;

@@ -893,7 +893,11 @@ pub(crate) fn catalog_table_functions() -> Vec<TableFunctionSet> {
             PREPARED_STATEMENT_COLUMNS,
             prepared_statement_rows,
         ),
-        rows_function("duckdb_temporary_files", TEMPORARY_FILE_COLUMNS, temporary_file_rows),
+        rows_function(
+            "duckdb_temporary_files",
+            TEMPORARY_FILE_COLUMNS,
+            temporary_file_rows,
+        ),
         rows_function("duckdb_dependencies", DEPENDENCY_COLUMNS, dependency_rows),
         rows_function("duckdb_types", TYPE_COLUMNS, type_rows),
         secrets_function(),
@@ -1363,11 +1367,27 @@ fn extensions_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
     let config = crate::extensions::ExtensionConfig::from_settings(|name| {
         settings.as_ref()?.current_setting(name).ok()
     });
-    crate::extensions::extension_rows(&config, |name| {
-        cache
-            .as_deref()
-            .is_none_or(|cache| crate::database::static_extension_loaded(cache, name))
-    })
+    let client_extensions = cache
+        .as_deref()
+        .and_then(|cache| {
+            cache.get::<crate::database::ClientExtensions>(crate::database::CLIENT_EXTENSIONS_KEY)
+        })
+        .map(|extensions| {
+            extensions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+        })
+        .unwrap_or_default();
+    crate::extensions::extension_rows(
+        &config,
+        |name| {
+            cache
+                .as_deref()
+                .is_none_or(|cache| crate::database::static_extension_loaded(cache, name))
+        },
+        &client_extensions,
+    )
 }
 
 const PLATFORM_COLUMNS: Columns = &[("platform", varchar)];
@@ -1491,7 +1511,12 @@ fn temporary_file_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
         .buffer_manager()
         .temporary_files()
         .into_iter()
-        .map(|file| vec![text(&file.path), Value::bigint(i64::try_from(file.size).unwrap_or(i64::MAX))])
+        .map(|file| {
+            vec![
+                text(&file.path),
+                Value::bigint(i64::try_from(file.size).unwrap_or(i64::MAX)),
+            ]
+        })
         .collect())
 }
 

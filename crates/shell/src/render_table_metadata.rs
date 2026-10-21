@@ -6,8 +6,8 @@
 use std::collections::{BTreeMap, HashSet};
 
 use crate::box_renderer::{
-    DOTDOTDOT, DOTDOTDOT_LENGTH, HORIZONTAL, LDCORNER, LTCORNER, RDCORNER, RTCORNER, VERTICAL, truncate_value,
-    try_format_large_number,
+    DOTDOTDOT, DOTDOTDOT_LENGTH, HORIZONTAL, LDCORNER, LTCORNER, RDCORNER, RTCORNER, VERTICAL,
+    truncate_value, try_format_large_number,
 };
 use crate::highlight::{HighlightElementType, ShellHighlight};
 use crate::output::PrintOutput;
@@ -138,7 +138,11 @@ impl ShellTableRenderInfo {
 
     /// `LineCount`.
     fn line_count(&self) -> usize {
-        let constant_count = if self.estimated_size_length.is_some() { 6 } else { 4 };
+        let constant_count = if self.estimated_size_length.is_some() {
+            6
+        } else {
+            4
+        };
         self.column_lines() + constant_count
     }
 
@@ -205,7 +209,11 @@ impl ShellTableRenderInfo {
             for column_render in &mut self.column_renders {
                 for column in column_render {
                     for (component, &max_width) in column.iter_mut().zip(&self.max_component_widths) {
-                        Self::truncate_value_if_required(&mut component.text, &mut component.render_width, max_width);
+                        Self::truncate_value_if_required(
+                            &mut component.text,
+                            &mut component.render_width,
+                            max_width,
+                        );
                     }
                 }
             }
@@ -282,14 +290,19 @@ impl TableMetadataLine {
             let render_width_per_column = extra_render_width / render_table.column_renders.len();
             for (render_idx, column_render) in render_table.column_renders.iter().enumerate() {
                 let is_last = render_idx + 1 == render_table.column_renders.len();
-                let mut column_line = if render_idx == 0 { VERTICAL.to_owned() } else { " ".to_owned() };
+                let mut column_line = if render_idx == 0 {
+                    VERTICAL.to_owned()
+                } else {
+                    " ".to_owned()
+                };
                 if let Some(column) = column_render.get(column_idx) {
                     column_line.push(' ');
                     print(&column_line, layout_type);
                     for (component_idx, component) in column.iter().enumerate() {
                         print(&component.text, component.element_type);
                         // Padding between the components.
-                        let mut padding = " ".repeat(self.max_component_widths[component_idx] - component.render_width + 1);
+                        let mut padding =
+                            " ".repeat(self.max_component_widths[component_idx] - component.render_width + 1);
                         if extra_render_width > 0 {
                             let render_count = if is_last {
                                 extra_render_width
@@ -395,7 +408,10 @@ impl ShellState {
             }
             let split_count = max_split_count.min(max_splits);
             let mut new_renders: Vec<ColumnRenderRow> = vec![ColumnRenderRow::new(); split_count];
-            for (split_idx, column) in std::mem::take(&mut table.column_renders[0]).into_iter().enumerate() {
+            for (split_idx, column) in std::mem::take(&mut table.column_renders[0])
+                .into_iter()
+                .enumerate()
+            {
                 new_renders[split_idx % split_count].push(column);
             }
             table.column_renders = new_renders;
@@ -403,7 +419,8 @@ impl ShellState {
         }
 
         // Group the tables by database and schema.
-        let mut grouped_tables: BTreeMap<String, BTreeMap<String, Vec<ShellTableRenderInfo>>> = BTreeMap::new();
+        let mut grouped_tables: BTreeMap<String, BTreeMap<String, Vec<ShellTableRenderInfo>>> =
+            BTreeMap::new();
         for entry in table_list {
             grouped_tables
                 .entry(entry.table.database_name.clone())
@@ -460,13 +477,17 @@ impl ShellState {
                                 .max(current_table.max_component_widths.len());
                             let new_max_component_widths: Vec<usize> = (0..component_count)
                                 .map(|i| {
-                                    let existing = existing_line.max_component_widths.get(i).copied().unwrap_or(0);
-                                    let current = current_table.max_component_widths.get(i).copied().unwrap_or(0);
+                                    let existing =
+                                        existing_line.max_component_widths.get(i).copied().unwrap_or(0);
+                                    let current =
+                                        current_table.max_component_widths.get(i).copied().unwrap_or(0);
                                     existing.max(current)
                                 })
                                 .collect();
-                            let new_column_render_width =
-                                3 + new_max_component_widths.iter().map(|width| width + 1).sum::<usize>();
+                            let new_column_render_width = 3 + new_max_component_widths
+                                .iter()
+                                .map(|width| width + 1)
+                                .sum::<usize>();
                             let new_rendering_width = render_width
                                 .max(existing_line.render_width)
                                 .max(new_column_render_width);
@@ -504,7 +525,10 @@ impl ShellState {
             }
         }
 
-        let line_count: usize = metadata_displays.iter().map(|display| display.render_height).sum();
+        let line_count: usize = metadata_displays
+            .iter()
+            .map(|display| display.render_height)
+            .sum();
         let pager = self.should_use_pager_for_lines(line_count) && self.setup_pager();
         // The width of the database and schema lines.
         let mut metadata_render_width = 0;
@@ -519,7 +543,9 @@ impl ShellState {
         let mut last_displayed_schema = String::new();
         for metadata_display in &metadata_displays {
             // The database and schema names, when they change.
-            if !metadata_display.database_name.is_empty() && last_displayed_database != metadata_display.database_name {
+            if !metadata_display.database_name.is_empty()
+                && last_displayed_database != metadata_display.database_name
+            {
                 render_line_display(
                     &highlight,
                     &metadata_display.database_name,
@@ -529,7 +555,9 @@ impl ShellState {
                 last_displayed_database.clone_from(&metadata_display.database_name);
                 last_displayed_schema.clear();
             }
-            if !metadata_display.schema_name.is_empty() && last_displayed_schema != metadata_display.schema_name {
+            if !metadata_display.schema_name.is_empty()
+                && last_displayed_schema != metadata_display.schema_name
+            {
                 render_line_display(
                     &highlight,
                     &metadata_display.schema_name,
@@ -538,7 +566,8 @@ impl ShellState {
                 );
                 last_displayed_schema.clone_from(&metadata_display.schema_name);
             }
-            let group_table_list = &grouped_tables[&metadata_display.database_name][&metadata_display.schema_name];
+            let group_table_list =
+                &grouped_tables[&metadata_display.database_name][&metadata_display.schema_name];
             for line_idx in 0..metadata_display.render_height {
                 for (table_line_idx, display_line) in metadata_display.display_lines.iter().enumerate() {
                     let is_last = table_line_idx + 1 == metadata_display.display_lines.len();

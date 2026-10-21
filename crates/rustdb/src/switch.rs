@@ -1,10 +1,10 @@
 //! `switch` (DuckDB's `core_functions/scalar/map/switch.cpp`): a CASE written as a call,
 //! `switch(x, MAP {key: value, ...}, default)`, which the binder replaces by the CASE.
 
+use rustdb_ast::ExpressionType;
 use rustdb_common::{Error, Result};
 use rustdb_function::{ScalarFunction, ScalarFunctionSet};
 use rustdb_planner::ClientContext;
-use rustdb_ast::ExpressionType;
 use rustdb_planner::expression::{BoundCaseCheck, BoundCaseExpression, Expression, ExpressionKind};
 use rustdb_planner::function_binder::{RewriteExpression, add_cast_to_type, max_logical_type};
 use rustdb_types::{LogicalType, LogicalTypeId, TemplateTypeInfo, TypeInfo, Value};

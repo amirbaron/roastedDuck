@@ -1,8 +1,8 @@
 //! Ctrl-C handling (`InterruptHandler` and `ShellState::seenInterrupt`): an interrupt
 //! stops printing and interrupts the running query; a third one exits.
 
-use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 
 use rustdb::ClientHandle;
 

@@ -4,12 +4,11 @@
 
 use std::fs::File;
 use std::io::BufReader;
-use std::sync::Arc;
 use std::time::Instant;
 
 use rustdb::{
-    Connection, Database, MaterializedResult, PendingExecutionResult, QueryResult, Result, SqlStatement,
-    StatementReturnType, Value,
+    Connection, Database, PendingExecutionResult, QueryResult, Result, SqlStatement, StatementReturnType,
+    Value,
 };
 use rustdb_ast::{ExpressionType, QueryNodeKind, ShowType, SqlStatementKind, TableRefKind};
 
@@ -24,8 +23,9 @@ use crate::renderer::{
     RenderingQueryResult, ResultSource, ScannedResult, ShellRenderer, StatePrintStream, renderer_for,
 };
 use crate::state::{
-    Input, InputMode, MetadataResult, PagerMode, RenderMode, ShellColumnInfo, ShellFlag, ShellState, ShellTableInfo,
-    StartupText, SuccessState, exit, expand_path, home_directory, sql_identifier, sql_string,
+    Input, InputMode, MetadataResult, PagerMode, ReadLineVersion, RenderMode, ShellColumnInfo, ShellFlag,
+    ShellState, ShellTableInfo, StartupText, SuccessState, exit, expand_path, home_directory, sql_identifier,
+    sql_string,
 };
 
 /// What `OpenDB` does when the database cannot be opened (`ShellOpenFlags`).
@@ -95,7 +95,7 @@ impl PromptContext for ConnectionPromptContext<'_> {
             "bytes_read" => human(conn.bytes_read()),
             "bytes_written" => human(conn.bytes_written()),
             _ => {
-                let (database, schema) = conn.default_database_and_schema();
+                let (database, schema) = conn.current_database_and_schema();
                 match name {
                     "current_database" => database,
                     "current_schema" => schema,
@@ -256,7 +256,8 @@ pub fn sql_is_complete(sql: &str) -> bool {
                         next_dollar = idx;
                         break;
                     }
-                    let identifier = c.is_ascii_alphabetic() || c == b'_' || c >= 0x80 || (idx > 1 && c.is_ascii_digit());
+                    let identifier =
+                        c.is_ascii_alphabetic() || c == b'_' || c >= 0x80 || (idx > 1 && c.is_ascii_digit());
                     if !identifier {
                         break;
                     }
@@ -423,11 +424,14 @@ impl Shell {
         self.state.print_database_error(error);
     }
 
-    /// Opens the database at `filename` and connects to it, with the shell's extension
-    /// loaded.
+    /// Opens the database at `filename` and connects to it, logging warnings to the
+    /// shell (`RegisterShellLogger`).
     fn connect(&mut self, filename: &str) -> Result<()> {
-        let db = Database::open(filename, &self.state.config)?;
-        crate::extension::register_shell_logger(&db, &self.state)?;
+        let mut config = self.state.config.clone();
+        // `ShellExtension::Load` sets the API of the database.
+        config.set_option_by_name("duckdb_api", Value::varchar(crate::extension::DUCKDB_API_CLI))?;
+        let db = Database::open(filename, &config)?;
+        crate::extension::register_shell_logger(&db, &self.state.out)?;
         let conn = db.connect()?;
         interrupt::set_connection(Some(&conn.client_handle()));
         self.conn = Some(conn);
@@ -460,8 +464,10 @@ impl Shell {
                 exit(1);
             }
         }
-        if let Some(db) = &self.db {
-            crate::extension::load_shell_extension(db, &self.state.last_result);
+        if let (Some(db), Some(conn)) = (&self.db, &mut self.conn)
+            && let Err(error) = crate::extension::load_shell_extension(db, conn, &self.state.last_result)
+        {
+            self.state.print_database_error(&error.to_string());
         }
         if self.state.safe_mode {
             self.execute_query("SET enable_external_access=false");
@@ -470,6 +476,38 @@ impl Shell {
         if self.state.stdout_is_console {
             self.execute_query("PRAGMA enable_progress_bar");
             self.execute_query("PRAGMA enable_print_progress_bar");
+        }
+    }
+
+    /// `EnableSafeMode` (`-safe` and `.safe_mode`): an open database loses external
+    /// access at once.
+    pub fn enable_safe_mode(&mut self) {
+        self.state.safe_mode = true;
+        if self.db.is_some() {
+            self.execute_query("SET enable_external_access=false");
+            self.execute_query("SET lock_configuration=true");
+        }
+    }
+
+    /// `ShellLoadHistory`, with the line editor.
+    pub fn load_history(&mut self, path: &str) {
+        if self.state.rl_version == ReadLineVersion::Linenoise {
+            crate::linenoise::history_load(path);
+        }
+    }
+
+    /// `ShellSetHistoryMaxLength(2000)` and `ShellSaveHistory`, with the line editor.
+    pub fn save_history(&mut self, path: &str) {
+        if self.state.rl_version == ReadLineVersion::Linenoise {
+            crate::linenoise::history_set_max_len(2000);
+            crate::linenoise::history_save(path);
+        }
+    }
+
+    /// `ShellAddHistory`, with the line editor.
+    fn add_history(&self, line: &str) {
+        if self.state.rl_version == ReadLineVersion::Linenoise {
+            crate::linenoise::history_add(line);
         }
     }
 
@@ -561,7 +599,10 @@ impl Shell {
             } else {
                 qualified_name.clone()
             };
-            let columns: Vec<String> = table_columns.iter().map(|column| sql_identifier(column)).collect();
+            let columns: Vec<String> = table_columns
+                .iter()
+                .map(|column| sql_identifier(column))
+                .collect();
             let select = format!("SELECT {} FROM {qualified_name}", columns.join(", "));
             let saved_dest_table = std::mem::replace(&mut self.state.dest_table, destination);
             let saved_mode = self.state.mode;
@@ -581,24 +622,29 @@ impl Shell {
     /// a long query is shown while it runs.
     fn send_statement(&mut self, statement: SqlStatement, materialize: bool) -> Result<QueryResult> {
         printer::flush_stdout();
-        let show_progress = self.state.stdout_is_console;
-        let conn = self.conn();
+        self.conn();
+        let Self { db, conn, state } = self;
+        let Some(conn) = conn.as_mut() else {
+            return Err(rustdb::Error::internal("no connection"));
+        };
         let query = statement.query.clone();
         let pending = conn.pending_query(&query, statement, !materialize)?;
-        if show_progress && conn.print_progress_bar() {
-            let mut display = ProgressDisplay::new(conn.progress_bar_wait_time());
+        if state.stdout_is_console
+            && let Some(wait_time) = progress_bar_wait_time(conn)
+        {
+            let mut display = ProgressDisplay::new(wait_time);
             loop {
                 match conn.execute_task(&pending)? {
                     PendingExecutionResult::ResultReady | PendingExecutionResult::ExecutionFinished => break,
                     PendingExecutionResult::ResultNotReady | PendingExecutionResult::NoTasksAvailable => {
                         let progress = conn.client_handle().query_progress();
-                        display.update(&mut self.state, self.db.as_ref(), progress.percentage);
+                        display.update(state, db.as_ref(), progress.percentage);
                     }
                 }
             }
-            display.finish(&mut self.state, self.db.as_ref());
+            display.finish(state, db.as_ref());
         }
-        self.conn().execute_pending(&pending)
+        conn.execute_pending(&pending)
     }
 
     /// `UseDescribeRenderMode`: whether `statement` is `DESCRIBE table` or
@@ -610,7 +656,9 @@ impl Shell {
         let QueryNodeKind::Select(select_node) = &select.node.kind else {
             return None;
         };
-        if select_node.select_list.len() != 1 || select_node.select_list[0].expression_type != ExpressionType::Star {
+        if select_node.select_list.len() != 1
+            || select_node.select_list[0].expression_type != ExpressionType::Star
+        {
             return None;
         }
         let TableRefKind::Show(show) = &select_node.from_table.kind else {
@@ -640,12 +688,7 @@ impl Shell {
             );
             return Ok(SuccessState::Failure);
         }
-        let Some(mut renderer) = renderer_for(&self.state, self.state.c_mode) else {
-            return Err(rustdb::Error::new(
-                rustdb::ErrorKind::Unknown,
-                "Unsupported mode for GetRenderer",
-            ));
-        };
+        let mut renderer = renderer_for(&self.state, self.state.c_mode);
         let materialize = renderer.require_materialized_result();
         let result = match self.send_statement(statement, materialize) {
             Ok(result) => result,
@@ -657,7 +700,10 @@ impl Shell {
         let (source, return_type) = match result {
             QueryResult::Materialized(result) => {
                 let return_type = result.return_type();
-                (ResultSource::Materialized(ScannedResult::new(result)), return_type)
+                (
+                    ResultSource::Materialized(ScannedResult::new(result)),
+                    return_type,
+                )
             }
             QueryResult::Stream(stream) => {
                 let return_type = stream.return_type();
@@ -707,10 +753,13 @@ impl Shell {
             // The statement's text, without leading whitespace.
             let start = usize::try_from(statement.location).unwrap_or(0);
             let length = usize::try_from(statement.length).unwrap_or(0);
-            let text = sql.get(start..(start + length).min(sql.len())).unwrap_or_default();
+            let text = sql
+                .get(start..(start + length).min(sql.len()))
+                .unwrap_or_default();
             let text = text.trim_start_matches(|c: char| c.is_ascii() && is_space(c as u8));
             if self.state.has_flag(ShellFlag::Echo) {
-                self.state.print(format!("{}\n", if text.is_empty() { sql } else { text }));
+                self.state
+                    .print(format!("{}\n", if text.is_empty() { sql } else { text }));
             }
             self.state.c_mode = self.state.mode;
             if statement.statement_type() == rustdb::StatementType::ExplainStatement {
@@ -731,7 +780,12 @@ impl Shell {
     }
 
     /// `RenderQuery`: runs `query` and renders it with `renderer`.
-    pub fn render_query(&mut self, renderer: &mut dyn ShellRenderer, query: &str, pager: PagerMode) -> Result<SuccessState> {
+    pub fn render_query(
+        &mut self,
+        renderer: &mut dyn ShellRenderer,
+        query: &str,
+        pager: PagerMode,
+    ) -> Result<SuccessState> {
         let mut statements = match self.conn().parse_statements(query) {
             Ok(statements) => statements,
             Err(error) => {
@@ -813,14 +867,16 @@ impl Shell {
                 } else if table_name.is_empty() {
                     z.clone_into(&mut table_name);
                 } else {
-                    self.state.print(format!("ERROR: extra argument: \"{z}\".  Usage:\n"));
+                    self.state
+                        .print(format!("ERROR: extra argument: \"{z}\".  Usage:\n"));
                     metadata_command::print_help(&self.state, Some("import"));
                     return false;
                 }
             } else if z == "-v" {
                 // Verbose: ignored.
             } else if z == "-ascii" {
-                self.state.print_err("-ascii mode is no longer supported for .import");
+                self.state
+                    .print_err("-ascii mode is no longer supported for .import");
                 exit(1);
             } else if z == "-csv" {
                 "read_csv".clone_into(&mut function);
@@ -844,7 +900,8 @@ impl Shell {
         }
         if table_name.is_empty() {
             let missing = if file_name.is_empty() { "FILE" } else { "TABLE" };
-            self.state.print(format!("ERROR: missing {missing} argument. Usage:\n"));
+            self.state
+                .print(format!("ERROR: missing {missing} argument. Usage:\n"));
             metadata_command::print_help(&self.state, Some("import"));
             return false;
         }
@@ -945,18 +1002,18 @@ impl Shell {
                 let query = args[name_index].clone();
                 let (result, value) = execute_sql_single_value(self.conn(), &query);
                 let error = match result {
-                    ExecuteSqlSingleValueResult::ExecutionError => {
-                        Some(format!("Error: failed to evaluate --sql query '{query}': {value}\n"))
-                    }
+                    ExecuteSqlSingleValueResult::ExecutionError => Some(format!(
+                        "Error: failed to evaluate --sql query '{query}': {value}\n"
+                    )),
                     ExecuteSqlSingleValueResult::EmptyResult => {
                         Some("Error: --sql query returned no rows, expected single value\n".to_owned())
                     }
                     ExecuteSqlSingleValueResult::MultipleRows => {
                         Some("Error: --sql query returned multiple rows, expected single value\n".to_owned())
                     }
-                    ExecuteSqlSingleValueResult::MultipleColumns => {
-                        Some("Error: --sql query returned multiple columns, expected single value\n".to_owned())
-                    }
+                    ExecuteSqlSingleValueResult::MultipleColumns => Some(
+                        "Error: --sql query returned multiple columns, expected single value\n".to_owned(),
+                    ),
                     ExecuteSqlSingleValueResult::NullResult => {
                         Some("Error: --sql query returned a null value\n".to_owned())
                     }
@@ -975,7 +1032,8 @@ impl Shell {
             name_index += 1;
         }
         if has_sql && args.len() > name_index {
-            self.state.print_err("Error: cannot use both --sql and a FILE argument\n");
+            self.state
+                .print_err("Error: cannot use both --sql and a FILE argument\n");
             return false;
         }
         if !has_sql && args.len() > name_index {
@@ -990,7 +1048,8 @@ impl Shell {
             self.state.db_filename.clone_from(&new_filename);
             self.open_db(ShellOpenFlags::KeepAliveOnFailure);
             if self.db.is_none() {
-                self.state.print_err(format!("Error: cannot open '{new_filename}'\n"));
+                self.state
+                    .print_err(format!("Error: cannot open '{new_filename}'\n"));
             }
         }
         if self.db.is_none() {
@@ -1015,7 +1074,10 @@ impl Shell {
             self.state.print_err(format!("Error: cannot open \"{file}\"\n"));
             return false;
         };
-        let saved_input = std::mem::replace(&mut self.state.input, Input::Reader(Box::new(BufReader::new(handle))));
+        let saved_input = std::mem::replace(
+            &mut self.state.input,
+            Input::Reader(BufReader::new(Box::new(handle))),
+        );
         let saved_lineno = self.state.lineno;
         let rc = self.process_input(InputMode::File);
         self.state.input = saved_input;
@@ -1040,9 +1102,7 @@ impl Shell {
                 return false;
             }
         }
-        let Some(mut renderer) = renderer_for(&self.state, mode) else {
-            return false;
-        };
+        let mut renderer = renderer_for(&self.state, mode);
         renderer.settings_mut().show_header = false;
         let mut select = String::from("SELECT sql FROM sqlite_master WHERE ");
         if let Some(name) = name {
@@ -1174,7 +1234,10 @@ GROUP BY ALL;
             let (schema_filter_str, name_filter) = if schema_filter.is_empty() {
                 (String::new(), "WHERE ao.name LIKE ?1")
             } else {
-                ("\n  WHERE schema_name LIKE ?1".to_owned(), "WHERE ao.name LIKE ?2")
+                (
+                    "\n  WHERE schema_name LIKE ?1".to_owned(),
+                    "WHERE ao.name LIKE ?2",
+                )
             };
             let query = format!(
                 r"
@@ -1207,8 +1270,12 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
             };
             (query, values)
         } else {
-            let query = "\nSELECT name FROM\nsqlite_schema\nWHERE type='index' AND tbl_name LIKE ?1".to_owned();
-            (query, vec![args.get(1).cloned().unwrap_or_else(|| "%".to_owned())])
+            let query =
+                "\nSELECT name FROM\nsqlite_schema\nWHERE type='index' AND tbl_name LIKE ?1".to_owned();
+            (
+                query,
+                vec![args.get(1).cloned().unwrap_or_else(|| "%".to_owned())],
+            )
         };
         let conn = self.conn();
         let prepared = match conn.prepare(&query) {
@@ -1248,8 +1315,11 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
                 let mut j = i;
                 while j < names.len() {
                     let prefix = if j < print_rows { "" } else { "  " };
-                    self.state
-                        .print(format!("{prefix}{}{}", names[j], " ".repeat(maxlen - names[j].len())));
+                    self.state.print(format!(
+                        "{prefix}{}{}",
+                        names[j],
+                        " ".repeat(maxlen - names[j].len())
+                    ));
                     j += print_rows;
                 }
                 self.state.print("\n");
@@ -1344,7 +1414,7 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
     /// `RunOneSqlLine`: runs SQL text read from the input; 1 on error.
     fn run_one_sql_line(&mut self, mode: InputMode, sql: &str) -> usize {
         if mode == InputMode::Standard && !sql.is_empty() && !sql.starts_with('\x03') {
-            crate::linenoise::history_add(sql);
+            self.add_history(sql);
         }
         let timer = Timer::begin(self.state.enable_timer);
         let success = self.execute_sql(sql);
@@ -1382,16 +1452,20 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
     /// `OneInputLine`: the next line of input, `None` at the end. Interactive input is
     /// read with the line editor and a prompt.
     fn one_input_line(&mut self, is_continuation: bool) -> Option<String> {
-        if let Input::Reader(reader) = &mut self.state.input {
-            return ShellState::read_line(reader.as_mut());
+        match &mut self.state.input {
+            Input::Reader(reader) => return ShellState::read_line(reader),
+            Input::Stdin => return ShellState::read_line(&mut std::io::stdin().lock()),
+            Input::Interactive => {}
         }
-        if self.state.rl_version == crate::state::ReadLineVersion::Linenoise {
+        if self.state.rl_version == ReadLineVersion::Linenoise {
             let prompt = if is_continuation {
                 self.state.continue_prompt.clone()
             } else {
                 self.generate_prompt()
             };
-            return crate::linenoise::linenoise(&prompt);
+            let mut completion = |line: &[u8]| linenoise_completion(self.conn.as_mut(), line);
+            let line = crate::linenoise::linenoise(&prompt, Some(&mut completion))?;
+            return Some(String::from_utf8_lossy(&line).into_owned());
         }
         // Without the line editor: print the prompt and read a line.
         if is_continuation {
@@ -1430,7 +1504,9 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
         let mut err_count = 0usize;
         let mut num_ctrl_c = 0usize;
         self.state.lineno = 0;
-        let interactive = |shell: &Self| matches!(shell.state.input, Input::Interactive) && shell.state.stdin_is_interactive;
+        let interactive = |shell: &Self| {
+            matches!(shell.state.input, Input::Interactive) && shell.state.stdin_is_interactive
+        };
         while err_count == 0 || !self.state.bail_on_error(mode) || interactive(self) {
             self.state.out.flush();
             let Some(line) = self.one_input_line(!sql.is_empty()) else {
@@ -1483,7 +1559,7 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
                 }
                 if line.starts_with('.') {
                     if mode == InputMode::Standard {
-                        crate::linenoise::history_add(&line);
+                        self.add_history(&line);
                     }
                     let rc = self.do_meta_command(&line);
                     if rc == 2 {
@@ -1530,8 +1606,10 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
         let saved_lineno = self.state.lineno;
         let rc = match File::open(file) {
             Ok(handle) => {
-                let saved_input =
-                    std::mem::replace(&mut self.state.input, Input::Reader(Box::new(BufReader::new(handle))));
+                let saved_input = std::mem::replace(
+                    &mut self.state.input,
+                    Input::Reader(BufReader::new(Box::new(handle))),
+                );
                 let rc = self.process_input(mode);
                 self.state.input = saved_input;
                 rc
@@ -1586,7 +1664,10 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
         };
         for arg in &args[1..] {
             if arg.starts_with('-') {
-                let z = arg.strip_prefix('-').filter(|z| z.starts_with('-')).unwrap_or(arg);
+                let z = arg
+                    .strip_prefix('-')
+                    .filter(|z| z.starts_with('-'))
+                    .unwrap_or(arg);
                 if z == "-bom" {
                     bom = true;
                 } else if output_mode != 'e' && z == "-x" {
@@ -1668,7 +1749,8 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
     /// `ChangeDirectory` (`.cd`).
     pub fn change_directory(&mut self, path: &str) -> SuccessState {
         if std::env::set_current_dir(expand_path(path)).is_err() {
-            self.state.print_err(format!("Cannot change to directory \"{path}\"\n"));
+            self.state
+                .print_err(format!("Cannot change to directory \"{path}\"\n"));
             return SuccessState::Failure;
         }
         SuccessState::Success
@@ -1679,12 +1761,7 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
         let Some(last_result) = self.state.last_result() else {
             return Ok(MetadataResult::Success);
         };
-        let Some(mut renderer) = renderer_for(&self.state, self.state.c_mode) else {
-            return Err(rustdb::Error::new(
-                rustdb::ErrorKind::Unknown,
-                "Unsupported mode for GetRenderer",
-            ));
-        };
+        let mut renderer = renderer_for(&self.state, self.state.c_mode);
         renderer.remove_render_limits();
         let result = self.render_query_result(
             renderer.as_mut(),
@@ -1697,6 +1774,80 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
             MetadataResult::Success
         })
     }
+}
+
+/// `linenoise_completion`: dot commands complete from their names, SQL from
+/// `sql_auto_complete`; failures complete nothing.
+fn linenoise_completion(
+    conn: Option<&mut Connection>,
+    line: &[u8],
+) -> Vec<crate::linenoise::CompletionCandidate> {
+    use crate::linenoise::CompletionCandidate;
+    let text = String::from_utf8_lossy(line);
+    if text.starts_with('.') {
+        return metadata_command::metadata_completions(&text)
+            .into_iter()
+            .map(|completion| CompletionCandidate {
+                completion: completion.into_bytes(),
+                start: 0,
+                completion_type: "keyword".to_owned(),
+                score: 0,
+                extra_char: 0,
+            })
+            .collect();
+    }
+    if text.starts_with('#') {
+        return Vec::new();
+    }
+    let Some(conn) = conn else {
+        return Vec::new();
+    };
+    let Ok(result) = conn.query(&format!("CALL sql_auto_complete({})", sql_string(&text))) else {
+        return Vec::new();
+    };
+    let mut candidates = Vec::with_capacity(result.row_count());
+    for row in 0..result.row_count() {
+        let extra = result.value(4, row);
+        let extra_char = if extra.is_null() {
+            0
+        } else {
+            match value_to_string(&extra).as_bytes() {
+                [c] => *c,
+                _ => 0,
+            }
+        };
+        let number = |column: usize| {
+            result
+                .value(column, row)
+                .as_i128()
+                .and_then(|value| u64::try_from(value).ok())
+        };
+        candidates.push(CompletionCandidate {
+            completion: value_to_string(&result.value(0, row)).into_bytes(),
+            start: number(1).unwrap_or(0) as usize,
+            completion_type: value_to_string(&result.value(2, row)),
+            score: number(3).unwrap_or(0),
+            extra_char,
+        });
+    }
+    candidates
+}
+
+/// When the progress bar of a query prints, the time after which it shows
+/// (`enable_progress_bar`, `enable_progress_bar_print` and `progress_bar_time`).
+fn progress_bar_wait_time(conn: &Connection) -> Option<std::time::Duration> {
+    let enabled =
+        |name: &str| conn.current_setting(name).ok().and_then(|value| value.as_bool()) == Some(true);
+    if !enabled("enable_progress_bar") || !enabled("enable_progress_bar_print") {
+        return None;
+    }
+    let wait_time = conn
+        .current_setting("progress_bar_time")
+        .ok()
+        .and_then(|value| value.as_i128())
+        .and_then(|millis| u64::try_from(millis).ok())
+        .unwrap_or(2000);
+    Some(std::time::Duration::from_millis(wait_time))
 }
 
 /// Sets generic parameter `name` of `.import` (an `unordered_map` entry).
@@ -1736,7 +1887,9 @@ pub fn parse_qualified_name_components(input: &str) -> std::result::Result<Vec<S
                 // A quoted part: up to the closing quote, `""` escaping a quote.
                 loop {
                     match chars.next() {
-                        None => return Err(format!("Unterminated quote in qualified name! (input: {input})")),
+                        None => {
+                            return Err(format!("Unterminated quote in qualified name! (input: {input})"));
+                        }
                         Some('"') if chars.peek() == Some(&'"') => {
                             chars.next();
                             entry.push('"');
@@ -1794,7 +1947,11 @@ pub fn split_meta_command(line: &str) -> Vec<String> {
                 pos += 1;
             }
             let arg = String::from_utf8_lossy(&arg).into_owned();
-            args.push(if quote == b'"' { resolve_backslashes(&arg) } else { arg });
+            args.push(if quote == b'"' {
+                resolve_backslashes(&arg)
+            } else {
+                arg
+            });
         } else {
             // An unquoted argument, up to the next space.
             while pos < bytes.len() && !is_space(bytes[pos]) {
@@ -1805,13 +1962,6 @@ pub fn split_meta_command(line: &str) -> Vec<String> {
         }
     }
     args
-}
-
-/// A materialized result of the shell's own queries.
-pub fn query_rows(result: &MaterializedResult, column: usize) -> Vec<String> {
-    (0..result.row_count())
-        .map(|row| value_to_string(&result.value(column, row)))
-        .collect()
 }
 
 #[cfg(test)]
@@ -1831,7 +1981,10 @@ mod tests {
     #[test]
     fn meta_command_arguments() {
         assert_eq!(split_meta_command(".mode csv"), ["mode", "csv"]);
-        assert_eq!(split_meta_command(".print 'a b' \"c\\td\""), ["print", "a b", "c\td"]);
+        assert_eq!(
+            split_meta_command(".print 'a b' \"c\\td\""),
+            ["print", "a b", "c\td"]
+        );
         assert_eq!(split_meta_command(".separator \\t"), ["separator", "\t"]);
     }
 

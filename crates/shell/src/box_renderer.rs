@@ -72,20 +72,20 @@ struct ResultRenderer<'a> {
     column_idx: Option<usize>,
 }
 
-/// The type of values rendered outside a column (`invalid_type`).
-const INVALID_TYPE: LogicalType = LogicalType::INVALID;
-
 impl ResultRenderer<'_> {
     fn layout(&mut self, text: &str) {
         self.renderer.render_layout(text);
     }
 
-    fn value_type(&self) -> &LogicalType {
-        self.column_idx.map_or(&INVALID_TYPE, |column| &self.column_types[column])
+    /// The type of the column being rendered, `INVALID` outside a column
+    /// (`invalid_type`).
+    fn value_type(&self) -> LogicalType {
+        self.column_idx
+            .map_or(LogicalType::INVALID, |column| self.column_types[column].clone())
     }
 
     fn render(&mut self, render_mode: ResultRenderType, value: &str) {
-        let ty = self.value_type().clone();
+        let ty = self.value_type();
         match render_mode {
             ResultRenderType::Layout => self.renderer.render_layout(value),
             ResultRenderType::ColumnName => self.renderer.render_column_name(value),
@@ -368,7 +368,7 @@ impl BoxRendererState {
     fn initialize(&mut self, context: &dyn RenderContext) -> Result<()> {
         let mut max_width = self.config.max_width;
         if max_width == 0 {
-            max_width = if printer::is_terminal(printer::OutputStream::Stdout) {
+            max_width = if printer::stdout_is_terminal() {
                 printer::terminal_width()
             } else {
                 120
@@ -421,7 +421,11 @@ impl BoxRendererState {
     }
 
     /// `Render`.
-    pub fn render(&mut self, renderer: &mut dyn BaseResultRenderer, context: &dyn RenderContext) -> Result<()> {
+    pub fn render(
+        &mut self,
+        renderer: &mut dyn BaseResultRenderer,
+        context: &dyn RenderContext,
+    ) -> Result<()> {
         let mut ss = ResultRenderer {
             renderer,
             column_types: original_types(&self.result).to_vec(),
@@ -531,7 +535,9 @@ impl BoxRendererState {
         count: usize,
     ) -> Result<Vec<Vec<RenderCell>>> {
         let null_render_length = render_width(&self.config.null_value);
-        let mut rows: Vec<Vec<RenderCell>> = (0..count).map(|_| Vec::with_capacity(chunk.column_count())).collect();
+        let mut rows: Vec<Vec<RenderCell>> = (0..count)
+            .map(|_| Vec::with_capacity(chunk.column_count()))
+            .collect();
         for c in 0..chunk.column_count() {
             let source = chunk.column(c);
             let strings = context.cast_to_varchar(source, offset + count)?;
@@ -646,7 +652,11 @@ impl BoxRendererState {
         }
         for (i, chunk) in chunks[first_chunk..].iter().enumerate() {
             // Skip the rows of the first chunk above the bottom rows.
-            let offset = if i == 0 { fetched_row_count - self.bottom_rows } else { 0 };
+            let offset = if i == 0 {
+                fetched_row_count - self.bottom_rows
+            } else {
+                0
+            };
             let rows = self.convert_chunk(context, chunk, offset, chunk.len() - offset)?;
             bottom_collection.extend(rows);
         }
@@ -740,7 +750,11 @@ impl BoxRendererState {
         // The digits before any decimal point.
         let character_count = bytes.iter().take_while(|c| c.is_ascii_digit()).count();
         // The position of the first thousand separator.
-        let mut separator_position = if character_count % 3 == 0 { 3 } else { character_count % 3 };
+        let mut separator_position = if character_count % 3 == 0 {
+            3
+        } else {
+            character_count % 3
+        };
         let mut result = Vec::with_capacity(bytes.len() + character_count / 3);
         for (c, &byte) in bytes.iter().enumerate().take(character_count) {
             if c == separator_position
@@ -793,7 +807,12 @@ impl BoxRendererState {
     }
 
     /// `PotentiallyExpandRow`: a value too wide for its column continues on extra rows.
-    fn potentially_expand_row(&self, mut row: BoxRenderRow, rows: &mut Vec<BoxRenderRow>, is_first_row: bool) {
+    fn potentially_expand_row(
+        &self,
+        mut row: BoxRenderRow,
+        rows: &mut Vec<BoxRenderRow>,
+        is_first_row: bool,
+    ) {
         let max_rows_per_row = self.max_rows_per_row;
         let mut extra_rows: Vec<BoxRenderRow> = Vec::new();
         for c in 0..row.values.len() {
@@ -816,8 +835,12 @@ impl BoxRendererState {
             let mut annotations = std::mem::take(&mut row.values[c].annotations);
             let mut annotation_idx = 0;
             let mut active_render_mode = ResultRenderType::Value;
-            row.values[c].text =
-                truncate_value(&full_value, self.column_widths[c], &mut current_pos, &mut current_render_width);
+            row.values[c].text = truncate_value(
+                &full_value,
+                self.column_widths[c],
+                &mut current_pos,
+                &mut current_render_width,
+            );
             row.values[c].render_width = Some(current_render_width);
             row.values[c].decomposed = true;
             while annotation_idx < annotations.len() && annotations[annotation_idx].start < current_pos {
@@ -842,7 +865,8 @@ impl BoxRendererState {
                     }
                     extra_rows.push(extra_row);
                 }
-                let can_add_extra_row = current_row + 1 < extra_rows.len() || extra_rows.len() < max_rows_per_row;
+                let can_add_extra_row =
+                    current_row + 1 < extra_rows.len() || extra_rows.len() < max_rows_per_row;
                 let extra_value = &mut extra_rows[current_row].values[c];
                 current_row += 1;
                 let start_pos = current_pos;
@@ -962,12 +986,16 @@ impl BoxRendererState {
                 // Shortening suffices: shorten the widest columns towards the same width.
                 let mut shorten_amount_required_map: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
                 for (col_idx, &amount) in max_shorten_amount.iter().enumerate() {
-                    shorten_amount_required_map.entry(amount).or_default().push(col_idx);
+                    shorten_amount_required_map
+                        .entry(amount)
+                        .or_default()
+                        .push(col_idx);
                 }
                 let mut actual_shorten_amounts = vec![0; max_shorten_amount.len()];
                 while shorten_amount_required > 0 {
                     // The columns that can shrink the most.
-                    let Some((&largest_width, column_list)) = shorten_amount_required_map.iter().next_back() else {
+                    let Some((&largest_width, column_list)) = shorten_amount_required_map.iter().next_back()
+                    else {
                         break;
                     };
                     let column_list = column_list.clone();
@@ -1123,7 +1151,9 @@ impl BoxRendererState {
         line.push_str(left_corner);
         let mut column_index = 0;
         for k in 0..self.total_render_length - 2 {
-            if column_index < self.column_boundary_positions.len() && k == self.column_boundary_positions[column_index] {
+            if column_index < self.column_boundary_positions.len()
+                && k == self.column_boundary_positions[column_index]
+            {
                 line.push_str(boundary);
                 column_index += 1;
             } else {
@@ -1469,7 +1499,12 @@ impl BoxRendererState {
 /// `BoxRenderer::TruncateValue`: the part of `value` from `pos` that fits in
 /// `column_width` columns given `current_render_width` used already, up to a newline
 /// (which is skipped). Advances `pos` and `current_render_width`.
-pub fn truncate_value(value: &str, column_width: usize, pos: &mut usize, current_render_width: &mut usize) -> String {
+pub fn truncate_value(
+    value: &str,
+    column_width: usize,
+    pos: &mut usize,
+    current_render_width: &mut usize,
+) -> String {
     let start_pos = *pos;
     let bytes = value.as_bytes();
     while *pos < value.len() {
@@ -1665,7 +1700,8 @@ fn process_json(value: &str, handler: &mut dyn JsonHandler) -> bool {
                         can_parse_value = c == b'[';
                     }
                     b'}' | b']' => {
-                        let matching = matches!((separators.last(), c), (Some(b'{'), b'}') | (Some(b'['), b']'));
+                        let matching =
+                            matches!((separators.last(), c), (Some(b'{'), b'}') | (Some(b'['), b']'));
                         if !matching {
                             return false;
                         }
@@ -1849,7 +1885,11 @@ impl JsonFormatter {
     }
 
     fn add_literal_character(&mut self, c: u8) {
-        if self.components.last().is_none_or(|last| last.kind != JsonComponentType::Literal) {
+        if self
+            .components
+            .last()
+            .is_none_or(|last| last.kind != JsonComponentType::Literal)
+        {
             self.push(JsonComponentType::Literal, b"");
         }
         if let Some(last) = self.components.last_mut() {
@@ -1900,7 +1940,12 @@ impl JsonFormatter {
     }
 
     /// `FormatComponent`.
-    fn format_component(&self, format_state: &mut FormatState, component: &JsonComponent, inline_mode: InlineMode) {
+    fn format_component(
+        &self,
+        format_state: &mut FormatState,
+        component: &JsonComponent,
+        inline_mode: InlineMode,
+    ) {
         let components = &self.components;
         let c = format_state.component_idx;
         let max_width = format_state.max_width;
@@ -1935,30 +1980,30 @@ impl JsonFormatter {
                         peek_depth -= 1;
                     }
                     render_size += bytes_render_width(&peek_component.text);
-                    if matches!(peek_component.kind, JsonComponentType::Comma | JsonComponentType::Colon) {
+                    if matches!(
+                        peek_component.kind,
+                        JsonComponentType::Comma | JsonComponentType::Colon
+                    ) {
                         render_size += 1;
                     }
                     peek_idx += 1;
                 }
                 if component.text == b"[" {
                     // Arrays always inline unless they hold objects.
+                    // DuckDB resets the depth for every component, so the first closing
+                    // bracket ends the scan.
                     peek_idx = c + 1;
                     while peek_idx < components.len() {
                         let peek_component = &components[peek_idx];
-                        peek_depth = 0;
-                        if peek_component.kind == JsonComponentType::BracketOpen {
-                            if peek_component.text == b"{" {
-                                // An object within the array.
-                                break;
-                            }
-                            peek_depth += 1;
+                        if peek_component.kind == JsonComponentType::BracketOpen
+                            && peek_component.text == b"{"
+                        {
+                            // An object within the array.
+                            break;
                         }
                         if peek_component.kind == JsonComponentType::BracketClose {
-                            if peek_depth == 0 {
-                                inline_child_mode = InlineMode::InlinedMultiLine;
-                                break;
-                            }
-                            peek_depth -= 1;
+                            inline_child_mode = InlineMode::InlinedMultiLine;
+                            break;
                         }
                         peek_idx += 1;
                     }
@@ -2037,7 +2082,10 @@ impl JsonFormatter {
                             break;
                         }
                         render_size += bytes_render_width(&peek_component.text);
-                        if matches!(peek_component.kind, JsonComponentType::Comma | JsonComponentType::Colon) {
+                        if matches!(
+                            peek_component.kind,
+                            JsonComponentType::Comma | JsonComponentType::Colon
+                        ) {
                             render_size += 1;
                         }
                         peek_idx += 1;
@@ -2046,7 +2094,11 @@ impl JsonFormatter {
                         Self::add_space(format_state);
                         for inline_idx in c + 1..peek_idx {
                             format_state.component_idx = inline_idx;
-                            self.format_component(format_state, &components[inline_idx], InlineMode::InlinedSingleLine);
+                            self.format_component(
+                                format_state,
+                                &components[inline_idx],
+                                InlineMode::InlinedSingleLine,
+                            );
                         }
                         format_state.component_idx = peek_idx - 1;
                         return;

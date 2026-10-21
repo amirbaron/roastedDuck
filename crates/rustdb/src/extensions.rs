@@ -9,32 +9,59 @@ use rustdb_common::{Error, ErrorKind, Result};
 /// The extensions DuckDB knows, with their descriptions (`internal_extensions`).
 const DEFAULT_EXTENSIONS: [(&str, &str); 30] = [
     ("core_functions", "Core function library"),
-    ("icu", "Adds support for time zones and collations using the ICU library"),
+    (
+        "icu",
+        "Adds support for time zones and collations using the ICU library",
+    ),
     ("excel", "Adds support for Excel-like format strings"),
     ("parquet", "Adds support for reading and writing parquet files"),
     ("tpch", "Adds TPC-H data generation and query support"),
     ("tpcds", "Adds TPC-DS data generation and query support"),
-    ("httpfs", "Adds support for reading and writing files over a HTTP(S) connection"),
+    (
+        "httpfs",
+        "Adds support for reading and writing files over a HTTP(S) connection",
+    ),
     ("json", "Adds support for JSON operations"),
     ("autocomplete", "Adds support for autocomplete in the shell"),
     ("motherduck", "Enables motherduck integration with the system"),
     ("mysql_scanner", "Adds support for connecting to a MySQL database"),
-    ("odbc_scanner", "Adds support for connecting to remote databases over ODBC"),
-    ("sqlite_scanner", "Adds support for reading and writing SQLite database files"),
-    ("postgres_scanner", "Adds support for connecting to a Postgres database"),
+    (
+        "odbc_scanner",
+        "Adds support for connecting to remote databases over ODBC",
+    ),
+    (
+        "sqlite_scanner",
+        "Adds support for reading and writing SQLite database files",
+    ),
+    (
+        "postgres_scanner",
+        "Adds support for connecting to a Postgres database",
+    ),
     ("inet", "Adds support for IP-related data types and functions"),
-    ("spatial", "Geospatial extension that adds support for working with spatial data and functions"),
+    (
+        "spatial",
+        "Geospatial extension that adds support for working with spatial data and functions",
+    ),
     ("aws", "Provides features that depend on the AWS SDK"),
-    ("azure", "Adds a filesystem abstraction for Azure blob storage to DuckDB"),
+    (
+        "azure",
+        "Adds a filesystem abstraction for Azure blob storage to DuckDB",
+    ),
     ("encodings", "All unicode encodings to UTF-8"),
     ("iceberg", "Adds support for Apache Iceberg"),
-    ("vss", "Adds indexing support to accelerate Vector Similarity Search"),
+    (
+        "vss",
+        "Adds indexing support to accelerate Vector Similarity Search",
+    ),
     ("delta", "Adds support for Delta Lake"),
     ("fts", "Adds support for Full-Text Search Indexes"),
     ("ui", "Adds local UI for DuckDB"),
     ("ducklake", "Adds support for DuckLake, SQL as a Lakehouse Format"),
     ("quack", "The DuckDB 'Quack' Client/Server Protocol"),
-    ("vortex", "Adds support for reading and writing files using the Vortex file format"),
+    (
+        "vortex",
+        "Adds support for reading and writing files using the Vortex file format",
+    ),
     ("lance", "Adds support for querying Lance datasets"),
     ("avro", "Adds support for reading Avro files"),
     ("unity_catalog", "Adds support for connecting to Unity Catalog"),
@@ -82,7 +109,10 @@ fn is_full_path(extension: &str) -> bool {
 /// `CreateSuggestions`: the candidates message, and whether the name is an extension.
 fn create_suggestions(extension: &str) -> (String, bool) {
     let lower = extension.to_lowercase();
-    let mut candidates: Vec<String> = DEFAULT_EXTENSIONS.iter().map(|(name, _)| (*name).to_owned()).collect();
+    let mut candidates: Vec<String> = DEFAULT_EXTENSIONS
+        .iter()
+        .map(|(name, _)| (*name).to_owned())
+        .collect();
     candidates.extend(ALIASES.iter().map(|(alias, _)| (*alias).to_owned()));
     let closest = top_n_jaro_winkler(&candidates, &lower);
     if closest.contains(&lower) {
@@ -155,10 +185,12 @@ impl ExtensionConfig {
                 .filter(|text| !text.is_empty())
         };
         let configured = setting("extension_directories").and_then(|value| {
-            value
-                .children()?
-                .iter()
-                .find_map(|directory| directory.to_varchar().ok().filter(|directory| !directory.is_empty()))
+            value.children()?.iter().find_map(|directory| {
+                directory
+                    .to_varchar()
+                    .ok()
+                    .filter(|directory| !directory.is_empty())
+            })
         });
         let base = text("extension_directory")
             .or(configured)
@@ -230,7 +262,9 @@ fn install_extension(info: &LoadInfo, config: &ExtensionConfig) -> Result<()> {
         REPOSITORIES
             .iter()
             .find(|(name, _)| *name == info.repository)
-            .map(|(_, path)| Repository { path: (*path).to_owned() })
+            .map(|(_, path)| Repository {
+                path: (*path).to_owned(),
+            })
     } else {
         Some(Repository {
             path: info.repository.clone(),
@@ -252,7 +286,9 @@ fn install_extension(info: &LoadInfo, config: &ExtensionConfig) -> Result<()> {
         return check_origin(&local_path, &name, extension, repository.as_ref());
     }
     if is_full_path(extension) && repository.is_some() {
-        return Err(Error::invalid_input("Cannot pass both a repository and a full path url"));
+        return Err(Error::invalid_input(
+            "Cannot pass both a repository and a full path url",
+        ));
     }
     if !is_full_path(extension) && repository.is_none() {
         repository = Some(Repository {
@@ -274,7 +310,11 @@ fn install_extension(info: &LoadInfo, config: &ExtensionConfig) -> Result<()> {
     let versioned = if info.version.is_empty() {
         format!("/{VERSION_DIRECTORY}/{}/{name}.duckdb_extension.gz", platform())
     } else {
-        format!("/{name}/{}/{VERSION_DIRECTORY}/{}/{name}.duckdb_extension.gz", info.version, platform())
+        format!(
+            "/{name}/{}/{VERSION_DIRECTORY}/{}/{name}.duckdb_extension.gz",
+            info.version,
+            platform()
+        )
     };
     let url = format!("{}{versioned}", repository.path);
     if repository.path.starts_with("http://") || repository.path.starts_with("https://") {
@@ -285,7 +325,12 @@ fn install_extension(info: &LoadInfo, config: &ExtensionConfig) -> Result<()> {
 }
 
 /// `ThrowErrorOnMismatchingExtensionOrigin` for an installed extension.
-fn check_origin(local_path: &str, name: &str, extension: &str, repository: Option<&Repository>) -> Result<()> {
+fn check_origin(
+    local_path: &str,
+    name: &str,
+    extension: &str,
+    repository: Option<&Repository>,
+) -> Result<()> {
     let info_path = format!("{local_path}.info");
     if !std::path::Path::new(&info_path).exists() {
         return Ok(());
@@ -324,7 +369,9 @@ fn direct_install(path: &str, name: &str) -> Result<()> {
     if !exists {
         return Err(Error::new(
             ErrorKind::Io,
-            format!("Failed to install local extension \"{name}\", no access to the file at PATH \"{file}\"\n"),
+            format!(
+                "Failed to install local extension \"{name}\", no access to the file at PATH \"{file}\"\n"
+            ),
         ));
     }
     Err(Error::not_implemented(format!(
@@ -348,7 +395,9 @@ fn install_from_http_url(url: &str, name: &str) -> Result<()> {
         // The request itself failed.
         Err(request_error) => Error::new(
             ErrorKind::Io,
-            format!("Failed to download extension \"{name}\" at URL \"{url}\"\n{message} (ERROR {request_error})"),
+            format!(
+                "Failed to download extension \"{name}\" at URL \"{url}\"\n{message} (ERROR {request_error})"
+            ),
         ),
         // The server responded with an error status.
         Ok(status) => Error::new(
@@ -376,7 +425,9 @@ fn http_get_status(url: &str) -> std::result::Result<u16, String> {
     let stream = (host, port)
         .to_socket_addrs()
         .ok()
-        .and_then(|mut addresses| addresses.find_map(|address| TcpStream::connect_timeout(&address, timeout).ok()))
+        .and_then(|mut addresses| {
+            addresses.find_map(|address| TcpStream::connect_timeout(&address, timeout).ok())
+        })
         .ok_or_else(|| CONNECTION_ERROR.to_owned())?;
     let io_error = |error: std::io::Error| error.to_string();
     stream.set_read_timeout(Some(timeout)).map_err(io_error)?;
@@ -388,7 +439,9 @@ fn http_get_status(url: &str) -> std::result::Result<u16, String> {
     )
     .map_err(io_error)?;
     let mut status_line = String::new();
-    BufReader::new(&stream).read_line(&mut status_line).map_err(io_error)?;
+    BufReader::new(&stream)
+        .read_line(&mut status_line)
+        .map_err(io_error)?;
     status_line
         .split_whitespace()
         .nth(1)
@@ -521,7 +574,9 @@ fn read_install_info(path: &str, name: &str) -> Result<InstallInfo> {
     if bytes.is_empty() {
         return Err(Error::new(
             ErrorKind::Io,
-            format!("Failed to read info file for '{name}' extension: '{path}'.\nThe file appears to be empty!\n{hint}"),
+            format!(
+                "Failed to read info file for '{name}' extension: '{path}'.\nThe file appears to be empty!\n{hint}"
+            ),
         ));
     }
     rustdb_serde::binary::BinaryDeserializer::deserialize::<InstallInfo>(&bytes).map_err(|error| {
@@ -550,10 +605,12 @@ fn repository_name(url: &str) -> String {
 
 /// The rows of `duckdb_extensions()` (`DuckDBExtensionsInit`): the extensions DuckDB
 /// knows, those installed in the extension directory and the loaded ones, by name.
-/// `is_loaded` tells whether a statically linked extension is loaded.
+/// `is_loaded` tells whether a statically linked extension is loaded; `client_extensions`
+/// are the names and descriptions of the extensions the client linked and loaded.
 pub(crate) fn extension_rows(
     config: &ExtensionConfig,
     is_loaded: impl Fn(&str) -> bool,
+    client_extensions: &[(String, String)],
 ) -> Result<Vec<Vec<rustdb_types::Value>>> {
     use rustdb_types::{LogicalType, Value};
     struct Information {
@@ -576,7 +633,11 @@ pub(crate) fn extension_rows(
             Information {
                 loaded,
                 installed: linked,
-                file_path: if linked { "(BUILT-IN)".to_owned() } else { String::new() },
+                file_path: if linked {
+                    "(BUILT-IN)".to_owned()
+                } else {
+                    String::new()
+                },
                 install_mode: if linked {
                     InstallMode::StaticallyLinked
                 } else {
@@ -591,6 +652,21 @@ pub(crate) fn extension_rows(
                     .collect(),
                 // A loaded built-in extension reports the library version.
                 extension_version: if loaded { version.to_owned() } else { String::new() },
+            },
+        );
+    }
+    for (name, description) in client_extensions {
+        extensions.insert(
+            name.clone(),
+            Information {
+                loaded: true,
+                installed: true,
+                file_path: "(BUILT-IN)".to_owned(),
+                install_mode: InstallMode::StaticallyLinked,
+                installed_from: String::new(),
+                description: description.clone(),
+                aliases: Vec::new(),
+                extension_version: version.to_owned(),
             },
         );
     }

@@ -246,7 +246,10 @@ impl AttachedDatabase {
                 self.log_manager.log_global(
                     "",
                     rustdb_function::logging::LogLevel::Error,
-                    &format!("Silent exception in AttachedDatabase::Close():\t{}", error.raw_message()),
+                    &format!(
+                        "Silent exception in AttachedDatabase::Close():\t{}",
+                        error.raw_message()
+                    ),
                 );
                 Ok(())
             }

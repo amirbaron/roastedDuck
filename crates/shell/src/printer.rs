@@ -5,19 +5,9 @@
 use std::io::{BufWriter, IsTerminal, Stdout, Write};
 use std::sync::{LazyLock, Mutex, PoisonError};
 
-/// A standard output stream (DuckDB's `OutputStream`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OutputStream {
-    Stdout,
-    Stderr,
-}
-
-/// `Printer::IsTerminal`.
-pub fn is_terminal(stream: OutputStream) -> bool {
-    match stream {
-        OutputStream::Stdout => std::io::stdout().is_terminal(),
-        OutputStream::Stderr => std::io::stderr().is_terminal(),
-    }
+/// `Printer::IsTerminal(STREAM_STDOUT)`.
+pub fn stdout_is_terminal() -> bool {
+    std::io::stdout().is_terminal()
 }
 
 /// `Printer::TerminalWidth`: the column count of the terminal on standard input, 120 if
@@ -29,7 +19,11 @@ pub fn terminal_width() -> usize {
     unsafe {
         libc::ioctl(0, libc::TIOCGWINSZ, &raw mut size);
     }
-    if size.ws_col == 0 { 120 } else { usize::from(size.ws_col) }
+    if size.ws_col == 0 {
+        120
+    } else {
+        usize::from(size.ws_col)
+    }
 }
 
 /// C's `stdout`: buffered unless it is a terminal, where every write goes out at once

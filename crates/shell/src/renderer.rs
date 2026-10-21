@@ -17,10 +17,10 @@ use crate::box_renderer::{
 use crate::highlight::{HighlightElementType, ShellHighlight};
 use crate::interrupt;
 use crate::output::{Output, PrintOutput};
-use crate::render_context::{RenderContext, string_column};
+use crate::render_context::RenderContext;
 use crate::state::{
-    LargeNumberRendering, PagerMode, RenderMode, ShellColumnInfo, ShellFlag, ShellState, ShellTableInfo, SuccessState,
-    sql_identifier,
+    LargeNumberRendering, PagerMode, RenderMode, ShellColumnInfo, ShellFlag, ShellState, ShellTableInfo,
+    SuccessState, sql_identifier,
 };
 
 /// A materialized result with the position of its scan (`MaterializedQueryResult` and
@@ -194,7 +194,11 @@ impl RenderingQueryResult {
     }
 
     /// `TryConvertChunk`: fetches and converts the next chunk; `false` at the end.
-    fn try_convert_chunk(&mut self, renderer: &dyn ShellRenderer, conn: &mut Connection) -> Result<bool> {
+    fn try_convert_chunk<R: ShellRenderer + ?Sized>(
+        &mut self,
+        renderer: &R,
+        conn: &mut Connection,
+    ) -> Result<bool> {
         if self.exhausted_result {
             return Ok(false);
         }
@@ -228,10 +232,10 @@ impl RenderingQueryResult {
 
     /// The row at `cursor` (`RenderingResultIterator`), loading chunks as needed; `None`
     /// past the end.
-    fn row(
+    fn row<R: ShellRenderer + ?Sized>(
         &mut self,
         cursor: &mut RowCursor,
-        renderer: &dyn ShellRenderer,
+        renderer: &R,
         conn: &mut Connection,
     ) -> Result<Option<RowData>> {
         while cursor.row_index >= self.loaded_row_count {
@@ -418,7 +422,12 @@ pub trait ShellRenderer {
     fn remove_render_limits(&mut self) {}
 
     /// `Analyze`: work done before rendering, such as sizing columns.
-    fn analyze(&mut self, state: &mut ShellState, result: &mut RenderingQueryResult, conn: &mut Connection) -> Result<()> {
+    fn analyze(
+        &mut self,
+        state: &mut ShellState,
+        result: &mut RenderingQueryResult,
+        conn: &mut Connection,
+    ) -> Result<()> {
         let _ = (state, result, conn);
         Ok(())
     }
@@ -607,7 +616,12 @@ fn render_column_row<R: ColumnLayout>(renderer: &R, out: &mut dyn PrintStream, r
         if c > 0 {
             out.print(renderer.column_separator());
         }
-        render_aligned_value(out, value, column_state.column_width[c], column_state.alignment(c));
+        render_aligned_value(
+            out,
+            value,
+            column_state.column_width[c],
+            column_state.alignment(c),
+        );
     }
     out.print(renderer.row_separator());
 }
@@ -904,7 +918,11 @@ column_renderer!(ModeLatexRenderer, {
         let column_count = metadata.column_count();
         out.print("\\begin{tabular}{|");
         for type_name in &metadata.type_names {
-            out.print(if ShellState::column_type_is_integer(type_name) { "r" } else { "l" });
+            out.print(if ShellState::column_type_is_integer(type_name) {
+                "r"
+            } else {
+                "l"
+            });
         }
         out.print("|}\n");
         out.print("\\hline\n");
@@ -1341,7 +1359,10 @@ impl ModeJsonRenderer {
         }
         matches!(
             ty.id(),
-            LogicalTypeId::UBigInt | LogicalTypeId::HugeInt | LogicalTypeId::UHugeInt | LogicalTypeId::Decimal
+            LogicalTypeId::UBigInt
+                | LogicalTypeId::HugeInt
+                | LogicalTypeId::UHugeInt
+                | LogicalTypeId::Decimal
         )
     }
 
@@ -1576,7 +1597,10 @@ impl ShellRenderer for ModePrettyRenderer {
                     }
                 }
                 line.push(c);
-                if n_paren == 1 && c_end == 0 && (c == b'(' || c == b'\n' || (c == b',' && !ws_to_eol(&z[i + 1..]))) {
+                if n_paren == 1
+                    && c_end == 0
+                    && (c == b'(' || c == b'\n' || (c == b',' && !ws_to_eol(&z[i + 1..])))
+                {
                     if c == b'\n' {
                         line.pop();
                     }
@@ -1696,7 +1720,9 @@ impl ModeDuckBoxRenderer {
         config.large_number_rendering = match large_rendering {
             LargeNumberRendering::Footer => box_renderer::LargeNumberRendering::Footer,
             LargeNumberRendering::All => box_renderer::LargeNumberRendering::All,
-            LargeNumberRendering::None | LargeNumberRendering::Default => box_renderer::LargeNumberRendering::None,
+            LargeNumberRendering::None | LargeNumberRendering::Default => {
+                box_renderer::LargeNumberRendering::None
+            }
         };
         "use .last to show entire result".clone_into(&mut config.hidden_rows_hint);
         Self {
@@ -1722,9 +1748,16 @@ impl ShellRenderer for ModeDuckBoxRenderer {
         self.config.max_width = usize::MAX;
     }
 
-    fn analyze(&mut self, _state: &mut ShellState, result: &mut RenderingQueryResult, conn: &mut Connection) -> Result<()> {
+    fn analyze(
+        &mut self,
+        _state: &mut ShellState,
+        result: &mut RenderingQueryResult,
+        conn: &mut Connection,
+    ) -> Result<()> {
         let ResultSource::Materialized(scanned) = &result.source else {
-            return Err(rustdb::Error::internal("duckbox rendering needs a materialized result"));
+            return Err(rustdb::Error::internal(
+                "duckbox rendering needs a materialized result",
+            ));
         };
         match BoxRendererState::prepare(
             self.config.clone(),
@@ -1751,10 +1784,9 @@ impl ShellRenderer for ModeDuckBoxRenderer {
         }
         // A set `.maxwidth` pages results wider than the terminal.
         if self.config.max_width != 0
-            && self
-                .render_state
-                .as_ref()
-                .is_some_and(|render_state| render_state.total_render_width() > self.settings.max_render_width)
+            && self.render_state.as_ref().is_some_and(|render_state| {
+                render_state.total_render_width() > self.settings.max_render_width
+            })
         {
             return Ok(true);
         }
@@ -1781,7 +1813,9 @@ impl ShellRenderer for ModeDuckBoxRenderer {
         };
         let rendered = if self.error_str.is_empty() {
             match &mut self.render_state {
-                Some(render_state) => render_state.render(&mut renderer, conn).map_err(|error| error.to_string()),
+                Some(render_state) => render_state
+                    .render(&mut renderer, conn)
+                    .map_err(|error| error.to_string()),
                 None => Ok(()),
             }
         } else {
@@ -1824,7 +1858,9 @@ impl ShellRenderer for ModeDescribeRenderer {
         _conn: &mut Connection,
     ) -> Result<SuccessState> {
         let ResultSource::Materialized(scanned) = &result.source else {
-            return Err(rustdb::Error::internal("DESCRIBE rendering needs a materialized result"));
+            return Err(rustdb::Error::internal(
+                "DESCRIBE rendering needs a materialized result",
+            ));
         };
         let mut table = ShellTableInfo {
             table_name: state.describe_table_name.clone(),
@@ -1915,10 +1951,10 @@ impl ShellRenderer for ModeTrashRenderer {
     }
 }
 
-/// `ShellState::GetRenderer(mode)`; `None` for the modes without a renderer.
-pub fn renderer_for(state: &ShellState, mode: RenderMode) -> Option<Box<dyn ShellRenderer>> {
+/// `ShellState::GetRenderer(mode)`.
+pub fn renderer_for(state: &ShellState, mode: RenderMode) -> Box<dyn ShellRenderer> {
     let settings = || RendererSettings::new(state);
-    Some(match mode {
+    match mode {
         RenderMode::Line => Box::new(ModeLineRenderer {
             settings: settings(),
             header_width: 0,
@@ -1954,6 +1990,5 @@ pub fn renderer_for(state: &ShellState, mode: RenderMode) -> Option<Box<dyn Shel
         RenderMode::Duckbox => Box::new(ModeDuckBoxRenderer::new(state)),
         RenderMode::Describe => Box::new(ModeDescribeRenderer { settings: settings() }),
         RenderMode::Trash => Box::new(ModeTrashRenderer { settings: settings() }),
-        RenderMode::Eqp => return None,
-    })
+    }
 }

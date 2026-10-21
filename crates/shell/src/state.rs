@@ -8,13 +8,14 @@ use std::io::{BufRead, BufReader, BufWriter, Read};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb::{Config, MaterializedResult};
+use rustdb::Config;
 
 use crate::highlight::{self, HighlightElementType, HighlightMode, ShellHighlight};
 use crate::output::{Output, OutputTarget, PrintOutput};
 use crate::printer;
 use crate::progress_bar::ShellProgressBar;
 use crate::prompt::Prompt;
+use crate::renderer::ScannedResult;
 
 /// How query results are rendered (`RenderMode`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,8 +46,6 @@ pub enum RenderMode {
     Ascii,
     /// Pretty-printed schemas.
     Pretty,
-    /// `EXPLAIN QUERY PLAN` as a graph (unused).
-    Eqp,
     /// A JSON array.
     Json,
     /// Markdown tables.
@@ -82,7 +81,6 @@ impl RenderMode {
             Self::Describe => "describe",
             Self::Ascii => "ascii",
             Self::Pretty => "prettyprint",
-            Self::Eqp => "eqp",
             Self::Json => "json",
             Self::Markdown => "markdown",
             Self::Table => "table",
@@ -106,12 +104,24 @@ pub enum LargeNumberRendering {
 }
 
 /// The input a line is read from (`ShellState::in`).
-#[derive(Debug)]
 pub enum Input {
     /// Standard input typed at a terminal: read with the line editor and a prompt.
     Interactive,
-    /// A file or a pipe.
+    /// Standard input that is a file or a pipe (`in = stdin`), read through the
+    /// process's buffered stdin.
+    Stdin,
+    /// A file of `.read`, `-f` or the init file.
     Reader(BufReader<Box<dyn Read>>),
+}
+
+impl std::fmt::Debug for Input {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Interactive => "Interactive",
+            Self::Stdin => "Stdin",
+            Self::Reader(_) => "Reader",
+        })
+    }
 }
 
 /// The mode of reading input (`InputMode`).
@@ -214,7 +224,7 @@ pub struct ShellTableInfo {
 
 /// The result of the last query, which `.last` renders again and `FROM _` reads
 /// (`ShellState::last_result`); shared with the replacement scan of `_`.
-pub type LastResult = Arc<Mutex<Option<Arc<MaterializedResult>>>>;
+pub type LastResult = Arc<Mutex<Option<ScannedResult>>>;
 
 /// The separators of the modes (`SEP_*`).
 pub const SEP_COLUMN: &str = "|";
@@ -391,9 +401,14 @@ impl ShellState {
         }
     }
 
-    /// `Print(PrintOutput, ...)`.
-    pub fn print_to(&self, output: PrintOutput, text: impl AsRef<[u8]>) {
-        self.out.print(output, text);
+    /// The rest of `ShellState::Initialize`: the line editor's continuation prompts.
+    pub fn initialize(&self) {
+        crate::linenoise::set_prompt(
+            &self.continue_prompt,
+            &self.continue_prompt_selected,
+            &self.scroll_up_prompt,
+            &self.scroll_down_prompt,
+        );
     }
 
     /// `Print(...)` to the output.
@@ -563,7 +578,10 @@ impl ShellState {
     pub fn string_to_bool(&self, arg: &str) -> bool {
         let bytes = arg.as_bytes();
         let digits = if bytes.starts_with(b"0x") {
-            2 + bytes[2..].iter().take_while(|&&c| hex_digit_value(c).is_some()).count()
+            2 + bytes[2..]
+                .iter()
+                .take_while(|&&c| hex_digit_value(c).is_some())
+                .count()
         } else {
             bytes.iter().take_while(|c| c.is_ascii_digit()).count()
         };
@@ -576,7 +594,9 @@ impl ShellState {
         if arg.eq_ignore_ascii_case("off") || arg.eq_ignore_ascii_case("no") {
             return false;
         }
-        self.print_err(format!("ERROR: Not a boolean value: \"{arg}\". Assuming \"no\".\n"));
+        self.print_err(format!(
+            "ERROR: Not a boolean value: \"{arg}\". Assuming \"no\".\n"
+        ));
         false
     }
 
@@ -656,13 +676,21 @@ impl ShellState {
     /// `ShowConfiguration` (`.show`).
     pub fn show_configuration(&self) {
         let on_off = |on: bool| if on { "on" } else { "off" };
-        self.print(format!("{:>12.12}: {}\n", "echo", on_off(self.has_flag(ShellFlag::Echo))));
+        self.print(format!(
+            "{:>12.12}: {}\n",
+            "echo",
+            on_off(self.has_flag(ShellFlag::Echo))
+        ));
         self.print(format!("{:>12.12}: {}\n", "headers", on_off(self.show_header)));
         self.print(format!("{:>12.12}: {}\n", "mode", self.mode.name()));
         self.print(format!("{:>12.12}: ", "nullvalue"));
         self.print(Self::escape_c_string(&self.null_value));
         self.print("\n");
-        let output = if self.outfile.is_empty() { "stdout" } else { &self.outfile };
+        let output = if self.outfile.is_empty() {
+            "stdout"
+        } else {
+            &self.outfile
+        };
         self.print(format!("{:>12.12}: {output}\n", "output"));
         self.print(format!("{:>12.12}: ", "colseparator"));
         self.print(Self::escape_c_string(&self.col_separator));
@@ -747,7 +775,11 @@ impl ShellState {
         let is_pipe = self.outfile.len() > 1 && self.outfile.starts_with('|');
         self.close_output();
         if !is_pipe && self.do_xdg_open {
-            let open_command = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+            let open_command = if cfg!(target_os = "macos") {
+                "open"
+            } else {
+                "xdg-open"
+            };
             let command = format!("{open_command} {}", self.temp_file);
             if run_system(&command) == 0 {
                 // Give the viewer time to start before the file may be deleted.
@@ -813,7 +845,11 @@ impl ShellState {
 
     /// `ShouldUsePager()`: only for results to an interactive terminal.
     pub fn should_use_pager(&mut self) -> bool {
-        if !self.out.is_stdout() || !self.stdout_is_console || !self.outfile.is_empty() || !self.stdin_is_interactive {
+        if !self.out.is_stdout()
+            || !self.stdout_is_console
+            || !self.outfile.is_empty()
+            || !self.stdin_is_interactive
+        {
             return false;
         }
         if self.pager_mode == PagerMode::Off {
@@ -910,11 +946,14 @@ impl ShellState {
     }
 
     /// The result of the last query.
-    pub fn last_result(&self) -> Option<Arc<MaterializedResult>> {
-        self.last_result.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    pub fn last_result(&self) -> Option<ScannedResult> {
+        self.last_result
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
-    pub fn set_last_result(&self, result: Option<Arc<MaterializedResult>>) {
+    pub fn set_last_result(&self, result: Option<ScannedResult>) {
         *self.last_result.lock().unwrap_or_else(PoisonError::into_inner) = result;
     }
 }
@@ -978,8 +1017,9 @@ fn random_u64() -> u64 {
     hasher.finish()
 }
 
-/// `ShellState::Exit`: flushes the output and exits the process.
+/// `ShellState::Exit`: exits the process; like C's `exit`, it flushes the output.
 pub fn exit(code: i32) -> ! {
+    crate::output::flush_shell_output();
     printer::flush_stdout();
     std::process::exit(code)
 }

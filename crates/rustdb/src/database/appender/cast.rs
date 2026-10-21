@@ -123,7 +123,9 @@ pub(super) fn cast_operation(input: &Value, target: &LogicalType) -> Result<Opti
             if !is_number(source) && source != L::Varchar {
                 return Err(unimplemented(input, target));
             }
-            input.try_cast(target).map_err(|_| cast_exception(input, target))?
+            input
+                .try_cast(target)
+                .map_err(|_| cast_exception(input, target))?
         }
         // `AppendDecimalValueInternal`: `TryCastToDecimal` throws its conversion error.
         L::Decimal => {
@@ -134,11 +136,15 @@ pub(super) fn cast_operation(input: &Value, target: &LogicalType) -> Result<Opti
         }
         L::Date => match source {
             L::Date => input.clone(),
-            L::Timestamp => input.try_cast(target).map_err(|_| cast_exception(input, target))?,
+            L::Timestamp => input
+                .try_cast(target)
+                .map_err(|_| cast_exception(input, target))?,
             // `Date::FromCString`.
             L::Varchar => {
                 let bytes = string_bytes(input);
-                Value::date(Date::parse(bytes, false).map_err(|error| Error::conversion(error.message(bytes)))?)
+                Value::date(
+                    Date::parse(bytes, false).map_err(|error| Error::conversion(error.message(bytes)))?,
+                )
             }
             _ => return Err(unimplemented(input, target)),
         },
@@ -150,8 +156,8 @@ pub(super) fn cast_operation(input: &Value, target: &LogicalType) -> Result<Opti
             // `Timestamp::FromCString` without applying an offset.
             L::Varchar => {
                 let bytes = string_bytes(input);
-                let (timestamp, _) =
-                    Timestamp::parse(bytes, false).map_err(|error| Error::conversion(error.message(bytes)))?;
+                let (timestamp, _) = Timestamp::parse(bytes, false)
+                    .map_err(|error| Error::conversion(error.message(bytes)))?;
                 Value::timestamp(timestamp)
             }
             _ => return Err(unimplemented(input, target)),

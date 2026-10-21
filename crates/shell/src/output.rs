@@ -4,7 +4,7 @@
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::process::{Child, ChildStdin};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use crate::interrupt;
 use crate::printer;
@@ -23,7 +23,10 @@ pub enum OutputTarget {
     Stderr,
     File(BufWriter<File>),
     /// A process reading the output (`popen`): a pager or the command of `.output |cmd`.
-    Pipe { child: Child, stdin: BufWriter<ChildStdin> },
+    Pipe {
+        child: Child,
+        stdin: BufWriter<ChildStdin>,
+    },
 }
 
 impl OutputTarget {
@@ -76,7 +79,19 @@ pub struct Output(Arc<Mutex<OutputTarget>>);
 
 impl Default for Output {
     fn default() -> Self {
-        Self(Arc::new(Mutex::new(OutputTarget::Stdout)))
+        let output = Self(Arc::new(Mutex::new(OutputTarget::Stdout)));
+        let _ = SHELL_OUTPUT.set(output.clone());
+        output
+    }
+}
+
+/// The shell's output, which [`flush_shell_output`] flushes when the process exits.
+static SHELL_OUTPUT: OnceLock<Output> = OnceLock::new();
+
+/// Flushes the shell's output file or pipe, as C's `exit` flushes every `FILE *`.
+pub fn flush_shell_output() {
+    if let Some(output) = SHELL_OUTPUT.get() {
+        output.flush();
     }
 }
 

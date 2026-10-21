@@ -101,7 +101,10 @@ impl rustdb_function::TempCatalog for StatementTempCatalog {
             .map(|(_, _, column)| column.logical_type.clone())
             .collect();
         for rows in rows.chunks(STANDARD_VECTOR_SIZE) {
-            let mut columns: Vec<Vector> = types.iter().map(|ty| Vector::flat(ty.clone(), rows.len())).collect();
+            let mut columns: Vec<Vector> = types
+                .iter()
+                .map(|ty| Vector::flat(ty.clone(), rows.len()))
+                .collect();
             for (row, values) in rows.iter().enumerate() {
                 for ((column, value), ty) in columns.iter_mut().zip(values).zip(&types) {
                     if value.logical_type() == ty || value.is_null() {
@@ -112,7 +115,11 @@ impl rustdb_function::TempCatalog for StatementTempCatalog {
                 }
             }
             let chunk = DataChunk::new(columns, rows.len());
-            storage.append_chunk(&self.transaction, &chunk, rustdb_storage::TableConstraints::default())?;
+            storage.append_chunk(
+                &self.transaction,
+                &chunk,
+                rustdb_storage::TableConstraints::default(),
+            )?;
         }
         Ok(())
     }

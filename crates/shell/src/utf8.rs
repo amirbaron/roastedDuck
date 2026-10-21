@@ -20,7 +20,13 @@ pub fn char_render_width(text: &str, pos: usize) -> usize {
 /// sequences count once.
 pub fn render_width(text: &str) -> usize {
     text.graphemes(true)
-        .map(|grapheme| grapheme.chars().next().and_then(UnicodeWidthChar::width).unwrap_or(0))
+        .map(|grapheme| {
+            grapheme
+                .chars()
+                .next()
+                .and_then(UnicodeWidthChar::width)
+                .unwrap_or(0)
+        })
         .sum()
 }
 
@@ -38,6 +44,65 @@ pub fn previous_grapheme_cluster(text: &str, pos: usize) -> usize {
     text.get(..pos)
         .and_then(|head| head.grapheme_indices(true).next_back())
         .map_or(0, |(offset, _)| offset)
+}
+
+/// The code point starting at byte `pos` of `bytes` and its length
+/// (`Utf8Proc::UTF8ToCodepoint`), `None` if the bytes there are not UTF-8.
+pub fn codepoint_at(bytes: &[u8], pos: usize) -> Option<(char, usize)> {
+    let first = *bytes.get(pos)?;
+    let length = match first {
+        0..=0x7f => 1,
+        0xc0..=0xdf => 2,
+        0xe0..=0xef => 3,
+        0xf0..=0xf7 => 4,
+        _ => return None,
+    };
+    let text = std::str::from_utf8(bytes.get(pos..pos + length)?).ok()?;
+    text.chars().next().map(|c| (c, length))
+}
+
+/// `Utf8Proc::RenderWidth(const char *, size_t, size_t)` on bytes that may not be UTF-8:
+/// an invalid byte takes no width.
+pub fn byte_render_width(bytes: &[u8], pos: usize) -> usize {
+    codepoint_at(bytes, pos)
+        .and_then(|(c, _)| UnicodeWidthChar::width(c))
+        .unwrap_or(0)
+}
+
+/// The UTF-8 text at the start of `bytes`, at most `limit` bytes of it.
+fn valid_prefix(bytes: &[u8], limit: usize) -> &str {
+    let window = &bytes[..limit.min(bytes.len())];
+    match std::str::from_utf8(window) {
+        Ok(text) => text,
+        // SAFETY: `valid_up_to` bytes were validated.
+        Err(error) => unsafe { std::str::from_utf8_unchecked(&window[..error.valid_up_to()]) },
+    }
+}
+
+/// `Utf8Proc::NextGraphemeCluster` on bytes that may not be UTF-8: an invalid byte is a
+/// cluster of its own.
+pub fn next_grapheme_cluster_bytes(bytes: &[u8], pos: usize) -> usize {
+    let rest = &bytes[pos.min(bytes.len())..];
+    let mut limit = 64;
+    loop {
+        let text = valid_prefix(rest, limit);
+        let Some(grapheme) = text.graphemes(true).next() else {
+            return pos + 1;
+        };
+        // A cluster reaching the end of the window may continue past it.
+        if grapheme.len() < text.len() || text.len() < limit.min(rest.len()) || limit >= rest.len() {
+            return pos + grapheme.len();
+        }
+        limit *= 2;
+    }
+}
+
+/// `Utf8Proc::PreviousGraphemeCluster` on bytes: the previous byte if they are not UTF-8.
+pub fn previous_grapheme_cluster_bytes(bytes: &[u8], pos: usize) -> usize {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => previous_grapheme_cluster(text, pos),
+        Err(_) => pos.saturating_sub(1),
+    }
 }
 
 /// The render width of a string printed to a terminal (`Linenoise::ComputeRenderWidth`,
