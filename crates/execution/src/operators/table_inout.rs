@@ -18,6 +18,8 @@ pub struct PhysicalTableInOutFunction {
     function: TableFunction,
     in_out: TableInOutFunction,
     bind_data: Option<Arc<dyn FunctionData>>,
+    /// The function's columns the plan reads, virtual ones included.
+    column_ids: Vec<u64>,
     projected_input: Vec<u64>,
     /// The output column numbering the rows produced for each input row
     /// (`WITH ORDINALITY` of a correlated call).
@@ -39,6 +41,7 @@ impl PhysicalTableInOutFunction {
         types: Vec<LogicalType>,
         function: TableFunction,
         bind_data: Option<Arc<dyn FunctionData>>,
+        column_ids: Vec<u64>,
         projected_input: Vec<u64>,
         ordinality_index: Option<u64>,
         child: PhysicalRef,
@@ -52,6 +55,7 @@ impl PhysicalTableInOutFunction {
             function,
             in_out,
             bind_data,
+            column_ids,
             projected_input,
             ordinality_index,
             children: [child],
@@ -125,6 +129,10 @@ impl Operator for PhysicalTableInOutFunction {
 
     fn local_operator_state(&self, _: &ExecutionContext, (): &()) -> Result<InOutState> {
         Ok(InOutState {
+            scan: TableScanState {
+                column_ids: self.column_ids.clone(),
+                ..TableScanState::default()
+            },
             new_row: true,
             ordinality: 1,
             ..InOutState::default()

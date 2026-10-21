@@ -218,6 +218,9 @@ pub type TableInOutFunction = Arc<
 pub struct TableScanState {
     pub position: u64,
     pub local: Option<Box<dyn std::any::Any + Send>>,
+    /// The columns an in-out function produces, virtual ones included
+    /// (`TableFunctionInitInput::column_ids`); empty for all of its columns.
+    pub column_ids: Vec<u64>,
 }
 
 /// One overload of a table function.

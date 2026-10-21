@@ -26,6 +26,22 @@ enum InOutType {
     Tree,
 }
 
+/// The virtual columns (`GetJSONTableInOutVirtualColumns`): the input document, the
+/// path the walk starts at, the empty column and a row number per input row.
+const JSON_COLUMN: u64 = 1 << 63;
+const ROOT_COLUMN: u64 = (1 << 63) + 1;
+const EMPTY_COLUMN: u64 = u64::MAX - 1;
+const ROW_ID_COLUMN: u64 = u64::MAX;
+
+fn virtual_columns(_: Option<&dyn FunctionData>) -> Vec<(u64, String, LogicalType)> {
+    vec![
+        (JSON_COLUMN, "json".to_owned(), json_type()),
+        (ROOT_COLUMN, "root".to_owned(), LogicalType::VARCHAR),
+        (EMPTY_COLUMN, String::new(), LogicalType::BOOLEAN),
+        (ROW_ID_COLUMN, "rowid".to_owned(), LogicalType::BIGINT),
+    ]
+}
+
 /// The bind data: which function, and the input row of a call with constant arguments.
 #[derive(Debug)]
 struct InOutData {
@@ -71,7 +87,7 @@ struct ConstantScan {
 /// The scan of a call with constant arguments: the in-out function over its input row.
 fn constant_scan(
     bind_data: Option<&dyn FunctionData>,
-    _: &[u64],
+    column_ids: &[u64],
     scan_state: &mut TableScanState,
     chunk: &mut DataChunk,
 ) -> Result<bool> {
@@ -92,6 +108,7 @@ fn constant_scan(
             .map(Vector::constant)
             .collect::<Result<Vec<_>>>()?;
         state.input = Some(DataChunk::new(columns, 1));
+        state.walk.column_ids = column_ids.to_vec();
     }
     let Some(input) = state.input.as_ref() else {
         return Ok(false);
@@ -118,6 +135,8 @@ struct InOutState {
     initialized: bool,
     row: usize,
     nodes: Vec<RecursionNode>,
+    /// Rows produced for the current input row (the `rowid` column).
+    total_count: i64,
 }
 
 impl InOutState {
@@ -180,8 +199,12 @@ impl Output {
         self.count += 1;
     }
 
-    fn finish(self) -> Result<Vec<Vector>> {
-        Ok(vec![
+    /// The columns `column_ids` asks for (all eight when empty), virtual ones included;
+    /// `row` describes the input row the rows came from. Other ids (the ordinality the
+    /// operator adds) are not the function's.
+    fn finish(self, column_ids: &[u64], row: &RowColumns) -> Result<Vec<Vector>> {
+        let count = self.count;
+        let columns = vec![
             self.key.finish(&LogicalType::VARCHAR)?,
             self.value.finish(&json_type())?,
             self.ty.finish(&LogicalType::VARCHAR)?,
@@ -190,8 +213,39 @@ impl Output {
             self.parent.finish(&LogicalType::UBIGINT)?,
             self.fullkey.finish(&LogicalType::VARCHAR)?,
             self.path.finish(&LogicalType::VARCHAR)?,
-        ])
+        ];
+        if column_ids.is_empty() {
+            return Ok(columns);
+        }
+        let mut result = Vec::with_capacity(column_ids.len());
+        for &column in column_ids {
+            match column {
+                JSON_COLUMN => result.push(Vector::constant(&row.json)?.reinterpret(json_type())?),
+                ROOT_COLUMN => result.push(Vector::constant(&Value::varchar(&row.root))?),
+                EMPTY_COLUMN => result.push(Vector::constant(&Value::null(LogicalType::BOOLEAN))?),
+                ROW_ID_COLUMN => {
+                    let mut rowid = Vector::flat(LogicalType::BIGINT, count.max(1));
+                    for (offset, value) in rowid.values_mut::<i64>()[..count].iter_mut().enumerate() {
+                        *value = row.first_rowid + offset as i64;
+                    }
+                    result.push(rowid);
+                }
+                _ => {
+                    if let Some(vector) = usize::try_from(column).ok().and_then(|index| columns.get(index)) {
+                        result.push(vector.clone());
+                    }
+                }
+            }
+        }
+        Ok(result)
     }
+}
+
+/// The constant virtual columns of the rows of one input row.
+struct RowColumns {
+    json: Value,
+    root: String,
+    first_rowid: i64,
 }
 
 impl InOutState {
@@ -229,6 +283,7 @@ fn initialize_row(
 ) -> Result<()> {
     state.nodes.clear();
     state.arena.reset();
+    state.total_count = 0;
     let mut path_value = Value::varchar("$");
     if input.column_count() > 1 {
         let paths = text_column(input.column(1), input.len(), &LogicalType::VARCHAR)?;
@@ -336,12 +391,18 @@ fn in_out_function(
         .get_or_insert_with(|| Box::new(InOutState::default()))
         .downcast_mut::<InOutState>()
         .ok_or_else(|| Error::internal("json_each state of another function"))?;
+    let column_ids = &scan_state.column_ids;
     let mut out = Output::default();
     loop {
         if state.row >= input.len() {
             state.row = 0;
             state.initialized = false;
-            output.set_columns(out.finish()?, 0);
+            let row = RowColumns {
+                json: Value::null(json_type()),
+                root: String::new(),
+                first_rowid: 0,
+            };
+            output.set_columns(out.finish(column_ids, &row)?, 0);
             return Ok(InOutResult::NeedMoreInput);
         }
         if !state.initialized {
@@ -349,6 +410,13 @@ fn in_out_function(
             state.initialized = true;
         }
         walk(kind, state, &mut out);
+        // An output chunk holds the rows of one input row.
+        let row = RowColumns {
+            json: input.column(0).get_value(state.row),
+            root: state.path.clone(),
+            first_rowid: state.total_count,
+        };
+        state.total_count += out.count as i64;
         if state.nodes.is_empty() {
             // This row is done; the next call continues with the next row.
             state.row += 1;
@@ -356,7 +424,7 @@ fn in_out_function(
         }
         if out.count > 0 {
             let count = out.count;
-            output.set_columns(out.finish()?, count);
+            output.set_columns(out.finish(column_ids, &row)?, count);
             return Ok(InOutResult::HaveMoreOutput);
         }
     }
@@ -374,6 +442,9 @@ fn in_out_table_function(name: &str, kind: InOutType, input: LogicalType, with_p
         .with_in_out(in_out_function);
     // The engine's in-out operator expects every column (no projection pushdown).
     function.in_out = true;
+    function.get_virtual_columns = Some(Arc::new(virtual_columns));
+    // The scan of a constant call produces one column per column id.
+    function.projected_output = true;
     function
 }
 

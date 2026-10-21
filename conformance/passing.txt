@@ -2782,6 +2782,7 @@ test/sql/json/table/read_json_objects.test
 test/sql/json/table/read_json_union.test
 test/sql/json/table/read_json_unnest_heterogeneous_struct.test
 test/sql/json/table/test_json_nested_struct_projection_pushdown.test
+test/sql/json/table/test_json_table_in_out.test_slow
 test/sql/json/test_json_bool.test
 test/sql/json/test_json_cast.test
 test/sql/json/test_json_copy.test_slow

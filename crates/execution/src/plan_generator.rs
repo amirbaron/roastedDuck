@@ -1133,10 +1133,12 @@ impl PlanGenerator {
                 // A table in-out function over its arguments' rows (`CreatePlan(LogicalGet &)`
                 // with children); the binder already cast the input to the function's types.
                 let child = next_child("table in-out function")?;
+                let column_ids = get.column_ids.iter().map(|column| column.index).collect();
                 Arc::new(crate::operators::PhysicalTableInOutFunction::new(
                     types,
                     get.function,
                     get.bind_data,
+                    column_ids,
                     get.projected_input,
                     get.ordinality_index,
                     child,
