@@ -459,6 +459,15 @@ impl Connection {
         }
     }
 
+    /// Whether the active query's execution finished, completing or failing; `false`
+    /// without an active query (`ClientContext::ExecutionIsFinished`).
+    pub fn execution_is_finished(&self) -> bool {
+        self.active_query.as_ref().is_some_and(|active| match &active.state {
+            ActiveState::Ended(_) => true,
+            ActiveState::Running(run) => run.finished || run.execution.execution_is_finished(),
+        })
+    }
+
     /// The state of the pending query without working on it (DuckDB's
     /// `PendingQueryResult::CheckPulse`): the caller's tasks wait to be run.
     pub fn check_pending(&mut self, pending: &PendingQuery) -> Result<PendingExecutionResult> {

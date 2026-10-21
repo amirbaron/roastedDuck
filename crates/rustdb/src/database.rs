@@ -1675,6 +1675,25 @@ impl Database {
         true
     }
 
+    /// Runs queued tasks of the database's queries on the calling thread (DuckDB's
+    /// `TaskScheduler::ExecuteTasks`): at most `max_tasks`, until none is queued or
+    /// `marker` (if given) is cleared; returns how many ran.
+    pub fn execute_tasks(&self, marker: Option<&std::sync::atomic::AtomicBool>, max_tasks: usize) -> usize {
+        self.instance.env.scheduler.execute_tasks(marker, max_tasks)
+    }
+
+    /// Runs queued tasks of the database's queries on the calling thread until `marker`
+    /// is cleared, waiting for tasks meanwhile (`TaskScheduler::ExecuteForever`).
+    pub fn execute_tasks_forever(&self, marker: &std::sync::atomic::AtomicBool) {
+        self.instance.env.scheduler.execute_forever(marker);
+    }
+
+    /// Wakes the threads in [`Database::execute_tasks_forever`] to see their cleared marker
+    /// (`TaskScheduler::Signal`).
+    pub fn signal_task_threads(&self) {
+        self.instance.env.scheduler.signal();
+    }
+
     /// Registers a log storage that `logging_storage` can then select by `name`
     /// (`LogManager::RegisterLogStorage`); returns `false`, registering nothing, if a
     /// storage of that name was registered before.
