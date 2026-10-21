@@ -298,6 +298,13 @@ impl RowGroupCollection {
         self.stats().distinct.clone()
     }
 
+    /// Replaces the distinct statistics of `column` (`SetDistinct`).
+    pub fn set_distinct(&self, column: usize, distinct: Option<DistinctStatistics>) {
+        if let Some(slot) = self.stats().distinct.get_mut(column) {
+            *slot = distinct;
+        }
+    }
+
     /// Replaces the table statistics.
     pub fn set_statistics(&self, stats: TableStatistics) {
         *self.stats() = stats;

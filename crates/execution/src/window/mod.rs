@@ -52,14 +52,18 @@ pub struct WindowExpression {
     /// `WINDOW_ROW_NUMBER`, `WINDOW_AGGREGATE`, ...
     pub expression_type: ExpressionType,
     pub return_type: LogicalType,
-    /// The name of the call, for plan rendering.
+    /// The alias of the call.
     pub alias: String,
+    /// The name of the call (`Expression::GetName`: its alias, else its SQL), for plan
+    /// rendering.
+    pub name: String,
     pub window: BoundWindowExpression,
 }
 
 impl WindowExpression {
     /// Unwraps a bound window expression.
     pub fn from_expression(expression: Expression) -> Result<Self> {
+        let name = expression.name();
         let Expression {
             expression_type,
             return_type,
@@ -72,6 +76,7 @@ impl WindowExpression {
                 expression_type,
                 return_type,
                 alias,
+                name,
                 window: *window,
             }),
             _ => Err(Error::internal("expected a window expression")),

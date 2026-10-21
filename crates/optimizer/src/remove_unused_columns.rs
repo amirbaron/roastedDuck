@@ -406,7 +406,9 @@ impl<'a> RemoveUnusedColumns<'a> {
                     self.visit_cte_ref(*table_index, *cte_index, chunk_types.len())?;
                 }
             }
-            LogicalOperatorType::LogicalCopyToFile | LogicalOperatorType::LogicalPivot => {
+            LogicalOperatorType::LogicalCopyToFile
+            | LogicalOperatorType::LogicalPivot
+            | LogicalOperatorType::LogicalVacuum => {
                 self.everything_referenced = true;
             }
             _ => {}

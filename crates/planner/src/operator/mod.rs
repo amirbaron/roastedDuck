@@ -585,6 +585,17 @@ pub enum LogicalKind {
     CopyToFile(Box<LogicalCopyToFile>),
     /// `EXPORT DATABASE`.
     Export(Box<LogicalExport>),
+    /// `VACUUM` / `ANALYZE` of a table's columns, scanned by the child (DuckDB's
+    /// `LogicalVacuum` with its `column_id_map`).
+    Vacuum(Box<LogicalVacuum>),
+}
+
+/// A bound `VACUUM`/`ANALYZE` of a table.
+#[derive(Clone, Debug)]
+pub struct LogicalVacuum {
+    pub table: Arc<rustdb_catalog::CatalogEntry>,
+    /// The physical column of each column the child produces.
+    pub column_id_map: Vec<usize>,
 }
 
 /// A bound `CREATE TABLE` (DuckDB's `BoundCreateTableInfo`): the table definition with
@@ -999,6 +1010,7 @@ impl LogicalOperator {
             LogicalKind::MergeInto(_) => T::LogicalMergeInto,
             LogicalKind::CopyToFile(_) => T::LogicalCopyToFile,
             LogicalKind::Export(_) => T::LogicalExport,
+            LogicalKind::Vacuum(_) => T::LogicalVacuum,
         }
     }
 
@@ -1136,6 +1148,7 @@ impl LogicalOperator {
             LogicalKind::Execute { prepared } => generate_column_bindings(0, prepared.types.len()),
             LogicalKind::Prepare { .. }
             | LogicalKind::Export(_)
+            | LogicalKind::Vacuum(_)
             | LogicalKind::Set { .. }
             | LogicalKind::Reset { .. }
             | LogicalKind::Attach(_)
@@ -1333,6 +1346,7 @@ impl LogicalOperator {
             LogicalKind::Execute { prepared } => prepared.types.clone(),
             LogicalKind::Prepare { .. }
             | LogicalKind::Export(_)
+            | LogicalKind::Vacuum(_)
             | LogicalKind::Deallocate { .. }
             | LogicalKind::Set { .. }
             | LogicalKind::Reset { .. }

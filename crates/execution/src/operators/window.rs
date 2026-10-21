@@ -213,7 +213,7 @@ impl PhysicalOperator for PhysicalWindow {
 
     fn params_to_string(&self, _: u64) -> RenderParams {
         let mut result = RenderParams::new();
-        let projections: Vec<&str> = self.select_list.iter().map(|w| w.alias.as_str()).collect();
+        let projections: Vec<&str> = self.select_list.iter().map(|w| w.name.as_str()).collect();
         result.insert("Projections".to_owned(), projections.join("\n"));
         result
     }

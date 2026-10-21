@@ -39,6 +39,7 @@ mod ungrouped_aggregate;
 mod union;
 mod unnest;
 mod update;
+mod vacuum;
 mod window;
 
 pub use alter::AlterEntryAction;
@@ -92,6 +93,7 @@ pub use ungrouped_aggregate::{AggregateStates, PhysicalUngroupedAggregate, Ungro
 pub use union::PhysicalUnion;
 pub use unnest::{PhysicalUnnest, UnnestState};
 pub use update::{PhysicalUpdate, UpdateGlobal};
+pub use vacuum::{PhysicalVacuum, VacuumStatistics};
 pub use window::{
     PhysicalWindow, WindowGlobalSinkState, WindowGlobalSourceState, WindowLocalSinkState,
     WindowLocalSourceState,

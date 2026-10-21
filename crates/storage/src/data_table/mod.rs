@@ -615,6 +615,12 @@ impl DataTable {
         self.row_groups.column_statistics(column)
     }
 
+    /// Replaces the distinct statistics of `column`, as `ANALYZE` computed them
+    /// (`DataTable::SetDistinct`).
+    pub fn set_distinct(&self, column: usize, distinct: Option<crate::statistics::DistinctStatistics>) {
+        self.row_groups.set_distinct(column, distinct);
+    }
+
     // ----------------------------------------------------------------------------------
     // Appends
     // ----------------------------------------------------------------------------------

@@ -1001,6 +1001,11 @@ impl PlanGenerator {
             LogicalKind::CopyToFile(copy) => {
                 plan_copy_to_file(*copy, next_child("copy")?, self.context.as_ref())?
             }
+            LogicalKind::Vacuum(vacuum) => Arc::new(crate::operators::PhysicalVacuum::new(
+                next_child("vacuum")?,
+                table_storage(&vacuum.table)?,
+                vacuum.column_id_map,
+            )),
             LogicalKind::Export(export) => {
                 let context = self.context()?;
                 let catalog = context.catalog(&export.catalog)?;

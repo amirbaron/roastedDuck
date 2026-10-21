@@ -88,56 +88,71 @@ pub fn bind_statement(scope: &mut BindScope<'_>, statement: &mut SqlStatement) -
 /// `VACUUM` / `ANALYZE` (DuckDB's `Binder::Bind(VacuumStatement &)`): the table and
 /// columns are checked; the statistics DuckDB recomputes are not kept here.
 fn bind_vacuum(scope: &mut BindScope<'_>, info: &mut rustdb_ast::VacuumInfo) -> Result<BoundStatement> {
-    if info.has_table
-        && let Some(table_ref) = info.table_ref.as_mut()
-    {
-        let bound = super::tableref::bind_table_ref(scope, table_ref)?;
-        let base_tables = || Error::binder("Can only vacuum or analyze base tables");
-        let LogicalKind::Get(get) = &bound.plan.kind else {
-            return Err(base_tables());
-        };
-        let Some(entry) = &get.table else {
-            return Err(base_tables());
-        };
-        let rustdb_catalog::EntryKind::Table(table) = &entry.kind else {
-            return Err(base_tables());
-        };
-        if info.columns.is_empty() {
-            info.columns = table
-                .physical_columns()
-                .map(|(_, _, column)| column.name.clone())
-                .collect();
-        }
-        let mut seen: Vec<String> = Vec::new();
-        for name in &info.columns {
-            if seen.iter().any(|existing| existing.eq_ignore_ascii_case(name)) {
-                return Err(Error::binder(
-                    "cannot vacuum or analyze the same column twice, i.e., there is a duplicate entry in the list of column names",
-                ));
-            }
-            seen.push(name.clone());
-            let Some((_, column)) = table.column(name) else {
-                return Err(Error::binder(format!(
-                    "Column with name \"{name}\" does not exist"
-                )));
-            };
-            if column.generated.is_some() {
-                return Err(Error::binder(format!(
-                    "cannot vacuum or analyze generated column \"{}\" - specify non-generated columns to vacuum or analyze",
-                    column.name
-                )));
-            }
-        }
-    }
     scope.with_properties(|properties| properties.return_type = StatementReturnType::Nothing);
-    Ok(BoundStatement::new(
-        LogicalOperator::new(LogicalKind::EmptyResult {
-            return_types: vec![LogicalType::BOOLEAN],
+    let names = vec!["Success".to_owned()];
+    let types = vec![LogicalType::BOOLEAN];
+    let Some(table_ref) = info.table_ref.as_mut().filter(|_| info.has_table) else {
+        let plan = LogicalOperator::new(LogicalKind::EmptyResult {
+            return_types: types.clone(),
             bindings: vec![crate::ColumnBinding::new(0, 0)],
-        }),
-        vec!["Success".to_owned()],
-        vec![LogicalType::BOOLEAN],
-    ))
+        });
+        return Ok(BoundStatement::new(plan, names, types));
+    };
+    // `Binder::BindVacuumTable`: the vacuum sinks a scan of the analyzed columns.
+    let mut bound = super::tableref::bind_table_ref(scope, table_ref)?;
+    let base_tables = || Error::binder("Can only vacuum or analyze base tables");
+    let LogicalKind::Get(get) = &mut bound.plan.kind else {
+        return Err(base_tables());
+    };
+    let Some(entry) = get.table.clone() else {
+        return Err(base_tables());
+    };
+    let rustdb_catalog::EntryKind::Table(table) = &entry.kind else {
+        return Err(base_tables());
+    };
+    if info.columns.is_empty() {
+        info.columns = table
+            .physical_columns()
+            .map(|(_, _, column)| column.name.clone())
+            .collect();
+    }
+    let mut column_ids = Vec::with_capacity(info.columns.len());
+    let mut column_id_map = Vec::with_capacity(info.columns.len());
+    let mut select_list = Vec::with_capacity(info.columns.len());
+    for name in &info.columns {
+        let Some((logical, column)) = table.column(name) else {
+            return Err(Error::binder(format!("Column with name \"{name}\" does not exist")));
+        };
+        if column.generated.is_some() {
+            return Err(Error::binder(format!(
+                "cannot vacuum or analyze generated column \"{}\" - specify non-generated columns to vacuum or analyze",
+                column.name
+            )));
+        }
+        if column_ids.iter().any(|existing: &crate::operator::ColumnIndex| existing.index as usize == logical) {
+            return Err(Error::binder(
+                "cannot vacuum or analyze the same column twice, i.e., there is a duplicate entry in the list of column names",
+            ));
+        }
+        let binding = crate::ColumnBinding::new(get.table_index, column_ids.len() as u64);
+        select_list.push(crate::expression::Expression::column_ref(
+            column.name.clone(),
+            column.logical_type.clone(),
+            binding,
+            0,
+        ));
+        column_ids.push(crate::operator::ColumnIndex::new(logical as u64));
+        column_id_map.push(table.logical_to_physical(logical).unwrap_or(logical));
+    }
+    get.shared_column_ids = None;
+    get.column_ids = column_ids;
+    let projection = LogicalOperator::projection(scope.generate_table_index(), select_list, bound.plan);
+    let mut plan = LogicalOperator::new(LogicalKind::Vacuum(Box::new(crate::operator::LogicalVacuum {
+        table: entry,
+        column_id_map,
+    })));
+    plan.add_child(projection);
+    Ok(BoundStatement::new(plan, names, types))
 }
 
 /// `CALL function(...)` (DuckDB's `Binder::Bind(CallStatement &)`): bound as
