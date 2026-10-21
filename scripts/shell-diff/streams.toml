@@ -176,3 +176,9 @@ name = "interrupt-long-query-merged"
 merged = true
 interrupt_after = 1.5
 stdin = ".mode csv\nSELECT 1 AS before;\nSELECT count(*) FROM range(100000000000) t(i) WHERE i % 7 = 3;\nSELECT 1 AS after;\n"
+
+[[case]]
+name = "argument-latin1"
+known = "the shell reads arguments as UTF-8 (invalid bytes become U+FFFD)"
+encoding = "latin-1"
+args = ["-c", "SELECT 'café' AS x"]

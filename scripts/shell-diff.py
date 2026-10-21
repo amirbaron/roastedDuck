@@ -15,7 +15,7 @@ Cases live in TOML files (default: scripts/shell-diff/*.toml), one `[[case]]` ta
   name       unique name (required)
   args       command-line arguments (after argv[0])
   stdin      text fed to standard input (default: none, stdin is /dev/null)
-  encoding   how stdin and files are encoded (default utf-8; latin-1 writes the bytes
+  encoding   how stdin, files and arguments are encoded (default utf-8; latin-1 writes the bytes
              \u0000-ÿ stand for, to feed invalid UTF-8)
   merged     standard error goes to the same pipe as standard output, to compare how
              the two interleave (the buffering of stdout)
@@ -129,7 +129,8 @@ def run_pipe(binary, work, case):
     _, env = prepare(work, case)
     stdin = case.get("stdin")
     encoding = case.get("encoding", "utf-8")
-    process = subprocess.Popen(["duckdb"] + case.get("args", []), executable=binary,
+    arguments = [argument.encode(encoding) for argument in ["duckdb"] + case.get("args", [])]
+    process = subprocess.Popen(arguments, executable=binary,
                                stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
                                stdout=subprocess.PIPE,
                                stderr=subprocess.STDOUT if case.get("merged") else subprocess.PIPE,
