@@ -35,14 +35,15 @@ mod wal;
 
 pub use config::{AccessMode, Config, config_flags};
 pub use database::{
-    Appender, ClientHandle, ColumnDescription, Connection, Database, ExtensionLoad, PendingExecutionResult,
-    PendingQuery, PreparedStatement, QueryId, QueryProgress, QueryResult, StreamQueryResult,
-    TableDescription,
+    Appender, ClientHandle, ColumnDescription, Connection, Database, ExtensionLoad, MemoryStatus,
+    PendingExecutionResult, PendingQuery, PreparedStatement, QueryId, QueryProgress, QueryResult,
+    StreamQueryResult, TableDescription,
 };
 pub use logging::LogStorage;
 pub use query_profiler::ProfilingTree;
 pub use result::MaterializedResult;
 pub use rustdb_ast::{SqlStatement, StatementType};
 pub use rustdb_common::{Error, ErrorKind, Result};
+pub use rustdb_function::logging::LogLevel;
 pub use rustdb_planner::StatementReturnType;
-pub use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Value};
+pub use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Value, Vector};

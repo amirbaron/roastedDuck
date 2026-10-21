@@ -1,152 +1,207 @@
-//! `rustdb`: the command-line shell.
-//!
-//! Usage: `rustdb [DATABASE] [-csv|-list] [-c SQL]`. Without `-c`, statements are read from
-//! standard input, one statement per line. The full port of DuckDB's shell (dot commands,
-//! box rendering, line editing) lives in this crate as it grows.
+//! `rustdb`: the command-line shell, a port of DuckDB's (`tools/shell`).
 
-use std::io::{self, BufRead, Write};
+mod box_renderer;
+mod command_line_option;
+mod extension;
+mod helpers;
+mod highlight;
+mod interrupt;
+mod linenoise;
+mod metadata_command;
+mod output;
+mod printer;
+mod progress;
+mod progress_bar;
+mod prompt;
+mod render_context;
+mod render_table_metadata;
+mod renderer;
+mod shell;
+mod state;
+mod utf8;
+
+use std::io::IsTerminal;
 use std::process::ExitCode;
 
-use rustdb::{Config, Connection, Database, MaterializedResult, StatementReturnType};
+use highlight::HighlightElementType;
+use output::PrintOutput;
+use shell::{Shell, ShellOpenFlags};
+use state::{BailOnError, Input, InputMode, MetadataResult, ShellState, StartupText, SuccessState};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Mode {
-    Csv,
-    List,
+/// An option of the command line with its arguments (`CommandLineCall`).
+struct CommandLineCall {
+    option: &'static command_line_option::CommandLineOption,
+    arguments: Vec<String>,
 }
 
-struct Options {
-    database: String,
-    mode: Mode,
-    command: Option<String>,
-}
+/// `RunShell`: reads the command line, opens the database, runs the init file and the
+/// options, then the SQL of the command line or standard input; returns the exit code.
+fn run_shell(shell: &mut Shell, args: &[String]) -> i32 {
+    let state = &mut shell.state;
+    state.stdin_is_interactive = std::io::stdin().is_terminal();
+    state.stdout_is_console = std::io::stdout().is_terminal();
+    state.stderr_is_console = std::io::stderr().is_terminal();
+    state.initialize();
+    if let Some(program_name) = args.first() {
+        program_name.clone_into(&mut state.program_name);
+    }
+    interrupt::install(libc::SIGINT);
 
-fn parse_args(args: impl Iterator<Item = String>) -> Result<Options, String> {
-    let mut options = Options {
-        database: String::new(),
-        mode: Mode::List,
-        command: None,
-    };
-    let mut args = args.peekable();
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "-csv" => options.mode = Mode::Csv,
-            "-list" => options.mode = Mode::List,
-            "-c" => options.command = Some(args.next().ok_or("-c requires an argument")?),
-            flag if flag.starts_with('-') => return Err(format!("unknown option: {flag}")),
-            path => path.clone_into(&mut options.database),
+    // A first pass over the command line: the database file, the SQL and the options,
+    // whose pre-init callbacks run now.
+    let mut extra_commands = Vec::new();
+    let mut command_line_calls = Vec::new();
+    let mut i = 1;
+    while i < args.len() {
+        let arg = &args[i];
+        let Some(option_name) = arg.strip_prefix('-') else {
+            if shell.state.db_filename.is_empty() {
+                arg.clone_into(&mut shell.state.db_filename);
+            } else {
+                // More arguments are SQL or dot commands, and stdin is not read.
+                shell.state.read_stdin = false;
+                shell.state.stdin_is_interactive = false;
+                extra_commands.push(arg.clone());
+            }
+            i += 1;
+            continue;
+        };
+        // `--init` and `-init` are both accepted.
+        let option_name = option_name.strip_prefix('-').unwrap_or(option_name);
+        let option = match command_line_option::find_command_line_option(&shell.state, option_name) {
+            Ok(option) => option,
+            Err(error) => {
+                shell.state.print_database_error(&error);
+                return 1;
+            }
+        };
+        let mut arguments = vec![option.option.to_owned()];
+        for arg_idx in 0..option.argument_count {
+            if i + 1 >= args.len() {
+                let error = format!(
+                    "Missing Argument Error: Argument '-{}' needs {} arguments, but got {arg_idx}\nOPTION:\n  -{} {}    \
+                     {}\n\nRun '{} -help' for a list of options.\n",
+                    option.option,
+                    option.argument_count,
+                    option.option,
+                    option.arguments,
+                    option.description,
+                    shell.state.program_name
+                );
+                shell.state.print_database_error(&error);
+                return 1;
+            }
+            i += 1;
+            arguments.push(args[i].clone());
+        }
+        if let Some(callback) = option.pre_init_callback
+            && callback(shell, &arguments) == MetadataResult::Exit
+        {
+            return 0;
+        }
+        command_line_calls.push(CommandLineCall { option, arguments });
+        i += 1;
+    }
+    if shell.state.db_filename.is_empty() {
+        ":memory:".clone_into(&mut shell.state.db_filename);
+    }
+    if let Err(error) = shell.open_db(ShellOpenFlags::ExitOnFailure) {
+        shell::fatal(&error);
+    }
+
+    // The init file (`~/.duckdbrc` unless `-init` names one).
+    if shell.state.run_init {
+        let init_file = (!shell.state.init_file.is_empty()).then(|| shell.state.init_file.clone());
+        if !shell.process_duckdbrc(init_file.as_deref()) && shell.state.bail != BailOnError::DontBailOnError {
+            if !shell.state.duckdb_rc_path.is_empty() {
+                let error = format!(
+                    "Encountered errors while executing init file \"{}\". Exiting.",
+                    shell.state.duckdb_rc_path
+                );
+                shell.state.print_database_error(&error);
+            }
+            return 1;
         }
     }
-    Ok(options)
-}
+    shell.state.detect_dark_light_mode();
 
-/// Quotes a CSV field like DuckDB's `-csv` mode (`PrintEscapedCSV`): fields holding a
-/// control character, a quote, a non-ASCII byte or the separator become a quoted
-/// identifier.
-fn csv_field(text: &str) -> String {
-    let needs_quote = text.contains(',')
-        || text
-            .bytes()
-            .any(|byte| byte <= 31 || byte == b'"' || byte == b'\'' || byte >= 127);
-    if needs_quote {
-        format!("\"{}\"", text.replace('"', "\"\""))
-    } else {
-        text.to_owned()
-    }
-}
-
-fn render(result: &MaterializedResult, mode: Mode, out: &mut impl Write) -> io::Result<()> {
-    let separator = if mode == Mode::Csv { "," } else { "|" };
-    let format = |text: &str| {
-        if mode == Mode::Csv {
-            csv_field(text)
-        } else {
-            text.to_owned()
+    // A second pass: the options apply after the init file, overriding it.
+    for call in &command_line_calls {
+        if let Some(callback) = call.option.post_init_callback
+            && callback(shell, &call.arguments) == MetadataResult::Exit
+        {
+            return 0;
         }
-    };
-    let header: Vec<String> = result.names().iter().map(|name| format(name)).collect();
-    writeln!(out, "{}", header.join(separator))?;
-    for row in 0..result.row_count() {
-        let fields: Vec<String> = (0..result.column_count())
-            .map(|column| {
-                let value = result.value(column, row);
-                if value.is_null() {
-                    // The shell's default `.nullvalue`.
-                    "NULL".to_owned()
-                } else {
-                    format(&value.to_varchar().unwrap_or_else(|error| error.to_string()))
-                }
-            })
-            .collect();
-        writeln!(out, "{}", fields.join(separator))?;
     }
-    Ok(())
-}
 
-/// Runs each statement of `sql`, printing the results of queries (statements that
-/// change rows or return nothing print nothing), and stops at the first error.
-fn run(connection: &mut Connection, sql: &str, mode: Mode) -> bool {
-    let stdout = io::stdout();
-    let outcome = connection.extract_statements(sql).and_then(|statements| {
-        for statement in statements {
-            let query = statement.query.clone();
-            let result = connection.execute_statement(&query, statement)?;
-            if result.return_type() == StatementReturnType::QueryResult {
-                // Buffered: a line-buffered stdout makes one system call per row.
-                let mut out = io::BufWriter::new(stdout.lock());
-                if render(&result, mode, &mut out)
-                    .and_then(|()| out.flush())
-                    .is_err()
-                {
-                    return Ok(false);
+    let mut rc = 0;
+    if !shell.state.read_stdin {
+        // Every argument after the database file is a separate input.
+        for command in &extra_commands {
+            if command.starts_with('.') {
+                rc = shell.do_meta_command(command);
+                if rc != 0 {
+                    return if rc == 2 { 0 } else { rc };
                 }
+            } else if shell.execute_sql(command) != SuccessState::Success {
+                return if rc != 0 { rc } else { 1 };
             }
         }
-        Ok(true)
-    });
-    outcome.unwrap_or_else(|error| {
-        eprintln!("{error}");
-        false
-    })
+    } else if shell.state.stdin_is_interactive {
+        print_startup_text(&shell.state);
+        let history_file = std::env::var("DUCKDB_HISTORY")
+            .unwrap_or_else(|_| format!("{}/.duckdb_history", state::home_directory()));
+        shell.load_history(&history_file);
+        shell.state.input = Input::Interactive;
+        rc = shell.process_input(InputMode::Standard);
+        shell.save_history(&history_file);
+    } else {
+        shell.state.input = Input::Stdin;
+        rc = shell.process_input(InputMode::Standard);
+    }
+    rc
+}
+
+/// The version and hint shown when the shell starts on a terminal.
+fn print_startup_text(state: &ShellState) {
+    let mut startup_version = format!(
+        "DuckDB {} ({}",
+        rustdb::Database::library_version(),
+        rustdb::Database::release_codename()
+    );
+    if rustdb::Database::release_codename().contains("Development") {
+        startup_version += ", ";
+        startup_version += rustdb::Database::source_id();
+    }
+    startup_version += ")\n";
+    if state.startup_text != StartupText::None {
+        state.print_highlighted(
+            &startup_version,
+            PrintOutput::Stdout,
+            HighlightElementType::StartupVersion,
+        );
+    }
+    if state.startup_text == StartupText::All {
+        state.print_highlighted(
+            "Enter \".help\" for usage hints.\n",
+            PrintOutput::Stdout,
+            HighlightElementType::StartupText,
+        );
+    }
 }
 
 fn main() -> ExitCode {
-    let options = match parse_args(std::env::args().skip(1)) {
-        Ok(options) => options,
-        Err(message) => {
-            eprintln!("Error: {message}");
-            return ExitCode::FAILURE;
-        }
-    };
-    let connection = Database::open(&options.database, &Config::default()).and_then(|db| db.connect());
-    let mut connection = match connection {
-        Ok(connection) => connection,
-        Err(error) => {
-            eprintln!("{error}");
-            return ExitCode::FAILURE;
-        }
-    };
-    if let Some(sql) = options.command {
-        return if run(&mut connection, &sql, options.mode) {
-            ExitCode::SUCCESS
-        } else {
-            ExitCode::FAILURE
-        };
-    }
-    // Statements run once a line completes them with `;`.
-    let mut ok = true;
-    let mut pending = String::new();
-    for line in io::stdin().lock().lines() {
-        let Ok(line) = line else { break };
-        pending.push_str(&line);
-        pending.push('\n');
-        if pending.trim_end().ends_with(';') {
-            ok &= run(&mut connection, &pending, options.mode);
-            pending.clear();
-        }
-    }
-    if !pending.trim().is_empty() {
-        ok &= run(&mut connection, &pending, options.mode);
-    }
-    if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+    let args: Vec<String> = std::env::args().collect();
+    let mut shell = Shell::new(ShellState::new());
+    let rc = run_shell(&mut shell, &args);
+    // `RunShell`'s clean-up: SIGINT is ignored while the database closes.
+    interrupt::ignore(libc::SIGINT);
+    shell.state.set_table_name(None);
+    shell.state.set_last_result(None);
+    shell.close_db();
+    shell.state.reset_output();
+    shell.state.do_xdg_open = false;
+    shell.state.clear_temp_file();
+    printer::flush_stdout();
+    ExitCode::from(rc as u8)
 }

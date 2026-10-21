@@ -112,8 +112,12 @@ fn file_column(data: &ReadFileData, path: &str, column: usize) -> Result<Value> 
     if column == FILE_NAME_COLUMN {
         return Ok(Value::varchar(path));
     }
-    let metadata =
-        std::fs::metadata(path).map_err(|error| io_error(format!("Cannot open file \"{path}\": {error}")))?;
+    let metadata = std::fs::metadata(path).map_err(|error| {
+        io_error(format!(
+            "Cannot open file \"{path}\": {}",
+            rustdb_common::os_error_text(&error)
+        ))
+    })?;
     Ok(match column {
         FILE_CONTENT_COLUMN => {
             assert_max_file_size(path, metadata.len())?;

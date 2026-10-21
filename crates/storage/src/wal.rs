@@ -510,7 +510,12 @@ impl WalGuard<'_> {
                 .create(true)
                 .truncate(false)
                 .open(&path)
-                .map_err(|error| io_error(format!("Cannot open file \"{path}\": {error}")))?;
+                .map_err(|error| {
+                    io_error(format!(
+                        "Cannot open file \"{path}\": {}",
+                        rustdb_common::os_error_text(&error)
+                    ))
+                })?;
             if self.state.requires_truncate {
                 file.set_len(self.state.size)
                     .map_err(|error| io_error(format!("Could not truncate file \"{path}\": {error}")))?;
@@ -719,11 +724,21 @@ impl WalReader {
         let file = match File::open(path) {
             Ok(file) => file,
             Err(error) if error.kind() == IoErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(io_error(format!("Cannot open file \"{path}\": {error}"))),
+            Err(error) => {
+                return Err(io_error(format!(
+                    "Cannot open file \"{path}\": {}",
+                    rustdb_common::os_error_text(&error)
+                )));
+            }
         };
         let file_size = file
             .metadata()
-            .map_err(|error| io_error(format!("Cannot open file \"{path}\": {error}")))?
+            .map_err(|error| {
+                io_error(format!(
+                    "Cannot open file \"{path}\": {}",
+                    rustdb_common::os_error_text(&error)
+                ))
+            })?
             .len();
         Ok(Some(Self {
             path: path.to_owned(),

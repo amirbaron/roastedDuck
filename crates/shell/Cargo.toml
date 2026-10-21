@@ -12,6 +12,17 @@ path = "src/main.rs"
 
 [dependencies]
 rustdb.workspace = true
+rustdb-ast.workspace = true
+rustdb-common.workspace = true
+rustdb-parser.workspace = true
+rustdb-planner.workspace = true
+rustdb-types.workspace = true
+rustdb-function = { path = "../function" }
+rustdb-functions = { path = "../functions" }
+rustdb-serde.workspace = true
+libc = "0.2"
+unicode-segmentation = "1"
+unicode-width = "0.2"
 
 [lints]
 workspace = true

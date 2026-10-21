@@ -949,6 +949,11 @@ impl QueryProfiler {
         self.running
     }
 
+    /// The value of counter `metric` of the latest profiled query.
+    pub fn bytes(&self, metric: MetricType) -> u64 {
+        self.query_metrics.value(metric)
+    }
+
     /// The counters storage records into, while a query is profiled.
     pub fn active_metrics(&self) -> Option<&Arc<QueryMetrics>> {
         self.running.then_some(&self.query_metrics)

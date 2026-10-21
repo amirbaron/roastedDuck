@@ -27,7 +27,6 @@ fn count_result(plan: LogicalOperator) -> BoundStatement {
 
 /// `CREATE ...` (DuckDB's `Binder::Bind(CreateStatement &)`).
 pub fn bind_create(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Result<BoundStatement> {
-    let mut return_type = StatementReturnType::Nothing;
     let plan = match &info.kind {
         CreateInfoKind::Schema => {
             let catalog = bind_catalog(scope, &info.catalog);
@@ -69,7 +68,8 @@ pub fn bind_create(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Result<B
             let (bound, query) = bind_create_table_info(scope, info.clone())?;
             let mut plan = LogicalOperator::new(LogicalKind::CreateTable(Box::new(bound)));
             if let Some(query) = query {
-                return_type = StatementReturnType::ChangedRows;
+                // DuckDB marks `CREATE TABLE AS` as changing rows, but `BindCreate` ends
+                // by setting every create statement's return type to NOTHING.
                 plan.add_child(query);
             }
             plan
@@ -92,7 +92,7 @@ pub fn bind_create(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Result<B
             ));
         }
     };
-    scope.with_properties(|properties| properties.return_type = return_type);
+    scope.with_properties(|properties| properties.return_type = StatementReturnType::Nothing);
     Ok(count_result(plan))
 }
 

@@ -109,6 +109,63 @@ pub fn canonicalize_path(path: &str) -> String {
     result
 }
 
+/// `LocalFileSystem::CanonicalizePath`: the absolute path with symbolic links, `.` and
+/// `..` resolved as far as the path exists (`realpath`), and lexically beyond that.
+pub fn canonicalize_local_path(input: &str) -> String {
+    // `MakePathAbsolute`.
+    let mut path = expand_path(input);
+    if !path.starts_with('/') {
+        let working_directory = std::env::current_dir()
+            .map(|directory| directory.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        path = format!("{working_directory}/{path}");
+    }
+    let mut current = path.clone();
+    let mut remainder = String::new();
+    let mut dot_dot_count = 0;
+    while !current.is_empty() {
+        if dot_dot_count == 0
+            && let Ok(resolved) = std::fs::canonicalize(&current)
+        {
+            let resolved = resolved.to_string_lossy().into_owned();
+            if remainder.is_empty() {
+                return resolved;
+            }
+            if resolved.ends_with('/') {
+                return resolved + &remainder;
+            }
+            return format!("{resolved}/{remainder}");
+        }
+        // Up one directory.
+        let Some(sep) = current.rfind('/') else {
+            break;
+        };
+        let component = &current[sep + 1..];
+        if component == ".." {
+            dot_dot_count += 1;
+        } else if !component.is_empty() && component != "." {
+            if dot_dot_count > 0 {
+                dot_dot_count -= 1;
+            } else if remainder.is_empty() {
+                component.clone_into(&mut remainder);
+            } else {
+                remainder = format!("{component}/{remainder}");
+            }
+        }
+        current.truncate(sep);
+    }
+    canonicalize_path(&path)
+}
+
+/// `DBConfig::SanitizeAllowedPath`: the path as the file system serving it canonicalizes
+/// it; remote paths are kept as they are.
+fn sanitize_allowed_path(path: &str) -> String {
+    if path.contains("://") && file_url_offset(path) == 0 {
+        return canonicalize_path(path);
+    }
+    canonicalize_local_path(path)
+}
+
 /// The VARCHAR entries of the list setting `name`.
 fn list_setting(settings: &dyn crate::client::SettingsSource, name: &str) -> Vec<String> {
     let Ok(value) = settings.current_setting(name) else {
@@ -133,10 +190,10 @@ fn can_access(settings: &dyn crate::client::SettingsSource, path: &str, director
     if enabled {
         return true;
     }
-    let mut path = canonicalize_path(path);
+    let mut path = sanitize_allowed_path(path);
     if list_setting(settings, "allowed_paths")
         .iter()
-        .any(|allowed| canonicalize_path(allowed) == path)
+        .any(|allowed| sanitize_allowed_path(allowed) == path)
     {
         return true;
     }
@@ -148,7 +205,7 @@ fn can_access(settings: &dyn crate::client::SettingsSource, path: &str, director
         path.push('/');
     }
     directories.iter().any(|allowed| {
-        let mut allowed = canonicalize_path(allowed);
+        let mut allowed = sanitize_allowed_path(allowed);
         if !allowed.ends_with('/') {
             allowed.push('/');
         }
@@ -226,7 +283,10 @@ fn verify_file_system_loaded(client: &crate::FunctionClient, path: &str) -> rust
         &format!("File {path} requires the extension {extension} to be loaded"),
         extension,
     );
-    Err(rustdb_common::Error::new(rustdb_common::ErrorKind::MissingExtension, message))
+    Err(rustdb_common::Error::new(
+        rustdb_common::ErrorKind::MissingExtension,
+        message,
+    ))
 }
 
 /// The name of the file system that handles `path` (`FileSystem::GetName` of the one

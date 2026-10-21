@@ -318,7 +318,8 @@ impl Appender {
         };
         let input = Value::bytes(LogicalType::VARCHAR, bytes);
         let Some(value) = cast::cast_operation(&input, ty)? else {
-            let text = std::str::from_utf8(bytes).map_err(|_| invalid_unicode_error(bytes, "value construction"))?;
+            let text =
+                std::str::from_utf8(bytes).map_err(|_| invalid_unicode_error(bytes, "value construction"))?;
             return self.append_value(&Value::varchar(text));
         };
         let row = self.chunk.len();

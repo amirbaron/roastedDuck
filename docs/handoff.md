@@ -46,7 +46,10 @@ performance targets of `docs/porting-plan.md` (≥ 1.3× C++ speed, ≤ 0.6× me
 - **C API:** 546 of 547 functions; all 30 `test/api/capi` files pass
   (`scripts/capi-tests/run.sh`, `--lib cpp` runs them against the C++ library). ADBC is
   missing.
-- **CLI shell:** `crates/shell` is still a stub (prints `a|b` rows).
+- **CLI shell:** `crates/shell` (`rustdb`) is DuckDB's shell one to one, linenoise included:
+  392 of the 392 `tools/shell/tests` that pass on the C++ CLI pass
+  (`scripts/shell-tests.sh --binary rust|cpp`); interactive sessions match it byte for byte
+  under a pty. The engine's leftovers are work-queue item 3.
 - **Performance** (`docs/perf-backlog.md`, round 4; speed = C++ time ÷ rustdb time, higher
   is better; memory = rustdb ÷ C++, lower is better):
 

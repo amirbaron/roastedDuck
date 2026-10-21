@@ -22,13 +22,18 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    - `parse_statements` hands a PRAGMA's expansion of several statements out as one
      multi-statement, where DuckDB's `StatementPreprocessor` adds `BEGIN`/`COMMIT`
      statements around them, so `duckdb_extract_statements` counts fewer statements.
-3. **CLI shell** (top priority). `crates/shell` is a stub that prints `a|b` rows;
-   DuckDB's shell renders duckbox tables (also for `-c` and piped output), dot commands
-   and modes. Port `tools/shell` one to one: byte-identical rendering, every option and
-   dot command, and the interactive editor (linenoise: keys, history, multi-line
-   editing, completion, highlighting). Done when every test of `tools/shell/tests` that
-   passes on the C++ CLI passes on rustdb, and interactive sessions match byte for byte
-   under a pty.
+3. **CLI shell, the engine's part** (top priority). `crates/shell` ports `tools/shell`
+   one to one, linenoise included (`crates/shell/src/linenoise`, a module of the shell):
+   the 392 tests of `tools/shell/tests` that pass on the C++ CLI pass on rustdb
+   (`scripts/shell-tests.sh`), and interactive sessions (editing keys, history and its
+   search, completion, highlighting, multi-line editing, the pager, `.edit`) match the
+   C++ CLI byte for byte under a pty. What still differs comes from the engine:
+   - `errors_as_json` objects carry `error_subtype` and `position` only; DuckDB adds the
+     exception's other extra info (`name`, `candidates`, `type`, `catalog`, `schema`,
+     `stack_trace`, ...) in the iteration order of libc++'s `unordered_map`.
+   - Internal errors have no `Stack Trace:` section.
+   - `pragma database_size` reports a `memory_usage` of 0 bytes where DuckDB counts the
+     buffer of the shell's last result (256 KiB): results are not buffer-managed (4).
 
 ## Storage
 

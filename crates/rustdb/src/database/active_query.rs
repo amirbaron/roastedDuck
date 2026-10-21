@@ -206,6 +206,11 @@ impl ClientHandle {
         self.interrupted.store(true, Ordering::Release);
     }
 
+    /// Whether the running query was interrupted (`ClientContext::IsInterrupted`).
+    pub fn is_interrupted(&self) -> bool {
+        self.interrupted.load(Ordering::Acquire)
+    }
+
     /// The progress of the running query (`ClientContext::GetQueryProgress`).
     pub fn query_progress(&self) -> QueryProgress {
         *self.progress.lock().unwrap_or_else(PoisonError::into_inner)
@@ -462,10 +467,12 @@ impl Connection {
     /// Whether the active query's execution finished, completing or failing; `false`
     /// without an active query (`ClientContext::ExecutionIsFinished`).
     pub fn execution_is_finished(&self) -> bool {
-        self.active_query.as_ref().is_some_and(|active| match &active.state {
-            ActiveState::Ended(_) => true,
-            ActiveState::Running(run) => run.finished || run.execution.execution_is_finished(),
-        })
+        self.active_query
+            .as_ref()
+            .is_some_and(|active| match &active.state {
+                ActiveState::Ended(_) => true,
+                ActiveState::Running(run) => run.finished || run.execution.execution_is_finished(),
+            })
     }
 
     /// The state of the pending query without working on it (DuckDB's
