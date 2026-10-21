@@ -7,8 +7,8 @@ use rustdb_common::{Error, Result};
 use rustdb_function::{FunctionState, ScalarFunction, ScalarFunctionSet};
 use rustdb_types::{DataChunk, Interval, ListEntry, LogicalType, Timestamp, Vector, VectorKind};
 
-use crate::icu_datefunc::{self, BindData, TzCalendar};
 use crate::icu_dateadd::add;
+use crate::icu_datefunc::{self, BindData, TzCalendar};
 
 /// `RangeInfoStruct::ListLength`: the number of values from `start_value` to `end_value`.
 fn list_length(
@@ -45,7 +45,11 @@ fn list_length(
     let in_range = |value: Timestamp| {
         if is_negative {
             // negative interval, start_value is going down
-            if inclusive_bound { value >= end_value } else { value > end_value }
+            if inclusive_bound {
+                value >= end_value
+            } else {
+                value > end_value
+            }
         } else if inclusive_bound {
             value <= end_value
         } else {
@@ -56,14 +60,21 @@ fn list_length(
         start_value = add(calendar, start_value, increment_value)?;
         total_values += 1;
         if total_values > u64::from(u32::MAX) {
-            return Err(Error::invalid_input("Lists larger than 2^32 elements are not supported"));
+            return Err(Error::invalid_input(
+                "Lists larger than 2^32 elements are not supported",
+            ));
         }
     }
     Ok(total_values)
 }
 
 /// `ICUListRange::ICUListRangeFunction`.
-fn list_range_rows(args: &DataChunk, state: &mut FunctionState, result: &mut Vector, inclusive_bound: bool) -> Result<()> {
+fn list_range_rows(
+    args: &DataChunk,
+    state: &mut FunctionState,
+    result: &mut Vector,
+    inclusive_bound: bool,
+) -> Result<()> {
     let bind_info: &BindData = icu_datefunc::bind_data(state.bind_data.as_ref())?;
     let mut calendar = TzCalendar::new(&bind_info.calendar, &bind_info.cal_setting);
     let count = args.len();
@@ -87,7 +98,8 @@ fn list_range_rows(args: &DataChunk, state: &mut FunctionState, result: &mut Vec
     let mut nulls = Vec::new();
     let mut values: Vec<Timestamp> = Vec::new();
     for row in 0..rows {
-        let (Some(start), Some(end), Some(increment)) = (starts.get(row), ends.get(row), increments.get(row)) else {
+        let (Some(start), Some(end), Some(increment)) = (starts.get(row), ends.get(row), increments.get(row))
+        else {
             nulls.push(row);
             entries.push(ListEntry::new(values.len(), 0));
             continue;
@@ -126,7 +138,11 @@ fn list_range_set(name: &str, inclusive_bound: bool) -> ScalarFunctionSet {
     set.add(
         ScalarFunction::new(
             name,
-            vec![LogicalType::TIMESTAMP_TZ, LogicalType::TIMESTAMP_TZ, LogicalType::INTERVAL],
+            vec![
+                LogicalType::TIMESTAMP_TZ,
+                LogicalType::TIMESTAMP_TZ,
+                LogicalType::INTERVAL,
+            ],
             LogicalType::list(LogicalType::TIMESTAMP_TZ),
             move |args, state, result| list_range_rows(args, state, result, inclusive_bound),
         )
@@ -138,5 +154,8 @@ fn list_range_set(name: &str, inclusive_bound: bool) -> ScalarFunctionSet {
 /// `ICUListRange::AddICUListRangeFunction`: `range` and `generate_series` (inclusive
 /// bounds on the RHS).
 pub(crate) fn list_range_functions() -> Vec<ScalarFunctionSet> {
-    vec![list_range_set("range", false), list_range_set("generate_series", true)]
+    vec![
+        list_range_set("range", false),
+        list_range_set("generate_series", true),
+    ]
 }

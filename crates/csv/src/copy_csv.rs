@@ -86,7 +86,9 @@ struct BoundStrftime {
 
 impl std::fmt::Debug for BoundStrftime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BoundStrftime").field("format", &self.format).finish_non_exhaustive()
+        f.debug_struct("BoundStrftime")
+            .field("format", &self.format)
+            .finish_non_exhaustive()
     }
 }
 
@@ -99,7 +101,13 @@ fn bind_strftime(context: &ClientContext, format: &Value) -> Result<Option<Bound
     {
         return Ok(None);
     }
-    let Some(entry) = context.get_entry("system", "main", rustdb_catalog::CatalogType::ScalarFunction, "strftime", true)?
+    let Some(entry) = context.get_entry(
+        "system",
+        "main",
+        rustdb_catalog::CatalogType::ScalarFunction,
+        "strftime",
+        true,
+    )?
     else {
         return Ok(None);
     };
@@ -241,7 +249,10 @@ impl CsvSink {
         let file = File::create(path).map_err(|error| crate::buffer::open_error(path, &error))?;
         let file = BufWriter::with_capacity(1 << 15, file);
         Ok(match compression.resolve(path) {
-            FileCompressionType::Gzip => Self::Gzip(flate2::write::GzEncoder::new(file, flate2::Compression::default())),
+            FileCompressionType::Gzip => Self::Gzip(flate2::write::GzEncoder::new(
+                file,
+                flate2::Compression::default(),
+            )),
             FileCompressionType::Zstd => Self::Zstd(Vec::new(), file),
             _ => Self::Plain(file),
         })

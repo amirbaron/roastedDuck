@@ -8,10 +8,10 @@ use rustdb_functions::scalar::date::date_part::Part;
 use rustdb_functions::scalar::executor::{Str, binary, str_at, ternary};
 use rustdb_types::{DataChunk, Interval, LogicalType, Timestamp, Vector};
 
-use crate::icu4c::calendar::{Calendar, field};
-use crate::icu4c::grego::MONDAY;
 use crate::icu_datefunc::{self, BindData, CalendarPtr, get_time_unsafe, set_time, subtract_field};
 use crate::icu_datetrunc::{PartTrunc, truncation_factory};
+use crate::icu4c::calendar::{Calendar, field};
+use crate::icu4c::grego::MONDAY;
 
 /// `ICUDateFunc::part_sub_t`: the number of parts between two instants.
 pub(crate) type PartSub = fn(&mut Calendar, Timestamp, Timestamp) -> Result<i64>;
@@ -19,6 +19,7 @@ pub(crate) type PartSub = fn(&mut Calendar, Timestamp, Timestamp) -> Result<i64>
 // ICU only has 32 bit precision for date parts, so it can overflow a high resolution.
 // Since there is no difference between ICU and the obvious calculations, we make these
 // using the DuckDB internal type.
+#[allow(clippy::unnecessary_wraps)] // the signature of the function pointer it is used as
 fn subtract_microsecond(_calendar: &mut Calendar, start_date: Timestamp, end_date: Timestamp) -> Result<i64> {
     Ok(end_date.0.wrapping_sub(start_date.0))
 }
@@ -49,7 +50,11 @@ fn subtract_week(calendar: &mut Calendar, start_date: Timestamp, end_date: Times
     calendar.set_first_day_of_week(MONDAY);
     calendar.set_minimal_days_in_first_week(4);
     set_time(calendar, start_date);
-    Ok(i64::from(subtract_field(calendar, field::WEEK_OF_YEAR, end_date)?))
+    Ok(i64::from(subtract_field(
+        calendar,
+        field::WEEK_OF_YEAR,
+        end_date,
+    )?))
 }
 
 fn subtract_month(calendar: &mut Calendar, start_date: Timestamp, end_date: Timestamp) -> Result<i64> {
@@ -214,7 +219,11 @@ fn part_set(
     set.add(
         ScalarFunction::new(
             name,
-            vec![LogicalType::VARCHAR, LogicalType::TIMESTAMP_TZ, LogicalType::TIMESTAMP_TZ],
+            vec![
+                LogicalType::VARCHAR,
+                LogicalType::TIMESTAMP_TZ,
+                LogicalType::TIMESTAMP_TZ,
+            ],
             LogicalType::BIGINT,
             kernel,
         )

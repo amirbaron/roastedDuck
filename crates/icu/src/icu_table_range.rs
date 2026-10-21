@@ -6,15 +6,15 @@ use std::sync::Arc;
 
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_function::{
-    FunctionData, InOutResult, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet,
-    TableScanState,
+    FunctionData, InOutResult, TableFunction, TableFunctionBindInput, TableFunctionBindOutput,
+    TableFunctionSet, TableScanState,
 };
 use rustdb_types::{DataChunk, Interval, LogicalType, Timestamp, Value, Vector};
 
+use crate::icu_dateadd::add;
+use crate::icu_datefunc::{TzCalendar, create_calendar_with_cutover, session_settings};
 use crate::icu4c::calendar::Calendar;
 use crate::icu4c::timezone::TimeZone;
-use crate::icu_datefunc::{TzCalendar, create_calendar_with_cutover, session_settings};
-use crate::icu_dateadd::add;
 
 /// `ICUTableRange::ICURangeBindData`.
 #[derive(Debug)]
@@ -73,6 +73,7 @@ impl IcuRangeBindData {
 
 /// `ICUTableRange::ICURangeLocalState`.
 #[derive(Debug, Default)]
+#[allow(clippy::struct_excessive_bools)]
 struct IcuRangeLocalState {
     initialized_row: bool,
     current_input_row: usize,
@@ -99,7 +100,11 @@ impl IcuRangeLocalState {
     /// `ICUTableRange::GenerateRangeDateTimeParameters`. Like DuckDB, an empty range
     /// leaves `empty_range` set for the following rows.
     fn generate_parameters(&mut self, input: &DataChunk, row_id: usize, generate_series: bool) -> Result<()> {
-        let values: Vec<Value> = input.columns().iter().map(|column| column.get_value(row_id)).collect();
+        let values: Vec<Value> = input
+            .columns()
+            .iter()
+            .map(|column| column.get_value(row_id))
+            .collect();
         if values.iter().any(Value::is_null) {
             self.start = Timestamp(0);
             self.end = Timestamp(0);
@@ -231,7 +236,14 @@ fn bind(generate_series: bool) -> impl Fn(&TableFunctionBindInput<'_>) -> Result
         let result = IcuRangeBindData::new(&context.function_client, input.inputs);
         Ok(TableFunctionBindOutput {
             return_types: vec![LogicalType::TIMESTAMP_TZ],
-            names: vec![if generate_series { "generate_series" } else { "range" }.to_owned()],
+            names: vec![
+                if generate_series {
+                    "generate_series"
+                } else {
+                    "range"
+                }
+                .to_owned(),
+            ],
             bind_data: Some(Arc::new(result)),
         })
     }
@@ -243,7 +255,11 @@ fn range_function(name: &str, generate_series: bool) -> TableFunction {
     let scan_in_out = in_out.clone();
     let mut function = TableFunction::new(
         name,
-        vec![LogicalType::TIMESTAMP_TZ, LogicalType::TIMESTAMP_TZ, LogicalType::INTERVAL],
+        vec![
+            LogicalType::TIMESTAMP_TZ,
+            LogicalType::TIMESTAMP_TZ,
+            LogicalType::INTERVAL,
+        ],
     )
     .with_bind(bind(generate_series))
     .with_scan(move |bind_data, _, state, chunk| {
@@ -252,7 +268,7 @@ fn range_function(name: &str, generate_series: bool) -> TableFunction {
             let columns = data
                 .inputs
                 .iter()
-                .map(|value| Vector::constant(value))
+                .map(Vector::constant)
                 .collect::<Result<Vec<_>>>()?;
             state.local = Some(Box::new(ConstantScan {
                 inner: TableScanState::default(),

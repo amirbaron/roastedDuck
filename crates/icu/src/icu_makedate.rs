@@ -12,9 +12,11 @@ use rustdb_function::{FunctionState, ScalarFunction, ScalarFunctionSet};
 use rustdb_functions::scalar::executor::{str_at, unary};
 use rustdb_types::{DataChunk, Date, LogicalType, StringT, Timestamp, Vector, VectorKind};
 
-use crate::icu4c::calendar::{Calendar, field};
-use crate::icu_datefunc::{self, BindData, CalendarPtr, MICROS_PER_MSEC, extract_field, get_time, set_time, set_time_zone};
+use crate::icu_datefunc::{
+    self, BindData, CalendarPtr, MICROS_PER_MSEC, extract_field, get_time, set_time, set_time_zone,
+};
 use crate::icu_timezone::type_id_name;
+use crate::icu4c::calendar::{Calendar, field};
 
 /// `ICUMakeDate::Operation`: the local date of `instant` in the calendar's time zone.
 pub(crate) fn make_date(calendar: &mut Calendar, instant: Timestamp) -> Result<Date> {
@@ -39,7 +41,11 @@ pub(crate) fn to_date(client: &rustdb_function::FunctionClient, instant: Timesta
 }
 
 /// `ICUMakeDate::BindCastToDate`.
-fn bind_cast_to_date(casts: &CastFunctionSet, _source: &LogicalType, _target: &LogicalType) -> Result<Option<BoundCastInfo>> {
+fn bind_cast_to_date(
+    casts: &CastFunctionSet,
+    _source: &LogicalType,
+    _target: &LogicalType,
+) -> Result<Option<BoundCastInfo>> {
     let Some(client) = casts.client() else {
         return Ok(None);
     };
@@ -67,7 +73,12 @@ fn bind_cast_to_date(casts: &CastFunctionSet, _source: &LogicalType, _target: &L
 
 /// `ICUMakeDate::AddCasts`.
 pub(crate) fn add_casts(casts: &mut CastFunctionSet) {
-    casts.register_bind_function(LogicalType::TIMESTAMP_TZ, LogicalType::DATE, Arc::new(bind_cast_to_date), -1);
+    casts.register_bind_function(
+        LogicalType::TIMESTAMP_TZ,
+        LogicalType::DATE,
+        Arc::new(bind_cast_to_date),
+        -1,
+    );
 }
 
 /// `Cast::Operation<int64_t, int32_t>`.
@@ -81,11 +92,20 @@ fn cast_to_i32(value: i64) -> Result<i32> {
 }
 
 /// `ICUMakeTimestampTZFunc::Operation`.
-fn make_timestamp_tz(calendar: &mut Calendar, yyyy: i64, mm: i64, dd: i64, hr: i64, mn: i64, ss: f64) -> Result<Timestamp> {
+fn make_timestamp_tz(
+    calendar: &mut Calendar,
+    yyyy: i64,
+    mm: i64,
+    dd: i64,
+    hr: i64,
+    mn: i64,
+    ss: f64,
+) -> Result<Timestamp> {
     let year = cast_to_i32(yyyy + i64::from(yyyy < 0))?;
-    let month = cast_to_i32(mm.checked_sub(1).ok_or_else(|| {
-        Error::out_of_range(format!("Overflow in subtraction of INT64 ({mm} - 1)!"))
-    })?)?;
+    let month = cast_to_i32(
+        mm.checked_sub(1)
+            .ok_or_else(|| Error::out_of_range(format!("Overflow in subtraction of INT64 ({mm} - 1)!")))?,
+    )?;
     let day = cast_to_i32(dd)?;
     let hour = cast_to_i32(hr)?;
     let min = cast_to_i32(mn)?;
@@ -126,7 +146,11 @@ fn make_timestamp_tz_rows(args: &DataChunk, state: &mut FunctionState, result: &
     let info: &BindData = icu_datefunc::bind_data(state.bind_data.as_ref())?;
     let mut calendar: CalendarPtr = info.calendar.clone();
     let count = args.len();
-    let columns: Vec<Cow<'_, Vector>> = args.columns().iter().map(|column| prepared(column, count)).collect();
+    let columns: Vec<Cow<'_, Vector>> = args
+        .columns()
+        .iter()
+        .map(|column| prepared(column, count))
+        .collect();
 
     // Three cases: no TZ, constant TZ, variable TZ
     let mut variable_tz = false;
@@ -145,7 +169,10 @@ fn make_timestamp_tz_rows(args: &DataChunk, state: &mut FunctionState, result: &
 
     let constant = columns.iter().all(|column| column.is_constant());
     let rows = if constant { 1 } else { count };
-    let parts: Vec<_> = columns[..5].iter().map(|column| column.unified::<i64>()).collect();
+    let parts: Vec<_> = columns[..5]
+        .iter()
+        .map(|column| column.unified::<i64>())
+        .collect();
     let seconds = columns[5].unified::<f64>();
     let zones = variable_tz.then(|| columns[6].unified::<StringT>());
     result.reset_flat(rows);
@@ -207,14 +234,24 @@ pub(crate) fn make_timestamptz_functions() -> ScalarFunctionSet {
     let mut senary = parts.clone();
     senary.push(LogicalType::DOUBLE);
     set.add(
-        ScalarFunction::new("make_timestamptz", senary.clone(), LogicalType::TIMESTAMP_TZ, make_timestamp_tz_rows)
-            .with_bind(icu_datefunc::bind),
+        ScalarFunction::new(
+            "make_timestamptz",
+            senary.clone(),
+            LogicalType::TIMESTAMP_TZ,
+            make_timestamp_tz_rows,
+        )
+        .with_bind(icu_datefunc::bind),
     );
     let mut septenary = senary;
     septenary.push(LogicalType::VARCHAR);
     set.add(
-        ScalarFunction::new("make_timestamptz", septenary, LogicalType::TIMESTAMP_TZ, make_timestamp_tz_rows)
-            .with_bind(icu_datefunc::bind),
+        ScalarFunction::new(
+            "make_timestamptz",
+            septenary,
+            LogicalType::TIMESTAMP_TZ,
+            make_timestamp_tz_rows,
+        )
+        .with_bind(icu_datefunc::bind),
     );
     set.add(ScalarFunction::new(
         "make_timestamptz",

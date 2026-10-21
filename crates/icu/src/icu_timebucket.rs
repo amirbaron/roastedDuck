@@ -13,10 +13,10 @@ use crate::icu_datesub::subtract_factory;
 use crate::icu_datetrunc::truncation_factory;
 use crate::icu_timezone::from_naive;
 
-/// Use 2000-01-03 00:00:00 (Monday) as origin when bucket_width is days, hours, ... for
-/// TimescaleDB compatibility. There are 10959 days between 1970-01-01 and 2000-01-03.
+/// Use 2000-01-03 00:00:00 (Monday) as origin when `bucket_width` is days, hours, ... for
+/// `TimescaleDB` compatibility. There are 10959 days between 1970-01-01 and 2000-01-03.
 const DEFAULT_ORIGIN_MICROS_1: i64 = 10959 * Interval::MICROS_PER_DAY;
-/// Use 2000-01-01 as origin when bucket_width is months, years, ... for TimescaleDB
+/// Use 2000-01-01 as origin when `bucket_width` is months, years, ... for `TimescaleDB`
 /// compatibility. There are 10957 days between 1970-01-01 and 2000-01-01.
 const DEFAULT_ORIGIN_MICROS_2: i64 = 10957 * Interval::MICROS_PER_DAY;
 
@@ -63,7 +63,9 @@ fn classify_bucket_width_error_throw(bucket_width: Interval) -> Result<BucketWid
     } else if bucket_width.months == 0 {
         Err(Error::not_implemented("Day intervals cannot have time component"))
     } else {
-        Err(Error::not_implemented("Month intervals cannot have day or time component"))
+        Err(Error::not_implemented(
+            "Month intervals cannot have day or time component",
+        ))
     }
 }
 
@@ -169,7 +171,9 @@ fn bucket(
         BucketWidthType::ConvertibleToMicros => {
             width_convertible_to_micros_common(bucket_width.micros, ts, origin, calendar)
         }
-        BucketWidthType::ConvertibleToDays => width_convertible_to_days_common(bucket_width.days, ts, origin, calendar),
+        BucketWidthType::ConvertibleToDays => {
+            width_convertible_to_days_common(bucket_width.days, ts, origin, calendar)
+        }
         BucketWidthType::ConvertibleToMonths => {
             width_convertible_to_months_common(bucket_width.months, ts, origin, calendar)
         }
@@ -211,7 +215,12 @@ fn offset_bucket(
 }
 
 /// `OffsetTernaryOperator`.
-fn offset_operator(bucket_width: Interval, ts: Timestamp, offset: Interval, calendar: &mut TzCalendar) -> Result<Timestamp> {
+fn offset_operator(
+    bucket_width: Interval,
+    ts: Timestamp,
+    offset: Interval,
+    calendar: &mut TzCalendar,
+) -> Result<Timestamp> {
     let kind = classify_bucket_width_error_throw(bucket_width)?;
     offset_bucket(kind, bucket_width, ts, offset, calendar)
 }
@@ -231,7 +240,12 @@ fn origin_operator(
 }
 
 /// `TimeZoneTernaryOperator`: the origin is the default one in time zone `tz`.
-fn time_zone_operator(bucket_width: Interval, ts: Timestamp, tz: &str, calendar: &mut TzCalendar) -> Result<Timestamp> {
+fn time_zone_operator(
+    bucket_width: Interval,
+    ts: Timestamp,
+    tz: &str,
+    calendar: &mut TzCalendar,
+) -> Result<Timestamp> {
     set_time_zone(&mut calendar.calendar, tz)?;
     let kind = classify_bucket_width_error_throw(bucket_width)?;
     let origin = from_naive(&mut calendar.calendar, default_origin(kind))?;
@@ -349,7 +363,11 @@ fn time_bucket_origin_rows(args: &DataChunk, state: &mut FunctionState, result: 
 }
 
 /// `ICUTimeBucketTimeZoneFunction`.
-fn time_bucket_time_zone_rows(args: &DataChunk, state: &mut FunctionState, result: &mut Vector) -> Result<()> {
+fn time_bucket_time_zone_rows(
+    args: &DataChunk,
+    state: &mut FunctionState,
+    result: &mut Vector,
+) -> Result<()> {
     let mut calendar = calendar_of(state, true)?;
     let count = args.len();
     let bucket_width_arg = args.column(0);
@@ -363,10 +381,14 @@ fn time_bucket_time_zone_rows(args: &DataChunk, state: &mut FunctionState, resul
         set_time_zone(&mut calendar.calendar, &tz)?;
         let kind = classify_bucket_width(bucket_width);
         if kind == BucketWidthType::Unclassified {
-            return ternary::<Interval, Timestamp, Str, Timestamp>(args, result, |bucket_width, ts, tz, out| {
-                *out = time_zone_operator(bucket_width, ts, &String::from_utf8_lossy(tz), &mut calendar)?;
-                Ok(true)
-            });
+            return ternary::<Interval, Timestamp, Str, Timestamp>(
+                args,
+                result,
+                |bucket_width, ts, tz, out| {
+                    *out = time_zone_operator(bucket_width, ts, &String::from_utf8_lossy(tz), &mut calendar)?;
+                    Ok(true)
+                },
+            );
         }
         let origin = from_naive(&mut calendar.calendar, default_origin(kind))?;
         let columns = DataChunk::new(vec![args.column(0).clone(), args.column(1).clone()], count);

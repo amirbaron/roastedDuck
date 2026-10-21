@@ -15,17 +15,17 @@ use rustdb_function::{
 use rustdb_functions::scalar::executor::{Str, binary, unary};
 use rustdb_functions::temporal::{time_add_interval, time_tz_normalized_micros};
 use rustdb_types::{
-    DataChunk, Date, Interval, LogicalType, LogicalTypeId, Time, TimeTz, Timestamp, Value, Vector, implicit_cast_cost,
-    timestamp as ts,
+    DataChunk, Date, Interval, LogicalType, LogicalTypeId, Time, TimeTz, Timestamp, Value, Vector,
+    implicit_cast_cost, timestamp as ts,
 };
 
-use crate::icu4c::calendar::{Calendar, field};
-use crate::icu4c::timezone::TimeZone;
-use crate::icu4c::zone_names::ZONE_NAMES;
 use crate::icu_datefunc::{
     self, BindData, CalendarPtr, MICROS_PER_MSEC, extract_field, extract_offset_seconds, get_time, set_time,
     set_time_zone,
 };
+use crate::icu4c::calendar::{Calendar, field};
+use crate::icu4c::timezone::TimeZone;
+use crate::icu4c::zone_names::ZONE_NAMES;
 
 // ---------------------------------------------------------------------- pg_timezone_names
 
@@ -176,7 +176,9 @@ pub(crate) fn to_naive(calendar: &mut Calendar, instant: Timestamp) -> Result<Ti
 
 /// The `CastData` of the ICU casts: the bind data of the connection's settings.
 fn cast_bind_data(casts: &CastFunctionSet) -> Option<Arc<BindData>> {
-    casts.client().map(|client| Arc::new(BindData::from_client(client)))
+    casts
+        .client()
+        .map(|client| Arc::new(BindData::from_client(client)))
 }
 
 /// Whether `disable_timestamptz_casts` is set for the connection.
@@ -202,7 +204,11 @@ pub(crate) fn type_id_name(id: LogicalTypeId) -> &'static str {
 }
 
 /// `ICUFromNaiveTimestamp::BindCastFromNaive`.
-fn bind_cast_from_naive(casts: &CastFunctionSet, source: &LogicalType, _target: &LogicalType) -> Result<Option<BoundCastInfo>> {
+fn bind_cast_from_naive(
+    casts: &CastFunctionSet,
+    source: &LogicalType,
+    _target: &LogicalType,
+) -> Result<Option<BoundCastInfo>> {
     let Some(client) = casts.client() else {
         return Ok(None);
     };
@@ -240,7 +246,11 @@ fn bind_cast_from_naive(casts: &CastFunctionSet, source: &LogicalType, _target: 
         let mut calendar: CalendarPtr = info.calendar.clone();
         let source = addressable(source, count);
         let raw: Vec<i64> = if is_date {
-            source.values::<Date>().iter().map(|date| i64::from(date.0)).collect()
+            source
+                .values::<Date>()
+                .iter()
+                .map(|date| i64::from(date.0))
+                .collect()
         } else {
             source.values::<i64>().to_vec()
         };
@@ -252,7 +262,11 @@ fn bind_cast_from_naive(casts: &CastFunctionSet, source: &LogicalType, _target: 
 }
 
 /// `ICUToNaiveTimestamp::BindCastToNaive`.
-fn bind_cast_to_naive(casts: &CastFunctionSet, _source: &LogicalType, target: &LogicalType) -> Result<Option<BoundCastInfo>> {
+fn bind_cast_to_naive(
+    casts: &CastFunctionSet,
+    _source: &LogicalType,
+    target: &LogicalType,
+) -> Result<Option<BoundCastInfo>> {
     let Some(client) = casts.client() else {
         return Ok(None);
     };
@@ -296,7 +310,10 @@ pub(crate) fn to_time_tz_operation(calendar: &mut Calendar, timetz: TimeTz) -> R
     // Normalise to +00:00, add TZ offset, then set offset to TZ
     let time = Time(time_tz_normalized_micros(timetz));
     let offset = extract_offset_seconds(calendar)?;
-    let (time, _) = time_add_interval(time, Interval::new(0, 0, i64::from(offset) * Interval::MICROS_PER_SEC));
+    let (time, _) = time_add_interval(
+        time,
+        Interval::new(0, 0, i64::from(offset) * Interval::MICROS_PER_SEC),
+    );
     Ok(TimeTz::new(time, offset))
 }
 
@@ -323,7 +340,12 @@ pub(crate) fn to_time_tz(calendar: &mut Calendar, instant: Timestamp) -> Result<
 }
 
 /// `ICUToTimeTZ::BindCastToTimeTZ`.
-fn bind_cast_to_time_tz(casts: &CastFunctionSet, _source: &LogicalType, _target: &LogicalType) -> Result<Option<BoundCastInfo>> {
+#[allow(clippy::unnecessary_wraps)] // a cast bind callback
+fn bind_cast_to_time_tz(
+    casts: &CastFunctionSet,
+    _source: &LogicalType,
+    _target: &LogicalType,
+) -> Result<Option<BoundCastInfo>> {
     let Some(info) = cast_bind_data(casts) else {
         return Ok(None);
     };
@@ -395,8 +417,10 @@ fn time_zone_execute<T: rustdb_types::NativeType + Copy>(
             *result = Vector::constant_null(result.logical_type().clone());
             return Ok(());
         }
-        let tz_id = String::from_utf8_lossy(rustdb_functions::scalar::executor::str_at(tz_vec, 0).unwrap_or_default())
-            .into_owned();
+        let tz_id = String::from_utf8_lossy(
+            rustdb_functions::scalar::executor::str_at(tz_vec, 0).unwrap_or_default(),
+        )
+        .into_owned();
         set_time_zone(&mut calendar, &tz_id)?;
         let columns = DataChunk::new(vec![args.column(1).clone()], args.len());
         unary::<T, T>(&columns, result, |value, out| {
@@ -425,7 +449,9 @@ pub(crate) fn timezone_functions() -> ScalarFunctionSet {
             "timezone",
             vec![LogicalType::VARCHAR, LogicalType::TIMESTAMP],
             LogicalType::TIMESTAMP_TZ,
-            |args, state, result| time_zone_execute::<Timestamp>(args, state, result, from_naive, Timestamp::is_finite),
+            |args, state, result| {
+                time_zone_execute::<Timestamp>(args, state, result, from_naive, Timestamp::is_finite)
+            },
         )
         .with_bind(icu_datefunc::bind),
     );
@@ -434,7 +460,9 @@ pub(crate) fn timezone_functions() -> ScalarFunctionSet {
             "timezone",
             vec![LogicalType::VARCHAR, LogicalType::TIMESTAMP_TZ],
             LogicalType::TIMESTAMP,
-            |args, state, result| time_zone_execute::<Timestamp>(args, state, result, to_naive, Timestamp::is_finite),
+            |args, state, result| {
+                time_zone_execute::<Timestamp>(args, state, result, to_naive, Timestamp::is_finite)
+            },
         )
         .with_bind(icu_datefunc::bind),
     );
@@ -443,7 +471,9 @@ pub(crate) fn timezone_functions() -> ScalarFunctionSet {
             "timezone",
             vec![LogicalType::VARCHAR, LogicalType::TIME_TZ],
             LogicalType::TIME_TZ,
-            |args, state, result| time_zone_execute::<TimeTz>(args, state, result, to_time_tz_operation, |_| true),
+            |args, state, result| {
+                time_zone_execute::<TimeTz>(args, state, result, to_time_tz_operation, |_| true)
+            },
         )
         .with_bind(icu_datefunc::bind),
     );
@@ -473,6 +503,7 @@ impl FunctionData for BindDataNow {
 }
 
 /// `ICULocalTimestampFunc::BindNow`.
+#[allow(clippy::unnecessary_wraps)] // a bind callback
 fn bind_now(_function: &mut ScalarFunction, input: &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>> {
     Ok(Some(Arc::new(BindDataNow {
         data: BindData::from_client(input.client),
@@ -504,11 +535,16 @@ pub(crate) fn local_now_functions() -> Vec<ScalarFunctionSet> {
     let mut timestamp_set = ScalarFunctionSet::new("current_localtimestamp");
     timestamp_set.add(timestamp);
 
-    let time = ScalarFunction::new("current_localtime", vec![], LogicalType::TIME, |_, state, result| {
-        let local = local_timestamp(state)?;
-        *result = Vector::constant(&Value::time(local.to_time()))?;
-        Ok(())
-    })
+    let time = ScalarFunction::new(
+        "current_localtime",
+        vec![],
+        LogicalType::TIME,
+        |_, state, result| {
+            let local = local_timestamp(state)?;
+            *result = Vector::constant(&Value::time(local.to_time()))?;
+            Ok(())
+        },
+    )
     .with_bind(bind_now);
     let mut time_set = ScalarFunctionSet::new("current_localtime");
     time_set.add(time);

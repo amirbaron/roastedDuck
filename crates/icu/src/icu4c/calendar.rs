@@ -106,22 +106,42 @@ const DATE_PRECEDENCE: ResolutionTable = &[
         &[F::DAY_OF_MONTH as i32, RESOLVE_STOP],
         &[F::WEEK_OF_YEAR as i32, F::DAY_OF_WEEK as i32, RESOLVE_STOP],
         &[F::WEEK_OF_MONTH as i32, F::DAY_OF_WEEK as i32, RESOLVE_STOP],
-        &[F::DAY_OF_WEEK_IN_MONTH as i32, F::DAY_OF_WEEK as i32, RESOLVE_STOP],
+        &[
+            F::DAY_OF_WEEK_IN_MONTH as i32,
+            F::DAY_OF_WEEK as i32,
+            RESOLVE_STOP,
+        ],
         &[F::WEEK_OF_YEAR as i32, F::DOW_LOCAL as i32, RESOLVE_STOP],
         &[F::WEEK_OF_MONTH as i32, F::DOW_LOCAL as i32, RESOLVE_STOP],
         &[F::DAY_OF_WEEK_IN_MONTH as i32, F::DOW_LOCAL as i32, RESOLVE_STOP],
         &[F::DAY_OF_YEAR as i32, RESOLVE_STOP],
         // if YEAR is set over YEAR_WOY use DAY_OF_MONTH
-        &[RESOLVE_REMAP | F::DAY_OF_MONTH as i32, F::YEAR as i32, RESOLVE_STOP],
+        &[
+            RESOLVE_REMAP | F::DAY_OF_MONTH as i32,
+            F::YEAR as i32,
+            RESOLVE_STOP,
+        ],
         // if YEAR_WOY is set,  calc based on WEEK_OF_YEAR
-        &[RESOLVE_REMAP | F::WEEK_OF_YEAR as i32, F::YEAR_WOY as i32, RESOLVE_STOP],
+        &[
+            RESOLVE_REMAP | F::WEEK_OF_YEAR as i32,
+            F::YEAR_WOY as i32,
+            RESOLVE_STOP,
+        ],
     ],
     &[
         &[F::WEEK_OF_YEAR as i32, RESOLVE_STOP],
         &[F::WEEK_OF_MONTH as i32, RESOLVE_STOP],
         &[F::DAY_OF_WEEK_IN_MONTH as i32, RESOLVE_STOP],
-        &[RESOLVE_REMAP | F::DAY_OF_WEEK_IN_MONTH as i32, F::DAY_OF_WEEK as i32, RESOLVE_STOP],
-        &[RESOLVE_REMAP | F::DAY_OF_WEEK_IN_MONTH as i32, F::DOW_LOCAL as i32, RESOLVE_STOP],
+        &[
+            RESOLVE_REMAP | F::DAY_OF_WEEK_IN_MONTH as i32,
+            F::DAY_OF_WEEK as i32,
+            RESOLVE_STOP,
+        ],
+        &[
+            RESOLVE_REMAP | F::DAY_OF_WEEK_IN_MONTH as i32,
+            F::DOW_LOCAL as i32,
+            RESOLVE_STOP,
+        ],
     ],
 ];
 
@@ -141,40 +161,42 @@ const YEAR_PRECEDENCE: ResolutionTable = &[&[
 
 /// `kCalendarLimits`: the limits shared by every calendar.
 const CALENDAR_LIMITS: [[i32; 4]; F::COUNT] = [
-    [-1, -1, -1, -1], // ERA
-    [-1, -1, -1, -1], // YEAR
-    [-1, -1, -1, -1], // MONTH
-    [-1, -1, -1, -1], // WEEK_OF_YEAR
-    [-1, -1, -1, -1], // WEEK_OF_MONTH
-    [-1, -1, -1, -1], // DAY_OF_MONTH
-    [-1, -1, -1, -1], // DAY_OF_YEAR
-    [1, 1, 7, 7],     // DAY_OF_WEEK
-    [-1, -1, -1, -1], // DAY_OF_WEEK_IN_MONTH
-    [0, 0, 1, 1],     // AM_PM
-    [0, 0, 11, 11],   // HOUR
-    [0, 0, 23, 23],   // HOUR_OF_DAY
-    [0, 0, 59, 59],   // MINUTE
-    [0, 0, 59, 59],   // SECOND
-    [0, 0, 999, 999], // MILLISECOND
+    [-1, -1, -1, -1],                                               // ERA
+    [-1, -1, -1, -1],                                               // YEAR
+    [-1, -1, -1, -1],                                               // MONTH
+    [-1, -1, -1, -1],                                               // WEEK_OF_YEAR
+    [-1, -1, -1, -1],                                               // WEEK_OF_MONTH
+    [-1, -1, -1, -1],                                               // DAY_OF_MONTH
+    [-1, -1, -1, -1],                                               // DAY_OF_YEAR
+    [1, 1, 7, 7],                                                   // DAY_OF_WEEK
+    [-1, -1, -1, -1],                                               // DAY_OF_WEEK_IN_MONTH
+    [0, 0, 1, 1],                                                   // AM_PM
+    [0, 0, 11, 11],                                                 // HOUR
+    [0, 0, 23, 23],                                                 // HOUR_OF_DAY
+    [0, 0, 59, 59],                                                 // MINUTE
+    [0, 0, 59, 59],                                                 // SECOND
+    [0, 0, 999, 999],                                               // MILLISECOND
     [-12 * ONE_HOUR, -12 * ONE_HOUR, 12 * ONE_HOUR, 15 * ONE_HOUR], // ZONE_OFFSET
-    [0, 0, ONE_HOUR, ONE_HOUR], // DST_OFFSET
-    [-1, -1, -1, -1], // YEAR_WOY
-    [1, 1, 7, 7],     // DOW_LOCAL
-    [-1, -1, -1, -1], // EXTENDED_YEAR
-    [-0x7F00_0000, -0x7F00_0000, 0x7F00_0000, 0x7F00_0000], // JULIAN_DAY
-    [0, 0, 24 * ONE_HOUR - 1, 24 * ONE_HOUR - 1], // MILLISECONDS_IN_DAY
-    [0, 0, 1, 1],     // IS_LEAP_MONTH
+    [0, 0, ONE_HOUR, ONE_HOUR],                                     // DST_OFFSET
+    [-1, -1, -1, -1],                                               // YEAR_WOY
+    [1, 1, 7, 7],                                                   // DOW_LOCAL
+    [-1, -1, -1, -1],                                               // EXTENDED_YEAR
+    [-0x7F00_0000, -0x7F00_0000, 0x7F00_0000, 0x7F00_0000],         // JULIAN_DAY
+    [0, 0, 24 * ONE_HOUR - 1, 24 * ONE_HOUR - 1],                   // MILLISECONDS_IN_DAY
+    [0, 0, 1, 1],                                                   // IS_LEAP_MONTH
 ];
 
 /// `UCalendarWallTimeOption`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WallTimeOption {
     Last,
+    #[allow(dead_code)] // DuckDB never calls `setSkippedWallTimeOption`
     First,
 }
 
 /// A calendar (ICU's `Calendar` with its subclass state in [`CalendarSystem`]).
 #[derive(Clone, Debug)]
+#[allow(clippy::struct_excessive_bools)] // ICU's `Calendar` flags
 pub struct Calendar {
     pub(super) fields: [i32; F::COUNT],
     pub(super) stamp: [i32; F::COUNT],
@@ -290,7 +312,11 @@ impl Calendar {
         if status.is_success() {
             self.complete(status);
         }
-        if status.is_success() { self.fields[field] } else { 0 }
+        if status.is_success() {
+            self.fields[field]
+        } else {
+            0
+        }
     }
 
     /// `Calendar::set`.
@@ -441,11 +467,6 @@ impl Calendar {
         }
     }
 
-    /// `Calendar::getFirstDayOfWeek`.
-    pub(super) fn first_day_of_week(&self) -> i32 {
-        self.first_day_of_week
-    }
-
     /// `Calendar::setMinimalDaysInFirstWeek`.
     pub fn set_minimal_days_in_first_week(&mut self, value: i32) {
         let value = value.clamp(1, 7);
@@ -453,11 +474,6 @@ impl Calendar {
             self.minimal_days_in_first_week = value;
             self.are_fields_set = false;
         }
-    }
-
-    /// `Calendar::getMinimalDaysInFirstWeek`.
-    pub(super) fn minimal_days_in_first_week(&self) -> i32 {
-        self.minimal_days_in_first_week
     }
 
     /// `Calendar::adoptTimeZone` / `setTimeZone`.
@@ -546,7 +562,12 @@ impl Calendar {
         // If julian is negative, then julian%7 will be negative, so we adjust
         // accordingly.  We add 1 because Julian day 0 is Monday.
         let day_of_week = ((julian + 1.0) % 7.0) as i32;
-        day_of_week + if day_of_week < 0 { 7 + grego::SUNDAY } else { grego::SUNDAY }
+        day_of_week
+            + if day_of_week < 0 {
+                7 + grego::SUNDAY
+            } else {
+                grego::SUNDAY
+            }
     }
 
     /// `Calendar::computeGregorianAndDOWFields`.
@@ -785,6 +806,7 @@ impl Calendar {
     }
 
     /// `Calendar::fieldDifference`.
+    #[allow(clippy::float_cmp)] // ICU compares the millis exactly
     pub fn field_difference(&mut self, target_ms: f64, field: usize, status: &mut Status) -> i32 {
         if status.is_failure() {
             return 0;
@@ -892,13 +914,7 @@ impl Calendar {
             | F::MILLISECONDS_IN_DAY
             | F::IS_LEAP_MONTH => CALENDAR_LIMITS[field][limit as usize],
             F::WEEK_OF_MONTH => match limit {
-                Limit::Minimum => {
-                    if self.minimal_days_in_first_week == 1 {
-                        1
-                    } else {
-                        0
-                    }
-                }
+                Limit::Minimum => i32::from(self.minimal_days_in_first_week == 1),
                 Limit::GreatestMinimum => 1,
                 _ => {
                     let min_days_in_first = self.minimal_days_in_first_week;
@@ -1038,7 +1054,7 @@ impl Calendar {
         let mut low_good = GREGORIAN_LIMITS[F::YEAR][Limit::GreatestMinimum as usize];
         let mut high_bad = GREGORIAN_LIMITS[F::YEAR][Limit::LeastMaximum as usize] + 1;
         while (low_good + 1) < high_bad {
-            let y = (low_good + high_bad) / 2;
+            let y = i32::midpoint(low_good, high_bad);
             cal.set(F::YEAR, y);
             if cal.get(F::YEAR, status) == y && cal.get(F::ERA, status) == era {
                 low_good = y;
@@ -1094,7 +1110,13 @@ impl Calendar {
     }
 
     /// `Calendar::getActualHelper`.
-    fn get_actual_helper(&mut self, field: usize, start_value: i32, end_value: i32, status: &mut Status) -> i32 {
+    fn get_actual_helper(
+        &mut self,
+        field: usize,
+        start_value: i32,
+        end_value: i32,
+        status: &mut Status,
+    ) -> i32 {
         if start_value == end_value {
             // if we know that the maximum value is always the same, just return it
             return start_value;
@@ -1119,7 +1141,9 @@ impl Calendar {
         work.set(field, start_value);
 
         let mut result = start_value;
-        if (work.get(field, status) != start_value && field != F::WEEK_OF_MONTH && delta > 0) || status.is_failure() {
+        if (work.get(field, status) != start_value && field != F::WEEK_OF_MONTH && delta > 0)
+            || status.is_failure()
+        {
             // keep the start value
         } else {
             loop {
@@ -1314,7 +1338,8 @@ impl Calendar {
             self.get_default_month_in_year(year)
         };
 
-        let mut julian_day = self.handle_compute_month_start(year, if use_month { month } else { 0 }, use_month);
+        let mut julian_day =
+            self.handle_compute_month_start(year, if use_month { month } else { 0 }, use_month);
 
         if best_field == F::DAY_OF_MONTH {
             // give calendar subclass a chance to have a default 'first' dom
@@ -1382,7 +1407,8 @@ impl Calendar {
                         julian_day = next_julian_day;
 
                         // recalculate 'first' [0-based local dow of jan 1]
-                        first = Self::julian_day_to_day_of_week(f64::from(julian_day) + 1.0) - first_day_of_week;
+                        first =
+                            Self::julian_day_to_day_of_week(f64::from(julian_day) + 1.0) - first_day_of_week;
                         if first < 0 {
                             first += 7;
                         }
@@ -1403,7 +1429,8 @@ impl Calendar {
                         // is it past Dec 31?  (nextJulianDay is day BEFORE year+1's  Jan 1)
                         // Fire up the calculating engines.. retry YWOY = (year-1)
                         julian_day = self.handle_compute_month_start(year - 1, 0, false); // jd before Jan 1 of previous year
-                        first = Self::julian_day_to_day_of_week(f64::from(julian_day) + 1.0) - first_day_of_week; // 0 based local dow   of first week
+                        first =
+                            Self::julian_day_to_day_of_week(f64::from(julian_day) + 1.0) - first_day_of_week; // 0 based local dow   of first week
 
                         if first < 0 {
                             // 0..6
@@ -1519,11 +1546,7 @@ impl Calendar {
 
     /// `Calendar::handleGetYearLength` (the generic version).
     pub(super) fn calendar_handle_get_year_length(&mut self, eyear: i32) -> i32 {
-        self.handle_compute_month_start(eyear + 1, 0, false) - self.handle_compute_month_start(eyear, 0, false)
-    }
-
-    /// The Gregorian year of the current Julian day (`getGregorianYear`).
-    pub(super) const fn gregorian_year(&self) -> i32 {
-        self.gregorian_year
+        self.handle_compute_month_start(eyear + 1, 0, false)
+            - self.handle_compute_month_start(eyear, 0, false)
     }
 }

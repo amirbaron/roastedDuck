@@ -9,10 +9,10 @@ use rustdb_common::{Error, Result};
 use rustdb_function::{BindInput, FunctionClient, FunctionData, ScalarFunction};
 use rustdb_types::{Interval, Timestamp};
 
-use crate::icu4c::calendar::{Calendar, Status, field};
-use crate::icu4c::calsys::CalendarSystem;
-use crate::icu4c::timezone::TimeZone;
 use crate::icu_helpers;
+use crate::icu4c::calendar::{Calendar, Status, field};
+use crate::icu4c::calsys::{CalendarSystem, GregorianState};
+use crate::icu4c::timezone::TimeZone;
 
 /// `Interval::MICROS_PER_MSEC`.
 pub(crate) const MICROS_PER_MSEC: i64 = 1000;
@@ -34,8 +34,13 @@ fn now_millis() -> f64 {
 pub(crate) fn create_calendar_with_cutover(zone: TimeZone, cal_setting: &str, proleptic: bool) -> Calendar {
     // `Calendar::createInstance(tz, Locale("@calendar=" + cal_setting))`; calendars
     // without a port (the astronomical islamic, chinese and dangi) fall back to Gregorian.
-    let system = CalendarSystem::for_keyword(cal_setting, proleptic)
-        .unwrap_or_else(|| CalendarSystem::for_keyword("gregorian", proleptic).expect("gregorian"));
+    let system = CalendarSystem::for_keyword(cal_setting, proleptic).unwrap_or_else(|| {
+        CalendarSystem::Gregorian(if proleptic {
+            GregorianState::proleptic()
+        } else {
+            GregorianState::papal()
+        })
+    });
     let mut calendar = Calendar::new(zone, system, now_millis());
     if cal_setting.eq_ignore_ascii_case("iso8601") {
         calendar.set_first_day_of_week(crate::icu4c::grego::MONDAY);
@@ -117,7 +122,11 @@ pub(crate) fn session_settings(client: &FunctionClient) -> (String, String) {
 }
 
 /// `ICUDateFunc::Bind`: binds a default calendar object for use by the function.
-pub(crate) fn bind(_function: &mut ScalarFunction, input: &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>> {
+#[allow(clippy::unnecessary_wraps)] // a bind callback
+pub(crate) fn bind(
+    _function: &mut ScalarFunction,
+    input: &BindInput<'_>,
+) -> Result<Option<Arc<dyn FunctionData>>> {
     Ok(Some(Arc::new(BindData::from_client(input.client))))
 }
 
@@ -182,9 +191,7 @@ pub(crate) fn try_get_time(calendar: &mut Calendar, micros: u64) -> Option<Times
     }
     // UDate is a double, so it can't overflow (it just loses accuracy), but converting
     // back to µs can.
-    let micros = millis
-        .checked_mul(MICROS_PER_MSEC)?
-        .checked_add(micros as i64)?;
+    let micros = millis.checked_mul(MICROS_PER_MSEC)?.checked_add(micros as i64)?;
     // Now make sure the value is in range
     let result = Timestamp(micros);
     let date = result.to_date();

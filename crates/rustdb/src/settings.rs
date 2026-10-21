@@ -205,7 +205,11 @@ fn unrecognized(name: &str, enabled: impl Fn(&str) -> bool) -> Error {
 }
 
 /// [`unrecognized`] with the options extensions added as candidates too.
-pub(crate) fn unrecognized_with(name: &str, extension_options: &[String], enabled: impl Fn(&str) -> bool) -> Error {
+pub(crate) fn unrecognized_with(
+    name: &str,
+    extension_options: &[String],
+    enabled: impl Fn(&str) -> bool,
+) -> Error {
     use rustdb_function::extension_entries::{EXTENSION_SETTINGS, add_install_hint, find_extension};
     if let Some(extension) = find_extension(name, EXTENSION_SETTINGS) {
         let message = format!(
@@ -698,9 +702,9 @@ impl Settings {
             SetScope::Global if LOCAL_ONLY.contains(&option) => Err(Error::catalog(format!(
                 "option \"{name}\" cannot be {verb} globally"
             ))),
-            SetScope::Session | SetScope::Local if GLOBAL_ONLY.contains(&option) => Err(Error::catalog(format!(
-                "option \"{name}\" cannot be {verb} locally"
-            ))),
+            SetScope::Session | SetScope::Local if GLOBAL_ONLY.contains(&option) => Err(Error::catalog(
+                format!("option \"{name}\" cannot be {verb} locally"),
+            )),
             _ => Ok(()),
         }
     }
@@ -1247,17 +1251,19 @@ impl rustdb_function::SettingsSource for SettingsSnapshot {
         {
             return Ok(value.clone());
         }
-        let definition = definition
-            .ok_or_else(|| {
-                let extension_names: Vec<String> =
-                    self.extensions.iter().map(|(option, _, _)| option.name.clone()).collect();
-                unrecognized_with(name, &extension_names, |option| {
-                    self.current_setting(option)
-                        .ok()
-                        .and_then(|value| value.as_bool())
-                        .unwrap_or(false)
-                })
-            })?;
+        let definition = definition.ok_or_else(|| {
+            let extension_names: Vec<String> = self
+                .extensions
+                .iter()
+                .map(|(option, _, _)| option.name.clone())
+                .collect();
+            unrecognized_with(name, &extension_names, |option| {
+                self.current_setting(option)
+                    .ok()
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false)
+            })
+        })?;
         self.value(definition)
     }
 
@@ -1285,18 +1291,22 @@ impl rustdb_function::SettingsSource for SettingsSnapshot {
                     .map(|alias| (*alias).to_owned())
                     .collect(),
             })
-            .chain(self.extensions.iter().map(|(option, value, local)| rustdb_function::SettingInfo {
-                name: option.name.clone(),
-                value: if value.is_null() {
-                    String::new()
-                } else {
-                    value.to_varchar().unwrap_or_default()
-                },
-                description: option.description.clone(),
-                input_type: option.input_type.to_string(),
-                global: !local,
-                aliases: Vec::new(),
-            }))
+            .chain(
+                self.extensions
+                    .iter()
+                    .map(|(option, value, local)| rustdb_function::SettingInfo {
+                        name: option.name.clone(),
+                        value: if value.is_null() {
+                            String::new()
+                        } else {
+                            value.to_varchar().unwrap_or_default()
+                        },
+                        description: option.description.clone(),
+                        input_type: option.input_type.to_string(),
+                        global: !local,
+                        aliases: Vec::new(),
+                    }),
+            )
             .collect()
     }
 }

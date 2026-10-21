@@ -135,7 +135,11 @@ impl CatalogSet {
         let chains = self.lock();
         chains
             .get(&key(name))
-            .and_then(|chain| chain.iter().find(|version| version.timestamp() < TRANSACTION_ID_START))
+            .and_then(|chain| {
+                chain
+                    .iter()
+                    .find(|version| version.timestamp() < TRANSACTION_ID_START)
+            })
             .and_then(|version| version.entry.clone())
     }
 

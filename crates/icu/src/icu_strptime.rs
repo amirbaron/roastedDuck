@@ -8,18 +8,22 @@ use std::sync::Arc;
 use rustdb_common::{Error, Result};
 use rustdb_function::cast::executor::{RowError, addressable, cast_rows, cast_rows_to_string};
 use rustdb_function::cast::{BoundCastInfo, CastFunctionSet};
-use rustdb_function::{BindInput, FunctionData, FunctionState, ScalarBind, ScalarFunction, ScalarFunctionSet};
+use rustdb_function::{
+    BindInput, FunctionData, FunctionState, ScalarBind, ScalarFunction, ScalarFunctionSet,
+};
 use rustdb_functions::scalar::date::strftime_format::{ParseResult, Spec, StrTimeFormat};
 use rustdb_functions::scalar::executor::{Str, StrOut, binary, str_at, unary};
-use rustdb_types::{DataChunk, Date, LogicalType, LogicalTypeId, StringT, Time, TimeTz, Timestamp, Value, Vector};
+use rustdb_types::{
+    DataChunk, Date, LogicalType, LogicalTypeId, StringT, Time, TimeTz, Timestamp, Value, Vector,
+};
 
-use crate::icu4c::calendar::{Calendar, field};
 use crate::icu_datefunc::{
     self, BindData, CalendarPtr, MICROS_PER_MSEC, extract_field, extract_offset_seconds, get_time, set_time,
     set_time_zone, set_time_zone_message, try_get_time, try_set_time_zone,
 };
 use crate::icu_helpers::get_components;
 use crate::icu_timezone::from_naive;
+use crate::icu4c::calendar::{Calendar, field};
 
 // ---------------------------------------------------------------------- strptime
 
@@ -169,7 +173,11 @@ fn strptime_bind(
     bind_strptime: ScalarBind,
 ) -> impl Fn(&mut ScalarFunction, &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>> {
     move |function, input| {
-        if input.argument_types.get(1).is_some_and(|ty| ty.id() == LogicalTypeId::Unknown) {
+        if input
+            .argument_types
+            .get(1)
+            .is_some_and(|ty| ty.id() == LogicalTypeId::Unknown)
+        {
             return bind_strptime(function, input);
         }
         let Some(Some(format_value)) = input.constants.get(1) else {
@@ -194,10 +202,15 @@ fn strptime_bind(
             let mut formats = Vec::with_capacity(children.len());
             let mut has_tz = false;
             for child in children {
-                let text = if child.is_null() { "NULL".to_owned() } else { child.to_varchar()? };
+                let text = if child.is_null() {
+                    "NULL".to_owned()
+                } else {
+                    child.to_varchar()?
+                };
                 let format = parse_format(&text)?;
                 // If any format has UTC offsets or names, then we have to produce TSTZ
-                has_tz = has_tz || format.has_specifier(Spec::TzName) || format.has_specifier(Spec::UtcOffset);
+                has_tz =
+                    has_tz || format.has_specifier(Spec::TzName) || format.has_specifier(Spec::UtcOffset);
                 formats.push(format);
             }
             if has_tz {
@@ -302,7 +315,11 @@ fn varchar_to_time_tz(info: &BindData) -> BoundCastInfo {
 }
 
 /// `ICUStrptime::BindCastFromVarchar`.
-fn bind_cast_from_varchar(casts: &CastFunctionSet, _source: &LogicalType, target: &LogicalType) -> Result<Option<BoundCastInfo>> {
+fn bind_cast_from_varchar(
+    casts: &CastFunctionSet,
+    _source: &LogicalType,
+    target: &LogicalType,
+) -> Result<Option<BoundCastInfo>> {
     let Some(client) = casts.client() else {
         return Ok(None);
     };
@@ -310,7 +327,9 @@ fn bind_cast_from_varchar(casts: &CastFunctionSet, _source: &LogicalType, target
     match target.id() {
         LogicalTypeId::TimestampTz => Ok(Some(varchar_to_timestamp_tz(&info))),
         LogicalTypeId::TimeTz => Ok(Some(varchar_to_time_tz(&info))),
-        _ => Err(Error::internal("Unsupported type for VARCHAR to TIME/TIMESTAMPTZ cast.")),
+        _ => Err(Error::internal(
+            "Unsupported type for VARCHAR to TIME/TIMESTAMPTZ cast.",
+        )),
     }
 }
 
@@ -372,13 +391,24 @@ pub(crate) fn cast_operation(calendar: &mut Calendar, input: Timestamp, out: &mu
 
     write_date(out, ts_data.year, ts_data.month, ts_data.day);
     out.push(b' ');
-    write_time(out, ts_data.hour, ts_data.minute, ts_data.second, ts_data.microsecond);
+    write_time(
+        out,
+        ts_data.hour,
+        ts_data.minute,
+        ts_data.second,
+        ts_data.microsecond,
+    );
     write_utc_offset(out, hour_offset, minute_offset);
     Ok(())
 }
 
 /// `ICUStrftime::BindCastToVarchar`.
-fn bind_cast_to_varchar(casts: &CastFunctionSet, _source: &LogicalType, _target: &LogicalType) -> Result<Option<BoundCastInfo>> {
+#[allow(clippy::unnecessary_wraps)] // a cast bind callback
+fn bind_cast_to_varchar(
+    casts: &CastFunctionSet,
+    _source: &LogicalType,
+    _target: &LogicalType,
+) -> Result<Option<BoundCastInfo>> {
     let Some(client) = casts.client() else {
         return Ok(None);
     };

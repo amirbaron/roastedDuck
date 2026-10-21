@@ -3,6 +3,7 @@
 //! UTC and local offsets (`getOffset`, `BasicTimeZone::getOffsetFromLocal`), over the
 //! tzdb that jiff bundles.
 
+use std::fmt::Write as _;
 use std::sync::{Arc, OnceLock};
 
 use super::grego::{ONE_HOUR, floor_divide_f64};
@@ -84,7 +85,9 @@ fn parse_custom_id(id: &str) -> Option<(i32, i32, i32, i32)> {
         let mut end = start;
         let mut value: i64 = 0;
         while end < bytes.len() && bytes[end].is_ascii_digit() {
-            value = value.saturating_mul(10).saturating_add(i64::from(bytes[end] - b'0'));
+            value = value
+                .saturating_mul(10)
+                .saturating_add(i64::from(bytes[end] - b'0'));
             end += 1;
         }
         (value, end)
@@ -152,9 +155,9 @@ fn format_custom_id(hour: i32, min: i32, sec: i32, negative: bool) -> String {
     let mut id = String::from("GMT");
     if hour | min | sec != 0 {
         id.push(if negative { '-' } else { '+' });
-        id.push_str(&format!("{hour:02}:{min:02}"));
+        let _ = write!(id, "{hour:02}:{min:02}");
         if sec != 0 {
-            id.push_str(&format!(":{sec:02}"));
+            let _ = write!(id, ":{sec:02}");
         }
     }
     id
@@ -247,12 +250,10 @@ impl TimeZone {
                 let instant = timestamp
                     .as_millisecond()
                     .saturating_sub(i64::from(offset.seconds()) * 1000);
-                let dst = jiff::Timestamp::from_millisecond(instant)
-                    .map(|instant| {
-                        let info = zone.to_offset_info(instant);
-                        info.offset() == offset && info.dst().is_dst()
-                    })
-                    .unwrap_or(false);
+                let dst = jiff::Timestamp::from_millisecond(instant).is_ok_and(|instant| {
+                    let info = zone.to_offset_info(instant);
+                    info.offset() == offset && info.dst().is_dst()
+                });
                 split_offset(offset.seconds(), dst)
             }
         }
@@ -268,7 +269,11 @@ impl TimeZone {
 /// Splits a total offset into ICU's raw and DST parts (the DST part is the usual hour).
 fn split_offset(seconds: i32, dst: bool) -> (i32, i32) {
     let total = seconds * 1000;
-    if dst { (total - ONE_HOUR, ONE_HOUR) } else { (total, 0) }
+    if dst {
+        (total - ONE_HOUR, ONE_HOUR)
+    } else {
+        (total, 0)
+    }
 }
 
 /// Moves `millis` into the range jiff covers without changing the offsets it has: late

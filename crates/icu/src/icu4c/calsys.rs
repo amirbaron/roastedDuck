@@ -38,8 +38,9 @@ pub(super) const GREGORIAN_LIMITS: Limits = [
     [-1, -1, -1, -1],                       // IS_LEAP_MONTH
 ];
 
-/// The limits shared by the lunar and solar calendars, with their own YEAR, MONTH,
-/// WEEK_OF_YEAR, DAY_OF_MONTH, DAY_OF_YEAR and DAY_OF_WEEK_IN_MONTH rows.
+/// The limits shared by the lunar and solar calendars, with their own `YEAR`, `MONTH`,
+/// `WEEK_OF_YEAR`, `DAY_OF_MONTH`, `DAY_OF_YEAR` and `DAY_OF_WEEK_IN_MONTH` rows.
+#[allow(clippy::too_many_arguments)]
 const fn limits(
     era: [i32; 4],
     year: [i32; 4],
@@ -169,7 +170,7 @@ const TAIWAN_ERA_START: i32 = 1911;
 /// `TaiwanCalendar::BEFORE_MINGUO` / `MINGUO`.
 const BEFORE_MINGUO: i32 = 0;
 const MINGUO: i32 = 1;
-/// The default of EXTENDED_YEAR in the Gregorian derivatives (`k*GregorianEpoch`).
+/// The default of `EXTENDED_YEAR` in the Gregorian derivatives (`k*GregorianEpoch`).
 const GREGORIAN_EPOCH: i32 = 1970;
 
 /// The state of a `GregorianCalendar`: its Julian/Gregorian cutover.
@@ -308,6 +309,7 @@ impl CalendarSystem {
     }
 
     /// The subclass part of `isEquivalentTo` (`fGregorianCutover`).
+    #[allow(clippy::float_cmp)] // ICU compares the cutovers exactly
     pub fn is_equivalent_to(&self, other: &Self) -> bool {
         match (self.gregorian(), other.gregorian()) {
             (Some(a), Some(b)) => a.cutover == b.cutover,
@@ -416,7 +418,7 @@ fn era_index(year: i32, month: i32, day: i32) -> i32 {
     let mut high = num_eras; // last index + 1
     let mut low = if starts_by(current) { current } else { 0 };
     while low < high - 1 {
-        let i = (low + high) / 2;
+        let i = i32::midpoint(low, high);
         if starts_by(i) {
             low = i;
         } else {
@@ -518,7 +520,9 @@ fn hebrew_start_of_year(year: i32) -> i32 {
     let months = (235_i32.wrapping_mul(year).wrapping_sub(234)) / 19; // # of months before year
 
     let mut frac = i64::from(months) * i64::from(MONTH_FRACT) + i64::from(BAHARAD); // Fractional part of day #
-    let mut day = months.wrapping_mul(29).wrapping_add((frac / i64::from(DAY_PARTS)) as i32); // Whole # part of calculation
+    let mut day = months
+        .wrapping_mul(29)
+        .wrapping_add((frac / i64::from(DAY_PARTS)) as i32); // Whole # part of calculation
     frac %= i64::from(DAY_PARTS); // Time of day
 
     let mut wd = day % 7; // Day of week (0 == Monday)
@@ -719,7 +723,11 @@ const UM_AL_QURA_YR_START_ESTIMATE_FIX: [i32; 301] = [
 /// `getUmalqura_MonthLength`.
 fn umalqura_month_length(y: i32, m: i32) -> i32 {
     let mask = 0x01 << (11 - m); // set mask for bit corresponding to month
-    if UMALQURA_MONTHLENGTH[y as usize] & mask == 0 { 29 } else { 30 }
+    if UMALQURA_MONTHLENGTH[y as usize] & mask == 0 {
+        29
+    } else {
+        30
+    }
 }
 
 /// `IslamicCalendar::civilLeapYear`.
@@ -999,9 +1007,7 @@ impl Calendar {
                     eyear = eyear.wrapping_add(quotient);
                     month = remainder;
                 }
-                if grego::is_leap_year(eyear + INDIAN_ERA_START) && month == 0 {
-                    31
-                } else if (1..=5).contains(&month) {
+                if (grego::is_leap_year(eyear + INDIAN_ERA_START) && month == 0) || (1..=5).contains(&month) {
                     31
                 } else {
                     30
@@ -1057,7 +1063,9 @@ impl Calendar {
                     365
                 }
             }
-            CalendarSystem::Coptic | CalendarSystem::Ethiopic { .. } => self.calendar_handle_get_year_length(eyear),
+            CalendarSystem::Coptic | CalendarSystem::Ethiopic { .. } => {
+                self.calendar_handle_get_year_length(eyear)
+            }
         }
     }
 
@@ -1169,7 +1177,7 @@ impl Calendar {
         1
     }
 
-    /// The `add` overrides: `HebrewCalendar::add(MONTH)` skips ADAR_1 in common years.
+    /// The `add` overrides: `HebrewCalendar::add(MONTH)` skips `ADAR_1` in common years.
     /// Returns `false` if the calendar does not override `add` for `field`.
     pub(super) fn subclass_add(&mut self, field: usize, amount: i32, status: &mut Status) -> bool {
         if !matches!(self.system, CalendarSystem::Hebrew) || field != F::MONTH {
@@ -1244,10 +1252,10 @@ impl Calendar {
     fn gregorian_is_leap_year(&self, year: i32) -> bool {
         if year >= self.gregorian_state().cutover_year {
             // Gregorian
-            (year & 0x3) == 0 && (year % 100 != 0 || year % 400 == 0)
+            year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
         } else {
             // Julian
-            (year & 0x3) == 0
+            year % 4 == 0
         }
     }
 
@@ -1277,7 +1285,7 @@ impl Calendar {
 
             // Julian leap years occurred historically every 4 years starting with 8 AD.
             // We implement the proleptic calendar.
-            let is_leap = (eyear & 0x3) == 0; // equiv. to (eyear%4 == 0)
+            let is_leap = eyear % 4 == 0;
 
             // Common Julian/Gregorian calculation
             let march1 = if is_leap { 60 } else { 59 }; // zero-based DOY for March 1
@@ -1513,10 +1521,18 @@ impl Calendar {
         if yday < INDIAN_YEAR_START {
             // Day is at the end of the preceding Saka year
             indian_year -= 1;
-            leap_month = if grego::is_leap_year(gregorian_year - 1) { 31 } else { 30 }; // Days in leapMonth this year, previous Gregorian year
+            leap_month = if grego::is_leap_year(gregorian_year - 1) {
+                31
+            } else {
+                30
+            }; // Days in leapMonth this year, previous Gregorian year
             yday += leap_month + (31 * 5) + (30 * 3) + 10;
         } else {
-            leap_month = if grego::is_leap_year(gregorian_year) { 31 } else { 30 }; // Days in leapMonth this year
+            leap_month = if grego::is_leap_year(gregorian_year) {
+                31
+            } else {
+                30
+            }; // Days in leapMonth this year
             yday -= INDIAN_YEAR_START;
         }
 

@@ -5,7 +5,9 @@ use std::any::Any;
 use std::sync::Arc;
 
 use rustdb_common::{Error, Result};
-use rustdb_function::{FunctionClient, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet, Stability};
+use rustdb_function::{
+    FunctionClient, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet, Stability,
+};
 use rustdb_types::{LogicalType, Time, TimeTz, Timestamp, Value, Vector};
 
 use crate::icu_datefunc::BindData;
@@ -63,7 +65,11 @@ fn current_function(
         *result = Vector::constant(&value(state)?)?;
         Ok(())
     })
-    .with_bind(|_, input| Ok(Some(Arc::new(ClientData(Arc::clone(input.client))) as Arc<dyn FunctionData>)));
+    .with_bind(|_, input| {
+        Ok(Some(
+            Arc::new(ClientData(Arc::clone(input.client))) as Arc<dyn FunctionData>
+        ))
+    });
     function.stability = Stability::ConsistentWithinQuery;
     function
 }
@@ -71,7 +77,11 @@ fn current_function(
 /// `RegisterICUCurrentFunctions`: `get_current_time`, `current_date` and `today`.
 pub(crate) fn current_functions() -> Vec<ScalarFunctionSet> {
     let mut current_time_set = ScalarFunctionSet::new("get_current_time");
-    current_time_set.add(current_function("get_current_time", LogicalType::TIME_TZ, current_time));
+    current_time_set.add(current_function(
+        "get_current_time",
+        LogicalType::TIME_TZ,
+        current_time,
+    ));
 
     let mut current_date_set = ScalarFunctionSet::new("current_date");
     current_date_set.add(current_function("current_date", LogicalType::DATE, current_date));

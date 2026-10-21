@@ -35,8 +35,8 @@ const JULIAN_1970_CE: i32 = 2_440_588;
 
 /// `Grego::DAYS_BEFORE`.
 const DAYS_BEFORE: [i16; 24] = [
-    0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 0, 31, 60, 91, 121, 152, 182, 213, 244, 274,
-    305, 335,
+    0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305,
+    335,
 ];
 
 /// `Grego::MONTH_LENGTH`.
@@ -75,6 +75,7 @@ pub fn floor_divide_rem_i32(numerator: f64, denominator: i32) -> (i32, i32) {
 }
 
 /// `ClockMath::floorDivide(double dividend, double divisor, double &remainder)`.
+#[allow(clippy::float_cmp)] // ICU compares the quotients exactly
 pub fn floor_divide_rem_f64(dividend: f64, divisor: f64) -> (f64, f64) {
     let mut quotient = floor_divide_f64(dividend, divisor);
     let mut remainder = dividend - quotient * divisor;
@@ -92,7 +93,7 @@ pub fn floor_divide_rem_f64(dividend: f64, divisor: f64) -> (f64, f64) {
 
 /// `Grego::isLeapYear`.
 pub const fn is_leap_year(year: i32) -> bool {
-    (year & 0x3) == 0 && (year % 100 != 0 || year % 400 == 0)
+    year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
 
 /// `Grego::monthLength`.

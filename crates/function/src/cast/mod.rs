@@ -216,6 +216,7 @@ impl fmt::Debug for CastFunctionSet {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("CastFunctionSet")
             .field("registered", &self.registered.len())
+            .field("client", &self.client.is_some())
             .finish()
     }
 }

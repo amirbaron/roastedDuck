@@ -92,7 +92,13 @@ enum StaticExtension {
 }
 
 impl StaticExtension {
-    const ALL: [Self; 5] = [Self::Parquet, Self::Json, Self::Tpch, Self::Autocomplete, Self::Icu];
+    const ALL: [Self; 5] = [
+        Self::Parquet,
+        Self::Json,
+        Self::Tpch,
+        Self::Autocomplete,
+        Self::Icu,
+    ];
 
     fn from_name(name: &str) -> Option<Self> {
         match name {
@@ -182,11 +188,14 @@ impl StaticExtension {
                     system.alter_builtin_scalar_functions(name, IcuExtension::patch_function)?;
                 }
                 for (name, collation) in IcuExtension::collations() {
-                    system.register_collation(&name, rustdb_catalog::CollationEntry {
-                        function: collation,
-                        combinable: false,
-                        not_required_for_equality: false,
-                    })?;
+                    system.register_collation(
+                        &name,
+                        rustdb_catalog::CollationEntry {
+                            function: collation,
+                            combinable: false,
+                            not_required_for_equality: false,
+                        },
+                    )?;
                 }
             }
         }
@@ -290,7 +299,9 @@ fn contains_type(ty: &LogicalType, id: rustdb_types::LogicalTypeId) -> bool {
     }
     match ty.id() {
         L::List => ty.child_type().is_some_and(|child| contains_type(child, id)),
-        L::Array => ty.array_child().is_some_and(|(child, _)| contains_type(child, id)),
+        L::Array => ty
+            .array_child()
+            .is_some_and(|(child, _)| contains_type(child, id)),
         L::Map => ty
             .map_key_value()
             .is_some_and(|(key, value)| contains_type(key, id) || contains_type(value, id)),
@@ -358,10 +369,10 @@ impl DatabaseInstance {
     /// The collations extensions registered in the system catalog, with whether they are
     /// combinable.
     pub(crate) fn extension_collations(&self) -> Vec<(String, bool)> {
-        let Some(schema) = self
-            .system_catalog
-            .schema(&rustdb_catalog::Transaction::system(), rustdb_catalog::DEFAULT_SCHEMA)
-        else {
+        let Some(schema) = self.system_catalog.schema(
+            &rustdb_catalog::Transaction::system(),
+            rustdb_catalog::DEFAULT_SCHEMA,
+        ) else {
             return Vec::new();
         };
         let Some(schema) = schema.as_schema() else {
@@ -447,7 +458,11 @@ impl DatabaseInstance {
 
     /// Sets (`Some`) or resets (`None`, to the default) the global value of extension
     /// option `option` (`DBConfig::SetOption` / `ResetOption`).
-    pub(crate) fn set_extension_global(&self, option: &rustdb_function::ExtensionOption, value: Option<Value>) {
+    pub(crate) fn set_extension_global(
+        &self,
+        option: &rustdb_function::ExtensionOption,
+        value: Option<Value>,
+    ) {
         let mut globals = self
             .extension_globals
             .lock()
@@ -988,16 +1003,10 @@ impl Connection {
     fn casts(&self) -> Arc<CastFunctionSet> {
         let instance = self.database.instance();
         let casts = instance.casts();
-        if !instance
-            .client_casts
-            .load(std::sync::atomic::Ordering::Acquire)
-        {
+        if !instance.client_casts.load(std::sync::atomic::Ordering::Acquire) {
             return casts;
         }
-        let mut bound = self
-            .bound_casts
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut bound = self.bound_casts.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some((base, bound)) = bound.as_ref()
             && Arc::ptr_eq(base, &casts)
         {
@@ -1210,9 +1219,11 @@ impl Connection {
     /// is then set for the session (the default scope) or globally.
     fn set_extension_variable(&mut self, name: &str, value: &Value, scope: SetScope) -> Result<()> {
         let instance = self.database.instance();
-        let option = instance
-            .extension_option(name)
-            .ok_or_else(|| Error::invalid_input(format!("Extension parameter {name} was not found after autoloading")))?;
+        let option = instance.extension_option(name).ok_or_else(|| {
+            Error::invalid_input(format!(
+                "Extension parameter {name} was not found after autoloading"
+            ))
+        })?;
         let mut target_value = self.cast_value(value, &option.input_type)?;
         if let Some(set_function) = &option.set_function {
             set_function(&mut target_value)?;
@@ -1229,9 +1240,11 @@ impl Connection {
     /// which then becomes the session's (or the global) value.
     fn reset_extension_variable(&mut self, name: &str, scope: SetScope) -> Result<()> {
         let instance = self.database.instance();
-        let option = instance
-            .extension_option(name)
-            .ok_or_else(|| Error::invalid_input(format!("Extension parameter {name} was not found after autoloading")))?;
+        let option = instance.extension_option(name).ok_or_else(|| {
+            Error::invalid_input(format!(
+                "Extension parameter {name} was not found after autoloading"
+            ))
+        })?;
         if let Some(set_function) = &option.set_function {
             let mut default_value = option.default_value.clone();
             set_function(&mut default_value)?;
@@ -1884,13 +1897,15 @@ impl Connection {
                 .instance()
                 .extension_option_values()
                 .into_iter()
-                .map(|(option, global)| match self.extension_session.get(&option.name) {
-                    Some(value) => {
-                        let value = value.clone();
-                        (option, value, true)
-                    }
-                    None => (option, global, false),
-                })
+                .map(
+                    |(option, global)| match self.extension_session.get(&option.name) {
+                        Some(value) => {
+                            let value = value.clone();
+                            (option, value, true)
+                        }
+                        None => (option, global, false),
+                    },
+                )
                 .collect(),
         }
     }
@@ -2200,7 +2215,9 @@ impl Connection {
                     .into_iter()
                     .map(|(option, _)| option.name)
                     .collect();
-                return Err(crate::settings::unrecognized_with(name, &extension_names, |_| false));
+                return Err(crate::settings::unrecognized_with(name, &extension_names, |_| {
+                    false
+                }));
             }
             LogicalKind::Set { name, value, scope } => {
                 if is_secret_setting(name) {

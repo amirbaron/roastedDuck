@@ -262,11 +262,9 @@ impl Catalog {
         };
         let mut merged = current.clone();
         for function in set.functions {
-            if merged
-                .functions
-                .iter()
-                .any(|existing| existing.arguments == function.arguments && existing.varargs == function.varargs)
-            {
+            if merged.functions.iter().any(|existing| {
+                existing.arguments == function.arguments && existing.varargs == function.varargs
+            }) {
                 return Err(rustdb_common::Error::catalog(format!(
                     "Failed to add new function overloads to function \"{}\": function overload already exists",
                     set.name
@@ -297,7 +295,9 @@ impl Catalog {
             .get_committed(name)
             .ok_or_else(|| rustdb_common::Error::internal(format!("Function \"{name}\" not found")))?;
         let EntryKind::ScalarFunction(current) = &existing.kind else {
-            return Err(rustdb_common::Error::internal(format!("\"{name}\" is not a scalar function")));
+            return Err(rustdb_common::Error::internal(format!(
+                "\"{name}\" is not a scalar function"
+            )));
         };
         let mut altered = current.clone();
         alter(&mut altered)?;
@@ -740,7 +740,11 @@ impl Catalog {
             ))
         };
         // `GetEntryInternal`: the entry is about to get a new version.
-        if let Some(contents) = self.schema(transaction, schema).as_deref().and_then(CatalogEntry::as_schema) {
+        if let Some(contents) = self
+            .schema(transaction, schema)
+            .as_deref()
+            .and_then(CatalogEntry::as_schema)
+        {
             Self::set_for(contents, entry.catalog_type()).check_write_conflict(transaction, entry.name())?;
         }
         let owner_schema_entry = self.schema(transaction, owner_schema).ok_or_else(missing)?;

@@ -8,9 +8,9 @@ use rustdb_functions::scalar::date::date_part::Part;
 use rustdb_functions::scalar::executor::{Str, binary, str_at, unary};
 use rustdb_types::{DataChunk, LogicalType, Timestamp, Vector};
 
+use crate::icu_datefunc::{self, BindData, CalendarPtr, extract_field, get_time, get_time_unsafe, set_time};
 use crate::icu4c::calendar::{Calendar, field};
 use crate::icu4c::grego::MONDAY;
-use crate::icu_datefunc::{self, BindData, CalendarPtr, extract_field, get_time, get_time_unsafe, set_time};
 
 /// `ICUDateFunc::part_trunc_t`: truncates the calendar's time to a part's precision.
 pub(crate) type PartTrunc = fn(&mut Calendar, &mut u64) -> Result<()>;
@@ -67,6 +67,7 @@ fn trunc_minute(calendar: &mut Calendar, micros: &mut u64) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::unnecessary_wraps)] // the signature of the function pointer it is used as
 fn trunc_hour(calendar: &mut Calendar, micros: &mut u64) -> Result<()> {
     trunc_minute_internal(calendar, micros);
     calendar.set(field::MINUTE, 0);
@@ -161,7 +162,9 @@ pub(crate) fn truncation_factory(part: Part) -> Result<PartTrunc> {
         Part::Milliseconds => trunc_millisecond,
         Part::Microseconds => trunc_microsecond,
         _ => {
-            return Err(Error::not_implemented("Specifier type not implemented for ICU DATETRUNC"));
+            return Err(Error::not_implemented(
+                "Specifier type not implemented for ICU DATETRUNC",
+            ));
         }
     })
 }

@@ -17,14 +17,14 @@ use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Vector};
 /// The locales ICU 77's collation data has (`Collator::getAvailableLocales`), as DuckDB
 /// names the collations (lowercase `language[_country]`).
 pub(crate) const COLLATION_LOCALES: [&str; 129] = [
-    "af", "am", "ar", "ar_sa", "as", "az", "be", "bg", "bn", "bo", "br", "bs", "ca", "ceb", "chr", "cs", "cy", "da",
-    "de", "de_at", "dsb", "dz", "ee", "el", "en", "en_us", "eo", "es", "et", "fa", "fa_af", "ff", "fi", "fil", "fo",
-    "fr", "fr_ca", "ga", "gl", "gu", "ha", "haw", "he", "he_il", "hi", "hr", "hsb", "hu", "hy", "id", "id_id", "ig",
-    "is", "it", "ja", "ka", "kk", "kl", "km", "kn", "ko", "kok", "ku", "ky", "lb", "lkt", "ln", "lo", "lt", "lv",
-    "mk", "ml", "mn", "mr", "ms", "mt", "my", "nb", "nb_no", "ne", "nl", "nn", "om", "or", "pa", "pa_in", "pl",
-    "ps", "pt", "ro", "ru", "sa", "se", "si", "sk", "sl", "smn", "sq", "sr", "sr_ba", "sr_me", "sr_rs", "sv", "sw",
-    "ta", "te", "th", "tk", "to", "tr", "ug", "uk", "ur", "uz", "vi", "wae", "wo", "xh", "yi", "yo", "yue",
-    "yue_cn", "zh", "zh_cn", "zh_hk", "zh_mo", "zh_sg", "zh_tw", "zu",
+    "af", "am", "ar", "ar_sa", "as", "az", "be", "bg", "bn", "bo", "br", "bs", "ca", "ceb", "chr", "cs",
+    "cy", "da", "de", "de_at", "dsb", "dz", "ee", "el", "en", "en_us", "eo", "es", "et", "fa", "fa_af", "ff",
+    "fi", "fil", "fo", "fr", "fr_ca", "ga", "gl", "gu", "ha", "haw", "he", "he_il", "hi", "hr", "hsb", "hu",
+    "hy", "id", "id_id", "ig", "is", "it", "ja", "ka", "kk", "kl", "km", "kn", "ko", "kok", "ku", "ky", "lb",
+    "lkt", "ln", "lo", "lt", "lv", "mk", "ml", "mn", "mr", "ms", "mt", "my", "nb", "nb_no", "ne", "nl", "nn",
+    "om", "or", "pa", "pa_in", "pl", "ps", "pt", "ro", "ru", "sa", "se", "si", "sk", "sl", "smn", "sq", "sr",
+    "sr_ba", "sr_me", "sr_rs", "sv", "sw", "ta", "te", "th", "tk", "to", "tr", "ug", "uk", "ur", "uz", "vi",
+    "wae", "wo", "xh", "yi", "yo", "yue", "yue_cn", "zh", "zh_cn", "zh_hk", "zh_mo", "zh_sg", "zh_tw", "zu",
 ];
 
 /// `IcuBindData::FUNCTION_PREFIX`.
@@ -43,7 +43,10 @@ fn collator_cache() -> &'static Mutex<HashMap<String, SharedCollator>> {
 }
 
 /// The collator of `key`, made by `create` the first time.
-fn cached_collator(key: String, create: impl FnOnce() -> Result<CollatorBorrowed<'static>>) -> Result<SharedCollator> {
+fn cached_collator(
+    key: String,
+    create: impl FnOnce() -> Result<CollatorBorrowed<'static>>,
+) -> Result<SharedCollator> {
     let mut cache = collator_cache().lock().unwrap_or_else(PoisonError::into_inner);
     if let Some(collator) = cache.get(&key) {
         return Ok(Arc::clone(collator));
@@ -116,7 +119,8 @@ impl IcuBindData {
                 options.strength = Some(Strength::Primary);
                 options.case_level = Some(CaseLevel::On);
             }
-            let locale = icu_locale_core::Locale::try_from_str(tag).unwrap_or(icu_locale_core::Locale::UNKNOWN);
+            let locale =
+                icu_locale_core::Locale::try_from_str(tag).unwrap_or(icu_locale_core::Locale::UNKNOWN);
             CollatorBorrowed::try_new(CollatorPreferences::from(&locale), options).map_err(|error| {
                 Error::invalid_input(format!("Failed to create ICU collator with tag {tag}: {error}"))
             })
@@ -188,17 +192,21 @@ fn icu_collate_function(args: &DataChunk, state: &mut FunctionState, result: &mu
 fn icu_collate_function_for(collation: &str, tag: &'static str) -> ScalarFunction {
     let name = format!("{FUNCTION_PREFIX}{collation}");
     let collation = collation.to_owned();
-    ScalarFunction::new(name, vec![LogicalType::VARCHAR], LogicalType::VARCHAR, icu_collate_function).with_bind(
-        move |_, _| {
-            // `ICUCollateBind`: a tagged collator, else the collator of the name.
-            let data = if tag.is_empty() {
-                IcuBindData::for_name(&collation)?
-            } else {
-                IcuBindData::for_tag(tag)?
-            };
-            Ok(Some(Arc::new(data) as Arc<dyn FunctionData>))
-        },
+    ScalarFunction::new(
+        name,
+        vec![LogicalType::VARCHAR],
+        LogicalType::VARCHAR,
+        icu_collate_function,
     )
+    .with_bind(move |_, _| {
+        // `ICUCollateBind`: a tagged collator, else the collator of the name.
+        let data = if tag.is_empty() {
+            IcuBindData::for_name(&collation)?
+        } else {
+            IcuBindData::for_tag(tag)?
+        };
+        Ok(Some(Arc::new(data) as Arc<dyn FunctionData>))
+    })
 }
 
 /// The collations (`LoadInternal`): one per locale, then `icu_noaccent`.
@@ -207,18 +215,28 @@ pub(crate) fn collations() -> Vec<(String, ScalarFunction)> {
         .iter()
         .map(|collation| ((*collation).to_owned(), icu_collate_function_for(collation, "")))
         .collect();
-    result.push(("icu_noaccent".to_owned(), icu_collate_function_for("noaccent", NOACCENT_TAG)));
+    result.push((
+        "icu_noaccent".to_owned(),
+        icu_collate_function_for("noaccent", NOACCENT_TAG),
+    ));
     result
 }
 
 /// `ICUSortKeyBind`: the collation must be a non-NULL constant.
-fn icu_sort_key_bind(_function: &mut ScalarFunction, input: &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>> {
+fn icu_sort_key_bind(
+    _function: &mut ScalarFunction,
+    input: &BindInput<'_>,
+) -> Result<Option<Arc<dyn FunctionData>>> {
     let Some(Some(value)) = input.constants.get(1) else {
         return Err(Error::not_implemented(
             "ICU_SORT_KEY(VARCHAR, VARCHAR) with non-constant collation is not supported",
         ));
     };
-    if input.argument_types.get(1).is_some_and(|ty| ty.id() == LogicalTypeId::Unknown) {
+    if input
+        .argument_types
+        .get(1)
+        .is_some_and(|ty| ty.id() == LogicalTypeId::Unknown)
+    {
         return Err(Error::not_implemented(
             "ICU_SORT_KEY(VARCHAR, VARCHAR) with non-constant collation is not supported",
         ));

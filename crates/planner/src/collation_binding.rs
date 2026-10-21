@@ -66,7 +66,10 @@ fn type_collation(ty: &LogicalType) -> &str {
 #[derive(Clone, Debug)]
 enum ResolvedCollation {
     Builtin(&'static Collation),
-    Extension { name: String, entry: rustdb_catalog::CollationEntry },
+    Extension {
+        name: String,
+        entry: Box<rustdb_catalog::CollationEntry>,
+    },
 }
 
 impl ResolvedCollation {
@@ -183,7 +186,7 @@ fn resolve_collations(
             None => match lookup(argument)? {
                 Some(entry) => ResolvedCollation::Extension {
                     name: argument.to_owned(),
-                    entry,
+                    entry: Box::new(entry),
                 },
                 None => {
                     return Err(Error::catalog(format!(

@@ -4,12 +4,12 @@
 
 use rustdb_common::string_util::{candidates_message, top_n_jaro_winkler};
 use rustdb_common::{Error, Result};
-use rustdb_types::{Date, Time, Timestamp};
+use rustdb_types::Timestamp;
 
+use crate::icu_datefunc::{MICROS_PER_MSEC, extract_field, set_time};
 use crate::icu4c::calendar::{Calendar, field};
 use crate::icu4c::timezone::TimeZone;
 use crate::icu4c::zone_names::ZONE_NAMES;
-use crate::icu_datefunc::{MICROS_PER_MSEC, extract_field, set_time};
 
 /// `GetKnownTimeZone`: the zone `tz_str` names, if ICU knows it.
 fn get_known_time_zone(tz_str: &str) -> Option<TimeZone> {
@@ -152,19 +152,7 @@ pub(crate) fn get_components(ts: Timestamp, calendar: &mut Calendar) -> Result<T
         hour: extract_field(calendar, field::HOUR_OF_DAY)?,
         minute: extract_field(calendar, field::MINUTE)?,
         second: extract_field(calendar, field::SECOND)?,
-        microsecond: (i64::from(extract_field(calendar, field::MILLISECOND)?) * MICROS_PER_MSEC + micros as i64)
-            as i32,
+        microsecond: (i64::from(extract_field(calendar, field::MILLISECOND)?) * MICROS_PER_MSEC
+            + micros as i64) as i32,
     })
-}
-
-/// `ICUHelpers::ToTimestamp`.
-pub(crate) fn to_timestamp(data: TimestampComponents) -> Result<Timestamp> {
-    let date = Date::from_ymd(data.year, data.month, data.day).ok_or_else(|| {
-        Error::conversion(format!(
-            "Date out of range: {}-{}-{}",
-            data.year, data.month, data.day
-        ))
-    })?;
-    let time = Time::from_hms_micros(data.hour, data.minute, data.second, data.microsecond);
-    Timestamp::from_datetime(date, time).ok_or_else(|| Error::conversion("Timestamp out of range"))
 }

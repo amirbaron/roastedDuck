@@ -6,14 +6,16 @@ use std::any::Any;
 use std::sync::Arc;
 
 use rustdb_common::{Error, Result};
-use rustdb_function::{BindInput, FunctionClient, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet};
+use rustdb_function::{
+    BindInput, FunctionClient, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet,
+};
 use rustdb_functions::scalar::executor::{binary, unary};
 use rustdb_types::{DataChunk, Date, Interval, LogicalType, Timestamp, Vector};
 
-use crate::icu4c::calendar::{Status, field};
 use crate::icu_datefunc::{self, BindData, MICROS_PER_MSEC, TzCalendar, get_time, set_time, subtract_field};
 use crate::icu_datetrunc::current_midnight;
 use crate::icu_helpers::{TimestampComponents, get_components};
+use crate::icu4c::calendar::{Status, field};
 
 /// The bind data of the interval functions: the calendar, and the connection whose
 /// transaction start `age(x)` reads.
@@ -37,7 +39,10 @@ impl FunctionData for DateAddBindData {
 }
 
 /// `ICUBindIntervalMonths`: intervals do not work with 13 month calendars.
-fn bind_interval_months(_function: &mut ScalarFunction, input: &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>> {
+fn bind_interval_months(
+    _function: &mut ScalarFunction,
+    input: &BindInput<'_>,
+) -> Result<Option<Arc<dyn FunctionData>>> {
     let data = BindData::from_client(input.client);
     let calendar = TzCalendar::new(&data.calendar, &data.cal_setting);
     if !calendar.supports_intervals {
@@ -52,7 +57,11 @@ fn bind_interval_months(_function: &mut ScalarFunction, input: &BindInput<'_>) -
 }
 
 /// `CalendarAddHour`: adds hours in steps that fit `int32_t`.
-fn calendar_add_hour(calendar: &mut crate::icu4c::calendar::Calendar, interval_hour: i64, status: &mut Status) {
+fn calendar_add_hour(
+    calendar: &mut crate::icu4c::calendar::Calendar,
+    interval_hour: i64,
+    status: &mut Status,
+) {
     let mut interval_hour = interval_hour;
     if interval_hour >= 0 {
         while interval_hour > 0 {
@@ -70,7 +79,11 @@ fn calendar_add_hour(calendar: &mut crate::icu4c::calendar::Calendar, interval_h
 }
 
 /// `ICUCalendarAdd::Operation(timestamp_t, interval_t)`.
-pub(crate) fn add(calendar_p: &mut TzCalendar, timestamp: Timestamp, interval: Interval) -> Result<Timestamp> {
+pub(crate) fn add(
+    calendar_p: &mut TzCalendar,
+    timestamp: Timestamp,
+    interval: Interval,
+) -> Result<Timestamp> {
     if !timestamp.is_finite() {
         return Ok(timestamp);
     }
@@ -142,7 +155,11 @@ pub(crate) fn add(calendar_p: &mut TzCalendar, timestamp: Timestamp, interval: I
 }
 
 /// `ICUCalendarSub::Operation(timestamp_t, interval_t)`.
-pub(crate) fn sub_interval(calendar: &mut TzCalendar, timestamp: Timestamp, interval: Interval) -> Result<Timestamp> {
+pub(crate) fn sub_interval(
+    calendar: &mut TzCalendar,
+    timestamp: Timestamp,
+    interval: Interval,
+) -> Result<Timestamp> {
     let negated = Interval::new(
         interval.months.wrapping_neg(),
         interval.days.wrapping_neg(),
@@ -168,18 +185,30 @@ fn set_start(calendar: &mut TzCalendar, start_date: Timestamp, end_date: Timesta
 }
 
 /// The time part of the differences (`Time::FromTime` of the field differences).
-fn time_difference(calendar: &mut TzCalendar, end_date: Timestamp, start_micros: i64, end_micros: i64) -> Result<i64> {
+fn time_difference(
+    calendar: &mut TzCalendar,
+    end_date: Timestamp,
+    start_micros: i64,
+    end_micros: i64,
+) -> Result<i64> {
     let hour_diff = subtract_field(&mut calendar.calendar, field::HOUR_OF_DAY, end_date)?;
     let min_diff = subtract_field(&mut calendar.calendar, field::MINUTE, end_date)?;
     let sec_diff = subtract_field(&mut calendar.calendar, field::SECOND, end_date)?;
     let ms_diff = subtract_field(&mut calendar.calendar, field::MILLISECOND, end_date)?;
     let micros_diff = (i64::from(ms_diff) * MICROS_PER_MSEC + (end_micros - start_micros)) as i32;
-    Ok(((i64::from(hour_diff) * 60 + i64::from(min_diff)) * 60 + i64::from(sec_diff)) * Interval::MICROS_PER_SEC
-        + i64::from(micros_diff))
+    Ok(
+        ((i64::from(hour_diff) * 60 + i64::from(min_diff)) * 60 + i64::from(sec_diff))
+            * Interval::MICROS_PER_SEC
+            + i64::from(micros_diff),
+    )
 }
 
 /// `ICUCalendarSub::Operation(timestamp_t, timestamp_t)`.
-pub(crate) fn sub_timestamps(calendar: &mut TzCalendar, end_date: Timestamp, start_date: Timestamp) -> Result<Interval> {
+pub(crate) fn sub_timestamps(
+    calendar: &mut TzCalendar,
+    end_date: Timestamp,
+    start_date: Timestamp,
+) -> Result<Interval> {
     if !end_date.is_finite() || !start_date.is_finite() {
         return Err(Error::invalid_input("Cannot subtract infinite timestamps"));
     }
@@ -200,7 +229,11 @@ fn get_age(ts1: TimestampComponents, ts2: TimestampComponents, is_negative: bool
     const NORMAL_DAYS: [i32; 13] = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     const LEAP_DAYS: [i32; 13] = [0, 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     let days_in = |year: i32, month: i32| {
-        let table = if Date::is_leap_year(year) { &LEAP_DAYS } else { &NORMAL_DAYS };
+        let table = if Date::is_leap_year(year) {
+            &LEAP_DAYS
+        } else {
+            &NORMAL_DAYS
+        };
         table.get(month as usize).copied().unwrap_or(0)
     };
     // perform the differences
@@ -265,7 +298,8 @@ fn get_age(ts1: TimestampComponents, ts2: TimestampComponents, is_negative: bool
     Interval::new(
         year_diff.wrapping_mul(12).wrapping_add(month_diff),
         day_diff,
-        ((i64::from(hour_diff) * 60 + i64::from(min_diff)) * 60 + i64::from(sec_diff)) * Interval::MICROS_PER_SEC
+        ((i64::from(hour_diff) * 60 + i64::from(min_diff)) * 60 + i64::from(sec_diff))
+            * Interval::MICROS_PER_SEC
             + i64::from(micros_diff),
     )
 }
@@ -367,17 +401,48 @@ fn age_unary(args: &DataChunk, state: &mut FunctionState, result: &mut Vector) -
 pub(crate) fn date_add_functions() -> Vec<ScalarFunctionSet> {
     let tstz = || LogicalType::TIMESTAMP_TZ;
     let mut plus = ScalarFunctionSet::new("+");
-    plus.add(binary_function("+", tstz(), LogicalType::INTERVAL, tstz(), add_timestamp_interval));
-    plus.add(binary_function("+", LogicalType::INTERVAL, tstz(), tstz(), add_interval_timestamp));
+    plus.add(binary_function(
+        "+",
+        tstz(),
+        LogicalType::INTERVAL,
+        tstz(),
+        add_timestamp_interval,
+    ));
+    plus.add(binary_function(
+        "+",
+        LogicalType::INTERVAL,
+        tstz(),
+        tstz(),
+        add_interval_timestamp,
+    ));
 
     let mut minus = ScalarFunctionSet::new("-");
-    minus.add(binary_function("-", tstz(), LogicalType::INTERVAL, tstz(), sub_timestamp_interval));
-    minus.add(binary_function("-", tstz(), tstz(), LogicalType::INTERVAL, sub_timestamp_timestamp));
+    minus.add(binary_function(
+        "-",
+        tstz(),
+        LogicalType::INTERVAL,
+        tstz(),
+        sub_timestamp_interval,
+    ));
+    minus.add(binary_function(
+        "-",
+        tstz(),
+        tstz(),
+        LogicalType::INTERVAL,
+        sub_timestamp_timestamp,
+    ));
 
     let mut age_set = ScalarFunctionSet::new("age");
-    age_set.add(binary_function("age", tstz(), tstz(), LogicalType::INTERVAL, age_binary));
+    age_set.add(binary_function(
+        "age",
+        tstz(),
+        tstz(),
+        LogicalType::INTERVAL,
+        age_binary,
+    ));
     age_set.add(
-        ScalarFunction::new("age", vec![tstz()], LogicalType::INTERVAL, age_unary).with_bind(bind_interval_months),
+        ScalarFunction::new("age", vec![tstz()], LogicalType::INTERVAL, age_unary)
+            .with_bind(bind_interval_months),
     );
     vec![plus, minus, age_set]
 }

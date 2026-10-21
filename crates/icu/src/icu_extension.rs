@@ -8,8 +8,8 @@ use rustdb_common::{Error, Result};
 use rustdb_function::{ExtensionOption, TableFunction, TableFunctionBindOutput, TableFunctionSet};
 use rustdb_types::{LogicalType, Value, Vector};
 
-use crate::icu4c::timezone::host_time_zone_id;
 use crate::icu_helpers;
+use crate::icu4c::timezone::host_time_zone_id;
 
 /// The calendar keyword values (`Calendar::getKeywordValuesForLocale("calendar", ...)`),
 /// in ICU's order.
@@ -84,7 +84,7 @@ pub(crate) fn extension_options() -> Vec<ExtensionOption> {
     let mut tz_string = host_time_zone_id();
     // If the environment TZ is invalid, look for some alternatives
     if icu_helpers::try_get_normalized_time_zone(&mut tz_string).is_none() {
-        tz_string = "UTC".to_owned();
+        "UTC".clone_into(&mut tz_string);
     }
     vec![
         ExtensionOption {

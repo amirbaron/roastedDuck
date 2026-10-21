@@ -13,9 +13,9 @@ use rustdb_functions::scalar::executor::{Str, StrOut, addressable, binary, unary
 use rustdb_functions::scalar::structs::build_struct;
 use rustdb_types::{DataChunk, Date, LogicalType, LogicalTypeId, NativeType, Timestamp, Vector};
 
+use crate::icu_datefunc::{self, BindData, CalendarPtr, MICROS_PER_MSEC, extract_field, set_time};
 use crate::icu4c::calendar::{Calendar, Status, field};
 use crate::icu4c::grego::{MONDAY, SUNDAY};
-use crate::icu_datefunc::{self, BindData, CalendarPtr, MICROS_PER_MSEC, extract_field, set_time};
 
 /// `ICUDatePart::part_bigint_t`.
 type PartBigint = fn(&mut Calendar, u64) -> Result<i64>;
@@ -67,7 +67,9 @@ fn extract_day_of_week(calendar: &mut Calendar, _micros: u64) -> Result<i64> {
 
 fn extract_iso_day_of_week(calendar: &mut Calendar, _micros: u64) -> Result<i64> {
     // [Mon(1), Sun(7)]
-    Ok(i64::from(1 + (extract_field(calendar, field::DAY_OF_WEEK)? + 7 - MONDAY) % 7))
+    Ok(i64::from(
+        1 + (extract_field(calendar, field::DAY_OF_WEEK)? + 7 - MONDAY) % 7,
+    ))
 }
 
 fn extract_week(calendar: &mut Calendar, _micros: u64) -> Result<i64> {
@@ -114,6 +116,7 @@ fn extract_microsecond(calendar: &mut Calendar, micros: u64) -> Result<i64> {
     Ok(extract_millisecond(calendar, micros)? * MICROS_PER_MSEC + micros as i64)
 }
 
+#[allow(clippy::unnecessary_wraps)] // the signature of the function pointer it is used as
 fn extract_epoch(calendar: &mut Calendar, micros: u64) -> Result<f64> {
     let mut status = Status::ok();
     let mut result = calendar.get_time_in_millis(&mut status) / 1000.0;
@@ -359,7 +362,10 @@ fn unary_text(args: &DataChunk, state: &mut FunctionState, result: &mut Vector) 
 }
 
 /// `ICUDatePart::BindUnaryDatePart`: the adapter of the part the function is named after.
-fn bind_unary_date_part(function: &mut ScalarFunction, input: &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>> {
+fn bind_unary_date_part(
+    function: &mut ScalarFunction,
+    input: &BindInput<'_>,
+) -> Result<Option<Arc<dyn FunctionData>>> {
     let part = Part::parse(&function.name)?;
     let adapter = if part.is_bigint() {
         Adapter::Bigint(part_code_bigint_factory(part)?)
@@ -395,7 +401,10 @@ fn second_column(args: &DataChunk) -> DataChunk {
 
 /// `ICUDatePart::BindBinaryDatePart`: if we are only looking for Julian Days (or epochs),
 /// then patch in the unary function.
-fn bind_binary_date_part(function: &mut ScalarFunction, input: &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>> {
+fn bind_binary_date_part(
+    function: &mut ScalarFunction,
+    input: &BindInput<'_>,
+) -> Result<Option<Arc<dyn FunctionData>>> {
     let part_value = input.constants.first().cloned().flatten();
     let is_parameter = input.argument_types[0].id() == LogicalTypeId::Unknown;
     if let Some(part_value) = part_value.filter(|value| !value.is_null() && !is_parameter) {
@@ -403,7 +412,8 @@ fn bind_binary_date_part(function: &mut ScalarFunction, input: &BindInput<'_>) -
         let part = Part::parse(&part_name)?;
         if !part.is_bigint() {
             function.return_type = LogicalType::DOUBLE;
-            function.kernel = Arc::new(|args, state, result| unary_double(&second_column(args), state, result));
+            function.kernel =
+                Arc::new(|args, state, result| unary_double(&second_column(args), state, result));
             let adapter = Adapter::Double(part_code_double_factory(part)?);
             return Ok(Some(Arc::new(BindAdapterData {
                 data: BindData::from_client(input.client),
@@ -517,7 +527,10 @@ fn column<T: NativeType>(ty: LogicalType, values: &[Option<T>]) -> Vector {
 }
 
 /// `ICUDatePart::BindStruct`: collect names and deconflict, construct return type.
-fn bind_struct(function: &mut ScalarFunction, input: &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>> {
+fn bind_struct(
+    function: &mut ScalarFunction,
+    input: &BindInput<'_>,
+) -> Result<Option<Arc<dyn FunctionData>>> {
     if input.argument_types[0].id() == LogicalTypeId::Unknown {
         return Err(rustdb_functions::parameter_not_resolved());
     }
@@ -545,7 +558,10 @@ fn bind_struct(function: &mut ScalarFunction, input: &BindInput<'_>) -> Result<O
     let mut struct_children = Vec::with_capacity(list_children.len());
     for part_value in list_children {
         if part_value.is_null() {
-            return Err(Error::binder(format!("NULL struct entry name in {}", function.name)));
+            return Err(Error::binder(format!(
+                "NULL struct entry name in {}",
+                function.name
+            )));
         }
         let part_name = part_value.to_varchar()?;
         let part_code = Part::parse(&part_name)?;
@@ -573,7 +589,9 @@ fn bind_struct(function: &mut ScalarFunction, input: &BindInput<'_>) -> Result<O
 
 /// The bind of a unary function with a fixed adapter (`BindLastDate`, `BindMonthName`,
 /// `BindDayName`).
-fn bind_adapter(adapter: Adapter) -> impl Fn(&mut ScalarFunction, &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>> {
+fn bind_adapter(
+    adapter: Adapter,
+) -> impl Fn(&mut ScalarFunction, &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>> {
     move |_, input| {
         Ok(Some(Arc::new(BindAdapterData {
             data: BindData::from_client(input.client),
@@ -630,7 +648,8 @@ fn adapter_set(
 ) -> ScalarFunctionSet {
     let mut set = ScalarFunctionSet::new(name);
     set.add(
-        ScalarFunction::new(name, vec![LogicalType::TIMESTAMP_TZ], result_type, kernel).with_bind(bind_adapter(adapter)),
+        ScalarFunction::new(name, vec![LogicalType::TIMESTAMP_TZ], result_type, kernel)
+            .with_bind(bind_adapter(adapter)),
     );
     set
 }
@@ -674,10 +693,25 @@ pub(crate) fn date_part_functions() -> Vec<ScalarFunctionSet> {
     sets.push(unary_part_set("weekday", LogicalType::BIGINT));
     sets.push(unary_part_set("weekofyear", LogicalType::BIGINT));
     // register the last_day function
-    sets.push(adapter_set("last_day", LogicalType::DATE, unary_date, Adapter::Date(make_last_day)));
+    sets.push(adapter_set(
+        "last_day",
+        LogicalType::DATE,
+        unary_date,
+        Adapter::Date(make_last_day),
+    ));
     // register the dayname/monthname functions
-    sets.push(adapter_set("monthname", LogicalType::VARCHAR, unary_text, Adapter::Text(month_name)));
-    sets.push(adapter_set("dayname", LogicalType::VARCHAR, unary_text, Adapter::Text(day_name)));
+    sets.push(adapter_set(
+        "monthname",
+        LogicalType::VARCHAR,
+        unary_text,
+        Adapter::Text(month_name),
+    ));
+    sets.push(adapter_set(
+        "dayname",
+        LogicalType::VARCHAR,
+        unary_text,
+        Adapter::Text(day_name),
+    ));
     // finally the actual date_part function
     sets.push(date_part_set("date_part"));
     sets.push(date_part_set("datepart"));
