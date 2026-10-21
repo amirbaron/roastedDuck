@@ -23,7 +23,8 @@ use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, Vector};
 use crate::compression::{self, CompressionType, SegmentScan, constant, uncompressed};
 use crate::statistics::BaseStatistics;
 
-/// Whether a segment is still appendable memory or written to the database file.
+/// Whether a segment is still appendable memory or written by a checkpoint (to the
+/// database file, or to memory for an in-memory database).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SegmentType {
     Transient,
@@ -216,8 +217,9 @@ pub struct ColumnSegment {
     buffer_manager: BufferManager,
     /// The block manager of a persistent segment, for its overflow string blocks.
     block_manager: Option<Arc<dyn BlockManager>>,
-    /// The on-disk overflow string blocks of a persistent string segment
-    /// (`UncompressedStringSegmentState::on_disk_blocks`).
+    /// The overflow string blocks of a persistent string segment
+    /// (`UncompressedStringSegmentState::on_disk_blocks`): on disk, or the in-memory
+    /// blocks of the segment of an in-memory database.
     overflow_blocks: Vec<BlockId>,
 }
 
@@ -270,12 +272,60 @@ impl ColumnSegment {
         }
     }
 
+    /// A segment an in-memory checkpoint compressed into `block` at `offset`
+    /// (`InMemoryPartialBlock::AddSegmentToTail`, which makes it persistent): it is never
+    /// written again unless updated, and an uncompressed string segment keeps its big
+    /// strings in `string_blocks`. Its block id is the temporary one of `block`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn create_in_memory(
+        buffer_manager: &BufferManager,
+        block: Arc<BlockHandle>,
+        offset: usize,
+        block_size: usize,
+        ty: LogicalType,
+        count: u64,
+        compression: CompressionType,
+        stats: BaseStatistics,
+        string_blocks: Vec<Arc<BlockHandle>>,
+    ) -> Result<Self> {
+        let layout = Layout::of(&ty)?;
+        let overflow_blocks = string_blocks.iter().map(|block| block.block_id()).collect();
+        let memory_blocks = string_blocks
+            .into_iter()
+            .map(|block| {
+                let size = usize::try_from(block.memory_usage()).unwrap_or(usize::MAX);
+                OverflowBlock {
+                    block,
+                    size,
+                    used: size,
+                }
+            })
+            .collect();
+        Ok(Self {
+            ty,
+            layout,
+            compression,
+            segment_type: SegmentType::Persistent,
+            block_id: block.block_id(),
+            block: Some(block),
+            offset,
+            segment_size: block_size - offset,
+            block_size,
+            count: AtomicU64::new(count),
+            stats: Mutex::new(stats),
+            string_state: Mutex::new(StringSegmentState { memory_blocks }),
+            buffer_manager: buffer_manager.clone(),
+            block_manager: None,
+            overflow_blocks,
+        })
+    }
+
     /// The block manager of a persistent segment.
     pub(crate) fn persistent_block_manager(&self) -> Option<&Arc<dyn BlockManager>> {
         self.block_manager.as_ref()
     }
 
-    /// The on-disk overflow string blocks of a persistent string segment.
+    /// The overflow string blocks of a persistent string segment.
     pub fn overflow_blocks(&self) -> &[BlockId] {
         &self.overflow_blocks
     }

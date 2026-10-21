@@ -255,6 +255,8 @@ struct WalState {
     size: u64,
     /// Entries written since the WAL was last emptied (`GetWALEntriesCount`).
     entries: u64,
+    /// The entries of the last commit.
+    last_commit_entries: u64,
     /// The file is cut to `size` when it is opened (`UNINITIALIZED_REQUIRES_TRUNCATE`):
     /// replay stopped at a torn or failed entry.
     requires_truncate: bool,
@@ -273,11 +275,6 @@ pub struct WriteAheadLog {
     block_manager: Arc<SingleFileBlockManager>,
     options: SerializationOptions,
     state: Mutex<WalState>,
-    /// Held shared by the transactions writing to the database.
-    checkpoint_lock: Arc<crate::checkpoint_lock::CheckpointLock>,
-    /// Held shared by transactions that insert or delete rows, exclusively by a checkpoint
-    /// that vacuums (`DuckTransactionManager::vacuum_lock`).
-    vacuum_lock: Arc<crate::checkpoint_lock::CheckpointLock>,
 }
 
 impl WriteAheadLog {
@@ -299,19 +296,7 @@ impl WriteAheadLog {
                 requires_truncate,
                 ..WalState::default()
             }),
-            checkpoint_lock: Arc::default(),
-            vacuum_lock: Arc::default(),
         }
-    }
-
-    /// The database's checkpoint lock (`DuckTransactionManager::checkpoint_lock`).
-    pub fn checkpoint_lock(&self) -> &Arc<crate::checkpoint_lock::CheckpointLock> {
-        &self.checkpoint_lock
-    }
-
-    /// The database's vacuum lock (`DuckTransactionManager::vacuum_lock`).
-    pub fn vacuum_lock(&self) -> &Arc<crate::checkpoint_lock::CheckpointLock> {
-        &self.vacuum_lock
     }
 
     pub fn path(&self) -> &str {
@@ -376,9 +361,10 @@ impl WalGuard<'_> {
         self.state.size
     }
 
-    /// Entries written since the WAL was last emptied.
-    pub fn entries(&self) -> u64 {
-        self.state.entries
+    /// Entries written since the WAL was last emptied, before the last commit: the count
+    /// `SingleFileStorageManager::AutomaticCheckpoint` sees when that commit starts.
+    pub fn entries_before_last_commit(&self) -> u64 {
+        self.state.entries - self.state.last_commit_entries
     }
 
     /// Whether commits are not logged.
@@ -453,6 +439,7 @@ impl WalGuard<'_> {
     /// (`WALWriteState` + `WriteAheadLog::Flush`). On failure the WAL is cut back to its
     /// previous size (`StorageCommitState::RevertCommit`).
     pub fn commit(&mut self, mut batch: WalBatch) -> Result<()> {
+        self.state.last_commit_entries = 0;
         if batch.is_empty() {
             return Ok(());
         }
@@ -477,6 +464,7 @@ impl WalGuard<'_> {
             let _ = self.truncate(initial_size);
         } else {
             self.state.entries += batch.entries;
+            self.state.last_commit_entries = batch.entries;
         }
         result
     }
@@ -523,6 +511,7 @@ impl WalGuard<'_> {
         self.state.file = None;
         self.state.size = 0;
         self.state.entries = 0;
+        self.state.last_commit_entries = 0;
         self.state.requires_truncate = false;
         match std::fs::remove_file(&self.wal.path) {
             Ok(()) => Ok(()),

@@ -1,5 +1,6 @@
-//! Checkpointing the catalog to a database file and loading it back (DuckDB's
-//! `SingleFileCheckpointWriter` and `CheckpointReader`).
+//! Checkpointing the catalog to a database file and loading it back, and checkpointing
+//! in-memory databases (DuckDB's `SingleFileCheckpointWriter`, `CheckpointReader` and
+//! `InMemoryCheckpointer`).
 //!
 //! The catalog is written as one list of entries: per schema its sequences, tables
 //! (referenced tables before referencing ones), views and indexes. Each entry is its
@@ -22,12 +23,14 @@ use rustdb_storage::checkpoint::pointers::{deserialize_index_storage_info, index
 use rustdb_storage::checkpoint::pointers::{deserialize_meta_block_pointer, serialize_meta_block_pointer};
 use rustdb_storage::checkpoint::stream::StreamDeserializer;
 use rustdb_storage::checkpoint::table_reader::{load_row_groups, read_table_data};
-use rustdb_storage::checkpoint::table_writer::{BlockWriter, finish_table_checkpoint, write_table_data};
+use rustdb_storage::checkpoint::table_writer::{
+    BlockWriter, checkpoint_in_memory_table, finish_table_checkpoint, write_table_data,
+};
 use rustdb_storage::index::art::{ArtStorageInfo, deprecated_index_block_ids};
 use rustdb_storage::index::{IndexConstraintType, IndexSlot, UnboundIndex, UnboundIndexStorage};
 use rustdb_storage::metadata::{MetaBlockPointer, MetadataReader, MetadataWriter};
 use rustdb_storage::storage_info::{DatabaseHeader, STANDARD_VECTOR_SIZE};
-use rustdb_storage::storage_manager::{CheckpointAbort, StorageManager};
+use rustdb_storage::storage_manager::{CheckpointAbort, InMemoryStorageManager, StorageManager};
 use rustdb_storage::{ColumnDefinition as StorageColumn, DataTable};
 use rustdb_types::{LogicalType, Value};
 
@@ -684,6 +687,43 @@ pub fn write_checkpoint(
     for (table, data) in persisted {
         finish_table_checkpoint(&table, data, replace_in_memory)?;
     }
+    Ok(())
+}
+
+/// Checkpoints an in-memory database (DuckDB's `InMemoryCheckpointer::CreateCheckpoint`):
+/// the data of every committed table is vacuumed (by a `full_checkpoint`) and, unless
+/// `vacuum_only` (`CheckpointType::VACUUM_ONLY`), compressed into in-memory blocks; then
+/// the estimated size of the changes is reset. The caller guarantees that no transaction
+/// writes to the database, and for a full checkpoint that none needs an older version of
+/// its data.
+pub fn checkpoint_in_memory(
+    catalog: &Catalog,
+    storage: &InMemoryStorageManager,
+    full_checkpoint: bool,
+    vacuum_only: bool,
+    lowest_active_start: u64,
+) -> Result<()> {
+    let transaction = Transaction::system();
+    let mut tables = Vec::new();
+    for schema in catalog.schemas().scan(&transaction) {
+        let Some(schema_entry) = schema.as_schema() else {
+            continue;
+        };
+        for entry in schema_entry.tables.scan(&transaction) {
+            if let EntryKind::Table(table) = &entry.kind
+                && let Some(storage_table) = &table.storage
+            {
+                tables.push(Arc::clone(storage_table));
+            }
+        }
+    }
+    let settings = storage.table_write_settings(full_checkpoint, lowest_active_start);
+    let abort = storage.checkpoint_config().abort;
+    for table in tables {
+        checkpoint_in_memory_table(&table, storage.compression_config(), settings, vacuum_only)?;
+        abort.check(CheckpointAbort::InMemoryCheckpoint)?;
+    }
+    storage.set_wal_size(0);
     Ok(())
 }
 

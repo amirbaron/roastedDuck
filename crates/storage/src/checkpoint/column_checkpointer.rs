@@ -374,8 +374,10 @@ fn checkpoint_segments<const N: usize>(
     if !column.has_changes() && validity.is_none_or(|validity| !validity.has_changes()) {
         let mut result: [Vec<DataPointer>; N] = std::array::from_fn(|_| Vec::new());
         result[0] = column.persistent_data_pointers(row_group_start)?;
+        ctx.writer.keep_segment_blocks(column);
         if let Some(validity) = validity {
             result[1] = validity.persistent_data_pointers(row_group_start)?;
+            ctx.writer.keep_segment_blocks(validity);
         }
         for pointers in &result {
             ctx.writer.add_reused_pointers(pointers);

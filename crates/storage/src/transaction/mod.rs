@@ -18,7 +18,7 @@ pub use undo::{CatalogUndo, UndoProperties};
 pub(crate) use undo::{SequenceValue, UndoBuffer, UndoEntry};
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rustdb_common::profiling::{MetricType, start_timer};
@@ -143,6 +143,7 @@ impl Transaction {
         &self,
         name: &str,
         wal: Option<&Arc<WriteAheadLog>>,
+        locks: &crate::checkpoint_lock::DatabaseLocks,
         checkpoint_lock: bool,
         vacuum_lock: bool,
     ) -> Result<()> {
@@ -163,20 +164,20 @@ impl Transaction {
             ))?,
         }
         drop(modified);
-        if checkpoint_lock && let Some(wal) = wal {
+        if checkpoint_lock {
             let mut guard = self
                 .checkpoint_guard
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
             if guard.is_none() {
                 // Waits while a checkpoint replaces the table data.
-                *guard = Some(wal.checkpoint_lock().shared());
+                *guard = Some(locks.checkpoint.shared());
             }
         }
-        if vacuum_lock && let Some(wal) = wal {
+        if vacuum_lock {
             let mut guard = self.vacuum_guard.lock().unwrap_or_else(PoisonError::into_inner);
             if guard.is_none() {
-                *guard = Some(wal.vacuum_lock().shared());
+                *guard = Some(locks.vacuum.shared());
             }
         }
         Ok(())
@@ -189,7 +190,10 @@ impl Transaction {
             .accessed_databases
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        if !accessed.iter().any(|accessed| accessed.eq_ignore_ascii_case(name)) {
+        if !accessed
+            .iter()
+            .any(|accessed| accessed.eq_ignore_ascii_case(name))
+        {
             accessed.push(name.to_lowercase());
         }
     }
@@ -308,9 +312,12 @@ impl Transaction {
         !self.undo().is_empty() || self.local_storage.changes_made()
     }
 
-    /// What the undo log contains.
+    /// What the undo log contains, with the estimated size of the transaction-local rows
+    /// (`DuckTransaction::GetUndoProperties`).
     pub fn undo_properties(&self) -> UndoProperties {
-        self.undo().properties()
+        let mut properties = self.undo().properties();
+        properties.estimated_size += self.local_storage.estimated_size();
+        properties
     }
 }
 
@@ -347,6 +354,10 @@ pub struct TransactionManager {
     state: Mutex<ManagerState>,
     lowest_active: Arc<LowestActive>,
     last_commit: AtomicU64,
+    /// Commits and rollbacks cleaning up undo logs no transaction needs any more. DuckDB
+    /// keeps a transaction, and with it its locks, until it is cleaned up; here its
+    /// versions (update chains) are still in place while this is non-zero.
+    cleanups: AtomicUsize,
 }
 
 /// The start time and id of the oldest running transaction, shared with the
@@ -371,6 +382,7 @@ impl Default for TransactionManager {
                 id: AtomicU64::new(TRANSACTION_ID_START),
             }),
             last_commit: AtomicU64::new(0),
+            cleanups: AtomicUsize::new(0),
         }
     }
 }
@@ -447,6 +459,20 @@ impl TransactionManager {
         self.last_commit.load(Ordering::Acquire)
     }
 
+    /// Whether undo logs of committed transactions are being cleaned up: their update
+    /// chains are still in place, which a checkpoint must not vacuum.
+    pub fn cleanup_in_progress(&self) -> bool {
+        self.cleanups.load(Ordering::Acquire) > 0
+    }
+
+    /// Cleans up the undo logs `remove_transaction` collected.
+    fn run_cleanup(&self, cleanup: Vec<CleanupTask>) {
+        for committed in cleanup {
+            committed.undo.cleanup(committed.lowest_active_start);
+        }
+        self.cleanups.fetch_sub(1, Ordering::AcqRel);
+    }
+
     /// Number of running transactions.
     pub fn active_count(&self) -> usize {
         self.lock().active.len()
@@ -465,17 +491,14 @@ impl TransactionManager {
             .map(|&(_, start)| start)
             .min()
             .unwrap_or(TRANSACTION_ID_START);
-        state
-            .recently_committed
-            .iter()
-            .any(|committed| {
-                committed.blocks_checkpoint
-                    && committed.commit_id >= lowest_start
-                    && committed
-                        .database
-                        .as_deref()
-                        .is_none_or(|written| written.eq_ignore_ascii_case(database))
-            })
+        state.recently_committed.iter().any(|committed| {
+            committed.blocks_checkpoint
+                && committed.commit_id >= lowest_start
+                && committed
+                    .database
+                    .as_deref()
+                    .is_none_or(|written| written.eq_ignore_ascii_case(database))
+        })
     }
 
     /// Commits `transaction` (`CommitTransaction`). If flushing its local storage or
@@ -522,9 +545,7 @@ impl TransactionManager {
         let cleanup = self.remove_transaction(&mut state, transaction.transaction_id);
         drop(state);
         transaction.release_checkpoint_lock();
-        for committed in cleanup {
-            committed.undo.cleanup(committed.lowest_active_start);
-        }
+        self.run_cleanup(cleanup);
         outcome
     }
 
@@ -539,14 +560,14 @@ impl TransactionManager {
         let cleanup = self.remove_transaction(&mut state, transaction.transaction_id);
         drop(state);
         transaction.release_checkpoint_lock();
-        for committed in cleanup {
-            committed.undo.cleanup(committed.lowest_active_start);
-        }
+        self.run_cleanup(cleanup);
     }
 
     /// Removes a finished transaction from the active list and collects the committed
-    /// undo logs no running transaction needs any more (`RemoveTransaction`).
+    /// undo logs no running transaction needs any more (`RemoveTransaction`), to be
+    /// cleaned up with [`TransactionManager::run_cleanup`].
     fn remove_transaction(&self, state: &mut ManagerState, transaction_id: u64) -> Vec<CleanupTask> {
+        self.cleanups.fetch_add(1, Ordering::AcqRel);
         state.active.retain(|&(id, _)| id != transaction_id);
         let lowest_start = state
             .active

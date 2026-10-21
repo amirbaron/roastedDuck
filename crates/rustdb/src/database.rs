@@ -703,9 +703,7 @@ impl DatabaseInstance {
             *config
         };
         for database in self.databases.all() {
-            if let Some(storage) = &database.storage {
-                storage.set_compression_config(config);
-            }
+            database.storage.set_compression_config(config);
         }
         Ok(())
     }
@@ -749,9 +747,7 @@ impl DatabaseInstance {
                 *config
             };
             for database in self.databases.all() {
-                if let Some(storage) = &database.storage {
-                    storage.set_compression_config(config);
-                }
+                database.storage.set_compression_config(config);
             }
             return Ok(());
         }
@@ -806,9 +802,7 @@ impl DatabaseInstance {
             *config
         };
         for database in self.databases.all() {
-            if let Some(storage) = &database.storage {
-                storage.set_compression_config(config);
-            }
+            database.storage.set_compression_config(config);
         }
         Ok(())
     }
@@ -882,9 +876,7 @@ impl DatabaseInstance {
             *config
         };
         for database in self.databases.all() {
-            if let Some(storage) = &database.storage {
-                storage.set_checkpoint_config(config);
-            }
+            database.storage.set_checkpoint_config(config);
         }
         Ok(())
     }
@@ -945,26 +937,60 @@ impl DatabaseInstance {
     /// dropped catalog entries: then it does not checkpoint while other transactions run
     /// (`GetCheckpointType`). A failing checkpoint reports that the commit succeeded
     /// (`BuildAutocheckpointError`).
-    fn auto_checkpoint(&self, name: &str, blocks_concurrent: bool, index_bytes: u64) -> Result<()> {
+    ///
+    /// An in-memory database has no WAL: its WAL size grows by the `estimated_size` of
+    /// each commit (with the index memory), and it checkpoints automatically only when no
+    /// other transaction runs (DuckDB cannot vacuum then; rustdb does not compress then
+    /// either).
+    fn auto_checkpoint(
+        &self,
+        name: &str,
+        blocks_concurrent: bool,
+        estimated_size: u64,
+        index_bytes: u64,
+        skip_checkpoint: bool,
+    ) -> Result<()> {
         let threshold = self
             .checkpoint_wal_size
             .load(std::sync::atomic::Ordering::Relaxed);
         let Some(database) = self.databases.get(name) else {
             return Ok(());
         };
-        let Some(storage) = &database.storage else {
-            return Ok(());
+        let storage = match &database.storage {
+            crate::attached::DatabaseStorage::File(storage) => storage,
+            crate::attached::DatabaseStorage::InMemory(storage) => {
+                storage.add_wal_size(estimated_size);
+                if storage.wal_size() <= threshold || skip_checkpoint || self.transactions.active_count() > 0
+                {
+                    return Ok(());
+                }
+                // Nothing was logged: the commit itself failed (`error.Merge`).
+                return database
+                    .create_checkpoint(
+                        crate::storage::CheckpointMode::Automatic,
+                        Some(&self.transactions),
+                    )
+                    .map_err(|error| {
+                        Error::new(
+                            ErrorKind::Transaction,
+                            format!("Failed to commit: {}", error.raw_message()),
+                        )
+                    });
+            }
         };
         let Some(wal) = storage.wal() else {
             return Ok(());
         };
+        if skip_checkpoint {
+            return Ok(());
+        }
         // `SingleFileStorageManager::AutomaticCheckpoint`: the WAL size or entry count.
         let entry_limit = self
             .wal_autocheckpoint_entries
             .load(std::sync::atomic::Ordering::Relaxed);
         let (size, entries) = {
             let guard = wal.lock();
-            (guard.size(), guard.entries())
+            (guard.size(), guard.entries_before_last_commit())
         };
         // The commit's estimated size counts the memory of the indexes over its appended
         // rows (`LocalTableStorage::EstimatedSize`).
@@ -978,7 +1004,7 @@ impl DatabaseInstance {
             // also of committed changes older transactions still need.
             if blocks_concurrent
                 || self.transactions.retains_changes(u64::MAX, &database.name)
-                || wal.checkpoint_lock().try_exclusive().is_none()
+                || database.catalog.locks().checkpoint.try_exclusive().is_none()
             {
                 return Ok(());
             }
@@ -1203,17 +1229,19 @@ impl Database {
         else {
             return Ok(None);
         };
-        if let Some(storage) = &attached.storage {
-            storage.set_compression_config(self.instance.compression_config());
-            storage.set_checkpoint_config(self.instance.checkpoint_config());
-        }
+        attached
+            .storage
+            .set_compression_config(self.instance.compression_config());
+        attached
+            .storage
+            .set_checkpoint_config(self.instance.checkpoint_config());
         if let Err(error) = crate::wal::replay(self, &attached) {
             self.instance.databases.remove(&attached.name);
             return Err(error);
         }
         // `RecoveryMode::NO_WAL_WRITES`: the WAL is replayed, but not written to again.
         if options.no_wal_writes
-            && let Some(wal) = attached.storage.as_ref().and_then(|storage| storage.wal())
+            && let Some(wal) = attached.storage.file().and_then(|storage| storage.wal())
         {
             wal.lock().set_no_writes();
         }
@@ -1346,6 +1374,7 @@ impl Database {
             log_query_writer: None,
             extension_session: CaseInsensitiveMap::default(),
             bound_casts: Mutex::default(),
+            explicit_commit: None,
         })
     }
 
@@ -1420,6 +1449,32 @@ pub struct Connection {
     /// The database's casts bound for this connection, with the set they were made from
     /// (only when extension casts depend on the connection's settings).
     bound_casts: Mutex<Option<(Arc<CastFunctionSet>, Arc<CastFunctionSet>)>>,
+    /// The database an explicit `COMMIT` of the statement committed changes to, what
+    /// they were and the memory of the indexes over appended rows, for the automatic
+    /// checkpoint at the end of the statement.
+    explicit_commit: Option<CommittedChanges>,
+}
+
+/// What a transaction about to commit changed, for the automatic checkpoint after the
+/// commit.
+#[derive(Debug)]
+struct CommittedChanges {
+    /// The database it wrote to.
+    database: String,
+    properties: rustdb_storage::transaction::UndoProperties,
+    /// The memory of the indexes over its appended rows.
+    index_bytes: u64,
+}
+
+impl CommittedChanges {
+    /// The changes of `transaction`, if it wrote to a database.
+    fn of(transaction: &Transaction) -> Option<Self> {
+        transaction.modified_database().map(|database| Self {
+            database,
+            properties: transaction.undo_properties(),
+            index_bytes: transaction.local_storage().index_memory_size() as u64,
+        })
+    }
 }
 
 impl Drop for Connection {
@@ -1565,16 +1620,11 @@ impl Connection {
             .as_ref()
             .is_err_and(|error| invalidates_transaction(error.kind()));
         // The database the transaction wrote to, which its commit may checkpoint.
-        let (modified, blocks_concurrent, index_bytes) = if self.transactions.has_current() {
+        let committed = if self.transactions.has_current() {
             let current = self.transactions.current();
-            let properties = current.undo_properties();
-            (
-                current.modified_database(),
-                properties.has_updates || properties.has_dropped_entries,
-                current.local_storage().index_memory_size() as u64,
-            )
+            CommittedChanges::of(&current)
         } else {
-            (None, false, 0)
+            self.explicit_commit.take()
         };
         // A transaction that used an invalidated database cannot commit
         // (`MetaTransaction::Commit`); it is rolled back.
@@ -1604,11 +1654,14 @@ impl Connection {
         }
         if result.is_ok()
             && !self.transactions.has_current()
-            && let Some(modified) = modified
-            && let Err(error) =
-                self.database
-                    .instance()
-                    .auto_checkpoint(&modified, blocks_concurrent, index_bytes)
+            && let Some(committed) = committed
+            && let Err(error) = self.database.instance().auto_checkpoint(
+                &committed.database,
+                committed.properties.has_updates || committed.properties.has_dropped_entries,
+                committed.properties.estimated_size,
+                committed.index_bytes,
+                self.settings.skip_checkpoint_on_commit(),
+            )
         {
             result = Err(error);
         }
@@ -2202,7 +2255,7 @@ impl Connection {
             // Explicit checkpoints bind the indexes first, so the written indexes hold
             // the changes replayed from the WAL (`SingleFileCheckpointWriter::WriteTable`
             // with a bind connection).
-            if attached.storage.is_some() {
+            if attached.storage.file().is_some() {
                 let client = self.client_context(Arc::clone(&transaction));
                 let system = Transaction::system();
                 for schema in attached.catalog.schemas().scan(&system) {
@@ -2627,6 +2680,7 @@ impl Connection {
             transaction.modify_database(
                 &database.name,
                 database.catalog.wal(),
+                database.catalog.locks(),
                 needs_checkpoint_lock(plan),
                 needs_vacuum_lock(plan),
             )?;
@@ -2720,6 +2774,10 @@ impl Connection {
                             return Err(Error::new(ErrorKind::Io, message));
                         }
                         let rolls_back = self.transactions.is_invalidated();
+                        if !rolls_back && self.transactions.has_current() {
+                            let current = self.transactions.current();
+                            self.explicit_commit = CommittedChanges::of(&current);
+                        }
                         let result = self.transactions.commit();
                         self.finish_transaction_attaches(rolls_back || result.is_err());
                         result?;

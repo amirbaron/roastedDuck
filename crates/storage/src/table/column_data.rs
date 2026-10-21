@@ -20,6 +20,7 @@ use super::column_segment::{ColumnSegment, SegmentAppendState, SegmentScanState}
 use super::segment_tree::{Segment, SegmentNode, SegmentTree};
 use super::update_segment::{UpdateSegment, UpdateVersion};
 use crate::VECTOR_SIZE;
+use crate::checkpoint::table_writer::InMemoryBlocks;
 use crate::data_table::TableIoManager;
 use crate::statistics::{BaseStatistics, FilterPropagateResult};
 use crate::table_filter::TableFilter;
@@ -507,7 +508,14 @@ impl ColumnData {
         for (segment_idx, node) in self.segments.nodes().iter().enumerate() {
             let segment = &node.node;
             let persistent = segment.segment_type() == crate::table::column_segment::SegmentType::Persistent;
-            let overflow: Vec<i64> = segment.overflow_blocks().to_vec();
+            // `UncompressedStringSegmentState::on_disk_blocks`: the in-memory overflow
+            // blocks of an in-memory database are not listed.
+            let overflow: Vec<i64> = segment
+                .overflow_blocks()
+                .iter()
+                .copied()
+                .filter(|&block| block < rustdb_buffer::MAXIMUM_BLOCK)
+                .collect();
             let mut segment_info = if overflow.is_empty() {
                 String::new()
             } else {
@@ -1464,27 +1472,51 @@ impl ColumnData {
         ty: LogicalType,
         data: &crate::checkpoint::pointers::PersistentColumnData,
     ) -> Result<Self> {
+        Self::from_stored(io, column_index, ty, data, None)
+    }
+
+    /// A column of type `ty` whose segments an in-memory checkpoint wrote to `blocks`.
+    pub(crate) fn from_in_memory_checkpoint(
+        io: Arc<TableIoManager>,
+        column_index: usize,
+        ty: LogicalType,
+        data: &crate::checkpoint::pointers::PersistentColumnData,
+        blocks: &InMemoryBlocks,
+    ) -> Result<Self> {
+        Self::from_stored(io, column_index, ty, data, Some(blocks))
+    }
+
+    /// A column made of the segments `data` describes: on disk, or in `blocks`.
+    fn from_stored(
+        io: Arc<TableIoManager>,
+        column_index: usize,
+        ty: LogicalType,
+        data: &crate::checkpoint::pointers::PersistentColumnData,
+        blocks: Option<&InMemoryBlocks>,
+    ) -> Result<Self> {
         let column = Self::create(io, column_index, ty, ColumnDataType::MainTable, false, Some(data));
         let mut stats = BaseStatistics::create_empty(column.ty.clone());
-        column.initialize_persistent(data, &mut stats)?;
+        column.initialize_persistent(data, &mut stats, blocks)?;
         if let Some(own) = &column.stats {
             *own.lock().unwrap_or_else(PoisonError::into_inner) = stats;
         }
         Ok(column)
     }
 
-    /// Creates the persistent segments of `data` and of the children
-    /// (`InitializeColumn`); their statistics are merged into `stats`.
+    /// Creates the segments of `data` and of the children (`InitializeColumn`): persistent
+    /// ones, or with `blocks` those of an in-memory checkpoint; their statistics are merged
+    /// into `stats`.
     fn initialize_persistent(
         &self,
         data: &crate::checkpoint::pointers::PersistentColumnData,
         stats: &mut BaseStatistics,
+        blocks: Option<&InMemoryBlocks>,
     ) -> Result<()> {
         if let ColumnKind::Geometry { base, storage } = &self.kind {
             // `GeoColumnData::InitializeColumn`: the base column holds the stored data;
             // its statistics are interpreted as geometry statistics.
             let mut layout_stats = BaseStatistics::create_empty(base.ty.clone());
-            base.initialize_persistent(data, &mut layout_stats)?;
+            base.initialize_persistent(data, &mut layout_stats, blocks)?;
             self.count.store(base.count(), Ordering::Release);
             super::geo_column_data::interpret_layout_statistics(&layout_stats, *storage, stats);
             return Ok(());
@@ -1493,17 +1525,34 @@ impl ColumnData {
         let block_manager = self.io.block_manager();
         let mut count = 0u64;
         for pointer in &data.pointers {
-            let segment = ColumnSegment::create_persistent(
-                buffer_manager,
-                block_manager,
-                pointer.block_pointer.block_id,
-                pointer.block_pointer.offset as usize,
-                self.ty.clone(),
-                pointer.tuple_count,
-                pointer.compression,
-                pointer.statistics.clone(),
-                pointer.overflow_blocks.clone(),
-            )?;
+            let segment = match blocks {
+                Some(blocks) if pointer.block_pointer.is_valid() => ColumnSegment::create_in_memory(
+                    buffer_manager,
+                    Arc::clone(blocks.block(pointer.block_pointer.block_id)?),
+                    pointer.block_pointer.offset as usize,
+                    block_manager.block_size(),
+                    self.ty.clone(),
+                    pointer.tuple_count,
+                    pointer.compression,
+                    pointer.statistics.clone(),
+                    pointer
+                        .overflow_blocks
+                        .iter()
+                        .map(|&block| blocks.block(block).map(Arc::clone))
+                        .collect::<Result<_>>()?,
+                )?,
+                _ => ColumnSegment::create_persistent(
+                    buffer_manager,
+                    block_manager,
+                    pointer.block_pointer.block_id,
+                    pointer.block_pointer.offset as usize,
+                    self.ty.clone(),
+                    pointer.tuple_count,
+                    pointer.compression,
+                    pointer.statistics.clone(),
+                    pointer.overflow_blocks.clone(),
+                )?,
+            };
             if self.ty.id() == LogicalTypeId::Validity {
                 stats.merge_validity(&pointer.statistics);
             } else {
@@ -1520,7 +1569,7 @@ impl ColumnData {
         };
         match &self.kind {
             ColumnKind::Validity | ColumnKind::Geometry { .. } => {}
-            ColumnKind::Standard { validity } => validity.initialize_persistent(child(0)?, stats)?,
+            ColumnKind::Standard { validity } => validity.initialize_persistent(child(0)?, stats, blocks)?,
             ColumnKind::List {
                 validity,
                 child: list_child,
@@ -1529,18 +1578,18 @@ impl ColumnData {
                 validity,
                 child: list_child,
             } => {
-                validity.initialize_persistent(child(0)?, stats)?;
+                validity.initialize_persistent(child(0)?, stats, blocks)?;
                 let mut child_stats = BaseStatistics::create_empty(list_child.ty.clone());
-                list_child.initialize_persistent(child(1)?, &mut child_stats)?;
+                list_child.initialize_persistent(child(1)?, &mut child_stats, blocks)?;
                 if let Some(target) = stats.child_mut() {
                     target.merge(&child_stats);
                 }
             }
             ColumnKind::Struct { validity, fields } => {
-                validity.initialize_persistent(child(0)?, stats)?;
+                validity.initialize_persistent(child(0)?, stats, blocks)?;
                 for (index, field) in fields.iter().enumerate() {
                     let mut field_stats = BaseStatistics::create_empty(field.ty.clone());
-                    field.initialize_persistent(child(index + 1)?, &mut field_stats)?;
+                    field.initialize_persistent(child(index + 1)?, &mut field_stats, blocks)?;
                     if let Some(target) = stats.struct_children_mut().and_then(|c| c.get_mut(index)) {
                         target.merge(&field_stats);
                     }

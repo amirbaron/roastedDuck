@@ -5,6 +5,19 @@
 
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
+/// The locks of a database that transactions writing to it hold shared and checkpoints
+/// take exclusively (DuckDB's `DuckTransactionManager::checkpoint_lock` and
+/// `vacuum_lock`).
+#[derive(Debug, Default)]
+pub struct DatabaseLocks {
+    /// Held shared by transactions that update rows or change the catalog: a checkpoint
+    /// that replaces the in-memory table data needs it exclusively.
+    pub checkpoint: Arc<CheckpointLock>,
+    /// Held shared by transactions that insert or delete rows, exclusively by a checkpoint
+    /// that vacuums, so that no checkpoint moves row ids under them.
+    pub vacuum: Arc<CheckpointLock>,
+}
+
 #[derive(Debug, Default)]
 struct LockState {
     shared: usize,
