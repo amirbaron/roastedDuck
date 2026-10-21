@@ -369,8 +369,13 @@ impl AggregateExecutor {
                 state.evaluate(local, bounds, count)
             }
             (StrategyGlobal::Custom(state), AggregateLocalState::Custom(local)) => {
-                let (Some(state), Some(local)) = (state, local) else {
+                let Some(state) = state else {
                     return Err(not_finalized());
+                };
+                // A thread evaluating without having finalized sets up its state now.
+                let local = match local {
+                    Some(local) => local,
+                    None => local.insert(CustomLocalState::new(&self.aggregator)?),
                 };
                 state.evaluate(&self.aggregator, local, bounds, count, row_idx)
             }

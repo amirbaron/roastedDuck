@@ -26,20 +26,6 @@ impl WindowMask {
         }
     }
 
-    /// A mask with row `i` valid where `flags[i]` is set.
-    pub(crate) fn from_flags(flags: &[bool]) -> Self {
-        let words = flags
-            .chunks(BITS_PER_ENTRY)
-            .map(|chunk| {
-                chunk
-                    .iter()
-                    .enumerate()
-                    .fold(0u64, |word, (bit, &flag)| word | (u64::from(flag) << bit))
-            })
-            .collect();
-        Self { words: Some(words) }
-    }
-
     /// The mask of the first `count` rows of a vector's validity.
     pub(crate) fn from_validity(validity: &ValidityMask, count: usize) -> Self {
         let Some(words) = validity.words() else {
