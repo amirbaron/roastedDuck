@@ -113,9 +113,8 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    order, the partitioned aggregate and the UnnestRewriter's `unnest` pattern, and showed
    that caching table blocks like DuckDB makes rustdb's memory DuckDB's. Left: cheaper
    table block re-reads (caching is ruled out by the memory target), the aggregate hash
-   table's lookups and resizes, the hash join probe, and struct projection pushdown with
-   the EXPLAIN tests that check it (`plan_struct_projection_pushdown`,
-   `struct_projection_pushdown_in_storage`, `deliver_child_columns`).
+   table's lookups and resizes, and the hash join probe. Struct projection pushdown is
+   ported (13).
 8. **Logical plan serialization** (`json_serialize_plan`).
 9. **Physical operator logging** (`physical_operator_logging`): the
    `PhysicalOperator` log type is registered, but nothing writes it. DuckDB logs from
@@ -140,12 +139,22 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
     sort into buffer-managed, spillable runs (`PhysicalRangeJoin` global sort state,
     `WindowHashGroup`), and the IEJoin/AsOf sinks finalize in two events
     (`AddFinishEvent`, see `docs/perf-backlog.md`).
-13. **VARIANT extract pushdown into shredded columns.** VARIANT columns are stored,
-    shredded and unshredded like DuckDB's; a scan of `col.a::INT` still unshreds whole
-    values and extracts afterwards. DuckDB scans the typed column of a fully shredded
-    field directly (`VariantColumnData::PushdownShreddedFieldExtract`,
-    `VariantStats::PushdownExtract`), which needs the storage `PushdownExtract` of struct
-    projection pushdown (7) first. Results are unaffected.
+13. **VARIANT scans after the extract pushdown.** Struct and VARIANT extract pushdown are
+    ported one to one: `RemoveUnusedColumns` registers `struct_extract` / `variant_extract`
+    chains (under a cast) on scanned columns, scans read only the fields used
+    (`ColumnIndex` children, the scan's `Projections` list them), and a table scan of a
+    STRUCT or VARIANT column emits each extracted field as a column of its own
+    (`PUSHDOWN_EXTRACT`: `StructColumnData` reads the field into the result, with a
+    pushed-down cast; `VariantColumnData::PushdownShreddedFieldExtract` reads a fully
+    shredded field's typed column, else unshreds, extracts and casts). DuckDB's quirks
+    come along: a filter on a field disables the pushdown for the whole column;
+    `FindShreddedColumnInternal` stops one path element short, so a single-field path
+    (`v.a::INT`) never reads the typed column, and `v.a.b::INT` over a primitive `a`
+    returns `a`'s values where the extract should be NULL (C++ 1.5.6 does the same);
+    mixing a typed and an untyped path of the same field (`v.a.b::INT` with `v.a::INT`)
+    raises DuckDB's "This path wasn't found in the registered paths" internal error.
+    So `variant/tpch_sf1` spends its time unshredding (in DuckDB too), and rustdb's
+    unshredding must be faster than DuckDB's for it to finish in 300 s.
 14. **Buffer eviction parity under tight limits** (`max_swap_space_error.test`, failing 4
     in 10 runs). After `CREATE TABLE t2 AS SELECT random() FROM range(200000)` under
     `memory_limit='1024KiB'`, two threads and a 4 MB swap limit, rustdb keeps 1,067,008
