@@ -26,8 +26,14 @@ that close it. Finished streams are removed; the commit history records them.
    during the insert and logs only their pointers (`ROW_GROUP_DATA`), and estimates the
    WAL growth from those pointers. Affects peak memory of bulk loads and WAL size. Tests:
    `optimistic_write_not_trigger_checkpoint`, `wal_size_unaligned_appends`,
-   `reclaim_space_insert_unique_idx_optimistic`. Starts after the in-memory checkpoint
+   `reclaim_space_insert_unique_idx_optimistic`, `buffer_managed_query_result` (an
+   800 MB table created under a 100 MB limit without a temporary directory). Replaying
+   `ROW_GROUP_DATA` entries is part of it: rustdb cannot replay a WAL in which DuckDB
+   logged an optimistically written insert. Starts after the in-memory checkpoint
    work merges (shared code).
+   **Concurrent checkpoints** belong to the same WAL work: rustdb's checkpoint holds the
+   WAL lock, so commits wait for it, while DuckDB lets them continue into a new WAL and
+   recovers from `.wal.checkpoint` plus `.wal` (the `concurrent_wal` tests).
 5. **Compression parity.** ZSTD strings compress about 16% worse than DuckDB's
    (`zstd_compression_ratio`). The cause is `ruzstd`'s encoder, not its match level: on
    concatenated UUIDs it reaches 1.72× (1.76× emitting literals only, about 4.56 bits per
