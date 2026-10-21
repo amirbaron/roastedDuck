@@ -3615,7 +3615,10 @@ test/sql/storage/concurrent_attach_if_not_exists_create.test
 test/sql/storage/concurrent_attach_or_replace.test_slow
 test/sql/storage/concurrent_checkpoint_unchanged_table_delete_blocks.test_slow
 test/sql/storage/concurrent_table_insertion.test_slow
+test/sql/storage/concurrent_wal/concurrent_checkpoint_abort.test_slow
 test/sql/storage/concurrent_wal/concurrent_checkpoint_abort_autocheckpoint.test_slow
+test/sql/storage/concurrent_wal/concurrent_checkpoint_abort_recovery.test_slow
+test/sql/storage/concurrent_wal/concurrent_checkpoint_empty_checkpoint.test_slow
 test/sql/storage/constraints/foreignkey/foreign_key_persistent.test
 test/sql/storage/constraints/foreignkey/foreign_key_persistent_memory_limit.test
 test/sql/storage/corrupt/corrupt_catalog_entry.test
@@ -3696,6 +3699,7 @@ test/sql/storage/optimistic_write/optimistic_write_mixed.test_slow
 test/sql/storage/optimistic_write/optimistic_write_multi_statement.test_slow
 test/sql/storage/optimistic_write/optimistic_write_multi_statement_string.test_slow
 test/sql/storage/optimistic_write/optimistic_write_no_block_reuse.test_slow
+test/sql/storage/optimistic_write/optimistic_write_not_trigger_checkpoint.test
 test/sql/storage/optimistic_write/optimistic_write_nulls.test
 test/sql/storage/optimistic_write/optimistic_write_primary_key.test_slow
 test/sql/storage/optimistic_write/optimistic_write_temp_table.test
@@ -3722,6 +3726,7 @@ test/sql/storage/parallel/memory_limit_batch_load_list.test_slow
 test/sql/storage/parallel/memory_limit_mixed_batches.test_slow
 test/sql/storage/parallel/parallel_insert_selective_filter.test_slow
 test/sql/storage/parallel/reclaim_space_batch_insert.test_slow
+test/sql/storage/parallel/reclaim_space_insert_unique_idx_optimistic.test_slow
 test/sql/storage/parallel/reclaim_space_primary_key_optimistic.test_slow
 test/sql/storage/parallel/reclaim_space_rollback_mixed_batches.test_slow
 test/sql/storage/parallel/tiny_row_group_size.test_slow
@@ -3898,6 +3903,7 @@ test/sql/storage/wal/wal_replay_unbound_index_generated_column.test
 test/sql/storage/wal/wal_replay_unbound_index_mixed_inserts.test
 test/sql/storage/wal/wal_replay_unbound_index_multi_index.test
 test/sql/storage/wal/wal_sequence_uncommitted_transaction.test
+test/sql/storage/wal/wal_size_unaligned_appends.test_slow
 test/sql/storage/wal/wal_storage_types.test
 test/sql/storage/wal/wal_store_add_column.test
 test/sql/storage/wal/wal_store_add_column_persistent.test
