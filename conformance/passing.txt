@@ -694,6 +694,7 @@ test/parquet/timetz_parquet.test
 test/parquet/variant/variant_all_types_shredded.test
 test/parquet/variant/variant_basic.test
 test/parquet/variant/variant_basic_shredded_writing.test
+test/parquet/variant/variant_basic_writing.test
 test/parquet/variant/variant_blob_roundtrip.test
 test/parquet/variant/variant_bytes_to_variant.test
 test/parquet/variant/variant_comparison.test
@@ -715,6 +716,7 @@ test/parquet/variant/variant_shredding_reanalysis_bug.test
 test/parquet/variant/variant_shredding_required_fields.test
 test/parquet/variant/variant_small_decimal.test
 test/parquet/variant/variant_snowflake_test.test
+test/parquet/variant/variant_stats_propagation.test
 test/parquet/variant/variant_to_parquet_variant.test
 test/parquet/variant/variant_write_partially_shredded.test
 test/planner/projection_binding.test
@@ -1774,6 +1776,7 @@ test/sql/copy/parquet/read_parquet_parameter.test
 test/sql/copy/parquet/recursive_parquet_union_by_name.test
 test/sql/copy/parquet/replacement_scan_custom_extension.test
 test/sql/copy/parquet/rle_bool.test
+test/sql/copy/parquet/shredded_variant_stats.test
 test/sql/copy/parquet/spark_v2.test
 test/sql/copy/parquet/struct_column_reader_skip.test
 test/sql/copy/parquet/struct_skip_pushdown_null.test
@@ -2396,6 +2399,7 @@ test/sql/function/timetz/timetz_group_by.test
 test/sql/function/uuid/test_uuid.test
 test/sql/function/uuid/test_uuid_function.test
 test/sql/function/variant/variant_extract.test
+test/sql/function/variant/variant_extract_try_cast.test
 test/sql/function/variant/variant_shredded_extract_nested.test
 test/sql/function/variant/variant_typeof.test
 test/sql/generated_columns/stored/basic.test
@@ -3849,11 +3853,17 @@ test/sql/storage/types/variant/test_all_types_single_table.test
 test/sql/storage/types/variant/test_all_types_variant.test
 test/sql/storage/types/variant/update.test
 test/sql/storage/types/variant/variant_case_sensitive_fields_shredded.test
+test/sql/storage/types/variant/variant_extract_stats.test
 test/sql/storage/types/variant/variant_index.test
 test/sql/storage/types/variant/variant_null_missing.test
 test/sql/storage/types/variant/variant_null_shredding_inconsistency_issue.test
 test/sql/storage/types/variant/variant_parquet_shredding_bug.test
+test/sql/storage/types/variant/variant_shredding.test_slow
+test/sql/storage/types/variant/variant_shredding_empty_keys.test
 test/sql/storage/types/variant/variant_shredding_inconsistent.test
+test/sql/storage/types/variant/variant_shredding_omit_untyped.test
+test/sql/storage/types/variant/variant_stats_merging.test_slow
+test/sql/storage/types/variant/variant_storage_version.test
 test/sql/storage/unicode_filename.test
 test/sql/storage/unzip.test
 test/sql/storage/update/dictionary_update_null.test
