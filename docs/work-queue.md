@@ -4,21 +4,21 @@ Workstreams found while closing conformance failures (at most two agents run at 
 Each names the C++ it ports and the tests or checks that close it. Finished streams are
 removed; the commit history records them.
 
-Order of the next agents: the performance round (7) and VARIANT storage (13) once the
-running C API (1) and WAL (4) agents finish, then the C API extension surface (2), the
-shell (3), compression (5) and the rest.
+Order of the next agents: VARIANT storage (13) once the running WAL (4) or performance
+(7) agent finishes, then the C API extension surface (2), the shell (3), compression (5)
+and the rest.
 
 ## Public surface (M8)
 
-1. **C API, core.** `libduckdb` exports 17 of the 547 `duckdb_*` functions of DuckDB
-   1.5.6. Port `src/main/capi/` for results, values, prepared and pending statements,
-   streaming, appender, data chunks, vectors, logical types, table description,
-   configuration. Verify with DuckDB's own `test/api/capi/*.cpp` (Catch) compiled against
-   rustdb's `libduckdb` and header (test code only; nothing C++ ships), and diff the
-   exported symbol list against the C++ library.
-2. **C API, extension surface.** Scalar, aggregate, table and copy functions, replacement
-   scans, custom types, file system, logging, profiling, instance cache, catalog, the
-   Arrow C data interface (`duckdb_arrow_*`, `arrow_scan`) and ADBC.
+2. **C API, extension surface.** The core C API exports 334 of DuckDB's 547 functions
+   and passes DuckDB's core `test/api/capi` files (`scripts/capi-tests/run.sh`). Missing:
+   scalar, aggregate, table, cast and copy functions, replacement scans, custom types,
+   file system, catalog, config options, logging, profiling, instance cache, the
+   threading API (`duckdb_execute_tasks*`), the Arrow C data interface
+   (`duckdb_arrow_*`, `arrow_scan`) and ADBC; also a PRAGMA function catalog (the
+   extract-statements PRAGMA case of `test_capi_extract`). Typed appends go through
+   `Value`, so an overflowing DECIMAL append errors and invalid UTF-8 is rejected where
+   DuckDB writes them.
 3. **CLI shell.** `crates/shell` is a stub that prints `a|b` rows; DuckDB's shell renders
    duckbox tables (also for `-c` and piped output), dot commands and modes. Port
    `tools/shell` with byte-identical rendering.
