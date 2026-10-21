@@ -221,7 +221,9 @@ struct TemporaryFile {
 }
 
 struct FileState {
-    file: Option<File>,
+    /// The open file; reads and writes clone it and run without the lock, like DuckDB's
+    /// (only the slot bookkeeping is under the file lock).
+    file: Option<Arc<File>>,
     indexes: BlockIndexManager,
 }
 
@@ -246,7 +248,7 @@ impl TemporaryFile {
                 .truncate(true)
                 .open(&self.path)
                 .map_err(|err| io_error(format!("Cannot open file \"{}\": {err}", self.path.display())))?;
-            state.file = Some(file);
+            state.file = Some(Arc::new(file));
         }
         state.indexes.new_index(self.slot_size, Some(disk)).map(Some)
     }
@@ -255,23 +257,23 @@ impl TemporaryFile {
         slot * self.slot_size
     }
 
-    fn write_slot(&self, slot: u64, data: &[u8]) -> Result<()> {
-        let state = self.lock();
-        let file = state
+    /// The open file, for I/O outside the lock.
+    fn handle(&self) -> Result<Arc<File>> {
+        self.lock()
             .file
-            .as_ref()
-            .ok_or_else(|| Error::internal("temporary file is not open"))?;
-        write_all_at(file, data, self.position(slot))
+            .clone()
+            .ok_or_else(|| Error::internal("temporary file is not open"))
+    }
+
+    fn write_slot(&self, slot: u64, data: &[u8]) -> Result<()> {
+        let file = self.handle()?;
+        write_all_at(&file, data, self.position(slot))
             .map_err(|err| io_error(format!("Could not write file \"{}\": {err}", self.path.display())))
     }
 
     fn read_slot(&self, slot: u64, data: &mut [u8]) -> Result<()> {
-        let state = self.lock();
-        let file = state
-            .file
-            .as_ref()
-            .ok_or_else(|| Error::internal("temporary file is not open"))?;
-        read_exact_at(file, data, self.position(slot)).map_err(|err| {
+        let file = self.handle()?;
+        read_exact_at(&file, data, self.position(slot)).map_err(|err| {
             io_error(format!(
                 "Could not read from file \"{}\": {err}",
                 self.path.display()
