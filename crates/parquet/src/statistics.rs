@@ -4,7 +4,7 @@
 
 use rustdb_common::{Error, Result};
 use rustdb_function::cast::{CastFunctionSet, ValueCast as _};
-use rustdb_storage::statistics::{BaseStatistics, NumericValue, StatsData};
+use rustdb_storage::statistics::{BaseStatistics, NumericValue, StatsData, wrap_shredded_levels};
 use rustdb_types::{Date, LogicalType, LogicalTypeId, PhysicalType, Time, TimeNs, TimeTz, Timestamp, Value};
 
 use crate::column_reader::values::{DecimalTarget, FixedConversion, float16_to_float32};
@@ -248,6 +248,9 @@ pub fn transform_column_statistics(
         }
         _ => {}
     }
+    if schema.kind == SchemaKind::Variant {
+        return variant_statistics(schema, columns, can_have_nan, casts);
+    }
     if !matches!(schema.kind, SchemaKind::Column | SchemaKind::Geometry) {
         return Ok(None);
     }
@@ -351,6 +354,139 @@ pub fn transform_column_statistics(
         stats.set_validity(stats.can_have_null(), false);
     }
     Ok(Some(stats))
+}
+
+/// The VARIANT statistics of a shredded VARIANT column (the VARIANT case of
+/// `TransformColumnStatistics`): the statistics of its `value` and `typed_value`
+/// columns as those of `untyped_value_index` and `typed_value`.
+fn variant_statistics(
+    schema: &ColumnSchema,
+    columns: &[ColumnChunk],
+    can_have_nan: bool,
+    casts: &CastFunctionSet,
+) -> Result<Option<BaseStatistics>> {
+    let [_, value, typed_value] = schema.children.as_slice() else {
+        return Ok(None);
+    };
+    let Some(structured) = typed_value_layout_to_type(&typed_value.logical_type)? else {
+        // A nested group without `typed_value` has no structured type.
+        return Ok(None);
+    };
+    let mut stats = BaseStatistics::create_shredded_variant(wrap_shredded_levels(&structured));
+    let value_stats = transform_column_statistics(value, columns, can_have_nan, casts)?;
+    let typed_value_stats = transform_column_statistics(typed_value, columns, can_have_nan, casts)?;
+    let Some(shredded) = stats.variant_mut().and_then(|variant| variant.shredded.as_mut()) else {
+        return Ok(None);
+    };
+    let Some([typed, untyped]) = shredded.struct_children_mut() else {
+        return Ok(None);
+    };
+    if !convert_unshredded_stats(untyped, value_stats.as_ref())
+        || !convert_shredded_stats(typed, typed_value_stats.as_ref())
+    {
+        return Ok(None);
+    }
+    // The validity is unknown.
+    stats.set_has_no_null();
+    stats.set_has_null();
+    Ok(Some(stats))
+}
+
+/// `VariantColumnReader::TypedValueLayoutToType`: the structured type of a `typed_value`
+/// layout; `None` when a field or element group has no `typed_value`.
+fn typed_value_layout_to_type(typed_value: &LogicalType) -> Result<Option<LogicalType>> {
+    let group_typed_value = |group: &LogicalType| -> Result<Option<LogicalType>> {
+        let typed_value = group
+            .struct_children()
+            .unwrap_or_default()
+            .iter()
+            .find(|(name, _)| name == "typed_value");
+        match typed_value {
+            Some((_, ty)) => typed_value_layout_to_type(ty),
+            None => Ok(None),
+        }
+    };
+    match typed_value.id() {
+        _ if !typed_value.is_nested() => Ok(Some(typed_value.clone())),
+        LogicalTypeId::Struct => {
+            let mut fields = Vec::new();
+            for (name, group) in typed_value.struct_children().unwrap_or_default() {
+                let Some(field) = group_typed_value(group)? else {
+                    return Ok(None);
+                };
+                fields.push((name.clone(), field));
+            }
+            Ok(Some(LogicalType::struct_type(fields)))
+        }
+        LogicalTypeId::List => {
+            let element = typed_value.child_type().cloned().unwrap_or_default();
+            Ok(group_typed_value(&element)?.map(LogicalType::list))
+        }
+        _ => Err(Error::invalid_input(format!(
+            "VARIANT typed value has to be a primitive/struct/list, not {typed_value}"
+        ))),
+    }
+}
+
+/// `ConvertUnshreddedStats`: `untyped_value_index` statistics from those of a `value`
+/// column; values that are all NULL or VARIANT NULL (an empty prefix) make it 0.
+fn convert_unshredded_stats(result: &mut BaseStatistics, input: Option<&BaseStatistics>) -> bool {
+    let Some(input) = input else {
+        return false;
+    };
+    result.set_validity(input.can_have_null(), input.can_have_no_null());
+    if !result.can_have_no_null() {
+        return true;
+    }
+    let all_null = input
+        .string()
+        .is_some_and(|string| string.min_bytes().is_empty() && string.max_bytes().is_empty());
+    if all_null && let Some(numeric) = result.numeric_mut() {
+        numeric.min = Some(NumericValue::U32(0));
+        numeric.max = Some(NumericValue::U32(0));
+        result.set_has_no_null();
+    }
+    true
+}
+
+/// `ConvertShreddedStats`: the statistics of a `typed_value` level from those of its
+/// Parquet columns.
+fn convert_shredded_stats(result: &mut BaseStatistics, input: Option<&BaseStatistics>) -> bool {
+    let Some(input) = input else {
+        return false;
+    };
+    result.set_validity(input.can_have_null(), input.can_have_no_null());
+    match result.logical_type().id() {
+        LogicalTypeId::List => match (result.child_mut(), input.child()) {
+            (Some(result), Some(input)) => convert_shredded_stats_item(result, input),
+            _ => false,
+        },
+        LogicalTypeId::Struct => {
+            let inputs = input.struct_children().unwrap_or_default();
+            let Some(results) = result.struct_children_mut() else {
+                return false;
+            };
+            results
+                .iter_mut()
+                .zip(inputs)
+                .all(|(result, input)| convert_shredded_stats_item(result, input))
+        }
+        _ => {
+            *result = input.clone();
+            true
+        }
+    }
+}
+
+/// `ConvertShreddedStatsItem`: a `STRUCT(typed_value, untyped_value_index)` level from the
+/// statistics of a Parquet `{value, typed_value}` group.
+fn convert_shredded_stats_item(result: &mut BaseStatistics, input: &BaseStatistics) -> bool {
+    let (Some([typed, untyped]), Some([value, typed_value, ..])) =
+        (result.struct_children_mut(), input.struct_children())
+    else {
+        return false;
+    };
+    convert_unshredded_stats(untyped, Some(value)) && convert_shredded_stats(typed, Some(typed_value))
 }
 
 /// The zero-padded 8-byte prefix kept by string statistics.
