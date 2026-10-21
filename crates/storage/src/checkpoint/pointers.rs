@@ -460,6 +460,99 @@ impl PersistentColumnData {
     }
 }
 
+/// A row group an optimistic write stored in the database file, as a commit logs it to the
+/// WAL (DuckDB's `PersistentRowGroupData`).
+#[derive(Clone, Debug)]
+pub struct PersistentRowGroupData {
+    pub types: Vec<LogicalType>,
+    pub column_data: Vec<PersistentColumnData>,
+    /// The row id of the row group's first row in the table.
+    pub start: u64,
+    pub count: u64,
+}
+
+impl PersistentRowGroupData {
+    /// `PersistentRowGroupData::Serialize`.
+    pub fn serialize_fields(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        serializer.write_list_property(100, "types", self.types.len(), |s, index| {
+            s.write_object(&self.types[index])
+        })?;
+        serializer.write_list_property(101, "columns", self.column_data.len(), |s, index| {
+            s.on_object_begin();
+            self.column_data[index].serialize_fields(s)?;
+            s.on_object_end();
+            Ok(())
+        })?;
+        serializer.write_property(102, "start", &self.start)?;
+        serializer.write_property(103, "count", &self.count)
+    }
+
+    /// `PersistentRowGroupData::Deserialize`.
+    pub fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
+        let mut types: Vec<LogicalType> = Vec::new();
+        deserializer.read_list_property(100, "types", |d, _| {
+            types.push(d.read_object()?);
+            Ok(())
+        })?;
+        let mut column_data = Vec::with_capacity(types.len());
+        deserializer.read_list_property(101, "columns", |d, index| {
+            let ty = types
+                .get(index)
+                .ok_or_else(|| Error::serialization("more row group columns than types"))?;
+            d.on_object_begin()?;
+            column_data.push(PersistentColumnData::deserialize_fields(d, ty)?);
+            d.on_object_end()
+        })?;
+        Ok(Self {
+            types,
+            column_data,
+            start: deserializer.read_property(102, "start")?,
+            count: deserializer.read_property(103, "count")?,
+        })
+    }
+}
+
+/// The row groups an optimistic write stored, as logged to the WAL by a commit
+/// (DuckDB's `PersistentCollectionData`).
+#[derive(Clone, Debug, Default)]
+pub struct PersistentCollectionData {
+    pub row_group_data: Vec<PersistentRowGroupData>,
+}
+
+impl PersistentCollectionData {
+    /// `PersistentCollectionData::Serialize`.
+    pub fn serialize_fields(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        serializer.write_list_property(100, "row_groups", self.row_group_data.len(), |s, index| {
+            s.on_object_begin();
+            self.row_group_data[index].serialize_fields(s)?;
+            s.on_object_end();
+            Ok(())
+        })
+    }
+
+    /// `PersistentCollectionData::Deserialize`.
+    pub fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
+        let mut row_group_data = Vec::new();
+        deserializer.read_list_property(100, "row_groups", |d, _| {
+            d.on_object_begin()?;
+            row_group_data.push(PersistentRowGroupData::deserialize_fields(d)?);
+            d.on_object_end()
+        })?;
+        Ok(Self { row_group_data })
+    }
+
+    /// Every block the row groups use, once per reference (`GetBlockIds`).
+    pub fn block_ids(&self) -> Vec<BlockId> {
+        let mut blocks = Vec::new();
+        for row_group in &self.row_group_data {
+            for column in &row_group.column_data {
+                column.collect_blocks(&mut blocks);
+            }
+        }
+        blocks
+    }
+}
+
 /// Where a row group's columns and deletes are stored (DuckDB's `RowGroupPointer`).
 #[derive(Clone, Debug, Default)]
 pub struct RowGroupPointer {

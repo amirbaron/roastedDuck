@@ -18,10 +18,10 @@ use rustdb_serde::binary::BinarySerializer;
 use rustdb_serde::{Deserializer, SerializationOptions, Serializer};
 use rustdb_types::{DataChunk, LogicalType, Vector};
 
-use crate::checkpoint::pointers::serialize_meta_block_pointer;
+use crate::checkpoint::pointers::{PersistentCollectionData, serialize_meta_block_pointer};
 use crate::checkpoint::stream::{ReadStream, StreamDeserializer};
 use crate::checkpoint::vector_serde::serialize_chunk;
-use crate::data_table::DataTableInfo;
+use crate::data_table::{DataTable, DataTableInfo};
 use crate::metadata::MetaBlockPointer;
 use crate::single_file_block_manager::SingleFileBlockManager;
 use crate::storage_info::{DB_IDENTIFIER_LEN, checksum};
@@ -190,6 +190,16 @@ impl WalBatch {
         })
     }
 
+    /// `ROW_GROUP_DATA` of row groups an optimistic write stored (`WriteRowGroupData`).
+    pub fn row_group_data(&mut self, data: &PersistentCollectionData) -> Result<()> {
+        if data.row_group_data.is_empty() {
+            return Err(Error::internal("ROW_GROUP_DATA without row groups"));
+        }
+        self.entry(WalType::RowGroupData, |s| {
+            s.write_object_property(101, "row_group_data", |s| data.serialize_fields(s))
+        })
+    }
+
     /// `DELETE_TUPLE` of the rows `row_ids` (`WriteDelete`).
     pub fn delete(&mut self, row_ids: &[i64]) -> Result<()> {
         let mut ids = Vector::flat(LogicalType::BIGINT, row_ids.len());
@@ -220,6 +230,62 @@ impl WalBatch {
             s.write_property(103, "usage_count", &usage_count)?;
             s.write_property(104, "counter", &counter)
         })
+    }
+}
+
+/// Row groups of one table an optimistic write stored and a commit moved into the table
+/// (DuckDB's `OptimisticallyWrittenRowGroupData`).
+#[derive(Debug)]
+struct OptimisticallyWrittenRowGroupData {
+    table: Arc<DataTable>,
+    /// The row id of the first row.
+    start: u64,
+    count: u64,
+    data: PersistentCollectionData,
+}
+
+/// What a commit logs differently because of optimistic writes (DuckDB's
+/// `SingleFileStorageCommitState`): the row groups that moved into tables as they are,
+/// logged as `ROW_GROUP_DATA` instead of their rows.
+#[derive(Debug, Default)]
+pub struct StorageCommitState {
+    row_group_data: Vec<OptimisticallyWrittenRowGroupData>,
+}
+
+impl StorageCommitState {
+    /// Records that `count` rows from row id `start` of `table` are the stored row groups
+    /// `data` (`AddRowGroupData`).
+    pub(crate) fn add_row_group_data(
+        &mut self,
+        table: &Arc<DataTable>,
+        start: u64,
+        count: u64,
+        data: PersistentCollectionData,
+    ) {
+        self.row_group_data.push(OptimisticallyWrittenRowGroupData {
+            table: Arc::clone(table),
+            start,
+            count,
+            data,
+        });
+    }
+
+    /// The stored row groups at row id `start` of `table`, with their row count
+    /// (`GetRowGroupData`).
+    pub fn row_group_data(
+        &self,
+        table: &Arc<DataTable>,
+        start: u64,
+    ) -> Option<(u64, &PersistentCollectionData)> {
+        self.row_group_data
+            .iter()
+            .find(|entry| Arc::ptr_eq(&entry.table, table) && entry.start == start)
+            .map(|entry| (entry.count, &entry.data))
+    }
+
+    /// Whether stored row groups were moved into tables (`HasRowGroupData`).
+    pub fn has_row_group_data(&self) -> bool {
+        !self.row_group_data.is_empty()
     }
 }
 
@@ -301,6 +367,11 @@ impl WriteAheadLog {
 
     pub fn path(&self) -> &str {
         &self.path
+    }
+
+    /// The block manager of the database file the WAL belongs to.
+    pub fn block_manager(&self) -> &Arc<SingleFileBlockManager> {
+        &self.block_manager
     }
 
     /// A batch for the entries of one commit.

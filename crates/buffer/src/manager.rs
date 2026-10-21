@@ -217,7 +217,8 @@ impl ManagerShared {
         let file_size = buffer.alloc_size() as u64 + 16;
         self.evicted(tag)
             .fetch_add(buffer.alloc_size() as u64, Ordering::Relaxed);
-        let write_error = |err: std::io::Error| io_error(format!("Could not write file \"{}\": {err}", path.display()));
+        let write_error =
+            |err: std::io::Error| io_error(format!("Could not write file \"{}\": {err}", path.display()));
         let file = OpenOptions::new()
             .write(true)
             .create(true)
@@ -821,6 +822,54 @@ impl BufferManager {
                 memory,
             ))
         })
+    }
+
+    /// A new persistent block `block_id` of `block_manager` whose data is still being
+    /// written: a zeroed buffer, registered under the block id and pinned. Segments placed
+    /// in it read it from memory; the caller writes the block to the file before it
+    /// releases the pin, after which the block is evicted and reloaded like any other
+    /// persistent block (the buffer of a `PartialBlock` of `PartialBlockType::APPEND_TO_TABLE`,
+    /// which `PartialBlock::Flush` converts to persistent).
+    pub fn create_persistent_block(
+        &self,
+        block_manager: &Arc<dyn BlockManager>,
+        block_id: BlockId,
+    ) -> Result<BufferHandle> {
+        if block_manager.registry().is_registered(block_id) {
+            return Err(Error::internal(format!("Block {block_id} is already registered")));
+        }
+        let alloc_size = aligned_alloc_size(block_manager.block_size(), block_manager.block_header_size());
+        let (reservation, reusable) =
+            self.shared
+                .evict_or_throw(MemoryTag::BaseTable, alloc_size as u64, true, || {
+                    format!(
+                        "could not allocate block of size {}",
+                        format_bytes(alloc_size as u64)
+                    )
+                })?;
+        let buffer = self
+            .shared
+            .create_block_buffer(block_manager.as_ref(), reusable)?;
+        // SAFETY: the buffer was just allocated and is owned here; `size` bytes from its
+        // data pointer belong to it.
+        unsafe { std::ptr::write_bytes(buffer.data_ptr(), 0, buffer.size()) };
+        let memory = BlockMemory::loaded(
+            Arc::clone(&self.shared),
+            block_id,
+            MemoryTag::BaseTable,
+            buffer,
+            DestroyBufferUpon::Block,
+            alloc_size as u64,
+            reservation,
+        );
+        let block = block_manager.registry().get_or_register(block_id, || {
+            Arc::new(BlockHandle::new(
+                block_id,
+                Some(Arc::clone(block_manager)),
+                memory,
+            ))
+        });
+        self.pin(&block)
     }
 
     /// Turns a pinned temporary block into persistent block `block_id`: its buffer is

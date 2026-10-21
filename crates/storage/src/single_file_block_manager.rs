@@ -119,8 +119,12 @@ impl FileHandle {
                     },
                 ];
                 let skip = usize::from(header_rest.is_empty());
-                let offset = libc::off_t::try_from(location + written as u64)
-                    .map_err(|_| io_error(format!("Could not write to file \"{}\": offset too large", self.path)))?;
+                let offset = libc::off_t::try_from(location + written as u64).map_err(|_| {
+                    io_error(format!(
+                        "Could not write to file \"{}\": offset too large",
+                        self.path
+                    ))
+                })?;
                 // SAFETY: the iovecs point into `header` and `data`, which outlive the call.
                 let result = unsafe {
                     libc::pwritev(
@@ -566,9 +570,14 @@ impl SingleFileBlockManager {
         state.free_list.iter().next().copied().unwrap_or(state.max_block)
     }
 
-    /// `MarkBlockAsCheckpointed`.
+    /// Marks a block written by an optimistic write as part of the persisted data once a
+    /// commit logged it to the WAL (`MarkBlockAsCheckpointed`): it is no longer free in
+    /// the free list the next checkpoint writes, and is freed once a checkpoint no longer
+    /// references it, like the blocks of the checkpoint on disk.
     pub fn mark_block_as_checkpointed(&self, block_id: BlockId) {
-        self.lock().newly_used_blocks.remove(&block_id);
+        let mut state = self.lock();
+        state.newly_used_blocks.remove(&block_id);
+        state.checkpoint_blocks.insert(block_id);
     }
 
     /// Marks a block read from the file as in use (`MarkBlockAsUsed`).
@@ -658,6 +667,11 @@ impl SingleFileBlockManager {
             let released: Vec<BlockId> = previous.difference(&state.checkpoint_blocks).copied().collect();
             for block in &released {
                 state.multi_use_blocks.remove(block);
+            }
+            // Blocks optimistic writes added that the checkpoint keeps are in use now
+            // (`CheckpointBlockIdMarker`).
+            for block in data_blocks.keys() {
+                state.newly_used_blocks.remove(block);
             }
             // Blocks shared by several segments are multi-use blocks (`IncreaseBlockReferenceCount`).
             for (&block, &uses) in data_blocks {
@@ -768,6 +782,12 @@ impl SingleFileBlockManager {
             allocated += block_size;
         }
         Ok(blocks)
+    }
+
+    /// Syncs the database file (`FileSync`): the blocks optimistic writes added must be
+    /// durable before a WAL entry refers to them.
+    pub fn file_sync(&self) -> Result<()> {
+        self.handle.sync()
     }
 
     /// Cuts free blocks off the end of the file (`Truncate`).

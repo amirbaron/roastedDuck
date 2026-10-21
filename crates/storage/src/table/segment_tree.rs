@@ -97,6 +97,13 @@ impl<T: Segment> SegmentTree<T> {
         Some((index, nodes[index].clone()))
     }
 
+    /// Replaces the segment at position `index`, keeping its start row (`SetSegment`).
+    pub fn set(&self, index: usize, node: Arc<T>) {
+        if let Some(slot) = self.write().get_mut(index) {
+            slot.node = node;
+        }
+    }
+
     /// Removes every segment at position `index` and after.
     pub fn truncate(&self, index: usize) {
         self.write().truncate(index);

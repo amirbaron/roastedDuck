@@ -26,7 +26,7 @@ use rustdb_common::{Error, Result};
 
 use crate::data_table::DataTable;
 use crate::table::{DeleteRecord, UpdateRecord};
-use crate::wal::WriteAheadLog;
+use crate::wal::{StorageCommitState, WriteAheadLog};
 
 /// Transaction ids start here; anything below is a timestamp (`TRANSACTION_ID_START`).
 pub const TRANSACTION_ID_START: u64 = 4_611_686_018_427_388_000;
@@ -399,7 +399,7 @@ impl TransactionManager {
     fn log_and_commit(transaction: &Transaction, commit_id: u64, others_active: bool) -> Result<()> {
         transaction.undo().verify_commit(transaction.start_time)?;
         let Some(wal) = transaction.wal() else {
-            transaction.local_storage.commit(transaction)?;
+            transaction.local_storage.commit(transaction, None)?;
             return transaction
                 .undo()
                 .commit(commit_id, transaction.transaction_id, others_active);
@@ -407,24 +407,31 @@ impl TransactionManager {
         // The transaction-local rows reach the table under the WAL lock, so a checkpoint
         // (which holds it) never sees appended rows whose commit is not logged yet.
         let mut guard = wal.lock();
+        let mut commit_state = StorageCommitState::default();
         let mut commit_timer = start_timer(MetricType::CommitLocalStorageLatency);
-        transaction.local_storage.commit(transaction)?;
+        transaction
+            .local_storage
+            .commit(transaction, Some(&mut commit_state))?;
         commit_timer.end();
         let undo = transaction.undo();
-        if undo.is_empty() {
-            return undo.commit(commit_id, transaction.transaction_id, others_active);
+        if !undo.is_empty() {
+            let initial_size = guard.size();
+            let mut wal_timer = start_timer(MetricType::WriteToWalLatency);
+            let mut batch = wal.batch();
+            undo.write_to_wal(&mut batch, transaction.data(), &commit_state)?;
+            if commit_state.has_row_group_data() {
+                // The WAL refers to blocks optimistic writes stored: they must be durable
+                // first.
+                wal.block_manager().file_sync()?;
+            }
+            guard.commit(batch)?;
+            wal_timer.end();
+            if let Err(error) = undo.commit(commit_id, transaction.transaction_id, others_active) {
+                let _ = guard.truncate(initial_size);
+                return Err(error);
+            }
         }
-        let initial_size = guard.size();
-        let mut wal_timer = start_timer(MetricType::WriteToWalLatency);
-        let mut batch = wal.batch();
-        undo.write_to_wal(&mut batch, transaction.data())?;
-        guard.commit(batch)?;
-        wal_timer.end();
-        let result = undo.commit(commit_id, transaction.transaction_id, others_active);
-        if result.is_err() {
-            let _ = guard.truncate(initial_size);
-        }
-        result
+        Ok(())
     }
 
     /// Starts a transaction (`StartTransaction`).
@@ -528,8 +535,11 @@ impl TransactionManager {
             }
             Err(error) => {
                 transaction.commit_id.store(0, Ordering::Release);
-                transaction.local_storage.rollback();
-                if let Err(rollback_error) = undo.rollback() {
+                let rolled_back = transaction
+                    .local_storage
+                    .rollback()
+                    .and_then(|()| undo.rollback());
+                if let Err(rollback_error) = rolled_back {
                     return Err(Error::new(
                         rustdb_common::ErrorKind::Fatal,
                         format!(
@@ -552,10 +562,11 @@ impl TransactionManager {
     /// Discards everything `transaction` did (`RollbackTransaction`).
     pub fn rollback(&self, transaction: &Transaction) {
         let mut state = self.lock();
-        transaction.local_storage.rollback();
         let undo = std::mem::take(&mut *transaction.undo());
         // Rolling back only fails on internal errors; the versions are then left as they
-        // are, invisible to everyone.
+        // are, invisible to everyone, and blocks of optimistic writes stay in use until the
+        // database is opened again.
+        let _ = transaction.local_storage.rollback();
         let _ = undo.rollback();
         let cleanup = self.remove_transaction(&mut state, transaction.transaction_id);
         drop(state);

@@ -12,6 +12,7 @@ use super::column_data::{ColumnData, ColumnDataType};
 use super::row_group::{DeleteRecord, RowGroup, RowGroupAppendState, TableScanType, UpdateRecord};
 use super::scan_state::{CollectionScanState, ParallelCollectionScanState, ScanFilterInfo, StorageIndex};
 use super::segment_tree::{SegmentNode, SegmentTree};
+use crate::checkpoint::pointers::PersistentCollectionData;
 use crate::data_table::TableIoManager;
 use crate::statistics::{BaseStatistics, DistinctStatistics};
 use crate::transaction::TransactionData;
@@ -143,6 +144,9 @@ pub struct RowGroupCollection {
     types: Vec<LogicalType>,
     row_group_size: u64,
     total_rows: AtomicU64,
+    /// The bytes of transient segments appends allocated, never reduced
+    /// (`allocation_size`).
+    allocation_size: AtomicU64,
     row_groups: RwLock<Arc<RowGroupSegmentTree>>,
     stats: Mutex<TableStatistics>,
     append_mode: Mutex<RowGroupAppendMode>,
@@ -179,6 +183,7 @@ impl RowGroupCollection {
             types,
             row_group_size,
             total_rows: AtomicU64::new(0),
+            allocation_size: AtomicU64::new(0),
             row_groups: RwLock::new(Arc::new(RowGroupSegmentTree::new(base_row_id))),
             stats: Mutex::new(stats),
             append_mode: Mutex::new(if can_append {
@@ -232,6 +237,11 @@ impl RowGroupCollection {
 
     pub fn total_rows(&self) -> u64 {
         self.total_rows.load(Ordering::Acquire)
+    }
+
+    /// The bytes appends allocated for transient segments (`GetAllocationSize`).
+    pub fn allocation_size(&self) -> u64 {
+        self.allocation_size.load(Ordering::Acquire)
     }
 
     /// The current row groups.
@@ -657,10 +667,19 @@ impl RowGroupCollection {
                         append_count,
                     )
                 };
+                let previous_allocation_size = state.current.node.allocation_size();
                 state
                     .current
                     .node
                     .append(&mut state.row_group_append, &piece, append_count)?;
+                self.allocation_size.fetch_add(
+                    state
+                        .current
+                        .node
+                        .allocation_size()
+                        .saturating_sub(previous_allocation_size),
+                    Ordering::AcqRel,
+                );
                 let mut stats = self.stats();
                 state.current.node.merge_into_statistics(&mut stats.columns)?;
             }
@@ -784,8 +803,10 @@ impl RowGroupCollection {
     pub fn merge_storage(&self, other: &Self) -> Result<()> {
         let row_groups = self.row_groups();
         let mut index = row_groups.base_row_id + self.total_rows();
-        for node in other.row_groups().tree.nodes() {
-            node.node.set_data_type(ColumnDataType::MainTable)?;
+        let nodes = other.row_groups().tree.nodes();
+        let is_persistent = nodes.last().is_some_and(|node| node.node.is_persistent());
+        for node in nodes {
+            node.node.set_data_type(ColumnDataType::MainTable);
             node.node.set_has_changes();
             let count = node.node.count();
             row_groups.tree.push(index, node.node);
@@ -800,7 +821,65 @@ impl RowGroupCollection {
             stats.merge_distinct(&other_stats);
         }
         self.total_rows.fetch_add(other.total_rows(), Ordering::AcqRel);
+        // Appends do not change a row group an optimistic write stored.
+        if is_persistent {
+            self.set_append_mode(RowGroupAppendMode::SuggestNew);
+        }
         Ok(())
+    }
+
+    /// The leading row groups of `other` an optimistic write stored, as the commit that
+    /// merges `other` into this collection logs them to the WAL: the row id of the first,
+    /// their row count and their data (the `PersistentCollectionData` `MergeStorage`
+    /// hands to `StorageCommitState::AddRowGroupData`). `None` when there are none, or when
+    /// a column has updates, which are not logged this way.
+    pub fn optimistically_written(
+        &self,
+        other: &Self,
+    ) -> Result<Option<(u64, u64, PersistentCollectionData)>> {
+        let start = self.row_groups().base_row_id + self.total_rows();
+        let mut index = start;
+        let mut data = PersistentCollectionData::default();
+        for node in other.row_groups().tree.nodes() {
+            if !node.node.is_persistent() {
+                break;
+            }
+            let (mut row_group, has_updates) = node.node.serialize_row_group_info(index)?;
+            if has_updates {
+                return Ok(None);
+            }
+            row_group.types.clone_from(&self.types);
+            index += row_group.count;
+            data.row_group_data.push(row_group);
+        }
+        if index == start {
+            return Ok(None);
+        }
+        Ok(Some((start, index - start, data)))
+    }
+
+    /// A collection starting at row id `base_row_id` made of the row groups a WAL entry
+    /// logged (`RowGroupCollection::Initialize` from a `PersistentCollectionData`).
+    pub fn from_persistent_data(
+        io: Arc<TableIoManager>,
+        types: Vec<LogicalType>,
+        base_row_id: u64,
+        data: PersistentCollectionData,
+    ) -> Result<Self> {
+        let collection = Self::new(io, types, base_row_id);
+        let types: Arc<[LogicalType]> = collection.types.iter().cloned().collect();
+        for row_group in data.row_group_data {
+            let row_group = Arc::new(RowGroup::from_persistent(
+                Arc::clone(&collection.io),
+                Arc::clone(&types),
+                row_group.column_data,
+                row_group.count,
+            ));
+            // The statistics of the row group's columns join the collection's.
+            row_group.columns()?;
+            collection.append_existing_row_group(row_group);
+        }
+        Ok(collection)
     }
 
     // ----------------------------------------------------------------------------------

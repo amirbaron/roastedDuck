@@ -15,7 +15,10 @@ use rustdb_buffer::{BlockManager, BufferManager};
 use rustdb_common::{Error, ErrorKind, Result, STANDARD_VECTOR_SIZE};
 use rustdb_types::{DataChunk, LogicalType, Vector};
 
+use crate::checkpoint::pointers::PersistentCollectionData;
 use crate::index::TableIndexList;
+use crate::optimistic_data_writer::OptimisticWriteConfig;
+use crate::single_file_block_manager::SingleFileBlockManager;
 use crate::statistics::BaseStatistics;
 use crate::table::{
     CollectionScanState, FetchType, ParallelTableScanState, RowGroupCollection, ScanOptions, StorageIndex,
@@ -34,6 +37,11 @@ pub struct TableIoManager {
     /// The serialization version of the database (`StorageManager::GetStorageVersion`);
     /// in-memory databases use the latest.
     storage_version: u64,
+    /// The block manager of the database file; `None` for in-memory databases and
+    /// temporary tables (`StorageManager::InMemory`, `DataTable::IsTemporary`).
+    file: Option<Arc<SingleFileBlockManager>>,
+    /// How appends to the tables are written to the database file before they commit.
+    optimistic_write: Mutex<OptimisticWriteConfig>,
 }
 
 impl TableIoManager {
@@ -51,14 +59,22 @@ impl TableIoManager {
             block_manager,
             row_group_size,
             storage_version: rustdb_serde::SerializationCompatibility::latest().serialization_version,
+            file: None,
+            optimistic_write: Mutex::default(),
         }
     }
 
-    /// Sets the serialization version of the database file.
-    #[must_use]
-    pub fn with_storage_version(mut self, storage_version: u64) -> Self {
-        self.storage_version = storage_version;
-        self
+    /// The I/O manager of the tables of the database file of `block_manager`.
+    pub fn for_file(
+        buffer_manager: BufferManager,
+        block_manager: Arc<SingleFileBlockManager>,
+        row_group_size: u64,
+    ) -> Self {
+        let dyn_manager: Arc<dyn BlockManager> = Arc::clone(&block_manager) as Arc<dyn BlockManager>;
+        let mut result = Self::with_row_group_size(buffer_manager, dyn_manager, row_group_size);
+        result.storage_version = block_manager.storage_version();
+        result.file = Some(block_manager);
+        result
     }
 
     /// The serialization version of the database (`StorageManager::GetStorageVersion`).
@@ -74,8 +90,29 @@ impl TableIoManager {
         &self.block_manager
     }
 
+    /// The block manager of the database file, unless the tables are in memory.
+    pub fn file_block_manager(&self) -> Option<&Arc<SingleFileBlockManager>> {
+        self.file.as_ref()
+    }
+
     pub fn row_group_size(&self) -> u64 {
         self.row_group_size
+    }
+
+    /// The settings of optimistic writes.
+    pub fn optimistic_write_config(&self) -> OptimisticWriteConfig {
+        *self
+            .optimistic_write
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Changes the settings of optimistic writes.
+    pub fn set_optimistic_write_config(&self, config: OptimisticWriteConfig) {
+        *self
+            .optimistic_write
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = config;
     }
 }
 
@@ -739,7 +776,10 @@ impl DataTable {
                 state.storage.index_append_mode(),
             )?;
         }
-        state.storage.collection().append(chunk, &mut state.append)?;
+        // A completed row group may be written to disk now (`LocalStorage::Append`).
+        if state.storage.collection().append(chunk, &mut state.append)? {
+            state.storage.write_new_row_group()?;
+        }
         Ok(())
     }
 
@@ -763,6 +803,49 @@ impl DataTable {
         let result = self.local_append(&mut state, chunk);
         self.finalize_local_append(state);
         result
+    }
+
+    /// Adds the row groups a `ROW_GROUP_DATA` WAL entry logged to the end of the table and
+    /// their rows to its indexes, which may hold duplicates until the replayed commit
+    /// completes (`WriteAheadLogDeserializer::ReplayRowGroupData`).
+    pub fn replay_row_group_data(&self, data: PersistentCollectionData) -> Result<()> {
+        let _lock = self.append_lock();
+        let base_row = self.total_rows();
+        let collection =
+            RowGroupCollection::from_persistent_data(Arc::clone(self.io()), self.types(), base_row, data)?;
+        if self.has_indexes() {
+            let columns = self.indexes().required_columns();
+            let column_ids: Vec<StorageIndex> =
+                columns.iter().map(|&column| StorageIndex::from(column)).collect();
+            let types: Vec<LogicalType> = columns
+                .iter()
+                .map(|&column| collection.types()[column].clone())
+                .collect();
+            let mut filters = crate::table::ScanFilterInfo::default();
+            let mut state = CollectionScanState::default();
+            collection.initialize_scan(&mut state, &column_ids, &mut filters)?;
+            let mut chunk = DataChunk::with_types(&types, STANDARD_VECTOR_SIZE);
+            let mut current_row = base_row;
+            while collection.scan_all(
+                crate::table::TableScanType::AllRows,
+                TransactionData::latest_committed(),
+                &mut state,
+                &column_ids,
+                &mut filters,
+                &mut chunk,
+            )? {
+                let table_chunk = self.index_table_chunk(&columns, &chunk);
+                Self::append_to_indexes(
+                    self.indexes(),
+                    None,
+                    &table_chunk,
+                    current_row as i64,
+                    crate::index::IndexAppendMode::InsertDuplicates,
+                )?;
+                current_row += chunk.len() as u64;
+            }
+        }
+        self.row_groups.merge_storage(&collection)
     }
 
     /// Marks appended rows as committed (`CommitAppend`).

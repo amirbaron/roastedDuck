@@ -5,7 +5,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rustdb_common::{Error, Result};
-use rustdb_storage::{DataTable, OptimisticCollection, TableConstraints, Transaction};
+use rustdb_storage::{DataTable, OptimisticCollection, OptimisticDataWriter, TableConstraints, Transaction};
 use rustdb_types::{DataChunk, LogicalType};
 
 use super::insert::{InsertTarget, append_collections};
@@ -20,9 +20,10 @@ use crate::{ExecutionContext, Sink, SinkFinalize, SinkResult, Source, SourceResu
 /// state when its batch ends. Consecutive small collections are merged into collections
 /// of about a row group (by the sinking threads, as soon as every batch before them is
 /// complete); `finalize` moves the collections into the transaction-local storage in batch
-/// order. DuckDB also writes merged row groups to disk early and blocks threads that run
-/// too far ahead of the lowest batch when memory runs out; rustdb keeps the rows in
-/// memory, like a serial insert.
+/// order. Complete row groups, and the collections of a row group or more, are written to
+/// the database file by the optimistic writer of the thread that built them. DuckDB also
+/// blocks threads that run too far ahead of the lowest batch when memory runs out
+/// (`BatchMemoryManager`); rustdb's executor does not block sinks.
 #[derive(Debug)]
 pub struct PhysicalBatchInsert {
     types: Vec<LogicalType>,
@@ -130,14 +131,15 @@ impl BatchInsertGlobal {
             || count >= size / 10 * 36
     }
 
-    /// Hands a finalized batch collection over (`AddCollection`); from `next_batch`, also
-    /// schedules merges of the complete batches.
+    /// Hands a finalized batch collection over (`AddCollection`); from `next_batch`, with
+    /// the thread's `writer`, a collection of a row group or more is written and merges of
+    /// the complete batches are scheduled.
     fn add_collection(
         &self,
         batch_index: u64,
         min_batch_index: u64,
-        collection: OptimisticCollection,
-        schedule: bool,
+        mut collection: OptimisticCollection,
+        writer: Option<&mut OptimisticDataWriter>,
     ) -> Result<()> {
         if batch_index < min_batch_index {
             return Err(Error::internal(format!(
@@ -146,6 +148,10 @@ impl BatchInsertGlobal {
         }
         let total_rows = collection.total_rows();
         let flushed = total_rows >= self.row_group_size;
+        let schedule = writer.is_some();
+        if flushed && let Some(writer) = writer {
+            collection.write_unflushed_row_groups(writer)?;
+        }
         self.result.add_count(total_rows);
         let mut state = self.state();
         let position = state
@@ -246,8 +252,9 @@ impl BatchInsertGlobal {
         Ok(())
     }
 
-    /// Runs queued merge tasks until there are none (`ExecuteTasks`).
-    fn execute_tasks(&self) -> Result<()> {
+    /// Runs queued merge tasks until there are none, writing the merged collections with
+    /// the thread's `writer` (`ExecuteTasks`).
+    fn execute_tasks(&self, writer: &mut OptimisticDataWriter) -> Result<()> {
         loop {
             let task = self
                 .tasks
@@ -255,7 +262,7 @@ impl BatchInsertGlobal {
                 .unwrap_or_else(PoisonError::into_inner)
                 .pop_front();
             let Some(task) = task else { return Ok(()) };
-            let merged = merge(task.collections)?;
+            let merged = merge(task.collections, false, writer)?;
             let mut state = self.state();
             state.merged = true;
             let entry = state
@@ -268,24 +275,52 @@ impl BatchInsertGlobal {
     }
 }
 
-/// Appends every collection after the first to the first (`CollectionMerger::Flush`).
-fn merge(collections: Vec<OptimisticCollection>) -> Result<Option<OptimisticCollection>> {
+/// Appends every collection after the first to the first and writes the rows of the
+/// result not written yet with `writer`, unless it is a single collection that was
+/// `flushed` already (`CollectionMerger::Flush`).
+fn merge(
+    collections: Vec<OptimisticCollection>,
+    flushed: bool,
+    writer: &mut OptimisticDataWriter,
+) -> Result<Option<OptimisticCollection>> {
+    let merge_count = collections.len();
     let mut collections = collections.into_iter();
     let Some(mut result) = collections.next() else {
         return Ok(None);
     };
     for collection in collections {
-        result.append_collection(&collection)?;
+        result.append_collection(&collection, writer)?;
+    }
+    if merge_count > 1 || !flushed {
+        result.write_unflushed_row_groups(writer)?;
     }
     Ok(Some(result))
 }
 
-/// A thread's state: the collection of the batch it is appending.
+/// A thread's state: the collection of the batch it is appending and the writer of the
+/// row groups it completes.
 #[derive(Debug, Default)]
 pub struct BatchInsertLocal {
     current_index: u64,
     min_batch_index: u64,
     collection: Option<OptimisticCollection>,
+    writer: Option<OptimisticDataWriter>,
+}
+
+impl BatchInsertLocal {
+    /// The thread's optimistic writer, created on first use.
+    fn writer(
+        &mut self,
+        table: &Arc<DataTable>,
+        transaction: &Transaction,
+    ) -> Result<&mut OptimisticDataWriter> {
+        if self.writer.is_none() {
+            self.writer = Some(table.create_optimistic_writer(transaction)?);
+        }
+        self.writer
+            .as_mut()
+            .ok_or_else(|| Error::internal("batch insert without an optimistic writer"))
+    }
 }
 
 impl Sink for PhysicalBatchInsert {
@@ -319,13 +354,20 @@ impl Sink for PhysicalBatchInsert {
         local: &mut Self::Local,
         partition: PartitionInfo,
     ) -> Result<()> {
-        if let Some(mut collection) = local.collection.take() {
+        if let (Some(table), Some(mut collection)) = (&global.table, local.collection.take()) {
             if local.current_index == partition.batch_index {
                 return Err(Error::internal("NextBatch called with the same batch index?"));
             }
             collection.finalize();
-            global.add_collection(local.current_index, partition.min_batch_index, collection, true)?;
-            global.execute_tasks()?;
+            let current_index = local.current_index;
+            let writer = local.writer(table, &self.transaction)?;
+            global.add_collection(
+                current_index,
+                partition.min_batch_index,
+                collection,
+                Some(&mut *writer),
+            )?;
+            global.execute_tasks(writer)?;
         }
         local.current_index = partition.batch_index;
         local.min_batch_index = partition.min_batch_index;
@@ -343,13 +385,13 @@ impl Sink for PhysicalBatchInsert {
             return Ok(SinkResult::Finished);
         };
         table.verify_append_constraints(&self.constraints, chunk)?;
-        let collection = match &mut local.collection {
-            Some(collection) => collection,
-            None => local
-                .collection
-                .insert(table.create_optimistic_collection(&self.transaction)?),
-        };
-        collection.append(chunk)?;
+        if local.collection.is_none() {
+            local.collection = Some(table.create_optimistic_collection(&self.transaction)?);
+        }
+        local.writer(table, &self.transaction)?;
+        if let (Some(collection), Some(writer)) = (&mut local.collection, &mut local.writer) {
+            collection.append(chunk, writer)?;
+        }
         Ok(SinkResult::NeedMoreInput)
     }
 
@@ -357,17 +399,18 @@ impl Sink for PhysicalBatchInsert {
         if let Some(mut collection) = local.collection {
             collection.finalize();
             if collection.total_rows() > 0 {
-                global.add_collection(local.current_index, local.min_batch_index, collection, false)?;
+                global.add_collection(local.current_index, local.min_batch_index, collection, None)?;
             }
         }
         Ok(())
     }
 
     fn finalize(&self, _: &ExecutionContext, global: &mut Self::Global) -> Result<SinkFinalize> {
-        global.execute_tasks()?;
         let Some(table) = global.table.clone() else {
             return Ok(SinkFinalize::Ready);
         };
+        let mut writer = table.create_optimistic_writer(&self.transaction)?;
+        global.execute_tasks(&mut writer)?;
         let state = std::mem::take(&mut *global.state());
         let collections = state
             .entries
@@ -386,13 +429,13 @@ impl Sink for PhysicalBatchInsert {
             let mut small = Vec::new();
             for (flushed, collection) in collections {
                 if flushed {
-                    finals.extend(merge(std::mem::take(&mut small))?);
-                    finals.push(collection);
+                    finals.extend(merge(std::mem::take(&mut small), false, &mut writer)?);
+                    finals.extend(merge(vec![collection], true, &mut writer)?);
                 } else {
                     small.push(collection);
                 }
             }
-            finals.extend(merge(small)?);
+            finals.extend(merge(small, false, &mut writer)?);
             for collection in &finals {
                 table.local_merge(&self.transaction, collection)?;
             }

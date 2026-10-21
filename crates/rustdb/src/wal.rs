@@ -22,7 +22,9 @@ use rustdb_execution::operators::{
 };
 use rustdb_serde::Deserializer;
 use rustdb_storage::DataTable;
-use rustdb_storage::checkpoint::pointers::{deserialize_index_storage_info, deserialize_meta_block_pointer};
+use rustdb_storage::checkpoint::pointers::{
+    PersistentCollectionData, deserialize_index_storage_info, deserialize_meta_block_pointer,
+};
 use rustdb_storage::checkpoint::vector_serde::deserialize_chunk;
 use rustdb_storage::index::UnboundIndexStorage;
 use rustdb_storage::metadata::MetaBlockPointer;
@@ -133,6 +135,8 @@ enum ScannedEntry {
     Flush,
     /// A checkpoint marker with the root it announces.
     Checkpoint(MetaBlockPointer),
+    /// Row groups an optimistic write stored, whose blocks are in use.
+    RowGroupData(PersistentCollectionData),
     Other,
 }
 
@@ -144,6 +148,7 @@ fn scan_entry(d: &mut dyn Deserializer, whole: bool) -> Result<ScannedEntry> {
         return Ok(match parse_entry(d, "")? {
             WalEntry::Flush => ScannedEntry::Flush,
             WalEntry::Checkpoint(meta_block) => ScannedEntry::Checkpoint(meta_block),
+            WalEntry::RowGroupData(data) => ScannedEntry::RowGroupData(data),
             _ => ScannedEntry::Other,
         });
     }
@@ -154,8 +159,18 @@ fn scan_entry(d: &mut dyn Deserializer, whole: bool) -> Result<ScannedEntry> {
             "meta_block",
             deserialize_meta_block_pointer,
         )?),
+        WalType::RowGroupData => ScannedEntry::RowGroupData(read_row_group_data(d)?),
         _ => ScannedEntry::Other,
     })
+}
+
+/// Reads the row groups of a `ROW_GROUP_DATA` entry.
+fn read_row_group_data(d: &mut dyn Deserializer) -> Result<PersistentCollectionData> {
+    d.read_object_property(
+        101,
+        "row_group_data",
+        PersistentCollectionData::deserialize_fields,
+    )
 }
 
 /// The first pass (`ReplayLog` with `deserialize_only`).
@@ -177,6 +192,16 @@ fn scan_log(reader: &mut WalReader, storage: &StorageManager) -> Result<ScanStat
                     }
                     state.checkpoint = Some((meta_block, reader.offset()));
                     state.checkpoint_truncate_offset = last_flush_end;
+                }
+                ScannedEntry::RowGroupData(data) => {
+                    // The blocks are in use once the WAL is replayed; mark them now, so
+                    // that nothing the replay writes reuses them (`ReplayRowGroupData` in
+                    // `deserialize_only` mode).
+                    let block_manager = storage.block_manager();
+                    for block in data.block_ids() {
+                        block_manager.mark_block_as_used(block);
+                        block_manager.mark_block_as_checkpointed(block);
+                    }
                 }
                 ScannedEntry::Flush => {
                     last_flush_end = reader.offset();
@@ -325,6 +350,7 @@ enum WalEntry {
         name: String,
     },
     Insert(DataChunk),
+    RowGroupData(PersistentCollectionData),
     Delete(DataChunk),
     Update {
         column_path: Vec<u64>,
@@ -424,9 +450,7 @@ fn parse_entry(d: &mut dyn Deserializer, catalog: &str) -> Result<WalEntry> {
         WalType::Checkpoint => {
             WalEntry::Checkpoint(d.read_object_property(101, "meta_block", deserialize_meta_block_pointer)?)
         }
-        WalType::RowGroupData => {
-            return Err(Error::not_implemented("replaying ROW_GROUP_DATA WAL entries"));
-        }
+        WalType::RowGroupData => WalEntry::RowGroupData(read_row_group_data(d)?),
         WalType::WalVersion => return Err(Error::internal("Invalid WAL entry type!")),
     };
     d.on_object_end()?;
@@ -540,6 +564,10 @@ impl Replayer {
                 let table = self.current_table("insert")?;
                 // Appended without verifying constraints (`LocalWALAppend`).
                 table.append_chunk(&transaction, &chunk, rustdb_storage::TableConstraints::default())?;
+            }
+            WalEntry::RowGroupData(data) => {
+                // The stored row groups join the table directly (`ReplayRowGroupData`).
+                self.current_table("insert")?.replay_row_group_data(data)?;
             }
             WalEntry::Delete(chunk) => {
                 let table = self.current_table("delete")?;

@@ -74,6 +74,11 @@ pub(crate) struct DatabaseInstance {
     /// `force_column_metadata_reuse`; global settings): applied to the storage of every
     /// attached database.
     checkpoint_config: std::sync::Mutex<rustdb_storage::storage_manager::CheckpointConfig>,
+    /// How large appends are written to database files before they commit
+    /// (`enable_optimistic_write`, `write_buffer_row_group_count`,
+    /// `write_buffer_row_group_memory_limit`; global settings): applied to the storage of
+    /// every attached database.
+    optimistic_write: std::sync::Mutex<rustdb_storage::OptimisticWriteConfig>,
     /// The secrets (DuckDB's `DBConfig::secret_manager`).
     pub(crate) secrets: Arc<crate::secrets::SecretManager>,
     /// The number of open connections (DuckDB's `ConnectionManager`).
@@ -881,6 +886,79 @@ impl DatabaseInstance {
         Ok(())
     }
 
+    /// `SET` / `RESET` (`None`) of the settings of optimistic writes
+    /// (`EnableOptimisticWriteSetting`, `WriteBufferRowGroupCountSetting`,
+    /// `WriteBufferRowGroupMemoryLimitSetting`) and of the `threads` and
+    /// `geometry_minimum_shredding_size` they depend on; other names are ignored.
+    fn set_optimistic_write_setting(&self, name: &str, value: Option<&rustdb_types::Value>) -> Result<()> {
+        use rustdb_function::cast::ValueCast;
+        let lower = name.to_ascii_lowercase();
+        let defaults = rustdb_storage::OptimisticWriteConfig::default();
+        let update: Box<dyn Fn(&mut rustdb_storage::OptimisticWriteConfig)> = match lower.as_str() {
+            "enable_optimistic_write" => {
+                let enabled = match value {
+                    Some(value) => value
+                        .default_cast_as(&rustdb_types::LogicalType::BOOLEAN)?
+                        .as_bool()
+                        .unwrap_or(false),
+                    None => defaults.enabled,
+                };
+                Box::new(move |config| config.enabled = enabled)
+            }
+            "write_buffer_row_group_count" => {
+                let count = match value {
+                    Some(value) => value
+                        .default_cast_as(&rustdb_types::LogicalType::UBIGINT)?
+                        .as_u64()
+                        .unwrap_or(0),
+                    None => defaults.row_group_count,
+                };
+                Box::new(move |config| config.row_group_count = count)
+            }
+            "write_buffer_row_group_memory_limit" => {
+                let limit = value
+                    .map(|value| rustdb_buffer::parse_memory_limit(&value.to_varchar()?))
+                    .transpose()?;
+                Box::new(move |config| config.memory_limit = limit)
+            }
+            "geometry_minimum_shredding_size" => {
+                let rows = match value {
+                    Some(value) => value
+                        .default_cast_as(&rustdb_types::LogicalType::BIGINT)?
+                        .as_i64()
+                        .unwrap_or(0),
+                    None => defaults.geometry_minimum_shredding_size,
+                };
+                Box::new(move |config| config.geometry_minimum_shredding_size = rows)
+            }
+            _ if is_threads_setting(name) => {
+                let threads = self.env.threads() as u64;
+                Box::new(move |config| config.threads = threads)
+            }
+            _ => return Ok(()),
+        };
+        let config = {
+            let mut config = self
+                .optimistic_write
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            update(&mut config);
+            *config
+        };
+        for database in self.databases.all() {
+            database.storage.set_optimistic_write_config(config);
+        }
+        Ok(())
+    }
+
+    /// How large appends are written to database files before they commit.
+    fn optimistic_write_config(&self) -> rustdb_storage::OptimisticWriteConfig {
+        *self
+            .optimistic_write
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// How checkpoints reuse metadata.
     fn checkpoint_config(&self) -> rustdb_storage::storage_manager::CheckpointConfig {
         *self
@@ -1119,6 +1197,7 @@ impl Database {
             ..rustdb_buffer::BufferManagerConfig::default()
         })?;
         let env = Arc::new(rustdb_execution::ClientEnv::new(buffer_manager));
+        let threads = env.threads();
         let instance = DatabaseInstance {
             path: path.clone(),
             config: config.clone(),
@@ -1136,6 +1215,10 @@ impl Database {
             checkpoint_wal_size: std::sync::atomic::AtomicU64::new(DEFAULT_CHECKPOINT_WAL_SIZE),
             compression: std::sync::Mutex::default(),
             checkpoint_config: std::sync::Mutex::default(),
+            optimistic_write: std::sync::Mutex::new(rustdb_storage::OptimisticWriteConfig {
+                threads: threads as u64,
+                ..rustdb_storage::OptimisticWriteConfig::default()
+            }),
             validity: Arc::default(),
             wal_autocheckpoint_entries: std::sync::atomic::AtomicU64::new(0),
             secrets: Arc::default(),
@@ -1170,6 +1253,7 @@ impl Database {
                 instance.set_force_compression(Some(value))?;
             }
             instance.set_checkpoint_setting(name, Some(value))?;
+            instance.set_optimistic_write_setting(name, Some(value))?;
             instance.set_disabled_compression_methods(name, Some(value))?;
             instance.set_wal_autocheckpoint_entries(name, Some(value))?;
         }
@@ -1235,6 +1319,9 @@ impl Database {
         attached
             .storage
             .set_checkpoint_config(self.instance.checkpoint_config());
+        attached
+            .storage
+            .set_optimistic_write_config(self.instance.optimistic_write_config());
         if let Err(error) = crate::wal::replay(self, &attached) {
             self.instance.databases.remove(&attached.name);
             return Err(error);
@@ -2133,7 +2220,8 @@ impl Connection {
 
     /// `LOAD` / `INSTALL` (`PhysicalLoad`).
     fn run_load(&mut self, info: &rustdb_ast::LoadInfo) -> Result<()> {
-        let config = crate::extensions::ExtensionConfig::from_settings(|name| self.database.global_setting(name));
+        let config =
+            crate::extensions::ExtensionConfig::from_settings(|name| self.database.global_setting(name));
         if let Some(name) = crate::extensions::load_extension(info, &config)?
             && let Some(extension) = StaticExtension::from_name(&name)
         {
@@ -2964,6 +3052,9 @@ impl Connection {
                     .set_checkpoint_setting(name, Some(value))?;
                 self.database
                     .instance()
+                    .set_optimistic_write_setting(name, Some(value))?;
+                self.database
+                    .instance()
                     .set_disabled_compression_methods(name, Some(value))?;
                 self.database
                     .instance()
@@ -2994,6 +3085,9 @@ impl Connection {
                     self.database.instance().set_force_compression(None)?;
                 }
                 self.database.instance().set_checkpoint_setting(name, None)?;
+                self.database
+                    .instance()
+                    .set_optimistic_write_setting(name, None)?;
                 self.database
                     .instance()
                     .set_disabled_compression_methods(name, None)?;

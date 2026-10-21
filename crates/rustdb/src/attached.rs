@@ -61,6 +61,14 @@ impl DatabaseStorage {
         }
     }
 
+    /// Sets how large appends are written to the database file before they commit; an
+    /// in-memory database keeps them in memory.
+    pub fn set_optimistic_write_config(&self, config: rustdb_storage::OptimisticWriteConfig) {
+        if let Self::File(storage) = self {
+            storage.io().set_optimistic_write_config(config);
+        }
+    }
+
     /// Sets the settings checkpoints follow.
     pub fn set_checkpoint_config(&self, config: rustdb_storage::storage_manager::CheckpointConfig) {
         match self {

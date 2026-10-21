@@ -26,6 +26,7 @@ pub mod checkpoint_lock;
 pub mod compression;
 pub mod index;
 pub mod metadata;
+pub mod optimistic_data_writer;
 pub mod single_file_block_manager;
 pub mod statistics;
 pub mod storage_info;
@@ -41,6 +42,7 @@ pub use data_table::{
     BoundForeignKey, ColumnDefinition, ConstraintVerifier, DataTable, DataTableInfo, ForeignKeyKind,
     LocalAppendState, OptimisticCollection, TableConstraints, TableIoManager,
 };
+pub use optimistic_data_writer::{OptimisticDataWriter, OptimisticWriteConfig};
 pub use table::{ParallelTableScanState, StorageIndex, TableScanState};
 pub use table_filter::{TableFilter, TableFilterSet};
 pub use transaction::{
