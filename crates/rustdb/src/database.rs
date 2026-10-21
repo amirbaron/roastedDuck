@@ -1716,6 +1716,49 @@ impl Database {
         self.instance.log_manager.register_storage(name, storage)
     }
 
+    /// Selects the log storage `name`, built in or registered (`LogManager::SetLogStorage`).
+    pub fn set_log_storage(&self, name: &str) -> Result<()> {
+        self.instance.log_manager.set_storage(name)
+    }
+
+    /// Turns logging on or off (`LogManager::SetEnableLogging`).
+    pub fn set_enable_logging(&self, enabled: bool) {
+        self.instance.log_manager.set_enabled(enabled);
+    }
+
+    /// Logs entries of `level` and above (`LogManager::SetLogLevel`).
+    pub fn set_log_level(&self, level: rustdb_function::logging::LogLevel) {
+        self.instance.log_manager.set_level(level);
+    }
+
+    /// The version of the library (`DuckDB::LibraryVersion`).
+    pub fn library_version() -> &'static str {
+        rustdb_storage::storage_info::LIBRARY_VERSION
+    }
+
+    /// The commit the library was built from (`DuckDB::SourceID`).
+    pub fn source_id() -> &'static str {
+        rustdb_storage::storage_info::SOURCE_ID
+    }
+
+    /// The codename of the library's release (`DuckDB::ReleaseCodename`).
+    pub fn release_codename() -> &'static str {
+        let version = Self::library_version();
+        if version.contains("-dev") {
+            "Development Version"
+        } else if version.starts_with("v1.2.") {
+            "Histrionicus"
+        } else if version.starts_with("v1.3.") {
+            "Ossivalis"
+        } else if version.starts_with("v1.4.") {
+            "Andium"
+        } else if version.starts_with("v1.5.") {
+            "Variegata"
+        } else {
+            "Unknown Version"
+        }
+    }
+
     /// Adds a replacement scan, tried after the built-in ones and those added before
     /// (`DBConfig::replacement_scans.push_back`).
     pub fn add_replacement_scan(&self, scan: rustdb_planner::ReplacementScan) {
@@ -1849,6 +1892,27 @@ impl Connection {
             .set_settings(Arc::new(self.settings_snapshot()));
         let mut params = rustdb_function::cast::CastParameters::new();
         value.cast_with(&self.casts(), target, &mut params)
+    }
+
+    /// Casts the first `count` rows of `source` to `target` with the casts of this
+    /// database, including those of loaded extensions (DuckDB's
+    /// `VectorOperations::Cast(ClientContext &, ...)`).
+    pub fn cast_vector(
+        &self,
+        source: &rustdb_types::Vector,
+        target: &rustdb_types::LogicalType,
+        count: usize,
+    ) -> Result<rustdb_types::Vector> {
+        self.function_client
+            .set_settings(Arc::new(self.settings_snapshot()));
+        let mut params = rustdb_function::cast::CastParameters::new();
+        rustdb_function::cast::cast_vector(&self.casts(), source, target, count, &mut params)
+    }
+
+    /// Whether the connection commits every statement, being outside an explicit
+    /// transaction (DuckDB's `Connection::IsAutoCommit`).
+    pub fn is_auto_commit(&self) -> bool {
+        self.transactions.is_auto_commit()
     }
 
     /// The database's casts as this connection binds them (DuckDB's

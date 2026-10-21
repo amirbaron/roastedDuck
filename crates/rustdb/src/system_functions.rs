@@ -1336,24 +1336,11 @@ const VERSION_COLUMNS: Columns = &[
 /// `pragma_version()` (`PragmaVersionFunction`): the library version, source id and
 /// release codename (`DuckDB::ReleaseCodename`).
 fn version_rows(_: &ClientContext) -> Result<Vec<Vec<Value>>> {
-    let version = rustdb_storage::storage_info::LIBRARY_VERSION;
-    let codename = if version.contains("-dev") {
-        "Development Version"
-    } else if version.starts_with("v1.2.") {
-        "Histrionicus"
-    } else if version.starts_with("v1.3.") {
-        "Ossivalis"
-    } else if version.starts_with("v1.4.") {
-        "Andium"
-    } else if version.starts_with("v1.5.") {
-        "Variegata"
-    } else {
-        "Unknown Version"
-    };
+    use crate::Database;
     Ok(vec![vec![
-        text(version),
-        text(rustdb_storage::storage_info::SOURCE_ID),
-        text(codename),
+        text(Database::library_version()),
+        text(Database::source_id()),
+        text(Database::release_codename()),
     ]])
 }
 

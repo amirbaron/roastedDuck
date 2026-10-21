@@ -206,6 +206,11 @@ impl ClientHandle {
         self.interrupted.store(true, Ordering::Release);
     }
 
+    /// Whether the running query was interrupted (`ClientContext::IsInterrupted`).
+    pub fn is_interrupted(&self) -> bool {
+        self.interrupted.load(Ordering::Acquire)
+    }
+
     /// The progress of the running query (`ClientContext::GetQueryProgress`).
     pub fn query_progress(&self) -> QueryProgress {
         *self.progress.lock().unwrap_or_else(PoisonError::into_inner)
