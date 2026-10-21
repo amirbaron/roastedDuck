@@ -3622,6 +3622,7 @@ test/sql/storage/compression/zstd/test_giant_lists.test_slow
 test/sql/storage/compression/zstd/test_skipping.test
 test/sql/storage/compression/zstd/zstd.test
 test/sql/storage/compression/zstd/zstd_big_badly_compressed_list.test
+test/sql/storage/compression/zstd/zstd_compression_ratio.test_slow
 test/sql/storage/compression/zstd/zstd_force_compression.test
 test/sql/storage/compression/zstd/zstd_giant_string.test_slow
 test/sql/storage/concurrent_attach.test_slow

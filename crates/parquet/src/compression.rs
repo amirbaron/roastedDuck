@@ -1,6 +1,6 @@
 //! Page compression codecs (`ColumnReader::DecompressInternal` and the writer's
 //! `ColumnWriter::CompressPage`), all in pure Rust: snappy (our own decoder, `snap` to compress), gzip (`miniz_oxide`
-//! through `flate2`), zstd (`ruzstd`), LZ4 raw blocks (`lz4_flex`) and brotli (`brotli`).
+//! through `flate2`), zstd (`rustdb-zstd`, decoded with `ruzstd`), LZ4 raw blocks (`lz4_flex`) and brotli (`brotli`).
 
 use std::io::{Read as _, Write as _};
 
@@ -119,13 +119,12 @@ pub fn compress(codec: CompressionCodec, src: &[u8], level: i64, out: &mut Vec<u
                 .map_err(|error| Error::internal(format!("gzip compression failed: {error}")))?;
         }
         CompressionCodec::ZSTD => {
-            // Gap: `ruzstd` only implements its fastest level, so `level` does not change
-            // the output (it stays a valid zstd frame any reader accepts).
-            let _ = level;
-            out.extend_from_slice(&ruzstd::encoding::compress_to_vec(
-                src,
-                ruzstd::encoding::CompressionLevel::Fastest,
-            ));
+            // `ZSTD_compress` at the writer's level.
+            let level = level.clamp(
+                i64::from(rustdb_zstd::MIN_LEVEL),
+                i64::from(rustdb_zstd::MAX_LEVEL),
+            ) as i32;
+            rustdb_zstd::Compressor::new(level).compress_into(out, src);
         }
         CompressionCodec::LZ4_RAW => crate::lz4::compress(src, out),
         CompressionCodec::BROTLI => brotli_compress(src, out)?,

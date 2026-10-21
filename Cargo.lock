@@ -864,6 +864,7 @@ version = "1.5.6"
 dependencies = [
  "libc",
  "rustdb-common",
+ "rustdb-zstd",
  "ruzstd",
 ]
 
@@ -916,6 +917,7 @@ dependencies = [
  "rustdb-parser",
  "rustdb-planner",
  "rustdb-types",
+ "rustdb-zstd",
  "ruzstd",
  "unicode-normalization",
 ]
@@ -1026,6 +1028,7 @@ dependencies = [
  "rustdb-planner",
  "rustdb-storage",
  "rustdb-types",
+ "rustdb-zstd",
  "ruzstd",
  "serde_json",
  "snap",
@@ -1113,6 +1116,7 @@ dependencies = [
  "rustdb-row",
  "rustdb-serde",
  "rustdb-types",
+ "rustdb-zstd",
  "ruzstd",
 ]
 

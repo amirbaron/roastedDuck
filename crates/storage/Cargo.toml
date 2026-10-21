@@ -13,6 +13,7 @@ rustdb-buffer = { path = "../buffer" }
 rustdb-function = { path = "../function" }
 rustdb-row = { path = "../row" }
 rustdb-serde = { path = "../serde" }
+rustdb-zstd = { path = "../zstd" }
 ruzstd = "0.9"
 
 [target.'cfg(unix)'.dependencies]
