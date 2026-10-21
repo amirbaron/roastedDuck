@@ -817,6 +817,7 @@ impl Database {
         for set in rustdb_csv::read_csv::read_csv_functions() {
             system_catalog.register_table_functions(set)?;
         }
+        system_catalog.register_table_functions(crate::read_duckdb::read_duckdb_functions())?;
         crate::system_functions::register_default_views(&system_catalog)?;
         crate::system_functions::register_default_macros(&system_catalog)?;
         let buffer_manager = rustdb_buffer::BufferManager::new(rustdb_buffer::BufferManagerConfig {
@@ -999,6 +1000,11 @@ impl Database {
 
     pub(crate) fn instance(&self) -> &DatabaseInstance {
         &self.instance
+    }
+
+    /// The database of an instance still open.
+    pub(crate) fn from_instance(instance: &std::sync::Weak<DatabaseInstance>) -> Option<Self> {
+        instance.upgrade().map(|instance| Self { instance })
     }}
 
 /// A connection to a database (DuckDB's `Connection` and `ClientContext`). Each
