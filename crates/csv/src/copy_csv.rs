@@ -71,6 +71,56 @@ enum ColumnFormat {
     Date(StrpTimeFormat),
     /// `strftime(column, format)` of a TIMESTAMP (WITH TIME ZONE).
     Timestamp(StrpTimeFormat),
+    /// `strftime(column, format)` bound from the catalog: TIMESTAMP WITH TIME ZONE with an
+    /// extension's `strftime` (ICU's, which formats in the session's time zone).
+    Function(BoundStrftime),
+}
+
+/// A bound `strftime(column, format)` call.
+#[derive(Clone)]
+struct BoundStrftime {
+    kernel: rustdb_function::ScalarKernel,
+    bind_info: Option<Arc<dyn FunctionData>>,
+    format: Value,
+}
+
+impl std::fmt::Debug for BoundStrftime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BoundStrftime").field("format", &self.format).finish_non_exhaustive()
+    }
+}
+
+/// Binds `strftime(<TIMESTAMPTZ column>, format)` against the catalog (the expression
+/// `CreateCastExpression` builds), when an extension provides TIMESTAMPTZ casts.
+fn bind_strftime(context: &ClientContext, format: &Value) -> Result<Option<BoundStrftime>> {
+    if !context
+        .casts
+        .has_registered_cast(&LogicalType::VARCHAR, &LogicalType::TIMESTAMP_TZ)
+    {
+        return Ok(None);
+    }
+    let Some(entry) = context.get_entry("system", "main", rustdb_catalog::CatalogType::ScalarFunction, "strftime", true)?
+    else {
+        return Ok(None);
+    };
+    let rustdb_catalog::EntryKind::ScalarFunction(functions) = &entry.entry.kind else {
+        return Ok(None);
+    };
+    let children = vec![
+        rustdb_planner::Expression::reference("", LogicalType::TIMESTAMP_TZ, 0),
+        rustdb_planner::Expression::constant(format.clone()),
+    ];
+    let bound = rustdb_planner::function_binder::FunctionBinder::new(context)
+        .bind_scalar_function(functions, children, false)?
+        .map_err(|error| error.error)?;
+    let rustdb_planner::ExpressionKind::Function(function) = bound.kind else {
+        return Ok(None);
+    };
+    Ok(Some(BoundStrftime {
+        kernel: function.function.kernel.clone(),
+        bind_info: function.bind_info.clone(),
+        format: format.clone(),
+    }))
 }
 
 /// The bind data of a CSV write (DuckDB's `WriteCSVData`).
@@ -140,11 +190,24 @@ fn write_csv_bind(
         .filter(|value| !value.is_null())
         .map(write_format)
         .transpose()?;
+    let tz_strftime = match options
+        .write_date_format
+        .get(&LogicalTypeId::Timestamp)
+        .filter(|value| !value.is_null())
+    {
+        Some(format) if types.iter().any(|ty| ty.id() == LogicalTypeId::TimestampTz) => {
+            bind_strftime(context, format)?
+        }
+        _ => None,
+    };
     let formats = types
         .iter()
         .map(|ty| match ty.id() {
             LogicalTypeId::Date if date_format.is_some() => {
                 ColumnFormat::Date(date_format.clone().unwrap_or_default())
+            }
+            LogicalTypeId::TimestampTz if tz_strftime.is_some() => {
+                ColumnFormat::Function(tz_strftime.clone().unwrap_or_else(|| unreachable!()))
             }
             LogicalTypeId::Timestamp | LogicalTypeId::TimestampTz if timestamp_format.is_some() => {
                 ColumnFormat::Timestamp(timestamp_format.clone().unwrap_or_default())
@@ -371,6 +434,17 @@ fn column_text(data: &WriteCsvData, column: usize, vector: &Vector, count: usize
                 let text = result.add_string(&buffer);
                 result.values_mut::<StringT>()[row] = text;
             }
+            Ok(result)
+        }
+        ColumnFormat::Function(strftime) => {
+            let format = Vector::constant(&strftime.format)?;
+            let args = DataChunk::new(vec![vector.clone(), format], count);
+            let mut state = rustdb_function::FunctionState {
+                bind_data: strftime.bind_info.clone(),
+                ..rustdb_function::FunctionState::default()
+            };
+            let mut result = Vector::flat(LogicalType::VARCHAR, count.max(1));
+            (strftime.kernel)(&args, &mut state, &mut result)?;
             Ok(result)
         }
         ColumnFormat::Timestamp(format) => {

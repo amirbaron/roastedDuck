@@ -316,6 +316,14 @@ impl CastFunctionSet {
         })
     }
 
+    /// Whether an extension registered the cast from `source` to `target` (e.g. ICU's
+    /// VARCHAR to TIMESTAMPTZ, standing for `DatabaseInstance::ExtensionIsLoaded("icu")`).
+    pub fn has_registered_cast(&self, source: &LogicalType, target: &LogicalType) -> bool {
+        self.registered
+            .iter()
+            .any(|entry| &entry.source == source && &entry.target == target)
+    }
+
     /// The cost of implicitly casting `source` to `target`, or `-1` if the binder may not
     /// insert this cast (DuckDB's `CastFunctionSet::ImplicitCastCost`).
     pub fn implicit_cast_cost(&self, source: &LogicalType, target: &LogicalType) -> i64 {

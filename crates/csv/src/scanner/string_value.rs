@@ -355,7 +355,7 @@ impl StringValueScanner {
             projected_columns: Vec::new(),
             projecting_columns: false,
             chunk_col_id: 0,
-            // The reference harness (DuckDB's unittest) runs without ICU loaded.
+            // Set from the file scan's casts below.
             icu_loaded: false,
             buffer_handles: HashMap::new(),
             requested_size: 0,
@@ -415,6 +415,10 @@ impl StringValueScanner {
                     }
                 }
                 Some(file_scan) => {
+                    // `ExtensionIsLoaded("icu")`: ICU registers the VARCHAR to TIMESTAMPTZ cast.
+                    result.icu_loaded = file_scan
+                        .casts
+                        .has_registered_cast(&LogicalType::VARCHAR, &LogicalType::TIMESTAMP_TZ);
                     if file_scan.file_types.len() > number_of_columns as usize {
                         return Err(Error::invalid_input(format!(
                             "Mismatch between the number of columns ({number_of_columns}) in the CSV file and what is expected in the scanner ({}).",
