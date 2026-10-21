@@ -15,8 +15,8 @@ use std::collections::{BTreeMap, HashMap};
 use rustdb_common::libcxx::{UnorderedOrder, string_hash};
 use rustdb_common::{Error, Result};
 use rustdb_types::variant::{VariantData, VariantLogicalType as V, VariantNormalizer, unshredded_type};
-use rustdb_types::variant_value::{VariantValue, to_variant};
-use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, Value, Vector};
+use rustdb_types::variant_value::{VariantValue, to_variant_data};
+use rustdb_types::{ListEntry, LogicalType, LogicalTypeId, PhysicalType, Value, Vector};
 
 use crate::statistics::{TYPED_VALUE_INDEX, UNTYPED_VALUE_INDEX};
 
@@ -696,28 +696,43 @@ impl<'a> Shredder<'a> {
         self.write_variant_values(child, &children)
     }
 
-    /// The value of row `row` of vector `vector`.
-    fn value(&self, vector: usize, row: usize) -> Value {
+    /// Vector `vector` as a flat vector.
+    fn build_vector(&self, vector: usize) -> Result<Vector> {
         let target = &self.vectors[vector];
-        if !target.valid[row] {
-            return Value::null(target.ty.clone());
-        }
+        let rows = target.valid.len();
+        let mut result = Vector::flat(target.ty.clone(), rows.max(1));
         match &target.data {
-            OutData::Values(values) => values[row].clone(),
-            OutData::Struct(fields) => Value::from_children(
-                target.ty.clone(),
-                fields.iter().map(|&field| self.value(field, row)).collect(),
-            ),
+            OutData::Values(values) => {
+                for (row, value) in values.iter().enumerate() {
+                    if target.valid[row] {
+                        result.set_value(row, value)?;
+                    }
+                }
+            }
+            OutData::Struct(fields) => {
+                let built = fields
+                    .iter()
+                    .map(|&field| self.build_vector(field))
+                    .collect::<Result<Vec<_>>>()?;
+                if let Some(children) = result.struct_children_mut() {
+                    for (child, field) in children.iter_mut().zip(built) {
+                        *child = field;
+                    }
+                }
+            }
             OutData::List { entries, child } => {
-                let (offset, length) = entries[row];
-                Value::list(
-                    self.vectors[*child].ty.clone(),
-                    (offset..offset + length)
-                        .map(|element| self.value(*child, element))
-                        .collect(),
-                )
+                for (entry, &(offset, length)) in result.values_mut::<ListEntry>().iter_mut().zip(entries) {
+                    *entry = ListEntry::new(offset, length);
+                }
+                result.set_list_child(self.build_vector(*child)?, self.vectors[*child].valid.len());
             }
         }
+        for (row, valid) in target.valid.iter().enumerate() {
+            if !valid {
+                result.validity_mut().set_invalid(row, rows.max(1));
+            }
+        }
+        Ok(result)
     }
 }
 
@@ -775,11 +790,11 @@ fn unshredded_object_children(
 }
 
 /// `VariantColumnData::ShredVariantData`: the unshredded and the shredded (of
-/// `shredded_type`) value of each VARIANT row (`None` for NULL rows).
+/// `shredded_type`) vector of VARIANT rows (`None` for NULL rows).
 pub(crate) fn shred_rows(
     rows: &[Option<VariantData>],
     shredded_type: &LogicalType,
-) -> Result<(Vec<Value>, Vec<Value>)> {
+) -> Result<(Vector, Vector)> {
     let mut shredder = Shredder::new(rows);
     let shredded = shredder.allocate(shredded_type, rows.len());
     let items: Vec<Item> = (0..rows.len())
@@ -791,12 +806,11 @@ pub(crate) fn shred_rows(
         .collect();
     shredder.write_variant_values(shredded, &items)?;
     // Now the unshredded values: each row's in one VARIANT, in the order they were found.
-    let unshredded_type = unshredded_type();
     let mut unshredded = Vec::with_capacity(rows.len());
     for row in 0..rows.len() {
         let values = std::mem::take(&mut shredder.unshredded_values[row]);
         if values.is_empty() {
-            unshredded.push(Value::null(unshredded_type.clone()));
+            unshredded.push(None);
             continue;
         }
         let data = shredder.row(row)?;
@@ -812,60 +826,54 @@ pub(crate) fn shred_rows(
                 normalizer.visit_object_fields(data, value.source_value_index, &value.unshredded_children)?;
             }
         }
-        unshredded.push(
-            normalizer
-                .finish()
-                .to_value()
-                .reinterpret(unshredded_type.clone()),
-        );
+        unshredded.push(Some(normalizer.finish()));
     }
-    let shredded = (0..rows.len()).map(|row| shredder.value(shredded, row)).collect();
-    Ok((unshredded, shredded))
+    Ok((
+        VariantData::write_vector(&unshredded, &unshredded_type())?,
+        shredder.build_vector(shredded)?,
+    ))
 }
 
-/// `VariantColumnData::UnshredVariantData`: the VARIANT values of `count` rows of an
-/// unshredded and a shredded vector (`None` for NULL).
+/// `VariantColumnData::UnshredVariantData`: a vector of type `ty` (VARIANT) with the
+/// values of `count` rows of an unshredded and a shredded vector.
 pub(crate) fn unshred_rows(
     unshredded: &Vector,
     shredded: &Vector,
     count: usize,
-) -> Result<Vec<Option<Value>>> {
-    let shredded_type = shredded.logical_type().clone();
+    ty: &LogicalType,
+) -> Result<Vector> {
     let mut values = Vec::with_capacity(count);
     for row in 0..count {
-        let variant = VariantData::from_value(&unshredded.get_value(row))?;
-        values.push(unshred(
-            variant.as_ref(),
-            &shredded.get_value(row),
-            &shredded_type,
-        )?);
+        let variant = VariantData::from_vector(unshredded, row)?;
+        values.push(unshred(variant.as_ref(), shredded, row)?);
     }
-    to_variant(&values)
+    VariantData::write_vector(&to_variant_data(&values)?, ty)
 }
 
-/// `Unshred` for one value of a shredded level of type `ty`.
-fn unshred(variant: Option<&VariantData>, shredded: &Value, ty: &LogicalType) -> Result<VariantValue> {
-    let (typed, typed_type, untyped) = if ty.id() == LogicalTypeId::Struct {
-        // "typed_value", "untyped_value_index".
-        let fields = ty.struct_children().unwrap_or_default();
-        let values = shredded.children().unwrap_or_default();
-        let typed_type = &fields[TYPED_VALUE_INDEX].1;
-        let typed = values
-            .get(TYPED_VALUE_INDEX)
-            .cloned()
-            .unwrap_or_else(|| Value::null(typed_type.clone()));
-        (typed, typed_type, values.get(UNTYPED_VALUE_INDEX))
+/// `Unshred` for row `row` of a shredded level.
+fn unshred(variant: Option<&VariantData>, level: &Vector, row: usize) -> Result<VariantValue> {
+    let (typed, typed_row, untyped) = if level.logical_type().id() == LogicalTypeId::Struct {
+        // "typed_value", "untyped_value_index": the fields of the level's row.
+        let slot = level.sel().slot(row);
+        let fields = level
+            .struct_children()
+            .ok_or_else(|| Error::internal("shredded level without its fields"))?;
+        (
+            &fields[TYPED_VALUE_INDEX],
+            slot,
+            fields.get(UNTYPED_VALUE_INDEX).map(|untyped| (untyped, slot)),
+        )
     } else {
-        (shredded.clone(), ty, None)
+        (level, row, None)
     };
-    let mut result = unshred_typed_value(variant, &typed, typed_type)?;
-    let Some(untyped) = untyped.filter(|untyped| !untyped.is_null()) else {
+    let mut result = unshred_typed_value(variant, typed, typed_row)?;
+    let Some((untyped, untyped_row)) =
+        untyped.filter(|(untyped, untyped_row)| !untyped.is_null(*untyped_row))
+    else {
         // A NULL `untyped_value_index`: fully shredded.
         return Ok(result);
     };
-    let index = untyped
-        .as_u32()
-        .ok_or_else(|| Error::internal("untyped_value_index is not a UINTEGER"))?;
+    let index = untyped.values::<u32>()[untyped.sel().slot(untyped_row)];
     if index == 0 {
         return Ok(VariantValue::Missing);
     }
@@ -884,47 +892,44 @@ fn unshred(variant: Option<&VariantData>, shredded: &Value, ty: &LogicalType) ->
     Ok(result)
 }
 
-/// `UnshredTypedValue`.
-fn unshred_typed_value(
-    variant: Option<&VariantData>,
-    typed: &Value,
-    ty: &LogicalType,
-) -> Result<VariantValue> {
-    if typed.is_null() {
+/// `UnshredTypedValue` for row `row` of a typed vector.
+fn unshred_typed_value(variant: Option<&VariantData>, typed: &Vector, row: usize) -> Result<VariantValue> {
+    if typed.is_null(row) {
         return Ok(VariantValue::null());
     }
-    match ty.id() {
+    let slot = typed.sel().slot(row);
+    match typed.logical_type().id() {
         LogicalTypeId::Struct => {
             // `UnshredTypedObject`: an OBJECT of the fields that are not missing.
-            let fields = ty.struct_children().unwrap_or_default();
-            let values = typed.children().unwrap_or_default();
+            let names = typed.logical_type().struct_children().unwrap_or_default();
+            let fields = typed.struct_children().unwrap_or_default();
             let mut result = VariantValue::Missing;
-            for ((name, field_type), value) in fields.iter().zip(values) {
-                let field = unshred(variant, value, field_type)?;
-                if matches!(field, VariantValue::Missing) {
+            for ((name, _), field) in names.iter().zip(fields) {
+                let value = unshred(variant, field, slot)?;
+                if matches!(value, VariantValue::Missing) {
                     continue;
                 }
                 if matches!(result, VariantValue::Missing) {
                     result = VariantValue::Object(BTreeMap::new());
                 }
                 if let VariantValue::Object(object) = &mut result {
-                    VariantValue::add_child(object, name, field);
+                    VariantValue::add_child(object, name, value);
                 }
             }
             Ok(result)
         }
         LogicalTypeId::List => {
             // `UnshredTypedArray`.
-            let element_type = ty.child_type().cloned().unwrap_or(LogicalType::INVALID);
-            let items = typed
-                .children()
-                .unwrap_or_default()
-                .iter()
-                .map(|element| unshred(variant, element, &element_type))
+            let (elements, _) = typed
+                .list_child()
+                .ok_or_else(|| Error::internal("shredded ARRAY without its elements"))?;
+            let items = typed.values::<ListEntry>()[slot]
+                .range()
+                .map(|element| unshred(variant, elements, element))
                 .collect::<Result<Vec<_>>>()?;
             Ok(VariantValue::array(items))
         }
-        _ => Ok(VariantValue::Primitive(typed.clone())),
+        _ => Ok(VariantValue::Primitive(typed.get_value(row))),
     }
 }
 
@@ -957,5 +962,100 @@ fn unshredded_value(variant: Option<&VariantData>, values_index: u32) -> Result<
             Ok(VariantValue::array(items))
         }
         _ => Ok(VariantValue::Primitive(data.to_sql_value(index)?)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rustdb_types::variant::encode_value;
+
+    use super::*;
+
+    fn variant(value: &Value) -> Option<VariantData> {
+        encode_value(value)
+            .unwrap()
+            .map(|encoded| VariantData::from_value(&encoded).unwrap().unwrap())
+    }
+
+    /// Shreds `rows` on the type their analysis suggests and unshreds them again.
+    fn roundtrip(rows: &[Option<VariantData>]) -> (LogicalType, Vec<Option<VariantData>>) {
+        let mut analysis = ShreddingAnalysis::new();
+        for data in rows.iter().flatten() {
+            analysis.update(data).unwrap();
+        }
+        let shredded_type = analysis.shredded_type().unwrap().unwrap();
+        let values = roundtrip_on(rows, &shredded_type);
+        (shredded_type, values)
+    }
+
+    /// Shreds `rows` on `shredded_type` and unshreds them again.
+    fn roundtrip_on(rows: &[Option<VariantData>], shredded_type: &LogicalType) -> Vec<Option<VariantData>> {
+        let (unshredded, shredded) = shred_rows(rows, shredded_type).unwrap();
+        let result = unshred_rows(&unshredded, &shredded, rows.len(), &LogicalType::variant()).unwrap();
+        (0..rows.len())
+            .map(|row| VariantData::from_vector(&result, row).unwrap())
+            .collect()
+    }
+
+    fn object(fields: Vec<(&str, Value)>) -> Value {
+        Value::struct_value(
+            fields
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn shredding_roundtrips_mixed_values() {
+        let rows = vec![
+            variant(&object(vec![
+                ("a", Value::integer(1)),
+                ("b", Value::varchar("x")),
+            ])),
+            variant(&object(vec![
+                ("a", Value::varchar("not an int")),
+                ("c", Value::boolean(true)),
+            ])),
+            None,
+            variant(&Value::integer(42)),
+            variant(&object(vec![
+                ("a", Value::integer(2)),
+                ("b", Value::varchar("y")),
+            ])),
+            variant(&Value::list(
+                LogicalType::INTEGER,
+                vec![Value::integer(1), Value::null(LogicalType::INTEGER)],
+            )),
+        ];
+        let (shredded_type, values) = roundtrip(&rows);
+        // The fields come in the order of DuckDB's `unordered_map` (checked against DuckDB).
+        assert_eq!(
+            shredded_type.to_string(),
+            "STRUCT(typed_value STRUCT(b STRUCT(typed_value VARCHAR, untyped_value_index UINTEGER), \
+             c STRUCT(typed_value BOOLEAN, untyped_value_index UINTEGER), \
+             a STRUCT(typed_value INTEGER, untyped_value_index UINTEGER)), untyped_value_index UINTEGER)"
+        );
+        for (row, value) in rows.iter().zip(&values) {
+            let normalized = row.as_ref().map(|data| data.normalize().unwrap());
+            assert_eq!(value, &normalized);
+        }
+    }
+
+    #[test]
+    fn objects_without_shredded_fields_are_lost_like_in_duckdb() {
+        // {'b': 1} shredded on STRUCT(a INTEGER) has unshredded fields only; DuckDB's
+        // unshredding returns NULL for it.
+        let rows = vec![
+            variant(&object(vec![("a", Value::integer(2))])),
+            variant(&object(vec![("b", Value::integer(1))])),
+        ];
+        let shredding = crate::statistics::wrap_shredded_levels(&LogicalType::struct_type(vec![(
+            "a".to_owned(),
+            LogicalType::INTEGER,
+        )]));
+        let values = roundtrip_on(&rows, &shredding);
+        assert_eq!(values[0], rows[0]);
+        assert_eq!(values[1], None);
     }
 }

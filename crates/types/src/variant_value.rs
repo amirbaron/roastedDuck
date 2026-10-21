@@ -62,6 +62,14 @@ impl VariantValue {
 /// `VariantValue::ToVARIANT`: the VARIANT value of each decoded value; `None` for NULL
 /// and missing values.
 pub fn to_variant(values: &[VariantValue]) -> Result<Vec<Option<Value>>> {
+    Ok(to_variant_data(values)?
+        .into_iter()
+        .map(|data| data.map(|data| data.to_value()))
+        .collect())
+}
+
+/// [`to_variant`] as unpacked VARIANTs.
+pub fn to_variant_data(values: &[VariantValue]) -> Result<Vec<Option<VariantData>>> {
     values
         .iter()
         .map(|value| {
@@ -70,7 +78,7 @@ pub fn to_variant(values: &[VariantValue]) -> Result<Vec<Option<Value>>> {
             }
             let mut data = VariantData::default();
             convert_value(value, &mut data)?;
-            Ok(Some(data.to_value()))
+            Ok(Some(data))
         })
         .collect()
 }

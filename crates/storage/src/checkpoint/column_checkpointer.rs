@@ -170,7 +170,7 @@ fn scan_variant_rows(
         let rows = (count - row).min(STANDARD_VECTOR_SIZE as u64) as usize;
         column.checkpoint_scan(&mut state, row, rows, &mut vector)?;
         let values = (0..rows)
-            .map(|index| VariantData::from_value(&vector.get_value(index)))
+            .map(|index| VariantData::from_vector(&vector, index))
             .collect::<Result<Vec<_>>>()?;
         callback(&values)?;
         row += rows as u64;
@@ -199,11 +199,10 @@ fn write_shredded_data(
     shredded_type: &LogicalType,
     io: &Arc<TableIoManager>,
 ) -> Result<(ColumnData, ColumnData)> {
-    let unshredded_type = rustdb_types::variant::unshredded_type();
     let unshredded = ColumnData::new(
         Arc::clone(io),
         1,
-        unshredded_type.clone(),
+        rustdb_types::variant::unshredded_type(),
         ColumnDataType::CheckpointTarget,
     );
     let shredded = ColumnData::new(
@@ -215,15 +214,7 @@ fn write_shredded_data(
     let mut unshredded_append = unshredded.initialize_append()?;
     let mut shredded_append = shredded.initialize_append()?;
     scan_variant_rows(column, count, |rows| {
-        let (unshredded_values, shredded_values) = shred_rows(rows, shredded_type)?;
-        let mut unshredded_vector = Vector::flat(unshredded_type.clone(), rows.len());
-        let mut shredded_vector = Vector::flat(shredded_type.clone(), rows.len());
-        for (row, (unshredded_value, shredded_value)) in
-            unshredded_values.iter().zip(&shredded_values).enumerate()
-        {
-            unshredded_vector.set_value(row, unshredded_value)?;
-            shredded_vector.set_value(row, shredded_value)?;
-        }
+        let (unshredded_vector, shredded_vector) = shred_rows(rows, shredded_type)?;
         unshredded.append(&mut unshredded_append, &unshredded_vector, rows.len())?;
         shredded.append(&mut shredded_append, &shredded_vector, rows.len())
     })?;

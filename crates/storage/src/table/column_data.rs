@@ -1208,12 +1208,17 @@ impl ColumnData {
                 shredded.scan_into(None, shredded_state, &mut shredded_values, count, 0)?;
                 let mut validity_values = Vector::flat(LogicalType::BOOLEAN, count.max(1));
                 let scanned = validity.scan_into(updates, validity_state, &mut validity_values, count, 0)?;
-                let values =
-                    super::variant_column_data::unshred_rows(&unshredded_values, &shredded_values, scanned)?;
-                for (row, value) in values.into_iter().enumerate() {
-                    match value {
-                        Some(value) => result.set_value(result_offset + row, &value)?,
-                        None => result.set_null(result_offset + row),
+                let values = super::variant_column_data::unshred_rows(
+                    &unshredded_values,
+                    &shredded_values,
+                    scanned,
+                    &self.ty,
+                )?;
+                if result_offset == 0 {
+                    *result = values;
+                } else {
+                    for row in 0..scanned {
+                        result.set_value(result_offset + row, &values.get_value(row))?;
                     }
                 }
                 state.offset_in_column += count as u64;
