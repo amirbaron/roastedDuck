@@ -9,6 +9,8 @@ test/extension/autoloading_copy_function.test
 test/extension/autoloading_encodings.test
 test/extension/autoloading_types.test
 test/extension/duckdb_extensions.test
+test/extension/install_extension.test
+test/extension/install_extension_httpfs.test
 test/extension/install_version.test
 test/extension/load_error.test
 test/extension/test_loadable_optimizer.test
@@ -2007,6 +2009,7 @@ test/sql/export/parquet/export_parquet_map.test
 test/sql/export/parquet/export_parquet_struct.test
 test/sql/export/parquet/export_parquet_union.test
 test/sql/export/parquet_export.test
+test/sql/extensions/allowed_directories_install.test
 test/sql/extensions/attach_type_alias_conflict.test
 test/sql/extensions/checked_load.test
 test/sql/extensions/load_arbitrary_path.test
@@ -3253,6 +3256,7 @@ test/sql/sample/test_sample_too_big.test
 test/sql/sample/test_sampling_stats.test_slow
 test/sql/secrets/create_secret_expression.test
 test/sql/secrets/create_secret_hffs_autoload.test
+test/sql/secrets/create_secret_persistence_no_client_context.test
 test/sql/secrets/secret_autoloading_errors.test
 test/sql/secrets/secret_compatibility_http.test
 test/sql/select/test_multi_column_reference.test

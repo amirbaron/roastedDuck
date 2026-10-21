@@ -1374,7 +1374,11 @@ const EXTENSIONS_COLUMNS: Columns = &[
 /// `duckdb_extensions()`.
 fn extensions_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
     let cache = context.function_client.object_cache();
-    crate::extensions::extension_rows(|name| {
+    let settings = context.function_client.settings();
+    let config = crate::extensions::ExtensionConfig::from_settings(|name| {
+        settings.as_ref()?.current_setting(name).ok()
+    });
+    crate::extensions::extension_rows(&config, |name| {
         cache
             .as_deref()
             .is_none_or(|cache| crate::database::static_extension_loaded(cache, name))

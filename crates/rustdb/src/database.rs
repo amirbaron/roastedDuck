@@ -2082,7 +2082,8 @@ impl Connection {
             return self.copy_database(copy);
         }
         if let rustdb_ast::SqlStatementKind::Load(info) = &statement.kind {
-            if let Some(name) = crate::extensions::load_extension(info)?
+            let config = crate::extensions::ExtensionConfig::from_settings(|name| self.database.global_setting(name));
+            if let Some(name) = crate::extensions::load_extension(info, &config)?
                 && let Some(extension) = StaticExtension::from_name(&name)
             {
                 self.database.instance.load_static_extension(extension)?;
