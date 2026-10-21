@@ -881,7 +881,6 @@ impl ShellState {
         // A pager that exits early makes writes fail with SIGPIPE: treat that as an
         // interrupt (`StartPagerDisplay`).
         crate::interrupt::install(libc::SIGPIPE);
-        printer::flush_stdout();
         let child = Command::new("/bin/sh")
             .arg("-c")
             .arg(&self.pager_command)
@@ -926,19 +925,26 @@ impl ShellState {
     /// pipes): the line without its `\n` or `\r\n`, `None` at the end.
     pub fn read_line(reader: &mut dyn BufRead) -> Option<String> {
         let mut line = Vec::new();
-        match reader.read_until(b'\n', &mut line) {
-            Ok(0) | Err(_) => return None,
-            Ok(_) => {}
-        }
-        if line.last() == Some(&b'\n') {
-            line.pop();
-            if line.last() == Some(&b'\r') {
-                line.pop();
+        loop {
+            let start = line.len();
+            match reader.read_until(b'\n', &mut line) {
+                Ok(0) | Err(_) if start == 0 => return None,
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
             }
-        }
-        // `fgets` stops at a NUL as the end of the string.
-        if let Some(nul) = line.iter().position(|&c| c == 0) {
-            line.truncate(nul);
+            // The line ends at a NUL, as a C string does: the rest of the text `fgets`
+            // read is dropped and the next line is read in its place.
+            if let Some(nul) = line[start..].iter().position(|&c| c == 0) {
+                line.truncate(start + nul);
+                continue;
+            }
+            if line.last() == Some(&b'\n') {
+                line.pop();
+                if line.last() == Some(&b'\r') {
+                    line.pop();
+                }
+            }
+            break;
         }
         Some(String::from_utf8_lossy(&line).into_owned())
     }
@@ -999,9 +1005,9 @@ pub fn home_directory() -> String {
 }
 
 /// `system()`: runs `command` with `/bin/sh -c`, returning its exit status as `system`
-/// reports it (the wait status), -1 if it could not start.
+/// reports it (the wait status), -1 if it could not start. Like `system`, it leaves the
+/// shell's buffered output in its buffer.
 pub fn run_system(command: &str) -> i32 {
-    printer::flush_stdout();
     match Command::new("/bin/sh").arg("-c").arg(command).status() {
         Ok(status) => {
             use std::os::unix::process::ExitStatusExt;
