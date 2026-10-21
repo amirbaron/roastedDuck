@@ -148,6 +148,12 @@ impl Sort {
         })
     }
 
+    /// An empty, finalized run of this sort (`SortedRun(client, sort, false)`, e.g.
+    /// `MaterializeEmpty`).
+    pub fn empty_run(&self) -> Result<SortedRun> {
+        SortedRun::for_materialization(&self.layouts)
+    }
+
     /// Marks this as an (approximate) index-creation sort.
     #[must_use]
     pub fn index_sort(mut self) -> Self {

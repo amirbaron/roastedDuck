@@ -92,6 +92,44 @@ impl SortedRun {
         self.key_data.count()
     }
 
+    /// The keys, one row per sorted row (`key_data`).
+    pub fn key_data(&self) -> &TupleDataCollection {
+        &self.key_data
+    }
+
+    /// The payload rows; materialized runs store them in key order, chunk for chunk
+    /// (`payload_data`).
+    pub fn payload_data(&self) -> Option<&TupleDataCollection> {
+        self.payload_data.as_ref()
+    }
+
+    /// The type of the keys.
+    pub fn key_type(&self) -> super::key::SortKeyType {
+        self.layouts.key_type
+    }
+
+    /// The types of the columns a scan produces.
+    pub fn output_types(&self) -> &[rustdb_types::LogicalType] {
+        &self.layouts.output_types
+    }
+
+    /// The output columns of the rows of `keys`: key columns decoded, payload columns
+    /// gathered from the payload rows the keys point to (`SortedRunScanState::Scan`).
+    /// `keep_alive` must hold the pins of the payload rows' heap blocks.
+    ///
+    /// # Safety
+    /// The keys must be keys of this run whose payload rows (and long keys' heaps) are
+    /// pinned for the duration of the call.
+    pub unsafe fn scan<K: SortKey>(
+        &self,
+        keys: &[K],
+        decode_buffer: &mut Vec<u8>,
+        keep_alive: Option<&crate::gather::HeapKeepAlive>,
+        chunk: &mut rustdb_types::DataChunk,
+    ) -> Result<()> {
+        self.layouts.scan_keys(keys, decode_buffer, keep_alive, chunk)
+    }
+
     /// Bytes held by keys and payload.
     pub fn size_in_bytes(&self) -> usize {
         self.key_data.size_in_bytes()

@@ -3,18 +3,20 @@
 //! input chunk on the range key, then merging.
 
 use rustdb_common::tree_renderer::RenderParams;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use rustdb_ast::{ExpressionType, JoinType};
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_planner::Expression;
 use rustdb_planner::operator::JoinCondition;
+use rustdb_row::sort::{ExternalBlockIteratorState, SortKey, SortedRun};
+use rustdb_row::{ParallelScanState, PinProperties, ScanState};
 use rustdb_types::{DataChunk, LogicalType, SelectionVector, ValidityMask};
 
 use super::range_join::{
-    LocalSortedTable, SortedTable, is_strict_comparison, order_modifiers, reorder_range_conditions,
-    select_join_tail, sorts_before,
+    LocalSortedTable, SortedTable, is_strict_comparison, key_before, order_modifiers,
+    reorder_range_conditions, select_join_tail, slice_sorted_payload,
 };
 use super::{
     OuterJoinMarker, construct_empty_join_result, construct_mark_join_result,
@@ -104,24 +106,31 @@ impl PhysicalPiecewiseMergeJoin {
         )
     }
 
-    /// Sorts an input chunk on the first condition and recomputes its keys
-    /// (`PiecewiseMergeJoinState::ResolveJoinKeys`).
+    /// Sorts an input chunk on the first condition, reads the sorted payload back and
+    /// recomputes its keys (`PiecewiseMergeJoinState::ResolveJoinKeys`).
     fn resolve_join_keys(
         &self,
         ctx: &ExecutionContext,
         input: &DataChunk,
         state: &mut MergeJoinProbeState,
     ) -> Result<()> {
-        let mut table = self.sorted_table(ctx, &self.left_types)?;
+        let table = self.sorted_table(ctx, &self.left_types)?;
         let mut local = LocalSortedTable::new(&table, self.left_expressions());
         local.sink(&table, input, &self.conditions)?;
+        let mut executor = std::mem::replace(&mut local.executor, ExpressionExecutor::new(Vec::new()));
         table.combine(local)?;
         table.finalize()?;
-        let all: Vec<u32> = (0..table.count() as u32).collect();
-        table.gather(&all, &mut state.lhs_payload)?;
-        state
-            .lhs_executor
-            .execute(&state.lhs_payload, &mut state.lhs_keys)?;
+        table.materialize()?;
+        // Scan the sorted payload (minus the primary sort column).
+        let payload = table.sorted()?.payload_data();
+        state.lhs_payload = DataChunk::default();
+        if let Some(payload) = payload {
+            let mut scan = payload.initialize_scan(PinProperties::UnpinAfterDone);
+            payload.scan(&mut scan, &mut state.lhs_payload)?;
+        }
+        // Recompute the sorted keys from the sorted input.
+        executor.execute(&state.lhs_payload, &mut state.lhs_keys)?;
+        state.lhs_iterator = Some(table.create_iterator_state()?);
         state.lhs_table = Some(table);
         Ok(())
     }
@@ -137,32 +146,34 @@ impl PhysicalPiecewiseMergeJoin {
         state: &mut MergeJoinProbeState,
     ) -> Result<()> {
         self.resolve_join_keys(ctx, input, state)?;
-        let lhs = state
+        let lhs_table = state
             .lhs_table
             .as_ref()
             .ok_or_else(|| Error::internal("merge join without sorted input"))?;
-        let rhs = &global.table;
+        let mut found_match = vec![false; lhs_table.count()];
         let strict = is_strict_comparison(self.conditions[0].comparison)?;
-        let mut found_match = vec![false; lhs.count()];
-        let lhs_not_null = lhs.not_null();
-        let rhs_not_null = rhs.not_null();
-        let mut l_entry = 0;
-        'blocks: for r_start in (0..rhs_not_null).step_by(STANDARD_VECTOR_SIZE) {
-            // Only the largest key of the block matters.
-            let r_entry = (r_start + STANDARD_VECTOR_SIZE).min(rhs_not_null) - 1;
-            while sorts_before(lhs.key(l_entry), rhs.key(r_entry), strict) {
-                found_match[l_entry] = true;
-                l_entry += 1;
-                if l_entry >= lhs_not_null {
-                    break 'blocks;
-                }
-            }
-        }
+        let rhs = &global.table;
+        let sort_key_type = rhs.sort_key_type()?;
+        let (Some(lhs_iterator), Some(rhs_iterator)) = (&mut state.lhs_iterator, &mut state.rhs_iterator)
+        else {
+            return Err(Error::internal("merge join without iterators"));
+        };
+        rustdb_row::dispatch_sort_key!(sort_key_type, K => merge_join_simple_blocks::<K>(
+            lhs_table,
+            lhs_iterator,
+            rhs,
+            rhs_iterator,
+            &mut found_match,
+            strict,
+        ))?;
+        // Use the sorted payload.
+        let lhs_not_null = lhs_table.not_null();
         let payload = &state.lhs_payload;
         match self.join_type {
             JoinType::Mark => {
-                // Keys are only used for their validity: the sorted NULL keys are last.
-                let count = lhs.count();
+                // The only part of the join keys that is used is the validity mask. Since
+                // the payload is sorted, the NULL keys are the tail end.
+                let count = lhs_table.count();
                 let columns = state
                     .lhs_keys
                     .columns()
@@ -206,8 +217,9 @@ impl PhysicalPiecewiseMergeJoin {
         global: &MergeJoinGlobalState,
         state: &mut MergeJoinProbeState,
     ) -> Result<OperatorResult> {
-        let rhs = &global.table;
+        let rhs_table = &global.table;
         let strict = is_strict_comparison(self.conditions[0].comparison)?;
+        let sort_key_type = rhs_table.sort_key_type()?;
         loop {
             if state.first_fetch {
                 self.resolve_join_keys(ctx, input, state)?;
@@ -221,6 +233,7 @@ impl PhysicalPiecewiseMergeJoin {
             }
             if state.finished {
                 if state.left_outer.enabled() {
+                    // Before moving to the next chunk, emit the input rows without a match.
                     state.left_outer.construct_left_join_result(
                         &state.lhs_payload,
                         &self.right_types,
@@ -232,38 +245,76 @@ impl PhysicalPiecewiseMergeJoin {
                 state.finished = false;
                 return Ok(OperatorResult::NeedMoreInput);
             }
-            let lhs = state
+            let lhs_table = state
                 .lhs_table
                 .as_ref()
                 .ok_or_else(|| Error::internal("merge join without sorted input"))?;
-            let rhs_not_null = sorted_chunk_not_null(state.right_chunk_index, rhs.count(), rhs.not_null());
-            let block_start = rhs.block_start(state.right_chunk_index);
-            let result_count = merge_join_complex_blocks(
-                lhs,
-                &mut state.left_position,
-                rhs,
-                block_start,
-                rhs_not_null,
-                &mut state.right_position,
+            let (Some(lhs_iterator), Some(rhs_iterator)) = (&mut state.lhs_iterator, &mut state.rhs_iterator)
+            else {
+                return Err(Error::internal("merge join without iterators"));
+            };
+            let mut left = ChunkMergeInfo {
+                block_idx: 0,
+                not_null: lhs_table.not_null(),
+                entry_idx: state.left_position,
+            };
+            let mut right = ChunkMergeInfo {
+                block_idx: state.right_chunk_index,
+                not_null: sorted_chunk_not_null(
+                    state.right_chunk_index,
+                    rhs_table.count(),
+                    rhs_table.has_null.load(Ordering::Relaxed),
+                ),
+                entry_idx: state.right_position,
+            };
+            // Repin so we don't hang on to data after we have scanned it. Only the right
+            // side: the left side is one chunk.
+            rhs_iterator.repin();
+            let lhs_run = lhs_table.sorted()?;
+            let rhs_run = rhs_table.sorted()?;
+            let result_count = rustdb_row::dispatch_sort_key!(sort_key_type, K => merge_join_complex_blocks::<K>(
+                MergeSide {
+                    run: lhs_run,
+                    iterator: lhs_iterator,
+                    info: &mut left,
+                },
+                MergeSide {
+                    run: rhs_run,
+                    iterator: rhs_iterator,
+                    info: &mut right,
+                },
                 strict,
                 &mut state.prev_left_index,
                 &mut state.lsel,
                 &mut state.rsel,
-            );
+            ))?;
+            state.left_position = left.entry_idx;
+            state.right_position = right.entry_idx;
             if result_count == 0 {
-                // This right block is done: move on to the next.
+                // This right chunk is exhausted: move on to the next.
                 state.left_position = 0;
                 state.right_position = 0;
                 state.right_base += STANDARD_VECTOR_SIZE;
                 state.right_chunk_index += 1;
-                if state.right_chunk_index >= rhs.block_count() {
+                if state.right_chunk_index >= rhs_table.block_count() {
                     state.finished = true;
                 }
                 continue;
             }
-            let absolute: Vec<u32> = state.rsel.iter().map(|&row| (block_start as u32) + row).collect();
+            // Found matches: extract them.
+            let absolute: Vec<u32> = state
+                .rsel
+                .iter()
+                .map(|&row| (right.block_idx * STANDARD_VECTOR_SIZE) as u32 + row)
+                .collect();
             let mut rhs_input = DataChunk::default();
-            rhs.gather(&absolute, &mut rhs_input)?;
+            slice_sorted_payload(
+                &mut rhs_input,
+                rhs_table,
+                rhs_iterator,
+                &absolute,
+                &mut state.decode_buffer,
+            )?;
             let mut sel: Vec<u32> = (0..result_count as u32).collect();
             if self.conditions.len() > 1 {
                 // Resolve the remaining conditions on the matched pairs.
@@ -279,10 +330,19 @@ impl PhysicalPiecewiseMergeJoin {
                     sel = passing.iter().map(|&i| sel[i as usize]).collect();
                 }
             }
+            let left_rows: Vec<u32> = sel.iter().map(|&i| state.lsel[i as usize]).collect();
+            for &row in &left_rows {
+                state.left_outer.set_match(row as usize);
+            }
+            if !rhs_table.found_match.is_empty() {
+                // Absolute position of the block plus the position inside that block.
+                for &i in &sel {
+                    rhs_table.set_match(state.right_base + state.rsel[i as usize] as usize);
+                }
+            }
             if sel.is_empty() {
                 continue;
             }
-            let left_rows: Vec<u32> = sel.iter().map(|&i| state.lsel[i as usize]).collect();
             let mut columns = slice_columns(&state.lhs_payload, &left_rows);
             if sel.len() == result_count {
                 columns.extend(rhs_input.into_columns());
@@ -290,70 +350,127 @@ impl PhysicalPiecewiseMergeJoin {
                 columns.extend(slice_columns(&rhs_input, &sel));
             }
             output.set_columns(columns, sel.len());
-            for &row in &left_rows {
-                state.left_outer.set_match(row as usize);
-            }
-            if !rhs.found_match.is_empty() {
-                for &i in &sel {
-                    rhs.set_match(state.right_base + state.rsel[i as usize] as usize);
-                }
-            }
             return Ok(OperatorResult::HaveMoreOutput);
         }
     }
 }
 
 /// Number of non-NULL rows in right block `block` (`SortedChunkNotNull`).
-fn sorted_chunk_not_null(block: usize, count: usize, not_null: usize) -> usize {
+fn sorted_chunk_not_null(block: usize, count: usize, has_null: usize) -> usize {
     let begin = block * STANDARD_VECTOR_SIZE;
     let end = (begin + STANDARD_VECTOR_SIZE).min(count);
+    let not_null = count - has_null;
     end.min(begin.max(not_null)) - begin
 }
 
-/// The next pairs of (sorted input row, right block row) where the input row sorts
-/// before the right row: for each right row, every input row before it, resuming at the
-/// given positions (`MergeJoinComplexBlocks`).
-#[allow(clippy::too_many_arguments, reason = "mirrors DuckDB's merge state")]
-fn merge_join_complex_blocks(
-    lhs: &SortedTable,
-    l_entry: &mut usize,
-    rhs: &SortedTable,
-    block_start: usize,
-    r_not_null: usize,
-    r_entry: &mut usize,
+/// Marks the input rows that sort before the largest key of some right block
+/// (`TemplatedMergeJoinSimpleBlocks`).
+fn merge_join_simple_blocks<K: SortKey>(
+    lhs_table: &SortedTable,
+    lhs_iterator: &mut ExternalBlockIteratorState,
+    rhs_table: &SortedTable,
+    rhs_iterator: &mut ExternalBlockIteratorState,
+    found_match: &mut [bool],
+    strict: bool,
+) -> Result<()> {
+    let lhs_run = lhs_table.sorted()?;
+    let rhs_run = rhs_table.sorted()?;
+    let lhs_not_null = lhs_table.not_null();
+    let rhs_not_null = rhs_table.not_null();
+    let mut l_entry_idx = 0;
+    for r_idx in (0..rhs_not_null).step_by(STANDARD_VECTOR_SIZE) {
+        // Repin the right side to release memory; safe because only left values are
+        // returned (the left side is only one chunk).
+        rhs_iterator.repin();
+        // Only the biggest value of the right block matters.
+        let r_entry_idx = (r_idx + STANDARD_VECTOR_SIZE).min(rhs_not_null) - 1;
+        let rhs_key = rhs_iterator.get::<K>(rhs_run, r_entry_idx)?;
+        loop {
+            let lhs_key = lhs_iterator.get::<K>(lhs_run, l_entry_idx)?;
+            if !key_before(&lhs_key, &rhs_key, strict) {
+                // Every later left value is bigger: next right block.
+                break;
+            }
+            found_match[l_entry_idx] = true;
+            l_entry_idx += 1;
+            if l_entry_idx >= lhs_not_null {
+                // Early out: the whole input matches.
+                return Ok(());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// One side of a merge: its current block and position (`ChunkMergeInfo`).
+#[derive(Debug)]
+struct ChunkMergeInfo {
+    /// The block being scanned.
+    block_idx: usize,
+    /// Non-NULL rows in the block (they come first).
+    not_null: usize,
+    /// The current position in the block.
+    entry_idx: usize,
+}
+
+impl ChunkMergeInfo {
+    fn index(&self) -> usize {
+        self.block_idx * STANDARD_VECTOR_SIZE + self.entry_idx
+    }
+}
+
+/// A side of a merge with its run and iterator.
+struct MergeSide<'a> {
+    run: &'a SortedRun,
+    iterator: &'a mut ExternalBlockIteratorState,
+    info: &'a mut ChunkMergeInfo,
+}
+
+/// The next pairs of (input row, right block row) where the input row sorts before the
+/// right row: for each right row, every input row before it, resuming at the sides'
+/// positions (`TemplatedMergeJoinComplexBlocks`).
+fn merge_join_complex_blocks<K: SortKey>(
+    l: MergeSide<'_>,
+    r: MergeSide<'_>,
     strict: bool,
     prev_left_index: &mut usize,
     lsel: &mut Vec<u32>,
     rsel: &mut Vec<u32>,
-) -> usize {
+) -> Result<usize> {
     lsel.clear();
     rsel.clear();
-    if *r_entry >= r_not_null {
-        return 0;
+    if r.info.entry_idx >= r.info.not_null {
+        return Ok(0);
     }
-    let l_not_null = lhs.not_null();
     loop {
-        let matches = *l_entry < *prev_left_index
-            || (*l_entry < l_not_null
-                && sorts_before(lhs.key(*l_entry), rhs.key(block_start + *r_entry), strict));
-        if matches {
-            lsel.push(*l_entry as u32);
-            rsel.push(*r_entry as u32);
-            *l_entry += 1;
+        if l.info.entry_idx < *prev_left_index
+            || (l.info.entry_idx < l.info.not_null
+                && key_before(
+                    &l.iterator.get::<K>(l.run, l.info.index())?,
+                    &r.iterator.get::<K>(r.run, r.info.index())?,
+                    strict,
+                ))
+        {
+            // Left side smaller: found a match; move the left side forward.
+            lsel.push(l.info.entry_idx as u32);
+            rsel.push(r.info.entry_idx as u32);
+            l.info.entry_idx += 1;
             if lsel.len() == STANDARD_VECTOR_SIZE {
+                // Out of space.
                 break;
             }
             continue;
         }
-        *prev_left_index = *l_entry;
-        // The right row is smaller, or the input is exhausted: next right row.
-        *r_entry += 1;
-        if *r_entry >= r_not_null {
+        *prev_left_index = l.info.entry_idx;
+        // The right side is smaller or equal, or the left side is exhausted: move the
+        // right side forward and reset the left side to its start.
+        r.info.entry_idx += 1;
+        if r.info.entry_idx >= r.info.not_null {
             break;
         }
-        *l_entry = 0;
+        l.info.entry_idx = 0;
     }
-    lsel.len()
+    Ok(lsel.len())
 }
 
 impl PhysicalOperator for PhysicalPiecewiseMergeJoin {
@@ -428,12 +545,28 @@ impl Sink for PhysicalPiecewiseMergeJoin {
     fn finalize(&self, _: &ExecutionContext, global: &mut MergeJoinGlobalState) -> Result<SinkFinalize> {
         global.table.finalize()?;
         if propagates_build_side(self.join_type) {
+            // FULL/RIGHT OUTER joins mark every right row's matches.
             global.table.initialize_matches();
         }
         if global.table.count() == 0 && empty_result_if_rhs_is_empty(self.join_type) {
             return Ok(SinkFinalize::NoOutputPossible);
         }
+        // The sorted right side is materialized by the finalize tasks.
         Ok(SinkFinalize::Ready)
+    }
+
+    /// Materializes the sorted right side in parallel (`RangeJoinMaterializeEvent`).
+    fn finalize_tasks(&self, _: &ExecutionContext, global: &MergeJoinGlobalState) -> Result<usize> {
+        Ok(global.table.materialize_tasks())
+    }
+
+    fn execute_finalize_task(
+        &self,
+        _: &ExecutionContext,
+        global: &MergeJoinGlobalState,
+        _: usize,
+    ) -> Result<()> {
+        global.table.execute_materialize_task()
     }
 }
 
@@ -441,12 +574,13 @@ impl Sink for PhysicalPiecewiseMergeJoin {
 #[derive(Debug)]
 pub struct MergeJoinProbeState {
     left_outer: OuterJoinMarker,
-    lhs_executor: ExpressionExecutor,
+    /// The sorted input chunk and its table.
     lhs_table: Option<SortedTable>,
-    /// The sorted input chunk.
     lhs_payload: DataChunk,
     /// The condition keys of the sorted input chunk.
     lhs_keys: DataChunk,
+    lhs_iterator: Option<ExternalBlockIteratorState>,
+    rhs_iterator: Option<ExternalBlockIteratorState>,
     first_fetch: bool,
     finished: bool,
     left_position: usize,
@@ -457,6 +591,7 @@ pub struct MergeJoinProbeState {
     lsel: Vec<u32>,
     rsel: Vec<u32>,
     rhs_executor: ExpressionExecutor,
+    decode_buffer: Vec<u8>,
 }
 
 impl Operator for PhysicalPiecewiseMergeJoin {
@@ -476,15 +611,22 @@ impl Operator for PhysicalPiecewiseMergeJoin {
             .ok_or_else(|| Error::internal("merge join probe requires its sink state"))
     }
 
-    fn local_operator_state(&self, _: &ExecutionContext, _: &SinkState) -> Result<MergeJoinProbeState> {
+    fn local_operator_state(&self, _: &ExecutionContext, sink: &SinkState) -> Result<MergeJoinProbeState> {
+        let global = super::sink_state::<MergeJoinGlobalState>(sink, "merge join")?;
         let mut left_outer = OuterJoinMarker::new(is_left_outer_join(self.join_type));
         left_outer.initialize(STANDARD_VECTOR_SIZE);
+        let rhs_iterator = if global.table.count() > 0 {
+            Some(global.table.create_iterator_state()?)
+        } else {
+            None
+        };
         Ok(MergeJoinProbeState {
             left_outer,
-            lhs_executor: ExpressionExecutor::new(self.left_expressions()),
             lhs_table: None,
             lhs_payload: DataChunk::default(),
             lhs_keys: DataChunk::default(),
+            lhs_iterator: None,
+            rhs_iterator,
             first_fetch: true,
             finished: true,
             left_position: 0,
@@ -495,6 +637,7 @@ impl Operator for PhysicalPiecewiseMergeJoin {
             lsel: Vec::with_capacity(STANDARD_VECTOR_SIZE),
             rsel: Vec::with_capacity(STANDARD_VECTOR_SIZE),
             rhs_executor: ExpressionExecutor::new(self.right_expressions()),
+            decode_buffer: Vec::new(),
         })
     }
 
@@ -508,6 +651,7 @@ impl Operator for PhysicalPiecewiseMergeJoin {
     ) -> Result<OperatorResult> {
         let global = super::sink_state::<MergeJoinGlobalState>(sink, "merge join")?;
         if global.table.count() == 0 {
+            // Empty right side.
             if empty_result_if_rhs_is_empty(self.join_type) {
                 return Ok(OperatorResult::Finished);
             }
@@ -517,6 +661,7 @@ impl Operator for PhysicalPiecewiseMergeJoin {
         }
         match self.join_type {
             JoinType::Semi | JoinType::Anti | JoinType::Mark => {
+                // Simple joins have at most STANDARD_VECTOR_SIZE matches per chunk.
                 self.resolve_simple_join(ctx, input, output, global, state)?;
                 Ok(OperatorResult::NeedMoreInput)
             }
@@ -530,16 +675,18 @@ impl Operator for PhysicalPiecewiseMergeJoin {
     }
 }
 
-/// The scan of unmatched right rows, in sorted order (`PiecewiseJoinGlobalScanState`).
+/// The scan of the sorted right rows for unmatched ones (`PiecewiseJoinGlobalScanState`).
 #[derive(Debug)]
 pub struct MergeJoinSourceState {
     sink: SinkState,
-    next_row: AtomicUsize,
+    parallel_scan: Option<ParallelScanState>,
+    /// The position of the next chunk scanned (`right_outer_position`).
+    position: Mutex<usize>,
 }
 
 impl Source for PhysicalPiecewiseMergeJoin {
     type Global = MergeJoinSourceState;
-    type Local = ();
+    type Local = Option<ScanState>;
 
     fn global_source_state(
         &self,
@@ -547,20 +694,34 @@ impl Source for PhysicalPiecewiseMergeJoin {
         sink: Option<&SinkState>,
     ) -> Result<MergeJoinSourceState> {
         let sink = sink.ok_or_else(|| Error::internal("merge join source requires its sink state"))?;
+        let global = super::sink_state::<MergeJoinGlobalState>(sink, "merge join")?;
+        let parallel_scan = global
+            .table
+            .sorted()?
+            .payload_data()
+            .map(|payload| payload.initialize_parallel_scan(None, PinProperties::UnpinAfterDone));
         Ok(MergeJoinSourceState {
             sink: Arc::clone(sink),
-            next_row: AtomicUsize::new(0),
+            parallel_scan,
+            position: Mutex::new(0),
         })
     }
 
-    fn local_source_state(&self, _: &ExecutionContext, _: &MergeJoinSourceState) -> Result<()> {
-        Ok(())
+    fn local_source_state(&self, _: &ExecutionContext, global: &MergeJoinSourceState) -> Result<Self::Local> {
+        let table = &super::sink_state::<MergeJoinGlobalState>(&global.sink, "merge join")?.table;
+        Ok(match (table.sorted()?.payload_data(), &global.parallel_scan) {
+            (Some(payload), Some(scan)) => Some(payload.initialize_local_scan(scan)),
+            _ => None,
+        })
     }
 
-    /// `PiecewiseJoinScanState::MaxThreads`: one thread per chunk of the right side.
+    /// `PiecewiseJoinGlobalScanState::MaxThreads`: one thread per chunk of the right side.
     fn max_threads(&self, global: &MergeJoinSourceState) -> usize {
         super::sink_state::<MergeJoinGlobalState>(&global.sink, "merge join")
-            .map_or(1, |sink| sink.table.count().div_ceil(STANDARD_VECTOR_SIZE))
+            .ok()
+            .and_then(|sink| sink.table.sorted().ok())
+            .and_then(SortedRun::payload_data)
+            .map_or(1, rustdb_row::TupleDataCollection::chunk_count)
     }
 
     fn get_data(
@@ -568,27 +729,43 @@ impl Source for PhysicalPiecewiseMergeJoin {
         _: &ExecutionContext,
         chunk: &mut DataChunk,
         global: &MergeJoinSourceState,
-        (): &mut (),
+        local: &mut Self::Local,
     ) -> Result<SourceResult> {
         let table = &super::sink_state::<MergeJoinGlobalState>(&global.sink, "merge join")?.table;
+        // The right side was empty: nothing to do.
+        let (Some(scan), Some(parallel_scan), Some(payload)) =
+            (local, &global.parallel_scan, table.sorted()?.payload_data())
+        else {
+            return Ok(SourceResult::Finished);
+        };
+        if table.count() == 0 {
+            return Ok(SourceResult::Finished);
+        }
         loop {
-            let start = global.next_row.fetch_add(STANDARD_VECTOR_SIZE, Ordering::Relaxed);
-            if start >= table.count() {
+            // Read the next sorted chunk.
+            let mut rhs_chunk = DataChunk::default();
+            let rhs_position = {
+                let mut position = global.position.lock().unwrap_or_else(PoisonError::into_inner);
+                let result = *position;
+                payload.parallel_scan(parallel_scan, scan, &mut rhs_chunk)?;
+                *position += rhs_chunk.len();
+                result
+            };
+            let count = rhs_chunk.len();
+            if count == 0 {
                 return Ok(SourceResult::Finished);
             }
-            let end = (start + STANDARD_VECTOR_SIZE).min(table.count());
-            let unmatched: Vec<u32> = (start..end)
-                .filter(|&row| !table.found_match[row].load(Ordering::Relaxed))
-                .map(|row| row as u32)
+            // The rows that did not find a match.
+            let rsel: Vec<u32> = (0..count as u32)
+                .filter(|&row| !table.found_match[rhs_position + row as usize].load(Ordering::Relaxed))
                 .collect();
-            if unmatched.is_empty() {
+            if rsel.is_empty() {
                 continue;
             }
-            let mut right = DataChunk::default();
-            table.gather(&unmatched, &mut right)?;
+            let len = rsel.len();
             let mut columns = null_columns(&self.left_types);
-            columns.extend(right.into_columns());
-            chunk.set_columns(columns, unmatched.len());
+            columns.extend(slice_columns(&rhs_chunk, &rsel));
+            chunk.set_columns(columns, len);
             return Ok(SourceResult::HaveMoreOutput);
         }
     }
@@ -601,8 +778,8 @@ mod tests {
     #[test]
     fn not_null_rows_per_block() {
         // 5000 rows, the last 100 NULL: blocks of 2048, 2048, 904 (804 not NULL).
-        assert_eq!(sorted_chunk_not_null(0, 5000, 4900), 2048);
-        assert_eq!(sorted_chunk_not_null(2, 5000, 4900), 804);
-        assert_eq!(sorted_chunk_not_null(1, 5000, 1000), 0);
+        assert_eq!(sorted_chunk_not_null(0, 5000, 100), 2048);
+        assert_eq!(sorted_chunk_not_null(2, 5000, 100), 804);
+        assert_eq!(sorted_chunk_not_null(1, 5000, 4000), 0);
     }
 }
