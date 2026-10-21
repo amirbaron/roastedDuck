@@ -320,3 +320,204 @@ fn extract_rows(input: &Vector, path: &[VariantPathComponent], count: usize) -> 
     }
     Ok(vector)
 }
+
+/// Builds a vector with the VARIANT layout row by row, in the layout
+/// [`VariantData::write_vector`] produces, without unpacking rows into [`VariantData`]s.
+#[derive(Debug, Default)]
+pub struct VariantVectorBuilder {
+    valid: Vec<bool>,
+    key_entries: Vec<ListEntry>,
+    /// The bytes of all keys, and each key's span in them.
+    key_bytes: Vec<u8>,
+    key_spans: Vec<(usize, usize)>,
+    children_entries: Vec<ListEntry>,
+    child_keys_index: Vec<Option<u32>>,
+    child_values_index: Vec<u32>,
+    values_entries: Vec<ListEntry>,
+    type_ids: Vec<u8>,
+    byte_offsets: Vec<u32>,
+    /// The data blobs of all rows, and each row's span in them.
+    data_bytes: Vec<u8>,
+    data_spans: Vec<(usize, usize)>,
+    /// Where the current row's keys, children, values and data start.
+    row_start: (usize, usize, usize, usize),
+}
+
+impl VariantVectorBuilder {
+    pub fn with_capacity(rows: usize) -> Self {
+        Self {
+            valid: Vec::with_capacity(rows),
+            key_entries: Vec::with_capacity(rows),
+            children_entries: Vec::with_capacity(rows),
+            values_entries: Vec::with_capacity(rows),
+            data_spans: Vec::with_capacity(rows),
+            ..Self::default()
+        }
+    }
+
+    /// A NULL row.
+    pub fn push_null(&mut self) {
+        self.valid.push(false);
+        self.key_entries.push(ListEntry::new(self.key_spans.len(), 0));
+        self.children_entries
+            .push(ListEntry::new(self.child_values_index.len(), 0));
+        self.values_entries.push(ListEntry::new(self.type_ids.len(), 0));
+        self.data_spans.push((self.data_bytes.len(), 0));
+    }
+
+    /// Starts a non-NULL row.
+    pub fn start_row(&mut self) {
+        self.row_start = (
+            self.key_spans.len(),
+            self.child_values_index.len(),
+            self.type_ids.len(),
+            self.data_bytes.len(),
+        );
+    }
+
+    /// Appends a key to the current row.
+    pub fn push_key(&mut self, key: &[u8]) {
+        self.key_spans.push((self.key_bytes.len(), key.len()));
+        self.key_bytes.extend_from_slice(key);
+    }
+
+    /// Appends a child entry to the current row.
+    pub fn push_child(&mut self, keys_index: Option<u32>, values_index: u32) {
+        self.child_keys_index.push(keys_index);
+        self.child_values_index.push(values_index);
+    }
+
+    /// Appends a value of `type_id` whose payload starts at the current end of the row's
+    /// data.
+    pub fn push_value(&mut self, type_id: VariantLogicalType) -> Result<()> {
+        let offset = u32::try_from(self.data_bytes.len() - self.row_start.3)
+            .map_err(|_| Error::internal("VARIANT exceeds 4 GiB"))?;
+        self.type_ids.push(type_id as u8);
+        self.byte_offsets.push(offset);
+        Ok(())
+    }
+
+    /// The data of all rows, to append the current row's payloads to.
+    pub fn data_mut(&mut self) -> &mut Vec<u8> {
+        &mut self.data_bytes
+    }
+
+    /// Ends the current row.
+    pub fn finish_row(&mut self) {
+        let (keys, children, values, data) = self.row_start;
+        self.valid.push(true);
+        self.key_entries
+            .push(ListEntry::new(keys, self.key_spans.len() - keys));
+        self.children_entries
+            .push(ListEntry::new(children, self.child_values_index.len() - children));
+        self.values_entries
+            .push(ListEntry::new(values, self.type_ids.len() - values));
+        self.data_spans.push((data, self.data_bytes.len() - data));
+    }
+
+    /// Appends an unpacked VARIANT value (`None` for NULL).
+    pub fn push_data(&mut self, row: Option<&VariantData>) {
+        let Some(row) = row else {
+            self.push_null();
+            return;
+        };
+        self.start_row();
+        for key in &row.keys {
+            self.push_key(key.as_bytes());
+        }
+        for child in &row.children {
+            self.push_child(child.keys_index, child.values_index);
+        }
+        for value in &row.values {
+            self.type_ids.push(value.type_id);
+            self.byte_offsets.push(value.byte_offset);
+        }
+        self.data_bytes.extend_from_slice(&row.data);
+        self.finish_row();
+    }
+
+    /// The vector of type `ty` (VARIANT, or its unshredded STRUCT) with the rows.
+    pub fn finish(self, ty: &LogicalType) -> Vector {
+        let count = self.valid.len();
+        let field_type = |index: usize| -> LogicalType {
+            ty.struct_children()
+                .and_then(|fields| fields.get(index))
+                .map_or(LogicalType::INVALID, |(_, field)| field.clone())
+        };
+        let list_vector = |list_type: LogicalType, entries: &[ListEntry], child: Vector, size: usize| {
+            let mut list = Vector::flat(list_type, count.max(1));
+            list.values_mut::<ListEntry>()[..entries.len()].copy_from_slice(entries);
+            list.set_list_child(child, size);
+            list
+        };
+        let struct_vector = |struct_type: LogicalType, fields: Vec<Vector>, rows: usize| {
+            let mut vector = Vector::flat(struct_type, rows.max(1));
+            if let Some(children) = vector.struct_children_mut() {
+                for (child, field) in children.iter_mut().zip(fields) {
+                    *child = field;
+                }
+            }
+            vector
+        };
+
+        let mut key_vector = Vector::flat(LogicalType::VARCHAR, self.key_spans.len().max(1));
+        for (index, &(start, length)) in self.key_spans.iter().enumerate() {
+            let string = key_vector.add_string(&self.key_bytes[start..start + length]);
+            key_vector.values_mut::<crate::StringT>()[index] = string;
+        }
+        let keys = list_vector(field_type(0), &self.key_entries, key_vector, self.key_spans.len());
+
+        let child_type = field_type(1).child_type().cloned().unwrap_or_default();
+        let total_children = self.child_values_index.len();
+        let mut keys_index = Vector::flat(LogicalType::UINTEGER, total_children.max(1));
+        let mut nulls = Vec::new();
+        {
+            let slots = keys_index.values_mut::<u32>();
+            for (index, key) in self.child_keys_index.iter().enumerate() {
+                match key {
+                    Some(key) => slots[index] = *key,
+                    None => nulls.push(index),
+                }
+            }
+        }
+        for index in nulls {
+            keys_index.set_null(index);
+        }
+        let mut values_index = Vector::flat(LogicalType::UINTEGER, total_children.max(1));
+        values_index.values_mut::<u32>()[..total_children].copy_from_slice(&self.child_values_index);
+        let children = list_vector(
+            field_type(1),
+            &self.children_entries,
+            struct_vector(child_type, vec![keys_index, values_index], total_children),
+            total_children,
+        );
+
+        let entry_type = field_type(2).child_type().cloned().unwrap_or_default();
+        let total_values = self.type_ids.len();
+        let mut type_ids = Vector::flat(LogicalType::UTINYINT, total_values.max(1));
+        type_ids.values_mut::<u8>()[..total_values].copy_from_slice(&self.type_ids);
+        let mut byte_offsets = Vector::flat(LogicalType::UINTEGER, total_values.max(1));
+        byte_offsets.values_mut::<u32>()[..total_values].copy_from_slice(&self.byte_offsets);
+        let values = list_vector(
+            field_type(2),
+            &self.values_entries,
+            struct_vector(entry_type, vec![type_ids, byte_offsets], total_values),
+            total_values,
+        );
+
+        let mut data = Vector::flat(LogicalType::BLOB, count.max(1));
+        for (index, (&(start, length), &valid)) in self.data_spans.iter().zip(&self.valid).enumerate() {
+            if valid {
+                let string = data.add_string(&self.data_bytes[start..start + length]);
+                data.values_mut::<crate::StringT>()[index] = string;
+            }
+        }
+        let mut result = struct_vector(ty.clone(), vec![keys, children, values, data], count);
+        for (index, &valid) in self.valid.iter().enumerate() {
+            if !valid {
+                result.set_null(index);
+            }
+        }
+        result
+    }
+}

@@ -18,6 +18,7 @@ use rustdb_types::variant::{
     VariantData, VariantLogicalType as V, VariantNormalizer, VariantPathComponent, unshredded_type,
 };
 use rustdb_types::variant_value::{VariantValue, to_variant_data};
+use rustdb_types::variant_vector::VariantVectorBuilder;
 use rustdb_types::{ListEntry, LogicalType, LogicalTypeId, PhysicalType, Value, Vector};
 
 use crate::statistics::{TYPED_VALUE_INDEX, UNTYPED_VALUE_INDEX};
@@ -839,18 +840,212 @@ pub(crate) fn shred_rows(
 
 /// `VariantColumnData::UnshredVariantData`: a vector of type `ty` (VARIANT) with the
 /// values of `count` rows of an unshredded and a shredded vector.
+///
+/// Rows of an OBJECT shredded on primitive fields with no unshredded values are written
+/// straight into the VARIANT layout ([`ShreddedObject`]); the others go through
+/// [`VariantValue`]s as in DuckDB (`Unshred` + `VariantValue::ToVARIANT`).
 pub(crate) fn unshred_rows(
     unshredded: &Vector,
     shredded: &Vector,
     count: usize,
     ty: &LogicalType,
 ) -> Result<Vector> {
-    let mut values = Vec::with_capacity(count);
+    let Some(object) = ShreddedObject::new(shredded) else {
+        let mut values = Vec::with_capacity(count);
+        for row in 0..count {
+            let variant = VariantData::from_vector(unshredded, row)?;
+            values.push(unshred(variant.as_ref(), shredded, row)?);
+        }
+        return VariantData::write_vector(&to_variant_data(&values)?, ty);
+    };
+    let mut builder = VariantVectorBuilder::with_capacity(count);
     for row in 0..count {
+        if object.write_row(&mut builder, row)? {
+            continue;
+        }
         let variant = VariantData::from_vector(unshredded, row)?;
-        values.push(unshred(variant.as_ref(), shredded, row)?);
+        let value = unshred(variant.as_ref(), shredded, row)?;
+        let data = to_variant_data(std::slice::from_ref(&value))?;
+        builder.push_data(data.first().and_then(Option::as_ref));
     }
-    VariantData::write_vector(&to_variant_data(&values)?, ty)
+    Ok(builder.finish(ty))
+}
+
+/// A shredded OBJECT level whose fields are shredded on primitive types, fully
+/// consistently (their typed vectors are the field levels themselves): `Unshred` of a
+/// row without unshredded values is the OBJECT of the fields' values, which
+/// [`ShreddedObject::write_row`] writes the way `VariantValue::ToVARIANT` lays it out.
+struct ShreddedObject<'a> {
+    level: &'a Vector,
+    typed: &'a Vector,
+    untyped: Option<&'a Vector>,
+    /// The fields in the order of their names (an OBJECT's `BTreeMap`), with the variant
+    /// type of their values.
+    fields: Vec<(&'a str, &'a Vector, V)>,
+}
+
+impl<'a> ShreddedObject<'a> {
+    fn new(level: &'a Vector) -> Option<Self> {
+        if level.logical_type().id() != LogicalTypeId::Struct {
+            return None;
+        }
+        let level_fields = level.struct_children()?;
+        let typed = level_fields.get(TYPED_VALUE_INDEX)?;
+        let names = typed.logical_type().struct_children()?;
+        if typed.logical_type().id() != LogicalTypeId::Struct || names.is_empty() {
+            return None;
+        }
+        let vectors = typed.struct_children()?;
+        let mut fields = Vec::with_capacity(names.len());
+        for ((name, field_type), vector) in names.iter().zip(vectors) {
+            fields.push((name.as_str(), vector, primitive_variant_type(field_type)?));
+        }
+        fields.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+        if fields.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+            return None;
+        }
+        Some(Self {
+            level,
+            typed,
+            untyped: level_fields.get(UNTYPED_VALUE_INDEX),
+            fields,
+        })
+    }
+
+    /// Writes row `row` if it has no unshredded value; `false` otherwise.
+    fn write_row(&self, builder: &mut VariantVectorBuilder, row: usize) -> Result<bool> {
+        let slot = self.level.sel().slot(row);
+        if self.untyped.is_some_and(|untyped| !untyped.is_null(slot)) {
+            return Ok(false);
+        }
+        if self.typed.is_null(slot) {
+            // A NULL object and no unshredded value: NULL.
+            builder.push_null();
+            return Ok(true);
+        }
+        let typed_slot = self.typed.sel().slot(slot);
+        builder.start_row();
+        builder.push_value(V::Object)?;
+        let count = self.fields.len();
+        let data = builder.data_mut();
+        rustdb_types::variant::varint_encode(count as u64, data);
+        rustdb_types::variant::varint_encode(0, data);
+        for (index, (name, _, _)) in self.fields.iter().enumerate() {
+            builder.push_key(name.as_bytes());
+            builder.push_child(Some(index as u32), index as u32 + 1);
+        }
+        for &(_, vector, type_id) in &self.fields {
+            if vector.is_null(typed_slot) {
+                builder.push_value(V::VariantNull)?;
+                continue;
+            }
+            write_primitive(builder, vector, typed_slot, type_id)?;
+        }
+        builder.finish_row();
+        Ok(true)
+    }
+}
+
+/// The variant type of the values of a primitive column of type `ty` that
+/// [`write_primitive`] writes (`ConvertPrimitive`'s type tags); `None` for the others.
+fn primitive_variant_type(ty: &LogicalType) -> Option<V> {
+    use LogicalTypeId as L;
+    Some(match ty.id() {
+        L::Boolean => V::BoolTrue,
+        L::TinyInt => V::Int8,
+        L::SmallInt => V::Int16,
+        L::Integer => V::Int32,
+        L::BigInt => V::Int64,
+        L::HugeInt => V::Int128,
+        L::UTinyInt => V::Uint8,
+        L::USmallInt => V::Uint16,
+        L::UInteger => V::Uint32,
+        L::UBigInt => V::Uint64,
+        L::UHugeInt => V::Uint128,
+        L::Float => V::Float,
+        L::Double => V::Double,
+        L::Date => V::Date,
+        L::Time => V::TimeMicros,
+        L::TimeNs => V::TimeNanos,
+        L::Timestamp => V::TimestampMicros,
+        L::TimestampSec => V::TimestampSec,
+        L::TimestampMs => V::TimestampMilis,
+        L::TimestampNs => V::TimestampNanos,
+        L::TimestampTz => V::TimestampMicrosTz,
+        L::Decimal => V::Decimal,
+        L::Varchar if ty.alias().is_none() => V::Varchar,
+        L::Blob => V::Blob,
+        _ => return None,
+    })
+}
+
+/// Appends the non-NULL value at `slot` of a primitive column to the current row, like
+/// `ConvertPrimitive` does with its `Value`.
+fn write_primitive(builder: &mut VariantVectorBuilder, vector: &Vector, slot: usize, type_id: V) -> Result<()> {
+    let slot = vector.sel().slot(slot);
+    match type_id {
+        V::BoolTrue => {
+            let flag = vector.values::<bool>()[slot];
+            builder.push_value(if flag { V::BoolTrue } else { V::BoolFalse })?;
+        }
+        V::Int8 => push_fixed(builder, type_id, &vector.values::<i8>()[slot].to_le_bytes())?,
+        V::Int16 => push_fixed(builder, type_id, &vector.values::<i16>()[slot].to_le_bytes())?,
+        V::Int32 | V::Date => push_fixed(builder, type_id, &vector.values::<i32>()[slot].to_le_bytes())?,
+        V::Int64
+        | V::TimeMicros
+        | V::TimeNanos
+        | V::TimestampMicros
+        | V::TimestampSec
+        | V::TimestampMilis
+        | V::TimestampNanos
+        | V::TimestampMicrosTz => push_fixed(builder, type_id, &vector.values::<i64>()[slot].to_le_bytes())?,
+        V::Int128 => push_fixed(builder, type_id, &vector.values::<i128>()[slot].to_le_bytes())?,
+        V::Uint8 => push_fixed(builder, type_id, &vector.values::<u8>()[slot].to_le_bytes())?,
+        V::Uint16 => push_fixed(builder, type_id, &vector.values::<u16>()[slot].to_le_bytes())?,
+        V::Uint32 => push_fixed(builder, type_id, &vector.values::<u32>()[slot].to_le_bytes())?,
+        V::Uint64 => push_fixed(builder, type_id, &vector.values::<u64>()[slot].to_le_bytes())?,
+        V::Uint128 => push_fixed(builder, type_id, &vector.values::<u128>()[slot].to_le_bytes())?,
+        V::Float => push_fixed(builder, type_id, &vector.values::<f32>()[slot].to_le_bytes())?,
+        V::Double => push_fixed(builder, type_id, &vector.values::<f64>()[slot].to_le_bytes())?,
+        V::Decimal => {
+            let ty = vector.logical_type();
+            let (width, scale) = ty
+                .decimal_properties()
+                .ok_or_else(|| Error::internal("DECIMAL without width and scale"))?;
+            builder.push_value(V::Decimal)?;
+            let data = builder.data_mut();
+            rustdb_types::variant::varint_encode(u64::from(width), data);
+            rustdb_types::variant::varint_encode(u64::from(scale), data);
+            match ty.physical_type() {
+                PhysicalType::Int16 => data.extend_from_slice(&vector.values::<i16>()[slot].to_le_bytes()),
+                PhysicalType::Int32 => data.extend_from_slice(&vector.values::<i32>()[slot].to_le_bytes()),
+                PhysicalType::Int64 => data.extend_from_slice(&vector.values::<i64>()[slot].to_le_bytes()),
+                _ => data.extend_from_slice(&vector.values::<i128>()[slot].to_le_bytes()),
+            }
+        }
+        V::Varchar | V::Blob => {
+            let value = &vector.values::<rustdb_types::StringT>()[slot];
+            let bytes = vector.string_value(value);
+            builder.push_value(type_id)?;
+            let data = builder.data_mut();
+            rustdb_types::variant::varint_encode(bytes.len() as u64, data);
+            data.extend_from_slice(bytes);
+        }
+        other => {
+            return Err(Error::internal(format!(
+                "VARIANT({}) written from a primitive column",
+                other.name()
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Appends a value with a fixed-size payload to the current row.
+fn push_fixed(builder: &mut VariantVectorBuilder, type_id: V, payload: &[u8]) -> Result<()> {
+    builder.push_value(type_id)?;
+    builder.data_mut().extend_from_slice(payload);
+    Ok(())
 }
 
 /// `VariantUtils::VariantExtract` along a path of OBJECT fields: each row's value rooted
