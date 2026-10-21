@@ -62,7 +62,7 @@ impl Art {
     }
 
     /// The slots of the children of inner node `node`.
-    fn child_slots(&self, node: Node) -> Result<Vec<Slot>> {
+    pub(super) fn child_slots(&self, node: Node) -> Result<Vec<Slot>> {
         let mut slots = Vec::new();
         for (byte, _) in self.children(node)? {
             if let Some(slot) = self.get_child(node, byte)? {

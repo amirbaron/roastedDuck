@@ -209,6 +209,14 @@ impl DataTable {
         self.indexes().bind(bind)
     }
 
+    /// Compacts the memory of every bound index (`DataTable::VacuumIndexes`).
+    pub fn vacuum_indexes(&self) -> Result<()> {
+        for entry in self.indexes().entries() {
+            entry.lock().index.vacuum()?;
+        }
+        Ok(())
+    }
+
     /// Removes the index `name` (DROP INDEX, or rollback of CREATE INDEX).
     pub fn remove_index(&self, name: &str) -> bool {
         self.indexes().remove(name)

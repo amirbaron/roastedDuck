@@ -2142,7 +2142,35 @@ impl Connection {
             },
             _ => None,
         });
+        // `VACUUM tbl` compacts the table's indexes (`PhysicalVacuum::Finalize`).
+        let vacuum_table = match &statement.kind {
+            rustdb_ast::SqlStatementKind::Vacuum(info) if info.has_table => info
+                .table_ref
+                .as_deref()
+                .and_then(|table_ref| match &table_ref.kind {
+                    rustdb_ast::TableRefKind::BaseTable(base) => Some((**base).clone()),
+                    _ => None,
+                }),
+            _ => None,
+        };
         let result = self.run_planned(statement)?;
+        if let Some(base) = vacuum_table {
+            let transaction = self.transactions.current();
+            let client = self.client_context(transaction);
+            let found = client.get_entry(
+                &base.catalog_name,
+                &base.schema_name,
+                rustdb_catalog::CatalogType::Table,
+                &base.table_name,
+                true,
+            )?;
+            if let Some(found) = found
+                && let rustdb_catalog::EntryKind::Table(table) = &found.entry.kind
+                && let Some(storage) = &table.storage
+            {
+                storage.vacuum_indexes()?;
+            }
+        }
         if let Some(force) = checkpoint {
             let instance = self.database.instance();
             let name = database.unwrap_or_else(|| self.default_catalog());

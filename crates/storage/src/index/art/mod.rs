@@ -16,6 +16,7 @@ mod prefix;
 mod storage;
 #[cfg(test)]
 mod tests;
+mod vacuum;
 
 use std::collections::BTreeSet;
 use std::fmt;
