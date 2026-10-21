@@ -3,9 +3,10 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
 use rustdb_common::{Error, Result};
 use rustdb_row::hash::hash_columns;
-use rustdb_types::{DataChunk, LogicalType, SelectionVector, Value, Vector};
+use rustdb_types::{DataChunk, LogicalType, STANDARD_VECTOR_SIZE, SelectionVector, Value, Vector};
 
 use crate::aggregate_hashtable::{GroupedAggregateHashTable, initial_capacity};
+use crate::window::collection::copy_into;
 use rustdb_common::tree_renderer::RenderParams;
 
 use crate::operator::{
@@ -103,17 +104,68 @@ impl PhysicalOperator for PhysicalCte {
     }
 }
 
+/// The chunks one thread materialised. Small input chunks (e.g. behind a selective
+/// join) are packed into chunks of up to `STANDARD_VECTOR_SIZE` rows, as DuckDB's
+/// `ColumnDataCollection` does, so that the CTE's scans do not produce tiny chunks.
+#[derive(Debug, Default)]
+pub struct CteLocal {
+    chunks: Vec<DataChunk>,
+    /// The chunk being packed.
+    packing: Option<DataChunk>,
+}
+
+impl CteLocal {
+    /// Adds the rows of `chunk`, whose columns have `types`.
+    fn push(&mut self, chunk: &DataChunk, types: &[LogicalType]) -> Result<()> {
+        let count = chunk.len();
+        if count == 0 {
+            return Ok(());
+        }
+        let packed = self.packing.as_ref().map_or(0, DataChunk::len);
+        if count > STANDARD_VECTOR_SIZE / 2 || packed + count > STANDARD_VECTOR_SIZE {
+            self.flush();
+        }
+        if count > STANDARD_VECTOR_SIZE / 2 {
+            self.chunks.push(chunk.compacted());
+            return Ok(());
+        }
+        let packing = self.packing.get_or_insert_with(|| {
+            DataChunk::new(
+                types
+                    .iter()
+                    .map(|ty| Vector::flat(ty.clone(), STANDARD_VECTOR_SIZE))
+                    .collect(),
+                0,
+            )
+        });
+        let offset = packing.len();
+        // Compacting first copies the rows' strings into a heap of their own, which the
+        // packed chunk then references (rather than the input's, e.g. a table block's).
+        let compacted = chunk.compacted();
+        for (index, column) in compacted.columns().iter().enumerate() {
+            copy_into(column, count, packing.column_mut(index), offset)?;
+        }
+        packing.set_len(offset + count);
+        Ok(())
+    }
+
+    fn flush(&mut self) {
+        if let Some(packing) = self.packing.take() {
+            self.chunks.push(packing);
+        }
+    }
+}
+
 impl Sink for PhysicalCte {
     type Global = Mutex<Vec<DataChunk>>;
-    /// The chunks one thread materialised.
-    type Local = Vec<DataChunk>;
+    type Local = CteLocal;
 
     fn global_sink_state(&self, _: &ExecutionContext) -> Result<Self::Global> {
         Ok(Mutex::default())
     }
 
-    fn local_sink_state(&self, _: &ExecutionContext, _: &Self::Global) -> Result<Vec<DataChunk>> {
-        Ok(Vec::new())
+    fn local_sink_state(&self, _: &ExecutionContext, _: &Self::Global) -> Result<CteLocal> {
+        Ok(CteLocal::default())
     }
 
     fn sink(
@@ -121,17 +173,18 @@ impl Sink for PhysicalCte {
         _: &ExecutionContext,
         chunk: &DataChunk,
         _: &Self::Global,
-        local: &mut Vec<DataChunk>,
+        local: &mut CteLocal,
     ) -> Result<SinkResult> {
-        local.push(chunk.compacted());
+        local.push(chunk, self.children[0].types())?;
         Ok(SinkResult::NeedMoreInput)
     }
 
-    fn combine(&self, _: &ExecutionContext, global: &Self::Global, mut local: Vec<DataChunk>) -> Result<()> {
+    fn combine(&self, _: &ExecutionContext, global: &Self::Global, mut local: CteLocal) -> Result<()> {
+        local.flush();
         global
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .append(&mut local);
+            .append(&mut local.chunks);
         Ok(())
     }
 

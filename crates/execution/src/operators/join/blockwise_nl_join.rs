@@ -85,6 +85,15 @@ impl PhysicalOperator for PhysicalBlockwiseNLJoin {
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         propagates_build_side(self.join_type).then_some(self as &dyn ErasedSource)
     }
+    fn parallel_operator(&self) -> bool {
+        true
+    }
+    fn parallel_sink(&self) -> bool {
+        true
+    }
+    fn parallel_source(&self) -> bool {
+        true
+    }
 
     fn params_to_string(&self, _: u64) -> RenderParams {
         let mut result = RenderParams::new();
@@ -381,6 +390,12 @@ impl Source for PhysicalBlockwiseNLJoin {
 
     fn local_source_state(&self, _: &ExecutionContext, _: &RightOuterScanState) -> Result<()> {
         Ok(())
+    }
+
+    /// `BlockwiseNLJoinGlobalScanState::MaxThreads`.
+    fn max_threads(&self, global: &RightOuterScanState) -> usize {
+        super::sink_state::<BlockwiseNLJoinGlobalState>(global.sink(), "blockwise nested loop join")
+            .map_or(1, |sink| sink.right_outer.max_threads())
     }
 
     fn get_data(

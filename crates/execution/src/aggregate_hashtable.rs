@@ -6,9 +6,10 @@
 //! (the "salt"), so most probes are resolved without touching the row. Probing is linear
 //! with a salt-dependent odd stride, exactly as in DuckDB.
 
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
-use rustdb_buffer::{BufferManager, MemoryTag};
+use rustdb_buffer::{AllocatedData, BufferManager, MemoryTag};
 use rustdb_common::{Error, Result};
 use rustdb_function::AggregateFunction;
 use rustdb_function::FunctionData;
@@ -57,9 +58,13 @@ fn probe(
     compare: &mut Vec<u32>,
 ) {
     let mask = (entries.len() - 1) & usize::try_from(bitmask).unwrap_or(usize::MAX);
-    // Written by index like DuckDB's selection vectors; truncated afterwards.
-    empty.resize(remaining.len(), 0);
-    compare.resize(remaining.len(), 0);
+    // Written by index like DuckDB's selection vectors, into the spare capacity.
+    empty.clear();
+    compare.clear();
+    empty.reserve(remaining.len());
+    compare.reserve(remaining.len());
+    let empty_out = &mut empty.spare_capacity_mut()[..remaining.len()];
+    let compare_out = &mut compare.spare_capacity_mut()[..remaining.len()];
     let (mut empty_count, mut compare_count) = (0, 0);
     for &index in remaining {
         let row = index as usize;
@@ -70,12 +75,12 @@ fn probe(
             if *entry == 0 {
                 // Unoccupied: claim it with the salt; the pointer follows later.
                 *entry = salt;
-                empty[empty_count] = index;
+                empty_out[empty_count].write(index);
                 empty_count += 1;
                 break;
             }
             if (*entry | POINTER_MASK) == salt {
-                compare[compare_count] = index;
+                compare_out[compare_count].write(index);
                 compare_count += 1;
                 break;
             }
@@ -83,8 +88,12 @@ fn probe(
         }
         offsets[row] = offset as u64;
     }
-    empty.truncate(empty_count);
-    compare.truncate(compare_count);
+    // SAFETY: every row goes to exactly one output, at its count, so the first
+    // `empty_count` / `compare_count` spare slots were written.
+    unsafe {
+        empty.set_len(empty_count);
+        compare.set_len(compare_count);
+    }
 }
 
 /// The number of table entries for `count` groups (`GetCapacityForCount`).
@@ -128,6 +137,57 @@ struct DictionaryGroups {
     groups: Vec<RowPtr>,
 }
 
+/// The entries of a pointer table, zeroed (DuckDB's `hash_map`). A large table is a
+/// mapping of its own, so it goes back to the OS when a bigger one replaces it (the process
+/// allocator kept every outgrown table). DuckDB charges it to the buffer pool; here, as
+/// before, the sinks only count it in their memory estimate (`size_in_bytes`): charging
+/// it too takes TPC-H q9 over a 100 MB limit (`external_file_cache_low_mem.test_slow`).
+#[derive(Debug, Default)]
+struct Entries {
+    memory: Option<AllocatedData>,
+    len: usize,
+}
+
+impl Entries {
+    fn zeroed(len: usize) -> Result<Self> {
+        let memory = AllocatedData::untracked_zeroed(len * size_of::<u64>())?;
+        Ok(Self {
+            memory: Some(memory),
+            len,
+        })
+    }
+}
+
+impl Deref for Entries {
+    type Target = [u64];
+
+    #[allow(
+        clippy::cast_ptr_alignment,
+        reason = "AllocatedData is 16-byte aligned, more than u64 needs"
+    )]
+    fn deref(&self) -> &[u64] {
+        match &self.memory {
+            // SAFETY: the memory holds `len` initialised u64s and lives as long as `self`.
+            Some(memory) => unsafe { std::slice::from_raw_parts(memory.as_ptr().cast(), self.len) },
+            None => &[],
+        }
+    }
+}
+
+impl DerefMut for Entries {
+    #[allow(
+        clippy::cast_ptr_alignment,
+        reason = "AllocatedData is 16-byte aligned, more than u64 needs"
+    )]
+    fn deref_mut(&mut self) -> &mut [u64] {
+        match &mut self.memory {
+            // SAFETY: as in `deref`; `&mut self` makes the access unique.
+            Some(memory) => unsafe { std::slice::from_raw_parts_mut(memory.as_ptr().cast(), self.len) },
+            None => &mut [],
+        }
+    }
+}
+
 /// A hash table mapping groups to aggregate states.
 #[derive(Debug)]
 pub struct GroupedAggregateHashTable {
@@ -135,7 +195,7 @@ pub struct GroupedAggregateHashTable {
     group_types: Vec<LogicalType>,
     partitioned: PartitionedTupleData,
     append: PartitionedAppendState,
-    entries: Vec<u64>,
+    entries: Entries,
     bitmask: u64,
     count: usize,
     matcher: RowMatcher,
@@ -151,6 +211,10 @@ pub struct GroupedAggregateHashTable {
     new_group_rows: Vec<u32>,
     ht_offsets: Vec<u64>,
     salts: Vec<u64>,
+    /// Scratch selections of `find_or_create_groups`: the rows still probing, those that
+    /// claimed an empty entry, those to compare with an entry's group, and those that
+    /// differed.
+    probe_buffers: [Vec<u32>; 4],
     /// Whether rows still hold aggregate states that need destroying.
     states_live: bool,
     /// Rows added with `add_chunk` (`sink_count`).
@@ -162,6 +226,8 @@ pub struct GroupedAggregateHashTable {
     hll: Option<HyperLogLog>,
     /// Cached groups of a storage dictionary group column (`dict_state`).
     dictionary_groups: DictionaryGroups,
+    /// How often the pointer table started over while the rows were kept (`Abandon`).
+    restarts: usize,
 }
 
 impl GroupedAggregateHashTable {
@@ -235,7 +301,7 @@ impl GroupedAggregateHashTable {
             group_types,
             partitioned,
             append,
-            entries: Vec::new(),
+            entries: Entries::default(),
             bitmask: 0,
             count: 0,
             matcher,
@@ -246,11 +312,13 @@ impl GroupedAggregateHashTable {
             new_group_rows: Vec::new(),
             ht_offsets: Vec::new(),
             salts: Vec::new(),
+            probe_buffers: Default::default(),
             states_live: false,
             sink_count: 0,
             skip_lookups: false,
             hll: None,
             dictionary_groups: DictionaryGroups::default(),
+            restarts: 0,
         };
         table.resize(capacity.max(initial_capacity()).next_power_of_two())?;
         Ok(table)
@@ -304,6 +372,11 @@ impl GroupedAggregateHashTable {
         self.skip_lookups = true;
     }
 
+    /// Whether every group has a single row (no duplicates to merge when combining).
+    pub fn is_deduplicated(&self) -> bool {
+        !self.skip_lookups && self.restarts == 0
+    }
+
     /// Starts or stops counting the distinct group hashes (`EnableHLL`).
     pub fn enable_hll(&mut self, enable: bool) {
         self.hll = enable.then(|| self.hll.unwrap_or_default());
@@ -324,6 +397,7 @@ impl GroupedAggregateHashTable {
     pub fn abandon(&mut self) {
         self.entries.fill(0);
         self.count = 0;
+        self.restarts += 1;
         self.dictionary_groups = DictionaryGroups::default();
     }
 
@@ -351,7 +425,10 @@ impl GroupedAggregateHashTable {
         if self.count != 0 && capacity < self.capacity() {
             return Err(Error::internal("Cannot downsize a non-empty hash table!"));
         }
-        self.entries = vec![0; capacity];
+        // The groups are reinserted from the rows, so the old table goes before the new one
+        // is allocated.
+        self.entries = Entries::default();
+        self.entries = Entries::zeroed(capacity)?;
         self.bitmask = capacity as u64 - 1;
         if self.count != 0 {
             self.reinsert_rows()?;
@@ -432,7 +509,7 @@ impl GroupedAggregateHashTable {
         // overlap before the branchy probing loop below (DuckDB's `occupied_count`).
         let mut occupied = 0usize;
         {
-            let entries = self.entries.as_slice();
+            let entries = &self.entries[..];
             let mask = (entries.len() - 1) & usize::try_from(self.bitmask).unwrap_or(usize::MAX);
             let offsets = &mut self.ht_offsets[..count];
             let salts = &mut self.salts[..count];
@@ -446,11 +523,10 @@ impl GroupedAggregateHashTable {
         }
         std::hint::black_box(occupied);
 
-        let mut remaining: Vec<u32> = (0..count as u32).collect();
+        let [mut remaining, mut empty, mut compare, mut no_match] = std::mem::take(&mut self.probe_buffers);
+        remaining.clear();
+        remaining.extend(0..count as u32);
         let mut new_groups = 0;
-        let mut empty = Vec::with_capacity(count);
-        let mut compare = Vec::with_capacity(count);
-        let mut no_match = Vec::new();
         let mut iterations = 0;
         while !remaining.is_empty() {
             iterations += 1;
@@ -500,6 +576,7 @@ impl GroupedAggregateHashTable {
             }
             std::mem::swap(&mut remaining, &mut no_match);
         }
+        self.probe_buffers = [remaining, empty, compare, no_match];
         self.count += new_groups;
         Ok(new_groups)
     }

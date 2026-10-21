@@ -59,7 +59,7 @@ impl FixedOrd for Interval {
 /// How an aggregate state stores input values of some physical representation.
 pub(crate) trait StoredKind: Send + Sync + 'static {
     /// The owned copy kept in a state.
-    type Owned: Clone + Send + 'static;
+    type Owned: Clone + Default + Send + 'static;
     /// A borrowed input value.
     type Ref<'a>: Copy;
     /// A chunk of input prepared for reading values.

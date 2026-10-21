@@ -111,21 +111,6 @@ pub(crate) fn write_values<T: Primitive>(result: &mut Vector, offset: usize, val
     Ok(())
 }
 
-/// Writes `value` to rows `offset..offset + count` of a flat result vector.
-#[inline]
-pub(crate) fn fill_values<T: Primitive>(
-    result: &mut Vector,
-    offset: usize,
-    count: usize,
-    value: T,
-) -> Result<()> {
-    let target = result_bytes::<T>(result, offset, count)?;
-    for chunk in target.chunks_exact_mut(T::SIZE) {
-        value.store(chunk);
-    }
-    Ok(())
-}
-
 /// Marks rows of a result vector as NULL wherever `is_valid(row)` is false, for rows
 /// `offset..offset + count` (`row` counts from 0 at `offset`).
 pub(crate) fn set_invalid_where(

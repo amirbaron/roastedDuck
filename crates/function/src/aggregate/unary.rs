@@ -18,6 +18,17 @@ pub trait UnaryAggregate: Send + Sync + 'static {
 
     fn update(state: &mut Self::State, value: Self::Input) -> Result<()>;
 
+    /// Adds every value of `values` in order, as many [`UnaryAggregate::update`] calls
+    /// would; override with a loop that keeps the running value in registers (DuckDB's
+    /// update loops vectorise) where the result cannot depend on the grouping, as for
+    /// integer sums.
+    fn update_values(state: &mut Self::State, values: &[Self::Input]) -> Result<()> {
+        for &value in values {
+            Self::update(state, value)?;
+        }
+        Ok(())
+    }
+
     /// Adds `value` `count` times; override when that can be done in O(1).
     fn update_repeated(state: &mut Self::State, value: Self::Input, count: usize) -> Result<()> {
         for _ in 0..count {
@@ -205,9 +216,7 @@ impl<A: UnaryAggregate> AggregateOps for Unary<A> {
         let values = input.unified::<A::Input>();
         if values.validity.is_all_valid() {
             if let Sel::Identity = values.sel {
-                for &value in &values.values[..count] {
-                    A::update(state, value)?;
-                }
+                A::update_values(state, &values.values[..count])?;
             } else {
                 for row in 0..count {
                     A::update(state, values.values[values.slot(row)])?;
@@ -220,9 +229,7 @@ impl<A: UnaryAggregate> AggregateOps for Unary<A> {
             for (block, rows) in values.values[..count].chunks(64).enumerate() {
                 let word = words.get(block).copied().unwrap_or(u64::MAX);
                 if word == u64::MAX {
-                    for &value in rows {
-                        A::update(state, value)?;
-                    }
+                    A::update_values(state, rows)?;
                 } else if word != 0 {
                     for (bit, &value) in rows.iter().enumerate() {
                         if word >> bit & 1 == 1 {

@@ -8,6 +8,7 @@
 //! non-equality conditions with a [`RowMatcher`] and walks the chains in lockstep
 //! ([`ScanStructure`]), exactly like DuckDB, so results come out in DuckDB's order.
 
+use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -75,18 +76,19 @@ struct FirstRound<'a> {
     key_offset: usize,
     /// The hashes of the probing rows.
     hashes: &'a [u64],
-    /// The pointer table entry at each probing row's hash.
-    first_entries: &'a [u64],
+    /// The pointer table entry at each probing row's hash, if loaded ahead (with
+    /// prefetching); otherwise the entries are read in the loop.
+    first_entries: Option<&'a [u64]>,
 }
 
 /// Where the first probing round writes (`JoinHashTable::probe_typed_keys`).
 struct FirstRoundOutputs<'a> {
     pointers: &'a mut [RowPtr],
     offsets_and_salts: &'a mut [u64],
-    /// The rows whose candidate matched, in order.
-    matches: &'a mut [u32],
-    /// The rows whose candidate has another key, in order.
-    no_match: &'a mut [u32],
+    /// The rows whose candidate matched, in order (spare capacity, written by index).
+    matches: &'a mut [MaybeUninit<u32>],
+    /// The rows whose candidate has another key, in order (likewise).
+    no_match: &'a mut [MaybeUninit<u32>],
 }
 
 impl FirstRound<'_> {
@@ -106,9 +108,12 @@ impl FirstRound<'_> {
     ) -> (usize, usize) {
         let mut matched = 0;
         let mut no_match = 0;
-        for (i, (&row_hash, &first)) in self.hashes.iter().zip(self.first_entries).enumerate() {
+        for (i, &row_hash) in self.hashes.iter().enumerate() {
             let mut offset = row_hash & self.bitmask;
-            let mut entry = HtEntry(first);
+            let mut entry = HtEntry(match self.first_entries {
+                Some(first_entries) => first_entries[i],
+                None => self.entries[offset as usize].load(Ordering::Relaxed),
+            });
             if self.use_salts {
                 let row_salt = HtEntry::extract_salt(row_hash);
                 while entry.is_occupied() && entry.salt() != row_salt {
@@ -126,11 +131,11 @@ impl FirstRound<'_> {
             let build_key = unsafe { row.as_ptr().add(self.key_offset).cast::<T>().read_unaligned() };
             out.pointers[row_index as usize] = row;
             if key_of(row_index) == build_key {
-                out.matches[matched] = row_index;
+                out.matches[matched].write(row_index);
                 matched += 1;
             } else {
                 out.offsets_and_salts[row_index as usize] = offset | entry.salt_with_nulls();
-                out.no_match[no_match] = row_index;
+                out.no_match[no_match].write(row_index);
                 no_match += 1;
             }
         }
@@ -141,8 +146,15 @@ impl FirstRound<'_> {
 /// How many rows ahead probes prefetch pointer table entries and rows.
 const PREFETCH_DISTANCE: usize = 96;
 
+/// How many rows ahead inserts prefetch pointer table entries.
+const INSERT_PREFETCH_DISTANCE: usize = 32;
+
 /// Salts are only compared for tables that do not fit in the CPU cache.
 const USE_SALT_THRESHOLD: usize = 8192;
+
+/// Pointer tables with more entries than this are probed with prefetching; smaller ones
+/// (and their rows) stay in the CPU cache, where loading every entry ahead only costs.
+const PREFETCH_THRESHOLD: usize = 1 << 20;
 
 /// One slot of the pointer table: a row pointer in the low 48 bits and the upper 16 bits
 /// of the row's hash (DuckDB's `ht_entry_t`). Zero means empty.
@@ -865,6 +877,11 @@ impl JoinHashTable {
         self.capacity() > USE_SALT_THRESHOLD
     }
 
+    /// Whether probes load the pointer table entries ahead with prefetching.
+    fn prefetches(&self) -> bool {
+        self.capacity() > PREFETCH_THRESHOLD
+    }
+
     // ---------------------------------------------------------------------------------
     // Probe
     // ---------------------------------------------------------------------------------
@@ -960,6 +977,7 @@ impl JoinHashTable {
             .resize(keys.len().max(STANDARD_VECTOR_SIZE), RowPtr::NULL);
 
         let use_salts = self.use_salt();
+        let prefetch = self.prefetches();
         let mut match_count = 0;
         scan.sel_vector.clear();
         // The rows still probing: `None` = `0..count`.
@@ -973,14 +991,16 @@ impl JoinHashTable {
         loop {
             // Load the first entry of every row, prefetching a few rows ahead so the
             // cache misses overlap, then prefetch the rows the entries point to.
-            state.first_entries.clear();
-            state.first_entries.resize(elements, 0);
-            load_first_entries(
-                entries,
-                self.bitmask,
-                &state.hashes_dense[..elements],
-                &mut state.first_entries,
-            );
+            if prefetch {
+                state.first_entries.clear();
+                state.first_entries.resize(elements, 0);
+                load_first_entries(
+                    entries,
+                    self.bitmask,
+                    &state.hashes_dense[..elements],
+                    &mut state.first_entries,
+                );
+            }
             if first_round {
                 first_round = false;
                 if let Some(matched) =
@@ -1006,7 +1026,11 @@ impl JoinHashTable {
                 let row_hash = state.hashes_dense[i];
                 let mut offset = row_hash & self.bitmask;
                 let row_index = probing.as_ref().map_or(i as u32, |sel| sel[i]);
-                let mut entry = HtEntry(state.first_entries[i]);
+                let mut entry = HtEntry(if prefetch {
+                    state.first_entries[i]
+                } else {
+                    entries[offset as usize].load(Ordering::Relaxed)
+                });
                 if use_salts {
                     let row_salt = HtEntry::extract_salt(row_hash);
                     loop {
@@ -1121,17 +1145,18 @@ impl JoinHashTable {
             use_salts: self.use_salt(),
             key_offset: self.layout.offsets()[0],
             hashes: &state.hashes_dense[..elements],
-            first_entries: &state.first_entries[..elements],
+            // `get_row_pointers` loaded them when the table prefetches.
+            first_entries: self.prefetches().then(|| &state.first_entries[..elements]),
         };
         let base = scan.sel_vector.len();
-        scan.sel_vector.resize(base + elements, 0);
+        scan.sel_vector.reserve(elements);
         state.keys_no_match.clear();
-        state.keys_no_match.resize(elements, 0);
+        state.keys_no_match.reserve(elements);
         let mut outputs = FirstRoundOutputs {
             pointers: &mut scan.pointers,
             offsets_and_salts: &mut state.ht_offsets_and_salts,
-            matches: &mut scan.sel_vector[base..],
-            no_match: &mut state.keys_no_match,
+            matches: &mut scan.sel_vector.spare_capacity_mut()[..elements],
+            no_match: &mut state.keys_no_match.spare_capacity_mut()[..elements],
         };
         // Monomorphise the loop for the common shapes: all rows of a flat key vector.
         let (matched, no_match) = match (probing, values.sel) {
@@ -1150,8 +1175,11 @@ impl JoinHashTable {
                 &mut outputs,
             ),
         };
-        scan.sel_vector.truncate(base + matched);
-        state.keys_no_match.truncate(no_match);
+        // SAFETY: `run` wrote the first `matched` / `no_match` slots of the spare capacity.
+        unsafe {
+            scan.sel_vector.set_len(base + matched);
+            state.keys_no_match.set_len(no_match);
+        }
         matched
     }
 
@@ -1583,10 +1611,17 @@ impl<'a> Inserter<'a> {
             }
         }
         let capacity_mask = ht.bitmask | SALT_MASK;
+        // In a large table every row's entry is a cache miss: prefetching the entries of
+        // the rows a few ahead lets them overlap.
+        let prefetch = ht.prefetches();
         while !self.remaining.is_empty() {
             self.keys_to_compare.clear();
             self.rhs_rows.clear();
-            for &row_index in &self.remaining {
+            for (i, &row_index) in self.remaining.iter().enumerate() {
+                if prefetch && let Some(&ahead) = self.remaining.get(i + INSERT_PREFETCH_DISTANCE) {
+                    let offset = self.ht_offsets[ahead as usize] & ht.bitmask;
+                    prefetch_read(entries[offset as usize].as_ptr().cast_const().cast());
+                }
                 let row_index = row_index as usize;
                 let salt = self.salts[row_index];
                 let mut offset = self.ht_offsets[row_index];

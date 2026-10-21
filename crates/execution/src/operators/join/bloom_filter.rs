@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use rustdb_common::Result;
-use rustdb_row::hash::{hash_fixed, hash_vector};
+use rustdb_row::hash::{hash_fixed, hash_selected, hash_vector};
 use rustdb_storage::statistics::{BaseStatistics, FilterPropagateResult, NumericValue, StatsData};
 use rustdb_storage::table_filter::ExpressionFilter;
 use rustdb_types::{LogicalType, Vector, VectorKind};
@@ -27,8 +27,8 @@ const N_BITS: u32 = 4;
 /// selects a sector by its low bits and four bits in it by its high bytes.
 #[derive(Debug)]
 pub struct BloomFilter {
+    /// A power-of-two number of sectors.
     sectors: Box<[AtomicU64]>,
-    bitmask: u64,
 }
 
 impl BloomFilter {
@@ -38,7 +38,6 @@ impl BloomFilter {
         let num_sectors = (min_bits.next_power_of_two() >> LOG_SECTOR_SIZE).min(MAX_NUM_SECTORS);
         Self {
             sectors: (0..num_sectors).map(|_| AtomicU64::new(0)).collect(),
-            bitmask: num_sectors - 1,
         }
     }
 
@@ -58,8 +57,9 @@ impl BloomFilter {
 
     #[inline]
     fn sector(&self, hash: u64) -> &AtomicU64 {
-        // The bitmask keeps the index below the sector count.
-        &self.sectors[usize::try_from(hash & self.bitmask).unwrap_or_default()]
+        // The sector count is a power of two: masking with it minus one keeps the index
+        // in bounds without a check.
+        &self.sectors[hash as usize & (self.sectors.len() - 1)]
     }
 
     /// Adds a key hash (`InsertOne`).
@@ -68,12 +68,35 @@ impl BloomFilter {
         self.sector(hash).fetch_or(Self::mask(hash), Ordering::Relaxed);
     }
 
+    /// Moves the rows of `rows` whose hash (`hashes[i]` for `rows[i]`) may have been
+    /// inserted to its front, keeping their order, and returns how many there are
+    /// (`LookupHashes` with the selection compacted).
+    fn retain_found(&self, rows: &mut [u32], hashes: &[u64]) -> usize {
+        // The sectors in locals: through `self`, the atomics would make every iteration
+        // load them again.
+        let sectors = &self.sectors[..];
+        let mask = sectors.len() - 1;
+        let mut kept = 0;
+        for index in 0..rows.len().min(hashes.len()) {
+            let hash = hashes[index];
+            let bits = Self::mask(hash);
+            rows[kept] = rows[index];
+            kept += usize::from(sectors[hash as usize & mask].load(Ordering::Relaxed) & bits == bits);
+        }
+        kept
+    }
+
     /// Whether a key with this hash may have been inserted (`LookupOne`).
     #[inline]
     pub fn lookup(&self, hash: u64) -> bool {
         let mask = Self::mask(hash);
         self.sector(hash).load(Ordering::Relaxed) & mask == mask
     }
+}
+
+thread_local! {
+    /// The key hashes of the vector a scan thread is filtering (`BFTableFilterState::hashes_v`).
+    static HASHES: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// The probe-side filter `column IN BF(key)` (DuckDB's `BFTableFilter`): rows whose hash
@@ -147,25 +170,24 @@ fn check_integer_range(filter: &BloomFilter, min: NumericValue, max: NumericValu
 impl ExpressionFilter for BloomTableFilter {
     /// DuckDB's `BFTableFilter::Filter`: hashes the keys and keeps the rows found.
     fn select(&self, vector: &Vector, count: usize, sel: &mut Vec<u32>) -> Result<()> {
-        // Every slot is written by the hash.
-        let mut hashes = Vector::flat_for_overwrite(LogicalType::UBIGINT, count.max(1));
-        hash_vector(vector, count, &mut hashes)?;
-        if hashes.kind() == VectorKind::Constant {
-            if !self.filter.lookup(hashes.values::<u64>()[0]) {
+        if vector.kind() == VectorKind::Constant {
+            let mut hash = Vector::flat_for_overwrite(LogicalType::UBIGINT, 1);
+            hash_vector(vector, count, &mut hash)?;
+            if !self.filter.lookup(hash.unified::<u64>().values[0]) {
                 sel.clear();
             }
             return Ok(());
         }
-        let hashes = hashes.values::<u64>();
-        // Branchless compaction (`LookupHashes` writes every index, counts the found).
-        let mut kept = 0;
-        for index in 0..sel.len() {
-            let row = sel[index];
-            sel[kept] = row;
-            kept += usize::from(self.filter.lookup(hashes[row as usize]));
-        }
-        sel.truncate(kept);
-        Ok(())
+        // Only the rows still selected are hashed (`HashInternal` of the sliced keys).
+        HASHES.with_borrow_mut(|hashes| {
+            hashes.resize(sel.len().max(hashes.len()), 0);
+            let hashes = &mut hashes[..sel.len()];
+            hash_selected(vector, sel, hashes)?;
+            // Branchless compaction (`LookupHashes` writes every index, counts the found).
+            let kept = self.filter.retain_found(sel, hashes);
+            sel.truncate(kept);
+            Ok(())
+        })
     }
 
     fn check_statistics(&self, stats: &BaseStatistics) -> FilterPropagateResult {

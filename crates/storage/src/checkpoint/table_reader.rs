@@ -58,7 +58,7 @@ pub fn read_table_data(
 }
 
 /// Reads the `PersistentColumnData` of one column (`ColumnData::Deserialize`).
-fn read_column(
+pub(crate) fn read_column(
     metadata: &MetadataManager,
     pointer: MetaBlockPointer,
     ty: &LogicalType,
@@ -152,27 +152,31 @@ fn read_deletes(metadata: &MetadataManager, pointer: MetaBlockPointer) -> Result
 /// data block the table references.
 pub fn load_row_groups(
     io: &Arc<TableIoManager>,
-    metadata: &MetadataManager,
+    metadata: &Arc<MetadataManager>,
     types: &[LogicalType],
     data: PersistentTableData,
     blocks: &mut Vec<BlockId>,
 ) -> Result<RowGroupCollection> {
     let collection = RowGroupCollection::new(Arc::clone(io), types.to_vec(), 0);
+    let shared_types: Arc<[LogicalType]> = Arc::from(types);
     for pointer in data.row_groups {
         if pointer.data_pointers.len() != types.len() {
             return Err(Error::serialization(
                 "row group column count does not match the table",
             ));
         }
-        let mut columns = Vec::with_capacity(types.len());
+        // The columns are read again and built when first used; here only their blocks
+        // are collected.
         for (column_pointer, ty) in pointer.data_pointers.iter().zip(types) {
-            let persistent = read_column(metadata, *column_pointer, ty)?;
-            persistent.collect_blocks(blocks);
-            columns.push(persistent);
+            read_column(metadata, *column_pointer, ty)?.collect_blocks(blocks);
         }
-        // The columns are built when first used.
-        let row_group =
-            RowGroup::from_persistent(Arc::clone(io), types.to_vec(), columns, pointer.tuple_count);
+        let row_group = RowGroup::from_metadata(
+            Arc::clone(io),
+            Arc::clone(&shared_types),
+            Arc::clone(metadata),
+            &pointer.data_pointers,
+            pointer.tuple_count,
+        );
         if let Some(first) = pointer.deletes_pointers.first() {
             row_group.set_version_info(Arc::new(read_deletes(metadata, *first)?));
         }

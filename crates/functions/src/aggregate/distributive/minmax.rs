@@ -201,7 +201,7 @@ pub(crate) fn check_top_n(n: Option<i64>, what: &str) -> Result<usize> {
 }
 
 /// Merges one top-N heap into another (DuckDB's `MinMaxNOperation::Combine`).
-pub(crate) fn combine_top_n<V: Clone>(
+pub(crate) fn combine_top_n<V: Clone + Default>(
     source: Option<&TopN<V>>,
     target: &mut Option<TopN<V>>,
     mut insert: impl FnMut(&mut TopN<V>, &V),

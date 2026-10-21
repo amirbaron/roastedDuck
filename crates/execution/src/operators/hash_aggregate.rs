@@ -8,15 +8,12 @@ use rustdb_common::{Error, Result};
 use rustdb_planner::Expression;
 use rustdb_planner::expression::BoundAggregateExpression;
 use rustdb_planner::operator::GroupingSet;
-use rustdb_row::{
-    PartitionedTupleData, RadixPartitioning, TupleDataCollection, ValidityType, hash::hash_columns,
-};
+use rustdb_row::{PartitionedTupleData, TupleDataCollection, ValidityType, hash::hash_columns};
 use rustdb_storage::statistics::BaseStatistics;
-use rustdb_types::{DataChunk, LogicalType, STANDARD_VECTOR_SIZE, Value, Vector};
+use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
-use crate::aggregate_hashtable::{
-    AggregateObject, GroupedAggregateHashTable, capacity_for_count, initial_capacity, resize_threshold,
-};
+use super::radix_sink::{RadixSinkConfig, RadixSinkTable, initial_radix_bits};
+use crate::aggregate_hashtable::{AggregateObject, GroupedAggregateHashTable, capacity_for_count, initial_capacity};
 use crate::operator::{
     ErasedSink, ErasedSource, OrderPreservationType, PhysicalOperator, PhysicalRef, SinkState,
 };
@@ -92,12 +89,6 @@ impl PhysicalHashAggregate {
                 child_count: aggregate.children.len(),
             })
             .collect()
-    }
-
-    /// Radix bits of the thread-local tables, so threads can merge partitions
-    /// independently.
-    fn radix_bits(ctx: &ExecutionContext) -> usize {
-        RadixPartitioning::radix_bits(ctx.env.threads().next_power_of_two()).min(4)
     }
 
     /// A table for grouping set `set` with every aggregate's state.
@@ -195,26 +186,11 @@ pub struct HashAggregateGlobal {
     distinct_scheduled: AtomicBool,
     /// Whether any input row arrived (for empty grouping sets).
     saw_input: std::sync::atomic::AtomicBool,
-    /// The radix bits every thread's data ends up with; raised to
-    /// `external_radix_bits` once a thread runs out of its memory share (DuckDB's
-    /// `RadixHTConfig::SetRadixBitsToExternal`).
-    radix_bits: AtomicUsize,
-    /// The radix bits of an out-of-core aggregation.
-    external_radix_bits: usize,
-    /// The most radix bits the sink grows to while in memory (DuckDB's
-    /// `maximum_sink_radix_bits`).
-    maximum_sink_radix_bits: usize,
-    /// Pointer table capacity of the threads' tables (`RadixHTConfig::SinkCapacity`).
-    sink_capacity: usize,
-    /// Number of threads (`number_of_threads`): up to `GROW_STRATEGY_THREAD_THRESHOLD`
-    /// the threads' tables grow, beyond it they start over when full.
-    threads: usize,
-    /// Size of a block, which partitions should fill before more are added.
-    block_alloc_size: usize,
-    /// Whether the aggregation went out of core (`external`).
-    external: AtomicBool,
-    /// Whether a thread has combined, after which the radix bits stay (`any_combined`).
-    any_combined: AtomicBool,
+    /// How the threads fill their tables (`RadixHTConfig`).
+    config: RadixSinkConfig,
+    /// Per grouping set, per aggregate: the configuration of the tables of each
+    /// `DISTINCT` aggregate's tuples (their own `RadixPartitionedHashTable`).
+    distinct_configs: Vec<Vec<Option<RadixSinkConfig>>>,
     /// After finalisation: the groups still to combine and emit, one unit per grouping
     /// set and radix partition (DuckDB's `RadixHTGlobalSourceState` partitions), and the
     /// row an empty grouping set produces without input.
@@ -267,10 +243,10 @@ struct AggregatePartition {
 /// Per-thread state: one hash table per grouping set plus expression executors.
 #[derive(Debug)]
 pub struct HashAggregateLocal {
-    tables: Vec<GroupedAggregateHashTable>,
+    tables: Vec<RadixSinkTable>,
     /// Per grouping set, per `DISTINCT` aggregate: the thread's distinct tuples, handed
     /// to the global state in `combine`.
-    distinct: Vec<Vec<Option<GroupedAggregateHashTable>>>,
+    distinct: Vec<Vec<Option<RadixSinkTable>>>,
     /// Per grouping set, per `DISTINCT` aggregate: distinct tuples set aside under memory
     /// pressure, unpinned so that they can be spilled.
     distinct_abandoned: Vec<Vec<Option<PartitionedTupleData>>>,
@@ -281,12 +257,6 @@ pub struct HashAggregateLocal {
     /// The size above which the thread's tables are set aside under memory pressure: a
     /// quarter of its share of the memory limit (DuckDB's `GetMaxThreadMemory`).
     memory_limit: usize,
-    /// Per grouping set: the pointer table capacity of the thread's table
-    /// (`local_sink_capacity`).
-    sink_capacity: Vec<usize>,
-    /// Per grouping set: whether the table's strategy was adapted to the data
-    /// (`adapted`).
-    adapted: Vec<bool>,
     groups: ExpressionExecutor,
     arguments: Vec<ExpressionExecutor>,
     filters: Vec<Option<ExpressionExecutor>>,
@@ -297,8 +267,7 @@ impl Sink for PhysicalHashAggregate {
     type Local = HashAggregateLocal;
 
     fn global_sink_state(&self, ctx: &ExecutionContext) -> Result<HashAggregateGlobal> {
-        let threads = ctx.env.threads().max(1);
-        let initial_bits = Self::radix_bits(ctx);
+        let external_bits = external_radix_bits(ctx, initial_radix_bits(ctx));
         // The widest row decides how many partitions the threads can fill without too
         // many cache misses (`MaximumSinkRadixBits`).
         let row_width = self
@@ -312,7 +281,22 @@ impl Sink for PhysicalHashAggregate {
             .into_iter()
             .max()
             .unwrap_or(0);
-        let external_bits = external_radix_bits(ctx, initial_bits);
+        let distinct_configs = self
+            .grouping_sets
+            .iter()
+            .map(|set| {
+                self.aggregates
+                    .iter()
+                    .map(|aggregate| {
+                        if !aggregate.is_distinct() {
+                            return Ok(None);
+                        }
+                        let table = self.distinct_table(ctx, set, aggregate, initial_capacity(), 0)?;
+                        Ok(Some(RadixSinkConfig::new(ctx, table.layout().row_width(), external_bits)))
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })
+            .collect::<Result<Vec<_>>>()?;
         Ok(HashAggregateGlobal {
             collected: Mutex::new(self.grouping_sets.iter().map(|_| Vec::new()).collect()),
             distinct_collected: Mutex::new(
@@ -322,13 +306,8 @@ impl Sink for PhysicalHashAggregate {
                     .collect(),
             ),
             has_distinct: self.aggregates.iter().any(BoundAggregateExpression::is_distinct),
-            radix_bits: AtomicUsize::new(initial_bits),
-            external_radix_bits: external_bits,
-            maximum_sink_radix_bits: maximum_sink_radix_bits(threads, row_width, initial_bits)
-                .min(external_bits),
-            sink_capacity: sink_capacity(threads),
-            threads,
-            block_alloc_size: ctx.env.buffer_manager.block_alloc_size(),
+            config: RadixSinkConfig::new(ctx, row_width, external_bits),
+            distinct_configs,
             ..HashAggregateGlobal::default()
         })
     }
@@ -338,24 +317,19 @@ impl Sink for PhysicalHashAggregate {
         ctx: &ExecutionContext,
         global: &HashAggregateGlobal,
     ) -> Result<HashAggregateLocal> {
-        let radix_bits = global.radix_bits.load(Ordering::Acquire);
+        let config = &global.config;
+        let radix_bits = config.radix_bits.load(Ordering::Acquire);
         let threads = ctx.env.threads().max(1) as u64;
         let tables = self
             .grouping_sets
             .iter()
-            .map(|set| self.new_table(ctx, set, global.sink_capacity, radix_bits))
+            .map(|set| {
+                let table = self.new_table(ctx, set, config.sink_capacity, radix_bits)?;
+                Ok(RadixSinkTable::new(config, table))
+            })
             .collect::<Result<Vec<_>>>()?;
-        // Beyond the grow-strategy thread count, the tables count distinct groups so that
-        // they can adapt their strategy later.
-        let grow = global.threads <= GROW_STRATEGY_THREAD_THRESHOLD;
-        let mut tables = tables;
-        for table in &mut tables {
-            table.enable_hll(!grow);
-        }
         Ok(HashAggregateLocal {
-            sink_capacity: vec![global.sink_capacity; tables.len()],
-            adapted: vec![grow; tables.len()],
-            distinct: self.distinct_tables(ctx)?,
+            distinct: self.distinct_tables(ctx, global)?,
             distinct_abandoned: self
                 .grouping_sets
                 .iter()
@@ -433,7 +407,10 @@ impl Sink for PhysicalHashAggregate {
                     }
                     None => DataChunk::new(tuples, chunk.len()),
                 };
-                add_tuples(distinct, &tuples, &[], &[])?;
+                add_tuples(&mut distinct.table, &tuples, &[], &[])?;
+                if let Some(config) = &global.distinct_configs[set_index][index] {
+                    distinct.after_add_chunk(config)?;
+                }
                 selections[index] = Some(Vec::new());
             }
             if self.can_skip_regular_sink() {
@@ -446,13 +423,8 @@ impl Sink for PhysicalHashAggregate {
                 let refs: Vec<&Vector> = groups.columns().iter().collect();
                 hash_columns(&refs, chunk.len())?
             };
-            table.add_chunk(&groups, &hashes, &inputs, &selections)?;
-            Self::after_add_chunk(
-                global,
-                table,
-                &mut local.sink_capacity[set_index],
-                &mut local.adapted[set_index],
-            )?;
+            table.table.add_chunk(&groups, &hashes, &inputs, &selections)?;
+            table.after_add_chunk(&global.config)?;
         }
         // Under memory pressure, a thread whose tables hold more than a quarter of its
         // share of the memory limit sets their groups aside so that they can be spilled.
@@ -460,14 +432,14 @@ impl Sink for PhysicalHashAggregate {
             .tables
             .iter()
             .chain(local.distinct.iter().flatten().flatten())
-            .map(GroupedAggregateHashTable::size_in_bytes)
+            .map(|table| table.table.size_in_bytes())
             .sum();
         if size > local.memory_limit && memory_pressure(ctx) {
             Self::go_external(global, local)?;
             for (tables, abandoned) in local.distinct.iter_mut().zip(&mut local.distinct_abandoned) {
                 for (table, abandoned) in tables.iter_mut().zip(abandoned) {
                     if let Some(table) = table {
-                        abandon_table(table, abandoned, global.external_radix_bits)?;
+                        abandon_table(&mut table.table, abandoned, global.config.external_radix_bits)?;
                     }
                 }
             }
@@ -481,7 +453,7 @@ impl Sink for PhysicalHashAggregate {
         global: &HashAggregateGlobal,
         mut local: HashAggregateLocal,
     ) -> Result<()> {
-        global.any_combined.store(true, Ordering::Release);
+        global.config.any_combined.store(true, Ordering::Release);
         if global.has_distinct {
             let mut distinct_parts = Vec::new();
             for (set_index, (local_set, abandoned_set)) in local
@@ -492,7 +464,7 @@ impl Sink for PhysicalHashAggregate {
             {
                 for (index, (local_table, abandoned)) in local_set.iter_mut().zip(abandoned_set).enumerate() {
                     if let Some(local_table) = local_table {
-                        let data = table_data(local_table, abandoned.take())?;
+                        let data = table_data(&mut local_table.table, abandoned.take())?;
                         if data.count() > 0 {
                             distinct_parts.push((set_index, index, data));
                         }
@@ -509,7 +481,7 @@ impl Sink for PhysicalHashAggregate {
         }
         let mut parts = Vec::with_capacity(local.tables.len());
         for (table, abandoned) in local.tables.iter_mut().zip(&mut local.abandoned) {
-            let mut data = table.take_partitioned_data()?;
+            let mut data = table.table.take_partitioned_data()?;
             if let Some(mut abandoned) = abandoned.take() {
                 data.repartition(&mut abandoned)?;
                 data = abandoned;
@@ -577,7 +549,7 @@ impl Sink for PhysicalHashAggregate {
             ctx,
             set,
             initial_capacity(),
-            global.radix_bits.load(Ordering::Acquire),
+            global.config.radix_bits.load(Ordering::Acquire),
         )?;
         let group_count = set.len();
         let selections: Vec<Option<Vec<u32>>> = (0..self.aggregates.len())
@@ -655,11 +627,11 @@ impl PhysicalHashAggregate {
                 .unwrap_or_else(PoisonError::into_inner),
         );
         let mut units = Vec::new();
-        let external = global.external.load(Ordering::Acquire);
+        let external = global.config.external.load(Ordering::Acquire);
         for (set_index, aggregates) in collected.into_iter().enumerate() {
             for (aggregate, parts) in aggregates.into_iter().enumerate() {
                 let unique = !external
-                    && global.threads == 1
+                    && global.config.threads == 1
                     && parts.iter().filter(|part| part.count() > 0).count() == 1;
                 let radix_bits = parts
                     .iter()
@@ -698,7 +670,7 @@ impl PhysicalHashAggregate {
         let collected = std::mem::take(&mut *global.collected.lock().unwrap_or_else(PoisonError::into_inner));
         let mut finalized = FinalizedGroups::default();
         let objects = self.aggregate_objects();
-        let radix_bits = global.radix_bits.load(Ordering::Acquire);
+        let radix_bits = global.config.radix_bits.load(Ordering::Acquire);
         for (set_index, (set, parts)) in self.grouping_sets.iter().zip(collected).enumerate() {
             // Threads that combined before the sink went external have fewer partitions.
             let mut parts = parts
@@ -713,8 +685,8 @@ impl PhysicalHashAggregate {
             let rows: usize = parts.iter().map(PartitionedTupleData::count).sum();
             // Everything was aggregated by a single thread in a single table: its groups
             // are distinct already.
-            let single_table = !global.external.load(Ordering::Acquire)
-                && global.threads == 1
+            let single_table = !global.config.external.load(Ordering::Acquire)
+                && global.config.threads == 1
                 && parts.iter().filter(|part| part.count() > 0).count() == 1;
             let mut taken: Vec<Vec<TupleDataCollection>> = (0..partition_count).map(|_| Vec::new()).collect();
             for part in &mut parts {
@@ -843,143 +815,25 @@ pub(crate) fn repartitioned(
     Ok(data)
 }
 
-/// Up to this many threads, the threads' tables grow; beyond it they keep a small,
-/// cache-resident pointer table and start over when it is full
-/// (`RadixHTConfig::GROW_STRATEGY_THREAD_THRESHOLD`).
-const GROW_STRATEGY_THREAD_THRESHOLD: usize = 2;
-/// Rows after which a thread decides whether to adapt its table
-/// (`RadixHTLocalSinkState::ADAPTIVITY_THRESHOLD`); also the largest sink capacity.
-const ADAPTIVITY_THRESHOLD: usize = 1 << 20;
-/// Partitions filled to this share of a block trigger a repartition (`BLOCK_FILL_FACTOR`).
-const BLOCK_FILL_FACTOR: f64 = 0.5;
-/// Radix bits added per repartition (`REPARTITION_RADIX_BITS`).
-const REPARTITION_RADIX_BITS: usize = 2;
-/// The most radix bits of the sink (`MAXIMUM_FINAL_SINK_RADIX_BITS`).
-const MAXIMUM_FINAL_SINK_RADIX_BITS: usize = 8;
-
-/// `RadixHTConfig::SinkCapacity`
-fn sink_capacity(threads: usize) -> usize {
-    if threads <= GROW_STRATEGY_THREAD_THRESHOLD {
-        // Grow strategy: start off a bit bigger.
-        262_144
-    } else {
-        // Start off tiny; `decide_adaptation` may grow it later.
-        32_768
-    }
-}
-
-/// `RadixHTConfig::MaximumSinkRadixBits`: wide rows get fewer partitions, otherwise
-/// cache misses get out of hand.
-fn maximum_sink_radix_bits(threads: usize, row_width: usize, initial_bits: usize) -> usize {
-    if threads <= GROW_STRATEGY_THREAD_THRESHOLD {
-        return initial_bits; // Don't repartition unless we go external.
-    }
-    let bits = if row_width >= 64 {
-        MAXIMUM_FINAL_SINK_RADIX_BITS - 2
-    } else if row_width >= 32 {
-        MAXIMUM_FINAL_SINK_RADIX_BITS - 1
-    } else {
-        MAXIMUM_FINAL_SINK_RADIX_BITS
-    };
-    bits.max(initial_bits)
-}
-
 impl PhysicalHashAggregate {
-    /// The thread-local strategy after each chunk (the rest of DuckDB's
-    /// `RadixPartitionedHashTable::Sink`): adapt once enough rows were seen, and when the
-    /// pointer table is full either let it grow (few threads) or start a new one, raising
-    /// the radix bits as the partitions fill (`MaybeRepartition`).
-    fn after_add_chunk(
-        global: &HashAggregateGlobal,
-        table: &mut GroupedAggregateHashTable,
-        capacity: &mut usize,
-        adapted: &mut bool,
-    ) -> Result<()> {
-        let external = global.external.load(Ordering::Acquire);
-        if !*adapted && table.sink_count() >= ADAPTIVITY_THRESHOLD {
-            if !external {
-                Self::decide_adaptation(global, table, capacity)?;
-            }
-            table.enable_hll(false);
-            *adapted = true;
-        }
-        if table.count() + STANDARD_VECTOR_SIZE < resize_threshold(*capacity) {
-            return Ok(()); // Another chunk fits.
-        }
-        let grow = global.threads <= GROW_STRATEGY_THREAD_THRESHOLD;
-        if !grow || external {
-            // Start a new pointer table and keep appending to the same rows; this works
-            // because the table never grows.
-            table.abandon();
-        }
-        if grow {
-            return Ok(()); // Repartitioning only happens when going external.
-        }
-        let current_bits = table.radix_bits();
-        let partitions = 1usize << current_bits;
-        let row_size_per_partition = table.materialized_count() * table.layout().row_width() / partitions;
-        if row_size_per_partition as f64 > BLOCK_FILL_FACTOR * global.block_alloc_size as f64
-            && !global.any_combined.load(Ordering::Acquire)
-        {
-            let bits = (current_bits + REPARTITION_RADIX_BITS).min(global.maximum_sink_radix_bits);
-            global.radix_bits.fetch_max(bits, Ordering::AcqRel);
-        }
-        let global_bits = global.radix_bits.load(Ordering::Acquire);
-        if current_bits < global_bits {
-            table.repartition(global_bits)?;
-            if external {
-                table.resize_to(*capacity)?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Picks a better strategy from the distinct groups seen so far (`DecideAdaptation`):
-    /// skip the lookups when nearly every row is a new group, or grow the pointer table
-    /// when a bigger one would merge many more duplicates.
-    fn decide_adaptation(
-        global: &HashAggregateGlobal,
-        table: &mut GroupedAggregateHashTable,
-        capacity: &mut usize,
-    ) -> Result<()> {
-        const SKIP_LOOKUP_UNIQUE_PERCENTAGE_THRESHOLD: f64 = 0.95;
-        const CAPACITY_INCREASE_DEDUPLICATION_RATE_THRESHOLD: f64 = 2.0;
-        let sink_count = table.sink_count() as f64;
-        let deduplicated_count = table.materialized_count();
-        let hll_count = table.hll_upper_bound().min(deduplicated_count);
-        let deduplicated_percentage = deduplicated_count as f64 / sink_count;
-        let hll_percentage = hll_count as f64 / sink_count;
-        if hll_percentage > SKIP_LOOKUP_UNIQUE_PERCENTAGE_THRESHOLD {
-            // Almost everything is unique: just append, deduplicate when combining.
-            table.skip_lookups();
-            return Ok(());
-        }
-        if deduplicated_percentage / hll_percentage > CAPACITY_INCREASE_DEDUPLICATION_RATE_THRESHOLD {
-            let new_capacity = capacity_for_count(hll_count).min(ADAPTIVITY_THRESHOLD);
-            *capacity = global.sink_capacity.max(new_capacity);
-            table.abandon();
-            table.resize_to(*capacity)?;
-        }
-        Ok(())
-    }
-
     /// The thread's tables outgrew its memory share: their groups are set aside (unpinned,
     /// so they can be spilled) and the tables start over, and the aggregation switches to
     /// enough partitions to finalize them one at a time (DuckDB's `MaybeRepartition`
     /// abandoning the hash table when going external).
     fn go_external(global: &HashAggregateGlobal, local: &mut HashAggregateLocal) -> Result<()> {
-        global.external.store(true, Ordering::Release);
-        global
+        let config = &global.config;
+        config.external.store(true, Ordering::Release);
+        config
             .radix_bits
-            .fetch_max(global.external_radix_bits, Ordering::AcqRel);
+            .fetch_max(config.external_radix_bits, Ordering::AcqRel);
         // The tables keep their few partitions (every partition pins a block while
         // appending); the data set aside goes to the external partitions while it is
         // still in memory.
         for (table, abandoned) in local.tables.iter_mut().zip(&mut local.abandoned) {
-            let mut data = table.take_partitioned_data()?;
+            let mut data = table.table.take_partitioned_data()?;
             let target = match abandoned {
                 Some(target) => target,
-                None => abandoned.insert(data.with_radix_bits(global.external_radix_bits)?),
+                None => abandoned.insert(data.with_radix_bits(config.external_radix_bits)?),
             };
             data.repartition(target)?;
             target.unpin();
@@ -989,28 +843,42 @@ impl PhysicalHashAggregate {
 }
 
 impl PhysicalHashAggregate {
-    /// Per grouping set, per aggregate: an empty table of the distinct (groups,
-    /// arguments) tuples of each `DISTINCT` aggregate.
-    fn distinct_tables(&self, ctx: &ExecutionContext) -> Result<Vec<Vec<Option<GroupedAggregateHashTable>>>> {
+    /// An empty table of the distinct (groups, arguments) tuples of the `DISTINCT`
+    /// aggregate `aggregate` in grouping set `set`.
+    fn distinct_table(
+        &self,
+        ctx: &ExecutionContext,
+        set: &GroupingSet,
+        aggregate: &BoundAggregateExpression,
+        capacity: usize,
+        radix_bits: usize,
+    ) -> Result<GroupedAggregateHashTable> {
+        let mut types = self.set_group_types(set);
+        types.extend(aggregate.children.iter().map(|c| c.return_type.clone()));
+        GroupedAggregateHashTable::new(ctx.env.buffer_manager.clone(), types, &[], capacity, radix_bits)
+    }
+
+    /// Per grouping set, per aggregate: a thread's empty table of the distinct (groups,
+    /// arguments) tuples of each `DISTINCT` aggregate, filled like the groups' tables.
+    fn distinct_tables(
+        &self,
+        ctx: &ExecutionContext,
+        global: &HashAggregateGlobal,
+    ) -> Result<Vec<Vec<Option<RadixSinkTable>>>> {
         self.grouping_sets
             .iter()
-            .map(|set| {
+            .zip(&global.distinct_configs)
+            .map(|(set, configs)| {
                 self.aggregates
                     .iter()
-                    .map(|aggregate| {
-                        if !aggregate.is_distinct() {
+                    .zip(configs)
+                    .map(|(aggregate, config)| {
+                        let Some(config) = config else {
                             return Ok(None);
-                        }
-                        let mut types = self.set_group_types(set);
-                        types.extend(aggregate.children.iter().map(|c| c.return_type.clone()));
-                        GroupedAggregateHashTable::new(
-                            ctx.env.buffer_manager.clone(),
-                            types,
-                            &[],
-                            initial_capacity(),
-                            Self::radix_bits(ctx),
-                        )
-                        .map(Some)
+                        };
+                        let radix_bits = config.radix_bits.load(Ordering::Acquire);
+                        let table = self.distinct_table(ctx, set, aggregate, config.sink_capacity, radix_bits)?;
+                        Ok(Some(RadixSinkTable::new(config, table)))
                     })
                     .collect()
             })

@@ -221,16 +221,13 @@ impl PartitionedTupleData {
         }
         let single = build_partition_sel(state, sel, count);
         if let Some(partition_index) = single {
-            let partition = &mut self.partitions[partition_index];
-            let pin_state = &mut state.pin_states[partition_index];
-            let mut append = crate::state::AppendState {
-                pin_state: std::mem::take(pin_state),
-                chunk_state: std::mem::take(&mut state.chunk_state),
-            };
-            let result = partition.append_formatted(&mut append, formats, sel, count);
-            *pin_state = append.pin_state;
-            state.chunk_state = append.chunk_state;
-            result?;
+            self.partitions[partition_index].append_formatted_with(
+                &mut state.pin_states[partition_index],
+                &mut state.chunk_state,
+                formats,
+                sel,
+                count,
+            )?;
         } else {
             if !self.layout.all_constant() {
                 compute_heap_sizes(
