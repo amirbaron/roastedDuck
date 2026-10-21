@@ -66,3 +66,9 @@ that close it. Finished streams are removed; the commit history records them.
     DuckDB's trimmed ICU data has no tailoring (root order) and ICU4X applies Norwegian
     and Serbian rules. Generate the collation data from ICU 77's export data with
     `icu4x-datagen` for DuckDB's locale list and pin the root-order locales to root.
+12. **`ALTER DATABASE ... SET ALIAS TO` / `RENAME TO`** (`test_alter_database_rename`):
+    DuckDB re-keys the attached database (`DatabaseManager::RenameDatabase`,
+    `AttachedDatabase::SetName`) and the catalog name follows it. rustdb copies the name
+    into `Catalog`, every `CatalogSet` and `AttachedDatabase`, so it has to become shared
+    and mutable first (about 50 call sites); schedule when no other agent edits the
+    catalog crate.
