@@ -2186,7 +2186,27 @@ impl Connection {
                 Err(_) => {}
             }
         }
-        rustdb_parser::parse_with_options(sql, &options)
+        let error = match rustdb_parser::parse_with_options(sql, &options) {
+            Err(error)
+                if error.subtype() == Some(rustdb_parser::SYNTAX_ERROR)
+                    && self.database.instance().has_parser_extension() =>
+            {
+                error
+            }
+            parsed => return parsed,
+        };
+        // With a parser extension loaded, a query that does not parse is parsed again a
+        // statement at a time, for the extension to parse the one the grammar cannot. None
+        // does here, so that statement fails with the error of the whole query; but a
+        // statement before it is transformed, and fails with its own error if it cannot be.
+        for statement in rustdb_parser::split_queries(sql) {
+            match rustdb_parser::parse_with_options(&statement, &options) {
+                Ok(_) => {}
+                Err(failure) if failure.subtype() == Some(rustdb_parser::SYNTAX_ERROR) => break,
+                Err(failure) => return Err(failure),
+            }
+        }
+        Err(error)
     }
 
     /// The statements of `sql` as DuckDB's `ClientContext::ParseStatements` hands them out

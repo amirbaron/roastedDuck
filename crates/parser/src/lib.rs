@@ -151,6 +151,33 @@ pub fn parse_with_options(query: &str, options: &ParserOptions) -> Result<Vec<Sq
     Ok(statements)
 }
 
+/// `SplitQueries`: the statements of `query` at its `;` tokens, trimmed and each ending in
+/// its `;` (the last one as it is).
+pub fn split_queries(query: &str) -> Vec<String> {
+    // `StringUtil::Trim`: the C locale's white space.
+    let trim = |segment: &str| {
+        segment
+            .trim_matches(|c| matches!(c, ' ' | '\t' | '\n' | '\x0b' | '\x0c' | '\r'))
+            .to_owned()
+    };
+    let mut queries = Vec::new();
+    let mut last_split = 0;
+    for token in tokenize(query) {
+        if token.kind == SimplifiedTokenType::Operator && query.as_bytes().get(token.start) == Some(&b';') {
+            let segment = trim(&substring(query, last_split, token.start));
+            if !segment.is_empty() {
+                queries.push(segment + ";");
+            }
+            last_split = token.start + 1;
+        }
+    }
+    let segment = trim(&substring(query, last_split, query.len()));
+    if !segment.is_empty() {
+        queries.push(segment);
+    }
+    queries
+}
+
 /// `query.substr(start, end - start)` on byte offsets (lossy if they split a character).
 fn substring(query: &str, start: usize, end: usize) -> String {
     query.get(start..end).map_or_else(
