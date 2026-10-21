@@ -48,8 +48,10 @@ performance targets of `docs/porting-plan.md` (≥ 1.3× C++ speed, ≤ 0.6× me
   missing.
 - **CLI shell:** `crates/shell` (`rustdb`) is DuckDB's shell one to one, linenoise included:
   392 of the 392 `tools/shell/tests` that pass on the C++ CLI pass
-  (`scripts/shell-tests.sh --binary rust|cpp`); interactive sessions match it byte for byte
-  under a pty. The engine's leftovers are work-queue item 3.
+  (`scripts/shell-tests.sh --binary rust|cpp`), and 717 of the 726 cases of
+  `scripts/shell-diff.py` (modes, types, dot commands, options, errors, pty sessions)
+  match byte for byte, the other 9 differ for reasons work-queue item 3 records, with the
+  engine's other leftovers.
 - **Performance** (`docs/perf-backlog.md`, round 4; speed = C++ time ÷ rustdb time, higher
   is better; memory = rustdb ÷ C++, lower is better):
 
