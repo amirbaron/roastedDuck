@@ -423,18 +423,38 @@ pub(crate) fn extension_prefix(path: &str) -> Option<&str> {
     clippy::case_sensitive_file_extension_comparisons,
     reason = "the name is lowercased"
 )]
-pub(crate) fn is_open_file(path: &str) -> bool {
+pub(crate) fn is_open_file(path: &str) -> Result<bool> {
     use std::io::Read as _;
-    // `MagicBytes::CheckMagicBytes`.
-    let Ok(mut file) = std::fs::File::open(path) else {
-        return false;
+    // `MagicBytes::CheckMagicBytes`: a file that does not exist is a new database; one
+    // that cannot be opened or read (a directory) is an error.
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(Error::new(
+                ErrorKind::Io,
+                format!(
+                    "Cannot open file \"{path}\": {}",
+                    rustdb_common::os_error_text(&error)
+                ),
+            ));
+        }
     };
     let mut buffer = [0u8; 16];
     let mut read = 0;
     while read < buffer.len() {
         match file.read(&mut buffer[read..]) {
-            Ok(0) | Err(_) => break,
+            Ok(0) => break,
             Ok(count) => read += count,
+            Err(error) => {
+                return Err(Error::new(
+                    ErrorKind::Io,
+                    format!(
+                        "Could not read from file \"{path}\": {}",
+                        rustdb_common::os_error_text(&error)
+                    ),
+                ));
+            }
         }
     }
     let magic_offset = rustdb_storage::storage_info::MAGIC_BYTE_OFFSET;
@@ -443,7 +463,7 @@ pub(crate) fn is_open_file(path: &str) -> bool {
         || (&buffer[..4] != b"PAR1"
             && &buffer[magic_offset..magic_offset + duckdb_magic.len()] == duckdb_magic)
     {
-        return false;
+        return Ok(false);
     }
     let mut lower_name = path.to_lowercase();
     if lower_name.ends_with(".gz") {
@@ -451,11 +471,11 @@ pub(crate) fn is_open_file(path: &str) -> bool {
     } else if lower_name.ends_with(".zst") {
         lower_name.truncate(lower_name.len() - 4);
     }
-    ["parquet", "csv", "tsv", "json", "jsonl", "ndjson"]
+    Ok(["parquet", "csv", "tsv", "json", "jsonl", "ndjson"]
         .iter()
         .any(|suffix| {
             lower_name.ends_with(&format!(".{suffix}")) || lower_name.contains(&format!(".{suffix}?"))
-        })
+        }))
 }
 
 /// `DefaultCastAs(BOOLEAN)` of an option value.
@@ -617,7 +637,7 @@ impl DatabaseManager {
         instance_validity: &Arc<ValidChecker>,
     ) -> Result<Option<Arc<AttachedDatabase>>> {
         let _guard = self.attach_lock.lock().unwrap_or_else(PoisonError::into_inner);
-        let path = if path == ":memory:" || path.starts_with(":memory:") {
+        let path = if path == ":memory:" {
             String::new()
         } else {
             // `FileSystem::ExpandPath`: `~` (with `home_directory`) and `file:` URLs.

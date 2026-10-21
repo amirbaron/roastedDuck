@@ -1535,7 +1535,7 @@ impl Database {
         let options = crate::storage::startup_options(config);
         // A data file opens as an in-memory database with views on it, as with `ATTACH`
         // (`DatabaseManager::GetDatabaseType` resolving to `__open_file__`).
-        let main = if crate::attached::is_open_file(&path) {
+        let main = if crate::attached::is_open_file(&path)? {
             database.attach_open_file("", &path, &options, rustdb_ast::OnCreateConflict::ErrorOnConflict)?
         } else {
             database.attach("", &path, &options, rustdb_ast::OnCreateConflict::ErrorOnConflict)?
@@ -1563,13 +1563,13 @@ impl Database {
         // A database file is tracked by its canonical path
         // (`DatabaseManager::AttachDatabase` with `RequiresTrackingAttaches`).
         let canonical_path;
-        let path = if path.is_empty() || path.starts_with(":memory:") {
+        let path = if path.is_empty() || path == ":memory:" {
             path
         } else {
             canonical_path = rustdb_function::file_system::canonicalize_local_path(path);
             canonical_path.as_str()
         };
-        if !path.is_empty() && !path.starts_with(":memory:") {
+        if !path.is_empty() && path != ":memory:" {
             rustdb_function::file_system::verify_can_access_file(path)?;
             if !options.read_only() {
                 rustdb_function::file_system::verify_can_write(path)?;
@@ -1579,7 +1579,7 @@ impl Database {
         // (`serialization_compatibility`, `default_block_alloc_size`, also set by a
         // global `SET`); an existing file keeps its own.
         let mut options = options.clone();
-        if !path.is_empty() && !path.starts_with(":memory:") && !std::path::Path::new(path).exists() {
+        if !path.is_empty() && path != ":memory:" && !std::path::Path::new(path).exists() {
             if options.storage_version.is_none() {
                 options.storage_version = self.global_setting("storage_compatibility_version");
             }
@@ -3617,7 +3617,7 @@ impl Connection {
                     self.load_storage_extension(&db_type)?;
                     return Err(Error::binder(format!("Unrecognized storage type \"{db_type}\"")));
                 }
-                let attached = if !duckdb_type && crate::attached::is_open_file(path) {
+                let attached = if !duckdb_type && crate::attached::is_open_file(path)? {
                     self.database
                         .attach_open_file(&info.name, path, &options, info.on_conflict)?
                 } else {

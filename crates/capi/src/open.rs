@@ -135,7 +135,14 @@ impl InstanceCacheWrapper {
             }
             return Ok(database);
         }
-        let database = Arc::new(Database::open(path, config)?);
+        // A named in-memory database (`:memory:name`) is an in-memory instance the cache
+        // shares; opened directly, the path would name a file.
+        let instance_path = if path.starts_with(":memory:") {
+            ":memory:"
+        } else {
+            path
+        };
+        let database = Arc::new(Database::open(instance_path, config)?);
         if let Some(key) = key {
             instances.insert(key, (Arc::downgrade(&database), config.clone()));
         }
