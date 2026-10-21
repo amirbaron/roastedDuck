@@ -157,6 +157,15 @@ pub fn canonicalize_local_path(input: &str) -> String {
     canonicalize_path(&path)
 }
 
+/// `DBConfig::SanitizeAllowedPath`: the path as the file system serving it canonicalizes
+/// it; remote paths are kept as they are.
+fn sanitize_allowed_path(path: &str) -> String {
+    if path.contains("://") && file_url_offset(path) == 0 {
+        return canonicalize_path(path);
+    }
+    canonicalize_local_path(path)
+}
+
 /// The VARCHAR entries of the list setting `name`.
 fn list_setting(settings: &dyn crate::client::SettingsSource, name: &str) -> Vec<String> {
     let Ok(value) = settings.current_setting(name) else {
@@ -181,10 +190,10 @@ fn can_access(settings: &dyn crate::client::SettingsSource, path: &str, director
     if enabled {
         return true;
     }
-    let mut path = canonicalize_path(path);
+    let mut path = sanitize_allowed_path(path);
     if list_setting(settings, "allowed_paths")
         .iter()
-        .any(|allowed| canonicalize_path(allowed) == path)
+        .any(|allowed| sanitize_allowed_path(allowed) == path)
     {
         return true;
     }
@@ -196,7 +205,7 @@ fn can_access(settings: &dyn crate::client::SettingsSource, path: &str, director
         path.push('/');
     }
     directories.iter().any(|allowed| {
-        let mut allowed = canonicalize_path(allowed);
+        let mut allowed = sanitize_allowed_path(allowed);
         if !allowed.ends_with('/') {
             allowed.push('/');
         }
