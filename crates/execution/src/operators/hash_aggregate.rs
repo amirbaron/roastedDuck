@@ -584,12 +584,11 @@ impl Sink for PhysicalHashAggregate {
                 }
             }
         } else {
-            let rows: usize = data.iter().map(TupleDataCollection::count).sum();
             let mut distinct = GroupedAggregateHashTable::new(
                 ctx.env.buffer_manager.clone(),
                 first.layout().types()[..first.layout().column_count() - 1].to_vec(),
                 &[],
-                capacity_for_count(rows),
+                finalize_capacity(ctx, &data),
                 0,
             )?;
             for collection in &data {
@@ -801,6 +800,21 @@ pub(crate) fn table_data(
     Ok(data)
 }
 
+/// The pointer table capacity of the table a finalize task merges a partition's `data`
+/// into: room for every row, limited so that a thread does not over-allocate
+/// (`RadixHTLocalSourceState::Finalize`).
+pub(crate) fn finalize_capacity(ctx: &ExecutionContext, data: &[TupleDataCollection]) -> usize {
+    let rows: usize = data.iter().map(TupleDataCollection::count).sum();
+    let bytes: usize = data.iter().map(TupleDataCollection::size_in_bytes).sum();
+    let threads = ctx.env.threads().max(1) as f64;
+    let thread_limit = (0.6 * ctx.env.buffer_manager.max_memory() as f64 / threads) as usize;
+    let size_per_entry = bytes / rows.max(1) + (1.5 * size_of::<u64>() as f64) as usize;
+    let capacity_limit = (thread_limit / size_per_entry.max(1))
+        .next_power_of_two()
+        .max(initial_capacity());
+    capacity_for_count(rows).min(capacity_limit)
+}
+
 /// `data` with at least `radix_bits` radix bits, unpinned so it can be spilled.
 pub(crate) fn repartitioned(
     mut data: PartitionedTupleData,
@@ -977,17 +991,7 @@ impl PhysicalHashAggregate {
             }
             return Ok(chunks);
         }
-        // Room for every row of the partition, limited so that a thread does not
-        // over-allocate (`RadixHTGlobalSourceState` creating the partition's table).
-        let rows: usize = data.iter().map(TupleDataCollection::count).sum();
-        let bytes: usize = data.iter().map(TupleDataCollection::size_in_bytes).sum();
-        let threads = ctx.env.threads().max(1) as f64;
-        let thread_limit = (0.6 * ctx.env.buffer_manager.max_memory() as f64 / threads) as usize;
-        let size_per_entry = bytes / rows.max(1) + (1.5 * size_of::<u64>() as f64) as usize;
-        let capacity_limit = (thread_limit / size_per_entry.max(1))
-            .next_power_of_two()
-            .max(initial_capacity());
-        let mut table = self.new_table(ctx, set, capacity_for_count(rows).min(capacity_limit), 0)?;
+        let mut table = self.new_table(ctx, set, finalize_capacity(ctx, &data), 0)?;
         for collection in &data {
             table.combine(collection)?;
         }

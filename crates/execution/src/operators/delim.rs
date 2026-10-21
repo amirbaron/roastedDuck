@@ -7,8 +7,8 @@ use rustdb_row::{AppendState, PartitionedTupleData, PinProperties, TupleDataColl
 use rustdb_row::hash::hash_columns;
 use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
-use crate::aggregate_hashtable::{GroupedAggregateHashTable, capacity_for_count, initial_capacity};
-use crate::operators::hash_aggregate::{repartitioned, table_data};
+use crate::aggregate_hashtable::{GroupedAggregateHashTable, initial_capacity};
+use crate::operators::hash_aggregate::{finalize_capacity, repartitioned, table_data};
 use crate::operators::radix_sink::initial_radix_bits;
 use crate::column_data_collection::ColumnDataCollection;
 use rustdb_common::tree_renderer::RenderParams;
@@ -284,8 +284,7 @@ impl Sink for PhysicalDelimJoin {
             return Err(rustdb_common::Error::internal("delim join finalize task out of range"));
         };
         let data = std::mem::take(&mut *partition.lock().unwrap_or_else(PoisonError::into_inner));
-        let rows = data.iter().map(TupleDataCollection::count).sum();
-        let mut table = self.distinct_table(ctx, capacity_for_count(rows), 0)?;
+        let mut table = self.distinct_table(ctx, finalize_capacity(ctx, &data), 0)?;
         for collection in &data {
             table.combine(collection)?;
         }

@@ -17,7 +17,8 @@ use crate::aggregate_hashtable::{GroupedAggregateHashTable, initial_capacity};
 use crate::operators::radix_sink::{RadixSinkConfig, RadixSinkTable, initial_radix_bits};
 use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
 use crate::operators::hash_aggregate::{
-    abandon_table, external_radix_bits, memory_pressure, repartitioned, table_data, thread_memory_limit,
+    abandon_table, external_radix_bits, finalize_capacity, memory_pressure, repartitioned, table_data,
+    thread_memory_limit,
 };
 use crate::{ExecutionContext, ExpressionExecutor, Sink, SinkFinalize, SinkResult, Source, SourceResult};
 
@@ -462,7 +463,7 @@ impl Sink for PhysicalUngroupedAggregate {
                 }
             }
         } else {
-            let mut table = Self::distinct_table(ctx, aggregate, initial_capacity(), 0)?;
+            let mut table = Self::distinct_table(ctx, aggregate, finalize_capacity(ctx, &data), 0)?;
             for collection in &data {
                 table.combine(collection)?;
             }
