@@ -1564,6 +1564,7 @@ test/sql/copy/csv/test_multiple_big_compressed_csvs.test_slow
 test/sql/copy/csv/test_ncvoter.test
 test/sql/copy/csv/test_nfc.test
 test/sql/copy/csv/test_nfc_suite.test
+test/sql/copy/csv/test_non_unicode_header.test
 test/sql/copy/csv/test_null_padding_projection.test
 test/sql/copy/csv/test_null_padding_quoted_new_line.test_slow
 test/sql/copy/csv/test_null_padding_union.test

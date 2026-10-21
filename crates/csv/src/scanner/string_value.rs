@@ -575,14 +575,11 @@ impl StringValueScanner {
 
     /// The `Could not convert string ...` message of a cast error.
     fn cast_message(value: &[u8], type_id: LogicalTypeId) -> String {
-        sanitize_error(
-            format!(
-                "Could not convert string \"{}\" to '{}'",
-                String::from_utf8_lossy(value),
-                type_id.name()
-            )
-            .as_bytes(),
-        )
+        // The bytes are sanitized as they are (`FullLinePosition::SanitizeError`).
+        let mut message = b"Could not convert string \"".to_vec();
+        message.extend_from_slice(value);
+        message.extend_from_slice(format!("\" to '{}'", type_id.name()).as_bytes());
+        sanitize_error(&message)
     }
 
     /// `AddValueToVector`.
