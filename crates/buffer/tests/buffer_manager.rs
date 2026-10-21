@@ -32,11 +32,23 @@ fn manager(limit: usize, temp: Option<PathBuf>) -> BufferManager {
     .unwrap()
 }
 
+/// The byte at `i` of the block filled with `seed`: a xorshift stream, which temporary
+/// file compression cannot shrink, so a spilled block takes a whole slot.
+fn pattern(seed: u8, len: usize) -> impl Iterator<Item = u8> {
+    let mut state = 0x9E37_79B9_7F4A_7C15_u64 ^ u64::from(seed);
+    (0..len).map(move |_| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state.to_le_bytes()[0]
+    })
+}
+
 fn fill(handle: &BufferHandle, seed: u8) {
     // SAFETY: the test owns the only pin.
     let data = unsafe { handle.as_mut_slice() };
-    for (i, byte) in data.iter_mut().enumerate() {
-        *byte = seed.wrapping_add((i % 251) as u8);
+    for (byte, value) in data.iter_mut().zip(pattern(seed, usize::MAX)) {
+        *byte = value;
     }
 }
 
@@ -44,9 +56,7 @@ fn check(handle: &BufferHandle, seed: u8) {
     // SAFETY: no writers.
     let data = unsafe { handle.as_slice() };
     assert!(
-        data.iter()
-            .enumerate()
-            .all(|(i, &byte)| byte == seed.wrapping_add((i % 251) as u8)),
+        data.iter().zip(pattern(seed, data.len())).all(|(&byte, value)| byte == value),
         "block contents differ for seed {seed}"
     );
 }
@@ -211,15 +221,18 @@ fn max_temp_directory_size_is_enforced() {
     let mut blocks = Vec::new();
     let error = loop {
         match buffers.allocate(MemoryTag::OrderBy, BLOCK, false) {
-            Ok(pin) => blocks.push(Arc::clone(pin.block())),
+            Ok(pin) => {
+                fill(&pin, blocks.len() as u8);
+                blocks.push(Arc::clone(pin.block()));
+            }
             Err(error) => break error,
         }
     };
-    assert_eq!(blocks.len(), 5);
+    assert_eq!(blocks.len(), 5, "{error}");
     assert!(error.to_string().starts_with(
         "Out of Memory Error: failed to offload data block of size 256.0 KiB (768.0 KiB/768.0 KiB used).\n\
          This limit was set by the 'max_temp_directory_size' setting."
-    ));
+    ), "{error}");
     assert_eq!(buffers.max_swap(), Some(3 * BLOCK as u64));
     // Lowering the limit below the space in use is refused.
     let error = buffers.set_swap_limit(Some(BLOCK as u64)).unwrap_err();
