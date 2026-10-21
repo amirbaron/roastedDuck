@@ -1340,6 +1340,34 @@ impl rustdb_function::SettingsSource for SettingsSnapshot {
         self.value(definition)
     }
 
+    /// Extension options are local once the session set them; the built-in options have
+    /// the scope `duckdb_settings()` shows.
+    fn current_setting_scope(&self, name: &str) -> Option<(Value, rustdb_function::SettingScope)> {
+        use rustdb_function::SettingScope;
+        if let Some(definition) = SETTINGS
+            .iter()
+            .find(|definition| definition.name.eq_ignore_ascii_case(name))
+        {
+            let scope = if definition.global {
+                SettingScope::Global
+            } else {
+                SettingScope::Local
+            };
+            return self.value(definition).ok().map(|value| (value, scope));
+        }
+        self.extensions
+            .iter()
+            .find(|(option, _, _)| option.name.eq_ignore_ascii_case(name))
+            .map(|(_, value, local)| {
+                let scope = if *local {
+                    SettingScope::Local
+                } else {
+                    SettingScope::Global
+                };
+                (value.clone(), scope)
+            })
+    }
+
     fn settings(&self) -> Vec<rustdb_function::SettingInfo> {
         SETTINGS
             .iter()

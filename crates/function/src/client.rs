@@ -29,7 +29,7 @@ pub struct SettingInfo {
 pub type ExtensionOptionSet = std::sync::Arc<dyn Fn(&mut Value) -> Result<()> + Send + Sync>;
 
 /// A configuration option an extension adds (DuckDB's `ExtensionOption`, registered with
-/// `DBConfig::AddExtensionOption`); its scope defaults to the session.
+/// `DBConfig::AddExtensionOption`).
 #[derive(Clone)]
 pub struct ExtensionOption {
     pub name: String,
@@ -37,6 +37,9 @@ pub struct ExtensionOption {
     pub input_type: rustdb_types::LogicalType,
     pub default_value: Value,
     pub set_function: Option<ExtensionOptionSet>,
+    /// Whether `SET` without a scope sets the option globally (a `default_scope` of
+    /// `GLOBAL`) rather than for the session.
+    pub global_by_default: bool,
 }
 
 impl std::fmt::Debug for ExtensionOption {
@@ -48,12 +51,24 @@ impl std::fmt::Debug for ExtensionOption {
     }
 }
 
+/// Where the current value of an option comes from (DuckDB's `SettingScope`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingScope {
+    /// The connection's own value.
+    Local,
+    /// The database's value.
+    Global,
+}
+
 /// The connection's configuration as functions see it (DuckDB's
 /// `ClientContext::TryGetCurrentSetting` and `DBConfig::GetOptions`).
 pub trait SettingsSource: Send + Sync + std::fmt::Debug {
     /// The current value of option `name` (case-insensitive), or DuckDB's unrecognized
     /// option error.
     fn current_setting(&self, name: &str) -> Result<Value>;
+    /// The current value of option `name` and where it comes from (the
+    /// `SettingLookupResult` of `TryGetCurrentSetting`); `None` for an unknown option.
+    fn current_setting_scope(&self, name: &str) -> Option<(Value, SettingScope)>;
     /// Every option with its current value.
     fn settings(&self) -> Vec<SettingInfo>;
 }

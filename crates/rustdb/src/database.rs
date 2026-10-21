@@ -1663,6 +1663,17 @@ impl Database {
         })
     }
 
+    /// Adds a configuration option (`DBConfig::AddExtensionOption`, as
+    /// `duckdb_register_config_option` does): returns `false`, adding nothing, if an option
+    /// of that name exists (`HasExtensionOption`).
+    pub fn add_extension_option(&self, option: rustdb_function::ExtensionOption) -> bool {
+        if self.instance.extension_option(&option.name).is_some() {
+            return false;
+        }
+        self.instance.add_extension_option(option);
+        true
+    }
+
     /// Adds a replacement scan, tried after the built-in ones and those added before
     /// (`DBConfig::replacement_scans.push_back`).
     pub fn add_replacement_scan(&self, scan: rustdb_planner::ReplacementScan) {
@@ -1998,6 +2009,10 @@ impl Connection {
             None => outcome,
         };
         let ended = self.transactions.end_statement(outcome.is_ok(), invalidates);
+        // Between statements, the connection's functions (and C API clients reading its
+        // options) see the settings the statement left.
+        self.function_client
+            .set_settings(Arc::new(self.settings_snapshot()));
         // `EndQueryInternal`: the profile is written before the logger is refreshed.
         drop(metrics_guard);
         let profiled = self
@@ -2103,7 +2118,8 @@ impl Connection {
     }
 
     /// `PhysicalSet::SetExtensionVariable`: the option's callback checks the value, which
-    /// is then set for the session (the default scope) or globally.
+    /// is then set for the session or globally (without a scope, as the option's default
+    /// scope says).
     fn set_extension_variable(&mut self, name: &str, value: &Value, scope: SetScope) -> Result<()> {
         let instance = self.database.instance();
         let option = instance.extension_option(name).ok_or_else(|| {
@@ -2115,7 +2131,7 @@ impl Connection {
         if let Some(set_function) = &option.set_function {
             set_function(&mut target_value)?;
         }
-        if scope == SetScope::Global {
+        if scope == SetScope::Global || (scope == SetScope::Automatic && option.global_by_default) {
             instance.set_extension_global(&option, Some(target_value));
         } else {
             self.extension_session.insert(&option.name, target_value);
@@ -2124,7 +2140,8 @@ impl Connection {
     }
 
     /// `PhysicalReset::ResetExtensionVariable`: the option's callback checks the default,
-    /// which then becomes the session's (or the global) value.
+    /// which then becomes the session's or the global value (without a scope, as the
+    /// option's default scope says).
     fn reset_extension_variable(&mut self, name: &str, scope: SetScope) -> Result<()> {
         let instance = self.database.instance();
         let option = instance.extension_option(name).ok_or_else(|| {
@@ -2136,7 +2153,7 @@ impl Connection {
             let mut default_value = option.default_value.clone();
             set_function(&mut default_value)?;
         }
-        if scope == SetScope::Global {
+        if scope == SetScope::Global || (scope == SetScope::Automatic && option.global_by_default) {
             instance.set_extension_global(&option, None);
         } else {
             self.extension_session

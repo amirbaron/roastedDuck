@@ -23,7 +23,8 @@ pub use aggregate::{
     UnaryAggregate,
 };
 pub use client::{
-    ClientRequest, ExtensionOption, ExtensionOptionSet, FunctionClient, SettingInfo, SettingsSource, TempCatalog,
+    ClientRequest, ExtensionOption, ExtensionOptionSet, FunctionClient, SettingInfo, SettingScope, SettingsSource,
+    TempCatalog,
 };
 pub use copy::{CopyFunction, CopyOption, CopyOptionMode};
 pub use scalar::{
