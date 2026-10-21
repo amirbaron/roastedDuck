@@ -208,9 +208,12 @@ impl RenderingQueryResult {
                 Some(chunk) => Some(renderer.convert_chunk(conn, chunk)?),
                 None => None,
             },
-            ResultSource::Stream(stream) => match conn.fetch(stream)? {
-                Some(chunk) => Some(renderer.convert_chunk(conn, &chunk)?),
-                None => None,
+            // A fetch that fails ends a streaming result: DuckDB's `QueryResult::Fetch` then
+            // returns nothing and keeps the error on the result, which the shell does not
+            // look at.
+            ResultSource::Stream(stream) => match conn.fetch(stream) {
+                Ok(Some(chunk)) => Some(renderer.convert_chunk(conn, &chunk)?),
+                Ok(None) | Err(_) => None,
             },
         };
         let Some(mut chunk) = fetched else {
