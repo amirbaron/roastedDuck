@@ -328,9 +328,9 @@ impl TopNHeap {
         self.heap.push(entry);
     }
 
-    /// The rows of `sort_chunk` whose first sort column does not order after the global
-    /// boundary's (`CheckBoundaryValues` on the first column): only they can enter the
-    /// heap. `None` when every row may.
+    /// The rows of `sort_chunk` whose first sort column orders before the global
+    /// boundary's, or ties with it when more columns follow (`CheckBoundaryValues` on the
+    /// first column): only they can enter the heap. `None` when every row may.
     fn rows_within_boundary(&mut self, sort_chunk: &DataChunk, boundary: &[u8]) -> Result<Option<Vec<u32>>> {
         if self.boundary.as_ref().is_none_or(|known| *known.key != *boundary) {
             let mut columns = [Vector::flat(sort_chunk.column(0).logical_type().clone(), 1)];
@@ -348,21 +348,31 @@ impl TopNHeap {
         };
         let count = sort_chunk.len();
         let column = sort_chunk.column(0);
+        // With a single sort column, a row equal to the boundary cannot enter the full
+        // heap either (an earlier row wins the tie), as with DuckDB's comparison of the
+        // last column; with more columns, the next ones decide.
+        let single = self.modifiers.len() == 1;
         let mut rows = Vec::new();
         if Self::compares_typed(column, &known.first) {
             // `VectorOperations::DistinctLessThan` and friends: without NULLs, a value
-            // orders at most as the boundary's when it compares so.
-            let op = if self.modifiers[0].order == SortOrder::Descending {
-                CompareOp::GreaterThanOrEqual
-            } else {
-                CompareOp::LessThanOrEqual
+            // orders before the boundary's when it compares so.
+            let op = match (self.modifiers[0].order == SortOrder::Descending, single) {
+                (true, true) => CompareOp::GreaterThan,
+                (true, false) => CompareOp::GreaterThanOrEqual,
+                (false, true) => CompareOp::LessThan,
+                (false, false) => CompareOp::LessThanOrEqual,
             };
             rows.reserve(count);
             rustdb_types::compare::select(op, column, &known.first, count, None, Some(&mut rows), None)?;
         } else {
             let limit = &known.key[..known.first_length];
             let firsts = create_sort_keys(&[column], &self.modifiers[..1], count)?;
-            append_where(count, &mut rows, |row| row as u32, |row| firsts.key(row) <= limit);
+            append_where(
+                count,
+                &mut rows,
+                |row| row as u32,
+                |row| firsts.key(row) < limit || !single && firsts.key(row) == limit,
+            );
         }
         Ok((rows.len() < count).then_some(rows))
     }
