@@ -65,9 +65,9 @@ impl Value {
             LogicalTypeId::Blob => serializer.write_property(102, "value", &blob::to_string(bytes)),
             LogicalTypeId::Geometry => {
                 if !serializer.should_serialize(WKB_GEOMETRY_VERSION) {
-                    return Err(Error::not_implemented(
-                        "Serializing GEOMETRY values in the spatial extension's legacy format",
-                    ));
+                    // Older versions get the spatial extension's legacy format.
+                    let legacy = crate::geometry::to_spatial(bytes)?;
+                    return serializer.write_property(102, "value", &blob::to_string(&legacy));
                 }
                 serializer.write_property(102, "value", &blob::to_string(bytes))?;
                 serializer.write_property(103, "geometry_format", &GeometryStorageType::Wkb)
@@ -165,12 +165,11 @@ impl Value {
                     "geometry_format",
                     GeometryStorageType::Spatial,
                 )?;
-                if format != GeometryStorageType::Wkb {
-                    return Err(Error::not_implemented(
-                        "Reading GEOMETRY values in the spatial extension's legacy format",
-                    ));
+                match format {
+                    GeometryStorageType::Wkb => blob::from_string(&text),
+                    GeometryStorageType::Spatial => crate::geometry::from_spatial(&blob::from_string(&text)?),
+                    _ => Err(Error::internal("Unknown geometry format in value deserialization")),
                 }
-                blob::from_string(&text)
             }
             _ => Ok(text),
         }
