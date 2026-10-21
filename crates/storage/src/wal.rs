@@ -555,6 +555,9 @@ pub struct WalReader {
     reader: BufReader<File>,
     offset: u64,
     file_size: u64,
+    /// The WAL's version: 1 for WALs of DuckDB before v0.10, whose entries are neither
+    /// sized nor checksummed (`ReplayState::wal_version`).
+    version: u64,
 }
 
 impl ReadStream for WalReader {
@@ -589,6 +592,7 @@ impl WalReader {
             reader: BufReader::new(file),
             offset: 0,
             file_size,
+            version: WAL_VERSION_NUMBER,
         }))
     }
 
@@ -622,9 +626,14 @@ impl WalReader {
         let d: &mut dyn Deserializer = &mut deserializer;
         let wal_type: u8 = d.read_property(100, "wal_type")?;
         if wal_type != WalType::WalVersion as u8 {
-            return Err(Error::not_implemented(
-                "replaying a WAL without a version entry (written by DuckDB before v0.10)",
-            ));
+            // DuckDB before v0.10 wrote no version entry: the first entry is data.
+            self.reset()?;
+            self.version = 1;
+            return Ok(WalHeader {
+                version: 1,
+                db_identifier: None,
+                checkpoint_iteration: None,
+            });
         }
         let version: u64 = d.read_property(101, "version")?;
         let mut identifier = [0u8; DB_IDENTIFIER_LEN];
@@ -643,11 +652,27 @@ impl WalReader {
         }
         let checkpoint_iteration: Option<u64> = d.read_optional(103, "checkpoint_iteration")?;
         deserializer.end()?;
+        self.version = version;
         Ok(WalHeader {
             version,
             db_identifier: has_identifier.then_some(identifier),
             checkpoint_iteration,
         })
+    }
+
+    /// The WAL's version (1 for WALs written before v0.10).
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// Reads the next entry with `read` (`GetEntryDeserializer`): from its sized and
+    /// checksummed frame, or straight from the file for version 1.
+    pub fn read_entry<R>(&mut self, read: impl FnOnce(&mut dyn Deserializer) -> Result<R>) -> Result<R> {
+        if self.version == 1 {
+            return read(&mut StreamDeserializer::new(self));
+        }
+        let payload = self.next_entry()?;
+        read(&mut rustdb_serde::binary::BinaryDeserializer::new(&payload))
     }
 
     /// Reads the payload of the next entry and verifies its checksum. A torn entry is a

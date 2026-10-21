@@ -21,7 +21,6 @@ use rustdb_execution::operators::{
     DdlAction, DropAction, TableCreator,
 };
 use rustdb_serde::Deserializer;
-use rustdb_serde::binary::BinaryDeserializer;
 use rustdb_storage::DataTable;
 use rustdb_storage::checkpoint::pointers::{deserialize_index_storage_info, deserialize_meta_block_pointer};
 use rustdb_storage::checkpoint::vector_serde::deserialize_chunk;
@@ -29,6 +28,7 @@ use rustdb_storage::index::UnboundIndexStorage;
 use rustdb_storage::metadata::MetaBlockPointer;
 use rustdb_storage::storage_manager::StorageManager;
 use rustdb_storage::wal::{WAL_VERSION_NUMBER, WalReader, WalType, checkpoint_wal_path};
+use rustdb_types::DataChunk;
 
 use crate::attached::AttachedDatabase;
 use crate::{Connection, Database};
@@ -96,7 +96,7 @@ struct ScanState {
 /// Checks the header against the database file (`ReplayVersion`).
 fn check_header(reader: &mut WalReader, storage: &StorageManager, state: &mut ScanState) -> Result<()> {
     let header = reader.read_header()?;
-    if header.version != WAL_VERSION_NUMBER {
+    if !matches!(header.version, 1 | WAL_VERSION_NUMBER) {
         return Err(io_error(format!(
             "Failed to read WAL of version {} - can only read version 1, 2 and 3 (encrypted)",
             header.version
@@ -121,12 +121,41 @@ fn check_header(reader: &mut WalReader, storage: &StorageManager, state: &mut Sc
     Ok(())
 }
 
-/// The type of an entry and a deserializer positioned after it.
-fn entry_type(deserializer: &mut BinaryDeserializer<'_>) -> Result<WalType> {
-    deserializer.begin()?;
-    let d: &mut dyn Deserializer = deserializer;
+/// Opens an entry and reads its type.
+fn entry_type(d: &mut dyn Deserializer) -> Result<WalType> {
+    d.on_object_begin()?;
     let value: u8 = d.read_property(100, "wal_type")?;
     WalType::from_u8(value).ok_or_else(|| Error::internal("Invalid WAL entry type!"))
+}
+
+/// What the first pass needs of an entry.
+enum ScannedEntry {
+    Flush,
+    /// A checkpoint marker with the root it announces.
+    Checkpoint(MetaBlockPointer),
+    Other,
+}
+
+/// Reads an entry for the first pass. A framed entry is read only up to what the pass
+/// needs (its frame skips the rest); an unframed one (`whole`, WAL version 1) is read to
+/// its end.
+fn scan_entry(d: &mut dyn Deserializer, whole: bool) -> Result<ScannedEntry> {
+    if whole {
+        return Ok(match parse_entry(d, "")? {
+            WalEntry::Flush => ScannedEntry::Flush,
+            WalEntry::Checkpoint(meta_block) => ScannedEntry::Checkpoint(meta_block),
+            _ => ScannedEntry::Other,
+        });
+    }
+    Ok(match entry_type(d)? {
+        WalType::WalFlush => ScannedEntry::Flush,
+        WalType::Checkpoint => ScannedEntry::Checkpoint(d.read_object_property(
+            101,
+            "meta_block",
+            deserialize_meta_block_pointer,
+        )?),
+        _ => ScannedEntry::Other,
+    })
 }
 
 /// The first pass (`ReplayLog` with `deserialize_only`).
@@ -140,20 +169,16 @@ fn scan_log(reader: &mut WalReader, storage: &StorageManager) -> Result<ScanStat
         loop {
             replay_entry_count += 1;
             state.current_position = reader.offset();
-            let payload = reader.next_entry()?;
-            let mut deserializer = BinaryDeserializer::new(&payload);
-            match entry_type(&mut deserializer)? {
-                WalType::Checkpoint => {
+            let whole = reader.version() == 1;
+            match reader.read_entry(|d| scan_entry(d, whole))? {
+                ScannedEntry::Checkpoint(meta_block) => {
                     if state.checkpoint.is_some() {
                         return Err(io_error("WAL cannot contain more than one checkpoint marker"));
                     }
-                    let d: &mut dyn Deserializer = &mut deserializer;
-                    let meta_block =
-                        d.read_object_property(101, "meta_block", deserialize_meta_block_pointer)?;
                     state.checkpoint = Some((meta_block, reader.offset()));
                     state.checkpoint_truncate_offset = last_flush_end;
                 }
-                WalType::WalFlush => {
+                ScannedEntry::Flush => {
                     last_flush_end = reader.offset();
                     if reader.finished() {
                         rustdb_common::profiling::add_to_counter(
@@ -163,7 +188,7 @@ fn scan_log(reader: &mut WalReader, storage: &StorageManager) -> Result<ScanStat
                         return Ok(());
                     }
                 }
-                _ => {}
+                ScannedEntry::Other => {}
             }
         }
     })();
@@ -251,8 +276,7 @@ fn replay_log(
     let outcome = (|| -> Result<()> {
         reader.read_header()?;
         loop {
-            let payload = reader.next_entry()?;
-            if replayer.replay_entry(&mut connection, &payload)? {
+            if reader.read_entry(|d| replayer.replay_entry(&mut connection, d))? {
                 connection.query("COMMIT")?;
                 successful_offset = reader.offset();
                 if reader.finished() {
@@ -273,6 +297,142 @@ fn replay_log(
     Ok((successful_offset, !all_succeeded))
 }
 
+/// A WAL entry as read, before it is applied (the reading half of DuckDB's `Replay*`
+/// functions, which their `deserialize_only` mode runs alone).
+enum WalEntry {
+    Flush,
+    CreateTable(CreateInfo),
+    CreateView(CreateInfo),
+    CreateSequence(CreateInfo),
+    CreateSchema(String),
+    CreateIndex(CreateInfo, UnboundIndexStorage),
+    /// Macros, table macros and types.
+    CreateEntry(CreateInfo),
+    Drop {
+        catalog_type: AstCatalogType,
+        schema: String,
+        name: String,
+    },
+    Alter(Box<AlterInfo>),
+    SequenceValue {
+        schema: String,
+        name: String,
+        usage_count: u64,
+        counter: i64,
+    },
+    UseTable {
+        schema: String,
+        name: String,
+    },
+    Insert(DataChunk),
+    Delete(DataChunk),
+    Update {
+        column_path: Vec<u64>,
+        chunk: DataChunk,
+    },
+    Checkpoint(MetaBlockPointer),
+}
+
+/// Reads one entry; `CREATE` entries go to the catalog `catalog` whatever the catalog
+/// name they were logged with.
+fn parse_entry(d: &mut dyn Deserializer, catalog: &str) -> Result<WalEntry> {
+    let wal_type = entry_type(d)?;
+    let create_info = |d: &mut dyn Deserializer, expected: AstCatalogType, tag: &'static str| {
+        let mut info = read_create_info_property(d, 101, expected, tag)?;
+        catalog.clone_into(&mut info.catalog);
+        Ok::<_, Error>(info)
+    };
+    let entry = match wal_type {
+        WalType::WalFlush => WalEntry::Flush,
+        WalType::CreateTable => WalEntry::CreateTable(create_info(d, AstCatalogType::TableEntry, "table")?),
+        WalType::CreateView => WalEntry::CreateView(create_info(d, AstCatalogType::ViewEntry, "view")?),
+        WalType::CreateSequence => {
+            WalEntry::CreateSequence(create_info(d, AstCatalogType::SequenceEntry, "sequence")?)
+        }
+        WalType::CreateSchema => WalEntry::CreateSchema(d.read_property(101, "schema")?),
+        WalType::CreateIndex => {
+            let info = create_info(d, AstCatalogType::IndexEntry, "index_catalog_entry")?;
+            WalEntry::CreateIndex(info, read_index_storage(d)?)
+        }
+        // `ReplayCreateMacro`, `ReplayCreateTableMacro` and `ReplayCreateType`.
+        WalType::CreateMacro => WalEntry::CreateEntry(create_info(d, AstCatalogType::MacroEntry, "macro")?),
+        WalType::CreateTableMacro => {
+            WalEntry::CreateEntry(create_info(d, AstCatalogType::TableMacroEntry, "table")?)
+        }
+        WalType::CreateType => WalEntry::CreateEntry(create_info(d, AstCatalogType::TypeEntry, "type")?),
+        WalType::DropTable
+        | WalType::DropView
+        | WalType::DropSequence
+        | WalType::DropIndex
+        | WalType::DropMacro
+        | WalType::DropTableMacro
+        | WalType::DropType => {
+            let schema: String = d.read_property(101, "schema")?;
+            let name: String = d.read_property(102, "name")?;
+            let catalog_type = match wal_type {
+                WalType::DropTable => AstCatalogType::TableEntry,
+                WalType::DropView => AstCatalogType::ViewEntry,
+                WalType::DropSequence => AstCatalogType::SequenceEntry,
+                WalType::DropIndex => AstCatalogType::IndexEntry,
+                WalType::DropMacro => AstCatalogType::MacroEntry,
+                WalType::DropTableMacro => AstCatalogType::TableMacroEntry,
+                _ => AstCatalogType::TypeEntry,
+            };
+            WalEntry::Drop {
+                catalog_type,
+                schema,
+                name,
+            }
+        }
+        WalType::DropSchema => WalEntry::Drop {
+            catalog_type: AstCatalogType::SchemaEntry,
+            schema: String::new(),
+            name: d.read_property(101, "schema")?,
+        },
+        WalType::AlterInfo => {
+            d.on_property_begin(101, "info")?;
+            if !d.on_nullable_begin()? {
+                return Err(Error::serialization("ALTER entry without info"));
+            }
+            let info: rustdb_ast::ParseInfo = d.read_object()?;
+            d.on_nullable_end()?;
+            d.on_property_end()?;
+            let rustdb_ast::ParseInfo::Alter(alter) = info else {
+                return Err(Error::serialization("ALTER entry with another statement"));
+            };
+            if is_add_primary_key(&alter) {
+                skip_index_storage(d)?;
+            }
+            WalEntry::Alter(alter)
+        }
+        WalType::SequenceValue => WalEntry::SequenceValue {
+            schema: d.read_property(101, "schema")?,
+            name: d.read_property(102, "name")?,
+            usage_count: d.read_property(103, "usage_count")?,
+            counter: d.read_property(104, "counter")?,
+        },
+        WalType::UseTable => WalEntry::UseTable {
+            schema: d.read_property(101, "schema")?,
+            name: d.read_property(102, "table")?,
+        },
+        WalType::InsertTuple => WalEntry::Insert(d.read_object_property(101, "chunk", deserialize_chunk)?),
+        WalType::DeleteTuple => WalEntry::Delete(d.read_object_property(101, "chunk", deserialize_chunk)?),
+        WalType::UpdateTuple => WalEntry::Update {
+            column_path: d.read_property(101, "column_indexes")?,
+            chunk: d.read_object_property(102, "chunk", deserialize_chunk)?,
+        },
+        WalType::Checkpoint => {
+            WalEntry::Checkpoint(d.read_object_property(101, "meta_block", deserialize_meta_block_pointer)?)
+        }
+        WalType::RowGroupData => {
+            return Err(Error::not_implemented("replaying ROW_GROUP_DATA WAL entries"));
+        }
+        WalType::WalVersion => return Err(Error::internal("Invalid WAL entry type!")),
+    };
+    d.on_object_end()?;
+    Ok(entry)
+}
+
 /// The state of the second pass (`ReplayState`).
 struct Replayer {
     catalog: Arc<Catalog>,
@@ -283,18 +443,17 @@ struct Replayer {
 
 impl Replayer {
     /// Applies one entry; returns whether it was a `WAL_FLUSH` (`ReplayEntry`).
-    fn replay_entry(&mut self, connection: &mut Connection, payload: &[u8]) -> Result<bool> {
-        let mut deserializer = BinaryDeserializer::new(payload);
-        let wal_type = entry_type(&mut deserializer)?;
-        if wal_type == WalType::WalFlush {
-            deserializer.end()?;
-            return Ok(true);
-        }
+    fn replay_entry(&mut self, connection: &mut Connection, d: &mut dyn Deserializer) -> Result<bool> {
+        let entry = parse_entry(d, self.catalog.name())?;
+        self.apply(connection, entry)
+    }
+
+    /// Applies a parsed entry; returns whether it was a `WAL_FLUSH`.
+    fn apply(&mut self, connection: &mut Connection, entry: WalEntry) -> Result<bool> {
         let transaction = connection.current_transaction();
-        let d: &mut dyn Deserializer = &mut deserializer;
-        match wal_type {
-            WalType::CreateTable => {
-                let info = self.read_create_info(d, AstCatalogType::TableEntry, "table")?;
+        match entry {
+            WalEntry::Flush => return Ok(true),
+            WalEntry::CreateTable(info) => {
                 let creator = CatalogTableCreator {
                     catalog: Arc::clone(&self.catalog),
                     schema: info.schema.clone(),
@@ -303,24 +462,21 @@ impl Replayer {
                 };
                 creator.create(&transaction)?;
             }
-            WalType::CreateView => {
-                let info = self.read_create_info(d, AstCatalogType::ViewEntry, "view")?;
+            WalEntry::CreateView(info) => {
                 CreateViewAction {
                     catalog: Arc::clone(&self.catalog),
                     info,
                 }
                 .execute(&transaction)?;
             }
-            WalType::CreateSequence => {
-                let info = self.read_create_info(d, AstCatalogType::SequenceEntry, "sequence")?;
+            WalEntry::CreateSequence(info) => {
                 CreateSequenceAction {
                     catalog: Arc::clone(&self.catalog),
                     info,
                 }
                 .execute(&transaction)?;
             }
-            WalType::CreateSchema => {
-                let schema: String = d.read_property(101, "schema")?;
+            WalEntry::CreateSchema(schema) => {
                 let mut info = rustdb_catalog::checkpoint::schema_create_info(self.catalog.name(), &schema);
                 info.on_conflict = rustdb_ast::OnCreateConflict::ErrorOnConflict;
                 CreateSchemaAction {
@@ -329,30 +485,22 @@ impl Replayer {
                 }
                 .execute(&transaction)?;
             }
-            WalType::CreateIndex => {
-                let info = self.read_create_info(d, AstCatalogType::IndexEntry, "index_catalog_entry")?;
-                let stored = read_index_storage(d)?;
+            WalEntry::CreateIndex(info, stored) => {
                 replay_create_index(&self.catalog, &transaction, &info, stored)?;
             }
-            WalType::DropTable
-            | WalType::DropView
-            | WalType::DropSequence
-            | WalType::DropIndex
-            | WalType::DropMacro
-            | WalType::DropTableMacro
-            | WalType::DropType => {
-                let schema: String = d.read_property(101, "schema")?;
-                let name: String = d.read_property(102, "name")?;
-                let catalog_type = match wal_type {
-                    WalType::DropTable => AstCatalogType::TableEntry,
-                    WalType::DropView => AstCatalogType::ViewEntry,
-                    WalType::DropSequence => AstCatalogType::SequenceEntry,
-                    WalType::DropIndex => AstCatalogType::IndexEntry,
-                    WalType::DropMacro => AstCatalogType::MacroEntry,
-                    WalType::DropTableMacro => AstCatalogType::TableMacroEntry,
-                    _ => AstCatalogType::TypeEntry,
-                };
-                if wal_type == WalType::DropTable
+            WalEntry::CreateEntry(info) => {
+                CreateEntryAction {
+                    catalog: Arc::clone(&self.catalog),
+                    info,
+                }
+                .execute(&transaction)?;
+            }
+            WalEntry::Drop {
+                catalog_type,
+                schema,
+                name,
+            } => {
+                if catalog_type == AstCatalogType::TableEntry
                     && self
                         .current_table
                         .as_ref()
@@ -362,31 +510,13 @@ impl Replayer {
                 }
                 self.drop(&transaction, catalog_type, schema, name)?;
             }
-            WalType::DropSchema => {
-                let schema: String = d.read_property(101, "schema")?;
-                self.drop(&transaction, AstCatalogType::SchemaEntry, String::new(), schema)?;
-            }
-            WalType::AlterInfo => {
-                d.on_property_begin(101, "info")?;
-                if !d.on_nullable_begin()? {
-                    return Err(Error::serialization("ALTER entry without info"));
-                }
-                let info: rustdb_ast::ParseInfo = d.read_object()?;
-                d.on_nullable_end()?;
-                d.on_property_end()?;
-                let rustdb_ast::ParseInfo::Alter(mut alter) = info else {
-                    return Err(Error::serialization("ALTER entry with another statement"));
-                };
-                if is_add_primary_key(&alter) {
-                    skip_index_storage(d)?;
-                }
-                self.alter(connection, &mut alter)?;
-            }
-            WalType::SequenceValue => {
-                let schema: String = d.read_property(101, "schema")?;
-                let name: String = d.read_property(102, "name")?;
-                let usage_count: u64 = d.read_property(103, "usage_count")?;
-                let counter: i64 = d.read_property(104, "counter")?;
+            WalEntry::Alter(mut alter) => self.alter(connection, &mut alter)?,
+            WalEntry::SequenceValue {
+                schema,
+                name,
+                usage_count,
+                counter,
+            } => {
                 let entry = self
                     .catalog
                     .get_entry(&transaction, CatalogType::Sequence, &schema, &name)
@@ -396,9 +526,7 @@ impl Replayer {
                 };
                 sequence.replay_value(usage_count, counter);
             }
-            WalType::UseTable => {
-                let schema: String = d.read_property(101, "schema")?;
-                let name: String = d.read_property(102, "table")?;
+            WalEntry::UseTable { schema, name } => {
                 let entry = self
                     .catalog
                     .get_entry(&transaction, CatalogType::Table, &schema, &name)
@@ -408,14 +536,12 @@ impl Replayer {
                 };
                 self.current_table.clone_from(&table.storage);
             }
-            WalType::InsertTuple => {
-                let chunk = d.read_object_property(101, "chunk", deserialize_chunk)?;
+            WalEntry::Insert(chunk) => {
                 let table = self.current_table("insert")?;
                 // Appended without verifying constraints (`LocalWALAppend`).
                 table.append_chunk(&transaction, &chunk, rustdb_storage::TableConstraints::default())?;
             }
-            WalType::DeleteTuple => {
-                let chunk = d.read_object_property(101, "chunk", deserialize_chunk)?;
+            WalEntry::Delete(chunk) => {
                 let table = self.current_table("delete")?;
                 let ids = chunk.column(0).flattened(chunk.len());
                 let row_ids = &ids.values::<i64>()[..chunk.len()];
@@ -425,9 +551,7 @@ impl Replayer {
                 }
                 table.delete(&transaction, row_ids)?;
             }
-            WalType::UpdateTuple => {
-                let column_path: Vec<u64> = d.read_property(101, "column_indexes")?;
-                let chunk = d.read_object_property(102, "chunk", deserialize_chunk)?;
+            WalEntry::Update { column_path, chunk } => {
                 let table = self.current_table("update")?;
                 if column_path
                     .first()
@@ -448,45 +572,9 @@ impl Replayer {
                 let path: Vec<usize> = column_path.iter().map(|&index| index as usize).collect();
                 table.update_column(&transaction, &ids.values::<i64>()[..chunk.len()], &path, &values)?;
             }
-            WalType::Checkpoint => {
-                let _ = d.read_object_property(101, "meta_block", deserialize_meta_block_pointer)?;
-            }
-            WalType::RowGroupData => {
-                return Err(Error::not_implemented("replaying ROW_GROUP_DATA WAL entries"));
-            }
-            WalType::CreateMacro | WalType::CreateTableMacro | WalType::CreateType => {
-                // `ReplayCreateMacro`, `ReplayCreateTableMacro` and `ReplayCreateType`.
-                let (expected, tag) = match wal_type {
-                    WalType::CreateMacro => (AstCatalogType::MacroEntry, "macro"),
-                    WalType::CreateTableMacro => (AstCatalogType::TableMacroEntry, "table"),
-                    _ => (AstCatalogType::TypeEntry, "type"),
-                };
-                let info = self.read_create_info(d, expected, tag)?;
-                CreateEntryAction {
-                    catalog: Arc::clone(&self.catalog),
-                    info,
-                }
-                .execute(&transaction)?;
-            }
-            WalType::WalVersion | WalType::WalFlush => {
-                return Err(Error::internal("Invalid WAL entry type!"));
-            }
+            WalEntry::Checkpoint(_) => {}
         }
-        deserializer.end()?;
         Ok(false)
-    }
-
-    /// Reads the `CreateInfo` of a `CREATE` entry; the entry goes to this database's
-    /// catalog whatever the catalog name it was logged with.
-    fn read_create_info(
-        &self,
-        d: &mut dyn Deserializer,
-        expected: AstCatalogType,
-        tag: &'static str,
-    ) -> Result<CreateInfo> {
-        let mut info = read_create_info_property(d, 101, expected, tag)?;
-        self.catalog.name().clone_into(&mut info.catalog);
-        Ok(info)
     }
 
     fn current_table(&self, action: &str) -> Result<&Arc<DataTable>> {
