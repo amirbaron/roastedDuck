@@ -250,7 +250,6 @@ impl ColumnSegment {
             _ => {
                 let layout = Layout::of(&ty)?;
                 let block = buffer_manager.register_block(block_manager, block_id);
-                block.release_on_unpin();
                 Ok(Self {
                     ty,
                     layout,
@@ -516,11 +515,6 @@ impl ColumnSegment {
             return Err(Error::internal(
                 "ColumnSegment::FetchRow - row_id out of range for segment",
             ));
-        }
-        // Rows fetched by id (late materialisation, index lookups) are read a few at a
-        // time and again by later queries: their blocks stay cached like DuckDB's.
-        if let Some(block) = &self.block {
-            block.keep_cached();
         }
         match self.compression {
             CompressionType::Constant | CompressionType::Empty => {

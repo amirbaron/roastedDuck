@@ -1,6 +1,5 @@
 //! The buffer pool: memory limit, usage accounting and eviction (DuckDB's `BufferPool`).
 
-use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
@@ -52,8 +51,6 @@ pub struct BufferPool {
     allocator: Arc<BlockAllocator>,
     bulk_deallocation_flush_threshold: AtomicU64,
     temporary_memory: TemporaryMemoryManager,
-    /// Unpinned blocks kept loaded by [`BufferPool::retain_released`], oldest first.
-    released: Mutex<VecDeque<EvictionNode>>,
 }
 
 impl std::fmt::Debug for BufferPool {
@@ -64,11 +61,6 @@ impl std::fmt::Debug for BufferPool {
             .finish_non_exhaustive()
     }
 }
-
-/// How many unpinned blocks [`BufferPool::retain_released`] keeps loaded (4 MiB of
-/// 256 KiB blocks): enough for the blocks every scanning thread shares with the next row
-/// groups it scans.
-const RELEASED_BLOCKS: usize = 16;
 
 /// DuckDB's default `allocator_bulk_deallocation_flush_threshold` (512 MiB).
 pub const DEFAULT_BULK_DEALLOCATION_FLUSH_THRESHOLD: u64 = 512 << 20;
@@ -94,7 +86,6 @@ impl BufferPool {
             allocator,
             bulk_deallocation_flush_threshold: AtomicU64::new(DEFAULT_BULK_DEALLOCATION_FLUSH_THRESHOLD),
             temporary_memory: TemporaryMemoryManager::new(),
-            released: Mutex::default(),
         })
     }
 
@@ -203,49 +194,6 @@ impl BufferPool {
         })
     }
 
-    /// Keeps a persistent block that holds several segments loaded after its last unpin
-    /// (see `BlockHandle::release_on_unpin`), with release sequence `sequence`, until
-    /// [`RELEASED_BLOCKS`] blocks were released after it or memory runs short; then it is
-    /// freed unless it was pinned again.
-    pub(crate) fn retain_released(&self, memory: &Arc<BlockMemory>, sequence: u64) {
-        let oldest = {
-            let mut released = self.released.lock().unwrap_or_else(PoisonError::into_inner);
-            released.push_back(EvictionNode {
-                memory: Arc::downgrade(memory),
-                sequence,
-            });
-            if released.len() > RELEASED_BLOCKS {
-                released.pop_front()
-            } else {
-                None
-            }
-        };
-        if let Some(node) = oldest {
-            Self::free_released(&node);
-        }
-    }
-
-    /// Frees a block [`BufferPool::retain_released`] kept, unless it was pinned (and
-    /// possibly released again) since.
-    fn free_released(node: &EvictionNode) {
-        let Some(memory) = node.memory.upgrade() else {
-            return;
-        };
-        let mut inner = memory.lock();
-        if memory.readers() == 0 && memory.release_sequence() == node.sequence && memory.releases_on_unpin() {
-            // Persistent data: dropping it cannot fail.
-            let _ = memory.unload(&mut inner);
-        }
-    }
-
-    /// Frees every block [`BufferPool::retain_released`] keeps.
-    fn free_all_released(&self) {
-        let released = std::mem::take(&mut *self.released.lock().unwrap_or_else(PoisonError::into_inner));
-        for node in &released {
-            Self::free_released(node);
-        }
-    }
-
     pub(crate) fn increment_dead_nodes(&self, memory: &BlockMemory) {
         self.queue_for(memory).increment_dead_nodes();
     }
@@ -266,9 +214,6 @@ impl BufferPool {
         memory_limit: u64,
         reuse: bool,
     ) -> Result<Eviction> {
-        if self.usage.total(false) + extra_memory > memory_limit {
-            self.free_all_released();
-        }
         for queue in &self.queues {
             let eviction = self.evict_from_queue(queue, tag, extra_memory, memory_limit, reuse)?;
             if eviction.success {
