@@ -2287,6 +2287,7 @@ test/sql/function/string/test_url_encode.test
 test/sql/function/time/epoch.test
 test/sql/function/time/test_date_part.test
 test/sql/function/time/test_extract.test
+test/sql/function/time/test_extract_stats.test
 test/sql/function/timestamp/age.test
 test/sql/function/timestamp/date_diff.test_slow
 test/sql/function/timestamp/date_sub.test_slow

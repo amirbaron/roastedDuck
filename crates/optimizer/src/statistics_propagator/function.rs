@@ -191,6 +191,14 @@ fn propagate_date_part(
     };
     let child = child_stats.get(input_index)?;
     let input = function.children.get(input_index)?;
+    // `EpochOperator::PropagateStatistics<dtime_t>`: the seconds of a day.
+    if matches!(kind, DatePartKind::Monotonic { double: true }) && input.return_type.id() == LogicalTypeId::Time {
+        let mut result = BaseStatistics::create_empty(LogicalType::DOUBLE);
+        set_min(&mut result, Some(NumericValue::F64(0.0)));
+        set_max(&mut result, Some(NumericValue::F64(86_400.0)));
+        result.set_validity(child.can_have_null(), child.can_have_no_null());
+        return Some(result);
+    }
     let temporal = matches!(
         input.return_type.id(),
         LogicalTypeId::Date | LogicalTypeId::Timestamp
