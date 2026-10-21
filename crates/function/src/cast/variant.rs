@@ -322,7 +322,10 @@ fn cast_primitive_in_place(
         };
         let matches = match direct {
             VariantLogicalType::BoolTrue => {
-                matches!(type_id, VariantLogicalType::BoolTrue | VariantLogicalType::BoolFalse)
+                matches!(
+                    type_id,
+                    VariantLogicalType::BoolTrue | VariantLogicalType::BoolFalse
+                )
             }
             VariantLogicalType::Decimal => {
                 type_id == VariantLogicalType::Decimal && value_type.decimal_properties() == decimal

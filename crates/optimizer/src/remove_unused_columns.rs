@@ -112,7 +112,8 @@ impl ReferencedColumn {
         if find_shortest_matching_path(&self.unique_paths, path).is_some() {
             return;
         }
-        self.unique_paths.retain(|unique_path| !unique_path.is_child_path_of(path));
+        self.unique_paths
+            .retain(|unique_path| !unique_path.is_child_path_of(path));
         self.unique_paths.push(path.clone());
     }
 }
@@ -239,7 +240,11 @@ impl<'a> RemoveUnusedColumns<'a> {
 
     /// Registers a chain of extracts on a column reference, optionally under a cast
     /// (`HandleExtractExpression`); `false` if `expression` is no such chain.
-    fn handle_extract_expression(&mut self, expression: &Expression, cast_type: Option<&LogicalType>) -> bool {
+    fn handle_extract_expression(
+        &mut self,
+        expression: &Expression,
+        cast_type: Option<&LogicalType>,
+    ) -> bool {
         let Some((binding, mut path)) = extract_chain(expression) else {
             return false;
         };
@@ -675,7 +680,11 @@ impl<'a> RemoveUnusedColumns<'a> {
 
     /// `struct_extract` calls reading `path` out of `target` (DuckDB's
     /// `ConstructStructExtractFromPath`).
-    fn construct_struct_extract_from_path(&self, mut target: Expression, path: &ColumnIndex) -> Result<Expression> {
+    fn construct_struct_extract_from_path(
+        &self,
+        mut target: Expression,
+        path: &ColumnIndex,
+    ) -> Result<Expression> {
         let mut path = path;
         loop {
             let struct_type = target.return_type.clone();
@@ -869,7 +878,8 @@ impl<'a> RemoveUnusedColumns<'a> {
             let column_type = get.column_type(old_column_id);
             let struct_column_index = old_column_id.index;
             let created = write_pushdown_extract_columns(column, |extract_path, cast_type| {
-                let mut new_index = ColumnIndex::with_children(struct_column_index, vec![extract_path.clone()]);
+                let mut new_index =
+                    ColumnIndex::with_children(struct_column_index, vec![extract_path.clone()]);
                 new_index.set_pushdown_extract_type(&column_type, cast_type);
                 if let Some(position) = new_column_ids.iter().position(|existing| *existing == new_index) {
                     return Ok(position as u64);
@@ -944,11 +954,16 @@ impl<'a> RemoveUnusedColumns<'a> {
     /// The expression of a table filter over `column` (DuckDB's `TableFilter::ToExpression`),
     /// as far as the column references go: the operands other than the column are left
     /// out. `None` for a filter that is constant.
-    fn table_filter_expression(&self, filter: &TableFilter, column: &Expression) -> Result<Option<Expression>> {
+    fn table_filter_expression(
+        &self,
+        filter: &TableFilter,
+        column: &Expression,
+    ) -> Result<Option<Expression>> {
         Ok(match filter {
-            TableFilter::ConstantComparison { .. } | TableFilter::IsNull | TableFilter::IsNotNull | TableFilter::In(_) => {
-                Some(column.clone())
-            }
+            TableFilter::ConstantComparison { .. }
+            | TableFilter::IsNull
+            | TableFilter::IsNotNull
+            | TableFilter::In(_) => Some(column.clone()),
             TableFilter::Or(children) | TableFilter::And(children) => {
                 let mut expressions = Vec::with_capacity(children.len());
                 for child in children {
@@ -970,7 +985,10 @@ impl<'a> RemoveUnusedColumns<'a> {
             } => {
                 let extract = self.optimizer.bind_scalar_function(
                     "struct_extract_at",
-                    vec![column.clone(), Expression::constant(Value::bigint(*child_index as i64 + 1))],
+                    vec![
+                        column.clone(),
+                        Expression::constant(Value::bigint(*child_index as i64 + 1)),
+                    ],
                 )?;
                 self.table_filter_expression(child_filter, &extract)?
             }
@@ -978,7 +996,9 @@ impl<'a> RemoveUnusedColumns<'a> {
                 Some(child) => self.table_filter_expression(child, column)?,
                 None => None,
             },
-            TableFilter::SelectivityOptional(optional) => self.table_filter_expression(&optional.child, column)?,
+            TableFilter::SelectivityOptional(optional) => {
+                self.table_filter_expression(&optional.child, column)?
+            }
             TableFilter::Dynamic(data) => data.get().map(|_| column.clone()),
             TableFilter::Expression(expression_filter) => {
                 if expression_filter.is_bloom_filter() {
@@ -1123,7 +1143,10 @@ fn supports_pushdown_extract(get: &LogicalGet, column: u64) -> bool {
     let EntryKind::Table(table) = &entry.kind else {
         return false;
     };
-    let Some(column) = usize::try_from(column).ok().and_then(|column| table.columns.get(column)) else {
+    let Some(column) = usize::try_from(column)
+        .ok()
+        .and_then(|column| table.columns.get(column))
+    else {
         return false;
     };
     column.generated.is_none()
@@ -1217,7 +1240,9 @@ fn merge_child_columns(current: &mut Vec<ColumnIndex>, new_child: ColumnIndex) {
 /// The child of a cast (not a `TRY_CAST`) (DuckDB's `TryGetCastChild`).
 fn cast_child(expression: &Expression) -> Option<&Expression> {
     match &expression.kind {
-        ExpressionKind::Cast(cast) if expression.expression_type == ExpressionType::OperatorCast && !cast.try_cast => {
+        ExpressionKind::Cast(cast)
+            if expression.expression_type == ExpressionType::OperatorCast && !cast.try_cast =>
+        {
             Some(&cast.child)
         }
         _ => None,
@@ -1241,7 +1266,11 @@ fn extract_chain(expression: &Expression) -> Option<(ColumnBinding, Vec<ColumnIn
     let child = function.children.first()?;
     let element = match child.return_type.id() {
         // `HandleStructExtract`: the field index of the bind data.
-        LogicalTypeId::Struct => ColumnIndex::new(struct_extract_index(&function.function.name, child, function.children.get(1)?)?),
+        LogicalTypeId::Struct => ColumnIndex::new(struct_extract_index(
+            &function.function.name,
+            child,
+            function.children.get(1)?,
+        )?),
         // `HandleVariantExtract`: only extracts by key are pushed down.
         LogicalTypeId::Variant => {
             let key = function.children.get(1)?.as_constant()?;
@@ -1264,9 +1293,7 @@ fn extract_chain(expression: &Expression) -> Option<(ColumnBinding, Vec<ColumnIn
 /// (case-insensitive) or by 1-based position.
 fn struct_extract_index(name: &str, input: &Expression, key: &Expression) -> Option<u64> {
     let key = key.as_constant()?;
-    if name != "struct_extract_at"
-        && key.logical_type().id() == LogicalTypeId::Varchar
-    {
+    if name != "struct_extract_at" && key.logical_type().id() == LogicalTypeId::Varchar {
         let key = key.as_str()?.to_lowercase();
         let position = input
             .return_type

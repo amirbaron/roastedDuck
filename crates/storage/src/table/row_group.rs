@@ -887,8 +887,13 @@ impl RowGroup {
                 vector.values_mut::<i64>()[result_index] = (row_start + row) as i64;
                 continue;
             }
-            self.column(column_id.primary_index())?
-                .fetch_row_index(transaction, column_id, row, vector, result_index)?;
+            self.column(column_id.primary_index())?.fetch_row_index(
+                transaction,
+                column_id,
+                row,
+                vector,
+                result_index,
+            )?;
         }
         Ok(())
     }

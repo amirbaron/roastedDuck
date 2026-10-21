@@ -981,7 +981,12 @@ fn primitive_variant_type(ty: &LogicalType) -> Option<V> {
 
 /// Appends the non-NULL value at `slot` of a primitive column to the current row, like
 /// `ConvertPrimitive` does with its `Value`.
-fn write_primitive(builder: &mut VariantVectorBuilder, vector: &Vector, slot: usize, type_id: V) -> Result<()> {
+fn write_primitive(
+    builder: &mut VariantVectorBuilder,
+    vector: &Vector,
+    slot: usize,
+    type_id: V,
+) -> Result<()> {
     let slot = vector.sel().slot(slot);
     match type_id {
         V::BoolTrue => {

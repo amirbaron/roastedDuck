@@ -159,13 +159,20 @@ impl<'a> VariantVectorView<'a> {
         if u64::from(keys_index) >= keys.length {
             return Err(Error::internal("VARIANT key index out of range"));
         }
-        let key = self.key_strings.string_bytes((keys.offset + u64::from(keys_index)) as usize);
+        let key = self
+            .key_strings
+            .string_bytes((keys.offset + u64::from(keys_index)) as usize);
         Ok((values_index, Some(key)))
     }
 
     /// The child value of an OBJECT by key, or of an ARRAY by 0-based index
     /// (`VariantUtils::FindChildValues`).
-    pub fn find_child(&self, slot: usize, nested: VariantNested, component: &VariantPathComponent) -> Result<Option<u32>> {
+    pub fn find_child(
+        &self,
+        slot: usize,
+        nested: VariantNested,
+        component: &VariantPathComponent,
+    ) -> Result<Option<u32>> {
         match component {
             VariantPathComponent::Index(index) => {
                 if *index >= nested.child_count {

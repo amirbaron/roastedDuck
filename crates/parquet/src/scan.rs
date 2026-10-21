@@ -739,7 +739,11 @@ fn scan_column(local: usize, same_type: bool, children: Option<&Vec<ChildProject
 /// (`CreateReaderRecursive`'s indexes); empty when it reads the whole column or a
 /// VARIANT field.
 pub(crate) fn child_projections(column: &ColumnIndex) -> Vec<ChildProjection> {
-    if column.child_indexes.iter().any(|child| !child.has_primary_index()) {
+    if column
+        .child_indexes
+        .iter()
+        .any(|child| !child.has_primary_index())
+    {
         return Vec::new();
     }
     column

@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use rustdb_common::{Result, STANDARD_VECTOR_SIZE};
-use rustdb_function::random::RandomEngine;
 use rustdb_function::cast::CastFunctionSet;
+use rustdb_function::random::RandomEngine;
 use rustdb_storage::table::{RowGroupOrderOptions, ScanCasts, ScanRandom, ScanSampling};
 use rustdb_storage::table_filter::DynamicTableFilterSet;
 use rustdb_storage::{

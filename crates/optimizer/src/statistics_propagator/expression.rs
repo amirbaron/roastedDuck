@@ -491,7 +491,12 @@ pub(crate) fn pushdown_extract_statistics(
         StatisticsType::Struct => {
             let child_index = usize::try_from(index.index).ok()?;
             let child_stats = stats.struct_children()?.get(child_index)?;
-            let child_type = stats.logical_type().struct_children()?.get(child_index)?.1.clone();
+            let child_type = stats
+                .logical_type()
+                .struct_children()?
+                .get(child_index)?
+                .1
+                .clone();
             match index.child_indexes.first() {
                 None if index.ty != child_type => try_propagate_cast(child_stats, &child_type, &index.ty),
                 None => Some(child_stats.clone()),

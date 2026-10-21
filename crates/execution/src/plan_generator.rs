@@ -203,7 +203,12 @@ fn projection_names(get: &LogicalGet) -> Result<Vec<String>> {
 
 /// The name of a scanned column, or of each of its fields read, one per line (DuckDB's
 /// `AddProjectionNames`).
-fn add_projection_names(index: &ColumnIndex, name: &str, ty: &LogicalType, result: &mut String) -> Result<()> {
+fn add_projection_names(
+    index: &ColumnIndex,
+    name: &str,
+    ty: &LogicalType,
+    result: &mut String,
+) -> Result<()> {
     if index.child_indexes.is_empty() {
         // No fields projected out.
         if !result.is_empty() {
@@ -218,7 +223,12 @@ fn add_projection_names(index: &ColumnIndex, name: &str, ty: &LogicalType, resul
         } else {
             LogicalType::variant()
         };
-        add_projection_names(child, &format!("{name}.{}", child.field_name()), &field_type, result)
+        add_projection_names(
+            child,
+            &format!("{name}.{}", child.field_name()),
+            &field_type,
+            result,
+        )
     };
     match ty.id() {
         LogicalTypeId::Struct => {

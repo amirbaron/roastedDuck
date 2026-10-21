@@ -1058,7 +1058,11 @@ pub fn try_pushdown_generic_expression(
     if bindings.iter().any(|binding| binding != first) {
         return FilterPushdownResult::NoPushdown;
     }
-    let Some(column) = get.column_ids.get(first.column_index as usize).and_then(filter_key) else {
+    let Some(column) = get
+        .column_ids
+        .get(first.column_index as usize)
+        .and_then(filter_key)
+    else {
         return FilterPushdownResult::NoPushdown;
     };
     let mut filter = expression.clone();

@@ -49,7 +49,10 @@ impl PhysicalTableScan {
             types,
             function,
             bind_data,
-            column_indexes: column_ids.iter().map(|&id| rustdb_types::ColumnIndex::new(id)).collect(),
+            column_indexes: column_ids
+                .iter()
+                .map(|&id| rustdb_types::ColumnIndex::new(id))
+                .collect(),
             column_ids,
             projection: Vec::new(),
             filters: None,

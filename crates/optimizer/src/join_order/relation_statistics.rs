@@ -78,7 +78,10 @@ pub fn table_column_statistics(
     let stats = storage.column_statistics(physical)?;
     if column_index.is_pushdown_extract() {
         // The statistics of the extracted field (`TableStatistics::CopyStats`).
-        return crate::statistics_propagator::pushdown_extract_statistics(&stats, column_index.child_indexes.first()?);
+        return crate::statistics_propagator::pushdown_extract_statistics(
+            &stats,
+            column_index.child_indexes.first()?,
+        );
     }
     Some(stats)
 }
@@ -153,7 +156,9 @@ pub fn extract_get_stats(op: &mut LogicalOperator, context: &ClientContext) -> R
     if !get.table_filters.is_empty() {
         let mut has_non_optional_filters = false;
         for (&column, filter) in &get.table_filters.filters {
-            if let Some(column_stats) = table_column_statistics(context, get, &ColumnIndex::new(column as u64)) {
+            if let Some(column_stats) =
+                table_column_statistics(context, get, &ColumnIndex::new(column as u64))
+            {
                 let with_filter = inspect_table_filter(base_table_cardinality, filter, &column_stats);
                 cardinality_after_filters = cardinality_after_filters.min(with_filter);
             }

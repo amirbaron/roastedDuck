@@ -17,13 +17,13 @@ use rustdb_types::{
 
 use super::chunk_info::UpdateScanType;
 use super::column_segment::{ColumnSegment, SegmentAppendState, SegmentScanState};
+use super::scan_state::StorageIndex;
 use super::segment_tree::{Segment, SegmentNode, SegmentTree};
 use super::update_segment::{UpdateSegment, UpdateVersion};
 use crate::VECTOR_SIZE;
 use crate::checkpoint::table_writer::InMemoryBlocks;
 use crate::data_table::TableIoManager;
 use crate::statistics::{BaseStatistics, FilterPropagateResult, TYPED_VALUE_INDEX, is_fully_shredded};
-use super::scan_state::StorageIndex;
 use crate::table_filter::TableFilter;
 use crate::transaction::TransactionData;
 use rustdb_function::cast::{BoundCastInfo, CastFunctionSet, CastParameters};
@@ -227,7 +227,11 @@ impl ColumnScanState {
     /// A scan state for reading `storage_index` out of a column of type `ty`: only the
     /// struct fields it names, or the field it extracts, with the extract's cast
     /// (`ColumnScanState::Initialize` with a `StorageIndex`).
-    pub fn initialize(ty: &LogicalType, storage_index: &StorageIndex, casts: Option<&ScanCasts>) -> Result<Self> {
+    pub fn initialize(
+        ty: &LogicalType,
+        storage_index: &StorageIndex,
+        casts: Option<&ScanCasts>,
+    ) -> Result<Self> {
         let mut state = Self {
             storage_index: storage_index.clone(),
             casts: casts.cloned(),
@@ -259,7 +263,8 @@ impl ColumnScanState {
                     // Every field.
                     state.scan_child_column = vec![true; fields.len()];
                     for (index, (_, field)) in fields.iter().enumerate() {
-                        state.child_states[index + 1] = Self::initialize(field, &StorageIndex::new(0), casts)?;
+                        state.child_states[index + 1] =
+                            Self::initialize(field, &StorageIndex::new(0), casts)?;
                     }
                 } else if storage_index.pushdown_extract {
                     // Only the extracted field, read into the result itself.
@@ -349,7 +354,9 @@ fn find_shredded_column<'a>(
         if shredded.ty.id() == LogicalTypeId::Struct {
             // A shredded level: its typed values.
             out.child_indexes.push(ColumnIndex::new(TYPED_VALUE_INDEX as u64));
-            let Some(typed_stats) = stats.struct_children().and_then(|children| children.get(TYPED_VALUE_INDEX))
+            let Some(typed_stats) = stats
+                .struct_children()
+                .and_then(|children| children.get(TYPED_VALUE_INDEX))
             else {
                 return false;
             };
@@ -379,15 +386,19 @@ fn find_shredded_column<'a>(
     if !is_fully_shredded(parent_stats) {
         return false;
     }
-    let Some(index) = typed_value
-        .ty
-        .struct_children()
-        .and_then(|children| children.iter().position(|(name, _)| name.eq_ignore_ascii_case(field_name)))
-    else {
+    let Some(index) = typed_value.ty.struct_children().and_then(|children| {
+        children
+            .iter()
+            .position(|(name, _)| name.eq_ignore_ascii_case(field_name))
+    }) else {
         // The OBJECT has no such field.
         return false;
     };
-    let ColumnKind::Struct { fields: object_fields, .. } = &typed_value.kind else {
+    let ColumnKind::Struct {
+        fields: object_fields,
+        ..
+    } = &typed_value.kind
+    else {
         return false;
     };
     let Some(object_field) = object_fields.get(index) else {
@@ -399,7 +410,9 @@ fn find_shredded_column<'a>(
     *stats = field_stats;
     // shredded.typed_value.<field>
     let mut typed_value_index = ColumnIndex::new(TYPED_VALUE_INDEX as u64);
-    typed_value_index.child_indexes.push(ColumnIndex::new(index as u64));
+    typed_value_index
+        .child_indexes
+        .push(ColumnIndex::new(index as u64));
     out.child_indexes.push(typed_value_index);
     *path = next;
     let child_column = &mut out.child_indexes[0].child_indexes[0];
@@ -1176,8 +1189,8 @@ impl ColumnData {
         let Some(shredded) = shredded else {
             return;
         };
-        let is_pushed_down_cast = state.storage_index.has_type()
-            && state.storage_index.scan_type().id() != LogicalTypeId::Variant;
+        let is_pushed_down_cast =
+            state.storage_index.has_type() && state.storage_index.scan_type().id() != LogicalTypeId::Variant;
         if state.storage_index.pushdown_extract
             && is_pushed_down_cast
             && let Some(extract) = state.storage_index.children.first()
@@ -1196,7 +1209,11 @@ impl ColumnData {
     /// The `struct_extract` of the shredded data of this VARIANT column that reads the
     /// field `variant_extract` extracts, if that is fully shredded on a primitive type in
     /// every row of the row group (`VariantColumnData::PushdownShreddedFieldExtract`).
-    fn pushdown_shredded_field_extract(&self, shredded: &Self, variant_extract: &StorageIndex) -> Option<StorageIndex> {
+    fn pushdown_shredded_field_extract(
+        &self,
+        shredded: &Self,
+        variant_extract: &StorageIndex,
+    ) -> Option<StorageIndex> {
         let stats = self.stats_lock().ok()?;
         let variant_stats = stats.variant()?;
         if !variant_stats.is_shredded() {
@@ -1252,7 +1269,9 @@ impl ColumnData {
                     init(validity, validity_state, row);
                 }
                 for child in children.iter().filter(|child| child.should_scan) {
-                    if let (Some(field), Some(field_state)) = (fields.get(child.field), states.get_mut(child.state)) {
+                    if let (Some(field), Some(field_state)) =
+                        (fields.get(child.field), states.get_mut(child.state))
+                    {
                         init(field, field_state, row);
                     }
                 }
@@ -1517,7 +1536,9 @@ impl ColumnData {
             ColumnKind::Variant { .. } if state.storage_index.pushdown_extract => {
                 self.scan_variant_extract(updates, state, result, count, result_offset)
             }
-            ColumnKind::Variant { .. } => self.scan_variant_values(updates, state, result, count, result_offset),
+            ColumnKind::Variant { .. } => {
+                self.scan_variant_values(updates, state, result, count, result_offset)
+            }
             ColumnKind::Array { validity, child } => {
                 let [validity_state, child_state, ..] = state.child_states.as_mut_slice() else {
                     return Err(Error::internal("array scan state without children"));
@@ -1563,15 +1584,13 @@ impl ColumnData {
         else {
             return Err(Error::internal("variant scan of a non-VARIANT column"));
         };
-        let [validity_state, unshredded_state, shredded_states @ ..] =
-            state.child_states.as_mut_slice()
+        let [validity_state, unshredded_state, shredded_states @ ..] = state.child_states.as_mut_slice()
         else {
             return Err(Error::internal("variant scan state without children"));
         };
         let Some(shredded) = shredded else {
             // The values are in the unshredded STRUCT, which has the VARIANT layout.
-            let scanned =
-                validity.scan_into(updates, validity_state, result, count, result_offset)?;
+            let scanned = validity.scan_into(updates, validity_state, result, count, result_offset)?;
             unshredded.scan_into(None, unshredded_state, result, count, result_offset)?;
             state.offset_in_column += count as u64;
             return Ok(scanned);
