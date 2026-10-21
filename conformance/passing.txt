@@ -2802,6 +2802,7 @@ test/sql/keywords/keywords_in_expressions.test
 test/sql/limit/parallel_limit_transaction_local.test_slow
 test/sql/limit/streaming_limit_pipeline_flush.test
 test/sql/limit/streaming_limit_pipeline_flush2.test
+test/sql/limit/test_batch_limit_filters.test
 test/sql/limit/test_limit0.test
 test/sql/limit/test_parallel_limit.test_slow
 test/sql/limit/test_parallel_limit_nested.test_slow
