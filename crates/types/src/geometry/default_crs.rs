@@ -8,3 +8,31 @@ pub(super) const OGC_CRS84_PROJJSON: &str = r#"{"$schema":"https://proj.org/sche
 pub(super) const OGC_CRS83_WKT2_2019: &str = r#"GEOGCRS["NAD83 (CRS83)",DATUM["North American Datum 1983",ELLIPSOID["GRS 1980",6378137,298.257222101,LENGTHUNIT["metre",1]]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]],CS[ellipsoidal,2],AXIS["geodetic longitude (Lon)",east,ORDER[1],ANGLEUNIT["degree",0.0174532925199433]],AXIS["geodetic latitude (Lat)",north,ORDER[2],ANGLEUNIT["degree",0.0174532925199433]],USAGE[SCOPE["Not known."],AREA["North America - onshore and offshore: Canada - Alberta; British Columbia; Manitoba; New Brunswick; Newfoundland and Labrador; Northwest Territories; Nova Scotia; Nunavut; Ontario; Prince Edward Island; Quebec; Saskatchewan; Yukon. Puerto Rico. United States (USA) - Alabama; Alaska; Arizona; Arkansas; California; Colorado; Connecticut; Delaware; Florida; Georgia; Hawaii; Idaho; Illinois; Indiana; Iowa; Kansas; Kentucky; Louisiana; Maine; Maryland; Massachusetts; Michigan; Minnesota; Mississippi; Missouri; Montana; Nebraska; Nevada; New Hampshire; New Jersey; New Mexico; New York; North Carolina; North Dakota; Ohio; Oklahoma; Oregon; Pennsylvania; Rhode Island; South Carolina; South Dakota; Tennessee; Texas; Utah; Vermont; Virginia; Washington; West Virginia; Wisconsin; Wyoming. US Virgin Islands. British Virgin Islands."],BBOX[14.92,167.65,86.45,-40.73]],ID["OGC","CRS83"]]"#;
 
 pub(super) const OGC_CRS83_PROJJSON: &str = r#"{"$schema":"https://proj.org/schemas/v0.7/projjson.schema.json","type":"GeographicCRS","name":"NAD83 (CRS83)","datum":{"type":"GeodeticReferenceFrame","name":"North American Datum 1983","ellipsoid":{"name":"GRS 1980","semi_major_axis":6378137,"inverse_flattening":298.257222101}},"coordinate_system":{"subtype":"ellipsoidal","axis":[{"name":"Geodetic longitude","abbreviation":"Lon","direction":"east","unit":"degree"},{"name":"Geodetic latitude","abbreviation":"Lat","direction":"north","unit":"degree"}]},"scope":"Not known.","area":"North America - onshore and offshore: Canada - Alberta; British Columbia; Manitoba; New Brunswick; Newfoundland and Labrador; Northwest Territories; Nova Scotia; Nunavut; Ontario; Prince Edward Island; Quebec; Saskatchewan; Yukon. Puerto Rico. United States (USA) - Alabama; Alaska; Arizona; Arkansas; California; Colorado; Connecticut; Delaware; Florida; Georgia; Hawaii; Idaho; Illinois; Indiana; Iowa; Kansas; Kentucky; Louisiana; Maine; Maryland; Massachusetts; Michigan; Minnesota; Mississippi; Missouri; Montana; Nebraska; Nevada; New Hampshire; New Jersey; New Mexico; New York; North Carolina; North Dakota; Ohio; Oklahoma; Oregon; Pennsylvania; Rhode Island; South Carolina; South Dakota; Tennessee; Texas; Utah; Vermont; Virginia; Washington; West Virginia; Wisconsin; Wyoming. US Virgin Islands. British Virgin Islands.","bbox":{"south_latitude":14.92,"west_longitude":167.65,"north_latitude":86.45,"east_longitude":-40.73},"id":{"authority":"OGC","code":"CRS83"}}"#;
+
+/// A coordinate system DuckDB knows without extensions (`DefaultCoordinateReferenceSystem`).
+#[derive(Clone, Copy, Debug)]
+pub struct DefaultCoordinateSystem {
+    pub name: &'static str,
+    pub auth_name: &'static str,
+    pub auth_code: &'static str,
+    pub wkt2_2019: &'static str,
+    pub projjson: &'static str,
+}
+
+/// `DEFAULT_CRS_DEFINITIONS`, in DuckDB's order.
+pub const DEFAULT_COORDINATE_SYSTEMS: [DefaultCoordinateSystem; 2] = [
+    DefaultCoordinateSystem {
+        name: "OGC:CRS84",
+        auth_name: "OGC",
+        auth_code: "CRS84",
+        wkt2_2019: OGC_CRS84_WKT2_2019,
+        projjson: OGC_CRS84_PROJJSON,
+    },
+    DefaultCoordinateSystem {
+        name: "OGC:CRS83",
+        auth_name: "OGC",
+        auth_code: "CRS83",
+        wkt2_2019: OGC_CRS83_WKT2_2019,
+        projjson: OGC_CRS83_PROJJSON,
+    },
+];

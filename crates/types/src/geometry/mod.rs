@@ -12,6 +12,7 @@ mod legacy;
 mod shred;
 
 pub use crs::{Crs, CrsType, try_convert, try_identify};
+pub use default_crs::{DEFAULT_COORDINATE_SYSTEMS, DefaultCoordinateSystem};
 pub use legacy::{from_spatial, is_spatial_type, spatial_type, to_spatial};
 pub use shred::{from_vectorized, to_vectorized};
 

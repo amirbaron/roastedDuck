@@ -902,7 +902,161 @@ pub(crate) fn catalog_table_functions() -> Vec<TableFunctionSet> {
         rows_function("duckdb_types", TYPE_COLUMNS, type_rows),
         secrets_function(),
         which_secret_function(),
+        rows_function("duckdb_secret_types", SECRET_TYPE_COLUMNS, secret_type_rows),
+        rows_function(
+            "duckdb_coordinate_systems",
+            COORDINATE_SYSTEM_COLUMNS,
+            coordinate_system_rows,
+        ),
+        table_sample_function(),
+        seq_scan_function(),
     ]
+}
+
+const SECRET_TYPE_COLUMNS: Columns = &[
+    ("type", varchar),
+    ("default_provider", varchar),
+    ("extension", varchar),
+];
+
+/// `duckdb_secret_types()` (`DuckDBSecretTypesFunction`): the secret types of the secret
+/// manager (`AllSecretTypes`).
+fn secret_type_rows(_: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    Ok(crate::secrets::SECRET_TYPES
+        .iter()
+        .map(|secret_type| {
+            vec![
+                text(secret_type.name),
+                text(secret_type.default_provider),
+                text(secret_type.extension),
+            ]
+        })
+        .collect())
+}
+
+const COORDINATE_SYSTEM_COLUMNS: Columns = &[
+    ("database_name", varchar),
+    ("database_oid", bigint),
+    ("schema_name", varchar),
+    ("schema_oid", bigint),
+    ("crs_oid", bigint),
+    ("crs_name", varchar),
+    ("auth_name", varchar),
+    ("auth_code", varchar),
+    ("projjson", varchar),
+    ("wkt2_2019", varchar),
+];
+
+/// The object ids of the default coordinate systems of a database, given when they are
+/// first listed (DuckDB's `DefaultCoordinateSystemGenerator` creates their entries then).
+struct CoordinateSystemOids(Vec<u64>);
+
+/// `duckdb_coordinate_systems()` (`DuckDBCoordinateSystemsFunction`): the coordinate
+/// systems of `system.main`, by name (the catalog set's order).
+fn coordinate_system_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    use rustdb_types::geometry::DEFAULT_COORDINATE_SYSTEMS;
+    const KEY: &str = "duckdb_coordinate_systems_oids";
+    let new_oids = || {
+        Arc::new(CoordinateSystemOids(
+            DEFAULT_COORDINATE_SYSTEMS
+                .iter()
+                .map(|_| rustdb_catalog::next_oid())
+                .collect(),
+        ))
+    };
+    let oids = if let Some(cache) = context.function_client.object_cache() {
+        cache.get::<CoordinateSystemOids>(KEY).unwrap_or_else(|| {
+            let oids = new_oids();
+            cache.put(KEY.to_owned(), Arc::clone(&oids));
+            oids
+        })
+    } else {
+        new_oids()
+    };
+    let Some((system, main)) = schemas(context).into_iter().find(|(catalog, schema)| {
+        catalog.name().eq_ignore_ascii_case("system") && schema.name() == rustdb_catalog::DEFAULT_SCHEMA
+    }) else {
+        return Ok(Vec::new());
+    };
+    let mut systems: Vec<_> = DEFAULT_COORDINATE_SYSTEMS.iter().zip(&oids.0).collect();
+    systems.sort_by_key(|(crs, _)| crs.name);
+    Ok(systems
+        .into_iter()
+        .map(|(crs, crs_oid)| {
+            vec![
+                text(&*system.name()),
+                oid(system.oid()),
+                text(main.name()),
+                oid(main.oid),
+                oid(*crs_oid),
+                text(crs.name),
+                text(crs.auth_name),
+                text(crs.auth_code),
+                text(crs.projjson),
+                text(crs.wkt2_2019),
+            ]
+        })
+        .collect())
+}
+
+/// `duckdb_table_sample(table)` (`DuckDBTableSampleFunction`): the reservoir sample of a
+/// table, with the table's columns. DuckDB 1.5's tables keep no sample
+/// (`RowGroupCollection::GetSample` returns none), so it has no rows.
+fn table_sample_function() -> TableFunctionSet {
+    let function = TableFunction::new("duckdb_table_sample", vec![LogicalType::VARCHAR])
+        .with_bind(|input| {
+            let context = client_context(input)?;
+            // `GetValue<string>`: a NULL argument reads as the name "NULL".
+            let name = match input.inputs.first() {
+                Some(value) if !value.is_null() => value.to_varchar()?,
+                _ => "NULL".to_owned(),
+            };
+            let (catalog, schema, table) = crate::sequence::parse_qualified_name(&name)?;
+            let (catalog, schema) = context.bind_schema_or_catalog(&catalog, &schema)?;
+            let found = context
+                .get_entry(
+                    &catalog,
+                    &schema,
+                    rustdb_catalog::CatalogType::Table,
+                    &table,
+                    false,
+                )?
+                .ok_or_else(|| Error::catalog(format!("Table with name {table} does not exist!")))?;
+            let EntryKind::Table(entry) = &found.entry.kind else {
+                return Err(Error::catalog(format!("{table} is not an table")));
+            };
+            let types: Vec<LogicalType> = entry
+                .columns
+                .iter()
+                .map(|column| column.logical_type.clone())
+                .collect();
+            Ok(TableFunctionBindOutput {
+                return_types: types.clone(),
+                names: entry.columns.iter().map(|column| column.name.clone()).collect(),
+                bind_data: Some(Arc::new(Rows {
+                    types,
+                    rows: Vec::new(),
+                })),
+            })
+        })
+        .with_scan(|bind_data, _, state, chunk| scan_rows(bind_data, state, chunk));
+    let mut set = TableFunctionSet::new("duckdb_table_sample");
+    set.add(function);
+    set
+}
+
+/// `seq_scan` (`TableScanFunction`): the table scan as the catalog lists it. Table scans
+/// are planned from the table; called directly it fails as it does in DuckDB, which has
+/// no bind function for it.
+fn seq_scan_function() -> TableFunctionSet {
+    let function = TableFunction::new("seq_scan", Vec::new()).with_bind(|_| {
+        Err(Error::invalid_input(
+            "Cannot call function \"seq_scan\" directly - it has no bind function",
+        ))
+    });
+    let mut set = TableFunctionSet::new("seq_scan");
+    set.add(function);
+    set
 }
 
 /// A constant VARCHAR computed from the client context when bound.

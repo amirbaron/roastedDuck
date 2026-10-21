@@ -397,6 +397,22 @@ fn install_hint(message: &str, extension: &str) -> String {
 }
 
 /// `SecretManager::ThrowTypeNotFoundError`.
+/// A secret type the secret manager knows (DuckDB's `SecretType`).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SecretType {
+    pub name: &'static str,
+    pub default_provider: &'static str,
+    /// The extension that registers the type; empty for built-in ones.
+    pub extension: &'static str,
+}
+
+/// The secret types without extensions (`SecretManager::Initialize`): `http`.
+pub(crate) const SECRET_TYPES: [SecretType; 1] = [SecretType {
+    name: "http",
+    default_provider: "config",
+    extension: "",
+}];
+
 fn type_not_found(secret_type: &str) -> Error {
     let lower = secret_type.to_lowercase();
     match EXTENSION_SECRET_TYPES.iter().find(|(name, _)| *name == lower) {
@@ -496,7 +512,9 @@ impl SecretManager {
         // Without a provider the type must exist (its default provider is used);
         // otherwise the type's provider must.
         let was_default = input.provider.is_empty();
-        let known_type = input.secret_type == "http";
+        let known_type = SECRET_TYPES
+            .iter()
+            .any(|secret_type| secret_type.name == input.secret_type);
         if was_default && !known_type {
             return Err(type_not_found(&input.secret_type));
         }

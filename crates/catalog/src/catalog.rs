@@ -324,15 +324,23 @@ impl Catalog {
         Ok(())
     }
 
-    /// Registers a built-in collation in `main` (DuckDB's `ExtensionLoader::RegisterCollation`).
+    /// Registers a built-in collation in `main` (DuckDB's `ExtensionLoader::RegisterCollation`),
+    /// and its function as a scalar function unless one of that name exists (for
+    /// serialization, `IGNORE_ON_CONFLICT`).
     pub fn register_collation(&self, name: &str, collation: crate::CollationEntry) -> Result<()> {
         let schema = self
             .schema(&Transaction::system(), DEFAULT_SCHEMA)
             .ok_or_else(missing_main)?;
         let schema = schema.as_schema().ok_or_else(missing_main)?;
+        let function = collation.function.clone();
         let mut entry = CatalogEntry::new(name, EntryKind::Collation(collation));
         entry.internal = true;
         schema.collations.replace_committed(entry);
+        if schema.functions.get_committed(&function.name).is_none() {
+            let mut set = ScalarFunctionSet::new(Arc::clone(&function.name));
+            set.add(function);
+            self.register_scalar_functions(set)?;
+        }
         Ok(())
     }
 
