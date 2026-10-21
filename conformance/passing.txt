@@ -234,6 +234,7 @@ test/fuzzer/pedro/update_default_segv.test
 test/fuzzer/pedro/update_join_bind_error.test
 test/fuzzer/pedro/update_join_statistics.test
 test/fuzzer/pedro/utf8_invalid_unicode.test
+test/fuzzer/pedro/vacuum_table_with_generated_column.test
 test/fuzzer/pedro/vacuum_unsupported_type.test
 test/fuzzer/pedro/verify_parallelism_batch_index.test
 test/fuzzer/pedro/view_not_rebound_error.test
@@ -4622,6 +4623,7 @@ test/sql/upsert/upsert_set_expressions.test
 test/sql/upsert/upsert_shorthand.test
 test/sql/upsert/upsert_transaction.test
 test/sql/upsert/upsert_unique_null.test
+test/sql/vacuum/test_analyze.test
 test/sql/vacuum/vacuum_nested_types.test
 test/sql/variables/test_variables.test
 test/sql/vector_types/list_vector_types.test_slow
