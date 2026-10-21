@@ -796,27 +796,30 @@ fn serialize_indexes(
                 offset: pointer.offset,
             })
         };
+        // Unchanged buffers of a bound index and an unbound index (written as it was
+        // stored) keep their blocks, which stay in use.
+        let mut kept = Vec::new();
         let info = match &slot {
             // Indexes rebuilt by a vacuum are written instead of the table's current ones,
             // which the table replaces by them once the checkpoint is complete.
             IndexSlot::Bound(_) if let Some(index) = rebuilt.as_deref_mut().and_then(|rebuilt| rebuilt.get_mut(bound)) => {
                 bound += 1;
-                index.serialize_to_disk(&index_options, &mut write)?
+                index.serialize_to_disk(&index_options, &mut write, &mut |block| kept.push(block))?
             }
             IndexSlot::Bound(entry) => {
                 bound += 1;
-                entry.lock().index.serialize_to_disk(&index_options, &mut write)?
+                entry
+                    .lock()
+                    .index
+                    .serialize_to_disk(&index_options, &mut write, &mut |block| kept.push(block))?
             }
-            // An unbound index is written as it was stored; its blocks stay in use.
             IndexSlot::Unbound(index) => {
-                let mut kept = Vec::new();
-                let info = index.serialize_to_disk(&mut write, &mut |block| kept.push(block))?;
-                for block in kept {
-                    *blocks.used_blocks.entry(block).or_insert(0) += 1;
-                }
-                info
+                index.serialize_to_disk(&mut write, &mut |block| kept.push(block))?
             }
         };
+        for block in kept {
+            *blocks.used_blocks.entry(block).or_insert(0) += 1;
+        }
         index_blocks.flush()?;
         for (block, count) in index_blocks.used_blocks {
             *blocks.used_blocks.entry(block).or_insert(0) += count;

@@ -7,14 +7,12 @@
 //!
 //! Like DuckDB, buffers are zstd-compressed into smaller size classes (`S32K` ...
 //! `S224K`) when that pays off: an adaptive choice per write compares how long
-//! compressed and uncompressed writes took (`TemporaryFileCompressionAdaptivity`). The
-//! pure-Rust encoder has a single level (about zstd's level 1), so the choice is between
-//! that level and no compression. A compressed slot holds the compressed length (8 bytes,
-//! little endian) followed by the zstd frame.
+//! uncompressed writes and compressed writes at each of the levels -5, -3, -1, 1, 3 and 5
+//! took (`TemporaryFileCompressionAdaptivity`). A compressed slot holds the compressed
+//! length (8 bytes, little endian) followed by the zstd frame.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{File, OpenOptions};
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -324,13 +322,14 @@ impl TemporaryFile {
     }
 }
 
-/// Whether recent compressed writes were fast enough, compared to uncompressed ones, to
-/// keep compressing (DuckDB's `TemporaryFileCompressionAdaptivity` with one level).
+/// Which zstd level writes are the fastest, and whether they are fast enough, compared to
+/// uncompressed writes, to compress at all (DuckDB's `TemporaryFileCompressionAdaptivity`).
 #[derive(Debug)]
 struct CompressionAdaptivity {
-    /// Moving averages of the duration of uncompressed and compressed writes.
+    /// Moving averages of the duration of uncompressed writes and of compressed writes per
+    /// level.
     uncompressed_ns: u64,
-    compressed_ns: u64,
+    compressed_ns: [u64; Self::LEVELS],
     /// State of the random deviations.
     random: u64,
 }
@@ -338,10 +337,12 @@ struct CompressionAdaptivity {
 impl CompressionAdaptivity {
     /// `INITIAL_NS`
     const INITIAL_NS: u64 = 50_000;
+    /// The levels -5, -3, -1, 1, 3 and 5 (`LEVELS`).
+    const LEVELS: usize = 6;
     /// Compress while compressed writes take less than this many times as long
     /// (`DURATION_RATIO_THRESHOLD`).
     const DURATION_RATIO_THRESHOLD: f64 = 2.0;
-    /// How often to try the other choice, to keep the averages current
+    /// How often to try another choice, to keep the averages current
     /// (`COMPRESSION_DEVIATION`).
     const COMPRESSION_DEVIATION: f64 = 0.5;
     /// Weight of the old average (`WEIGHT`).
@@ -350,9 +351,14 @@ impl CompressionAdaptivity {
     fn new(seed: u64) -> Self {
         Self {
             uncompressed_ns: Self::INITIAL_NS,
-            compressed_ns: Self::INITIAL_NS,
+            compressed_ns: [Self::INITIAL_NS; Self::LEVELS],
             random: seed | 1,
         }
+    }
+
+    /// `IndexToLevel`.
+    fn level(index: usize) -> i32 {
+        index as i32 * 2 - 5
     }
 
     fn next_random(&mut self) -> f64 {
@@ -363,24 +369,42 @@ impl CompressionAdaptivity {
         (self.random.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 11) as f64 / (1u64 << 53) as f64
     }
 
-    /// Whether the next write should be compressed (`GetCompressionLevel`).
-    fn should_compress(&mut self) -> bool {
-        let ratio = self.compressed_ns as f64 / self.uncompressed_ns as f64;
-        let compress = ratio < Self::DURATION_RATIO_THRESHOLD;
-        if self.next_random() < Self::COMPRESSION_DEVIATION {
-            !compress
+    /// The zstd level of the next write, `None` to write it uncompressed
+    /// (`GetCompressionLevel`).
+    fn compression_level(&mut self) -> Option<i32> {
+        let mut min_index = 0;
+        for index in 1..Self::LEVELS {
+            if self.compressed_ns[index] < self.compressed_ns[min_index] {
+                min_index = index;
+            }
+        }
+        let ratio = self.compressed_ns[min_index] as f64 / self.uncompressed_ns as f64;
+        let should_compress = ratio < Self::DURATION_RATIO_THRESHOLD;
+        let should_deviate = self.next_random() < Self::COMPRESSION_DEVIATION;
+        let deviate_uncompressed = self.next_random() < 0.5;
+        if !should_deviate {
+            should_compress.then(|| Self::level(min_index))
+        } else if !should_compress {
+            Some(Self::level(0))
+        } else if deviate_uncompressed {
+            None
+        } else if min_index == Self::LEVELS - 1 {
+            Some(Self::level(min_index - 1))
+        } else if ratio < 1.0 {
+            Some(Self::level(min_index + 1))
+        } else if min_index == 0 {
+            None
         } else {
-            compress
+            Some(Self::level(min_index - 1))
         }
     }
 
-    /// Records the duration of a write (`Update`).
-    fn update(&mut self, compressed: bool, started: Instant) {
+    /// Records the duration of a write at `level` (`Update`).
+    fn update(&mut self, level: Option<i32>, started: Instant) {
         let duration = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
-        let average = if compressed {
-            &mut self.compressed_ns
-        } else {
-            &mut self.uncompressed_ns
+        let average = match level {
+            None => &mut self.uncompressed_ns,
+            Some(level) => &mut self.compressed_ns[((level + 5) >> 1) as usize],
         };
         *average = (*average * (Self::WEIGHT - 1) + duration) / Self::WEIGHT;
     }
@@ -420,13 +444,13 @@ impl std::hash::Hasher for FixedHasher {
     }
 }
 
-/// `buffer`'s bytes zstd-compressed into a slot image (length word, then the frame), or
-/// `None` if that does not fit a compressed size class (`CompressBuffer`).
-fn compress_buffer(data: &[u8]) -> Option<(TemporaryBufferSize, Vec<u8>)> {
+/// `buffer`'s bytes zstd-compressed at `level` into a slot image (length word, then the
+/// frame), or `None` if that does not fit a compressed size class (`CompressBuffer`).
+fn compress_buffer(data: &[u8], level: i32) -> Option<(TemporaryBufferSize, Vec<u8>)> {
     if data.len() as u64 <= TemporaryBufferSize::S32K.bytes() {
         return None; // No point compressing.
     }
-    let frame = ruzstd::encoding::compress_to_vec(data, ruzstd::encoding::CompressionLevel::Fastest);
+    let frame = rustdb_zstd::compress(data, level);
     let size = TemporaryBufferSize::for_compressed(size_of::<u64>() + frame.len())?;
     let mut slot = Vec::with_capacity(size.bytes() as usize);
     slot.extend_from_slice(&(frame.len() as u64).to_le_bytes());
@@ -449,11 +473,14 @@ fn decompress_slot(slot: &[u8], target: &mut [u8]) -> Result<()> {
             frame.len()
         ))
     })?;
-    let mut decoder = ruzstd::decoding::StreamingDecoder::new(frame)
+    let size = rustdb_zstd::decompress(target, frame)
         .map_err(|error| corrupt(format!("failed to decompress block ({error})")))?;
-    decoder
-        .read_exact(target)
-        .map_err(|error| corrupt(format!("failed to decompress block ({error})")))?;
+    if size != target.len() {
+        return Err(corrupt(format!(
+            "decompressed block is {size} bytes but expected {}",
+            target.len()
+        )));
+    }
     Ok(())
 }
 
@@ -509,11 +536,11 @@ impl TemporaryFileManager {
         let data = unsafe { buffer.internal() };
         let adaptivity = &self.adaptivities[adaptivity_index()];
         let started = Instant::now();
-        let compress = adaptivity
+        let level = adaptivity
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .should_compress();
-        let compressed = if compress { compress_buffer(data) } else { None };
+            .compression_level();
+        let compressed = level.and_then(|level| compress_buffer(data, level));
         let size = compressed
             .as_ref()
             .map_or(TemporaryBufferSize::Default, |(size, _)| *size);
@@ -566,7 +593,7 @@ impl TemporaryFileManager {
         adaptivity
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .update(compress, started);
+            .update(level, started);
         Ok(size.bytes())
     }
 
@@ -815,7 +842,7 @@ mod tests {
     #[test]
     fn compressed_slots_round_trip() {
         let data: Vec<u8> = (0..DEFAULT_BLOCK_ALLOC_SIZE).map(|i| (i % 7) as u8).collect();
-        let (size, slot) = super::compress_buffer(&data).expect("repetitive data compresses");
+        let (size, slot) = super::compress_buffer(&data, 1).expect("repetitive data compresses");
         assert_eq!(size, TemporaryBufferSize::S32K);
         assert_eq!(slot.len() as u64, size.bytes());
         let mut restored = vec![0; data.len()];
@@ -832,7 +859,7 @@ mod tests {
                 state as u8
             })
             .collect();
-        assert!(super::compress_buffer(&noise).is_none());
+        assert!(super::compress_buffer(&noise, 1).is_none());
     }
 
     #[test]

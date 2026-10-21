@@ -66,10 +66,7 @@ impl JsonFileHandle {
             let raw: Box<dyn Read + Send> = Box::new(std::io::Cursor::new(contents));
             let reader: Box<dyn Read + Send> = match compression {
                 FileCompressionType::Gzip => Box::new(flate2::read::MultiGzDecoder::new(raw)),
-                FileCompressionType::Zstd => Box::new(
-                    ruzstd::decoding::StreamingDecoder::new(raw)
-                        .map_err(rustdb_csv::buffer::zstd_open_error)?,
-                ),
+                FileCompressionType::Zstd => Box::new(rustdb_zstd::StreamDecoder::new(raw)),
                 _ => raw,
             };
             // `GetFileSize` of a pipe.
@@ -101,9 +98,7 @@ impl JsonFileHandle {
         let raw: Box<dyn Read + Send> = Box::new(buffered);
         let reader: Box<dyn Read + Send> = match compression {
             FileCompressionType::Gzip => Box::new(flate2::read::MultiGzDecoder::new(raw)),
-            FileCompressionType::Zstd => Box::new(
-                ruzstd::decoding::StreamingDecoder::new(raw).map_err(rustdb_csv::buffer::zstd_open_error)?,
-            ),
+            FileCompressionType::Zstd => Box::new(rustdb_zstd::StreamDecoder::new(raw)),
             _ => raw,
         };
         Ok(Self {

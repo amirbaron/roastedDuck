@@ -3489,6 +3489,7 @@ test/sql/storage/compression/alprd/alprd_uncompressed_mode_v1_5_0.test_slow
 test/sql/storage/compression/alprd/alprd_zeros.test
 test/sql/storage/compression/bitpacking/bitpacking_bitwidths.test_slow
 test/sql/storage/compression/bitpacking/bitpacking_compression_ratio.test_slow
+test/sql/storage/compression/bitpacking/bitpacking_compression_ratio_hugeint.test_slow
 test/sql/storage/compression/bitpacking/bitpacking_constant_delta.test
 test/sql/storage/compression/bitpacking/bitpacking_delta.test_slow
 test/sql/storage/compression/bitpacking/bitpacking_delta_for.test
@@ -3580,6 +3581,7 @@ test/sql/storage/compression/roaring/roaring_bool_array_simple.test
 test/sql/storage/compression/roaring/roaring_bool_array_simple_w_null.test
 test/sql/storage/compression/roaring/roaring_bool_bitset_simple.test
 test/sql/storage/compression/roaring/roaring_bool_bitset_simple_w_null.test
+test/sql/storage/compression/roaring/roaring_bool_compression_ratio.test_slow
 test/sql/storage/compression/roaring/roaring_bool_fetch_row.test
 test/sql/storage/compression/roaring/roaring_bool_first_is_null.test
 test/sql/storage/compression/roaring/roaring_bool_inverted_array_simple.test
@@ -3589,6 +3591,7 @@ test/sql/storage/compression/roaring/roaring_bool_run_simple_w_null.test
 test/sql/storage/compression/roaring/roaring_bool_smaller_than_vector.test
 test/sql/storage/compression/roaring/roaring_bool_uncompressed_under_v1_5_0.test
 test/sql/storage/compression/roaring/roaring_bool_various_distributions.test_slow
+test/sql/storage/compression/roaring/roaring_compression_ratio.test_slow
 test/sql/storage/compression/roaring/roaring_fetch_row.test
 test/sql/storage/compression/roaring/roaring_inverted_array_simple.test
 test/sql/storage/compression/roaring/roaring_inverted_run_simple.test
@@ -3619,6 +3622,7 @@ test/sql/storage/compression/zstd/test_giant_lists.test_slow
 test/sql/storage/compression/zstd/test_skipping.test
 test/sql/storage/compression/zstd/zstd.test
 test/sql/storage/compression/zstd/zstd_big_badly_compressed_list.test
+test/sql/storage/compression/zstd/zstd_compression_ratio.test_slow
 test/sql/storage/compression/zstd/zstd_force_compression.test
 test/sql/storage/compression/zstd/zstd_giant_string.test_slow
 test/sql/storage/concurrent_attach.test_slow

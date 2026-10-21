@@ -207,9 +207,7 @@ impl CsvFileHandle {
         let raw: Box<dyn Read + Send> = Box::new(buffered);
         let decompressed: Box<dyn Read + Send> = match compression {
             FileCompressionType::Gzip => Box::new(flate2::read::MultiGzDecoder::new(raw)),
-            FileCompressionType::Zstd => {
-                Box::new(ruzstd::decoding::StreamingDecoder::new(raw).map_err(zstd_open_error)?)
-            }
+            FileCompressionType::Zstd => Box::new(rustdb_zstd::StreamDecoder::new(raw)),
             _ => raw,
         };
         let reader: Box<dyn Read + Send> = match encoding.as_str() {
@@ -576,15 +574,3 @@ pub fn verify_gzip_header(reader: &mut impl std::io::BufRead, path: &str) -> Res
     Ok(())
 }
 
-/// The error of a ZSTD stream that does not start with a frame, as `ZSTD_getErrorName`
-/// names libzstd's errors (`ZStdFile` throws them as IO errors).
-pub fn zstd_open_error(error: ruzstd::decoding::errors::FrameDecoderError) -> Error {
-    use ruzstd::decoding::errors::{FrameDecoderError, ReadFrameHeaderError};
-    let message = match error {
-        FrameDecoderError::ReadFrameHeaderError(ReadFrameHeaderError::BadMagicNumber(_)) => {
-            "Unknown frame descriptor".to_owned()
-        }
-        other => other.to_string(),
-    };
-    Error::new(ErrorKind::Io, message)
-}

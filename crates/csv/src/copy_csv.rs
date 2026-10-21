@@ -324,11 +324,11 @@ impl CsvSink {
             Self::Plain(mut file) => file.flush(),
             Self::Gzip(encoder) => encoder.finish()?.flush(),
             Self::Zstd(buffer, mut file) => {
-                ruzstd::encoding::compress(
-                    buffer.as_slice(),
-                    &mut file,
-                    ruzstd::encoding::CompressionLevel::Fastest,
-                );
+                // `ZstdStreamWrapper`: a stream at the default level, ended at the close.
+                file.write_all(&rustdb_zstd::compress_streamed(
+                    &buffer,
+                    rustdb_zstd::DEFAULT_LEVEL,
+                ))?;
                 file.flush()
             }
             Self::Closed => Ok(()),

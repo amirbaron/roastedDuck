@@ -17,7 +17,7 @@ use super::segment_tree::Segment;
 use crate::VECTOR_SIZE;
 use crate::checkpoint::pointers::{PersistentColumnData, PersistentRowGroupData};
 use crate::checkpoint::table_reader::read_column;
-use crate::checkpoint::table_writer::InMemoryBlocks;
+use crate::checkpoint::table_writer::{AppendBlocks, InMemoryBlocks};
 use crate::data_table::TableIoManager;
 use crate::metadata::{MetaBlockPointer, MetadataManager};
 use crate::statistics::{BaseStatistics, FilterPropagateResult};
@@ -254,6 +254,33 @@ impl RowGroup {
             .clone_from(&self.version_info_lock());
         row_group.set_metadata(metadata);
         row_group
+    }
+
+    /// A row group sharing this one's versions whose columns an optimistic write wrote to
+    /// `blocks` as `data` (the `result_row_group` of `RowGroup::WriteToDisk` with the
+    /// `PartialBlockManager` of an `OptimisticDataWriter`). Its segments are created now,
+    /// so that those in blocks written later can be moved to them.
+    pub(crate) fn with_optimistic_write(
+        &self,
+        io: &Arc<TableIoManager>,
+        types: &[LogicalType],
+        data: &[PersistentColumnData],
+        blocks: &AppendBlocks,
+    ) -> Result<Self> {
+        let columns = data
+            .iter()
+            .zip(types)
+            .enumerate()
+            .map(|(index, (data, ty))| {
+                ColumnData::from_optimistic_write(Arc::clone(io), index, ty.clone(), data, blocks)
+                    .map(Arc::new)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let row_group = Self::from_columns(columns, self.count());
+        row_group
+            .version_info_lock()
+            .clone_from(&self.version_info_lock());
+        Ok(row_group)
     }
 
     /// A row group sharing this one's versions whose columns an in-memory checkpoint

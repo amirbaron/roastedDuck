@@ -404,6 +404,11 @@ impl Sink for PhysicalBatchInsert {
                 global.add_collection(local.current_index, local.min_batch_index, collection, None)?;
             }
         }
+        // The thread's partially filled blocks go to the transaction's writer.
+        if let (Some(table), Some(mut writer)) = (&global.table, local.writer) {
+            let _merge = global.state();
+            table.merge_optimistic_writer(&self.transaction, &mut writer)?;
+        }
         Ok(())
     }
 
@@ -441,6 +446,8 @@ impl Sink for PhysicalBatchInsert {
             for collection in &finals {
                 table.local_merge(&self.transaction, collection)?;
             }
+            table.merge_optimistic_writer(&self.transaction, &mut writer)?;
+            table.final_flush_optimistic_writer(&self.transaction)?;
         } else {
             // Few rows: append them to the local storage directly.
             append_collections(

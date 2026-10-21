@@ -7,7 +7,6 @@
 //! is continued ends with the id of the next page. The extra pages are the segment state
 //! (`overflow_blocks`).
 
-use std::io::Read;
 use std::sync::Arc;
 
 use rustdb_buffer::{BlockId, INVALID_BLOCK};
@@ -67,6 +66,8 @@ pub(crate) struct ZstdScanState {
     count: usize,
     offsets: [usize; 4],
     current: Option<DecodedVector>,
+    /// `decompression_context`, created at the first vector.
+    decompressor: Option<Box<rustdb_zstd::Decompressor>>,
 }
 
 impl ZstdScanState {
@@ -77,6 +78,7 @@ impl ZstdScanState {
             count,
             offsets: metadata_offsets(count.div_ceil(ZSTD_VECTOR_SIZE)),
             current: None,
+            decompressor: None,
         })
     }
 
@@ -90,7 +92,7 @@ impl ZstdScanState {
     }
 
     /// `LoadVector` + `DecompressString` for the whole vector.
-    fn load_vector(&self, segment: &ColumnSegment, index: usize) -> Result<DecodedVector> {
+    fn load_vector(&mut self, segment: &ColumnSegment, index: usize) -> Result<DecodedVector> {
         let bytes = self.data.bytes();
         let [page_ids, page_offsets, uncompressed_sizes, compressed_sizes] = self.offsets;
         let page_id: i64 = load(bytes, page_ids + 8 * index)?;
@@ -156,12 +158,12 @@ impl ZstdScanState {
             next_id_offset = take;
             current_page = Some(next);
         }
-        let mut strings = Vec::with_capacity(uncompressed_size);
-        let mut decoder = ruzstd::decoding::StreamingDecoder::new(compressed.as_slice())
+        let mut strings = vec![0u8; uncompressed_size];
+        let decompressor = self.decompressor.get_or_insert_with(Box::default);
+        let size = decompressor
+            .decompress(&mut strings, &compressed)
             .map_err(|error| corrupt(format!("ZSTD Decompression failed: {error}")))?;
-        decoder
-            .read_to_end(&mut strings)
-            .map_err(|error| corrupt(format!("ZSTD Decompression failed: {error}")))?;
+        strings.truncate(size);
         let mut ranges = Vec::with_capacity(vector_size);
         let mut offset = 0;
         for length in lengths {
@@ -304,6 +306,7 @@ impl Analyzer for ZstdAnalyzer {
             rows: Vec::new(),
             lengths: Vec::new(),
             has_null: Vec::new(),
+            context: None,
         }))
     }
 }
@@ -328,9 +331,10 @@ struct ExtraPage {
     offset: usize,
 }
 
-/// `ZSTDCompressionState`: strings are compressed per vector of 2048 into one zstd frame
-/// (with the pure-Rust `ruzstd` encoder) that is laid out over the segment's page and extra
-/// pages exactly like DuckDB lays out its streaming output.
+/// `ZSTDCompressionState`: strings are compressed per vector of 2048 into one zstd frame,
+/// string by string into the space left on the current page (`ZSTD_compressStream2` at the
+/// default level, with `rustdb-zstd` writing zstd's frames), continued on extra pages
+/// exactly like DuckDB lays out its streaming output.
 #[derive(Debug)]
 struct ZstdCompressor {
     ty: LogicalType,
@@ -349,6 +353,8 @@ struct ZstdCompressor {
     rows: Vec<u8>,
     lengths: Vec<u32>,
     has_null: Vec<bool>,
+    /// The compression context, reset per vector (`ZSTDAnalyzeState::context`).
+    context: Option<Box<rustdb_zstd::Compressor>>,
 }
 
 impl ZstdCompressor {
@@ -469,20 +475,49 @@ impl ZstdCompressor {
             }
             position = end;
         }
-        let compressed =
-            ruzstd::encoding::compress_to_vec(rows.as_slice(), ruzstd::encoding::CompressionLevel::Fastest);
-        let mut written = 0;
-        loop {
-            let (buffer, offset) = self.current()?;
-            let take = (writable - *offset).min(compressed.len() - written);
-            buffer[*offset..*offset + take].copy_from_slice(&compressed[written..written + take]);
-            *offset += take;
-            written += take;
-            if written == compressed.len() {
-                break;
+        // `InitializeVector` resets the context; `CompressString` compresses each string
+        // (empty ones only at the end of the vector) into the rest of the current page, and
+        // starts a new page whenever output is left to flush.
+        let mut context = self
+            .context
+            .take()
+            .unwrap_or_else(|| Box::new(rustdb_zstd::Compressor::new(rustdb_zstd::DEFAULT_LEVEL)));
+        context.reset_session();
+        context.set_level(rustdb_zstd::DEFAULT_LEVEL);
+        let mut compressed_size = 0;
+        let mut position = 0;
+        for (row, &length) in lengths.iter().enumerate() {
+            let string = &rows[position..position + length as usize];
+            position += length as usize;
+            let end = row + 1 == lengths.len();
+            if !end && string.is_empty() {
+                continue;
             }
-            self.new_page(sink)?;
+            let directive = if end {
+                rustdb_zstd::EndDirective::End
+            } else {
+                rustdb_zstd::EndDirective::Continue
+            };
+            let mut in_pos = 0;
+            loop {
+                let (buffer, offset) = self.current()?;
+                let mut out_pos = 0;
+                let remaining = context.compress_stream(
+                    &mut buffer[*offset..writable],
+                    &mut out_pos,
+                    string,
+                    &mut in_pos,
+                    directive,
+                );
+                *offset += out_pos;
+                compressed_size += out_pos;
+                if remaining == 0 {
+                    break;
+                }
+                self.new_page(sink)?;
+            }
         }
+        self.context = Some(context);
         // `FlushVector`: the vector metadata.
         let segment = self
             .segment
@@ -498,7 +533,7 @@ impl ZstdCompressor {
         segment.buffer[uncompressed_sizes + 8 * index..uncompressed_sizes + 8 * index + 8]
             .copy_from_slice(&(rows.len() as u64).to_le_bytes());
         segment.buffer[compressed_sizes + 8 * index..compressed_sizes + 8 * index + 8]
-            .copy_from_slice(&(compressed.len() as u64).to_le_bytes());
+            .copy_from_slice(&(compressed_size as u64).to_le_bytes());
         segment.vectors += 1;
         segment.count += tuple_count as u64;
         self.vectors_written += 1;

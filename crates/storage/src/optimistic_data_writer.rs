@@ -8,10 +8,12 @@
 //! row groups move into the table as they are and the WAL only logs where they are
 //! (`ROW_GROUP_DATA`); when it rolls back, their blocks are freed again.
 //!
-//! The writers of all threads inserting into a table in one transaction share the
-//! transaction's [`AppendBlocks`]: one partially filled block, written when the
-//! transaction commits (DuckDB merges the partial block managers of the threads' writers
-//! into the transaction's).
+//! Every writer has its partially filled blocks (DuckDB's `PartialBlockManager`), and so
+//! has every column of the collections of parallel inserts; the collections' blocks are
+//! merged into their writer's once the collection is written, and the threads' writers
+//! into the transaction's, which writes the partially filled blocks last
+//! (`FinalFlush`). The blocks get their ids when they are written; the transaction's
+//! [`AppendBlocks`] records them.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -58,9 +60,15 @@ pub struct OptimisticWriteCollection {
     unflushed_data_size: u64,
     prev_allocated_size: u64,
     complete_row_groups: usize,
+    /// The partially filled blocks of each column (`partial_block_managers`), for the
+    /// collections of parallel inserts (`OptimisticWritePartialManagers::PER_COLUMN`);
+    /// empty when the writer's blocks are used (`GLOBAL`).
+    partial_block_managers: Vec<BlockWriter>,
 }
 
 impl OptimisticWriteCollection {
+    /// A collection whose row groups are written to the writer's partially filled blocks
+    /// (`OptimisticWritePartialManagers::GLOBAL`).
     pub(crate) fn new(collection: Arc<RowGroupCollection>) -> Self {
         Self {
             collection,
@@ -68,6 +76,25 @@ impl OptimisticWriteCollection {
             unflushed_data_size: 0,
             prev_allocated_size: 0,
             complete_row_groups: 0,
+            partial_block_managers: Vec::new(),
+        }
+    }
+
+    /// A collection whose columns have partially filled blocks of their own in `blocks`
+    /// (`OptimisticWritePartialManagers::PER_COLUMN`).
+    pub(crate) fn per_column(
+        collection: Arc<RowGroupCollection>,
+        blocks: Option<&Arc<AppendBlocks>>,
+    ) -> Self {
+        let partial_block_managers = match blocks {
+            Some(blocks) => (0..collection.types().len())
+                .map(|_| BlockWriter::append_to_table(Arc::clone(blocks)))
+                .collect(),
+            None => Vec::new(),
+        };
+        Self {
+            partial_block_managers,
+            ..Self::new(collection)
         }
     }
 
@@ -222,6 +249,9 @@ impl OptimisticDataWriter {
             let unflushed: Vec<usize> = row_groups.unflushed_row_groups.iter().copied().collect();
             self.flush_to_disk(row_groups, &unflushed)?;
         }
+        for manager in std::mem::take(&mut row_groups.partial_block_managers) {
+            self.merge_manager(manager)?;
+        }
         row_groups.unflushed_row_groups.clear();
         row_groups.unflushed_data_size = 0;
         // Further appends must not change a row group that was written.
@@ -234,7 +264,7 @@ impl OptimisticDataWriter {
     /// Writes the row groups at `indexes` and installs the row groups reading the
     /// written blocks in their place (`FlushToDisk`). Row groups without rows have
     /// nothing to write.
-    fn flush_to_disk(&mut self, row_groups: &OptimisticWriteCollection, indexes: &[usize]) -> Result<()> {
+    fn flush_to_disk(&mut self, row_groups: &mut OptimisticWriteCollection, indexes: &[usize]) -> Result<()> {
         let Some(blocks) = self.partial_manager.as_mut() else {
             return Ok(());
         };
@@ -259,6 +289,7 @@ impl OptimisticDataWriter {
             &row_groups.collection,
             &to_flush,
             blocks,
+            &mut row_groups.partial_block_managers,
             config.geometry_minimum_shredding_size,
         )?;
         for (index, row_group) in positions.into_iter().zip(written) {
@@ -267,10 +298,32 @@ impl OptimisticDataWriter {
         Ok(())
     }
 
-    /// Writes the partially filled block the transaction's writers share (`FinalFlush`).
-    pub(crate) fn final_flush(&mut self) -> Result<()> {
-        match &self.blocks {
-            Some(blocks) => blocks.flush(),
+    /// Moves partially filled blocks into this writer's (`Merge`).
+    fn merge_manager(&mut self, other: BlockWriter) -> Result<()> {
+        if let Some(manager) = &mut self.partial_manager {
+            return manager.merge(other);
+        }
+        self.partial_manager = Some(other);
+        Ok(())
+    }
+
+    /// Moves the partially filled blocks of `other` into this writer (`Merge`).
+    pub fn merge(&mut self, other: &mut OptimisticDataWriter) -> Result<()> {
+        match other.partial_manager.take() {
+            Some(manager) => self.merge_manager(manager),
+            None => Ok(()),
+        }
+    }
+
+    /// Discards the partially filled blocks (`Rollback`).
+    pub(crate) fn rollback(&mut self) {
+        self.partial_manager = None;
+    }
+
+    /// Writes the partially filled blocks (`FinalFlush`).
+    pub fn final_flush(&mut self) -> Result<()> {
+        match self.partial_manager.take() {
+            Some(mut manager) => manager.flush(),
             None => Ok(()),
         }
     }

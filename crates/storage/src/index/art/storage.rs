@@ -213,17 +213,19 @@ impl Art {
         }
     }
 
-    /// Writes the index data with `write` (which returns where the bytes went) and
-    /// returns its description (`ART::SerializeToDisk`).
+    /// Writes the changed index data with `write` (which returns where the bytes went) and
+    /// returns its description (`ART::SerializeToDisk`); `keep` receives the block of each
+    /// buffer that is on disk unchanged.
     pub fn serialize_to_disk(
         &mut self,
         options: &CaseInsensitiveMap<Value>,
         write: &mut dyn FnMut(&[u8]) -> Result<BufferPointer>,
+        keep: &mut dyn FnMut(rustdb_buffer::BlockId),
     ) -> Result<ArtStorageInfo> {
         let mut info = self.prepare_serialize(options)?;
         let count = Self::serialized_allocators(options);
         for allocator in self.allocators.iter_mut().take(count) {
-            allocator.serialize_buffers(write)?;
+            allocator.serialize_buffers(write, keep)?;
         }
         info.allocator_infos = self.allocator_infos(count);
         Ok(info)

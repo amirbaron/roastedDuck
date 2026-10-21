@@ -12,7 +12,7 @@
 
 use std::any::Any;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
 use rustdb_buffer::{
     BlockHandle, BlockId, BlockManager, BufferHandle, BufferManager, INVALID_BLOCK, MemoryTag,
@@ -204,10 +204,10 @@ pub struct ColumnSegment {
     layout: Layout,
     compression: CompressionType,
     segment_type: SegmentType,
-    block: Option<Arc<BlockHandle>>,
-    block_id: BlockId,
-    offset: usize,
-    segment_size: usize,
+    /// Where the segment's bytes are. Only the segments an optimistic write placed in a
+    /// block whose id is assigned later move (`PartialBlock::Flush`, which converts them to
+    /// persistent, and `PartialBlockManager::Merge`).
+    location: RwLock<SegmentLocation>,
     /// Usable size of a block of the segment's block manager.
     block_size: usize,
     /// Published row count; see the module documentation.
@@ -221,6 +221,32 @@ pub struct ColumnSegment {
     /// (`UncompressedStringSegmentState::on_disk_blocks`): on disk, or the in-memory
     /// blocks of the segment of an in-memory database.
     overflow_blocks: Vec<BlockId>,
+}
+
+/// The block of a segment, its id (`INVALID_BLOCK` for transient segments), and the
+/// segment's offset and size in it.
+#[derive(Debug)]
+struct SegmentLocation {
+    block: Option<Arc<BlockHandle>>,
+    block_id: BlockId,
+    offset: usize,
+    segment_size: usize,
+}
+
+impl SegmentLocation {
+    fn new(
+        block: Option<Arc<BlockHandle>>,
+        block_id: BlockId,
+        offset: usize,
+        segment_size: usize,
+    ) -> RwLock<Self> {
+        RwLock::new(Self {
+            block,
+            block_id,
+            offset,
+            segment_size,
+        })
+    }
 }
 
 impl ColumnSegment {
@@ -256,10 +282,12 @@ impl ColumnSegment {
                     layout,
                     compression,
                     segment_type: SegmentType::Persistent,
-                    block: Some(block),
-                    block_id,
-                    offset,
-                    segment_size: block_manager.block_size() - offset,
+                    location: SegmentLocation::new(
+                        Some(block),
+                        block_id,
+                        offset,
+                        block_manager.block_size() - offset,
+                    ),
                     block_size: block_manager.block_size(),
                     count: AtomicU64::new(count),
                     stats: Mutex::new(stats),
@@ -270,6 +298,45 @@ impl ColumnSegment {
                 })
             }
         }
+    }
+
+    /// A segment an optimistic write placed at `offset` of a block that is not written
+    /// yet: it reads the block's transient buffer `block` until the block is written and
+    /// the segment moved to it (DuckDB's segment keeps its transient block until
+    /// `PartialBlock::Flush`).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn create_pending(
+        buffer_manager: &BufferManager,
+        block_manager: &Arc<dyn BlockManager>,
+        block: Arc<BlockHandle>,
+        offset: usize,
+        ty: LogicalType,
+        count: u64,
+        compression: CompressionType,
+        stats: BaseStatistics,
+        overflow_blocks: Vec<BlockId>,
+    ) -> Result<Self> {
+        let layout = Layout::of(&ty)?;
+        let block_id = block.block_id();
+        Ok(Self {
+            ty,
+            layout,
+            compression,
+            segment_type: SegmentType::Persistent,
+            location: SegmentLocation::new(
+                Some(block),
+                block_id,
+                offset,
+                block_manager.block_size() - offset,
+            ),
+            block_size: block_manager.block_size(),
+            count: AtomicU64::new(count),
+            stats: Mutex::new(stats),
+            string_state: Mutex::default(),
+            buffer_manager: buffer_manager.clone(),
+            block_manager: Some(Arc::clone(block_manager)),
+            overflow_blocks,
+        })
     }
 
     /// A segment an in-memory checkpoint compressed into `block` at `offset`
@@ -289,6 +356,7 @@ impl ColumnSegment {
         string_blocks: Vec<Arc<BlockHandle>>,
     ) -> Result<Self> {
         let layout = Layout::of(&ty)?;
+        let block_id = block.block_id();
         let overflow_blocks = string_blocks.iter().map(|block| block.block_id()).collect();
         let memory_blocks = string_blocks
             .into_iter()
@@ -306,10 +374,7 @@ impl ColumnSegment {
             layout,
             compression,
             segment_type: SegmentType::Persistent,
-            block_id: block.block_id(),
-            block: Some(block),
-            offset,
-            segment_size: block_size - offset,
+            location: SegmentLocation::new(Some(block), block_id, offset, block_size - offset),
             block_size,
             count: AtomicU64::new(count),
             stats: Mutex::new(stats),
@@ -350,10 +415,7 @@ impl ColumnSegment {
             layout,
             compression: CompressionType::Uncompressed,
             segment_type: SegmentType::Transient,
-            block: Some(block),
-            block_id: INVALID_BLOCK,
-            offset: 0,
-            segment_size,
+            location: SegmentLocation::new(Some(block), INVALID_BLOCK, 0, segment_size),
             block_size: block_manager.block_size(),
             count: AtomicU64::new(0),
             stats: Mutex::new(stats),
@@ -385,10 +447,7 @@ impl ColumnSegment {
             layout,
             compression,
             segment_type: SegmentType::Persistent,
-            block: None,
-            block_id: INVALID_BLOCK,
-            offset: 0,
-            segment_size: 0,
+            location: SegmentLocation::new(None, INVALID_BLOCK, 0, 0),
             block_size: 0,
             count: AtomicU64::new(count),
             stats: Mutex::new(stats),
@@ -424,8 +483,12 @@ impl ColumnSegment {
         self.count.store(count, Ordering::Release);
     }
 
+    fn location(&self) -> std::sync::RwLockReadGuard<'_, SegmentLocation> {
+        self.location.read().unwrap_or_else(PoisonError::into_inner)
+    }
+
     pub fn segment_size(&self) -> usize {
-        self.segment_size
+        self.location().segment_size
     }
 
     /// Usable size of a block of the segment's block manager.
@@ -434,15 +497,26 @@ impl ColumnSegment {
     }
 
     pub fn block_id(&self) -> BlockId {
-        self.block_id
+        self.location().block_id
     }
 
     pub fn block_offset(&self) -> usize {
-        self.offset
+        self.location().offset
     }
 
-    pub fn block(&self) -> Option<&Arc<BlockHandle>> {
-        self.block.as_ref()
+    pub fn block(&self) -> Option<Arc<BlockHandle>> {
+        self.location().block.clone()
+    }
+
+    /// Moves a persistent segment to `offset` of `block` (`block_id`): the block an
+    /// optimistic write placed it in was merged into another or written to the file
+    /// (`MarkAsPersistent`).
+    pub(crate) fn set_location(&self, block: Arc<BlockHandle>, block_id: BlockId, offset: usize) {
+        let mut location = self.location.write().unwrap_or_else(PoisonError::into_inner);
+        location.block = Some(block);
+        location.block_id = block_id;
+        location.offset = offset;
+        location.segment_size = self.block_size - offset;
     }
 
     pub(crate) fn buffer_manager(&self) -> &BufferManager {
@@ -468,11 +542,15 @@ impl ColumnSegment {
 
     /// Pins the segment's block.
     pub(crate) fn pin(&self) -> Result<SegmentBuffer> {
-        let block = self
-            .block
-            .as_ref()
-            .ok_or_else(|| Error::internal("attempting to pin a segment without a block"))?;
-        Ok(SegmentBuffer::new(self.buffer_manager.pin(block)?, self.offset))
+        let (block, offset) = {
+            let location = self.location();
+            let block = location
+                .block
+                .clone()
+                .ok_or_else(|| Error::internal("attempting to pin a segment without a block"))?;
+            (block, location.offset)
+        };
+        Ok(SegmentBuffer::new(self.buffer_manager.pin(&block)?, offset))
     }
 
     /// Prepares a scan of this segment (`InitializeScan`).
@@ -519,7 +597,7 @@ impl ColumnSegment {
         }
         // Rows fetched by id (late materialisation, index lookups) are read a few at a
         // time and again by later queries: their blocks stay cached like DuckDB's.
-        if let Some(block) = &self.block {
+        if let Some(block) = &self.location().block {
             block.keep_cached();
         }
         match self.compression {

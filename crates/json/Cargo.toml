@@ -19,7 +19,7 @@ rustdb-csv = { path = "../csv" }
 zmij = "1.0.23"
 memchr = "2"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
-ruzstd = "0.9"
+rustdb-zstd = { path = "../zstd" }
 
 [lints]
 workspace = true

@@ -314,6 +314,34 @@ What moved the numbers in round 5:
   q19 0.32× → 0.50×). It was reverted (`4bf408a`); the re-reads have to get cheaper
   instead (Open items).
 
+## zstd (compression parity)
+
+`crates/zstd/examples/bench.rs` against `tools/zstd-ref` (`zstd_ref bench`, DuckDB 1.5.6's
+zstd from `libduckdb`): `ZSTD_compress` and `ZSTD_decompress` of the same input in a
+loop, a new compression context per call on both sides, best of 3 alternating runs, one
+thread, MB/s of input. Both engines write the same frames, so the decompression columns
+decode identical input. `ruzstd` decoded at 0.2–0.5× DuckDB's speed before the port.
+
+| input | level | compress rustdb | compress DuckDB | ratio | decompress rustdb | decompress DuckDB | ratio |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 1 MB of UUIDs | 3 | 233 | 264 | 0.88× | 1636 | 1645 | 0.99× |
+| 5 MB of text | 3 | 692 | 723 | 0.96× | 2018 | 2174 | 0.93× |
+| 5 MB of text | 1 | 695 | 710 | 0.98× | 1814 | 1919 | 0.95× |
+| 5 MB of text | -1 | 646 | 644 | 1.00× | 1598 | 1666 | 0.96× |
+| 300 KB of text | -5 | 654 | 666 | 0.98× | 1617 | 1703 | 0.95× |
+| 540 KB mixed | 1 | 538 | 581 | 0.93× | 1662 | 1734 | 0.96× |
+| 4 MB of string vectors | 3 | 670 | 707 | 0.95× | 2064 | 2166 | 0.95× |
+| 200 KB random | 3 | 9930 | 9454 | 1.05× | 81113 | 83283 | 0.97× |
+| 300 KB of zeros | 3 | 18028 | 17291 | 1.04× | 19332 | 8165 | 2.37× |
+
+End to end (one thread, storage version v1.2.0, 4M rows of two VARCHAR columns, an
+MD5-like and a sentence-like one): `CREATE TABLE ... AS` with `force_compression='zstd'`
+takes 1.78 s against DuckDB's 1.76 s, 0.45 s above the same table uncompressed on both
+engines (0.44 s for DuckDB), so compressing is at parity; scanning both columns back
+(`sum(length(..))`, warm) takes 0.24 s against 0.14–0.15 s, of which ~0.15 s against
+~0.10–0.13 s is the ZSTD vectors (the rest is the engine's string scan, 0.10 s against
+0.01–0.05 s uncompressed). Peak RSS 115 MB against 850 MB.
+
 ## TPC-H SF1 status
 
 Measured with `.context/perf/bin/tpch.py` (one process per query, best of 5, warm OS
@@ -355,7 +383,8 @@ limit at 4 threads with peak RSS within 0.9–1.2× of DuckDB; without a limit, 
 | Struct projection pushdown | `plan_struct_projection_pushdown`, `struct_projection_pushdown_in_storage`, `deliver_child_columns` fail | `struct_extract` on a scanned column is not pushed into the scan as a child column (`ColumnIndex` children, pushdown extract) | `crates/optimizer`, `crates/storage`, `crates/parquet` |
 | Common subexpressions | `l_extendedprice * (1 - l_discount)` computed twice in Q1 | check the CSE optimizer port against DuckDB's plan | `crates/optimizer` |
 | Parser: tiny statements (`SELECT 1`, short SELECTs) | ~1.05–1.25× DuckDB cycles per query | per-node malloc/free vs DuckDB's arena-allocated parse tree | `crates/parser` (`parse_bench`) |
-| Spill files | compression has one level | `ruzstd` only encodes at about zstd level 1; DuckDB adapts between levels -5..5 | `crates/buffer` (`temp_file.rs`) |
+| zstd | compression 0.88× on UUID-like strings, 0.93–1.0× elsewhere; decompression 0.93–0.99× (see above) | the double-fast search loop and the sequence decoding loop keep fewer values in registers than zstd's (more instructions per position and per sequence) | `crates/zstd` (`dfast.rs`, `decompress/block.rs`) |
+| ZSTD segment scans | ~0.15 s against ~0.10–0.13 s for 4M rows of two columns | each vector's pages are copied into one buffer and decoded into a new zeroed one; DuckDB streams the pages into the vector's string buffer | `crates/storage` (`compression/zstd.rs`) |
 | Nested comparisons (LIST/STRUCT/ARRAY `=`, `<`, …) | not measured | row by row through `Value`s; port DuckDB's vectorised `PositionComparator` (`is_distinct_from.cpp`) | `crates/types` (`compare.rs`) |
 | Cross product / UNNEST constant side | not measured | one `Value` per output chunk instead of a zero-copy constant view of a row (`ConstantVector::Reference`) | `crates/execution` |
 | Reservoir sample storage | not measured | sampled rows are copied value by value into the reservoir (`crates/execution/src/sample.rs::append_rows`); needs a typed `VectorOperations::Copy` with selection | `crates/execution` |
@@ -394,4 +423,5 @@ limit at 4 threads with peak RSS within 0.9–1.2× of DuckDB; without a limit, 
 | Partitioned aggregate | groups on hive partition columns used the hash aggregate (`partitioned_group_by` failed) | DuckDB's `PhysicalPartitionedAggregate` and the scans' partition data |
 | Unnest rewriter plans | a lateral `UNNEST` (`CROSS JOIN unnest(arr)`) kept its `DELIM_JOIN` (`unnest_rewriter.test_slow` failed) | the UnnestRewriter's pattern for the `unnest` table function |
 | Opening a database: checkpoint blocks | every row group's column metadata was read to collect the blocks the checkpoint references (TPC-H SF10: 8,161 metadata block reads, 0.8 G instructions; ClickBench 7.8 G) | every block neither free nor metadata (`LoadFreeList`): 0.11 and 0.39 G instructions (DuckDB 0.09 and 0.16) |
+| Spill files and zstd | `ruzstd` encoded at about zstd level 1 only and decoded at 0.2–0.5× DuckDB's speed | zstd 1.5.6 ported (`crates/zstd`): spill files adapt between levels -5..5 as DuckDB's do; 0.88–1.05× compression, 0.93–0.99× decompression |
 | `COUNT(DISTINCT)` finalize | the tables merging DISTINCT partitions resized from the initial capacity (ClickBench q04: 0.4 of 7.3 Gcycles reinserting) | sized for their partition like the regular finalize (q04 7.39 → 6.85 Gcycles) |

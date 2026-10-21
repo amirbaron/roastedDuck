@@ -10,9 +10,9 @@
 //! (`experimental_metadata_reuse`), and so do tables whose row groups all do.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
-use rustdb_buffer::{BlockHandle, BlockId, BufferHandle, MAXIMUM_BLOCK, MemoryTag};
+use rustdb_buffer::{BlockHandle, BlockId, MAXIMUM_BLOCK, MemoryTag};
 use rustdb_common::{Error, Result};
 use rustdb_serde::binary::BinarySerializer;
 use rustdb_serde::{SerializationOptions, Serializer};
@@ -35,71 +35,48 @@ use crate::table::{
     PerColumnMetadataBlocks, RowGroup, RowGroupCollection, RowGroupMetadata, TableMetadataPointer,
 };
 
+/// The number of segments that may share a block (`DEFAULT_MAX_USE_COUNT`).
+const MAX_USE_COUNT: u32 = 1 << 20;
+
 /// The writer of data blocks of a checkpoint or of an optimistic write (DuckDB's
-/// `PartialBlockManager`): segments smaller than 80% of a block share blocks.
+/// `PartialBlockManager`). A segment of at most 80% of a block goes to the partially
+/// filled block with the least free space that fits it, or to a new block; a block stays
+/// partially filled while at least 20% of it is free and is written as soon as it is
+/// fuller, or when the writer flushes.
 #[derive(Debug)]
 pub struct BlockWriter {
     target: BlockTarget,
-    /// The block being filled (for optimistic writes, it is shared, see
-    /// [`AppendBlocks`]).
-    partial: Option<PartialBlock>,
+    /// The partially filled blocks by free space, those with the same free space in the
+    /// order they were added (`partially_filled_blocks`, a multimap).
+    partial: BTreeMap<(usize, u64), PartialBlock>,
+    /// The order of the next block added to `partial`.
+    next_order: u64,
     /// Every data block this checkpoint references, with the number of references.
     pub used_blocks: BTreeMap<BlockId, u32>,
 }
 
-/// The block segments are added to (DuckDB's `PartialBlock`).
+/// A block segments are added to (DuckDB's `PartialBlock` and its `PartialBlockState`).
 #[derive(Debug)]
 struct PartialBlock {
+    /// The block of a checkpoint, the temporary block of an in-memory checkpoint, or for
+    /// an optimistic write the provisional id the pointers to its segments carry until
+    /// the block is written (DuckDB assigns the block id then).
     block_id: BlockId,
-    /// The bytes used so far.
-    used: usize,
+    /// The bytes used, aligned to 8 (`state.offset`).
+    offset: usize,
+    /// The segments placed in the block (`block_use_count`).
+    use_count: u32,
     data: PartialBlockData,
 }
 
 /// Where the contents of a partial block are until it is written.
 #[derive(Debug)]
 enum PartialBlockData {
-    /// The bytes, written by `flush` (`PartialBlockForCheckpoint`).
+    /// The bytes, written by `flush` (`PartialBlockForCheckpoint`, `InMemoryPartialBlock`).
     Bytes(Vec<u8>),
-    /// The pinned buffer of the registered block, which the segments already placed in it
-    /// read until `flush` writes it to the file (a `PartialBlock` of
-    /// `PartialBlockType::APPEND_TO_TABLE`).
-    Pinned(BufferHandle),
-}
-
-impl PartialBlock {
-    /// The byte offset a segment of `size` bytes is placed at, if it fits.
-    fn offset_for(&self, size: usize, block_size: usize) -> Option<usize> {
-        let start = self.used.next_multiple_of(8);
-        (start + size <= block_size).then_some(start)
-    }
-
-    /// Places `data` at `start` (`AddSegmentToTail`); the bytes before it stay zero.
-    fn add_segment(&mut self, start: usize, data: &[u8]) {
-        match &mut self.data {
-            PartialBlockData::Bytes(buffer) => {
-                buffer.resize(start, 0);
-                buffer.extend_from_slice(data);
-            }
-            PartialBlockData::Pinned(pin) => {
-                let end = (start + data.len()).min(pin.len());
-                // SAFETY: the pin keeps the zeroed buffer alive. The segments already in
-                // the block lie before `start` and are only read; nothing else accesses
-                // the bytes written here before the segment is handed out.
-                unsafe {
-                    std::ptr::copy_nonoverlapping(data.as_ptr(), pin.as_ptr().add(start), end - start);
-                }
-            }
-        }
-        self.used = start + data.len();
-    }
-
-    fn pointer(&self, offset: usize) -> Result<BlockPointer> {
-        Ok(BlockPointer {
-            block_id: self.block_id,
-            offset: u32::try_from(offset).map_err(|_| Error::internal("block offset overflow"))?,
-        })
-    }
+    /// The transient block of a block of an optimistic write, which the segments placed in
+    /// it read until it is written (in DuckDB, the block of its first segment).
+    Pending(Arc<BlockHandle>),
 }
 
 /// Where a [`BlockWriter`] puts its blocks (DuckDB's `PartialBlockType`).
@@ -134,10 +111,14 @@ impl InMemoryBlocks {
 }
 
 /// The blocks the optimistic writes of one transaction add to the database file for one
-/// table (the `PartialBlockManager` of `PartialBlockType::APPEND_TO_TABLE` that DuckDB's
-/// writers merge into the transaction's, and the blocks its rollback frees): the
-/// writers of all threads share the partially filled block, and every block written is
-/// recorded. The blocks stay newly used until a commit logs them.
+/// table: every block written is recorded (the blocks its rollback frees), and the
+/// blocks not written yet are tracked by the provisional id the pointers to their
+/// segments carry. The partially filled blocks themselves belong to the writers'
+/// [`BlockWriter`]s (the `PartialBlockManager`s of DuckDB's `OptimisticDataWriter`s and
+/// of the collections of parallel inserts), which merge them as DuckDB does. A block
+/// gets its id when it is written; the segments in it then move to it, like
+/// `PartialBlock::Flush` converts them to persistent segments. The blocks stay newly used
+/// until a commit logs them.
 #[derive(Debug)]
 pub struct AppendBlocks {
     io: Arc<TableIoManager>,
@@ -147,8 +128,42 @@ pub struct AppendBlocks {
 
 #[derive(Debug, Default)]
 struct AppendBlocksState {
-    partial: Option<PartialBlock>,
+    /// The blocks written to the file.
     written: BTreeSet<BlockId>,
+    /// Where the data of each provisional block is now, by provisional id.
+    locations: HashMap<BlockId, BlockLocation>,
+    /// The blocks not written yet, by provisional id.
+    pending: HashMap<BlockId, PendingBlock>,
+}
+
+/// Where the data of a provisional block is: at `delta` in the pending block with
+/// provisional id `block_id`, or in written block `block_id`.
+#[derive(Clone, Copy, Debug)]
+struct BlockLocation {
+    block_id: BlockId,
+    delta: usize,
+    written: bool,
+}
+
+/// A block of an optimistic write that is not written yet.
+#[derive(Debug)]
+struct PendingBlock {
+    /// The transient block holding its bytes.
+    handle: Arc<BlockHandle>,
+    /// The provisional ids whose data it holds (its own and those of the blocks merged
+    /// into it).
+    aliases: Vec<BlockId>,
+    /// The segments placed in it, with their offset.
+    segments: Vec<(Weak<ColumnSegment>, usize)>,
+}
+
+/// Where a segment placed in a block of an optimistic write is.
+#[derive(Debug)]
+pub(crate) enum PendingSegment {
+    /// At `offset` of a block not written yet, whose transient block is `handle`.
+    Pending { handle: Arc<BlockHandle>, offset: usize },
+    /// At `offset` of written block `block_id`.
+    Written { block_id: BlockId, offset: usize },
 }
 
 impl AppendBlocks {
@@ -170,48 +185,15 @@ impl AppendBlocks {
         rustdb_buffer::BlockManager::block_size(self.manager.as_ref())
     }
 
-    /// A new block of the file, recorded as written (`GetFreeBlockId`).
-    fn new_block(&self, state: &mut AppendBlocksState) -> Result<BlockId> {
-        let block_id = self.manager.get_free_block_id()?;
-        state.written.insert(block_id);
-        Ok(block_id)
+    fn dyn_manager(&self) -> Arc<dyn rustdb_buffer::BlockManager> {
+        Arc::clone(&self.manager) as _
     }
 
-    /// Stores the bytes of a segment and returns where (`GetBlockAllocation` and
-    /// `RegisterPartialBlock`).
-    fn write_segment(&self, data: &[u8]) -> Result<BlockPointer> {
-        let block_size = self.block_size();
-        let mut state = self.state();
-        if data.len() > block_size / 5 * 4 {
-            let block_id = self.new_block(&mut state)?;
-            drop(state);
-            self.write_block(block_id, data)?;
-            return Ok(BlockPointer { block_id, offset: 0 });
-        }
-        if let Some(partial) = &mut state.partial
-            && let Some(offset) = partial.offset_for(data.len(), block_size)
-        {
-            partial.add_segment(offset, data);
-            return partial.pointer(offset);
-        }
-        if let Some(full) = state.partial.take() {
-            self.write_partial(full)?;
-        }
-        let block_id = self.new_block(&mut state)?;
-        let block_manager: Arc<dyn rustdb_buffer::BlockManager> = Arc::clone(&self.manager) as _;
-        let pin = self
-            .io
-            .buffer_manager()
-            .create_persistent_block(&block_manager, block_id)?;
-        let mut partial = PartialBlock {
-            block_id,
-            used: 0,
-            data: PartialBlockData::Pinned(pin),
-        };
-        partial.add_segment(0, data);
-        let pointer = partial.pointer(0);
-        state.partial = Some(partial);
-        pointer
+    /// A new block of the file, recorded as written (`GetFreeBlockId`).
+    fn new_block(&self) -> Result<BlockId> {
+        let block_id = self.manager.get_free_block_id()?;
+        self.state().written.insert(block_id);
+        Ok(block_id)
     }
 
     /// Writes a block, zero-padding it to the block size.
@@ -221,43 +203,190 @@ impl AppendBlocks {
         self.manager.write_block(block_id, &data)
     }
 
-    /// Writes a partially filled block to the file and releases its buffer.
-    fn write_partial(&self, partial: PartialBlock) -> Result<()> {
-        match partial.data {
-            PartialBlockData::Bytes(buffer) => self.write_block(partial.block_id, &buffer),
-            PartialBlockData::Pinned(pin) => {
-                // SAFETY: the pin keeps the block's buffer of `pin.len()` bytes alive, and
-                // nothing writes to it any more.
-                let bytes = unsafe { std::slice::from_raw_parts(pin.as_ptr(), pin.len()) };
-                self.manager.write_block(partial.block_id, bytes)
-            }
+    /// A new block that gets its id when it is written: zeroed transient memory, whose
+    /// temporary id is the provisional id of the block (`AllocateBlock` of
+    /// `APPEND_TO_TABLE`, which leaves the block id invalid).
+    fn allocate_pending(&self) -> Result<Arc<BlockHandle>> {
+        let pin =
+            self.io
+                .buffer_manager()
+                .allocate_for(MemoryTag::InMemoryTable, self.manager.as_ref(), false)?;
+        // SAFETY: the buffer was just allocated and is pinned; `len` bytes belong to it.
+        unsafe { std::ptr::write_bytes(pin.as_ptr(), 0, pin.len()) };
+        let handle = Arc::clone(pin.block());
+        let block_id = handle.block_id();
+        let mut state = self.state();
+        state.locations.insert(
+            block_id,
+            BlockLocation {
+                block_id,
+                delta: 0,
+                written: false,
+            },
+        );
+        state.pending.insert(
+            block_id,
+            PendingBlock {
+                handle: Arc::clone(&handle),
+                aliases: vec![block_id],
+                segments: Vec::new(),
+            },
+        );
+        Ok(handle)
+    }
+
+    /// Copies `data` to `offset` of a pending block's transient block.
+    fn write_pending_bytes(&self, handle: &Arc<BlockHandle>, offset: usize, data: &[u8]) -> Result<()> {
+        let pin = self.io.buffer_manager().pin(handle)?;
+        if offset + data.len() > pin.len() {
+            return Err(Error::internal("segment exceeds its partial block"));
+        }
+        // SAFETY: in bounds (checked above) of the pinned buffer; the bytes at and after
+        // `offset` belong to no segment yet, so nothing reads them.
+        unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), pin.as_ptr().add(offset), data.len()) };
+        Ok(())
+    }
+
+    /// The first `len` bytes of a pending block.
+    fn read_pending_bytes(&self, handle: &Arc<BlockHandle>, len: usize) -> Result<Vec<u8>> {
+        let pin = self.io.buffer_manager().pin(handle)?;
+        let len = len.min(pin.len());
+        // SAFETY: in bounds of the pinned buffer; the segments in it are only read.
+        Ok(unsafe { std::slice::from_raw_parts(pin.as_ptr(), len) }.to_vec())
+    }
+
+    /// Whether `block_id` is the provisional id of a block of an optimistic write.
+    pub(crate) fn is_provisional(&self, block_id: BlockId) -> bool {
+        block_id >= MAXIMUM_BLOCK && self.state().locations.contains_key(&block_id)
+    }
+
+    /// Where the segment at `offset` of provisional block `block_id` is now.
+    pub(crate) fn resolve(&self, block_id: BlockId, offset: usize) -> Result<PendingSegment> {
+        let state = self.state();
+        let location = state
+            .locations
+            .get(&block_id)
+            .ok_or_else(|| Error::internal(format!("unknown provisional block {block_id}")))?;
+        let offset = offset + location.delta;
+        if location.written {
+            return Ok(PendingSegment::Written {
+                block_id: location.block_id,
+                offset,
+            });
+        }
+        let pending = state
+            .pending
+            .get(&location.block_id)
+            .ok_or_else(|| Error::internal(format!("pending block {} not found", location.block_id)))?;
+        Ok(PendingSegment::Pending {
+            handle: Arc::clone(&pending.handle),
+            offset,
+        })
+    }
+
+    /// Records that `segment` reads offset `offset` of pending block `block_id`, so that it
+    /// moves with the block's data.
+    pub(crate) fn register_segment(&self, block_id: BlockId, segment: &Arc<ColumnSegment>, offset: usize) {
+        if let Some(pending) = self.state().pending.get_mut(&block_id) {
+            pending.segments.push((Arc::downgrade(segment), offset));
         }
     }
 
-    /// Writes the partially filled block (`FinalFlush`).
-    pub(crate) fn flush(&self) -> Result<()> {
-        let partial = self.state().partial.take();
-        match partial {
-            Some(partial) => self.write_partial(partial),
-            None => Ok(()),
+    /// Records that pending block `from` was copied to `delta` of pending block `into`
+    /// (`PartialBlockForCheckpoint::Merge`): its segments move there.
+    fn merge_pending(&self, from: BlockId, into: BlockId, delta: usize) -> Result<()> {
+        let mut state = self.state();
+        let merged = state
+            .pending
+            .remove(&from)
+            .ok_or_else(|| Error::internal(format!("pending block {from} not found")))?;
+        let handle = state
+            .pending
+            .get(&into)
+            .map(|pending| Arc::clone(&pending.handle))
+            .ok_or_else(|| Error::internal(format!("pending block {into} not found")))?;
+        for alias in &merged.aliases {
+            if let Some(location) = state.locations.get_mut(alias) {
+                location.block_id = into;
+                location.delta += delta;
+            }
         }
+        let mut segments = Vec::with_capacity(merged.segments.len());
+        for (segment, offset) in merged.segments {
+            if let Some(live) = segment.upgrade() {
+                live.set_location(Arc::clone(&handle), into, offset + delta);
+                segments.push((segment, offset + delta));
+            }
+        }
+        if let Some(target) = state.pending.get_mut(&into) {
+            target.aliases.extend(merged.aliases);
+            target.segments.extend(segments);
+        }
+        Ok(())
+    }
+
+    /// Writes pending block `block_id` to a new block of the file and moves its segments
+    /// there (`PartialBlockForCheckpoint::Flush` of `APPEND_TO_TABLE`, which fetches the
+    /// block id now).
+    fn write_pending(&self, block_id: BlockId) -> Result<()> {
+        let handle = match self.state().pending.get(&block_id) {
+            Some(pending) => Arc::clone(&pending.handle),
+            None => return Err(Error::internal(format!("pending block {block_id} not found"))),
+        };
+        let bytes = self.read_pending_bytes(&handle, self.block_size())?;
+        let new_id = self.new_block()?;
+        self.write_block(new_id, &bytes)?;
+        let block_manager = self.dyn_manager();
+        let block = self.io.buffer_manager().register_block(&block_manager, new_id);
+        block.release_on_unpin();
+        let mut state = self.state();
+        let Some(pending) = state.pending.remove(&block_id) else {
+            return Err(Error::internal(format!("pending block {block_id} not found")));
+        };
+        for alias in &pending.aliases {
+            if let Some(location) = state.locations.get_mut(alias) {
+                location.block_id = new_id;
+                location.written = true;
+            }
+        }
+        drop(state);
+        for (segment, offset) in pending.segments {
+            if let Some(segment) = segment.upgrade() {
+                segment.set_location(Arc::clone(&block), new_id, offset);
+            }
+        }
+        Ok(())
+    }
+
+    /// Writes the blocks no writer flushed (a writer dropped without its final flush), in
+    /// the order of their provisional ids.
+    pub(crate) fn flush(&self) -> Result<()> {
+        let mut pending: Vec<BlockId> = self.state().pending.keys().copied().collect();
+        pending.sort_unstable();
+        for block_id in pending {
+            self.write_pending(block_id)?;
+        }
+        Ok(())
     }
 
     /// Forgets the written blocks: the table the row groups moved to owns them now.
     pub(crate) fn hand_over(&self) {
-        self.state().written.clear();
+        let mut state = self.state();
+        state.written.clear();
+        state.locations.clear();
     }
 
-    /// Frees every written block and discards the partially filled one
+    /// Frees every written block and discards the pending ones
     /// (`OptimisticDataWriter::Rollback` and `CommitDropTable` of the rolled back
     /// collections). The blocks are newly used, so they are free again at once, or when
     /// the last handle to them goes.
     pub(crate) fn rollback(&self) -> Result<()> {
-        let (partial, written) = {
+        let written = {
             let mut state = self.state();
-            (state.partial.take(), std::mem::take(&mut state.written))
+            state.pending.clear();
+            state.locations.clear();
+            std::mem::take(&mut state.written)
         };
-        drop(partial);
         for block in written {
             self.manager.mark_block_as_modified(block)?;
         }
@@ -273,7 +402,8 @@ impl BlockWriter {
     fn with_target(target: BlockTarget) -> Self {
         Self {
             target,
-            partial: None,
+            partial: BTreeMap::new(),
+            next_order: 0,
             used_blocks: BTreeMap::new(),
         }
     }
@@ -302,6 +432,14 @@ impl BlockWriter {
         }
     }
 
+    /// The blocks of an optimistic write, `None` for a checkpoint.
+    pub(crate) fn append_blocks(&self) -> Option<&Arc<AppendBlocks>> {
+        match &self.target {
+            BlockTarget::AppendToTable(blocks) => Some(blocks),
+            BlockTarget::File(_) | BlockTarget::InMemory(_) => None,
+        }
+    }
+
     pub(crate) fn block_size(&self) -> usize {
         match &self.target {
             BlockTarget::File(manager) => rustdb_buffer::BlockManager::block_size(manager.as_ref()),
@@ -310,6 +448,12 @@ impl BlockWriter {
                 rustdb_buffer::BlockManager::block_size(blocks.io.block_manager().as_ref())
             }
         }
+    }
+
+    /// The largest segment that shares a block, and how full a block may be while it takes
+    /// more segments (80% of a block, `max_partial_block_size`).
+    fn max_partial_block_size(&self) -> usize {
+        self.block_size() / 5 * 4
     }
 
     /// What the codecs of this checkpoint need to know: the block size, the storage version
@@ -335,7 +479,7 @@ impl BlockWriter {
     pub(crate) fn new_block(&mut self) -> Result<BlockId> {
         let id = match &mut self.target {
             BlockTarget::File(manager) => manager.get_free_block_id_for_checkpoint()?,
-            BlockTarget::AppendToTable(blocks) => blocks.new_block(&mut blocks.state())?,
+            BlockTarget::AppendToTable(blocks) => blocks.new_block()?,
             BlockTarget::InMemory(blocks) => {
                 let pin = blocks.io.buffer_manager().allocate_for(
                     MemoryTag::InMemoryTable,
@@ -412,7 +556,7 @@ impl BlockWriter {
         for node in column.segments().nodes() {
             let segment = &node.node;
             if let Some(block) = segment.block() {
-                blocks.blocks.insert(segment.block_id(), Arc::clone(block));
+                blocks.blocks.insert(segment.block_id(), block);
             }
             for overflow in &segment.string_state().memory_blocks {
                 blocks
@@ -430,48 +574,138 @@ impl BlockWriter {
         }
     }
 
-    /// Stores the bytes of a segment and returns where (`GetBlockAllocation`).
-    pub fn write_segment(&mut self, data: &[u8]) -> Result<BlockPointer> {
+    /// A block for a segment of `size` bytes (`GetBlockAllocation`): the partially filled
+    /// block with the least free space that fits it, or a new one (`AllocateBlock`).
+    fn get_block_allocation(&mut self, size: usize) -> Result<PartialBlock> {
+        if size <= self.max_partial_block_size()
+            && let Some(key) = self.partial.range((size, 0)..).next().map(|(key, _)| *key)
+            && let Some(mut block) = self.partial.remove(&key)
+        {
+            block.use_count += 1;
+            if !matches!(self.target, BlockTarget::AppendToTable(_)) {
+                *self.used_blocks.entry(block.block_id).or_insert(0) += 1;
+            }
+            return Ok(block);
+        }
+        let (block_id, data) = match &self.target {
+            BlockTarget::AppendToTable(blocks) => {
+                let handle = blocks.allocate_pending()?;
+                (handle.block_id(), PartialBlockData::Pending(handle))
+            }
+            BlockTarget::File(_) | BlockTarget::InMemory(_) => {
+                (self.new_block()?, PartialBlockData::Bytes(Vec::new()))
+            }
+        };
+        Ok(PartialBlock {
+            block_id,
+            offset: 0,
+            use_count: 1,
+            data,
+        })
+    }
+
+    /// Copies `data` to `offset` of `block`; the bytes before it stay zero.
+    fn copy_to_block(&self, block: &mut PartialBlock, offset: usize, data: &[u8]) -> Result<()> {
+        match &mut block.data {
+            PartialBlockData::Bytes(buffer) => {
+                buffer.resize(offset, 0);
+                buffer.extend_from_slice(data);
+                Ok(())
+            }
+            PartialBlockData::Pending(handle) => match &self.target {
+                BlockTarget::AppendToTable(blocks) => blocks.write_pending_bytes(handle, offset, data),
+                BlockTarget::File(_) | BlockTarget::InMemory(_) => {
+                    Err(Error::internal("pending block outside of an optimistic write"))
+                }
+            },
+        }
+    }
+
+    /// Records that `size` more bytes of `block` are used (`RegisterPartialBlock`): it
+    /// stays partially filled while at least 20% of it is free, and is written otherwise.
+    fn register_partial_block(&mut self, mut block: PartialBlock, size: usize) -> Result<()> {
         let block_size = self.block_size();
-        if data.len() > block_size {
+        if block.use_count < MAX_USE_COUNT {
+            block.offset = (block.offset + size).next_multiple_of(8);
+            let space_left = block_size.saturating_sub(block.offset);
+            if space_left >= block_size - self.max_partial_block_size() {
+                self.partial.insert((space_left, self.next_order), block);
+                self.next_order += 1;
+                return Ok(());
+            }
+        }
+        self.flush_block(block)
+    }
+
+    /// Writes a block no more segments go to (`PartialBlock::Flush`).
+    fn flush_block(&self, block: PartialBlock) -> Result<()> {
+        match block.data {
+            PartialBlockData::Bytes(buffer) => self.write_block(block.block_id, buffer),
+            PartialBlockData::Pending(_) => match &self.target {
+                BlockTarget::AppendToTable(blocks) => blocks.write_pending(block.block_id),
+                BlockTarget::File(_) | BlockTarget::InMemory(_) => {
+                    Err(Error::internal("pending block outside of an optimistic write"))
+                }
+            },
+        }
+    }
+
+    /// Stores the bytes of a segment and returns where (`GetBlockAllocation` and
+    /// `RegisterPartialBlock`). For an optimistic write the pointer may carry the
+    /// provisional id of a block that is written later.
+    pub fn write_segment(&mut self, data: &[u8]) -> Result<BlockPointer> {
+        if data.len() > self.block_size() {
             return Err(Error::internal(
                 "segment size exceeds block size in ColumnCheckpointState::FlushSegmentInternal",
             ));
         }
-        if let BlockTarget::AppendToTable(blocks) = &self.target {
-            return blocks.write_segment(data);
-        }
-        if data.len() > block_size / 5 * 4 {
-            let block_id = self.new_block()?;
-            self.write_block(block_id, data.to_vec())?;
-            return Ok(BlockPointer { block_id, offset: 0 });
-        }
-        if let Some(partial) = &mut self.partial
-            && let Some(offset) = partial.offset_for(data.len(), block_size)
-        {
-            partial.add_segment(offset, data);
-            *self.used_blocks.entry(partial.block_id).or_insert(0) += 1;
-            return partial.pointer(offset);
-        }
-        self.flush()?;
-        let block_id = self.new_block()?;
-        let mut partial = PartialBlock {
-            block_id,
-            used: 0,
-            data: PartialBlockData::Bytes(Vec::new()),
+        let mut block = self.get_block_allocation(data.len())?;
+        let offset = block.offset;
+        self.copy_to_block(&mut block, offset, data)?;
+        let pointer = BlockPointer {
+            block_id: block.block_id,
+            offset: u32::try_from(offset).map_err(|_| Error::internal("block offset overflow"))?,
         };
-        partial.add_segment(0, data);
-        self.partial = Some(partial);
-        Ok(BlockPointer { block_id, offset: 0 })
+        self.register_partial_block(block, data.len())?;
+        Ok(pointer)
     }
 
-    /// Writes the partially filled block (`FlushPartialBlocks`); the partially filled
-    /// block of optimistic writes is written when the transaction commits.
+    /// Moves the partially filled blocks of `other` into this writer
+    /// (`PartialBlockManager::Merge`): each is copied into the partially filled block with
+    /// the least free space that fits its used bytes, or stays a block of its own.
+    pub(crate) fn merge(&mut self, mut other: BlockWriter) -> Result<()> {
+        let block_size = self.block_size();
+        for ((free, _), merged) in std::mem::take(&mut other.partial) {
+            let used = block_size - free;
+            let fits =
+                used <= self.max_partial_block_size() && self.partial.range((used, 0)..).next().is_some();
+            if !fits {
+                self.partial.insert((free, self.next_order), merged);
+                self.next_order += 1;
+                continue;
+            }
+            let mut block = self.get_block_allocation(used)?;
+            let offset = block.offset;
+            let blocks = match (&merged.data, &self.target) {
+                (PartialBlockData::Pending(handle), BlockTarget::AppendToTable(blocks)) => {
+                    let bytes = blocks.read_pending_bytes(handle, used)?;
+                    let blocks = Arc::clone(blocks);
+                    self.copy_to_block(&mut block, offset, &bytes)?;
+                    blocks
+                }
+                _ => return Err(Error::internal("merging partial blocks of a checkpoint")),
+            };
+            blocks.merge_pending(merged.block_id, block.block_id, offset)?;
+            self.register_partial_block(block, used)?;
+        }
+        Ok(())
+    }
+
+    /// Writes the partially filled blocks, those with the least free space first
+    /// (`FlushPartialBlocks`).
     pub fn flush(&mut self) -> Result<()> {
-        if let Some(partial) = self.partial.take()
-            && let PartialBlockData::Bytes(buffer) = partial.data
-        {
-            self.write_block(partial.block_id, buffer)?;
+        for (_, block) in std::mem::take(&mut self.partial) {
+            self.flush_block(block)?;
         }
         Ok(())
     }
@@ -783,6 +1017,7 @@ pub(crate) fn write_row_groups_to_disk(
     collection: &RowGroupCollection,
     row_groups: &[Arc<RowGroup>],
     blocks: &mut BlockWriter,
+    column_blocks: &mut [BlockWriter],
     geometry_minimum_shredding_size: i64,
 ) -> Result<Vec<Arc<RowGroup>>> {
     let io = collection.io();
@@ -796,11 +1031,16 @@ pub(crate) fn write_row_groups_to_disk(
         .map(|_| Vec::with_capacity(types.len()))
         .collect();
     for index in 0..types.len() {
+        // `RowGroupWriteInfo::GetPartialBlockManager`: the column's own, if any.
+        let writer: &mut BlockWriter = match column_blocks.get_mut(index) {
+            Some(writer) => writer,
+            None => &mut *blocks,
+        };
         for (row_group, written) in row_groups.iter().zip(&mut columns) {
             let column = row_group.column(index)?;
             let mut context = CheckpointContext {
-                info: blocks.compression_info(),
-                writer: &mut *blocks,
+                info: writer.compression_info(),
+                writer: &mut *writer,
                 io,
                 column_compression: compression_types
                     .get(index)
@@ -815,14 +1055,18 @@ pub(crate) fn write_row_groups_to_disk(
             written.push(checkpoint_column(column, column.count(), 0, &mut context)?);
         }
     }
-    Ok(row_groups
+    let append_blocks = blocks.append_blocks().cloned();
+    row_groups
         .iter()
         .zip(columns)
         .map(|(row_group, data)| {
             let types = column_types(collection, &data);
-            Arc::new(row_group.with_persistent(Arc::clone(io), types, data, RowGroupMetadata::default()))
+            Ok(Arc::new(match &append_blocks {
+                Some(append_blocks) => row_group.with_optimistic_write(io, &types, &data, append_blocks)?,
+                None => row_group.with_persistent(Arc::clone(io), types, data, RowGroupMetadata::default()),
+            }))
         })
-        .collect())
+        .collect()
 }
 
 /// Hands the table what a completed checkpoint wrote (`RowGroupCollection::Checkpoint`

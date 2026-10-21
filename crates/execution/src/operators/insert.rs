@@ -217,9 +217,9 @@ impl Sink for PhysicalInsert {
         let count = collection.total_rows();
         let row_group_size = table.row_groups().row_group_size();
         if count >= row_group_size {
-            // Write the thread's remaining rows; the partially filled block the
-            // transaction's writers share is written when it commits.
+            // Write the thread's remaining rows and its partially filled blocks.
             collection.write_unflushed_row_groups(&mut writer)?;
+            writer.final_flush()?;
         }
         let _merge = global.merge_lock.lock().unwrap_or_else(PoisonError::into_inner);
         global.result.add_count(count);
@@ -233,7 +233,8 @@ impl Sink for PhysicalInsert {
             )
         } else {
             // The rows were written: move their row groups into the local storage.
-            table.local_merge(&self.transaction, &collection)
+            table.local_merge(&self.transaction, &collection)?;
+            table.merge_optimistic_writer(&self.transaction, &mut writer)
         }
     }
 
