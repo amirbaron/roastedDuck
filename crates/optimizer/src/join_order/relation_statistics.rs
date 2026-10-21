@@ -3,7 +3,7 @@
 
 use rustdb_ast::{ExpressionType, JoinType};
 use rustdb_catalog::EntryKind;
-use rustdb_planner::operator::{COLUMN_IDENTIFIER_ROW_ID, LogicalAggregate, LogicalGet};
+use rustdb_planner::operator::{COLUMN_IDENTIFIER_ROW_ID, ColumnIndex, LogicalAggregate, LogicalGet};
 use rustdb_planner::{
     ClientContext, ColumnBinding, Expression, ExpressionKind, LogicalKind, LogicalOperator,
 };
@@ -53,8 +53,9 @@ impl Default for RelationStats {
 pub fn table_column_statistics(
     context: &ClientContext,
     get: &LogicalGet,
-    column: u64,
+    column_index: &ColumnIndex,
 ) -> Option<BaseStatistics> {
+    let column = column_index.index;
     if column == COLUMN_IDENTIFIER_ROW_ID {
         return None;
     }
@@ -74,12 +75,20 @@ pub fn table_column_statistics(
         return None;
     }
     let physical = table.logical_to_physical(usize::try_from(column).ok()?)?;
-    storage.column_statistics(physical)
+    let stats = storage.column_statistics(physical)?;
+    if column_index.is_pushdown_extract() {
+        // The statistics of the extracted field (`TableStatistics::CopyStats`).
+        return crate::statistics_propagator::pushdown_extract_statistics(
+            &stats,
+            column_index.child_indexes.first()?,
+        );
+    }
+    Some(stats)
 }
 
 /// A column's distinct count from the table statistics, 0 if unknown (DuckDB's
 /// `RelationStatisticsHelper::GetDistinctCount`).
-fn distinct_count(context: &ClientContext, get: &LogicalGet, column: u64) -> u64 {
+fn distinct_count(context: &ClientContext, get: &LogicalGet, column: &ColumnIndex) -> u64 {
     table_column_statistics(context, get, column).map_or(0, |stats| stats.distinct_count())
 }
 
@@ -121,7 +130,7 @@ pub fn extract_get_stats(op: &mut LogicalOperator, context: &ClientContext) -> R
         stats.table_name.clone_from(&name);
     }
     for column in &get.column_ids {
-        let count = distinct_count(context, get, column.index);
+        let count = distinct_count(context, get, column);
         let column_name = get
             .names
             .get(column.index as usize)
@@ -147,7 +156,9 @@ pub fn extract_get_stats(op: &mut LogicalOperator, context: &ClientContext) -> R
     if !get.table_filters.is_empty() {
         let mut has_non_optional_filters = false;
         for (&column, filter) in &get.table_filters.filters {
-            if let Some(column_stats) = table_column_statistics(context, get, column as u64) {
+            if let Some(column_stats) =
+                table_column_statistics(context, get, &ColumnIndex::new(column as u64))
+            {
                 let with_filter = inspect_table_filter(base_table_cardinality, filter, &column_stats);
                 cardinality_after_filters = cardinality_after_filters.min(with_filter);
             }

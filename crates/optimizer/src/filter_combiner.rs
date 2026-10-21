@@ -680,9 +680,13 @@ fn type_supports_constant_filter(ty: &LogicalType) -> bool {
         )
 }
 
-/// The table filter key of a scan column.
-fn filter_key(column: &ColumnIndex) -> usize {
-    usize::try_from(column.index).unwrap_or(usize::MAX)
+/// The table filter key of a scan column; `None` for a pushed-down extract, which
+/// filters cannot be pushed into yet (DuckDB's FIXMEs on `IsPushdownExtract`).
+fn filter_key(column: &ColumnIndex) -> Option<usize> {
+    if column.is_pushdown_extract() {
+        return None;
+    }
+    Some(usize::try_from(column.index).unwrap_or(usize::MAX))
 }
 
 /// The scanned column a column reference, possibly inside `struct_extract` calls, reads
@@ -691,7 +695,7 @@ fn bound_column_index(column_ids: &[ColumnIndex], expression: &Expression) -> Op
     match &expression.kind {
         ExpressionKind::ColumnRef(column) => column_ids
             .get(usize::try_from(column.binding.column_index).ok()?)
-            .map(filter_key),
+            .and_then(filter_key),
         ExpressionKind::Function(function)
             if matches!(&*function.function.name, "struct_extract" | "struct_extract_at") =>
         {
@@ -756,7 +760,7 @@ fn column_and_constant<'e>(
     };
     let constant = children.get(1)?.as_constant()?;
     let column = column_ids.get(usize::try_from(column.binding.column_index).ok()?)?;
-    Some((filter_key(column), constant))
+    Some((filter_key(column)?, constant))
 }
 
 /// The next string after every string starting with `prefix` (DuckDB's
@@ -914,7 +918,7 @@ fn try_pushdown_in_filter(
     let Some(column) = usize::try_from(column.binding.column_index)
         .ok()
         .and_then(|index| column_ids.get(index))
-        .map(filter_key)
+        .and_then(filter_key)
     else {
         return FilterPushdownResult::NoPushdown;
     };
@@ -1002,7 +1006,7 @@ fn try_pushdown_or_clause(
         let Some(id) = usize::try_from(column.binding.column_index)
             .ok()
             .and_then(|index| column_ids.get(index))
-            .map(filter_key)
+            .and_then(filter_key)
         else {
             return FilterPushdownResult::NoPushdown;
         };
@@ -1054,7 +1058,11 @@ pub fn try_pushdown_generic_expression(
     if bindings.iter().any(|binding| binding != first) {
         return FilterPushdownResult::NoPushdown;
     }
-    let Some(column) = get.column_ids.get(first.column_index as usize).map(filter_key) else {
+    let Some(column) = get
+        .column_ids
+        .get(first.column_index as usize)
+        .and_then(filter_key)
+    else {
         return FilterPushdownResult::NoPushdown;
     };
     let mut filter = expression.clone();

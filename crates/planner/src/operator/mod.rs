@@ -72,13 +72,7 @@ impl BoundLimitNode {
 /// A set of group indexes (DuckDB's `GroupingSet`).
 pub type GroupingSet = std::collections::BTreeSet<u64>;
 
-/// A column of a table or table function, possibly a field path into a nested column
-/// (DuckDB's `ColumnIndex`).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ColumnIndex {
-    pub index: u64,
-    pub child_indexes: Vec<ColumnIndex>,
-}
+pub use rustdb_types::{ColumnIndex, ColumnIndexType};
 
 /// The pseudo column id of `rowid` (DuckDB's `COLUMN_IDENTIFIER_ROW_ID`).
 pub const COLUMN_IDENTIFIER_ROW_ID: u64 = u64::MAX;
@@ -86,19 +80,6 @@ pub const COLUMN_IDENTIFIER_ROW_ID: u64 = u64::MAX;
 /// The pseudo column id of a scan that needs no column (DuckDB's
 /// `COLUMN_IDENTIFIER_EMPTY`).
 pub const COLUMN_IDENTIFIER_EMPTY: u64 = u64::MAX - 1;
-
-impl ColumnIndex {
-    pub const fn new(index: u64) -> Self {
-        Self {
-            index,
-            child_indexes: Vec::new(),
-        }
-    }
-
-    pub const fn is_row_id_column(&self) -> bool {
-        self.index == COLUMN_IDENTIFIER_ROW_ID
-    }
-}
 
 /// `GROUP BY` aggregation (DuckDB's `LogicalAggregate`). The aggregates are the
 /// operator's `expressions`.
@@ -252,6 +233,10 @@ impl LogicalGet {
         }
         if column.index == COLUMN_IDENTIFIER_EMPTY {
             return LogicalType::BOOLEAN;
+        }
+        if column.has_type() {
+            // A pushed-down extract produces the extracted field (`GetScanType`).
+            return column.scan_type().clone();
         }
         if let Some(ty) = self.returned_types.get(column.index as usize) {
             return ty.clone();

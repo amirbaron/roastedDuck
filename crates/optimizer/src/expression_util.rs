@@ -319,8 +319,12 @@ pub fn can_throw(expression: &Expression) -> bool {
         ExpressionKind::Cast(cast) => {
             let child_type = &cast.child.return_type;
             let target = &expression.return_type;
+            // DuckDB compares with `LogicalType(child_type.id())`, a type without
+            // parameters: a cast to a type with parameters (DECIMAL, VARIANT, nested
+            // types, ...) never counts as throwing here.
             if target.id() != child_type.id()
-                && LogicalType::force_max_logical_type(target, child_type).id() == child_type.id()
+                && LogicalType::force_max_logical_type(target, child_type)
+                    == LogicalType::simple(child_type.id())
             {
                 return true;
             }

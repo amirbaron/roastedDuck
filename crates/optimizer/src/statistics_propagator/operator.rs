@@ -333,7 +333,7 @@ impl StatisticsPropagator<'_> {
             return Ok(self.node_stats.take());
         }
         for (index, column) in get.column_ids.iter().enumerate() {
-            if let Some(stats) = table_column_statistics(self.optimizer.context(), get, column.index) {
+            if let Some(stats) = table_column_statistics(self.optimizer.context(), get, column) {
                 self.statistics_map
                     .insert(ColumnBinding::new(get.table_index, index as u64), stats);
             }

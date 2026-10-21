@@ -366,6 +366,28 @@ Memory-heavy queries (`.context/perf/bin/mem.py`, SF1 lineitem): all run under a
 limit at 4 threads with peak RSS within 0.9–1.2× of DuckDB; without a limit, sorting
 `l_comment` takes 651 MB vs 457 MB and 1.15 s vs 0.81 s.
 
+## VARIANT TPC-H SF1 (`variant/tpch_sf1`)
+
+The 22 TPC-H queries over views that cast the fields of VARIANT columns
+(`lineitem.l_orderkey::DECIMAL(15,2)`, ...) of a shredded SF1 database, 14 threads, one
+CLI session each, run back to back on a loaded machine (load average 13–16):
+
+| | wall | CPU | peak RSS |
+|---|---:|---:|---:|
+| DuckDB 1.5.6 | 94.0 s | 986 s | 1,417 MB |
+| rustdb before (Q1 alone) | 180 s | 813 s | |
+| rustdb, VARIANT read in place | 94.7 s | 912 s | 767 MB |
+| rustdb, unshredding into the layout | 18.0 s | 186 s | 744 MB |
+
+The whole test (dbgen, the VARIANT tables, checkpoint, the 22 queries): 33 s, DuckDB's
+`unittest` 89 s. DuckDB's time goes into unshredding: a filter on a field disables the
+extract pushdown of its column, and single-field paths never read the shredded column
+(work queue 13), so every query unshreds whole rows, builds a `VariantValue` per row and
+field, and casts field by field through `Value`s. rustdb writes rows whose fields are
+shredded on primitive types straight into the VARIANT layout, extracts by remapping each
+row's root value (as DuckDB's `VariantExtract` does), and casts values of the target type
+straight from the data, the others with one vector cast per type.
+
 ## Open items
 
 | Area | Gap | Suspected cause | Found in |
@@ -380,7 +402,6 @@ limit at 4 threads with peak RSS within 0.9–1.2× of DuckDB; without a limit, 
 | Sorting VARCHAR keys | `l_comment` sort 1.4× slower, 1.4× the memory | the output decodes strings from the sort keys (`decode_value`) instead of reading a payload; contiguous copy of each run's keys | `crates/row` (`sort/`) |
 | Window source | one hash group per thread | DuckDB splits a hash group into tasks (`WindowHashGroup` stages), so a single partition runs on one thread here | `crates/execution` (`operators/window.rs`) |
 | IEJoin / AsOf sinks | sequential | their sinks switch inputs on `combine` instead of DuckDB's two finalize events (`AddFinishEvent`) | `crates/execution` (`operators/join/iejoin.rs`, `asof_join.rs`) |
-| Struct projection pushdown | `plan_struct_projection_pushdown`, `struct_projection_pushdown_in_storage`, `deliver_child_columns` fail | `struct_extract` on a scanned column is not pushed into the scan as a child column (`ColumnIndex` children, pushdown extract) | `crates/optimizer`, `crates/storage`, `crates/parquet` |
 | Common subexpressions | `l_extendedprice * (1 - l_discount)` computed twice in Q1 | check the CSE optimizer port against DuckDB's plan | `crates/optimizer` |
 | Parser: tiny statements (`SELECT 1`, short SELECTs) | ~1.05–1.25× DuckDB cycles per query | per-node malloc/free vs DuckDB's arena-allocated parse tree | `crates/parser` (`parse_bench`) |
 | zstd | compression 0.88× on UUID-like strings, 0.93–1.0× elsewhere; decompression 0.93–0.99× (see above) | the double-fast search loop and the sequence decoding loop keep fewer values in registers than zstd's (more instructions per position and per sequence) | `crates/zstd` (`dfast.rs`, `decompress/block.rs`) |
@@ -424,4 +445,6 @@ limit at 4 threads with peak RSS within 0.9–1.2× of DuckDB; without a limit, 
 | Unnest rewriter plans | a lateral `UNNEST` (`CROSS JOIN unnest(arr)`) kept its `DELIM_JOIN` (`unnest_rewriter.test_slow` failed) | the UnnestRewriter's pattern for the `unnest` table function |
 | Opening a database: checkpoint blocks | every row group's column metadata was read to collect the blocks the checkpoint references (TPC-H SF10: 8,161 metadata block reads, 0.8 G instructions; ClickBench 7.8 G) | every block neither free nor metadata (`LoadFreeList`): 0.11 and 0.39 G instructions (DuckDB 0.09 and 0.16) |
 | Spill files and zstd | `ruzstd` encoded at about zstd level 1 only and decoded at 0.2–0.5× DuckDB's speed | zstd 1.5.6 ported (`crates/zstd`): spill files adapt between levels -5..5 as DuckDB's do; 0.88–1.05× compression, 0.93–0.99× decompression |
+| Struct projection pushdown | `struct_extract` on a scanned column read the whole column (`plan_struct_projection_pushdown`, `struct_projection_pushdown_in_storage`, `deliver_child_columns` failed) | DuckDB's `RemoveUnusedColumns` child columns and pushdown extract: scans read only the fields used, table scans emit extracted fields directly (work queue 13) |
+| VARIANT scans, extracts and casts | every row unpacked into `Value`s (`variant/tpch_sf1` timed out at 300 s; Q1 180 s vs DuckDB's 2.5 s) | VARIANT vectors read in place (`UnifiedVariantVectorData`), zero-copy extract, direct casts, unshredding into the layout (18.0 s for the 22 queries vs 94.0 s) |
 | `COUNT(DISTINCT)` finalize | the tables merging DISTINCT partitions resized from the initial capacity (ClickBench q04: 0.4 of 7.3 Gcycles reinserting) | sized for their partition like the regular finalize (q04 7.39 → 6.85 Gcycles) |

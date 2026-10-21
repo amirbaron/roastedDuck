@@ -17,6 +17,9 @@ pub struct PhysicalTableScan {
     function: TableFunction,
     bind_data: Option<Arc<dyn FunctionData>>,
     column_ids: Vec<u64>,
+    /// The scanned columns with the fields read of nested ones (DuckDB's
+    /// `column_indexes`).
+    column_indexes: Vec<rustdb_types::ColumnIndex>,
     /// The positions in `column_ids` that are output; empty for all of them (columns
     /// read only for pushed-down filters are not output).
     projection: Vec<usize>,
@@ -46,6 +49,10 @@ impl PhysicalTableScan {
             types,
             function,
             bind_data,
+            column_indexes: column_ids
+                .iter()
+                .map(|&id| rustdb_types::ColumnIndex::new(id))
+                .collect(),
             column_ids,
             projection: Vec::new(),
             filters: None,
@@ -74,6 +81,13 @@ impl PhysicalTableScan {
             partition_columns.to_vec()
         };
         Some(get_partition_info(self.bind_data.as_deref(), &base_columns))
+    }
+
+    /// The scanned columns with the fields read of nested ones.
+    #[must_use]
+    pub fn with_column_indexes(mut self, column_indexes: Vec<rustdb_types::ColumnIndex>) -> Self {
+        self.column_indexes = column_indexes;
+        self
     }
 
     /// Outputs only the columns at `projection` (positions in the column ids).
@@ -136,7 +150,7 @@ impl PhysicalOperator for PhysicalTableScan {
             // Virtual columns are not listed (`column_id >= names.size()`).
             let name = |index: usize| {
                 (!self.explain.virtual_columns.contains(&index))
-                    .then(|| self.explain.column_names.get(index).map(String::as_str))
+                    .then(|| self.explain.projection_name(index))
                     .flatten()
             };
             let names: Vec<&str> = if self.projection.is_empty() {
@@ -233,6 +247,7 @@ impl Source for PhysicalTableScan {
             Some(parallel) => Some((parallel.init_global)(
                 self.bind_data.as_deref(),
                 &self.column_ids,
+                &self.column_indexes,
             )?),
             None => None,
         };

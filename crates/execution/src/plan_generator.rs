@@ -30,7 +30,7 @@ use rustdb_planner::{
     LogicalOperatorType,
 };
 use rustdb_storage::{DataTable, StorageIndex, TableConstraints};
-use rustdb_types::{DataChunk, LogicalType, PhysicalType, Value};
+use rustdb_types::{ColumnIndex, DataChunk, LogicalType, LogicalTypeId, PhysicalType, Value};
 
 use crate::constraints::table_constraints;
 mod asof_join;
@@ -182,6 +182,81 @@ fn scan_filter_set(
     Ok(Some(filters))
 }
 
+/// What `EXPLAIN` lists under `Projections` for each scanned column of `get` (the names
+/// DuckDB's `PhysicalTableScan::ParamsToString` builds with `AddProjectionNames`).
+fn projection_names(get: &LogicalGet) -> Result<Vec<String>> {
+    get.column_ids
+        .iter()
+        .map(|column| {
+            let (Some(name), Some(ty)) = (
+                get.names.get(column.index as usize),
+                get.returned_types.get(column.index as usize),
+            ) else {
+                return Ok(get.column_name(column));
+            };
+            let mut result = String::new();
+            add_projection_names(column, name, ty, &mut result)?;
+            Ok(result)
+        })
+        .collect()
+}
+
+/// The name of a scanned column, or of each of its fields read, one per line (DuckDB's
+/// `AddProjectionNames`).
+fn add_projection_names(
+    index: &ColumnIndex,
+    name: &str,
+    ty: &LogicalType,
+    result: &mut String,
+) -> Result<()> {
+    if index.child_indexes.is_empty() {
+        // No fields projected out.
+        if !result.is_empty() {
+            result.push('\n');
+        }
+        result.push_str(name);
+        return Ok(());
+    }
+    let variant_field = |child: &ColumnIndex, result: &mut String| {
+        let field_type = if child.has_type() {
+            child.ty.clone()
+        } else {
+            LogicalType::variant()
+        };
+        add_projection_names(
+            child,
+            &format!("{name}.{}", child.field_name()),
+            &field_type,
+            result,
+        )
+    };
+    match ty.id() {
+        LogicalTypeId::Struct => {
+            let fields = ty.struct_children().unwrap_or_default();
+            for child in &index.child_indexes {
+                if child.has_primary_index() {
+                    let (field, field_type) = fields
+                        .get(child.index as usize)
+                        .ok_or_else(|| Error::internal("projected struct field out of range"))?;
+                    add_projection_names(child, &format!("{name}.{field}"), field_type, result)?;
+                } else {
+                    variant_field(child, result)?;
+                }
+            }
+            Ok(())
+        }
+        LogicalTypeId::Variant => {
+            for child in &index.child_indexes {
+                variant_field(child, result)?;
+            }
+            Ok(())
+        }
+        _ => Err(Error::internal(format!(
+            "Unexpected type ({ty}) in AddProjectionNames"
+        ))),
+    }
+}
+
 /// The storage of a table entry (`DuckTableEntry::GetStorage`).
 fn table_storage(entry: &CatalogEntry) -> Result<Arc<DataTable>> {
     match &entry.kind {
@@ -297,7 +372,7 @@ impl PlanGenerator {
                     .ok()
                     .and_then(|logical| table.logical_to_physical(logical))
                     .ok_or_else(|| Error::internal("scan of a generated column"))?;
-                Ok(StorageIndex::new(physical as u64))
+                Ok(StorageIndex::from_column_index(column, physical as u64))
             })
             .collect::<Result<Vec<_>>>()?;
         if column_ids.is_empty() {
@@ -330,6 +405,7 @@ impl PlanGenerator {
                     }
                 })
                 .collect(),
+            projection_names: projection_names(get)?,
             virtual_columns: get
                 .column_ids
                 .iter()
@@ -354,7 +430,8 @@ impl PlanGenerator {
         .with_dynamic_filters(get.dynamic_filters.clone())
         .with_index_scan(Some(context.index_scan))
         .with_explain_info(explain)
-        .with_row_group_order(get.row_group_order.clone());
+        .with_row_group_order(get.row_group_order.clone())
+        .with_casts(Arc::clone(&context.client.casts));
         if let Some(sample) = &get.sample_options {
             // DuckDB's `ScanSamplingInfo`: the percentage as a fraction.
             let percentage = sample.sample_size.as_f64().unwrap_or(100.0);
@@ -1211,6 +1288,7 @@ impl PlanGenerator {
                         .iter()
                         .map(|column| get.column_name(column))
                         .collect(),
+                    projection_names: projection_names(&get)?,
                     virtual_columns: get
                         .column_ids
                         .iter()
@@ -1236,6 +1314,7 @@ impl PlanGenerator {
                 let projection = get.projection_ids.iter().map(|&id| id as usize).collect();
                 Arc::new(
                     PhysicalTableScan::new(types, get.function, bind_data, column_ids)
+                        .with_column_indexes(get.column_ids)
                         .with_projection(projection)
                         .with_filters(filters)
                         .with_explain_info(explain),

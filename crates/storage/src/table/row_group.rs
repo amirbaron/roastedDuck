@@ -9,7 +9,7 @@ use rustdb_types::{DataChunk, LogicalType, SelectionVector, Vector};
 use super::PerColumnMetadataBlocks;
 use super::chunk_info::{DeletedRows, DeletedScanType, InsertedScanType, ScanOptions, UpdateScanType};
 use super::column_data::{
-    ColumnAppendState, ColumnData, ColumnDataType, ColumnScanState, UpdateRegistration,
+    ColumnAppendState, ColumnData, ColumnDataType, ColumnScanState, ScanCasts, UpdateRegistration,
 };
 use super::row_version_manager::RowVersionManager;
 use super::scan_state::{CollectionScanState, ScanFilterInfo, StorageIndex};
@@ -569,6 +569,9 @@ impl RowGroup {
         for (index, entry) in filters.filters().iter().enumerate() {
             let result = if entry.table_column_index.is_row_id() {
                 check_row_id_filter(&entry.filter, row_start, row_start + self.count())
+            } else if entry.table_column_index.pushdown_extract {
+                // The statistics are those of the whole column, not the extracted field.
+                FilterPropagateResult::NoPruningPossible
             } else {
                 match self.column(entry.table_column_index.primary_index()) {
                     Ok(column) => column.check_zonemap_column(&entry.filter),
@@ -911,8 +914,13 @@ impl RowGroup {
                 vector.values_mut::<i64>()[result_index] = (row_start + row) as i64;
                 continue;
             }
-            self.column(column_id.primary_index())?
-                .fetch_row(transaction, row, vector, result_index)?;
+            self.column(column_id.primary_index())?.fetch_row_index(
+                transaction,
+                column_id,
+                row,
+                vector,
+                result_index,
+            )?;
         }
         Ok(())
     }
@@ -1180,30 +1188,22 @@ impl RowGroup {
         Ok(())
     }
 
-    /// Column scan states for scanning `column_ids` of a table with `types`.
+    /// Column scan states for scanning `column_ids` of a table with `types`
+    /// (`CollectionScanState::Initialize`); `casts` binds the casts of pushed-down
+    /// extracts.
     pub(crate) fn column_scan_states(
         types: &[LogicalType],
         column_ids: &[StorageIndex],
-    ) -> Vec<ColumnScanState> {
+        casts: Option<&ScanCasts>,
+    ) -> Result<Vec<ColumnScanState>> {
         column_ids
             .iter()
             .map(|column_id| {
                 if column_id.is_row_id() {
-                    return ColumnScanState::default();
+                    return Ok(ColumnScanState::default());
                 }
                 let ty = types.get(column_id.primary_index()).cloned().unwrap_or_default();
-                let mut state = ColumnScanState::for_type(&ty);
-                if !column_id.children.is_empty() {
-                    let fields = ty.struct_children().map_or(0, <[_]>::len);
-                    let mut scan = vec![false; fields];
-                    for child in &column_id.children {
-                        if let Some(flag) = scan.get_mut(child.primary_index()) {
-                            *flag = true;
-                        }
-                    }
-                    state.scan_child_column = scan;
-                }
-                state
+                ColumnScanState::initialize(&ty, column_id, casts)
             })
             .collect()
     }

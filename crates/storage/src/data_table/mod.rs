@@ -620,6 +620,9 @@ impl DataTable {
             .map(|column| {
                 if column.is_row_id() {
                     LogicalType::BIGINT
+                } else if column.pushdown_extract {
+                    // The extracted field.
+                    column.scan_type().clone()
                 } else {
                     collection
                         .types()

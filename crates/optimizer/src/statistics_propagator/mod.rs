@@ -12,6 +12,7 @@ mod execute_aggregates;
 mod expression;
 mod function;
 
+pub(crate) use expression::pushdown_extract_statistics;
 pub use function::WithoutStatistics;
 mod operator;
 

@@ -17,14 +17,17 @@ use rustdb_types::{
 
 use super::chunk_info::UpdateScanType;
 use super::column_segment::{ColumnSegment, SegmentAppendState, SegmentScanState};
+use super::scan_state::StorageIndex;
 use super::segment_tree::{Segment, SegmentNode, SegmentTree};
 use super::update_segment::{UpdateSegment, UpdateVersion};
 use crate::VECTOR_SIZE;
 use crate::checkpoint::table_writer::{AppendBlocks, InMemoryBlocks, PendingSegment};
 use crate::data_table::TableIoManager;
-use crate::statistics::{BaseStatistics, FilterPropagateResult};
+use crate::statistics::{BaseStatistics, FilterPropagateResult, TYPED_VALUE_INDEX, is_fully_shredded};
 use crate::table_filter::TableFilter;
 use crate::transaction::TransactionData;
+use rustdb_function::cast::{BoundCastInfo, CastFunctionSet, CastParameters};
+use rustdb_types::ColumnIndex;
 
 impl Segment for ColumnSegment {
     fn row_count(&self) -> u64 {
@@ -116,6 +119,53 @@ fn under_child(
     })
 }
 
+/// The casts of the client, which a scan binds the casts pushed into it with (DuckDB's
+/// `ColumnScanState::context`).
+#[derive(Clone)]
+pub struct ScanCasts(pub Arc<CastFunctionSet>);
+
+impl std::fmt::Debug for ScanCasts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ScanCasts")
+    }
+}
+
+/// A cast of the scanned values to the type an extract pushed into the scan produces
+/// (DuckDB's `PushedDownExpressionState` with its cast expression).
+#[derive(Debug)]
+pub struct PushedDownCast {
+    source: LogicalType,
+    target: LogicalType,
+    cast: BoundCastInfo,
+}
+
+impl PushedDownCast {
+    /// Scans into an intermediate vector of the source type with `scan` (at offset 0) and
+    /// casts it into `result` at `result_offset` (DuckDB's `ScanChild` with an expression
+    /// state).
+    fn scan_into(
+        &self,
+        result: &mut Vector,
+        count: usize,
+        result_offset: usize,
+        scan: impl FnOnce(&mut Vector, usize) -> Result<usize>,
+    ) -> Result<usize> {
+        let mut input = Vector::flat(self.source.clone(), count.max(STANDARD_VECTOR_SIZE));
+        let scanned = scan(&mut input, 0)?;
+        let mut casted = Vector::flat(self.target.clone(), scanned.max(1));
+        self.cast
+            .execute(&input, &mut casted, scanned, &mut CastParameters::new())?;
+        if result_offset == 0 {
+            *result = casted;
+        } else {
+            for row in 0..scanned {
+                result.set_value(result_offset + row, &casted.get_value(row))?;
+            }
+        }
+        Ok(scanned)
+    }
+}
+
 /// The state of a scan of one column (DuckDB's `ColumnScanState`).
 #[derive(Debug, Default)]
 pub struct ColumnScanState {
@@ -126,13 +176,20 @@ pub struct ColumnScanState {
     pub offset_in_column: u64,
     /// Whether the current segment's zone map was already checked.
     pub segment_checked: bool,
-    /// Validity first, then list/array child or struct fields.
+    /// Validity first, then list/array child or struct fields (only the extracted field
+    /// of a pushdown extract).
     pub child_states: Vec<ColumnScanState>,
     /// The child offset after the last scanned list (LIST columns).
     last_offset: u64,
     /// Which struct fields are scanned (all when empty).
     pub scan_child_column: Vec<bool>,
     pub update_scan_type: UpdateScanType,
+    /// The (part of the) column the scan reads (DuckDB's `storage_index`).
+    pub storage_index: StorageIndex,
+    /// The cast of an extract pushed into the scan (DuckDB's `expression_state`).
+    pushed_down_cast: Option<Box<PushedDownCast>>,
+    /// The client's casts, for casts pushed into the scan.
+    casts: Option<ScanCasts>,
 }
 
 impl ColumnScanState {
@@ -167,6 +224,105 @@ impl ColumnScanState {
         state
     }
 
+    /// A scan state for reading `storage_index` out of a column of type `ty`: only the
+    /// struct fields it names, or the field it extracts, with the extract's cast
+    /// (`ColumnScanState::Initialize` with a `StorageIndex`).
+    pub fn initialize(
+        ty: &LogicalType,
+        storage_index: &StorageIndex,
+        casts: Option<&ScanCasts>,
+    ) -> Result<Self> {
+        let mut state = Self {
+            storage_index: storage_index.clone(),
+            casts: casts.cloned(),
+            ..Self::default()
+        };
+        if ty.id() == LogicalTypeId::Validity {
+            return Ok(state);
+        }
+        if ty.id() == LogicalTypeId::Variant {
+            // The child states are made per row group (`CreateScanStates`): the shape of
+            // a VARIANT differs between them.
+            state.scan_child_column = vec![true; 2];
+            if !storage_index.pushdown_extract {
+                return Ok(state);
+            }
+            let scan_type = storage_index.scan_type().clone();
+            if scan_type.id() != LogicalTypeId::Variant {
+                state.push_down_cast(ty, &scan_type)?;
+            }
+            return Ok(state);
+        }
+        state.child_states.push(Self::default());
+        match ty.physical_type() {
+            PhysicalType::Struct => {
+                let fields = ty.struct_children().unwrap_or_default();
+                state.child_states.extend(fields.iter().map(|_| Self::default()));
+                let children = &storage_index.children;
+                if children.is_empty() {
+                    // Every field.
+                    state.scan_child_column = vec![true; fields.len()];
+                    for (index, (_, field)) in fields.iter().enumerate() {
+                        state.child_states[index + 1] =
+                            Self::initialize(field, &StorageIndex::new(0), casts)?;
+                    }
+                } else if storage_index.pushdown_extract {
+                    // Only the extracted field, read into the result itself.
+                    state.scan_child_column = vec![true];
+                    let child = &children[0];
+                    let (_, child_type) = fields
+                        .get(child.primary_index())
+                        .ok_or_else(|| Error::internal("pushdown extract of a field out of range"))?;
+                    if child.children.is_empty() && child_type != &child.ty {
+                        state.push_down_cast(child_type, &child.ty)?;
+                    }
+                    state.child_states[1] = Self::initialize(child_type, child, casts)?;
+                } else {
+                    // The named fields; the others are NULL.
+                    state.scan_child_column = vec![false; fields.len()];
+                    for child in children {
+                        let index = child.primary_index();
+                        let (_, child_type) = fields
+                            .get(index)
+                            .ok_or_else(|| Error::internal("projected struct field out of range"))?;
+                        state.scan_child_column[index] = true;
+                        state.child_states[index + 1] = Self::initialize(child_type, child, casts)?;
+                    }
+                }
+            }
+            PhysicalType::List => {
+                let child = ty.child_type().cloned().unwrap_or_default();
+                state
+                    .child_states
+                    .push(Self::initialize(&child, &StorageIndex::new(0), casts)?);
+            }
+            PhysicalType::Array => {
+                let child = ty
+                    .array_child()
+                    .map_or(LogicalType::INVALID, |(child, _)| child.clone());
+                state
+                    .child_states
+                    .push(Self::initialize(&child, &StorageIndex::new(0), casts)?);
+            }
+            _ => {}
+        }
+        Ok(state)
+    }
+
+    /// Casts the scanned values from `source` to `target` (`PushDownCast`).
+    fn push_down_cast(&mut self, source: &LogicalType, target: &LogicalType) -> Result<()> {
+        let cast = match &self.casts {
+            Some(casts) => casts.0.get_cast_function(source, target)?,
+            None => CastFunctionSet::new().get_cast_function(source, target)?,
+        };
+        self.pushed_down_cast = Some(Box::new(PushedDownCast {
+            source: source.clone(),
+            target: target.clone(),
+            cast,
+        }));
+        Ok(())
+    }
+
     /// Moves the scan forward by `count` rows without reading (`Next`).
     pub fn next(&mut self, count: u64) {
         self.offset_in_column += count;
@@ -174,6 +330,128 @@ impl ColumnScanState {
             child.next(count);
         }
     }
+}
+
+/// Follows the field path `path` through the shredded column `shredded`, adding the
+/// child indexes of the shredded data it reads to `out` (DuckDB's
+/// `FindShreddedColumnInternal`); `stats` and `path` end at the leaf.
+///
+/// Like DuckDB's, the field named by the last path element is not looked up: the column
+/// reached through the elements before it is the result.
+fn find_shredded_column<'a>(
+    shredded: &ColumnData,
+    stats: &mut &'a BaseStatistics,
+    path: &mut &'a StorageIndex,
+    out: &mut ColumnIndex,
+) -> bool {
+    let current = *path;
+    let field_name = current.field_name();
+    let Some(next) = current.children.first() else {
+        // The end of the path.
+        if !is_fully_shredded(stats) {
+            return false;
+        }
+        if shredded.ty.id() == LogicalTypeId::Struct {
+            // A shredded level: its typed values.
+            out.child_indexes.push(ColumnIndex::new(TYPED_VALUE_INDEX as u64));
+            let Some(typed_stats) = stats
+                .struct_children()
+                .and_then(|children| children.get(TYPED_VALUE_INDEX))
+            else {
+                return false;
+            };
+            *stats = typed_stats;
+        }
+        return true;
+    };
+    let ColumnKind::Struct { fields, .. } = &shredded.kind else {
+        // A sub-field of a primitive.
+        return false;
+    };
+    let Some(typed_value) = fields.get(TYPED_VALUE_INDEX) else {
+        return false;
+    };
+    let parent_stats = *stats;
+    let Some(typed_stats) = parent_stats
+        .struct_children()
+        .and_then(|children| children.get(TYPED_VALUE_INDEX))
+    else {
+        return false;
+    };
+    *stats = typed_stats;
+    if typed_value.ty.id() != LogicalTypeId::Struct {
+        // Not shredded on an OBJECT.
+        return false;
+    }
+    if !is_fully_shredded(parent_stats) {
+        return false;
+    }
+    let Some(index) = typed_value.ty.struct_children().and_then(|children| {
+        children
+            .iter()
+            .position(|(name, _)| name.eq_ignore_ascii_case(field_name))
+    }) else {
+        // The OBJECT has no such field.
+        return false;
+    };
+    let ColumnKind::Struct {
+        fields: object_fields,
+        ..
+    } = &typed_value.kind
+    else {
+        return false;
+    };
+    let Some(object_field) = object_fields.get(index) else {
+        return false;
+    };
+    let Some(field_stats) = stats.struct_children().and_then(|children| children.get(index)) else {
+        return false;
+    };
+    *stats = field_stats;
+    // shredded.typed_value.<field>
+    let mut typed_value_index = ColumnIndex::new(TYPED_VALUE_INDEX as u64);
+    typed_value_index
+        .child_indexes
+        .push(ColumnIndex::new(index as u64));
+    out.child_indexes.push(typed_value_index);
+    *path = next;
+    let child_column = &mut out.child_indexes[0].child_indexes[0];
+    find_shredded_column(object_field, stats, path, child_column)
+}
+
+/// A field a scan of a STRUCT column reads (DuckDB's `StructColumnDataChild`).
+#[derive(Clone, Copy, Debug)]
+struct StructScanChild {
+    /// The field's column.
+    field: usize,
+    /// The position of its scan state in `child_states`.
+    state: usize,
+    /// The position of its vector among the result's fields; `None` for a pushdown
+    /// extract, whose result is the field itself.
+    vector: Option<usize>,
+    should_scan: bool,
+}
+
+/// The fields a scan of a STRUCT column reads (DuckDB's `GetStructChildren`).
+fn struct_scan_children(state: &ColumnScanState, field_count: usize) -> Vec<StructScanChild> {
+    if state.storage_index.pushdown_extract
+        && let Some(child) = state.storage_index.children.first()
+    {
+        return vec![StructScanChild {
+            field: child.primary_index(),
+            state: 1,
+            vector: None,
+            should_scan: true,
+        }];
+    }
+    (0..field_count)
+        .map(|index| StructScanChild {
+            field: index,
+            state: index + 1,
+            vector: Some(index),
+            should_scan: state.scan_child_column.get(index).copied().unwrap_or(true),
+        })
+        .collect()
 }
 
 /// The state of an append to one column (DuckDB's `ColumnAppendState`).
@@ -919,9 +1197,54 @@ impl ColumnData {
             ColumnScanState::default(),
             ColumnScanState::for_type(&unshredded.ty),
         ];
-        if let Some(shredded) = shredded {
-            state.child_states.push(ColumnScanState::for_type(&shredded.ty));
+        let Some(shredded) = shredded else {
+            return;
+        };
+        let is_pushed_down_cast =
+            state.storage_index.has_type() && state.storage_index.scan_type().id() != LogicalTypeId::Variant;
+        if state.storage_index.pushdown_extract
+            && is_pushed_down_cast
+            && let Some(extract) = state.storage_index.children.first()
+            && let Some(struct_extract) = self.pushdown_shredded_field_extract(shredded, extract)
+            && let Ok(shredded_state) =
+                ColumnScanState::initialize(&shredded.ty, &struct_extract, state.casts.as_ref())
+        {
+            // The field exists and is fully shredded: a pushed-down `struct_extract` of the
+            // shredded data reads it.
+            state.child_states.push(shredded_state);
+            return;
         }
+        state.child_states.push(ColumnScanState::for_type(&shredded.ty));
+    }
+
+    /// The `struct_extract` of the shredded data of this VARIANT column that reads the
+    /// field `variant_extract` extracts, if that is fully shredded on a primitive type in
+    /// every row of the row group (`VariantColumnData::PushdownShreddedFieldExtract`).
+    fn pushdown_shredded_field_extract(
+        &self,
+        shredded: &Self,
+        variant_extract: &StorageIndex,
+    ) -> Option<StorageIndex> {
+        let stats = self.stats_lock().ok()?;
+        let variant_stats = stats.variant()?;
+        if !variant_stats.is_shredded() {
+            // Not (or inconsistently) shredded statistics.
+            return None;
+        }
+        // shredded.typed_value
+        let mut column_index = ColumnIndex::new(0);
+        let mut field_stats = variant_stats.shredded_stats()?;
+        let mut path = variant_extract;
+        if !find_shredded_column(shredded, &mut field_stats, &mut path, &mut column_index) {
+            return None;
+        }
+        if field_stats.logical_type().is_nested() {
+            // The leaf must be primitive: the shredding of OBJECTs and ARRAYs interleaves
+            // `untyped_value_index` fields.
+            return None;
+        }
+        column_index.set_pushdown_extract_type(&shredded.ty, Some(&path.ty));
+        Some(StorageIndex::from_column_index(&column_index, 0))
     }
 
     fn initialize_children(&self, state: &mut ColumnScanState, row: u64) {
@@ -951,9 +1274,15 @@ impl ColumnData {
                 }
             }
             ColumnKind::Struct { validity, fields } => {
-                if let Some((validity_state, field_states)) = states.split_first_mut() {
+                let children = struct_scan_children(state, fields.len());
+                let states = &mut state.child_states;
+                if let Some(validity_state) = states.first_mut() {
                     init(validity, validity_state, row);
-                    for (field, field_state) in fields.iter().zip(field_states) {
+                }
+                for child in children.iter().filter(|child| child.should_scan) {
+                    if let (Some(field), Some(field_state)) =
+                        (fields.get(child.field), states.get_mut(child.state))
+                    {
                         init(field, field_state, row);
                     }
                 }
@@ -1154,25 +1483,50 @@ impl ColumnData {
                 self.scan_list(validity, child, state, result, count)
             }
             ColumnKind::Struct { validity, fields } => {
-                let [validity_state, field_states @ ..] = state.child_states.as_mut_slice() else {
-                    return Err(Error::internal("struct scan state without children"));
-                };
-                let scanned = validity.scan_into(updates, validity_state, result, count, result_offset)?;
-                let scan_all = state.scan_child_column.is_empty();
-                let children = result
-                    .struct_children_mut()
-                    .ok_or_else(|| Error::internal("struct scan into a non-struct vector"))?;
-                for (index, ((field, field_state), child)) in fields
-                    .iter()
-                    .zip(field_states)
-                    .zip(children.iter_mut())
-                    .enumerate()
-                {
-                    if scan_all || state.scan_child_column.get(index).copied().unwrap_or(true) {
-                        field.scan_into(updates, field_state, child, count, result_offset)?;
-                    } else {
-                        field_state.next(count as u64);
+                // `StructColumnData::Scan` / `ScanCount`.
+                let children = struct_scan_children(state, fields.len());
+                let mut scanned = count;
+                if !state.storage_index.pushdown_extract {
+                    // The struct itself: its validity.
+                    let validity_state = state
+                        .child_states
+                        .first_mut()
+                        .ok_or_else(|| Error::internal("struct scan state without children"))?;
+                    scanned = validity.scan_into(updates, validity_state, result, count, result_offset)?;
+                }
+                for child in children {
+                    let target = match child.vector {
+                        // A pushdown extract: the field is the result.
+                        None => &mut *result,
+                        Some(index) => result
+                            .struct_children_mut()
+                            .and_then(|vectors| vectors.get_mut(index))
+                            .ok_or_else(|| Error::internal("struct scan into a non-struct vector"))?,
+                    };
+                    if !child.should_scan {
+                        // A field the scan does not read is NULL.
+                        if result_offset == 0 {
+                            *target = Vector::constant_null(target.logical_type().clone());
+                        } else {
+                            for row in 0..count {
+                                target.set_null(result_offset + row);
+                            }
+                        }
+                        continue;
                     }
+                    let field = fields
+                        .get(child.field)
+                        .ok_or_else(|| Error::internal("struct scan of a field out of range"))?;
+                    let field_state = state
+                        .child_states
+                        .get_mut(child.state)
+                        .ok_or_else(|| Error::internal("struct scan state without its field"))?;
+                    scanned = match &state.pushed_down_cast {
+                        Some(cast) => cast.scan_into(target, count, result_offset, |input, offset| {
+                            field.scan_into(updates, field_state, input, count, offset)
+                        })?,
+                        None => field.scan_into(updates, field_state, target, count, result_offset)?,
+                    };
                 }
                 state.offset_in_column += count as u64;
                 Ok(scanned)
@@ -1190,50 +1544,11 @@ impl ColumnData {
                 state.offset_in_column += scanned as u64;
                 Ok(scanned)
             }
-            ColumnKind::Variant {
-                validity,
-                unshredded,
-                shredded,
-            } => {
-                let [validity_state, unshredded_state, shredded_states @ ..] =
-                    state.child_states.as_mut_slice()
-                else {
-                    return Err(Error::internal("variant scan state without children"));
-                };
-                let Some(shredded) = shredded else {
-                    // The values are in the unshredded STRUCT, which has the VARIANT layout.
-                    let scanned =
-                        validity.scan_into(updates, validity_state, result, count, result_offset)?;
-                    unshredded.scan_into(None, unshredded_state, result, count, result_offset)?;
-                    state.offset_in_column += count as u64;
-                    return Ok(scanned);
-                };
-                let shredded_state = shredded_states
-                    .first_mut()
-                    .ok_or_else(|| Error::internal("variant scan state without its shredded column"))?;
-                // `UnshredVariantData` of both sub-columns; the validity is that of the
-                // unshredded values.
-                let mut unshredded_values = Vector::flat(unshredded.ty.clone(), count.max(1));
-                unshredded.scan_into(None, unshredded_state, &mut unshredded_values, count, 0)?;
-                let mut shredded_values = Vector::flat(shredded.ty.clone(), count.max(1));
-                shredded.scan_into(None, shredded_state, &mut shredded_values, count, 0)?;
-                let mut validity_values = Vector::flat(LogicalType::BOOLEAN, count.max(1));
-                let scanned = validity.scan_into(updates, validity_state, &mut validity_values, count, 0)?;
-                let values = super::variant_column_data::unshred_rows(
-                    &unshredded_values,
-                    &shredded_values,
-                    scanned,
-                    &self.ty,
-                )?;
-                if result_offset == 0 {
-                    *result = values;
-                } else {
-                    for row in 0..scanned {
-                        result.set_value(result_offset + row, &values.get_value(row))?;
-                    }
-                }
-                state.offset_in_column += count as u64;
-                Ok(scanned)
+            ColumnKind::Variant { .. } if state.storage_index.pushdown_extract => {
+                self.scan_variant_extract(updates, state, result, count, result_offset)
+            }
+            ColumnKind::Variant { .. } => {
+                self.scan_variant_values(updates, state, result, count, result_offset)
             }
             ColumnKind::Array { validity, child } => {
                 let [validity_state, child_state, ..] = state.child_states.as_mut_slice() else {
@@ -1259,6 +1574,115 @@ impl ColumnData {
                 Ok(scanned)
             }
         }
+    }
+
+    /// Scans the values of a VARIANT column (DuckDB's `VariantColumnData::Scan`): the
+    /// unshredded STRUCT has the VARIANT layout; a shredded row group's values are put back
+    /// together (`UnshredVariantData`).
+    fn scan_variant_values(
+        &self,
+        updates: Option<(TransactionData, usize)>,
+        state: &mut ColumnScanState,
+        result: &mut Vector,
+        count: usize,
+        result_offset: usize,
+    ) -> Result<usize> {
+        let ColumnKind::Variant {
+            validity,
+            unshredded,
+            shredded,
+        } = &self.kind
+        else {
+            return Err(Error::internal("variant scan of a non-VARIANT column"));
+        };
+        let [validity_state, unshredded_state, shredded_states @ ..] = state.child_states.as_mut_slice()
+        else {
+            return Err(Error::internal("variant scan state without children"));
+        };
+        let Some(shredded) = shredded else {
+            // The values are in the unshredded STRUCT, which has the VARIANT layout.
+            let scanned = validity.scan_into(updates, validity_state, result, count, result_offset)?;
+            unshredded.scan_into(None, unshredded_state, result, count, result_offset)?;
+            state.offset_in_column += count as u64;
+            return Ok(scanned);
+        };
+        let shredded_state = shredded_states
+            .first_mut()
+            .ok_or_else(|| Error::internal("variant scan state without its shredded column"))?;
+        // `UnshredVariantData` of both sub-columns; the validity is that of the
+        // unshredded values.
+        let mut unshredded_values = Vector::flat(unshredded.ty.clone(), count.max(1));
+        unshredded.scan_into(None, unshredded_state, &mut unshredded_values, count, 0)?;
+        let mut shredded_values = Vector::flat(shredded.ty.clone(), count.max(1));
+        shredded.scan_into(None, shredded_state, &mut shredded_values, count, 0)?;
+        let mut validity_values = Vector::flat(LogicalType::BOOLEAN, count.max(1));
+        let scanned = validity.scan_into(updates, validity_state, &mut validity_values, count, 0)?;
+        let values = super::variant_column_data::unshred_rows(
+            &unshredded_values,
+            &shredded_values,
+            scanned,
+            &self.ty,
+        )?;
+        if result_offset == 0 {
+            *result = values;
+        } else {
+            for row in 0..scanned {
+                result.set_value(result_offset + row, &values.get_value(row))?;
+            }
+        }
+        state.offset_in_column += count as u64;
+        Ok(scanned)
+    }
+
+    /// A scan of a VARIANT column with an extract pushed into it (the pushdown part of
+    /// DuckDB's `VariantColumnData::ScanWithCallback`): the shredded field itself when the
+    /// row group shreds it fully, else the values put back together, extracted and cast.
+    fn scan_variant_extract(
+        &self,
+        updates: Option<(TransactionData, usize)>,
+        state: &mut ColumnScanState,
+        result: &mut Vector,
+        count: usize,
+        result_offset: usize,
+    ) -> Result<usize> {
+        let ColumnKind::Variant { shredded, .. } = &self.kind else {
+            return Err(Error::internal("variant extract scan of a non-VARIANT column"));
+        };
+        if let Some(shredded) = shredded
+            && let Some(shredded_state) = state.child_states.get_mut(2)
+            && shredded_state.storage_index.pushdown_extract
+        {
+            // `CreateScanStates` found the field fully shredded in this row group: a
+            // pushed-down `struct_extract` of the shredded data reads it.
+            let scanned = shredded.scan_into(None, shredded_state, result, count, result_offset)?;
+            state.offset_in_column += count as u64;
+            return Ok(scanned);
+        }
+        // Fall back to the VARIANT values (`UnshredVariantData`), extracted.
+        let mut values = Vector::flat(self.ty.clone(), count.max(1));
+        let scanned = self.scan_variant_values(updates, state, &mut values, count, 0)?;
+        let mut path = Vec::new();
+        let mut element = state.storage_index.children.first();
+        while let Some(current) = element {
+            path.push(current.field_name());
+            element = current.children.first();
+        }
+        let extracted = super::variant_column_data::extract_path(&values, &path, scanned)?;
+        match &state.pushed_down_cast {
+            Some(cast) => {
+                cast.scan_into(result, scanned, result_offset, |input, _| {
+                    *input = extracted;
+                    Ok(scanned)
+                })?;
+            }
+            None if result_offset == 0 => *result = extracted,
+            None => {
+                for row in 0..scanned {
+                    result.set_value(result_offset + row, &extracted.get_value(row))?;
+                }
+            }
+        }
+        Ok(scanned)
     }
 
     fn scan_list(
@@ -1360,9 +1784,14 @@ impl ColumnData {
             }
             ColumnKind::Struct { validity, fields } => {
                 state.offset_in_column += count;
-                if let Some((validity_state, field_states)) = state.child_states.split_first_mut() {
+                let children = struct_scan_children(state, fields.len());
+                if let Some(validity_state) = state.child_states.first_mut() {
                     validity.skip(validity_state, count)?;
-                    for (field, field_state) in fields.iter().zip(field_states) {
+                }
+                for child in children.iter().filter(|child| child.should_scan) {
+                    if let (Some(field), Some(field_state)) =
+                        (fields.get(child.field), state.child_states.get_mut(child.state))
+                    {
                         field.skip(field_state, count)?;
                     }
                 }
@@ -2309,6 +2738,37 @@ impl ColumnData {
                 result.set_value(result_index, &value)
             }
         }
+    }
+
+    /// Reads row `row` of the part of the column `storage_index` names into
+    /// `result[result_index]` (`FetchRow` with a `StorageIndex`): a pushed-down extract is
+    /// read through a scan of the row's vector, like nested rows.
+    pub fn fetch_row_index(
+        &self,
+        transaction: TransactionData,
+        storage_index: &StorageIndex,
+        row: u64,
+        result: &mut Vector,
+        result_index: usize,
+    ) -> Result<()> {
+        if !storage_index.pushdown_extract {
+            return self.fetch_row(transaction, row, result, result_index);
+        }
+        if row > self.count() {
+            return Err(Error::internal("ColumnData::FetchRow - row_id out of range"));
+        }
+        let vector_start = row / VECTOR_SIZE * VECTOR_SIZE;
+        let mut state = ColumnScanState::initialize(&self.ty, storage_index, None)?;
+        self.initialize_scan_with_offset(&mut state, vector_start)?;
+        let count = (self.count() - vector_start).min(VECTOR_SIZE) as usize;
+        let mut vector = Vector::flat(result.logical_type().clone(), count);
+        let vector_index = (vector_start / VECTOR_SIZE) as usize;
+        self.scan(transaction, vector_index, &mut state, &mut vector, count)?;
+        let value: Value = vector.get_value((row - vector_start) as usize);
+        if result.row_capacity() <= result_index {
+            result.resize(result_index + 1);
+        }
+        result.set_value(result_index, &value)
     }
 
     /// The flat vector of this column containing row `row` (`Fetch` + `Flatten`), used as

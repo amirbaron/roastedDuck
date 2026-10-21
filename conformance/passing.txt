@@ -665,6 +665,7 @@ test/optimizer/union_exclude.test
 test/optimizer/unnest_rewriter.test_slow
 test/optimizer/unnest_rewriter_issue_14542.test
 test/optimizer/unused_columns/cte_unused_columns.test
+test/optimizer/unused_columns/deliver_child_columns.test
 test/optimizer/unused_columns/distinct_on_projection_pushdown.test
 test/optimizer/using_optimizer.test
 test/optimizer/zonemaps.test
@@ -2868,6 +2869,7 @@ test/sql/optimizer/expression/test_move_constants.test
 test/sql/optimizer/expression/test_negation_limits.test
 test/sql/optimizer/expression/test_nop_arithmetic.test
 test/sql/optimizer/expression/test_timestamp_offset.test
+test/sql/optimizer/plan/plan_struct_projection_pushdown.test
 test/sql/optimizer/plan/table_filter_pushdown_large_strings.test_slow
 test/sql/optimizer/plan/test_anti_join_empty_child.test
 test/sql/optimizer/plan/test_disable_build_side_probe_side.test
@@ -3862,6 +3864,7 @@ test/sql/storage/types/variant/test_all_types.test
 test/sql/storage/types/variant/test_all_types_single_object.test
 test/sql/storage/types/variant/test_all_types_single_table.test
 test/sql/storage/types/variant/test_all_types_variant.test
+test/sql/storage/types/variant/tpch_sf1.test_slow
 test/sql/storage/types/variant/update.test
 test/sql/storage/types/variant/variant_case_sensitive_fields_shredded.test
 test/sql/storage/types/variant/variant_extract_stats.test
@@ -4550,6 +4553,7 @@ test/sql/types/struct/struct_operations.test
 test/sql/types/struct/struct_pack_list.test
 test/sql/types/struct/struct_position.test
 test/sql/types/struct/struct_projection_pushdown.test
+test/sql/types/struct/struct_projection_pushdown_in_storage.test
 test/sql/types/struct/struct_projection_pushdown_index.test_slow
 test/sql/types/struct/struct_projection_pushdown_optimizer_bug.test
 test/sql/types/struct/struct_projection_pushdown_unnamed.test

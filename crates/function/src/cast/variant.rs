@@ -8,6 +8,7 @@
 
 use rustdb_common::Result;
 use rustdb_types::variant::{self, VariantData, VariantLogicalType, VariantNested, VariantPathComponent};
+use rustdb_types::variant_vector::VariantVectorView;
 use rustdb_types::{LogicalType, LogicalTypeId, Value, Vector};
 
 use super::{BoundCastInfo, CastFunctionSet, CastParameters, ValueCast};
@@ -96,6 +97,13 @@ fn cast_from_variant(
     params: &mut CastParameters,
 ) -> Result<bool> {
     let target = result.logical_type().clone();
+    if !target.is_nested()
+        && let Some(view) = VariantVectorView::new(source)
+        && let Some(converted) = cast_primitive_in_place(&view, source, &target, count)?
+    {
+        *result = converted;
+        return Ok(true);
+    }
     let rows = if source.is_constant() { count.min(1) } else { count };
     let data = (0..rows)
         .map(|row| VariantData::from_value(&source.get_value(row)))
@@ -136,6 +144,224 @@ fn cast_from_variant(
     params.source_column = column;
     assigned?;
     Ok(false)
+}
+
+/// The SQL type of a primitive VARIANT value whose payload [`write_payload`] stores
+/// as is; `None` for the others.
+fn payload_type(type_id: VariantLogicalType, payload: &[u8]) -> Result<Option<LogicalType>> {
+    use VariantLogicalType as V;
+    Ok(Some(match type_id {
+        V::BoolTrue | V::BoolFalse => LogicalType::BOOLEAN,
+        V::Int8 => LogicalType::TINYINT,
+        V::Int16 => LogicalType::SMALLINT,
+        V::Int32 => LogicalType::INTEGER,
+        V::Int64 => LogicalType::BIGINT,
+        V::Int128 => LogicalType::HUGEINT,
+        V::Uint8 => LogicalType::UTINYINT,
+        V::Uint16 => LogicalType::USMALLINT,
+        V::Uint32 => LogicalType::UINTEGER,
+        V::Uint64 => LogicalType::UBIGINT,
+        V::Uint128 => LogicalType::UHUGEINT,
+        V::Float => LogicalType::FLOAT,
+        V::Double => LogicalType::DOUBLE,
+        V::Date => LogicalType::DATE,
+        V::TimeMicros => LogicalType::TIME,
+        V::TimeNanos => LogicalType::simple(LogicalTypeId::TimeNs),
+        V::TimestampSec => LogicalType::simple(LogicalTypeId::TimestampSec),
+        V::TimestampMilis => LogicalType::simple(LogicalTypeId::TimestampMs),
+        V::TimestampMicros => LogicalType::TIMESTAMP,
+        V::TimestampNanos => LogicalType::TIMESTAMP_NS,
+        V::TimestampMicrosTz => LogicalType::TIMESTAMP_TZ,
+        V::Varchar => LogicalType::VARCHAR,
+        V::Blob => LogicalType::BLOB,
+        V::Decimal => {
+            let mut pos = 0;
+            let width = variant::varint_decode(payload, &mut pos)?;
+            let scale = variant::varint_decode(payload, &mut pos)?;
+            let (Ok(width), Ok(scale)) = (u8::try_from(width), u8::try_from(scale)) else {
+                return Ok(None);
+            };
+            LogicalType::decimal(width, scale)
+        }
+        _ => return Ok(None),
+    }))
+}
+
+/// Little-endian `N` bytes at the start of `payload`.
+fn fixed<const N: usize>(payload: &[u8]) -> Result<[u8; N]> {
+    payload
+        .get(..N)
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or_else(|| rustdb_common::Error::internal("VARIANT data too short"))
+}
+
+/// Writes the payload of a primitive VARIANT value of type `type_id` into row `row` of
+/// `vector`, whose type is the value's [`payload_type`] (or one of the same layout).
+fn write_payload(vector: &mut Vector, row: usize, type_id: VariantLogicalType, payload: &[u8]) -> Result<()> {
+    use VariantLogicalType as V;
+    match type_id {
+        V::BoolTrue | V::BoolFalse => vector.values_mut::<bool>()[row] = type_id == V::BoolTrue,
+        V::Int8 => vector.values_mut::<i8>()[row] = i8::from_le_bytes(fixed(payload)?),
+        V::Int16 => vector.values_mut::<i16>()[row] = i16::from_le_bytes(fixed(payload)?),
+        V::Int32 | V::Date => vector.values_mut::<i32>()[row] = i32::from_le_bytes(fixed(payload)?),
+        V::Int64
+        | V::TimeMicros
+        | V::TimeNanos
+        | V::TimestampSec
+        | V::TimestampMilis
+        | V::TimestampMicros
+        | V::TimestampNanos
+        | V::TimestampMicrosTz => vector.values_mut::<i64>()[row] = i64::from_le_bytes(fixed(payload)?),
+        V::Int128 => vector.values_mut::<i128>()[row] = i128::from_le_bytes(fixed(payload)?),
+        V::Uint8 => vector.values_mut::<u8>()[row] = u8::from_le_bytes(fixed(payload)?),
+        V::Uint16 => vector.values_mut::<u16>()[row] = u16::from_le_bytes(fixed(payload)?),
+        V::Uint32 => vector.values_mut::<u32>()[row] = u32::from_le_bytes(fixed(payload)?),
+        V::Uint64 => vector.values_mut::<u64>()[row] = u64::from_le_bytes(fixed(payload)?),
+        V::Uint128 => vector.values_mut::<u128>()[row] = u128::from_le_bytes(fixed(payload)?),
+        V::Float => vector.values_mut::<f32>()[row] = f32::from_le_bytes(fixed(payload)?),
+        V::Double => vector.values_mut::<f64>()[row] = f64::from_le_bytes(fixed(payload)?),
+        V::Varchar | V::Blob => {
+            let mut pos = 0;
+            let length = variant::varint_decode(payload, &mut pos)? as usize;
+            let bytes = payload
+                .get(pos..pos + length)
+                .ok_or_else(|| rustdb_common::Error::internal("VARIANT string exceeds its data"))?;
+            let string = vector.add_string(bytes);
+            vector.values_mut::<rustdb_types::StringT>()[row] = string;
+        }
+        V::Decimal => {
+            let mut pos = 0;
+            let width = variant::varint_decode(payload, &mut pos)?;
+            variant::varint_decode(payload, &mut pos)?;
+            let data = payload
+                .get(pos..)
+                .ok_or_else(|| rustdb_common::Error::internal("VARIANT decimal exceeds its data"))?;
+            match width {
+                0..=4 => vector.values_mut::<i16>()[row] = i16::from_le_bytes(fixed(data)?),
+                5..=9 => vector.values_mut::<i32>()[row] = i32::from_le_bytes(fixed(data)?),
+                10..=18 => vector.values_mut::<i64>()[row] = i64::from_le_bytes(fixed(data)?),
+                _ => vector.values_mut::<i128>()[row] = i128::from_le_bytes(fixed(data)?),
+            }
+        }
+        _ => {
+            return Err(rustdb_common::Error::internal(format!(
+                "VARIANT({}) payload written in place",
+                type_id.name()
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Copies row `from_row` of the flat vector `from` into row `to_row` of `to`, of the same
+/// non-nested type.
+fn copy_row(from: &Vector, from_row: usize, to: &mut Vector, to_row: usize) -> Result<()> {
+    use rustdb_types::PhysicalType as P;
+    if from.is_null(from_row) {
+        to.set_null(to_row);
+        return Ok(());
+    }
+    let slot = from.sel().slot(from_row);
+    match from.logical_type().physical_type() {
+        P::Bool => to.values_mut::<bool>()[to_row] = from.values::<bool>()[slot],
+        P::Int8 => to.values_mut::<i8>()[to_row] = from.values::<i8>()[slot],
+        P::Int16 => to.values_mut::<i16>()[to_row] = from.values::<i16>()[slot],
+        P::Int32 => to.values_mut::<i32>()[to_row] = from.values::<i32>()[slot],
+        P::Int64 => to.values_mut::<i64>()[to_row] = from.values::<i64>()[slot],
+        P::Int128 => to.values_mut::<i128>()[to_row] = from.values::<i128>()[slot],
+        P::UInt8 => to.values_mut::<u8>()[to_row] = from.values::<u8>()[slot],
+        P::UInt16 => to.values_mut::<u16>()[to_row] = from.values::<u16>()[slot],
+        P::UInt32 => to.values_mut::<u32>()[to_row] = from.values::<u32>()[slot],
+        P::UInt64 => to.values_mut::<u64>()[to_row] = from.values::<u64>()[slot],
+        P::UInt128 => to.values_mut::<u128>()[to_row] = from.values::<u128>()[slot],
+        P::Float => to.values_mut::<f32>()[to_row] = from.values::<f32>()[slot],
+        P::Double => to.values_mut::<f64>()[to_row] = from.values::<f64>()[slot],
+        P::Varchar => {
+            let string = to.add_string(from.string_bytes(from_row));
+            to.values_mut::<rustdb_types::StringT>()[to_row] = string;
+        }
+        _ => to.set_value(to_row, &from.get_value(from_row))?,
+    }
+    Ok(())
+}
+
+/// `CastVariantToPrimitive` over a VARIANT vector read in place: values of the target's
+/// type are read directly, the others are gathered by type and cast like
+/// `ConvertVariantToValue` + `DefaultTryCastAs` (one vector cast per type, which casts
+/// each row like the value cast does). `None` when a row needs the general path (a value
+/// type not read in place, or a failing cast, whose error the general path reports).
+fn cast_primitive_in_place(
+    view: &VariantVectorView<'_>,
+    source: &Vector,
+    target: &LogicalType,
+    count: usize,
+) -> Result<Option<Vector>> {
+    let Some(direct) = direct_type(target)
+        .or_else(|| (target.id() == LogicalTypeId::Boolean).then_some(VariantLogicalType::BoolTrue))
+    else {
+        return Ok(None);
+    };
+    let decimal = target.decimal_properties();
+    let rows = if source.is_constant() { count.min(1) } else { count };
+    let mut out = Vector::flat(target.clone(), rows.max(1));
+    // The rows to cast, by the type of their value.
+    let mut gathers: Vec<(LogicalType, Vec<usize>)> = Vec::new();
+    for row in 0..rows {
+        if !view.is_valid(row) {
+            out.set_null(row);
+            continue;
+        }
+        let slot = view.slot(row);
+        let type_id = view.type_id(slot, 0)?;
+        if type_id.is_nested() {
+            return Ok(None);
+        }
+        let payload = view.payload(slot, 0)?;
+        let Some(value_type) = payload_type(type_id, payload)? else {
+            return Ok(None);
+        };
+        let matches = match direct {
+            VariantLogicalType::BoolTrue => {
+                matches!(
+                    type_id,
+                    VariantLogicalType::BoolTrue | VariantLogicalType::BoolFalse
+                )
+            }
+            VariantLogicalType::Decimal => {
+                type_id == VariantLogicalType::Decimal && value_type.decimal_properties() == decimal
+            }
+            direct => type_id == direct,
+        };
+        if matches {
+            write_payload(&mut out, row, type_id, payload)?;
+            continue;
+        }
+        match gathers.iter_mut().find(|(ty, _)| *ty == value_type) {
+            Some((_, gathered)) => gathered.push(row),
+            None => gathers.push((value_type, vec![row])),
+        }
+    }
+    let casts = CastFunctionSet::new();
+    for (value_type, gathered) in gathers {
+        let mut values = Vector::flat(value_type, gathered.len());
+        for (index, &row) in gathered.iter().enumerate() {
+            let slot = view.slot(row);
+            write_payload(&mut values, index, view.type_id(slot, 0)?, view.payload(slot, 0)?)?;
+        }
+        let mut params = CastParameters::try_cast();
+        params.strict = true;
+        let casted = super::value::cast_vector(&casts, &values, target, gathered.len(), &mut params)?;
+        if params.error_message().is_some() {
+            return Ok(None);
+        }
+        for (index, &row) in gathered.iter().enumerate() {
+            copy_row(&casted, index, &mut out, row)?;
+        }
+    }
+    if source.is_constant() {
+        out.make_constant();
+    }
+    Ok(Some(out))
 }
 
 /// The conversion state shared by all rows (`FromVariantConversionData`).
