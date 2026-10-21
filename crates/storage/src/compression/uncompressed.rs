@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use rustdb_buffer::{MAXIMUM_BLOCK, MemoryTag};
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, StringT, ValidityMask, Vector};
+use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, Sel, StringT, ValidityMask, Vector};
 
 use super::{Analyzer, CompressionInfo, CompressionType, Compressor};
 use crate::checkpoint::column_checkpointer::{FinishedSegment, SegmentSink};
@@ -114,8 +114,22 @@ fn append_fixed(
     let source = vector.data_bytes();
     let sel = vector.sel();
     let validity = vector.validity();
-    let mut target = vec![0u8; copy_count * width];
     let is_list = segment.logical_type().physical_type() == PhysicalType::List;
+    if !is_list && matches!(sel, Sel::Identity) && validity.is_all_valid() {
+        // A flat vector without NULLs is copied as it is (`StandardFixedSizeAppend`).
+        stats.set_has_no_null_fast();
+        update_numeric_stats(stats, vector, offset, copy_count);
+        // SAFETY: rows at and after the published count are not visible to readers yet.
+        unsafe {
+            buffer.write(
+                base * width,
+                &source[offset * width..(offset + copy_count) * width],
+            )?;
+        }
+        segment.set_count((base + copy_count) as u64);
+        return Ok(copy_count);
+    }
+    let mut target = vec![0u8; copy_count * width];
     let null_value = null_bytes(physical, width);
     let mut any_valid = false;
     let mut any_null = false;
@@ -157,7 +171,11 @@ fn update_numeric_stats(stats: &mut BaseStatistics, vector: &Vector, offset: usi
     macro_rules! update {
         ($ty:ty) => {{
             let data = vector.unified::<$ty>();
-            numeric.update((offset..offset + count).filter_map(|row| data.get(row)));
+            if matches!(data.sel, Sel::Identity) && data.validity.is_all_valid() {
+                numeric.update(data.values[offset..offset + count].iter().copied());
+            } else {
+                numeric.update((offset..offset + count).filter_map(|row| data.get(row)));
+            }
         }};
     }
     match vector.logical_type().physical_type() {

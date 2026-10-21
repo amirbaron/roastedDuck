@@ -1,7 +1,9 @@
 //! Scan states of tables and row group collections (DuckDB's `scan_state.hpp`).
 
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
+use super::adaptive_filter::AdaptiveFilter;
 use super::column_data::ColumnScanState;
 use super::row_group::RowGroup;
 use super::row_group_collection::RowGroupSegmentTree;
@@ -59,9 +61,9 @@ pub struct ScanFilter {
     pub always_true: bool,
 }
 
-/// The filters of a scan and which of them are still evaluated (DuckDB's
+/// The filters of a scan, which of them are still evaluated and in which order (DuckDB's
 /// `ScanFilterInfo`).
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ScanFilterInfo {
     filters: Vec<ScanFilter>,
     /// Per scanned column: whether it has a filter that is still evaluated.
@@ -72,15 +74,26 @@ pub struct ScanFilterInfo {
     /// Per scanned column: whether only its filter needs it, not the scan's output
     /// (DuckDB's columns outside `projection_ids`).
     filter_only: Vec<bool>,
+    /// The order in which the filters are evaluated.
+    adaptive_filter: AdaptiveFilter,
+}
+
+impl Default for ScanFilterInfo {
+    fn default() -> Self {
+        Self::new(None, &[])
+    }
 }
 
 impl ScanFilterInfo {
     /// Binds `filters` (keyed by scan column) to `column_ids`.
     pub fn new(filters: Option<&TableFilterSet>, column_ids: &[StorageIndex]) -> Self {
         let mut info = Self {
+            filters: Vec::new(),
             column_has_filter: vec![false; column_ids.len()],
             base_column_has_filter: vec![false; column_ids.len()],
-            ..Self::default()
+            always_true_filters: 0,
+            filter_only: Vec::new(),
+            adaptive_filter: AdaptiveFilter::new(std::iter::empty()),
         };
         for (&scan_column_index, filter) in filters.map(|set| &set.filters).into_iter().flatten() {
             let Some(table_column_index) = column_ids.get(scan_column_index) else {
@@ -95,7 +108,24 @@ impl ScanFilterInfo {
             info.column_has_filter[scan_column_index] = true;
             info.base_column_has_filter[scan_column_index] = true;
         }
+        info.adaptive_filter = AdaptiveFilter::new(info.filters.iter().map(|filter| &filter.filter));
         info
+    }
+
+    /// The filters in the order to evaluate them (`GetAdaptiveFilter()->permutation`).
+    pub fn permutation(&self) -> &[usize] {
+        &self.adaptive_filter.permutation
+    }
+
+    /// Starts measuring the filtering of a vector (`BeginFilter`).
+    pub fn begin_filter(&self) -> Option<Instant> {
+        self.adaptive_filter.begin_filter()
+    }
+
+    /// Ends measuring the filtering of a vector, adapting the order of the filters
+    /// (`EndFilter`).
+    pub fn end_filter(&mut self, start: Option<Instant>) {
+        self.adaptive_filter.end_filter(start);
     }
 
     pub fn filters(&self) -> &[ScanFilter] {

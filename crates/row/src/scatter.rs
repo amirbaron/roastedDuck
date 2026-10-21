@@ -4,7 +4,7 @@
 use rustdb_common::{Error, Result};
 use rustdb_types::StringT;
 
-use crate::format::{ChunkFormat, FormatKind, VectorFormat};
+use crate::format::{ChunkFormat, FormatKind, SlotMap, VectorFormat};
 use crate::heap::{child_rows, elements_size, write_elements};
 use crate::layout::{HEAP_SIZE_WIDTH, TupleDataLayout, validity_bytes};
 use crate::row::{RowPtr, copy, set_all_valid, set_invalid, store};
@@ -232,9 +232,26 @@ unsafe fn scatter_fixed(
     ) {
         // SAFETY (whole function): rows are writable rows of the layout.
         unsafe {
-            if sel.is_none() && format.sel.is_identity() && format.all_valid() {
-                for (i, row) in rows[..count].iter().enumerate() {
-                    copy(format.slot_ptr(i, W), row.as_ptr().add(offset), W);
+            if format.all_valid() {
+                // `TupleDataTemplatedScatter` without NULLs: no validity per row, and the
+                // usual selections resolved outside the loop.
+                match (sel, &format.sel) {
+                    (None, SlotMap::Identity) => {
+                        for (i, row) in rows[..count].iter().enumerate() {
+                            copy(format.slot_ptr(i, W), row.as_ptr().add(offset), W);
+                        }
+                    }
+                    (Some(sel), SlotMap::Identity) => {
+                        for (&slot, row) in sel[..count].iter().zip(&rows[..count]) {
+                            copy(format.slot_ptr(slot as usize, W), row.as_ptr().add(offset), W);
+                        }
+                    }
+                    _ => {
+                        for (i, row) in rows[..count].iter().enumerate() {
+                            let slot = format.slot(input_row(sel, i));
+                            copy(format.slot_ptr(slot, W), row.as_ptr().add(offset), W);
+                        }
+                    }
                 }
                 return;
             }

@@ -89,6 +89,27 @@ impl Aggregate for Count {
         result.values_mut::<i64>()[row] = *state;
         Ok(())
     }
+
+    fn finalize_all(
+        &self,
+        states: &mut States<'_, i64>,
+        count: usize,
+        _: AggregateInput<'_>,
+        result: &mut Vector,
+        offset: usize,
+    ) -> Result<()> {
+        finalize_counts(states, count, result, offset);
+        Ok(())
+    }
+}
+
+/// Writes `count` counts into rows `offset..` of `result`, borrowing its data once
+/// (`StateFinalize` with `CountFunction::Finalize`).
+fn finalize_counts(states: &mut States<'_, i64>, count: usize, result: &mut Vector, offset: usize) {
+    let data = &mut result.values_mut::<i64>()[offset..offset + count];
+    for (index, value) in data.iter_mut().enumerate() {
+        *value = *states.get(index);
+    }
 }
 
 /// The number of non-NULL rows among the first `count` rows of `input`
@@ -180,6 +201,18 @@ impl Aggregate for CountStar {
         row: usize,
     ) -> Result<()> {
         result.values_mut::<i64>()[row] = *state;
+        Ok(())
+    }
+
+    fn finalize_all(
+        &self,
+        states: &mut States<'_, i64>,
+        count: usize,
+        _: AggregateInput<'_>,
+        result: &mut Vector,
+        offset: usize,
+    ) -> Result<()> {
+        finalize_counts(states, count, result, offset);
         Ok(())
     }
 }

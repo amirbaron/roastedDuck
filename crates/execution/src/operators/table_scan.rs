@@ -92,6 +92,9 @@ impl PhysicalOperator for PhysicalTableScan {
     fn supports_batch_index(&self) -> bool {
         self.function.parallel_scan.is_some()
     }
+    fn table_filters(&self) -> Option<&rustdb_storage::TableFilterSet> {
+        self.filters.as_ref().filter(|filters| !filters.is_empty())
+    }
 
     fn explain_name(&self) -> String {
         self.function.name.to_ascii_uppercase()

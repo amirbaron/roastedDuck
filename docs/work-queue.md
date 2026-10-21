@@ -54,12 +54,13 @@ performance (7) agent finishes, then the shell (3), compression (5) and the rest
 
 ## Planner and execution
 
-7. **Performance round 4.** Batch `LIMIT` for filtered scans, partitioned aggregate,
-   struct projection pushdown, hash join probe, `COUNT(DISTINCT)`, small scans
+7. **Performance round 5.** The aggregate hash table's lookups and resizes, re-reading
+   table blocks, the hash join probe, partitioned aggregate, struct projection pushdown,
+   Top-N row group reordering (`RowGroupPruner`, `RowGroupReorderer`)
    (`docs/perf-backlog.md`); the EXPLAIN tests that check these plans
-   (`test_batch_limit_filters`, `partitioned_group_by`,
-   `plan_struct_projection_pushdown`, `top_n_pruning`, `unnest_rewriter`,
-   `deliver_child_columns`).
+   (`partitioned_group_by`, `plan_struct_projection_pushdown`,
+   `struct_projection_pushdown_in_storage`, `deliver_child_columns`, `top_n_pruning`,
+   `test_top_n_nulls_row_group_pruner_extensive`, `unnest_rewriter`).
 8. **Logical plan serialization** (`json_serialize_plan`).
 9. **Physical operator logging** (`physical_operator_logging`).
 10. **TPC-DS** (`test/sql/tpcds`, the `tpcds` extension).

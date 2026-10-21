@@ -274,12 +274,33 @@ fn hash_strings(input: &Vector, out: &mut [u64], combine: bool) {
     for (row, target) in out.iter_mut().enumerate() {
         let slot = data.slot(row);
         let hash = if data.validity.is_valid(slot) {
-            hash_bytes(input.string_value(&data.values[slot]))
+            hash_string(input, &data.values[slot])
         } else {
             NULL_HASH
         };
         emit(target, hash, combine);
     }
+}
+
+/// [`hash_bytes`] of a string of `vector` (`Hash(string_t)`): an inlined string is hashed
+/// from its 16 bytes, its first 8 bytes and the rest each as one block, without a loop.
+#[inline]
+fn hash_string(vector: &Vector, value: &StringT) -> u64 {
+    if !value.is_inlined() {
+        return hash_bytes(vector.string_value(value));
+    }
+    let len = value.len();
+    let bits = value.inlined_bits();
+    let mut h = 0xe17a_1465 ^ (len as u64).wrapping_mul(0xc6a4_a793_5bd1_e995);
+    if len != 0 {
+        h ^= bits as u64;
+        h = h.wrapping_mul(MULTIPLIER);
+    }
+    if len > 8 {
+        h ^= (bits >> 64) as u64;
+        h = h.wrapping_mul(MULTIPLIER);
+    }
+    murmur_hash64(h)
 }
 
 /// Hashes rows `0..out.len()` of `input` into `out` (combining with the hashes already
@@ -465,6 +486,18 @@ mod tests {
         let mut vector = Vector::flat(value.logical_type().clone(), 1);
         vector.set_value(0, value).unwrap();
         vector
+    }
+
+    #[test]
+    fn inlined_strings_hash_like_their_bytes() {
+        let vector = Vector::flat(LogicalType::VARCHAR, 1);
+        let all = "abcdefghijklm";
+        for text in (0..=all.len()).map(|len| &all[..len]) {
+            // SAFETY: `text` outlives the value.
+            let value = unsafe { StringT::from_raw(text.as_bytes()) };
+            let expected = hash_bytes(text.as_bytes());
+            assert_eq!(hash_string(&vector, &value), expected, "{text}");
+        }
     }
 
     /// Expected values from `SELECT hash(...)` in DuckDB 1.5.6.

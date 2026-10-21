@@ -39,22 +39,22 @@ pub use comparison_join::JoinPlanSettings;
 pub use explain::ExplainOutput;
 
 use crate::expression_executor::ExpressionExecutor;
-use crate::operator::{PhysicalRef, SinkData};
+use crate::operator::{PhysicalOperator, PhysicalRef, SinkData};
 use crate::operators::{
     AlterEntryAction, CatalogTableCreator, CreateIndexAction, CreateSchemaAction, CreateSequenceAction,
     CreateViewAction, DdlAction, DropAction, InsertTarget, PhysicalBatchInsert, PhysicalCreateTable,
     PhysicalDdl, PhysicalDelete, PhysicalInsert, PhysicalSeqScan, PhysicalUpdate, ScanExplainInfo,
+};
+use crate::operators::{
+    BATCH_LIMIT_THRESHOLD, PhysicalColumnDataScan, PhysicalDummyScan, PhysicalFilter, PhysicalHashAggregate,
+    PhysicalLimit, PhysicalLimitPercent, PhysicalOrder, PhysicalProjection, PhysicalStreamingLimit,
+    PhysicalTableScan, PhysicalTopN, PhysicalUngroupedAggregate,
 };
 use crate::operators::{CreateEntryAction, PhysicalCreateType, PhysicalCrossProduct, bind_table_indexes};
 use crate::operators::{CteData, PhysicalCte, PhysicalCteScan, PhysicalRecursiveCte};
 use crate::operators::{
     DelimShared, PhysicalBlockwiseNLJoin, PhysicalDelimJoin, PhysicalDelimScan, PhysicalHashJoin,
     PhysicalUnion,
-};
-use crate::operators::{
-    PhysicalColumnDataScan, PhysicalDummyScan, PhysicalFilter, PhysicalHashAggregate, PhysicalLimitPercent,
-    PhysicalOrder, PhysicalProjection, PhysicalStreamingLimit, PhysicalTableScan, PhysicalTopN,
-    PhysicalUngroupedAggregate,
 };
 use crate::operators::{
     PhysicalExpressionScan, PhysicalPivot, PhysicalReservoirSample, PhysicalStreamingSample, PhysicalUnnest,
@@ -237,6 +237,30 @@ impl PlanGenerator {
         self.context
             .as_ref()
             .map_or_else(JoinPlanSettings::default, |context| context.join_settings)
+    }
+
+    /// `CreatePlan(LogicalLimit &)` without a percentage: a parallel streaming limit when
+    /// the order does not matter, a batch limit when it does and the sources number their
+    /// batches, a single-threaded streaming limit otherwise.
+    fn plan_limit(
+        &self,
+        types: Vec<LogicalType>,
+        limit: BoundLimitNode,
+        offset: BoundLimitNode,
+        child: PhysicalRef,
+    ) -> PhysicalRef {
+        let (threads, preserve_setting) = self.context.as_ref().map_or((1, true), |context| {
+            (context.threads, context.preserve_insertion_order)
+        });
+        if !order_preservation::preserve_insertion_order(child.as_ref(), preserve_setting) {
+            return Arc::new(PhysicalStreamingLimit::new(types, limit, offset, true, child));
+        }
+        if order_preservation::use_batch_index(child.as_ref(), threads)
+            && use_batch_limit(child.as_ref(), &limit, &offset)
+        {
+            return Arc::new(PhysicalLimit::new(types, limit, offset, child));
+        }
+        Arc::new(PhysicalStreamingLimit::new(types, limit, offset, false, child))
     }
 
     fn context(&self) -> Result<&PlanContext> {
@@ -1329,7 +1353,7 @@ impl PlanGenerator {
                 ) {
                     Arc::new(PhysicalLimitPercent::new(types, limit, offset, child))
                 } else {
-                    Arc::new(PhysicalStreamingLimit::new(types, limit, offset, child))
+                    self.plan_limit(types, limit, offset, child)
                 }
             }
             LogicalKind::Order {
@@ -1726,6 +1750,33 @@ fn evaluate_rows(types: &[LogicalType], rows: &[Vec<Expression>]) -> Result<Vec<
         chunks.push(chunk);
     }
     Ok(chunks)
+}
+
+/// Whether a LIMIT over `child` collects its rows in parallel by batch (`UseBatchLimit`):
+/// only over a filter or a join, since over a plain table scan the threads would scan many
+/// rows just to throw them away, and only for a constant limit (plus offset) of at most
+/// [`BATCH_LIMIT_THRESHOLD`] rows, which every thread may keep.
+fn use_batch_limit(child: &dyn PhysicalOperator, limit: &BoundLimitNode, offset: &BoundLimitNode) -> bool {
+    let mut current = child;
+    loop {
+        match current.name() {
+            "TABLE_SCAN" if current.table_filters().is_none() => return false,
+            "PROJECTION" => match current.children().first() {
+                Some(next) => current = next.as_ref(),
+                None => break,
+            },
+            _ => break,
+        }
+    }
+    let BoundLimitNode::ConstantValue(limit) = limit else {
+        return false;
+    };
+    let total = match offset {
+        BoundLimitNode::ExpressionValue(_) => return false,
+        BoundLimitNode::ConstantValue(offset) => limit.saturating_add(*offset),
+        _ => *limit,
+    };
+    total <= BATCH_LIMIT_THRESHOLD
 }
 
 /// `PhysicalPlanGenerator::CreatePlan(LogicalCopyToFile &)`.

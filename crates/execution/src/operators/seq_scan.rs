@@ -254,6 +254,9 @@ impl PhysicalOperator for PhysicalSeqScan {
     fn supports_batch_index(&self) -> bool {
         true
     }
+    fn table_filters(&self) -> Option<&TableFilterSet> {
+        self.filters.as_ref().filter(|filters| !filters.is_empty())
+    }
 
     fn explain_name(&self) -> String {
         "SEQ_SCAN".to_owned()

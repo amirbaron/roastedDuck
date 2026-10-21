@@ -33,10 +33,6 @@ impl SlotMap<'_> {
         }
     }
 
-    pub(crate) fn is_identity(&self) -> bool {
-        matches!(self, Self::Identity)
-    }
-
     fn from_sel(sel: Sel<'_>) -> SlotMap<'_> {
         match sel {
             Sel::Identity => SlotMap::Identity,
@@ -190,6 +186,13 @@ impl<'a> VectorFormat<'a> {
     #[inline]
     pub(crate) fn slot_bytes(&self, slot: usize, width: usize) -> &'a [u8] {
         &self.data[slot * width..(slot + 1) * width]
+    }
+
+    /// Pointer to the data of slot 0 of a fixed-width vector: slot `slot` is
+    /// `slot * width` bytes further.
+    #[inline]
+    pub(crate) fn data_ptr(&self) -> *const u8 {
+        self.data.as_ptr()
     }
 
     /// Pointer to the data of slot `slot` of a fixed-width vector.

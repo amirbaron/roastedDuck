@@ -1,6 +1,7 @@
 //! Table storage internals (DuckDB's `storage/table`): row groups, column data, column
 //! segments, version information and updates.
 
+pub mod adaptive_filter;
 pub mod chunk_info;
 pub mod column_data;
 pub mod column_segment;
@@ -14,6 +15,7 @@ pub mod segment_tree;
 pub mod update_segment;
 pub mod variant_column_data;
 
+pub use adaptive_filter::AdaptiveFilter;
 pub use chunk_info::{
     ChunkVectorInfo, DeletedRows, DeletedScanType, InsertedScanType, ScanOptions, UpdateScanType,
 };

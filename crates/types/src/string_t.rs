@@ -98,6 +98,18 @@ impl StringT {
         Some(low & low_mask == 0 && high & high_mask == 0)
     }
 
+    /// The bytes of an inlined string as a little-endian number: byte `i` of the string
+    /// in bits `8i..8i + 8`, zero above the string's length. Only meaningful for inlined
+    /// strings ([`StringT::is_inlined`]).
+    #[inline]
+    pub fn inlined_bits(&self) -> u128 {
+        let mut bytes = [0u8; 16];
+        bytes[..12].copy_from_slice(&self.data);
+        // Bytes after an inlined string are not necessarily zero.
+        let mask = u128::MAX.checked_shr(128 - 8 * self.len.min(12)).unwrap_or(0);
+        u128::from_le_bytes(bytes) & mask
+    }
+
     /// The first (up to) four bytes; equal prefixes are needed for equal strings.
     pub fn prefix(&self) -> [u8; 4] {
         [self.data[0], self.data[1], self.data[2], self.data[3]]

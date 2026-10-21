@@ -9,9 +9,7 @@
 
 use rustdb_common::{Error, Result};
 use rustdb_function::{FunctionData, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, LogicalType, NativeType, PhysicalType, Vector};
-
-use crate::scalar::executor::{Str, StrOut, unary};
+use rustdb_types::{DataChunk, LogicalType, NativeType, PhysicalType, StringHeap, StringT, Vector};
 
 /// `CMUtils::Bind`.
 fn bind_internal(
@@ -214,19 +212,35 @@ fn compress_string(input: &[u8], size: usize) -> u128 {
     aligned | u128::from(input.len() as u8)
 }
 
-/// `StringDecompress` (and `MiniStringDecompress`).
-fn decompress_string(value: u128, size: usize, out: &mut Vec<u8>) {
+/// [`compress_string`] of a `string_t`. An inlined string is packed from its 16 bytes
+/// without looking at its characters one by one (`TemplatedReverseMemCpy`): byte-swapped,
+/// its first byte is the most significant, and shifting it down by the bytes the result
+/// lacks leaves the first `size - 1` bytes above an (empty) length byte.
+#[inline]
+fn compress_string_t(input: &StringT, size: usize) -> u128 {
+    if size == 1 || !input.is_inlined() {
+        // SAFETY: the kernel runs while the input vector, and so its string heap, lives.
+        return compress_string(unsafe { input.as_bytes() }, size);
+    }
+    (input.inlined_bits().swap_bytes() >> (8 * (16 - size))) | input.len() as u128
+}
+
+/// `StringDecompress` (and `MiniStringDecompress`): the string packed into the `size`
+/// low bytes of `value`. Shifted to the top and byte-swapped, its first byte is the
+/// lowest, so a string that fits inline is taken from the integer as a whole
+/// (`UncompressInlineString`); longer ones are copied into `heap`.
+#[inline]
+fn decompress_string(value: u128, size: usize, heap: &mut StringHeap) -> StringT {
     if size == 1 {
-        if value != 0 {
-            out.push((value - 1) as u8);
-        }
-        return;
+        return if value == 0 {
+            StringT::inline(&[])
+        } else {
+            StringT::inline(&[(value - 1) as u8])
+        };
     }
-    let bytes = value.to_le_bytes();
-    let len = usize::from(bytes[0]);
-    for i in 0..len.min(size) {
-        out.push(bytes[size - 1 - i]);
-    }
+    let len = (value as u8 as usize).min(size - 1);
+    let bytes = (value << (8 * (16 - size))).swap_bytes().to_le_bytes();
+    heap.add(&bytes[..len])
 }
 
 fn string_compress_function(result: &LogicalType) -> ScalarFunctionSet {
@@ -241,12 +255,15 @@ fn string_compress_function(result: &LogicalType) -> ScalarFunctionSet {
             result.clone(),
             move |args, _, out| {
                 macro_rules! run {
-                    ($t:ty) => {
-                        unary::<Str, $t>(args, out, |input, value| {
-                            *value = <$t as Bits>::from_bits(compress_string(input, size));
-                            Ok(true)
-                        })
-                    };
+                    ($t:ty) => {{
+                        rustdb_types::kernels::unary::<StringT, $t>(
+                            &args.columns()[0],
+                            args.len(),
+                            out,
+                            |input| <$t as Bits>::from_bits(compress_string_t(&input, size)),
+                        );
+                        Ok(())
+                    }};
                 }
                 match physical {
                     PhysicalType::UInt8 => run!(u8),
@@ -279,12 +296,17 @@ fn string_decompress_set() -> ScalarFunctionSet {
         set.add(
             ScalarFunction::new(name, vec![input], LogicalType::VARCHAR, move |args, _, out| {
                 macro_rules! run {
-                    ($t:ty) => {
-                        unary::<$t, StrOut>(args, out, |value, bytes| {
-                            decompress_string(value.to_bits(), size, bytes);
-                            Ok(true)
-                        })
-                    };
+                    ($t:ty) => {{
+                        let mut heap = StringHeap::default();
+                        rustdb_types::kernels::unary::<$t, StringT>(
+                            &args.columns()[0],
+                            args.len(),
+                            out,
+                            |value| decompress_string(value.to_bits(), size, &mut heap),
+                        );
+                        out.add_heap(heap);
+                        Ok(())
+                    }};
                 }
                 match physical {
                     PhysicalType::UInt8 => run!(u8),
@@ -364,17 +386,43 @@ mod tests {
     }
 
     #[test]
+    fn inlined_strings_compress_like_their_bytes() {
+        for size in [1usize, 2, 4, 8, 16] {
+            for input in [
+                &b""[..],
+                b"a",
+                b"ab",
+                b"abcdefg",
+                b"abcdefghijkl",
+                b"abcdefghijklmno",
+            ] {
+                if input.len() >= size && size > 1 || size == 1 && input.len() > 1 {
+                    continue;
+                }
+                // SAFETY: `input` outlives the value.
+                let value = unsafe { StringT::from_raw(input) };
+                assert_eq!(
+                    compress_string_t(&value, size),
+                    compress_string(input, size),
+                    "{size} {input:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn strings_round_trip_and_order() {
+        let mut heap = StringHeap::default();
         for size in [1usize, 2, 4, 8, 16] {
             let mut previous = None;
-            for text in ["", "a", "ab", "abc", "b"] {
+            for text in ["", "a", "ab", "abc", "abcdefghijklm", "abcdefghijklmno", "b"] {
                 if text.len() >= size && size > 1 || size == 1 && text.len() > 1 {
                     continue;
                 }
                 let compressed = compress_string(text.as_bytes(), size);
-                let mut out = Vec::new();
-                decompress_string(compressed, size, &mut out);
-                assert_eq!(out, text.as_bytes());
+                let out = decompress_string(compressed, size, &mut heap);
+                // SAFETY: `heap` holds the bytes of non-inlined results.
+                assert_eq!(unsafe { out.as_bytes() }, text.as_bytes());
                 if let Some(previous) = previous {
                     assert!(compressed > previous);
                 }

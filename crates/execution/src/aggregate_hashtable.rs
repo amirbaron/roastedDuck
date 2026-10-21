@@ -20,7 +20,9 @@ use rustdb_row::{
     update_states,
 };
 use rustdb_storage::statistics::{HLL_REGISTERS, HyperLogLog};
-use rustdb_types::{DataChunk, DictionaryInfo, LogicalType, STANDARD_VECTOR_SIZE, SelectionVector, Vector};
+use rustdb_types::{
+    DataChunk, DictionaryInfo, LogicalType, STANDARD_VECTOR_SIZE, Sel, SelectionVector, Vector,
+};
 
 /// Upper 16 bits of an entry: the salt.
 const SALT_MASK: u64 = 0xFFFF_0000_0000_0000;
@@ -511,14 +513,22 @@ impl GroupedAggregateHashTable {
         {
             let entries = &self.entries[..];
             let mask = (entries.len() - 1) & usize::try_from(self.bitmask).unwrap_or(usize::MAX);
-            let offsets = &mut self.ht_offsets[..count];
-            let salts = &mut self.salts[..count];
-            for row in 0..count {
-                let hash = hash_values.values[hash_values.slot(row)];
-                let offset = hash as usize & mask;
-                occupied += usize::from(entries[offset] != 0);
-                offsets[row] = offset as u64;
-                salts[row] = extract_salt(hash);
+            let offsets = self.ht_offsets[..count].iter_mut();
+            let salts = self.salts[..count].iter_mut();
+            let mut lookup = |offset: &mut u64, salt: &mut u64, hash: u64| {
+                let position = hash as usize & mask;
+                occupied += usize::from(entries[position] != 0);
+                *offset = position as u64;
+                *salt = extract_salt(hash);
+            };
+            if let Sel::Identity = hash_values.sel {
+                for ((offset, salt), &hash) in offsets.zip(salts).zip(&hash_values.values[..count]) {
+                    lookup(offset, salt, hash);
+                }
+            } else {
+                for (row, (offset, salt)) in offsets.zip(salts).enumerate() {
+                    lookup(offset, salt, hash_values.values[hash_values.slot(row)]);
+                }
             }
         }
         std::hint::black_box(occupied);

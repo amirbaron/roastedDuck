@@ -7,10 +7,84 @@
 //! plays for DuckDB without keeping allocator slack around after a pipeline finishes.
 
 use std::ptr::NonNull;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use crate::os;
+
+/// How long a freed large mapping stays mapped for reuse: the decay time DuckDB gives its
+/// allocator (`DUCKDB_JEMALLOC_DECAY`, jemalloc's `dirty_decay_ms`).
+const RETAIN_LARGE_MAPPINGS: Duration = Duration::from_secs(5);
+
+/// A freed large mapping kept for reuse.
+struct RetainedMapping {
+    ptr: NonNull<u8>,
+    size: usize,
+    freed: Instant,
+}
+
+// SAFETY: a retained mapping is unused memory owned by the list; it carries no thread
+// affinity.
+unsafe impl Send for RetainedMapping {}
+
+/// Large mappings freed in the last [`RETAIN_LARGE_MAPPINGS`], as DuckDB's allocator keeps
+/// freed memory until its decay time: a query that allocates the same hash tables again
+/// (every run of a repeated query) reuses their pages instead of faulting in new ones.
+static RETAINED_MAPPINGS: Mutex<Vec<RetainedMapping>> = Mutex::new(Vec::new());
+
+/// Maps `size` bytes (a multiple of the page size) for a large allocation, reusing a
+/// retained mapping of exactly that size. Returns the memory and whether it is zeroed
+/// (fresh mappings are, reused ones are not); `None` if the OS refuses the mapping. A
+/// request no retained mapping fits unmaps all of them first, so that they do not add
+/// to the memory the new one takes.
+pub(crate) fn map_large(size: usize) -> Option<(NonNull<u8>, bool)> {
+    let stale = {
+        let mut retained = RETAINED_MAPPINGS.lock().unwrap_or_else(PoisonError::into_inner);
+        let now = Instant::now();
+        let fresh = |mapping: &RetainedMapping| now.duration_since(mapping.freed) < RETAIN_LARGE_MAPPINGS;
+        let reusable = retained
+            .iter()
+            .position(|mapping| mapping.size == size && fresh(mapping));
+        if let Some(index) = reusable {
+            let mapping = retained.swap_remove(index);
+            return Some((mapping.ptr, false));
+        }
+        std::mem::take(&mut *retained)
+    };
+    for mapping in stale {
+        // SAFETY: retained mappings are unused mappings of `size` bytes.
+        unsafe { os::unmap(mapping.ptr, mapping.size) };
+    }
+    os::map(size).map(|ptr| (ptr, true))
+}
+
+/// Frees a mapping from [`map_large`]: it stays mapped for reuse for a while, and the
+/// mappings freed longer ago are unmapped.
+///
+/// # Safety
+/// `ptr` and `size` must come from one `map_large` call, and the memory must not be used
+/// afterwards.
+pub(crate) unsafe fn unmap_large(ptr: NonNull<u8>, size: usize) {
+    let now = Instant::now();
+    let expired: Vec<RetainedMapping> = {
+        let mut retained = RETAINED_MAPPINGS.lock().unwrap_or_else(PoisonError::into_inner);
+        retained.push(RetainedMapping {
+            ptr,
+            size,
+            freed: now,
+        });
+        let (expired, kept) = std::mem::take(&mut *retained)
+            .into_iter()
+            .partition(|mapping| now.duration_since(mapping.freed) >= RETAIN_LARGE_MAPPINGS);
+        *retained = kept;
+        expired
+    };
+    for mapping in expired {
+        // SAFETY: retained mappings are unused mappings of `size` bytes.
+        unsafe { os::unmap(mapping.ptr, mapping.size) };
+    }
+}
 
 /// A pooled block address.
 struct PooledBlock(NonNull<u8>);

@@ -124,6 +124,11 @@ pub trait PhysicalOperator: Send + Sync + fmt::Debug + 'static {
     fn requires_batch_index(&self) -> bool {
         false
     }
+    /// The filters pushed into a table scan (`PhysicalTableScan::table_filters`); `None`
+    /// for other operators and scans without filters.
+    fn table_filters(&self) -> Option<&rustdb_storage::TableFilterSet> {
+        None
+    }
     /// Whether this is a `UNION ALL`, whose children feed the same pipeline sink.
     fn is_union(&self) -> bool {
         false

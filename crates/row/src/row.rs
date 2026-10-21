@@ -94,7 +94,17 @@ pub(crate) unsafe fn set_invalid(row: *mut u8, col: usize) {
 #[inline]
 pub(crate) unsafe fn set_all_valid(row: *mut u8, bytes: usize) {
     // SAFETY: guaranteed by the caller.
-    unsafe { std::ptr::write_bytes(row, 0xFF, bytes) };
+    unsafe {
+        // Rows rarely have more than 64 columns: one store instead of a `memset` call
+        // per row (DuckDB's `InitializeValidityMask`).
+        match bytes {
+            1 => row.write(0xFF),
+            2 => row.cast::<u16>().write_unaligned(u16::MAX),
+            4 => row.cast::<u32>().write_unaligned(u32::MAX),
+            8 => row.cast::<u64>().write_unaligned(u64::MAX),
+            _ => std::ptr::write_bytes(row, 0xFF, bytes),
+        }
+    }
 }
 
 /// Copies `len` bytes. Short copies (strings, mostly) use two overlapping loads and
