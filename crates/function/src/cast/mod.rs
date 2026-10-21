@@ -52,6 +52,9 @@ pub struct CastParameters {
     /// `when casting from source column <alias>`.
     pub source_column: Option<String>,
     try_cast: bool,
+    /// Under `TRY_CAST`, a list whose elements fail to convert becomes NULL itself, so
+    /// the reader can report the row (the CSV scanner's `nullify_parent`).
+    pub nullify_parent: bool,
     error_message: Option<String>,
 }
 

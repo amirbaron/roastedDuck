@@ -1111,6 +1111,7 @@ test/sql/cast/float_decimal_cast.test
 test/sql/cast/float_integer_cast.test
 test/sql/cast/string_to_integer_decimal_cast.test
 test/sql/cast/string_to_integer_exponent_cast.test
+test/sql/cast/string_to_list_cast.test
 test/sql/cast/string_to_list_escapes.test
 test/sql/cast/string_to_list_roundtrip.test
 test/sql/cast/string_to_map_cast.test_slow

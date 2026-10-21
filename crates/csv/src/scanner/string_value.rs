@@ -2339,6 +2339,7 @@ impl StringValueScanner {
                     continue;
                 }
                 let mut params = CastParameters::try_cast();
+                params.nullify_parent = true;
                 let result_vector = cast_vector(&file_scan.casts, parse_vector, &ty, rows, &mut params)?;
                 let failed_rows: Vec<usize> = (0..rows)
                     .filter(|&row| result_vector.is_null(row) && !parse_vector.is_null(row))

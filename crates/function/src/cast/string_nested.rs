@@ -85,7 +85,17 @@ fn string_to_list(
         entries.push(ListEntry::new(offset, parts.len() - offset));
     }
     let total = parts.len();
-    let (child, converted) = cast_child(child_cast, &parts.finish(), child_type, total, params)?;
+    let parts = parts.finish();
+    let (child, converted) = cast_child(child_cast, &parts, child_type, total, params)?;
+    if !converted && params.nullify_parent {
+        // A row with an element that failed to convert becomes NULL.
+        for (row, entry) in entries.iter().enumerate() {
+            let range = entry.offset as usize..(entry.offset + entry.length) as usize;
+            if validity.is_valid(row) && range.clone().any(|j| child.is_null(j) && !parts.is_null(j)) {
+                validity.set_invalid(row, input.rows);
+            }
+        }
+    }
     let mut out = Vector::flat(target.clone(), input.rows);
     out.values_mut::<ListEntry>()[..input.rows].copy_from_slice(&entries);
     out.set_validity(validity);
