@@ -466,6 +466,8 @@ fn arrow_scan_parallel_scan() -> ParallelTableScan {
                 .downcast_ref::<ArrowScanLocalState>()
                 .map_or(0, |state| state.batch_index)
         }),
+        // Partition columns are not supported (`ArrowGetPartitionData` throws).
+        partition_data: None,
         dynamic_to_string: None,
         row_group_metrics: None,
     }

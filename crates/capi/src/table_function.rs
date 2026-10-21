@@ -445,6 +445,7 @@ fn c_table_function_scan(projection_pushdown: bool) -> ParallelTableScan {
                 .downcast_ref::<CTableLocalState>()
                 .map_or(0, |local| local.batch_index)
         }),
+        partition_data: None,
         dynamic_to_string: None,
         row_group_metrics: None,
     }
