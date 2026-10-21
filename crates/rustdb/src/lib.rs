@@ -39,6 +39,7 @@ pub use database::{
     PendingQuery, PreparedStatement, QueryId, QueryProgress, QueryResult, StreamQueryResult,
     TableDescription,
 };
+pub use logging::LogStorage;
 pub use result::MaterializedResult;
 pub use rustdb_ast::{SqlStatement, StatementType};
 pub use rustdb_common::{Error, ErrorKind, Result};

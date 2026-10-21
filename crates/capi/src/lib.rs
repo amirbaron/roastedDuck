@@ -26,6 +26,7 @@ mod file_system;
 mod function;
 mod helper;
 mod hugeint;
+mod logging;
 mod logical_types;
 mod open;
 mod pending;
@@ -59,6 +60,7 @@ pub use helper::{
     duckdb_valid_utf8_check, duckdb_vector_size,
 };
 pub use hugeint::*;
+pub use logging::*;
 pub use logical_types::*;
 pub use open::*;
 pub use pending::*;

@@ -1384,12 +1384,13 @@ impl Database {
         })?;
         let env = Arc::new(rustdb_execution::ClientEnv::new(buffer_manager));
         let threads = env.threads();
+        let log_manager = Arc::new(crate::logging::LogManager::default());
         let instance = DatabaseInstance {
             path: path.clone(),
             config: config.clone(),
             transactions: Arc::default(),
             system_catalog: Arc::new(system_catalog),
-            databases: DatabaseManager::default(),
+            databases: DatabaseManager::new(Arc::clone(&log_manager)),
             default_database: std::sync::OnceLock::new(),
             casts: std::sync::RwLock::new(Arc::new(json_casts())),
             client_casts: std::sync::atomic::AtomicBool::new(false),
@@ -1411,7 +1412,7 @@ impl Database {
             secrets: Arc::default(),
             connections: Arc::default(),
             object_cache: Arc::default(),
-            log_manager: Arc::default(),
+            log_manager,
             global_settings: Mutex::default(),
             loaded_extensions: Arc::default(),
             replacement_scans: std::sync::RwLock::default(),
@@ -1672,6 +1673,13 @@ impl Database {
         }
         self.instance.add_extension_option(option);
         true
+    }
+
+    /// Registers a log storage that `logging_storage` can then select by `name`
+    /// (`LogManager::RegisterLogStorage`); returns `false`, registering nothing, if a
+    /// storage of that name was registered before.
+    pub fn register_log_storage(&self, name: &str, storage: Arc<dyn crate::logging::LogStorage>) -> bool {
+        self.instance.log_manager.register_storage(name, storage)
     }
 
     /// Adds a replacement scan, tried after the built-in ones and those added before
