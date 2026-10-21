@@ -57,12 +57,15 @@ impl JsonFileHandle {
             file.seek(SeekFrom::Start(start))
                 .map_err(|error| Error::new(ErrorKind::Io, error.to_string()))?;
         }
-        let raw: Box<dyn Read + Send> = Box::new(BufReader::with_capacity(1 << 16, file));
+        let mut buffered = BufReader::with_capacity(1 << 16, file);
+        if compression == FileCompressionType::Gzip && start == 0 {
+            rustdb_csv::buffer::verify_gzip_header(&mut buffered, path)?;
+        }
+        let raw: Box<dyn Read + Send> = Box::new(buffered);
         let reader: Box<dyn Read + Send> = match compression {
             FileCompressionType::Gzip => Box::new(flate2::read::MultiGzDecoder::new(raw)),
             FileCompressionType::Zstd => Box::new(
-                ruzstd::decoding::StreamingDecoder::new(raw)
-                    .map_err(|error| Error::new(ErrorKind::Io, format!("{error}")))?,
+                ruzstd::decoding::StreamingDecoder::new(raw).map_err(rustdb_csv::buffer::zstd_open_error)?,
             ),
             _ => raw,
         };

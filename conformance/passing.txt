@@ -1610,6 +1610,7 @@ test/sql/copy/csv/unquoted_escape/human_eval.test
 test/sql/copy/csv/unquoted_escape/identical.test
 test/sql/copy/csv/unquoted_escape/mixed.test
 test/sql/copy/csv/write_header_default.test
+test/sql/copy/csv/zstd_crash.test
 test/sql/copy/csv/zstd_fs.test
 test/sql/copy/encryption/concurrent_encrypted_attach.test
 test/sql/copy/encryption/different_aes_ciphers.test

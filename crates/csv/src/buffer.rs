@@ -200,13 +200,16 @@ impl CsvFileHandle {
             logger: FileSystemLogger::open(path),
             position: 0,
         };
-        let raw: Box<dyn Read + Send> = Box::new(BufReader::with_capacity(1 << 16, file));
+        let mut buffered = BufReader::with_capacity(1 << 16, file);
+        if compression == FileCompressionType::Gzip {
+            verify_gzip_header(&mut buffered, path)?;
+        }
+        let raw: Box<dyn Read + Send> = Box::new(buffered);
         let decompressed: Box<dyn Read + Send> = match compression {
             FileCompressionType::Gzip => Box::new(flate2::read::MultiGzDecoder::new(raw)),
-            FileCompressionType::Zstd => Box::new(
-                ruzstd::decoding::StreamingDecoder::new(raw)
-                    .map_err(|error| Error::new(ErrorKind::Io, format!("{error}")))?,
-            ),
+            FileCompressionType::Zstd => {
+                Box::new(ruzstd::decoding::StreamingDecoder::new(raw).map_err(zstd_open_error)?)
+            }
             _ => raw,
         };
         let reader: Box<dyn Read + Send> = match encoding.as_str() {
@@ -550,4 +553,38 @@ impl CsvBufferManager {
     pub fn set_sniffing(&self, sniffing: bool) {
         *self.sniffing.lock().unwrap_or_else(PoisonError::into_inner) = sniffing;
     }
+}
+
+/// `GZipFileSystem::VerifyGZIPHeader`: checks the header of a GZIP file before it is
+/// decompressed, without consuming it.
+pub fn verify_gzip_header(reader: &mut impl std::io::BufRead, path: &str) -> Result<()> {
+    const GZIP_HEADER_MINSIZE: usize = 10;
+    const GZIP_COMPRESSION_DEFLATE: u8 = 0x08;
+    // ASCII, MULTIPART, COMMENT and ENCRYPT.
+    const GZIP_FLAG_UNSUPPORTED: u8 = 0x1 | 0x2 | 0x10 | 0x20;
+    let header = reader.fill_buf().map_err(|error| open_error(path, &error))?;
+    let error = |message: &str| Error::new(ErrorKind::Io, format!("{message}: {path}"));
+    if header.len() < GZIP_HEADER_MINSIZE || header[0] != 0x1F || header[1] != 0x8B {
+        return Err(error("Input is not a GZIP stream"));
+    }
+    if header[2] != GZIP_COMPRESSION_DEFLATE {
+        return Err(error("Unsupported GZIP compression method"));
+    }
+    if header[3] & GZIP_FLAG_UNSUPPORTED != 0 {
+        return Err(error("Unsupported GZIP archive"));
+    }
+    Ok(())
+}
+
+/// The error of a ZSTD stream that does not start with a frame, as `ZSTD_getErrorName`
+/// names libzstd's errors (`ZStdFile` throws them as IO errors).
+pub fn zstd_open_error(error: ruzstd::decoding::errors::FrameDecoderError) -> Error {
+    use ruzstd::decoding::errors::{FrameDecoderError, ReadFrameHeaderError};
+    let message = match error {
+        FrameDecoderError::ReadFrameHeaderError(ReadFrameHeaderError::BadMagicNumber(_)) => {
+            "Unknown frame descriptor".to_owned()
+        }
+        other => other.to_string(),
+    };
+    Error::new(ErrorKind::Io, message)
 }
