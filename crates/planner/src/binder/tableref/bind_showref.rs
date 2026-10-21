@@ -192,6 +192,19 @@ fn sql_string(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
 }
 
+/// DuckDB's `PragmaShowTablesExpanded`: the query of `SHOW ALL TABLES` and
+/// `PRAGMA show_tables_expanded`.
+pub const SHOW_TABLES_EXPANDED: &str = "\n\tSELECT\n\t\tt.database_name AS database,\n\t\tt.schema_name AS schema,\n\t\tt.table_name AS \
+                                     name,\n\t\tLIST(c.column_name order by c.column_index) AS column_names,\n\t\tLIST(c.data_type \
+                                     order by c.column_index) AS column_types,\n\t\tFIRST(t.temporary) AS temporary,\n\tFROM \
+                                     duckdb_tables t\n\tJOIN duckdb_columns c\n\tUSING (table_oid)\n\tGROUP BY database, schema, \
+                                     name\n\n\tUNION ALL\n\n\tSELECT\n\t\tv.database_name AS database,\n\t\tv.schema_name AS \
+                                     schema,\n\t\tv.view_name AS name,\n\t\tLIST(c.column_name order by c.column_index) AS \
+                                     column_names,\n\t\tLIST(c.data_type order by c.column_index) AS column_types,\n\t\t\
+                                     FIRST(v.temporary) AS temporary,\n\tFROM duckdb_views v\n\tJOIN duckdb_columns c\n\tON \
+                                     (v.view_oid=c.table_oid)\n\tGROUP BY database, schema, name\n\n\tORDER BY database, \
+                                     schema, name\n\t";
+
 /// DuckDB's `PragmaShowTables(database, schema)`.
 fn pragma_show_tables(database: &str, schema: &str) -> String {
     let mut conditions = Vec::new();
@@ -259,18 +272,7 @@ fn bind_show_table(scope: &mut BindScope<'_>, show: &ShowRef) -> Result<BoundSta
             pragma_show_tables(&catalog, &schema)
         }
         "\"variables\"" => "SELECT * FROM duckdb_variables() ORDER BY name".to_owned(),
-        // `PragmaShowTablesExpanded`.
-        "__show_tables_expanded" => "\n\tSELECT\n\t\tt.database_name AS database,\n\t\tt.schema_name AS schema,\n\t\tt.table_name AS \
-                                     name,\n\t\tLIST(c.column_name order by c.column_index) AS column_names,\n\t\tLIST(c.data_type \
-                                     order by c.column_index) AS column_types,\n\t\tFIRST(t.temporary) AS temporary,\n\tFROM \
-                                     duckdb_tables t\n\tJOIN duckdb_columns c\n\tUSING (table_oid)\n\tGROUP BY database, schema, \
-                                     name\n\n\tUNION ALL\n\n\tSELECT\n\t\tv.database_name AS database,\n\t\tv.schema_name AS \
-                                     schema,\n\t\tv.view_name AS name,\n\t\tLIST(c.column_name order by c.column_index) AS \
-                                     column_names,\n\t\tLIST(c.data_type order by c.column_index) AS column_types,\n\t\t\
-                                     FIRST(v.temporary) AS temporary,\n\tFROM duckdb_views v\n\tJOIN duckdb_columns c\n\tON \
-                                     (v.view_oid=c.table_oid)\n\tGROUP BY database, schema, name\n\n\tORDER BY database, \
-                                     schema, name\n\t"
-            .to_owned(),
+        "__show_tables_expanded" => SHOW_TABLES_EXPANDED.to_owned(),
         _ => format!("SELECT * FROM pragma_show({});", sql_string(&show.table_name)),
     };
     let mut statements = rustdb_parser::parse(&sql)?;
