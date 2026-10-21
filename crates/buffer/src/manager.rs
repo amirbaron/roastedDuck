@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
 use rustdb_common::{Error, Result};
 
-use crate::allocator::BlockAllocator;
+use crate::allocator::{self, BlockAllocator};
 use crate::block::{BlockHandle, BlockId, BlockMemory, BufferHandle, DestroyBufferUpon};
 use crate::block_manager::BlockManager;
 use crate::bytes::format_bytes;
@@ -901,7 +901,9 @@ impl BufferManager {
 ///
 /// Allocations of at least [`MAP_THRESHOLD`] bytes are page mappings of their own: the
 /// process allocator would keep them resident after they are freed (a hash table that
-/// doubled its pointer table a few times held all the smaller tables as well).
+/// doubled its pointer table a few times held all the smaller tables as well). Freed
+/// mappings are reused for a few seconds, like DuckDB's allocator reuses freed memory
+/// (see [`allocator::map_large`]).
 pub struct AllocatedData {
     ptr: NonNull<u8>,
     layout: Layout,
@@ -933,10 +935,13 @@ impl AllocatedData {
             ))
         };
         if size >= MAP_THRESHOLD {
-            // Mappings start zeroed.
             let layout = Layout::from_size_align(size.next_multiple_of(os::PAGE_SIZE), os::PAGE_SIZE)
                 .map_err(|_| error())?;
-            let ptr = os::map(layout.size()).ok_or_else(error)?;
+            let (ptr, is_zeroed) = allocator::map_large(layout.size()).ok_or_else(error)?;
+            if zeroed && !is_zeroed {
+                // SAFETY: the mapping holds `layout.size()` writable bytes.
+                unsafe { std::ptr::write_bytes(ptr.as_ptr(), 0, layout.size()) };
+            }
             return Ok(Self {
                 ptr,
                 layout,
@@ -993,7 +998,7 @@ impl Drop for AllocatedData {
     fn drop(&mut self) {
         if self.layout.size() >= MAP_THRESHOLD {
             // SAFETY: mapped in `allocate` with this size; nothing uses it any more.
-            unsafe { os::unmap(self.ptr, self.layout.size()) };
+            unsafe { allocator::unmap_large(self.ptr, self.layout.size()) };
         } else {
             // SAFETY: allocated in `allocate` with `self.layout`.
             unsafe { std::alloc::dealloc(self.ptr.as_ptr(), self.layout) };
