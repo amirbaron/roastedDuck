@@ -82,3 +82,12 @@ performance (7) agent finishes, then the shell (3), compression (5) and the rest
     field directly (`VariantColumnData::PushdownShreddedFieldExtract`,
     `VariantStats::PushdownExtract`), which needs the storage `PushdownExtract` of struct
     projection pushdown (7) first. Results are unaffected.
+14. **Buffer eviction parity under tight limits** (`max_swap_space_error.test`, failing 4
+    in 10 runs). After `CREATE TABLE t2 AS SELECT random() FROM range(200000)` under
+    `memory_limit='1024KiB'`, two threads and a 4 MB swap limit, rustdb keeps 1,067,008
+    bytes of IN_MEMORY_TABLE resident (above the limit) and 1.31 MB on disk, where
+    DuckDB keeps 542,720 bytes resident and 1.84 MB on disk. With 1M rows, rustdb then
+    holds three pinned blocks (804 KiB) and fails to allocate the fourth ("could not
+    allocate block") before reaching the swap limit DuckDB reports ("failed to offload
+    data block"). Compare what the insert path pins per thread and when DuckDB unloads
+    transient segments.
