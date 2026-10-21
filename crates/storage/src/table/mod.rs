@@ -12,6 +12,7 @@ pub mod row_version_manager;
 pub mod scan_state;
 pub mod segment_tree;
 pub mod update_segment;
+pub mod variant_column_data;
 
 pub use chunk_info::{
     ChunkVectorInfo, DeletedRows, DeletedScanType, InsertedScanType, ScanOptions, UpdateScanType,
@@ -36,3 +37,4 @@ pub use scan_state::{
 };
 pub use segment_tree::{Segment, SegmentNode, SegmentTree};
 pub use update_segment::{UpdateSegment, UpdateVersion};
+pub use variant_column_data::VariantShreddingConfig;

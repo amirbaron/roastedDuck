@@ -69,6 +69,14 @@ impl DatabaseStorage {
         }
     }
 
+    /// Sets how checkpoints shred VARIANT columns.
+    pub fn set_variant_shredding_config(&self, config: rustdb_storage::table::VariantShreddingConfig) {
+        match self {
+            Self::File(storage) => storage.io().set_variant_shredding_config(config),
+            Self::InMemory(storage) => storage.io().set_variant_shredding_config(config),
+        }
+    }
+
     /// Sets the settings checkpoints follow.
     pub fn set_checkpoint_config(&self, config: rustdb_storage::storage_manager::CheckpointConfig) {
         match self {

@@ -631,14 +631,9 @@ impl VariantData {
     /// The canonical form of this value (`VariantNormalizer::Normalize`): values in visit
     /// order, OBJECT fields sorted by key, no unused data.
     pub fn normalize(&self) -> Result<Self> {
-        let mut state = Normalizer::default();
+        let mut state = VariantNormalizer::default();
         state.visit(self, 0)?;
-        Ok(Self {
-            keys: state.keys,
-            children: state.children,
-            values: state.values,
-            data: state.data,
-        })
+        Ok(state.finish())
     }
 }
 
@@ -653,6 +648,17 @@ fn decimal_size(width: u32) -> Result<usize> {
     })
 }
 
+/// The STRUCT with the layout of a VARIANT, which stores the values a shredded VARIANT
+/// column does not shred (`VariantShredding::GetUnshreddedType`).
+pub fn unshredded_type() -> LogicalType {
+    LogicalType::struct_type(
+        LogicalType::variant()
+            .struct_children()
+            .unwrap_or_default()
+            .to_vec(),
+    )
+}
+
 /// One step of a VARIANT path (DuckDB's `VariantPathComponent`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VariantPathComponent {
@@ -662,21 +668,37 @@ pub enum VariantPathComponent {
     Index(u32),
 }
 
-#[derive(Default)]
-struct Normalizer {
+/// Writes values of VARIANTs into one new VARIANT in canonical form (DuckDB's
+/// `VariantNormalizer` with its `VariantNormalizerState`): values in visit order, OBJECT
+/// fields sorted by key, no unused data.
+#[derive(Debug, Default)]
+pub struct VariantNormalizer {
     keys: Vec<String>,
     children: Vec<VariantChild>,
     values: Vec<VariantEntry>,
     data: Vec<u8>,
 }
 
-impl Normalizer {
-    fn visit(&mut self, source: &VariantData, value_index: u32) -> Result<()> {
+impl VariantNormalizer {
+    /// The number of values written so far (`values_size`).
+    pub fn value_count(&self) -> usize {
+        self.values.len()
+    }
+
+    /// The VARIANT written.
+    pub fn finish(self) -> VariantData {
+        VariantData {
+            keys: self.keys,
+            children: self.children,
+            values: self.values,
+            data: self.data,
+        }
+    }
+
+    /// Writes value `value_index` of `source` and its children (`VariantVisitor<VariantNormalizer>::Visit`).
+    pub fn visit(&mut self, source: &VariantData, value_index: u32) -> Result<()> {
         let type_id = source.type_id(value_index)?;
-        self.values.push(VariantEntry {
-            type_id: type_id as u8,
-            byte_offset: u32_of(self.data.len())?,
-        });
+        self.push_entry(type_id)?;
         match type_id {
             VariantLogicalType::Array => {
                 let nested = source.nested(value_index)?;
@@ -703,28 +725,74 @@ impl Normalizer {
                 if nested.child_count == 0 {
                     return Ok(());
                 }
-                let first_child = self.children.len();
-                let first_key = self.keys.len();
-                varint_encode(first_child as u64, &mut self.data);
-                self.children
-                    .resize(first_child + nested.child_count as usize, VariantChild::default());
-                self.keys
-                    .resize(first_key + nested.child_count as usize, String::new());
-                let mut sorted = BTreeMap::new();
-                for index in 0..nested.child_count {
-                    let child = source.child(nested, index)?;
-                    sorted.entry(source.child_key(child)?.as_bytes()).or_insert(child);
-                }
-                for (slot, (key, child)) in sorted.into_iter().enumerate() {
-                    self.keys[first_key + slot] = String::from_utf8_lossy(key).into_owned();
-                    self.children[first_child + slot] = VariantChild {
-                        keys_index: Some(u32_of(first_key + slot)?),
-                        values_index: u32_of(self.values.len())?,
-                    };
-                    self.visit(source, child.values_index)?;
-                }
+                let sorted = Self::sorted_fields(source, nested, 0..nested.child_count)?;
+                self.write_fields(source, sorted, nested.child_count as usize)?;
             }
             _ => self.data.extend_from_slice(source.raw_payload(value_index)?),
+        }
+        Ok(())
+    }
+
+    /// Writes the OBJECT value `value_index` of `source` with only its children at
+    /// `positions` (the `VisitObject` of `ShredVariantData`, for the fields of a
+    /// partially shredded OBJECT that are not shredded).
+    pub fn visit_object_fields(
+        &mut self,
+        source: &VariantData,
+        value_index: u32,
+        positions: &[u32],
+    ) -> Result<()> {
+        self.push_entry(VariantLogicalType::Object)?;
+        let nested = source.nested(value_index)?;
+        let sorted = Self::sorted_fields(source, nested, positions.iter().copied())?;
+        varint_encode(sorted.len() as u64, &mut self.data);
+        let count = sorted.len();
+        self.write_fields(source, sorted, count)
+    }
+
+    fn push_entry(&mut self, type_id: VariantLogicalType) -> Result<()> {
+        self.values.push(VariantEntry {
+            type_id: type_id as u8,
+            byte_offset: u32_of(self.data.len())?,
+        });
+        Ok(())
+    }
+
+    /// The children at `positions` of an OBJECT by key; the first of equal keys wins.
+    fn sorted_fields(
+        source: &VariantData,
+        nested: VariantNested,
+        positions: impl Iterator<Item = u32>,
+    ) -> Result<BTreeMap<&[u8], VariantChild>> {
+        let mut sorted = BTreeMap::new();
+        for index in positions {
+            let child = source.child(nested, index)?;
+            sorted.entry(source.child_key(child)?.as_bytes()).or_insert(child);
+        }
+        Ok(sorted)
+    }
+
+    /// Writes the first child index of an OBJECT, then its `fields` in order, with
+    /// `reserved` children and keys.
+    fn write_fields(
+        &mut self,
+        source: &VariantData,
+        fields: BTreeMap<&[u8], VariantChild>,
+        reserved: usize,
+    ) -> Result<()> {
+        let first_child = self.children.len();
+        let first_key = self.keys.len();
+        varint_encode(first_child as u64, &mut self.data);
+        self.children
+            .resize(first_child + reserved, VariantChild::default());
+        self.keys.resize(first_key + reserved, String::new());
+        for (slot, (key, child)) in fields.into_iter().enumerate() {
+            self.keys[first_key + slot] = String::from_utf8_lossy(key).into_owned();
+            self.children[first_child + slot] = VariantChild {
+                keys_index: Some(u32_of(first_key + slot)?),
+                values_index: u32_of(self.values.len())?,
+            };
+            self.visit(source, child.values_index)?;
         }
         Ok(())
     }

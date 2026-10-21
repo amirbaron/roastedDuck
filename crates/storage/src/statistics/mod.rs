@@ -7,12 +7,17 @@ mod geometry;
 mod numeric;
 mod serialize;
 mod string;
+mod variant;
 
 pub use distinct::{DistinctStatistics, HLL_REGISTERS, HyperLogLog};
 pub use geometry::{GeometryStats, GeometryStatsFlags, GeometryTypeSet};
 pub use numeric::{NumericStats, NumericValue, StatsNative, maximum_value, minimum_value};
 pub use serialize::{deserialize_table_statistics, serialize_table_statistics};
 pub use string::{MAX_STRING_MINMAX_SIZE, StringStats};
+pub use variant::{
+    TYPED_VALUE_INDEX, UNTYPED_VALUE_INDEX, VariantShreddingState, VariantStats, find_child_stats,
+    is_fully_shredded, structured_type, typed_stats, untyped_stats,
+};
 
 use std::fmt;
 
@@ -88,6 +93,7 @@ pub enum StatsData {
     Struct(Vec<BaseStatistics>),
     /// The statistics of all array elements.
     Array(Box<BaseStatistics>),
+    Variant(Box<VariantStats>),
 }
 
 /// Statistics of a set of values of one type (DuckDB's `BaseStatistics`).
@@ -139,7 +145,11 @@ fn construct(ty: &LogicalType, init: Init) -> StatsData {
                 .map(|(_, child)| BaseStatistics::create(child.clone(), init))
                 .collect(),
         ),
-        StatisticsType::Base | StatisticsType::Variant => StatsData::Base,
+        StatisticsType::Variant => StatsData::Variant(Box::new(match init {
+            Init::Empty => VariantStats::empty(),
+            Init::Unknown => VariantStats::unknown(),
+        })),
+        StatisticsType::Base => StatsData::Base,
     }
 }
 
@@ -190,6 +200,7 @@ impl fmt::Display for BaseStatistics {
                 }
             )?,
             StatsData::Geometry(geometry) => write!(f, "{geometry}")?,
+            StatsData::Variant(variant) => write!(f, "{variant}")?,
             StatsData::List(child) | StatsData::Array(child) => write!(f, "[{child}]")?,
             StatsData::Struct(children) => {
                 f.write_str(" {")?;
@@ -293,6 +304,14 @@ impl BaseStatistics {
                     };
                 }
             }
+            StatsData::Variant(variant) => {
+                let ty = rustdb_types::variant::unshredded_type();
+                let unshredded = match value.children() {
+                    Some(children) if !value.is_null() => Value::from_children(ty, children.to_vec()),
+                    _ => Value::null(ty),
+                };
+                variant.unshredded = Self::from_constant(&unshredded);
+            }
             StatsData::Base => {}
         }
     }
@@ -335,19 +354,25 @@ impl BaseStatistics {
         self.has_no_null = true;
     }
 
-    /// Marks that the values may contain NULLs, including struct fields (`SetHasNull`).
+    /// Marks that the values may contain NULLs, including struct fields and the
+    /// unshredded data of a VARIANT (`SetHasNull`).
     pub fn set_has_null(&mut self) {
         self.has_null = true;
-        if let StatsData::Struct(children) = &mut self.data {
-            children.iter_mut().for_each(Self::set_has_null);
+        match &mut self.data {
+            StatsData::Struct(children) => children.iter_mut().for_each(Self::set_has_null),
+            StatsData::Variant(variant) => variant.unshredded.set_has_null(),
+            _ => {}
         }
     }
 
-    /// Marks that the values may contain non-NULLs, including struct fields.
+    /// Marks that the values may contain non-NULLs, including struct fields and the
+    /// unshredded data of a VARIANT (`SetHasNoNull`).
     pub fn set_has_no_null(&mut self) {
         self.has_no_null = true;
-        if let StatsData::Struct(children) = &mut self.data {
-            children.iter_mut().for_each(Self::set_has_no_null);
+        match &mut self.data {
+            StatsData::Struct(children) => children.iter_mut().for_each(Self::set_has_no_null),
+            StatsData::Variant(variant) => variant.unshredded.set_has_no_null(),
+            _ => {}
         }
     }
 
@@ -394,6 +419,7 @@ impl BaseStatistics {
                     own.merge(theirs);
                 }
             }
+            (StatsData::Variant(own), StatsData::Variant(theirs)) => own.merge(theirs),
             _ => {}
         }
     }

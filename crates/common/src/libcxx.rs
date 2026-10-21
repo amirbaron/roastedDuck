@@ -209,8 +209,10 @@ impl<K> UnorderedOrder<K> {
     }
 }
 
-/// libc++'s `std::hash<std::string>` on 64-bit platforms (`__murmur2_or_cityhash<size_t,
-/// 64>`: CityHash64, without libc++'s ABI fix of the 4 to 8 byte case).
+/// libc++'s `std::hash<std::string>` on 64-bit platforms
+/// (`__murmur2_or_cityhash<size_t, 64>`, i.e. `CityHash64`, without libc++'s ABI fix of the 4 to
+/// 8 byte case). The names follow libc++'s.
+#[allow(clippy::many_single_char_names)]
 pub fn string_hash(bytes: &[u8]) -> u64 {
     let len = bytes.len();
     if len <= 16 {
@@ -309,6 +311,7 @@ fn hash_len_16(u: u64, v: u64) -> u64 {
 }
 
 /// `__hash_len_0_to_16`.
+#[allow(clippy::many_single_char_names)]
 fn hash_len_0_to_16(bytes: &[u8]) -> u64 {
     let len = bytes.len();
     let len64 = len as u64;
@@ -352,6 +355,7 @@ fn hash_len_17_to_32(bytes: &[u8]) -> u64 {
 }
 
 /// `__weak_hash_len_32_with_seeds` of the 32 bytes at `offset`.
+#[allow(clippy::many_single_char_names)]
 fn weak_hash_len_32_with_seeds(bytes: &[u8], offset: usize, a: u64, b: u64) -> (u64, u64) {
     let (w, x, y, z) = (
         load64(bytes, offset),
@@ -368,6 +372,7 @@ fn weak_hash_len_32_with_seeds(bytes: &[u8], offset: usize, a: u64, b: u64) -> (
 }
 
 /// `__hash_len_33_to_64`.
+#[allow(clippy::many_single_char_names)]
 fn hash_len_33_to_64(bytes: &[u8]) -> u64 {
     let len = bytes.len();
     let mut z = load64(bytes, 24);

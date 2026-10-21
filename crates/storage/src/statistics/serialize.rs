@@ -187,6 +187,7 @@ impl BaseStatistics {
                     Ok(())
                 })
             }
+            StatsData::Variant(variant) => super::variant::write_variant_stats(serializer, variant),
             StatsData::Base => Ok(()),
         })
     }
@@ -229,6 +230,7 @@ impl BaseStatistics {
                         Ok(())
                     })?;
                 }
+                StatsData::Variant(variant) => super::variant::read_variant_stats(deserializer, variant)?,
                 StatsData::Base => {}
             }
             Ok(())
