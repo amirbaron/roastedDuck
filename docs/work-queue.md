@@ -68,8 +68,11 @@ and the rest.
     ICU4X's compiled data lacks for `as`, `haw`, `kl`, `kok`, `lkt`, `mr`, `se`, `smn`
     (e.g. Assamese sorts `ক্ষ` after `হ`), while for `nb`, `nn`, `nb_no` and `sr_me`
     DuckDB's trimmed ICU data has no tailoring (root order) and ICU4X applies Norwegian
-    and Serbian rules. Generate the collation data from ICU 77's export data with
-    `icu4x-datagen` for DuckDB's locale list and pin the root-order locales to root.
+    and Serbian rules. DuckDB embeds ICU 66.1's data (`extension/icu`, CLDR 36), whose
+    `nb` has no `no` fallback for collation, while ICU4X's data is from a much newer
+    CLDR. Generate collation data with `icu4x-datagen` for DuckDB's locale list, then
+    compare every collation with the C++ CLI on a multi-script sample and pin the ones
+    where ICU 66 differs (root order for `nb`, `nn`, `nb_no`, `sr_me`).
 12. **`ALTER DATABASE ... SET ALIAS TO` / `RENAME TO`** (`test_alter_database_rename`):
     DuckDB re-keys the attached database (`DatabaseManager::RenameDatabase`,
     `AttachedDatabase::SetName`) and the catalog name follows it. rustdb copies the name
