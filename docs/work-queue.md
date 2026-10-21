@@ -18,8 +18,9 @@ leftovers (2) when a client needs them.
      filters on every type to the producer, as `TableFunction` has no per-type hook.
    - `duckdb_result_get_arrow_options` reads the connection's settings when called, not
      those the result was created with.
-   - `parse_statements` expands a PRAGMA into its query, but does not wrap expansions of
-     several statements in an implicit `BEGIN`/`COMMIT` (`StatementPreprocessor`).
+   - `parse_statements` hands a PRAGMA's expansion of several statements out as one
+     multi-statement, where DuckDB's `StatementPreprocessor` adds `BEGIN`/`COMMIT`
+     statements around them, so `duckdb_extract_statements` counts fewer statements.
 3. **CLI shell.** `crates/shell` is a stub that prints `a|b` rows; DuckDB's shell renders
    duckbox tables (also for `-c` and piped output), dot commands and modes. Port
    `tools/shell` with byte-identical rendering.
