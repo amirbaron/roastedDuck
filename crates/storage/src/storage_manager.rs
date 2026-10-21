@@ -195,11 +195,10 @@ impl StorageManager {
             block_manager.load_free_list(&metadata)?;
         }
         let dyn_manager: Arc<dyn BlockManager> = Arc::clone(&block_manager) as Arc<dyn BlockManager>;
-        let io = Arc::new(TableIoManager::with_row_group_size(
-            buffer_manager,
-            dyn_manager,
-            options.row_group_size,
-        ));
+        let io = Arc::new(
+            TableIoManager::with_row_group_size(buffer_manager, dyn_manager, options.row_group_size)
+                .with_storage_version(block_manager.storage_version()),
+        );
         Ok(Self {
             path: path.to_owned(),
             block_manager,

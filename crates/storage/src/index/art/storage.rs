@@ -184,19 +184,15 @@ impl Art {
     }
 
     /// `ART::PrepareSerialize`: converts to the requested layout and describes the root.
-    fn prepare_serialize(
-        &mut self,
-        options: &CaseInsensitiveMap<Value>,
-        storage_version: u64,
-    ) -> Result<ArtStorageInfo> {
+    fn prepare_serialize(&mut self, options: &CaseInsensitiveMap<Value>) -> Result<ArtStorageInfo> {
         if wants_v1_0_0_storage(options) {
             self.transform_to_deprecated()?;
         }
         let mut options = options.clone();
-        options.insert(
-            "storage_version",
-            Value::ubigint(self.storage_version.unwrap_or(storage_version)),
-        );
+        // Indexes loaded without a storage version do not get one.
+        if let Some(version) = self.storage_version {
+            options.insert("storage_version", Value::ubigint(version));
+        }
         for allocator in &mut self.allocators {
             allocator.remove_empty_buffers();
         }
@@ -218,15 +214,13 @@ impl Art {
     }
 
     /// Writes the index data with `write` (which returns where the bytes went) and
-    /// returns its description (`ART::SerializeToDisk`). `storage_version` is the file's,
-    /// recorded for indexes created before it was known.
+    /// returns its description (`ART::SerializeToDisk`).
     pub fn serialize_to_disk(
         &mut self,
         options: &CaseInsensitiveMap<Value>,
-        storage_version: u64,
         write: &mut dyn FnMut(&[u8]) -> Result<BufferPointer>,
     ) -> Result<ArtStorageInfo> {
-        let mut info = self.prepare_serialize(options, storage_version)?;
+        let mut info = self.prepare_serialize(options)?;
         let count = Self::serialized_allocators(options);
         for allocator in self.allocators.iter_mut().take(count) {
             allocator.serialize_buffers(write)?;
@@ -240,9 +234,8 @@ impl Art {
     pub fn serialize_to_wal(
         &mut self,
         options: &CaseInsensitiveMap<Value>,
-        storage_version: u64,
     ) -> Result<(ArtStorageInfo, Vec<Vec<Vec<u8>>>)> {
-        let mut info = self.prepare_serialize(options, storage_version)?;
+        let mut info = self.prepare_serialize(options)?;
         let count = Self::serialized_allocators(options);
         let buffers = self
             .allocators

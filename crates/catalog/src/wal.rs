@@ -59,9 +59,8 @@ fn serialize_index(
         };
         return Ok((info, Vec::new()));
     };
-    let storage_version = batch.options().compatibility.serialization_version;
     let mut state = entry.lock();
-    state.index.serialize_to_wal(&options, storage_version)
+    state.index.serialize_to_wal(&options)
 }
 
 /// Writes the storage of an index (`index_storage_info` and `index_storage`).

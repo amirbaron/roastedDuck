@@ -6,6 +6,7 @@ mod optimistic;
 pub use indexes::{BoundForeignKey, ForeignKeyKind};
 pub use optimistic::OptimisticCollection;
 
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
@@ -30,6 +31,9 @@ pub struct TableIoManager {
     buffer_manager: BufferManager,
     block_manager: Arc<dyn BlockManager>,
     row_group_size: u64,
+    /// The serialization version of the database (`StorageManager::GetStorageVersion`);
+    /// in-memory databases use the latest.
+    storage_version: u64,
 }
 
 impl TableIoManager {
@@ -46,7 +50,20 @@ impl TableIoManager {
             buffer_manager,
             block_manager,
             row_group_size,
+            storage_version: rustdb_serde::SerializationCompatibility::latest().serialization_version,
         }
+    }
+
+    /// Sets the serialization version of the database file.
+    #[must_use]
+    pub fn with_storage_version(mut self, storage_version: u64) -> Self {
+        self.storage_version = storage_version;
+        self
+    }
+
+    /// The serialization version of the database (`StorageManager::GetStorageVersion`).
+    pub fn storage_version(&self) -> u64 {
+        self.storage_version
     }
 
     pub fn buffer_manager(&self) -> &BufferManager {
@@ -70,6 +87,9 @@ pub struct DataTableInfo {
     table: RwLock<String>,
     /// The indexes, shared by every version of the table.
     indexes: TableIndexList,
+    /// The storage versions recorded with the indexes read from the database file, until
+    /// the indexes are built (`IndexStorageInfo::options`).
+    stored_index_versions: Mutex<HashMap<String, Option<u64>>>,
 }
 
 impl DataTableInfo {
@@ -79,7 +99,25 @@ impl DataTableInfo {
             schema: RwLock::new(schema.into()),
             table: RwLock::new(table.into()),
             indexes: TableIndexList::default(),
+            stored_index_versions: Mutex::default(),
         }
+    }
+
+    /// Records the storage versions of the indexes read with the table.
+    pub fn set_stored_index_versions(&self, versions: HashMap<String, Option<u64>>) {
+        *self
+            .stored_index_versions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = versions;
+    }
+
+    /// The storage version index `name` was stored with, once (`Some(None)` when it was
+    /// stored without one); `None` for indexes not read from the file.
+    pub(crate) fn take_stored_index_version(&self, name: &str) -> Option<Option<u64>> {
+        self.stored_index_versions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(name)
     }
 
     /// The table's indexes.

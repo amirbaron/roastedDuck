@@ -586,6 +586,9 @@ pub struct IndexStorageInfo {
     pub name: String,
     pub root: u64,
     pub allocators: Vec<AllocatorInfo>,
+    /// The `storage_version` option: the storage version the index was created with,
+    /// recorded since v1.5.0.
+    pub storage_version: Option<u64>,
 }
 
 impl IndexStorageInfo {
@@ -626,12 +629,17 @@ impl IndexStorageInfo {
             deserializer.on_list_end()?;
             deserializer.on_optional_property_end(true)?;
         }
-        let _options: Option<rustdb_common::CaseInsensitiveMap<rustdb_types::Value>> =
+        let options: Option<rustdb_common::CaseInsensitiveMap<rustdb_types::Value>> =
             deserializer.read_optional(103, "options")?;
+        let storage_version = options
+            .as_ref()
+            .and_then(|options| options.get("storage_version"))
+            .and_then(|value| value.as_u64());
         Ok(Self {
             name,
             root,
             allocators,
+            storage_version,
         })
     }
 
