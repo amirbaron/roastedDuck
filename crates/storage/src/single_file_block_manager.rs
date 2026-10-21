@@ -9,6 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use rustdb_buffer::{BlockId, BlockManager, BlockRegistry, FileBuffer};
@@ -244,7 +245,8 @@ pub struct SingleFileBlockManager {
     handle: FileHandle,
     block_alloc_size: usize,
     read_only: bool,
-    version_number: u64,
+    /// `MainHeader::version_number`; a checkpoint upgrading the file from 64 raises it.
+    version_number: AtomicU64,
     storage_version: u64,
     /// The random identity of the file, matched by its WAL (`MainHeader::db_identifier`).
     db_identifier: [u8; DB_IDENTIFIER_LEN],
@@ -307,7 +309,7 @@ impl SingleFileBlockManager {
             handle: FileHandle::new(file, path),
             block_alloc_size: options.block_alloc_size,
             read_only: false,
-            version_number,
+            version_number: AtomicU64::new(version_number),
             storage_version,
             db_identifier: main_header.db_identifier,
             registry: BlockRegistry::default(),
@@ -377,7 +379,7 @@ impl SingleFileBlockManager {
             handle,
             block_alloc_size: options.block_alloc_size,
             read_only: options.read_only,
-            version_number: VERSION_NUMBER,
+            version_number: AtomicU64::new(VERSION_NUMBER),
             storage_version: 1,
             db_identifier: [0; DB_IDENTIFIER_LEN],
             registry: BlockRegistry::default(),
@@ -391,7 +393,7 @@ impl SingleFileBlockManager {
                 "Cannot open encrypted database \"{path}\" without a key"
             )));
         }
-        manager.version_number = main_header.version_number;
+        *manager.version_number.get_mut() = main_header.version_number;
         manager.db_identifier = main_header.db_identifier;
         let h1 = DatabaseHeader::read(&main_header, &manager.read_header_block(FILE_HEADER_SIZE as u64)?)?;
         let h2 = DatabaseHeader::read(
@@ -454,7 +456,7 @@ impl SingleFileBlockManager {
 
     /// The file's version number (`MainHeader::version_number`).
     pub fn version_number(&self) -> u64 {
-        self.version_number
+        self.version_number.load(Ordering::Relaxed)
     }
 
     /// The serialization version (`StorageManager::GetStorageVersion`).
@@ -711,6 +713,14 @@ impl SingleFileBlockManager {
         header.serialization_compatibility = self.storage_version;
         abort.check(crate::storage_manager::CheckpointAbort::AfterFreeListWrite)?;
         self.handle.sync()?;
+        // A file of version 64 upgraded to a storage version that stores its
+        // compatibility in the database header gets a version 65 main header.
+        if self.version_number() == 64 && self.storage_version >= 4 {
+            self.version_number.store(65, Ordering::Relaxed);
+            let mut main_header = Vec::with_capacity(FILE_HEADER_SIZE);
+            MainHeader::new(65).write(&mut main_header);
+            self.write_header_block(&main_header, 0)?;
+        }
         let mut content = Vec::with_capacity(FILE_HEADER_SIZE);
         header.write(&mut content);
         let location = {

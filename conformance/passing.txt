@@ -1045,6 +1045,7 @@ test/sql/attach/attach_sequence.test
 test/sql/attach/attach_serialize_dependency.test
 test/sql/attach/attach_show_all_tables.test
 test/sql/attach/attach_show_table.test
+test/sql/attach/attach_storage_version.test
 test/sql/attach/attach_table_constraints.test
 test/sql/attach/attach_table_ddl.test
 test/sql/attach/attach_table_info.test
