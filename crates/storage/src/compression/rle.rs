@@ -7,8 +7,8 @@ use rustdb_common::Result;
 use rustdb_types::{LogicalType, PhysicalType, Vector};
 
 use super::primitive::{
-    Primitive, align8, align8_floor, corrupt, load, result_bytes, unified_values,
-    update_numeric_stats,
+    Primitive, align8, align8_floor, corrupt, load, result_bytes, unified_values, update_numeric_stats,
+    write_values,
 };
 use super::{Analyzer, CodecScan, CompressionInfo, CompressionType, Compressor, SegmentScan, Sequential};
 use crate::checkpoint::column_checkpointer::{FinishedSegment, SegmentSink};
@@ -208,6 +208,26 @@ impl<T: Primitive> CodecScan for RleScanState<T> {
 
     fn skip(&mut self, _segment: &ColumnSegment, count: usize) -> Result<()> {
         self.skip_internal(count)
+    }
+
+    /// `CanEmitConstantVector` + `RLEScanConstant`: a whole vector inside one run is a
+    /// constant vector.
+    fn scan_constant(&mut self, segment: &ColumnSegment, count: usize) -> Result<Option<Vector>> {
+        if count != rustdb_common::STANDARD_VECTOR_SIZE {
+            return Ok(None);
+        }
+        let run_length = self.run_length(self.entry_pos)?;
+        if run_length.saturating_sub(self.position_in_entry) < count {
+            return Ok(None);
+        }
+        let mut result = Vector::flat(segment.logical_type().clone(), 1);
+        write_values(&mut result, 0, &[self.run_value(self.entry_pos)?])?;
+        result.make_constant();
+        self.position_in_entry += count;
+        if self.position_in_entry >= run_length {
+            self.forward_to_next_run()?;
+        }
+        Ok(Some(result))
     }
 
     /// `RLEScanPartialInternal` (always producing a flat vector).

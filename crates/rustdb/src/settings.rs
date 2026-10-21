@@ -288,59 +288,6 @@ pub(crate) fn canonical_option(name: &str) -> Option<&'static str> {
     option_by_name(name).or_else(|| canonical_name(name))
 }
 
-/// Options with their own set callbacks (not generic settings) that have no local
-/// setter: they can only be set for the whole database (DuckDB's settings without
-/// `SetLocal`). Options with `global: false` conversely have no global setter.
-const GLOBAL_ONLY_OPTIONS: &[&str] = &[
-    "__delta_only_variant_encoding_enabled",
-    "access_mode",
-    "allocator_bulk_deallocation_flush_threshold",
-    "allocator_flush_threshold",
-    "allow_persistent_secrets",
-    "allowed_configs",
-    "allowed_directories",
-    "allowed_paths",
-    "block_allocator_memory",
-    "checkpoint_threshold",
-    "custom_user_agent",
-    "default_secret_storage",
-    "disabled_compression_methods",
-    "disabled_filesystems",
-    "disabled_optimizers",
-    "extension_directories",
-    "force_mbedtls_unsafe",
-    "http_proxy",
-    "max_memory",
-    "max_temp_directory_size",
-    "secret_directory",
-    "storage_compatibility_version",
-    "temp_directory",
-    "threads",
-    "write_buffer_row_group_memory_limit",
-];
-
-/// The checks of `PhysicalSet` and `PhysicalReset` on the scope: an option without a
-/// global (local) setter cannot be set or reset with `GLOBAL` (`SESSION`).
-pub(crate) fn check_setting_scope(name: &str, scope: rustdb_ast::SetScope, reset: bool) -> Result<()> {
-    use rustdb_ast::SetScope;
-    let Some(option) = canonical_option(name) else {
-        return Ok(());
-    };
-    let Some(definition) = SETTINGS.iter().find(|definition| definition.name == option) else {
-        return Ok(());
-    };
-    let action = if reset { "reset" } else { "set" };
-    match scope {
-        SetScope::Global if !definition.global => Err(Error::catalog(format!(
-            "option \"{name}\" cannot be {action} globally"
-        ))),
-        SetScope::Session if GLOBAL_ONLY_OPTIONS.contains(&option) => Err(Error::catalog(format!(
-            "option \"{name}\" cannot be {action} locally"
-        ))),
-        _ => Ok(()),
-    }
-}
-
 /// Whether a `SET` of option `name` without a scope sets it for the whole database
 /// (DuckDB's `GetSettingScope`: the option's scope is global).
 pub(crate) fn is_global_option(name: &str) -> bool {
@@ -631,6 +578,57 @@ impl Settings {
         Err(Error::invalid_input(format!(
             "Cannot change configuration option \"{name}\" - the configuration has been locked"
         )))
+    }
+
+    /// `PhysicalSet::GetSettingScope`: options that only exist globally cannot be set (or
+    /// reset) for a session.
+    pub(crate) fn check_session_scope(name: &str, scope: rustdb_ast::SetScope) -> Result<()> {
+        /// The options whose `Scope` is `SettingScopeTarget::GLOBAL_ONLY`.
+        const GLOBAL_ONLY: &[&str] = &[
+            "allow_community_extensions",
+            "allow_extensions_metadata_mismatch",
+            "allow_unredacted_secrets",
+            "allow_unsigned_extensions",
+            "autoinstall_extension_repository",
+            "autoinstall_known_extensions",
+            "autoload_known_extensions",
+            "current_transaction_invalidation_policy",
+            "custom_extension_repository",
+            "debug_eviction_queue_sleep_micro_seconds",
+            "default_block_size",
+            "disable_database_invalidation",
+            "duckdb_api",
+            "enable_external_access",
+            "enable_external_file_cache",
+            "enable_fsst_vectors",
+            "experimental_metadata_reuse",
+            "extension_directory",
+            "external_threads",
+            "force_bitpacking_mode",
+            "force_column_metadata_reuse",
+            "force_compression",
+            "geometry_minimum_shredding_size",
+            "http_proxy_password",
+            "http_proxy_username",
+            "lock_configuration",
+            "max_vacuum_tasks",
+            "pin_threads",
+            "scheduler_process_partial",
+            "storage_block_prefetch",
+            "temp_file_encryption",
+            "variant_minimum_shredding_size",
+            "warnings_as_errors",
+            "zstd_min_string_length",
+        ];
+        if scope == rustdb_ast::SetScope::Session
+            && let Some(option) = canonical_name(name)
+            && GLOBAL_ONLY.contains(&option)
+        {
+            return Err(Error::invalid_input(format!(
+                "Setting \"{option}\" cannot be set as a session variable - it can only be set globally"
+            )));
+        }
+        Ok(())
     }
 
     /// The `OnSet` / `SetGlobal` checks of options that cannot change while the database

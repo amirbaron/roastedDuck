@@ -636,11 +636,19 @@ struct BitpackingState<T: PackInt> {
     has_invalid: bool,
     can_do_delta: bool,
     can_do_for: bool,
-    /// `force_bitpacking_mode` (always `AUTO`).
+    /// `force_bitpacking_mode`.
     mode: BitpackingMode,
 }
 
 impl<T: PackInt> BitpackingState<T> {
+    /// A state whose groups use `force_bitpacking_mode` where they can.
+    fn with_mode(info: &CompressionInfo) -> Self {
+        let mut state = Self::new();
+        state.mode =
+            BitpackingMode::from_u8(info.config.force_bitpacking_mode).unwrap_or(BitpackingMode::Auto);
+        state
+    }
+
     fn new() -> Self {
         let mut state = Self {
             buffer: vec![T::default(); BITPACKING_METADATA_GROUP_SIZE],
@@ -884,7 +892,7 @@ impl<T: PackInt> Analyzer for BitpackingAnalyzer<T> {
     fn into_compressor(self: Box<Self>) -> Result<Box<dyn Compressor>> {
         let physical = self.ty.physical_type();
         let mut compressor = BitpackingCompressor::<T> {
-            state: BitpackingState::new(),
+            state: BitpackingState::with_mode(&self.info),
             write_statistics: physical != PhysicalType::List,
             physical,
             ty: self.ty,
@@ -1103,7 +1111,7 @@ impl<T: PackInt> Compressor for BitpackingCompressor<T> {
 
 fn analyzer<T: PackInt>(ty: &LogicalType, info: &CompressionInfo) -> Box<dyn Analyzer> {
     Box::new(BitpackingAnalyzer::<T> {
-        state: BitpackingState::new(),
+        state: BitpackingState::with_mode(info),
         ty: ty.clone(),
         info: *info,
     })
@@ -1128,4 +1136,40 @@ pub(crate) fn init_analyze(
         PhysicalType::UInt128 => analyzer::<u128>(ty, info),
         _ => return None,
     })
+}
+
+/// `BitpackingGetSegmentInfo`: how many metadata groups of the segment use each mode, in
+/// mode order.
+pub(crate) fn segment_info(segment: &ColumnSegment) -> Result<Vec<(String, String)>> {
+    const NAMES: [&str; 6] = [
+        "INVALID",
+        "AUTO",
+        "CONSTANT",
+        "CONSTANT_DELTA",
+        "DELTA_FOR",
+        "FOR",
+    ];
+    let data = segment.pin_persistent()?;
+    let bytes = data.bytes();
+    let metadata_offset = usize::try_from(load::<u64>(bytes, 0)?)
+        .map_err(|_| corrupt("Bitpacking offset is out of range - corrupt database file"))?;
+    let groups = (segment.count() as usize).div_ceil(BITPACKING_METADATA_GROUP_SIZE);
+    let mut counts = [0usize; NAMES.len()];
+    for group in 0..groups {
+        let position = metadata_offset
+            .checked_sub((group + 1) * size_of::<u32>())
+            .ok_or_else(|| corrupt("Bitpacking metadata is out of range - corrupt database file"))?;
+        let encoded: u32 = load(bytes, position)?;
+        let mode = (encoded >> 24) as usize;
+        let slot = counts
+            .get_mut(mode)
+            .ok_or_else(|| corrupt("Invalid bitpacking mode"))?;
+        *slot += 1;
+    }
+    Ok(NAMES
+        .iter()
+        .zip(counts)
+        .filter(|(_, count)| *count > 0)
+        .map(|(name, count)| ((*name).to_owned(), count.to_string()))
+        .collect())
 }

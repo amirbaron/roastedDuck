@@ -236,8 +236,13 @@ impl Engine for RustEngine {
         Ok(())
     }
 
+    /// The storage version the database uses now, set at open or by a global `SET`
+    /// (`runner.db->instance->config.options.serialization_compatibility`).
     fn inherit_storage_version(&self, config: &mut Config, database: &Database) {
-        if let Some(version) = option(database.config(), "storage_compatibility_version").cloned() {
+        let current = database
+            .global_setting("storage_compatibility_version")
+            .or_else(|| option(database.config(), "storage_compatibility_version").cloned());
+        if let Some(version) = current {
             config
                 .options
                 .push(("storage_compatibility_version".to_owned(), version));

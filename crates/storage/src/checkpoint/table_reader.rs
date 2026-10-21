@@ -13,7 +13,10 @@ use super::stream::StreamDeserializer;
 use crate::data_table::TableIoManager;
 use crate::metadata::{MetaBlockPointer, MetadataManager, MetadataReader};
 use crate::statistics::{BaseStatistics, DistinctStatistics, deserialize_table_statistics};
-use crate::table::{ChunkVectorInfo, RowGroup, RowGroupCollection, RowVersionManager, TableStatistics};
+use crate::table::{
+    ChunkVectorInfo, RowGroup, RowGroupCollection, RowGroupMetadata, RowVersionManager, TableMetadataPointer,
+    TableStatistics,
+};
 
 /// A table's data as stored by a checkpoint.
 #[derive(Debug)]
@@ -23,6 +26,9 @@ pub struct PersistentTableData {
     pub distinct: Vec<Option<DistinctStatistics>>,
     pub row_groups: Vec<RowGroupPointer>,
     pub total_rows: u64,
+    /// Where the statistics and row group pointers start, and every metadata block they
+    /// span (`base_table_pointer` and `read_metadata_pointers`).
+    pub metadata_pointer: TableMetadataPointer,
 }
 
 /// Reads the statistics and row group pointers written by `FinalizeTable`
@@ -34,6 +40,7 @@ pub fn read_table_data(
     total_rows: u64,
 ) -> Result<PersistentTableData> {
     let mut reader = MetadataReader::new(metadata, table_pointer, true)?;
+    reader.track_read_pointers();
     let (statistics, distinct) = {
         let mut deserializer = StreamDeserializer::new(&mut reader);
         deserializer.begin()?;
@@ -54,6 +61,10 @@ pub fn read_table_data(
         distinct,
         row_groups,
         total_rows,
+        metadata_pointer: TableMetadataPointer {
+            pointer: table_pointer,
+            blocks: reader.take_read_pointers(),
+        },
     })
 }
 
@@ -107,6 +118,7 @@ fn read_deletes(metadata: &MetadataManager, pointer: MetaBlockPointer) -> Result
     const VECTOR_INFO: u8 = 1;
     const EMPTY_INFO: u8 = 2;
     let mut reader = MetadataReader::new(metadata, pointer, true)?;
+    reader.track_read_pointers();
     let chunk_count = reader.read_u64()?;
     let mut vectors: Vec<Option<ChunkVectorInfo>> = Vec::new();
     for _ in 0..chunk_count {
@@ -145,7 +157,10 @@ fn read_deletes(metadata: &MetadataManager, pointer: MetaBlockPointer) -> Result
             }
         };
     }
-    Ok(RowVersionManager::from_vectors(vectors))
+    Ok(RowVersionManager::from_vectors(
+        vectors,
+        reader.take_read_pointers(),
+    ))
 }
 
 /// Builds the row groups of a table from its checkpoint data; `blocks` receives every
@@ -159,7 +174,7 @@ pub fn load_row_groups(
 ) -> Result<RowGroupCollection> {
     let collection = RowGroupCollection::new(Arc::clone(io), types.to_vec(), 0);
     let shared_types: Arc<[LogicalType]> = Arc::from(types);
-    for pointer in data.row_groups {
+    for mut pointer in data.row_groups {
         if pointer.data_pointers.len() != types.len() {
             return Err(Error::serialization(
                 "row group column count does not match the table",
@@ -174,7 +189,13 @@ pub fn load_row_groups(
             Arc::clone(io),
             Arc::clone(&shared_types),
             Arc::clone(metadata),
-            &pointer.data_pointers,
+            RowGroupMetadata {
+                column_pointers: pointer.data_pointers.as_slice().into(),
+                has_metadata_blocks: pointer.has_metadata_blocks,
+                extra_metadata_blocks: std::mem::take(&mut pointer.extra_metadata_blocks),
+                has_per_column_metadata_blocks: pointer.has_per_column_metadata_blocks,
+                per_column_metadata_blocks: pointer.per_column_metadata_blocks.clone(),
+            },
             pointer.tuple_count,
         );
         if let Some(first) = pointer.deletes_pointers.first() {
@@ -196,5 +217,9 @@ pub fn load_row_groups(
         columns: data.statistics,
         distinct,
     });
+    collection.set_metadata_pointer(Some(data.metadata_pointer));
+    if !collection.is_empty() {
+        collection.set_append_mode(crate::table::RowGroupAppendMode::SuggestNew);
+    }
     Ok(collection)
 }

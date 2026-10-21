@@ -6,6 +6,7 @@ use rustdb_common::{Result, STANDARD_VECTOR_SIZE};
 
 use super::chunk_info::{ChunkVectorInfo, DeletedRows, ScanOptions, VersionCompression};
 use crate::VECTOR_SIZE;
+use crate::metadata::{MetaBlockPointer, MetadataManager, MetadataWriter};
 use crate::transaction::TransactionData;
 
 #[derive(Debug, Default)]
@@ -16,6 +17,9 @@ struct VersionState {
     uncheckpointed_delete_commit: Option<u64>,
     /// Whether a compression pass may achieve anything.
     needs_compression_check: bool,
+    /// The metadata blocks the deletes are stored in, as of the last checkpoint that
+    /// wrote or read them.
+    storage_pointers: Vec<MetaBlockPointer>,
 }
 
 impl VersionState {
@@ -68,15 +72,25 @@ impl RowVersionManager {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Version info read from disk.
-    pub fn from_vectors(vectors: Vec<Option<ChunkVectorInfo>>) -> Self {
+    /// Version info read from disk, stored in the metadata blocks `storage_pointers`
+    /// (`RowVersionManager::Deserialize`).
+    pub fn from_vectors(
+        vectors: Vec<Option<ChunkVectorInfo>>,
+        storage_pointers: Vec<MetaBlockPointer>,
+    ) -> Self {
         Self {
             state: Mutex::new(VersionState {
                 vectors,
                 uncheckpointed_delete_commit: None,
                 needs_compression_check: false,
+                storage_pointers,
             }),
         }
+    }
+
+    /// The metadata blocks the deletes are stored in (`GetStoragePointers`).
+    pub fn storage_pointers(&self) -> Vec<MetaBlockPointer> {
+        self.lock().storage_pointers.clone()
     }
 
     /// Rows among the first `count` whose delete is committed.
@@ -219,12 +233,21 @@ impl RowVersionManager {
         self.lock().uncheckpointed_delete_commit.is_some()
     }
 
-    /// The deleted-rows information to write in a checkpoint as of `checkpoint_id`:
-    /// `(vector index, deletes)` for every vector with deletes, see
-    /// [`ChunkVectorInfo::checkpoint_deletes`].
-    pub fn checkpoint_deletes(&self, checkpoint_id: u64) -> Vec<(usize, Option<Vec<u64>>)> {
+    /// Writes the deletes committed as of `checkpoint_id` to new metadata blocks, or
+    /// keeps the stored ones when no delete was committed since they were written; returns
+    /// the blocks (`RowVersionManager::Checkpoint`).
+    pub fn checkpoint(
+        &self,
+        metadata: &MetadataManager,
+        checkpoint_id: u64,
+    ) -> Result<Vec<MetaBlockPointer>> {
         let mut state = self.lock();
-        let result = state
+        if state.uncheckpointed_delete_commit.is_none() {
+            // The stored deletes are current: keep their blocks from being freed.
+            metadata.clear_modified_blocks(&state.storage_pointers)?;
+            return Ok(state.storage_pointers.clone());
+        }
+        let to_serialize: Vec<(usize, Option<Vec<u64>>)> = state
             .vectors
             .iter()
             .enumerate()
@@ -237,14 +260,68 @@ impl RowVersionManager {
                     .map(|deletes| (index, deletes))
             })
             .collect();
+        state.storage_pointers.clear();
+        if !to_serialize.is_empty() {
+            let mut writer = MetadataWriter::new(metadata);
+            writer.track_written_pointers();
+            writer.write_u64(to_serialize.len() as u64)?;
+            for (vector_index, deleted) in to_serialize {
+                writer.write_u64(vector_index as u64)?;
+                write_chunk_deletes(&mut writer, vector_index, deleted.as_deref())?;
+            }
+            writer.flush()?;
+            state.storage_pointers = writer.take_written_pointers();
+        }
         if state
             .uncheckpointed_delete_commit
             .is_some_and(|commit| commit <= checkpoint_id)
         {
             state.uncheckpointed_delete_commit = None;
         }
-        result
+        Ok(state.storage_pointers.clone())
     }
+}
+
+/// `ChunkVectorInfo::Write`: the deletes of one vector; `deleted` is `None` when the
+/// whole vector is deleted, otherwise a mask with a set bit per deleted row.
+fn write_chunk_deletes(
+    writer: &mut MetadataWriter<'_>,
+    vector_index: usize,
+    deleted: Option<&[u64]>,
+) -> Result<()> {
+    const CONSTANT_INFO: u8 = 0;
+    const VECTOR_INFO: u8 = 1;
+    let start = (vector_index * STANDARD_VECTOR_SIZE) as u64;
+    let Some(mask) = deleted else {
+        writer.write_u8(CONSTANT_INFO)?;
+        return writer.write_u64(start);
+    };
+    writer.write_u8(VECTOR_INFO)?;
+    writer.write_u64(start)?;
+    // `ValidityMask::Write` with valid == deleted.
+    let count = STANDARD_VECTOR_SIZE;
+    let valid_values = mask.iter().map(|word| word.count_ones() as usize).sum::<usize>();
+    let invalid_values = count - valid_values;
+    let bitmask_bytes = count / 8;
+    let valid_size = 2 * valid_values + 4;
+    let invalid_size = 2 * invalid_values + 4;
+    if valid_size < bitmask_bytes || invalid_size < bitmask_bytes {
+        let serialize_valid = valid_size < invalid_size;
+        writer.write_u8(if serialize_valid { 1 } else { 2 })?;
+        writer.write_u32(valid_values.min(invalid_values) as u32)?;
+        for row in 0..count {
+            let is_valid = mask[row / 64] >> (row % 64) & 1 == 1;
+            if is_valid == serialize_valid {
+                writer.write_data(&(row as u16).to_le_bytes())?;
+            }
+        }
+    } else {
+        writer.write_u8(0)?;
+        for word in mask {
+            writer.write_u64(*word)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

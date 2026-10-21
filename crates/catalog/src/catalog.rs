@@ -112,6 +112,15 @@ impl Catalog {
         let _ = self.storage.set(Arc::downgrade(storage));
     }
 
+    /// The serialization version the database file is written with; `None` in memory
+    /// (`StorageManager::GetStorageVersion`).
+    pub fn storage_version(&self) -> Option<u64> {
+        self.storage
+            .get()
+            .and_then(std::sync::Weak::upgrade)
+            .map(|storage| storage.block_manager().storage_version())
+    }
+
     /// The metadata blocks of the database file; empty in memory
     /// (`DuckCatalog::GetMetadataInfo`).
     pub fn metadata_info(&self) -> Vec<rustdb_storage::metadata::MetadataBlockInfo> {

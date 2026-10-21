@@ -51,6 +51,7 @@ pub(crate) fn startup_options(config: &Config) -> AttachOptions {
         row_group_size: None,
         kept: Vec::new(),
         default_table: None,
+        no_wal_writes: false,
     }
 }
 
@@ -153,22 +154,39 @@ pub(crate) fn open_storage(
     Ok(Arc::new(storage))
 }
 
-/// `CHECKPOINT` / `FORCE CHECKPOINT` from a connection whose transaction is `current`
+/// `CHECKPOINT` / `FORCE CHECKPOINT` of `database` from a connection whose transaction
+/// is `current`; `started` tells whether that transaction was started for the database
 /// (`DuckTransactionManager::Checkpoint`).
 pub(crate) fn checkpoint(
-    catalog: &Catalog,
-    storage: Option<&Arc<StorageManager>>,
+    database: &crate::attached::AttachedDatabase,
     current: &Transaction,
+    started: bool,
     force: bool,
     transactions: &rustdb_catalog::TransactionManager,
 ) -> Result<()> {
-    let Some(storage) = storage else {
+    database.check_valid()?;
+    if database.storage.is_none() {
         return Ok(());
-    };
+    }
+    if started && force {
+        return Err(Error::new(
+            ErrorKind::Transaction,
+            "Cannot FORCE CHECKPOINT: the current transaction has been started for this database",
+        ));
+    }
     if current.changes_made() {
         return Err(Error::new(
             ErrorKind::Transaction,
             "Cannot CHECKPOINT: the current transaction has transaction local changes",
+        ));
+    }
+    // A committed transaction with updates or catalog changes that older transactions
+    // still need holds the checkpoint lock (`recently_committed_transactions`).
+    if !force && transactions.retains_changes(current.transaction_id) {
+        return Err(Error::new(
+            ErrorKind::Transaction,
+            "Cannot CHECKPOINT: there are other write transactions active. Try using FORCE CHECKPOINT to wait \
+             until all active transactions are finished",
         ));
     }
     let mode = if force {
@@ -176,12 +194,7 @@ pub(crate) fn checkpoint(
     } else {
         CheckpointMode::Manual
     };
-    create_checkpoint(catalog, storage, mode, Some(transactions))
-}
-
-/// The checkpoint written when a database is closed (`AttachedDatabase::Close`).
-pub(crate) fn checkpoint_on_close(catalog: &Catalog, storage: &StorageManager) -> Result<()> {
-    create_checkpoint(catalog, storage, CheckpointMode::Automatic, None)
+    database.create_checkpoint(mode, Some(transactions))
 }
 
 /// Why a checkpoint is written.
@@ -206,6 +219,7 @@ pub(crate) fn create_checkpoint(
     storage: &StorageManager,
     mode: CheckpointMode,
     transactions: Option<&rustdb_catalog::TransactionManager>,
+    failed: &dyn Fn(Error) -> Error,
 ) -> Result<()> {
     if storage.is_read_only() {
         return Ok(());
@@ -230,6 +244,13 @@ pub(crate) fn create_checkpoint(
     let replace_in_memory = exclusive.is_some()
         && transactions
             .is_none_or(|transactions| transactions.last_commit() < transactions.lowest_active_start());
+    // A full checkpoint only vacuums when no transaction inserting or deleting rows runs
+    // (`TryGetVacuumLock`; otherwise it is a concurrent one).
+    let vacuum_lock = if replace_in_memory {
+        storage.wal().and_then(|wal| wal.vacuum_lock().try_exclusive())
+    } else {
+        None
+    };
     let mut guard = storage.wal().map(|wal| wal.lock());
     let wal_size = guard.as_ref().map_or(0, rustdb_storage::wal::WalGuard::size);
     if wal_size == 0 {
@@ -249,11 +270,24 @@ pub(crate) fn create_checkpoint(
             Ok(())
         },
         replace_in_memory,
-    )?;
+        vacuum_lock.is_some(),
+        transactions.map_or(u64::MAX, rustdb_catalog::TransactionManager::lowest_active_start),
+    )
+    .map_err(|error| {
+        let error = failed(error);
+        if let Some(guard) = guard.as_mut() {
+            guard.invalidate(error.raw_message().to_owned());
+        }
+        error
+    })?;
     timer.end();
     drop(exclusive);
     if has_wal && let Some(guard) = guard.as_mut() {
-        guard.finish_checkpoint()?;
+        guard.finish_checkpoint().map_err(|error| {
+            let error = failed(error);
+            guard.invalidate(error.raw_message().to_owned());
+            error
+        })?;
     }
     Ok(())
 }

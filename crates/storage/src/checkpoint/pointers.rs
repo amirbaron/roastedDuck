@@ -10,6 +10,7 @@ use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType};
 use crate::compression::CompressionType;
 use crate::metadata::MetaBlockPointer;
 use crate::statistics::BaseStatistics;
+use crate::table::{PerColumnMetadataBlock, PerColumnMetadataBlocks};
 
 /// A position in a block (DuckDB's `BlockPointer`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,7 +93,7 @@ pub fn read_meta_pointer_list(deserializer: &mut dyn Deserializer) -> Result<Vec
 }
 
 /// The name of a compression type in `EnumUtil` (JSON serialization).
-fn compression_enum_name(compression: CompressionType) -> &'static str {
+pub(crate) fn compression_enum_name(compression: CompressionType) -> &'static str {
     match compression {
         CompressionType::Auto => "COMPRESSION_AUTO",
         CompressionType::Uncompressed => "COMPRESSION_UNCOMPRESSED",
@@ -383,24 +384,63 @@ pub struct RowGroupPointer {
     /// The metadata pointer of each column's `PersistentColumnData`.
     pub data_pointers: Vec<MetaBlockPointer>,
     pub deletes_pointers: Vec<MetaBlockPointer>,
+    /// Whether `extra_metadata_blocks` lists every metadata block of the columns besides
+    /// the ones `data_pointers` point into.
+    pub has_metadata_blocks: bool,
+    /// Those metadata blocks (often none; set for wide columns with a lot of metadata).
+    pub extra_metadata_blocks: Vec<u64>,
+    /// Whether `per_column_metadata_blocks` is set (it replaces `extra_metadata_blocks`
+    /// when columns are written one by one, `force_column_metadata_reuse`).
+    pub has_per_column_metadata_blocks: bool,
+    pub per_column_metadata_blocks: PerColumnMetadataBlocks,
 }
 
 impl RowGroupPointer {
-    /// `RowGroup::Serialize` (without per-column metadata reuse).
-    pub fn serialize_fields(&self, serializer: &mut dyn Serializer) -> Result<()> {
+    /// `RowGroup::Serialize`; with `supports_per_column_writes` the per-column metadata
+    /// blocks are written too, flattened into the legacy properties for v1.4 and v1.5.
+    pub fn serialize_fields(
+        &self,
+        serializer: &mut dyn Serializer,
+        supports_per_column_writes: bool,
+    ) -> Result<()> {
         serializer.write_property(100, "row_start", &self.row_start)?;
         serializer.write_property(101, "tuple_count", &self.tuple_count)?;
         write_meta_pointer_list(serializer, 102, "data_pointers", &self.data_pointers)?;
         write_meta_pointer_list(serializer, 103, "delete_pointers", &self.deletes_pointers)?;
-        if serializer.should_serialize(6) {
-            serializer.write_property(104, "has_metadata_blocks", &false)?;
-            serializer.on_optional_property_begin(105, "extra_metadata_blocks", false);
-            serializer.on_optional_property_end(false);
+        if serializer.should_serialize(6) && !supports_per_column_writes {
+            serializer.write_property(104, "has_metadata_blocks", &self.has_metadata_blocks)?;
+            write_u64_list(
+                serializer,
+                105,
+                "extra_metadata_blocks",
+                &self.extra_metadata_blocks,
+            )?;
+        }
+        if supports_per_column_writes {
+            serializer.write_property(104, "has_metadata_blocks", &self.has_per_column_metadata_blocks)?;
+            write_u64_list(
+                serializer,
+                105,
+                "extra_metadata_blocks",
+                &self.per_column_metadata_blocks.blocks(),
+            )?;
+            serializer.write_property(
+                106,
+                "has_per_column_metadata_blocks",
+                &self.has_per_column_metadata_blocks,
+            )?;
+            let packed: Vec<u64> = self
+                .per_column_metadata_blocks
+                .data
+                .iter()
+                .map(|entry| entry.packed())
+                .collect();
+            write_u64_list(serializer, 107, "per_column_metadata_blocks", &packed)?;
         }
         Ok(())
     }
 
-    /// `RowGroup::Deserialize`; the metadata reuse properties are read and ignored.
+    /// `RowGroup::Deserialize`.
     pub fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
         let row_start = deserializer.read_property(100, "row_start")?;
         let tuple_count = deserializer.read_property(101, "tuple_count")?;
@@ -410,24 +450,35 @@ impl RowGroupPointer {
         deserializer.on_property_begin(103, "delete_pointers")?;
         let deletes_pointers = read_meta_pointer_list(deserializer)?;
         deserializer.on_property_end()?;
-        let _: Option<bool> = deserializer.read_optional(104, "has_metadata_blocks")?;
-        let _: Option<Vec<u64>> = deserializer.read_optional(105, "extra_metadata_blocks")?;
-        let _: Option<bool> = deserializer.read_optional(106, "has_per_column_metadata_blocks")?;
-        if deserializer.on_optional_property_begin(107, "per_column_metadata_blocks")? {
-            // `vector<PerColumnMetadataBlock>`: objects of (column index, block ids).
-            deserializer.read_list(|d, _| {
-                d.on_object_begin()?;
-                let _: Option<u64> = d.read_optional(100, "column_index")?;
-                let _: Option<Vec<u64>> = d.read_optional(101, "block_ids")?;
-                d.on_object_end()
-            })?;
-            deserializer.on_optional_property_end(true)?;
+        let mut has_metadata_blocks = deserializer
+            .read_optional(104, "has_metadata_blocks")?
+            .unwrap_or(false);
+        let mut extra_metadata_blocks: Vec<u64> = deserializer
+            .read_optional(105, "extra_metadata_blocks")?
+            .unwrap_or_default();
+        let has_per_column_metadata_blocks = deserializer
+            .read_optional(106, "has_per_column_metadata_blocks")?
+            .unwrap_or(false);
+        let packed: Vec<u64> = deserializer
+            .read_optional(107, "per_column_metadata_blocks")?
+            .unwrap_or_default();
+        let per_column_metadata_blocks = PerColumnMetadataBlocks {
+            data: packed.into_iter().map(PerColumnMetadataBlock::unpack).collect(),
+        };
+        if has_per_column_metadata_blocks {
+            // Per-column metadata supersedes the legacy extra metadata blocks.
+            has_metadata_blocks = false;
+            extra_metadata_blocks.clear();
         }
         Ok(Self {
             row_start,
             tuple_count,
             data_pointers,
             deletes_pointers,
+            has_metadata_blocks,
+            extra_metadata_blocks,
+            has_per_column_metadata_blocks,
+            per_column_metadata_blocks,
         })
     }
 }

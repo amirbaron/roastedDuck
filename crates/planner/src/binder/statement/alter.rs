@@ -460,6 +460,7 @@ fn add_column(
         default_value,
         generated: None,
         comment: column.comment.clone(),
+        compression_type: column.compression_type,
     });
     Ok(AlterAction::AddColumn {
         definition: definition(columns, table.constraints.clone()),

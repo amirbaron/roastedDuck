@@ -441,6 +441,46 @@ pub fn bind_create_table_info(
     ))
 }
 
+/// `VerifyCompressionType`: every `USING COMPRESSION` must name a codec that can be
+/// written with the database's storage version and that supports the column's type.
+fn verify_compression_types(storage_version: Option<u64>, columns: &[ColumnDefinition]) -> Result<()> {
+    use rustdb_storage::compression::{
+        CompressionAvailability, CompressionType as Storage, compression_type_is_available,
+        has_compression_function,
+    };
+    for column in columns {
+        let compression = Storage::from_u8(column.compression_type as u8).unwrap_or(Storage::Auto);
+        match compression_type_is_available(compression, storage_version) {
+            CompressionAvailability::Available => {}
+            CompressionAvailability::Deprecated => {
+                return Err(Error::binder(format!(
+                    "Can't compress using user-provided compression type '{compression}', that type is deprecated \
+                     and only has decompress support"
+                )));
+            }
+            CompressionAvailability::NotAvailableYet => {
+                return Err(Error::binder(format!(
+                    "Can't compress using user-provided compression type '{compression}', that type is not \
+                     available yet"
+                )));
+            }
+        }
+        if compression == Storage::Auto {
+            continue;
+        }
+        let physical = column.logical_type.physical_type();
+        if !has_compression_function(compression, physical) {
+            return Err(Error::binder(format!(
+                "Can't compress column \"{}\" with type '{}' (physical: {}) using compression type '{compression}'",
+                column.name,
+                column.logical_type,
+                physical.name()
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Binds the column types, generated columns, constraints and defaults of a `CREATE
 /// TABLE` without a query.
 fn bind_table_definition(
@@ -455,6 +495,11 @@ fn bind_table_definition(
                 bind_logical_type_in_schema(&scope.context, &column.logical_type, catalog, schema)?;
         }
     }
+    let storage_version = scope
+        .context
+        .catalog(catalog)
+        .and_then(|catalog| catalog.storage_version());
+    verify_compression_types(storage_version, &table.columns.columns)?;
     bind_generated_columns(scope, &table.table, &mut table.columns.columns)?;
     bind_create_table_constraints(
         scope,

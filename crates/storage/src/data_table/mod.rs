@@ -109,6 +109,8 @@ impl DataTableInfo {
 pub struct ColumnDefinition {
     pub name: String,
     pub ty: LogicalType,
+    /// `USING COMPRESSION` (`ColumnDefinition::CompressionType`); `Auto` by default.
+    pub compression: crate::compression::CompressionType,
 }
 
 impl ColumnDefinition {
@@ -116,7 +118,15 @@ impl ColumnDefinition {
         Self {
             name: name.into(),
             ty,
+            compression: crate::compression::CompressionType::Auto,
         }
+    }
+
+    /// The column with compression `compression`.
+    #[must_use]
+    pub fn with_compression(mut self, compression: crate::compression::CompressionType) -> Self {
+        self.compression = compression;
+        self
     }
 }
 

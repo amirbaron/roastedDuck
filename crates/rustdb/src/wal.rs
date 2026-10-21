@@ -132,7 +132,8 @@ fn entry_type(deserializer: &mut BinaryDeserializer<'_>) -> Result<WalType> {
 fn scan_log(reader: &mut WalReader, storage: &StorageManager) -> Result<ScanState> {
     let mut state = ScanState::default();
     let mut last_flush_end = 0;
-    let mut replay_entry_count = 0;
+    // DuckDB's loop also counts the version entry `check_header` reads.
+    let mut replay_entry_count = 1;
     let outcome = (|| -> Result<()> {
         check_header(reader, storage, &mut state)?;
         loop {

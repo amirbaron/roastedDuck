@@ -82,6 +82,8 @@ pub struct Transaction {
     /// The shared hold of the written database's checkpoint lock, until the transaction
     /// ends (`DuckTransaction::write_lock`).
     checkpoint_guard: Mutex<Option<crate::checkpoint_lock::SharedCheckpointGuard>>,
+    /// The shared hold of the vacuum lock of a transaction that inserts or deletes rows.
+    vacuum_guard: Mutex<Option<crate::checkpoint_lock::SharedCheckpointGuard>>,
     /// The manager's oldest running transaction, for transactions it started.
     lowest_active: Option<Arc<LowestActive>>,
 }
@@ -97,6 +99,7 @@ impl Transaction {
             modified_database: Mutex::new(None),
             accessed_databases: Mutex::default(),
             checkpoint_guard: Mutex::new(None),
+            vacuum_guard: Mutex::new(None),
             lowest_active: None,
         }
     }
@@ -121,6 +124,10 @@ impl Transaction {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take();
+        self.vacuum_guard
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
     }
 
     /// Records that the transaction writes to the database `name`, whose commits are
@@ -129,11 +136,15 @@ impl Transaction {
     /// With `checkpoint_lock` (updates and catalog changes, DuckDB's
     /// `SetModifications`), the database's checkpoint lock is held shared until the
     /// transaction ends.
+    ///
+    /// With `vacuum_lock` (inserts and deletes), the database's vacuum lock is held shared
+    /// until the transaction ends, so that no checkpoint moves row ids under it.
     pub fn modify_database(
         &self,
         name: &str,
         wal: Option<&Arc<WriteAheadLog>>,
         checkpoint_lock: bool,
+        vacuum_lock: bool,
     ) -> Result<()> {
         let mut modified = self
             .modified_database
@@ -160,6 +171,12 @@ impl Transaction {
             if guard.is_none() {
                 // Waits while a checkpoint replaces the table data.
                 *guard = Some(wal.checkpoint_lock().shared());
+            }
+        }
+        if vacuum_lock && let Some(wal) = wal {
+            let mut guard = self.vacuum_guard.lock().unwrap_or_else(PoisonError::into_inner);
+            if guard.is_none() {
+                *guard = Some(wal.vacuum_lock().shared());
             }
         }
         Ok(())
@@ -302,6 +319,11 @@ impl Transaction {
 struct CommittedUndo {
     commit_id: u64,
     undo: UndoBuffer,
+    /// Whether the transaction updated rows or changed the catalog: DuckDB keeps such a
+    /// `DuckTransaction`, and with it its shared checkpoint lock, in
+    /// `recently_committed_transactions` until no running transaction needs the older
+    /// versions, which blocks checkpoints.
+    blocks_checkpoint: bool,
 }
 
 #[derive(Debug)]
@@ -427,6 +449,24 @@ impl TransactionManager {
         self.lock().active.len()
     }
 
+    /// Whether a committed transaction that updated rows or changed the catalog is kept
+    /// for a running transaction other than `except` (by id), which in DuckDB holds the
+    /// checkpoint lock shared until it is cleaned up (`recently_committed_transactions`).
+    pub fn retains_changes(&self, except: u64) -> bool {
+        let state = self.lock();
+        let lowest_start = state
+            .active
+            .iter()
+            .filter(|&&(id, _)| id != except)
+            .map(|&(_, start)| start)
+            .min()
+            .unwrap_or(TRANSACTION_ID_START);
+        state
+            .recently_committed
+            .iter()
+            .any(|committed| committed.blocks_checkpoint && committed.commit_id >= lowest_start)
+    }
+
     /// Commits `transaction` (`CommitTransaction`). If flushing its local storage or
     /// stamping its versions fails, the transaction is rolled back and the error returned.
     pub fn commit(&self, transaction: &Transaction) -> Result<()> {
@@ -442,9 +482,12 @@ impl TransactionManager {
             Ok(()) => {
                 self.last_commit.store(commit_id, Ordering::Release);
                 if !undo.is_empty() {
-                    state
-                        .recently_committed
-                        .push_back(CommittedUndo { commit_id, undo });
+                    let properties = undo.properties();
+                    state.recently_committed.push_back(CommittedUndo {
+                        commit_id,
+                        undo,
+                        blocks_checkpoint: properties.has_updates || properties.has_catalog_changes,
+                    });
                 }
                 Ok(())
             }

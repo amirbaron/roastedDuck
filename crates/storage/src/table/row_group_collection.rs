@@ -104,6 +104,22 @@ fn empty_distinct(ty: &LogicalType) -> Option<DistinctStatistics> {
     DistinctStatistics::type_is_supported(ty).then(DistinctStatistics::default)
 }
 
+/// Whether `ty` is or contains a VARIANT or GEOMETRY (`TypeVisitor::Contains`).
+fn contains_shredded_type(ty: &LogicalType) -> bool {
+    use rustdb_types::LogicalTypeId;
+    if matches!(ty.id(), LogicalTypeId::Variant | LogicalTypeId::Geometry) {
+        return true;
+    }
+    if let Some(child) = ty.child_type() {
+        return contains_shredded_type(child);
+    }
+    if let Some((child, _)) = ty.array_child() {
+        return contains_shredded_type(child);
+    }
+    ty.struct_children()
+        .is_some_and(|children| children.iter().any(|(_, child)| contains_shredded_type(child)))
+}
+
 /// Whether row ids of a collection starting at `row_start` are transaction-local.
 fn data_type_for(row_start: u64) -> ColumnDataType {
     match row_start.cmp(&MAX_ROW_ID) {
@@ -130,6 +146,21 @@ pub struct RowGroupCollection {
     row_groups: RwLock<Arc<RowGroupSegmentTree>>,
     stats: Mutex<TableStatistics>,
     append_mode: Mutex<RowGroupAppendMode>,
+    /// Whether appends may go to a row group a checkpoint wrote (not for tables with
+    /// shredded VARIANT or GEOMETRY columns, `can_append_to_checkpointed_row_group`).
+    can_append_to_checkpointed_row_group: bool,
+    /// Where the table's statistics and row group pointers are on disk, with every
+    /// metadata block they span (`metadata_pointer` and `metadata_pointers`).
+    metadata_pointer: Mutex<Option<TableMetadataPointer>>,
+}
+
+/// The table data a checkpoint wrote (DuckDB's `RowGroupCollection::metadata_pointer`
+/// and `metadata_pointers`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TableMetadataPointer {
+    pub pointer: crate::metadata::MetaBlockPointer,
+    /// Every metadata block the statistics and row group pointers span.
+    pub blocks: Vec<crate::metadata::MetaBlockPointer>,
 }
 
 /// Applies an update to the rows of one vector of a row group.
@@ -140,6 +171,9 @@ impl RowGroupCollection {
     pub fn new(io: Arc<TableIoManager>, types: Vec<LogicalType>, base_row_id: u64) -> Self {
         let row_group_size = io.row_group_size();
         let stats = TableStatistics::empty(&types);
+        // Tables with shredded types (VARIANT / GEOMETRY) cannot append to an existing row
+        // group.
+        let can_append = !types.iter().any(contains_shredded_type);
         Self {
             io,
             types,
@@ -147,8 +181,41 @@ impl RowGroupCollection {
             total_rows: AtomicU64::new(0),
             row_groups: RwLock::new(Arc::new(RowGroupSegmentTree::new(base_row_id))),
             stats: Mutex::new(stats),
-            append_mode: Mutex::new(RowGroupAppendMode::AppendToExisting),
+            append_mode: Mutex::new(if can_append {
+                RowGroupAppendMode::AppendToExisting
+            } else {
+                RowGroupAppendMode::RequireNew
+            }),
+            can_append_to_checkpointed_row_group: can_append,
+            metadata_pointer: Mutex::default(),
         }
+    }
+
+    /// Where the table data is on disk, if it was read from or written to the database
+    /// file and is still current.
+    pub fn metadata_pointer(&self) -> Option<TableMetadataPointer> {
+        self.metadata_pointer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Sets the row count after a vacuum replaced the row groups.
+    pub fn set_total_rows(&self, total_rows: u64) {
+        self.total_rows.store(total_rows, Ordering::Release);
+    }
+
+    /// Records where the table data is on disk (`FinalizeCheckpoint`).
+    pub fn set_metadata_pointer(&self, pointer: Option<TableMetadataPointer>) {
+        *self
+            .metadata_pointer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = pointer;
+    }
+
+    /// The statistics of every column (`CopyStats`).
+    pub fn statistics(&self) -> TableStatistics {
+        self.stats().clone()
     }
 
     pub fn io(&self) -> &Arc<TableIoManager> {
@@ -236,7 +303,14 @@ impl RowGroupCollection {
         *self.stats() = stats;
     }
 
+    /// `SetRowGroupAppendMode`: `SuggestNew` becomes `RequireNew` when appends cannot
+    /// go to checkpointed row groups.
     pub fn set_append_mode(&self, mode: RowGroupAppendMode) {
+        let mode = if mode == RowGroupAppendMode::SuggestNew && !self.can_append_to_checkpointed_row_group {
+            RowGroupAppendMode::RequireNew
+        } else {
+            mode
+        };
         *self.append_mode.lock().unwrap_or_else(PoisonError::into_inner) = mode;
     }
 
@@ -502,13 +576,27 @@ impl RowGroupCollection {
 
     /// Starts an append (`InitializeAppend`).
     pub fn initialize_append(&self, transaction: TransactionData) -> Result<TableAppendState> {
+        self.initialize_append_with_indexes(transaction, false)
+    }
+
+    /// `InitializeAppend` of a table with indexes (`has_indexes`): `SuggestNew` is only
+    /// honored when a vacuum can compact the row groups later, which it cannot for tables
+    /// with indexes.
+    pub fn initialize_append_with_indexes(
+        &self,
+        transaction: TransactionData,
+        has_indexes: bool,
+    ) -> Result<TableAppendState> {
         let row_groups = self.row_groups();
         let total = self.total_rows();
         let needs_new = match row_groups.tree.last() {
             None => true,
             Some(last) => match self.append_mode() {
-                RowGroupAppendMode::RequireNew | RowGroupAppendMode::SuggestNew => true,
-                RowGroupAppendMode::AppendToExisting => last.node.count() >= self.row_group_size,
+                RowGroupAppendMode::RequireNew => true,
+                RowGroupAppendMode::SuggestNew if !has_indexes => true,
+                RowGroupAppendMode::SuggestNew | RowGroupAppendMode::AppendToExisting => {
+                    last.node.count() >= self.row_group_size
+                }
             },
         };
         let (position, current) = if needs_new {
@@ -691,6 +779,7 @@ impl RowGroupCollection {
         let mut index = row_groups.base_row_id + self.total_rows();
         for node in other.row_groups().tree.nodes() {
             node.node.set_data_type(ColumnDataType::MainTable)?;
+            node.node.set_has_changes();
             let count = node.node.count();
             row_groups.tree.push(index, node.node);
             index += count;
@@ -841,15 +930,14 @@ impl RowGroupCollection {
     /// A collection with the same row id range and `types`, sharing nothing yet.
     fn derived(&self, types: Vec<LogicalType>, stats: TableStatistics) -> Self {
         let row_groups = self.row_groups();
-        Self {
-            io: Arc::clone(&self.io),
-            types,
-            row_group_size: self.row_group_size,
-            total_rows: AtomicU64::new(self.total_rows()),
-            row_groups: RwLock::new(Arc::new(RowGroupSegmentTree::new(row_groups.base_row_id))),
-            stats: Mutex::new(stats),
-            append_mode: Mutex::new(self.append_mode()),
+        let result = Self::new(Arc::clone(&self.io), types, row_groups.base_row_id);
+        result.total_rows.store(self.total_rows(), Ordering::Release);
+        *result.stats() = stats;
+        let mode = self.append_mode();
+        if mode != RowGroupAppendMode::AppendToExisting || result.can_append_to_checkpointed_row_group {
+            result.set_append_mode(mode);
         }
+        result
     }
 
     /// A copy of the collection with a new last column of type `ty`, filled by `default`
@@ -882,6 +970,7 @@ impl RowGroupCollection {
             let mut columns = node.node.columns()?;
             columns.push(Arc::clone(&column));
             let row_group = Arc::new(node.node.with_columns(columns));
+            row_group.set_metadata(node.node.metadata().with_added_column());
             if let Some(column_stats) = result.stats().columns.get_mut(column_index) {
                 column.merge_into_statistics(column_stats)?;
             }
@@ -904,9 +993,9 @@ impl RowGroupCollection {
         for node in self.row_groups().tree.nodes() {
             let mut columns = node.node.columns()?;
             columns.remove(column);
-            target
-                .tree
-                .push(node.row_start, Arc::new(node.node.with_columns(columns)));
+            let row_group = Arc::new(node.node.with_columns(columns));
+            row_group.set_metadata(node.node.metadata().without_column(column));
+            target.tree.push(node.row_start, row_group);
         }
         Ok(result)
     }
@@ -982,9 +1071,9 @@ impl RowGroupCollection {
             if let Some(column_stats) = result.stats().columns.get_mut(changed) {
                 column.merge_into_statistics(column_stats)?;
             }
-            target_tree
-                .tree
-                .push(node.row_start, Arc::new(node.node.with_columns(columns)));
+            let row_group = Arc::new(node.node.with_columns(columns));
+            row_group.set_metadata(node.node.metadata().with_changed_column(changed));
+            target_tree.tree.push(node.row_start, row_group);
         }
         Ok(result)
     }
