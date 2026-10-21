@@ -4,8 +4,12 @@
 //! `CopticCalendar` / `EthiopicCalendar` (`CECalendar`) and `PersianCalendar`).
 //! [`Calendar`] dispatches to them by [`CalendarSystem`].
 
-use super::calendar::{Calendar, Limit, Status, field as F};
-use super::grego::{self, EPOCH_START_AS_JULIAN_DAY, JAN1_1_JULIAN_DAY, ONE_DAY};
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+
+use super::astro::{self, Astronomer};
+use super::calendar::{Calendar, Limit, RESOLVE_REMAP, RESOLVE_STOP, Status, UNSET, field as F};
+use super::grego::{self, EPOCH_START_AS_JULIAN_DAY, JAN1_1_JULIAN_DAY, ONE_DAY, ONE_HOUR};
 use super::japanese_eras::JAPANESE_ERA_STARTS;
 
 /// A calendar's limits table (`[field][ELimitType]`).
@@ -220,6 +224,7 @@ impl GregorianState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IslamicType {
     Civil,
+    Astronomical,
     Tbla,
     Umalqura,
 }
@@ -239,7 +244,7 @@ pub enum CalendarSystem {
     Hebrew,
     /// `IndianCalendar`.
     Indian,
-    /// `IslamicCalendar` with an arithmetic calculation.
+    /// `IslamicCalendar`.
     Islamic(IslamicType),
     /// `CopticCalendar`.
     Coptic,
@@ -247,6 +252,9 @@ pub enum CalendarSystem {
     Ethiopic { amete_alem: bool },
     /// `PersianCalendar`.
     Persian,
+    /// `ChineseCalendar`, or `DangiCalendar` (the Korean calendar: another epoch year
+    /// and the astronomical computations in Korean time).
+    Chinese { dangi: bool },
 }
 
 impl CalendarSystem {
@@ -269,12 +277,16 @@ impl CalendarSystem {
             "hebrew" => Self::Hebrew,
             "indian" => Self::Indian,
             "islamic-civil" => Self::Islamic(IslamicType::Civil),
+            // "default any region specific not handled individually to islamic"
+            "islamic" | "islamic-rgsa" => Self::Islamic(IslamicType::Astronomical),
             "islamic-tbla" => Self::Islamic(IslamicType::Tbla),
             "islamic-umalqura" => Self::Islamic(IslamicType::Umalqura),
             "coptic" => Self::Coptic,
             "ethiopic" => Self::Ethiopic { amete_alem: false },
             "ethiopic-amete-alem" => Self::Ethiopic { amete_alem: true },
             "persian" => Self::Persian,
+            "chinese" => Self::Chinese { dangi: false },
+            "dangi" => Self::Chinese { dangi: true },
             _ => return None,
         })
     }
@@ -289,12 +301,15 @@ impl CalendarSystem {
             Self::Hebrew => "hebrew",
             Self::Indian => "indian",
             Self::Islamic(IslamicType::Civil) => "islamic-civil",
+            Self::Islamic(IslamicType::Astronomical) => "islamic",
             Self::Islamic(IslamicType::Tbla) => "islamic-tbla",
             Self::Islamic(IslamicType::Umalqura) => "islamic-umalqura",
             Self::Coptic => "coptic",
             Self::Ethiopic { amete_alem: false } => "ethiopic",
             Self::Ethiopic { amete_alem: true } => "ethiopic-amete-alem",
             Self::Persian => "persian",
+            Self::Chinese { dangi: false } => "chinese",
+            Self::Chinese { dangi: true } => "dangi",
         }
     }
 
@@ -352,6 +367,7 @@ impl CalendarSystem {
                 }
             }
             Self::Persian => PERSIAN_LIMITS[field][limit as usize],
+            Self::Chinese { .. } => CHINESE_LIMITS[field][limit as usize],
         }
     }
 
@@ -368,7 +384,10 @@ impl CalendarSystem {
 
     /// `getFieldResolutionTable`.
     pub fn field_resolution_table(&self) -> &'static [&'static [&'static [i32]]] {
-        Calendar::date_precedence()
+        match self {
+            Self::Chinese { .. } => CHINESE_DATE_PRECEDENCE,
+            _ => Calendar::date_precedence(),
+        }
     }
 }
 
@@ -735,9 +754,14 @@ fn civil_leap_year(year: i32) -> bool {
     (14 + 11 * year) % 30 < 11
 }
 
-/// Whether `year` uses the civil arithmetic.
+/// Whether `year` uses the civil arithmetic (civil, tbla, and umalqura outside its
+/// table).
 fn islamic_is_arithmetic(kind: IslamicType, year: i32) -> bool {
-    kind != IslamicType::Umalqura || !(UMALQURA_YEAR_START..=UMALQURA_YEAR_END).contains(&year)
+    match kind {
+        IslamicType::Civil | IslamicType::Tbla => true,
+        IslamicType::Astronomical => false,
+        IslamicType::Umalqura => !(UMALQURA_YEAR_START..=UMALQURA_YEAR_END).contains(&year),
+    }
 }
 
 /// `IslamicCalendar::yearStart`.
@@ -746,6 +770,8 @@ fn islamic_year_start(kind: IslamicType, year: i32) -> i32 {
         (year - 1)
             .wrapping_mul(354)
             .wrapping_add(grego::floor_divide_i64(3 + 11 * i64::from(year), 30) as i32)
+    } else if kind == IslamicType::Astronomical {
+        true_month_start(12_i32.wrapping_mul(year - 1))
     } else {
         let year = year - UMALQURA_YEAR_START;
         let yr_start_linear_estimate = (354.367_20 * f64::from(year) + 460_322.05 + 0.5) as i32;
@@ -761,6 +787,9 @@ fn islamic_month_length(kind: IslamicType, extended_year: i32, month: i32) -> i3
             length += 1;
         }
         length
+    } else if kind == IslamicType::Astronomical {
+        let month = 12_i32.wrapping_mul(extended_year - 1).wrapping_add(month);
+        true_month_start(month.wrapping_add(1)) - true_month_start(month)
     } else {
         umalqura_month_length(extended_year - UMALQURA_YEAR_START, month)
     }
@@ -770,6 +799,9 @@ fn islamic_month_length(kind: IslamicType, extended_year: i32, month: i32) -> i3
 fn islamic_year_length(kind: IslamicType, extended_year: i32) -> i32 {
     if islamic_is_arithmetic(kind, extended_year) {
         354 + i32::from(civil_leap_year(extended_year))
+    } else if kind == IslamicType::Astronomical {
+        let month = 12_i32.wrapping_mul(extended_year - 1);
+        true_month_start(month.wrapping_add(12)) - true_month_start(month)
     } else {
         (0..12)
             .map(|month| islamic_month_length(kind, extended_year, month))
@@ -783,12 +815,272 @@ fn islamic_month_start(kind: IslamicType, year: i32, month: i32) -> i32 {
         ((29.5 * f64::from(month)).ceil() as i32)
             .wrapping_add((year - 1).wrapping_mul(354))
             .wrapping_add(grego::floor_divide_i64(3 + 11 * i64::from(year), 30) as i32)
+    } else if kind == IslamicType::Astronomical {
+        true_month_start(12_i32.wrapping_mul(year - 1).wrapping_add(month))
     } else {
         let mut ms = islamic_year_start(kind, year);
         for i in 0..month {
             ms += islamic_month_length(kind, year, i);
         }
         ms
+    }
+}
+
+/// `HIJRA_MILLIS`: 7/16/622 AD 00:00.
+const HIJRA_MILLIS: f64 = -42_521_587_200_000.0;
+
+/// `gMonthCache`: the process-wide cache of `trueMonthStart`.
+static ISLAMIC_MONTH_CACHE: LazyLock<Mutex<HashMap<i32, i32>>> = LazyLock::new(Mutex::default);
+
+/// `IslamicCalendar::trueMonthStart`: the day number (from the Hijri epoch) on which a
+/// month (0 at the epoch) of the true lunar calendar starts.
+#[allow(clippy::neg_cmp_op_on_partial_ord)] // ICU's loop conditions, NaN included
+fn true_month_start(month: i32) -> i32 {
+    let cached = ISLAMIC_MONTH_CACHE
+        .lock()
+        .map_or(0, |cache| cache.get(&month).copied().unwrap_or(0));
+    if cached != 0 {
+        return cached;
+    }
+    // Make a guess at when the month started, using the average length
+    let mut origin = HIJRA_MILLIS + (f64::from(month) * astro::SYNODIC_MONTH).floor() * ONE_DAY;
+
+    let mut age = islamic_moon_age(origin);
+    if age >= 0.0 {
+        // The month has already started
+        loop {
+            origin -= ONE_DAY;
+            age = islamic_moon_age(origin);
+            if !(age >= 0.0) {
+                break;
+            }
+        }
+    } else {
+        // Preceding month has not ended yet.
+        loop {
+            origin += ONE_DAY;
+            age = islamic_moon_age(origin);
+            if !(age < 0.0) {
+                break;
+            }
+        }
+    }
+    let start = (grego::floor_divide_i64(origin as i64 - HIJRA_MILLIS as i64, ONE_DAY as i64) + 1) as i32;
+    if let Ok(mut cache) = ISLAMIC_MONTH_CACHE.lock() {
+        cache.insert(month, start);
+    }
+    start
+}
+
+/// `IslamicCalendar::moonAge`: the moon's age in degrees, in [-180, 180].
+fn islamic_moon_age(time: f64) -> f64 {
+    let mut age = Astronomer::new(time).moon_age();
+    // Convert to degrees and normalize...
+    age = age * 180.0 / std::f64::consts::PI;
+    if age > 180.0 {
+        age -= 360.0;
+    }
+    age
+}
+
+// ------------------------------------------------------------------ Chinese helpers
+
+/// `CHINESE_EPOCH_YEAR`: the Gregorian year of the Chinese epoch.
+const CHINESE_EPOCH_YEAR: i32 = -2636;
+/// `DANGI_EPOCH_YEAR`.
+const DANGI_EPOCH_YEAR: i32 = -2332;
+/// `CHINA_OFFSET`: the offset of the zone the Chinese astronomical computations are in.
+const CHINA_OFFSET: f64 = 8.0 * ONE_HOUR as f64;
+/// `SYNODIC_GAP`: a number of days safely inside a lunation.
+const SYNODIC_GAP: i32 = 25;
+
+/// `CHNSECAL_LIMITS`.
+const CHINESE_LIMITS: Limits = {
+    let mut table = limits(
+        [1, 1, 83333, 83333],
+        [1, 1, 60, 60],
+        [0, 0, 11, 11],
+        [1, 1, 50, 55],
+        [1, 1, 29, 30],
+        [1, 1, 353, 385],
+        [-1, -1, 5, 5],
+        [-5_000_000, -5_000_000, 5_000_000, 5_000_000],
+    );
+    table[F::YEAR_WOY] = [-5_000_000, -5_000_000, 5_000_000, 5_000_000];
+    table[F::IS_LEAP_MONTH] = [0, 0, 1, 1];
+    table
+};
+
+/// `ChineseCalendar::CHINESE_DATE_PRECEDENCE`.
+const CHINESE_DATE_PRECEDENCE: &[&[&[i32]]] = &[
+    &[
+        &[F::DAY_OF_MONTH as i32, RESOLVE_STOP],
+        &[F::WEEK_OF_YEAR as i32, F::DAY_OF_WEEK as i32, RESOLVE_STOP],
+        &[F::WEEK_OF_MONTH as i32, F::DAY_OF_WEEK as i32, RESOLVE_STOP],
+        &[
+            F::DAY_OF_WEEK_IN_MONTH as i32,
+            F::DAY_OF_WEEK as i32,
+            RESOLVE_STOP,
+        ],
+        &[F::WEEK_OF_YEAR as i32, F::DOW_LOCAL as i32, RESOLVE_STOP],
+        &[F::WEEK_OF_MONTH as i32, F::DOW_LOCAL as i32, RESOLVE_STOP],
+        &[F::DAY_OF_WEEK_IN_MONTH as i32, F::DOW_LOCAL as i32, RESOLVE_STOP],
+        &[F::DAY_OF_YEAR as i32, RESOLVE_STOP],
+        &[
+            RESOLVE_REMAP | F::DAY_OF_MONTH as i32,
+            F::IS_LEAP_MONTH as i32,
+            RESOLVE_STOP,
+        ],
+    ],
+    &[
+        &[F::WEEK_OF_YEAR as i32, RESOLVE_STOP],
+        &[F::WEEK_OF_MONTH as i32, RESOLVE_STOP],
+        &[F::DAY_OF_WEEK_IN_MONTH as i32, RESOLVE_STOP],
+        &[
+            RESOLVE_REMAP | F::DAY_OF_WEEK_IN_MONTH as i32,
+            F::DAY_OF_WEEK as i32,
+            RESOLVE_STOP,
+        ],
+        &[
+            RESOLVE_REMAP | F::DAY_OF_WEEK_IN_MONTH as i32,
+            F::DOW_LOCAL as i32,
+            RESOLVE_STOP,
+        ],
+    ],
+];
+
+/// `gChineseCalendarWinterSolsticeCache`. ICU shares it (and the new year cache) between
+/// the Chinese and the Dangi calendars, whichever fills an entry first.
+static WINTER_SOLSTICE_CACHE: LazyLock<Mutex<HashMap<i32, i32>>> = LazyLock::new(Mutex::default);
+/// `gChineseCalendarNewYearCache`.
+static NEW_YEAR_CACHE: LazyLock<Mutex<HashMap<i32, i32>>> = LazyLock::new(Mutex::default);
+
+/// `CalendarCache::get` (0 if absent).
+fn cache_get(cache: &Mutex<HashMap<i32, i32>>, key: i32) -> i32 {
+    cache
+        .lock()
+        .map_or(0, |cache| cache.get(&key).copied().unwrap_or(0))
+}
+
+/// `CalendarCache::put`.
+fn cache_put(cache: &Mutex<HashMap<i32, i32>>, key: i32, value: i32) {
+    if let Ok(mut cache) = cache.lock() {
+        cache.insert(key, value);
+    }
+}
+
+/// The astronomical computations of a `ChineseCalendar`, in its zone (`fZoneAstroCalc`).
+#[derive(Clone, Copy, Debug)]
+struct ChineseAstro {
+    dangi: bool,
+}
+
+impl ChineseAstro {
+    /// The raw offset of `fZoneAstroCalc` at `millis`: China's +8, or Korea's history
+    /// (the `RuleBasedTimeZone` of `initDangiCalZoneAstroCalc`: +8, +7 in 1897, +8 from
+    /// 1898, +9 from 1912, each start in the previous rule's standard time).
+    fn offset(self, millis: f64) -> f64 {
+        if !self.dangi {
+            return CHINA_OFFSET;
+        }
+        let hour = f64::from(ONE_HOUR);
+        let year_millis = |year: i32| f64::from((year - 1970) * 365) * ONE_DAY;
+        if millis < year_millis(1897) - 8.0 * hour {
+            8.0 * hour
+        } else if millis < year_millis(1898) - 7.0 * hour {
+            7.0 * hour
+        } else if millis < year_millis(1912) - 8.0 * hour {
+            8.0 * hour
+        } else {
+            9.0 * hour
+        }
+    }
+
+    /// `ChineseCalendar::daysToMillis`.
+    fn days_to_millis(self, days: f64) -> f64 {
+        let millis = days * ONE_DAY;
+        millis - self.offset(millis)
+    }
+
+    /// `ChineseCalendar::millisToDays`.
+    fn millis_to_days(self, millis: f64) -> f64 {
+        grego::floor_divide_f64(millis + self.offset(millis), ONE_DAY)
+    }
+
+    /// `ChineseCalendar::winterSolstice`: the local day of the winter solstice of `gyear`.
+    fn winter_solstice(self, gyear: i32) -> i32 {
+        let mut cache_value = cache_get(&WINTER_SOLSTICE_CACHE, gyear);
+        if cache_value == 0 {
+            // In books December 15 is used, but it fails for some years using our
+            // algorithms, e.g.: 1298 1391 1492 1553 1560.
+            let ms = self.days_to_millis(grego::fields_to_day(gyear, 11, 1));
+            let solar_long = Astronomer::new(ms).sun_time(astro::WINTER_SOLSTICE, true);
+            // Winter solstice is 270 degrees solar longitude aka Dongzhi
+            cache_value = self.millis_to_days(solar_long) as i32;
+            cache_put(&WINTER_SOLSTICE_CACHE, gyear, cache_value);
+        }
+        cache_value
+    }
+
+    /// `ChineseCalendar::newMoonNear`: the local day of the new moon before or after
+    /// `days`.
+    fn new_moon_near(self, days: f64, after: bool) -> i32 {
+        let new_moon = Astronomer::new(self.days_to_millis(days)).moon_time(astro::NEW_MOON, after);
+        self.millis_to_days(new_moon) as i32
+    }
+
+    /// `ChineseCalendar::synodicMonthsBetween`.
+    fn synodic_months_between(day1: i32, day2: i32) -> i32 {
+        let roundme = f64::from(day2 - day1) / astro::SYNODIC_MONTH;
+        (roundme + if roundme >= 0.0 { 0.5 } else { -0.5 }) as i32
+    }
+
+    /// `ChineseCalendar::majorSolarTerm`: the major solar term (1..=12) on `days`.
+    fn major_solar_term(self, days: i32) -> i32 {
+        let solar_longitude = Astronomer::new(self.days_to_millis(f64::from(days))).sun_longitude();
+        // Compute (floor(solarLongitude / (pi/6)) + 2) % 12
+        let mut term = ((6.0 * solar_longitude / std::f64::consts::PI) as i32 + 2) % 12;
+        if term < 1 {
+            term += 12;
+        }
+        term
+    }
+
+    /// `ChineseCalendar::hasNoMajorSolarTerm`.
+    fn has_no_major_solar_term(self, new_moon: i32) -> bool {
+        self.major_solar_term(new_moon)
+            == self.major_solar_term(self.new_moon_near(f64::from(new_moon + SYNODIC_GAP), true))
+    }
+
+    /// `ChineseCalendar::isLeapMonthBetween`.
+    fn is_leap_month_between(self, new_moon1: i32, new_moon2: i32) -> bool {
+        new_moon2 >= new_moon1
+            && (self.is_leap_month_between(
+                new_moon1,
+                self.new_moon_near(f64::from(new_moon2 - SYNODIC_GAP), false),
+            ) || self.has_no_major_solar_term(new_moon2))
+    }
+
+    /// `ChineseCalendar::newYear`: the local day of the Chinese new year in `gyear`.
+    fn new_year(self, gyear: i32) -> i32 {
+        let mut cache_value = cache_get(&NEW_YEAR_CACHE, gyear);
+        if cache_value == 0 {
+            let solstice_before = self.winter_solstice(gyear - 1);
+            let solstice_after = self.winter_solstice(gyear);
+            let new_moon1 = self.new_moon_near(f64::from(solstice_before + 1), true);
+            let new_moon2 = self.new_moon_near(f64::from(new_moon1 + SYNODIC_GAP), true);
+            let new_moon11 = self.new_moon_near(f64::from(solstice_after + 1), false);
+
+            cache_value = if Self::synodic_months_between(new_moon1, new_moon11) == 12
+                && (self.has_no_major_solar_term(new_moon1) || self.has_no_major_solar_term(new_moon2))
+            {
+                self.new_moon_near(f64::from(new_moon2 + SYNODIC_GAP), true)
+            } else {
+                new_moon2
+            };
+            cache_put(&NEW_YEAR_CACHE, gyear, cache_value);
+        }
+        cache_value
     }
 }
 
@@ -933,6 +1225,16 @@ impl Calendar {
                 self.set_ce_fields(eyear, era, year, month, day);
             }
             CalendarSystem::Persian => self.persian_handle_compute_fields(julian_day),
+            CalendarSystem::Chinese { dangi } => {
+                let (gyear, gmonth) = (self.gregorian_year, self.gregorian_month);
+                self.compute_chinese_fields(
+                    ChineseAstro { dangi },
+                    julian_day - EPOCH_START_AS_JULIAN_DAY, // local days
+                    gyear,
+                    gmonth,
+                    true, // set all fields
+                );
+            }
         }
     }
 
@@ -988,6 +1290,9 @@ impl Calendar {
             CalendarSystem::Coptic => ce_to_jd(eyear, month, 0, COPTIC_JD_EPOCH_OFFSET),
             CalendarSystem::Ethiopic { .. } => ce_to_jd(eyear, month, 0, JD_EPOCH_OFFSET_AMETE_MIHRET),
             CalendarSystem::Persian => persian_month_start(eyear, month),
+            CalendarSystem::Chinese { dangi } => {
+                self.chinese_handle_compute_month_start(dangi, eyear, month, use_month)
+            }
         }
     }
 
@@ -1031,6 +1336,14 @@ impl Calendar {
             CalendarSystem::Coptic | CalendarSystem::Ethiopic { .. } => {
                 self.calendar_handle_get_month_length(extended_year, month)
             }
+            CalendarSystem::Chinese { dangi } => {
+                let astro = ChineseAstro { dangi };
+                let this_start = self.chinese_handle_compute_month_start(dangi, extended_year, month, true)
+                    - EPOCH_START_AS_JULIAN_DAY
+                    + 1; // Julian day -> local days
+                let next_start = astro.new_moon_near(f64::from(this_start + SYNODIC_GAP), true);
+                next_start - this_start
+            }
         }
     }
 
@@ -1063,7 +1376,7 @@ impl Calendar {
                     365
                 }
             }
-            CalendarSystem::Coptic | CalendarSystem::Ethiopic { .. } => {
+            CalendarSystem::Coptic | CalendarSystem::Ethiopic { .. } | CalendarSystem::Chinese { .. } => {
                 self.calendar_handle_get_year_length(eyear)
             }
         }
@@ -1126,6 +1439,23 @@ impl Calendar {
                     self.internal_get_or(F::YEAR, 1) // Default to year 1
                 }
             }
+            CalendarSystem::Chinese { dangi } => {
+                if self.newest_stamp(F::ERA, F::YEAR, UNSET) <= self.stamp[F::EXTENDED_YEAR] {
+                    self.internal_get_or(F::EXTENDED_YEAR, 1) // Default to year 1
+                } else {
+                    let cycle = self.internal_get_or(F::ERA, 1) - 1; // 0-based cycle
+                    // adjust to the instance specific epoch
+                    let epoch_year = if dangi {
+                        DANGI_EPOCH_YEAR
+                    } else {
+                        CHINESE_EPOCH_YEAR
+                    };
+                    cycle
+                        .wrapping_mul(60)
+                        .wrapping_add(self.internal_get_or(F::YEAR, 1))
+                        .wrapping_sub(epoch_year - CHINESE_EPOCH_YEAR)
+                }
+            }
             CalendarSystem::Ethiopic { amete_alem } => {
                 if self.newer_field(F::EXTENDED_YEAR, F::YEAR) == F::EXTENDED_YEAR {
                     self.internal_get_or(F::EXTENDED_YEAR, 1) // Default to year 1
@@ -1180,7 +1510,26 @@ impl Calendar {
     /// The `add` overrides: `HebrewCalendar::add(MONTH)` skips `ADAR_1` in common years.
     /// Returns `false` if the calendar does not override `add` for `field`.
     pub(super) fn subclass_add(&mut self, field: usize, amount: i32, status: &mut Status) -> bool {
-        if !matches!(self.system, CalendarSystem::Hebrew) || field != F::MONTH {
+        if field != F::MONTH {
+            return false;
+        }
+        if let CalendarSystem::Chinese { dangi } = self.system {
+            // `ChineseCalendar::add(MONTH)`
+            if amount != 0 {
+                let dom = self.get(F::DAY_OF_MONTH, status);
+                if status.is_failure() {
+                    return true;
+                }
+                let day = self.get(F::JULIAN_DAY, status) - EPOCH_START_AS_JULIAN_DAY; // Get local day
+                if status.is_failure() {
+                    return true;
+                }
+                let moon = day - dom + 1; // New moon
+                self.chinese_offset_month(ChineseAstro { dangi }, moon, dom, amount);
+            }
+            return true;
+        }
+        if !matches!(self.system, CalendarSystem::Hebrew) {
             return false;
         }
         if status.is_failure() {
@@ -1562,7 +1911,7 @@ impl Calendar {
 
     // -------------------------------------------------------------- IslamicCalendar
 
-    /// `IslamicCalendar::handleComputeFields` for the arithmetic calculations.
+    /// `IslamicCalendar::handleComputeFields`.
     fn islamic_handle_compute_fields(&mut self, kind: IslamicType, julian_day: i32) {
         let mut days = julian_day.wrapping_sub(CIVIL_EPOC);
         let (year, month);
@@ -1576,6 +1925,33 @@ impl Calendar {
                 days = julian_day.wrapping_sub(ASTRONOMICAL_EPOC);
             }
             (year, month) = civil_fields(days);
+        } else if kind == IslamicType::Astronomical {
+            // Guess at the number of elapsed full months since the epoch
+            let mut months = (f64::from(days) / astro::SYNODIC_MONTH).floor() as i32;
+
+            let start_date = (f64::from(months) * astro::SYNODIC_MONTH).floor() as i32;
+
+            let age = islamic_moon_age(self.internal_get_time());
+            if days - start_date >= 25 && age > 0.0 {
+                // If we're near the end of the month, assume next month and search
+                // backwards
+                months += 1;
+            }
+
+            // Find out the last time that the new moon was actually visible at this
+            // longitude.  This returns midnight the night that the moon was visible at
+            // sunset.
+            while true_month_start(months) > days {
+                // If it was after the date in question, back up a month and try again
+                months -= 1;
+            }
+
+            year = if months >= 0 {
+                (months / 12) + 1
+            } else {
+                (months + 1) / 12
+            };
+            month = ((months % 12) + 12) % 12;
         } else {
             let umalqura_start_days = islamic_year_start(kind, UMALQURA_YEAR_START);
             if days < umalqura_start_days {
@@ -1615,6 +1991,177 @@ impl Calendar {
         self.internal_set(F::MONTH, month);
         self.internal_set(F::DAY_OF_MONTH, day_of_month);
         self.internal_set(F::DAY_OF_YEAR, day_of_year);
+    }
+
+    // -------------------------------------------------------------- ChineseCalendar
+
+    /// `ChineseCalendar::computeChineseFields`: the fields of the local day `days`.
+    fn compute_chinese_fields(
+        &mut self,
+        astro: ChineseAstro,
+        days: i32,
+        gyear: i32,
+        gmonth: i32,
+        set_all_fields: bool,
+    ) {
+        // Find the winter solstices before and after the target date.  These define the
+        // boundaries of this Chinese year, specifically, the position of month 11, which
+        // always contains the solstice.  We want solsticeBefore <= date < solsticeAfter.
+        let solstice_before;
+        let mut solstice_after = astro.winter_solstice(gyear);
+        if days < solstice_after {
+            solstice_before = astro.winter_solstice(gyear - 1);
+        } else {
+            solstice_before = solstice_after;
+            solstice_after = astro.winter_solstice(gyear + 1);
+        }
+
+        // Find the start of the month after month 11.  This will be either the prior
+        // month 12 or leap month 11 (very rare).  Also find the start of the following
+        // month 11.
+        let first_moon = astro.new_moon_near(f64::from(solstice_before + 1), true);
+        let last_moon = astro.new_moon_near(f64::from(solstice_after + 1), false);
+        let this_moon = astro.new_moon_near(f64::from(days + 1), false); // Start of this month
+        let is_leap_year = ChineseAstro::synodic_months_between(first_moon, last_moon) == 12;
+
+        let mut month = ChineseAstro::synodic_months_between(first_moon, this_moon);
+        if is_leap_year && astro.is_leap_month_between(first_moon, this_moon) {
+            month -= 1;
+        }
+        if month < 1 {
+            month += 12;
+        }
+
+        let is_leap_month = is_leap_year
+            && astro.has_no_major_solar_term(this_moon)
+            && !astro.is_leap_month_between(
+                first_moon,
+                astro.new_moon_near(f64::from(this_moon - SYNODIC_GAP), false),
+            );
+
+        self.internal_set(F::MONTH, month - 1); // Convert from 1-based to 0-based
+        self.internal_set(F::IS_LEAP_MONTH, i32::from(is_leap_month));
+
+        if set_all_fields {
+            // Extended year and cycle year is based on the epoch year
+            let epoch_year = if astro.dangi {
+                DANGI_EPOCH_YEAR
+            } else {
+                CHINESE_EPOCH_YEAR
+            };
+            let mut extended_year = gyear - epoch_year;
+            let mut cycle_year = gyear - CHINESE_EPOCH_YEAR;
+            if month < 11 || gmonth >= 6 {
+                extended_year += 1;
+                cycle_year += 1;
+            }
+            let day_of_month = days - this_moon + 1;
+
+            self.internal_set(F::EXTENDED_YEAR, extended_year);
+
+            // 0->0,60  1->1,1  60->1,60  61->2,1  etc.
+            let (cycle, year_of_cycle) = grego::floor_divide_rem_i32(f64::from(cycle_year - 1), 60);
+            self.internal_set(F::ERA, cycle + 1);
+            self.internal_set(F::YEAR, year_of_cycle + 1);
+
+            self.internal_set(F::DAY_OF_MONTH, day_of_month);
+
+            // Days will be before the first new year we compute if this date is in month
+            // 11, leap 11, 12.  There is never a leap 12.
+            let mut the_new_year = astro.new_year(gyear);
+            if days < the_new_year {
+                the_new_year = astro.new_year(gyear - 1);
+            }
+            self.internal_set(F::DAY_OF_YEAR, days - the_new_year + 1);
+        }
+    }
+
+    /// `ChineseCalendar::handleComputeMonthStart`.
+    fn chinese_handle_compute_month_start(
+        &mut self,
+        dangi: bool,
+        eyear: i32,
+        month: i32,
+        use_month: bool,
+    ) -> i32 {
+        let astro = ChineseAstro { dangi };
+        let mut eyear = eyear;
+        let mut month = month;
+        // If the month is out of range, adjust it into range, and modify the extended year
+        // value accordingly.
+        if !(0..=11).contains(&month) {
+            let (quotient, remainder) = grego::floor_divide_rem_f64(f64::from(month), 12.0);
+            eyear = eyear.wrapping_add(quotient as i32);
+            month = remainder as i32;
+        }
+
+        let epoch_year = if dangi {
+            DANGI_EPOCH_YEAR
+        } else {
+            CHINESE_EPOCH_YEAR
+        };
+        let gyear = eyear.wrapping_add(epoch_year).wrapping_sub(1); // Gregorian year
+        let the_new_year = astro.new_year(gyear);
+        let mut new_moon = astro.new_moon_near(f64::from(the_new_year.wrapping_add(month * 29)), true);
+
+        let mut julian_day = new_moon.wrapping_add(EPOCH_START_AS_JULIAN_DAY);
+
+        // Save fields for later restoration
+        let save_month = self.internal_get(F::MONTH);
+        let save_is_leap_month = self.internal_get(F::IS_LEAP_MONTH);
+
+        // Ignore IS_LEAP_MONTH field if useMonth is false
+        let is_leap_month = if use_month { save_is_leap_month } else { 0 };
+
+        self.compute_gregorian_fields(julian_day);
+
+        // This will modify the MONTH and IS_LEAP_MONTH fields (only)
+        let (gyear, gmonth) = (self.gregorian_year, self.gregorian_month);
+        self.compute_chinese_fields(astro, new_moon, gyear, gmonth, false);
+
+        if month != self.internal_get(F::MONTH) || is_leap_month != self.internal_get(F::IS_LEAP_MONTH) {
+            new_moon = astro.new_moon_near(f64::from(new_moon + SYNODIC_GAP), true);
+            julian_day = new_moon + EPOCH_START_AS_JULIAN_DAY;
+        }
+
+        self.internal_set(F::MONTH, save_month);
+        self.internal_set(F::IS_LEAP_MONTH, save_is_leap_month);
+
+        julian_day - 1
+    }
+
+    /// `ChineseCalendar::offsetMonth`: moves `delta` months from the month starting on
+    /// the local day `new_moon`, keeping the day of month `dom`.
+    fn chinese_offset_month(&mut self, astro: ChineseAstro, new_moon: i32, dom: i32, delta: i32) {
+        let mut status = Status::ok();
+
+        // Move to the middle of the month before our target month.
+        let mut new_moon = new_moon.wrapping_add((astro::SYNODIC_MONTH * (f64::from(delta) - 0.5)) as i32);
+
+        // Search forward to the target month's new moon
+        new_moon = astro.new_moon_near(f64::from(new_moon), true);
+
+        // Find the target dom
+        let jd = new_moon + EPOCH_START_AS_JULIAN_DAY - 1 + dom;
+
+        // Pin the dom.  In this calendar all months are 29 or 30 days so pinning just
+        // means handling dom 30.
+        if dom > 29 {
+            self.set(F::JULIAN_DAY, jd - 1);
+            // TODO Fix this.  We really shouldn't ever have to explicitly call complete().
+            self.complete(&mut status);
+            if status.is_failure() {
+                return;
+            }
+            if self.get_actual_maximum(F::DAY_OF_MONTH, &mut status) >= dom {
+                if status.is_failure() {
+                    return;
+                }
+                self.set(F::JULIAN_DAY, jd);
+            }
+        } else {
+            self.set(F::JULIAN_DAY, jd);
+        }
     }
 
     // -------------------------------------------------------------- PersianCalendar

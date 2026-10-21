@@ -84,7 +84,7 @@ impl Status {
 }
 
 /// `kUnset`.
-const UNSET: i32 = 0;
+pub(super) const UNSET: i32 = 0;
 /// `kInternallySet`.
 const INTERNALLY_SET: i32 = 1;
 /// `kMinimumUserStamp`.
@@ -93,9 +93,9 @@ const MINIMUM_USER_STAMP: i32 = 2;
 const STAMP_MAX: i32 = 10000;
 
 /// `kResolveSTOP`.
-const RESOLVE_STOP: i32 = -1;
+pub(super) const RESOLVE_STOP: i32 = -1;
 /// `kResolveRemap`.
-const RESOLVE_REMAP: i32 = 32;
+pub(super) const RESOLVE_REMAP: i32 = 32;
 
 /// A field resolution table (`UFieldResolutionTable`): groups of lines of fields.
 type ResolutionTable = &'static [&'static [&'static [i32]]];
@@ -387,7 +387,7 @@ impl Calendar {
     }
 
     /// `Calendar::newestStamp`.
-    fn newest_stamp(&self, first: usize, last: usize, best_stamp_so_far: i32) -> i32 {
+    pub(super) fn newest_stamp(&self, first: usize, last: usize, best_stamp_so_far: i32) -> i32 {
         let mut best = best_stamp_so_far;
         for &stamp in &self.stamp[first..=last] {
             if stamp > best {
@@ -421,7 +421,7 @@ impl Calendar {
     }
 
     /// `Calendar::complete`.
-    fn complete(&mut self, status: &mut Status) {
+    pub(super) fn complete(&mut self, status: &mut Status) {
         if !self.is_time_set {
             self.update_time(status);
             if status.is_failure() {

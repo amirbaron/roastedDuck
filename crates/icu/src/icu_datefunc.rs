@@ -32,8 +32,8 @@ fn now_millis() -> f64 {
 /// `proleptic`, Gregorian calendars get `ucal_setGregorianChange(U_DATE_MIN)` (which
 /// only succeeds for plain `GregorianCalendar`s: `gregorian` and `iso8601`).
 pub(crate) fn create_calendar_with_cutover(zone: TimeZone, cal_setting: &str, proleptic: bool) -> Calendar {
-    // `Calendar::createInstance(tz, Locale("@calendar=" + cal_setting))`; calendars
-    // without a port (the astronomical islamic, chinese and dangi) fall back to Gregorian.
+    // `Calendar::createInstance(tz, Locale("@calendar=" + cal_setting))`: unknown
+    // calendars are Gregorian.
     let system = CalendarSystem::for_keyword(cal_setting, proleptic).unwrap_or_else(|| {
         CalendarSystem::Gregorian(if proleptic {
             GregorianState::proleptic()
