@@ -191,7 +191,10 @@ fn print_startup_text(state: &ShellState) {
 }
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().collect();
+    // The arguments as UTF-8, invalid bytes becoming U+FFFD as in the input.
+    let args: Vec<String> = std::env::args_os()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
     let mut shell = Shell::new(ShellState::new());
     let rc = run_shell(&mut shell, &args);
     // `RunShell`'s clean-up: SIGINT is ignored while the database closes.
