@@ -11,7 +11,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_types::{
-    ListEntry, LogicalType, LogicalTypeId, PhysicalType, SelectionVector, Value, Vector, VectorKind,
+    GeometryStorageType, ListEntry, LogicalType, LogicalTypeId, PhysicalType, SelectionVector, Value, Vector,
+    VectorKind, geometry,
 };
 
 use super::chunk_info::UpdateScanType;
@@ -70,6 +71,14 @@ pub enum ColumnKind {
     Array {
         validity: Box<ColumnData>,
         child: Box<ColumnData>,
+    },
+    /// A GEOMETRY column stored in another layout (DuckDB's `GeoColumnData` with a
+    /// `storage_type` other than WKB): `base` holds the shredded vectorized layout, or the
+    /// spatial extension's legacy bytes, and scans rebuild WKB from it. GEOMETRY columns
+    /// stored as WKB are `Standard`.
+    Geometry {
+        base: Box<ColumnData>,
+        storage: GeometryStorageType,
     },
 }
 
@@ -226,19 +235,50 @@ impl ColumnData {
         ty: LogicalType,
         data_type: ColumnDataType,
     ) -> Self {
-        Self::create(io, column_index, ty, data_type, false)
+        Self::create(io, column_index, ty, data_type, false, None)
     }
 
+    /// A column of type `ty` (`ColumnData::CreateColumn`); `layout` is the stored data the
+    /// column is built for, whose GEOMETRY columns may use another storage layout.
     fn create(
         io: Arc<TableIoManager>,
         column_index: usize,
         ty: LogicalType,
         data_type: ColumnDataType,
         has_parent: bool,
+        layout: Option<&crate::checkpoint::pointers::PersistentColumnData>,
     ) -> Self {
-        let validity = || Box::new(Self::create(Arc::clone(&io), 0, validity_type(), data_type, true));
+        let validity = || Box::new(Self::create(Arc::clone(&io), 0, validity_type(), data_type, true, None));
+        let child_layout = |index: usize| layout.and_then(|data| data.child_columns.get(index));
+        let geometry_storage = match layout {
+            Some(data) if ty.id() == LogicalTypeId::Geometry => {
+                data.geometry_storage.unwrap_or(GeometryStorageType::Spatial)
+            }
+            _ => GeometryStorageType::Wkb,
+        };
         let kind = if ty.id() == LogicalTypeId::Validity {
             ColumnKind::Validity
+        } else if geometry_storage != GeometryStorageType::Wkb {
+            // `GeoColumnData::InitializeColumn`: the base column has the stored layout; the
+            // legacy format is stored as GEOMETRY (or as its BLOB alias when just written).
+            let base_type = match (geometry_storage, layout) {
+                (GeometryStorageType::Spatial, Some(data)) if data.logical_type.id() == LogicalTypeId::Blob => {
+                    data.logical_type.clone()
+                }
+                (GeometryStorageType::Spatial, _) => LogicalType::GEOMETRY,
+                (storage, _) => geometry::vectorized_type(storage).unwrap_or(LogicalType::GEOMETRY),
+            };
+            ColumnKind::Geometry {
+                base: Box::new(Self::create(
+                    Arc::clone(&io),
+                    column_index,
+                    base_type,
+                    data_type,
+                    true,
+                    None,
+                )),
+                storage: geometry_storage,
+            }
         } else {
             match ty.physical_type() {
                 PhysicalType::List => ColumnKind::List {
@@ -249,6 +289,7 @@ impl ColumnData {
                         ty.child_type().cloned().unwrap_or_default(),
                         data_type,
                         true,
+                        child_layout(1),
                     )),
                 },
                 PhysicalType::Struct => ColumnKind::Struct {
@@ -259,7 +300,14 @@ impl ColumnData {
                         .iter()
                         .enumerate()
                         .map(|(index, (_, field))| {
-                            Self::create(Arc::clone(&io), index + 1, field.clone(), data_type, true)
+                            Self::create(
+                                Arc::clone(&io),
+                                index + 1,
+                                field.clone(),
+                                data_type,
+                                true,
+                                child_layout(index + 1),
+                            )
                         })
                         .collect(),
                 },
@@ -273,6 +321,7 @@ impl ColumnData {
                             .unwrap_or_default(),
                         data_type,
                         true,
+                        child_layout(1),
                     )),
                 },
                 _ => ColumnKind::Standard { validity: validity() },
@@ -333,6 +382,7 @@ impl ColumnData {
                 ColumnKind::Struct { validity, fields } => {
                     validity.allocation_size() + fields.iter().map(Self::allocation_size).sum::<u64>()
                 }
+                ColumnKind::Geometry { base, .. } => base.allocation_size(),
             }
     }
 
@@ -358,12 +408,13 @@ impl ColumnData {
                 f(validity);
                 fields.iter().for_each(f);
             }
+            ColumnKind::Geometry { base, .. } => f(base),
         }
     }
 
     fn validity_child(&self) -> Option<&Self> {
         match &self.kind {
-            ColumnKind::Validity => None,
+            ColumnKind::Validity | ColumnKind::Geometry { .. } => None,
             ColumnKind::Standard { validity }
             | ColumnKind::List { validity, .. }
             | ColumnKind::Struct { validity, .. }
@@ -392,11 +443,16 @@ impl ColumnData {
         col_path: &mut Vec<u64>,
         out: &mut Vec<ColumnSegmentInfo>,
     ) {
-        if !matches!(self.kind, ColumnKind::Struct { .. } | ColumnKind::Array { .. }) {
+        if !matches!(
+            self.kind,
+            ColumnKind::Struct { .. } | ColumnKind::Array { .. } | ColumnKind::Geometry { .. }
+        ) {
             self.own_segment_info(row_group_index, col_path, out);
         }
         match &self.kind {
             ColumnKind::Validity => {}
+            // `GeoColumnData::GetColumnSegmentInfo`: the base column's, at the same path.
+            ColumnKind::Geometry { base, .. } => base.column_segment_info(row_group_index, col_path, out),
             ColumnKind::Standard { validity } => {
                 col_path.push(0);
                 validity.column_segment_info(row_group_index, col_path, out);
@@ -561,7 +617,17 @@ impl ColumnData {
         &self,
         row_start: u64,
     ) -> Result<crate::checkpoint::pointers::PersistentColumnData> {
+        if let ColumnKind::Geometry { base, storage } = &self.kind {
+            // `GeoColumnData::Serialize`: the base column's data with its storage type,
+            // which the legacy format does not record.
+            let mut result = base.persistent_data(row_start)?;
+            result.geometry_storage = (*storage != GeometryStorageType::Spatial).then_some(*storage);
+            return Ok(result);
+        }
         let mut result = crate::checkpoint::pointers::PersistentColumnData::new(self.ty.clone());
+        if self.ty.id() == LogicalTypeId::Geometry {
+            result.geometry_storage = Some(GeometryStorageType::Wkb);
+        }
         if !matches!(self.kind, ColumnKind::Struct { .. } | ColumnKind::Array { .. }) {
             result.pointers = self.persistent_data_pointers(row_start)?;
         }
@@ -658,6 +724,13 @@ impl ColumnData {
 
     /// Positions `state` at the start of the column (`InitializeScan`).
     pub fn initialize_scan(&self, state: &mut ColumnScanState) {
+        if let ColumnKind::Geometry { base, .. } = &self.kind {
+            // `GeoColumnData::InitializeScan`: the child state is shaped for the base.
+            state.offset_in_column = 0;
+            state.child_states = vec![ColumnScanState::for_type(&base.ty)];
+            base.initialize_scan(&mut state.child_states[0]);
+            return;
+        }
         state.current = self.segments.root().map(|node| (0, node));
         state.offset_in_column = state.current.as_ref().map_or(0, |(_, node)| node.row_start);
         state.segment_state = None;
@@ -676,6 +749,11 @@ impl ColumnData {
         if row == 0 {
             self.initialize_scan(state);
             return Ok(());
+        }
+        if let ColumnKind::Geometry { base, .. } = &self.kind {
+            state.offset_in_column = row;
+            state.child_states = vec![ColumnScanState::for_type(&base.ty)];
+            return base.initialize_scan_with_offset(&mut state.child_states[0], row);
         }
         state.current = self.segments.find(row);
         state.offset_in_column = row;
@@ -710,7 +788,7 @@ impl ColumnData {
         };
         let states = &mut state.child_states;
         match &self.kind {
-            ColumnKind::Validity => {}
+            ColumnKind::Validity | ColumnKind::Geometry { .. } => {}
             ColumnKind::Standard { validity } => {
                 if let Some(child_state) = states.first_mut() {
                     init(validity, child_state, row);
@@ -947,6 +1025,19 @@ impl ColumnData {
                 state.offset_in_column += count as u64;
                 Ok(scanned)
             }
+            ColumnKind::Geometry { base, storage } => {
+                // `GeoColumnData::Scan` / `ScanCount`: scan the base layout, then rebuild
+                // the WKB (`Reassemble`).
+                let base_state = state
+                    .child_states
+                    .first_mut()
+                    .ok_or_else(|| Error::internal("geometry scan state without its base"))?;
+                let mut layout = Vector::flat(base.ty.clone(), count.max(1));
+                let scanned = base.scan_into(None, base_state, &mut layout, count, 0)?;
+                geometry::from_vectorized(&layout, result, scanned, *storage, result_offset)?;
+                state.offset_in_column += scanned as u64;
+                Ok(scanned)
+            }
             ColumnKind::Array { validity, child } => {
                 let [validity_state, child_state, ..] = state.child_states.as_mut_slice() else {
                     return Err(Error::internal("array scan state without children"));
@@ -1077,6 +1168,13 @@ impl ColumnData {
                     for (field, field_state) in fields.iter().zip(field_states) {
                         field.skip(field_state, count)?;
                     }
+                }
+                Ok(())
+            }
+            ColumnKind::Geometry { base, .. } => {
+                state.offset_in_column += count;
+                if let Some(base_state) = state.child_states.first_mut() {
+                    base.skip(base_state, count)?;
                 }
                 Ok(())
             }
@@ -1350,7 +1448,7 @@ impl ColumnData {
         ty: LogicalType,
         data: &crate::checkpoint::pointers::PersistentColumnData,
     ) -> Result<Self> {
-        let column = Self::new(io, column_index, ty, ColumnDataType::MainTable);
+        let column = Self::create(io, column_index, ty, ColumnDataType::MainTable, false, Some(data));
         let mut stats = BaseStatistics::create_empty(column.ty.clone());
         column.initialize_persistent(data, &mut stats)?;
         if let Some(own) = &column.stats {
@@ -1366,6 +1464,15 @@ impl ColumnData {
         data: &crate::checkpoint::pointers::PersistentColumnData,
         stats: &mut BaseStatistics,
     ) -> Result<()> {
+        if let ColumnKind::Geometry { base, storage } = &self.kind {
+            // `GeoColumnData::InitializeColumn`: the base column holds the stored data;
+            // its statistics are interpreted as geometry statistics.
+            let mut layout_stats = BaseStatistics::create_empty(base.ty.clone());
+            base.initialize_persistent(data, &mut layout_stats)?;
+            self.count.store(base.count(), Ordering::Release);
+            super::geo_column_data::interpret_layout_statistics(&layout_stats, *storage, stats);
+            return Ok(());
+        }
         let buffer_manager = self.io.buffer_manager();
         let block_manager = self.io.block_manager();
         let mut count = 0u64;
@@ -1396,7 +1503,7 @@ impl ColumnData {
                 .ok_or_else(|| Error::internal("persistent column data without its children"))
         };
         match &self.kind {
-            ColumnKind::Validity => {}
+            ColumnKind::Validity | ColumnKind::Geometry { .. } => {}
             ColumnKind::Standard { validity } => validity.initialize_persistent(child(0)?, stats)?,
             ColumnKind::List {
                 validity,
@@ -1456,6 +1563,11 @@ impl ColumnData {
 
     /// Prepares appending to the column (`InitializeAppend`).
     pub fn initialize_append(&self) -> Result<ColumnAppendState> {
+        if matches!(self.kind, ColumnKind::Geometry { .. }) {
+            // Row groups with shredded columns are never appended to
+            // (`RowGroupCollection` starts a new row group).
+            return Err(Error::internal("appending to a shredded GEOMETRY column"));
+        }
         let mut state = ColumnAppendState::default();
         if !matches!(self.kind, ColumnKind::Struct { .. } | ColumnKind::Array { .. }) {
             let last = self.segments.last();
@@ -1477,7 +1589,7 @@ impl ColumnData {
             Ok(())
         };
         match &self.kind {
-            ColumnKind::Validity => {}
+            ColumnKind::Validity | ColumnKind::Geometry { .. } => {}
             ColumnKind::Standard { validity } => push_child(validity)?,
             ColumnKind::List { validity, child } | ColumnKind::Array { validity, child } => {
                 push_child(validity)?;
@@ -1522,6 +1634,7 @@ impl ColumnData {
             vector
         };
         match &self.kind {
+            ColumnKind::Geometry { .. } => Err(Error::internal("appending to a shredded GEOMETRY column")),
             ColumnKind::Validity => self.append_data(stats, state, vector, count),
             ColumnKind::Standard { validity } => {
                 self.append_data(stats, state, vector, count)?;
@@ -1700,6 +1813,11 @@ impl ColumnData {
                 self.count.store(new_count, Ordering::Release);
                 return Ok(());
             }
+            ColumnKind::Geometry { base, .. } => {
+                base.revert_append(new_count)?;
+                self.count.store(new_count, Ordering::Release);
+                return Ok(());
+            }
             _ => {}
         }
         self.revert_segments(new_count)?;
@@ -1779,8 +1897,11 @@ impl ColumnData {
                 }
                 Ok(())
             }
-            ColumnKind::List { .. } | ColumnKind::Struct { .. } | ColumnKind::Array { .. } => {
-                // Nested rows are materialised through a scan of their vector.
+            ColumnKind::List { .. }
+            | ColumnKind::Struct { .. }
+            | ColumnKind::Array { .. }
+            | ColumnKind::Geometry { .. } => {
+                // Nested and shredded rows are materialised through a scan of their vector.
                 let vector_start = row / VECTOR_SIZE * VECTOR_SIZE;
                 let mut state = ColumnScanState::for_type(&self.ty);
                 self.initialize_scan_with_offset(&mut state, vector_start)?;
@@ -1914,6 +2035,9 @@ impl ColumnData {
                 }
             }
             ColumnKind::List { .. } => return Err(Error::not_implemented("List Update is not supported.")),
+            ColumnKind::Geometry { .. } => {
+                return Err(Error::not_implemented("GEOMETRY Update is not supported"));
+            }
             ColumnKind::Array { .. } => return Err(not_implemented_nested("UPDATE", &self.ty)),
         }
         Ok(registrations)

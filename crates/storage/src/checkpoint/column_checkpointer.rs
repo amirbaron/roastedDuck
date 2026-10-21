@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use rustdb_buffer::BlockId;
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, Vector};
+use rustdb_types::{GeometryStorageType, LogicalType, LogicalTypeId, PhysicalType, Vector, geometry};
 
 use super::pointers::{BlockPointer, DataPointer, PersistentColumnData};
 use super::table_writer::BlockWriter;
@@ -23,7 +23,8 @@ use crate::compression::{
 };
 use crate::data_table::TableIoManager;
 use crate::statistics::BaseStatistics;
-use crate::table::column_data::{ColumnData, ColumnKind, ColumnScanState};
+use crate::table::column_data::{ColumnData, ColumnDataType, ColumnKind, ColumnScanState};
+use crate::table::geo_column_data::interpret_layout_statistics;
 
 /// A segment a codec finished: its bytes (the first `segment_size` bytes of its block),
 /// row count, statistics, encoding and extra blocks.
@@ -94,6 +95,10 @@ pub(crate) struct CheckpointContext<'a> {
     pub column_compression: CompressionType,
     /// `schema.table` of the column, for the log.
     pub table_name: &'a str,
+    /// The storage version written: GEOMETRY uses the legacy format before v1.5.0.
+    pub storage_version: u64,
+    /// `geometry_minimum_shredding_size`.
+    pub geometry_minimum_shredding_size: i64,
 }
 
 /// `DUCKDB_LOG_TRACE` of the codec `DetectBestCompressionMethod` chose for a column.
@@ -140,9 +145,118 @@ pub(crate) fn checkpoint_column(
     row_group_start: u64,
     ctx: &mut CheckpointContext<'_>,
 ) -> Result<PersistentColumnData> {
+    if column.logical_type().id() == LogicalTypeId::Geometry {
+        return checkpoint_geometry(column, count, row_group_start, ctx);
+    }
+    checkpoint_column_data(column, count, row_group_start, ctx)
+}
+
+/// The storage version that added GEOMETRY to the core (`Geometry::VERSION_ADDED`).
+const GEOMETRY_VERSION_ADDED: u64 = 7;
+
+/// The geometry statistics of a WKB GEOMETRY column: its segments' (the `old_stats`
+/// `GeoColumnData::Checkpoint` decides the shredding by).
+fn geometry_column_statistics(column: &ColumnData) -> BaseStatistics {
+    let mut stats = BaseStatistics::create_empty(column.logical_type().clone());
+    for node in column.segments().nodes() {
+        stats.merge(&node.node.statistics());
+    }
+    stats
+}
+
+/// Writes rows `0..count` of a GEOMETRY column converted to `storage` into a new column of
+/// that layout and checkpoints it (the specialize loop of `GeoColumnData::Checkpoint`).
+fn checkpoint_converted_geometry(
+    column: &ColumnData,
+    count: u64,
+    storage: GeometryStorageType,
+    row_group_start: u64,
+    ctx: &mut CheckpointContext<'_>,
+) -> Result<PersistentColumnData> {
+    let layout_type = geometry::vectorized_type(storage)?;
+    let target = ColumnData::new(
+        Arc::clone(ctx.io),
+        column.column_index(),
+        layout_type,
+        ColumnDataType::CheckpointTarget,
+    );
+    let mut append_state = target.initialize_append()?;
+    let mut state = ColumnScanState::for_type(column.logical_type());
+    column.initialize_scan(&mut state);
+    let mut vector = Vector::flat(column.logical_type().clone(), STANDARD_VECTOR_SIZE);
+    let mut row = 0u64;
+    while row < count {
+        let rows = (count - row).min(STANDARD_VECTOR_SIZE as u64) as usize;
+        column.checkpoint_scan(&mut state, row, rows, &mut vector)?;
+        let layout = geometry::to_vectorized(&vector, rows, storage)?;
+        target.append(&mut append_state, &layout, rows)?;
+        row += rows as u64;
+    }
+    let mut result = checkpoint_column_data(&target, count, row_group_start, ctx)?;
+    result.geometry_storage = (storage != GeometryStorageType::Spatial).then_some(storage);
+    Ok(result)
+}
+
+/// `GeoColumnData::Checkpoint`: an unchanged column keeps its layout; a changed one is
+/// written in the spatial extension's legacy format for storage versions before v1.5.0,
+/// shredded when the row group is large enough and all its geometries are non-empty and of
+/// one shreddable type, and as WKB otherwise.
+fn checkpoint_geometry(
+    column: &ColumnData,
+    count: u64,
+    row_group_start: u64,
+    ctx: &mut CheckpointContext<'_>,
+) -> Result<PersistentColumnData> {
+    // A shredded or legacy column is never changed (updates are rewritten as deletes and
+    // appends go to new row groups): it keeps its layout.
+    if let ColumnKind::Geometry { base, storage } = column.kind() {
+        let mut result = checkpoint_column_data(base, count, row_group_start, ctx)?;
+        result.geometry_storage = (*storage != GeometryStorageType::Spatial).then_some(*storage);
+        return Ok(result);
+    }
+    if !column.has_any_changes() {
+        let mut result = checkpoint_column_data(column, count, row_group_start, ctx)?;
+        result.geometry_storage = Some(GeometryStorageType::Wkb);
+        return Ok(result);
+    }
+    if ctx.storage_version < GEOMETRY_VERSION_ADDED {
+        return checkpoint_converted_geometry(column, count, GeometryStorageType::Spatial, row_group_start, ctx);
+    }
+    let threshold = ctx.geometry_minimum_shredding_size;
+    let should_shred = threshold >= 0 && column.count() >= threshold as u64;
+    let shred_type = should_shred
+        .then(|| geometry_column_statistics(column))
+        .and_then(|stats| {
+            let data = *stats.geometry()?;
+            let (geometry_type, vertex_type) = data.types.try_get_single_type()?;
+            // Empty geometries have no vertices to put in the layouts.
+            if data.flags.has_empty_geometry() || data.flags.has_empty_part() {
+                return None;
+            }
+            let storage = geometry::storage_type(geometry_type, vertex_type);
+            (storage != GeometryStorageType::Wkb).then_some(storage)
+        });
+    match shred_type {
+        Some(storage) => checkpoint_converted_geometry(column, count, storage, row_group_start, ctx),
+        None => {
+            let mut result = checkpoint_column_data(column, count, row_group_start, ctx)?;
+            result.geometry_storage = Some(GeometryStorageType::Wkb);
+            Ok(result)
+        }
+    }
+}
+
+/// [`checkpoint_column`] for the column classes other than GEOMETRY.
+fn checkpoint_column_data(
+    column: &ColumnData,
+    count: u64,
+    row_group_start: u64,
+    ctx: &mut CheckpointContext<'_>,
+) -> Result<PersistentColumnData> {
     let ty = column.logical_type().clone();
     let mut result = PersistentColumnData::new(ty.clone());
     match column.kind() {
+        ColumnKind::Geometry { .. } => return checkpoint_geometry(column, count, row_group_start, ctx),
         ColumnKind::Validity => {
             let [pointers] =
                 checkpoint_segments(column, count, &[ty], &LogicalType::BOOLEAN, row_group_start, ctx)?;
@@ -385,6 +499,20 @@ fn checkpoint_segments<const N: usize>(
 /// does (`InitializeColumn`): validity segments only contribute NULL information, LIST /
 /// ARRAY children and STRUCT fields their own statistics.
 pub(crate) fn merge_persistent_statistics(data: &PersistentColumnData, stats: &mut BaseStatistics) {
+    // `GeoColumnCheckpointState::GetStatistics`: the statistics of a shredded layout, or of
+    // the legacy format just written as a BLOB, are interpreted.
+    if stats.logical_type().id() == LogicalTypeId::Geometry
+        && data.logical_type.id() != LogicalTypeId::Validity
+        && data.logical_type.id() != LogicalTypeId::Geometry
+    {
+        let storage = data.geometry_storage.unwrap_or(GeometryStorageType::Spatial);
+        let mut layout = BaseStatistics::create_empty(data.logical_type.clone());
+        merge_persistent_statistics(data, &mut layout);
+        let mut row_group = BaseStatistics::create_empty(stats.logical_type().clone());
+        interpret_layout_statistics(&layout, storage, &mut row_group);
+        stats.merge(&row_group);
+        return;
+    }
     for pointer in &data.pointers {
         if data.logical_type.id() == LogicalTypeId::Validity {
             stats.merge_validity(&pointer.statistics);

@@ -5,7 +5,7 @@
 use rustdb_buffer::{BlockId, INVALID_BLOCK};
 use rustdb_common::{Error, Result};
 use rustdb_serde::{Deserializer, Serializer};
-use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType};
+use rustdb_types::{GeometryStorageType, LogicalType, LogicalTypeId, PhysicalType};
 
 use crate::compression::CompressionType;
 use crate::metadata::MetaBlockPointer;
@@ -208,10 +208,68 @@ impl DataPointer {
 /// The segments of a column and of its children (DuckDB's `PersistentColumnData`).
 #[derive(Clone, Debug)]
 pub struct PersistentColumnData {
+    /// The type of the stored data: for a shredded GEOMETRY column its vectorized layout.
     pub logical_type: LogicalType,
     pub pointers: Vec<DataPointer>,
     /// Validity first, then the list/array child or the struct fields.
     pub child_columns: Vec<PersistentColumnData>,
+    /// The storage type of a GEOMETRY column (DuckDB's `GeometryPersistentColumnData`,
+    /// the only `extra_data` this port writes); `None` for other columns and for the
+    /// spatial extension's legacy GEOMETRY.
+    pub geometry_storage: Option<GeometryStorageType>,
+}
+
+/// `ExtraPersistentColumnDataType`.
+const EXTRA_DATA_VARIANT: u8 = 1;
+const EXTRA_DATA_GEOMETRY: u8 = 2;
+
+fn extra_data_type_name(value: u8) -> &'static str {
+    match value {
+        EXTRA_DATA_VARIANT => "VARIANT",
+        EXTRA_DATA_GEOMETRY => "GEOMETRY",
+        _ => "INVALID",
+    }
+}
+
+/// `ExtraPersistentColumnData::Serialize` of a `GeometryPersistentColumnData`.
+fn write_geometry_extra_data(serializer: &mut dyn Serializer, storage: GeometryStorageType) -> Result<()> {
+    serializer.on_property_begin(100, "type");
+    rustdb_serde::write_enum(serializer, extra_data_type_name(EXTRA_DATA_GEOMETRY), |s| {
+        s.write_u8(EXTRA_DATA_GEOMETRY);
+    });
+    serializer.on_property_end();
+    serializer.write_optional(101, "storage_type", storage == GeometryStorageType::Wkb, &storage)
+}
+
+/// `ExtraPersistentColumnData::Deserialize`: the geometry storage type it records.
+fn read_extra_data(deserializer: &mut dyn Deserializer) -> Result<GeometryStorageType> {
+    let kind = if deserializer.on_optional_property_begin(100, "type")? {
+        let kind = rustdb_serde::read_enum(
+            deserializer,
+            "ExtraPersistentColumnDataType",
+            |name| {
+                ["INVALID", "VARIANT", "GEOMETRY"]
+                    .iter()
+                    .position(|n| n.eq_ignore_ascii_case(name))
+                    .map(|i| i as u8)
+            },
+            |d| Ok(Some(d.read_u8()?)),
+        )?;
+        deserializer.on_optional_property_end(true)?;
+        kind
+    } else {
+        deserializer.on_optional_property_end(false)?;
+        0
+    };
+    match kind {
+        EXTRA_DATA_GEOMETRY => Ok(deserializer
+            .read_optional(101, "storage_type")?
+            .unwrap_or(GeometryStorageType::Wkb)),
+        EXTRA_DATA_VARIANT => Err(Error::not_implemented(
+            "reading shredded VARIANT columns from a database file",
+        )),
+        _ => Err(Error::internal("Unknown PersistentColumnData type")),
+    }
 }
 
 fn validity_type() -> LogicalType {
@@ -224,6 +282,7 @@ impl PersistentColumnData {
             logical_type,
             pointers: Vec::new(),
             child_columns: Vec::new(),
+            geometry_storage: None,
         }
     }
 
@@ -249,8 +308,21 @@ impl PersistentColumnData {
     /// `PersistentColumnData::Serialize`.
     pub fn serialize_fields(&self, serializer: &mut dyn Serializer) -> Result<()> {
         // "extra_data" (99) is only written for VARIANT and GEOMETRY columns.
-        serializer.on_optional_property_begin(99, "extra_data", false);
-        serializer.on_optional_property_end(false);
+        match self.geometry_storage {
+            Some(storage) => {
+                serializer.on_optional_property_begin(99, "extra_data", true);
+                serializer.on_nullable_begin(true);
+                serializer.on_object_begin();
+                write_geometry_extra_data(serializer, storage)?;
+                serializer.on_object_end();
+                serializer.on_nullable_end();
+                serializer.on_optional_property_end(true);
+            }
+            None => {
+                serializer.on_optional_property_begin(99, "extra_data", false);
+                serializer.on_optional_property_end(false);
+            }
+        }
         self.write_pointers(serializer)?;
         if self.logical_type.id() == LogicalTypeId::Validity {
             return Ok(());
@@ -294,12 +366,27 @@ impl PersistentColumnData {
 
     /// `PersistentColumnData::Deserialize` for a column of type `ty`.
     pub fn deserialize_fields(deserializer: &mut dyn Deserializer, ty: &LogicalType) -> Result<Self> {
+        // `GetPersistentColumnDataType`: the extra data of a GEOMETRY column decides the
+        // type of the stored data.
+        let mut geometry_storage = None;
         if deserializer.on_optional_property_begin(99, "extra_data")? {
-            return Err(Error::not_implemented(
-                "reading VARIANT or GEOMETRY columns from a database file",
-            ));
+            if deserializer.on_nullable_begin()? {
+                deserializer.on_object_begin()?;
+                geometry_storage = Some(read_extra_data(deserializer)?);
+                deserializer.on_object_end()?;
+            }
+            deserializer.on_nullable_end()?;
+            deserializer.on_optional_property_end(true)?;
+        } else {
+            deserializer.on_optional_property_end(false)?;
         }
+        let stored_type = match geometry_storage {
+            Some(storage) => rustdb_types::geometry::vectorized_type(storage)?,
+            None => ty.clone(),
+        };
+        let ty = &stored_type;
         let mut result = Self::new(ty.clone());
+        result.geometry_storage = geometry_storage;
         result.pointers = Self::read_pointers(deserializer, ty)?;
         if ty.id() == LogicalTypeId::Validity {
             return Ok(result);

@@ -4,6 +4,7 @@
 pub mod chunk_info;
 pub mod column_data;
 pub mod column_segment;
+pub(crate) mod geo_column_data;
 pub mod per_column_metadata_blocks;
 pub mod row_group;
 pub mod row_group_collection;

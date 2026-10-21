@@ -806,6 +806,17 @@ impl DatabaseInstance {
                 };
                 Box::new(move |config| config.max_vacuum_tasks = tasks)
             }
+            // `GeometryMinimumShreddingSize`.
+            ("geometry_minimum_shredding_size", value) => {
+                let rows = match value {
+                    Some(value) => value
+                        .default_cast_as(&rustdb_types::LogicalType::BIGINT)?
+                        .as_i64()
+                        .unwrap_or(0),
+                    None => CheckpointConfig::default().geometry_minimum_shredding_size,
+                };
+                Box::new(move |config| config.geometry_minimum_shredding_size = rows)
+            }
             // `DebugCheckpointAbortSetting::OnSet`.
             ("debug_checkpoint_abort", Some(value)) => {
                 if value.is_null() {
