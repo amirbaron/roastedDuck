@@ -1,0 +1,248 @@
+# More dot commands, catalog objects and result shapes.
+
+[[case]]
+name = "late-error-{mode}"
+known = "a streaming result buffers 1 MB ahead of the reader in DuckDB, whose collector blocks; rustdb runs ahead in tasks of 50 chunks, so a late error stops the output after other rows"
+vary = { mode = ["list", "csv", "json"] }
+stdin = '''
+.mode {mode}
+SELECT CASE WHEN i < 150000 THEN i ELSE error('late failure') END AS v FROM range(200000) t(i);
+SELECT 'next' AS n;
+'''
+
+[[case]]
+name = "dump-generated-collate-comment"
+stdin = '''
+CREATE TABLE t(a INT, b INT GENERATED ALWAYS AS (a * 2), s VARCHAR COLLATE NOCASE, PRIMARY KEY (a));
+INSERT INTO t (a, s) VALUES (1, 'x'), (2, 'Y');
+COMMENT ON TABLE t IS 'a comment';
+COMMENT ON COLUMN t.s IS 'column comment';
+CREATE TABLE u(x INT, y INT, UNIQUE (x, y), CHECK (x < y));
+CREATE INDEX expr_idx ON u((x + y));
+CREATE VIEW v(c1, c2) AS SELECT a, s FROM t;
+CREATE SEQUENCE seq INCREMENT BY 3 MINVALUE 1 MAXVALUE 100 START WITH 7 CYCLE;
+CREATE MACRO tm(n) AS TABLE SELECT * FROM range(n);
+CREATE TYPE pair AS STRUCT(a INT, b VARCHAR);
+.dump
+.schema
+.schema --indent
+.indexes
+'''
+
+[[case]]
+name = "dump-schemas-and-attached"
+stdin = '''
+CREATE SCHEMA s1;
+CREATE TABLE s1.t(i INT);
+INSERT INTO s1.t VALUES (1);
+ATTACH ':memory:' AS other;
+CREATE TABLE other.o(j INT);
+INSERT INTO other.o VALUES (2);
+.dump
+.schema
+.tables
+'''
+
+[[case]]
+name = "dump-special-values"
+stdin = '''
+CREATE TABLE t(d DOUBLE, f FLOAT, dt DATE, ts TIMESTAMP, iv INTERVAL, b BLOB, l VARCHAR[], m MAP(INT, VARCHAR));
+INSERT INTO t VALUES ('nan', 'inf', 'infinity', '-infinity', INTERVAL '-1 year 2 months', '\x00\x0a\x27', ['a''b', NULL, 'c"d'], MAP {1: 'x'});
+INSERT INTO t VALUES (-0.0, 1e-45, '0001-01-01', '294247-01-10 04:00:54.775806', INTERVAL 0 DAY, '', [], MAP {});
+.dump
+'''
+
+[[case]]
+name = "column-mode-unicode"
+stdin = '''
+.mode column
+SELECT '漢字' AS a, '🦆' AS b, 'plain' AS c, NULL AS d;
+.width 3 -6
+SELECT '漢字漢字' AS a, '🦆🦆🦆' AS b;
+'''
+
+[[case]]
+name = "table-markdown-unicode"
+stdin = '''
+.mode table
+SELECT '漢字' AS a, 'é' AS b, NULL AS c, 'line
+break' AS d;
+.mode markdown
+SELECT '漢字' AS a, 'a|b' AS b, NULL AS c;
+.mode box
+SELECT '漢字' AS a, 'x' AS b;
+'''
+
+[[case]]
+name = "line-mode-many-columns"
+stdin = '''
+.mode line
+SELECT * FROM test_all_types() LIMIT 1;
+'''
+
+[[case]]
+name = "pragmas"
+stdin = '''
+CREATE TABLE t(i INT PRIMARY KEY, s VARCHAR);
+INSERT INTO t VALUES (1, 'a');
+PRAGMA table_info('t');
+PRAGMA show_tables;
+PRAGMA show_tables_expanded;
+PRAGMA collations;
+PRAGMA storage_info('t');
+CALL pragma_metadata_info();
+'''
+
+[[case]]
+name = "show-and-describe"
+stdin = '''
+CREATE TABLE t(i INT PRIMARY KEY, s VARCHAR DEFAULT 'x', l INT[]);
+SHOW t;
+SHOW TABLES;
+SHOW ALL TABLES;
+SHOW DATABASES;
+DESCRIBE t;
+DESCRIBE SELECT 1;
+.mode csv
+DESCRIBE t;
+.mode duckbox
+.maxwidth 50
+DESCRIBE t;
+'''
+
+[[case]]
+name = "transactions"
+stdin = '''
+BEGIN;
+CREATE TABLE t(i INT);
+INSERT INTO t VALUES (1);
+ROLLBACK;
+SELECT * FROM t;
+BEGIN TRANSACTION;
+CREATE TABLE t(i INT);
+COMMIT;
+.tables
+BEGIN;
+SELECT bogus;
+SELECT 1;
+ROLLBACK;
+SELECT 2 AS after_rollback;
+'''
+
+[[case]]
+name = "copy-to-stdout"
+stdin = '''
+COPY (SELECT 1 AS a, 'x' AS b) TO '/dev/stdout' (HEADER);
+SELECT 2 AS c;
+COPY (SELECT 3 AS d) TO '/dev/stdout' (FORMAT json);
+'''
+
+[[case]]
+name = "copy-to-stdout-merged"
+merged = true
+stdin = '''
+SELECT 1 AS before;
+COPY (SELECT 1 AS a, 'x' AS b) TO '/dev/stdout' (HEADER);
+SELECT 2 AS c; COPY (SELECT 3 AS d) TO '/dev/stdout';
+'''
+
+[[case]]
+name = "prepared-statements"
+stdin = '''
+PREPARE p AS SELECT $1::INT + 1 AS r, $2 AS s;
+EXECUTE p(41, 'x');
+.mode csv
+EXECUTE p(1, NULL);
+DEALLOCATE p;
+EXECUTE p(1, 2);
+'''
+
+[[case]]
+name = "set-and-reset"
+stdin = '''
+SET threads = 2;
+SELECT current_setting('threads') AS t;
+RESET threads;
+SET memory_limit = '1GB';
+SELECT current_setting('memory_limit') AS m;
+SET GLOBAL TimeZone = 'UTC';
+SELECT current_setting('TimeZone') AS tz;
+SET default_null_order = 'nulls_first';
+SELECT * FROM (VALUES (1), (NULL)) t(i) ORDER BY i;
+'''
+
+[[case]]
+name = "big-blob-and-strings"
+stdin = '''
+SELECT repeat('\xAA', 50)::BLOB AS b;
+SELECT repeat('ab', 5000) AS s;
+.mode line
+SELECT repeat('ab', 100) AS s;
+'''
+
+[[case]]
+name = "numeric-edge"
+stdin = '''
+SELECT 0.1 + 0.2 AS a, 1e308 * 10 AS b, -1e-308 / 1e10 AS c, 2::DOUBLE ** 1023 AS d;
+SELECT 123456789012345678901234567890.123::DECIMAL(38,3) AS e, (-1)::DECIMAL(38,37) AS f;
+SELECT 1::BIGNUM AS g, (2::BIGNUM ** 200)::VARCHAR AS h;
+.mode csv
+SELECT 0.1 + 0.2 AS a, 1e308 * 10 AS b, -1e-308 / 1e10 AS c;
+'''
+
+[[case]]
+name = "union-and-enum-nested"
+stdin = '''
+CREATE TYPE color AS ENUM ('red', 'green');
+SELECT [union_value(a := 1)::UNION(a INT, b VARCHAR), union_value(b := 'x')] AS u, ['red'::color, NULL] AS e, {'k': 'green'::color} AS s;
+.mode json
+SELECT [union_value(a := 1)::UNION(a INT, b VARCHAR), union_value(b := 'x')] AS u, ['red'::color, NULL] AS e, {'k': 'green'::color} AS s;
+.mode insert t
+SELECT [union_value(a := 1)::UNION(a INT, b VARCHAR)] AS u, 'red'::color AS e;
+'''
+
+[[case]]
+name = "array-and-list-deep"
+stdin = '''
+SELECT [[1, 2], [3]]::INT[][] AS l, [[1, 2], [3, 4]]::INT[2][2] AS a, [MAP {'a': [1]}, MAP {}] AS m, {'a': {'b': {'c': [NULL]}}} AS s;
+.mode csv
+SELECT [[1, 2], [3]]::INT[][] AS l, [[1, 2], [3, 4]]::INT[2][2] AS a, [MAP {'a': [1]}, MAP {}] AS m, {'a': {'b': {'c': [NULL]}}} AS s;
+'''
+
+[[case]]
+name = "timestamps-precision"
+stdin = '''
+SELECT TIMESTAMP '2024-01-01 00:00:00.000001' AS a, TIMESTAMP_NS '2024-01-01 00:00:00.000000001' AS b, TIME '00:00:00.5' AS c, TIMETZ '23:59:59.999999+15:59' AS d, TIMESTAMPTZ '2024-01-01 00:00:00.123+05:30' AS e;
+SELECT '-infinity'::TIMESTAMPTZ AS f, 'epoch'::TIMESTAMP AS g, INTERVAL '1 microsecond' AS h, INTERVAL '-2 years -3 months 4 days 5:06:07.08' AS i;
+'''
+
+[[case]]
+name = "read-csv-and-sniff"
+files = { "data.csv" = "a;b;c\n1;x;2024-01-01\n2;y;2024-02-01\n" }
+stdin = '''
+SELECT * FROM 'data.csv';
+SELECT * FROM read_csv('data.csv', header = true, delim = ';');
+SELECT * FROM sniff_csv('data.csv');
+DESCRIBE SELECT * FROM 'data.csv';
+'''
+
+[[case]]
+name = "nested-explain-and-profiling"
+stdin = '''
+CREATE TABLE t AS SELECT i, i % 3 AS g FROM range(10) t(i);
+EXPLAIN SELECT g, count(*) FROM t GROUP BY g HAVING count(*) > 1 ORDER BY g;
+SET explain_output = 'all';
+EXPLAIN SELECT 1;
+.mode line
+EXPLAIN SELECT 1;
+'''
+
+[[case]]
+name = "pragma-database-list"
+known = "a database oid counts the catalog entries created before it, which differ in number"
+stdin = "PRAGMA database_list;\n"
+
+[[case]]
+name = "pragma-functions"
+known = "functions rustdb lacks: icu_collate_* (ICU registers each collation as a function too), seq_scan, json_serialize_plan, duckdb_coordinate_systems, duckdb_external_file_cache, duckdb_secret_types, duckdb_table_sample, tpcds, dsdgen"
+stdin = "PRAGMA functions;\n"
