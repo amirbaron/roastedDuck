@@ -186,7 +186,8 @@ impl LocalTableStorage {
     }
 
     /// Writes the row groups not written yet, if the rows fill a row group, and the
-    /// partially filled block (`FlushBlocks`).
+    /// partially filled blocks (`FlushBlocks`); blocks of writers that were dropped
+    /// without writing theirs are written too.
     fn flush_blocks(&self) -> Result<()> {
         let mut row_groups = self.row_groups();
         let mut writer = self.optimistic_writer();
@@ -194,13 +195,33 @@ impl LocalTableStorage {
         if collection.total_rows() >= collection.row_group_size() {
             writer.write_unflushed_row_groups(&mut row_groups)?;
         }
-        writer.final_flush()
+        writer.final_flush()?;
+        match &self.append_blocks {
+            Some(blocks) => blocks.flush(),
+            None => Ok(()),
+        }
     }
 
     /// A writer for the row groups one thread of a parallel insert completes
-    /// (`OptimisticDataWriter(context, table)`); it shares the transaction's blocks.
+    /// (`OptimisticDataWriter(context, table)`); it records its blocks in the
+    /// transaction's.
     pub(crate) fn create_optimistic_writer(&self) -> OptimisticDataWriter {
         OptimisticDataWriter::new(self.table(), self.append_blocks.clone())
+    }
+
+    /// The blocks the transaction's optimistic writes add for the table.
+    pub(crate) fn append_blocks(&self) -> Option<&Arc<AppendBlocks>> {
+        self.append_blocks.as_ref()
+    }
+
+    /// Moves the partially filled blocks of a thread's writer into the storage's writer.
+    pub(crate) fn merge_optimistic_writer(&self, writer: &mut OptimisticDataWriter) -> Result<()> {
+        self.optimistic_writer().merge(writer)
+    }
+
+    /// Writes the partially filled blocks of the storage's writer (`FinalFlush`).
+    pub(crate) fn final_flush_optimistic_writer(&self) -> Result<()> {
+        self.optimistic_writer().final_flush()
     }
 
     /// Moves the row groups of a thread's collection to the end of the local rows
@@ -210,8 +231,9 @@ impl LocalTableStorage {
     }
 
     /// Discards what optimistic writes stored for the local rows: the partially filled
-    /// block and every written block (`LocalTableStorage::Rollback`).
+    /// blocks and every written block (`LocalTableStorage::Rollback`).
     fn rollback(&self) -> Result<()> {
+        self.optimistic_writer().rollback();
         match &self.append_blocks {
             Some(blocks) => blocks.rollback(),
             None => Ok(()),

@@ -94,11 +94,15 @@ impl OptimisticCollection {
 impl DataTable {
     /// An empty thread-local collection for a parallel insert into this table
     /// (`OptimisticDataWriter::CreateCollection`).
-    pub fn create_optimistic_collection(&self, transaction: &Transaction) -> Result<OptimisticCollection> {
+    pub fn create_optimistic_collection(
+        self: &Arc<Self>,
+        transaction: &Transaction,
+    ) -> Result<OptimisticCollection> {
         self.check_main_table("insert into")?;
+        let storage = transaction.local_storage().get_or_create(self)?;
         let collection = RowGroupCollection::new(Arc::clone(self.io()), self.types(), MAX_ROW_ID);
         Ok(OptimisticCollection {
-            row_groups: OptimisticWriteCollection::new(Arc::new(collection)),
+            row_groups: OptimisticWriteCollection::per_column(Arc::new(collection), storage.append_blocks()),
             append: None,
             transaction: transaction.data(),
         })
@@ -113,6 +117,26 @@ impl DataTable {
         self.check_main_table("insert into")?;
         let storage = transaction.local_storage().get_or_create(self)?;
         Ok(storage.create_optimistic_writer())
+    }
+
+    /// Moves the partially filled blocks of a thread's optimistic writer into the
+    /// transaction-local storage's writer (`GetOptimisticWriter(context).Merge(writer)`).
+    pub fn merge_optimistic_writer(
+        self: &Arc<Self>,
+        transaction: &Transaction,
+        writer: &mut OptimisticDataWriter,
+    ) -> Result<()> {
+        self.check_main_table("insert into")?;
+        let storage = transaction.local_storage().get_or_create(self)?;
+        storage.merge_optimistic_writer(writer)
+    }
+
+    /// Writes the partially filled blocks of the transaction-local storage's writer
+    /// (`GetOptimisticWriter(context).FinalFlush()`).
+    pub fn final_flush_optimistic_writer(self: &Arc<Self>, transaction: &Transaction) -> Result<()> {
+        self.check_main_table("insert into")?;
+        let storage = transaction.local_storage().get_or_create(self)?;
+        storage.final_flush_optimistic_writer()
     }
 
     /// Moves the row groups of a finalized thread-local collection to the end of the

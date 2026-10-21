@@ -20,7 +20,7 @@ use super::column_segment::{ColumnSegment, SegmentAppendState, SegmentScanState}
 use super::segment_tree::{Segment, SegmentNode, SegmentTree};
 use super::update_segment::{UpdateSegment, UpdateVersion};
 use crate::VECTOR_SIZE;
-use crate::checkpoint::table_writer::InMemoryBlocks;
+use crate::checkpoint::table_writer::{AppendBlocks, InMemoryBlocks, PendingSegment};
 use crate::data_table::TableIoManager;
 use crate::statistics::{BaseStatistics, FilterPropagateResult};
 use crate::table_filter::TableFilter;
@@ -234,6 +234,17 @@ fn validity_type() -> LogicalType {
 
 fn not_implemented_nested(what: &str, ty: &LogicalType) -> Error {
     Error::not_implemented(format!("{what} is not supported for columns of type {ty}"))
+}
+
+/// Where the blocks of the stored segments a column is made of are.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum StoredBlocks<'a> {
+    /// In the database file.
+    File,
+    /// The blocks an in-memory checkpoint wrote.
+    InMemory(&'a InMemoryBlocks),
+    /// The blocks of an optimistic write, some of which are not written yet.
+    Optimistic(&'a AppendBlocks),
 }
 
 impl ColumnData {
@@ -1667,7 +1678,19 @@ impl ColumnData {
         ty: LogicalType,
         data: &crate::checkpoint::pointers::PersistentColumnData,
     ) -> Result<Self> {
-        Self::from_stored(io, column_index, ty, data, None)
+        Self::from_stored(io, column_index, ty, data, StoredBlocks::File)
+    }
+
+    /// A column of type `ty` whose segments an optimistic write placed in `blocks`, some
+    /// of which are not written yet.
+    pub(crate) fn from_optimistic_write(
+        io: Arc<TableIoManager>,
+        column_index: usize,
+        ty: LogicalType,
+        data: &crate::checkpoint::pointers::PersistentColumnData,
+        blocks: &AppendBlocks,
+    ) -> Result<Self> {
+        Self::from_stored(io, column_index, ty, data, StoredBlocks::Optimistic(blocks))
     }
 
     /// A column of type `ty` whose segments an in-memory checkpoint wrote to `blocks`.
@@ -1678,16 +1701,16 @@ impl ColumnData {
         data: &crate::checkpoint::pointers::PersistentColumnData,
         blocks: &InMemoryBlocks,
     ) -> Result<Self> {
-        Self::from_stored(io, column_index, ty, data, Some(blocks))
+        Self::from_stored(io, column_index, ty, data, StoredBlocks::InMemory(blocks))
     }
 
-    /// A column made of the segments `data` describes: on disk, or in `blocks`.
+    /// A column made of the segments `data` describes, whose blocks are in `blocks`.
     fn from_stored(
         io: Arc<TableIoManager>,
         column_index: usize,
         ty: LogicalType,
         data: &crate::checkpoint::pointers::PersistentColumnData,
-        blocks: Option<&InMemoryBlocks>,
+        blocks: StoredBlocks<'_>,
     ) -> Result<Self> {
         let column = Self::create(io, column_index, ty, ColumnDataType::MainTable, false, Some(data));
         let mut stats = BaseStatistics::create_empty(column.ty.clone());
@@ -1705,7 +1728,7 @@ impl ColumnData {
         &self,
         data: &crate::checkpoint::pointers::PersistentColumnData,
         stats: &mut BaseStatistics,
-        blocks: Option<&InMemoryBlocks>,
+        blocks: StoredBlocks<'_>,
     ) -> Result<()> {
         if let ColumnKind::Geometry { base, storage } = &self.kind {
             // `GeoColumnData::InitializeColumn`: the base column holds the stored data;
@@ -1720,22 +1743,61 @@ impl ColumnData {
         let block_manager = self.io.block_manager();
         let mut count = 0u64;
         for pointer in &data.pointers {
+            let mut pending = None;
             let segment = match blocks {
-                Some(blocks) if pointer.block_pointer.is_valid() => ColumnSegment::create_in_memory(
-                    buffer_manager,
-                    Arc::clone(blocks.block(pointer.block_pointer.block_id)?),
-                    pointer.block_pointer.offset as usize,
-                    block_manager.block_size(),
-                    self.ty.clone(),
-                    pointer.tuple_count,
-                    pointer.compression,
-                    pointer.statistics.clone(),
-                    pointer
-                        .overflow_blocks
-                        .iter()
-                        .map(|&block| blocks.block(block).map(Arc::clone))
-                        .collect::<Result<_>>()?,
-                )?,
+                StoredBlocks::InMemory(blocks) if pointer.block_pointer.is_valid() => {
+                    ColumnSegment::create_in_memory(
+                        buffer_manager,
+                        Arc::clone(blocks.block(pointer.block_pointer.block_id)?),
+                        pointer.block_pointer.offset as usize,
+                        block_manager.block_size(),
+                        self.ty.clone(),
+                        pointer.tuple_count,
+                        pointer.compression,
+                        pointer.statistics.clone(),
+                        pointer
+                            .overflow_blocks
+                            .iter()
+                            .map(|&block| blocks.block(block).map(Arc::clone))
+                            .collect::<Result<_>>()?,
+                    )?
+                }
+                StoredBlocks::Optimistic(blocks)
+                    if pointer.block_pointer.is_valid()
+                        && blocks.is_provisional(pointer.block_pointer.block_id) =>
+                {
+                    match blocks.resolve(
+                        pointer.block_pointer.block_id,
+                        pointer.block_pointer.offset as usize,
+                    )? {
+                        PendingSegment::Pending { handle, offset } => {
+                            let segment = ColumnSegment::create_pending(
+                                buffer_manager,
+                                block_manager,
+                                Arc::clone(&handle),
+                                offset,
+                                self.ty.clone(),
+                                pointer.tuple_count,
+                                pointer.compression,
+                                pointer.statistics.clone(),
+                                pointer.overflow_blocks.clone(),
+                            )?;
+                            pending = Some((handle.block_id(), offset));
+                            segment
+                        }
+                        PendingSegment::Written { block_id, offset } => ColumnSegment::create_persistent(
+                            buffer_manager,
+                            block_manager,
+                            block_id,
+                            offset,
+                            self.ty.clone(),
+                            pointer.tuple_count,
+                            pointer.compression,
+                            pointer.statistics.clone(),
+                            pointer.overflow_blocks.clone(),
+                        )?,
+                    }
+                }
                 _ => ColumnSegment::create_persistent(
                     buffer_manager,
                     block_manager,
@@ -1753,7 +1815,11 @@ impl ColumnData {
             } else {
                 stats.merge(&pointer.statistics);
             }
-            self.segments.push(count, Arc::new(segment));
+            let segment = Arc::new(segment);
+            if let (StoredBlocks::Optimistic(blocks), Some((block, offset))) = (blocks, pending) {
+                blocks.register_segment(block, &segment, offset);
+            }
+            self.segments.push(count, segment);
             count += pointer.tuple_count;
         }
         self.count.store(count, Ordering::Release);

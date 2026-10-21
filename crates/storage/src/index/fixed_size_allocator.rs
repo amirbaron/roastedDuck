@@ -404,6 +404,7 @@ impl FixedSizeAllocator {
     pub(crate) fn serialize_buffers(
         &mut self,
         write: &mut dyn FnMut(&[u8]) -> Result<BufferPointer>,
+        keep: &mut dyn FnMut(rustdb_buffer::BlockId),
     ) -> Result<()> {
         self.update_allocation_sizes();
         let ids: Vec<u64> = self.buffers.keys().copied().collect();
@@ -413,6 +414,12 @@ impl FixedSizeAllocator {
                     .buffers
                     .get(&id)
                     .ok_or_else(|| Error::internal("index buffer disappeared"))?;
+                // `FixedSizeBuffer::Serialize`: a buffer on disk that did not change keeps
+                // its block.
+                if let (false, Some(disk)) = (buffer.dirty, buffer.disk) {
+                    keep(disk.block_id);
+                    continue;
+                }
                 let bytes = buffer_bytes(
                     buffer,
                     self.loader.as_deref(),
