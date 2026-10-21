@@ -190,6 +190,46 @@ args = ["-help"]
 keys = []
 
 [[case]]
+name = "pty-search-cancel"
+pty = true
+args = ["-dark-mode"]
+keys = ["SELECT 'one';", "\r", "SELECT 'two';", "\r", "\u0012", "zzz", "\u0007", "\u0012", "o", "\u0012", "\u001b[C", "\r", "\u0004"]
+
+[[case]]
+name = "pty-bracketed-paste"
+pty = true
+args = ["-dark-mode"]
+keys = ["\u001b[200~SELECT 1 AS a,\r2 AS b;\u001b[201~", "\r", "\u0004"]
+
+[[case]]
+name = "pty-tiny-terminal"
+pty = true
+args = ["-dark-mode"]
+cols = 12
+rows = 8
+keys = ["SELECT 'abcdefghijklmnop' AS x, 1 AS y;", "\r", "\u0004"]
+
+[[case]]
+name = "pty-wide-chars-wrap"
+pty = true
+args = ["-dark-mode"]
+cols = 20
+keys = ["SELECT '漢字漢字漢字漢字漢字漢字漢字漢字' AS k", "\u001b[D", "\u001b[D", "\u001b[D", "\u001b[D", "\u001b[D", "\u001b[D", "\u001b[D", "x", "\u0005", ";", "\r", "\u0004"]
+
+[[case]]
+name = "pty-completion-files"
+pty = true
+args = ["-dark-mode"]
+files = { "data_one.csv" = "a\n1\n", "data_two.csv" = "a\n2\n", "sub/inner.csv" = "a\n3\n" }
+keys = ["SELECT * FROM 'data", "\t", "\t", "\u0003", "SELECT * FROM 'sub/", "\t", "\u0003", ".read da", "\t", "\u0003", "\u0004"]
+
+[[case]]
+name = "pty-history-file-saved"
+pty = true
+args = ["-dark-mode"]
+keys = ["SELECT 1;", "\r", "SELECT\r2;", "\r", ".mode csv", "\r", "SELECT 'it''s';", "\r", "\u0004"]
+
+[[case]]
 name = "pty-duckdbrc"
 pty = true
 home = { ".duckdbrc" = ".mode markdown\nSELECT 'rc' AS source;\n" }
