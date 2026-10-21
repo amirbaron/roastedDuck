@@ -146,7 +146,7 @@ impl DataTable {
         expressions: IndexKeyExpressions,
     ) -> Result<Art> {
         let io = self.io();
-        Art::new(
+        let mut art = Art::new(
             name,
             constraint,
             column_ids.to_vec(),
@@ -154,7 +154,11 @@ impl DataTable {
             expressions,
             io.buffer_manager().clone(),
             io.block_manager().block_size(),
-        )
+        )?;
+        // A new ART has the storage version of its database, one read from the file the
+        // version it was stored with (`ART::ART`).
+        art.set_storage_version(self.info().index_storage_version(name, io.storage_version()));
+        Ok(art)
     }
 
     /// Adds an index enforcing a PRIMARY KEY, UNIQUE or FOREIGN KEY constraint over

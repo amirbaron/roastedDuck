@@ -1025,6 +1025,7 @@ fn read_duckdb_parallel() -> ParallelTableScan {
                 .map_or(0, |local| local.batch_index)
         }),
         dynamic_to_string: Some(Arc::new(read_duckdb_dynamic_to_string)),
+        row_group_metrics: None,
     }
 }
 

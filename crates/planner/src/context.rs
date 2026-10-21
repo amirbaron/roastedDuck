@@ -63,6 +63,9 @@ pub struct PlannerConfig {
     /// `old_implicit_casting`: any type casts implicitly to VARCHAR, and types combine
     /// even without a common type.
     pub old_implicit_casting: bool,
+    /// `ignore_unknown_crs`: GEOMETRY types with an unrecognized coordinate system drop it
+    /// instead of failing to bind.
+    pub ignore_unknown_crs: bool,
 }
 
 /// The `default_null_order` setting (DuckDB's `DefaultOrderByNullType`).
@@ -91,6 +94,7 @@ impl Default for PlannerConfig {
             allow_unredacted_secrets: false,
             flip_right_joins: true,
             old_implicit_casting: false,
+            ignore_unknown_crs: false,
         }
     }
 }

@@ -38,12 +38,16 @@ pub(super) fn cast_switch(source: &LogicalType, target: &LogicalType) -> Result<
             })
         })),
         LogicalTypeId::Geometry => {
-            if let (Some(source_crs), Some(target_crs)) = (crs(source), crs(target))
-                && source_crs != target_crs
-            {
-                return Err(Error::binder(format!(
-                    "Cannot cast GEOMETRY with CRS '{source_crs}' to GEOMETRY with different CRS '{target_crs}'"
-                )));
+            if let (Some(source_crs), Some(target_crs)) = (crs(source), crs(target)) {
+                let source_crs = geometry::Crs::parse_lenient(source_crs);
+                let target_crs = geometry::Crs::parse_lenient(target_crs);
+                if !source_crs.equals(&target_crs) {
+                    return Err(Error::binder(format!(
+                        "Cannot cast GEOMETRY with CRS '{}' to GEOMETRY with different CRS '{}'",
+                        source_crs.identifier(),
+                        target_crs.identifier()
+                    )));
+                }
             }
             Some(BoundCastInfo::reinterpret())
         }

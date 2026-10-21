@@ -475,6 +475,7 @@ pub(crate) fn json_parallel_scan() -> ParallelTableScan {
                 .map_or(0, |local| local.batch_index)
         }),
         dynamic_to_string: None,
+        row_group_metrics: None,
     }
 }
 

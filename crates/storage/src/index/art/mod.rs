@@ -369,23 +369,61 @@ impl Art {
         }
     }
 
-    /// Whether keys of GEOMETRY columns must be converted (`KeyInputNeedConversion`); the
-    /// pre-v1.5 GEOMETRY representation is not supported by this port.
-    fn check_key_input(&self) -> Result<()> {
-        let old = self
-            .storage_version
-            .is_none_or(|v| v < GEOMETRY_KEY_STORAGE_VERSION);
-        if old
-            && self
-                .key_types
+    /// Whether the index predates v1.5.0 (or does not know its version), when GEOMETRY
+    /// keys were the spatial extension's representation.
+    fn has_legacy_geometry_keys(&self) -> bool {
+        self.storage_version
+            .is_none_or(|v| v < GEOMETRY_KEY_STORAGE_VERSION)
+    }
+
+    /// `KeyInputNeedConversion`: GEOMETRY keys of old indexes are built from the legacy
+    /// representation.
+    fn key_input_needs_conversion(&self, chunk: &DataChunk) -> bool {
+        self.has_legacy_geometry_keys()
+            && chunk
+                .columns()
                 .iter()
-                .any(|t| t.id() == rustdb_types::LogicalTypeId::Geometry)
-        {
-            return Err(Error::not_implemented(
-                "indexes on GEOMETRY columns of databases written before v1.5",
-            ));
+                .any(|column| column.logical_type().id() == rustdb_types::LogicalTypeId::Geometry)
+    }
+
+    /// The keys of `key_chunk` (`GenerateKeyVectors`), its GEOMETRY columns converted to
+    /// the legacy representation when the index needs them (`ConvertKeyInput`).
+    fn generate_key_vectors(&self, key_chunk: &DataChunk) -> Result<Vec<Option<ArtKey>>> {
+        if !self.key_input_needs_conversion(key_chunk) {
+            return generate_keys(key_chunk);
         }
-        Ok(())
+        let count = key_chunk.len();
+        let mut columns = Vec::with_capacity(key_chunk.columns().len());
+        for column in key_chunk.columns() {
+            if column.logical_type().id() != rustdb_types::LogicalTypeId::Geometry {
+                columns.push(column.clone());
+                continue;
+            }
+            let mut converted = rustdb_types::Vector::flat(LogicalType::BLOB, count.max(1));
+            for row in 0..count {
+                if column.is_null(row) {
+                    converted.set_null(row);
+                    continue;
+                }
+                let bytes = rustdb_types::geometry::to_spatial(column.string_bytes(row))?;
+                let value = converted.add_string(&bytes);
+                converted.values_mut::<rustdb_types::StringT>()[row] = value;
+            }
+            columns.push(converted);
+        }
+        generate_keys(&DataChunk::new(columns, count))
+    }
+
+    /// The key of a lookup constant (`ARTKey::CreateKey` with the storage version):
+    /// GEOMETRY constants of old indexes in the legacy representation.
+    fn create_lookup_key(&self, value: &Value) -> Result<ArtKey> {
+        if value.logical_type().id() == rustdb_types::LogicalTypeId::Geometry
+            && self.has_legacy_geometry_keys()
+            && let Some(bytes) = value.as_bytes()
+        {
+            return create_key(&Value::blob(&rustdb_types::geometry::to_spatial(bytes)?));
+        }
+        create_key(value)
     }
 
     // ----------------------------------------------------------------------------------
@@ -413,8 +451,7 @@ impl Art {
         delete_arts: &[&Self],
         mode: IndexAppendMode,
     ) -> Result<()> {
-        self.check_key_input()?;
-        let keys = generate_keys(key_chunk)?;
+        let keys = self.generate_key_vectors(key_chunk)?;
         self.insert_keys(&keys, row_ids, delete_arts, mode, Some(key_chunk))
     }
 
@@ -460,8 +497,7 @@ impl Art {
     /// (`ART::TryDelete`).
     pub fn try_delete(&mut self, table_chunk: &DataChunk, row_ids: &[i64]) -> Result<usize> {
         let key_chunk = self.execute_expressions(table_chunk)?;
-        self.check_key_input()?;
-        let keys = generate_keys(&key_chunk)?;
+        let keys = self.generate_key_vectors(&key_chunk)?;
         let mut deleted = 0;
         for (i, key) in keys.iter().enumerate() {
             let removed = match key {
@@ -547,7 +583,8 @@ impl Art {
         manager: &mut ConflictManager,
     ) -> Result<()> {
         let key_chunk = self.execute_expressions(table_chunk)?;
-        self.check_key_input()?;
+        // Like DuckDB, the keys are not converted for old GEOMETRY indexes here: their
+        // conflicts surface when the rows are inserted.
         let keys = generate_keys(&key_chunk)?;
         let mut conflict = None;
         for (i, key) in keys.iter().enumerate() {
@@ -783,7 +820,7 @@ impl Art {
         match predicate {
             IndexScanPredicate::Full => self.full_scan(max_count, row_ids),
             IndexScanPredicate::Single { op, value } => {
-                let key = create_key(value)?;
+                let key = self.create_lookup_key(value)?;
                 match op {
                     CompareOp::Equal => self.search_equal(&key, max_count, row_ids),
                     CompareOp::GreaterThanOrEqual => self.search_greater(&key, true, max_count, row_ids),
@@ -799,8 +836,8 @@ impl Art {
                 high,
                 high_inclusive,
             } => {
-                let lower = create_key(low)?;
-                let upper = create_key(high)?;
+                let lower = self.create_lookup_key(low)?;
+                let upper = self.create_lookup_key(high)?;
                 self.search_close_range(
                     &lower,
                     &upper,

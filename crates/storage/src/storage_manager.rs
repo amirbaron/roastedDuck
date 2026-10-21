@@ -127,6 +127,9 @@ pub struct CheckpointConfig {
     pub max_vacuum_tasks: u64,
     /// `debug_checkpoint_abort`.
     pub abort: CheckpointAbort,
+    /// `geometry_minimum_shredding_size`: the rows a row group needs before its GEOMETRY
+    /// columns are shredded; negative disables shredding.
+    pub geometry_minimum_shredding_size: i64,
 }
 
 impl Default for CheckpointConfig {
@@ -136,6 +139,7 @@ impl Default for CheckpointConfig {
             force_column_metadata_reuse: false,
             max_vacuum_tasks: 100,
             abort: CheckpointAbort::NoAbort,
+            geometry_minimum_shredding_size: 30_000,
         }
     }
 }
@@ -191,11 +195,10 @@ impl StorageManager {
             block_manager.load_free_list(&metadata)?;
         }
         let dyn_manager: Arc<dyn BlockManager> = Arc::clone(&block_manager) as Arc<dyn BlockManager>;
-        let io = Arc::new(TableIoManager::with_row_group_size(
-            buffer_manager,
-            dyn_manager,
-            options.row_group_size,
-        ));
+        let io = Arc::new(
+            TableIoManager::with_row_group_size(buffer_manager, dyn_manager, options.row_group_size)
+                .with_storage_version(block_manager.storage_version()),
+        );
         Ok(Self {
             path: path.to_owned(),
             block_manager,
@@ -278,6 +281,7 @@ impl StorageManager {
             full_checkpoint,
             max_vacuum_tasks: config.max_vacuum_tasks,
             lowest_active_start,
+            geometry_minimum_shredding_size: config.geometry_minimum_shredding_size,
         }
     }
 

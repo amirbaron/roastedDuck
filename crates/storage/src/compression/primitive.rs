@@ -244,7 +244,5 @@ pub(crate) fn unified_strings(input: &Vector, count: usize) -> impl Iterator<Ite
 pub(crate) fn update_string_stats(stats: &mut BaseStatistics, bytes: &[u8]) {
     stats.set_has_no_null_fast();
     let check_unicode = stats.logical_type().id() == rustdb_types::LogicalTypeId::Varchar;
-    if let Some(string) = stats.string_mut() {
-        string.update(bytes, check_unicode);
-    }
+    stats.update_string(bytes, check_unicode);
 }

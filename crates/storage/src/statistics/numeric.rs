@@ -335,8 +335,9 @@ pub fn minimum_value(ty: &LogicalType) -> Option<NumericValue> {
         L::TimestampSec => NumericValue::I64(timestamp_min()? / MICROS_PER_SEC),
         L::TimestampMs => NumericValue::I64(timestamp_min()? / 1000),
         L::TimestampNs => NumericValue::I64(i64::MIN / NANOS_PER_DAY * NANOS_PER_DAY),
-        L::Float => NumericValue::F32(f32::MIN),
-        L::Double => NumericValue::F64(f64::MIN),
+        // `NumericLimits<T>::Minimum`: -infinity for types that have it.
+        L::Float => NumericValue::F32(f32::NEG_INFINITY),
+        L::Double => NumericValue::F64(f64::NEG_INFINITY),
         L::Decimal => return decimal_bound(ty, false),
         L::Enum => match ty.physical_type() {
             PhysicalType::UInt8 => NumericValue::U8(0),
@@ -373,8 +374,9 @@ pub fn maximum_value(ty: &LogicalType) -> Option<NumericValue> {
         L::TimeTz => NumericValue::I64(
             (MICROS_PER_DAY << TIME_TZ_OFFSET_BITS) | (TIME_TZ_MAX_OFFSET + TIME_TZ_MAX_OFFSET),
         ),
-        L::Float => NumericValue::F32(f32::MAX),
-        L::Double => NumericValue::F64(f64::MAX),
+        // `NumericLimits<T>::Maximum`: infinity for types that have it.
+        L::Float => NumericValue::F32(f32::INFINITY),
+        L::Double => NumericValue::F64(f64::INFINITY),
         L::Decimal => return decimal_bound(ty, true),
         L::Enum => {
             let size = ty.enum_values().map_or(0, <[String]>::len) as u64;

@@ -3,11 +3,13 @@
 //! optimizer reads them through `DataTable::column_statistics`.
 
 mod distinct;
+mod geometry;
 mod numeric;
 mod serialize;
 mod string;
 
 pub use distinct::{DistinctStatistics, HLL_REGISTERS, HyperLogLog};
+pub use geometry::{GeometryStats, GeometryStatsFlags, GeometryTypeSet};
 pub use numeric::{NumericStats, NumericValue, StatsNative, maximum_value, minimum_value};
 pub use serialize::{deserialize_table_statistics, serialize_table_statistics};
 pub use string::{MAX_STRING_MINMAX_SIZE, StringStats};
@@ -79,6 +81,7 @@ pub enum StatsData {
     Base,
     Numeric(NumericStats),
     String(StringStats),
+    Geometry(GeometryStats),
     /// The statistics of all list elements.
     List(Box<BaseStatistics>),
     /// One entry per struct field.
@@ -110,9 +113,13 @@ fn construct(ty: &LogicalType, init: Init) -> StatsData {
             Init::Empty => NumericStats::empty(ty),
             Init::Unknown => NumericStats::unknown(),
         }),
-        StatisticsType::String | StatisticsType::Geometry => StatsData::String(match init {
+        StatisticsType::String => StatsData::String(match init {
             Init::Empty => StringStats::empty(),
             Init::Unknown => StringStats::unknown(),
+        }),
+        StatisticsType::Geometry => StatsData::Geometry(match init {
+            Init::Empty => GeometryStats::empty(),
+            Init::Unknown => GeometryStats::unknown(),
         }),
         StatisticsType::List => {
             let child = ty.child_type().cloned().unwrap_or_default();
@@ -182,6 +189,7 @@ impl fmt::Display for BaseStatistics {
                     "?".to_owned()
                 }
             )?,
+            StatsData::Geometry(geometry) => write!(f, "{geometry}")?,
             StatsData::List(child) | StatsData::Array(child) => write!(f, "[{child}]")?,
             StatsData::Struct(children) => {
                 f.write_str(" {")?;
@@ -262,6 +270,13 @@ impl BaseStatistics {
             StatsData::String(string) => {
                 if let Some(bytes) = value.as_bytes() {
                     string.update(bytes, value.logical_type().id() == LogicalTypeId::Varchar);
+                }
+            }
+            StatsData::Geometry(geometry) => {
+                if !value.is_null()
+                    && let Some(bytes) = value.as_bytes()
+                {
+                    geometry.update(bytes);
                 }
             }
             StatsData::List(child) | StatsData::Array(child) => {
@@ -371,6 +386,7 @@ impl BaseStatistics {
         match (&mut self.data, &other.data) {
             (StatsData::Numeric(own), StatsData::Numeric(theirs)) => own.merge(theirs),
             (StatsData::String(own), StatsData::String(theirs)) => own.merge(theirs),
+            (StatsData::Geometry(own), StatsData::Geometry(theirs)) => own.merge(theirs),
             (StatsData::List(own), StatsData::List(theirs))
             | (StatsData::Array(own), StatsData::Array(theirs)) => own.merge(theirs),
             (StatsData::Struct(own), StatsData::Struct(theirs)) => {
@@ -410,6 +426,39 @@ impl BaseStatistics {
             StatsData::String(string) => Some(string),
             _ => None,
         }
+    }
+
+    /// Bounding box, types and emptiness, for GEOMETRY statistics (`GeometryStats`).
+    pub fn geometry(&self) -> Option<&GeometryStats> {
+        match &self.data {
+            StatsData::Geometry(geometry) => Some(geometry),
+            _ => None,
+        }
+    }
+
+    pub fn geometry_mut(&mut self) -> Option<&mut GeometryStats> {
+        match &mut self.data {
+            StatsData::Geometry(geometry) => Some(geometry),
+            _ => None,
+        }
+    }
+
+    /// Accounts for one non-NULL string value in string or GEOMETRY statistics
+    /// (`UncompressedStringStorage::UpdateStringStats` without the validity flag).
+    #[inline]
+    pub fn update_string(&mut self, bytes: &[u8], check_unicode: bool) {
+        match &mut self.data {
+            StatsData::String(string) => string.update(bytes, check_unicode),
+            StatsData::Geometry(geometry) => geometry.update(bytes),
+            _ => {}
+        }
+    }
+
+    /// Copies the NULL flags and distinct count of `other` (`CopyBase`).
+    pub fn copy_base(&mut self, other: &Self) {
+        self.has_null = other.has_null;
+        self.has_no_null = other.has_no_null;
+        self.distinct_count = other.distinct_count;
     }
 
     /// The element statistics of a LIST or ARRAY.

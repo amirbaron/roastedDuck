@@ -339,6 +339,8 @@ pub struct TableWriteSettings {
     /// The start time of the oldest active transaction (`LowestActiveStart`), for the
     /// compression of version information.
     pub lowest_active_start: u64,
+    /// `geometry_minimum_shredding_size` (`GeometryMinimumShreddingSize`).
+    pub geometry_minimum_shredding_size: i64,
 }
 
 impl Default for TableWriteSettings {
@@ -350,6 +352,7 @@ impl Default for TableWriteSettings {
             full_checkpoint: false,
             max_vacuum_tasks: 100,
             lowest_active_start: crate::transaction::TRANSACTION_ID_START,
+            geometry_minimum_shredding_size: 30_000,
         }
     }
 }
@@ -462,7 +465,7 @@ pub fn finish_table_checkpoint(
             let node = match written.iter().position(|w| Arc::ptr_eq(&w.row_group, &row_group)) {
                 Some(position) => {
                     let w = written.swap_remove(position);
-                    let types = w.columns.iter().map(|data| data.logical_type.clone()).collect();
+                    let types = column_types(collection, &w.columns);
                     Arc::new(row_group.with_persistent(
                         Arc::clone(collection.io()),
                         types,
@@ -502,11 +505,7 @@ pub fn finish_table_checkpoint(
             continue;
         }
         // The written columns are built again when first used.
-        let types: Arc<[rustdb_types::LogicalType]> = written
-            .columns
-            .iter()
-            .map(|data| data.logical_type.clone())
-            .collect();
+        let types = column_types(collection, &written.columns);
         node.node = Arc::new(node.node.with_persistent(
             Arc::clone(collection.io()),
             types,
@@ -651,6 +650,8 @@ fn write_row_group_data(
                 .copied()
                 .unwrap_or(CompressionType::Auto),
             table_name,
+            storage_version: settings.storage_version,
+            geometry_minimum_shredding_size: settings.geometry_minimum_shredding_size,
         };
         columns.push(Some(checkpoint_column(
             column,
@@ -678,6 +679,19 @@ fn write_row_group_data(
 /// Merges the statistics of the columns of a row group whose data is not written again
 /// into `stats`: built columns contribute their statistics, the others are recorded in
 /// `incomplete` (`SetHasUnloadedColumn`), their statistics are the table's.
+/// The types of the columns of a written row group: the table's, as the stored data of a
+/// GEOMETRY column has the type of its storage layout.
+fn column_types(
+    collection: &RowGroupCollection,
+    columns: &[PersistentColumnData],
+) -> Arc<[rustdb_types::LogicalType]> {
+    let types = collection.types();
+    if types.len() == columns.len() {
+        return types.iter().cloned().collect();
+    }
+    columns.iter().map(|data| data.logical_type.clone()).collect()
+}
+
 fn merge_kept_column_statistics(
     row_group: &RowGroup,
     index: usize,

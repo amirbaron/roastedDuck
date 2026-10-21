@@ -248,7 +248,7 @@ pub fn transform_column_statistics(
         }
         _ => {}
     }
-    if schema.kind != SchemaKind::Column {
+    if !matches!(schema.kind, SchemaKind::Column | SchemaKind::Geometry) {
         return Ok(None);
     }
     let Some(chunk) = columns.get(schema.column_index) else {
@@ -296,6 +296,46 @@ pub fn transform_column_statistics(
                 }
                 if let Some(max) = max {
                     string.max = prefix(max);
+                }
+            }
+            stats
+        }
+        L::Geometry => {
+            let mut stats = BaseStatistics::create_unknown(ty.clone());
+            if let (Some(geo), Some(data)) = (&meta.geospatial_statistics, stats.geometry_mut()) {
+                if let Some(bbox) = &geo.bbox {
+                    let extent = &mut data.extent;
+                    // xmin > xmax is allowed for geometries crossing the antimeridian, which
+                    // are not handled.
+                    if bbox.xmin <= bbox.xmax {
+                        extent.x_min = bbox.xmin;
+                        extent.x_max = bbox.xmax;
+                    }
+                    if bbox.ymin <= bbox.ymax {
+                        extent.y_min = bbox.ymin;
+                        extent.y_max = bbox.ymax;
+                    }
+                    if let (Some(zmin), Some(zmax)) = (bbox.zmin, bbox.zmax)
+                        && zmin <= zmax
+                    {
+                        extent.z_min = zmin;
+                        extent.z_max = zmax;
+                    }
+                    if let (Some(mmin), Some(mmax)) = (bbox.mmin, bbox.mmax)
+                        && mmin <= mmax
+                    {
+                        extent.m_min = mmin;
+                        extent.m_max = mmax;
+                    }
+                }
+                // Types that are set but empty still mean "any type".
+                if let Some(types) = &geo.geospatial_types
+                    && !types.is_empty()
+                {
+                    data.types.clear();
+                    for &wkb_type in types {
+                        data.types.add_wkb_type(wkb_type);
+                    }
                 }
             }
             stats

@@ -703,20 +703,17 @@ fn serialize_indexes(
     if options.compatibility.serialization_version >= 3 {
         index_options.insert("v1_0_0_storage", Value::boolean(false));
     }
-    let storage_version = storage.block_manager().storage_version();
     let mut infos = Vec::new();
     for entry in table.info().indexes().entries() {
         let mut index_blocks = BlockWriter::new(Arc::clone(storage.block_manager()));
         let mut state = entry.lock();
-        let info = state
-            .index
-            .serialize_to_disk(&index_options, storage_version, &mut |bytes| {
-                let pointer = index_blocks.write_segment(bytes)?;
-                Ok(rustdb_storage::index::fixed_size_allocator::BufferPointer {
-                    block_id: pointer.block_id,
-                    offset: pointer.offset,
-                })
-            })?;
+        let info = state.index.serialize_to_disk(&index_options, &mut |bytes| {
+            let pointer = index_blocks.write_segment(bytes)?;
+            Ok(rustdb_storage::index::fixed_size_allocator::BufferPointer {
+                block_id: pointer.block_id,
+                offset: pointer.offset,
+            })
+        })?;
         index_blocks.flush()?;
         for (block, count) in index_blocks.used_blocks {
             *blocks.used_blocks.entry(block).or_insert(0) += count;
@@ -843,6 +840,7 @@ pub fn load_checkpoint(
                         "reading indexes of database files written by old DuckDB versions",
                     ));
                 }
+                let mut index_versions = std::collections::HashMap::new();
                 if d.on_optional_property_begin(104, "index_storage_infos")? {
                     // The indexes are rebuilt from the table below; their stored data
                     // only keeps its blocks in use until the next checkpoint.
@@ -853,6 +851,7 @@ pub fn load_checkpoint(
                             rustdb_storage::checkpoint::pointers::IndexStorageInfo::deserialize_fields(d)?;
                         d.on_object_end()?;
                         data_blocks.extend(info.block_ids());
+                        index_versions.insert(info.name, info.storage_version);
                     }
                     d.on_list_end()?;
                     d.on_optional_property_end(true)?;
@@ -878,6 +877,7 @@ pub fn load_checkpoint(
                     columns,
                     collection,
                 );
+                table.info().set_stored_index_versions(index_versions);
                 for (index, constraint) in entry.constraints.iter().enumerate() {
                     match constraint {
                         Constraint::Unique(unique) => {
