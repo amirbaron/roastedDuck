@@ -42,12 +42,9 @@ pub(crate) fn setting_bool(context: &ClientContext, name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// The virtual `filename` column (`MultiFileReader::COLUMN_IDENTIFIER_FILENAME`).
-pub const COLUMN_IDENTIFIER_FILENAME: u64 = 1 << 63;
-/// The virtual `file_row_number` column (`COLUMN_IDENTIFIER_FILE_ROW_NUMBER`).
-pub const COLUMN_IDENTIFIER_FILE_ROW_NUMBER: u64 = (1 << 63) + 1;
-/// The virtual `file_index` column (`COLUMN_IDENTIFIER_FILE_INDEX`).
-pub const COLUMN_IDENTIFIER_FILE_INDEX: u64 = (1 << 63) + 2;
+pub use rustdb_csv::multi_file::{
+    COLUMN_IDENTIFIER_FILE_INDEX, COLUMN_IDENTIFIER_FILE_ROW_NUMBER, COLUMN_IDENTIFIER_FILENAME,
+};
 
 /// `MultiFileScanStats`: the statistics of a column from the metadata already read
 /// while binding: of the single file, or merged over all files with `union_by_name`.
@@ -208,19 +205,7 @@ fn read_parquet_virtual_columns(bind_data: Option<&dyn FunctionData>) -> Vec<(u6
     let filename_option = bind_data
         .and_then(|data| data.as_any().downcast_ref::<ParquetBindData>())
         .is_some_and(|data| data.reader_bind.filename_idx.is_some());
-    let mut result = Vec::with_capacity(3);
-    if !filename_option {
-        result.push((
-            COLUMN_IDENTIFIER_FILENAME,
-            "filename".to_owned(),
-            LogicalType::VARCHAR,
-        ));
-    }
-    result.push((
-        COLUMN_IDENTIFIER_FILE_INDEX,
-        "file_index".to_owned(),
-        LogicalType::UBIGINT,
-    ));
+    let mut result = rustdb_csv::multi_file::multi_file_virtual_columns(filename_option);
     result.push((
         COLUMN_IDENTIFIER_FILE_ROW_NUMBER,
         "file_row_number".to_owned(),

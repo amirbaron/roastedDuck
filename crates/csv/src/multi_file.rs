@@ -36,6 +36,32 @@ impl Default for MultiFileOptions {
     }
 }
 
+/// The virtual `filename` column (`MultiFileReader::COLUMN_IDENTIFIER_FILENAME`).
+pub const COLUMN_IDENTIFIER_FILENAME: u64 = 1 << 63;
+/// The virtual `file_row_number` column (`COLUMN_IDENTIFIER_FILE_ROW_NUMBER`).
+pub const COLUMN_IDENTIFIER_FILE_ROW_NUMBER: u64 = (1 << 63) + 1;
+/// The virtual `file_index` column (`COLUMN_IDENTIFIER_FILE_INDEX`).
+pub const COLUMN_IDENTIFIER_FILE_INDEX: u64 = (1 << 63) + 2;
+
+/// `MultiFileGetVirtualColumns`: `filename` (unless the `filename` option names a real
+/// column) and `file_index`.
+pub fn multi_file_virtual_columns(filename_option: bool) -> Vec<(u64, String, LogicalType)> {
+    let mut result = Vec::with_capacity(2);
+    if !filename_option {
+        result.push((
+            COLUMN_IDENTIFIER_FILENAME,
+            "filename".to_owned(),
+            LogicalType::VARCHAR,
+        ));
+    }
+    result.push((
+        COLUMN_IDENTIFIER_FILE_INDEX,
+        "file_index".to_owned(),
+        LogicalType::UBIGINT,
+    ));
+    result
+}
+
 /// How many files a file list expanded to (DuckDB's `FileExpandResult`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileExpandResult {
@@ -500,6 +526,39 @@ fn list_files(path: &str) -> Vec<(String, bool)> {
         .collect()
 }
 
+/// The directories of the `file_search_path` setting, relative paths are looked up in.
+fn file_search_paths() -> Vec<String> {
+    rustdb_function::file_system::opener()
+        .and_then(|client| client.settings())
+        .and_then(|settings| settings.current_setting("file_search_path").ok())
+        .filter(|value| !value.is_null())
+        .and_then(|value| value.to_varchar().ok())
+        .map(|paths| {
+            paths
+                .split(',')
+                .filter(|path| !path.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `LocalFileSystem::FetchFileWithoutGlob`: the file itself, or else (for relative paths)
+/// the files of that name in the `file_search_path` directories.
+fn fetch_file_without_glob(path: &str, absolute_path: bool) -> Vec<String> {
+    if file_exists(path) {
+        return vec![path.to_owned()];
+    }
+    if absolute_path {
+        return Vec::new();
+    }
+    file_search_paths()
+        .iter()
+        .map(|search_path| join_path(search_path, path))
+        .filter(|joined| file_exists(joined))
+        .collect()
+}
+
 /// `LocalGlobResult`: expands a pattern against the local file system.
 pub fn local_glob(pattern: &str) -> Result<Vec<String>> {
     // `OpenerFileSystem::Glob` checks the pattern against the access configuration.
@@ -529,11 +588,7 @@ pub fn local_glob(pattern: &str) -> Result<Vec<String>> {
     splits.push(path[last_pos..].to_owned());
     let absolute_path = path.starts_with('/') || splits[0].contains(':');
     if !has_glob(&path) {
-        return Ok(if file_exists(&path) {
-            vec![path]
-        } else {
-            Vec::new()
-        });
+        return Ok(fetch_file_without_glob(&path, absolute_path));
     }
     if splits.iter().filter(|split| *split == "**").count() > 1 {
         return Err(io_error("Cannot use multiple '**' in one path"));
@@ -552,11 +607,21 @@ pub fn local_glob(pattern: &str) -> Result<Vec<String>> {
             });
         }
     } else {
-        expand_directories.push(ExpandDirectory {
-            path: ".".to_owned(),
-            split_index: 0,
-            is_empty: true,
-        });
+        // The `file_search_path` directories are where relative globs start.
+        for search_path in file_search_paths() {
+            expand_directories.push(ExpandDirectory {
+                path: search_path,
+                split_index: 0,
+                is_empty: false,
+            });
+        }
+        if expand_directories.is_empty() {
+            expand_directories.push(ExpandDirectory {
+                path: ".".to_owned(),
+                split_index: 0,
+                is_empty: true,
+            });
+        }
     }
     let mut expanded_files: Vec<String> = Vec::new();
     while let Some(next_dir) = expand_directories.pop() {
@@ -639,8 +704,9 @@ pub fn local_glob(pattern: &str) -> Result<Vec<String>> {
             }
         }
     }
-    if expanded_files.is_empty() && file_exists(&path) {
-        expanded_files.push(path);
+    if expanded_files.is_empty() {
+        // Last ditch effort: the path as a literal file name.
+        expanded_files = fetch_file_without_glob(&path, absolute_path);
     }
     Ok(expanded_files)
 }

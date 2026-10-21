@@ -277,6 +277,10 @@ impl CsvSink {
     /// Creates `path` (replacing an existing file), compressed as `compression` says
     /// (`FileSystem::OpenFile` with `FILE_FLAGS_FILE_CREATE_NEW` and the compression).
     pub(crate) fn create(path: &str, compression: FileCompressionType) -> Result<Self> {
+        let compression = compression.resolve(path);
+        if compression == FileCompressionType::Zstd {
+            rustdb_function::file_system::verify_zstd_file_system()?;
+        }
         let file = File::create(path).map_err(|error| crate::buffer::open_error(path, &error))?;
         let file = LoggedFile {
             file,
@@ -284,7 +288,7 @@ impl CsvSink {
             position: 0,
         };
         let file = BufWriter::with_capacity(1 << 15, file);
-        Ok(match compression.resolve(path) {
+        Ok(match compression {
             FileCompressionType::Gzip => Self::Gzip(flate2::write::GzEncoder::new(
                 file,
                 flate2::Compression::default(),
@@ -330,7 +334,16 @@ struct CsvWriter {
     path: String,
     written_anything: bool,
     bytes_written: u64,
+    /// Rows not written to the file yet (the `MemoryStream` of `CSVWriterState`); they
+    /// are flushed once `FLUSH_SIZE` bytes accumulate, so `FILE_SIZE_BYTES` sees whole
+    /// flushes as DuckDB's writer does.
+    pending: Vec<u8>,
+    /// Whether `pending` holds rows (`CSVWriterState::written_anything`).
+    pending_written: bool,
 }
+
+/// `CSVWriterOptions::flush_size`.
+const FLUSH_SIZE: usize = 4096 * 8;
 
 fn write_error(path: &str, error: &std::io::Error) -> Error {
     Error::new(ErrorKind::Io, format!("Could not write file \"{path}\": {error}"))
@@ -351,6 +364,34 @@ impl CsvWriter {
         }
         self.written_anything = true;
         self.write_raw(block)
+    }
+
+    /// `CSVWriter::WriteChunk` with a writer state: buffers a block of rows, flushing the
+    /// buffer once it reaches `FLUSH_SIZE`.
+    fn write_rows(&mut self, block: &[u8], newline: &str) -> Result<()> {
+        if self.pending_written {
+            self.pending.extend_from_slice(newline.as_bytes());
+        }
+        self.pending_written = true;
+        self.pending.extend_from_slice(block);
+        if self.pending.len() >= FLUSH_SIZE {
+            self.flush_pending(newline)?;
+        }
+        Ok(())
+    }
+
+    /// `CSVWriter::Flush` of the buffered rows.
+    fn flush_pending(&mut self, newline: &str) -> Result<()> {
+        if !self.pending_written {
+            return Ok(());
+        }
+        let pending = std::mem::take(&mut self.pending);
+        self.pending_written = false;
+        let result = self.flush_block(&pending, newline);
+        // Keep the allocation for the next rows.
+        self.pending = pending;
+        self.pending.clear();
+        result
     }
 }
 
@@ -441,6 +482,8 @@ fn write_csv_initialize_global(bind_data: &dyn FunctionData, path: &str) -> Resu
         path: path.to_owned(),
         written_anything: false,
         bytes_written: 0,
+        pending: Vec::new(),
+        pending_written: false,
     };
     if !data.options.prefix.is_empty() {
         writer.write_raw(data.options.prefix.as_bytes())?;
@@ -538,7 +581,7 @@ fn write_csv_sink(bind_data: &dyn FunctionData, state: &CopyGlobalState, chunk: 
         return Ok(());
     };
     let mut writer = global.writer.lock().unwrap_or_else(PoisonError::into_inner);
-    writer.flush_block(&block, &data.writer_options.newline)
+    writer.write_rows(&block, &data.writer_options.newline)
 }
 
 /// The rows of a chunk as CSV lines (without a final newline); `None` for no rows.
@@ -632,6 +675,7 @@ fn write_csv_flush_batch(
         .downcast::<Vec<Vec<u8>>>()
         .map_err(|_| Error::internal("csv batch of another format"))?;
     let mut writer = global.writer.lock().unwrap_or_else(PoisonError::into_inner);
+    writer.flush_pending(&data.writer_options.newline)?;
     for block in blocks.iter() {
         writer.flush_block(block, &data.writer_options.newline)?;
     }
@@ -648,6 +692,7 @@ fn write_csv_finalize(bind_data: &dyn FunctionData, state: &CopyGlobalState) -> 
         .downcast_ref::<GlobalWriteCsvData>()
         .ok_or_else(|| Error::internal("csv write without its file"))?;
     let mut writer = global.writer.lock().unwrap_or_else(PoisonError::into_inner);
+    writer.flush_pending(&data.writer_options.newline)?;
     if !data.options.suffix.is_empty() {
         writer.write_raw(data.options.suffix.as_bytes())?;
     } else if writer.written_anything {

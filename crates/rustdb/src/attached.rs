@@ -338,7 +338,8 @@ pub(crate) struct DatabaseManager {
     attach_lock: Mutex<()>,
     /// Detached databases a transaction still uses: their files stay reserved until
     /// they are closed (`DatabaseFilePathManager`).
-    detached: Mutex<Vec<std::sync::Weak<AttachedDatabase>>>,
+    /// With whether to checkpoint when closing (the `checkpoint` of the detach).
+    detached: Mutex<Vec<(std::sync::Weak<AttachedDatabase>, bool)>>,
 }
 
 impl DatabaseManager {
@@ -374,16 +375,32 @@ impl DatabaseManager {
             self.detached
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .push(Arc::downgrade(&database));
+                .push((Arc::downgrade(&database), checkpoint));
         }
         Some(result)
     }
 
-    /// The detached databases that are not closed yet.
+    /// The detached databases that are not closed yet. One whose other references are
+    /// gone (they were held only briefly when it was detached) is closed now, as DuckDB
+    /// closes it when its last reference goes away (`InvokeCloseIfLastReference`).
     fn detached_open(&self) -> Vec<Arc<AttachedDatabase>> {
         let mut detached = self.detached.lock().unwrap_or_else(PoisonError::into_inner);
-        detached.retain(|database| database.upgrade().is_some_and(|database| !database.is_closed()));
-        detached.iter().filter_map(std::sync::Weak::upgrade).collect()
+        let mut open = Vec::new();
+        detached.retain(|(database, checkpoint)| {
+            let Some(database) = database.upgrade() else {
+                return false;
+            };
+            if database.is_closed() {
+                return false;
+            }
+            if Arc::strong_count(&database) == 1 {
+                let _ = AttachedDatabase::close_if_last_reference(&database, *checkpoint);
+                return false;
+            }
+            open.push(database);
+            true
+        });
+        open
     }
 
     /// Detaches `database` if it is still attached (`ptr_eq`) under its name.

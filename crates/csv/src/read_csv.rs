@@ -42,7 +42,67 @@ pub fn transform_string_to_logical_type(context: &ClientContext, text: &str) -> 
     if text.eq_ignore_ascii_case("null") {
         return Ok(LogicalType::SQLNULL);
     }
-    let column = parse_column_definition(&format!("dummy {text}"), &ParserOptions::default())?;
+    // `TypeManager::ParseLogicalType`: text that does not parse as a type is reported
+    // with similar type names.
+    let column = parse_column_definition(&format!("dummy {text}"), &ParserOptions::default()).map_err(|_| {
+        const SUGGESTED_TYPES: [&str; 47] = [
+        "BIGINT",
+        "INT8",
+        "LONG",
+        "BIT",
+        "BITSTRING",
+        "BLOB",
+        "BYTEA",
+        "BINARY,",
+        "VARBINARY",
+        "BOOLEAN",
+        "BOOL",
+        "LOGICAL",
+        "DATE",
+        "DECIMAL(prec, scale)",
+        "DOUBLE",
+        "FLOAT8",
+        "FLOAT",
+        "FLOAT4",
+        "REAL",
+        "HUGEINT",
+        "INTEGER",
+        "INT4",
+        "INT",
+        "SIGNED",
+        "INTERVAL",
+        "SMALLINT",
+        "INT2",
+        "SHORT",
+        "TIME",
+        "TIMESTAMPTZ",
+        "TIMESTAMP",
+        "DATETIME",
+        "TINYINT",
+        "INT1",
+        "UBIGINT",
+        "UHUGEINT",
+        "UINTEGER",
+        "USMALLINT",
+        "UTINYINT",
+        "UUID",
+        "VARCHAR",
+        "CHAR",
+        "BPCHAR",
+        "TEXT",
+        "STRING",
+        "MAP(INTEGER, VARCHAR)",
+        "UNION(num INTEGER, text VARCHAR)",
+        ];
+        let candidates: Vec<String> = SUGGESTED_TYPES.iter().map(|&name| name.to_owned()).collect();
+        let mut message = format!("Value \"{text}\" can not be converted to a DuckDB Type.\nPossible examples as suggestions: \n");
+        for suggestion in rustdb_common::string_util::top_n_jaro_winkler(&candidates, text) {
+            message.push_str("* ");
+            message.push_str(&suggestion);
+            message.push('\n');
+        }
+        Error::invalid_input(message)
+    })?;
     bind_logical_type(context, &column.logical_type)
 }
 
@@ -83,6 +143,18 @@ impl FunctionData for ReadCsvData {
 }
 
 impl ReadCsvData {
+    /// The type of scanned column `id`, virtual columns included.
+    fn column_type(&self, id: u64) -> LogicalType {
+        match id {
+            crate::multi_file::COLUMN_IDENTIFIER_FILENAME => LogicalType::VARCHAR,
+            crate::multi_file::COLUMN_IDENTIFIER_FILE_INDEX => LogicalType::UBIGINT,
+            _ => usize::try_from(id)
+                .ok()
+                .and_then(|index| self.types.get(index).cloned())
+                .unwrap_or(LogicalType::BOOLEAN),
+        }
+    }
+
     fn view(&self) -> MultiFileOptionsView {
         options_view(&self.file_options)
     }
@@ -556,8 +628,20 @@ fn open_file(data: &ReadCsvData, file_idx: usize, column_ids: &[u64]) -> Result<
         hive_parse(file)
     };
     for &global_id in column_ids {
+        match global_id {
+            crate::multi_file::COLUMN_IDENTIFIER_FILENAME => {
+                sources.push(ColumnSource::Constant(Value::varchar(file)));
+                continue;
+            }
+            crate::multi_file::COLUMN_IDENTIFIER_FILE_INDEX => {
+                sources.push(ColumnSource::Constant(Value::ubigint(file_idx as u64)));
+                continue;
+            }
+            _ => {}
+        }
         let global = global_id as usize;
         if global >= data.names.len() {
+            // The empty column of a scan reading no column.
             sources.push(ColumnSource::Constant(Value::null(LogicalType::BOOLEAN)));
             continue;
         }
@@ -749,9 +833,9 @@ fn read_csv_scan(
         } else {
             if state.file_idx >= data.files.files.len() {
                 *chunk = DataChunk::new(
-                    data.types
+                    column_ids
                         .iter()
-                        .map(|ty| Vector::constant_null(ty.clone()))
+                        .map(|&id| Vector::constant_null(data.column_type(id)))
                         .collect(),
                     0,
                 );
@@ -789,25 +873,16 @@ fn read_csv_scan(
         };
         let rows = reader_chunk.len();
         let reader_columns = reader_chunk.into_columns();
-        let mut columns: Vec<Option<Vector>> = vec![None; data.types.len()];
-        for (position, &global_id) in column_ids.iter().enumerate() {
-            let global = global_id as usize;
-            if global >= columns.len() || columns[global].is_some() {
-                continue;
-            }
-            columns[global] = Some(match &file.sources[position] {
-                ColumnSource::Reader(index) => reader_columns[*index].clone(),
-                ColumnSource::Constant(value) => Vector::constant(value)?,
-            });
-        }
-        *chunk = DataChunk::new(
-            columns
-                .into_iter()
-                .zip(&data.types)
-                .map(|(column, ty)| column.unwrap_or_else(|| Vector::constant_null(ty.clone())))
-                .collect(),
-            rows,
-        );
+        // One output column per scanned column id (`projected_output`).
+        let columns = file
+            .sources
+            .iter()
+            .map(|source| match source {
+                ColumnSource::Reader(index) => Ok(reader_columns[*index].clone()),
+                ColumnSource::Constant(value) => Vector::constant(value),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        *chunk = DataChunk::new(columns, rows);
         state.current = Some(file);
         return Ok(true);
     }
@@ -877,7 +952,14 @@ fn read_csv_function(name: &'static str, argument: LogicalType) -> TableFunction
         .with_scan(read_csv_scan);
     function.named_parameters = read_csv_parameters();
     function.projection_pushdown = true;
+    function.projected_output = true;
     function.empty_column = true;
+    function.get_virtual_columns = Some(Arc::new(|bind_data: Option<&dyn FunctionData>| {
+        let filename_option = bind_data
+            .and_then(|data| data.as_any().downcast_ref::<ReadCsvData>())
+            .is_some_and(|data| data.reader_bind.filename_idx.is_some());
+        crate::multi_file::multi_file_virtual_columns(filename_option)
+    }));
     function.type_pushdown = Some(Arc::new(read_csv_type_pushdown));
     function.file_filter_pushdown = Some(read_csv_file_filter_pushdown());
     function

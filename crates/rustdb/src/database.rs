@@ -386,6 +386,13 @@ impl DatabaseInstance {
             if extension == StaticExtension::Icu {
                 self.load_icu_config();
             }
+            if extension == StaticExtension::Parquet {
+                // `ParquetExtension::Load` registers the ZSTD file system.
+                self.object_cache.put(
+                    rustdb_function::file_system::ZSTD_FILE_SYSTEM_KEY.to_owned(),
+                    Arc::new(()),
+                );
+            }
             loaded.push(extension);
         }
         Ok(())

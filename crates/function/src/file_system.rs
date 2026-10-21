@@ -211,6 +211,26 @@ fn file_system_name(path: &str) -> &'static str {
     }
 }
 
+/// The object cache key under which the database marks the ZSTD file system as
+/// registered (`FileSystemRegistry::compressed_fs`, which the parquet extension extends).
+pub const ZSTD_FILE_SYSTEM_KEY: &str = "rustdb.zstd_file_system";
+
+/// `VirtualFileSystem::OpenFile` with a compression: ZSTD files need the ZSTD file
+/// system, which the parquet extension registers. Without a statement (worker threads)
+/// the check was made when the reader was bound.
+pub fn verify_zstd_file_system() -> rustdb_common::Result<()> {
+    let Some(cache) = opener().and_then(|client| client.object_cache()) else {
+        return Ok(());
+    };
+    if cache.get::<()>(ZSTD_FILE_SYSTEM_KEY).is_some() {
+        return Ok(());
+    }
+    Err(rustdb_common::Error::not_implemented(
+        "Attempting to open a compressed file, but the compression type is not supported.\nConsider explicitly \
+         \"INSTALL parquet; LOAD parquet;\" to support this compression scheme",
+    ))
+}
+
 /// The object cache key of the database's [`DisabledFileSystems`].
 pub const DISABLED_FILE_SYSTEMS_KEY: &str = "rustdb.disabled_filesystems";
 

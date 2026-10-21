@@ -50,6 +50,9 @@ impl JsonFileHandle {
             ));
         }
         let compression = compression.resolve(path);
+        if compression == FileCompressionType::Zstd {
+            rustdb_function::file_system::verify_zstd_file_system()?;
+        }
         if start > 0 {
             file.seek(SeekFrom::Start(start))
                 .map_err(|error| Error::new(ErrorKind::Io, error.to_string()))?;

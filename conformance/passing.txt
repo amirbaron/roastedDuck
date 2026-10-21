@@ -1367,6 +1367,7 @@ test/sql/copy/csv/auto/test_sample_size.test
 test/sql/copy/csv/auto/test_sniffer_blob.test
 test/sql/copy/csv/auto/test_sniffer_empty_start_value.test
 test/sql/copy/csv/auto/test_timings_csv.test
+test/sql/copy/csv/auto/test_type_candidates.test
 test/sql/copy/csv/auto/test_type_detection.test
 test/sql/copy/csv/auto_glob_directory.test
 test/sql/copy/csv/batched_write/batch_csv_mixed_batches.test_slow
@@ -1417,6 +1418,7 @@ test/sql/copy/csv/empty_first_line.test
 test/sql/copy/csv/empty_string_quote.test
 test/sql/copy/csv/except.test
 test/sql/copy/csv/glob/copy_csv_glob.test
+test/sql/copy/csv/glob/read_csv_glob.test
 test/sql/copy/csv/glob/read_csv_glob_crawl.test_slow
 test/sql/copy/csv/glob/read_csv_glob_crawl_partitioned.test_slow
 test/sql/copy/csv/glob/test_unmatch_globs.test
@@ -1457,6 +1459,19 @@ test/sql/copy/csv/read_csv_subquery.test
 test/sql/copy/csv/read_csv_variable.test
 test/sql/copy/csv/recursive_csv_union_by_name.test
 test/sql/copy/csv/recursive_read_csv.test
+test/sql/copy/csv/rejects/csv_buffer_size_rejects.test_slow
+test/sql/copy/csv/rejects/csv_incorrect_columns_amount_rejects.test
+test/sql/copy/csv/rejects/csv_rejects_auto.test
+test/sql/copy/csv/rejects/csv_rejects_flush_cast.test
+test/sql/copy/csv/rejects/csv_rejects_flush_message.test
+test/sql/copy/csv/rejects/csv_rejects_maximum_line.test
+test/sql/copy/csv/rejects/csv_rejects_read.test
+test/sql/copy/csv/rejects/csv_rejects_two_tables.test
+test/sql/copy/csv/rejects/csv_unquoted_rejects.test
+test/sql/copy/csv/rejects/test_invalid_parameters.test
+test/sql/copy/csv/rejects/test_invalid_utf_rejects.test
+test/sql/copy/csv/rejects/test_mixed.test
+test/sql/copy/csv/rejects/test_multiple_errors_same_line.test
 test/sql/copy/csv/relaxed_quotes.test
 test/sql/copy/csv/struct.test
 test/sql/copy/csv/struct_padding.test
@@ -1575,6 +1590,7 @@ test/sql/copy/csv/test_thousands_separator.test
 test/sql/copy/csv/test_time.test
 test/sql/copy/csv/test_timestamp_offset.test
 test/sql/copy/csv/test_timestamptz_12926.test
+test/sql/copy/csv/test_union_by_name.test
 test/sql/copy/csv/test_union_by_name_types.test
 test/sql/copy/csv/test_unquoted_csv.test_slow
 test/sql/copy/csv/test_validator.test
@@ -1608,6 +1624,7 @@ test/sql/copy/encryption/tpch_sf1_encrypted.test_slow
 test/sql/copy/encryption/unencrypted_to_encrypted.test
 test/sql/copy/encryption/unencrypted_to_encrypted_direct_query.test
 test/sql/copy/encryption/write_encrypted_database.test
+test/sql/copy/file_size_bytes.test
 test/sql/copy/file_size_bytes_large.test_slow
 test/sql/copy/format_uuid.test
 test/sql/copy/hive_partition_null_overwrite.test

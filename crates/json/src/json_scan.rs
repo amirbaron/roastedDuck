@@ -22,10 +22,7 @@ use crate::json_reader::{ByteRange, JsonReader, ScanBatch};
 use crate::json_reader_options::JsonReaderOptions;
 use crate::yyjson::Doc;
 
-/// The virtual `filename` column (`MultiFileReader::COLUMN_IDENTIFIER_FILENAME`).
-pub const COLUMN_IDENTIFIER_FILENAME: u64 = 1 << 63;
-/// The virtual `file_index` column (`COLUMN_IDENTIFIER_FILE_INDEX`).
-pub const COLUMN_IDENTIFIER_FILE_INDEX: u64 = (1 << 63) + 2;
+pub use rustdb_csv::multi_file::{COLUMN_IDENTIFIER_FILE_INDEX, COLUMN_IDENTIFIER_FILENAME};
 /// The empty column of multi-file readers (`COLUMN_IDENTIFIER_EMPTY`).
 const COLUMN_IDENTIFIER_EMPTY: u64 = u64::MAX - 1;
 
@@ -515,24 +512,10 @@ pub(crate) fn json_scan(
     Ok(false)
 }
 
-/// `MultiFileGetVirtualColumns`: `filename` (unless the `filename` option names a real
-/// column) and `file_index`.
+/// `MultiFileGetVirtualColumns`.
 pub(crate) fn json_virtual_columns(bind_data: Option<&dyn FunctionData>) -> Vec<(u64, String, LogicalType)> {
     let filename_option = bind_data
         .and_then(|data| data.as_any().downcast_ref::<JsonScanData>())
         .is_some_and(|data| data.reader_bind.filename_idx.is_some());
-    let mut result = Vec::with_capacity(2);
-    if !filename_option {
-        result.push((
-            COLUMN_IDENTIFIER_FILENAME,
-            "filename".to_owned(),
-            LogicalType::VARCHAR,
-        ));
-    }
-    result.push((
-        COLUMN_IDENTIFIER_FILE_INDEX,
-        "file_index".to_owned(),
-        LogicalType::UBIGINT,
-    ));
-    result
+    rustdb_csv::multi_file::multi_file_virtual_columns(filename_option)
 }

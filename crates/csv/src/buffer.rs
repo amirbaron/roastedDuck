@@ -192,6 +192,9 @@ impl CsvFileHandle {
             ));
         }
         let compression = options.compression.resolve(path);
+        if compression == FileCompressionType::Zstd {
+            rustdb_function::file_system::verify_zstd_file_system()?;
+        }
         let file = LoggedFile {
             file,
             logger: FileSystemLogger::open(path),
