@@ -46,8 +46,8 @@ impl FunctionData for DbgenFunctionData {
         self
     }
 
-    fn modified_database(&self) -> Option<&str> {
-        Some(self.target.catalog.name())
+    fn modified_database(&self) -> Option<String> {
+        Some(self.target.catalog.name().to_string())
     }
 }
 
@@ -74,7 +74,7 @@ fn thread_count(context: &ClientContext) -> usize {
 fn dbgen_bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBindOutput> {
     let context = client_context(input)?;
     // The current catalog and schema.
-    let mut catalog = context.default_catalog().to_owned();
+    let mut catalog = context.default_catalog();
     let mut schema = context.default_schema().to_owned();
     let mut sf = 0.0;
     let mut suffix = String::new();

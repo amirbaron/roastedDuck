@@ -110,9 +110,9 @@ fn bind_scalar_function<B: ExpressionBinder + ?Sized>(
                 if !properties
                     .modified_databases
                     .iter()
-                    .any(|name| name.eq_ignore_ascii_case(database))
+                    .any(|name| name.eq_ignore_ascii_case(&database))
                 {
-                    properties.modified_databases.push(database.to_owned());
+                    properties.modified_databases.push(database);
                 }
             });
         }

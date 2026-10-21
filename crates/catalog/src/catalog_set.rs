@@ -63,9 +63,30 @@ pub enum Lookup {
 pub struct CatalogSet {
     chains: Mutex<BTreeMap<String, Vec<Arc<Version>>>>,
     /// The catalog the set belongs to.
-    catalog: String,
+    catalog: CatalogName,
     /// The schema the set belongs to (empty for the set of schemas).
     schema: String,
+}
+
+/// The name of a catalog, shared by its sets: `ALTER DATABASE ... SET ALIAS TO` renames
+/// the attached database, and DuckDB's catalog name is the attached database's
+/// (`Catalog::GetName`).
+#[derive(Clone, Debug, Default)]
+pub struct CatalogName(Arc<std::sync::RwLock<Arc<str>>>);
+
+impl CatalogName {
+    pub fn new(name: &str) -> Self {
+        Self(Arc::new(std::sync::RwLock::new(Arc::from(name))))
+    }
+
+    pub fn get(&self) -> Arc<str> {
+        Arc::clone(&self.0.read().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// Renames the catalog (`AttachedDatabase::SetName`).
+    pub fn set(&self, name: &str) {
+        *self.0.write().unwrap_or_else(PoisonError::into_inner) = Arc::from(name);
+    }
 }
 
 fn key(name: &str) -> String {
@@ -86,17 +107,17 @@ fn conflicts(transaction: &Transaction, timestamp: u64) -> bool {
 
 impl CatalogSet {
     /// An empty set of schema `schema` of catalog `catalog`.
-    pub fn new(catalog: impl Into<String>, schema: impl Into<String>) -> Self {
+    pub fn new(catalog: &CatalogName, schema: impl Into<String>) -> Self {
         Self {
             chains: Mutex::default(),
-            catalog: catalog.into(),
+            catalog: catalog.clone(),
             schema: schema.into(),
         }
     }
 
-    /// The catalog the set belongs to.
-    pub fn catalog_name(&self) -> &str {
-        &self.catalog
+    /// The name of the catalog the set belongs to.
+    pub fn catalog_name(&self) -> Arc<str> {
+        self.catalog.get()
     }
 
     /// The schema the set belongs to (empty for the set of schemas).

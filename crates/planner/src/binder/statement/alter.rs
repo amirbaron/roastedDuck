@@ -34,11 +34,13 @@ pub fn bind_alter(scope: &mut BindScope<'_>, info: &mut AlterInfo) -> Result<Bou
             .ok_or_else(|| Error::internal("ALTER OWNED BY of an unexpected entry"))?,
         AlterInfoKind::SetComment(comment) => CatalogType::from_ast(comment.entry_catalog_type)
             .ok_or_else(|| Error::internal("COMMENT ON an unexpected entry"))?,
-        other @ AlterInfoKind::AlterDatabase(_) => {
-            return Err(Error::not_implemented(format!(
-                "ALTER {}",
-                other.alter_type().name()
-            )));
+        // `ALTER DATABASE` changes the database manager, not a catalog.
+        AlterInfoKind::AlterDatabase(_) => {
+            return Ok(BoundStatement::new(
+                LogicalOperator::new(LogicalKind::AlterDatabase(info.clone())),
+                vec!["Success".to_owned()],
+                vec![LogicalType::BOOLEAN],
+            ));
         }
     };
     let (catalog, schema) = bind_schema_or_catalog(scope, &info.catalog, &info.schema)?;

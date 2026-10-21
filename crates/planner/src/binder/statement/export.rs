@@ -89,7 +89,7 @@ pub fn bind_export(scope: &mut BindScope<'_>, stmt: &mut ExportStatement) -> Res
         )));
     }
     let catalog_name = if stmt.database.is_empty() {
-        scope.context.default_catalog().to_owned()
+        scope.context.default_catalog()
     } else {
         stmt.database.clone()
     };

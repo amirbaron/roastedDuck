@@ -108,7 +108,7 @@ pub struct SchemaEntry {
 
 impl SchemaEntry {
     /// The empty schema `schema` of catalog `catalog`.
-    pub fn new(catalog: &str, schema: &str) -> Self {
+    pub fn new(catalog: &crate::CatalogName, schema: &str) -> Self {
         let set = || Arc::new(CatalogSet::new(catalog, schema));
         Self {
             tables: set(),

@@ -53,8 +53,9 @@ pub(crate) struct DatabaseInstance {
     pub(crate) system_catalog: Arc<Catalog>,
     /// The database opened at start-up and every attached one.
     pub(crate) databases: DatabaseManager,
-    /// The name of the database opened at start-up (the default database).
-    default_database: std::sync::OnceLock<String>,
+    /// The name of the database opened at start-up (the default database), which
+    /// `ALTER DATABASE ... SET ALIAS TO` renames.
+    default_database: std::sync::RwLock<Option<String>>,
     /// The cast functions (DuckDB's `DBConfig::GetCastFunctions`); extensions replace
     /// the set when they register casts.
     casts: std::sync::RwLock<Arc<CastFunctionSet>>,
@@ -1169,9 +1170,43 @@ impl DatabaseInstance {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// `ALTER DATABASE` (`DatabaseManager::Alter`): `SET ALIAS TO` renames an attached
+    /// database (`RenameDatabase`), and the default database follows its name.
+    fn alter_database(&self, info: &rustdb_ast::AlterInfo) -> Result<()> {
+        let rustdb_ast::AlterInfoKind::AlterDatabase(rustdb_ast::AlterDatabaseInfo::RenameDatabase(rename)) =
+            &info.kind
+        else {
+            return Err(Error::internal("Unsupported ALTER DATABASE operation"));
+        };
+        let (name, new_name) = (&info.catalog, &rename.new_name);
+        if !self.databases.rename(name, new_name)? {
+            if info.if_not_found == rustdb_ast::OnEntryNotFound::ThrowException {
+                return Err(Error::binder(format!(
+                    "Failed to rename database \"{name}\": database not found"
+                )));
+            }
+            return Ok(());
+        }
+        let mut default = self
+            .default_database
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if default
+            .as_deref()
+            .is_some_and(|default| default.eq_ignore_ascii_case(name))
+        {
+            *default = Some(new_name.clone());
+        }
+        Ok(())
+    }
+
     /// The name of the database opened at start-up.
-    pub(crate) fn default_database_name(&self) -> &str {
-        self.default_database.get().map_or("memory", String::as_str)
+    pub(crate) fn default_database_name(&self) -> String {
+        self.default_database
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .unwrap_or_else(|| "memory".to_owned())
     }
 
     /// The attached database called `name`.
@@ -1187,13 +1222,13 @@ impl DatabaseInstance {
         let databases = self.databases.all();
         let mut catalogs: Vec<Arc<Catalog>> = databases
             .iter()
-            .filter(|database| database.name.eq_ignore_ascii_case(default))
+            .filter(|database| database.name().eq_ignore_ascii_case(default))
             .map(|database| Arc::clone(&database.catalog))
             .collect();
         catalogs.extend(
             databases
                 .iter()
-                .filter(|database| !database.name.eq_ignore_ascii_case(default))
+                .filter(|database| !database.name().eq_ignore_ascii_case(default))
                 .map(|database| Arc::clone(&database.catalog)),
         );
         catalogs.push(Arc::clone(&self.system_catalog));
@@ -1276,7 +1311,7 @@ impl DatabaseInstance {
             // transaction made changes they must not see; the checkpoint lock must be free,
             // also of committed changes older transactions still need.
             if blocks_concurrent
-                || self.transactions.retains_changes(u64::MAX, &database.name)
+                || self.transactions.retains_changes(u64::MAX, &database.name())
                 || database.catalog.locks().checkpoint.try_exclusive().is_none()
             {
                 return Ok(());
@@ -1413,7 +1448,7 @@ impl Database {
             transactions: Arc::default(),
             system_catalog: Arc::new(system_catalog),
             databases: DatabaseManager::new(Arc::clone(&log_manager)),
-            default_database: std::sync::OnceLock::new(),
+            default_database: std::sync::RwLock::default(),
             casts: std::sync::RwLock::new(Arc::new(json_casts())),
             client_casts: std::sync::atomic::AtomicBool::new(false),
             extension_options: std::sync::RwLock::default(),
@@ -1481,7 +1516,11 @@ impl Database {
         let main = database.attach("", &path, &options, rustdb_ast::OnCreateConflict::ErrorOnConflict)?;
         if let Some(main) = main {
             main.is_initial.store(true, std::sync::atomic::Ordering::Release);
-            let _ = database.instance.default_database.set(main.name.clone());
+            *database
+                .instance
+                .default_database
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(main.name().to_string());
         }
         Ok(database)
     }
@@ -1538,7 +1577,7 @@ impl Database {
             .storage
             .set_variant_shredding_config(self.instance.variant_shredding_config());
         if let Err(error) = crate::wal::replay(self, &attached) {
-            self.instance.databases.remove(&attached.name);
+            self.instance.databases.remove(&attached.name());
             return Err(error);
         }
         // `RecoveryMode::NO_WAL_WRITES`: the WAL is replayed, but not written to again.
@@ -1642,7 +1681,7 @@ impl Database {
             Arc::clone(&self.instance.transactions),
             Arc::clone(&function_client),
         );
-        function_client.set_database(self.instance.default_database_name());
+        function_client.set_database(&self.instance.default_database_name());
         self.instance
             .connections
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1743,10 +1782,11 @@ impl Database {
             // The core function library is part of the system catalog, loaded at start-up
             // as the reference build's statically linked `core_functions` is.
             "core_functions" => ExtensionLoad::Loaded,
-            "icu" | "tpcds" | "httpfs"| "fts" | "inet" | "excel" | "sqlsmith"
-            | "spatial" | "delta" | "iceberg" | "aws" | "azure" | "motherduck" | "postgres_scanner"
-            | "mysql_scanner" | "sqlite_scanner" | "vss" | "ui" | "encodings" | "ducklake" | "avro"
-            | "demo_capi" => ExtensionLoad::NotAvailable,
+            "icu" | "tpcds" | "httpfs" | "fts" | "inet" | "excel" | "sqlsmith" | "spatial" | "delta"
+            | "iceberg" | "aws" | "azure" | "motherduck" | "postgres_scanner" | "mysql_scanner"
+            | "sqlite_scanner" | "vss" | "ui" | "encodings" | "ducklake" | "avro" | "demo_capi" => {
+                ExtensionLoad::NotAvailable
+            }
             _ => ExtensionLoad::Unknown,
         })
     }
@@ -2467,7 +2507,7 @@ impl Connection {
             }));
         let instance = self.database.instance();
         let context = Arc::new(ClientContext {
-            catalogs: self.catalogs(instance.default_database_name()),
+            catalogs: self.catalogs(&instance.default_database_name()),
             search_path: self.search_path.clone(),
             view_search_path: Vec::new(),
             transaction,
@@ -2566,7 +2606,7 @@ impl Connection {
                 stmt.from_database, stmt.to_database
             )));
         }
-        let target_name = target.name.clone();
+        let target_name = target.name().to_string();
         // Read the source in the open transaction, or in a snapshot of its own.
         let (snapshot, temporary) = if self.transactions.has_current() {
             (self.transactions.current(), false)
@@ -2623,7 +2663,7 @@ impl Connection {
                     format!(
                         "INSERT INTO {} ({columns}) SELECT {columns} FROM {}",
                         rustdb_ast::qualifier_to_string(&target_name, &schema, entry.name()),
-                        rustdb_ast::qualifier_to_string(&source.name, &schema, entry.name()),
+                        rustdb_ast::qualifier_to_string(&source.name(), &schema, entry.name()),
                     ),
                 ));
             }
@@ -2982,14 +3022,14 @@ impl Connection {
                         .catalog
                         .schema(&transaction, rustdb_catalog::DEFAULT_SCHEMA)
                 {
-                    resolved.push((database.name.clone(), main.name().to_owned()));
+                    resolved.push((database.name().to_string(), main.name().to_owned()));
                     set_paths.push((schema.clone(), main.name().to_owned()));
                     continue;
                 }
                 let default = self.default_catalog();
                 let database = instance.databases.get(&default).ok_or_else(not_found)?;
                 if let Some(found) = database.catalog.schema(&transaction, &schema) {
-                    resolved.push((database.name.clone(), found.name().to_owned()));
+                    resolved.push((database.name().to_string(), found.name().to_owned()));
                 } else {
                     // `Catalog::GetSchema` without a catalog also finds the system schemas.
                     let found = instance
@@ -3006,7 +3046,7 @@ impl Connection {
                 .catalog
                 .schema(&transaction, &schema)
                 .ok_or_else(not_found)?;
-            resolved.push((database.name.clone(), found.name().to_owned()));
+            resolved.push((database.name().to_string(), found.name().to_owned()));
             set_paths.push((catalog, schema));
         }
         if set_schema
@@ -3080,7 +3120,7 @@ impl Connection {
     /// The name of the default database of this connection.
     fn default_catalog(&self) -> String {
         self.search_path.first().map_or_else(
-            || self.database.instance().default_database_name().to_owned(),
+            || self.database.instance().default_database_name(),
             |(catalog, _)| catalog.clone(),
         )
     }
@@ -3252,11 +3292,11 @@ impl Connection {
                 return Err(Error::invalid_input(format!(
                     "Cannot execute statement of type \"{}\" on database \"{}\" which is attached in read-only mode!",
                     ty.strip_suffix("_STATEMENT").unwrap_or(ty),
-                    database.name
+                    database.name()
                 )));
             }
             transaction.modify_database(
-                &database.name,
+                &database.name(),
                 database.catalog.wal(),
                 database.catalog.locks(),
                 needs_checkpoint_lock(plan),
@@ -3351,7 +3391,7 @@ impl Connection {
                             let transaction = self.transactions.current();
                             for database in self.database.instance().databases.all() {
                                 if database.validity.invalidated().is_none() {
-                                    transaction.access_database(&database.name);
+                                    transaction.access_database(&database.name());
                                     self.use_database(&database);
                                 }
                             }
@@ -3423,6 +3463,10 @@ impl Connection {
             }
             LogicalKind::Detach(info) => {
                 self.detach(info)?;
+                return Ok(StatementRun::Done(nothing()));
+            }
+            LogicalKind::AlterDatabase(info) => {
+                self.database.instance().alter_database(info)?;
                 return Ok(StatementRun::Done(nothing()));
             }
             LogicalKind::Set {
@@ -3966,7 +4010,7 @@ fn collect_modified_databases(plan: &LogicalOperator, instance: &DatabaseInstanc
                     .io()
                     .is_ok_and(|io| Arc::ptr_eq(io, storage.io()))
             })
-            .map(|database| database.name.clone())
+            .map(|database| database.name().to_string())
     };
     match &plan.kind {
         LogicalKind::Insert(insert) => {
@@ -4009,7 +4053,7 @@ fn collect_modified_databases(plan: &LogicalOperator, instance: &DatabaseInstanc
         LogicalKind::Drop(info) => push(&info.catalog),
         LogicalKind::Get(get) => {
             if let Some(name) = table_function_modified_database(get) {
-                push(name);
+                push(&name);
             }
         }
         _ => {}
@@ -4021,7 +4065,7 @@ fn collect_modified_databases(plan: &LogicalOperator, instance: &DatabaseInstanc
 
 /// The database a table function call writes to, as its bind registered it (DuckDB's
 /// `RegisterDBModify`, e.g. by `dbgen`).
-fn table_function_modified_database(get: &rustdb_planner::operator::LogicalGet) -> Option<&str> {
+fn table_function_modified_database(get: &rustdb_planner::operator::LogicalGet) -> Option<String> {
     get.bind_data.as_deref()?.modified_database()
 }
 

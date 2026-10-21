@@ -981,6 +981,7 @@ test/sql/alter/struct/drop_col_nested_struct.test
 test/sql/alter/struct/drop_col_struct.test
 test/sql/alter/struct/rename_col_nested_struct.test
 test/sql/alter/struct/rename_col_struct.test
+test/sql/alter/test_alter_database_rename.test
 test/sql/alter/test_alter_if_exists.test
 test/sql/append/test_big_append.test_slow
 test/sql/attach/attach_all_types.test

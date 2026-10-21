@@ -106,7 +106,7 @@ impl CatalogUndo for CatalogChange {
         let schema = self.set.schema_name();
         match &self.wal {
             WalRecord::Create => match self.version.entry() {
-                Some(entry) => crate::wal::write_create(batch, catalog, schema, entry),
+                Some(entry) => crate::wal::write_create(batch, &catalog, schema, entry),
                 None => Ok(()),
             },
             WalRecord::Drop(entry) => crate::wal::write_drop(batch, schema, entry),
@@ -151,7 +151,10 @@ impl CatalogUndo for CommitCheck {
     fn verify_commit(&self, start_time: u64) -> Result<()> {
         match self {
             Self::SchemaDropped { name, sets } => {
-                if sets.iter().any(|set| set.created_since(start_time, |_| true).is_some()) {
+                if sets
+                    .iter()
+                    .any(|set| set.created_since(start_time, |_| true).is_some())
+                {
                     return Err(rustdb_common::Error::new(
                         rustdb_common::ErrorKind::Dependency,
                         format!(
@@ -171,7 +174,10 @@ impl CatalogUndo for CommitCheck {
                             .as_ref()
                             .is_some_and(|owner| crate::entry::same_entry(owner, entry))
                 };
-                if sets.iter().any(|set| set.created_since(start_time, refers).is_some()) {
+                if sets
+                    .iter()
+                    .any(|set| set.created_since(start_time, refers).is_some())
+                {
                     return Err(rustdb_common::Error::new(
                         rustdb_common::ErrorKind::Dependency,
                         format!(

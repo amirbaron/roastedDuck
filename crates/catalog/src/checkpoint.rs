@@ -498,7 +498,7 @@ pub fn write_checkpoint(
     let meta_block = writer.meta_block_pointer()?;
     let mut blocks = BlockWriter::new(Arc::clone(storage.block_manager()));
     let table_settings = storage.table_write_settings(replace_in_memory && vacuum, lowest_active_start);
-    let catalog_name = catalog.name().to_owned();
+    let catalog_name = catalog.name();
     let mut persisted = Vec::new();
 
     // `GetCatalogEntries`.

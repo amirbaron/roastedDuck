@@ -54,7 +54,7 @@ pub trait FunctionData: Any + Send + Sync + fmt::Debug {
     /// The database a function call writes to, which its statement then modifies
     /// (DuckDB's `StatementProperties::RegisterDBModify` in a table function's bind or a
     /// scalar function's `get_modified_databases`).
-    fn modified_database(&self) -> Option<&str> {
+    fn modified_database(&self) -> Option<String> {
         None
     }
 }

@@ -6,7 +6,9 @@ use rustdb_common::{Error, Result};
 use rustdb_function::{AggregateFunctionSet, ScalarFunctionSet, TableFunctionSet};
 use rustdb_types::Value;
 
-use crate::{CatalogEntry, CatalogSet, CatalogType, EntryKind, SchemaEntry, StorageHook, Transaction};
+use crate::{
+    CatalogEntry, CatalogName, CatalogSet, CatalogType, EntryKind, SchemaEntry, StorageHook, Transaction,
+};
 
 /// The schema new objects go to when none is given.
 pub const DEFAULT_SCHEMA: &str = "main";
@@ -16,7 +18,7 @@ pub const TEMP_CATALOG: &str = "temp";
 /// One attached database's catalog (DuckDB's `DuckCatalog`).
 #[derive(Debug)]
 pub struct Catalog {
-    name: String,
+    name: CatalogName,
     schemas: Arc<CatalogSet>,
     /// Where the database's tables keep their data.
     io: OnceLock<Arc<rustdb_storage::TableIoManager>>,
@@ -53,9 +55,9 @@ pub struct AttachedInfo {
 impl Catalog {
     /// A catalog containing the empty `main` schema.
     pub fn new(name: impl Into<String>) -> Result<Self> {
-        let name = name.into();
+        let name = CatalogName::new(&name.into());
         let catalog = Self {
-            schemas: Arc::new(CatalogSet::new(name.clone(), "")),
+            schemas: Arc::new(CatalogSet::new(&name, "")),
             name,
             io: OnceLock::new(),
             wal: OnceLock::new(),
@@ -66,7 +68,7 @@ impl Catalog {
             locks: rustdb_storage::checkpoint_lock::DatabaseLocks::default(),
         };
         let mut catalog = catalog;
-        if !catalog.name.eq_ignore_ascii_case("system") {
+        if !catalog.name().eq_ignore_ascii_case("system") {
             catalog.oid = crate::next_oid();
         }
         let mut main = CatalogEntry::new(
@@ -78,8 +80,13 @@ impl Catalog {
         Ok(catalog)
     }
 
-    pub fn name(&self) -> &str {
-        &self.name
+    pub fn name(&self) -> Arc<str> {
+        self.name.get()
+    }
+
+    /// Renames the catalog along with its attached database (`AttachedDatabase::SetName`).
+    pub fn rename(&self, name: &str) {
+        self.name.set(name);
     }
 
     /// The locks transactions writing to the database hold and checkpoints take
@@ -156,7 +163,7 @@ impl Catalog {
     pub fn io(&self) -> Result<&Arc<rustdb_storage::TableIoManager>> {
         self.io
             .get()
-            .ok_or_else(|| Error::internal(format!("catalog \"{}\" has no storage", self.name)))
+            .ok_or_else(|| Error::internal(format!("catalog \"{}\" has no storage", self.name())))
     }
 
     /// Logs every following commit to this database to `wal` (once, after replay).
@@ -727,7 +734,14 @@ impl Catalog {
         // The entries it owns go with it (`DependencyManager::CheckDropDependencies`).
         let schema_name = schema.to_owned();
         for (owned_schema, owned) in self.owned_entries(transaction, &schema_name, &existing) {
-            self.drop_entry(transaction, owned.catalog_type(), &owned_schema, owned.name(), cascade, true)?;
+            self.drop_entry(
+                transaction,
+                owned.catalog_type(),
+                &owned_schema,
+                owned.name(),
+                cascade,
+                true,
+            )?;
         }
         // `CatalogSet::CommitDrop`: entries other transactions made depend on it or
         // owned by it since this one started make the drop fail to commit.

@@ -1299,7 +1299,9 @@ impl SettingsSnapshot {
                 Some(value) => normalized_bytes(value)?,
                 None => Value::varchar(rustdb_buffer::format_bytes(self.memory_limit)),
             },
-            "block_allocator_memory" => Value::varchar(rustdb_buffer::format_bytes(self.block_allocator_memory)),
+            "block_allocator_memory" => {
+                Value::varchar(rustdb_buffer::format_bytes(self.block_allocator_memory))
+            }
             "max_temp_directory_size" => match (assigned, self.max_swap) {
                 (Some(value), _) => normalized_bytes(value)?,
                 (None, Some(limit)) => Value::varchar(rustdb_buffer::format_bytes(limit)),

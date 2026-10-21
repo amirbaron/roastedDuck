@@ -30,11 +30,11 @@ impl FunctionData for SequenceBindData {
         self
     }
 
-    fn modified_database(&self) -> Option<&str> {
+    fn modified_database(&self) -> Option<String> {
         self.catalog
             .as_ref()
             .filter(|_| self.modifies)
-            .map(|catalog| catalog.name())
+            .map(|catalog| catalog.name().to_string())
     }
 }
 
@@ -153,7 +153,7 @@ fn sequence_kernel(
     {
         // `DuckTransaction::PushSequenceUsage`; the sequence's database is modified.
         if let Some(catalog) = &data.catalog {
-            transaction.modify_database(catalog.name(), catalog.wal(), catalog.locks(), true, false)?;
+            transaction.modify_database(&catalog.name(), catalog.wal(), catalog.locks(), true, false)?;
         }
         let state = data.sequence.data();
         transaction.push_sequence_usage(

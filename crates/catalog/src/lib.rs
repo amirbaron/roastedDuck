@@ -13,7 +13,7 @@ mod transaction;
 mod wal;
 
 pub use catalog::{AttachedInfo, Catalog, DEFAULT_SCHEMA, TEMP_CATALOG};
-pub use catalog_set::{CatalogSet, Lookup};
+pub use catalog_set::{CatalogName, CatalogSet, Lookup};
 pub use entry::{
     CatalogEntry, CatalogType, CollationEntry, EntryKind, IndexEntry, MacroEntry, SchemaEntry, SequenceData,
     SequenceEntry, TableColumn, TableEntry, TypeEntry, ViewEntry, next_oid,

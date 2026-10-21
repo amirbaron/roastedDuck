@@ -143,7 +143,8 @@ impl BlockAllocator {
     /// only grow, and only up to the virtual memory DuckDB reserves for blocks, 80% of
     /// the system's memory.
     pub fn resize(&self, size: usize) -> Result<()> {
-        let virtual_memory_size = (crate::default_memory_limit() as usize).next_multiple_of(self.block_size.max(1));
+        let virtual_memory_size =
+            (crate::default_memory_limit() as usize).next_multiple_of(self.block_size.max(1));
         self.physical_memory_size
             .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                 (size >= current && size <= virtual_memory_size).then_some(size)
@@ -185,7 +186,10 @@ impl BlockAllocator {
     pub fn set_retention(&self, retain_bytes: usize) {
         self.retain_blocks
             .store(retain_bytes / self.block_size.max(1), Ordering::Relaxed);
-        let excess = self.pooled.load(Ordering::Relaxed).saturating_sub(self.retained_blocks());
+        let excess = self
+            .pooled
+            .load(Ordering::Relaxed)
+            .saturating_sub(self.retained_blocks());
         self.release_blocks(excess);
     }
 

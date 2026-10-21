@@ -247,7 +247,7 @@ pub(crate) fn create_tpch_schema(target: &DbgenTarget, suffix: &str) -> Result<(
             })
             .collect();
         let info = CreateInfo {
-            catalog: target.catalog.name().to_owned(),
+            catalog: target.catalog.name().to_string(),
             schema: target.schema.clone(),
             temporary: false,
             internal: false,

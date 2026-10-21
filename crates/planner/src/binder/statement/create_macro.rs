@@ -56,7 +56,7 @@ fn can_store_types(scope: &BindScope<'_>, info: &CreateInfo) -> bool {
         return true;
     }
     let catalog = if info.catalog.is_empty() {
-        scope.context.default_catalog()
+        &scope.context.default_catalog()
     } else {
         &info.catalog
     };
