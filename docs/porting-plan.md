@@ -103,7 +103,7 @@ same inputs instead of hand-porting the output:
 | utf8proc | `unicode-normalization`, `unicode-segmentation` | grapheme/NFC results match |
 | fmt | own fmtlib-syntax formatter | SQL `format()` uses fmtlib syntax; `printf()` uses printf syntax |
 | yyjson | `serde_json` / `sonic-rs` | JSON text output byte-identical (number formatting) |
-| zstd | `ruzstd` | **gap:** pure-Rust zstd encoder is limited; needs work for storage + Parquet writer |
+| zstd | `rustdb-zstd` (port of zstd 1.5.6's encoder), `ruzstd` to decode | frames identical to zstd's at levels -5 to 3 (`ZSTD_fast`, `ZSTD_dfast`); stronger levels write valid frames with the double-fast match finder |
 | brotli / lz4 / snappy / miniz | `brotli`, `lz4_flex`, `snap`, `miniz_oxide` | frame-compatible |
 | mbedtls | RustCrypto (`aes-gcm`, `sha2`, `hmac`), `rustls` | encrypted DB files readable both ways |
 | httplib | `hyper` / `reqwest` + rustls | — |
