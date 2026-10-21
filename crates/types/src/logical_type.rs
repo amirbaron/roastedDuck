@@ -169,6 +169,19 @@ impl LogicalType {
         )
     }
 
+    /// `AGGREGATE_STATE<function(arguments)::return_type>`: the exported state of an
+    /// aggregate, stored as its raw bytes.
+    pub fn aggregate_state(function_name: impl Into<String>, return_type: Self, bound_argument_types: Vec<Self>) -> Self {
+        Self::with_info(
+            LogicalTypeId::AggregateState,
+            TypeInfo::AggregateState(crate::AggregateStateTypeInfo {
+                function_name: function_name.into(),
+                return_type,
+                bound_argument_types,
+            }),
+        )
+    }
+
     /// `MAP(key, value)`: a list of `{key, value}` structs.
     pub fn map(key: Self, value: Self) -> Self {
         let entry = Self::struct_type(vec![("key".to_owned(), key), ("value".to_owned(), value)]);
@@ -457,7 +470,7 @@ impl LogicalType {
                 Some((w, _)) if w <= 38 => PhysicalType::Int128,
                 _ => PhysicalType::Invalid,
             },
-            L::Bignum | L::Varchar | L::Char | L::Blob | L::Bit | L::Type | L::Geometry => {
+            L::Bignum | L::Varchar | L::Char | L::Blob | L::Bit | L::Type | L::Geometry | L::AggregateState => {
                 PhysicalType::Varchar
             }
             L::Interval => PhysicalType::Interval,
@@ -476,7 +489,6 @@ impl LogicalType {
             | L::Unknown
             | L::StringLiteral
             | L::IntegerLiteral
-            | L::AggregateState
             | L::Unbound
             | L::Template => PhysicalType::Invalid,
         }
@@ -644,6 +656,18 @@ impl fmt::Display for LogicalType {
             }
             (L::Template, Some(TypeInfo::Template(info))) => f.write_str(&info.name),
             (L::Template, None) => f.write_str("T"),
+            // `AggregateStateType::GetTypeName`.
+            (L::AggregateState, Some(TypeInfo::AggregateState(info))) => {
+                write!(f, "AGGREGATE_STATE<{}(", info.function_name)?;
+                for (i, argument) in info.bound_argument_types.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{argument}")?;
+                }
+                write!(f, ")::{}>", info.return_type)
+            }
+            (L::AggregateState, None) => f.write_str("AGGREGATE_STATE<?>"),
             (L::Geometry, Some(TypeInfo::Geo(info))) if !info.crs.definition.is_empty() => {
                 write!(f, "GEOMETRY({})", write_quoted(&info.crs.definition, '\''))
             }

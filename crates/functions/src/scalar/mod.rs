@@ -1,6 +1,7 @@
 //! Scalar functions, organised like DuckDB's `src/function/scalar` and
 //! `extension/core_functions/scalar`.
 
+pub mod aggregate_export;
 pub mod array;
 pub mod binning;
 pub mod bit;
@@ -120,6 +121,7 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
     sets.extend(variant::variant_functions());
     sets.extend(log::log_functions());
     sets.extend(system::system_functions());
+    sets.extend(aggregate_export::aggregate_export_functions());
     sets.extend(compressed_materialization::compressed_materialization_functions());
     sets.extend(date::to_interval::to_interval_functions());
     for (set, aliases) in date::date_part::named_part_functions() {

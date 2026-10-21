@@ -517,15 +517,20 @@ impl<'a> SelectBinder<'a> {
                 "In a DISTINCT aggregate, ORDER BY expressions must appear in the argument list",
             ));
         }
-        if function.export_state {
-            return Err(Error::not_implemented("EXPORT_STATE"));
-        }
         let aggr_type = if function.distinct {
             AggregateType::Distinct
         } else {
             AggregateType::NonDistinct
         };
-        let aggregate = binder.bind_aggregate_function(overload, children, filter, aggr_type, order_bys)?;
+        let mut aggregate = binder.bind_aggregate_function(overload, children, filter, aggr_type, order_bys)?;
+        if function.export_state
+            && let ExpressionKind::Aggregate(bound) = &mut aggregate.kind
+        {
+            // `ExportAggregateFunction::Bind`.
+            bound.function = rustdb_function::aggregate::export_aggregate(&bound.function)?;
+            bound.bind_info = None;
+            aggregate.return_type = bound.function.return_type.clone();
+        }
         let index = if let Some(index) = self
             .node
             .aggregates

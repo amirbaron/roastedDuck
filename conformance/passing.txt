@@ -782,6 +782,7 @@ test/sql/aggregate/aggregates/test_scalar_aggr.test
 test/sql/aggregate/aggregates/test_sem.test
 test/sql/aggregate/aggregates/test_simple_filter.test
 test/sql/aggregate/aggregates/test_skewness.test
+test/sql/aggregate/aggregates/test_state_export.test
 test/sql/aggregate/aggregates/test_stddev.test
 test/sql/aggregate/aggregates/test_string_agg.test
 test/sql/aggregate/aggregates/test_string_agg_big.test
