@@ -131,6 +131,100 @@ What moved the numbers in round 3:
   compaction, a fused bloom hash-and-lookup loop and resizing the perfect hash join
   by index were also measured slower and reverted.
 
+## Benchmark suites (round 4)
+
+Same harness and data as round 3. `baseline` is the round 3 code (`930c36a`) measured
+again next to the round 4 code (`r4`), each against DuckDB in its own run, the two runs
+back to back per suite; 5 timed runs per query for TPC-H and h2oai at 14 threads, 3
+otherwise. The machine was shared with other agents' conformance runs (load 4–25). That
+moves wall times by up to ±30% between runs of the same query (TPC-H q17 0.83×–1.31×, q19
+0.67×–0.82× in two runs of the baseline; an earlier pair of ClickBench runs measured
+0.80× → 0.89× at 14 threads), so changes were judged by the cycles and instructions the
+process spends instead (`scripts/perf/cycles.sh`: `/usr/bin/time -l` of a process running
+a query N times minus one running it once, the binaries alternating), which the load
+barely moves; that comparison follows the wall-time table.
+
+| run | suite | threads | DuckDB wall s | rustdb wall s | speed geomean | slowest | mem geomean | max mem |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| baseline | tpch10 | 14 | 1.408 | 1.675 | 0.83× | q07 0.69× | 0.28× | q11 0.72× |
+| baseline | h2og | 14 | 0.510 | 0.577 | 0.90× | q09 0.74× | 0.71× | q06 0.91× |
+| baseline | h2oj | 14 | 0.707 | 0.667 | 1.10× | q05 0.88× | 0.79× | q05 0.80× |
+| baseline | hits | 14 | 10.013 | 13.425 | 0.81× | q19 0.39× | 0.35× | q00 1.02× |
+| baseline | tpch10 | 1 | 11.311 | 12.211 | 0.89× | q16 0.73× | 0.19× | q16 0.78× |
+| baseline | h2og | 1 | 4.965 | 5.512 | 0.81× | q05 0.50× | 0.31× | q06 0.69× |
+| baseline | h2oj | 1 | 7.167 | 6.056 | 1.22× | q05 1.01× | 0.48× | q02 0.59× |
+| baseline | hits | 1 | 89.671 | 121.987 | 0.78× | q19 0.31× | 0.26× | q00 1.02× |
+| r4 | tpch10 | 14 | 1.418 | 1.578 | 0.86× | q05 0.72× | 0.28× | q11 0.74× |
+| r4 | h2og | 14 | 0.511 | 0.515 | 1.00× | q09 0.82× | 0.73× | q10 0.91× |
+| r4 | h2oj | 14 | 0.696 | 0.632 | 1.12× | q05 1.00× | 0.79× | q03 0.81× |
+| r4 | hits | 14 | 10.240 | 13.395 | 0.85× | q37 0.32× | 0.35× | q00 1.02× |
+| r4 | tpch10 | 1 | 11.177 | 11.405 | 0.93× | q16 0.77× | 0.20× | q16 0.79× |
+| r4 | h2og | 1 | 3.172 | 3.292 | 0.98× | q05 0.84× | 0.35× | q06 0.71× |
+| r4 | h2oj | 1 | 7.315 | 6.159 | 1.20× | q04 1.06× | 0.51× | q04 0.62× |
+| r4 | hits | 1 | 88.502 | 110.527 | 0.85× | q19 0.32× | 0.27× | q00 1.03× |
+
+ClickBench q00 (`COUNT(*)`, which only opens the database) is 1 MB above DuckDB's RSS in
+both runs (47 MB vs 46 MB; 0.98× in round 3), so it is noise around the line rather than
+a change of this round. Memory grew by a few percent on small queries (h2og 0.31× →
+0.35× at one thread): the recently released blocks and reused mappings stay resident.
+
+Cycles per query at 14 threads (geomean of DuckDB cycles / rustdb cycles; ClickBench: the
+22 slower queries, without q28):
+
+| suite | baseline | r4 | slowest r4 |
+|---|---:|---:|---|
+| tpch10 | 0.88× | 0.90× | q07 0.75×, q05 0.76×, q02 0.79× |
+| h2og | 0.92× | 0.99× | q10 0.84×, q09 0.85×, q04 0.90× |
+| hits | 0.77× | 0.79× | q19 0.38×, q01 0.61×, q37 0.62× |
+
+The speed target (≥ 1.3×, nothing below 0.99×) is still far: TPC-H and ClickBench are at
+0.85–0.93×, h2og at par, only h2oj is faster than DuckDB. About half of what is left in the
+scan-heavy queries is reading table blocks again (see Open items).
+
+What moved the numbers in round 4:
+
+- Aggregates and hash tables: the row matcher's equality loops capture plain data, row
+  and selection pointers instead of the input format by reference, and handle stored
+  columns that may be NULL and NULL input values (5% of h2oai's groupby columns) in loops
+  of their own instead of the generic predicate, which was a call per row; fixed-width
+  scatter without NULLs skips the validity check per row; a row's validity bytes are set
+  with one store; the first pointer-table lookup iterates flat hashes; `count()` writes its
+  results a vector at a time. ClickBench q4 at one thread −17% instructions, q9 −16%;
+  h2oai groupby q9 −9%.
+- Scans: a scan orders its filters by estimated cost and swaps neighbours at run time when
+  that filters faster, as DuckDB's `AdaptiveFilter` does (a join's bloom filter on a key
+  column ran before cheap comparisons on later columns and hashed every row; TPC-H q3 at
+  one thread spends half as long in it). Small segments of consecutive row groups share
+  blocks, which were read again for every segment in them (a third of a single-threaded
+  TPC-H q7's reads): such blocks stay among the 16 most recently released blocks. Skipping
+  rows moves the scan to the segment it reaches, so that segment's zone map is checked
+  before it is read.
+- Top-N: the global boundary is checked on the first sort column's values instead of
+  encoded sort keys, and with a single sort column rows tying with the boundary are
+  dropped, as DuckDB's `CheckBoundaryValues` does (ClickBench q32, which orders 100M groups
+  by a count: −52% instructions, −22% cycles).
+- Strings: compressed materialization packs strings into integers and unpacks them as
+  whole 16-byte values (`TemplatedReverseMemCpy`, `UncompressInlineString`) instead of byte
+  by byte; inlined strings are hashed from their 16 bytes (`Hash(string_t)`).
+- Inserts: a flat fixed-width vector without NULLs is appended to an uncompressed segment
+  in one copy (`StandardFixedSizeAppend`). With the string decompression, h2oai groupby
+  q10 (a 10M-row `CREATE TABLE AS`) −15% instructions.
+- Allocations of 1 MiB and more (join pointer tables, aggregate tables) are reused for 5 s
+  after they are freed, like DuckDB's allocator (jemalloc's decay), instead of having their
+  pages faulted in on every run: TPC-H q9 spent 180 ms of its 2.3 s of CPU zeroing fresh
+  pages (DuckDB 18 ms). A request no kept mapping fits unmaps them first.
+- LIMIT: DuckDB's plan choice (`CreatePlan(LogicalLimit)`): a streaming limit runs on all
+  threads when the order does not matter, and a limit of at most 10,000 rows over a
+  filtered scan or a join collects the first rows of each batch in parallel
+  (`PhysicalLimit`); `test_batch_limit_filters` passes.
+- Tried and dropped: filling RLE runs with `slice::fill` (11% more instructions on
+  ClickBench q2, whose runs are short); keeping metadata blocks among the recently
+  released blocks (it saves the ~8,000 block reads of opening the TPC-H file, but put
+  ClickBench q0 2 MB above DuckDB's RSS); 32 instead of 16 recently released blocks (+5–8
+  MB on h2oai's small queries, no measurable gain); reading table data through a mapping
+  of the file instead of `pread` (a page fault per 16 KiB costs about as much as the copy,
+  faults do not scale over threads, and mapped pages count in RSS).
+
 ## TPC-H SF1 status
 
 Measured with `.context/perf/bin/tpch.py` (one process per query, best of 5, warm OS
@@ -159,16 +253,20 @@ limit at 4 threads with peak RSS within 0.9–1.2× of DuckDB; without a limit, 
 
 | Area | Gap | Suspected cause | Found in |
 |---|---|---|---|
-| Peak memory | TPC-H 0.19–0.27×, ClickBench 0.27–0.34× (none above 1.0×), but h2og 0.68× and h2oj 0.76× at 14 threads (target ≤ 0.6×) | the h2o queries are dominated by aggregate and join rows, as wide as DuckDB's; per-thread partitions allocate whole blocks | `crates/row`, `crates/execution` |
-| Table block re-reads | `pread` is 5–18% of scan-heavy queries; ClickBench point and small scans (q19 0.36×, q37 0.55×, q01/q07 0.6–0.7×) read their columns again on every run while DuckDB keeps them in its buffer pool (q19: 266 MB vs 58 MB RSS) | blocks are freed when unpinned to keep memory low; a bounded cache of re-read blocks (round 3, removed in `064b45d`) took q19 to 0.58× and ClickBench to 0.84×, but memory to 0.59× with small queries above 1.0× | `crates/buffer` |
+| Peak memory | TPC-H 0.20–0.28×, ClickBench 0.27–0.35× (q00, which only opens the database, at 1.02×: 47 MB vs 46 MB), but h2og 0.73× and h2oj 0.79× at 14 threads (target ≤ 0.6×) | the h2o queries are dominated by aggregate and join rows, as wide as DuckDB's; per-thread partitions allocate whole blocks | `crates/row`, `crates/execution` |
+| Table block re-reads | `pread`, and waiting for another thread's read of the same block, is ~15% of the CPU of scan-heavy TPC-H queries at 14 threads and most of the gap of ClickBench's point and small scans (q01, q19, q37 at 1.6–2.6× DuckDB's cycles); the copy runs near the memory bandwidth (TPC-H q7's 3,800 blocks: 12 ms at 14 threads, 43 ms at one) | blocks are freed when unpinned to keep memory low (only blocks shared by several segments stay among the 16 last released, round 4); a bounded cache of re-read blocks (round 3, removed in `064b45d`) took q19 to 0.58× and ClickBench to 0.84×, but memory to 0.59× with small queries above 1.0× | `crates/buffer` |
+| Metadata re-reads | opening the TPC-H SF10 file reads its 8 metadata blocks 8,161 times (2 GB from the page cache) | every metadata reader pins its block again and metadata blocks are freed when unpinned; keeping them among the recently released blocks fixes it but puts ClickBench q0 2 MB above DuckDB's RSS | `crates/storage` (`metadata.rs`) |
 | Right delim joins (Q17, Q20, Q21) | input buffered and rescanned into the join's build | DuckDB's `PhysicalRightDelimJoin` sinks straight into the join's hash table and the distinct aggregate; here a delim sink copies the input and a cached scan feeds the build pipeline | `crates/execution` (`operators/delim.rs`, `plan_generator.rs`) |
-| Hash join probe | probe ~1.4–1.5× DuckDB's `GetRowPointers` on mid-size tables (TPC-H q3/q5/q7/q9 0.70–0.79×); bloom filter lookups ~2× DuckDB's per key | per-row bookkeeping in the probe loop; the bloom filter hashes the keys in a separate pass | `crates/execution` (`join_hashtable.rs`, `operators/join/bloom_filter.rs`) |
+| Hash join probe | TPC-H q3/q5/q7 0.72–0.80× at 14 threads; the probe is close to DuckDB's `GetRowPointers` now, bloom filter lookups ~1.3× DuckDB's per key (memory-bound sector loads) | the bloom filter hashes the keys in a separate pass; more rows reach it than in DuckDB when the adaptive filter order has not settled | `crates/execution` (`join_hashtable.rs`, `operators/join/bloom_filter.rs`) |
 | Regular expressions with captures | `regexp_replace` 1.5× DuckDB (ClickBench q28 0.67×) | the `regex` crate's bounded backtracker finds the groups; RE2's BitState is faster for anchored patterns spanning the whole string | `crates/functions` (`regexp`) |
-| Aggregate hash table lookups | ~1.3× DuckDB's `FindOrCreateGroupsInternal` per row (ClickBench COUNT(DISTINCT) q04/q05/q08/q09 0.6–0.73×, h2og 0.86× at 1 thread) | the find-or-create loop and row matcher still cost more per row than DuckDB's; distinct tables are partitioned like DuckDB's now | `crates/execution` (`aggregate_hashtable.rs`), `crates/row` (`matcher.rs`) |
+| Aggregate hash table lookups | `find_or_create_groups` 1.2–1.5× DuckDB's `FindOrCreateGroupsInternal` (ClickBench q04/q08/q09/q35 0.6–0.8×); resizing at one thread costs ~2× DuckDB's `ReinsertTuples` (q04: 400 ms vs 211 ms) | per-chunk set-up (formats, chunk copies, HLL) and the probe loops cost more instructions; resized pointer tables are fresh mappings whose pages fault in; DuckDB appends a few rows per partition to an unpartitioned collection first (`UNPARTITIONED_RADIX_BITS_THRESHOLD`) | `crates/execution` (`aggregate_hashtable.rs`), `crates/row` |
 | Sorting VARCHAR keys | `l_comment` sort 1.4× slower, 1.4× the memory | the output decodes strings from the sort keys (`decode_value`) instead of reading a payload; contiguous copy of each run's keys | `crates/row` (`sort/`) |
 | Window source | one hash group per thread | DuckDB splits a hash group into tasks (`WindowHashGroup` stages), so a single partition runs on one thread here | `crates/execution` (`operators/window.rs`) |
 | IEJoin / AsOf sinks | sequential | their sinks switch inputs on `combine` instead of DuckDB's two finalize events (`AddFinishEvent`) | `crates/execution` (`operators/join/iejoin.rs`, `asof_join.rs`) |
-| Streaming LIMIT | pipelines with a LIMIT run on one thread | DuckDB's `PhysicalStreamingLimit` is parallel when order does not matter, and `PhysicalLimit` collects batches in parallel | `crates/execution` (`operators/limit.rs`) |
+| Top-N row group order | `top_n_pruning`, `test_top_n_nulls_row_group_pruner_extensive` fail; ORDER BY ... LIMIT scans row groups in storage order | DuckDB's `RowGroupPruner` / `RowGroupReorderer` scan row groups by their statistics and stop once the limit is guaranteed, so the top-N boundary tightens early | `crates/optimizer`, `crates/storage` |
+| Struct projection pushdown | `plan_struct_projection_pushdown`, `struct_projection_pushdown_in_storage`, `deliver_child_columns` fail | `struct_extract` on a scanned column is not pushed into the scan as a child column (`ColumnIndex` children, pushdown extract) | `crates/optimizer`, `crates/storage`, `crates/parquet` |
+| Partitioned aggregate | `partitioned_group_by` fails | DuckDB's `PhysicalPartitionedAggregate` for groups on hive partition columns is not ported | `crates/execution` |
+| Unnest rewriter plans | `unnest_rewriter.test_slow` fails | a lateral `UNNEST` (`CROSS JOIN unnest(arr)`) keeps the `DELIM_JOIN` that DuckDB's `UnnestRewriter` removes | `crates/optimizer` |
 | Common subexpressions | `l_extendedprice * (1 - l_discount)` computed twice in Q1 | check the CSE optimizer port against DuckDB's plan | `crates/optimizer` |
 | Parser: tiny statements (`SELECT 1`, short SELECTs) | ~1.05–1.25× DuckDB cycles per query | per-node malloc/free vs DuckDB's arena-allocated parse tree | `crates/parser` (`parse_bench`) |
 | Spill files | compression has one level | `ruzstd` only encodes at about zstd level 1; DuckDB adapts between levels -5..5 | `crates/buffer` (`temp_file.rs`) |
@@ -202,3 +300,7 @@ limit at 4 threads with peak RSS within 0.9–1.2× of DuckDB; without a limit, 
 | Small parallel queries | TPC-H q11/q22 0.34×/0.40× at 14 threads | DuckDB's parallel flags and `MaxThreads` for cross product, expression scan, pivot, table in-out and nested loop / merge / blockwise joins; packed CTE chunks; parallel delim-join distinct (q11 0.92×, q22 0.91×) |
 | `COUNT(DISTINCT)` sinks | one growing table per thread (ClickBench q04 0.37×) | the radix sink strategy for DISTINCT tables (q04 0.64×) |
 | Opening a database | every row group's column metadata read at open (ClickBench 200 MB, q00 8.2× DuckDB's memory) | metadata read when a column is first used (41 MB, q00 0.98×) |
+| LIMIT | pipelines with a LIMIT ran on one thread | DuckDB's plan choice: a parallel streaming limit when the order does not matter, a batch `PhysicalLimit` over filtered scans and joins |
+| Partial blocks | a block shared by several segments was read once per segment (a third of TPC-H q7's reads at one thread) | such blocks stay among the 16 last released blocks |
+| Scan filter order | filters ran in column order; a join's bloom filter could hash every row before a cheap comparison | cost order and run-time swaps (DuckDB's `AdaptiveFilter`) |
+| Row matching with NULLs | keys that may be NULL went through a generic predicate call per row | equality loops per selection kind with the stored validity byte and bit hoisted |
