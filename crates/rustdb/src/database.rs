@@ -2029,10 +2029,12 @@ impl Connection {
         match &plan.kind {
             LogicalKind::Set { name, value, scope } if *scope != SetScope::Variable => {
                 self.settings.check_lock(name)?;
+                Settings::check_scope(name, *scope, false)?;
                 Settings::check_running_set(name, value)?;
             }
             LogicalKind::Reset { name, scope } if *scope != SetScope::Variable => {
                 self.settings.check_lock(name)?;
+                Settings::check_scope(name, *scope, true)?;
                 Settings::check_running_reset(name)?;
             }
             _ => {}
@@ -2159,6 +2161,21 @@ impl Connection {
                 let (name, scope) = (name.clone(), *scope);
                 self.reset_extension_variable(&name, scope)?;
                 return Ok(nothing());
+            }
+            LogicalKind::Set { name, .. } | LogicalKind::Reset { name, .. }
+                if crate::settings::canonical_option(name).is_none()
+                    && !is_extension_setting(name)
+                    && !self.database.instance().extension_option_values().is_empty() =>
+            {
+                // `Catalog::UnrecognizedConfigurationError` suggests the extensions' options too.
+                let extension_names: Vec<String> = self
+                    .database
+                    .instance()
+                    .extension_option_values()
+                    .into_iter()
+                    .map(|(option, _)| option.name)
+                    .collect();
+                return Err(crate::settings::unrecognized_with(name, &extension_names, |_| false));
             }
             LogicalKind::Set { name, value, scope } => {
                 if is_secret_setting(name) {
