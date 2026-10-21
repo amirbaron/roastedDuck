@@ -36,6 +36,13 @@ impl ExpressionFilter for ExecutableExpressionFilter {
         Ok(())
     }
 
+    fn check_statistics(
+        &self,
+        stats: &rustdb_storage::statistics::BaseStatistics,
+    ) -> rustdb_storage::statistics::FilterPropagateResult {
+        self.filter.check_statistics(stats)
+    }
+
     fn to_sql(&self, column_name: &str) -> String {
         self.filter.to_sql(column_name)
     }
