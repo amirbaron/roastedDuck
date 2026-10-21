@@ -16,7 +16,7 @@ pub use serialize::{deserialize_table_statistics, serialize_table_statistics};
 pub use string::{MAX_STRING_MINMAX_SIZE, StringStats};
 pub use variant::{
     TYPED_VALUE_INDEX, UNTYPED_VALUE_INDEX, VariantShreddingState, VariantStats, find_child_stats,
-    is_fully_shredded, structured_type, typed_stats, untyped_stats, wrap_shredded_levels,
+    is_fully_shredded, structured_type, typed_stats, wrap_shredded_levels,
 };
 
 use std::fmt;

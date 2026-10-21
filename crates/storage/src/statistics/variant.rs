@@ -119,13 +119,6 @@ impl VariantStats {
         self.shredded = Some(stats);
     }
 
-    /// `VariantStats::GetShreddedStructuredType`: the shredding as one DuckDB type, the
-    /// fields of OBJECTs sorted by name.
-    pub fn shredded_structured_type(&self) -> Option<LogicalType> {
-        self.shredded_stats()
-            .map(|shredded| structured_type(shredded.logical_type()))
-    }
-
     /// `VariantStats::Merge`.
     pub(crate) fn merge(&mut self, other: &Self) {
         use VariantShreddingState as S;
@@ -286,7 +279,7 @@ pub fn typed_stats(stats: &BaseStatistics) -> &BaseStatistics {
 
 /// `VariantStats::GetUntypedStats`: the statistics of `untyped_value_index`, if the level
 /// has one.
-pub fn untyped_stats(stats: &BaseStatistics) -> Option<&BaseStatistics> {
+fn untyped_stats(stats: &BaseStatistics) -> Option<&BaseStatistics> {
     if stats.logical_type().id() != LogicalTypeId::Struct {
         return None;
     }

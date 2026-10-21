@@ -461,7 +461,8 @@ impl<'a> Shredder<'a> {
     /// `FlatVector::SetNull`: a NULL STRUCT has NULL fields.
     fn set_null(&mut self, vector: usize, row: usize) {
         self.vectors[vector].valid[row] = false;
-        for field in self.fields(vector).to_vec() {
+        for index in 0..self.fields(vector).len() {
+            let field = self.fields(vector)[index];
             self.set_null(field, row);
         }
     }
