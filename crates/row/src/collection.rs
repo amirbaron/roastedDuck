@@ -545,7 +545,7 @@ impl TupleDataCollection {
         let keep_alive = self.scan_keep_alive(&state.pin_state, &state.chunk_state.column_ids);
         let mut columns = Vec::with_capacity(state.chunk_state.column_ids.len());
         for &col in &state.chunk_state.column_ids {
-            let mut vector = Vector::flat(self.layout.types()[col].clone(), count.max(1));
+            let mut vector = Vector::flat_for_overwrite(self.layout.types()[col].clone(), count.max(1));
             // SAFETY: the chunk's blocks are pinned by `state.pin_state` and its row
             // locations were just initialised.
             unsafe {

@@ -808,7 +808,7 @@ impl SortLayouts {
             let mut decoded: Vec<Vector> = self
                 .key_types
                 .iter()
-                .map(|ty| Vector::flat(ty.clone(), count.max(1)))
+                .map(|ty| Vector::flat_for_overwrite(ty.clone(), count.max(1)))
                 .collect();
             if K::TYPE.is_constant_size()
                 && self.key_types.iter().all(|ty| is_plain_fixed(ty.physical_type()))
@@ -845,7 +845,7 @@ impl SortLayouts {
                     && wanted(output.output)
                 {
                     let ty = self.output_types[output.output].clone();
-                    let mut vector = Vector::flat(ty, count.max(1));
+                    let mut vector = Vector::flat_for_overwrite(ty, count.max(1));
                     // SAFETY: the payload rows the keys point to are pinned (in-memory runs
                     // keep them pinned; external merges hold the pins in `keep_alive`).
                     unsafe {
