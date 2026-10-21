@@ -11,7 +11,7 @@
 
 use std::ptr::NonNull;
 use std::sync::atomic::{
-    AtomicBool, AtomicI32, AtomicI64, AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering,
+    AtomicBool, AtomicI32, AtomicI64, AtomicPtr, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering,
 };
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -85,6 +85,15 @@ pub(crate) struct BlockMemory {
     /// Bytes to reserve when (re)loading the block.
     memory_usage: AtomicU64,
     eviction_queue_index: AtomicUsize,
+    /// Whether the buffer is freed as soon as the block is unpinned instead of staying
+    /// cached until memory runs short (persistent table data, see
+    /// [`BlockHandle::release_on_unpin`]).
+    release_on_unpin: AtomicBool,
+    /// How many segments stored in the block asked for `release_on_unpin`.
+    segments: AtomicU32,
+    /// Bumped whenever the unpinned block is retained by
+    /// [`BufferPool::retain_released`](crate::BufferPool), which then skips older entries.
+    release_sequence: AtomicU64,
     /// Whether the block was read (and its checksum verified) before.
     read_before: AtomicBool,
     inner: Mutex<BlockInner>,
@@ -113,6 +122,9 @@ impl BlockMemory {
             destroy_upon: AtomicU8::new(DestroyBufferUpon::Block as u8),
             memory_usage: AtomicU64::new(alloc_size as u64),
             eviction_queue_index: AtomicUsize::new(NO_QUEUE_INDEX),
+            release_on_unpin: AtomicBool::new(false),
+            segments: AtomicU32::new(0),
+            release_sequence: AtomicU64::new(0),
             read_before: AtomicBool::new(false),
             inner: Mutex::new(BlockInner {
                 buffer: None,
@@ -148,6 +160,9 @@ impl BlockMemory {
             destroy_upon: AtomicU8::new(destroy_upon as u8),
             memory_usage: AtomicU64::new(memory_usage),
             eviction_queue_index: AtomicUsize::new(NO_QUEUE_INDEX),
+            release_on_unpin: AtomicBool::new(false),
+            segments: AtomicU32::new(0),
+            release_sequence: AtomicU64::new(0),
             read_before: AtomicBool::new(false),
             inner: Mutex::new(BlockInner {
                 buffer: Some(buffer),
@@ -209,6 +224,24 @@ impl BlockMemory {
 
     fn is_temporary(&self) -> bool {
         self.block_id >= MAXIMUM_BLOCK
+    }
+
+    /// Whether the buffer is freed when the last pin goes (see `release_on_unpin`).
+    pub(crate) fn releases_on_unpin(&self) -> bool {
+        self.release_on_unpin.load(Ordering::Relaxed) && !self.is_temporary()
+    }
+
+    /// Whether several segments live in the block (see `release_on_unpin`).
+    pub(crate) fn holds_several_segments(&self) -> bool {
+        self.segments.load(Ordering::Relaxed) > 1
+    }
+
+    pub(crate) fn release_sequence(&self) -> u64 {
+        self.release_sequence.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn next_release_sequence(&self) -> u64 {
+        self.release_sequence.fetch_add(1, Ordering::AcqRel) + 1
     }
 
     /// Whether unpinned data must go to the eviction queue (rather than be dropped).
@@ -384,22 +417,30 @@ impl BlockHandle {
         self.block_id
     }
 
-    pub fn tag(&self) -> MemoryTag {
-        self.memory.tag()
+    /// Frees the buffer of this persistent block whenever its last pin is released,
+    /// instead of keeping it cached until memory runs short as DuckDB does. Table data is
+    /// read in a stream by scans: re-reading a block from the file (the operating
+    /// system's cache) costs less than keeping every scanned block resident.
+    ///
+    /// Called once for every segment stored in the block. A block holding several of them
+    /// (DuckDB packs small segments of consecutive row groups into shared blocks) is
+    /// usually pinned again right after its last unpin, for the next segment: it stays
+    /// loaded among the pool's recently released blocks
+    /// ([`BufferPool::retain_released`](crate::BufferPool)) instead of being read again.
+    pub fn release_on_unpin(&self) {
+        if self.block_manager.is_some() {
+            self.memory.release_on_unpin.store(true, Ordering::Relaxed);
+            self.memory.segments.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
-    /// Frees the data of this persistent block if it is loaded and unpinned; it is read
-    /// from the file again when next pinned.
-    pub fn unload_if_unpinned(&self) {
-        if self.block_manager.is_none() {
-            return;
-        }
-        let memory = &self.memory;
-        let mut inner = memory.lock();
-        if memory.can_unload() {
-            // Persistent data: dropping it cannot fail.
-            let _ = memory.unload(&mut inner);
-        }
+    /// Undoes [`BlockHandle::release_on_unpin`]: the block stays cached when unpinned.
+    pub fn keep_cached(&self) {
+        self.memory.release_on_unpin.store(false, Ordering::Relaxed);
+    }
+
+    pub fn tag(&self) -> MemoryTag {
+        self.memory.tag()
     }
 
     pub fn buffer_type(&self) -> FileBufferType {
