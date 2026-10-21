@@ -9,7 +9,7 @@ use rustdb_types::{LogicalType, PhysicalType};
 
 use super::numeric::NumericValue;
 use super::string::MAX_STRING_MINMAX_SIZE;
-use super::{BaseStatistics, DistinctStatistics, HyperLogLog, StatsData};
+use super::{BaseStatistics, DistinctStatistics, GeometryStats, HyperLogLog, StatsData, StringStats};
 
 /// `SerializeNumericStatsValue`.
 fn write_numeric_value(serializer: &mut dyn Serializer, value: Option<NumericValue>) -> Result<()> {
@@ -68,6 +68,100 @@ fn read_numeric_value(deserializer: &mut dyn Deserializer, ty: &LogicalType) -> 
     Ok(Some(value))
 }
 
+/// `StringStats::Serialize`.
+fn write_string_stats(serializer: &mut dyn Serializer, string: &StringStats) -> Result<()> {
+    serializer.on_property_begin(200, "min");
+    serializer.write_data(&string.min);
+    serializer.on_property_end();
+    serializer.on_property_begin(201, "max");
+    serializer.write_data(&string.max);
+    serializer.on_property_end();
+    serializer.write_property(202, "has_unicode", &string.has_unicode)?;
+    serializer.write_property(203, "has_max_string_length", &string.has_max_string_length)?;
+    serializer.write_property(204, "max_string_length", &string.max_string_length)
+}
+
+/// `StringStats::Deserialize`.
+fn read_string_stats(deserializer: &mut dyn Deserializer, string: &mut StringStats) -> Result<()> {
+    deserializer.on_property_begin(200, "min")?;
+    string
+        .min
+        .copy_from_slice(&deserializer.read_data(MAX_STRING_MINMAX_SIZE)?);
+    deserializer.on_property_end()?;
+    deserializer.on_property_begin(201, "max")?;
+    string
+        .max
+        .copy_from_slice(&deserializer.read_data(MAX_STRING_MINMAX_SIZE)?);
+    deserializer.on_property_end()?;
+    string.has_unicode = deserializer.read_property(202, "has_unicode")?;
+    string.has_max_string_length = deserializer.read_property(203, "has_max_string_length")?;
+    string.max_string_length = deserializer.read_property(204, "max_string_length")?;
+    Ok(())
+}
+
+/// The version that added GEOMETRY to the core (`Geometry::VERSION_ADDED`).
+const GEOMETRY_VERSION_ADDED: u64 = 7;
+
+/// `GeometryStats::Serialize`: older storage versions get unknown string statistics, as
+/// the spatial extension's GEOMETRY wrote.
+fn write_geometry_stats(serializer: &mut dyn Serializer, geometry: &GeometryStats) -> Result<()> {
+    if !serializer.should_serialize(GEOMETRY_VERSION_ADDED) {
+        return write_string_stats(serializer, &StringStats::unknown());
+    }
+    let extent = &geometry.extent;
+    serializer.write_object_property(300, "extent", |s| {
+        s.write_property(101, "x_min", &extent.x_min)?;
+        s.write_property(102, "x_max", &extent.x_max)?;
+        s.write_property(103, "y_min", &extent.y_min)?;
+        s.write_property(104, "y_max", &extent.y_max)?;
+        s.write_property(105, "z_min", &extent.z_min)?;
+        s.write_property(106, "z_max", &extent.z_max)?;
+        s.write_property(107, "m_min", &extent.m_min)?;
+        s.write_property(108, "m_max", &extent.m_max)
+    })?;
+    let sets = &geometry.types.sets;
+    serializer.write_object_property(301, "types", |s| {
+        s.write_property(101, "types_xy", &sets[0])?;
+        s.write_property(102, "types_xyz", &sets[1])?;
+        s.write_property(103, "types_xym", &sets[2])?;
+        s.write_property(104, "types_xyzm", &sets[3])
+    })?;
+    serializer.write_property_with_default(302, "flags", &geometry.flags.flags)
+}
+
+/// `GeometryStats::Deserialize`: the string statistics of the spatial extension's
+/// GEOMETRY are read and ignored, leaving unknown geometry statistics.
+fn read_geometry_stats(deserializer: &mut dyn Deserializer, geometry: &mut GeometryStats) -> Result<()> {
+    if deserializer.can_deserialize_property(200, "min")? {
+        let mut ignored = StringStats::empty();
+        read_string_stats(deserializer, &mut ignored)?;
+        *geometry = GeometryStats::unknown();
+        return Ok(());
+    }
+    let extent = &mut geometry.extent;
+    deserializer.read_object_property(300, "extent", |d| {
+        extent.x_min = d.read_property(101, "x_min")?;
+        extent.x_max = d.read_property(102, "x_max")?;
+        extent.y_min = d.read_property(103, "y_min")?;
+        extent.y_max = d.read_property(104, "y_max")?;
+        extent.z_min = d.read_property(105, "z_min")?;
+        extent.z_max = d.read_property(106, "z_max")?;
+        extent.m_min = d.read_property(107, "m_min")?;
+        extent.m_max = d.read_property(108, "m_max")?;
+        Ok(())
+    })?;
+    let sets = &mut geometry.types.sets;
+    deserializer.read_object_property(301, "types", |d| {
+        sets[0] = d.read_property(101, "types_xy")?;
+        sets[1] = d.read_property(102, "types_xyz")?;
+        sets[2] = d.read_property(103, "types_xym")?;
+        sets[3] = d.read_property(104, "types_xyzm")?;
+        Ok(())
+    })?;
+    geometry.flags.flags = deserializer.read_property_with_default(302, "flags")?;
+    Ok(())
+}
+
 impl BaseStatistics {
     /// Writes the properties of these statistics (`BaseStatistics::Serialize`).
     pub fn serialize_fields(&self, serializer: &mut dyn Serializer) -> Result<()> {
@@ -80,17 +174,8 @@ impl BaseStatistics {
                 serializer.write_object_property(200, "max", |s| write_numeric_value(s, numeric.min))?;
                 serializer.write_object_property(201, "min", |s| write_numeric_value(s, numeric.max))
             }
-            StatsData::String(string) => {
-                serializer.on_property_begin(200, "min");
-                serializer.write_data(&string.min);
-                serializer.on_property_end();
-                serializer.on_property_begin(201, "max");
-                serializer.write_data(&string.max);
-                serializer.on_property_end();
-                serializer.write_property(202, "has_unicode", &string.has_unicode)?;
-                serializer.write_property(203, "has_max_string_length", &string.has_max_string_length)?;
-                serializer.write_property(204, "max_string_length", &string.max_string_length)
-            }
+            StatsData::String(string) => write_string_stats(serializer, string),
+            StatsData::Geometry(geometry) => write_geometry_stats(serializer, geometry),
             StatsData::List(child) | StatsData::Array(child) => {
                 serializer.write_object_property(200, "child_stats", |s| child.serialize_fields(s))
             }
@@ -123,22 +208,8 @@ impl BaseStatistics {
                     numeric.max =
                         deserializer.read_object_property(201, "min", |d| read_numeric_value(d, ty))?;
                 }
-                StatsData::String(string) => {
-                    deserializer.on_property_begin(200, "min")?;
-                    string
-                        .min
-                        .copy_from_slice(&deserializer.read_data(MAX_STRING_MINMAX_SIZE)?);
-                    deserializer.on_property_end()?;
-                    deserializer.on_property_begin(201, "max")?;
-                    string
-                        .max
-                        .copy_from_slice(&deserializer.read_data(MAX_STRING_MINMAX_SIZE)?);
-                    deserializer.on_property_end()?;
-                    string.has_unicode = deserializer.read_property(202, "has_unicode")?;
-                    string.has_max_string_length =
-                        deserializer.read_property(203, "has_max_string_length")?;
-                    string.max_string_length = deserializer.read_property(204, "max_string_length")?;
-                }
+                StatsData::String(string) => read_string_stats(deserializer, string)?,
+                StatsData::Geometry(geometry) => read_geometry_stats(deserializer, geometry)?,
                 StatsData::List(child) | StatsData::Array(child) => {
                     let child_type = child.logical_type().clone();
                     **child = deserializer.read_object_property(200, "child_stats", |d| {

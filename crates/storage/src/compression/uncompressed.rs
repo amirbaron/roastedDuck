@@ -273,9 +273,7 @@ fn append_strings(
             break;
         }
         stats.set_has_no_null_fast();
-        if let Some(string) = stats.string_mut() {
-            string.update(bytes, check_unicode);
-        }
+        stats.update_string(bytes, check_unicode);
         dictionary_size += required;
         let position = dictionary_end - dictionary_size;
         if big {
