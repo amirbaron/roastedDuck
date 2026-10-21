@@ -72,6 +72,8 @@ pub struct ReadCsvData {
     pub casts: Arc<CastFunctionSet>,
     /// The number of threads (`threads` setting) deciding single-threaded reads.
     pub threads: u64,
+    /// The connection reading, whose temporary catalog keeps the rejects tables.
+    pub client: Option<Arc<rustdb_function::FunctionClient>>,
 }
 
 impl FunctionData for ReadCsvData {
@@ -104,6 +106,7 @@ impl ReadCsvData {
             ),
             casts: Arc::clone(&self.casts),
             threads: self.threads,
+            client: self.client.clone(),
         }
     }
 }
@@ -424,6 +427,7 @@ pub fn bind_csv_files(
         buffer_manager: Mutex::new(first_buffer_manager),
         casts: Arc::clone(casts),
         threads: std::thread::available_parallelism().map_or(1, |threads| threads.get() as u64),
+        client: rustdb_function::file_system::opener(),
     })
 }
 
@@ -480,6 +484,10 @@ struct CsvScanState {
     current: Option<FileState>,
     scanner_idx: u64,
     single_threaded: bool,
+    /// The rejects tables with `store_rejects`.
+    rejects: Option<Arc<crate::rejects::CsvRejectsTable>>,
+    /// The rejects file index of each file read so far (`rejects_file_indexes`).
+    rejects_file_indexes: Vec<u64>,
 }
 
 /// `MultiFileColumnMapper::ThrowColumnNotFoundError`.
@@ -666,12 +674,33 @@ fn finish_scan(scanner: StringValueScanner) {
 }
 
 /// `CSVGlobalState::FinishFile`.
-fn finish_file(data: &ReadCsvData, state: &CsvScanState, file: &FileState) -> Result<()> {
+fn finish_file(data: &ReadCsvData, state: &mut CsvScanState, file: &FileState) -> Result<()> {
     let ignore_or_store_errors = data.options.ignore_errors.value() || data.options.store_rejects.value();
     if !state.single_threaded && !ignore_or_store_errors {
         file.file_scan.validator.verify()?;
     }
-    file.file_scan.error_handler.error_if_any()
+    file.file_scan.error_handler.error_if_any()?;
+    fill_rejects_table(data, state, &file.file_scan)
+}
+
+/// `CSVGlobalState::FillRejectsTable`.
+fn fill_rejects_table(data: &ReadCsvData, state: &mut CsvScanState, file: &CsvFileScan) -> Result<()> {
+    let (Some(rejects), Some(client)) = (&state.rejects, &data.client) else {
+        return Ok(());
+    };
+    let scan_idx = client.query_id();
+    // File indexes are assigned in file order, whatever order the files finish in.
+    let file_idx = file.file_idx as usize;
+    while state.rejects_file_indexes.len() <= file_idx {
+        state.rejects_file_indexes.push(rejects.current_file_index(scan_idx));
+    }
+    rejects.fill(
+        client,
+        file,
+        (scan_idx, state.rejects_file_indexes[file_idx]),
+        &data.names,
+        data.options.rejects_limit,
+    )
 }
 
 /// The `read_csv` scan: the next chunk of every output column.
@@ -687,11 +716,26 @@ fn read_csv_scan(
     if scan_state.local.is_none() {
         let file_count = data.files.files.len() as u64;
         let many_csv_files = file_count > 1 && file_count > data.threads * 2;
+        // `CSVMultiFileInfo::InitializeGlobalState`: the rejects tables are created.
+        let rejects = match (&data.client, data.options.store_rejects.value()) {
+            (Some(client), true) => {
+                let rejects = crate::rejects::CsvRejectsTable::get_or_create(
+                    client,
+                    data.options.rejects_scan_name.get(),
+                    data.options.rejects_table_name.get(),
+                )?;
+                rejects.initialize_table(client)?;
+                Some(rejects)
+            }
+            _ => None,
+        };
         scan_state.local = Some(Box::new(CsvScanState {
             file_idx: 0,
             current: None,
             scanner_idx: 0,
             single_threaded: many_csv_files || !data.options.parallel,
+            rejects,
+            rejects_file_indexes: Vec::new(),
         }));
     }
     let state = scan_state

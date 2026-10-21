@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rustdb_common::Result;
-use rustdb_types::Value;
+use rustdb_types::{LogicalType, Value};
 
 use crate::random::RandomEngine;
 
@@ -139,6 +139,22 @@ pub struct FunctionClient {
     object_cache: Mutex<Option<Arc<ObjectCache>>>,
     /// Configuration changes functions made, not yet applied by the connection.
     client_requests: Mutex<Vec<ClientRequest>>,
+    /// The connection's temporary catalog in the running statement's transaction.
+    temp_catalog: Mutex<Option<Arc<dyn TempCatalog>>>,
+}
+
+/// The connection's temporary catalog, for functions that keep tables of their own
+/// (DuckDB's functions use the `ClientContext` catalog API, e.g. the CSV reader's
+/// rejects tables). Everything happens in the running statement's transaction.
+pub trait TempCatalog: Send + Sync + std::fmt::Debug {
+    /// Whether the temporary table `name` exists.
+    fn table_exists(&self, name: &str) -> Result<bool>;
+    /// `CREATE TEMP TYPE IF NOT EXISTS name AS ty`.
+    fn create_type(&self, name: &str, ty: LogicalType) -> Result<()>;
+    /// `CREATE TEMP TABLE IF NOT EXISTS name (columns)`.
+    fn create_table(&self, name: &str, columns: &[(String, LogicalType)]) -> Result<()>;
+    /// Appends `rows` to the temporary table `name` (DuckDB's `InternalAppender`).
+    fn append(&self, name: &str, rows: &[Vec<Value>]) -> Result<()>;
 }
 
 impl Default for FunctionClient {
@@ -155,6 +171,7 @@ impl Default for FunctionClient {
             logger: Mutex::default(),
             object_cache: Mutex::default(),
             client_requests: Mutex::default(),
+            temp_catalog: Mutex::default(),
         }
     }
 }
@@ -217,6 +234,19 @@ impl FunctionClient {
     /// Sets the configuration seen by the next statements.
     pub fn set_settings(&self, settings: Arc<dyn SettingsSource>) {
         *self.settings.lock().unwrap_or_else(PoisonError::into_inner) = Some(settings);
+    }
+
+    /// Sets the temporary catalog functions see during the running statement.
+    pub fn set_temp_catalog(&self, catalog: Arc<dyn TempCatalog>) {
+        *self.temp_catalog.lock().unwrap_or_else(PoisonError::into_inner) = Some(catalog);
+    }
+
+    /// The temporary catalog of the running statement, if the connection set one.
+    pub fn temp_catalog(&self) -> Option<Arc<dyn TempCatalog>> {
+        self.temp_catalog
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Sets the connection's loggers.

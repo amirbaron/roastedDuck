@@ -1458,6 +1458,11 @@ impl Connection {
     fn client_context(&self, transaction: Arc<Transaction>) -> Arc<ClientContext> {
         self.function_client
             .observe_transaction(transaction.transaction_id);
+        self.function_client
+            .set_temp_catalog(Arc::new(crate::temp_catalog::StatementTempCatalog {
+                catalog: Arc::clone(&self.temp_catalog),
+                transaction: Arc::clone(&transaction),
+            }));
         let instance = self.database.instance();
         Arc::new(ClientContext {
             catalogs: self.catalogs(instance.default_database_name()),

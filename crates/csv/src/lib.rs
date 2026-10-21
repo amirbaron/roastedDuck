@@ -8,6 +8,7 @@ pub mod error;
 pub mod file_scan;
 pub mod multi_file;
 pub mod options;
+mod rejects;
 pub mod read_csv;
 pub mod scanner;
 pub mod schema;
