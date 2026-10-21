@@ -248,6 +248,21 @@ impl TableCreator for CatalogTableCreator {
         let CreateInfoKind::Table(table) = &self.info.kind else {
             return Err(Error::internal("expected a table"));
         };
+        // `Catalog::SupportsCreateTable`.
+        let unsupported = if !table.partition_keys.is_empty() {
+            Some("PARTITIONED BY")
+        } else if !table.sort_keys.is_empty() {
+            Some("SORTED BY")
+        } else if !table.options.is_empty() {
+            Some("WITH clause")
+        } else {
+            None
+        };
+        if let Some(clause) = unsupported {
+            return Err(Error::catalog(format!(
+                "{clause} is not supported for tables in a duckdb catalog"
+            )));
+        }
         let mut entry = TableEntry::from_create_info(table);
         let physical = || {
             table

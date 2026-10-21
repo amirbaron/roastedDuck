@@ -1818,6 +1818,7 @@ test/sql/create/big_create_table_as.test_slow
 test/sql/create/big_create_table_as_varchar.test_slow
 test/sql/create/create_as.test
 test/sql/create/create_as_issue_11968.test
+test/sql/create/create_as_partition_sorted_options.test
 test/sql/create/create_database.test
 test/sql/create/create_index_on_issue_13643.test
 test/sql/create/create_objects_readonly.test
@@ -1825,6 +1826,7 @@ test/sql/create/create_or_replace.test
 test/sql/create/create_table_as_duplicate_names.test
 test/sql/create/create_table_as_error.test
 test/sql/create/create_table_empty_name.test
+test/sql/create/create_table_extra_options.test
 test/sql/create/create_table_with_arraybounds.test
 test/sql/create/create_using_index.test
 test/sql/cte/cte_bc.test
@@ -1906,6 +1908,7 @@ test/sql/detailed_profiler/detailed_tpch_parallel_sf01.test_slow
 test/sql/detailed_profiler/detailed_tpch_sf001.test_slow
 test/sql/detailed_profiler/test_detailed_profiler.test
 test/sql/error/aggregate_order_by.test
+test/sql/error/correlated_at_clause.test
 test/sql/error/error_location_not_duplicated.test
 test/sql/error/escape_percent_sign.test
 test/sql/error/incorrect_sql.test
@@ -3069,6 +3072,7 @@ test/sql/pragma/test_pragma_parsing.test
 test/sql/pragma/test_pragma_sanitized_inputs.test
 test/sql/pragma/test_query_log.test
 test/sql/pragma/test_show_tables.test
+test/sql/pragma/test_show_tables_from.test
 test/sql/pragma/test_show_tables_temp_views.test
 test/sql/pragma/test_storage_info.test
 test/sql/pragma/test_table_info.test
@@ -3208,6 +3212,7 @@ test/sql/settings/set_schema_temp_main.test
 test/sql/settings/setting_alias.test
 test/sql/settings/setting_collation.test
 test/sql/settings/setting_disabled_optimizer.test
+test/sql/settings/setting_exhaustive.test
 test/sql/settings/setting_null_order.test
 test/sql/settings/setting_order.test
 test/sql/settings/setting_preserve_identifier_case.test

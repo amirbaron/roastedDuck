@@ -273,6 +273,59 @@ pub(crate) fn canonical_option(name: &str) -> Option<&'static str> {
     option_by_name(name).or_else(|| canonical_name(name))
 }
 
+/// Options with their own set callbacks (not generic settings) that have no local
+/// setter: they can only be set for the whole database (DuckDB's settings without
+/// `SetLocal`). Options with `global: false` conversely have no global setter.
+const GLOBAL_ONLY_OPTIONS: &[&str] = &[
+    "__delta_only_variant_encoding_enabled",
+    "access_mode",
+    "allocator_bulk_deallocation_flush_threshold",
+    "allocator_flush_threshold",
+    "allow_persistent_secrets",
+    "allowed_configs",
+    "allowed_directories",
+    "allowed_paths",
+    "block_allocator_memory",
+    "checkpoint_threshold",
+    "custom_user_agent",
+    "default_secret_storage",
+    "disabled_compression_methods",
+    "disabled_filesystems",
+    "disabled_optimizers",
+    "extension_directories",
+    "force_mbedtls_unsafe",
+    "http_proxy",
+    "max_memory",
+    "max_temp_directory_size",
+    "secret_directory",
+    "storage_compatibility_version",
+    "temp_directory",
+    "threads",
+    "write_buffer_row_group_memory_limit",
+];
+
+/// The checks of `PhysicalSet` and `PhysicalReset` on the scope: an option without a
+/// global (local) setter cannot be set or reset with `GLOBAL` (`SESSION`).
+pub(crate) fn check_setting_scope(name: &str, scope: rustdb_ast::SetScope, reset: bool) -> Result<()> {
+    use rustdb_ast::SetScope;
+    let Some(option) = canonical_option(name) else {
+        return Ok(());
+    };
+    let Some(definition) = SETTINGS.iter().find(|definition| definition.name == option) else {
+        return Ok(());
+    };
+    let action = if reset { "reset" } else { "set" };
+    match scope {
+        SetScope::Global if !definition.global => Err(Error::catalog(format!(
+            "option \"{name}\" cannot be {action} globally"
+        ))),
+        SetScope::Session if GLOBAL_ONLY_OPTIONS.contains(&option) => Err(Error::catalog(format!(
+            "option \"{name}\" cannot be {action} locally"
+        ))),
+        _ => Ok(()),
+    }
+}
+
 /// Whether a `SET` of option `name` without a scope sets it for the whole database
 /// (DuckDB's `GetSettingScope`: the option's scope is global).
 pub(crate) fn is_global_option(name: &str) -> bool {

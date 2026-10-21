@@ -1732,10 +1732,12 @@ impl Connection {
             LogicalKind::Set { name, value, scope } if *scope != SetScope::Variable => {
                 self.settings.check_lock(name)?;
                 Settings::check_running_set(name, value)?;
+                crate::settings::check_setting_scope(name, *scope, false)?;
             }
             LogicalKind::Reset { name, scope } if *scope != SetScope::Variable => {
                 self.settings.check_lock(name)?;
                 Settings::check_running_reset(name)?;
+                crate::settings::check_setting_scope(name, *scope, true)?;
             }
             _ => {}
         }

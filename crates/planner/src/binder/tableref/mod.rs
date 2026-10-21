@@ -412,8 +412,14 @@ fn bind_base_table(
         });
         return Ok(BoundStatement::new(plan, names, types));
     }
-    if base.at_clause.is_some() {
-        return Err(Error::not_implemented("AT clauses (time travel)"));
+    if let Some(at_clause) = &mut base.at_clause {
+        // `Binder::BindAtClause`: a constant, evaluated while binding.
+        let mut binder = scope.binder.child()?;
+        let expression = crate::expression_binder::ConstantBinder::new(&mut binder, None, "AT clause")
+            .bind(&mut at_clause.expr, true)?;
+        scope.context.evaluator.evaluate_scalar(&expression)?;
+        // `Catalog::TryLookupEntryInternal`: DuckDB catalogs have no time travel.
+        return Err(Error::binder("Catalog type does not support time travel"));
     }
     if !base.schema_name.is_empty()
         && base.catalog_name.is_empty()
