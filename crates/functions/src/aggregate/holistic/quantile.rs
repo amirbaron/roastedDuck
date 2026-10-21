@@ -908,7 +908,10 @@ impl<const DATE: bool> MadKind for TemporalMad<DATE> {
         } else {
             input
         };
-        let delta = input.wrapping_sub(median);
+        // `timestamp_t::operator-` checks for overflow (times cannot overflow).
+        let delta = input
+            .checked_sub(median)
+            .ok_or_else(|| Error::out_of_range("Overflow in timestamp subtraction"))?;
         let magnitude = delta
             .checked_abs()
             .ok_or_else(|| Error::out_of_range(format!("Overflow on abs({delta})")))?;

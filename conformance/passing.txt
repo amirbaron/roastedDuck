@@ -281,6 +281,7 @@ test/fuzzer/sqlsmith/struct_verify_crash.test
 test/fuzzer/sqlsmith/subquery_binding_error.test
 test/fuzzer/sqlsmith/test_abs_overflow.test
 test/fuzzer/sqlsmith/timestamp_diff_overflow.test
+test/fuzzer/sqlsmith/timestamp_overflow.test
 test/fuzzer/sqlsmith/validity_mask_out_of_bounds.test
 test/fuzzer/sqlsmith/window-leadlag-overflow.test
 test/fuzzer/sqlsmith/window-list-value.test
