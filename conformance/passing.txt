@@ -52,6 +52,7 @@ test/fuzzer/duckfuzz/compressed_materialization_json.test
 test/fuzzer/duckfuzz/correlated_subqueries.test
 test/fuzzer/duckfuzz/corrupted_parquet.test
 test/fuzzer/duckfuzz/create_sort_key_strings.test
+test/fuzzer/duckfuzz/duck_fuzz_column_binding_tests.test
 test/fuzzer/duckfuzz/empty_result_pullup_delim_joins.test
 test/fuzzer/duckfuzz/enum_const_cast.test
 test/fuzzer/duckfuzz/filter_combiner_assert.test
@@ -80,6 +81,7 @@ test/fuzzer/duckfuzz/null_arguments.test
 test/fuzzer/duckfuzz/null_checkpoint.test
 test/fuzzer/duckfuzz/ordagg_nargs.test
 test/fuzzer/duckfuzz/order_by_positional_reference.test
+test/fuzzer/duckfuzz/pivot_aggregate_mismatch.test
 test/fuzzer/duckfuzz/qualify_column_reference.test
 test/fuzzer/duckfuzz/read_ndjson_non_varchar_input.test
 test/fuzzer/duckfuzz/regex_syntax_2889.test
@@ -280,6 +282,8 @@ test/fuzzer/sqlsmith/struct_verify_crash.test
 test/fuzzer/sqlsmith/subquery_binding_error.test
 test/fuzzer/sqlsmith/test_abs_overflow.test
 test/fuzzer/sqlsmith/timestamp_diff_overflow.test
+test/fuzzer/sqlsmith/timestamptz_double_cast.test
+test/fuzzer/sqlsmith/timestamptz_null_range.test
 test/fuzzer/sqlsmith/validity_mask_out_of_bounds.test
 test/fuzzer/sqlsmith/window-leadlag-overflow.test
 test/fuzzer/sqlsmith/window-list-value.test
@@ -313,6 +317,7 @@ test/issues/general/test_1290.test
 test/issues/general/test_13252.test
 test/issues/general/test_13542.test
 test/issues/general/test_1358.test
+test/issues/general/test_13824.test
 test/issues/general/test_13938.test
 test/issues/general/test_14232.test
 test/issues/general/test_14244.test
@@ -324,6 +329,7 @@ test/issues/general/test_15432.test
 test/issues/general/test_15483.test
 test/issues/general/test_1599.test
 test/issues/general/test_1613.test
+test/issues/general/test_16213.test_slow
 test/issues/general/test_16257.test_slow
 test/issues/general/test_16524.test
 test/issues/general/test_16662.test
@@ -341,6 +347,7 @@ test/issues/general/test_1881.test
 test/issues/general/test_1890.test
 test/issues/general/test_19067.test
 test/issues/general/test_19221.test
+test/issues/general/test_19327.test
 test/issues/general/test_1933.test
 test/issues/general/test_19504.test
 test/issues/general/test_19575.test
@@ -524,6 +531,7 @@ test/optimizer/constant_order_normalization.test
 test/optimizer/csv_pushdown.test
 test/optimizer/cte_inlining.test
 test/optimizer/date_trunc_simplification.test
+test/optimizer/date_trunc_simplification_icu.test
 test/optimizer/deliminator.test
 test/optimizer/distributivity_rule.test
 test/optimizer/eager_aggregate_execution.test
@@ -605,6 +613,7 @@ test/optimizer/pushdown/table_or_pushdown.test
 test/optimizer/pushdown/test_constant_or_null_pushdown.test
 test/optimizer/pushdown/test_pushdown_cte_group_by_all.test
 test/optimizer/pushdown/test_pushdown_or.test_slow
+test/optimizer/pushdown/timestamp_to_date_pushdown.test
 test/optimizer/pushdown_semi_anti_join.test
 test/optimizer/pushdown_set_op.test
 test/optimizer/regex_optimizer.test
@@ -633,6 +642,7 @@ test/optimizer/statistics/statistics_varchar.test
 test/optimizer/stats_non_numeric_cast.test
 test/optimizer/test_sum_rewrite.test
 test/optimizer/test_try_cast_decimal.test
+test/optimizer/timestamp_comparisons.test
 test/optimizer/topn/complex_top_n.test
 test/optimizer/topn/topn_optimizer.test
 test/optimizer/topn_window_elimination.test_slow
@@ -990,6 +1000,7 @@ test/sql/attach/attach_foreign_key.test
 test/sql/attach/attach_hidden.test
 test/sql/attach/attach_home_directory.test
 test/sql/attach/attach_huggingface_index.test
+test/sql/attach/attach_icu_collation.test
 test/sql/attach/attach_if_not_exists.test
 test/sql/attach/attach_index.test
 test/sql/attach/attach_issue16122.test
@@ -1226,8 +1237,10 @@ test/sql/collate/collate_non_varchar.test
 test/sql/collate/collate_order_by_alias.test
 test/sql/collate/collate_ordered_aggregate.test
 test/sql/collate/collate_subquery.test
+test/sql/collate/icu_collation_propagation.test
 test/sql/collate/nop_collation_join_filter_pushdown.test
 test/sql/collate/test_collate_accent_insensitive.test
+test/sql/collate/test_collate_and_grouping_sets.test
 test/sql/collate/test_collate_between.test
 test/sql/collate/test_collate_case_insensitive.test
 test/sql/collate/test_collate_expression.test
@@ -1237,6 +1250,7 @@ test/sql/collate/test_collate_pivot.test
 test/sql/collate/test_collation_propagation.test
 test/sql/collate/test_combined_collation.test
 test/sql/collate/test_default_collations.test
+test/sql/collate/test_icu_collate.test
 test/sql/collate/test_strpos_collate.test
 test/sql/collate/test_unsupported_collations.test
 test/sql/conjunction/or_between.test
@@ -1476,6 +1490,8 @@ test/sql/copy/csv/test_csv_mixed_casts.test
 test/sql/copy/csv/test_csv_no_trailing_newline.test
 test/sql/copy/csv/test_csv_projection_pushdown.test
 test/sql/copy/csv/test_csv_projection_pushdown_glob.test
+test/sql/copy/csv/test_csv_timestamp_tz.test
+test/sql/copy/csv/test_csv_timestamp_tz_icu.test
 test/sql/copy/csv/test_csv_wrong_file.test_slow
 test/sql/copy/csv/test_date.test
 test/sql/copy/csv/test_date_sniffer.test
@@ -1556,6 +1572,7 @@ test/sql/copy/csv/test_validator.test
 test/sql/copy/csv/test_web_page.test
 test/sql/copy/csv/test_windows_newline.test
 test/sql/copy/csv/test_wrong_newline_delimiter.test
+test/sql/copy/csv/timestamp_with_tz.test
 test/sql/copy/csv/tpch_csv_sf01.test_slow
 test/sql/copy/csv/tpch_parallel_copy.test_slow
 test/sql/copy/csv/tsv_copy.test
@@ -1731,6 +1748,7 @@ test/sql/copy/parquet/test_parquet_stats.test
 test/sql/copy/parquet/timestamp_ms_stats.test
 test/sql/copy/parquet/timestamp_s.test
 test/sql/copy/parquet/timetz_parquet.test
+test/sql/copy/parquet/timezone.test
 test/sql/copy/parquet/tpch_parallel_copy.test_slow
 test/sql/copy/parquet/tpch_parquet_copy_cast.test_slow
 test/sql/copy/parquet/tpch_parquet_schema_evolution.test_slow
@@ -1905,8 +1923,10 @@ test/sql/detailed_profiler/detailed_tpch_parallel_sf01.test_slow
 test/sql/detailed_profiler/detailed_tpch_sf001.test_slow
 test/sql/detailed_profiler/test_detailed_profiler.test
 test/sql/error/aggregate_order_by.test
+test/sql/error/correlated_at_clause.test
 test/sql/error/error_location_not_duplicated.test
 test/sql/error/escape_percent_sign.test
+test/sql/error/extension_function_error.test
 test/sql/error/incorrect_sql.test
 test/sql/error/lineitem_errors.test
 test/sql/error/missing_type.test
@@ -1926,6 +1946,7 @@ test/sql/export/empty_export.test
 test/sql/export/export_compression_level.test
 test/sql/export/export_database.test
 test/sql/export/export_external_access.test
+test/sql/export/export_functions.test
 test/sql/export/export_generated_columns.test
 test/sql/export/export_hive_path.test
 test/sql/export/export_indexes.test
@@ -1953,6 +1974,7 @@ test/sql/filter/test_alias_filter.test
 test/sql/filter/test_constant_comparisons.test
 test/sql/filter/test_filter_clause.test_slow
 test/sql/filter/test_illegal_filters.test
+test/sql/filter/test_last_option_corruption.test
 test/sql/filter/test_obsolete_filters.test
 test/sql/filter/test_or_pushdown.test
 test/sql/filter/test_struct_pushdown.test
@@ -1985,6 +2007,7 @@ test/sql/function/autocomplete/insert_into.test
 test/sql/function/autocomplete/pragma.test
 test/sql/function/autocomplete/scalar_functions.test
 test/sql/function/autocomplete/select.test
+test/sql/function/autocomplete/setting.test
 test/sql/function/autocomplete/show.test
 test/sql/function/autocomplete/suggest_file.test
 test/sql/function/autocomplete/table_functions.test
@@ -2029,6 +2052,7 @@ test/sql/function/generic/replace_type.test
 test/sql/function/generic/table_func_varargs.test
 test/sql/function/generic/test_approx_database_count.test
 test/sql/function/generic/test_between.test
+test/sql/function/generic/test_between_sideeffects.test
 test/sql/function/generic/test_boolean_test.test
 test/sql/function/generic/test_case.test_slow
 test/sql/function/generic/test_connection_count.test
@@ -2089,6 +2113,7 @@ test/sql/function/list/flatten.test
 test/sql/function/list/generate_series.test
 test/sql/function/list/generate_series_timestamp.test
 test/sql/function/list/generate_subscripts.test
+test/sql/function/list/icu_generate_series_timestamptz.test
 test/sql/function/list/lambda_constant_null.test
 test/sql/function/list/lambdas/arrow/expression_iterator_cases_deprecated.test
 test/sql/function/list/lambdas/arrow/filter_deprecated.test
@@ -2280,6 +2305,8 @@ test/sql/function/time/epoch.test
 test/sql/function/time/test_date_part.test
 test/sql/function/time/test_extract.test
 test/sql/function/timestamp/age.test
+test/sql/function/timestamp/current_time.test
+test/sql/function/timestamp/current_timestamp.test
 test/sql/function/timestamp/date_diff.test_slow
 test/sql/function/timestamp/date_sub.test_slow
 test/sql/function/timestamp/epoch.test
@@ -2288,6 +2315,17 @@ test/sql/function/timestamp/test_date_diff_epoch.test
 test/sql/function/timestamp/test_date_part.test
 test/sql/function/timestamp/test_extract.test
 test/sql/function/timestamp/test_extract_ms.test
+test/sql/function/timestamp/test_icu_age.test
+test/sql/function/timestamp/test_icu_dateadd.test
+test/sql/function/timestamp/test_icu_datediff.test
+test/sql/function/timestamp/test_icu_datepart.test
+test/sql/function/timestamp/test_icu_datesub.test
+test/sql/function/timestamp/test_icu_datetrunc.test
+test/sql/function/timestamp/test_icu_makedate.test
+test/sql/function/timestamp/test_icu_strftime.test
+test/sql/function/timestamp/test_icu_strptime.test
+test/sql/function/timestamp/test_icu_time_bucket_timestamptz.test
+test/sql/function/timestamp/test_last_modified.test
 test/sql/function/timestamp/test_now.test
 test/sql/function/timestamp/test_now_prepared.test
 test/sql/function/timestamp/test_strftime_timestamp.test
@@ -2297,7 +2335,10 @@ test/sql/function/timestamp/test_time_bucket_timestamp.test
 test/sql/function/timestamp/test_try_strptime.test
 test/sql/function/timetz/test_date_part.test
 test/sql/function/timetz/test_extract.test
+test/sql/function/timetz/test_icu_cast.test
+test/sql/function/timetz/timetz_group_by.test
 test/sql/function/uuid/test_uuid.test
+test/sql/function/uuid/test_uuid_function.test
 test/sql/function/variant/variant_extract.test
 test/sql/function/variant/variant_shredded_extract_nested.test
 test/sql/function/variant/variant_typeof.test
@@ -2653,6 +2694,7 @@ test/sql/json/scalar/test_json_create.test
 test/sql/json/scalar/test_json_dot_syntax.test
 test/sql/json/scalar/test_json_exists.test
 test/sql/json/scalar/test_json_extract.test
+test/sql/json/scalar/test_json_icu.test
 test/sql/json/scalar/test_json_keys.test
 test/sql/json/scalar/test_json_merge_patch.test
 test/sql/json/scalar/test_json_path.test
@@ -2903,6 +2945,7 @@ test/sql/parser/join_alias.test
 test/sql/parser/pg_err_pos_reset.test
 test/sql/parser/position_prepare.test
 test/sql/parser/star_expression.test
+test/sql/parser/table_at_clause.test
 test/sql/parser/test_columns.test
 test/sql/parser/test_columns_lists.test
 test/sql/parser/test_columns_order.test
@@ -2911,6 +2954,7 @@ test/sql/parser/test_columns_unpacked.test
 test/sql/parser/test_columns_where.test
 test/sql/parser/test_long_error.test
 test/sql/parser/test_operator_precedence.test
+test/sql/parser/test_value_functions.test
 test/sql/parser/trailing_commas.test
 test/sql/parser/unreserved_keyword_casing.test
 test/sql/parser/values_list_without_brackets.test
@@ -2967,6 +3011,7 @@ test/sql/peg_parser/transformer/delete_statement.test
 test/sql/peg_parser/transformer/drop_statement.test
 test/sql/peg_parser/transformer/load_statement.test
 test/sql/peg_parser/transformer/peg_transformer.test
+test/sql/peg_parser/transformer/set_statement.test
 test/sql/peg_parser/transformer/special_string.test
 test/sql/peg_parser/transformer/statement_length.test
 test/sql/peg_parser/transformer/transaction_statement.test
@@ -3194,6 +3239,7 @@ test/sql/setops/union_single_dedup.test
 test/sql/setops/value_union.test
 test/sql/settings/access_mode.test
 test/sql/settings/allowed_configs.test
+test/sql/settings/allowed_configs_extensions.test
 test/sql/settings/allowed_directories.test
 test/sql/settings/allowed_paths.test
 test/sql/settings/connection_local_settings.test
@@ -3206,11 +3252,13 @@ test/sql/settings/set_schema_temp_main.test
 test/sql/settings/setting_alias.test
 test/sql/settings/setting_collation.test
 test/sql/settings/setting_disabled_optimizer.test
+test/sql/settings/setting_exhaustive.test
 test/sql/settings/setting_null_order.test
 test/sql/settings/setting_order.test
 test/sql/settings/setting_preserve_identifier_case.test
 test/sql/settings/setting_profiling_mode.test
 test/sql/settings/setting_threads.test
+test/sql/settings/settings_icu.test
 test/sql/settings/test_lock_configuration.test
 test/sql/settings/user_agent.test
 test/sql/show_select/describe_rowid.test
@@ -3464,6 +3512,7 @@ test/sql/storage/external_file_cache/external_file_cache_low_mem.test_slow
 test/sql/storage/external_file_cache/external_file_cache_parquet_tpch.test_slow
 test/sql/storage/filter_pushdown_struct.test
 test/sql/storage/full_vector_delete_checkpoint.test
+test/sql/storage/icu_collation.test
 test/sql/storage/issue3789_node_segment_tree.test
 test/sql/storage/issue7582_list_storage.test
 test/sql/storage/large_delete_wal.test_slow
@@ -3831,12 +3880,15 @@ test/sql/table_function/duckdb_settings_extension.test
 test/sql/table_function/duckdb_tables.test
 test/sql/table_function/duckdb_types.test
 test/sql/table_function/duckdb_views.test
+test/sql/table_function/icu_range_timestamptz.test
 test/sql/table_function/information_schema.test
 test/sql/table_function/information_schema_fkey_constraint_names.test
 test/sql/table_function/information_schema_issue12867.test
 test/sql/table_function/information_schema_types.test
 test/sql/table_function/lateral_table_function.test
 test/sql/table_function/range_function_different_iterators.test
+test/sql/table_function/range_function_lateral.test
+test/sql/table_function/range_non_foldable.test
 test/sql/table_function/range_timestamp.test
 test/sql/table_function/range_timestamp_lateral_empty.test
 test/sql/table_function/read_text_and_blob.test
@@ -3847,6 +3899,11 @@ test/sql/table_function/test_information_schema_columns.test
 test/sql/table_function/test_range_function.test
 test/sql/table_function/test_repeat_function.test
 test/sql/table_function/test_table_function.test
+test/sql/timezone/disable_timestamptz_casts.test
+test/sql/timezone/icu_calendar_operations.test
+test/sql/timezone/test_icu_calendar.test
+test/sql/timezone/test_icu_casts.test
+test/sql/timezone/test_icu_timezone.test
 test/sql/topn/concurrent_topn_insert.test_slow
 test/sql/topn/test_top_n.test
 test/sql/topn/test_top_n_distinct_row_group_pruner.test
@@ -4303,22 +4360,27 @@ test/sql/types/time/test_time_2411.test
 test/sql/types/time/test_time_ns.test
 test/sql/types/time/test_time_tz.test
 test/sql/types/time/test_time_tz_collate.test
+test/sql/types/time/test_time_tz_icu.test
 test/sql/types/time/time_limits.test
 test/sql/types/time/time_parsing.test
 test/sql/types/time/time_try_cast.test
 test/sql/types/timestamp/alternative_timestamp_casts.test
 test/sql/types/timestamp/bc_timestamp.test
+test/sql/types/timestamp/infinity_cast_coverage.test
 test/sql/types/timestamp/test_incorrect_timestamp.test
 test/sql/types/timestamp/test_infinite_time.test
 test/sql/types/timestamp/test_timestamp.test
 test/sql/types/timestamp/test_timestamp_2411.test
 test/sql/types/timestamp/test_timestamp_auto_casting.test
 test/sql/types/timestamp/test_timestamp_ms.test
+test/sql/types/timestamp/test_timestamp_to_tz_cast.test
 test/sql/types/timestamp/test_timestamp_types.test
 test/sql/types/timestamp/test_timestamp_tz.test
 test/sql/types/timestamp/timestamp_limits.test
 test/sql/types/timestamp/timestamp_precision.test
+test/sql/types/timestamp/timestamp_timezone_cast.test
 test/sql/types/timestamp/timestamp_try_cast.test
+test/sql/types/timestamp/utc_offset.test
 test/sql/types/type/test_type_storage.test
 test/sql/types/uhugeint/test_uhugeint_aggregates.test
 test/sql/types/uhugeint/test_uhugeint_arithmetic.test
