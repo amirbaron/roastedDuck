@@ -329,23 +329,6 @@ fn timestamp_overload(name: &'static str, generate_series: bool) -> TableFunctio
     function
 }
 
-/// The ICU `TIMESTAMP WITH TIME ZONE` overload; its rows are not produced (ICU is not
-/// ported).
-fn timestamp_tz_overload(name: &'static str) -> TableFunction {
-    let timestamp = LogicalType::TIMESTAMP_TZ;
-    let mut function = TableFunction::new(name, vec![timestamp.clone(), timestamp, LogicalType::INTERVAL])
-        .with_bind(move |_: &TableFunctionBindInput<'_>| {
-            Ok(TableFunctionBindOutput {
-                return_types: vec![LogicalType::TIMESTAMP_TZ],
-                names: vec![name.to_owned()],
-                bind_data: None,
-            })
-        })
-        .with_scan(|_, _, _, _| Err(Error::not_implemented("TIMESTAMP WITH TIME ZONE ranges (ICU)")));
-    function.in_out = true;
-    function
-}
-
 /// The progress of the in-out form of the integer `range` (DuckDB's
 /// `RangeFunctionLocalState`).
 #[derive(Debug, Default)]
@@ -552,7 +535,6 @@ fn range_set(name: &'static str, generate_series: bool) -> TableFunctionSet {
         set.add(integer_overload(name, arguments, generate_series));
     }
     set.add(timestamp_overload(name, generate_series));
-    set.add(timestamp_tz_overload(name));
     set
 }
 

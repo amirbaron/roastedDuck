@@ -11,7 +11,7 @@ pub mod scalar;
 mod signature;
 pub mod strtime;
 pub mod table;
-mod temporal;
+pub mod temporal;
 mod values;
 
 use rustdb_common::{Error, ErrorKind, Result};
@@ -43,7 +43,7 @@ pub fn builtin_table_functions() -> Vec<TableFunctionSet> {
 
 /// DuckDB's `ParameterNotResolvedException`, raised by bind callbacks that need the type of
 /// a prepared statement parameter.
-pub(crate) fn parameter_not_resolved() -> Error {
+pub fn parameter_not_resolved() -> Error {
     Error::new(
         ErrorKind::ParameterNotResolved,
         "Parameter types could not be resolved",

@@ -15,7 +15,7 @@ use crate::scalar::executor::addressable;
 use crate::scalar::nested::{all_constant, struct_field};
 
 /// Builds a STRUCT vector of `rows` rows from its field vectors.
-pub(crate) fn build_struct(
+pub fn build_struct(
     ty: LogicalType,
     fields: Vec<Vector>,
     rows: usize,

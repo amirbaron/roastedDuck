@@ -22,7 +22,7 @@ pub use aggregate::{
     AggregateCollation, AggregateFunction, AggregateFunctionSet, AggregateOps, OwnedStates, StatePtr,
     UnaryAggregate,
 };
-pub use client::{ClientRequest, FunctionClient, SettingInfo, SettingsSource};
+pub use client::{ClientRequest, ExtensionOption, ExtensionOptionSet, FunctionClient, SettingInfo, SettingsSource};
 pub use copy::{CopyFunction, CopyOption, CopyOptionMode};
 pub use scalar::{
     AggregateResolver, BindInput, BindLambda, BoundAggregateFunction, CollationHandling, FunctionData,

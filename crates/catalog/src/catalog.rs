@@ -205,6 +205,121 @@ impl Catalog {
         self.create_entry_committed(schema, entry)
     }
 
+    /// Adds the overloads of `set` to the built-in function of that name (DuckDB's
+    /// `ExtensionLoader::RegisterFunction`, `ALTER_ON_CONFLICT` with
+    /// `MergeFunctionSet(new, override = true)`): an overload with the same arguments,
+    /// varargs and return type replaces the existing one in place, the others are appended.
+    pub fn register_scalar_functions_merged(&self, set: ScalarFunctionSet) -> Result<()> {
+        let schema = self
+            .schema(&Transaction::system(), DEFAULT_SCHEMA)
+            .ok_or_else(missing_main)?;
+        let schema = schema.as_schema().ok_or_else(missing_main)?;
+        let existing = schema.functions.get_committed(&set.name);
+        let Some(existing) = existing else {
+            return self.register_scalar_functions(set);
+        };
+        let EntryKind::ScalarFunction(current) = &existing.kind else {
+            return Err(rustdb_common::Error::internal(format!(
+                "\"{}\" is not a scalar function",
+                set.name
+            )));
+        };
+        let mut merged = current.clone();
+        for function in set.functions {
+            let same = merged.functions.iter_mut().find(|existing| {
+                existing.arguments == function.arguments
+                    && existing.return_type == function.return_type
+                    && existing.varargs == function.varargs
+            });
+            match same {
+                Some(existing) => *existing = function,
+                None => merged.functions.push(function),
+            }
+        }
+        let mut entry = CatalogEntry::new(existing.name(), EntryKind::ScalarFunction(merged));
+        entry.oid = existing.oid;
+        entry.internal = true;
+        schema.functions.replace_committed(entry);
+        Ok(())
+    }
+
+    /// Adds the overloads of `set` to the built-in table function of that name
+    /// (`MergeFunctionSet` without override: an existing overload is an error).
+    pub fn register_table_functions_merged(&self, set: TableFunctionSet) -> Result<()> {
+        let schema = self
+            .schema(&Transaction::system(), DEFAULT_SCHEMA)
+            .ok_or_else(missing_main)?;
+        let schema = schema.as_schema().ok_or_else(missing_main)?;
+        let existing = schema.table_functions.get_committed(&set.name);
+        let Some(existing) = existing else {
+            return self.register_table_functions(set);
+        };
+        let EntryKind::TableFunction(current) = &existing.kind else {
+            return Err(rustdb_common::Error::internal(format!(
+                "\"{}\" is not a table function",
+                set.name
+            )));
+        };
+        let mut merged = current.clone();
+        for function in set.functions {
+            if merged
+                .functions
+                .iter()
+                .any(|existing| existing.arguments == function.arguments && existing.varargs == function.varargs)
+            {
+                return Err(rustdb_common::Error::catalog(format!(
+                    "Failed to add new function overloads to function \"{}\": function overload already exists",
+                    set.name
+                )));
+            }
+            merged.functions.push(function);
+        }
+        let mut entry = CatalogEntry::new(existing.name(), EntryKind::TableFunction(merged));
+        entry.oid = existing.oid;
+        entry.internal = true;
+        schema.table_functions.replace_committed(entry);
+        Ok(())
+    }
+
+    /// Applies `alter` to the overloads of the built-in scalar function `name` (an
+    /// extension patching a built-in function).
+    pub fn alter_builtin_scalar_functions(
+        &self,
+        name: &str,
+        alter: impl FnOnce(&mut ScalarFunctionSet) -> Result<()>,
+    ) -> Result<()> {
+        let schema = self
+            .schema(&Transaction::system(), DEFAULT_SCHEMA)
+            .ok_or_else(missing_main)?;
+        let schema = schema.as_schema().ok_or_else(missing_main)?;
+        let existing = schema
+            .functions
+            .get_committed(name)
+            .ok_or_else(|| rustdb_common::Error::internal(format!("Function \"{name}\" not found")))?;
+        let EntryKind::ScalarFunction(current) = &existing.kind else {
+            return Err(rustdb_common::Error::internal(format!("\"{name}\" is not a scalar function")));
+        };
+        let mut altered = current.clone();
+        alter(&mut altered)?;
+        let mut entry = CatalogEntry::new(existing.name(), EntryKind::ScalarFunction(altered));
+        entry.oid = existing.oid;
+        entry.internal = true;
+        schema.functions.replace_committed(entry);
+        Ok(())
+    }
+
+    /// Registers a built-in collation in `main` (DuckDB's `ExtensionLoader::RegisterCollation`).
+    pub fn register_collation(&self, name: &str, collation: crate::CollationEntry) -> Result<()> {
+        let schema = self
+            .schema(&Transaction::system(), DEFAULT_SCHEMA)
+            .ok_or_else(missing_main)?;
+        let schema = schema.as_schema().ok_or_else(missing_main)?;
+        let mut entry = CatalogEntry::new(name, EntryKind::Collation(collation));
+        entry.internal = true;
+        schema.collations.replace_committed(entry);
+        Ok(())
+    }
+
     /// Adds an internal entry to the set of `main` its kind belongs to.
     fn register_builtin(&self, name: String, kind: EntryKind) -> Result<()> {
         let schema = self

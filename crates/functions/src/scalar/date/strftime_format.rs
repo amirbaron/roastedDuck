@@ -8,7 +8,7 @@ use crate::temporal::timestamp_from_datetime;
 
 /// A format specifier (DuckDB's `StrTimeSpecifier`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Spec {
+pub enum Spec {
     AbbreviatedWeekdayName,
     FullWeekdayName,
     WeekdayDecimal,
@@ -94,15 +94,15 @@ impl Spec {
 
 /// A parsed format string (DuckDB's `StrTimeFormat`): literals around specifiers.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct StrTimeFormat {
-    pub(crate) format_specifier: String,
+pub struct StrTimeFormat {
+    pub format_specifier: String,
     specifiers: Vec<Spec>,
     literals: Vec<Vec<u8>>,
 }
 
 impl StrTimeFormat {
     /// DuckDB's `StrTimeFormat::ParseFormatSpecifier`; the error is DuckDB's message.
-    pub(crate) fn parse(format: &str) -> std::result::Result<Self, String> {
+    pub fn parse(format: &str) -> std::result::Result<Self, String> {
         if format.is_empty() {
             return Err("Empty format string".to_owned());
         }
@@ -216,7 +216,7 @@ impl StrTimeFormat {
         Ok(result)
     }
 
-    pub(crate) fn has_specifier(&self, spec: Spec) -> bool {
+    pub fn has_specifier(&self, spec: Spec) -> bool {
         self.specifiers.contains(&spec)
     }
 
@@ -226,12 +226,19 @@ impl StrTimeFormat {
 
     /// Writes `date` with time parts `data` (year, month, day, hour, minute, second,
     /// nanoseconds, UTC offset) (DuckDB's `FormatStringNS`).
-    pub(crate) fn format(&self, date: Date, data: &[i32; 8], out: &mut Vec<u8>) {
+    pub fn format(&self, date: Date, data: &[i32; 8], out: &mut Vec<u8>) {
+        self.format_with_tz_name(date, data, None, out);
+    }
+
+    /// [`StrTimeFormat::format`] with the text `%Z` writes (DuckDB's `tz_name`).
+    pub fn format_with_tz_name(&self, date: Date, data: &[i32; 8], tz_name: Option<&str>, out: &mut Vec<u8>) {
         if !self.specifiers.contains(&Spec::NanosecondPadded) {
             for (literal, spec) in self.literals.iter().zip(&self.specifiers) {
                 out.extend_from_slice(literal);
                 if spec.is_date_specifier() {
                     write_date_specifier(*spec, date, out);
+                } else if *spec == Spec::TzName {
+                    out.extend_from_slice(tz_name.unwrap_or_default().as_bytes());
                 } else {
                     write_standard_specifier(*spec, data, out);
                 }
@@ -250,6 +257,8 @@ impl StrTimeFormat {
             let mut bytes = Vec::new();
             if spec.is_date_specifier() {
                 write_date_specifier(*spec, date, &mut bytes);
+            } else if *spec == Spec::TzName {
+                bytes.extend_from_slice(tz_name.unwrap_or_default().as_bytes());
             } else {
                 write_standard_specifier(*spec, data, &mut bytes);
             }
@@ -278,7 +287,7 @@ impl StrTimeFormat {
     // -----------------------------------------------------------------------------------
 
     /// DuckDB's `StrpTimeFormat::Parse`.
-    pub(crate) fn parse_text(&self, input: &[u8], strict: bool) -> ParseResult {
+    pub fn parse_text(&self, input: &[u8], strict: bool) -> ParseResult {
         let mut result = ParseResult {
             data: [1900, 1, 1, 0, 0, 0, 0, 0],
             ..ParseResult::default()
@@ -711,16 +720,16 @@ impl StrTimeFormat {
 
 /// The outcome of `strptime` parsing (DuckDB's `StrpTimeFormat::ParseResult`).
 #[derive(Clone, Debug, Default)]
-pub(crate) struct ParseResult {
+pub struct ParseResult {
     /// year, month, day, hour, minute, second, nanoseconds, UTC offset (seconds).
-    pub(crate) data: [i32; 8],
-    pub(crate) tz: String,
-    pub(crate) error_message: String,
-    pub(crate) error_position: Option<usize>,
-    pub(crate) special: Option<Date>,
-    pub(crate) ok: bool,
+    pub data: [i32; 8],
+    pub tz: String,
+    pub error_message: String,
+    pub error_position: Option<usize>,
+    pub special: Option<Date>,
+    pub ok: bool,
     /// An unsupported specifier was used (DuckDB throws).
-    pub(crate) not_implemented: bool,
+    pub not_implemented: bool,
 }
 
 impl ParseResult {
@@ -731,7 +740,7 @@ impl ParseResult {
     }
 
     /// DuckDB's `ParseResult::FormatError`.
-    pub(crate) fn format_error(&self, input: &[u8], format_specifier: &str) -> String {
+    pub fn format_error(&self, input: &[u8], format_specifier: &str) -> String {
         let input = String::from_utf8_lossy(input);
         let position = self
             .error_position
@@ -743,7 +752,8 @@ impl ParseResult {
         )
     }
 
-    fn micros(&self) -> i32 {
+    /// DuckDB's `GetMicros`.
+    pub fn micros(&self) -> i32 {
         (self.data[6] + 500) / 1000
     }
 
@@ -772,7 +782,7 @@ impl ParseResult {
     }
 
     /// DuckDB's `ToTimestamp`.
-    pub(crate) fn to_timestamp(&self) -> Result<Timestamp> {
+    pub fn to_timestamp(&self) -> Result<Timestamp> {
         if let Some(special) = self.special {
             return Ok(if special == Date::INFINITY {
                 Timestamp::INFINITY
@@ -788,7 +798,7 @@ impl ParseResult {
     }
 
     /// DuckDB's `TryToTimestamp` (which ignores special values).
-    pub(crate) fn try_to_timestamp(&self) -> Option<Timestamp> {
+    pub fn try_to_timestamp(&self) -> Option<Timestamp> {
         let date = Date::from_ymd(self.data[0], self.data[1], self.data[2])?;
         from_datetime(date, self.time())
     }

@@ -15,7 +15,7 @@ mod binary;
 mod compare;
 mod decimal;
 mod enums;
-mod executor;
+pub mod executor;
 mod geometry;
 mod nested;
 pub mod numeric;
@@ -207,6 +207,9 @@ struct CastEntry {
 #[derive(Clone, Default)]
 pub struct CastFunctionSet {
     registered: Vec<CastEntry>,
+    /// The connection casts are bound for (DuckDB's `GetCastFunctionInput::context`), if
+    /// any: extension casts that depend on the connection's settings read them from it.
+    client: Option<Arc<crate::FunctionClient>>,
 }
 
 impl fmt::Debug for CastFunctionSet {
@@ -251,6 +254,20 @@ impl CastFunctionSet {
     /// DuckDB's default casts only.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// These casts, bound for the connection `client` (DuckDB's `BindCastInput::context`).
+    #[must_use]
+    pub fn with_client(&self, client: Arc<crate::FunctionClient>) -> Self {
+        Self {
+            registered: self.registered.clone(),
+            client: Some(client),
+        }
+    }
+
+    /// The connection the casts are bound for, if any.
+    pub fn client(&self) -> Option<&Arc<crate::FunctionClient>> {
+        self.client.as_ref()
     }
 
     /// Registers a bound cast from `source` to `target` with an implicit cast cost

@@ -8,7 +8,7 @@ pub mod blob;
 pub mod compressed_materialization;
 pub mod date;
 pub mod enums;
-pub(crate) mod executor;
+pub mod executor;
 pub mod generic;
 pub mod geometry;
 pub mod list;
