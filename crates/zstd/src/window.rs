@@ -12,6 +12,9 @@ const WINDOW_START_INDEX: u32 = 2;
 /// The largest index before the window is moved down (`ZSTD_CURRENT_MAX` of 64-bit
 /// builds).
 const CURRENT_MAX: i64 = (3 << 29) + (1 << 31);
+/// How close to `CURRENT_MAX` the indexes of a reused context may start a frame
+/// (`ZSTD_INDEXOVERFLOW_MARGIN`).
+const INDEX_OVERFLOW_MARGIN: i64 = 16 << 20;
 /// The rows the hash tables are reduced by (`ZSTD_ROWSIZE`).
 const ROW_SIZE: usize = 16;
 
@@ -108,6 +111,18 @@ impl Window {
         }
     }
 
+    /// `ZSTD_window_clear`: nothing before the end is valid any more.
+    pub(crate) fn clear(&mut self) {
+        let end = (self.next_pos as i64 + self.base) as u32;
+        self.low_limit = end;
+        self.dict_limit = end;
+    }
+
+    /// `ZSTD_indexTooCloseToMax`: a new frame should restart the indexes.
+    fn index_too_close_to_max(&self) -> bool {
+        self.next_pos as i64 + self.base > CURRENT_MAX - INDEX_OVERFLOW_MARGIN
+    }
+
     /// `ZSTD_window_needOverflowCorrection`: whether the index of `end` (a position of
     /// the current segment) passes `ZSTD_CURRENT_MAX`.
     pub(crate) fn need_overflow_correction(&self, end: usize) -> bool {
@@ -181,6 +196,8 @@ pub(crate) struct MatchState {
     /// The chain table, or for dfast the table of short hashes.
     pub chain_table: Vec<u32>,
     pub next_to_update: u32,
+    /// The tables hold indexes of this window (`ZSTD_CCtx::initialized`).
+    initialized: bool,
 }
 
 impl MatchState {
@@ -191,20 +208,39 @@ impl MatchState {
             hash_table: Vec::new(),
             chain_table: Vec::new(),
             next_to_update: 0,
+            initialized: false,
         }
     }
 
-    /// `ZSTD_reset_matchState` with clean tables and a new window.
+    /// `ZSTD_reset_matchState`: a new frame, continuing the indexes of a context used before
+    /// (the tables keep their stale entries) or starting a new window with clean tables.
     pub(crate) fn reset(&mut self, params: CParams, chain_table: bool) {
         self.params = params;
+        let hash_size = 1usize << params.hash_log;
+        let chain_size = if chain_table {
+            1usize << params.chain_log
+        } else {
+            0
+        };
+        if self.initialized
+            && !self.window.index_too_close_to_max()
+            && self.hash_table.len() == hash_size
+            && self.chain_table.len() == chain_size
+        {
+            // `ZSTDirp_continue`: the indexes go on from the previous frame, so the
+            // tables' entries all lie below the new window and need no clearing
+            // (`ZSTD_invalidateMatchState`).
+            self.window.clear();
+            self.next_to_update = self.window.dict_limit;
+            return;
+        }
         self.window = Window::new();
         self.next_to_update = self.window.dict_limit;
         self.hash_table.clear();
-        self.hash_table.resize(1 << params.hash_log, 0);
+        self.hash_table.resize(hash_size, 0);
         self.chain_table.clear();
-        if chain_table {
-            self.chain_table.resize(1 << params.chain_log, 0);
-        }
+        self.chain_table.resize(chain_size, 0);
+        self.initialized = true;
     }
 
     /// `ZSTD_overflowCorrectIfNeeded` for the block `start..end` of the current segment:
@@ -240,6 +276,25 @@ fn reduce_table(table: &mut [u32], reducer: u32) {
 pub(crate) struct Mem<'a> {
     pub cur: &'a [u8],
     pub dict: &'a [u8],
+}
+
+/// `PREFETCH_L1`: brings the cache line at `pos` of `buf` closer (a hint; the address
+/// may lie past the buffer).
+#[inline(always)]
+pub(crate) fn prefetch(buf: &[u8], pos: usize) {
+    let address = buf.as_ptr().wrapping_add(pos);
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: a prefetch does not fault, whatever the address.
+    unsafe {
+        std::arch::asm!("prfm pldl1keep, [{0}]", in(reg) address, options(nostack, readonly, preserves_flags));
+    }
+    #[cfg(target_arch = "x86_64")]
+    // SAFETY: as above.
+    unsafe {
+        std::arch::x86_64::_mm_prefetch::<{ std::arch::x86_64::_MM_HINT_T0 }>(address.cast());
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    let _ = address;
 }
 
 #[inline(always)]
@@ -325,11 +380,28 @@ pub(crate) fn count_between(input: &[u8], ip: usize, other: &[u8], matched: usiz
         ip += 4;
         matched += 4;
     }
-    while ip < limit && input[ip] == other[matched] {
+    if ip + 2 <= limit && read16(other, matched) == read16(input, ip) {
+        ip += 2;
+        matched += 2;
+    }
+    if ip < limit && byte_at(other, matched) == byte_at(input, ip) {
         ip += 1;
-        matched += 1;
     }
     ip - start
+}
+
+#[inline(always)]
+fn read16(buf: &[u8], pos: usize) -> u16 {
+    debug_assert!(pos + 2 <= buf.len());
+    // SAFETY: as for `read32`.
+    u16::from_le(unsafe { buf.as_ptr().add(pos).cast::<u16>().read_unaligned() })
+}
+
+#[inline(always)]
+fn byte_at(buf: &[u8], pos: usize) -> u8 {
+    debug_assert!(pos < buf.len());
+    // SAFETY: as for `read32`.
+    unsafe { *buf.get_unchecked(pos) }
 }
 
 /// `ZSTD_count_2segments`: a match in the extDict ending at `match_end` continues at the

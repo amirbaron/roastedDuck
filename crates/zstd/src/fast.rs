@@ -2,8 +2,8 @@
 
 use crate::seq::{REPCODE1, SeqStore, offset_to_off_base};
 use crate::window::{
-    HASH_READ_SIZE, MatchState, Mem, SEARCH_STRENGTH, count, count_2segments, get, hash_ptr, read32, set,
-    template_mls,
+    HASH_READ_SIZE, MatchState, Mem, SEARCH_STRENGTH, count, count_2segments, get, hash_ptr, prefetch,
+    read32, set, template_mls,
 };
 
 /// `ZSTD_compressBlock_fast` / `ZSTD_compressBlock_fast_extDict`: stores the sequences of
@@ -158,6 +158,8 @@ fn compress_no_dict<const MLS: u32>(
             ip3 = ip1 + step;
             if ip2 >= next_step {
                 step += 1;
+                prefetch(buf, ip1 + 64);
+                prefetch(buf, ip1 + 128);
                 next_step += k_step_incr;
             }
             if ip3 as isize >= ilimit {
@@ -390,6 +392,8 @@ fn compress_ext_dict<const MLS: u32>(
             ip3 = ip1 + step;
             if ip2 >= next_step {
                 step += 1;
+                prefetch(buf, ip1 + 64);
+                prefetch(buf, ip1 + 128);
                 next_step += k_step_incr;
             }
             if ip3 as isize >= ilimit {

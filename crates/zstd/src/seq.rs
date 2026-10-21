@@ -90,20 +90,35 @@ impl SeqStore {
         off_base: u32,
         match_length: usize,
     ) {
+        const WILDCOPY_OVERLENGTH: usize = 32;
         let len = self.literals.len();
-        if lit_length <= 16 && anchor + 16 <= buf.len() && self.literals.capacity() - len >= 16 {
-            // `ZSTD_copy16`: short literals are copied 16 bytes at a time.
-            // SAFETY: 16 bytes are readable at `anchor` and writable after the length (both
-            // checked above); the length only grows over the `lit_length` copied bytes.
+        if anchor + lit_length + WILDCOPY_OVERLENGTH <= buf.len()
+            && self.literals.capacity() - len >= lit_length + WILDCOPY_OVERLENGTH
+        {
+            // `ZSTD_copy16`, then `ZSTD_wildcopy` for longer literals: 16 bytes at a time,
+            // over-reading and over-writing up to `WILDCOPY_OVERLENGTH` bytes.
+            // SAFETY: `WILDCOPY_OVERLENGTH` bytes past the literals are readable in `buf` and
+            // writable in the capacity (both checked above); the two buffers are distinct;
+            // the length only grows over the `lit_length` copied bytes.
             unsafe {
-                std::ptr::copy_nonoverlapping(
-                    buf.as_ptr().add(anchor),
-                    self.literals.as_mut_ptr().add(len),
-                    16,
-                );
+                let mut src = buf.as_ptr().add(anchor);
+                let mut dst = self.literals.as_mut_ptr().add(len);
+                let end = dst.add(lit_length);
+                std::ptr::copy_nonoverlapping(src, dst, 16);
+                if lit_length > 16 {
+                    loop {
+                        src = src.add(16);
+                        dst = dst.add(16);
+                        std::ptr::copy_nonoverlapping(src, dst, 16);
+                        if dst.add(16) >= end {
+                            break;
+                        }
+                    }
+                }
                 self.literals.set_len(len + lit_length);
             }
         } else {
+            // `ZSTD_safecopyLiterals`.
             self.literals.extend_from_slice(&buf[anchor..anchor + lit_length]);
         }
         if lit_length > 0xFFFF {
@@ -124,13 +139,19 @@ impl SeqStore {
 
     /// `ZSTD_seqToCodes`.
     pub(crate) fn compute_codes(&mut self) {
-        self.ll_code.clear();
-        self.of_code.clear();
-        self.ml_code.clear();
-        for sequence in &self.sequences {
-            self.ll_code.push(ll_code(u32::from(sequence.lit_length)) as u8);
-            self.of_code.push(highbit32(sequence.off_base) as u8);
-            self.ml_code.push(ml_code(u32::from(sequence.ml_base)) as u8);
+        let n = self.sequences.len();
+        self.ll_code.resize(n, 0);
+        self.of_code.resize(n, 0);
+        self.ml_code.resize(n, 0);
+        let codes = self
+            .ll_code
+            .iter_mut()
+            .zip(&mut self.of_code)
+            .zip(&mut self.ml_code);
+        for (((ll, of), ml), sequence) in codes.zip(&self.sequences) {
+            *ll = ll_code(u32::from(sequence.lit_length)) as u8;
+            *of = highbit32(sequence.off_base) as u8;
+            *ml = ml_code(u32::from(sequence.ml_base)) as u8;
         }
         match self.long_length {
             LongLength::Literal => self.ll_code[self.long_length_pos] = MAX_LL as u8,

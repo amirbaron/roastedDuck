@@ -394,11 +394,16 @@ impl CTable {
     /// `FSE_encodeSymbol`.
     #[inline(always)]
     pub(crate) fn encode(&self, bits: &mut BitWriter<'_>, state: &mut CState, symbol: u8) {
-        let transform = self.symbol_tt[symbol as usize];
+        debug_assert!((symbol as usize) < self.symbol_tt.len());
+        // SAFETY: the symbols encoded are those the table was built for (`max_symbol` or
+        // less), and a state stays within the table (`FSE_buildCTable`).
+        let transform = unsafe { *self.symbol_tt.get_unchecked(symbol as usize) };
         let nb_bits_out = ((state.value + u64::from(transform.delta_nb_bits)) >> 16) as u32;
         bits.add_bits(state.value, nb_bits_out);
         let index = ((state.value >> nb_bits_out) as i64 + i64::from(transform.delta_find_state)) as usize;
-        state.value = u64::from(self.state_table[index]);
+        debug_assert!(index < self.state_table.len());
+        // SAFETY: as above.
+        state.value = u64::from(unsafe { *self.state_table.get_unchecked(index) });
     }
 
     /// `FSE_flushCState`.
@@ -427,7 +432,8 @@ pub(crate) fn compress_using_ctable(out: &mut Vec<u8>, src: &[u8], table: &CTabl
     if src.len() <= 2 {
         return 0;
     }
-    let mut bits = BitWriter::new(out);
+    // At most 12 bits per symbol.
+    let mut bits = BitWriter::new(out, src.len() * 2 + 16);
     let mut ip = src.len();
     let (mut state1, mut state2);
     if src.len() & 1 == 1 {

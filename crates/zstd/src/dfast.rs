@@ -4,8 +4,8 @@
 
 use crate::seq::{REPCODE1, SeqStore, offset_to_off_base};
 use crate::window::{
-    HASH_READ_SIZE, MatchState, Mem, SEARCH_STRENGTH, count, count_2segments, get, hash_ptr, read32, read64,
-    set, template_mls,
+    HASH_READ_SIZE, MatchState, Mem, SEARCH_STRENGTH, count, count_2segments, get, hash_ptr, prefetch,
+    read32, read64, set, template_mls,
 };
 
 /// `ZSTD_compressBlock_doubleFast` / `ZSTD_compressBlock_doubleFast_extDict`.
@@ -27,6 +27,14 @@ pub(crate) fn compress_block(
         (7, true) => compress_ext_dict::<7>(ms, seq, rep, mem, istart, src_size),
         (_, true) => compress_ext_dict::<4>(ms, seq, rep, mem, istart, src_size),
     }
+}
+
+/// The byte before `pos` (`ip[-1]`), where `pos` is above the window's lowest position.
+#[inline(always)]
+fn byte_before(buf: &[u8], pos: usize) -> u8 {
+    debug_assert!(pos >= 1 && pos <= buf.len());
+    // SAFETY: the catch-up loops only look back while above `anchor` and `prefix_lowest`.
+    unsafe { *buf.get_unchecked(pos - 1) }
 }
 
 /// `ZSTD_compressBlock_doubleFast_noDict_generic`.
@@ -94,7 +102,7 @@ fn compress_no_dict<const MLS: u32>(
             curr = idx_of(ip);
             set(hash_long, hl0, curr);
             set(hash_small, hs0, curr);
-            if offset_1 > 0 && read32(buf, ip + 1 - offset_1 as usize) == read32(buf, ip + 1) {
+            if (offset_1 > 0) & (read32(buf, ip + 1 - offset_1 as usize) == read32(buf, ip + 1)) {
                 length = count(buf, ip + 1 + 4, ip + 1 + 4 - offset_1 as usize, iend) + 4;
                 ip += 1;
                 seq.store(buf, anchor, ip - anchor, REPCODE1, length);
@@ -108,7 +116,10 @@ fn compress_no_dict<const MLS: u32>(
                 if read64(buf, matchl0) == read64(buf, ip) {
                     let mut l = count(buf, ip + 8, matchl0 + 8, iend) + 8;
                     let offset = (ip - matchl0) as u32;
-                    while ip > anchor && matchl0 > prefix_lowest && buf[ip - 1] == buf[matchl0 - 1] {
+                    while ip > anchor
+                        && matchl0 > prefix_lowest
+                        && byte_before(buf, ip) == byte_before(buf, matchl0)
+                    {
                         ip -= 1;
                         matchl0 -= 1;
                         l += 1;
@@ -127,7 +138,10 @@ fn compress_no_dict<const MLS: u32>(
                         ip = ip1;
                         let mut l = count(buf, ip + 8, matchl1 + 8, iend) + 8;
                         let offset = (ip - matchl1) as u32;
-                        while ip > anchor && matchl1 > prefix_lowest && buf[ip - 1] == buf[matchl1 - 1] {
+                        while ip > anchor
+                            && matchl1 > prefix_lowest
+                            && byte_before(buf, ip) == byte_before(buf, matchl1)
+                        {
                             ip -= 1;
                             matchl1 -= 1;
                             l += 1;
@@ -140,7 +154,10 @@ fn compress_no_dict<const MLS: u32>(
                 let mut matchs0 = pos_of(idxs0);
                 let mut l = count(buf, ip + 4, matchs0 + 4, iend) + 4;
                 let offset = (ip - matchs0) as u32;
-                while ip > anchor && matchs0 > prefix_lowest && buf[ip - 1] == buf[matchs0 - 1] {
+                while ip > anchor
+                    && matchs0 > prefix_lowest
+                    && byte_before(buf, ip) == byte_before(buf, matchs0)
+                {
                     ip -= 1;
                     matchs0 -= 1;
                     l += 1;
@@ -150,6 +167,8 @@ fn compress_no_dict<const MLS: u32>(
                 break 'search;
             }
             if ip1 >= next_step {
+                prefetch(buf, ip1 + 64);
+                prefetch(buf, ip1 + 128);
                 step += 1;
                 next_step += k_step_incr;
             }
@@ -157,6 +176,8 @@ fn compress_no_dict<const MLS: u32>(
             ip1 += step;
             hl0 = hl1;
             idxl0 = idxl1;
+            #[cfg(target_arch = "aarch64")]
+            prefetch(buf, ip + 256);
             if ip1 as isize > ilimit {
                 offset_saved2 = if offset_saved1 != 0 && offset_1 != 0 {
                     offset_saved1

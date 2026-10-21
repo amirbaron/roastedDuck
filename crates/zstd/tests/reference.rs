@@ -183,6 +183,31 @@ fn string_vectors_match_duckdbs_zstd() {
 }
 
 #[test]
+fn reused_contexts_write_the_same_frames() {
+    // A context used before continues its indexes instead of clearing its tables
+    // (`ZSTDirp_continue`); the frames do not change.
+    let mut compressor = rustdb_zstd::Compressor::new(0);
+    for _ in 0..3 {
+        for (name, strings) in common::vectors() {
+            let original: Vec<u8> = strings.concat();
+            for (index, (first, page)) in common::PAGE_SPACES.iter().enumerate() {
+                let frame = common::strings_frame_with(&mut compressor, &strings, *first, *page);
+                check(name, Mode::Strings, index as i32, &frame, &original);
+            }
+        }
+        let mut one_shot = rustdb_zstd::Compressor::new(3);
+        for (name, data) in common::inputs() {
+            for level in common::ONE_SHOT_LEVELS {
+                one_shot.set_level(level);
+                let mut frame = Vec::new();
+                one_shot.compress_into(&mut frame, &data);
+                check(name, Mode::OneShot, level, &frame, &data);
+            }
+        }
+    }
+}
+
+#[test]
 fn stronger_levels_round_trip() {
     // Levels above dfast run the double-fast match finder: valid frames.
     let mut rng = common::Rng::new(3);

@@ -175,8 +175,24 @@ pub const ONE_SHOT_LEVELS: [i32; 6] = [3, 1, 2, -1, -3, -5];
 /// each string is one streaming call into the space left on the page, the last one ending
 /// the frame, empty ones before it skipped; output left to flush starts a new page.
 pub fn strings_frame(strings: &[Vec<u8>], first_space: usize, page_space: usize) -> Vec<u8> {
-    use rustdb_zstd::{Compressor, EndDirective};
-    let mut compressor = Compressor::new(0);
+    strings_frame_with(
+        &mut rustdb_zstd::Compressor::new(0),
+        strings,
+        first_space,
+        page_space,
+    )
+}
+
+/// `strings_frame` with a context used before, as DuckDB keeps one per column: a new
+/// session per vector (`ZSTD_CCtx_reset(ZSTD_reset_session_only)`).
+pub fn strings_frame_with(
+    compressor: &mut rustdb_zstd::Compressor,
+    strings: &[Vec<u8>],
+    first_space: usize,
+    page_space: usize,
+) -> Vec<u8> {
+    use rustdb_zstd::EndDirective;
+    compressor.reset_session();
     let mut result = Vec::new();
     let mut page = vec![0u8; first_space];
     let mut out_pos = 0;

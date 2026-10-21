@@ -84,7 +84,8 @@ fn entropy_compress(
             Some(stats) => {
                 out[seq_head] = ((stats.ll << 6) + (stats.of << 4) + (stats.ml << 2)) as u8;
                 let bitstream = encode_sequences(out, &next.fse, seq);
-                if stats.last_count_size != 0 && stats.last_count_size + bitstream < 4 {
+                // 0: the stream overflowed (`dstSize_tooSmall`); the block is stored raw.
+                if bitstream == 0 || stats.last_count_size != 0 && stats.last_count_size + bitstream < 4 {
                     0
                 } else {
                     out.len() - start
@@ -101,9 +102,19 @@ fn entropy_compress(
     size
 }
 
-/// `ZSTD_isRLE`.
+/// `ZSTD_isRLE`: compared 32 bytes at a time, as zstd unrolls it.
 fn is_rle(src: &[u8]) -> bool {
-    src.iter().all(|&byte| byte == src[0])
+    let value = src[0];
+    let pattern = u64::from_ne_bytes([value; 8]);
+    let (chunks, rest) = src.as_chunks::<32>();
+    rest.iter().all(|&byte| byte == value)
+        && chunks.iter().all(|chunk| {
+            let (words, _) = chunk.as_chunks::<8>();
+            words
+                .iter()
+                .fold(0, |differ, word| differ | (u64::from_ne_bytes(*word) ^ pattern))
+                == 0
+        })
 }
 
 /// The state of the block compression of a frame.

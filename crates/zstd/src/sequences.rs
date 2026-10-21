@@ -417,7 +417,8 @@ pub(crate) fn build_statistics(
 pub(crate) fn encode_sequences(out: &mut Vec<u8>, tables: &FseTables, seq: &SeqStore) -> usize {
     let n_seq = seq.sequences.len();
     let (ml_codes, of_codes, ll_codes) = (&seq.ml_code, &seq.of_code, &seq.ll_code);
-    let mut bits = BitWriter::new(out);
+    // At most 9 + 9 + 8 state bits and 16 + 16 + 31 extra bits per sequence.
+    let mut bits = BitWriter::new(out, n_seq * 12 + 16);
     let last = n_seq - 1;
     let mut state_ml = tables.matchlength.init_state2(ml_codes[last]);
     let mut state_of = tables.offcode.init_state2(of_codes[last]);
@@ -433,8 +434,11 @@ pub(crate) fn encode_sequences(out: &mut Vec<u8>, tables: &FseTables, seq: &SeqS
     );
     bits.add_bits(u64::from(sequence.off_base), u32::from(of_codes[last]));
     bits.flush();
-    for n in (0..last).rev() {
-        let (ll_code, of_code, ml_code) = (ll_codes[n], of_codes[n], ml_codes[n]);
+    let codes = ll_codes[..last]
+        .iter()
+        .zip(&of_codes[..last])
+        .zip(&ml_codes[..last]);
+    for (((&ll_code, &of_code), &ml_code), sequence) in codes.zip(&seq.sequences[..last]).rev() {
         let ll_bits = u32::from(LL_BITS[ll_code as usize]);
         let of_bits = u32::from(of_code);
         let ml_bits = u32::from(ML_BITS[ml_code as usize]);
@@ -444,7 +448,6 @@ pub(crate) fn encode_sequences(out: &mut Vec<u8>, tables: &FseTables, seq: &SeqS
         if of_bits + ml_bits + ll_bits >= 64 - 7 - (LL_FSE_LOG + ML_FSE_LOG + OFF_FSE_LOG) {
             bits.flush();
         }
-        let sequence = &seq.sequences[n];
         bits.add_bits(u64::from(sequence.lit_length), ll_bits);
         bits.add_bits(u64::from(sequence.ml_base), ml_bits);
         if of_bits + ml_bits + ll_bits > 56 {

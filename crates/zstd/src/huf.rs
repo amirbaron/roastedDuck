@@ -412,7 +412,8 @@ fn validate_ctable(table: &CTable, count: &[u32], max_symbol: u32) -> bool {
 
 /// `HUF_compress1X_usingCTable_internal`: appends the stream; returns its size.
 fn compress_1x(out: &mut Vec<u8>, src: &[u8], table: &CTable) -> usize {
-    let mut bits = BitWriter::new(out);
+    // Codes are 12 bits at most.
+    let mut bits = BitWriter::new(out, src.len() + src.len() / 2 + 16);
     let mut n = src.len();
     // The symbols are written last to first; flushing every four keeps at most 55 bits
     // pending.
