@@ -803,7 +803,13 @@ dependencies = [
 name = "rustdb-capi"
 version = "1.5.6"
 dependencies = [
+ "libc",
  "rustdb",
+ "rustdb-ast",
+ "rustdb-common",
+ "rustdb-function",
+ "rustdb-planner",
+ "rustdb-types",
 ]
 
 [[package]]

@@ -11,7 +11,13 @@ name = "duckdb"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
+libc = "0.2"
 rustdb.workspace = true
+rustdb-ast.workspace = true
+rustdb-common.workspace = true
+rustdb-function = { path = "../function" }
+rustdb-planner.workspace = true
+rustdb-types.workspace = true
 
 [lints]
 workspace = true
