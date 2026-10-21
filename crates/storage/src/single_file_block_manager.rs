@@ -506,10 +506,13 @@ impl SingleFileBlockManager {
         self.lock().free_list.len() as u64
     }
 
-    /// Reads the free list and the metadata block list (`LoadFreeList`).
+    /// Reads the free list and the metadata block list (`LoadFreeList`). Every other block
+    /// of the file holds data the checkpoint on disk references.
     pub fn load_free_list(&self, metadata: &MetadataManager) -> Result<()> {
         let free_pointer = MetaBlockPointer::new(self.lock().free_list_id, 0);
         if !free_pointer.is_valid() {
+            let mut state = self.lock();
+            state.checkpoint_blocks = (0..state.max_block).collect();
             return Ok(());
         }
         let mut reader = MetadataReader::new(metadata, free_pointer, true)?;
@@ -526,8 +529,16 @@ impl SingleFileBlockManager {
             multi_use.insert(block, count);
         }
         metadata.read_block_list(&mut reader)?;
+        let metadata_blocks: BTreeSet<BlockId> = metadata
+            .metadata_info()
+            .iter()
+            .map(|block| block.block_id)
+            .collect();
         {
             let mut state = self.lock();
+            state.checkpoint_blocks = (0..state.max_block)
+                .filter(|block| !free_list.contains(block) && !metadata_blocks.contains(block))
+                .collect();
             state.free_list = free_list;
             state.multi_use_blocks = multi_use;
         }
@@ -656,11 +667,6 @@ impl SingleFileBlockManager {
             state.free_list.insert(block_id);
             true
         }
-    }
-
-    /// Records the data blocks referenced by the checkpoint that was loaded.
-    pub fn set_checkpoint_blocks(&self, blocks: BTreeSet<BlockId>) {
-        self.lock().checkpoint_blocks = blocks;
     }
 
     /// Writes the free list and the database header of a checkpoint (`WriteHeader`).
