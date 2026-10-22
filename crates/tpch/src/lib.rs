@@ -306,7 +306,7 @@ pub fn pragma_tpch_query(parameters: &[Value]) -> Result<String> {
     let value = parameter
         .default_cast_as(&LogicalType::BIGINT)?
         .as_i64()
-        .ok_or_else(|| Error::internal("Calling GetValue on a NULL value"))?;
+        .ok_or_else(|| Error::internal("Calling GetValueInternal on a value that is NULL"))?;
     let query = i32::try_from(value).map_err(|_| {
         Error::invalid_input(format!(
             "Type INT64 with value {value} can't be cast because the value is out of range for the destination type INT32"
