@@ -31,8 +31,8 @@ performance targets of `docs/porting-plan.md` (≥ 1.3× C++ speed, ≤ 0.6× me
 
 ## Where things stand
 
-- **Corpus** (`scripts/conformance.sh`, last full run on main): 4748 of 4870 files pass,
-  22 fail, 100 skip, no timeouts. C++ DuckDB
+- **Corpus** (`scripts/conformance.sh`, last full run on main): 4752 of 4870 files pass,
+  18 fail, 100 skip, no timeouts. C++ DuckDB
   passes 4794. Of the files C++ passes and rustdb does not:
   - 25 skip with `require tpcds` (the `tpcds` extension is not ported; its `dsdgen` is
     TPC-licensed code, see below);
@@ -42,11 +42,10 @@ performance targets of `docs/porting-plan.md` (≥ 1.3× C++ speed, ≤ 0.6× me
     `physical_operator_logging` and the external file cache (2) — agents are on these —, `json_serialize_plan`,
     encryption
     (`dict_fsst_expression_filter`), ICU `as`/`kok`/`mr`.
-  The ratchet `conformance/passing.txt` lists 4823 files and must never shrink:
+  The ratchet `conformance/passing.txt` lists 4827 files and must never shrink:
   `target/release/slt ratchet update target/slt/rust.jsonl` after a run.
-- **Flaky:** `test/sql/storage/temp_directory/max_swap_space_error.test` fails under load
-  (work-queue item 14); `external_file_cache_low_mem.test_slow` failed once under load.
-  Rerun alone before treating either as a regression.
+- **Flaky:** none known since the buffer-memory merge (`max_swap_space_error.test` passed
+  20 of 20); rerun a file alone before treating a failure under load as a regression.
 - **C API:** 546 of 547 functions; all 30 `test/api/capi` files pass
   (`scripts/capi-tests/run.sh`, `--lib cpp` runs them against the C++ library). ADBC is
   missing.
@@ -54,7 +53,8 @@ performance targets of `docs/porting-plan.md` (≥ 1.3× C++ speed, ≤ 0.6× me
   shell one to one, linenoise included: all 392 `tools/shell/tests` that pass on the C++
   CLI pass (`scripts/shell-tests.sh --binary rust|cpp`), and 717 of the 726 cases of
   `scripts/shell-diff.py` (modes, types, dot commands, options, errors, pty sessions)
-  match byte for byte; the 9 others are engine differences (work-queue item 3).
+  match byte for byte (721 of 727; the 6 others are known engine differences,
+  work-queue item 3).
   `duckdb_functions()` matches DuckDB's except TPC-DS, `json_serialize_plan` and
   `duckdb_external_file_cache`.
 - **Compression:** `crates/zstd` ports zstd 1.5.6's encoder and decoder (zstd's frames at
@@ -77,15 +77,10 @@ performance targets of `docs/porting-plan.md` (≥ 1.3× C++ speed, ≤ 0.6× me
 Worktrees under `/Users/amirbaron/src/duckdb-rust/.claude/worktrees/`, briefs in
 `.context/briefs/`:
 
-- operator logging and the external file cache: **done, not merged** — branch
-  `worktree-agent-a5fa81bdf104c3fcb`; merge it only after the buffer-memory branch
-  (`external_file_cache_eviction_queue` needs buffer-managed results; conflicts: keep
-  both new `QueryOptions` fields, `force_external` and `streaming_result`);
 - TPC-DS (`tpcds.md`, base `1328ebc`);
-- buffer-managed results, streaming backpressure, batch insert memory, eviction parity,
-  the aggregate's source reservations (`buffer-memory.md`, base `930d230`).
+- logical plan serialization (`plan-serialization.md`, base `9aa5053`).
 
-Queued, in order (briefs written, each with `<BASE>` to fill in): `plan-serialization.md` (`json_serialize_plan`), `encryption.md`, `icu66.md` (ICU 66
+Queued, in order (briefs written, each with `<BASE>` to fill in): `encryption.md`, `icu66.md` (ICU 66
 collation data and sort key bytes); then performance rounds. `_common.md` holds the
 ground rules every brief repeats. If a session ends while
 an agent runs, its worktree holds its commits: review, finish or salvage, merge, run the
@@ -108,10 +103,10 @@ full corpus.
 
 ## Next steps, in order
 
-1. Merge the running agents' branches (buffer memory, logging and file cache), then run
-   the queued briefs.
+1. Merge the running agents' branches (TPC-DS, plan serialization), then run the queued
+   briefs.
 2. Close the remaining gaps in `docs/work-queue.md`, at most two agents at a time:
-   plan serialization (`json_serialize_plan`), encryption, ICU
+   encryption, ICU
    collation for as/kok/mr and its sort key bytes.
 3. TPC-DS (25 tests): port the `tpcds` extension. Its `dsdgen` (like TPC-H's `dbgen`,
    already in `crates/tpch`) carries TPC's license, not MIT — the owner should review
