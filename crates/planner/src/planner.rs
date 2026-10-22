@@ -7,7 +7,7 @@ use rustdb_ast::SqlStatement;
 use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
 use rustdb_types::LogicalType;
 
-use crate::binder::statement::bind_statement;
+use crate::binder::statement::{BoundPragmaInfo, bind_statement};
 use crate::binder::{BindScope, Binder, BindingMode};
 use crate::context::ClientContext;
 use crate::expression::BoundParameterData;
@@ -130,6 +130,14 @@ impl Planner {
     }
 
     /// Binds and plans `statement` (DuckDB's `Planner::CreatePlan`).
+    /// Binds a pragma's overload and arguments (DuckDB's `Binder::BindPragma`, which the
+    /// `PragmaHandler` calls before replacing a pragma by its query).
+    pub fn bind_pragma(&self, pragma: &mut rustdb_ast::PragmaInfo) -> Result<BoundPragmaInfo> {
+        let mut binder = Binder::new(Arc::clone(&self.context))?;
+        let mut scope = BindScope::root(&mut binder);
+        crate::binder::statement::bind_pragma_info(&mut scope, pragma)
+    }
+
     pub fn create_plan(&self, statement: SqlStatement) -> Result<PlannedStatement> {
         self.create_plan_with_values(statement, CaseInsensitiveMap::default())
     }

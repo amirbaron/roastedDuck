@@ -42,7 +42,7 @@ pub fn bind_create(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Result<B
                     info.schema
                 )));
             }
-            info.catalog = catalog;
+            // The info keeps the catalog as written; an empty one is the default catalog.
             LogicalOperator::new(LogicalKind::Create {
                 operator_type: LogicalOperatorType::LogicalCreateSchema,
                 info: Box::new(info.clone()),

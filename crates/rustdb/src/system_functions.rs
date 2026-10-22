@@ -3039,6 +3039,9 @@ pub(crate) fn builtin_pragma_functions() -> Vec<PragmaFunctionSet> {
         "disable_print_progress_bar",
         "enable_checkpoint_on_shutdown",
         "disable_checkpoint_on_shutdown",
+    ];
+    // `PragmaQueries::RegisterFunction`: pragmas that stand for a query.
+    let query_statements = [
         "show_tables",
         "show_tables_expanded",
         "show_databases",
@@ -3052,7 +3055,7 @@ pub(crate) fn builtin_pragma_functions() -> Vec<PragmaFunctionSet> {
         "all_profiling_output",
         "user_agent",
     ];
-    let calls = [
+    let query_calls = [
         PragmaFunction::call("table_info", vec![varchar()]),
         PragmaFunction::call("storage_info", vec![varchar()]),
         PragmaFunction::call("metadata_info", Vec::new()),
@@ -3063,7 +3066,13 @@ pub(crate) fn builtin_pragma_functions() -> Vec<PragmaFunctionSet> {
     statements
         .into_iter()
         .map(PragmaFunction::statement)
-        .chain(calls)
+        .chain(
+            query_statements
+                .into_iter()
+                .map(PragmaFunction::statement)
+                .chain(query_calls)
+                .map(PragmaFunction::with_query),
+        )
         .map(PragmaFunctionSet::single)
         .collect()
 }

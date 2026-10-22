@@ -47,7 +47,7 @@ pub mod prepared;
 pub mod subquery;
 
 pub use binder::expression::bind_logical_type;
-pub use binder::statement::{bind_index_expressions, verify_parameters};
+pub use binder::statement::{BoundPragmaInfo, bind_index_expressions, verify_parameters};
 pub use binder::tableref::{JoinSide, create_join, extract_join_conditions};
 pub use binder::tableref::{SHOW_TABLES_EXPANDED, deduplicate_columns};
 pub use binder::{Binder, BindingMode, BoundStatement};

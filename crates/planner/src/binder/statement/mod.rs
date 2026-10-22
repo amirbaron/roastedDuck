@@ -10,7 +10,7 @@ use rustdb_ast::{
     TransactionType,
 };
 use rustdb_common::{CaseInsensitiveMap, Error, Result};
-use rustdb_types::{LogicalType, LogicalTypeId};
+use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
 mod alter;
 mod alter_struct;
@@ -371,10 +371,32 @@ fn bind_deallocate(scope: &BindScope<'_>, drop: &DropInfo) -> BoundStatement {
     }))
 }
 
-/// `PRAGMA name(args)` without a result (DuckDB's `Bind(PragmaStatement &)` over
-/// `Binder::BindPragma`): the arguments are constants, and the catalog must hold the
-/// pragma with an overload for them.
+/// A pragma bound to its overload (DuckDB's `BoundPragmaInfo`).
+#[derive(Debug)]
+pub struct BoundPragmaInfo {
+    pub function: rustdb_function::PragmaFunction,
+    pub parameters: Vec<Value>,
+}
+
+/// `PRAGMA name(args)` without a result (DuckDB's `Bind(PragmaStatement &)`): a pragma
+/// that stands for a query was replaced by it before binding.
 fn bind_pragma(scope: &mut BindScope<'_>, pragma: &mut PragmaInfo) -> Result<BoundStatement> {
+    let bound = bind_pragma_info(scope, pragma)?;
+    if bound.function.query {
+        return Err(Error::binder(
+            "PRAGMA function does not have a function specified",
+        ));
+    }
+    scope.with_properties(|properties| properties.return_type = StatementReturnType::Nothing);
+    Ok(success(LogicalOperator::new(LogicalKind::Pragma {
+        name: pragma.name.clone(),
+        parameters: bound.parameters,
+    })))
+}
+
+/// DuckDB's `Binder::BindPragma`: the arguments are constants, and the catalog must hold
+/// the pragma with an overload for them.
+pub fn bind_pragma_info(scope: &mut BindScope<'_>, pragma: &mut PragmaInfo) -> Result<BoundPragmaInfo> {
     let constant = |scope: &mut BindScope<'_>, parameter: &mut rustdb_ast::ParsedExpression| {
         let bound = {
             let (inner, outer) = scope.split();
@@ -440,11 +462,10 @@ fn bind_pragma(scope: &mut BindScope<'_>, pragma: &mut PragmaInfo) -> Result<Bou
         None,
         &function.name,
     )?;
-    scope.with_properties(|properties| properties.return_type = StatementReturnType::Nothing);
-    Ok(success(LogicalOperator::new(LogicalKind::Pragma {
-        name: pragma.name.clone(),
+    Ok(BoundPragmaInfo {
+        function: function.clone(),
         parameters,
-    })))
+    })
 }
 
 /// `PREPARE name AS statement` (DuckDB's `Bind(PrepareStatement &)`).

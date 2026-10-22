@@ -27,6 +27,9 @@ pub struct PragmaFunction {
     pub varargs: Option<LogicalType>,
     /// The accepted `name = value` parameters and their types.
     pub named_parameters: Vec<(String, LogicalType)>,
+    /// The pragma stands for a query (DuckDB's `query` callback), which the connection
+    /// runs in its place, rather than running a function (`function`).
+    pub query: bool,
 }
 
 impl PragmaFunction {
@@ -38,6 +41,7 @@ impl PragmaFunction {
             arguments: Vec::new(),
             varargs: None,
             named_parameters: Vec::new(),
+            query: false,
         }
     }
 
@@ -49,7 +53,15 @@ impl PragmaFunction {
             arguments,
             varargs: None,
             named_parameters: Vec::new(),
+            query: false,
         }
+    }
+
+    /// The pragma with a query callback (see [`PragmaFunction::query`]).
+    #[must_use]
+    pub fn with_query(mut self) -> Self {
+        self.query = true;
+        self
     }
 }
 
