@@ -121,7 +121,16 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    operator's type and `ParamsToString()`. The test also needs
    `debug_force_external` to force the external hash join (16 partition builds with 4
    radix bits).
-10. **TPC-DS** (`test/sql/tpcds`, the `tpcds` extension).
+10. **TPC-DS** (`test/sql/tpcds`, the `tpcds` extension; 25 files skip with
+    `require tpcds`). Port `extension/tpcds` as `crates/tpcds`, an optional extension
+    crate like `crates/tpch` (dsdgen carries the TPC's license, see its README):
+    `dsdgen(sf, catalog, schema, suffix, overwrite, keys)`, `PRAGMA tpcds(n)`,
+    `tpcds_queries()`, `tpcds_answers()`, and dsdgen itself (the distributions of
+    `tpcds.idx`, the random number streams, every table generator) with one generation
+    state per call instead of the C globals, so the tables are DuckDB's value for value.
+    Checked by the fingerprints of every table at SF 0.01 and SF 1 against C++
+    (`crates/rustdb/tests/tpcds.rs`), the 99 queries against the answers, then the 25
+    files.
 11. **ICU collation of `as`, `kok` and `mr`** (`test_icu_extensive`). DuckDB embeds ICU
     66's data; rustdb matches it for 127 of the 130 collations (tailorings ICU4X's
     compiled data lacks come from `crates/icu/data/collation.postcard`, locales ICU 66
