@@ -202,7 +202,10 @@ mod tests {
         for stream in [1, 150, 260, 500, 790] {
             for count in 0..50 {
                 skipped.skip_random(stream, count);
-                assert_eq!(skipped.seeds[stream], drawn.seeds[stream], "stream {stream} after {count}");
+                assert_eq!(
+                    skipped.seeds[stream], drawn.seeds[stream],
+                    "stream {stream} after {count}"
+                );
                 drawn.next_random(stream);
             }
         }

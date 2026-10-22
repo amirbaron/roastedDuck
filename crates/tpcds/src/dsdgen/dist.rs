@@ -66,7 +66,10 @@ impl Dist {
         if self.increasing[wset - 1] {
             weights.partition_point(|&weight| level > weight)
         } else {
-            weights.iter().position(|&weight| level <= weight).unwrap_or(weights.len())
+            weights
+                .iter()
+                .position(|&weight| level <= weight)
+                .unwrap_or(weights.len())
         }
     }
 

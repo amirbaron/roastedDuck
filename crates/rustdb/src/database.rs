@@ -1937,11 +1937,9 @@ impl Database {
             // The core function library is part of the system catalog, loaded at start-up
             // as the reference build's statically linked `core_functions` is.
             "core_functions" => ExtensionLoad::Loaded,
-            "icu" | "httpfs" | "fts" | "inet" | "excel" | "sqlsmith" | "spatial" | "delta"
-            | "iceberg" | "aws" | "azure" | "motherduck" | "postgres_scanner" | "mysql_scanner"
-            | "sqlite_scanner" | "vss" | "ui" | "encodings" | "ducklake" | "avro" | "demo_capi" => {
-                ExtensionLoad::NotAvailable
-            }
+            "icu" | "httpfs" | "fts" | "inet" | "excel" | "sqlsmith" | "spatial" | "delta" | "iceberg"
+            | "aws" | "azure" | "motherduck" | "postgres_scanner" | "mysql_scanner" | "sqlite_scanner"
+            | "vss" | "ui" | "encodings" | "ducklake" | "avro" | "demo_capi" => ExtensionLoad::NotAvailable,
             _ => ExtensionLoad::Unknown,
         })
     }

@@ -42,15 +42,9 @@ impl ColumnBuffer {
     fn new(ty: ColumnType) -> Self {
         let values = match ty {
             ColumnType::BigInt => Values::Int64(Vec::new()),
-            ColumnType::Decimal(width, _) if width > 9 => {
-                Values::Int64(Vec::new())
-            }
-            ColumnType::Integer | ColumnType::Date | ColumnType::Decimal(..) => {
-                Values::Int32(Vec::new())
-            }
-            ColumnType::Varchar => {
-                Values::Varchar(Vec::new(), StringHeap::default())
-            }
+            ColumnType::Decimal(width, _) if width > 9 => Values::Int64(Vec::new()),
+            ColumnType::Integer | ColumnType::Date | ColumnType::Decimal(..) => Values::Int32(Vec::new()),
+            ColumnType::Varchar => Values::Varchar(Vec::new(), StringHeap::default()),
         };
         Self {
             ty,

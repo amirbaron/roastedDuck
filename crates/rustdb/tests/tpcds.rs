@@ -91,7 +91,10 @@ fn queries_answers_and_pragma() {
     assert_eq!(queries.value(0, 0).to_varchar().unwrap(), "99");
     assert_eq!(queries.value(2, 0).to_varchar().unwrap(), "99");
     // DuckDB lists the answers at SF 1 and SF 10, and has none at SF 10.
-    let error = con.query("SELECT * FROM tpcds_answers()").unwrap_err().to_string();
+    let error = con
+        .query("SELECT * FROM tpcds_answers()")
+        .unwrap_err()
+        .to_string();
     assert!(
         error.contains("Don't have TPC-DS answers for SF 10.000000!"),
         "{error}"
@@ -101,7 +104,10 @@ fn queries_answers_and_pragma() {
     let error = con.query("PRAGMA tpcds(100)").unwrap_err().to_string();
     assert!(error.contains("Out of range TPC-DS query number 100"), "{error}");
     let error = con.query("PRAGMA tpcds(32908301298)").unwrap_err().to_string();
-    assert!(error.contains("out of range for the destination type INT32"), "{error}");
+    assert!(
+        error.contains("out of range for the destination type INT32"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -116,7 +122,8 @@ fn dsdgen_options() {
     );
     con.query("CALL dsdgen(sf=0, overwrite=true)").unwrap();
     // Primary keys, which the generated rows satisfy.
-    con.query("CALL dsdgen(sf=0.01, suffix='_keys', keys=true)").unwrap();
+    con.query("CALL dsdgen(sf=0.01, suffix='_keys', keys=true)")
+        .unwrap();
     let error = con
         .query("INSERT INTO call_center_keys (cc_call_center_sk) VALUES (1)")
         .unwrap_err()
