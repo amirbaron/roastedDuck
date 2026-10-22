@@ -12,7 +12,7 @@ use rustdb_row::sort::{NullOrder, OrderModifiers, OrderType, create_sort_keys};
 use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Value, Vector};
 
 use crate::scalar::executor::addressable;
-use crate::scalar::nested::{all_constant, struct_field};
+use crate::scalar::nested::{all_constant, serialize_variable_return, struct_field};
 
 /// Builds a STRUCT vector of `rows` rows from its field vectors.
 pub fn build_struct(ty: LogicalType, fields: Vec<Vector>, rows: usize, constant: bool) -> Result<Vector> {
@@ -94,6 +94,7 @@ fn struct_pack_set(name: &str, named: bool) -> ScalarFunctionSet {
     .with_bind(bind_struct_pack(named));
     function.varargs = Some(LogicalType::ANY);
     function.null_handling = NullHandling::Special;
+    function.serialize = Some(Arc::new(serialize_variable_return));
     let mut set = ScalarFunctionSet::new(name);
     set.add(function);
     set
@@ -265,6 +266,7 @@ pub fn struct_insert_functions() -> ScalarFunctionSet {
     });
     function.varargs = Some(LogicalType::ANY);
     function.null_handling = NullHandling::Special;
+    function.serialize = Some(Arc::new(serialize_variable_return));
     let mut set = ScalarFunctionSet::new("struct_insert");
     set.add(function);
     set
@@ -344,6 +346,7 @@ pub fn struct_update_functions() -> ScalarFunctionSet {
     });
     function.varargs = Some(LogicalType::ANY);
     function.null_handling = NullHandling::Special;
+    function.serialize = Some(Arc::new(serialize_variable_return));
     let mut set = ScalarFunctionSet::new("struct_update");
     set.add(function);
     set

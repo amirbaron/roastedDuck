@@ -436,20 +436,17 @@ impl EntryKind {
         match self {
             Self::ScalarFunction(set) => {
                 for function in &mut set.functions {
-                    function.catalog_name = Arc::clone(&catalog);
-                    function.schema_name = Arc::clone(&schema);
+                    function.set_catalog_entry(&catalog, &schema);
                 }
             }
             Self::AggregateFunction(set) => {
                 for function in &mut set.functions {
-                    function.catalog_name = Arc::clone(&catalog);
-                    function.schema_name = Arc::clone(&schema);
+                    function.set_catalog_entry(&catalog, &schema);
                 }
             }
             Self::TableFunction(set) => {
                 for function in &mut set.functions {
-                    function.catalog_name = Arc::clone(&catalog);
-                    function.schema_name = Arc::clone(&schema);
+                    function.set_catalog_entry(&catalog, &schema);
                 }
             }
             _ => {}

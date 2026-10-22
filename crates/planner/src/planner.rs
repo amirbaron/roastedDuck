@@ -25,6 +25,9 @@ pub struct PlannedStatement {
     pub properties: StatementProperties,
     /// The statement's parameters and their resolved types.
     pub parameters: CaseInsensitiveMap<crate::expression::SharedParameterData>,
+    /// The number of table indexes the binder generated; DuckDB's optimizer generates
+    /// further ones with the same binder (`Optimizer(*planner.binder, context)`).
+    pub table_index_count: u64,
 }
 
 /// Binds statements into logical plans.
@@ -79,6 +82,7 @@ impl Planner {
             check_tree_depth(&bound_plan, self.context.config.max_expression_depth, 0)?;
             plan = Some(crate::subquery::decorrelate_independent(&binder, bound_plan)?);
         }
+        let table_index_count = binder.table_index_count();
         let parameter_map = binder.take_parameters().unwrap_or_default();
         let mut properties = binder.properties();
         properties.parameter_count = parameter_count;
@@ -103,6 +107,7 @@ impl Planner {
             types,
             properties,
             parameters,
+            table_index_count,
         })
     }
 

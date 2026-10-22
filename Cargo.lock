@@ -960,6 +960,7 @@ dependencies = [
  "rustdb-common",
  "rustdb-function",
  "rustdb-row",
+ "rustdb-serde",
  "rustdb-types",
  "unicode-normalization",
  "unicode-segmentation",

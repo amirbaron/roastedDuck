@@ -263,6 +263,23 @@ impl ScalarFunction {
         }
     }
 
+    /// Sets the catalog and schema of the function's catalog entry (see
+    /// [`ScalarFunction::catalog_name`]); empty ones for a function the engine uses
+    /// directly rather than through the catalog (DuckDB's `XFun::GetFunction()`).
+    pub fn set_catalog_entry(&mut self, catalog: &Arc<str>, schema: &Arc<str>) {
+        self.catalog_name = Arc::clone(catalog);
+        self.schema_name = Arc::clone(schema);
+    }
+
+    /// Removes argument `index`, which the bind consumed, keeping the arguments as they
+    /// were before the first removal (DuckDB's `Function::EraseArgument`).
+    pub fn erase_argument(&mut self, index: usize) {
+        if self.original_arguments.is_empty() {
+            self.original_arguments.clone_from(&self.arguments);
+        }
+        self.arguments.remove(index);
+    }
+
     /// Sets the kernel for arguments without unicode (see [`ScalarFunction::ascii_kernel`]).
     #[must_use]
     pub fn with_ascii_kernel(

@@ -82,3 +82,13 @@ pub(crate) fn list_child_type(ty: &LogicalType) -> Result<LogicalType> {
 pub(crate) fn all_constant(columns: &[Vector]) -> bool {
     columns.iter().all(|column| column.kind() == VectorKind::Constant)
 }
+
+/// `VariableReturnBindData::Serialize` (`struct_pack`, `row`, `struct_insert`,
+/// `struct_update`, `union_value`): the return type the bind computed.
+pub(crate) fn serialize_variable_return(
+    serializer: &mut dyn rustdb_serde::Serializer,
+    _: Option<&dyn rustdb_function::FunctionData>,
+    function: &rustdb_function::ScalarFunction,
+) -> Result<()> {
+    serializer.write_property(100, "variable_return_type", &function.return_type)
+}

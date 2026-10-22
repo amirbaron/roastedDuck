@@ -393,8 +393,18 @@ pub fn constant_or_null(
     children: Vec<Expression>,
     value: Value,
 ) -> Result<Expression> {
+    let ty = value.logical_type().clone();
     let mut arguments = Vec::with_capacity(children.len() + 1);
     arguments.push(Expression::constant(value));
     arguments.extend(children);
-    crate::optimizer::bind_scalar_function(context, "constant_or_null", arguments, false)
+    let mut result = crate::optimizer::bind_scalar_function(context, "constant_or_null", arguments, false)?;
+    if let ExpressionKind::Function(function) = &mut result.kind {
+        // DuckDB builds the call from `ConstantOrNullFun::GetFunction()` with the value's
+        // type as its first argument and result.
+        let function = &mut function.function;
+        function.set_catalog_entry(&std::sync::Arc::from(""), &std::sync::Arc::from(""));
+        function.arguments = vec![ty.clone(), LogicalType::ANY];
+        function.return_type = ty;
+    }
+    Ok(result)
 }

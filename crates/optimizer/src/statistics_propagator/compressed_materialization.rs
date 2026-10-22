@@ -700,12 +700,15 @@ impl StatisticsPropagator<'_> {
         let rustdb_catalog::EntryKind::ScalarFunction(functions) = &entry.entry.kind else {
             return Err(Error::internal(format!("{name} is not a scalar function")));
         };
-        functions
+        let mut function = functions
             .functions
             .iter()
             .find(|function| function.arguments == arguments)
             .cloned()
-            .ok_or_else(|| Error::internal(format!("no overload of {name} for {arguments:?}")))
+            .ok_or_else(|| Error::internal(format!("no overload of {name} for {arguments:?}")))?;
+        // The function object itself, not its catalog entry's.
+        function.set_catalog_entry(&std::sync::Arc::from(""), &std::sync::Arc::from(""));
+        Ok(function)
     }
 
     /// The compressed form of `input` given its statistics, if smaller (DuckDB's

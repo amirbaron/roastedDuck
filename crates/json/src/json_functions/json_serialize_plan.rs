@@ -110,7 +110,9 @@ fn serialize_plans(sql: &str, data: &SerializePlanBindData) -> Result<Vec<JsonVa
                     OptimizerConfig::from_settings(settings.as_ref())
                 });
             config.enabled = true;
-            plan = Optimizer::new(Arc::clone(&context), config).optimize(plan)?;
+            let mut optimizer = Optimizer::new(Arc::clone(&context), config);
+            optimizer.reserve_table_indexes(planned.table_index_count);
+            plan = optimizer.optimize(plan)?;
         }
         ColumnBindingResolver::resolve(&mut plan)?;
         plan.resolve_operator_types()?;

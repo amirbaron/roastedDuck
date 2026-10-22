@@ -472,6 +472,26 @@ impl StatisticsPropagator<'_> {
                     .insert(ColumnBinding::new(aggregate_index, index as u64), stats);
             }
         }
+        // Whether the aggregates' inputs, column references all, cannot be NULL.
+        let inputs_valid = node.expressions.iter().all(|expression| {
+            let ExpressionKind::Aggregate(aggregate) = &expression.kind else {
+                return false;
+            };
+            aggregate.children.iter().all(|child| {
+                child.as_column_ref().is_some_and(|column| {
+                    self.statistics_map
+                        .get(&column.binding)
+                        .is_some_and(|stats| !stats.can_have_null())
+                })
+            })
+        });
+        if let LogicalKind::Aggregate(aggregate) = &mut node.kind {
+            aggregate.distinct_validity = if inputs_valid {
+                rustdb_planner::TupleDataValidityType::CannotHaveNullValues
+            } else {
+                rustdb_planner::TupleDataValidityType::CanHaveNullValues
+            };
+        }
         // Whole-table count/min/max may be answered by the row group statistics.
         self.try_execute_aggregates(node);
         Ok(self.node_stats.take())

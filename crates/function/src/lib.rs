@@ -22,8 +22,8 @@ mod scalar;
 mod table;
 
 pub use aggregate::{
-    AggregateCollation, AggregateFunction, AggregateFunctionSet, AggregateOps, OwnedStates, StatePtr,
-    UnaryAggregate,
+    AggregateCollation, AggregateFunction, AggregateFunctionSet, AggregateOps, AggregateSerialize,
+    OwnedStates, StatePtr, UnaryAggregate,
 };
 pub use client::{
     ClientRequest, ExtensionOption, ExtensionOptionSet, FunctionClient, SettingInfo, SettingScope,
@@ -34,13 +34,14 @@ pub use pragma::{PragmaFunction, PragmaFunctionSet, PragmaType};
 pub use scalar::{
     AggregateResolver, BindInput, BindLambda, BoundAggregateFunction, CollationHandling, FunctionData,
     FunctionState, LambdaExecutor, LambdaInput, NullHandling, ScalarBind, ScalarFunction, ScalarFunctionSet,
-    ScalarKernel, Stability, StatsBindData,
+    ScalarKernel, ScalarSerialize, Stability, StatsBindData,
 };
 pub use table::{
     FileFilterPushdown, InOutResult, ParallelScanGlobal, ParallelScanLocal, ParallelTableScan,
     PartitionRowGroup, PartitionStatistics, TableFunction, TableFunctionBind, TableFunctionBindInput,
     TableFunctionBindOutput, TableFunctionBindReplace, TableFunctionPartitionInfo,
     TableFunctionPartitionStats, TableFunctionPushdownFilters, TableFunctionReplacement, TableFunctionScan,
-    TableFunctionSet, TableFunctionStatistics, TableFunctionTypePushdown, TableFunctionVirtualColumns,
-    TableInOutFunction, TablePartitionInfo, TableScanState, named_parameters_in_map_order,
+    TableFunctionSerialize, TableFunctionSet, TableFunctionStatistics, TableFunctionTypePushdown,
+    TableFunctionVirtualColumns, TableInOutFunction, TablePartitionInfo, TableScanState,
+    named_parameters_in_map_order,
 };

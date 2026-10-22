@@ -68,6 +68,13 @@ pub enum ExpressionKind {
 /// Whether an aggregate removes duplicate inputs.
 pub use crate::generated::enums::AggregateType;
 
+impl Default for crate::TupleDataValidityType {
+    /// `LogicalAggregate`'s until statistics propagation knows better.
+    fn default() -> Self {
+        Self::CanHaveNullValues
+    }
+}
+
 /// An aggregate call (DuckDB's `BoundAggregateExpression`).
 #[derive(Clone, Debug)]
 pub struct BoundAggregateExpression {

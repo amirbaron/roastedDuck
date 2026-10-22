@@ -442,6 +442,7 @@ fn create_plan(
             grouping_sets: std::mem::take(&mut statement.groups.grouping_sets),
             grouping_functions: std::mem::take(&mut statement.grouping_functions),
             group_stats: Vec::new(),
+            distinct_validity: crate::TupleDataValidityType::default(),
         };
         root = LogicalOperator::new(LogicalKind::Aggregate(Box::new(aggregate)))
             .with_expressions(std::mem::take(&mut statement.aggregates))

@@ -25,7 +25,7 @@ use rustdb_types::{DataChunk, LogicalType, Value};
 use crate::binder::CorrelatedColumns;
 use crate::column_binding::generate_column_bindings;
 use crate::expression::{BoundOrderByNode, BoundOrderModifier, Expression, ExpressionKind};
-use crate::generated::enums::{DistinctType, LogicalOperatorType};
+use crate::generated::enums::{DistinctType, LogicalOperatorType, TupleDataValidityType};
 use crate::prepared::PreparedStatementData;
 use crate::{ColumnBinding, SubqueryType};
 
@@ -96,6 +96,8 @@ pub struct LogicalAggregate {
     /// The statistics of each group, set by statistics propagation (DuckDB's
     /// `group_stats`); they decide on perfect hash aggregation.
     pub group_stats: Vec<Option<rustdb_storage::statistics::BaseStatistics>>,
+    /// Whether the inputs of the aggregates can be NULL, set by statistics propagation.
+    pub distinct_validity: TupleDataValidityType,
 }
 
 /// A table or table function scan (DuckDB's `LogicalGet`).

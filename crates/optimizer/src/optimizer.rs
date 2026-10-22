@@ -246,6 +246,13 @@ impl Optimizer {
         &self.timings
     }
 
+    /// Continues the table indexes after the `count` the binder generated (DuckDB's
+    /// optimizer generates them with the plan's binder); by default they follow the
+    /// largest one the plan uses.
+    pub fn reserve_table_indexes(&self, count: u64) {
+        self.next_table_index.set(self.next_table_index.get().max(count));
+    }
+
     /// A fresh table index (DuckDB's `Binder::GenerateTableIndex`).
     pub fn generate_table_index(&self) -> u64 {
         let index = self.next_table_index.get();

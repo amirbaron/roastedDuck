@@ -21,6 +21,32 @@ fn bind_internal(
     ))
 }
 
+/// `CMIntegralSerialize` and `CMStringCompressSerialize`: the bound types.
+fn serialize_compress(
+    serializer: &mut dyn rustdb_serde::Serializer,
+    _: Option<&dyn FunctionData>,
+    function: &ScalarFunction,
+) -> Result<()> {
+    serializer.write_property(100, "arguments", &function.arguments)?;
+    serializer.write_property(101, "return_type", &function.return_type)
+}
+
+/// `CMStringDecompressSerialize`: the argument types (the result is VARCHAR).
+fn serialize_string_decompress(
+    serializer: &mut dyn rustdb_serde::Serializer,
+    _: Option<&dyn FunctionData>,
+    function: &ScalarFunction,
+) -> Result<()> {
+    serializer.write_property(100, "arguments", &function.arguments)
+}
+
+/// An internal function (`CMUtils::Bind`) written with `serialize`.
+fn internal(function: ScalarFunction, serialize: rustdb_function::ScalarSerialize) -> ScalarFunction {
+    let mut function = function.with_bind(bind_internal);
+    function.serialize = Some(serialize);
+    function
+}
+
 /// An integer type the functions handle, through its two's complement bits.
 trait Bits: NativeType + Copy {
     fn to_bits(self) -> u128;
@@ -152,15 +178,15 @@ fn integral_compress_set(result: &LogicalType) -> ScalarFunctionSet {
         let Some(kernel) = kernel else {
             continue;
         };
-        set.add(
+        set.add(internal(
             ScalarFunction::new(
                 name.as_str(),
                 vec![input.clone(), input],
                 result.clone(),
                 move |args, _, out| kernel(args, out),
-            )
-            .with_bind(bind_internal),
-        );
+            ),
+            std::sync::Arc::new(serialize_compress),
+        ));
     }
     set
 }
@@ -182,15 +208,15 @@ fn integral_decompress_set(result: &LogicalType) -> ScalarFunctionSet {
         let Some(kernel) = kernel else {
             continue;
         };
-        set.add(
+        set.add(internal(
             ScalarFunction::new(
                 name.as_str(),
                 vec![input, result.clone()],
                 result.clone(),
                 move |args, _, out| kernel(args, out),
-            )
-            .with_bind(bind_internal),
-        );
+            ),
+            std::sync::Arc::new(serialize_compress),
+        ));
     }
     set
 }
@@ -248,7 +274,7 @@ fn string_compress_function(result: &LogicalType) -> ScalarFunctionSet {
     let size = result.physical_type().size();
     let physical = result.physical_type();
     let mut set = ScalarFunctionSet::new(name.as_str());
-    set.add(
+    set.add(internal(
         ScalarFunction::new(
             name.as_str(),
             vec![LogicalType::VARCHAR],
@@ -274,9 +300,9 @@ fn string_compress_function(result: &LogicalType) -> ScalarFunctionSet {
                     _ => run!(u128),
                 }
             },
-        )
-        .with_bind(bind_internal),
-    );
+        ),
+        std::sync::Arc::new(serialize_compress),
+    ));
     set
 }
 
@@ -293,7 +319,7 @@ fn string_decompress_set() -> ScalarFunctionSet {
     ] {
         let size = input.physical_type().size();
         let physical = input.physical_type();
-        set.add(
+        set.add(internal(
             ScalarFunction::new(name, vec![input], LogicalType::VARCHAR, move |args, _, out| {
                 macro_rules! run {
                     ($t:ty) => {{
@@ -316,9 +342,9 @@ fn string_decompress_set() -> ScalarFunctionSet {
                     PhysicalType::Int128 => run!(i128),
                     _ => run!(u128),
                 }
-            })
-            .with_bind(bind_internal),
-        );
+            }),
+            std::sync::Arc::new(serialize_string_decompress),
+        ));
     }
     set
 }

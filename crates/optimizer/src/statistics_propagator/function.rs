@@ -474,12 +474,15 @@ fn sum_no_overflow(
             "sum_no_overflow is not an aggregate function",
         ));
     };
-    functions
+    let mut function = functions
         .functions
         .iter()
         .find(|function| function.arguments.as_slice() == std::slice::from_ref(argument))
         .cloned()
-        .ok_or_else(|| rustdb_common::Error::internal("Unsupported internal type for sum_no_overflow"))
+        .ok_or_else(|| rustdb_common::Error::internal("Unsupported internal type for sum_no_overflow"))?;
+    // The function object itself, not its catalog entry's.
+    function.set_catalog_entry(&std::sync::Arc::from(""), &std::sync::Arc::from(""));
+    Ok(function)
 }
 
 /// The value of an integer bound.

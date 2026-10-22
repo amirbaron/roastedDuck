@@ -338,6 +338,11 @@ impl Binder {
         self.global.bound_tables.fetch_add(1, Ordering::Relaxed)
     }
 
+    /// The number of table indexes generated so far, the next one included none.
+    pub fn table_index_count(&self) -> u64 {
+        self.global.bound_tables.load(Ordering::Relaxed)
+    }
+
     /// The statement's properties.
     pub fn with_properties<T>(&self, f: impl FnOnce(&mut StatementProperties) -> T) -> T {
         f(&mut self

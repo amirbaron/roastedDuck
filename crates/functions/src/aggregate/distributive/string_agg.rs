@@ -5,6 +5,7 @@ use std::sync::Arc;
 use rustdb_common::{Error, Result};
 use rustdb_function::aggregate::{Aggregate, AggregateInput, States, Typed};
 use rustdb_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionData};
+use rustdb_serde::Serializer;
 use rustdb_types::{LogicalType, LogicalTypeId, StringT, Vector};
 
 use crate::signature::any_params;
@@ -115,8 +116,21 @@ fn bind_string_agg(
     } else {
         Some(separator.to_varchar()?)
     };
-    function.arguments.truncate(1);
+    function.erase_argument(1);
     Ok(Some(Arc::new(Separator(separator))))
+}
+
+/// DuckDB's `StringAggSerialize`: the separator (`,` for a NULL one).
+fn serialize_string_agg(
+    serializer: &mut dyn Serializer,
+    bind_data: Option<&dyn FunctionData>,
+    _: &AggregateFunction,
+) -> Result<()> {
+    let separator = bind_data
+        .and_then(|data| data.as_any().downcast_ref::<Separator>())
+        .and_then(|separator| separator.0.as_deref())
+        .unwrap_or(",");
+    serializer.write_property(100, "separator", separator)
 }
 
 /// The `string_agg` set: `string_agg(ANY)` and `string_agg(ANY, VARCHAR)`.
@@ -130,6 +144,8 @@ pub fn string_agg_functions() -> AggregateFunctionSet {
     )
     .with_bind(bind_string_agg)
     .without_state_destructor();
+    let mut function = function;
+    function.serialize = Some(Arc::new(serialize_string_agg));
     let mut with_separator = function.clone();
     with_separator.arguments.push(LogicalType::VARCHAR);
     set.add(function);

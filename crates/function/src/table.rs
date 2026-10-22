@@ -380,6 +380,13 @@ impl TableFunction {
         }
     }
 
+    /// Sets the catalog and schema of the function's catalog entry (see
+    /// [`TableFunction::catalog_name`]).
+    pub fn set_catalog_entry(&mut self, catalog: &Arc<str>, schema: &Arc<str>) {
+        self.catalog_name = Arc::clone(catalog);
+        self.schema_name = Arc::clone(schema);
+    }
+
     /// Sets the table-in/table-out callback.
     #[must_use]
     pub fn with_in_out(

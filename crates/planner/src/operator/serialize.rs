@@ -16,7 +16,7 @@ use super::{
 };
 use crate::function_serialization::{FunctionDataWriter, serialize_table_function};
 use crate::generated::{logical_operator as properties, nodes};
-use crate::{LimitNodeType, LogicalOperatorType, TupleDataValidityType};
+use crate::{LimitNodeType, LogicalOperatorType};
 
 impl LogicalOperator {
     /// Whether DuckDB can serialize the operator (`SupportSerialization`): EXPLAIN,
@@ -69,7 +69,7 @@ impl SerializeObject for LogicalOperator {
                 groups: &aggregate.groups,
                 grouping_sets: &aggregate.grouping_sets,
                 grouping_functions: &aggregate.grouping_functions,
-                distinct_validity: TupleDataValidityType::CanHaveNullValues,
+                distinct_validity: aggregate.distinct_validity,
             }
             .serialize_fields(serializer),
             LogicalKind::Window { window_index } => properties::LogicalWindow {
@@ -513,15 +513,16 @@ fn physical_indexes(columns: &[usize]) -> Vec<PhysicalIndex> {
 
 impl rustdb_serde::Serialize for BoundLimitNode {
     fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        // DuckDB's members default to 0 and -1.
         let (limit_type, constant_integer, constant_percentage, expression) = match self {
-            Self::Unset => (LimitNodeType::Unset, 0, 0.0, None),
-            Self::ConstantValue(value) => (LimitNodeType::ConstantValue, *value, 0.0, None),
+            Self::Unset => (LimitNodeType::Unset, 0, -1.0, None),
+            Self::ConstantValue(value) => (LimitNodeType::ConstantValue, *value, -1.0, None),
             Self::ConstantPercentage(percentage) => (LimitNodeType::ConstantPercentage, 0, *percentage, None),
             Self::ExpressionValue(expression) => {
-                (LimitNodeType::ExpressionValue, 0, 0.0, Some(&**expression))
+                (LimitNodeType::ExpressionValue, 0, -1.0, Some(&**expression))
             }
             Self::ExpressionPercentage(expression) => {
-                (LimitNodeType::ExpressionPercentage, 0, 0.0, Some(&**expression))
+                (LimitNodeType::ExpressionPercentage, 0, -1.0, Some(&**expression))
             }
         };
         serializer.write_object(&nodes::BoundLimitNode {
