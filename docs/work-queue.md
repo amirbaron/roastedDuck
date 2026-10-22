@@ -128,8 +128,13 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
     checks zero ART buffer residency before first access. C++ encrypted fixture writes
     use its documented `force_mbedtls_unsafe` test switch because this reference build
     has read-only crypto; C++ reads use normal crypto and fixtures contain synthetic data.
-    Workspace Clippy, 30 C API files and 392 shell tests pass. A fresh full sweep is
-    still required before accepting this state. Evidence:
+    Workspace Clippy, 30 C API files and 392 shell tests passed on the earlier source.
+    A subsequent full sweep on `506354f` plus the cache flag has 4781 passes,
+    15 accepted failures and 74 shared skips, zero crashes/timeouts and zero regressions
+    across the unchanged 4855-file ratchet. This includes fixes for snapshot-tail
+    filtering and partial mutation undo: 80 storage tests, 100 original stress trials,
+    20 diagnostic trials and 374 affected SQL passes/one shared skip all pass. Public
+    binaries are rebuilding for fresh C API and shell checks on that source. Evidence:
     `.context/artifacts/index-reload-20261022/`.
     Left: native expression-index binding and buffered WAL replay, native CREATE INDEX
     WAL buffers, pre-v0.10 root-pointer deserialization, and any missing/in-memory

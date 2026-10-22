@@ -36,16 +36,21 @@ gates remain in place.
 
 ## Where things stand
 
-- **Corpus**: latest reconciled results are **4781 of 4870 pass**, 15 fail, 74 skip;
+- **Corpus**: the latest complete serial sweep has **4781 of 4870 pass**, 15 fail, 74 skip;
   C++ is 4795 pass, 1 fail, 74 skip. All remaining Rust failures are the 15 accepted
   divergences in `conformance/divergences.md` (11 C++ extension binaries, 4 expected
   memory errors Rust avoids). No unexplained regressions, crashes or timeouts.
-  - A complete 4870-file sweep ran with one worker and `SLT_THREADS=1`: 4779 pass,
+  - The fresh sweep on `506354f` plus the uncommitted cache flag uses normal thread
+    defaults and passes the 4855-file ratchet without rechecks, shrink or verdict changes.
+    Every skip reason matches the prior baseline; the 15 failure messages match too,
+    apart from a process ID in a temporary filename. `target/slt/rust.jsonl` is refreshed
+    from this full run, with its previous contents backed up beside the raw results.
+  - An earlier 4870-file sweep ran with one worker and `SLT_THREADS=1`: 4779 pass,
     17 fail, 74 skip. Two tests require normal thread defaults (`test_batch_limit_filters`
     expects a parallel LIMIT, `reset_threads` compares startup threads with RESET); both
     pass on serial rechecks without the override. C++ reproduces the same one-thread
-    behavior. `target/slt/rust.jsonl` incorporates those two rechecks; raw full results
-    remain in the ICU artifact folder.
+    behavior. That older baseline incorporated two rechecks; its raw results remain in
+    the ICU artifact folder. The current canonical results need no reconciliation.
   - The ICU gap is closed (`2fa715c`): all 130 collations match C++ sort-key digests
     across 484,110 strings; all 24 collation files pass. The second gain over the
     previous 4779 baseline is a formerly skipped `require disk_space 40gb` TPC-H
@@ -55,8 +60,10 @@ gates remain in place.
   The ratchet `conformance/passing.txt` lists **4855** files (4781 passes + 74 shared
   skips), with zero regressions and no shrink. The C++ reference's previously skipped
   grouping result and `conformance/dashboard.md` are refreshed.
-- **Flaky:** none known since the buffer-memory merge (`max_swap_space_error.test` passed
-  20 of 20); rerun a file alone before treating a failure under load as a regression.
+- **Concurrency:** snapshot filtering and lost partial-write undo records are fixed
+  (`506354f`). All 100 original stress runs, 20 diagnostic runs and the fresh full sweep
+  pass. The earlier `max_swap_space_error.test` verification passed 20 of 20. Rerun a
+  file alone and inspect its real failure before attributing it to a change.
 - **C API:** 546 of 547 functions; all 30 `test/api/capi` files pass
   (`scripts/capi-tests/run.sh`, `--lib cpp` runs them against the C++ library). ADBC is
   missing.
@@ -99,7 +106,8 @@ added (`547a13b`). All 202 focused release unit tests pass; workspace/all-target
 and Clippy with warnings denied pass. The focused SQL run has 200 passes and three
 shared skips (203 files), with no failures, crashes or timeouts and zero regressions
 against the 4855-file ratchet. These focused rechecks retain the prior overall
-4781/15/74 results; a new full sweep is still required. Shell verification passes with the same five known differences; all eight fresh
+4781/15/74 results; the subsequent full sweep on `506354f` plus the cache flag confirms
+them without rechecks. Shell verification passes with the same five known differences; all eight fresh
 performance suites are complete with 160 passing result checks. Performance acceptance
 remains open because the parity targets are not yet met.
 
@@ -127,14 +135,15 @@ byte comparisons; a Rust unit test covers the fallback.
 ## Active cache experiment (2026-10-22)
 
 The working tree retains the uncommitted persistent-table cache experiment in
-`crates/storage/src/table/column_segment.rs`. Native modern ART disk restoration is
-also being implemented and verified in storage/catalog; it is not accepted yet. Candidate checks and both 160-query benchmark comparisons are saved under
+`crates/storage/src/table/column_segment.rs`. Modern plain/constraint ART disk restoration
+and its publication fix are committed and pass the fresh full sweep; the remaining
+paths stay open under work-queue 16. Candidate checks and both 160-query benchmark comparisons are saved under
 `.context/artifacts/parity-20261022/cache-policy/`. All candidate shell/C API checks
 and result comparisons pass, but the cache policy is **not accepted**: q21, q22 and
 q28 have memory above C++, despite improved average speed. See the experimental table
 in `docs/perf-backlog.md`. Preserve the uncached binaries in `uncached-merged/`.
 
-The fresh full sweep is complete: **4780 pass, 16 fail, 74 skip**, zero crashes or
+The initial cache-only full sweep completed at **4780 pass, 16 fail, 74 skip**, zero crashes or
 timeouts, with exactly one changed verdict against the prior baseline. The ratchet
 correctly fails with one regression, `test/sql/pragma/profiling/test_profiling_fs.test`
 (zero `TOTAL_BYTES_READ` on SELECT following reattach). A fresh C++ native-unittest
@@ -217,22 +226,31 @@ first driver invocation incorrectly checked the subset against the entire ratche
 stopped on missing unrelated files; the corrected scoped check passes without changing
 the canonical list or rerunning the already completed stages.
 
-Full-corpus acceptance is still pending. The serial driver
+The fresh full sweep is complete: **4781 pass, 15 accepted failures, 74 shared skips**,
+zero crashes/timeouts, and **4855 listed, zero ratchet regressions**. The profiling,
+both checkpoint and missing-ID stress regressions all pass. Every file's status and
+skip reason matches the baseline; accepted failures match after normalizing one
+temporary process ID. Raw results, worker logs, `comparison.json` and the prior canonical
+result backup are in `full-20261022T211412Z-4173` under the index-reload artifact folder.
+The canonical results are refreshed; dashboard counts and the passing list are unchanged.
+
+The serial driver
 `index-reload-20261022/stress-update/verify-journal.py` builds and signs the runner,
 checks 100 original stress trials plus 20 diagnostic trials, checks the affected SQL
 cohort and ratchet, then starts a fresh full sweep only if those gates pass. It stores
 the source/binary manifest and all logs under `stress-update/verification/`. Poll the
 live handle recorded in `.context/stress-update-investigation.md`; never launch a
-duplicate or rebuild its runner during the sweep. The previous failed full results and
-canonical ratchet remain unchanged. Shell/C API binaries still require rebuilding and
+duplicate workload. The previous failed full results and canonical ratchet remain
+preserved. Shell/C API binaries still require rebuilding and
 verification on the final source; an earlier partial release build was deliberately
 stopped after the runner linked, before finishing the remaining packages.
-The full sweep is now running through `resume-after-cohort.py`, which verifies the
+The completed sweep ran through `resume-after-cohort.py`, which verified the
 unchanged runner hash and source, checks the scoped ratchet, then resumes at the full
 stage. Its unique directory is recorded in `index-reload-20261022/full-run-path.txt`.
-`verify-post-full.py` is prepared but has not run; after a reviewed clean full sweep it
-rebuilds/signs the public binaries and verifies C API, shell and explicit-transaction
-lock behavior against C++.
+`verify-post-full.py` is now running after that review. It rebuilds/signs the public
+binaries and verifies C API, shell and explicit-transaction lock behavior against C++.
+Its unique output directory is in `stress-update/post-full-path.txt`. No other build or
+test workload may overlap it; the full sweep is terminal, not still running.
 
 Native disk restore covers plain and stored constraint indexes so far; expression/WAL,
 pre-v0.10 and fallback paths remain open under work-queue 16. The cache policy is still
@@ -253,13 +271,15 @@ Details: `.context/index-reload-progress.md`.
   `cargo check --workspace --all-targets -j 1`, the affected corpus directories, then a full run.
 - Unit tests: build with `cargo test --workspace --release -j 1 --no-run`, sign the
   generated test executables, then run them serially with `--test-threads=1`. The older
-  workspace baseline was 668+ passes; this continuation executed the changed ICU crate
-  (6/6), not the entire workspace unit suite.
+  workspace baseline was 668+ passes; this continuation executed 80 storage tests and
+  the changed ICU crate (6/6), not the entire workspace unit suite.
 
 ## Next steps, in order
 
-1. Fix native persisted-index loading (work-queue 16), which the cache experiment
-   exposes as a profiling regression. Then resolve or reject/rework caching's memory
+1. Finish the active shell/C API verification on `506354f`. Remaining shell engine
+   differences remain the owner's top priority (work-queue 3). Finish the other native
+   persisted-index paths (16); the profiling and concurrency regressions are fixed.
+   Resolve or reject/rework caching's memory
    outliers and continue the performance work; the policy is not accepted yet. Work
    down the rest of `docs/work-queue.md` sequentially. ICU verification is complete; Parquet encryption (15) remains.
 2. Keep one workload at a time. Use `JOBS=1` for canonical conformance runs; do not
