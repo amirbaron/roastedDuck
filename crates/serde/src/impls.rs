@@ -1,7 +1,7 @@
 //! (De)serialization of primitives, containers and the shared index/collection types,
 //! mirroring the `WriteValue` / `Read<T>` overloads of DuckDB's (de)serializer.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rustdb_common::{
     CaseInsensitiveMap, CaseInsensitiveSet, LogicalIndex, OrderedMap, PhysicalIndex, Result,
@@ -43,6 +43,14 @@ primitive!(i128, write_i128, read_i128);
 primitive!(u128, write_u128, read_u128);
 primitive!(f32, write_f32, read_f32);
 primitive!(f64, write_f64, read_f64);
+/// An index held as `usize`, written as DuckDB's `idx_t`.
+impl Serialize for usize {
+    fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        serializer.write_u64(*self as u64);
+        Ok(())
+    }
+}
+
 impl Serialize for str {
     fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
         serializer.write_str(self);
@@ -60,6 +68,20 @@ impl Serialize for String {
 impl Deserialize for String {
     fn deserialize(deserializer: &mut dyn Deserializer) -> Result<Self> {
         deserializer.read_string()
+    }
+}
+
+/// DuckDB's `IndexVector<T, INDEX_TYPE>`: an object holding the vector as
+/// `internal_vector`.
+#[derive(Clone, Copy, Debug)]
+pub struct IndexVector<'a, T>(pub &'a [T]);
+
+impl<T: Serialize> Serialize for IndexVector<'_, T> {
+    fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        serializer.on_object_begin();
+        serializer.write_property(100, "internal_vector", self.0)?;
+        serializer.on_object_end();
+        Ok(())
     }
 }
 
@@ -229,6 +251,13 @@ impl<K: Deserialize + PartialEq, V: Deserialize> Deserialize for OrderedMap<K, V
             map.insert(k, v);
         })?;
         Ok(map)
+    }
+}
+
+/// `std::map`: written in key order.
+impl<K: Serialize, V: Serialize> Serialize for BTreeMap<K, V> {
+    fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        write_map_entries(serializer, self.iter())
     }
 }
 

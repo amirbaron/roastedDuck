@@ -7,8 +7,8 @@
 use rustdb_ast::{AlterInfoKind, CreateInfo, ParseInfo};
 use rustdb_serde::binary::{BinaryDeserializer, BinarySerializer};
 use rustdb_serde::{
-    Deserializer, Pointee, SerializationCompatibility, SerializationOptions, deserialize_present,
-    serialize_present,
+    DeserializePointee, Deserializer, Pointee, SerializationCompatibility, SerializationOptions,
+    deserialize_present, serialize_present,
 };
 
 /// `WALType` values of entries holding a serialized catalog entry (a `CreateInfo`).
@@ -96,7 +96,7 @@ pub fn check_entry(
 }
 
 /// Reads property 101 of a WAL entry as `T`, writes it back, and compares the bytes.
-fn round_trip<T: Pointee>(
+fn round_trip<T: Pointee + DeserializePointee>(
     payload: &[u8],
     compatibility: &SerializationCompatibility,
     describe: impl Fn(&T) -> String,
