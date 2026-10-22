@@ -93,6 +93,95 @@ pub trait ClientLogger: Send + Sync + fmt::Debug {
     fn as_any(&self) -> &dyn Any;
 }
 
+/// The `PhysicalOperator` log entries of an operator (DuckDB's `PhysicalOperatorLogType`
+/// written by `DUCKDB_LOG(context, PhysicalOperatorLogType, op, ...)`): the operator's
+/// type and its `ParamsToString()`, captured when the operator starts and only if the
+/// query logs the type, so operators that do not log pay nothing.
+#[derive(Clone)]
+pub struct OperatorLogger {
+    logger: std::sync::Arc<dyn ClientLogger>,
+    operator_type: String,
+    parameters: Vec<(String, String)>,
+}
+
+impl fmt::Debug for OperatorLogger {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OperatorLogger")
+            .field("operator_type", &self.operator_type)
+            .finish_non_exhaustive()
+    }
+}
+
+impl OperatorLogger {
+    /// `PhysicalOperatorLogType::NAME`.
+    pub const NAME: &'static str = "PhysicalOperator";
+    /// `PhysicalOperatorLogType::LEVEL`.
+    pub const LEVEL: LogLevel = LogLevel::Debug;
+
+    /// The logger of an operator of type `operator_type` (`EnumUtil::ToString` of its
+    /// `PhysicalOperatorType`), if `logger` writes `PhysicalOperator` entries (the
+    /// `ShouldLog` of `DUCKDB_LOG`); `parameters` (its `ParamsToString()`) is only
+    /// computed then.
+    pub fn new(
+        logger: Option<std::sync::Arc<dyn ClientLogger>>,
+        operator_type: &str,
+        parameters: impl FnOnce() -> Vec<(String, String)>,
+    ) -> Option<Self> {
+        let logger = logger?;
+        if !logger.should_log(LogScope::Connection, Self::NAME, Self::LEVEL) {
+            return None;
+        }
+        Some(Self {
+            logger,
+            operator_type: operator_type.to_owned(),
+            parameters: parameters(),
+        })
+    }
+
+    /// `DUCKDB_LOG(context, PhysicalOperatorLogType, op, class, event, info)`; a failure to
+    /// log is ignored.
+    pub fn log(&self, class: &str, event: &str, info: &[(&str, String)]) {
+        let message = operator_log_message(&self.operator_type, &self.parameters, class, event, info);
+        let _ = self
+            .logger
+            .write_log(LogScope::Connection, Self::NAME, Self::LEVEL, &message);
+    }
+}
+
+/// `PhysicalOperatorLogType::ConstructLogMessage`: the STRUCT of the operator's type and
+/// parameters, the class and event logged and their info, as text.
+pub fn operator_log_message(
+    operator_type: &str,
+    parameters: &[(String, String)],
+    class: &str,
+    event: &str,
+    info: &[(&str, String)],
+) -> String {
+    use rustdb_types::Value;
+    // `StringPairIterableToMap`.
+    let map = |entries: Vec<(Value, Value)>| Value::map(LogicalType::VARCHAR, LogicalType::VARCHAR, entries);
+    let message = Value::struct_value(vec![
+        ("operator_type".to_owned(), Value::varchar(operator_type)),
+        (
+            "parameters".to_owned(),
+            map(parameters
+                .iter()
+                .map(|(key, value)| (Value::varchar(key), Value::varchar(value)))
+                .collect()),
+        ),
+        ("class".to_owned(), Value::varchar(class)),
+        ("event".to_owned(), Value::varchar(event)),
+        (
+            "info".to_owned(),
+            map(info
+                .iter()
+                .map(|(key, value)| (Value::varchar(*key), Value::varchar(value)))
+                .collect()),
+        ),
+    ]);
+    message.to_varchar().unwrap_or_default()
+}
+
 /// The `FileSystem` log entries of a local file (DuckDB's `FileSystemLogType` written by
 /// the `DUCKDB_LOG_FILE_SYSTEM_*` macros of a file handle).
 #[derive(Debug)]

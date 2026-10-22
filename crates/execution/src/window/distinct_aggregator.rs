@@ -51,6 +51,7 @@ impl DistinctSink {
         let global = sort.global_sink_state(SortConfig {
             threads: 1,
             connections: 1,
+            force_external: ctx.force_external(),
             ..SortConfig::default()
         });
         let local = sort.local_sink_state();

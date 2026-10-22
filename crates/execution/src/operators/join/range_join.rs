@@ -219,6 +219,7 @@ impl SortedTable {
         let config = SortConfig {
             threads,
             connections: 1,
+            force_external: ctx.force_external(),
             ..SortConfig::default()
         };
         let sink = sort.global_sink_state(config);

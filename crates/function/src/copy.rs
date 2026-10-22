@@ -93,6 +93,10 @@ pub type CopyToBind = Arc<
 /// `copy_to_initialize_global`: opens the file at the path.
 pub type CopyToInitializeGlobal =
     Arc<dyn Fn(&dyn FunctionData, &str) -> Result<CopyGlobalState> + Send + Sync>;
+/// `copy_to_initialize_operator`: hands a file's state the logger of the COPY operator,
+/// when the query logs it.
+pub type CopyToInitializeOperator =
+    Arc<dyn Fn(&CopyGlobalState, &crate::logging::OperatorLogger) + Send + Sync>;
 /// `copy_to_sink`: writes a chunk.
 pub type CopyToSink =
     Arc<dyn Fn(&dyn FunctionData, &CopyGlobalState, &DataChunk) -> Result<()> + Send + Sync>;
@@ -197,6 +201,8 @@ pub struct CopyFunction {
     pub copy_to_select: Option<CopyToSelect>,
     pub copy_to_bind: Option<CopyToBind>,
     pub copy_to_initialize_global: Option<CopyToInitializeGlobal>,
+    /// Gives a file's state the operator to log for (`initialize_operator`).
+    pub copy_to_initialize_operator: Option<CopyToInitializeOperator>,
     pub copy_to_sink: Option<CopyToSink>,
     pub copy_to_finalize: Option<CopyToFinalize>,
     /// The statistics of a written file for `RETURN_STATS` (`copy_to_get_written_statistics`).
@@ -235,6 +241,7 @@ impl CopyFunction {
             copy_to_select: None,
             copy_to_bind: None,
             copy_to_initialize_global: None,
+            copy_to_initialize_operator: None,
             copy_to_sink: None,
             copy_to_finalize: None,
             copy_to_get_written_statistics: None,

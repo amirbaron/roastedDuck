@@ -171,9 +171,15 @@ pub type ParallelScanLocal = Box<dyn std::any::Any + Send>;
 #[allow(clippy::type_complexity, reason = "callback signatures")]
 pub struct ParallelTableScan {
     /// The shared state of a scan of `column_ids`; `column_indexes` are the same columns
-    /// with the fields read of nested ones (DuckDB's `TableFunctionInitInput`).
+    /// with the fields read of nested ones, and the logger is the scan operator's, if the
+    /// query logs it (DuckDB's `TableFunctionInitInput` with its `op`).
     pub init_global: Arc<
-        dyn Fn(Option<&dyn FunctionData>, &[u64], &[rustdb_types::ColumnIndex]) -> Result<ParallelScanGlobal>
+        dyn Fn(
+                Option<&dyn FunctionData>,
+                &[u64],
+                &[rustdb_types::ColumnIndex],
+                Option<&crate::logging::OperatorLogger>,
+            ) -> Result<ParallelScanGlobal>
             + Send
             + Sync,
     >,

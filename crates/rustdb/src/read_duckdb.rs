@@ -817,6 +817,7 @@ fn read_duckdb_init_global(
     bind: Option<&dyn FunctionData>,
     column_ids: &[u64],
     _: &[rustdb_types::ColumnIndex],
+    _: Option<&rustdb_function::logging::OperatorLogger>,
 ) -> Result<ParallelScanGlobal> {
     let data = bind_data(bind)?;
     let mut cursor = Cursor {
@@ -973,7 +974,7 @@ fn read_duckdb_scan(
     chunk: &mut DataChunk,
 ) -> Result<bool> {
     if state.local.is_none() {
-        let global = read_duckdb_init_global(bind, column_ids, &[])?;
+        let global = read_duckdb_init_global(bind, column_ids, &[], None)?;
         let local: ParallelScanLocal = Box::<ScanLocal>::default();
         state.local = Some(Box::new((global, local)));
     }

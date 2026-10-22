@@ -450,6 +450,11 @@ pub struct JoinHashTable {
     build_bloom_filter: bool,
     /// The bloom filter, filled while the rows are inserted (`bloom_filter`).
     bloom_filter: Option<Arc<crate::operators::join::BloomFilter>>,
+    /// The matches probes found (`total_probe_matches`).
+    pub(crate) total_probe_matches: std::sync::atomic::AtomicUsize,
+    /// Logs the builds of the pointer table, for the join's operator (`op` and `context`
+    /// of DuckDB's `JoinHashTable`), if the query logs them.
+    logger: Option<rustdb_function::logging::OperatorLogger>,
 }
 
 impl JoinHashTable {
@@ -565,7 +570,20 @@ impl JoinHashTable {
             completed_partitions: vec![false; partitions],
             build_bloom_filter: false,
             bloom_filter: None,
+            total_probe_matches: std::sync::atomic::AtomicUsize::new(0),
+            logger: None,
         })
+    }
+
+    /// Logs the builds of the pointer table with `logger` (the join's operator).
+    pub fn set_logger(&mut self, logger: Option<rustdb_function::logging::OperatorLogger>) {
+        self.logger = logger;
+    }
+
+    /// The matches probes found so far (`total_probe_matches`).
+    pub fn total_probe_matches(&self) -> usize {
+        self.total_probe_matches
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Makes the next pointer table come with a bloom filter (`SetBuildBloomFilter`).
@@ -781,6 +799,19 @@ impl JoinHashTable {
             }
         }
         self.bitmask = capacity as u64 - 1;
+        if let Some(logger) = &self.logger {
+            logger.log(
+                "JoinHashTable",
+                "Build",
+                &[
+                    ("rows", self.count().to_string()),
+                    (
+                        "size",
+                        (self.data_collection.size_in_bytes() + capacity * size_of::<u64>()).to_string(),
+                    ),
+                ],
+            );
+        }
         Ok(())
     }
 
@@ -1937,6 +1968,8 @@ impl ScanStructure {
             .extend_from_slice(&self.sel_vector[..self.count]);
         self.chain_no_match_sel.clear();
         let Some(matcher) = &ht.row_matcher_probe else {
+            ht.total_probe_matches
+                .fetch_add(self.count, std::sync::atomic::Ordering::Relaxed);
             return Ok(self.count);
         };
         let no_match = if with_no_match {
@@ -1956,6 +1989,8 @@ impl ScanStructure {
             )?
         };
         self.chain_match_sel.truncate(matched);
+        ht.total_probe_matches
+            .fetch_add(matched, std::sync::atomic::Ordering::Relaxed);
         Ok(matched)
     }
 

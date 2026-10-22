@@ -52,6 +52,62 @@ pub struct ParquetWriteGlobal {
     combine_buffer: Mutex<Option<RowBuffer>>,
     /// Prepares batches without the writer's lock (`prepare_batch`).
     preparer: crate::writer::RowGroupPreparer,
+    /// The path of the file.
+    file_name: String,
+    /// The COPY operator's logger, if the query logs it (`op`).
+    logger: std::sync::OnceLock<rustdb_function::logging::OperatorLogger>,
+}
+
+impl ParquetWriteGlobal {
+    /// `LogFlushingRowGroup`: the row group about to be written and why.
+    fn log_flushing_row_group(&self, buffer: &RowBuffer, reason: &str) {
+        let Some(logger) = self.logger.get() else {
+            return;
+        };
+        logger.log(
+            "ParquetWriter",
+            "FlushRowGroup",
+            &[
+                ("file", self.file_name.clone()),
+                ("rows", buffer.rows.to_string()),
+                ("size", buffer.collection_size_in_bytes().to_string()),
+                ("reason", reason.to_owned()),
+            ],
+        );
+    }
+}
+
+impl RowBuffer {
+    /// The size of the rows as DuckDB's buffer (a `ColumnDataCollection`) holds them
+    /// (`SizeInBytes`): every column takes a vector of `STANDARD_VECTOR_SIZE` values and
+    /// its validity mask per 2048 rows, strings longer than 12 bytes their bytes besides.
+    fn collection_size_in_bytes(&self) -> usize {
+        const VALIDITY_MASK_SIZE: usize = rustdb_common::STANDARD_VECTOR_SIZE / 8;
+        let Some(first) = self.chunks.first() else {
+            return 0;
+        };
+        let vectors = self.rows.div_ceil(rustdb_common::STANDARD_VECTOR_SIZE);
+        let mut size = 0;
+        for (index, column) in first.columns().iter().enumerate() {
+            let physical = column.logical_type().physical_type();
+            let width = physical.size().max(1);
+            size += vectors * (width * rustdb_common::STANDARD_VECTOR_SIZE + VALIDITY_MASK_SIZE);
+            if physical == rustdb_types::PhysicalType::Varchar {
+                for chunk in &self.chunks {
+                    let column = chunk.column(index);
+                    if column.kind() != rustdb_types::VectorKind::Flat {
+                        continue;
+                    }
+                    size += (0..chunk.len())
+                        .filter(|&row| !column.is_null(row))
+                        .map(|row| column.string_bytes(row).len())
+                        .filter(|&len| len > 12)
+                        .sum::<usize>();
+                }
+            }
+        }
+        size
+    }
 }
 
 fn client_context(binder: Option<&dyn Any>) -> Result<&ClientContext> {
@@ -555,7 +611,28 @@ fn parquet_write_initialize_global(data: &dyn FunctionData, path: &str) -> Resul
         inner: Mutex::new((writer, RowBuffer::default())),
         combine_buffer: Mutex::new(None),
         preparer,
+        file_name: path.to_owned(),
+        logger: std::sync::OnceLock::new(),
     }))
+}
+
+/// `ParquetWriteInitializeOperator`: the writer logs for the COPY operator.
+fn parquet_write_initialize_operator(
+    state: &CopyGlobalState,
+    logger: &rustdb_function::logging::OperatorLogger,
+) {
+    if let Ok(global) = global_state(state) {
+        let _ = global.logger.set(logger.clone());
+    }
+}
+
+/// Why a buffer that reached the row group size is written (`ParquetWriteSink`).
+fn row_group_size_reason(data: &ParquetWriteBindData, buffer: &RowBuffer) -> &'static str {
+    if buffer.rows >= data.options.row_group_size {
+        "ROW_GROUP_SIZE"
+    } else {
+        "ROW_GROUP_SIZE_BYTES"
+    }
 }
 
 /// `ParquetWriter::Flush` from any thread: prepares the row group without the file's
@@ -588,6 +665,7 @@ fn parquet_write_sink_local(
     buffer.bytes += chunk_size_in_bytes(chunk);
     buffer.chunks.push(chunk.clone());
     if buffer.rows >= data.options.row_group_size || buffer.bytes >= data.options.row_group_size_bytes {
+        global.log_flushing_row_group(buffer, row_group_size_reason(data, buffer));
         flush_rows(global, buffer)?;
         *buffer = RowBuffer::default();
     }
@@ -609,6 +687,7 @@ fn parquet_write_combine(
     let half_rows = data.options.row_group_size / 2;
     let half_bytes = data.options.row_group_size_bytes / 2;
     if buffer.rows >= half_rows || buffer.bytes >= half_bytes {
+        global.log_flushing_row_group(&buffer, "Combine");
         return flush_rows(global, &buffer);
     }
     let mut combine = global
@@ -623,6 +702,7 @@ fn parquet_write_combine(
             if combined.rows >= half_rows || combined.bytes >= half_bytes {
                 let owned = combine.take().unwrap_or_default();
                 drop(combine);
+                global.log_flushing_row_group(&owned, "Combine");
                 return flush_rows(global, &owned);
             }
         }
@@ -713,6 +793,7 @@ fn parquet_write_sink(data: &dyn FunctionData, state: &CopyGlobalState, chunk: &
     buffer.bytes += chunk_size_in_bytes(chunk);
     buffer.chunks.push(chunk.clone());
     if buffer.rows >= data.options.row_group_size || buffer.bytes >= data.options.row_group_size_bytes {
+        global.log_flushing_row_group(buffer, row_group_size_reason(data, buffer));
         writer.flush(&buffer.chunks)?;
         *buffer = RowBuffer::default();
     }
@@ -720,7 +801,8 @@ fn parquet_write_sink(data: &dyn FunctionData, state: &CopyGlobalState, chunk: &
 }
 
 /// `ParquetWriteCombine` + `ParquetWriteFinalize`.
-fn parquet_write_finalize(_: &dyn FunctionData, state: &CopyGlobalState) -> Result<()> {
+fn parquet_write_finalize(data: &dyn FunctionData, state: &CopyGlobalState) -> Result<()> {
+    let data = bind_data(data)?;
     let global = global_state(state)?;
     // The rows threads combined in parallel writes.
     let combined = global
@@ -729,11 +811,22 @@ fn parquet_write_finalize(_: &dyn FunctionData, state: &CopyGlobalState) -> Resu
         .unwrap_or_else(PoisonError::into_inner)
         .take();
     if let Some(combined) = combined {
+        global.log_flushing_row_group(&combined, "Finalize");
         flush_rows(global, &combined)?;
     }
     let mut inner = global.inner.lock().unwrap_or_else(PoisonError::into_inner);
     let (writer, buffer) = &mut *inner;
     if buffer.rows > 0 {
+        // DuckDB's regular write combines this buffer first: written then if it holds at
+        // least half a row group, else at finalize.
+        let reason = if buffer.rows >= data.options.row_group_size / 2
+            || buffer.bytes >= data.options.row_group_size_bytes / 2
+        {
+            "Combine"
+        } else {
+            "Finalize"
+        };
+        global.log_flushing_row_group(buffer, reason);
         writer.flush(&buffer.chunks)?;
         *buffer = RowBuffer::default();
     }
@@ -966,6 +1059,7 @@ pub fn parquet_copy_function() -> CopyFunction {
     function.copy_to_select = Some(Arc::new(|input| Ok(parquet_write_select(input))));
     function.copy_to_bind = Some(Arc::new(parquet_write_bind));
     function.copy_to_initialize_global = Some(Arc::new(parquet_write_initialize_global));
+    function.copy_to_initialize_operator = Some(Arc::new(parquet_write_initialize_operator));
     function.copy_to_sink = Some(Arc::new(parquet_write_sink));
     function.execution_mode = Some(Arc::new(parquet_write_execution_mode));
     function.prepare_batch = Some(Arc::new(parquet_write_prepare_batch));

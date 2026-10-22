@@ -867,7 +867,7 @@ impl PhysicalHashAggregate {
     ) -> SinkMemory {
         let buffer_manager = &ctx.env.buffer_manager;
         let threads = ctx.env.threads().max(1) as u64;
-        let context = buffer_manager.temporary_memory_context(threads, 1, false);
+        let context = buffer_manager.temporary_memory_context(threads, 1, ctx.force_external());
         let state = buffer_manager.temporary_memory_manager().register(&context);
         let block_alloc_size = buffer_manager.block_alloc_size() as u64;
         let tuples_per_block = (block_alloc_size / row_width.max(1) as u64).max(1);

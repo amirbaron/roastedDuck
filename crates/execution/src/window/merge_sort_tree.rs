@@ -493,7 +493,8 @@ impl WindowMergeSortTree {
         count: usize,
         unique: bool,
     ) -> Result<Self> {
-        let (index_type, tree) = if count < u32::MAX as usize {
+        let force_external = ctx.force_external();
+        let (index_type, tree) = if count < u32::MAX as usize && !force_external {
             (LogicalType::INTEGER, IndexTree::U32(MergeSortTree::default()))
         } else {
             (LogicalType::BIGINT, IndexTree::U64(MergeSortTree::default()))
@@ -522,6 +523,7 @@ impl WindowMergeSortTree {
         let config = SortConfig {
             threads: 1,
             connections: 1,
+            force_external,
             ..SortConfig::default()
         };
         let global = sort.global_sink_state(config);

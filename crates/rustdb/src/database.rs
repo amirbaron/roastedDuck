@@ -4102,6 +4102,7 @@ impl Connection {
             preserve_insertion_order,
             client_interrupted: Some(self.client.interrupt_flag()),
             estimates,
+            force_external: self.settings.force_external(),
         };
         let execution = match QueryExecution::new(root, env, &options) {
             Ok(execution) => execution,

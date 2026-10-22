@@ -44,11 +44,27 @@ pub fn default_threads() -> usize {
     std::thread::available_parallelism().map_or(1, usize::from)
 }
 
+/// What operators read from the client running the query (the parts of DuckDB's
+/// `ClientContext` beyond the database): `ClientConfig::force_external`, the client's
+/// logger and the planner's estimates the operators' `ParamsToString` shows.
+#[derive(Clone, Debug, Default)]
+pub struct QueryClient {
+    /// `debug_force_external`: operators that can work out of core start out of core
+    /// (`ClientConfig::force_external`).
+    pub force_external: bool,
+    /// The connection's loggers (`Logger::Get(context)`).
+    pub logger: Option<Arc<dyn rustdb_function::logging::ClientLogger>>,
+    /// The estimated cardinality of the plan's operators.
+    pub estimates: crate::CardinalityEstimates,
+}
+
 /// Per-thread execution context handed to every operator call (DuckDB's
 /// `ExecutionContext` with its `ThreadContext`).
 #[derive(Debug, Clone)]
 pub struct ExecutionContext {
     pub env: Arc<ClientEnv>,
+    /// The client running the query.
+    pub client: Arc<QueryClient>,
     /// Index of the task running the current pipeline.
     pub thread_index: usize,
     /// Collects per-operator rows and timings under `EXPLAIN ANALYZE`.
@@ -65,6 +81,7 @@ impl ExecutionContext {
     pub fn new(env: Arc<ClientEnv>) -> Self {
         Self {
             env,
+            client: Arc::default(),
             thread_index: 0,
             profiler: None,
             interrupted: Arc::default(),
@@ -76,6 +93,7 @@ impl ExecutionContext {
     /// query's) and `client_interrupted` (the client's).
     pub(crate) fn for_task(
         env: Arc<ClientEnv>,
+        client: Arc<QueryClient>,
         profiler: Option<Arc<crate::QueryProfiler>>,
         interrupted: Arc<AtomicBool>,
         client_interrupted: Option<Arc<AtomicBool>>,
@@ -83,6 +101,7 @@ impl ExecutionContext {
     ) -> Self {
         Self {
             env,
+            client,
             thread_index,
             profiler,
             interrupted,
@@ -105,5 +124,26 @@ impl ExecutionContext {
             return Err(Error::new(ErrorKind::Interrupt, "Interrupted!"));
         }
         Ok(())
+    }
+
+    /// `ClientConfig::force_external` (`debug_force_external`).
+    pub fn force_external(&self) -> bool {
+        self.client.force_external
+    }
+
+    /// The logger of `PhysicalOperator` entries about `op`, if the query writes them
+    /// (`DUCKDB_LOG(context, PhysicalOperatorLogType, op, ...)` with its `ShouldLog`
+    /// checked once, where the operator starts).
+    pub fn operator_logger(
+        &self,
+        op: &dyn crate::PhysicalOperator,
+    ) -> Option<rustdb_function::logging::OperatorLogger> {
+        rustdb_function::logging::OperatorLogger::new(self.client.logger.clone(), op.name(), || {
+            let estimate = self.client.estimates.get_by_key(crate::operator_key(op));
+            op.params_to_string(estimate)
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect()
+        })
     }
 }

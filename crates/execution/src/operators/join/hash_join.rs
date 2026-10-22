@@ -286,6 +286,29 @@ pub struct HashJoinGlobalSinkState {
     probe_side_requirement: usize,
     /// Probe rows of partitions not built yet, for external joins (`probe_spill`).
     probe_spill: OnceLock<ProbeSpill>,
+    /// Logs the join's events, if the query logs them.
+    logger: Option<rustdb_function::logging::OperatorLogger>,
+    /// Logs the probe matches when the state goes away, as DuckDB's destructor does: by
+    /// then the operator's virtual `ParamsToString` is its base class's, without
+    /// parameters.
+    drop_logger: Option<rustdb_function::logging::OperatorLogger>,
+}
+
+impl Drop for HashJoinGlobalSinkState {
+    fn drop(&mut self) {
+        if let Some(logger) = &self.drop_logger {
+            let matches = self
+                .hash_table
+                .get_mut()
+                .unwrap_or_else(PoisonError::into_inner)
+                .total_probe_matches();
+            logger.log(
+                "PhysicalHashJoin",
+                "GetData",
+                &[("total_probe_matches", matches.to_string())],
+            );
+        }
+    }
 }
 
 /// The stages of building the pointer table in parallel (DuckDB's
@@ -331,12 +354,20 @@ impl Sink for PhysicalHashJoin {
 
     fn global_sink_state(&self, ctx: &ExecutionContext) -> Result<HashJoinGlobalSinkState> {
         clear_join_filters(&self.join_filters, self.filter_key());
-        let memory_context =
-            ctx.env
-                .buffer_manager
-                .temporary_memory_context(ctx.env.threads().max(1) as u64, 1, false);
+        let memory_context = ctx.env.buffer_manager.temporary_memory_context(
+            ctx.env.threads().max(1) as u64,
+            1,
+            ctx.force_external(),
+        );
+        let logger = ctx.operator_logger(self);
+        let drop_logger =
+            rustdb_function::logging::OperatorLogger::new(ctx.client.logger.clone(), self.name(), Vec::new);
+        let mut hash_table = self.initialize_hash_table(ctx)?;
+        hash_table.set_logger(logger.clone());
         Ok(HashJoinGlobalSinkState {
-            hash_table: RwLock::new(self.initialize_hash_table(ctx)?),
+            logger,
+            drop_logger,
+            hash_table: RwLock::new(hash_table),
             local_hash_tables: Mutex::default(),
             key_range: Mutex::default(),
             perfect_join_executor: None,
@@ -439,7 +470,15 @@ impl Sink for PhysicalHashJoin {
                 .get_mut()
                 .unwrap_or_else(PoisonError::into_inner),
         );
-        if self.prepare_external(ctx, global, &locals)? {
+        let external = self.prepare_external(ctx, global, &locals)?;
+        if let Some(logger) = &global.logger {
+            logger.log(
+                "PhysicalHashJoin",
+                "Finalize",
+                &[("external", u8::from(external).to_string())],
+            );
+        }
+        if external {
             return self.finalize_external(ctx, global, locals);
         }
         let table = global
@@ -639,7 +678,18 @@ impl PhysicalHashJoin {
         memory.set_remaining_size(total_size as u64);
         memory.update_reservation(&global.memory_context);
         global.probe_side_requirement = probe_side_requirement;
-        Ok(memory.reservation() < total_size as u64)
+        if memory.reservation() >= total_size as u64 {
+            return Ok(false);
+        }
+        // External joins use a lower load factor, which may make the table fit after all.
+        table.load_factor = JoinHashTable::EXTERNAL_LOAD_FACTOR;
+        let (total_size, _, _) = table.total_size_of(locals);
+        if (total_size as u64) < memory.reservation() {
+            memory.set_minimum_reservation(total_size as u64);
+            memory.set_remaining_size_and_update_reservation(&global.memory_context, total_size as u64);
+            return Ok(false);
+        }
+        Ok(true)
     }
 
     /// Finalizes an external join: repartitions the build side if its largest partition
@@ -664,7 +714,24 @@ impl PhysicalHashJoin {
         let very_very_skewed = max_partition_ht_size as f64 >= 0.8 * total_size as f64;
         let reservation = usize::try_from(global.temporary_memory.reservation()).unwrap_or(usize::MAX);
         if !very_very_skewed && max_partition_ht_size + global.probe_side_requirement > reservation {
+            let radix_bits_before = table.radix_bits();
             table.set_repartition_radix_bits(reservation, max_partition_size, max_partition_count)?;
+            if let Some(logger) = &global.logger {
+                logger.log(
+                    "PhysicalHashJoin",
+                    "Repartition",
+                    &[
+                        (
+                            "partitions_before",
+                            RadixPartitioning::number_of_partitions(radix_bits_before).to_string(),
+                        ),
+                        (
+                            "partitions_after",
+                            RadixPartitioning::number_of_partitions(table.radix_bits()).to_string(),
+                        ),
+                    ],
+                );
+            }
             for local in locals {
                 local.repartition_into(table)?;
             }
