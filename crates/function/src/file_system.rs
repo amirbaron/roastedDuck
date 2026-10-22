@@ -43,6 +43,17 @@ pub fn opener() -> Option<Arc<FunctionClient>> {
     OPENER.with(|opener| opener.borrow().clone())
 }
 
+/// Path prefixes of files other file systems serve (`EXTENSION_FILE_PREFIXES`).
+const REMOTE_PREFIXES: [&str; 12] = [
+    "http://", "https://", "s3://", "s3a://", "s3n://", "gcs://", "gs://", "r2://", "azure://", "az://",
+    "abfss://", "hf://",
+];
+
+/// `FileSystem::IsRemoteFile`.
+pub fn is_remote_file(path: &str) -> bool {
+    REMOTE_PREFIXES.iter().any(|prefix| path.starts_with(prefix))
+}
+
 /// `FileSystem::GetHomeDirectory`: the `home_directory` setting if set, else `$HOME`.
 pub fn home_directory() -> String {
     let setting = opener()

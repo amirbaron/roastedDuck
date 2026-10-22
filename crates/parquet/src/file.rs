@@ -1,102 +1,210 @@
-//! Reading a Parquet file: positional reads and the footer (DuckDB's `LoadMetadata` and
-//! `ParseParquetFooter`).
+//! Reading a Parquet file through the external file cache (DuckDB's `ParquetReader`
+//! reads through a `CachingFileHandle`): positional reads, prefetched ranges and the
+//! footer (`LoadMetadata` and `ParseParquetFooter`).
 
-use std::fs::File;
+use std::sync::{Arc, OnceLock};
 
-use rustdb_common::{Error, ErrorKind, Result};
+use rustdb_common::{Error, Result};
+use rustdb_function::caching_file_system::{CachedRead, CachingFileHandle};
+use rustdb_function::external_file_cache::{CacheValidationMode, ExternalFileCache};
 
 use crate::thrift::{FileMetaData, ThriftValue};
 
 /// An open Parquet file. Reads are positional, so one handle serves every thread.
 #[derive(Debug)]
 pub struct ParquetFile {
-    path: String,
-    file: File,
+    handle: CachingFileHandle,
     size: u64,
-    /// The last modification time, if known.
-    modified: Option<std::time::SystemTime>,
-}
-
-fn io_error(message: String) -> Error {
-    Error::new(ErrorKind::Io, message)
 }
 
 impl ParquetFile {
-    /// Opens `path` for reading (`FileSystem::OpenFile`).
-    pub fn open(path: &str) -> Result<Self> {
-        rustdb_function::file_system::verify_can_access_file(path)?;
-        let file = File::open(path).map_err(|error| {
-            let reason = match error.kind() {
-                std::io::ErrorKind::NotFound => "No such file or directory".to_owned(),
-                std::io::ErrorKind::PermissionDenied => "Permission denied".to_owned(),
-                _ => error.to_string(),
-            };
-            io_error(format!("Cannot open file \"{path}\": {reason}"))
-        })?;
-        let metadata = file
-            .metadata()
-            .map_err(|error| io_error(format!("Could not get file size of \"{path}\": {error}")))?;
-        if metadata.is_dir() {
-            return Err(io_error(format!("Cannot open file \"{path}\": Is a directory")));
-        }
-        Ok(Self {
-            path: path.to_owned(),
-            file,
-            size: metadata.len(),
-            modified: metadata.modified().ok(),
-        })
+    /// Opens `path` for reading through `cache` (`CachingFileSystem::OpenFile`).
+    pub fn open(
+        path: &str,
+        cache: Option<Arc<ExternalFileCache>>,
+        validation: CacheValidationMode,
+    ) -> Result<Self> {
+        let handle = CachingFileHandle::open(cache, path, validation)?;
+        let size = handle.file_size()?;
+        Ok(Self { handle, size })
     }
 
     pub fn path(&self) -> &str {
-        &self.path
+        self.handle.path()
     }
 
     pub fn size(&self) -> u64 {
         self.size
     }
 
-    pub fn modified(&self) -> Option<std::time::SystemTime> {
-        self.modified
+    /// The file's handle in the external file cache.
+    pub fn handle(&self) -> &CachingFileHandle {
+        &self.handle
     }
 
-    /// Fills `buffer` from offset `offset`.
+    /// Fills `buffer` from offset `offset`, bypassing the cache.
     pub fn read_exact_at(&self, buffer: &mut [u8], offset: u64) -> Result<()> {
-        let end = offset.checked_add(buffer.len() as u64);
-        if end.is_none_or(|end| end > self.size) {
-            return Err(io_error(format!(
-                "Could not read enough bytes from file \"{}\": attempted to read {} bytes from location {offset}",
-                self.path,
-                buffer.len()
-            )));
-        }
-        read_exact_at(&self.file, buffer, offset)
-            .map_err(|error| io_error(format!("Could not read from file \"{}\": {error}", self.path)))
+        self.handle.read_direct(buffer, offset)
     }
 
-    /// The bytes `offset..offset + len`.
+    /// The bytes `offset..offset + len`, bypassing the cache.
     pub fn read_range(&self, offset: u64, len: usize) -> Result<Vec<u8>> {
         let mut buffer = vec![0; len];
         self.read_exact_at(&mut buffer, offset)?;
         Ok(buffer)
     }
-}
 
-#[cfg(unix)]
-fn read_exact_at(file: &File, buffer: &mut [u8], offset: u64) -> std::io::Result<()> {
-    std::os::unix::fs::FileExt::read_exact_at(file, buffer, offset)
-}
-
-#[cfg(windows)]
-fn read_exact_at(file: &File, mut buffer: &mut [u8], mut offset: u64) -> std::io::Result<()> {
-    while !buffer.is_empty() {
-        let read = std::os::windows::fs::FileExt::seek_read(file, buffer, offset)?;
-        if read == 0 {
-            return Err(std::io::ErrorKind::UnexpectedEof.into());
-        }
-        buffer = &mut buffer[read..];
-        offset += read as u64;
+    /// The `len` bytes at `offset`, through the external file cache (a prefetch of
+    /// `ThriftFileTransport`).
+    pub fn read_cached(&self, offset: u64, len: u64) -> Result<CachedRead> {
+        self.handle.read(len, offset)
     }
-    Ok(())
+}
+
+/// A range of the file to prefetch, read through the cache on first use (DuckDB's
+/// `ReadHead`).
+#[derive(Debug)]
+pub struct ReadHead {
+    pub location: u64,
+    pub size: u64,
+    data: OnceLock<CachedRead>,
+}
+
+impl ReadHead {
+    fn new(location: u64, size: u64) -> Self {
+        Self {
+            location,
+            size,
+            data: OnceLock::new(),
+        }
+    }
+
+    /// `GetEnd`.
+    pub fn end(&self) -> u64 {
+        self.location + self.size
+    }
+
+    /// The bytes of the range, reading them through the cache if not done yet.
+    pub fn bytes(&self, file: &ParquetFile) -> Result<&[u8]> {
+        if self.data.get().is_none() {
+            let read = file.read_cached(self.location, self.size)?;
+            let _ = self.data.set(read);
+        }
+        self.data
+            .get()
+            .map(CachedRead::bytes)
+            .ok_or_else(|| Error::internal("prefetched range without data"))
+    }
+
+    /// Reads the range now (`ReadAheadBuffer::Prefetch`).
+    fn prefetch(&self, file: &ParquetFile) -> Result<()> {
+        self.bytes(file).map(|_| ())
+    }
+}
+
+/// The ranges registered for prefetching, consecutive ones merged (DuckDB's two-step
+/// `ReadAheadBuffer`: register the ranges, then prefetch them).
+#[derive(Debug, Default)]
+pub struct ReadAheadBuffer {
+    /// The read heads, the newest first (`read_heads`).
+    heads: Vec<Arc<ReadHead>>,
+    /// The ranges registered since the last `finalize_registration`, the newest first,
+    /// and whether others may merge into them (`merge_set`).
+    registered: Vec<(u64, u64, bool)>,
+}
+
+impl ReadAheadBuffer {
+    /// Ranges within this many bytes of each other merge (`ReadHeadComparator::ALLOW_GAP`).
+    const ALLOW_GAP: u64 = 1 << 14;
+
+    /// Whether neither of two ranges lies wholly before the other, gap included (the
+    /// equivalence of `ReadHeadComparator`).
+    fn mergeable(a: (u64, u64), b: (u64, u64)) -> bool {
+        let before = |a: (u64, u64), b: (u64, u64)| {
+            let a_end = a.0 + a.1;
+            let a_end = if a_end <= u64::MAX - Self::ALLOW_GAP {
+                a_end + Self::ALLOW_GAP
+            } else {
+                a_end
+            };
+            a.0 < b.0 && a_end < b.0
+        };
+        !before(a, b) && !before(b, a)
+    }
+
+    /// Registers `len` bytes at `pos` (`AddReadHead`); with `merge`, into a registered
+    /// range it touches or overlaps.
+    pub fn add_read_head(&mut self, file: &ParquetFile, pos: u64, len: u64, merge: bool) -> Result<()> {
+        if merge
+            && let Some(existing) = self
+                .registered
+                .iter_mut()
+                .find(|(start, size, mergeable)| *mergeable && Self::mergeable((*start, *size), (pos, len)))
+        {
+            let new_start = existing.0.min(pos);
+            let new_end = (existing.0 + existing.1).max(pos + len);
+            *existing = (new_start, new_end - new_start, true);
+            return Ok(());
+        }
+        self.registered.insert(0, (pos, len, merge));
+        if pos + len > file.size() {
+            return Err(Error::invalid_input(format!(
+                "Prefetch registered for bytes outside file: {}, attempted range: [{pos}, {}), file size: {}",
+                file.path(),
+                pos + len,
+                file.size()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Ends the registration: no more merging (`FinalizeRegistration`).
+    pub fn finalize_registration(&mut self) {
+        let registered: Vec<Arc<ReadHead>> = self
+            .registered
+            .drain(..)
+            .map(|(pos, len, _)| Arc::new(ReadHead::new(pos, len)))
+            .collect();
+        self.heads.splice(0..0, registered);
+    }
+
+    /// Registers, then reads `len` bytes at `pos` (`ThriftFileTransport::Prefetch`).
+    pub fn prefetch_range(&mut self, file: &ParquetFile, pos: u64, len: u64) -> Result<()> {
+        self.add_read_head(file, pos, len, false)?;
+        self.finalize_registration();
+        self.prefetch(file)
+    }
+
+    /// Reads every registered range (`Prefetch`).
+    pub fn prefetch(&self, file: &ParquetFile) -> Result<()> {
+        for head in &self.heads {
+            if head.end() > file.size() {
+                return Err(Error::invalid_input(
+                    "Prefetch registered requested for bytes outside file",
+                ));
+            }
+            head.prefetch(file)?;
+        }
+        Ok(())
+    }
+
+    /// The range holding `pos` (`GetReadHead`).
+    pub fn read_head(&self, pos: u64) -> Option<&Arc<ReadHead>> {
+        self.heads
+            .iter()
+            .find(|head| pos >= head.location && pos < head.end())
+    }
+
+    /// Drops the ranges (`ClearPrefetch`): they stay cached, but unpinned.
+    pub fn clear(&mut self) {
+        self.heads.clear();
+        self.registered.clear();
+    }
+
+    /// `HasPrefetch`.
+    pub fn has_prefetch(&self) -> bool {
+        !self.heads.is_empty() || !self.registered.is_empty()
+    }
 }
 
 /// The parsed footer of a file (DuckDB's `ParquetFileMetadataCache`).
@@ -109,8 +217,19 @@ pub struct FileMetadata {
     pub decryption: Option<crate::crypto::FileDecryption>,
 }
 
-/// `LoadMetadata`: checks the magic bytes and parses the footer.
-pub fn load_metadata(file: &ParquetFile, key: Option<&crate::crypto::FooterKey>) -> Result<FileMetadata> {
+/// `LoadMetadata`: checks the magic bytes and parses the footer. The end of the file is
+/// read through the cache: its last 8 bytes, or with `prefetch` (`ShouldAndCanPrefetch`)
+/// about a thousandth of the file to save a second read; the footer then comes from that
+/// range, or from a second one if it is larger.
+pub fn load_metadata(
+    file: &ParquetFile,
+    key: Option<&crate::crypto::FooterKey>,
+    prefetch: bool,
+) -> Result<FileMetadata> {
+    /// Estimate 1/1000th of the file to be footer (`ESTIMATED_FOOTER_RATIO`).
+    const ESTIMATED_FOOTER_RATIO: u64 = 1000;
+    const MIN_PREFETCH_SIZE: u64 = 16384;
+    const MAX_PREFETCH_SIZE: u64 = 262_144;
     let path = file.path();
     let size = file.size();
     if size < 12 {
@@ -118,8 +237,15 @@ pub fn load_metadata(file: &ParquetFile, key: Option<&crate::crypto::FooterKey>)
             "File '{path}' too small to be a Parquet file"
         )));
     }
+    let mut prefetch_size = 8;
+    if prefetch {
+        prefetch_size = (size / ESTIMATED_FOOTER_RATIO).clamp(MIN_PREFETCH_SIZE, MAX_PREFETCH_SIZE);
+        prefetch_size = prefetch_size.next_power_of_two().min(size);
+    }
+    let end = file.read_cached(size - prefetch_size, prefetch_size)?;
+    let end_bytes = end.bytes();
     let mut tail = [0u8; 8];
-    file.read_exact_at(&mut tail, size - 8)?;
+    tail.copy_from_slice(&end_bytes[end_bytes.len() - 8..]);
     // `ParseParquetFooter`.
     let footer_encrypted = match &tail[4..] {
         b"PAR1" => {
@@ -150,8 +276,16 @@ pub fn load_metadata(file: &ParquetFile, key: Option<&crate::crypto::FooterKey>)
             "Footer length error in file '{path}'"
         )));
     }
-    let footer = file.read_range(size - 8 - u64::from(footer_len), footer_len as usize)?;
-    let mut reader = crate::thrift::CompactReader::new(&footer);
+    let metadata_pos = size - 8 - u64::from(footer_len);
+    let second_read;
+    let footer: &[u8] = if u64::from(footer_len) > prefetch_size - 8 {
+        second_read = file.read_cached(metadata_pos, u64::from(footer_len))?;
+        second_read.bytes()
+    } else {
+        let start = (metadata_pos - (size - prefetch_size)) as usize;
+        &end_bytes[start..start + footer_len as usize]
+    };
+    let mut reader = crate::thrift::CompactReader::new(footer);
     let mut decryption = None;
     let metadata = match key {
         Some(key) if footer_encrypted => {

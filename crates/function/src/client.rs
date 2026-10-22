@@ -153,6 +153,8 @@ pub struct FunctionClient {
     logger: Mutex<Option<Arc<dyn crate::logging::ClientLogger>>>,
     /// The database's object cache (`ObjectCache::GetObjectCache`).
     object_cache: Mutex<Option<Arc<ObjectCache>>>,
+    /// The database's external file cache (`ExternalFileCache::Get(context)`).
+    external_file_cache: Mutex<Option<Arc<crate::external_file_cache::ExternalFileCache>>>,
     /// Configuration changes functions made, not yet applied by the connection.
     client_requests: Mutex<Vec<ClientRequest>>,
     /// The connection's temporary catalog in the running statement's transaction.
@@ -191,6 +193,7 @@ impl Default for FunctionClient {
             connections: Mutex::default(),
             logger: Mutex::default(),
             object_cache: Mutex::default(),
+            external_file_cache: Mutex::default(),
             client_requests: Mutex::default(),
             temp_catalog: Mutex::default(),
             transaction_context: Mutex::default(),
@@ -320,6 +323,22 @@ impl FunctionClient {
     /// Shares the database's object cache with this connection.
     pub fn set_object_cache(&self, cache: Arc<ObjectCache>) {
         *self.object_cache.lock().unwrap_or_else(PoisonError::into_inner) = Some(cache);
+    }
+
+    /// Shares the database's external file cache with this connection.
+    pub fn set_external_file_cache(&self, cache: Arc<crate::external_file_cache::ExternalFileCache>) {
+        *self
+            .external_file_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(cache);
+    }
+
+    /// The database's external file cache, if the connection belongs to a database.
+    pub fn external_file_cache(&self) -> Option<Arc<crate::external_file_cache::ExternalFileCache>> {
+        self.external_file_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// The database's object cache, if the connection belongs to a database.

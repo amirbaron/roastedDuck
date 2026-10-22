@@ -897,6 +897,7 @@ fn parquet_copy_from_bind(
         geoparquet_conversion: crate::scan::setting_bool(context, "enable_geoparquet_conversion"),
         ..ParquetOptions::default()
     };
+    crate::scan::set_file_cache_options(context, &mut options);
     for (name, values) in input.options.iter() {
         let option = name.to_lowercase();
         let boolean = || -> Result<bool> {

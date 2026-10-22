@@ -37,9 +37,13 @@ impl ParquetReader {
     /// Opens `path` and parses its footer and schema (`ParquetReader::ParquetReader`);
     /// with a metadata cache, a cached footer of the unchanged file is reused.
     pub fn open(path: &str, options: ParquetOptions) -> Result<Self> {
-        let file = Arc::new(ParquetFile::open(path)?);
+        let file = Arc::new(ParquetFile::open(
+            path,
+            options.file_cache.clone(),
+            options.cache_validation,
+        )?);
         if let Some(key) = &options.encryption {
-            let loaded = load_metadata(&file, Some(key))?;
+            let loaded = load_metadata(&file, Some(key), options.prefetch)?;
             let decryption = loaded.decryption.map(Arc::new);
             let mut reader =
                 Self::from_metadata(file, Arc::new(loaded.metadata), loaded.footer_len, options)?;
@@ -49,25 +53,27 @@ impl ParquetReader {
         if let Some(cache) = &options.metadata_cache {
             let key = CachedMetadata::key(path);
             if let Some(entry) = cache.get::<CachedMetadata>(&key)
-                && entry.is_valid(file.size(), file.modified())
+                && entry.is_valid_for(file.handle())?
             {
                 let metadata = Arc::clone(&entry.metadata);
                 return Self::from_metadata(file, metadata, entry.footer_len, options);
             }
-            let loaded = load_metadata(&file, None)?;
+            let loaded = load_metadata(&file, None, options.prefetch)?;
             let metadata = Arc::new(loaded.metadata);
+            let handle = file.handle();
             cache.put(
                 key,
                 Arc::new(CachedMetadata {
                     metadata: Arc::clone(&metadata),
                     footer_len: loaded.footer_len,
-                    size: file.size(),
-                    modified: file.modified(),
+                    validate: handle.validate(),
+                    last_modified: handle.last_modified()?,
+                    version_tag: handle.version_tag()?,
                 }),
             );
             return Self::from_metadata(file, metadata, loaded.footer_len, options);
         }
-        let loaded = load_metadata(&file, None)?;
+        let loaded = load_metadata(&file, None, options.prefetch)?;
         Self::from_metadata(file, Arc::new(loaded.metadata), loaded.footer_len, options)
     }
 
@@ -111,6 +117,7 @@ impl ParquetReader {
                 file,
                 metadata,
                 decryption: None,
+                prefetch: options.prefetch,
             },
             options,
             root_schema,
@@ -256,6 +263,7 @@ impl ParquetReader {
             root: StructReader::new(&self.root_schema, children),
             column_ids,
             prefetch: self.options.prefetch,
+            read_ahead: crate::file::ReadAheadBuffer::default(),
             filters,
             columns: Vec::new(),
             defines: vec![0; STANDARD_VECTOR_SIZE],
@@ -270,8 +278,11 @@ impl ParquetReader {
 pub struct CachedMetadata {
     pub metadata: Arc<FileMetaData>,
     footer_len: u32,
-    size: u64,
-    modified: Option<std::time::SystemTime>,
+    /// Whether the file's handle validated cached data (`validate`).
+    validate: bool,
+    /// The file's modification time (microseconds) and version tag when it was read.
+    last_modified: i64,
+    version_tag: String,
 }
 
 impl CachedMetadata {
@@ -280,18 +291,31 @@ impl CachedMetadata {
         format!("parquet_metadata{path}")
     }
 
-    /// Whether the cached footer is that of the file as it is now (`IsValid`).
-    pub fn is_valid(&self, size: u64, modified: Option<std::time::SystemTime>) -> bool {
-        self.size == size && self.modified.is_some() && self.modified == modified
+    /// Whether the cached footer is that of the file `handle` reads
+    /// (`ParquetFileMetadataCache::IsValid`).
+    pub fn is_valid_for(
+        &self,
+        handle: &rustdb_function::caching_file_system::CachingFileHandle,
+    ) -> Result<bool> {
+        Ok(rustdb_function::external_file_cache::ExternalFileCache::is_valid(
+            self.validate,
+            &self.version_tag,
+            self.last_modified,
+            &handle.version_tag()?,
+            handle.last_modified()?,
+        ))
     }
 
     /// The cached footer of `path`, if the file has not changed since (`TryLoadCaches`).
     pub fn lookup(cache: &rustdb_function::ObjectCache, path: &str) -> Option<Arc<Self>> {
         let entry = cache.get::<Self>(&Self::key(path))?;
-        let metadata = std::fs::metadata(path).ok()?;
-        entry
-            .is_valid(metadata.len(), metadata.modified().ok())
-            .then_some(entry)
+        let handle = rustdb_function::caching_file_system::CachingFileHandle::open(
+            None,
+            path,
+            rustdb_function::external_file_cache::CacheValidationMode::ValidateAll,
+        )
+        .ok()?;
+        entry.is_valid_for(&handle).ok()?.then_some(entry)
     }
 }
 
@@ -366,8 +390,10 @@ pub struct ReaderScanState {
     root: StructReader,
     /// The file column of each output column.
     column_ids: Vec<usize>,
-    /// Whether the row groups are checked like DuckDB's prefetch mode reads them.
+    /// Whether the row groups are prefetched (DuckDB's `prefetch_mode`).
     prefetch: bool,
+    /// The prefetched ranges of the current row group.
+    read_ahead: crate::file::ReadAheadBuffer,
     /// The filters to apply, by output column (`ScanFilter`s); evaluated first, so the
     /// other columns are skipped when no row passes.
     filters: Vec<(usize, TableFilter)>,
@@ -407,6 +433,7 @@ impl ReaderScanState {
                     .row_groups
                     .get(group_index)
                     .ok_or_else(|| Error::internal("row group index out of range"))?;
+                self.read_ahead.clear();
                 self.group_rows = group.num_rows.max(0) as u64;
                 let mut to_scan = 0;
                 for &column in &self.column_ids {
@@ -414,14 +441,8 @@ impl ReaderScanState {
                     reader.initialize_read(group_index, group, &self.context)?;
                     to_scan += reader.total_compressed_size();
                 }
-                if self.prefetch && self.group_rows > 0 && to_scan > group_span(group) {
-                    return Err(Error::new(
-                        rustdb_common::ErrorKind::Io,
-                        format!(
-                            "The parquet file '{}' seems to have incorrectly set page offsets. This interferes with DuckDB's prefetching optimization. DuckDB may still be able to scan this file by manually disabling the prefetching mechanism using: 'SET disable_parquet_prefetching=true'.",
-                            self.context.file_name
-                        ),
-                    ));
+                if self.prefetch && self.group_rows > 0 {
+                    self.prefetch_row_group(group, to_scan)?;
                 }
                 continue;
             }
@@ -481,6 +502,60 @@ impl ReaderScanState {
         }
     }
 
+    /// The prefetch of a row group about to be read, of which the scanned columns span
+    /// `to_scan` compressed bytes (`ParquetReader::Scan` in the prefetch mode): the whole
+    /// group when nearly all of it is read and nothing is filtered, else each column
+    /// (consecutive unfiltered ones merged), fetched on first use when a filter may make
+    /// some unnecessary.
+    fn prefetch_row_group(&mut self, group: &crate::thrift::RowGroup, to_scan: u64) -> Result<()> {
+        /// `ParquetReaderPrefetchConfig::WHOLE_GROUP_PREFETCH_MINIMUM_SCAN`.
+        const WHOLE_GROUP_PREFETCH_MINIMUM_SCAN: f64 = 0.95;
+        let span = group_span(group);
+        if to_scan > span {
+            return Err(Error::new(
+                rustdb_common::ErrorKind::Io,
+                format!(
+                    "The parquet file '{}' seems to have incorrectly set page offsets. This interferes with DuckDB's prefetching optimization. DuckDB may still be able to scan this file by manually disabling the prefetching mechanism using: 'SET disable_parquet_prefetching=true'.",
+                    self.context.file_name
+                ),
+            ));
+        }
+        let file = Arc::clone(&self.context.file);
+        let scan_percentage = to_scan as f64 / span as f64;
+        if self.filters.is_empty() && scan_percentage > WHOLE_GROUP_PREFETCH_MINIMUM_SCAN {
+            if group_compressed_size(group) > 0 {
+                self.read_ahead.prefetch_range(&file, group_offset(group), span)?;
+            }
+        } else {
+            let is_filter = |filter: &TableFilter| {
+                !matches!(
+                    filter,
+                    TableFilter::Optional(_) | TableFilter::SelectivityOptional(_)
+                )
+            };
+            // Lazy fetching: a range is read on first use, so columns all of whose rows
+            // a filter removes are never read.
+            let lazy_fetch = self.filters.iter().any(|(_, filter)| is_filter(filter));
+            for (position, &column) in self.column_ids.iter().enumerate() {
+                let has_filter = self
+                    .filters
+                    .iter()
+                    .any(|(filtered, filter)| *filtered == position && is_filter(filter));
+                self.root
+                    .child_mut(column)?
+                    .register_prefetch(&mut self.read_ahead, &file, !has_filter)?;
+            }
+            self.read_ahead.finalize_registration();
+            if !lazy_fetch {
+                self.read_ahead.prefetch(&file)?;
+            }
+        }
+        for &column in &self.column_ids {
+            self.root.child_mut(column)?.attach_read_heads(&self.read_ahead);
+        }
+        Ok(())
+    }
+
     /// Reads the next `count` rows of output column `position`.
     fn read_column(&mut self, position: usize, count: usize) -> Result<Vector> {
         let column = self.column_ids[position];
@@ -495,6 +570,38 @@ impl ReaderScanState {
             )));
         }
         Ok(vector)
+    }
+}
+
+/// `GetGroupOffset`: where the group's first column chunk starts.
+fn group_offset(group: &crate::thrift::RowGroup) -> u64 {
+    let mut min_offset = u64::MAX;
+    for column in &group.columns {
+        let Some(meta) = &column.meta_data else {
+            continue;
+        };
+        if let Some(offset) = meta.dictionary_page_offset {
+            min_offset = min_offset.min(offset as u64);
+        }
+        if let Some(offset) = meta.index_page_offset {
+            min_offset = min_offset.min(offset as u64);
+        }
+        min_offset = min_offset.min(meta.data_page_offset as u64);
+    }
+    min_offset
+}
+
+/// `GetGroupCompressedSize`: the group's `total_compressed_size`, or the sum of its
+/// columns' when unset.
+fn group_compressed_size(group: &crate::thrift::RowGroup) -> u64 {
+    match group.total_compressed_size {
+        Some(size) if size != 0 => size as u64,
+        _ => group
+            .columns
+            .iter()
+            .filter_map(|column| column.meta_data.as_ref())
+            .map(|meta| meta.total_compressed_size as u64)
+            .sum(),
     }
 }
 

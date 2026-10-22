@@ -152,16 +152,7 @@ const REPOSITORIES: [(&str, &str); 5] = [
     ("local_build_release", "./build/release/repository"),
 ];
 
-/// Path prefixes of files other file systems serve (`EXTENSION_FILE_PREFIXES`).
-const REMOTE_PREFIXES: [&str; 12] = [
-    "http://", "https://", "s3://", "s3a://", "s3n://", "gcs://", "gs://", "r2://", "azure://", "az://",
-    "abfss://", "hf://",
-];
-
-/// `FileSystem::IsRemoteFile`.
-fn is_remote_file(path: &str) -> bool {
-    REMOTE_PREFIXES.iter().any(|prefix| path.starts_with(prefix))
-}
+use rustdb_function::file_system::is_remote_file;
 
 /// The settings that locate extensions and their repository.
 #[derive(Debug, Clone)]

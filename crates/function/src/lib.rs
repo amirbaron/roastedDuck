@@ -6,11 +6,13 @@
 
 pub mod aggregate;
 pub mod bignum;
+pub mod caching_file_system;
 pub mod cast;
 pub mod client;
 pub use client::ObjectCache;
 pub mod copy;
 pub mod extension_entries;
+pub mod external_file_cache;
 pub mod file_system;
 pub mod function_descriptions;
 pub mod logging;

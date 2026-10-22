@@ -33,6 +33,18 @@ pub(crate) fn client_context<'a>(input: &TableFunctionBindInput<'a>) -> Result<&
         .ok_or_else(|| Error::internal("parquet function bound without a client context"))
 }
 
+/// How the client reads files: through the database's external file cache
+/// (`CachingFileSystem::Get(context)`), validated per `validate_external_file_cache`,
+/// prefetching per `ShouldAndCanPrefetch` (local files only with
+/// `prefetch_all_parquet_files`).
+pub(crate) fn set_file_cache_options(context: &ClientContext, options: &mut ParquetOptions) {
+    options.prefetch = setting_bool(context, "prefetch_all_parquet_files")
+        && !setting_bool(context, "disable_parquet_prefetching");
+    options.file_cache = context.function_client.external_file_cache();
+    options.cache_validation =
+        rustdb_function::external_file_cache::CacheValidationMode::of_client(Some(&context.function_client));
+}
+
 /// The current value of a boolean setting (`ClientContext::TryGetCurrentSetting`).
 pub(crate) fn setting_bool(context: &ClientContext, name: &str) -> bool {
     context
@@ -493,11 +505,9 @@ fn read_parquet_bind(
         } else {
             None
         },
-        // `ShouldAndCanPrefetch`: local files only with `prefetch_all_parquet_files`.
-        prefetch: setting_bool(context, "prefetch_all_parquet_files")
-            && !setting_bool(context, "disable_parquet_prefetching"),
         ..ParquetOptions::default()
     };
+    set_file_cache_options(context, &mut options);
     parse_options(input, &mut file_options, &mut options, context)?;
     let mut data = bind_files(&context.casts, files, file_options, &options)?;
     data.display_paths = Some(paths);

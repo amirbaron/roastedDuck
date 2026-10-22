@@ -54,9 +54,15 @@ pub struct ParquetOptions {
     pub explicit_cardinality: u64,
     /// Whether `GeoParquet` columns read as GEOMETRY (`enable_geoparquet_conversion`).
     pub geoparquet_conversion: bool,
-    /// Whether row groups are read in the prefetch mode, which checks their page offsets
-    /// (`prefetch_all_parquet_files` without `disable_parquet_prefetching`).
+    /// Whether files are read in the prefetch mode (`ShouldAndCanPrefetch`:
+    /// `prefetch_all_parquet_files` without `disable_parquet_prefetching`): the footer's
+    /// end of the file and the scanned row groups (or columns) are read whole, through
+    /// the external file cache.
     pub prefetch: bool,
+    /// The database's external file cache, which files are read through (`CachingFileSystem`).
+    pub file_cache: Option<std::sync::Arc<rustdb_function::external_file_cache::ExternalFileCache>>,
+    /// `validate_external_file_cache`.
+    pub cache_validation: rustdb_function::external_file_cache::CacheValidationMode,
 }
 
 /// One column of the `schema` parameter (`ParquetColumnDefinition`).
