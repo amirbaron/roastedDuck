@@ -28,6 +28,24 @@ pub struct BufferPointer {
     pub offset: u32,
 }
 
+/// Writes index buffers, including completion of deferred partial-block writes.
+/// Serialization flushes before publishing its new disk locations to other users.
+pub trait IndexBufferWriter {
+    fn write(&mut self, data: &[u8]) -> Result<BufferPointer>;
+
+    /// Immediate stores need no work here; deferred writers must make every returned
+    /// pointer readable before this returns.
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl<F: FnMut(&[u8]) -> Result<BufferPointer>> IndexBufferWriter for F {
+    fn write(&mut self, data: &[u8]) -> Result<BufferPointer> {
+        self(data)
+    }
+}
+
 /// Loads the bytes of a buffer persisted at a [`BufferPointer`].
 pub trait BufferLoader: Send + Sync + std::fmt::Debug {
     /// Returns `allocation_size` bytes stored at `pointer`.

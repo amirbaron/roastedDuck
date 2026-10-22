@@ -19,7 +19,7 @@ use super::node::{
 };
 use super::{Art, DEPRECATED_PREFIX_COUNT, PREFIX_METADATA_SIZE};
 use crate::index::fixed_size_allocator::{
-    BufferLoader, BufferPointer, FixedSizeAllocator, FixedSizeAllocatorInfo,
+    BufferLoader, FixedSizeAllocator, FixedSizeAllocatorInfo, IndexBufferWriter,
 };
 
 /// The serialized form of an ART (DuckDB's `IndexStorageInfo` without the buffers).
@@ -258,14 +258,17 @@ impl Art {
     pub fn serialize_to_disk(
         &mut self,
         options: &CaseInsensitiveMap<Value>,
-        write: &mut dyn FnMut(&[u8]) -> Result<BufferPointer>,
+        writer: &mut dyn IndexBufferWriter,
         keep: &mut dyn FnMut(rustdb_buffer::BlockId),
     ) -> Result<ArtStorageInfo> {
         let mut info = self.prepare_serialize(options)?;
         let count = Self::serialized_allocators(options);
         for allocator in self.allocators.iter_mut().take(count) {
-            allocator.serialize_buffers(write, keep)?;
+            allocator.serialize_buffers(&mut |data: &[u8]| writer.write(data), keep)?;
         }
+        // The caller still holds the index lock here. No reader may observe the new
+        // locations until their partial blocks have been flushed (`WritePartialBlocks`).
+        writer.flush()?;
         info.allocator_infos = self.allocator_infos(count);
         Ok(info)
     }

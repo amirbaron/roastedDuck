@@ -55,6 +55,20 @@ pub struct BlockWriter {
     pub used_blocks: BTreeMap<BlockId, u32>,
 }
 
+impl crate::index::IndexBufferWriter for BlockWriter {
+    fn write(&mut self, data: &[u8]) -> Result<crate::index::BufferPointer> {
+        let pointer = self.write_segment(data)?;
+        Ok(crate::index::BufferPointer {
+            block_id: pointer.block_id,
+            offset: pointer.offset,
+        })
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        BlockWriter::flush(self)
+    }
+}
+
 /// A block segments are added to (DuckDB's `PartialBlock` and its `PartialBlockState`).
 #[derive(Debug)]
 struct PartialBlock {
@@ -1585,9 +1599,8 @@ pub fn write_table_data(
     // `DataTable::Checkpoint`: with row ids moved, the indexes are built anew before
     // they are written; the table takes them with the vacuumed row groups.
     let rebuilt_indexes = if rebuild_indexes {
-        let _timer = rustdb_common::profiling::start_timer(
-            rustdb_common::profiling::MetricType::CumulativeVacuumTime,
-        );
+        let _timer =
+            rustdb_common::profiling::start_timer(rustdb_common::profiling::MetricType::CumulativeVacuumTime);
         Some(table.rebuild_indexes(&layout)?)
     } else {
         None
@@ -1806,9 +1819,8 @@ pub fn checkpoint_in_memory_table(
     }
     // `DataTable::Checkpoint`: with row ids moved, the indexes are built anew.
     let rebuilt_indexes = if rebuild_indexes {
-        let _timer = rustdb_common::profiling::start_timer(
-            rustdb_common::profiling::MetricType::CumulativeVacuumTime,
-        );
+        let _timer =
+            rustdb_common::profiling::start_timer(rustdb_common::profiling::MetricType::CumulativeVacuumTime);
         let layout: Vec<(Arc<RowGroup>, u64)> = nodes
             .iter()
             .map(|node| (Arc::clone(&node.node), node.row_start - base))

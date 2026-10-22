@@ -789,13 +789,6 @@ fn serialize_indexes(
     let mut bound = 0;
     for slot in table.info().indexes().slots() {
         let mut index_blocks = BlockWriter::new(Arc::clone(storage.block_manager()));
-        let mut write = |bytes: &[u8]| {
-            let pointer = index_blocks.write_segment(bytes)?;
-            Ok(rustdb_storage::index::fixed_size_allocator::BufferPointer {
-                block_id: pointer.block_id,
-                offset: pointer.offset,
-            })
-        };
         // Unchanged buffers of a bound index and an unbound index (written as it was
         // stored) keep their blocks, which stay in use.
         let mut kept = Vec::new();
@@ -806,23 +799,22 @@ fn serialize_indexes(
                 if let Some(index) = rebuilt.as_deref_mut().and_then(|rebuilt| rebuilt.get_mut(bound)) =>
             {
                 bound += 1;
-                index.serialize_to_disk(&index_options, &mut write, &mut |block| kept.push(block))?
+                index.serialize_to_disk(&index_options, &mut index_blocks, &mut |block| kept.push(block))?
             }
             IndexSlot::Bound(entry) => {
                 bound += 1;
                 entry
                     .lock()
                     .index
-                    .serialize_to_disk(&index_options, &mut write, &mut |block| kept.push(block))?
+                    .serialize_to_disk(&index_options, &mut index_blocks, &mut |block| kept.push(block))?
             }
             IndexSlot::Unbound(index) => {
-                index.serialize_to_disk(&mut write, &mut |block| kept.push(block))?
+                index.serialize_to_disk(&mut index_blocks, &mut |block| kept.push(block))?
             }
         };
         for block in kept {
             *blocks.used_blocks.entry(block).or_insert(0) += 1;
         }
-        index_blocks.flush()?;
         for (block, count) in index_blocks.used_blocks {
             *blocks.used_blocks.entry(block).or_insert(0) += count;
         }

@@ -15,7 +15,7 @@ use rustdb_common::{Error, Result};
 
 use super::IndexConstraintType;
 use super::art::ArtStorageInfo;
-use super::fixed_size_allocator::BufferPointer;
+use super::fixed_size_allocator::IndexBufferWriter;
 
 /// The stored data of an unbound index.
 #[derive(Debug)]
@@ -112,7 +112,7 @@ impl UnboundIndex {
     /// references.
     pub fn serialize_to_disk(
         &self,
-        write: &mut dyn FnMut(&[u8]) -> Result<BufferPointer>,
+        writer: &mut dyn IndexBufferWriter,
         blocks: &mut dyn FnMut(BlockId),
     ) -> Result<ArtStorageInfo> {
         let mut storage = self.storage();
@@ -120,15 +120,20 @@ impl UnboundIndex {
             // `ReplayIndexData`: every buffer becomes a block of the file.
             for (allocator, buffers) in info.allocator_infos.iter_mut().zip(buffers.iter()) {
                 for (position, bytes) in buffers.iter().enumerate() {
-                    let pointer = write(bytes)?;
+                    let pointer = writer.write(bytes)?;
                     match allocator.block_pointers.get_mut(position) {
                         Some(slot) => *slot = pointer,
                         None => allocator.block_pointers.push(pointer),
                     }
                 }
             }
+            // Keep the storage lock across the flush, before publishing Disk metadata
+            // that a concurrent binder can load.
+            writer.flush()?;
             let info = std::mem::take(info);
             *storage = UnboundIndexStorage::Disk(info);
+        } else {
+            writer.flush()?;
         }
         match &*storage {
             UnboundIndexStorage::Disk(info) => {

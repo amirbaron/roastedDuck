@@ -438,3 +438,110 @@ fn persisted_modern_nodes_load_lazily_and_remain_mutable() {
 fn persisted_deprecated_leaf_layout_loads_lazily_and_remains_mutable() {
     stored_art_round_trip(true);
 }
+
+/// Defers writes until flush, so publishing a pointer early cannot pass a reload.
+struct DeferredCheckpoint {
+    store: std::sync::Arc<CheckpointBuffers>,
+    pending: Vec<Vec<u8>>,
+    flushes: usize,
+    fail_flush: bool,
+}
+
+impl DeferredCheckpoint {
+    fn new(store: std::sync::Arc<CheckpointBuffers>) -> Self {
+        Self {
+            store,
+            pending: Vec::new(),
+            flushes: 0,
+            fail_flush: false,
+        }
+    }
+}
+
+impl super::super::IndexBufferWriter for DeferredCheckpoint {
+    fn write(&mut self, data: &[u8]) -> rustdb_common::Result<super::super::BufferPointer> {
+        let id = self.store.buffers.lock().unwrap().len() + self.pending.len();
+        self.pending.push(data.to_vec());
+        Ok(super::super::BufferPointer {
+            block_id: id as i64,
+            offset: 0,
+        })
+    }
+
+    fn flush(&mut self) -> rustdb_common::Result<()> {
+        self.flushes += 1;
+        if self.fail_flush {
+            return Err(rustdb_common::Error::new(
+                rustdb_common::ErrorKind::Io,
+                "injected flush failure",
+            ));
+        }
+        self.store.buffers.lock().unwrap().append(&mut self.pending);
+        Ok(())
+    }
+}
+
+fn one_key_index() -> Art {
+    let mut source = art(IndexConstraintType::None, LogicalType::BIGINT);
+    source
+        .insert_keys(
+            &[Some(row_id_key(42).to_vec())],
+            &[17],
+            &[],
+            IndexAppendMode::Default,
+            None,
+        )
+        .unwrap();
+    source
+}
+
+fn check_one_persisted_key(info: &ArtStorageInfo, store: std::sync::Arc<CheckpointBuffers>) {
+    let mut restored = art(IndexConstraintType::None, LogicalType::BIGINT);
+    restored.load_from_storage(info, store).unwrap();
+    let mut found = BTreeSet::new();
+    assert!(
+        restored
+            .search_equal(&row_id_key(42), usize::MAX, &mut found)
+            .unwrap()
+    );
+    assert_eq!(found, BTreeSet::from([17]));
+}
+
+#[test]
+fn serialization_flushes_deferred_buffers_before_returning() {
+    let store = std::sync::Arc::new(CheckpointBuffers::default());
+    let mut writer = DeferredCheckpoint::new(store.clone());
+    let info = one_key_index()
+        .serialize_to_disk(
+            &rustdb_common::CaseInsensitiveMap::default(),
+            &mut writer,
+            &mut |_| {},
+        )
+        .unwrap();
+    assert_eq!(writer.flushes, 1);
+    assert_eq!(writer.pending, Vec::<Vec<u8>>::new());
+    check_one_persisted_key(&info, store);
+}
+
+#[test]
+fn unbound_wal_metadata_is_not_published_before_flush_succeeds() {
+    let options = rustdb_common::CaseInsensitiveMap::default();
+    let (info, buffers) = one_key_index().serialize_to_wal(&options).unwrap();
+    let unbound = super::super::UnboundIndex::new(
+        "idx",
+        "ART",
+        IndexConstraintType::None,
+        vec![0],
+        std::sync::Arc::new(()),
+        super::super::UnboundIndexStorage::Wal(info, buffers),
+    );
+    let mut failed = DeferredCheckpoint::new(std::sync::Arc::new(CheckpointBuffers::default()));
+    failed.fail_flush = true;
+    assert!(unbound.serialize_to_disk(&mut failed, &mut |_| {}).is_err());
+    let store = std::sync::Arc::new(CheckpointBuffers::default());
+    let mut retry = DeferredCheckpoint::new(store.clone());
+    let info = unbound.serialize_to_disk(&mut retry, &mut |_| {}).unwrap();
+    assert_eq!(retry.flushes, 1);
+    assert_eq!(retry.pending, Vec::<Vec<u8>>::new());
+    check_one_persisted_key(&info, store);
+}

@@ -10,7 +10,9 @@ pub mod unbound_index;
 
 pub use art::{Art, ArtKey, IndexKeyExpressions};
 pub use conflict_manager::ConflictManager;
-pub use fixed_size_allocator::{BufferLoader, BufferPointer, FixedSizeAllocator, FixedSizeAllocatorInfo};
+pub use fixed_size_allocator::{
+    BufferLoader, BufferPointer, FixedSizeAllocator, FixedSizeAllocatorInfo, IndexBufferWriter,
+};
 pub use table_index_list::{IndexEntry, IndexSlot, TableIndexList};
 pub use unbound_index::{UnboundIndex, UnboundIndexStorage};
 
