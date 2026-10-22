@@ -2801,6 +2801,7 @@ test/sql/json/test_json_empty_object.test
 test/sql/json/test_json_export.test
 test/sql/json/test_json_macros.test
 test/sql/json/test_json_persistence.test
+test/sql/json/test_json_serialize_plan.test
 test/sql/json/test_json_serialize_sql.test
 test/sql/json/test_json_sqlite.test
 test/sql/json/test_json_struct_projection_pushdown.test_slow
