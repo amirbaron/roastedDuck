@@ -1051,9 +1051,11 @@ impl DataTable {
             if local {
                 deleted += transaction.local_storage().delete(self, ids)?;
             } else {
-                let (count, records) = self.row_groups.delete(transaction.data(), ids)?;
+                let mut records = Vec::new();
+                let result = self.row_groups.delete(transaction.data(), ids, &mut records);
+                // A failed explicit transaction retains these writes until ROLLBACK.
                 transaction.push_deletes(self, records);
-                deleted += count;
+                deleted += result?;
             }
         }
         Ok(deleted)
@@ -1099,10 +1101,12 @@ impl DataTable {
             } else {
                 slice(&global)
             };
-            let records = self
+            let mut records = Vec::new();
+            let result = self
                 .row_groups
-                .update(transaction.data(), &ids, column_ids, &chunk)?;
+                .update(transaction.data(), &ids, column_ids, &chunk, &mut records);
             transaction.push_updates(self, records);
+            result?;
         }
         Ok(())
     }
@@ -1128,11 +1132,12 @@ impl DataTable {
                 "Corrupt WAL: update of a row that does not exist",
             ));
         }
-        let records = self
-            .row_groups
-            .update_column(transaction.data(), row_ids, column_path, values)?;
+        let mut records = Vec::new();
+        let result =
+            self.row_groups
+                .update_column(transaction.data(), row_ids, column_path, values, &mut records);
         transaction.push_updates(self, records);
-        Ok(())
+        result
     }
 
     /// Verifies NOT NULL and CHECK constraints of updated values

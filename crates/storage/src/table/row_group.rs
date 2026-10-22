@@ -805,6 +805,7 @@ impl RowGroup {
                     column.filter(
                         transaction,
                         vector_index,
+                        max_count,
                         column_state,
                         vector,
                         &mut sel,
@@ -1002,15 +1003,15 @@ impl RowGroup {
 
     /// Deletes rows `ids` (row ids within this row group starting at `row_group_start`)
     /// in the transaction (`RowGroup::Delete`). Returns the number of deleted rows and one
-    /// record per touched vector for the undo log.
+    /// record per touched vector for the undo log. Records remain available on error.
     pub fn delete(
         &self,
         transaction: TransactionData,
         ids: &[i64],
         row_group_start: u64,
-    ) -> Result<(u64, Vec<DeleteRecord>)> {
+        records: &mut Vec<DeleteRecord>,
+    ) -> Result<u64> {
         let info = self.get_or_create_version_info();
-        let mut records = Vec::new();
         let mut deleted = 0;
         let mut current: Option<usize> = None;
         let mut rows: Vec<u16> = Vec::new();
@@ -1046,16 +1047,16 @@ impl RowGroup {
             let vector = (row / VECTOR_SIZE) as usize;
             if current != Some(vector) {
                 if let Some(previous) = current {
-                    deleted += flush(previous, &mut rows, &mut records)?;
+                    deleted += flush(previous, &mut rows, records)?;
                 }
                 current = Some(vector);
             }
             rows.push((row % VECTOR_SIZE) as u16);
         }
         if let Some(previous) = current {
-            deleted += flush(previous, &mut rows, &mut records)?;
+            deleted += flush(previous, &mut rows, records)?;
         }
-        Ok((deleted, records))
+        Ok(deleted)
     }
 
     /// Updates the sub-column at `column_path` (top-level column first) of rows `ids` (all
@@ -1067,22 +1068,30 @@ impl RowGroup {
         ids: &[i64],
         column_path: &[usize],
         row_group_start: u64,
-    ) -> Result<Vec<UpdateRecord>> {
+        records: &mut Vec<UpdateRecord>,
+    ) -> Result<()> {
         let (&column_index, rest) = column_path
             .split_first()
             .ok_or_else(|| Error::internal("empty column path"))?;
         let column = self.column(column_index)?;
-        let registrations = column.update_column(transaction, rest, update, ids, row_group_start)?;
+        let mut registrations = Vec::new();
+        let result = column.update_column(
+            transaction,
+            rest,
+            update,
+            ids,
+            row_group_start,
+            &mut registrations,
+        );
+        records.extend(registrations.into_iter().map(|registration| UpdateRecord {
+            column_index,
+            registration,
+        }));
+        result?;
         if let Some(stats) = column.update_statistics() {
             column.merge_statistics(&stats)?;
         }
-        Ok(registrations
-            .into_iter()
-            .map(|registration| UpdateRecord {
-                column_index,
-                registration,
-            })
-            .collect())
+        Ok(())
     }
 
     /// Updates `count` rows starting at `offset` of `ids`/`updates` (all in one vector)
@@ -1094,20 +1103,22 @@ impl RowGroup {
         ids: &[i64],
         column_ids: &[usize],
         row_group_start: u64,
-    ) -> Result<Vec<UpdateRecord>> {
-        let mut records = Vec::new();
+        records: &mut Vec<UpdateRecord>,
+    ) -> Result<()> {
         for (vector, &column_index) in updates.columns().iter().zip(column_ids) {
             let column = self.column(column_index)?;
-            let registrations = column.update(transaction, vector, ids, row_group_start)?;
-            if let Some(stats) = column.update_statistics() {
-                column.merge_statistics(&stats)?;
-            }
+            let mut registrations = Vec::new();
+            let result = column.update(transaction, vector, ids, row_group_start, &mut registrations);
             records.extend(registrations.into_iter().map(|registration| UpdateRecord {
                 column_index,
                 registration,
             }));
+            result?;
+            if let Some(stats) = column.update_statistics() {
+                column.merge_statistics(&stats)?;
+            }
         }
-        Ok(records)
+        Ok(())
     }
 
     // ----------------------------------------------------------------------------------

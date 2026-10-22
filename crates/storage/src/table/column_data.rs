@@ -1900,12 +1900,14 @@ impl ColumnData {
 
     /// Scans the vector and keeps the rows of `sel` that pass `filter` (`Filter`). With
     /// `all_rows`, every row is selected and `sel` is empty; it receives the rows that
-    /// pass.
+    /// pass. `max_count` is the scan's row limit, which can precede concurrently
+    /// appended rows in the last vector.
     #[allow(clippy::too_many_arguments)]
     pub fn filter(
         &self,
         transaction: TransactionData,
         vector_index: usize,
+        max_count: usize,
         state: &mut ColumnScanState,
         result: &mut Vector,
         sel: &mut Vec<u32>,
@@ -1913,7 +1915,7 @@ impl ColumnData {
         filter: &TableFilter,
         needs_values: bool,
     ) -> Result<()> {
-        let count = self.vector_count(vector_index);
+        let count = max_count.min(self.vector_count(vector_index));
         let all_rows = all_rows || sel.len() == count;
         if let Some(node) = self.codec_filter_segment(state, count, filter)? {
             let start = (state.offset_in_column - node.row_start) as usize;
@@ -2815,9 +2817,10 @@ impl ColumnData {
         update: &Vector,
         row_ids: &[i64],
         row_group_start: u64,
-    ) -> Result<Vec<UpdateRegistration>> {
+        registrations: &mut Vec<UpdateRegistration>,
+    ) -> Result<()> {
         let Some((&first, rest)) = column_path.split_first() else {
-            return self.update(transaction, update, row_ids, row_group_start);
+            return self.update(transaction, update, row_ids, row_group_start, registrations);
         };
         let child = match (&self.kind, first) {
             (ColumnKind::Variant { .. }, _) => {
@@ -2833,23 +2836,34 @@ impl ColumnData {
                 ));
             }
         };
-        let registrations = child.update_column(transaction, rest, update, row_ids, row_group_start)?;
-        Ok(under_child(first, registrations).collect())
+        let mut child_registrations = Vec::new();
+        let result = child.update_column(
+            transaction,
+            rest,
+            update,
+            row_ids,
+            row_group_start,
+            &mut child_registrations,
+        );
+        registrations.extend(under_child(first, child_registrations));
+        result
     }
 
     /// Updates rows `row_ids` (all in one vector of the row group starting at
     /// `row_group_start`) to the values of `update` (`Update`).
     ///
-    /// Returns the transaction nodes created, which the caller registers in the undo log.
+    /// Appends every created transaction node to `registrations`, including changes
+    /// before a later conflict. The caller must register these even on error.
     pub fn update(
         &self,
         transaction: TransactionData,
         update: &Vector,
         row_ids: &[i64],
         row_group_start: u64,
-    ) -> Result<Vec<UpdateRegistration>> {
+        registrations: &mut Vec<UpdateRegistration>,
+    ) -> Result<()> {
         let Some(&first) = row_ids.first() else {
-            return Ok(Vec::new());
+            return Ok(());
         };
         let first_row = (first as u64)
             .checked_sub(row_group_start)
@@ -2861,7 +2875,6 @@ impl ColumnData {
         } else {
             update
         };
-        let mut registrations = Vec::new();
         match &self.kind {
             ColumnKind::Validity | ColumnKind::Standard { .. } => {
                 let base = self.fetch_vector(first_row)?;
@@ -2871,7 +2884,7 @@ impl ColumnData {
                     row_ids,
                     &base,
                     row_group_start,
-                    &mut registrations,
+                    registrations,
                 )?;
                 if let ColumnKind::Standard { validity } = &self.kind {
                     let mut validity_registrations = Vec::new();
@@ -2903,8 +2916,16 @@ impl ColumnData {
                     .struct_children()
                     .ok_or_else(|| Error::internal("struct update with a non-struct vector"))?;
                 for (index, (field, child)) in fields.iter().zip(children).enumerate() {
-                    let field_registrations = field.update(transaction, child, row_ids, row_group_start)?;
+                    let mut field_registrations = Vec::new();
+                    let result = field.update(
+                        transaction,
+                        child,
+                        row_ids,
+                        row_group_start,
+                        &mut field_registrations,
+                    );
                     registrations.extend(under_child(index + 1, field_registrations));
+                    result?;
                 }
             }
             ColumnKind::List { .. } => return Err(Error::not_implemented("List Update is not supported.")),
@@ -2916,7 +2937,7 @@ impl ColumnData {
             }
             ColumnKind::Array { .. } => return Err(not_implemented_nested("UPDATE", &self.ty)),
         }
-        Ok(registrations)
+        Ok(())
     }
 
     fn update_internal(

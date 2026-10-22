@@ -6,10 +6,12 @@ use std::sync::Arc;
 
 use rustdb_buffer::{BufferManager, BufferManagerConfig, InMemoryBlockManager};
 use rustdb_storage::table::StorageIndex;
+use rustdb_storage::table_filter::{TableFilter, TableFilterSet};
 use rustdb_storage::{
     ColumnDefinition, DataTable, TableConstraints, TableIoManager, TableScanState, Transaction,
     TransactionManager,
 };
+use rustdb_types::compare::CompareOp;
 use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
 fn io() -> Arc<TableIoManager> {
@@ -40,6 +42,16 @@ fn chunk(rows: &[(i32, &str)]) -> DataChunk {
         strings.set_value(row, &Value::varchar(s)).unwrap();
     }
     DataChunk::new(vec![ints, strings], rows.len())
+}
+
+fn project(chunk: &DataChunk, columns: &[usize]) -> DataChunk {
+    DataChunk::new(
+        columns
+            .iter()
+            .map(|&column| chunk.column(column).clone())
+            .collect(),
+        chunk.len(),
+    )
 }
 
 fn insert(table: &Arc<DataTable>, transaction: &Transaction, rows: &[(i32, &str)]) {
@@ -81,6 +93,62 @@ fn scan(table: &Arc<DataTable>, transaction: &Transaction) -> Vec<(i64, i32, Str
 
 fn values(rows: &[(i64, i32, String)]) -> Vec<i32> {
     rows.iter().map(|(_, i, _)| *i).collect()
+}
+
+#[test]
+fn filtered_scan_keeps_its_row_limit_after_concurrent_append() {
+    for last_value in [0, 1] {
+        let manager = TransactionManager::default();
+        let table = table();
+        let setup = manager.begin();
+        let vector_size = rustdb_common::STANDARD_VECTOR_SIZE;
+        let mut rows: Vec<_> = (0..vector_size).map(|i| ((i % 2) as i32, "initial")).collect();
+        rows.push((last_value, "last"));
+        insert(&table, &setup, &rows);
+        manager.commit(&setup).unwrap();
+
+        let reader = manager.begin();
+        let mut filters = TableFilterSet::default();
+        filters.push_filter(
+            1,
+            TableFilter::ConstantComparison {
+                op: CompareOp::Equal,
+                constant: Value::integer(1),
+            },
+        );
+        let mut state = TableScanState::default();
+        table
+            .initialize_scan(
+                &reader,
+                &mut state,
+                vec![StorageIndex::row_id(), StorageIndex::new(0)],
+                Some(&filters),
+            )
+            .unwrap();
+        let mut result = DataChunk::default();
+        table.scan(&reader, &mut result, &mut state).unwrap();
+        assert_eq!(result.len(), vector_size / 2);
+
+        // The scan has one remaining row. A new matching row extends that same
+        // partial vector, but is outside both its row limit and MVCC snapshot.
+        let writer = manager.begin();
+        insert(&table, &writer, &[(1, "new")]);
+        manager.commit(&writer).unwrap();
+
+        table.scan(&reader, &mut result, &mut state).unwrap();
+        assert_eq!(
+            result.len(),
+            last_value as usize,
+            "a filter must not select the appended row or return the preceding rowid"
+        );
+        if last_value == 1 {
+            assert_eq!(result.column(0).get_value(0), Value::bigint(vector_size as i64));
+            assert_eq!(result.column(1).get_value(0), Value::integer(1));
+            table.scan(&reader, &mut result, &mut state).unwrap();
+            assert!(result.is_empty());
+        }
+        manager.commit(&reader).unwrap();
+    }
 }
 
 #[test]
@@ -420,4 +488,305 @@ fn alter_table_creates_new_versions() {
     );
     assert!(dropped.add_not_null_constraint(&t3, 0).is_ok());
     manager.commit(&t3).unwrap();
+}
+
+#[test]
+fn failed_multi_vector_update_does_not_leave_unregistered_versions() {
+    check_failed_multi_vector_write(false);
+}
+
+#[test]
+fn failed_multi_vector_delete_does_not_leave_unregistered_versions() {
+    check_failed_multi_vector_write(true);
+}
+
+fn check_failed_multi_vector_write(deleting: bool) {
+    for vector_size in [
+        rustdb_common::STANDARD_VECTOR_SIZE,
+        rustdb_storage::DEFAULT_ROW_GROUP_SIZE as usize,
+    ] {
+        let manager = TransactionManager::default();
+        let table = table();
+        let setup = manager.begin();
+        let rows: Vec<_> = (0..=vector_size).map(|i| (i as i32, "initial")).collect();
+        insert(&table, &setup, &rows);
+        manager.commit(&setup).unwrap();
+        let blocker = manager.begin();
+        let failed = manager.begin();
+        let last_id = vector_size as i64;
+        if deleting {
+            table.delete(&blocker, &[last_id]).unwrap();
+            assert!(table.delete(&failed, &[0, last_id]).is_err());
+        } else {
+            table
+                .update(
+                    &blocker,
+                    &[last_id],
+                    &[1],
+                    &project(&chunk(&[(0, "blocked")]), &[1]),
+                    &TableConstraints::default(),
+                )
+                .unwrap();
+            assert!(
+                table
+                    .update(
+                        &failed,
+                        &[0, last_id],
+                        &[1],
+                        &project(&chunk(&[(0, "first"), (0, "conflict")]), &[1]),
+                        &TableConstraints::default()
+                    )
+                    .is_err()
+            );
+        }
+        let probe = manager.begin();
+        if deleting {
+            assert!(
+                table.delete(&probe, &[0]).is_err(),
+                "failed transaction retains its deletes until rollback"
+            );
+        } else {
+            assert!(
+                table
+                    .update(
+                        &probe,
+                        &[0],
+                        &[1],
+                        &project(&chunk(&[(0, "probe")]), &[1]),
+                        &TableConstraints::default()
+                    )
+                    .is_err(),
+                "failed transaction retains its updates until rollback"
+            );
+        }
+        manager.rollback(&probe);
+        manager.rollback(&failed);
+        manager.rollback(&blocker);
+        let retry = manager.begin();
+        if deleting {
+            assert_eq!(table.delete(&retry, &[0]).unwrap(), 1);
+        } else {
+            table
+                .update(
+                    &retry,
+                    &[0],
+                    &[1],
+                    &project(&chunk(&[(0, "retry")]), &[1]),
+                    &TableConstraints::default(),
+                )
+                .unwrap();
+        }
+        manager.commit(&retry).unwrap();
+        let reader = manager.begin();
+        let rows = scan(&table, &reader);
+        if deleting {
+            assert_eq!(rows.len(), vector_size);
+            assert_eq!(rows[0].0, 1);
+        } else {
+            assert_eq!(rows.len(), vector_size + 1);
+            assert_eq!(rows[0].2, "retry");
+        }
+        manager.commit(&reader).unwrap();
+    }
+}
+
+#[test]
+fn failed_multi_column_update_does_not_leave_unregistered_versions() {
+    let manager = TransactionManager::default();
+    let table = table();
+    let setup = manager.begin();
+    insert(&table, &setup, &[(0, "initial")]);
+    manager.commit(&setup).unwrap();
+    let blocker = manager.begin();
+    let failed = manager.begin();
+    table
+        .update(
+            &blocker,
+            &[0],
+            &[1],
+            &project(&chunk(&[(0, "blocked")]), &[1]),
+            &TableConstraints::default(),
+        )
+        .unwrap();
+    assert!(
+        table
+            .update(
+                &failed,
+                &[0],
+                &[0, 1],
+                &chunk(&[(100, "conflict")]),
+                &TableConstraints::default()
+            )
+            .is_err()
+    );
+    let probe = manager.begin();
+    assert!(
+        table
+            .update(
+                &probe,
+                &[0],
+                &[0],
+                &project(&chunk(&[(300, "probe")]), &[0]),
+                &TableConstraints::default()
+            )
+            .is_err()
+    );
+    manager.rollback(&probe);
+    manager.rollback(&failed);
+    manager.rollback(&blocker);
+    let retry = manager.begin();
+    table
+        .update(
+            &retry,
+            &[0],
+            &[0],
+            &project(&chunk(&[(200, "retry")]), &[0]),
+            &TableConstraints::default(),
+        )
+        .unwrap();
+    manager.commit(&retry).unwrap();
+    let reader = manager.begin();
+    assert_eq!(scan(&table, &reader), [(0, 200, "initial".into())]);
+    manager.commit(&reader).unwrap();
+}
+
+#[test]
+fn failed_validity_update_does_not_leave_unregistered_value_version() {
+    let manager = TransactionManager::default();
+    let table = table();
+    let setup = manager.begin();
+    insert(&table, &setup, &[(1, "initial")]);
+    manager.commit(&setup).unwrap();
+    let ints = |value: Value| DataChunk::new(vec![Vector::constant(&value).unwrap()], 1);
+    let blocker = manager.begin();
+    let failed = manager.begin();
+    table
+        .update(
+            &blocker,
+            &[0],
+            &[0],
+            &ints(Value::null(LogicalType::INTEGER)),
+            &TableConstraints::default(),
+        )
+        .unwrap();
+    assert!(
+        table
+            .update(
+                &failed,
+                &[0],
+                &[0],
+                &ints(Value::integer(2)),
+                &TableConstraints::default()
+            )
+            .is_err()
+    );
+    let probe = manager.begin();
+    assert!(
+        table
+            .update(
+                &probe,
+                &[0],
+                &[0],
+                &ints(Value::integer(4)),
+                &TableConstraints::default()
+            )
+            .is_err()
+    );
+    manager.rollback(&probe);
+    manager.rollback(&failed);
+    manager.rollback(&blocker);
+    let retry = manager.begin();
+    table
+        .update(
+            &retry,
+            &[0],
+            &[0],
+            &ints(Value::integer(3)),
+            &TableConstraints::default(),
+        )
+        .unwrap();
+    manager.commit(&retry).unwrap();
+    let reader = manager.begin();
+    assert_eq!(scan(&table, &reader), [(0, 3, "initial".into())]);
+    manager.commit(&reader).unwrap();
+}
+
+#[test]
+fn failed_struct_update_does_not_leave_unregistered_field_version() {
+    let manager = TransactionManager::default();
+    let ty = LogicalType::struct_type(vec![
+        ("a".into(), LogicalType::INTEGER),
+        ("b".into(), LogicalType::INTEGER),
+    ]);
+    let table = DataTable::new(io(), "main", "nested", vec![ColumnDefinition::new("s", ty)]);
+    let value = |a, b| {
+        Value::struct_value(vec![
+            ("a".into(), Value::integer(a)),
+            ("b".into(), Value::integer(b)),
+        ])
+    };
+    let setup = manager.begin();
+    table
+        .append_chunk(
+            &setup,
+            &DataChunk::new(vec![Vector::constant(&value(1, 2)).unwrap()], 1),
+            TableConstraints::default(),
+        )
+        .unwrap();
+    manager.commit(&setup).unwrap();
+    let blocker = manager.begin();
+    let failed = manager.begin();
+    table
+        .update_column(
+            &blocker,
+            &[0],
+            &[0, 2],
+            &Vector::constant(&Value::integer(20)).unwrap(),
+        )
+        .unwrap();
+    assert!(
+        table
+            .update(
+                &failed,
+                &[0],
+                &[0],
+                &DataChunk::new(vec![Vector::constant(&value(100, 200)).unwrap()], 1),
+                &TableConstraints::default()
+            )
+            .is_err()
+    );
+    let probe = manager.begin();
+    assert!(
+        table
+            .update_column(
+                &probe,
+                &[0],
+                &[0, 1],
+                &Vector::constant(&Value::integer(400)).unwrap()
+            )
+            .is_err()
+    );
+    manager.rollback(&probe);
+    manager.rollback(&failed);
+    manager.rollback(&blocker);
+    let retry = manager.begin();
+    table
+        .update_column(
+            &retry,
+            &[0],
+            &[0, 1],
+            &Vector::constant(&Value::integer(300)).unwrap(),
+        )
+        .unwrap();
+    manager.commit(&retry).unwrap();
+    let reader = manager.begin();
+    let mut state = TableScanState::default();
+    table
+        .initialize_scan(&reader, &mut state, vec![StorageIndex::new(0)], None)
+        .unwrap();
+    let mut result = DataChunk::default();
+    table.scan(&reader, &mut result, &mut state).unwrap();
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.column(0).get_value(0), value(300, 2));
+    manager.commit(&reader).unwrap();
 }

@@ -457,7 +457,9 @@ impl LocalStorage {
                 entry.lock().index.try_delete(&table_chunk, &unique_ids)?;
             }
         }
-        let (count, _) = storage.collection().delete(TransactionData::local(), ids)?;
+        let count = storage
+            .collection()
+            .delete(TransactionData::local(), ids, &mut Vec::new())?;
         storage.deleted_rows.fetch_add(count, Ordering::AcqRel);
         Ok(count)
     }
@@ -473,9 +475,13 @@ impl LocalStorage {
         let Some(storage) = self.storage(table) else {
             return Ok(());
         };
-        storage
-            .collection()
-            .update(TransactionData::local(), ids, column_ids, updates)?;
+        storage.collection().update(
+            TransactionData::local(),
+            ids,
+            column_ids,
+            updates,
+            &mut Vec::new(),
+        )?;
         Ok(())
     }
 
