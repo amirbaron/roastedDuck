@@ -834,7 +834,7 @@
 {"duration_ms": 792, "file": "test/sql/aggregate/distinct/grouped/combined_with_grouping.test", "status": "pass"}
 {"duration_ms": 1450, "file": "test/sql/aggregate/distinct/grouped/coverage.test_slow", "status": "pass"}
 {"duration_ms": 887, "file": "test/sql/aggregate/distinct/grouped/distinct_and_non_distinct_mixed.test_slow", "status": "pass"}
-{"duration_ms": 20, "file": "test/sql/aggregate/distinct/grouped/distinct_grouping_tpch.test_slow", "reason": "require disk_space", "status": "skip"}
+{"duration_ms": 7485, "file": "test/sql/aggregate/distinct/grouped/distinct_grouping_tpch.test_slow", "status": "pass"}
 {"duration_ms": 132, "file": "test/sql/aggregate/distinct/grouped/identical_inputs.test", "status": "pass"}
 {"duration_ms": 43, "file": "test/sql/aggregate/distinct/grouped/issue_5070.test", "status": "pass"}
 {"duration_ms": 144, "file": "test/sql/aggregate/distinct/grouped/long_input.test_slow", "status": "pass"}
