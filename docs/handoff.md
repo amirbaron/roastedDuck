@@ -162,17 +162,20 @@ passes again; 384 affected SQL files pass with nine shared skips (393 total). Te
 cross-engine file cases pass across storage 1.0/1.2/1.5 and GCM/CTR, including mutation,
 reopen, cold ART residency and constraints. C++ encrypted fixture writes use its test
 switch `force_mbedtls_unsafe`; normal C++ readers work without it. Workspace Clippy
-with warnings denied, 30 C API files and 392 shell tests pass. A new full sweep is
-running, with its unique path in `index-reload-20261022/full-run-path.txt`. Do not
-rebuild the runner or start another workload until it finishes.
+with warnings denied, 30 C API files and 392 shell tests pass. The new full sweep
+finished at 4779 pass, 17 fail and 74 skip, zero crashes/timeouts. Exactly two concurrent
+checkpoint files regressed; all other verdicts match the canonical baseline. Its unique
+path is in `index-reload-20261022/full-run-path.txt`, with `comparison.json` and worker logs.
 The new full run has exposed two concurrent checkpoint regressions:
 `concurrent_checkpoint_insert.test` and `concurrent_checkpoint_wal_index.test_slow`
 read newly serialized index locations before partial blocks are flushed. The earlier
-profiling regression passes. Source fix is written but not built: index serialization
+profiling regression passes. The publication fix is written and passes 55 storage unit tests plus changed-crate
+Clippy with warnings denied; its release build is in progress: index serialization
 now takes a writer with an explicit flush operation, invoked before returning while
 the bound-index guard or unbound-storage mutex is held. Deferred-write and failed-flush
-retry tests are added. The currently running sweep still uses `592f7ad` plus the cache
-flag, not this unbuilt fix. Finish/preserve its results before building or testing again.
+retry tests are added. The completed sweep used `592f7ad` plus the cache flag. The new binary has not yet
+rerun those two real concurrency tests, so the fix remains uncommitted and unaccepted.
+Only the release build is active; do not start another workload until it completes.
 
 Native disk restore covers plain and stored constraint indexes so far; expression/WAL,
 pre-v0.10 and fallback paths remain open under work-queue 16. The cache policy is still
