@@ -81,7 +81,8 @@ Worktrees under `/Users/amirbaron/src/duckdb-rust/.claude/worktrees/`, briefs in
 - logical plan serialization (`plan-serialization.md`, base `9aa5053`).
 
 Queued, in order (briefs written, each with `<BASE>` to fill in): `encryption.md`, `icu66.md` (ICU 66
-collation data and sort key bytes); then performance rounds. `_common.md` holds the
+collation data and sort key bytes); `perf-round-6.md` (performance rounds, repeat until
+the targets hold). `_common.md` holds the
 ground rules every brief repeats. If a session ends while
 an agent runs, its worktree holds its commits: review, finish or salvage, merge, run the
 full corpus.
