@@ -154,11 +154,30 @@ fn templated_copy(
     ctx: &mut CopyContext<'_>,
     vector_index: usize,
     source: &Source<'_>,
+    offset: usize,
+    count: usize,
+    value_size: usize,
+    assign: impl FnMut(*mut u8, usize, usize),
+) -> Result<()> {
+    templated_copy_with(ctx, vector_index, source, offset, count, value_size, assign, None)
+}
+
+/// [`templated_copy`] with `bulk`, which writes `n` consecutive source slots from `slot`
+/// to positions from `target` at `base` in one go, for sources without a selection: the
+/// values are copied whole (a NULL's slot too, which nothing reads) and the NULLs marked
+/// after.
+#[expect(clippy::too_many_arguments, reason = "the parameters of DuckDB's copy plus the bulk copy")]
+fn templated_copy_with(
+    ctx: &mut CopyContext<'_>,
+    vector_index: usize,
+    source: &Source<'_>,
     mut offset: usize,
     count: usize,
     value_size: usize,
     mut assign: impl FnMut(*mut u8, usize, usize),
+    bulk: Option<&dyn Fn(*mut u8, usize, usize, usize)>,
 ) -> Result<()> {
+    let bulk = bulk.filter(|_| matches!(source.sel(), Sel::Identity));
     let mut current_index = vector_index;
     let mut remaining = count;
     let all_valid = source.validity.is_all_valid();
@@ -174,7 +193,17 @@ fn templated_copy(
             // SAFETY: the mask is `STANDARD_MASK_SIZE` bytes in the pinned block.
             unsafe { set_all_valid(mask) };
         }
-        if all_valid {
+        if let Some(bulk) = bulk {
+            bulk(base_ptr, current_count, offset, append_count);
+            if !all_valid {
+                for i in 0..append_count {
+                    if !source.is_valid(offset + i) {
+                        // SAFETY: `current_count + i < STANDARD_VECTOR_SIZE`.
+                        unsafe { set_invalid(mask, current_count + i) };
+                    }
+                }
+            }
+        } else if all_valid {
             for i in 0..append_count {
                 assign(base_ptr, current_count + i, sel.slot(offset + i));
             }
@@ -219,19 +248,45 @@ fn copy_fixed(
     count: usize,
     width: usize,
 ) -> Result<()> {
+    match width {
+        1 => copy_fixed_width::<1>(ctx, vector_index, source, offset, count),
+        2 => copy_fixed_width::<2>(ctx, vector_index, source, offset, count),
+        4 => copy_fixed_width::<4>(ctx, vector_index, source, offset, count),
+        8 => copy_fixed_width::<8>(ctx, vector_index, source, offset, count),
+        16 => copy_fixed_width::<16>(ctx, vector_index, source, offset, count),
+        _ => Err(Error::internal(format!(
+            "ColumnDataCollection: no copy for values of {width} bytes"
+        ))),
+    }
+}
+
+/// [`copy_fixed`] for values of `W` bytes.
+fn copy_fixed_width<const W: usize>(
+    ctx: &mut CopyContext<'_>,
+    vector_index: usize,
+    source: &Source<'_>,
+    offset: usize,
+    count: usize,
+) -> Result<()> {
     let data = source.data();
-    templated_copy(
+    let bulk = |base: *mut u8, target: usize, slot: usize, n: usize| {
+        // SAFETY: slots `slot..slot + n` are in the source vector's data and positions
+        // `target..target + n` below `STANDARD_VECTOR_SIZE` of the target vector's data.
+        unsafe { std::ptr::copy_nonoverlapping(data.add(slot * W), base.add(target * W), n * W) };
+    };
+    templated_copy_with(
         ctx,
         vector_index,
         source,
         offset,
         count,
-        width,
+        W,
         |base, target, slot| {
             // SAFETY: `slot` is a slot of the source vector's data and `target` a position
-            // below `STANDARD_VECTOR_SIZE` of the target vector's data, both `width` bytes.
-            unsafe { std::ptr::copy_nonoverlapping(data.add(slot * width), base.add(target * width), width) };
+            // below `STANDARD_VECTOR_SIZE` of the target vector's data, both `W` bytes.
+            unsafe { std::ptr::copy_nonoverlapping(data.add(slot * W), base.add(target * W), W) };
         },
+        Some(&bulk),
     )
 }
 
