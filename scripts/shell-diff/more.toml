@@ -244,5 +244,5 @@ stdin = "PRAGMA database_list;\n"
 
 [[case]]
 name = "pragma-functions"
-known = "functions rustdb lacks: icu_collate_* (ICU registers each collation as a function too), seq_scan, json_serialize_plan, duckdb_coordinate_systems, duckdb_external_file_cache, duckdb_secret_types, duckdb_table_sample, tpcds, dsdgen"
+known = "functions rustdb lacks: json_serialize_plan, duckdb_external_file_cache, tpcds, tpcds_answers, tpcds_queries, dsdgen"
 stdin = "PRAGMA functions;\n"
