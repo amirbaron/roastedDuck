@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use rustdb_ast::{SqlStatement, StatementType};
 use rustdb_common::{Error, Result};
-use rustdb_execution::operators::PhysicalResultCollector;
+use rustdb_execution::operators::{PhysicalResultCollector, QueryResultMemoryType};
 use rustdb_execution::{ExecutionStep, QueryExecution, QueryProfiler};
 use rustdb_planner::StatementReturnType;
 use rustdb_types::{DataChunk, LogicalType};
@@ -25,11 +25,33 @@ use crate::{Connection, MaterializedResult};
 /// caller drives the execution).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RunMode {
-    /// Run to completion, materializing the result (`Connection::Query`).
-    Materialize,
+    /// Run to completion, materializing the result as `memory_type` says
+    /// (`Connection::Query`).
+    Materialize(QueryResultMemoryType),
     /// Initialize the executor and return; the caller runs the tasks (`PendingQuery`).
-    /// With `stream`, the result is handed out while the query runs.
-    Pending { stream: bool },
+    /// With `stream`, the result is handed out while the query runs; otherwise it is
+    /// materialized as `memory_type` says.
+    Pending {
+        stream: bool,
+        memory_type: QueryResultMemoryType,
+    },
+}
+
+impl RunMode {
+    /// Run to completion with the result on the heap (`Connection::Query(string)`).
+    pub(crate) const MATERIALIZE: Self = Self::Materialize(QueryResultMemoryType::InMemory);
+
+    /// Where a materialized result keeps its rows.
+    pub(crate) fn memory_type(self) -> QueryResultMemoryType {
+        match self {
+            Self::Materialize(memory_type) | Self::Pending { memory_type, .. } => memory_type,
+        }
+    }
+
+    /// Whether the result streams.
+    pub(crate) fn streams(self) -> bool {
+        matches!(self, Self::Pending { stream: true, .. })
+    }
 }
 
 /// A started statement.
@@ -388,12 +410,30 @@ impl Connection {
         statement: SqlStatement,
         allow_stream: bool,
     ) -> Result<PendingQuery> {
+        self.pending_query_with(query, statement, allow_stream, QueryResultMemoryType::InMemory)
+    }
+
+    /// [`Connection::pending_query`] whose result, if materialized, keeps its rows as
+    /// `memory_type` says (`QueryParameters::memory_type`).
+    pub fn pending_query_with(
+        &mut self,
+        query: &str,
+        statement: SqlStatement,
+        allow_stream: bool,
+        memory_type: QueryResultMemoryType,
+    ) -> Result<PendingQuery> {
         self.initial_cleanup();
         let statement_type = statement.statement_type();
         self.begin_query(query, &statement)?;
         let started = self.in_query_scope(|connection| {
             connection.begin_query_logging(query);
-            connection.start_statement(statement, RunMode::Pending { stream: allow_stream })
+            connection.start_statement(
+                statement,
+                RunMode::Pending {
+                    stream: allow_stream,
+                    memory_type,
+                },
+            )
         });
         self.activate(query, statement_type, started)
     }

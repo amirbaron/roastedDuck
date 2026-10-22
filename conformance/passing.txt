@@ -2932,6 +2932,7 @@ test/sql/ordinality/ordinality.test_slow
 test/sql/ordinality/ordinality_constant.test
 test/sql/ordinality/ordinality_inout.test
 test/sql/outofcore/block_file_evicted_bytes_accounting.test_slow
+test/sql/outofcore/buffer_managed_query_result.test_slow
 test/sql/outofcore/evicted_memory_bytes_updates.test_slow
 test/sql/outofcore/leftover_temp_files_issue_6420.test_slow
 test/sql/outofcore/out_of_core_aggregation.test_slow

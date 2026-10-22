@@ -42,17 +42,16 @@ impl ScannedResult {
     }
 
     /// `MaterializedQueryResult::Fetch`: the next non-empty chunk.
-    pub fn fetch(&self) -> Option<&DataChunk> {
-        let chunks = self.result.chunks();
+    pub fn fetch(&self) -> Result<Option<DataChunk>> {
+        let chunk_count = self.result.chunk_count();
         loop {
             let position = self.scan_position.fetch_add(1, Ordering::AcqRel);
-            match chunks.get(position) {
-                None => {
-                    self.scan_position.store(chunks.len(), Ordering::Release);
-                    return None;
-                }
-                Some(chunk) if chunk.is_empty() => {}
-                Some(chunk) => return Some(chunk),
+            if position >= chunk_count {
+                self.scan_position.store(chunk_count, Ordering::Release);
+                return Ok(None);
+            }
+            if self.result.chunk_len(position) > 0 {
+                return self.result.chunk(position).map(|chunk| Some(chunk.into_owned()));
             }
         }
     }
@@ -204,8 +203,8 @@ impl RenderingQueryResult {
             return Ok(false);
         }
         let fetched = match &self.source {
-            ResultSource::Materialized(scanned) => match scanned.fetch() {
-                Some(chunk) => Some(renderer.convert_chunk(conn, chunk)?),
+            ResultSource::Materialized(scanned) => match scanned.fetch()? {
+                Some(chunk) => Some(renderer.convert_chunk(conn, &chunk)?),
                 None => None,
             },
             // A fetch that fails ends a streaming result: DuckDB's `QueryResult::Fetch` then
@@ -1869,7 +1868,7 @@ impl ShellRenderer for ModeDescribeRenderer {
             ..ShellTableInfo::default()
         };
         // The rows of the collection, as `for (auto &row : res.result)` scans them.
-        while let Some(chunk) = scanned.fetch() {
+        while let Some(chunk) = scanned.fetch()? {
             let value = |column: usize, row: usize| -> Option<String> {
                 let value = chunk.column(column).get_value(row);
                 (!value.is_null()).then(|| value.to_varchar().unwrap_or_default())

@@ -338,6 +338,22 @@ PRAGMA database_size;
 normalize = [["│ \\d+\\.\\d+ [GMK]iB +│$", "│ MEM │"]]
 
 [[case]]
+name = "duckbox-memory-usage-of-last-result"
+stdin = '''
+SELECT memory_usage FROM pragma_database_size();
+SELECT 42;
+SELECT memory_usage FROM pragma_database_size();
+SELECT * FROM range(100000);
+SELECT memory_usage FROM pragma_database_size();
+SELECT 'a' || range::VARCHAR || repeat('x', 20) AS s, [range, range + 1] AS l, {'a': range, 'b': 'str' || range} AS st FROM range(5000);
+SELECT memory_usage FROM pragma_database_size();
+SELECT tag, memory_usage_bytes FROM duckdb_memory() WHERE memory_usage_bytes > 0;
+.mode csv
+SELECT * FROM range(10);
+SELECT memory_usage FROM pragma_database_size();
+'''
+
+[[case]]
 name = "duckbox-settings"
 stdin = '''
 SELECT current_setting('max_memory') IS NOT NULL AS a;

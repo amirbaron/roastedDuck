@@ -804,6 +804,7 @@ dependencies = [
  "rustdb-parquet",
  "rustdb-parser",
  "rustdb-planner",
+ "rustdb-row",
  "rustdb-serde",
  "rustdb-storage",
  "rustdb-tpch",

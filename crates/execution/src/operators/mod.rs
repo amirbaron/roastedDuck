@@ -84,7 +84,9 @@ pub use perfect_hash_aggregate::{
 };
 pub use pivot::PhysicalPivot;
 pub use projection::PhysicalProjection;
-pub use result_collector::{CollectedResult, PhysicalResultCollector};
+pub use result_collector::{
+    CollectedResult, CollectedRows, CollectorKind, PhysicalResultCollector, QueryResultMemoryType,
+};
 pub use sample::{BlockingSample, PhysicalReservoirSample, PhysicalStreamingSample};
 pub use seq_scan::{
     DEFAULT_INDEX_SCAN_MAX_COUNT, DEFAULT_INDEX_SCAN_PERCENTAGE, PhysicalSeqScan, ScanExplainInfo,

@@ -575,14 +575,13 @@ impl BoxRendererState {
         let column_count = self.column_count();
         self.resume_position = None;
         let result = Arc::clone(&self.result);
-        let chunks = result.chunks();
         while row_idx < self.top_rows {
-            if context.is_interrupted() || chunk_idx >= chunks.len() {
+            if context.is_interrupted() || chunk_idx >= result.chunk_count() {
                 break;
             }
-            let chunk = &chunks[chunk_idx];
+            let chunk = result.chunk(chunk_idx)?;
             let insert_count = chunk.len().min(self.top_rows - row_idx);
-            let rows = self.convert_chunk(context, chunk, 0, insert_count)?;
+            let rows = self.convert_chunk(context, &chunk, 0, insert_count)?;
             top_collection.extend(rows);
 
             if self.config.large_number_rendering == LargeNumberRendering::Footer {
@@ -643,25 +642,26 @@ impl BoxRendererState {
         if self.bottom_rows == 0 {
             return Ok(());
         }
-        let chunks = self.result.chunks();
+        let result = &self.result;
         // The chunks holding the bottom rows, from the last one backwards.
         let mut fetched_row_count = 0;
-        let mut first_chunk = chunks.len();
+        let mut first_chunk = result.chunk_count();
         while fetched_row_count < self.bottom_rows && first_chunk > 0 {
             first_chunk -= 1;
-            fetched_row_count += chunks[first_chunk].len();
+            fetched_row_count += result.chunk_len(first_chunk);
         }
         if fetched_row_count < self.bottom_rows {
             return Err(rustdb::Error::internal("Failed to fetch enough rows"));
         }
-        for (i, chunk) in chunks[first_chunk..].iter().enumerate() {
+        for index in first_chunk..result.chunk_count() {
+            let chunk = result.chunk(index)?;
             // Skip the rows of the first chunk above the bottom rows.
-            let offset = if i == 0 {
+            let offset = if index == first_chunk {
                 fetched_row_count - self.bottom_rows
             } else {
                 0
             };
-            let rows = self.convert_chunk(context, chunk, offset, chunk.len() - offset)?;
+            let rows = self.convert_chunk(context, &chunk, offset, chunk.len() - offset)?;
             bottom_collection.extend(rows);
         }
         Ok(())

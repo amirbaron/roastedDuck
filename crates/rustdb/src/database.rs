@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use rustdb_ast::{SetScope, SqlStatement, TransactionType};
 use rustdb_catalog::{Catalog, Transaction, TransactionManager};
 use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
-use rustdb_execution::operators::PhysicalResultCollector;
+use rustdb_execution::operators::{PhysicalResultCollector, QueryResultMemoryType};
 use rustdb_execution::{
     PhysicalRef, PlanContext, QueryExecution, ScalarEvaluator, create_physical_plan_with,
 };
@@ -2298,6 +2298,20 @@ impl Connection {
         self.execute_statements(statements)
     }
 
+    /// [`Connection::query`] with the results' rows kept as `memory_type` says
+    /// (`ClientContext::Query` with `QueryParameters::memory_type`): a buffer-managed
+    /// result counts against the memory limit and spills like other operator data.
+    pub fn query_with(&mut self, sql: &str, memory_type: QueryResultMemoryType) -> Result<MaterializedResult> {
+        self.sync_global_settings();
+        let statements = self.parse_statements(sql)?;
+        let mut result = MaterializedResult::default();
+        for statement in statements {
+            let query = statement.query.clone();
+            result = self.execute_statement_with(&query, statement, memory_type)?;
+        }
+        Ok(result)
+    }
+
     /// Runs parsed statements and returns the result of the last one; errors are put in
     /// the context of their statement's text.
     pub fn execute_statements(&mut self, statements: Vec<SqlStatement>) -> Result<MaterializedResult> {
@@ -2313,13 +2327,24 @@ impl Connection {
     /// `ExecutePendingQueryInternal`): bind and plan, resolve column bindings, build the
     /// physical plan and run it, all inside the connection's transaction.
     pub fn execute_statement(&mut self, query: &str, statement: SqlStatement) -> Result<MaterializedResult> {
+        self.execute_statement_with(query, statement, QueryResultMemoryType::InMemory)
+    }
+
+    /// [`Connection::execute_statement`] with the result's rows kept as `memory_type`
+    /// says (`Connection::Query(statement, memory_type)`).
+    pub fn execute_statement_with(
+        &mut self,
+        query: &str,
+        statement: SqlStatement,
+        memory_type: QueryResultMemoryType,
+    ) -> Result<MaterializedResult> {
         self.initial_cleanup();
         let statement_type = statement.statement_type();
         self.begin_query(query, &statement)?;
         let outcome = self.in_query_scope(|connection| {
             connection.begin_query_logging(query);
             connection
-                .start_statement(statement, RunMode::Materialize)
+                .start_statement(statement, RunMode::Materialize(memory_type))
                 .and_then(StatementRun::into_materialized)
         });
         self.end_query(query, outcome)
@@ -2945,7 +2970,7 @@ impl Connection {
     }
 
     fn run_statement(&mut self, statement: SqlStatement) -> Result<MaterializedResult> {
-        self.start_statement(statement, RunMode::Materialize)
+        self.start_statement(statement, RunMode::MATERIALIZE)
             .and_then(StatementRun::into_materialized)
     }
 
@@ -3356,7 +3381,7 @@ impl Connection {
     }
 
     fn run_planned(&mut self, statement: SqlStatement) -> Result<MaterializedResult> {
-        self.start_planned(statement, RunMode::Materialize)
+        self.start_planned(statement, RunMode::MATERIALIZE)
             .and_then(StatementRun::into_materialized)
     }
 
@@ -3413,10 +3438,11 @@ impl Connection {
     ) -> Result<StatementRun> {
         self.register_modifications(&plan, &properties.modified_databases, statement_type)?;
         let mode = match mode {
-            RunMode::Pending { stream } => RunMode::Pending {
+            RunMode::Pending { stream, memory_type } => RunMode::Pending {
                 stream: stream && properties.allow_stream_result,
+                memory_type,
             },
-            RunMode::Materialize => RunMode::Materialize,
+            RunMode::Materialize(memory_type) => RunMode::Materialize(memory_type),
         };
         Ok(self
             .start_plan(plan, names, types, mode)?
@@ -3543,7 +3569,7 @@ impl Connection {
         names: Vec<String>,
         types: Vec<LogicalType>,
     ) -> Result<MaterializedResult> {
-        self.start_plan(plan, names, types, RunMode::Materialize)
+        self.start_plan(plan, names, types, RunMode::MATERIALIZE)
             .and_then(StatementRun::into_materialized)
     }
 
@@ -3997,7 +4023,7 @@ impl Connection {
         names: Vec<String>,
         types: Vec<LogicalType>,
     ) -> Result<MaterializedResult> {
-        self.start_execution(plan, names, types, RunMode::Materialize)
+        self.start_execution(plan, names, types, RunMode::MATERIALIZE)
             .and_then(StatementRun::into_materialized)
     }
 
@@ -4071,18 +4097,17 @@ impl Connection {
         } = physical?;
         let explain_analyze = physical.name() == "EXPLAIN_ANALYZE";
         let env = Arc::clone(&self.database.instance().env);
-        let streaming = mode == (RunMode::Pending { stream: true });
+        let streaming = mode.streams();
         let root: PhysicalRef = if streaming {
             Arc::new(PhysicalResultCollector::streaming(
                 physical,
                 preserve_insertion_order,
             ))
         } else {
-            Arc::new(PhysicalResultCollector::for_plan(
-                physical,
-                env.threads(),
-                preserve_insertion_order,
-            ))
+            Arc::new(
+                PhysicalResultCollector::for_plan(physical, env.threads(), preserve_insertion_order)
+                    .with_memory_type(mode.memory_type()),
+            )
         };
         // `Executor::Initialize`; EXPLAIN ANALYZE and profiled queries record what every
         // operator did.
@@ -4114,7 +4139,7 @@ impl Connection {
         };
         let run = PlanExecution::new(execution, names, types, profiler, streaming);
         match mode {
-            RunMode::Materialize => self.finish_execution(run).map(StatementRun::Done),
+            RunMode::Materialize(_) => self.finish_execution(run).map(StatementRun::Done),
             RunMode::Pending { .. } => Ok(StatementRun::Executing(Box::new(run))),
         }
     }
@@ -4127,8 +4152,8 @@ impl Connection {
         if let Some(profiler) = &profiler {
             self.profiler.flush(&self.settings.profiler, profiler);
         }
-        let chunks = PhysicalResultCollector::take_chunks(&state?)?;
-        Ok(MaterializedResult::new(names, types, chunks).with_return_type(return_type))
+        let rows = PhysicalResultCollector::take_rows(&state?)?;
+        Ok(MaterializedResult::from_rows(names, types, rows).with_return_type(return_type))
     }
 }
 

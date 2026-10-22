@@ -41,7 +41,8 @@ pub use database::{
 };
 pub use logging::LogStorage;
 pub use query_profiler::ProfilingTree;
-pub use result::MaterializedResult;
+pub use result::{MaterializedResult, ResultChunks};
+pub use rustdb_execution::operators::QueryResultMemoryType;
 pub use rustdb_ast::{SqlStatement, StatementType};
 pub use rustdb_common::{Error, ErrorKind, Result};
 pub use rustdb_function::logging::LogLevel;

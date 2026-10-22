@@ -4,7 +4,8 @@
 //! closest thing it can and the gap is noted on the method.
 
 use rustdb::{
-    AccessMode, Config, Connection, Database, LogicalType, LogicalTypeId, MaterializedResult, Value,
+    AccessMode, Config, Connection, Database, LogicalType, LogicalTypeId, MaterializedResult,
+    QueryResultMemoryType, Value,
 };
 
 use super::{ColumnClass, Engine, ExtensionLoad, QueryResult, RequireSetting};
@@ -282,7 +283,10 @@ impl Engine for RustEngine {
 
     fn query(&self, connection: &mut Connection, sql: &str) -> RustResult {
         RustResult {
-            outcome: connection.query(sql).map_err(|error| error.to_string()),
+            // Like DuckDB's runner (`Command::ExecuteQuery`): materialized, buffer-managed.
+            outcome: connection
+                .query_with(sql, QueryResultMemoryType::BufferManaged)
+                .map_err(|error| error.to_string()),
         }
     }
 
@@ -296,23 +300,26 @@ impl Engine for RustEngine {
             return Ok(Vec::new());
         };
         let mut values = Vec::with_capacity(result.row_count() * result.column_count());
-        for row in 0..result.row_count() {
-            for column in 0..result.column_count() {
-                let value = result.value(column, row);
-                // Like DuckDB's runner (`Value::CastAs(context, VARCHAR)`): types with
-                // extension casts (JSON, and TIMESTAMPTZ with ICU) are rendered through
-                // the connection's casts.
-                let value = if (contains_json(value.logical_type())
-                    || context.has_extension_cast(value.logical_type()))
-                    && !value.is_null()
-                {
-                    context
-                        .cast_value(&value, &LogicalType::VARCHAR)
-                        .map_err(|error| error.to_string())?
-                } else {
-                    value
-                };
-                values.push(convert_value(&value, original_sqlite_test)?);
+        for chunk in result.chunks() {
+            let chunk = chunk.map_err(|error| error.to_string())?;
+            for row in 0..chunk.len() {
+                for column in 0..result.column_count() {
+                    let value = chunk.column(column).get_value(row);
+                    // Like DuckDB's runner (`Value::CastAs(context, VARCHAR)`): types with
+                    // extension casts (JSON, and TIMESTAMPTZ with ICU) are rendered through
+                    // the connection's casts.
+                    let value = if (contains_json(value.logical_type())
+                        || context.has_extension_cast(value.logical_type()))
+                        && !value.is_null()
+                    {
+                        context
+                            .cast_value(&value, &LogicalType::VARCHAR)
+                            .map_err(|error| error.to_string())?
+                    } else {
+                        value
+                    };
+                    values.push(convert_value(&value, original_sqlite_test)?);
+                }
             }
         }
         Ok(values)

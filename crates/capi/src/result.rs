@@ -145,7 +145,7 @@ impl ResultData {
     fn collection(&mut self) -> &[DataChunk] {
         if self.collection.is_none() {
             let packed = match &self.state {
-                ResultState::Materialized(result) => pack_chunks(&self.types, result.chunks()),
+                ResultState::Materialized(result) => pack_chunks(&self.types, &materialized_chunks(result)),
                 ResultState::Stream(_) | ResultState::Failed => Vec::new(),
             };
             self.collection = Some(packed);
@@ -185,6 +185,15 @@ impl Drop for ResultData {
         if let ResultState::Stream(stream) = &self.state {
             self.context.lock().close_query(stream.id());
         }
+    }
+}
+
+/// The chunks of a materialized result: those of an in-memory result, or copies read
+/// from a buffer-managed one (none if they cannot be read).
+pub(crate) fn materialized_chunks(result: &MaterializedResult) -> std::borrow::Cow<'_, [DataChunk]> {
+    match result.in_memory_chunks() {
+        Some(chunks) => std::borrow::Cow::Borrowed(chunks),
+        None => std::borrow::Cow::Owned(result.collect_chunks().unwrap_or_default()),
     }
 }
 
@@ -364,7 +373,7 @@ fn translate_column(
         data: column.deprecated_data,
         row: 0,
     };
-    for chunk in result.chunks() {
+    for chunk in materialized_chunks(result).iter() {
         let vector = chunk.column(col).flattened(chunk.len());
         let written = match ty.id() {
             LogicalTypeId::Boolean => writer.copy(&vector, chunk.len(), |value: bool| value),
