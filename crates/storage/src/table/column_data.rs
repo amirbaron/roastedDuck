@@ -1898,7 +1898,9 @@ impl ColumnData {
         Ok(true)
     }
 
-    /// Scans the vector and keeps the rows of `sel` that pass `filter` (`Filter`).
+    /// Scans the vector and keeps the rows of `sel` that pass `filter` (`Filter`). With
+    /// `all_rows`, every row is selected and `sel` is empty; it receives the rows that
+    /// pass.
     #[allow(clippy::too_many_arguments)]
     pub fn filter(
         &self,
@@ -1907,10 +1909,12 @@ impl ColumnData {
         state: &mut ColumnScanState,
         result: &mut Vector,
         sel: &mut Vec<u32>,
+        all_rows: bool,
         filter: &TableFilter,
         needs_values: bool,
     ) -> Result<()> {
         let count = self.vector_count(vector_index);
+        let all_rows = all_rows || sel.len() == count;
         if let Some(node) = self.codec_filter_segment(state, count, filter)? {
             let start = (state.offset_in_column - node.row_start) as usize;
             let Some(SegmentScanState::Compressed(scan)) = &mut state.segment_state else {
@@ -1922,7 +1926,7 @@ impl ColumnData {
                 return self.skip(state, count as u64);
             }
             Self::prepare_result(result, count);
-            if scan.filter(&node.node, start, count, result, sel, filter, needs_values)? {
+            if scan.filter(&node.node, start, count, result, sel, all_rows, filter, needs_values)? {
                 state.offset_in_column += count as u64;
                 if let (ColumnKind::Standard { validity }, Some(validity_state)) =
                     (&self.kind, state.child_states.first_mut())
@@ -1937,6 +1941,10 @@ impl ColumnData {
             }
         }
         self.scan(transaction, vector_index, state, result, count)?;
+        if all_rows && sel.len() != count {
+            sel.clear();
+            sel.extend(0..count as u32);
+        }
         filter.select(result, count, sel)
     }
 

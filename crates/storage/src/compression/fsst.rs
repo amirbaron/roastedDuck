@@ -107,6 +107,7 @@ impl SegmentScan for FsstScanState {
         count: usize,
         result: &mut Vector,
         sel: &mut Vec<u32>,
+        all_rows: bool,
         filter: &TableFilter,
         needs_values: bool,
     ) -> Result<bool> {
@@ -118,7 +119,7 @@ impl SegmentScan for FsstScanState {
             CompareOp::NotEqual => false,
             _ => return Ok(false),
         };
-        if sel.len() != count || constant.as_bytes() != Some(&b""[..]) {
+        if !all_rows || constant.as_bytes() != Some(&b""[..]) {
             return Ok(false);
         }
         let alignment = start % GROUP_SIZE;

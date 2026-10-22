@@ -765,11 +765,12 @@ impl RowGroup {
                 state.vector_index += 1;
                 return Ok(());
             }
+            // Every row of the vector is selected until a filter runs: `sel` stays empty
+            // instead of holding `0..max_count` (DuckDB's incremental selection vector).
             let mut sel = std::mem::take(&mut state.filter_sel);
             sel.clear();
-            if count == max_count {
-                sel.extend(0..max_count as u32);
-            } else {
+            let mut all_rows = count == max_count;
+            if !all_rows {
                 sel.extend_from_slice(&valid_sel);
             }
             state.valid_sel = valid_sel;
@@ -781,7 +782,7 @@ impl RowGroup {
                         continue;
                     }
                     let index = entry.scan_column_index;
-                    if sel.is_empty() {
+                    if sel.is_empty() && !all_rows {
                         if !entry.table_column_index.is_row_id() {
                             self.column(entry.table_column_index.primary_index())?
                                 .skip(&mut state.column_scans[index], VECTOR_SIZE)?;
@@ -790,6 +791,10 @@ impl RowGroup {
                     }
                     let vector = result.column_mut(index);
                     if entry.table_column_index.is_row_id() {
+                        if all_rows {
+                            sel.extend(0..max_count as u32);
+                            all_rows = false;
+                        }
                         *vector = row_id_vector(row_id_start, max_count);
                         entry.filter.select(vector, max_count, &mut sel)?;
                         continue;
@@ -803,10 +808,15 @@ impl RowGroup {
                         column_state,
                         vector,
                         &mut sel,
+                        all_rows,
                         &entry.filter,
                         !filters.is_filter_only(index),
                     )?;
+                    all_rows = false;
                 }
+            }
+            if all_rows {
+                sel.extend(0..max_count as u32);
             }
             if sel.is_empty() {
                 // every row was filtered out: skip the vector in the columns not scanned yet

@@ -209,6 +209,7 @@ impl SegmentScan for DictionaryScanState {
         count: usize,
         result: &mut Vector,
         sel: &mut Vec<u32>,
+        all_rows: bool,
         filter: &TableFilter,
         needs_values: bool,
     ) -> Result<bool> {
@@ -237,10 +238,22 @@ impl SegmentScan for DictionaryScanState {
         let verdicts = self.verdicts.as_ref().map_or(&[][..], |(_, verdicts)| verdicts);
         // Branch-free: every row is written, and kept if its entry passes.
         let mut kept = 0;
-        for index in 0..sel.len() {
-            let row = sel[index];
-            sel[kept] = row;
-            kept += usize::from(verdicts[codes[row as usize] as usize]);
+        if all_rows {
+            sel.clear();
+            sel.reserve(count);
+            let slots = sel.spare_capacity_mut();
+            for (row, &code) in codes.iter().enumerate() {
+                slots[kept].write(row as u32);
+                kept += usize::from(verdicts[code as usize]);
+            }
+            // SAFETY: the first `kept` slots were written above.
+            unsafe { sel.set_len(kept) };
+        } else {
+            for index in 0..sel.len() {
+                let row = sel[index];
+                sel[kept] = row;
+                kept += usize::from(verdicts[codes[row as usize] as usize]);
+            }
         }
         sel.truncate(kept);
         if needs_values {
