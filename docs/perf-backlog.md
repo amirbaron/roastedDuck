@@ -434,6 +434,46 @@ and the window's `WindowHashGroup` stages run as tasks shared by all threads; wi
 hash groups materialize into a buffer-managed `ColumnDataCollection`; temporary file
 reads and writes run outside the file's lock (AsOf at 8 threads queued on it).
 
+## TPC-DS (`dsdgen` and the 99 queries at SF1)
+
+Generation: `CALL dsdgen(sf=...)` in each engine's CLI, the time of the call (`.timer on`);
+peak memory is the process's peak footprint (`/usr/bin/time -l`), the generated tables
+included. DuckDB generates the tables one after the other on one thread; rustdb on the
+connection's threads (see `crates/tpcds/README.md`). The fingerprints of all 24 tables are
+DuckDB's in every run. The file runs (a new database file, `CHECKPOINT` after the call)
+shared the machine with a full corpus run.
+
+| sf | storage | rustdb threads | DuckDB s | rustdb s | speed | DuckDB peak | rustdb peak | memory |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|
+| 1 | memory | 14 | 5.66 | 0.84 | 6.7× | 2206 MB | 2102 MB | 0.95× |
+| 1 | memory | 1 | 5.66 | 2.20 | 2.6× | 2206 MB | 2022 MB | 0.92× |
+| 3 | file | 14 | 43.9 | 18.9 | 2.3× | 1991 MB | 1145 MB | 0.57× |
+| 10 | file | 14 | 116.6 | 25.0 | 4.7× | 4389 MB | 1398 MB | 0.32× |
+
+In memory both engines keep the tables uncompressed, and the peak is the data; of a file
+database's, most is DuckDB's buffered blocks.
+
+Queries: `scripts/perf/bench.py tpcds1` (`scripts/perf/data.sh tpcds 1` makes the database
+with DuckDB's `dsdgen`), 3 timed runs per query; the results of all 99 queries are
+DuckDB's. `port` is the branch before the CASE fix below, `+ scatter` with it.
+
+| run | threads | DuckDB wall s | rustdb wall s | speed geomean | slowest | mem geomean | max mem |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| port | 14 | 1.435 | 1.723 | 0.90× | q10 0.34× | 0.80× | q02 1.15× |
+| port | 1 | 3.839 | 5.078 | 0.80× | q02 0.35× | 0.72× | q35 1.09× |
+| + scatter | 14 | 1.230 | 1.493 | 0.90× | q02 0.56× | 0.78× | q94 1.15× |
+| + scatter | 1 | 3.863 | 5.033 | 0.81× | q22 0.41× | 0.71× | q18 1.17× |
+
+The slowest: q02, q59 and q43 sum `CASE WHEN d_day_name = '...' THEN ... ELSE NULL END`
+per weekday. The CASE result's NULLs were set one copy-on-write check per row
+(`kernels::scatter` calling `ValidityMask::set_invalid`, a fifth of q43's time); they are
+cleared in one pass over the words now (q43 57 → 47 ms at one thread, q59 189 → 147 ms,
+q02 109 → 90 ms; DuckDB 27, 84 and 38 ms). The rest of their gap is the string
+comparisons and the CASE's selection vectors. q22 (`ROLLUP` over `inventory` joined with
+`item`) is 0.41–0.56×. At 14 threads q10 (`EXISTS`, delim joins), q05 and q27 (`ROLLUP`)
+use 0.75–0.84× DuckDB's CPU but 0.34–0.45× its wall time in one run, so a stage runs on
+fewer threads; their wall times vary between runs.
+
 ## Open items
 
 | Area | Gap | Suspected cause | Found in |
@@ -450,6 +490,7 @@ reads and writes run outside the file's lock (AsOf at 8 threads queued on it).
 | Range joins and window: peak memory | 0.65–0.99× DuckDB's RSS (target ≤ 0.6×); AsOf at 300 MiB and 8 threads varies between 0.91× and 1.15× from run to run | memory outside the buffer manager: per-thread chunks and executor states, IEJoin's `li`/`p` arrays (unmanaged in DuckDB too); not broken down yet | `crates/execution` (`operators/join/`, `operators/window.rs`) |
 | Window `SINK` / `FINALIZE` stages | one task per hash group (the stage's first); the other tasks of the stage only wait | the executors' global states are built single-threaded; DuckDB sinks every block range in parallel into them. Only windows with few, large partitions (ORDER BY only) feel it; not measured | `crates/execution` (`window/executor.rs`, `operators/window.rs`) |
 | `ColumnDataCollection` reads | each chunk read copies its vectors out of the block | rustdb vectors own their buffers; DuckDB's reference the pinned block | `crates/row` (`column_data.rs`) |
+| TPC-DS queries (SF1) | speed geomean 0.90× / 0.81× at 14 / 1 threads; q02, q22, q43, q59 at 0.4–0.6× (see the TPC-DS section) | CASE over string comparisons (selection vectors, `compare_strings`), `ROLLUP` over joins; stages of q05/q10/q27 on fewer threads | `crates/execution`, `crates/types` |
 | Common subexpressions | `l_extendedprice * (1 - l_discount)` computed twice in Q1 | check the CSE optimizer port against DuckDB's plan | `crates/optimizer` |
 | Parser: tiny statements (`SELECT 1`, short SELECTs) | ~1.05–1.25× DuckDB cycles per query | per-node malloc/free vs DuckDB's arena-allocated parse tree | `crates/parser` (`parse_bench`) |
 | zstd | compression 0.88× on UUID-like strings, 0.93–1.0× elsewhere; decompression 0.93–0.99× (see above) | the double-fast search loop and the sequence decoding loop keep fewer values in registers than zstd's (more instructions per position and per sequence) | `crates/zstd` (`dfast.rs`, `decompress/block.rs`) |

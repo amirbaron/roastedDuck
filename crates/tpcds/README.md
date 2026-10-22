@@ -13,6 +13,26 @@ DuckDB's, value for value and in the same order, at every scale factor. `queries
 (`tpcds_constants.hpp`). `columns.rs`, `tables.rs`, `tdefs_data.rs` and `schema.rs` are
 generated from DuckDB's headers.
 
+## Generation
+
+DuckDB generates the tables one after the other on one thread. Every table draws from
+random number streams of its own, so rustdb generates them on the connection's threads at
+once, each from the streams of a new generation; `inventory` and `customer_demographics`,
+whose rows draw a fixed amount from each stream, are generated in parts that skip their
+streams ahead and are appended in order. The rows and their order are DuckDB's at any
+number of threads: the fingerprints of all 24 tables match DuckDB's at SF 0.000001, 0.008,
+0.01, 0.1, 0.5, 1, 1.5, 3 and 10 (`crates/rustdb/tests/tpcds.rs` keeps SF 0.01).
+
+Where DuckDB's dsdgen does not return, rustdb does:
+
+- A scale factor above 100000 makes DuckDB's dsdgen exit the process (`ReportErrorNoLine`);
+  rustdb fails the call with the same message.
+- At tiny scale factors (DuckDB 1.5.6 hangs from 0.00001 to 0.005) no day has a sale, and
+  the loop that moves the sales' date forward by each day's sales never ends. The store and
+  web sales draw their dates and never read that date, so rustdb does not keep the loop;
+  the catalog sales date their orders with it, so rustdb fails once four years of days had
+  no order.
+
 ## License
 
 dsdgen, its distributions, the queries and the answers are part of the TPC-DS benchmark
