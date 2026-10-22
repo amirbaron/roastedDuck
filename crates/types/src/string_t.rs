@@ -40,7 +40,10 @@ impl StringT {
         let bytes = (bits & mask).to_le_bytes();
         let mut data = [0; 12];
         data.copy_from_slice(&bytes[..12]);
-        Self { len: len as u32, data }
+        Self {
+            len: len as u32,
+            data,
+        }
     }
 
     /// A string pointing at `bytes`.

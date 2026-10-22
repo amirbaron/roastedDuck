@@ -154,7 +154,10 @@ impl StringHeap {
         if len <= StringT::INLINE_LENGTH {
             return StringT::inline_bits(u128::from_le_bytes(*bytes), len);
         }
-        let fits = self.chunks.last().is_some_and(|chunk| chunk.len() - self.used >= 16);
+        let fits = self
+            .chunks
+            .last()
+            .is_some_and(|chunk| chunk.len() - self.used >= 16);
         if !fits {
             let grown = self.chunks.last().map_or(0, |chunk| chunk.len() * 2);
             self.chunks

@@ -127,7 +127,9 @@ impl<T: Primitive> RleScanState<T> {
         let mut position = self.position_in_entry;
         loop {
             let run_end = usize::from(RleCount::from_le_bytes(
-                *lengths.get(entry).ok_or_else(|| corrupt("Corrupted RLE segment"))?,
+                *lengths
+                    .get(entry)
+                    .ok_or_else(|| corrupt("Corrupted RLE segment"))?,
             ));
             let remaining = run_end.saturating_sub(position);
             if skip_count < remaining {

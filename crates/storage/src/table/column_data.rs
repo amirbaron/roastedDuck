@@ -1926,7 +1926,16 @@ impl ColumnData {
                 return self.skip(state, count as u64);
             }
             Self::prepare_result(result, count);
-            if scan.filter(&node.node, start, count, result, sel, all_rows, filter, needs_values)? {
+            if scan.filter(
+                &node.node,
+                start,
+                count,
+                result,
+                sel,
+                all_rows,
+                filter,
+                needs_values,
+            )? {
                 state.offset_in_column += count as u64;
                 if let (ColumnKind::Standard { validity }, Some(validity_state)) =
                     (&self.kind, state.child_states.first_mut())

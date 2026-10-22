@@ -174,7 +174,8 @@ impl Pool {
     /// The smallest size class: the alignment.
     const MIN_CAPACITY: usize = ALIGN;
     /// Size classes from `MIN_CAPACITY` to `MAX_LEN` bytes.
-    const CLASSES: usize = (Self::MAX_LEN.trailing_zeros() - Self::MIN_CAPACITY.trailing_zeros() + 1) as usize;
+    const CLASSES: usize =
+        (Self::MAX_LEN.trailing_zeros() - Self::MIN_CAPACITY.trailing_zeros() + 1) as usize;
     /// Free buffers kept per size class.
     const MAX_FREE: usize = 32;
 

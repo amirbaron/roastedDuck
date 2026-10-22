@@ -9,8 +9,8 @@
 
 use rustdb_common::{Error, Result};
 use rustdb_function::{FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet};
-use std::sync::Arc;
 use rustdb_types::{DataChunk, LogicalType, NativeType, PhysicalType, StringHeap, StringT, Vector};
+use std::sync::Arc;
 
 /// `CMUtils::Bind`.
 fn bind_internal(
@@ -388,45 +388,50 @@ fn string_decompress_set() -> ScalarFunctionSet {
     ] {
         let physical = input.physical_type();
         set.add(internal(
-            ScalarFunction::new(name, vec![input], LogicalType::VARCHAR, move |args, state, out| {
-                macro_rules! run {
-                    ($t:ty) => {{
-                        const SIZE: usize = size_of::<$t>();
-                        if SIZE <= StringT::INLINE_LENGTH + 1 {
-                            // Every string fits inline.
-                            let mut heap = StringHeap::default();
-                            rustdb_types::kernels::unary::<$t, StringT>(
-                                &args.columns()[0],
-                                args.len(),
-                                out,
-                                |value| decompress_string::<SIZE>(value.to_bits(), &mut heap),
-                            );
-                        } else {
-                            let heaps = DecompressHeaps::of(state)?;
-                            let mut heap = heaps.take();
-                            if let Some(target) = Arc::get_mut(&mut heap) {
+            ScalarFunction::new(
+                name,
+                vec![input],
+                LogicalType::VARCHAR,
+                move |args, state, out| {
+                    macro_rules! run {
+                        ($t:ty) => {{
+                            const SIZE: usize = size_of::<$t>();
+                            if SIZE <= StringT::INLINE_LENGTH + 1 {
+                                // Every string fits inline.
+                                let mut heap = StringHeap::default();
                                 rustdb_types::kernels::unary::<$t, StringT>(
                                     &args.columns()[0],
                                     args.len(),
                                     out,
-                                    |value| decompress_string::<SIZE>(value.to_bits(), target),
+                                    |value| decompress_string::<SIZE>(value.to_bits(), &mut heap),
                                 );
+                            } else {
+                                let heaps = DecompressHeaps::of(state)?;
+                                let mut heap = heaps.take();
+                                if let Some(target) = Arc::get_mut(&mut heap) {
+                                    rustdb_types::kernels::unary::<$t, StringT>(
+                                        &args.columns()[0],
+                                        args.len(),
+                                        out,
+                                        |value| decompress_string::<SIZE>(value.to_bits(), target),
+                                    );
+                                }
+                                out.add_shared_heap(Arc::clone(&heap));
+                                heaps.put(heap);
                             }
-                            out.add_shared_heap(Arc::clone(&heap));
-                            heaps.put(heap);
-                        }
-                        Ok(())
-                    }};
-                }
-                match physical {
-                    PhysicalType::UInt8 => run!(u8),
-                    PhysicalType::UInt16 => run!(u16),
-                    PhysicalType::UInt32 => run!(u32),
-                    PhysicalType::UInt64 => run!(u64),
-                    PhysicalType::Int128 => run!(i128),
-                    _ => run!(u128),
-                }
-            }),
+                            Ok(())
+                        }};
+                    }
+                    match physical {
+                        PhysicalType::UInt8 => run!(u8),
+                        PhysicalType::UInt16 => run!(u16),
+                        PhysicalType::UInt32 => run!(u32),
+                        PhysicalType::UInt64 => run!(u64),
+                        PhysicalType::Int128 => run!(i128),
+                        _ => run!(u128),
+                    }
+                },
+            ),
             std::sync::Arc::new(serialize_string_decompress),
         ));
     }
@@ -543,11 +548,50 @@ mod tests {
     }
 
     #[test]
+    fn decompressed_results_survive_heap_reuse_and_state_drop() -> Result<()> {
+        let set = string_decompress_set();
+        let function = set
+            .functions
+            .iter()
+            .find(|function| function.arguments == [LogicalType::UHUGEINT])
+            .ok_or_else(|| Error::internal("missing UHUGEINT decompressor"))?;
+        let mut state = FunctionState::default();
+        let mut saved = Vec::new();
+        for index in 0..24 {
+            let text = format!("abcdefghijk{index:04}");
+            let value = rustdb_types::Value::uhugeint(compress_string(text.as_bytes(), 16));
+            let args = DataChunk::new(vec![Vector::constant(&value)?], 1);
+            let mut output = Vector::flat(LogicalType::VARCHAR, 0);
+            (function.kernel)(&args, &mut state, &mut output)?;
+            assert_eq!(output.get_value(0), rustdb_types::Value::varchar(&text));
+            if index % 3 == 0 {
+                saved.push((text, output.clone()));
+            }
+        }
+        // More results than the heap cache holds remain live, including after its owner
+        // goes away; resetting a shared heap would overwrite these strings.
+        drop(state);
+        for (text, output) in saved {
+            assert_eq!(output.get_value(0), rustdb_types::Value::varchar(text));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn strings_round_trip_and_order() {
         let mut heap = StringHeap::default();
         for size in [1usize, 2, 4, 8, 16] {
             let mut previous = None;
-            for text in ["", "a", "ab", "abc", "abcdefghijkl", "abcdefghijklm", "abcdefghijklmno", "b"] {
+            for text in [
+                "",
+                "a",
+                "ab",
+                "abc",
+                "abcdefghijkl",
+                "abcdefghijklm",
+                "abcdefghijklmno",
+                "b",
+            ] {
                 if text.len() >= size && size > 1 || size == 1 && text.len() > 1 {
                     continue;
                 }
