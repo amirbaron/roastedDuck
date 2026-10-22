@@ -3097,7 +3097,10 @@ impl Connection {
         }
         if let rustdb_ast::SqlStatementKind::Load(info) = &statement.kind {
             self.run_load(info)?;
-            return Ok(StatementRun::Done(MaterializedResult::default()));
+            // `Binder::Bind(LoadStatement &)`: the statement returns nothing.
+            return Ok(StatementRun::Done(
+                MaterializedResult::default().with_return_type(rustdb_planner::StatementReturnType::Nothing),
+            ));
         }
         // Pragmas that stand for a query run that query (DuckDB's `PragmaHandler`).
         if let rustdb_ast::SqlStatementKind::Pragma(pragma) = &statement.kind
@@ -3719,6 +3722,7 @@ impl Connection {
             LogicalKind::Transaction { .. } => Some("TRANSACTION"),
             LogicalKind::Attach(_) => Some("ATTACH"),
             LogicalKind::Detach(_) => Some("DETACH"),
+            LogicalKind::Load(_) => Some("LOAD"),
             LogicalKind::Set {
                 scope: SetScope::Variable,
                 ..
@@ -3833,6 +3837,10 @@ impl Connection {
             }
             LogicalKind::Detach(info) => {
                 self.detach(info)?;
+                return Ok(StatementRun::Done(nothing()));
+            }
+            LogicalKind::Load(info) => {
+                self.run_load(info)?;
                 return Ok(StatementRun::Done(nothing()));
             }
             LogicalKind::AlterDatabase(info) => {

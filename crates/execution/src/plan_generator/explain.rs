@@ -71,6 +71,7 @@ fn utility_name(op: &LogicalOperator) -> Option<&'static str> {
         K::Transaction { .. } => "TRANSACTION",
         K::Attach(_) => "ATTACH",
         K::Detach(_) => "DETACH",
+        K::Load(_) => "LOAD",
         K::AlterDatabase(_) => "ALTER",
         K::Deallocate { .. } => "DEALLOCATE",
         _ => return None,

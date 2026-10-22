@@ -543,6 +543,8 @@ pub enum LogicalKind {
     Attach(Box<rustdb_ast::AttachInfo>),
     /// `DETACH`.
     Detach(rustdb_ast::DetachInfo),
+    /// `LOAD` / `INSTALL` (DuckDB's `LogicalSimple` of a `LoadInfo`).
+    Load(Box<rustdb_ast::LoadInfo>),
     /// `ALTER DATABASE` (DuckDB's `LogicalSimple` of an `AlterDatabaseInfo`, run by the
     /// `DatabaseManager`): the database `catalog` of `info`.
     AlterDatabase(rustdb_ast::AlterInfo),
@@ -1008,6 +1010,7 @@ impl LogicalOperator {
             LogicalKind::Reset { .. } => T::LogicalReset,
             LogicalKind::Attach(_) => T::LogicalAttach,
             LogicalKind::Detach(_) => T::LogicalDetach,
+            LogicalKind::Load(_) => T::LogicalLoad,
             LogicalKind::Transaction { .. } => T::LogicalTransaction,
             LogicalKind::Deallocate { .. } | LogicalKind::Drop(_) => T::LogicalDrop,
             LogicalKind::Pragma { .. } => T::LogicalPragma,
@@ -1164,6 +1167,7 @@ impl LogicalOperator {
             | LogicalKind::Reset { .. }
             | LogicalKind::Attach(_)
             | LogicalKind::Detach(_)
+            | LogicalKind::Load(_)
             | LogicalKind::AlterDatabase(_)
             | LogicalKind::Transaction { .. }
             | LogicalKind::Deallocate { .. }
@@ -1364,6 +1368,7 @@ impl LogicalOperator {
             | LogicalKind::Reset { .. }
             | LogicalKind::Attach(_)
             | LogicalKind::Detach(_)
+            | LogicalKind::Load(_)
             | LogicalKind::AlterDatabase(_)
             | LogicalKind::Transaction { .. }
             | LogicalKind::Pragma { .. }

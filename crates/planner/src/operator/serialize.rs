@@ -258,6 +258,7 @@ impl SerializeObject for LogicalOperator {
             }
             LogicalKind::Attach(info) => serialize_simple(&ParseInfo::Attach(info.clone()), serializer),
             LogicalKind::Detach(info) => serialize_simple(&ParseInfo::Detach(info.clone()), serializer),
+            LogicalKind::Load(info) => serialize_simple(&ParseInfo::Load(info.clone()), serializer),
             LogicalKind::AlterDatabase(info) => {
                 serialize_simple(&ParseInfo::Alter(Box::new(info.clone())), serializer)
             }

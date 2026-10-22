@@ -80,6 +80,7 @@ pub fn bind_statement(scope: &mut BindScope<'_>, statement: &mut SqlStatement) -
         SqlStatementKind::Alter(info) => alter::bind_alter(scope, info),
         SqlStatementKind::Attach(info) => bind_attach(scope, info),
         SqlStatementKind::Detach(info) => Ok(bind_detach(scope, info)),
+        SqlStatementKind::Load(info) => Ok(bind_load(scope, info)),
         SqlStatementKind::Copy(info) => copy::bind_copy(scope, info),
         SqlStatementKind::Export(export) => export::bind_export(scope, export),
         SqlStatementKind::Vacuum(info) => bind_vacuum(scope, info),
@@ -337,6 +338,15 @@ fn bind_detach(scope: &BindScope<'_>, info: &rustdb_ast::DetachInfo) -> BoundSta
         properties.requires_valid_transaction = false;
     });
     success(LogicalOperator::new(LogicalKind::Detach(info.clone())))
+}
+
+/// `LOAD` / `INSTALL` (DuckDB's `Binder::Bind(LoadStatement &)`).
+fn bind_load(scope: &BindScope<'_>, info: &rustdb_ast::LoadInfo) -> BoundStatement {
+    scope.with_properties(|properties| {
+        properties.allow_stream_result = false;
+        properties.return_type = StatementReturnType::Nothing;
+    });
+    success(LogicalOperator::new(LogicalKind::Load(Box::new(info.clone()))))
 }
 
 /// `BEGIN` / `COMMIT` / `ROLLBACK` (DuckDB's `Bind(TransactionStatement &)`).
