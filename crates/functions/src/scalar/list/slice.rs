@@ -315,7 +315,7 @@ fn bind_slice(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindResul
     match ty.id() {
         LogicalTypeId::Array => {
             let list = LogicalType::list(list_child_type(ty)?);
-            function.arguments[0] = list.clone();
+            function.cast_argument(0, list.clone());
             function.return_type = list;
         }
         LogicalTypeId::List => function.return_type = ty.clone(),

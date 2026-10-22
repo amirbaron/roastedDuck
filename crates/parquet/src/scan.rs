@@ -1496,6 +1496,129 @@ fn read_parquet_parameters() -> Vec<(String, LogicalType)> {
     parameters
 }
 
+/// `ParquetScanSerialize`: the files, columns and options of the scan.
+fn serialize_parquet_scan(
+    serializer: &mut dyn rustdb_serde::Serializer,
+    bind_data: Option<&dyn FunctionData>,
+    _: &TableFunction,
+) -> Result<()> {
+    let data = bind_data
+        .and_then(|data| data.as_any().downcast_ref::<ParquetBindData>())
+        .ok_or_else(|| Error::internal("read_parquet without its bind data"))?;
+    serializer.write_property(100, "files", &data.files.files)?;
+    serializer.write_property(101, "types", &data.types)?;
+    serializer.write_property(102, "names", &data.names)?;
+    serializer.write_object_property(103, "parquet_options", |serializer| {
+        // The readers' options leave out `file_row_number`, which the bind adds.
+        serialize_parquet_options(
+            serializer,
+            &data.options,
+            data.file_row_number_idx.is_some(),
+            &data.file_options,
+        )
+    })?;
+    if serializer.should_serialize(3) {
+        serializer.write_property(104, "table_columns", &data.table_columns)?;
+    }
+    Ok(())
+}
+
+/// `ParquetOptionsSerialization::Serialize`.
+fn serialize_parquet_options(
+    serializer: &mut dyn rustdb_serde::Serializer,
+    options: &ParquetOptions,
+    file_row_number: bool,
+    file_options: &MultiFileOptions,
+) -> Result<()> {
+    serializer.write_property_with_default(100, "binary_as_string", &options.binary_as_string)?;
+    serializer.write_property_with_default(101, "file_row_number", &file_row_number)?;
+    serializer.write_object_property(102, "file_options", |serializer| {
+        serialize_multi_file_options(serializer, file_options)
+    })?;
+    serializer.write_optional_with(103, "schema", options.schema.is_empty(), |serializer| {
+        serializer.on_list_begin(options.schema.len());
+        for column in &options.schema {
+            serializer.on_object_begin();
+            // `ParquetColumnDefinition::Serialize`; DuckDB leaves the deprecated
+            // `field_id` uninitialized.
+            serializer.write_property_with_default(100, "field_id", &0_i32)?;
+            serializer.write_property_with_default(101, "name", column.name.as_str())?;
+            serializer.write_property(103, "type", &column.logical_type)?;
+            serializer.write_property(104, "default_value", &column.default_value)?;
+            serializer.write_optional(
+                105,
+                "identifier",
+                column.identifier == Value::null(LogicalType::SQLNULL),
+                &column.identifier,
+            )?;
+            serializer.on_object_end();
+        }
+        serializer.on_list_end();
+        Ok(())
+    })?;
+    // The footer key's name is resolved to the key itself while binding.
+    serializer.write_optional_with(
+        104,
+        "encryption_config",
+        options.encryption.is_none(),
+        |serializer| match &options.encryption {
+            None => {
+                serializer.write_null();
+                Ok(())
+            }
+            Some(_) => Err(Error::not_implemented(
+                "Serializing a scan of encrypted Parquet files is not supported",
+            )),
+        },
+    )?;
+    serializer.write_optional(
+        106,
+        "explicit_cardinality",
+        options.explicit_cardinality == 0,
+        &options.explicit_cardinality,
+    )?;
+    serializer.write_optional(107, "can_have_nan", !options.can_have_nan, &options.can_have_nan)
+}
+
+/// `MultiFileOptions::Serialize`.
+fn serialize_multi_file_options(
+    serializer: &mut dyn rustdb_serde::Serializer,
+    options: &MultiFileOptions,
+) -> Result<()> {
+    serializer.write_property_with_default(100, "filename", &options.filename)?;
+    serializer.write_property_with_default(101, "hive_partitioning", &options.hive_partitioning)?;
+    serializer.write_property_with_default(
+        102,
+        "auto_detect_hive_partitioning",
+        &options.auto_detect_hive_partitioning,
+    )?;
+    serializer.write_property_with_default(103, "union_by_name", &options.union_by_name)?;
+    serializer.write_property_with_default(104, "hive_types_autocast", &options.hive_types_autocast)?;
+    serializer.write_optional_with(
+        105,
+        "hive_types_schema",
+        options.hive_types_schema.is_empty(),
+        |serializer| {
+            let hive_types = options.hive_types_in_map_order();
+            serializer.on_list_begin(hive_types.len());
+            for (name, ty) in hive_types {
+                serializer.on_object_begin();
+                serializer.write_property(0, "key", name)?;
+                serializer.write_property(1, "value", ty)?;
+                serializer.on_object_end();
+            }
+            serializer.on_list_end();
+            Ok(())
+        },
+    )?;
+    serializer.write_optional(
+        106,
+        "filename_column",
+        options.filename_column == "filename",
+        options.filename_column.as_str(),
+    )
+}
+
 /// One overload of `read_parquet` / `parquet_scan`.
 fn read_parquet_function(name: &'static str, argument: LogicalType) -> TableFunction {
     let mut function = TableFunction::new(name, vec![argument])
@@ -1514,6 +1637,7 @@ fn read_parquet_function(name: &'static str, argument: LogicalType) -> TableFunc
             }
         });
     function.named_parameters = read_parquet_parameters();
+    function.serialize = Some(Arc::new(serialize_parquet_scan));
     function.projection_pushdown = true;
     function.filter_pushdown = true;
     function.filter_prune = true;

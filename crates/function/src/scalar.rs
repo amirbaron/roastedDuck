@@ -270,6 +270,13 @@ pub struct ScalarFunction {
     /// The arguments before the bind removed some (DuckDB's `original_arguments`, set by
     /// `Function::EraseArgument`); empty when it removed none.
     pub original_arguments: Vec<LogicalType>,
+    /// The positions `erase_argument` removed while binding, in order: the binder drops
+    /// the call's arguments there too.
+    pub erased_arguments: Vec<usize>,
+    /// Casts the bind adds to the call's arguments, by position and in order, keeping
+    /// the declared argument types (DuckDB's binds wrap `arguments[i]` in a cast, e.g.
+    /// `AddArrayCastToList`).
+    pub argument_casts: Vec<(usize, LogicalType)>,
     /// The catalog and schema of the function's catalog entry (DuckDB's `catalog_name`
     /// and `schema_name`, set by the function catalog entries); empty for a function not
     /// taken from a catalog.
@@ -311,6 +318,8 @@ impl ScalarFunction {
             rewrite_expression: None,
             ascii_kernel: None,
             original_arguments: Vec::new(),
+            erased_arguments: Vec::new(),
+            argument_casts: Vec::new(),
             catalog_name: Arc::from(""),
             schema_name: Arc::from(""),
             serialize: None,
@@ -332,6 +341,12 @@ impl ScalarFunction {
         self.set_catalog_entry(&empty, &empty);
     }
 
+    /// Casts argument `index` of the call to `target` (see
+    /// [`ScalarFunction::argument_casts`]).
+    pub fn cast_argument(&mut self, index: usize, target: LogicalType) {
+        self.argument_casts.push((index, target));
+    }
+
     /// Removes argument `index`, which the bind consumed, keeping the arguments as they
     /// were before the first removal (DuckDB's `Function::EraseArgument`).
     pub fn erase_argument(&mut self, index: usize) {
@@ -339,6 +354,7 @@ impl ScalarFunction {
             self.original_arguments.clone_from(&self.arguments);
         }
         self.arguments.remove(index);
+        self.erased_arguments.push(index);
     }
 
     /// Sets the kernel for arguments without unicode (see [`ScalarFunction::ascii_kernel`]).

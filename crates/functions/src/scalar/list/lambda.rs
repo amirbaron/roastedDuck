@@ -85,8 +85,7 @@ fn bind_reduce_children(child_types: &[LogicalType], parameter: usize) -> Result
 }
 
 /// `ListLambdaPrepareBind` and `AddArrayCastToList`: the list type to continue binding
-/// with, or the bind data of a NULL list. The list argument keeps its `LIST(ANY)` type,
-/// except that an ARRAY is cast to a LIST through it.
+/// with, or the bind data of a NULL list.
 fn prepare_bind(
     function: &mut ScalarFunction,
     input: &BindInput<'_>,
@@ -106,7 +105,7 @@ fn prepare_bind(
         LogicalTypeId::Unknown => Err(crate::parameter_not_resolved()),
         LogicalTypeId::Array => {
             let list = LogicalType::list(list_child_type(ty)?);
-            function.arguments[0] = list.clone();
+            function.cast_argument(0, list.clone());
             Ok(ControlFlow::Continue(list))
         }
         _ => Ok(ControlFlow::Continue(ty.clone())),
@@ -168,8 +167,8 @@ fn bind_reduce(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindResu
                     "The initial value type must be the same as the list child type or a common super type",
                 )
             })?;
-            function.arguments[0] = LogicalType::list(element.clone());
-            function.arguments[2] = element.clone();
+            function.cast_argument(0, LogicalType::list(element.clone()));
+            function.cast_argument(2, element.clone());
         }
     }
     if !(2..=3).contains(&lambda.parameter_count) {

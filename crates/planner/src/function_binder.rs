@@ -685,7 +685,14 @@ impl<'a> FunctionBinder<'a> {
                     lambda: self.lambda.as_ref(),
                 },
             )?;
-            // The bind may have dropped trailing arguments (DuckDB's `EraseArgument`).
+            for (index, target) in std::mem::take(&mut function.argument_casts) {
+                let child = children.remove(index);
+                children.insert(index, add_cast_to_type(self.context, child, &target, false)?);
+            }
+            // The bind may have dropped arguments (DuckDB's `EraseArgument`).
+            for index in std::mem::take(&mut function.erased_arguments) {
+                children.remove(index);
+            }
             if function.varargs.is_none() {
                 children.truncate(function.arguments.len());
             }

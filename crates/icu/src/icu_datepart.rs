@@ -447,12 +447,27 @@ impl FunctionData for BindStructData {
     }
 }
 
+/// `ICUDatePart::SerializeStructFunction`.
+fn serialize_struct(
+    serializer: &mut dyn rustdb_serde::Serializer,
+    bind_data: Option<&dyn FunctionData>,
+    _: &ScalarFunction,
+) -> Result<()> {
+    let info = bind_data
+        .and_then(|data| data.as_any().downcast_ref::<BindStructData>())
+        .ok_or_else(|| Error::internal("date_part STRUCT variant without bind data"))?;
+    serializer.write_property(100, "tz_setting", info.data.tz_setting.as_str())?;
+    serializer.write_property(101, "cal_setting", info.data.cal_setting.as_str())?;
+    let names: Vec<&str> = info.part_codes.iter().map(|part| part.specifier_name()).collect();
+    serializer.write_property(102, "part_codes", &names)
+}
+
 /// `ICUDatePart::StructFunction`.
 fn struct_function(args: &DataChunk, state: &mut FunctionState, result: &mut Vector) -> Result<()> {
     let info: &BindStructData = icu_datefunc::bind_data(state.bind_data.as_ref())?;
     let mut calendar: CalendarPtr = info.data.calendar.clone();
     let count = args.len();
-    let input = addressable(args.column(1), count);
+    let input = addressable(args.column(0), count);
     let constant = input.is_constant();
     let rows = if constant { 1 } else { count };
     let values = input.unified::<Timestamp>();
@@ -580,6 +595,8 @@ fn bind_struct(
         };
         struct_children.push((part_name, ty));
     }
+    // The part names are consumed (`EraseArgument`).
+    function.erase_argument(0);
     function.return_type = LogicalType::struct_type(struct_children);
     Ok(Some(Arc::new(BindStructData {
         data: BindData::from_client(input.client),
@@ -634,7 +651,8 @@ fn date_part_set(name: &str) -> ScalarFunctionSet {
             LogicalType::struct_type(Vec::new()),
             struct_function,
         )
-        .with_bind(bind_struct),
+        .with_bind(bind_struct)
+        .with_serialize(serialize_struct),
     );
     set
 }

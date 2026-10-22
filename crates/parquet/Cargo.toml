@@ -15,6 +15,7 @@ rustdb-common.workspace = true
 rustdb-csv = { version = "1.5.6", path = "../csv" }
 rustdb-function = { version = "1.5.6", path = "../function" }
 rustdb-planner = { version = "1.5.6", path = "../planner" }
+rustdb-serde.workspace = true
 rustdb-storage = { version = "1.5.6", path = "../storage" }
 rustdb-types.workspace = true
 rustdb-zstd = { path = "../zstd" }

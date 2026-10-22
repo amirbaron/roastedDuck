@@ -979,6 +979,7 @@ dependencies = [
  "rustdb-function",
  "rustdb-functions",
  "rustdb-planner",
+ "rustdb-serde",
  "rustdb-types",
 ]
 
@@ -1029,6 +1030,7 @@ dependencies = [
  "rustdb-csv",
  "rustdb-function",
  "rustdb-planner",
+ "rustdb-serde",
  "rustdb-storage",
  "rustdb-types",
  "rustdb-zstd",

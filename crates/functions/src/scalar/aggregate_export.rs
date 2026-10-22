@@ -197,7 +197,9 @@ pub fn aggregate_export_functions() -> Vec<ScalarFunctionSet> {
     let state = LogicalType::simple(LogicalTypeId::AggregateState);
     let make = |name: &'static str, arguments: Vec<LogicalType>, return_type: LogicalType, kernel| {
         let mut function = ScalarFunction::new(name, arguments, return_type, kernel)
-            .with_bind(bind_aggregate_state);
+            .with_bind(bind_aggregate_state)
+            // `ExportStateScalarSerialize`.
+            .with_serialize(|_, _, _| Err(Error::not_implemented("FIXME: export state serialize")));
         function.null_handling = NullHandling::Special;
         let mut set = ScalarFunctionSet::new(name);
         set.add(function);

@@ -102,6 +102,12 @@ pub(crate) fn json_reader_function(
     function.parallel_scan = Some(json_parallel_scan());
     function.get_virtual_columns = Some(Arc::new(json_virtual_columns));
     function.file_filter_pushdown = Some(json_file_filter_pushdown());
+    // `JSONScan::Serialize`: DuckDB cannot serialize JSON scans.
+    function.serialize = Some(Arc::new(|_, _, _| {
+        Err(rustdb_common::Error::not_implemented(
+            "JSONScan Serialize not implemented",
+        ))
+    }));
     function
 }
 

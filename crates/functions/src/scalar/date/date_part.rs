@@ -55,6 +55,36 @@ pub enum Part {
 }
 
 impl Part {
+    /// The `DatePartSpecifier` name (`EnumUtil::ToString`).
+    pub fn specifier_name(self) -> &'static str {
+        match self {
+            Self::Year => "YEAR",
+            Self::Month => "MONTH",
+            Self::Day => "DAY",
+            Self::Decade => "DECADE",
+            Self::Century => "CENTURY",
+            Self::Millennium => "MILLENNIUM",
+            Self::Microseconds => "MICROSECONDS",
+            Self::Milliseconds => "MILLISECONDS",
+            Self::Second => "SECOND",
+            Self::Minute => "MINUTE",
+            Self::Hour => "HOUR",
+            Self::Dow => "DOW",
+            Self::IsoDow => "ISODOW",
+            Self::Week => "WEEK",
+            Self::IsoYear => "ISOYEAR",
+            Self::Quarter => "QUARTER",
+            Self::Doy => "DOY",
+            Self::YearWeek => "YEARWEEK",
+            Self::Era => "ERA",
+            Self::Timezone => "TIMEZONE",
+            Self::TimezoneHour => "TIMEZONE_HOUR",
+            Self::TimezoneMinute => "TIMEZONE_MINUTE",
+            Self::Epoch => "EPOCH",
+            Self::JulianDay => "JULIAN_DAY",
+        }
+    }
+
     /// DuckDB's `TryGetDatePartSpecifier`.
     pub fn try_parse(specifier: &str) -> Option<Self> {
         Some(match specifier.to_lowercase().as_str() {
@@ -813,14 +843,31 @@ fn struct_part(specifier: &str, ty: LogicalTypeId) -> Result<Part> {
     }
 }
 
-/// The parts of a STRUCT `date_part` call.
+/// The parts of a STRUCT `date_part` call (DuckDB's `StructDatePart::BindData`).
 #[derive(Debug)]
-struct StructParts(Vec<Part>);
+struct StructParts {
+    stype: LogicalType,
+    parts: Vec<Part>,
+}
 
 impl FunctionData for StructParts {
     fn as_any(&self) -> &dyn Any {
         self
     }
+}
+
+/// `StructDatePart::SerializeFunction`.
+fn serialize_struct_date_part(
+    serializer: &mut dyn rustdb_serde::Serializer,
+    bind_data: Option<&dyn FunctionData>,
+    _: &ScalarFunction,
+) -> Result<()> {
+    let data = bind_data
+        .and_then(|data| data.as_any().downcast_ref::<StructParts>())
+        .ok_or_else(|| Error::internal("date_part STRUCT variant without bind data"))?;
+    serializer.write_property(100, "stype", &data.stype)?;
+    let names: Vec<&str> = data.parts.iter().map(|part| part.specifier_name()).collect();
+    serializer.write_property(101, "part_codes", &names)
 }
 
 /// DuckDB's `StructDatePart::Bind`.
@@ -875,6 +922,8 @@ fn bind_struct_date_part(function: &mut ScalarFunction, input: &BindInput<'_>) -
         names.push(name);
         parts.push(part);
     }
+    // The part names are consumed (`EraseArgument`).
+    function.erase_argument(0);
     function.return_type = LogicalType::struct_type(fields);
     function.kernel = match ty {
         LogicalTypeId::Date => Arc::new(struct_kernel::<Date>),
@@ -885,7 +934,10 @@ fn bind_struct_date_part(function: &mut ScalarFunction, input: &BindInput<'_>) -
         LogicalTypeId::TimeTz => Arc::new(struct_kernel::<TimeTz>),
         _ => return Err(Error::internal("date_part STRUCT variant on a non-temporal type")),
     };
-    Ok(Some(Arc::new(StructParts(parts))))
+    Ok(Some(Arc::new(StructParts {
+        stype: function.return_type.clone(),
+        parts,
+    })))
 }
 
 /// DuckDB's `StructDatePart::Function`: NULL input gives a NULL struct, infinite input a
@@ -899,10 +951,10 @@ fn struct_kernel<T: Temporal>(
         .bind_data
         .as_ref()
         .and_then(|data| data.as_any().downcast_ref::<StructParts>())
-        .map(|data| data.0.clone())
+        .map(|data| data.parts.clone())
         .ok_or_else(|| Error::internal("date_part STRUCT variant without bind data"))?;
     let count = args.len();
-    let input = addressable(args.column(1), count);
+    let input = addressable(args.column(0), count);
     let constant = input.is_constant();
     let rows = if constant { 1 } else { count };
     let values = input.unified::<T>();
@@ -1011,7 +1063,8 @@ pub fn date_part_functions() -> ScalarFunctionSet {
                 LogicalType::struct_type(Vec::new()),
                 |_, _, _| Err(Error::internal("date_part used without being bound")),
             )
-            .with_bind(bind_struct_date_part),
+            .with_bind(bind_struct_date_part)
+            .with_serialize(serialize_struct_date_part),
         );
     }
     set

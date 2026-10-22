@@ -1053,9 +1053,209 @@ fn parquet_write_select(input: &CopyToSelectInput<'_>) -> Option<Vec<LogicalType
 }
 
 /// The `parquet` copy function.
+/// The entries of a `case_insensitive_map_t` filled in `entries`' order, in libc++'s
+/// iteration order.
+fn case_insensitive_map_order<'a, V>(entries: Vec<(&'a str, V)>) -> Vec<(&'a str, V)> {
+    let mut map = rustdb_common::libcxx::UnorderedOrder::default();
+    for (index, (name, _)) in entries.iter().enumerate() {
+        map.insert(
+            rustdb_common::libcxx::ci_hash(name),
+            index,
+            |a: &usize, b: &usize| entries[*a].0.eq_ignore_ascii_case(entries[*b].0),
+        );
+    }
+    let order: Vec<usize> = map.order().into_iter().map(|node| map.keys()[node]).collect();
+    let mut entries: Vec<Option<(&'a str, V)>> = entries.into_iter().map(Some).collect();
+    order
+        .into_iter()
+        .filter_map(|index| entries[index].take())
+        .collect()
+}
+
+/// `ChildFieldIDs::Serialize`.
+fn serialize_child_field_ids(
+    serializer: &mut dyn rustdb_serde::Serializer,
+    field_ids: &CaseInsensitiveMap<FieldId>,
+) -> Result<()> {
+    let entries = case_insensitive_map_order(field_ids.iter().collect());
+    serializer.write_optional_with(100, "ids", entries.is_empty(), |serializer| {
+        serializer.on_list_begin(entries.len());
+        for (name, field_id) in &entries {
+            serializer.on_object_begin();
+            serializer.write_property(0, "key", *name)?;
+            serializer.write_object_property(1, "value", |serializer| {
+                // `FieldID::Serialize`; an unset id is left uninitialized by DuckDB.
+                serializer.write_property_with_default(100, "set", &field_id.field_id.is_some())?;
+                serializer.write_property_with_default(101, "field_id", &field_id.field_id.unwrap_or(0))?;
+                serializer.write_object_property(102, "child_field_ids", |serializer| {
+                    serialize_child_field_ids(serializer, &field_id.children)
+                })
+            })?;
+            serializer.on_object_end();
+        }
+        serializer.on_list_end();
+        Ok(())
+    })
+}
+
+/// `ShreddingType::Serialize` of the shredding of `ty` (`ConvertShreddingTypeRecursive`),
+/// or of the root (`None`) over the shredded columns `children`.
+fn serialize_shredding_type(
+    serializer: &mut dyn rustdb_serde::Serializer,
+    ty: Option<&LogicalType>,
+    children: Vec<(&str, LogicalType)>,
+) -> Result<()> {
+    let ty = match ty {
+        None => LogicalType::INVALID,
+        Some(ty) if ty.id() == LogicalTypeId::Variant => LogicalType::ANY,
+        Some(ty) => ty.clone(),
+    };
+    serializer.write_property_with_default(100, "set", &(ty.id() != LogicalTypeId::Invalid))?;
+    serializer.write_property(101, "type", &ty)?;
+    let children = case_insensitive_map_order(children);
+    serializer.write_object_property(102, "children", |serializer| {
+        // `ChildShreddingTypes::Serialize`.
+        serializer.write_optional_with(100, "types", children.is_empty(), |serializer| {
+            serializer.on_list_begin(children.len());
+            for (name, child) in &children {
+                serializer.on_object_begin();
+                serializer.write_property(0, "key", *name)?;
+                let grandchildren: Vec<(&str, LogicalType)> = match child.id() {
+                    LogicalTypeId::Struct => child
+                        .struct_children()
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|(name, ty)| (name.as_str(), ty.clone()))
+                        .collect(),
+                    LogicalTypeId::List => child
+                        .child_type()
+                        .map(|element| vec![("element", element.clone())])
+                        .unwrap_or_default(),
+                    _ => Vec::new(),
+                };
+                serializer.write_object_property(1, "value", |serializer| {
+                    serialize_shredding_type(serializer, Some(child), grandchildren)
+                })?;
+                serializer.on_object_end();
+            }
+            serializer.on_list_end();
+            Ok(())
+        })
+    })
+}
+
+/// `ParquetCopySerialize`: the columns and options of the write.
+fn serialize_parquet_copy(
+    serializer: &mut dyn rustdb_serde::Serializer,
+    bind_data: &dyn FunctionData,
+    _: &CopyFunction,
+) -> Result<()> {
+    use rustdb_serde::OptionalIdx;
+    let data = bind_data
+        .as_any()
+        .downcast_ref::<ParquetWriteBindData>()
+        .ok_or_else(|| Error::internal("parquet COPY without its bind data"))?;
+    let options = &data.options;
+    let defaults = WriterOptions::default();
+    serializer.write_property(100, "sql_types", &data.types)?;
+    serializer.write_property(101, "column_names", &data.names)?;
+    serializer.write_property(102, "codec", options.codec.name().unwrap_or_default())?;
+    serializer.write_property(103, "row_group_size", &(options.row_group_size as u64))?;
+    serializer.write_property(
+        104,
+        "row_group_size_bytes",
+        &(options.row_group_size_bytes as u64),
+    )?;
+    serializer.on_property_begin(105, "kv_metadata");
+    serializer.on_list_begin(options.kv_metadata.len());
+    for (key, value) in &options.kv_metadata {
+        serializer.on_object_begin();
+        serializer.write_property(0, "first", key.as_str())?;
+        serializer.write_property(1, "second", String::from_utf8_lossy(value).as_ref())?;
+        serializer.on_object_end();
+    }
+    serializer.on_list_end();
+    serializer.on_property_end();
+    serializer.write_object_property(106, "field_ids", |serializer| {
+        serialize_child_field_ids(serializer, &options.field_ids)
+    })?;
+    serializer.write_optional_with(107, "encryption_config", true, |serializer| {
+        serializer.write_null();
+        Ok(())
+    })?;
+    // `SerializeCompressionLevel`: a negative level counts down from the largest index.
+    let compression_level = if options.compression_level < 0 {
+        u64::MAX - options.compression_level.unsigned_abs()
+    } else {
+        options.compression_level.unsigned_abs()
+    };
+    serializer.write_property_with_explicit_default(
+        109,
+        "compression_level",
+        &OptionalIdx(Some(compression_level)),
+        &OptionalIdx(None),
+    )?;
+    serializer.write_property_with_explicit_default(
+        110,
+        "row_groups_per_file",
+        &OptionalIdx(options.row_groups_per_file),
+        &OptionalIdx(None),
+    )?;
+    serializer.write_property_with_explicit_default(
+        112,
+        "dictionary_size_limit",
+        &OptionalIdx(options.dictionary_size_limit.map(|limit| limit as u64)),
+        &OptionalIdx(None),
+    )?;
+    serializer.write_optional(
+        113,
+        "bloom_filter_false_positive_ratio",
+        options.bloom_filter_false_positive_ratio.to_bits()
+            == defaults.bloom_filter_false_positive_ratio.to_bits(),
+        &options.bloom_filter_false_positive_ratio,
+    )?;
+    let parquet_version = match options.version {
+        ParquetVersion::V1 => "V1",
+        ParquetVersion::V2 => "V2",
+    };
+    serializer.write_optional(
+        114,
+        "parquet_version",
+        options.version == defaults.version,
+        parquet_version,
+    )?;
+    serializer.write_optional(
+        115,
+        "string_dictionary_page_size_limit",
+        options.string_dictionary_page_size_limit == defaults.string_dictionary_page_size_limit,
+        &(options.string_dictionary_page_size_limit as u64),
+    )?;
+    let geoparquet_version = match options.geoparquet_version {
+        crate::geo::GeoParquetVersion::V1 => "V1",
+        crate::geo::GeoParquetVersion::V2 => "V2",
+        crate::geo::GeoParquetVersion::Both => "BOTH",
+        crate::geo::GeoParquetVersion::None => "NONE",
+    };
+    serializer.write_optional(
+        116,
+        "geoparquet_version",
+        options.geoparquet_version == defaults.geoparquet_version,
+        geoparquet_version,
+    )?;
+    let shredded: Vec<(&str, LogicalType)> = options
+        .shredding
+        .iter()
+        .map(|(column, ty)| (column.as_str(), ty.clone()))
+        .collect();
+    serializer.write_optional_with(117, "shredding_types", shredded.is_empty(), |serializer| {
+        serializer.write_object_with(|serializer| serialize_shredding_type(serializer, None, shredded))
+    })
+}
+
 pub fn parquet_copy_function() -> CopyFunction {
     let mut function = CopyFunction::new("parquet");
     "parquet".clone_into(&mut function.extension);
+    function.serialize = Some(Arc::new(serialize_parquet_copy));
     function.options = parquet_copy_options();
     function.copy_to_select = Some(Arc::new(|input| Ok(parquet_write_select(input))));
     function.copy_to_bind = Some(Arc::new(parquet_write_bind));

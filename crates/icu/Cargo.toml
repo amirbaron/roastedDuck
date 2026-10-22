@@ -12,6 +12,7 @@ rustdb-types.workspace = true
 rustdb-function = { path = "../function" }
 rustdb-functions = { path = "../functions" }
 rustdb-planner.workspace = true
+rustdb-serde.workspace = true
 icu_collator = { version = "2.3", features = ["serde"] }
 icu_locale_core = "2.3"
 icu_provider = { version = "2.3", features = ["sync"] }
