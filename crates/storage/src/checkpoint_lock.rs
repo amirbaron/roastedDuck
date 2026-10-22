@@ -56,6 +56,18 @@ impl CheckpointLock {
         Some(ExclusiveCheckpointGuard(Arc::clone(self)))
     }
 
+    /// Takes the lock exclusively if `shared`, a shared hold of it, is the only one
+    /// (`TryUpgradeCheckpointLock`). The shared hold stays until it is dropped.
+    pub fn try_upgrade(self: &Arc<Self>, shared: &SharedCheckpointGuard) -> Option<ExclusiveCheckpointGuard> {
+        debug_assert!(Arc::ptr_eq(self, &shared.0));
+        let mut state = self.lock();
+        if state.exclusive || state.shared != 1 {
+            return None;
+        }
+        state.exclusive = true;
+        Some(ExclusiveCheckpointGuard(Arc::clone(self)))
+    }
+
     /// Takes the lock exclusively, waiting until every holder released it (the wait
     /// loop of `FORCE CHECKPOINT` in `DuckTransactionManager::Checkpoint`).
     pub fn exclusive(self: &Arc<Self>) -> ExclusiveCheckpointGuard {
@@ -108,5 +120,21 @@ mod tests {
         assert!(lock.try_exclusive().is_none());
         drop(exclusive);
         let _shared = lock.shared();
+    }
+
+    #[test]
+    fn upgrade_needs_the_only_shared_hold() {
+        let lock = Arc::new(CheckpointLock::default());
+        let first = lock.shared();
+        let second = lock.shared();
+        assert!(lock.try_upgrade(&first).is_none());
+        drop(second);
+        let exclusive = lock.try_upgrade(&first);
+        assert!(exclusive.is_some());
+        assert!(lock.try_exclusive().is_none());
+        drop(first);
+        assert!(lock.try_exclusive().is_none());
+        drop(exclusive);
+        assert!(lock.try_exclusive().is_some());
     }
 }

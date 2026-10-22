@@ -1362,6 +1362,65 @@ impl DatabaseInstance {
             })
     }
 
+    /// The checkpoint the commit of `transaction` runs instead of logging its `changes`
+    /// (`DuckTransactionManager::CommitTransaction` with
+    /// `skip_wal_write_due_to_checkpoint`): the commit checkpoints (`CanCheckpoint`: the
+    /// WAL of the database it wrote to would grow beyond `checkpoint_threshold` or holds
+    /// `wal_autocheckpoint_entries` entries, and the transaction gets the checkpoint lock
+    /// exclusively) and its estimated size is at least `skip_wal_threshold`
+    /// (`auto_checkpoint_skip_wal_threshold`). The commit then holds the WAL lock until
+    /// the checkpoint ends, and a failing checkpoint fails the commit (`error.Merge`).
+    /// Without, the commit is logged and [`DatabaseInstance::auto_checkpoint`] decides
+    /// after it.
+    fn skip_wal_checkpoint(
+        &self,
+        transaction: &Transaction,
+        changes: &CommittedChanges,
+        skip_checkpoint: bool,
+        skip_wal_threshold: u64,
+    ) -> Option<rustdb_storage::transaction::CommitCheckpoint<'static>> {
+        if skip_checkpoint || changes.properties.estimated_size < skip_wal_threshold {
+            return None;
+        }
+        let database = self.databases.get(&changes.database)?;
+        let storage = database.storage.file()?;
+        if storage.is_read_only() {
+            return None;
+        }
+        let wal = storage.wal()?;
+        {
+            // `SingleFileStorageManager::AutomaticCheckpoint`; a database that does not
+            // log commits (`NO_WAL_WRITES`) has nothing to skip.
+            let guard = wal.lock();
+            let threshold = self
+                .checkpoint_wal_size
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let entry_limit = self
+                .wal_autocheckpoint_entries
+                .load(std::sync::atomic::Ordering::Relaxed);
+            if guard.no_writes()
+                || (guard.size() + changes.properties.estimated_size <= threshold
+                    && !(entry_limit > 0 && guard.entries() >= entry_limit))
+            {
+                return None;
+            }
+        }
+        // Committed transactions that updated rows or changed the catalog hold the
+        // checkpoint lock while older transactions need their changes
+        // (`recently_committed_transactions`).
+        if self
+            .transactions
+            .retains_changes(transaction.transaction_id, &database.name())
+        {
+            return None;
+        }
+        let checkpoint = transaction.try_checkpoint_lock(database.catalog.locks())?;
+        let transactions = Arc::clone(&self.transactions);
+        Some(Box::new(move |wal| {
+            database.checkpoint_after_commit(&transactions, checkpoint, wal)
+        }))
+    }
+
     /// Whether `checkpoint_on_shutdown` is on (`PRAGMA disable_checkpoint_on_shutdown`).
     fn checkpoint_on_shutdown(&self) -> bool {
         !self.config.options.iter().any(|(name, value)| {
@@ -2443,7 +2502,18 @@ impl Connection {
             Some(message) => Err(Error::new(ErrorKind::Io, message)),
             None => outcome,
         };
-        let ended = self.transactions.end_statement(outcome.is_ok(), invalidates);
+        // An auto-commit that checkpoints instead of logging its changes; it is the
+        // commit's only checkpoint.
+        let checkpoint =
+            if self.transactions.is_auto_commit() && self.transactions.has_current() && outcome.is_ok() {
+                self.commit_checkpoint(committed.as_ref())
+            } else {
+                None
+            };
+        let committed = committed.filter(|_| checkpoint.is_none());
+        let ended = self
+            .transactions
+            .end_statement_checkpointing(outcome.is_ok(), invalidates, checkpoint);
         // Between statements, the connection's functions (and C API clients reading its
         // options) see the settings the statement left.
         self.function_client
@@ -2479,6 +2549,22 @@ impl Connection {
             result = Err(error);
         }
         result.map_err(|error| self.process_error(error, query))
+    }
+
+    /// The checkpoint the commit of the open transaction, which made `changes`, runs
+    /// instead of logging them (see [`DatabaseInstance::skip_wal_checkpoint`]).
+    fn commit_checkpoint(
+        &mut self,
+        changes: Option<&CommittedChanges>,
+    ) -> Option<rustdb_storage::transaction::CommitCheckpoint<'static>> {
+        let changes = changes?;
+        let current = self.transactions.current();
+        self.database.instance().skip_wal_checkpoint(
+            &current,
+            changes,
+            self.settings.skip_checkpoint_on_commit(),
+            self.settings.auto_checkpoint_skip_wal_threshold(),
+        )
     }
 
     /// Applies the configuration changes functions made (`enable_profiling` /
@@ -3666,11 +3752,14 @@ impl Connection {
                             return Err(Error::new(ErrorKind::Io, message));
                         }
                         let rolls_back = self.transactions.is_invalidated();
+                        let mut checkpoint = None;
                         if !rolls_back && self.transactions.has_current() {
                             let current = self.transactions.current();
-                            self.explicit_commit = CommittedChanges::of(&current);
+                            let changes = CommittedChanges::of(&current);
+                            checkpoint = self.commit_checkpoint(changes.as_ref());
+                            self.explicit_commit = changes.filter(|_| checkpoint.is_none());
                         }
-                        let result = self.transactions.commit();
+                        let result = self.transactions.commit(checkpoint);
                         self.finish_transaction_attaches(rolls_back || result.is_err());
                         result?;
                     }

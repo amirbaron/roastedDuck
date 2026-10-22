@@ -469,6 +469,11 @@ impl WalGuard<'_> {
         self.state.size - self.state.last_commit_size
     }
 
+    /// Entries written since the WAL was last emptied (`GetWALEntriesCount`).
+    pub fn entries(&self) -> u64 {
+        self.state.entries
+    }
+
     /// Entries written since the WAL was last emptied, before the last commit: the count
     /// `SingleFileStorageManager::AutomaticCheckpoint` sees when that commit starts.
     pub fn entries_before_last_commit(&self) -> u64 {

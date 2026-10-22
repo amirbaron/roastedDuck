@@ -3,6 +3,7 @@ use std::sync::Arc;
 use rustdb_catalog::{Transaction, TransactionManager};
 use rustdb_common::{Error, ErrorKind, Result};
 use rustdb_function::FunctionClient;
+use rustdb_storage::transaction::CommitCheckpoint;
 
 /// A connection's transaction state (DuckDB's `TransactionContext`).
 ///
@@ -102,9 +103,23 @@ impl TransactionContext {
     /// failure; in an explicit transaction, a failure whose error `invalidates` the
     /// transaction aborts it.
     pub fn end_statement(&mut self, success: bool, invalidates: bool) -> Result<()> {
+        self.end_statement_checkpointing(success, invalidates, None)
+    }
+
+    /// [`TransactionContext::end_statement`] whose auto-commit runs `checkpoint` instead
+    /// of logging its changes (see [`TransactionManager::commit_checkpointing`]).
+    pub fn end_statement_checkpointing(
+        &mut self,
+        success: bool,
+        invalidates: bool,
+        checkpoint: Option<CommitCheckpoint<'_>>,
+    ) -> Result<()> {
         if self.auto_commit {
             return match self.take_current() {
-                Some(transaction) if success => self.manager.commit(&transaction).map_err(commit_error),
+                Some(transaction) if success => self
+                    .manager
+                    .commit_checkpointing(&transaction, checkpoint)
+                    .map_err(commit_error),
                 Some(transaction) => {
                     self.manager.rollback(&transaction);
                     Ok(())
@@ -140,7 +155,10 @@ impl TransactionContext {
 
     /// `COMMIT`: an invalidated transaction is rolled back instead, without an error
     /// (`PhysicalTransaction` turns the COMMIT into a ROLLBACK).
-    pub fn commit(&mut self) -> Result<()> {
+    ///
+    /// With `checkpoint`, the commit runs it instead of logging the changes (see
+    /// [`TransactionManager::commit_checkpointing`]).
+    pub fn commit(&mut self, checkpoint: Option<CommitCheckpoint<'_>>) -> Result<()> {
         if self.auto_commit {
             return Err(transaction_error("cannot commit - no transaction is active"));
         }
@@ -151,7 +169,10 @@ impl TransactionContext {
                 self.manager.rollback(&transaction);
                 Ok(())
             }
-            Some(transaction) => self.manager.commit(&transaction).map_err(commit_error),
+            Some(transaction) => self
+                .manager
+                .commit_checkpointing(&transaction, checkpoint)
+                .map_err(commit_error),
             None => Ok(()),
         }
     }
@@ -187,7 +208,7 @@ mod tests {
     fn explicit_transactions_follow_duckdb_rules() {
         let mut context = TransactionContext::new(Arc::default(), Arc::default());
         assert_eq!(
-            context.commit().unwrap_err().to_string(),
+            context.commit(None).unwrap_err().to_string(),
             "TransactionContext Error: cannot commit - no transaction is active"
         );
         context.begin(false).unwrap();

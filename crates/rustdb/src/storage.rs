@@ -217,6 +217,11 @@ pub(crate) enum CheckpointMode {
 ///
 /// A failure invalidates the database (`failed` returns the error reported); commits
 /// are refused from then on with the message `refused` returns.
+///
+/// With `commit`, the checkpoint runs for a commit that did not log its changes
+/// (`CheckpointAction::ALWAYS_CHECKPOINT` with `CheckpointOptions::wal_lock`): it is
+/// written even if the WAL is empty, under the checkpoint lock and the WAL lock the
+/// commit holds.
 pub(crate) fn create_checkpoint(
     catalog: &Catalog,
     storage: &StorageManager,
@@ -224,6 +229,7 @@ pub(crate) fn create_checkpoint(
     transactions: Option<&rustdb_catalog::TransactionManager>,
     failed: &dyn Fn(Error) -> Error,
     refused: &dyn Fn() -> String,
+    commit: Option<CommitLocks<'_, '_>>,
 ) -> Result<()> {
     if storage.is_read_only() {
         return Ok(());
@@ -231,14 +237,20 @@ pub(crate) fn create_checkpoint(
     let Some(wal) = storage.wal() else {
         return Ok(());
     };
-    // `FORCE CHECKPOINT` waits until the write transactions finished: a checkpoint
-    // written beside them would store rows they appended but had not committed (as
-    // deleted rows), so the row ids of their WAL entries would no longer match.
+    let always = commit.is_some();
     let locks = catalog.locks();
-    let exclusive = if mode == CheckpointMode::Force {
-        Some(locks.checkpoint.exclusive())
+    let (exclusive, mut held_wal) = if let Some(CommitLocks { checkpoint, wal }) = commit {
+        (Some(checkpoint), Some(wal))
     } else {
-        locks.checkpoint.try_exclusive()
+        // `FORCE CHECKPOINT` waits until the write transactions finished: a checkpoint
+        // written beside them would store rows they appended but had not committed (as
+        // deleted rows), so the row ids of their WAL entries would no longer match.
+        let exclusive = if mode == CheckpointMode::Force {
+            Some(locks.checkpoint.exclusive())
+        } else {
+            locks.checkpoint.try_exclusive()
+        };
+        (exclusive, None)
     };
     // Without the lock, another checkpoint runs, or a transaction updates rows or changes
     // the catalog: there is no checkpoint (`CanCheckpoint`), except when the database
@@ -266,7 +278,7 @@ pub(crate) fn create_checkpoint(
     } else {
         None
     };
-    if wal.size() == 0 {
+    if !always && with_wal(wal, &mut held_wal, |guard| guard.size()) == 0 {
         return Ok(());
     }
     let mut has_wal = false;
@@ -279,22 +291,27 @@ pub(crate) fn create_checkpoint(
         &mut |meta_block, hold_off_commits| {
             // `WALStartCheckpoint`: the checkpoint includes the commits before commits
             // switch to the checkpoint WAL.
-            let mut guard = wal.lock();
-            let checkpoint_id =
-                transactions.map_or(u64::MAX, rustdb_catalog::TransactionManager::last_commit);
-            storage.io().set_active_checkpoint(Some(checkpoint_id));
-            hold_off_commits();
-            has_wal = guard.start_checkpoint(meta_block)?;
-            Ok(checkpoint_id)
+            with_wal(wal, &mut held_wal, |guard| {
+                let checkpoint_id =
+                    transactions.map_or(u64::MAX, rustdb_catalog::TransactionManager::last_commit);
+                storage.io().set_active_checkpoint(Some(checkpoint_id));
+                hold_off_commits();
+                has_wal = guard.start_checkpoint(meta_block)?;
+                Ok(checkpoint_id)
+            })
         },
         replace_in_memory,
         vacuum_lock.is_some(),
         transactions.map_or(u64::MAX, rustdb_catalog::TransactionManager::lowest_active_start),
     );
     drop(vacuum_lock);
+    #[expect(
+        clippy::redundant_closure_for_method_calls,
+        reason = "the method is not general over the guard's lifetime"
+    )]
     let finished = written.and_then(|()| {
         if has_wal {
-            wal.lock().finish_checkpoint()
+            with_wal(wal, &mut held_wal, |guard| guard.finish_checkpoint())
         } else {
             Ok(())
         }
@@ -303,11 +320,30 @@ pub(crate) fn create_checkpoint(
     drop(exclusive);
     if let Err(error) = finished {
         let error = failed(error);
-        wal.lock().invalidate(refused());
+        with_wal(wal, &mut held_wal, |guard| guard.invalidate(refused()));
         return Err(error);
     }
     timer.end();
     Ok(())
+}
+
+/// The locks a commit that checkpoints instead of logging its changes holds through the
+/// checkpoint: the database's checkpoint lock, exclusively, and the WAL lock.
+pub(crate) struct CommitLocks<'a, 'w> {
+    pub checkpoint: rustdb_storage::checkpoint_lock::ExclusiveCheckpointGuard,
+    pub wal: &'a mut rustdb_storage::wal::WalGuard<'w>,
+}
+
+/// Calls `f` with the WAL lock: `held` if the caller holds it, else taken for the call.
+fn with_wal<R>(
+    wal: &rustdb_storage::wal::WriteAheadLog,
+    held: &mut Option<&mut rustdb_storage::wal::WalGuard<'_>>,
+    f: impl FnOnce(&mut rustdb_storage::wal::WalGuard<'_>) -> R,
+) -> R {
+    match held {
+        Some(guard) => f(guard),
+        None => f(&mut wal.lock()),
+    }
 }
 
 /// Whether a checkpoint may vacuum: in DuckDB a committed transaction keeps its locks
