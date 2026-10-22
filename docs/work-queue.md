@@ -135,9 +135,6 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    - `EXPORT DATABASE` is not serialized: rustdb's `LogicalExport` keeps what its
      operator needs instead of DuckDB's `CopyInfo` and `BoundExportData`, and unions the
      table copies two at a time.
-   - Lambda functions, `list_slice` and `list_zip` over an ARRAY, and `list_reduce` with
-     an initial value of another type, list the cast types in `arguments` where DuckDB
-     keeps `ANY`: a bind casts arguments only through the function's argument types.
    - Equal aggregates are shared when their functions have the same name; DuckDB
      compares the functions' callbacks, so `median(x)` and `quantile_cont(x, 0.5)` are
      one aggregate there.
