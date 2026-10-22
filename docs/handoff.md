@@ -60,7 +60,7 @@ gates remain in place.
 - **C API:** 546 of 547 functions; all 30 `test/api/capi` files pass
   (`scripts/capi-tests/run.sh`, `--lib cpp` runs them against the C++ library). ADBC is
   missing.
-- **CLI shell (the owner's top priority, done):** `crates/shell` (`rustdb`) is DuckDB's
+- **CLI shell (the owner's top priority; engine gaps remain):** `crates/shell` (`rustdb`) is DuckDB's
   shell one to one, linenoise included: all 392 `tools/shell/tests` that pass on the C++
   CLI pass (`scripts/shell-tests.sh --binary rust|cpp`), and 722 of 727 cases of
   `scripts/shell-diff.py` (modes, types, dot commands, options, errors, pty sessions)
@@ -72,17 +72,20 @@ gates remain in place.
 - **Compression:** `crates/zstd` ports zstd 1.5.6's encoder and decoder (zstd's frames at
   levels -5..3; ruzstd is gone); roaring, hugeint bitpacking and partial blocks match
   DuckDB's layouts (work-queue item 5 lists what is left).
-- **Performance** (`docs/perf-backlog.md`, round 5; speed = C++ time ÷ rustdb time, higher
-  is better; memory = rustdb ÷ C++, lower is better):
+- **Performance** (`docs/perf-backlog.md`, fresh round 6 baseline; speed = C++ time ÷
+  Rust time, memory = Rust ÷ C++; 160 result checks pass):
 
   | suite | speed 14 / 1 threads | memory 14 / 1 threads |
   |---|---|---|
-  | TPC-H SF10 | 0.84× / 0.92× | 0.28× / 0.20× |
-  | ClickBench | 0.88× / 0.90× | 0.35× / 0.28× |
-  | h2o group-by | 1.01× / 1.07× | 0.73× / 0.36× |
-  | h2o joins | 1.10× / 1.22× | 0.78× / 0.63× |
+  | TPC-H SF10 | 0.88× / 0.94× | 0.29× / 0.21× |
+  | ClickBench | 0.87× / 0.91× | 0.36× / 0.29× |
+  | h2o group-by | 1.03× / 0.99× | 0.72× / 0.40× |
+  | h2o joins | 1.16× / 1.26× | 0.79× / 0.50× |
 
-  Caching table blocks like DuckDB was measured and dropped (memory rises to DuckDB's).
+  H2O joins meet the revised gates on this run; the other suites have individual slow
+  queries. ClickBench database-open q00 uses about 3.2 MB extra peak RSS (1.11× above
+  the interpreter). Performance parity is open. C++-style table-block caching, formerly
+  dropped for the stricter memory target, is the next experiment.
 
 ## Saved work (2026-10-22)
 
@@ -96,8 +99,9 @@ added (`547a13b`). All 202 focused release unit tests pass; workspace/all-target
 and Clippy with warnings denied pass. The focused SQL run has 200 passes and three
 shared skips (203 files), with no failures, crashes or timeouts and zero regressions
 against the 4855-file ratchet. These focused rechecks retain the prior overall
-4781/15/74 results; a new full sweep is still required. Shell verification and fresh
-performance measurements are in progress, so performance acceptance remains open.
+4781/15/74 results; a new full sweep is still required. Shell verification passes with the same five known differences; all eight fresh
+performance suites are complete with 160 passing result checks. Performance acceptance
+remains open because the parity targets are not yet met.
 
 The benchmark harness now fails on mismatches or engine errors and retains its
 check verdicts in JSON (`65042a1`); six regression tests pass. Older JSON lacks those

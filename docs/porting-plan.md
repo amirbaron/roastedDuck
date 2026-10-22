@@ -9,8 +9,8 @@ Target: a 100% Rust engine that is a 1:1 drop-in replacement for DuckDB **1.5.6*
    ~74k `query`/`statement` records) passes unchanged, error messages included.
 2. **Same files.** The Rust engine opens databases written by C++ DuckDB, and
    C++ DuckDB opens databases written by the Rust engine (storage + WAL byte format).
-3. **Same ABI.** It ships a `libduckdb` exporting the C API (`duckdb.h`, 546
-   functions) and loads C-API extensions (`duckdb_extension.h`).
+3. **Same ABI.** It ships a `libduckdb` exporting the C API (`duckdb.h`, 547
+   functions, including ADBC) and loads C-API extensions (`duckdb_extension.h`).
 4. **Performance parity with C++ DuckDB.** Match the reference on speed and peak
    memory on DuckDB's own benchmark suites, on the same machine, with identical
    results. The owner replaced the earlier outperformance targets on 2026-10-22.
@@ -141,12 +141,11 @@ same inputs instead of hand-porting the output:
 - **Scheduler:** DuckDB's morsel-driven task and pipeline/event model on a dedicated
   thread pool. Not rayon, not async: blocked-task and interrupt semantics must match.
 
-## Performance: beating C++ DuckDB
+## Performance: C++ parity
 
-A straight port of the same algorithms lands at roughly C++ speed; Rust is not faster
-by itself. The speedup has to come from deliberate engineering, all of it internal
-(results, plans' semantics and file bytes stay identical). Each change below lands only
-with a benchmark that shows the gain.
+Use measured gaps against C++ to choose engineering work. Improvements beyond parity
+are optional. All changes stay internal (results, plans' semantics and file bytes stay
+identical), and land only with a benchmark that demonstrates their benefit.
 
 | Lever | Where |
 |---|---|
@@ -160,10 +159,10 @@ with a benchmark that shows the gain.
 | Scheduler: lower-overhead task handoff, better pipeline-level work stealing | parallel execution |
 | Build: LTO, PGO (`cargo pgo`), BOLT on the release binary | release pipeline |
 
-## Memory: much lower peak than C++ DuckDB
+## Memory: C++ parity
 
-Same constraint as speed: lower memory comes from internal representation, never from
-changed results or file bytes, and never by trading away the speed targets.
+Peak memory must be at parity with C++. Lower memory is welcome when it comes from
+internal representation, preserving results and file bytes and meeting the speed target.
 
 | Lever | Where |
 |---|---|
@@ -316,7 +315,7 @@ secrets, delta (`delta-kernel-rs` is already Rust).
 
 **Gate:** `copy/`, `json/`, `timezone/`, `secrets/`, extension test dirs green;
 `data/parquet-testing` read/write round-trips; `benchmark/csv` and `benchmark/parquet`
-faster.
+at parity with C++.
 
 ### M8 — Public surface
 - `libduckdb` cdylib with the full C API and C extension API.

@@ -324,6 +324,55 @@ What moved the numbers in round 5:
   q19 0.32× → 0.50×). It was reverted (`4bf408a`); the re-reads have to get cheaper
   instead (Open items).
 
+## Benchmark suites (round 6, integrated baseline)
+
+Measured 2026-10-22 after integrating the five saved commits (`2a4541a` through
+`1e53786`). TPC-H SF10, the existing ClickBench database (99,997,497 rows, checked by
+q00), and the h2oai group/join databases are shared by both engines. One warm-up and
+three timed repetitions per query, one process/workload at a time at low priority,
+14 and 1 threads. Speed is C++ wall time / Rust wall time; memory is peak RSS above
+the Python interpreter, Rust / C++. All 160 result checks pass (146 exact, two
+unordered comparisons, 12 whole-result tie checks); the harness records each verdict
+and now fails on mismatches or engine errors. These results are a baseline for further
+parity work, not a completed performance milestone.
+
+| run | suite | threads | DuckDB wall s | rustdb wall s | speed geomean | slowest | mem geomean | max mem |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| merged | h2og | 1 | 3.160 | 3.163 | 0.99× | q08 0.82× | 0.40× | q06 0.76× |
+| merged | h2og | 14 | 0.515 | 0.498 | 1.03× | q04 0.84× | 0.72× | q10 0.91× |
+| merged | h2oj | 1 | 7.099 | 5.662 | 1.26× | q04 1.21× | 0.50× | q01 0.63× |
+| merged | h2oj | 14 | 0.726 | 0.619 | 1.16× | q02 1.12× | 0.79× | q04 0.81× |
+| merged | hits | 1 | 88.536 | 109.165 | 0.91× | q19 0.39× | 0.29× | q00 1.11× |
+| merged | hits | 14 | 9.392 | 12.086 | 0.87× | q19 0.42× | 0.36× | q00 1.11× |
+| merged | tpch10 | 1 | 11.332 | 11.287 | 0.94× | q21 0.79× | 0.21× | q16 0.80× |
+| merged | tpch10 | 14 | 1.444 | 1.582 | 0.88× | q05 0.73× | 0.29× | q11 0.76× |
+
+The preserved pre-change binaries (`ccfc6d0`) were also measured on six affected
+queries at 14 threads. Rust CPU seconds, before → after: TPC-H q05 0.725 → 0.706,
+q09 1.987 → 1.884, q10 1.312 → 1.156; ClickBench q01 0.0320 → 0.0258,
+q19 0.0467 → 0.0401, q37 0.0326 → 0.0328 (unchanged within noise). No complete
+pre-change sweep was repeated, so the old aggregate tables are not a controlled
+before/after comparison of all queries. The saved `r6base-hits-t1` aggregate is
+incomplete because its C++ q10 failed to open the database.
+
+H2O joins meet the revised speed and memory gates on this run. Other suites still
+have slow queries: TPC-H q05 at 0.73× (14 threads), q21 at 0.79× (1 thread);
+ClickBench q19 at 0.42× / 0.39×. The single-thread regexp query q28 takes 44.8 s
+against C++'s 30.7 s (0.69×). Database-open q00 has about 3.2 MB extra Rust peak RSS
+(49.3–49.7 MB vs 46.1–46.5 MB), the remaining memory outlier in these suites. The
+revised target permits re-evaluating C++'s full table-block caching policy, previously
+rejected for the superseded ≤0.6× memory goal. That experiment must preserve result
+and storage behavior and be measured against this uncached baseline.
+
+Validation of the integrated baseline: 202 focused release unit tests, 200 SQL passes
+plus three shared skips across 203 files, zero ratchet regressions; 392 upstream shell
+tests pass on both engines, three shared skips; all 727 shell differential cases have
+no unexpected differences (five documented ones remain); all 30 C API test files pass.
+A fresh full corpus sweep remains required. Evidence and binary hashes:
+`.context/artifacts/parity-20261022/` (`bench/`, `build-manifest.json`, SQL/unit/shell/C API
+logs). The next experiment uses a separate artifact subdirectory and preserves these
+binaries and reports.
+
 ## zstd (compression parity)
 
 `crates/zstd/examples/bench.rs` against `tools/zstd-ref` (`zstd_ref bench`, DuckDB 1.5.6's
@@ -535,8 +584,8 @@ are re-read rather than cached (see Open items); DuckDB keeps the decrypted bloc
 | Area | Gap | Suspected cause | Found in |
 |---|---|---|---|
 | Writes at storage v1.5.0 | creating and checkpointing 30M rows of four columns: 5.86 s against DuckDB's 5.06 s (0.86×); the same table at the default storage version is 1.22× (see Database encryption) | not broken down; v1.5.0 changes the compression choices (DICT_FSST, ALP's uncompressed vectors) | `crates/storage` (`compression/`) |
-| Peak memory | TPC-H 0.20–0.28×, ClickBench 0.27–0.35× (q00, which only opens the database, at 1.02×: 47 MB vs 46 MB), but h2og 0.73× and h2oj 0.78× at 14 threads (target ≤ 0.6×; round 5) | the h2o queries are dominated by aggregate and join rows, as wide as DuckDB's; per-thread partitions allocate whole blocks | `crates/row`, `crates/execution` |
-| Table block re-reads | `pread`, and waiting for another thread's read of the same block, is ~15% of the CPU of scan-heavy TPC-H queries at 14 threads and most of the gap of ClickBench's point and small scans (q01, q19, q37 at 1.6–2.6× DuckDB's cycles); the copy runs near the memory bandwidth (TPC-H q7's 3,800 blocks: 12 ms at 14 threads, 43 ms at one) | blocks are freed when unpinned to keep memory low (only blocks shared by several segments stay among the 16 last released, round 4); a bounded cache of re-read blocks (round 3, removed in `064b45d`) took q19 to 0.58× and ClickBench to 0.84×, but memory to 0.59× with small queries above 1.0×; caching every block like DuckDB (round 5, reverted) saves 5–7% of the cycles but makes peak RSS DuckDB's (0.89–0.92×), so the re-reads themselves must get cheaper | `crates/buffer` |
+| Peak memory | Round 5 geomeans (TPC-H 0.20–0.28×, ClickBench 0.27–0.35×, h2og 0.73× and h2oj 0.78× at 14 threads) meet the revised parity target; individual outliers such as database-open RSS still require checks | per-thread partitions and heap allocations outside the buffer manager; compare new evidence with C++ instead of the superseded ≤0.6× target | `crates/row`, `crates/execution` |
+| Table block re-reads | `pread`, and waiting for another thread's read of the same block, is ~15% of the CPU of scan-heavy TPC-H queries at 14 threads and most of the gap of ClickBench's point and small scans (q01, q19, q37 at 1.6–2.6× DuckDB's cycles); the copy runs near the memory bandwidth (TPC-H q7's 3,800 blocks: 12 ms at 14 threads, 43 ms at one) | blocks are freed when unpinned to keep memory low (only blocks shared by several segments stay among the 16 last released, round 4); a bounded cache of re-read blocks (round 3, removed in `064b45d`) took q19 to 0.58× and ClickBench to 0.84×, but memory to 0.59× with small queries above 1.0×; caching every block like DuckDB (round 5, reverted) saves 5–7% of the cycles but makes peak RSS DuckDB's (0.89–0.92×), the revised parity target permits re-evaluating C++'s full caching policy, alongside making re-reads cheaper | `crates/buffer` |
 | Metadata re-reads | opening a database reads no column metadata any more (round 5), but the first use of a column in a row group still pins its metadata block again; not measured | metadata blocks are freed when unpinned; keeping them among the recently released blocks put ClickBench q0 2 MB above DuckDB's RSS (round 4) | `crates/storage` (`metadata.rs`) |
 | Right delim joins (Q17, Q20, Q21) | input buffered and rescanned into the join's build | DuckDB's `PhysicalRightDelimJoin` sinks straight into the join's hash table and the distinct aggregate; here a delim sink copies the input into a buffer-managed collection (round 5) and a cached scan feeds the build pipeline | `crates/execution` (`operators/delim.rs`, `plan_generator.rs`) |
 | Hash join probe | TPC-H q3/q5/q7 0.72–0.80× at 14 threads; the probe is close to DuckDB's `GetRowPointers` now, bloom filter lookups ~1.3× DuckDB's per key (memory-bound sector loads) | the bloom filter hashes the keys in a separate pass; more rows reach it than in DuckDB when the adaptive filter order has not settled | `crates/execution` (`join_hashtable.rs`, `operators/join/bloom_filter.rs`) |
@@ -544,7 +593,7 @@ are re-read rather than cached (see Open items); DuckDB keeps the decrypted bloc
 | Aggregate hash table lookups | `find_or_create_groups` 1.2–1.5× DuckDB's `FindOrCreateGroupsInternal` (ClickBench q04/q08/q09/q35 0.6–0.8×); resizing at one thread costs ~2× DuckDB's `ReinsertTuples` (q04: 400 ms vs 211 ms) | per-chunk set-up (formats, chunk copies, HLL) and the probe loops cost more instructions; resized pointer tables are fresh mappings whose pages fault in; DuckDB appends a few rows per partition to an unpartitioned collection first (`UNPARTITIONED_RADIX_BITS_THRESHOLD`) | `crates/execution` (`aggregate_hashtable.rs`), `crates/row` |
 | Sorting VARCHAR keys | `l_comment` sort 1.4× slower, 1.4× the memory | the output decodes strings from the sort keys (`decode_value`) instead of reading a payload; contiguous copy of each run's keys | `crates/row` (`sort/`) |
 | Range joins and window in memory | IEJoin 0.84× / 0.93× and window 0.90× / 0.92× DuckDB's cycles at 1 / 8 threads without a limit; AsOf 0.97–0.98× out of core (see above) | the row-format primitives cost more instructions than DuckDB's: scattering into sort runs and hash partitions (`scatter_column`, heap sizes), gathering payload in the merger, building and decoding sort keys (window 18.9 G vs 14.2 G instructions, IEJoin 58.0 G vs 43.7 G) | `crates/row` (`scatter.rs`, `gather.rs`, `sort/`) |
-| Range joins and window: peak memory | 0.65–0.99× DuckDB's RSS (target ≤ 0.6×); AsOf at 300 MiB and 8 threads varies between 0.91× and 1.15× from run to run | memory outside the buffer manager: per-thread chunks and executor states, IEJoin's `li`/`p` arrays (unmanaged in DuckDB too); not broken down yet | `crates/execution` (`operators/join/`, `operators/window.rs`) |
+| Range joins and window: peak memory | 0.65–0.99× DuckDB's RSS (within the revised parity target); AsOf at 300 MiB and 8 threads varies between 0.91× and 1.15× from run to run | memory outside the buffer manager: per-thread chunks and executor states, IEJoin's `li`/`p` arrays (unmanaged in DuckDB too); not broken down yet | `crates/execution` (`operators/join/`, `operators/window.rs`) |
 | Window `SINK` / `FINALIZE` stages | one task per hash group (the stage's first); the other tasks of the stage only wait | the executors' global states are built single-threaded; DuckDB sinks every block range in parallel into them. Only windows with few, large partitions (ORDER BY only) feel it; not measured | `crates/execution` (`window/executor.rs`, `operators/window.rs`) |
 | Materialized shell results | `SELECT * FROM lineitem LIMIT 100000`: 1.26× the cycles and 1.14× the instructions of rustdb before results were buffer-managed (0.5× DuckDB's cycles) | appending copies every value into the collection's blocks (fixed-width vectors whole, long strings into heap blocks), and each query maps fresh blocks; DuckDB copies too | `crates/row` (`column_data/`) |
 | `ColumnDataCollection` reads | each chunk read copies its fixed-width values out of the block (strings point into the pinned heaps) | rustdb vectors own their buffers; DuckDB's reference the pinned block | `crates/row` (`column_data/`) |
