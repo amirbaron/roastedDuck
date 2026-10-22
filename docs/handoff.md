@@ -31,18 +31,16 @@ performance targets of `docs/porting-plan.md` (≥ 1.3× C++ speed, ≤ 0.6× me
 
 ## Where things stand
 
-- **Corpus** (`scripts/conformance.sh`, last full run on main): 4752 of 4870 files pass,
-  18 fail, 100 skip, no timeouts. C++ DuckDB
-  passes 4794. Of the files C++ passes and rustdb does not:
-  - 25 skip with `require tpcds` (the `tpcds` extension is not ported; its `dsdgen` is
-    TPC-licensed code, see below);
-  - 15 are accepted divergences (`conformance/divergences.md`: extension binaries, and
-    out-of-memory errors rustdb avoids);
-  - the rest are real gaps, each in `docs/work-queue.md`: `buffer_managed_query_result`,
-    `physical_operator_logging` and the external file cache (2) — agents are on these —, `json_serialize_plan`,
-    encryption
-    (`dict_fsst_expression_filter`), ICU `as`/`kok`/`mr`.
-  The ratchet `conformance/passing.txt` lists 4827 files and must never shrink:
+- **Corpus** (`scripts/conformance.sh`, last full run on main): 4777 of 4870 files pass,
+  18 fail, 75 skip (both engines skip the same files: extensions and settings the
+  reference build lacks), no timeouts. C++ DuckDB passes 4794. Of the 18 files C++ passes
+  and rustdb does not:
+  - 15 are accepted divergences (`conformance/divergences.md`: 11 load C++ extension
+    binaries, 4 expect out-of-memory errors rustdb avoids by using less memory);
+  - 3 are real gaps, each in `docs/work-queue.md`: `json_serialize_plan` and encryption
+    (`dict_fsst_expression_filter`) — agents are on these — and ICU `as`/`kok`/`mr`
+    (`test_icu_extensive`, brief `icu66.md` queued).
+  The ratchet `conformance/passing.txt` lists 4852 files and must never shrink:
   `target/release/slt ratchet update target/slt/rust.jsonl` after a run.
 - **Flaky:** none known since the buffer-memory merge (`max_swap_space_error.test` passed
   20 of 20); rerun a file alone before treating a failure under load as a regression.
@@ -77,10 +75,10 @@ performance targets of `docs/porting-plan.md` (≥ 1.3× C++ speed, ≤ 0.6× me
 Worktrees under `/Users/amirbaron/src/duckdb-rust/.claude/worktrees/`, briefs in
 `.context/briefs/`:
 
-- TPC-DS (`tpcds.md`, base `1328ebc`);
-- logical plan serialization (`plan-serialization.md`, base `9aa5053`).
+- logical plan serialization (`plan-serialization.md`, base `9aa5053`);
+- encryption (`encryption.md`, base `60f1d90`).
 
-Queued, in order (briefs written, each with `<BASE>` to fill in): `encryption.md`, `icu66.md` (ICU 66
+Queued, in order (briefs written, each with `<BASE>` to fill in): `icu66.md` (ICU 66
 collation data and sort key bytes); `perf-round-6.md` (performance rounds, repeat until
 the targets hold). `_common.md` holds the
 ground rules every brief repeats. If a session ends while
@@ -104,14 +102,13 @@ full corpus.
 
 ## Next steps, in order
 
-1. Merge the running agents' branches (TPC-DS, plan serialization), then run the queued
-   briefs.
-2. Close the remaining gaps in `docs/work-queue.md`, at most two agents at a time:
-   encryption, ICU
+1. Merge the running agents' branches (plan serialization, encryption), then run the
+   queued briefs.
+2. Close the remaining gaps in `docs/work-queue.md`, at most two agents at a time: ICU
    collation for as/kok/mr and its sort key bytes.
-3. TPC-DS (25 tests): port the `tpcds` extension. Its `dsdgen` (like TPC-H's `dbgen`,
-   already in `crates/tpch`) carries TPC's license, not MIT — the owner should review
-   the TPC terms before rustdb is published; keeping both generators as optional
-   extensions keeps the core MIT.
+3. TPC-DS is ported (`crates/tpcds`, all 25 files pass). Its `dsdgen`, like TPC-H's
+   `dbgen` in `crates/tpch`, carries TPC's license, not MIT — the owner should review the
+   TPC terms before rustdb is published; both stay optional extension crates so the core
+   is MIT.
 4. Performance rounds until the targets hold (≥ 1.3× C++ speed, ≤ 0.6× memory); then
    differential fuzzing against C++ (M9 in `docs/porting-plan.md`).
