@@ -29,6 +29,8 @@ struct ExpressionState {
     children: Vec<ExpressionState>,
     /// Scratch chunk holding evaluated arguments of a function call.
     arguments: DataChunk,
+    /// The vector of a constant, built on first use and shared by every result.
+    constant: Option<Vector>,
 }
 
 impl ExpressionState {
@@ -50,6 +52,7 @@ impl ExpressionState {
                 .map(Self::for_expression)
                 .collect(),
             arguments: DataChunk::default(),
+            constant: None,
         }
     }
 }
@@ -99,7 +102,9 @@ impl ExpressionExecutor {
     /// Evaluates every expression into the corresponding column of `output`.
     pub fn execute(&mut self, input: &DataChunk, output: &mut DataChunk) -> Result<()> {
         let count = input.len();
-        let mut columns = Vec::with_capacity(self.expressions.len());
+        // The previous results are released first, so their buffers can be reused.
+        let mut columns = output.take_columns();
+        columns.clear();
         for (expression, state) in self.expressions.iter().zip(&mut self.states) {
             columns.push(execute(expression, state, input, None, count)?);
         }
@@ -169,7 +174,14 @@ fn execute(
     count: usize,
 ) -> Result<Vector> {
     match &expression.kind {
-        ExpressionKind::Constant(constant) => Vector::constant(&constant.value),
+        ExpressionKind::Constant(constant) => {
+            if let Some(vector) = &state.constant {
+                return Ok(vector.clone());
+            }
+            let vector = Vector::constant(&constant.value)?;
+            state.constant = Some(vector.clone());
+            Ok(vector)
+        }
         ExpressionKind::Parameter(parameter) => Vector::constant(&parameter.value()),
         ExpressionKind::Reference(reference) => {
             let index =
@@ -238,7 +250,9 @@ fn execute_function(
     sel: Option<&[u32]>,
     count: usize,
 ) -> Result<Vector> {
-    let mut arguments = Vec::with_capacity(function.children.len());
+    // The previous call's arguments are released first, so their buffers can be reused.
+    let mut arguments = state.arguments.take_columns();
+    arguments.clear();
     for (child, child_state) in function.children.iter().zip(&mut state.children) {
         arguments.push(execute(child, child_state, input, sel, count)?);
     }

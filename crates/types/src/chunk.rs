@@ -42,6 +42,13 @@ impl DataChunk {
         self.len = len;
     }
 
+    /// Empties the chunk and returns its columns, whose list can be refilled and handed
+    /// back with [`DataChunk::set_columns`] without allocating a new one.
+    pub fn take_columns(&mut self) -> Vec<Vector> {
+        self.len = 0;
+        std::mem::take(&mut self.columns)
+    }
+
     pub fn set_len(&mut self, len: usize) {
         self.len = len;
     }
