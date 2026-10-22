@@ -77,12 +77,15 @@ performance targets of `docs/porting-plan.md` (≥ 1.3× C++ speed, ≤ 0.6× me
 Worktrees under `/Users/amirbaron/src/duckdb-rust/.claude/worktrees/`, briefs in
 `.context/briefs/`:
 
-- operator logging and the external file cache (`logging-filecache.md`, base `26e9c5e`);
+- operator logging and the external file cache: **done, not merged** — branch
+  `worktree-agent-a5fa81bdf104c3fcb`; merge it only after the buffer-memory branch
+  (`external_file_cache_eviction_queue` needs buffer-managed results; conflicts: keep
+  both new `QueryOptions` fields, `force_external` and `streaming_result`);
+- TPC-DS (`tpcds.md`, base `1328ebc`);
 - buffer-managed results, streaming backpressure, batch insert memory, eviction parity,
   the aggregate's source reservations (`buffer-memory.md`, base `930d230`).
 
-Queued, in order (briefs written, each with `<BASE>` to fill in): `tpcds.md` (the 25 TPC-DS files),
-`plan-serialization.md` (`json_serialize_plan`), `encryption.md`, `icu66.md` (ICU 66
+Queued, in order (briefs written, each with `<BASE>` to fill in): `plan-serialization.md` (`json_serialize_plan`), `encryption.md`, `icu66.md` (ICU 66
 collation data and sort key bytes); then performance rounds. `_common.md` holds the
 ground rules every brief repeats. If a session ends while
 an agent runs, its worktree holds its commits: review, finish or salvage, merge, run the
