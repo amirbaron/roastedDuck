@@ -42,14 +42,6 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      ResolveStacktraceSymbols`): its own C++ frames, which rustdb cannot print. A
      section of rustdb's frames needs a backtrace captured in `Error::internal` and
      formatted like DuckDB's; its bytes would still differ.
-   - A streaming result: DuckDB's `PhysicalBufferedCollector` blocks its sink once
-     `streaming_buffer_size` (1 MB) is buffered, and each fetch runs the query until the
-     buffer is full again, so an error in a row-wise result (csv, json, ...) more than
-     1 MB in stops the output after the rows fetched so far, silently (the shell ignores
-     the result's error; rustdb's shell now does too). rustdb's collector never blocks:
-     the query runs ahead in tasks of 50 chunks, so the output stops at other rows (or
-     the error comes before any). Needs blocked sinks that the fetch unblocks
-     (`BlockSink`, `UnblockSinks`, `Executor::ResultCollectorIsBlocked`).
    - The shell reads input and arguments as UTF-8, invalid bytes becoming U+FFFD;
      DuckDB passes the bytes on (a string constant then fails with "Invalid unicode
      (byte sequence mismatch) detected in value construction", `.print` writes them as
