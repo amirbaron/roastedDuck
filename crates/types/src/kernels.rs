@@ -378,7 +378,13 @@ mod tests {
         let null = Value::null(LogicalType::INTEGER);
         assert_eq!(
             values,
-            vec![null.clone(), null, Value::integer(3), Value::integer(40), Value::integer(1)]
+            vec![
+                null.clone(),
+                null,
+                Value::integer(3),
+                Value::integer(40),
+                Value::integer(1)
+            ]
         );
     }
 
