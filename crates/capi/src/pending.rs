@@ -124,7 +124,10 @@ fn execute_task(wrapper: &mut PendingStatementWrapper) -> DuckdbPendingState {
             DUCKDB_PENDING_RESULT_READY
         }
         Ok(PendingExecutionResult::ResultNotReady) => DUCKDB_PENDING_RESULT_NOT_READY,
-        Ok(PendingExecutionResult::NoTasksAvailable) => DUCKDB_PENDING_NO_TASKS_AVAILABLE,
+        // `duckdb_pending_execute_task` reports blocked tasks as no tasks available.
+        Ok(PendingExecutionResult::NoTasksAvailable | PendingExecutionResult::Blocked) => {
+            DUCKDB_PENDING_NO_TASKS_AVAILABLE
+        }
         Err(error) => {
             wrapper.statement = Some(Err(CError::new(error)));
             DUCKDB_PENDING_ERROR
@@ -147,7 +150,8 @@ pub unsafe extern "C" fn duckdb_pending_execute_check_state(
         return DUCKDB_PENDING_ERROR;
     };
     match catch(|| wrapper.context.lock().check_pending(pending)) {
-        Ok(PendingExecutionResult::ResultReady) => DUCKDB_PENDING_RESULT_READY,
+        // `CheckPulse` reports a blocked query as ready.
+        Ok(PendingExecutionResult::ResultReady | PendingExecutionResult::Blocked) => DUCKDB_PENDING_RESULT_READY,
         Ok(PendingExecutionResult::ResultNotReady) => DUCKDB_PENDING_RESULT_NOT_READY,
         Ok(PendingExecutionResult::NoTasksAvailable) => DUCKDB_PENDING_NO_TASKS_AVAILABLE,
         Ok(PendingExecutionResult::ExecutionFinished) => DUCKDB_PENDING_ERROR,

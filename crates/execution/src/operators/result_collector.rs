@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use rustdb_common::{Error, Result};
 use rustdb_buffer::MemoryTag;
 use rustdb_row::{ColumnDataAppendState, ColumnDataCollection};
 use rustdb_types::{DataChunk, LogicalType};
 
+use super::buffered_data::BufferedData;
 use crate::operator::{
     ErasedSink, OperatorPartitionInfo, PartitionInfo, PhysicalOperator, PhysicalRef, SinkState,
 };
@@ -34,6 +35,8 @@ pub struct CollectedResult {
     batches: BTreeMap<u64, Vec<DataChunk>>,
     /// The batches of a buffer-managed batch collector (`BatchedDataCollection::data`).
     collections: BTreeMap<u64, ColumnDataCollection>,
+    /// The buffer of a streaming collector (`BufferedCollectorGlobalState::buffered_data`).
+    buffered: Option<Arc<BufferedData>>,
 }
 
 /// The rows a result collector collected: chunks, or a buffer-managed collection.
@@ -56,6 +59,9 @@ pub enum CollectorKind {
     /// Rows handed out while the query runs, as soon as they arrive (`PhysicalBufferedCollector`
     /// of a streaming result); `parallel` when the order does not matter.
     Buffered { parallel: bool },
+    /// Rows handed out while the query runs, in the order of their batch indices
+    /// (`PhysicalBufferedBatchCollector`).
+    BufferedBatch,
 }
 
 /// Collects the final query result (DuckDB's `PhysicalMaterializedCollector` and
@@ -66,6 +72,9 @@ pub struct PhysicalResultCollector {
     kind: CollectorKind,
     /// Where a materialized result keeps its rows (`PhysicalResultCollector::memory_type`).
     memory_type: QueryResultMemoryType,
+    /// The bytes a streaming collector buffers before its sink blocks
+    /// (`streaming_buffer_size`).
+    buffer_size: usize,
     children: [PhysicalRef; 1],
 }
 
@@ -80,6 +89,7 @@ impl PhysicalResultCollector {
             types: child.types().to_vec(),
             kind,
             memory_type: QueryResultMemoryType::InMemory,
+            buffer_size: DEFAULT_STREAMING_BUFFER_SIZE,
             children: [child],
         }
     }
@@ -106,12 +116,34 @@ impl PhysicalResultCollector {
     }
 
     /// The collector of a streaming result for `plan` (`GetResultCollector` with
-    /// `ALLOW_STREAMING`): parallel when the plan's order does not matter, otherwise the
-    /// final pipeline runs on one thread so that rows arrive in order (DuckDB's
-    /// `PhysicalBufferedBatchCollector` reorders the batches of several threads instead).
-    pub fn streaming(plan: PhysicalRef, preserve_order_setting: bool) -> Self {
-        let parallel = !preserve_insertion_order(plan.as_ref(), preserve_order_setting);
-        Self::with_kind(plan, CollectorKind::Buffered { parallel })
+    /// `ALLOW_STREAMING`): parallel when the plan's order does not matter, by batch index
+    /// when every source supports it, and single-threaded otherwise. Its sink blocks once
+    /// `buffer_size` bytes are buffered.
+    pub fn streaming(plan: PhysicalRef, threads: usize, preserve_order_setting: bool, buffer_size: usize) -> Self {
+        let kind = if !preserve_insertion_order(plan.as_ref(), preserve_order_setting) {
+            CollectorKind::Buffered { parallel: true }
+        } else if !use_batch_index(plan.as_ref(), threads) {
+            CollectorKind::Buffered { parallel: false }
+        } else {
+            CollectorKind::BufferedBatch
+        };
+        let mut collector = Self::with_kind(plan, kind);
+        collector.buffer_size = buffer_size;
+        collector
+    }
+
+    /// Whether the collector hands rows out while the query runs (`IsStreaming`).
+    pub fn is_streaming(&self) -> bool {
+        matches!(self.kind, CollectorKind::Buffered { .. } | CollectorKind::BufferedBatch)
+    }
+
+    /// The buffer of a streaming collector, from its global state (`GetResult`'s
+    /// `buffered_data`).
+    pub fn buffered_data(global: &SinkState) -> Result<Option<Arc<BufferedData>>> {
+        let collected = global
+            .downcast_ref::<Mutex<CollectedResult>>()
+            .ok_or_else(|| Error::internal("result collector state has an unexpected type"))?;
+        Ok(collected.lock().map_err(|_| poisoned())?.buffered.clone())
     }
 
     pub fn kind(&self) -> CollectorKind {
@@ -121,9 +153,7 @@ impl PhysicalResultCollector {
     /// Whether the rows go to buffer-managed collections (`CreateCollection` with
     /// `BUFFER_MANAGED`). Results without columns stay on the heap.
     fn buffer_managed(&self) -> bool {
-        self.memory_type == QueryResultMemoryType::BufferManaged
-            && !self.types.is_empty()
-            && !matches!(self.kind, CollectorKind::Buffered { .. })
+        self.memory_type == QueryResultMemoryType::BufferManaged && !self.types.is_empty() && !self.is_streaming()
     }
 
     /// A new buffer-managed collection for the result's rows, ready for appending.
@@ -176,7 +206,7 @@ impl PhysicalOperator for PhysicalResultCollector {
     fn parallel_sink(&self) -> bool {
         match self.kind {
             CollectorKind::Materialized { parallel } | CollectorKind::Buffered { parallel } => parallel,
-            CollectorKind::Batch => true,
+            CollectorKind::Batch | CollectorKind::BufferedBatch => true,
         }
     }
     fn sink_order_dependent(&self) -> bool {
@@ -187,7 +217,7 @@ impl PhysicalOperator for PhysicalResultCollector {
     }
     fn required_partition_info(&self) -> OperatorPartitionInfo {
         OperatorPartitionInfo {
-            batch_index: self.kind == CollectorKind::Batch,
+            batch_index: matches!(self.kind, CollectorKind::Batch | CollectorKind::BufferedBatch),
             partition_columns: Vec::new(),
         }
     }
@@ -213,6 +243,10 @@ pub struct CollectorLocal {
     /// The completed buffer-managed batches of a batch collector
     /// (`BatchedDataCollection::data`).
     collections: BTreeMap<u64, ColumnDataCollection>,
+    /// The buffer of a streaming collector.
+    buffered: Option<Arc<BufferedData>>,
+    /// The batch a streaming batch collector sinks (`BufferedBatchCollectorLocalState`).
+    current_batch: u64,
 }
 
 impl CollectorLocal {
@@ -270,11 +304,22 @@ impl Sink for PhysicalResultCollector {
     type Local = CollectorLocal;
 
     fn global_sink_state(&self, _: &ExecutionContext) -> Result<Self::Global> {
-        Ok(Mutex::default())
+        let buffered = match self.kind {
+            CollectorKind::Buffered { .. } => Some(Arc::new(BufferedData::simple(self.buffer_size))),
+            CollectorKind::BufferedBatch => Some(Arc::new(BufferedData::batched(self.buffer_size))),
+            CollectorKind::Materialized { .. } | CollectorKind::Batch => None,
+        };
+        Ok(Mutex::new(CollectedResult {
+            buffered,
+            ..CollectedResult::default()
+        }))
     }
 
-    fn local_sink_state(&self, ctx: &ExecutionContext, _: &Self::Global) -> Result<Self::Local> {
-        let mut local = CollectorLocal::default();
+    fn local_sink_state(&self, ctx: &ExecutionContext, global: &Self::Global) -> Result<Self::Local> {
+        let mut local = CollectorLocal {
+            buffered: global.lock().map_err(|_| poisoned())?.buffered.clone(),
+            ..CollectorLocal::default()
+        };
         if self.buffer_managed() && matches!(self.kind, CollectorKind::Materialized { .. }) {
             // `MaterializedCollectorLocalState`: the collection's first chunk is allocated
             // right away.
@@ -287,16 +332,28 @@ impl Sink for PhysicalResultCollector {
         &self,
         ctx: &ExecutionContext,
         chunk: &DataChunk,
-        global: &Self::Global,
+        _: &Self::Global,
         local: &mut Self::Local,
     ) -> Result<SinkResult> {
-        if let CollectorKind::Buffered { .. } = self.kind {
-            global
-                .lock()
-                .map_err(|_| poisoned())?
-                .chunks
-                .push(chunk.compacted());
-        } else if !self.buffer_managed() {
+        if let Some(buffered) = &local.buffered {
+            let appended = match buffered.as_ref() {
+                // `PhysicalBufferedCollector::Sink`.
+                BufferedData::Simple(data) => data.sink(chunk, &ctx.interrupt_state),
+                // `PhysicalBufferedBatchCollector::Sink`.
+                BufferedData::Batched(data) => {
+                    let batch = ctx.partition_info.batch_index;
+                    local.current_batch = batch;
+                    data.update_min_batch_index(ctx.partition_info.min_batch_index, &ctx.interrupt_state)?;
+                    data.sink(chunk, batch, &ctx.interrupt_state)?
+                }
+            };
+            return Ok(if appended {
+                SinkResult::NeedMoreInput
+            } else {
+                SinkResult::Blocked
+            });
+        }
+        if !self.buffer_managed() {
             local.chunks.push(chunk.compacted());
         } else if self.kind == CollectorKind::Batch {
             local.append_batch(self, ctx, chunk)?;
@@ -308,17 +365,30 @@ impl Sink for PhysicalResultCollector {
 
     fn next_batch(
         &self,
-        _: &ExecutionContext,
+        ctx: &ExecutionContext,
         _: &Self::Global,
         local: &mut Self::Local,
         partition: &PartitionInfo,
     ) -> Result<()> {
+        if let Some(BufferedData::Batched(data)) = local.buffered.as_deref() {
+            // `PhysicalBufferedBatchCollector::NextBatch`.
+            data.complete_batch(local.current_batch);
+            local.current_batch = partition.batch_index;
+            return data.update_min_batch_index(partition.min_batch_index, &ctx.interrupt_state);
+        }
         local.flush_batch();
         local.batch_index = partition.batch_index;
         Ok(())
     }
 
-    fn combine(&self, _: &ExecutionContext, global: &Self::Global, mut local: Self::Local) -> Result<()> {
+    fn combine(&self, ctx: &ExecutionContext, global: &Self::Global, mut local: Self::Local) -> Result<()> {
+        if let Some(buffered) = &local.buffered {
+            if let BufferedData::Batched(data) = buffered.as_ref() {
+                // `PhysicalBufferedBatchCollector::Combine`.
+                data.update_min_batch_index(ctx.partition_info.min_batch_index, &ctx.interrupt_state)?;
+            }
+            return Ok(());
+        }
         if self.buffer_managed() {
             if self.kind == CollectorKind::Batch {
                 // `BatchedDataCollection::Merge`.
@@ -391,6 +461,9 @@ impl Sink for PhysicalResultCollector {
         Ok(SinkFinalize::Ready)
     }
 }
+
+/// The default `streaming_buffer_size` (1 MB).
+const DEFAULT_STREAMING_BUFFER_SIZE: usize = 1_000_000;
 
 fn duplicate_batch_error(batch_index: u64) -> Error {
     Error::internal(format!(

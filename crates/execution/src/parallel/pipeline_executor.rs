@@ -27,6 +27,29 @@ pub(crate) enum PipelineExecuteResult {
     NotFinished,
     /// The pipeline is exhausted and the thread's sink state was combined.
     Finished,
+    /// The sink blocked (`INTERRUPTED`): call again once the task is rescheduled.
+    Interrupted,
+}
+
+/// The outcome of pushing a chunk through the operators into the sink
+/// (`OperatorResultType` as `ExecutePushInternal` returns it).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PushResult {
+    NeedMoreInput,
+    HaveMoreOutput,
+    Finished,
+    /// The sink blocked; the final chunk is kept to be sunk again.
+    Blocked,
+}
+
+impl From<OperatorResult> for PushResult {
+    fn from(result: OperatorResult) -> Self {
+        match result {
+            OperatorResult::NeedMoreInput => Self::NeedMoreInput,
+            OperatorResult::HaveMoreOutput => Self::HaveMoreOutput,
+            OperatorResult::Finished => Self::Finished,
+        }
+    }
 }
 
 /// The number of chunks an execution may still push (DuckDB's `ExecutionBudget`).
@@ -115,6 +138,9 @@ pub(crate) struct PipelineExecutor {
     exhausted_pipeline: bool,
     /// The source returned its last chunk (DuckDB's `exhausted_source`).
     exhausted_source: bool,
+    /// The sink blocked on the final chunk, which must be sunk again
+    /// (`remaining_sink_chunk`).
+    remaining_sink_chunk: bool,
     flush: FlushState,
     profiling: Option<Profiling>,
 }
@@ -132,7 +158,7 @@ fn role<'a, T: ?Sized>(
 }
 
 impl PipelineExecutor {
-    pub fn new(ctx: ExecutionContext, pipeline: Arc<Pipeline>, states: PipelineStates) -> Result<Self> {
+    pub fn new(mut ctx: ExecutionContext, pipeline: Arc<Pipeline>, states: PipelineStates) -> Result<Self> {
         let sink = role(&pipeline.sink, |op| op.as_sink())?;
         let source = role(&pipeline.source, |op| op.as_source())?;
         let mut local_sink_state = sink.local_sink_state(&ctx, states.sink.as_ref())?;
@@ -156,6 +182,7 @@ impl PipelineExecutor {
                 local_sink_state.as_mut(),
                 &partition_info,
             )?;
+            ctx.partition_info = partition_info.clone();
         }
         let local_source_state = source.local_source_state(&ctx, states.source.as_ref())?;
         let mut intermediate_states = Vec::with_capacity(pipeline.operators.len());
@@ -198,6 +225,7 @@ impl PipelineExecutor {
             partition_info,
             exhausted_pipeline: false,
             exhausted_source: false,
+            remaining_sink_chunk: false,
             flush: FlushState::NotStarted,
             profiling,
         })
@@ -250,28 +278,41 @@ impl PipelineExecutor {
         self.in_process_operators.retain(|&position| position > index);
     }
 
+    /// Whether the sink blocked on the final chunk (`RemainingSinkChunk`).
+    pub fn remaining_sink_chunk(&self) -> bool {
+        self.remaining_sink_chunk
+    }
+
     /// Runs the pipeline until it is exhausted, or until `max_chunks` chunks were pushed
     /// (DuckDB's `Execute(max_chunks)`).
     pub fn execute(&mut self, max_chunks: usize) -> Result<PipelineExecuteResult> {
         let mut budget = ExecutionBudget::new(max_chunks);
         loop {
             self.ctx.check_interrupted()?;
-            if self.is_finished() && self.in_process_operators.is_empty() {
+            if self.is_finished() && self.in_process_operators.is_empty() && !self.remaining_sink_chunk {
                 // Nothing more can come out: stop pulling from the source.
                 self.exhausted_pipeline = true;
             }
             let flushing = self.flush != FlushState::NotStarted;
             let result = if self.exhausted_pipeline
                 && self.flush == FlushState::Done
+                && !self.remaining_sink_chunk
                 && self.in_process_operators.is_empty()
             {
                 break;
+            } else if self.remaining_sink_chunk {
+                // The sink blocked: sink the final chunk again.
+                self.remaining_sink_chunk = false;
+                self.execute_push_internal(self.final_index(), &mut budget)?
             } else if !self.in_process_operators.is_empty() && !flushing {
                 // Operators returned `HaveMoreOutput`: call them again with the same input.
                 self.execute_push_internal(0, &mut budget)?
             } else if self.exhausted_pipeline {
                 if self.try_flush_caching_operators(&mut budget)? {
                     break;
+                }
+                if self.remaining_sink_chunk {
+                    return Ok(PipelineExecuteResult::Interrupted);
                 }
                 return Ok(PipelineExecuteResult::NotFinished);
             } else {
@@ -289,7 +330,12 @@ impl PipelineExecutor {
                 }
                 self.execute_push_internal(0, &mut budget)?
             };
-            if result == OperatorResult::Finished {
+            if result == PushResult::Blocked {
+                // `SINK INTERRUPT`.
+                self.remaining_sink_chunk = true;
+                return Ok(PipelineExecuteResult::Interrupted);
+            }
+            if result == PushResult::Finished {
                 self.exhausted_pipeline = true;
             }
             if !budget.next() {
@@ -344,8 +390,13 @@ impl PipelineExecutor {
                 operator: index,
                 again,
             };
-            if self.execute_push_internal(index + 1, budget)? == OperatorResult::HaveMoreOutput {
-                return Ok(false);
+            match self.execute_push_internal(index + 1, budget)? {
+                PushResult::HaveMoreOutput => return Ok(false),
+                PushResult::Blocked => {
+                    self.remaining_sink_chunk = true;
+                    return Ok(false);
+                }
+                PushResult::NeedMoreInput | PushResult::Finished => {}
             }
         }
         self.flush = FlushState::Done;
@@ -401,19 +452,18 @@ impl PipelineExecutor {
             &self.partition_info,
         )?;
         self.partition_info.min_batch_index = self.pipeline.update_batch_index(current, next)?;
+        // The sink sees the batch of its input and the minimum (`partition_info` of the
+        // local sink state).
+        self.ctx.partition_info = self.partition_info.clone();
         Ok(())
     }
 
     /// Pushes `chunks[initial_idx]` through the operators after position `initial_idx`
     /// into the sink, as long as operators have more output and the budget lasts
     /// (`ExecutePushInternal`).
-    fn execute_push_internal(
-        &mut self,
-        initial_idx: usize,
-        budget: &mut ExecutionBudget,
-    ) -> Result<OperatorResult> {
+    fn execute_push_internal(&mut self, initial_idx: usize, budget: &mut ExecutionBudget) -> Result<PushResult> {
         if self.chunks[initial_idx].is_empty() {
-            return Ok(OperatorResult::NeedMoreInput);
+            return Ok(PushResult::NeedMoreInput);
         }
         let final_index = self.final_index();
         let mut result;
@@ -440,16 +490,20 @@ impl PipelineExecutor {
                     )?
                 };
                 self.record(|p| p.sink, None, started);
-                if sink_result == SinkResult::Finished {
-                    self.finish_processing(None);
-                    return Ok(OperatorResult::Finished);
+                match sink_result {
+                    SinkResult::Finished => {
+                        self.finish_processing(None);
+                        return Ok(PushResult::Finished);
+                    }
+                    SinkResult::Blocked => return Ok(PushResult::Blocked),
+                    SinkResult::NeedMoreInput => {}
                 }
             }
             if result != OperatorResult::HaveMoreOutput {
-                return Ok(result);
+                return Ok(result.into());
             }
             if !budget.next() {
-                return Ok(result);
+                return Ok(result.into());
             }
         }
     }

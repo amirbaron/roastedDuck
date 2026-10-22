@@ -2,7 +2,6 @@
 
 [[case]]
 name = "late-error-{mode}"
-known = "a streaming result buffers 1 MB ahead of the reader in DuckDB, whose collector blocks; rustdb runs ahead in tasks of 50 chunks, so a late error stops the output after other rows"
 vary = { mode = ["list", "csv", "json"] }
 stdin = '''
 .mode {mode}

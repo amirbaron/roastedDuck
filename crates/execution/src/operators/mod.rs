@@ -29,6 +29,7 @@ mod perfect_hash_aggregate;
 mod pivot;
 mod projection;
 mod radix_sink;
+pub mod buffered_data;
 mod result_collector;
 mod sample;
 mod seq_scan;

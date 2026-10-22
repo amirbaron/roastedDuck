@@ -653,6 +653,7 @@ impl Shell {
                         let progress = conn.client_handle().query_progress();
                         display.update(state, db.as_ref(), progress.percentage);
                     }
+                    PendingExecutionResult::Blocked => conn.wait_for_task(&pending)?,
                 }
             }
             display.finish(state, db.as_ref());

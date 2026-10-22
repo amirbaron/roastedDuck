@@ -7,14 +7,15 @@
 //! pipeline completes, while the scheduler's workers help. A [`QueryExecution`] lets the
 //! caller drive that work one task at a time (pending query results).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rustdb_common::{Error, Result};
 
 use super::event::{Event, EventKind};
+use super::interrupt::InterruptState;
 use super::meta_pipeline::{MetaPipelineType, PipelineBuilder, PipelineGraph, operator_key};
 use super::pipeline::{Pipeline, SharedState};
 use super::pipeline_executor::{
@@ -37,6 +38,9 @@ pub struct QueryOptions {
     /// The planner's estimated cardinality of the plan's operators, which weighs the
     /// pipelines' progress.
     pub estimates: CardinalityEstimates,
+    /// Whether the plan's root is a streaming result collector, whose sink blocks until
+    /// the client fetches (`HasStreamingResultCollector`).
+    pub streaming_result: bool,
 }
 
 impl Default for QueryOptions {
@@ -46,6 +50,7 @@ impl Default for QueryOptions {
             preserve_insertion_order: true,
             client_interrupted: None,
             estimates: CardinalityEstimates::default(),
+            streaming_result: false,
         }
     }
 }
@@ -79,6 +84,25 @@ pub enum ExecutionStep {
     NotReady,
     /// The remaining tasks are running on other threads (`NO_TASKS_AVAILABLE`).
     NoTasksAvailable,
+    /// The streaming result collector blocked with its buffer full: the result can be
+    /// fetched (`RESULT_READY`).
+    ResultReady,
+    /// Every task left is blocked, waiting to be rescheduled (`BLOCKED`).
+    Blocked,
+}
+
+/// How long a blocked query waits for a task to be rescheduled (`Executor::WAIT_TIME`).
+const WAIT_TIME: std::time::Duration = std::time::Duration::from_millis(20);
+
+/// Tasks waiting for an operator's interrupt callback (`to_be_rescheduled_tasks`).
+#[derive(Default)]
+struct BlockedTasks {
+    tasks: HashMap<u64, Box<dyn Task>>,
+    /// Tasks whose callback came before they were descheduled: they are rescheduled as
+    /// soon as they are (DuckDB's `RescheduleTask` waits for the task to be descheduled).
+    rescheduled_early: HashSet<u64>,
+    /// Set by `CancelTasks`: blocked tasks are dropped instead of kept.
+    cancelled: bool,
 }
 
 /// A physical plan being executed (DuckDB's `Executor` after `Initialize`): the pipelines
@@ -115,6 +139,10 @@ impl QueryExecution {
             total_pipelines: AtomicUsize::new(0),
             events: Mutex::default(),
             executor_tasks: AtomicUsize::new(0),
+            next_task_id: AtomicU64::new(0),
+            wake_generation: AtomicU64::new(0),
+            blocked: Mutex::default(),
+            streaming_result: options.streaming_result,
         });
         shared.schedule(&graph);
         Ok(Self {
@@ -149,10 +177,27 @@ impl QueryExecution {
             *current = shared.producer.take_task();
         }
         let Some(task) = current.as_mut() else {
-            return Ok(ExecutionStep::NoTasksAvailable);
+            if let Some(error) = self.shared.take_error() {
+                return Err(self.fail(error));
+            }
+            // No task to run: the others run elsewhere or are blocked.
+            let blocked = lock(&self.shared.blocked);
+            if blocked.tasks.is_empty() {
+                return Ok(ExecutionStep::NoTasksAvailable);
+            }
+            if self.shared.result_collector_is_blocked(&blocked) {
+                return Ok(ExecutionStep::ResultReady);
+            }
+            return Ok(ExecutionStep::Blocked);
         };
-        if task.execute(TaskExecutionMode::ProcessPartial) != TaskExecutionResult::NotFinished {
-            *current = None;
+        match task.execute(TaskExecutionMode::ProcessPartial) {
+            TaskExecutionResult::NotFinished => {}
+            TaskExecutionResult::Blocked => {
+                if let Some(task) = current.take() {
+                    task.deschedule();
+                }
+            }
+            TaskExecutionResult::Finished | TaskExecutionResult::Error => *current = None,
         }
         if let Some(error) = self.shared.take_error() {
             return Err(self.fail(error));
@@ -160,18 +205,37 @@ impl QueryExecution {
         Ok(ExecutionStep::NotReady)
     }
 
+    /// Waits for a blocked task to be rescheduled, for at most `WAIT_TIME`; returns right
+    /// away when none is blocked or the result collector is, which only a fetch unblocks
+    /// (`Executor::WaitForTask`).
+    pub fn wait_for_blocked_task(&self) {
+        let shared = &self.shared;
+        {
+            let blocked = lock(&shared.blocked);
+            if blocked.tasks.is_empty() || shared.result_collector_is_blocked(&blocked) {
+                return;
+            }
+        }
+        shared
+            .producer
+            .wait_timeout(|| shared.is_complete() || shared.is_cancelled(), WAIT_TIME);
+    }
+
     /// Whether every pipeline completed or a task failed (`Executor::ExecutionIsFinished`).
     pub fn execution_is_finished(&self) -> bool {
         self.done || self.shared.is_complete() || lock(&self.shared.error).is_some()
     }
 
-    /// Blocks until a task of the query is queued or the query completed or failed
-    /// (`Executor::WaitForTask`).
+    /// Blocks until a task of the query is queued, a task blocked, a streaming result
+    /// has a chunk to read, or the query completed or failed.
     pub fn wait_for_task(&self) {
         let shared = &self.shared;
-        shared
-            .producer
-            .wait(|| shared.is_complete() || shared.is_cancelled());
+        let generation = shared.wake_generation.load(Ordering::Acquire);
+        shared.producer.wait(|| {
+            shared.is_complete()
+                || shared.is_cancelled()
+                || shared.wake_generation.load(Ordering::Acquire) != generation
+        });
     }
 
     /// Runs the query to completion and returns the root's finalized sink state.
@@ -181,6 +245,12 @@ impl QueryExecution {
                 ExecutionStep::Finished => break,
                 ExecutionStep::NotReady => {}
                 ExecutionStep::NoTasksAvailable => self.wait_for_task(),
+                ExecutionStep::Blocked => self.wait_for_blocked_task(),
+                ExecutionStep::ResultReady => {
+                    return Err(Error::internal(
+                        "a streaming result's collector blocked while running the query to completion",
+                    ));
+                }
             }
         }
         self.shared.cancel_tasks();
@@ -340,6 +410,15 @@ pub(crate) struct ExecutorShared {
     events: Mutex<Vec<Arc<Event>>>,
     /// Tasks created and not dropped yet (`executor_tasks`).
     executor_tasks: AtomicUsize,
+    /// Numbers the tasks, for their interrupt states.
+    next_task_id: AtomicU64,
+    /// Changes when a task blocks or a streaming result's buffer gets a chunk to read:
+    /// wakes the query thread waiting for tasks, as nothing is queued then.
+    wake_generation: AtomicU64,
+    /// Descheduled tasks (`to_be_rescheduled_tasks`).
+    blocked: Mutex<BlockedTasks>,
+    /// Whether the root is a streaming result collector (`HasStreamingResultCollector`).
+    streaming_result: bool,
 }
 
 impl std::fmt::Debug for ExecutorShared {
@@ -438,10 +517,72 @@ impl ExecutorShared {
         }
     }
 
+    /// Parks a task that blocked until its interrupt callback (`AddToBeRescheduled`); a
+    /// callback that came first reschedules it right away.
+    fn add_to_be_rescheduled(&self, task_id: u64, task: Box<dyn Task>) {
+        let mut blocked = lock(&self.blocked);
+        if blocked.cancelled {
+            drop(blocked);
+            drop(task);
+            return;
+        }
+        if blocked.rescheduled_early.remove(&task_id) {
+            drop(blocked);
+            self.producer.schedule_tasks(vec![task]);
+            return;
+        }
+        blocked.tasks.insert(task_id, task);
+        drop(blocked);
+        self.wake_query_thread();
+    }
+
+    /// Wakes the query thread waiting for tasks to look at the query again.
+    pub(crate) fn wake_query_thread(&self) {
+        self.wake_generation.fetch_add(1, Ordering::AcqRel);
+        self.producer.notify();
+    }
+
+    /// Queues a descheduled task again (`RescheduleTask`).
+    pub(crate) fn reschedule_task(&self, task_id: u64) {
+        let mut blocked = lock(&self.blocked);
+        if blocked.cancelled {
+            return;
+        }
+        match blocked.tasks.remove(&task_id) {
+            Some(task) => {
+                drop(blocked);
+                self.producer.schedule_tasks(vec![task]);
+            }
+            None => {
+                blocked.rescheduled_early.insert(task_id);
+            }
+        }
+    }
+
+    /// Whether a blocked task waits for the streaming result collector, which only a
+    /// fetch unblocks (`ResultCollectorIsBlocked`).
+    fn result_collector_is_blocked(&self, blocked: &BlockedTasks) -> bool {
+        if !self.streaming_result {
+            return false;
+        }
+        // The result collector is always in the last pipeline.
+        if self.completed_pipelines.load(Ordering::Acquire) + 1 != self.total_pipelines.load(Ordering::Acquire) {
+            return false;
+        }
+        blocked.tasks.values().any(|task| task.task_blocked_on_result())
+    }
+
     /// Stops the query's remaining work and waits for its running tasks
-    /// (`CancelTasks`): queued tasks are dropped, running ones stop at their next chunk.
+    /// (`CancelTasks`): queued and blocked tasks are dropped, running ones stop at their
+    /// next chunk.
     fn cancel_tasks(&self) {
         self.interrupted.store(true, Ordering::Release);
+        let blocked_tasks = {
+            let mut blocked = lock(&self.blocked);
+            blocked.cancelled = true;
+            std::mem::take(&mut blocked.tasks)
+        };
+        drop(blocked_tasks);
         while let Some(task) = self.producer.take_task() {
             drop(task);
         }
@@ -852,16 +993,20 @@ pub(crate) struct ExecutorTask {
     event: Arc<Event>,
     kind: TaskKind,
     thread_index: usize,
+    /// Identifies the task to its interrupt state.
+    task_id: u64,
 }
 
 impl ExecutorTask {
     pub fn new(executor: &Arc<ExecutorShared>, event: Arc<Event>, kind: TaskKind) -> Self {
         let thread_index = executor.executor_tasks.fetch_add(1, Ordering::AcqRel);
+        let task_id = executor.next_task_id.fetch_add(1, Ordering::Relaxed);
         Self {
             executor: Arc::clone(executor),
             event,
             kind,
             thread_index,
+            task_id,
         }
     }
 
@@ -873,11 +1018,10 @@ impl ExecutorTask {
             TaskKind::Pipeline { pipeline, executor } => {
                 if executor.is_none() {
                     let states = self.executor.pipeline_states(pipeline)?;
-                    *executor = Some(Box::new(PipelineExecutor::new(
-                        self.executor.context(self.thread_index),
-                        Arc::clone(pipeline),
-                        states,
-                    )?));
+                    // `SetTaskForInterrupts`: a blocked sink reschedules this task.
+                    let mut ctx = self.executor.context(self.thread_index);
+                    ctx.interrupt_state = InterruptState::task(Arc::downgrade(&self.executor), self.task_id);
+                    *executor = Some(Box::new(PipelineExecutor::new(ctx, Arc::clone(pipeline), states)?));
                 }
                 let pipeline_executor = executor
                     .as_mut()
@@ -886,8 +1030,10 @@ impl ExecutorTask {
                     TaskExecutionMode::ProcessAll => usize::MAX,
                     TaskExecutionMode::ProcessPartial => PARTIAL_CHUNK_COUNT,
                 };
-                if pipeline_executor.execute(max_chunks)? == PipelineExecuteResult::NotFinished {
-                    return Ok(TaskExecutionResult::NotFinished);
+                match pipeline_executor.execute(max_chunks)? {
+                    PipelineExecuteResult::NotFinished => return Ok(TaskExecutionResult::NotFinished),
+                    PipelineExecuteResult::Interrupted => return Ok(TaskExecutionResult::Blocked),
+                    PipelineExecuteResult::Finished => {}
                 }
                 // The executor holds the sink state: release it before the event can
                 // finalize the sink.
@@ -913,6 +1059,17 @@ impl ExecutorTask {
 }
 
 impl Task for ExecutorTask {
+    fn deschedule(self: Box<Self>) {
+        let executor = Arc::clone(&self.executor);
+        let task_id = self.task_id;
+        executor.add_to_be_rescheduled(task_id, self);
+    }
+
+    fn task_blocked_on_result(&self) -> bool {
+        // A pipeline task whose sink blocked keeps the chunk it could not sink.
+        matches!(&self.kind, TaskKind::Pipeline { executor: Some(executor), .. } if executor.remaining_sink_chunk())
+    }
+
     fn execute(&mut self, mode: TaskExecutionMode) -> TaskExecutionResult {
         if self.executor.is_cancelled() {
             return TaskExecutionResult::Error;

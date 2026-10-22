@@ -4101,7 +4101,9 @@ impl Connection {
         let root: PhysicalRef = if streaming {
             Arc::new(PhysicalResultCollector::streaming(
                 physical,
+                env.threads(),
                 preserve_insertion_order,
+                usize::try_from(self.settings.streaming_buffer_size()).unwrap_or(usize::MAX),
             ))
         } else {
             Arc::new(
@@ -4127,6 +4129,7 @@ impl Connection {
             preserve_insertion_order,
             client_interrupted: Some(self.client.interrupt_flag()),
             estimates,
+            streaming_result: streaming,
         };
         let execution = match QueryExecution::new(root, env, &options) {
             Ok(execution) => execution,
