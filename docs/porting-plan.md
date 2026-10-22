@@ -11,9 +11,9 @@ Target: a 100% Rust engine that is a 1:1 drop-in replacement for DuckDB **1.5.6*
    C++ DuckDB opens databases written by the Rust engine (storage + WAL byte format).
 3. **Same ABI.** It ships a `libduckdb` exporting the C API (`duckdb.h`, 546
    functions) and loads C-API extensions (`duckdb_extension.h`).
-4. **Faster and leaner than C++ DuckDB.** It beats the reference on speed and uses much
-   less peak memory on DuckDB's own benchmark suites, on the same machine, with
-   identical results.
+4. **Performance parity with C++ DuckDB.** Match the reference on speed and peak
+   memory on DuckDB's own benchmark suites, on the same machine, with identical
+   results. The owner replaced the earlier outperformance targets on 2026-10-22.
 5. **Runs after every step.** Every merged change builds, the `rustdb` CLI and
    `libduckdb` run, and the conformance pass count never goes down.
 6. **Independent review.** At every milestone, reviewer agents that did not write the
@@ -187,9 +187,10 @@ wall time and peak memory for every benchmark.
 
 **Final targets (M9):**
 
-- **Speed:** geometric-mean speedup ≥ 1.3× on TPC-H SF10, ClickBench and h2oai. No
-  individual benchmark in any suite slower than **0.99×** C++.
-- **Memory:** geometric-mean peak memory ≤ **0.6×** C++ across all suites. No individual
+- **Speed:** geometric-mean speedup ≥ 1.0× on TPC-H SF10, ClickBench and h2oai,
+  allowing measured noise. No individual benchmark in any suite slower than **0.99×**
+  C++ beyond repeatable measurement noise.
+- **Memory:** geometric-mean peak memory ≤ **1.0×** C++ across all suites. No individual
   benchmark above 1.0× C++. On the out-of-core suite at a fixed `memory_limit`, never
   spills more bytes than C++.
 
@@ -267,14 +268,14 @@ precedence and error positions statement by statement.
 - **Transformer:** a 1:1 port of `src/parser/transform` producing the generated AST.
 
 **Gate:** for every statement in the corpus, Rust AST JSON == C++ `json_serialize_sql`,
-and every parse error has identical text; parse throughput faster than C++.
+and every parse error has identical text; parse throughput at parity with C++.
 
 ### M3 — Single-threaded in-memory slice
 In-memory catalog, binder for `SELECT`/`CREATE TABLE`/`INSERT`, expression executor,
 operators: scan, filter, projection, hash aggregate, order, limit, hash/nested-loop join.
 
 **Gate:** `select/`, `projection/`, `filter/`, `limit/`, `order/`, `types/` (in-memory
-subsets) green; single-threaded micro benchmarks faster than C++ with 1 thread.
+subsets) green; single-threaded micro benchmarks at parity with C++ with 1 thread.
 
 ### M4 — Full SQL surface
 Complete binder (subquery decorrelation, CTEs incl. recursive/`USING KEY`, `PIVOT`,
@@ -294,8 +295,8 @@ Task scheduler, pipelines/events, partitioned hash join and aggregate, the sort 
 profiler. Most of the performance levers land here.
 
 **Gate:** `parallelism/`, `outofcore/` green; TPC-H/TPC-DS SF1–SF10 results identical;
-in-memory TPC-H, h2oai, ClickBench: every benchmark ≥ 0.99× C++ speed, geomean > 1.0×,
-geomean peak memory below C++.
+in-memory TPC-H, h2oai, ClickBench: every benchmark ≥ 0.99× C++ speed, geomean ≥ 1.0×,
+geomean peak memory ≤ C++ (allowing measured noise).
 
 ### M6 — Persistent storage, byte-compatible
 Single-file block manager, metadata blocks, row groups, column segments, every
@@ -306,7 +307,7 @@ checkpointing, MVCC (undo buffers, row versions), ART indexes, encryption,
 
 **Gate:** opens every `test/storage/bc/*.db`; C++ opens every Rust-written DB and WAL
 (round-trip suite); crash/WAL-replay tests; `storage/`, `transactions/`, `index/`,
-`attach/`, `upsert/`, `alter/` green; `benchmark/ingestion` and on-disk TPC-H faster.
+`attach/`, `upsert/`, `alter/` green; `benchmark/ingestion` and on-disk TPC-H at parity.
 
 ### M7 — Formats and in-tree extensions
 CSV sniffer and reader/writer (`copy/` is the second-largest test dir at 539 files),

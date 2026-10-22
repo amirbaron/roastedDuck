@@ -9,7 +9,11 @@ Every test of DuckDB's sqllogictest corpus passes, except the ones rustdb cannot
 design (`conformance/divergences.md`: C++ extension binaries, and tests that expect an
 out-of-memory error rustdb avoids by using less memory). Along the way: byte-compatible
 storage and WAL with C++ DuckDB, the same C API, no C/C++ in the shipped artifact, and the
-performance targets of `docs/porting-plan.md` (≥ 1.3× C++ speed, ≤ 0.6× memory).
+performance targets of `docs/porting-plan.md` (≥ 1.0× C++ speed, ≤ 1.0× memory, allowing measured noise).
+
+The owner confirmed on 2026-10-22: parity with C++ is sufficient; the former
+≥ 1.3× speed / ≤ 0.6× memory targets are superseded. Functional and byte-compatibility
+gates remain in place.
 
 ## Ground rules (from the owner)
 
@@ -128,5 +132,5 @@ byte comparisons; a Rust unit test covers the fallback.
    `dbgen` in `crates/tpch`, carries TPC's license, not MIT — the owner should review the
    TPC terms before rustdb is published; both stay optional extension crates so the core
    is MIT.
-4. Performance rounds until the targets hold (≥ 1.3× C++ speed, ≤ 0.6× memory); then
+4. Performance rounds until the targets hold (≥ 1.0× C++ speed, ≤ 1.0× memory, allowing measured noise); then
    differential fuzzing against C++ (M9 in `docs/porting-plan.md`).

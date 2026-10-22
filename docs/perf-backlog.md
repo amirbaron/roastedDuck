@@ -1,7 +1,10 @@
 # Performance backlog
 
 Known places where rustdb is slower or heavier than DuckDB 1.5.6. Every item must be
-closed before M9 (no benchmark below 0.99× C++ speed, memory geomean ≤ 0.6×). Numbers are
+closed before M9 (no benchmark below 0.99× C++ speed, memory geomean ≤ 1.0×). The
+owner superseded the ≥ 1.3× speed / ≤ 0.6× memory targets on 2026-10-22: parity
+is sufficient. Historical measurements and rejected experiments below retain their
+original targets for context; caching may be re-evaluated under the parity target. Numbers are
 CPU time unless noted; the machine is shared, so small differences need re-checking.
 
 ## Benchmark suites (round 2)

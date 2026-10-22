@@ -1,10 +1,12 @@
 # Work queue
 
-Workstreams found while closing conformance failures (at most two agents run at once).
+Workstreams found while closing conformance failures. Execute sequentially: the
+owner limits this workspace to one task and one build or test workload at a time.
+The 2026-10-22 goal is C++ parity, including performance, without outperformance targets.
 Each names the C++ it ports and the tests or checks that close it. Finished streams are
 removed; the commit history records them.
 
-Order of the next agents: the shell (3) first — the owner's top priority (2026-10-21):
+Priority: the shell (3) first — the owner's top priority (2026-10-21):
 it must be DuckDB's shell one to one, interactive editing included — then compression
 (5) and the rest; the C API leftovers (2) when a client needs them.
 
@@ -116,7 +118,7 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
 7. **Performance round 6.** Round 5 (`docs/perf-backlog.md`) ported the Top-N row group
    order, the partitioned aggregate and the UnnestRewriter's `unnest` pattern, and showed
    that caching table blocks like DuckDB makes rustdb's memory DuckDB's. Left: cheaper
-   table block re-reads (caching is ruled out by the memory target), the aggregate hash
+   table block re-reads (re-evaluate caching against the current ≤ 1.0× memory target), the aggregate hash
    table's lookups and resizes, and the hash join probe. Struct projection pushdown is
    ported (13).
 8. **Logical plan serialization, the rest.** `json_serialize_plan` writes logical plans
