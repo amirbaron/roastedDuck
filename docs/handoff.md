@@ -88,8 +88,12 @@ gates remain in place.
 
 No previous Rust build, corpus run or agent process was active when this session resumed.
 The ICU worktree (`worktree-agent-a57faf12816ee7338`) has been merged; keep it and its
-artifacts intact. Performance round 6 remains saved work to review after ICU verification,
-not a running agent. Its brief is `.context/briefs/perf-round-6.md` (base `4dca105`).
+artifacts intact. Performance round 6 has five saved commits (`1814548` through `155fe70`)
+under review for sequential integration, not a running agent. They pool vector
+buffers by size, speed RLE skips, keep all-row selections implicit, reuse compressed
+string heaps, and reuse expression scratch lists and constants. Acceptance requires
+fresh checks on the merged code, focused conformance and shell comparisons, and
+performance measurements; the saved branch has no completed final benchmark report. Its brief is `.context/briefs/perf-round-6.md` (base `4dca105`).
 Do not launch the historical briefs in parallel: the owner's latest limit is one task.
 
 ICU verification artifacts are under
