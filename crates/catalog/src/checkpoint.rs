@@ -73,7 +73,7 @@ fn entry_info(
 }
 
 /// `TableCatalogEntry::GetInfo`.
-pub(crate) fn table_create_info(
+pub fn table_create_info(
     catalog: &str,
     schema: &str,
     entry: &CatalogEntry,

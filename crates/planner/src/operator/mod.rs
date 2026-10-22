@@ -9,6 +9,7 @@ mod copy_to_file;
 mod display;
 mod explain;
 mod expression_filter;
+mod serialize;
 mod table_index;
 
 use std::sync::{Arc, Mutex, PoisonError};
@@ -29,8 +30,8 @@ use crate::prepared::PreparedStatementData;
 use crate::{ColumnBinding, SubqueryType};
 
 pub use copy_to_file::{
-    CopyFunctionReturnType, CopyOverwriteMode, ExportedTable, FilenamePattern, LogicalCopyToFile,
-    LogicalExport,
+    CopyFunctionReturnType, CopyOverwriteMode, ExportedTable, FileNameSegment, FilenamePattern,
+    LogicalCopyToFile, LogicalExport,
 };
 pub use display::render_plan;
 pub use explain::{logical_operator_name, renderer_kind};
@@ -744,6 +745,8 @@ pub struct LogicalCreateIndex {
 #[derive(Clone, Debug)]
 pub struct LogicalInsert {
     pub table: Arc<rustdb_catalog::CatalogEntry>,
+    /// The catalog and schema of `table`.
+    pub catalog: String,
     pub schema: String,
     pub table_index: u64,
     /// For each physical column, the input column holding its value, or `None` to use the
@@ -760,6 +763,8 @@ pub struct LogicalInsert {
 #[derive(Clone, Debug)]
 pub struct LogicalDelete {
     pub table: Arc<rustdb_catalog::CatalogEntry>,
+    /// The catalog and schema of `table`.
+    pub catalog: String,
     pub schema: String,
     pub table_index: u64,
     pub bound_constraints: Vec<BoundConstraint>,
@@ -771,6 +776,8 @@ pub struct LogicalDelete {
 #[derive(Clone, Debug)]
 pub struct LogicalUpdate {
     pub table: Arc<rustdb_catalog::CatalogEntry>,
+    /// The catalog and schema of `table`.
+    pub catalog: String,
     pub schema: String,
     pub table_index: u64,
     /// The updated physical columns.
@@ -804,6 +811,9 @@ pub struct BoundMergeIntoAction {
 #[derive(Clone, Debug)]
 pub struct LogicalMergeInto {
     pub table: Arc<rustdb_catalog::CatalogEntry>,
+    /// The catalog and schema of `table`.
+    pub catalog: String,
+    pub schema: String,
     pub table_index: u64,
     /// The default of each physical column.
     pub bound_defaults: Vec<Expression>,

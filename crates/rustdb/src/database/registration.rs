@@ -50,7 +50,9 @@ impl Connection {
             };
             let mut merged = current.clone();
             merged.merge_function_set(set, true);
-            let mut entry = CatalogEntry::new(existing.name(), EntryKind::ScalarFunction(merged));
+            let mut kind = EntryKind::ScalarFunction(merged);
+            kind.set_function_catalog(&system.name(), DEFAULT_SCHEMA);
+            let mut entry = CatalogEntry::new(existing.name(), kind);
             entry.oid = existing.oid;
             entry.internal = existing.internal;
             system.replace_entry(
@@ -155,7 +157,13 @@ impl Connection {
 }
 
 /// Creates the internal function entry `name` in `main` of the system catalog.
-fn create_function(transaction: &Transaction, system: &Catalog, name: &str, kind: EntryKind) -> Result<()> {
+fn create_function(
+    transaction: &Transaction,
+    system: &Catalog,
+    name: &str,
+    mut kind: EntryKind,
+) -> Result<()> {
+    kind.set_function_catalog(&system.name(), DEFAULT_SCHEMA);
     let mut entry = CatalogEntry::new(name, kind);
     entry.internal = true;
     system

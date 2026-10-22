@@ -38,6 +38,7 @@ pub mod context;
 pub mod expression;
 pub mod expression_binder;
 pub mod function_binder;
+mod function_serialization;
 mod generated;
 pub mod operator;
 pub mod parsed_equality;
@@ -47,8 +48,8 @@ pub mod subquery;
 
 pub use binder::expression::bind_logical_type;
 pub use binder::statement::{bind_index_expressions, verify_parameters};
-pub use binder::tableref::{SHOW_TABLES_EXPANDED, deduplicate_columns};
 pub use binder::tableref::{JoinSide, create_join, extract_join_conditions};
+pub use binder::tableref::{SHOW_TABLES_EXPANDED, deduplicate_columns};
 pub use binder::{Binder, BindingMode, BoundStatement};
 pub use column_binding::{ColumnBinding, generate_column_bindings};
 pub use column_binding_resolver::ColumnBindingResolver;
@@ -57,7 +58,9 @@ pub use context::{
     ReplacementScanInput,
 };
 pub use expression::{Expression, ExpressionKind};
-pub use generated::enums::{DistinctType, LogicalOperatorType};
+pub use generated::enums::{
+    DistinctType, FileNameSegmentType, LimitNodeType, LogicalOperatorType, TupleDataValidityType,
+};
 pub use operator::{BoundLimitNode, LogicalKind, LogicalOperator, render_plan};
 pub use planner::{PlannedStatement, Planner};
 pub use prepared::{PreparedStatementData, StatementProperties, StatementReturnType};

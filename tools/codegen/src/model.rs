@@ -72,6 +72,8 @@ pub struct Class {
     pub pointer_held: bool,
     /// Used by value somewhere (needs `Serialize`/`Deserialize` for whole objects).
     pub used_by_value: bool,
+    /// Generated as a property struct for a hand-written type ([`Content::Properties`]).
+    pub properties: bool,
 }
 
 impl Class {
@@ -120,14 +122,23 @@ impl Model {
                     Content::Classes {
                         spec,
                         classes: selection,
+                    }
+                    | Content::Properties {
+                        spec,
+                        classes: selection,
                     } => {
+                        let properties = matches!(module.content, Content::Properties { .. });
                         for class in read_spec_file(&specs.join(spec))? {
                             if selection.is_some_and(|s| !s.contains(&class.class.as_str())) {
                                 continue;
                             }
                             let name = class.class.clone();
+                            if classes.contains_key(&name) {
+                                return Err(format!("{name} is generated twice").into());
+                            }
                             let mut resolved = resolve_class(class, home.clone(), &versions)?;
                             resolved.order = classes.len();
+                            resolved.properties = properties;
                             classes.insert(name, resolved);
                         }
                     }
@@ -220,6 +231,16 @@ impl Model {
         for class in self.classes.values().filter(|c| !c.config.custom) {
             let name = &class.spec.class;
             let spec = &class.spec;
+            if class.properties {
+                // Only written, by hand-written types: the C++ deserialization code and
+                // computed properties have no counterpart.
+                if spec.custom_implementation {
+                    return Err(
+                        format!("{name}: hand-written C++ serialization; configure a custom class").into(),
+                    );
+                }
+                continue;
+            }
             if spec.custom_implementation || spec.constructor_method.is_some() {
                 return Err(
                     format!("{name}: hand-written C++ (de)serialization; configure a custom class").into(),
@@ -331,7 +352,10 @@ fn collect_usage(
             }
         }
         CppType::Pointer(inner) => collect_usage(inner, true, pointers, values),
-        CppType::Vector(inner) | CppType::Set(inner) | CppType::CaseInsensitiveMap(inner) => {
+        CppType::Vector(inner)
+        | CppType::Set(inner)
+        | CppType::CaseInsensitiveMap(inner)
+        | CppType::IndexVector(inner) => {
             collect_usage(inner, false, pointers, values);
         }
         CppType::Map(a, b) | CppType::Pair(a, b) => {
@@ -407,5 +431,6 @@ fn resolve_class(spec: SpecClass, home: Home, versions: &VersionMap) -> Result<C
         children: Vec::new(),
         pointer_held: false,
         used_by_value: false,
+        properties: false,
     })
 }

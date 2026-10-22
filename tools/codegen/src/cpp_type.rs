@@ -39,6 +39,8 @@ pub enum CppType {
     Map(Box<CppType>, Box<CppType>),
     /// `pair<A, B>`: `{first, second}`.
     Pair(Box<CppType>, Box<CppType>),
+    /// `IndexVector<T, INDEX_TYPE>`: `{internal_vector}`.
+    IndexVector(Box<CppType>),
 }
 
 /// Splits `a, b<c, d>` at top-level commas.
@@ -82,7 +84,8 @@ impl CppType {
             };
             return Ok(match name {
                 "unique_ptr" | "shared_ptr" | "optionally_owned_ptr" => Self::Pointer(arg(0)?),
-                "vector" | "unsafe_vector" => Self::Vector(arg(0)?),
+                "vector" | "unsafe_vector" | "unordered_set" => Self::Vector(arg(0)?),
+                "IndexVector" => Self::IndexVector(arg(0)?),
                 "set" => Self::Set(arg(0)?),
                 // Keys of DuckDB's insertion-ordered map are case-insensitive too.
                 "case_insensitive_map_t" | "InsertionOrderPreservingMap" => Self::CaseInsensitiveMap(arg(0)?),
@@ -126,7 +129,8 @@ impl CppType {
             Self::Pointer(inner)
             | Self::Vector(inner)
             | Self::Set(inner)
-            | Self::CaseInsensitiveMap(inner) => {
+            | Self::CaseInsensitiveMap(inner)
+            | Self::IndexVector(inner) => {
                 inner.named_types(out);
             }
             Self::Map(a, b) | Self::Pair(a, b) => {

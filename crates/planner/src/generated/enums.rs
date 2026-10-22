@@ -452,3 +452,274 @@ impl Deserialize for DistinctType {
         })
     }
 }
+
+/// DuckDB's `AggregateType` (`duckdb/function/aggregate_state.hpp`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum AggregateType {
+    NonDistinct = 1,
+    Distinct = 2,
+}
+
+impl AggregateType {
+    /// Every member, in declaration order.
+    pub const ALL: [Self; 2] = [Self::NonDistinct, Self::Distinct];
+
+    /// The name `EnumUtil::ToChars` prints.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::NonDistinct => "NON_DISTINCT",
+            Self::Distinct => "DISTINCT",
+        }
+    }
+
+    /// Parses any name `EnumUtil::FromString` accepts (ASCII case-insensitive).
+    pub fn from_name(name: &str) -> Option<Self> {
+        const NAMES: &[(&str, AggregateType)] = &[
+            ("NON_DISTINCT", AggregateType::NonDistinct),
+            ("DISTINCT", AggregateType::Distinct),
+        ];
+        NAMES
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| *v)
+    }
+
+    /// The member with this numeric value.
+    pub const fn from_repr(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::NonDistinct),
+            2 => Some(Self::Distinct),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for AggregateType {
+    fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        write_enum(serializer, self.name(), |serializer| {
+            serializer.write_u8(*self as u8);
+        });
+        Ok(())
+    }
+}
+
+impl Deserialize for AggregateType {
+    fn deserialize(deserializer: &mut dyn Deserializer) -> Result<Self> {
+        read_enum(deserializer, "AggregateType", Self::from_name, |deserializer| {
+            Ok(Self::from_repr(deserializer.read_u8()?))
+        })
+    }
+}
+
+/// DuckDB's `LimitNodeType` (`duckdb/planner/bound_result_modifier.hpp`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum LimitNodeType {
+    Unset = 0,
+    ConstantValue = 1,
+    ConstantPercentage = 2,
+    ExpressionValue = 3,
+    ExpressionPercentage = 4,
+}
+
+impl LimitNodeType {
+    /// Every member, in declaration order.
+    pub const ALL: [Self; 5] = [
+        Self::Unset,
+        Self::ConstantValue,
+        Self::ConstantPercentage,
+        Self::ExpressionValue,
+        Self::ExpressionPercentage,
+    ];
+
+    /// The name `EnumUtil::ToChars` prints.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Unset => "UNSET",
+            Self::ConstantValue => "CONSTANT_VALUE",
+            Self::ConstantPercentage => "CONSTANT_PERCENTAGE",
+            Self::ExpressionValue => "EXPRESSION_VALUE",
+            Self::ExpressionPercentage => "EXPRESSION_PERCENTAGE",
+        }
+    }
+
+    /// Parses any name `EnumUtil::FromString` accepts (ASCII case-insensitive).
+    pub fn from_name(name: &str) -> Option<Self> {
+        const NAMES: &[(&str, LimitNodeType)] = &[
+            ("UNSET", LimitNodeType::Unset),
+            ("CONSTANT_VALUE", LimitNodeType::ConstantValue),
+            ("CONSTANT_PERCENTAGE", LimitNodeType::ConstantPercentage),
+            ("EXPRESSION_VALUE", LimitNodeType::ExpressionValue),
+            ("EXPRESSION_PERCENTAGE", LimitNodeType::ExpressionPercentage),
+        ];
+        NAMES
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| *v)
+    }
+
+    /// The member with this numeric value.
+    pub const fn from_repr(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Unset),
+            1 => Some(Self::ConstantValue),
+            2 => Some(Self::ConstantPercentage),
+            3 => Some(Self::ExpressionValue),
+            4 => Some(Self::ExpressionPercentage),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for LimitNodeType {
+    fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        write_enum(serializer, self.name(), |serializer| {
+            serializer.write_u8(*self as u8);
+        });
+        Ok(())
+    }
+}
+
+impl Deserialize for LimitNodeType {
+    fn deserialize(deserializer: &mut dyn Deserializer) -> Result<Self> {
+        read_enum(deserializer, "LimitNodeType", Self::from_name, |deserializer| {
+            Ok(Self::from_repr(deserializer.read_u8()?))
+        })
+    }
+}
+
+/// DuckDB's `TupleDataValidityType` (`duckdb/common/enums/tuple_data_layout_enums.hpp`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum TupleDataValidityType {
+    CanHaveNullValues = 0,
+    CannotHaveNullValues = 1,
+}
+
+impl TupleDataValidityType {
+    /// Every member, in declaration order.
+    pub const ALL: [Self; 2] = [Self::CanHaveNullValues, Self::CannotHaveNullValues];
+
+    /// The name `EnumUtil::ToChars` prints.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::CanHaveNullValues => "CAN_HAVE_NULL_VALUES",
+            Self::CannotHaveNullValues => "CANNOT_HAVE_NULL_VALUES",
+        }
+    }
+
+    /// Parses any name `EnumUtil::FromString` accepts (ASCII case-insensitive).
+    pub fn from_name(name: &str) -> Option<Self> {
+        const NAMES: &[(&str, TupleDataValidityType)] = &[
+            ("CAN_HAVE_NULL_VALUES", TupleDataValidityType::CanHaveNullValues),
+            (
+                "CANNOT_HAVE_NULL_VALUES",
+                TupleDataValidityType::CannotHaveNullValues,
+            ),
+        ];
+        NAMES
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| *v)
+    }
+
+    /// The member with this numeric value.
+    pub const fn from_repr(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::CanHaveNullValues),
+            1 => Some(Self::CannotHaveNullValues),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for TupleDataValidityType {
+    fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        write_enum(serializer, self.name(), |serializer| {
+            serializer.write_u8(*self as u8);
+        });
+        Ok(())
+    }
+}
+
+impl Deserialize for TupleDataValidityType {
+    fn deserialize(deserializer: &mut dyn Deserializer) -> Result<Self> {
+        read_enum(
+            deserializer,
+            "TupleDataValidityType",
+            Self::from_name,
+            |deserializer| Ok(Self::from_repr(deserializer.read_u8()?)),
+        )
+    }
+}
+
+/// DuckDB's `FileNameSegmentType` (`duckdb/common/filename_pattern.hpp`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum FileNameSegmentType {
+    Literal = 0,
+    UuidV4 = 1,
+    UuidV7 = 2,
+    Offset = 3,
+}
+
+impl FileNameSegmentType {
+    /// Every member, in declaration order.
+    pub const ALL: [Self; 4] = [Self::Literal, Self::UuidV4, Self::UuidV7, Self::Offset];
+
+    /// The name `EnumUtil::ToChars` prints.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Literal => "LITERAL",
+            Self::UuidV4 => "UUID_V4",
+            Self::UuidV7 => "UUID_V7",
+            Self::Offset => "OFFSET",
+        }
+    }
+
+    /// Parses any name `EnumUtil::FromString` accepts (ASCII case-insensitive).
+    pub fn from_name(name: &str) -> Option<Self> {
+        const NAMES: &[(&str, FileNameSegmentType)] = &[
+            ("LITERAL", FileNameSegmentType::Literal),
+            ("UUID_V4", FileNameSegmentType::UuidV4),
+            ("UUID_V7", FileNameSegmentType::UuidV7),
+            ("OFFSET", FileNameSegmentType::Offset),
+        ];
+        NAMES
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| *v)
+    }
+
+    /// The member with this numeric value.
+    pub const fn from_repr(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Literal),
+            1 => Some(Self::UuidV4),
+            2 => Some(Self::UuidV7),
+            3 => Some(Self::Offset),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for FileNameSegmentType {
+    fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        write_enum(serializer, self.name(), |serializer| {
+            serializer.write_u8(*self as u8);
+        });
+        Ok(())
+    }
+}
+
+impl Deserialize for FileNameSegmentType {
+    fn deserialize(deserializer: &mut dyn Deserializer) -> Result<Self> {
+        read_enum(
+            deserializer,
+            "FileNameSegmentType",
+            Self::from_name,
+            |deserializer| Ok(Self::from_repr(deserializer.read_u8()?)),
+        )
+    }
+}

@@ -29,6 +29,26 @@
       }
     ]
   },
+  "AggregateType": {
+    "header": "duckdb/function/aggregate_state.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "NON_DISTINCT",
+        "value": 1,
+        "strings": [
+          "NON_DISTINCT"
+        ]
+      },
+      {
+        "name": "DISTINCT",
+        "value": 2,
+        "strings": [
+          "DISTINCT"
+        ]
+      }
+    ]
+  },
   "AlterDatabaseType": {
     "header": "duckdb/parser/parsed_data/alter_database_info.hpp",
     "underlying": "uint8_t",

@@ -944,6 +944,7 @@ version = "1.5.6"
 dependencies = [
  "rustdb-buffer",
  "rustdb-common",
+ "rustdb-serde",
  "rustdb-types",
 ]
 
@@ -991,6 +992,7 @@ dependencies = [
  "rustdb-csv",
  "rustdb-function",
  "rustdb-functions",
+ "rustdb-optimizer",
  "rustdb-parser",
  "rustdb-planner",
  "rustdb-serde",

@@ -3,15 +3,10 @@
 
 use crate::{LogicalType, LogicalTypeId};
 
-/// How a [`ColumnIndex`] is read (DuckDB's `ColumnIndexType`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum ColumnIndexType {
-    /// The column in its entirety; its children only say which fields are needed.
-    #[default]
-    FullRead,
-    /// A struct or variant field the scan must extract and emit directly.
-    PushdownExtract,
-}
+/// How a [`ColumnIndex`] is read: in its entirety (`FullRead`; its children only say
+/// which fields are needed), or as a struct or variant field the scan must extract and
+/// emit directly (`PushdownExtract`).
+pub use crate::generated::enums::ColumnIndexType;
 
 /// A column, or a field path into a STRUCT (by field index) or VARIANT (by field name)
 /// column (DuckDB's `ColumnIndex`). Equality compares every member, like DuckDB's.
@@ -166,5 +161,19 @@ impl ColumnIndex {
                 }
             }
         }
+    }
+}
+
+impl rustdb_serde::Serialize for ColumnIndex {
+    /// `ColumnIndex::Serialize`.
+    fn serialize(&self, serializer: &mut dyn rustdb_serde::Serializer) -> rustdb_serde::Result<()> {
+        serializer.write_object(&crate::generated::column_index::ColumnIndex {
+            index: self.index,
+            child_indexes: &self.child_indexes,
+            index_type: self.index_type,
+            ty: &self.ty,
+            field: self.field_name(),
+            has_index: self.has_primary_index(),
+        })
     }
 }

@@ -3,6 +3,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use rustdb_common::Result;
+use rustdb_serde::Serializer;
 use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
 use crate::FunctionClient;
@@ -212,7 +213,22 @@ pub struct ScalarFunction {
     /// The kernel statistics propagation switches to when the first argument cannot
     /// contain unicode (the `SetFunctionCallback` of DuckDB's `ILikePropagateStats`).
     pub ascii_kernel: Option<ScalarKernel>,
+    /// The arguments before the bind removed some (DuckDB's `original_arguments`, set by
+    /// `Function::EraseArgument`); empty when it removed none.
+    pub original_arguments: Vec<LogicalType>,
+    /// The catalog and schema of the function's catalog entry (DuckDB's `catalog_name`
+    /// and `schema_name`, set by the function catalog entries); empty for a function not
+    /// taken from a catalog.
+    pub catalog_name: Arc<str>,
+    pub schema_name: Arc<str>,
+    /// Writes the bind data, so that a serialized plan can bind the function again
+    /// (DuckDB's `serialize` callback).
+    pub serialize: Option<ScalarSerialize>,
 }
+
+/// See [`ScalarFunction::serialize`] (DuckDB's `scalar_serialize_t`).
+pub type ScalarSerialize =
+    Arc<dyn Fn(&mut dyn Serializer, Option<&dyn FunctionData>, &ScalarFunction) -> Result<()> + Send + Sync>;
 
 /// See [`ScalarFunction::bind_expression`].
 pub type BindExpression =
@@ -240,6 +256,10 @@ impl ScalarFunction {
             bind_expression: None,
             rewrite_expression: None,
             ascii_kernel: None,
+            original_arguments: Vec::new(),
+            catalog_name: Arc::from(""),
+            schema_name: Arc::from(""),
+            serialize: None,
         }
     }
 

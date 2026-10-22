@@ -37,11 +37,13 @@ pub mod transaction;
 pub mod wal;
 
 mod data_table;
+mod generated;
 
 pub use data_table::{
     BoundForeignKey, ColumnDefinition, ConstraintVerifier, DataTable, DataTableInfo, ForeignKeyKind,
     LocalAppendState, OptimisticCollection, TableConstraints, TableIoManager,
 };
+pub use generated::enums::{OrderByColumnType, OrderByStatistics, StorageIndexType, TableFilterType};
 pub use optimistic_data_writer::{OptimisticDataWriter, OptimisticWriteConfig};
 pub use table::{ParallelTableScanState, StorageIndex, TableScanState};
 pub use table_filter::{TableFilter, TableFilterSet};

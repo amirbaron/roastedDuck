@@ -25,6 +25,11 @@ impl ColumnDataCollection {
         }
     }
 
+    /// A collection of `chunks` shared with their other holders.
+    pub fn from_shared(types: Vec<LogicalType>, chunks: Arc<[DataChunk]>) -> Self {
+        Self { types, chunks }
+    }
+
     pub fn types(&self) -> &[LogicalType] {
         &self.types
     }

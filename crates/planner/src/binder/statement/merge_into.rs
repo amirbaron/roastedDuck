@@ -306,9 +306,13 @@ pub fn bind_merge_into(scope: &mut BindScope<'_>, stmt: &mut MergeIntoStatement)
         };
         bind_table_ref(&mut target_scope, &mut stmt.target)?
     };
-    let (entry, target_index) = match &bound_table.plan.kind {
-        LogicalKind::Get(get) => (get.table.clone(), get.table_index),
-        _ => (None, 0),
+    let (entry, target_index, (catalog, schema)) = match &bound_table.plan.kind {
+        LogicalKind::Get(get) => (
+            get.table.clone(),
+            get.table_index,
+            get.table_schema.clone().unwrap_or_default(),
+        ),
+        _ => (None, 0, (String::new(), String::new())),
     };
     let entry: Arc<CatalogEntry> = entry.ok_or_else(|| Error::binder("Can only merge into base tables!"))?;
     let table = table_of(&entry)?;
@@ -443,6 +447,8 @@ pub fn bind_merge_into(scope: &mut BindScope<'_>, stmt: &mut MergeIntoStatement)
 
     let mut merge = LogicalMergeInto {
         table: Arc::clone(&entry),
+        catalog,
+        schema,
         table_index: merge_table_index,
         bound_defaults,
         row_id_start: 0,

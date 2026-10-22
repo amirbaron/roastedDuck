@@ -110,14 +110,17 @@ fn generate() -> Result<Vec<(PathBuf, String)>> {
                     }
                     emitter.finish("enum definitions (C++ headers and `enum_util.cpp`)")
                 }
-                Content::Classes { spec, .. } => {
+                Content::Classes { spec, .. } | Content::Properties { spec, .. } => {
                     let mut emitter = Emitter::new(&model, home.clone(), target.derives);
                     let mut classes: Vec<_> = model.classes.values().filter(|c| c.home == home).collect();
                     classes.sort_by_key(|c| c.order);
                     for class in classes {
-                        emitter
-                            .emit_class(class)
-                            .map_err(|e| format!("{}: {e}", class.spec.class))?;
+                        let emitted = if class.properties {
+                            emitter.emit_properties(class)
+                        } else {
+                            emitter.emit_class(class)
+                        };
+                        emitted.map_err(|e| format!("{}: {e}", class.spec.class))?;
                     }
                     emitter.finish(&format!("`{spec}`"))
                 }

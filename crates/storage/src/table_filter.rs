@@ -12,10 +12,13 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rustdb_common::{Error, Result};
+use rustdb_serde::{SerializeObject, Serializer};
 use rustdb_types::compare::{CompareOp, SqlOrd};
 
 use rustdb_types::{NativeType, PhysicalType, Sel, StringT, ValidityMask, Value, Vector};
 
+use crate::TableFilterType;
+use crate::generated::{nodes, table_filter as properties};
 use crate::statistics::{BaseStatistics, FilterPropagateResult, NumericValue, StatsData};
 
 /// A filter over arbitrary expressions, evaluated by the execution layer
@@ -38,6 +41,17 @@ pub trait ExpressionFilter: Send + Sync + fmt::Debug {
 
     /// The filter as SQL text over `column_name`.
     fn to_sql(&self, column_name: &str) -> String;
+
+    /// Writes the filter's `TableFilter` properties, its type included, for a serialized
+    /// plan (DuckDB's `ExpressionFilter::Serialize`). Filters the execution layer creates
+    /// never reach a serialized plan.
+    fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        let _ = serializer;
+        Err(Error::serialization(format!(
+            "Cannot serialize the table filter {}",
+            self.to_sql("column")
+        )))
+    }
 
     /// The filter as `Any`, so that layers above storage can recognize their own
     /// filter types.
@@ -631,6 +645,75 @@ impl TableFilterSet {
         self.filters.is_empty()
     }
 }
+
+impl rustdb_serde::Serialize for TableFilterSet {
+    fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        serializer.write_object(&nodes::TableFilterSet {
+            filters: &self.filters,
+        })
+    }
+}
+
+impl SerializeObject for TableFilter {
+    /// `TableFilter::Serialize` of each filter class.
+    fn serialize_fields(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        let filter_type = match self {
+            Self::ConstantComparison { .. } => TableFilterType::ConstantComparison,
+            Self::IsNull => TableFilterType::IsNull,
+            Self::IsNotNull => TableFilterType::IsNotNull,
+            Self::Or(_) => TableFilterType::ConjunctionOr,
+            Self::And(_) => TableFilterType::ConjunctionAnd,
+            Self::StructExtract { .. } => TableFilterType::StructExtract,
+            Self::Optional(_) | Self::SelectivityOptional(_) => TableFilterType::OptionalFilter,
+            Self::In(_) => TableFilterType::InFilter,
+            Self::Dynamic(_) => TableFilterType::DynamicFilter,
+            Self::Expression(filter) => return filter.serialize(serializer),
+        };
+        properties::TableFilter { filter_type }.serialize_fields(serializer)?;
+        match self {
+            Self::ConstantComparison { op, constant } => properties::ConstantFilter {
+                comparison_type: *op,
+                constant,
+            }
+            .serialize_fields(serializer),
+            Self::Or(children) => properties::ConjunctionOrFilter {
+                child_filters: children,
+            }
+            .serialize_fields(serializer),
+            Self::And(children) => properties::ConjunctionAndFilter {
+                child_filters: children,
+            }
+            .serialize_fields(serializer),
+            Self::StructExtract {
+                child_index,
+                child_name,
+                child_filter,
+            } => properties::StructFilter {
+                child_idx: *child_index as u64,
+                child_name,
+                child_filter: Some(child_filter),
+            }
+            .serialize_fields(serializer),
+            Self::Optional(child) => properties::OptionalFilter {
+                child_filter: child.as_deref(),
+            }
+            .serialize_fields(serializer),
+            Self::SelectivityOptional(filter) => {
+                // `SelectivityOptionalFilter::Serialize`.
+                properties::OptionalFilter {
+                    child_filter: Some(&filter.child),
+                }
+                .serialize_fields(serializer)?;
+                serializer.write_property_with_default(201, "selectivity_threshold", &filter.threshold)?;
+                serializer.write_property_with_default(202, "n_vectors_to_check", &filter.check_n)
+            }
+            Self::In(values) => properties::InFilter { values }.serialize_fields(serializer),
+            Self::IsNull | Self::IsNotNull | Self::Dynamic(_) | Self::Expression(_) => Ok(()),
+        }
+    }
+}
+
+rustdb_serde::impl_pointee_serialize!(TableFilter);
 
 #[cfg(test)]
 mod tests {

@@ -642,3 +642,68 @@ impl Deserialize for GeometryStorageType {
         )
     }
 }
+
+/// DuckDB's `ColumnIndexType` (`duckdb/common/column_index.hpp`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum ColumnIndexType {
+    Invalid = 0,
+    /// ! Regular column index, refers to a column in its entirety
+    FullRead = 1,
+    /// ! This index references a struct/variant field that MUST be extracted by the scan and emitted directly
+    PushdownExtract = 2,
+}
+
+impl ColumnIndexType {
+    /// Every member, in declaration order.
+    pub const ALL: [Self; 3] = [Self::Invalid, Self::FullRead, Self::PushdownExtract];
+
+    /// The name `EnumUtil::ToChars` prints.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Invalid => "INVALID",
+            Self::FullRead => "FULL_READ",
+            Self::PushdownExtract => "PUSHDOWN_EXTRACT",
+        }
+    }
+
+    /// Parses any name `EnumUtil::FromString` accepts (ASCII case-insensitive).
+    pub fn from_name(name: &str) -> Option<Self> {
+        const NAMES: &[(&str, ColumnIndexType)] = &[
+            ("INVALID", ColumnIndexType::Invalid),
+            ("FULL_READ", ColumnIndexType::FullRead),
+            ("PUSHDOWN_EXTRACT", ColumnIndexType::PushdownExtract),
+        ];
+        NAMES
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| *v)
+    }
+
+    /// The member with this numeric value.
+    pub const fn from_repr(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Invalid),
+            1 => Some(Self::FullRead),
+            2 => Some(Self::PushdownExtract),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for ColumnIndexType {
+    fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        write_enum(serializer, self.name(), |serializer| {
+            serializer.write_u8(*self as u8);
+        });
+        Ok(())
+    }
+}
+
+impl Deserialize for ColumnIndexType {
+    fn deserialize(deserializer: &mut dyn Deserializer) -> Result<Self> {
+        read_enum(deserializer, "ColumnIndexType", Self::from_name, |deserializer| {
+            Ok(Self::from_repr(deserializer.read_u8()?))
+        })
+    }
+}

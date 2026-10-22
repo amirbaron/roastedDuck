@@ -9,6 +9,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use rustdb_common::Result;
+use rustdb_serde::Serializer;
 use rustdb_types::{DataChunk, LogicalType, Value};
 
 use crate::FunctionData;
@@ -254,12 +255,13 @@ pub struct TableScanState {
     pub column_ids: Vec<u64>,
 }
 
-/// Named parameters in the iteration order of DuckDB's `named_parameter_type_map_t` (a
-/// `case_insensitive_map_t` filled in declaration order), which `Function::CallToString`
-/// and `duckdb_functions()` list them in.
-pub fn named_parameters_in_map_order(
-    named_parameters: &[(String, LogicalType)],
-) -> impl Iterator<Item = &(String, LogicalType)> {
+/// Named parameters (or their values) in the iteration order of DuckDB's
+/// `named_parameter_type_map_t` / `named_parameter_map_t` (a `case_insensitive_map_t`
+/// filled in the given order), which `Function::CallToString`, `duckdb_functions()` and
+/// serialized plans list them in.
+pub fn named_parameters_in_map_order<T>(
+    named_parameters: &[(String, T)],
+) -> impl Iterator<Item = &(String, T)> {
     let mut map = rustdb_common::libcxx::UnorderedOrder::default();
     for (index, (name, _)) in named_parameters.iter().enumerate() {
         map.insert(rustdb_common::libcxx::ci_hash(name), index, |a, b| {
@@ -332,7 +334,18 @@ pub struct TableFunction {
     /// Whether the scan fills one output column per scanned column id, in order
     /// (DuckDB's scan contract), instead of all of the function's columns.
     pub projected_output: bool,
+    /// The catalog and schema of the function's catalog entry (DuckDB's `catalog_name`
+    /// and `schema_name`); empty for a function not taken from a catalog.
+    pub catalog_name: Arc<str>,
+    pub schema_name: Arc<str>,
+    /// Writes the bind data, so that a serialized plan can bind the function again
+    /// (DuckDB's `serialize` callback); without it a plan holds the call's arguments.
+    pub serialize: Option<TableFunctionSerialize>,
 }
+
+/// See [`TableFunction::serialize`] (DuckDB's `table_function_serialize_t`).
+pub type TableFunctionSerialize =
+    Arc<dyn Fn(&mut dyn Serializer, Option<&dyn FunctionData>, &TableFunction) -> Result<()> + Send + Sync>;
 
 impl TableFunction {
     pub fn new(name: impl Into<Arc<str>>, arguments: Vec<LogicalType>) -> Self {
@@ -361,6 +374,9 @@ impl TableFunction {
             file_filter_pushdown: None,
             get_row_id_columns: None,
             projected_output: false,
+            catalog_name: Arc::from(""),
+            schema_name: Arc::from(""),
+            serialize: None,
         }
     }
 

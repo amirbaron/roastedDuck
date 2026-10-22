@@ -7,6 +7,7 @@
 
 mod display;
 mod equality;
+mod serialize;
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -64,13 +65,8 @@ pub enum ExpressionKind {
     Expanded(BoundExpandedExpression),
 }
 
-/// Whether an aggregate removes duplicate inputs (DuckDB's `AggregateType`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum AggregateType {
-    #[default]
-    NonDistinct,
-    Distinct,
-}
+/// Whether an aggregate removes duplicate inputs.
+pub use crate::generated::enums::AggregateType;
 
 /// An aggregate call (DuckDB's `BoundAggregateExpression`).
 #[derive(Clone, Debug)]

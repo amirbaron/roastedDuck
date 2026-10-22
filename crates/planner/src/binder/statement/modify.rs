@@ -165,6 +165,7 @@ pub fn bind_insert(scope: &mut BindScope<'_>, stmt: &mut InsertStatement) -> Res
     let table_index = scope.generate_table_index();
     let mut insert = LogicalOperator::new(LogicalKind::Insert(Box::new(LogicalInsert {
         table: Arc::clone(&entry),
+        catalog: found.catalog.clone(),
         schema: found.schema.clone(),
         table_index,
         column_index_map,
@@ -318,12 +319,20 @@ fn add_scan_column(get: &mut LogicalOperator, logical: usize) -> Result<(u64, u6
     Ok((get.table_index, (ids.len() - 1) as u64))
 }
 
+/// The catalog of the table a scan reads.
+fn table_catalog(get: &crate::operator::LogicalGet) -> String {
+    get.table_schema
+        .as_ref()
+        .map(|(catalog, _)| catalog.clone())
+        .unwrap_or_default()
+}
+
 /// `DELETE` (DuckDB's `Binder::Bind(DeleteStatement &)`).
 pub fn bind_delete(scope: &mut BindScope<'_>, stmt: &mut DeleteStatement) -> Result<BoundStatement> {
     let bound_table = bind_table_ref(scope, &mut stmt.table)?;
     let mut root = bound_table.plan;
-    let entry = match &root.kind {
-        LogicalKind::Get(get) => get.table.clone(),
+    let (entry, catalog) = match &root.kind {
+        LogicalKind::Get(get) => get.table.clone().map(|entry| (entry, table_catalog(get))),
         _ => None,
     }
     .ok_or_else(|| Error::binder("Can only delete from base table"))?;
@@ -366,6 +375,7 @@ pub fn bind_delete(scope: &mut BindScope<'_>, stmt: &mut DeleteStatement) -> Res
         .unwrap_or_default();
     let delete = LogicalOperator::new(LogicalKind::Delete(Box::new(LogicalDelete {
         table: Arc::clone(&entry),
+        catalog,
         schema,
         table_index,
         bound_constraints,
@@ -399,8 +409,11 @@ fn supports_regular_update(ty: &LogicalType) -> bool {
 /// `UPDATE` (DuckDB's `Binder::Bind(UpdateStatement &)`).
 pub fn bind_update(scope: &mut BindScope<'_>, stmt: &mut UpdateStatement) -> Result<BoundStatement> {
     let bound_table = bind_table_ref(scope, &mut stmt.table)?;
-    let entry = match &bound_table.plan.kind {
-        LogicalKind::Get(get) => get.table.clone(),
+    let (entry, (catalog, schema)) = match &bound_table.plan.kind {
+        LogicalKind::Get(get) => get
+            .table
+            .clone()
+            .map(|entry| (entry, get.table_schema.clone().unwrap_or_default())),
         _ => None,
     }
     .ok_or_else(|| Error::binder("Can only update base table"))?;
@@ -484,7 +497,8 @@ pub fn bind_update(scope: &mut BindScope<'_>, stmt: &mut UpdateStatement) -> Res
     let table_index = scope.generate_table_index();
     let update = LogicalOperator::new(LogicalKind::Update(Box::new(LogicalUpdate {
         table: Arc::clone(&entry),
-        schema: String::new(),
+        catalog,
+        schema,
         table_index,
         columns,
         bound_defaults,

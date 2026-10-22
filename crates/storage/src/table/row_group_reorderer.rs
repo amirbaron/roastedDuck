@@ -19,12 +19,8 @@ use crate::VECTOR_SIZE;
 use crate::statistics::BaseStatistics;
 use crate::transaction::TransactionData;
 
-/// The statistic that orders the row groups (DuckDB's `OrderByStatistics`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OrderByStatistics {
-    Min,
-    Max,
-}
+/// The statistic that orders the row groups.
+pub use crate::generated::enums::OrderByStatistics;
 
 impl OrderByStatistics {
     fn opposite(self) -> Self {
@@ -35,12 +31,8 @@ impl OrderByStatistics {
     }
 }
 
-/// How the statistics of the order column are read (DuckDB's `OrderByColumnType`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OrderByColumnType {
-    Numeric,
-    String,
-}
+/// How the statistics of the order column are read.
+pub use crate::generated::enums::OrderByColumnType;
 
 /// The order a scan reads its row groups in (DuckDB's `RowGroupOrderOptions`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,6 +50,43 @@ pub struct RowGroupOrderOptions {
     /// NULL-only row groups the OFFSET skips (`NULLS FIRST`).
     pub leading_null_group_offset: u64,
 }
+
+impl rustdb_serde::SerializeObject for RowGroupOrderOptions {
+    /// `RowGroupOrderOptions::Serialize`; the order is written as DuckDB's `OrderType` and
+    /// `OrderByNullType`.
+    fn serialize_fields(&self, serializer: &mut dyn rustdb_serde::Serializer) -> rustdb_common::Result<()> {
+        let (order_type, order_number) = match self.order_type {
+            OrderType::Ascending => ("ASCENDING", 2),
+            OrderType::Descending => ("DESCENDING", 3),
+        };
+        let (null_order, null_number) = match self.null_order {
+            NullOrder::NullsFirst => ("NULLS FIRST", 2),
+            NullOrder::NullsLast => ("NULLS LAST", 3),
+        };
+        serializer.write_property(100, "column_idx", &super::StorageIndex::new(self.column as u64))?;
+        serializer.write_property(101, "order_by", &self.order_by)?;
+        serializer.on_property_begin(102, "order_type");
+        rustdb_serde::write_enum(serializer, order_type, |serializer| {
+            serializer.write_u8(order_number);
+        });
+        serializer.on_property_end();
+        serializer.on_property_begin(103, "null_order");
+        rustdb_serde::write_enum(serializer, null_order, |serializer| {
+            serializer.write_u8(null_number);
+        });
+        serializer.on_property_end();
+        serializer.write_property(104, "column_type", &self.column_type)?;
+        serializer.write_property(105, "row_limit", &rustdb_serde::OptionalIdx(self.row_limit))?;
+        serializer.write_property_with_default(106, "row_group_offset", &self.row_group_offset)?;
+        serializer.write_property_with_default(
+            107,
+            "leading_null_group_offset",
+            &self.leading_null_group_offset,
+        )
+    }
+}
+
+rustdb_serde::impl_pointee_serialize!(RowGroupOrderOptions);
 
 /// What an OFFSET leaves of the row groups (DuckDB's `OffsetPruningResult`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

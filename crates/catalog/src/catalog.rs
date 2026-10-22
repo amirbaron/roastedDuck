@@ -257,7 +257,9 @@ impl Catalog {
         };
         let mut merged = current.clone();
         merged.merge_function_set(set, true);
-        let mut entry = CatalogEntry::new(existing.name(), EntryKind::ScalarFunction(merged));
+        let mut kind = EntryKind::ScalarFunction(merged);
+        kind.set_function_catalog(&self.name(), DEFAULT_SCHEMA);
+        let mut entry = CatalogEntry::new(existing.name(), kind);
         entry.oid = existing.oid;
         entry.internal = true;
         schema.functions.replace_committed(entry);
@@ -288,7 +290,9 @@ impl Catalog {
                 "Failed to add new function overloads to function \"{name}\": function overload already exists"
             )));
         }
-        let mut entry = CatalogEntry::new(existing.name(), EntryKind::TableFunction(merged));
+        let mut kind = EntryKind::TableFunction(merged);
+        kind.set_function_catalog(&self.name(), DEFAULT_SCHEMA);
+        let mut entry = CatalogEntry::new(existing.name(), kind);
         entry.oid = existing.oid;
         entry.internal = true;
         schema.table_functions.replace_committed(entry);
@@ -317,7 +321,9 @@ impl Catalog {
         };
         let mut altered = current.clone();
         alter(&mut altered)?;
-        let mut entry = CatalogEntry::new(existing.name(), EntryKind::ScalarFunction(altered));
+        let mut kind = EntryKind::ScalarFunction(altered);
+        kind.set_function_catalog(&self.name(), DEFAULT_SCHEMA);
+        let mut entry = CatalogEntry::new(existing.name(), kind);
         entry.oid = existing.oid;
         entry.internal = true;
         schema.functions.replace_committed(entry);
@@ -345,11 +351,12 @@ impl Catalog {
     }
 
     /// Adds an internal entry to the set of `main` its kind belongs to.
-    fn register_builtin(&self, name: String, kind: EntryKind) -> Result<()> {
+    fn register_builtin(&self, name: String, mut kind: EntryKind) -> Result<()> {
         let schema = self
             .schema(&Transaction::system(), DEFAULT_SCHEMA)
             .ok_or_else(missing_main)?;
         let schema = schema.as_schema().ok_or_else(missing_main)?;
+        kind.set_function_catalog(&self.name(), DEFAULT_SCHEMA);
         let mut entry = CatalogEntry::new(name, kind);
         entry.internal = true;
         let set = match entry.catalog_type() {

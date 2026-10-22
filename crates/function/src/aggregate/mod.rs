@@ -359,7 +359,24 @@ pub struct AggregateFunction {
     /// returns new bind data (DuckDB's `statistics` callback with `AggregateStatisticsInput`,
     /// which may update the bind data).
     pub statistics: Option<AggregateStatistics>,
+    /// The arguments before the bind removed some (DuckDB's `original_arguments`, set by
+    /// `Function::EraseArgument`); empty when it removed none.
+    pub original_arguments: Vec<LogicalType>,
+    /// The catalog and schema of the function's catalog entry (DuckDB's `catalog_name`
+    /// and `schema_name`); empty for a function not taken from a catalog.
+    pub catalog_name: Arc<str>,
+    pub schema_name: Arc<str>,
+    /// Writes the bind data, so that a serialized plan can bind the function again
+    /// (DuckDB's `serialize` callback).
+    pub serialize: Option<AggregateSerialize>,
 }
+
+/// See [`AggregateFunction::serialize`] (DuckDB's `aggregate_serialize_t`).
+pub type AggregateSerialize = Arc<
+    dyn Fn(&mut dyn rustdb_serde::Serializer, Option<&dyn FunctionData>, &AggregateFunction) -> Result<()>
+        + Send
+        + Sync,
+>;
 
 /// See [`AggregateFunction::statistics`].
 pub type AggregateStatistics = Arc<
@@ -388,6 +405,10 @@ impl AggregateFunction {
             collation: AggregateCollation::None,
             has_state_destructor: false,
             statistics: None,
+            original_arguments: Vec::new(),
+            catalog_name: Arc::from(""),
+            schema_name: Arc::from(""),
+            serialize: None,
         }
         .with_state_destructor_of_ops()
     }
