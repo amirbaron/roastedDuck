@@ -37,10 +37,11 @@ performance targets of `docs/porting-plan.md` (≥ 1.3× C++ speed, ≤ 0.6× me
   and rustdb does not:
   - 15 are accepted divergences (`conformance/divergences.md`: 11 load C++ extension
     binaries, 4 expect out-of-memory errors rustdb avoids by using less memory);
-  - 3 are real gaps, each in `docs/work-queue.md`: `json_serialize_plan` and encryption
-    (`dict_fsst_expression_filter`) — agents are on these — and ICU `as`/`kok`/`mr`
-    (`test_icu_extensive`, brief `icu66.md` queued).
-  The ratchet `conformance/passing.txt` lists 4852 files and must never shrink:
+  - 2 are real gaps, each in `docs/work-queue.md`: `json_serialize_plan` (an agent is on
+    it) and ICU `as`/`kok`/`mr` (`test_icu_extensive`, brief `icu66.md` queued).
+    Database encryption is ported (`crates/crypto`): `dict_fsst_expression_filter`
+    passes, and so do the encryption tests that `require httpfs` without that line.
+  The ratchet `conformance/passing.txt` lists 4853 files and must never shrink:
   `target/release/slt ratchet update target/slt/rust.jsonl` after a run.
 - **Flaky:** none known since the buffer-memory merge (`max_swap_space_error.test` passed
   20 of 20); rerun a file alone before treating a failure under load as a regression.
@@ -75,8 +76,7 @@ performance targets of `docs/porting-plan.md` (≥ 1.3× C++ speed, ≤ 0.6× me
 Worktrees under `/Users/amirbaron/src/duckdb-rust/.claude/worktrees/`, briefs in
 `.context/briefs/`:
 
-- logical plan serialization (`plan-serialization.md`, base `9aa5053`);
-- encryption (`encryption.md`, base `60f1d90`).
+- logical plan serialization (`plan-serialization.md`, base `9aa5053`).
 
 Queued, in order (briefs written, each with `<BASE>` to fill in): `icu66.md` (ICU 66
 collation data and sort key bytes); `perf-round-6.md` (performance rounds, repeat until
@@ -102,10 +102,9 @@ full corpus.
 
 ## Next steps, in order
 
-1. Merge the running agents' branches (plan serialization, encryption), then run the
-   queued briefs.
+1. Merge the running agent's branch (plan serialization), then run the queued briefs.
 2. Close the remaining gaps in `docs/work-queue.md`, at most two agents at a time: ICU
-   collation for as/kok/mr and its sort key bytes.
+   collation for as/kok/mr and its sort key bytes, Parquet encryption (15).
 3. TPC-DS is ported (`crates/tpcds`, all 25 files pass). Its `dsdgen`, like TPC-H's
    `dbgen` in `crates/tpch`, carries TPC's license, not MIT — the owner should review the
    TPC terms before rustdb is published; both stay optional extension crates so the core

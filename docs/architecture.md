@@ -15,6 +15,7 @@ Dependencies point downwards only.
 | `crates/ast` | `rustdb-ast` | `parser/*` node classes (generated from serialization specs) |
 | `crates/pg-parser` | `rustdb-pg-parser` | `third_party/libpg_query` |
 | `crates/zstd` | `rustdb-zstd` | `third_party/zstd` (zstd 1.5.6: the encoder, frame for frame, and the decoder) |
+| `crates/crypto` | `rustdb-crypto` | `common/encryption_*` (`EncryptionState`, `EncryptionKeyManager`, nonces, tags, key derivation) and the AES/SHA-256 part of `third_party/mbedtls`, on RustCrypto's `aes-gcm`, `ctr` and `sha2` |
 | `crates/buffer` | `rustdb-buffer` | `storage/buffer`, `StandardBufferManager`, temporary files, `TemporaryMemoryManager`, `ArenaAllocator` |
 | `crates/row` | `rustdb-row` | `common/types/row` (TupleDataCollection, partitioning, row matcher, row aggregates), `common/types/column` (ColumnDataCollection), `common/sort` |
 | `crates/function` | `rustdb-function` | `function/*` definitions (ScalarFunction, cast functions, ...) |

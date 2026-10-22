@@ -104,13 +104,14 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      the cache (`PREFETCH_FALLBACK_BUFFERSIZE`).
    - `CachingFileSystemWrapper` (the JSON reader, `read_text`, `read_blob`) caches
      remote files only: there is nothing to port until a remote file system exists.
-15. **Database encryption** (`dict_fsst_expression_filter`, which attaches a database
-    with `ENCRYPTION_KEY`; the other encryption tests `require httpfs` and are skipped
-    on both engines). DuckDB encrypts blocks, the WAL and temporary files with
-    AES-256-GCM (or CTR) through mbedtls when httpfs is not loaded
-    (`EncryptionEngine`, `StorageManager` encryption options, the main header's
-    encryption fields). Port it byte-compatibly with a pure-Rust AES-GCM, and check
-    files both ways against the C++ CLI.
+15. **Parquet modular encryption, the rest.** Database encryption is ported
+    (`crates/crypto` on RustCrypto; database files, the WAL and temporary files; files
+    open in either engine for every cipher, encryption version and storage version, and
+    the encryption tests pass without their `require httpfs`). The Parquet writer's
+    `encryption_config` is not implemented (`parquet_encryption`,
+    `parquet_encryption_tpch`, which `require httpfs`), and the reader decrypts with its
+    own AES in `crates/parquet/src/crypto.rs`, which should move onto `crates/crypto`
+    (hardware AES, constant time).
 
 ## Planner and execution
 

@@ -7,23 +7,27 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use rustdb_buffer::{BlockManager, BufferManager, InMemoryBlockManager};
 use rustdb_common::Result;
+use rustdb_crypto::EncryptionVersion;
 use rustdb_serde::{SerializationCompatibility, SerializationOptions};
 
 use crate::compression::CompressionConfig;
 use crate::data_table::TableIoManager;
+use crate::encryption::EncryptionOptions;
 use crate::metadata::{MetaBlockPointer, MetadataManager};
 use crate::single_file_block_manager::{BlockManagerOptions, SingleFileBlockManager};
 use crate::storage_info::DEFAULT_BLOCK_ALLOC_SIZE;
 use crate::wal::{WriteAheadLog, checkpoint_wal_path, recovery_wal_path, wal_path};
 
 /// How a database file is opened (DuckDB's `StorageManagerOptions`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct StorageOptions {
     pub read_only: bool,
     pub block_alloc_size: usize,
     /// The serialization version to write; `None` keeps the file's (or the default).
     pub storage_version: Option<u64>,
     pub row_group_size: u64,
+    /// The key and cipher of an encrypted file (`ENCRYPTION_KEY`).
+    pub encryption: Option<EncryptionOptions>,
 }
 
 impl Default for StorageOptions {
@@ -33,7 +37,53 @@ impl Default for StorageOptions {
             block_alloc_size: DEFAULT_BLOCK_ALLOC_SIZE,
             storage_version: None,
             row_group_size: crate::DEFAULT_ROW_GROUP_SIZE,
+            encryption: None,
         }
+    }
+}
+
+impl StorageOptions {
+    /// Resolves the storage and encryption versions of an encrypted file
+    /// (`StorageOptions::SetEncryptionVersion`): encryption needs storage v1.4.0 or
+    /// later; without a `STORAGE_VERSION` an encrypted file is written with v1.5.0, and
+    /// encryption version 1 needs v1.5.0. `storage_version_given` is the
+    /// `STORAGE_VERSION` option.
+    pub fn set_encryption_version(&mut self, storage_version_given: Option<&str>) -> Result<()> {
+        let v1_4_0 = SerializationCompatibility::from_version_name("v1.4.0")?.serialization_version;
+        let v1_5_0 = SerializationCompatibility::from_version_name("v1.5.0")?.serialization_version;
+        if self.storage_version.is_none_or(|version| version < v1_4_0)
+            && let Some(given) = storage_version_given
+        {
+            return Err(rustdb_common::Error::invalid_input(format!(
+                "Explicit provided STORAGE_VERSION (\"{given}\") and ENCRYPTION_KEY (storage >= v1.4.0) are not \
+                 compatible"
+            )));
+        }
+        let Some(encryption) = &mut self.encryption else {
+            return Ok(());
+        };
+        let requested = encryption.version;
+        let mut target = if requested == EncryptionVersion::None {
+            EncryptionVersion::V0_1
+        } else {
+            requested
+        };
+        match (self.storage_version, storage_version_given) {
+            (None, None) => self.storage_version = Some(v1_5_0),
+            (Some(version), given) if target == EncryptionVersion::V0_1 && version < v1_5_0 => match given {
+                Some(given) if requested == target => {
+                    return Err(rustdb_common::Error::invalid_input(format!(
+                        "Explicit provided STORAGE_VERSION (\"{given}\") is not compatible with \
+                         'debug_encryption_version = v1' (storage >= v1.5.0)"
+                    )));
+                }
+                Some(_) => {}
+                None => target = EncryptionVersion::V0_0,
+            },
+            _ => {}
+        }
+        encryption.version = target;
+        Ok(())
     }
 }
 
@@ -191,10 +241,11 @@ impl StorageManager {
                 }
             }
         }
+        let keys = buffer_manager.encryption_keys();
         let block_manager = Arc::new(if created {
-            SingleFileBlockManager::create_new(path, block_options)?
+            SingleFileBlockManager::create_new(path, block_options, options.encryption, keys)?
         } else {
-            SingleFileBlockManager::load_existing(path, block_options)?
+            SingleFileBlockManager::load_existing(path, block_options, options.encryption, keys)?
         });
         let metadata = Arc::new(MetadataManager::new(
             Arc::clone(&block_manager),
@@ -455,5 +506,67 @@ impl InMemoryStorageManager {
             lowest_active_start,
             geometry_minimum_shredding_size: config.geometry_minimum_shredding_size,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustdb_crypto::{CipherType, UserKey};
+
+    fn encrypted(storage_version: Option<u64>, version: EncryptionVersion) -> StorageOptions {
+        StorageOptions {
+            storage_version,
+            encryption: Some(EncryptionOptions {
+                user_key: UserKey::new(b"asdf".to_vec()),
+                cipher: CipherType::Invalid,
+                version,
+            }),
+            ..StorageOptions::default()
+        }
+    }
+
+    fn resolved(options: &StorageOptions) -> (Option<u64>, EncryptionVersion) {
+        (
+            options.storage_version,
+            options
+                .encryption
+                .as_ref()
+                .map_or(EncryptionVersion::None, |encryption| encryption.version),
+        )
+    }
+
+    /// `StorageOptions::SetEncryptionVersion`, as `test_different_encryption_versions`
+    /// and `attach_encryption_block_header` expect it.
+    #[test]
+    fn encryption_versions_follow_the_storage_version() {
+        let mut options = encrypted(None, EncryptionVersion::None);
+        options.set_encryption_version(None).unwrap();
+        assert_eq!(resolved(&options), (Some(7), EncryptionVersion::V0_1));
+        let mut options = encrypted(None, EncryptionVersion::V0_0);
+        options.set_encryption_version(None).unwrap();
+        assert_eq!(resolved(&options), (Some(7), EncryptionVersion::V0_0));
+        // v1.4.0 keeps encryption version 1 unless it is asked for explicitly.
+        let mut options = encrypted(Some(6), EncryptionVersion::None);
+        options.set_encryption_version(Some("v1.4.0")).unwrap();
+        assert_eq!(resolved(&options), (Some(6), EncryptionVersion::V0_1));
+        let mut options = encrypted(Some(6), EncryptionVersion::V0_1);
+        assert_eq!(
+            options
+                .set_encryption_version(Some("v1.4.0"))
+                .unwrap_err()
+                .to_string(),
+            "Invalid Input Error: Explicit provided STORAGE_VERSION (\"v1.4.0\") is not compatible with \
+             'debug_encryption_version = v1' (storage >= v1.5.0)"
+        );
+        let mut options = encrypted(Some(4), EncryptionVersion::None);
+        assert_eq!(
+            options
+                .set_encryption_version(Some("v1.2.0"))
+                .unwrap_err()
+                .to_string(),
+            "Invalid Input Error: Explicit provided STORAGE_VERSION (\"v1.2.0\") and ENCRYPTION_KEY (storage >= \
+             v1.4.0) are not compatible"
+        );
     }
 }

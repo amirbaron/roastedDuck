@@ -548,6 +548,8 @@ impl CompressionConfig {
 pub(crate) struct CompressionInfo {
     /// The usable size of a block.
     pub block_size: usize,
+    /// The block header in front of it (`GetBlockHeaderSize`): larger in encrypted files.
+    pub block_header_size: usize,
     /// The serialization version written (`StorageManager::GetStorageVersion`).
     pub storage_version: u64,
     pub config: CompressionConfig,

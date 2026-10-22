@@ -30,7 +30,7 @@ use rustdb_storage::checkpoint::vector_serde::deserialize_chunk;
 use rustdb_storage::index::UnboundIndexStorage;
 use rustdb_storage::metadata::MetaBlockPointer;
 use rustdb_storage::storage_manager::{CheckpointAbort, StorageManager};
-use rustdb_storage::wal::{WAL_VERSION_NUMBER, WalReader, WalType};
+use rustdb_storage::wal::{WAL_ENCRYPTED_VERSION_NUMBER, WAL_VERSION_NUMBER, WalReader, WalType};
 use rustdb_types::DataChunk;
 
 use crate::attached::AttachedDatabase;
@@ -81,7 +81,7 @@ pub(crate) fn replay(database: &Database, attached: &Arc<AttachedDatabase>) -> R
     // `SingleFileStorageManager::LoadDatabase` times the replay.
     let _timer =
         rustdb_common::profiling::start_timer(rustdb_common::profiling::MetricType::AttachReplayWalLatency);
-    let replayed = match WalReader::open(&storage.wal_path())? {
+    let replayed = match WalReader::open_for(&storage.wal_path(), storage.block_manager())? {
         None => None,
         Some(reader) => replay_log(database, attached, &storage, reader, WalFile::Main)?,
     };
@@ -124,7 +124,10 @@ fn check_header(
     state: &mut ScanState,
 ) -> Result<u64> {
     let header = reader.read_header()?;
-    if !matches!(header.version, 1 | WAL_VERSION_NUMBER) {
+    if !matches!(
+        header.version,
+        1 | WAL_VERSION_NUMBER | WAL_ENCRYPTED_VERSION_NUMBER
+    ) {
         return Err(io_error(format!(
             "Failed to read WAL of version {} - can only read version 1, 2 and 3 (encrypted)",
             header.version
@@ -255,9 +258,10 @@ fn scan_log(reader: &mut WalReader, storage: &StorageManager, file: WalFile) -> 
     }
 }
 
-/// Opens the WAL at `path`, which exists.
-fn open_wal(path: &str) -> Result<WalReader> {
-    WalReader::open(path)?.ok_or_else(|| io_error(format!("Cannot open file \"{path}\"")))
+/// Opens the WAL at `path` of `storage`'s file, which exists.
+fn open_wal(storage: &StorageManager, path: &str) -> Result<WalReader> {
+    WalReader::open_for(path, storage.block_manager())?
+        .ok_or_else(|| io_error(format!("Cannot open file \"{path}\"")))
 }
 
 /// Replays the WAL read by `reader`; returns the size of the WAL to keep and whether the
@@ -320,7 +324,7 @@ fn replay_log(
                     database,
                     attached,
                     storage,
-                    open_wal(&checkpoint_wal_path)?,
+                    open_wal(storage, &checkpoint_wal_path)?,
                     WalFile::Checkpoint,
                 );
             }
@@ -330,13 +334,25 @@ fn replay_log(
                     "Could not move file \"{checkpoint_wal_path}\" to \"{path}\": {error}"
                 ))
             })?;
-            return replay_log(database, attached, storage, open_wal(&path)?, WalFile::Checkpoint);
+            return replay_log(
+                database,
+                attached,
+                storage,
+                open_wal(storage, &path)?,
+                WalFile::Checkpoint,
+            );
         } else if read_only {
             checkpoint_wal = Some(checkpoint_wal_path);
         } else {
             drop(reader);
             merge_into_recovery_wal(storage, &path, checkpoint_position, &checkpoint_wal_path)?;
-            return replay_log(database, attached, storage, open_wal(&path)?, WalFile::Checkpoint);
+            return replay_log(
+                database,
+                attached,
+                storage,
+                open_wal(storage, &path)?,
+                WalFile::Checkpoint,
+            );
         }
     }
     if let Some(expected) = scan.expected_checkpoint {
@@ -359,7 +375,7 @@ fn replay_log(
         if scan.checkpoint_truncate_offset == 0 {
             return Ok(Some((0, false)));
         }
-        reader = open_wal(&path)?;
+        reader = open_wal(storage, &path)?;
     }
     reader.reset()?;
     let mut connection = database.connect()?;
@@ -397,7 +413,7 @@ fn replay_log(
             database,
             attached,
             storage,
-            open_wal(&checkpoint_wal)?,
+            open_wal(storage, &checkpoint_wal)?,
             WalFile::Checkpoint,
         );
     }
@@ -456,12 +472,12 @@ fn merge_into_recovery_wal(
         &recovery_path,
     )?;
     drop(main);
-    let mut checkpoint_reader = open_wal(checkpoint_wal_path)?;
+    let mut checkpoint_reader = open_wal(storage, checkpoint_wal_path)?;
     if !checkpoint_reader.finished() {
         // The checkpoint WAL's version entry is not copied; the versions must match.
         let mut state = ScanState::default();
         let version = check_header(&mut checkpoint_reader, storage, WalFile::Checkpoint, &mut state)?;
-        let main_version = open_wal(wal_path)?.read_header()?.version;
+        let main_version = open_wal(storage, wal_path)?.read_header()?.version;
         if version != main_version {
             return Err(Error::invalid_input(format!(
                 "Failure while replaying checkpoint WAL file \"{checkpoint_wal_path}\": checkpoint WAL version is \

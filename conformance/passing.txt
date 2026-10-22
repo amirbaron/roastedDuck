@@ -3537,6 +3537,7 @@ test/sql/storage/compression/constant/constant_columns_top_n.test_slow
 test/sql/storage/compression/constant/constant_columns_types.test_slow
 test/sql/storage/compression/constant/constant_columns_updates.test_slow
 test/sql/storage/compression/dict_fsst/dict_fsst.test_slow
+test/sql/storage/compression/dict_fsst/dict_fsst_expression_filter.test
 test/sql/storage/compression/dict_fsst/dict_fsst_fsst_only.test_slow
 test/sql/storage/compression/dict_fsst/dict_fsst_test.test
 test/sql/storage/compression/dict_fsst/dictionary_compression_ratio.test_slow

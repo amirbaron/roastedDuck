@@ -459,16 +459,27 @@ impl BlockWriter {
     /// What the codecs of this checkpoint need to know: the block size, the storage version
     /// written and the compression settings.
     pub(crate) fn compression_info(&self) -> CompressionInfo {
-        let (storage_version, config) = match &self.target {
-            BlockTarget::File(manager) => (manager.storage_version(), manager.compression_config()),
+        use rustdb_buffer::BlockManager;
+        let (storage_version, config, block_header_size) = match &self.target {
+            BlockTarget::File(manager) => (
+                manager.storage_version(),
+                manager.compression_config(),
+                manager.block_header_size(),
+            ),
             BlockTarget::AppendToTable(blocks) => (
                 blocks.manager.storage_version(),
                 blocks.manager.compression_config(),
+                blocks.manager.block_header_size(),
             ),
-            BlockTarget::InMemory(blocks) => (blocks.io.storage_version(), blocks.config),
+            BlockTarget::InMemory(blocks) => (
+                blocks.io.storage_version(),
+                blocks.config,
+                blocks.io.block_manager().block_header_size(),
+            ),
         };
         CompressionInfo {
             block_size: self.block_size(),
+            block_header_size,
             storage_version,
             config,
         }

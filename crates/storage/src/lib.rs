@@ -24,6 +24,7 @@
 pub mod checkpoint;
 pub mod checkpoint_lock;
 pub mod compression;
+pub mod encryption;
 pub mod index;
 pub mod metadata;
 pub mod optimistic_data_writer;

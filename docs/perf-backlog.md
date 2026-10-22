@@ -500,10 +500,31 @@ comparisons and the CASE's selection vectors. q22 (`ROLLUP` over `inventory` joi
 use 0.75–0.84× DuckDB's CPU but 0.34–0.45× its wall time in one run, so a stage runs on
 fewer threads; their wall times vary between runs.
 
+## Database encryption
+
+A table of 30M rows (`id`, `hash(id)`, a DECIMAL and a VARCHAR; 480 MB on disk) created
+and checkpointed in a new file, then scanned in a new process (cold: blocks come from the
+OS cache and are decrypted; warm: the same scan again), every column summed. Best of 3,
+14 threads, wall time from `.timer`; peak memory from `/usr/bin/time -l`. All three files
+use storage v1.5.0 (encrypted files default to it). DuckDB encrypts with its bundled
+mbedtls (`force_mbedtls_unsafe`; software AES and GHASH), rustdb with RustCrypto's
+(hardware AES and PMULL: 4.0 GB/s GCM, 8.0 GB/s CTR per core).
+
+| file | DuckDB write | rustdb write | speed | cold scan (D / r) | speed | warm scan (D / r) | speed | memory write / scan |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| plain | 5.06 s | 5.86 s | 0.86× | 0.131 / 0.054 s | 2.4× | 0.123 / 0.050 s | 2.5× | 0.25× / 0.14× |
+| GCM | 7.39 s | 5.98 s | 1.24× | 0.347 / 0.081 s | 4.3× | 0.132 / 0.059 s | 2.2× | 0.25× / 0.14× |
+| CTR | 6.35 s | 5.96 s | 1.07× | 0.253 / 0.065 s | 3.9× | 0.131 / 0.054 s | 2.4× | 0.24× / 0.14× |
+
+Encryption costs rustdb 2% on the write, 20–50% on a cold scan and 8–18% on a warm one
+(DuckDB: 26–46%, 93–165% and 7%). rustdb's warm scans decrypt again because table blocks
+are re-read rather than cached (see Open items); DuckDB keeps the decrypted blocks.
+
 ## Open items
 
 | Area | Gap | Suspected cause | Found in |
 |---|---|---|---|
+| Writes at storage v1.5.0 | creating and checkpointing 30M rows of four columns: 5.86 s against DuckDB's 5.06 s (0.86×); the same table at the default storage version is 1.22× (see Database encryption) | not broken down; v1.5.0 changes the compression choices (DICT_FSST, ALP's uncompressed vectors) | `crates/storage` (`compression/`) |
 | Peak memory | TPC-H 0.20–0.28×, ClickBench 0.27–0.35× (q00, which only opens the database, at 1.02×: 47 MB vs 46 MB), but h2og 0.73× and h2oj 0.78× at 14 threads (target ≤ 0.6×; round 5) | the h2o queries are dominated by aggregate and join rows, as wide as DuckDB's; per-thread partitions allocate whole blocks | `crates/row`, `crates/execution` |
 | Table block re-reads | `pread`, and waiting for another thread's read of the same block, is ~15% of the CPU of scan-heavy TPC-H queries at 14 threads and most of the gap of ClickBench's point and small scans (q01, q19, q37 at 1.6–2.6× DuckDB's cycles); the copy runs near the memory bandwidth (TPC-H q7's 3,800 blocks: 12 ms at 14 threads, 43 ms at one) | blocks are freed when unpinned to keep memory low (only blocks shared by several segments stay among the 16 last released, round 4); a bounded cache of re-read blocks (round 3, removed in `064b45d`) took q19 to 0.58× and ClickBench to 0.84×, but memory to 0.59× with small queries above 1.0×; caching every block like DuckDB (round 5, reverted) saves 5–7% of the cycles but makes peak RSS DuckDB's (0.89–0.92×), so the re-reads themselves must get cheaper | `crates/buffer` |
 | Metadata re-reads | opening a database reads no column metadata any more (round 5), but the first use of a column in a row group still pins its metadata block again; not measured | metadata blocks are freed when unpinned; keeping them among the recently released blocks put ClickBench q0 2 MB above DuckDB's RSS (round 4) | `crates/storage` (`metadata.rs`) |
