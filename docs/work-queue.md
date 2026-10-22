@@ -132,9 +132,6 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    object clear the entry, like DuckDB's. What still differs:
    - `CREATE SCHEMA` shows the default catalog where DuckDB leaves it empty (the
      read-only check reads the catalog from the plan).
-   - A query pragma (`PRAGMA version`) binds to a `LOGICAL_PRAGMA`, which cannot be
-     serialized, where DuckDB fails with "PRAGMA function does not have a function
-     specified": rustdb's pragma functions do not say which ones are queries.
    - `EXPORT DATABASE` is not serialized: rustdb's `LogicalExport` keeps what its
      operator needs instead of DuckDB's `CopyInfo` and `BoundExportData`, and unions the
      table copies two at a time.
