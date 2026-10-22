@@ -860,13 +860,23 @@ pub(crate) fn register_json_macros(system: &Catalog) -> Result<()> {
     Ok(())
 }
 
+/// `duckdb_views()`, which pushes projections down (`DuckDBViewsFun::RegisterFunction`);
+/// its scan fills every column.
+fn views_function() -> TableFunctionSet {
+    let mut set = rows_function("duckdb_views", VIEW_COLUMNS, view_rows);
+    for function in &mut set.functions {
+        function.projection_pushdown = true;
+    }
+    set
+}
+
 /// The catalog table functions.
 pub(crate) fn catalog_table_functions() -> Vec<TableFunctionSet> {
     vec![
         rows_function("duckdb_databases", DATABASE_COLUMNS, database_rows),
         rows_function("duckdb_schemas", SCHEMA_COLUMNS, schema_rows),
         rows_function("duckdb_tables", TABLE_COLUMNS, table_rows),
-        rows_function("duckdb_views", VIEW_COLUMNS, view_rows),
+        views_function(),
         rows_function("duckdb_indexes", INDEX_COLUMNS, index_rows),
         rows_function("duckdb_sequences", SEQUENCE_COLUMNS, sequence_rows),
         rows_function("duckdb_columns", COLUMN_COLUMNS, column_rows),

@@ -244,10 +244,11 @@ fn bind(function: &mut AggregateFunction, input: &BindInput<'_>) -> Result<Optio
     let list = function.return_type.id() == LogicalTypeId::List;
     let ty = input.argument_types[0].clone();
     // `EraseArgument`; a DECIMAL call then gets a new function (without the original
-    // arguments).
+    // arguments or a catalog entry).
     function.erase_argument(1);
     if ty.id() == LogicalTypeId::Decimal {
         function.original_arguments.clear();
+        function.clear_catalog_entry();
         function.ops = typed_ops(ty.physical_type(), &ty, list)?;
         if list {
             function.return_type = LogicalType::list(ty.clone());

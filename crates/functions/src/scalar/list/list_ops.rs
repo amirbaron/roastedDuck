@@ -312,8 +312,12 @@ fn bind_list_zip(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindRe
     if size < types.len() {
         arguments.push(LogicalType::BOOLEAN);
     }
-    function.arguments = arguments;
-    function.varargs = None;
+    // The arguments stay `ANY` varargs, but an ARRAY is cast to a LIST through them
+    // (`AddArrayCastToList`).
+    if types[..size].iter().any(|ty| ty.id() == LogicalTypeId::Array) {
+        function.arguments = arguments;
+        function.varargs = None;
+    }
     function.return_type = LogicalType::list(LogicalType::struct_type(children));
     Ok(None)
 }

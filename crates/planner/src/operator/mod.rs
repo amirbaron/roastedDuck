@@ -142,6 +142,8 @@ pub struct LogicalGet {
     /// The order a table scan reads its row groups in (DuckDB's
     /// `row_group_order_options`, set by the `RowGroupPruner`).
     pub row_group_order: Option<rustdb_storage::table::RowGroupOrderOptions>,
+    /// The table scan feeds a `CREATE INDEX` (`TableScanBindData::is_create_index`).
+    pub is_create_index: bool,
 }
 
 /// The file filters of a scan (DuckDB's `ExtraOperatorInfo::file_filters`, `total_files`
@@ -740,9 +742,13 @@ pub struct LogicalCreateIndex {
     /// `column_ids` are the physical columns the keys read.
     pub info: rustdb_ast::CreateInfo,
     pub table: Arc<rustdb_catalog::CatalogEntry>,
-    /// The key expressions, referencing the table's physical columns by index
-    /// (`unbound_expressions`).
+    /// The key expressions, referencing the table's physical columns by index.
     pub expressions: Vec<Expression>,
+    /// The key expressions over `scan`'s columns (DuckDB's `unbound_expressions`).
+    pub unbound_expressions: Vec<Expression>,
+    /// The scan of the indexed table with its row ids (DuckDB's child `LogicalGet`),
+    /// which serialized plans show; the index build reads the table itself.
+    pub scan: Box<LogicalOperator>,
 }
 
 /// `INSERT` (DuckDB's `LogicalInsert`).

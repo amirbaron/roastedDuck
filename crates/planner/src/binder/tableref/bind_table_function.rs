@@ -422,6 +422,7 @@ fn bind_table_function_internal(
         sample_options: None,
         file_filters: crate::operator::FileFilterInfo::default(),
         row_group_order: None,
+        is_create_index: false,
     };
     // DuckDB's `AddTableFunction`: a table binding tracking the columns used.
     scope.binder.bind_context.add_binding(Binding::new(

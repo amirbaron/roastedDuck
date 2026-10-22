@@ -61,6 +61,23 @@ pub(crate) fn serialize_scalar_function(
     .serialize(serializer, write.as_ref().map(|write| write as _))
 }
 
+/// `FunctionSerializer::Serialize` of a scalar function whose bind data `function_data`
+/// writes (a lambda function's, whose lambda rustdb keeps on the expression).
+pub(crate) fn serialize_scalar_function_with(
+    serializer: &mut dyn Serializer,
+    function: &ScalarFunction,
+    function_data: FunctionDataWriter<'_>,
+) -> Result<()> {
+    FunctionProperties {
+        name: &function.name,
+        arguments: &function.arguments,
+        original_arguments: &function.original_arguments,
+        catalog_name: &function.catalog_name,
+        schema_name: &function.schema_name,
+    }
+    .serialize(serializer, Some(function_data))
+}
+
 /// `FunctionSerializer::Serialize` of an aggregate function.
 pub(crate) fn serialize_aggregate_function(
     serializer: &mut dyn Serializer,

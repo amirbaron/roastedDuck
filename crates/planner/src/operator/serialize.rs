@@ -44,9 +44,13 @@ impl LogicalOperator {
 
 impl SerializeObject for LogicalOperator {
     fn serialize_fields(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        let children = match &self.kind {
+            LogicalKind::CreateIndex(create) => std::slice::from_ref(&*create.scan),
+            _ => &self.children,
+        };
         properties::LogicalOperator {
             operator_type: self.operator_type(),
-            children: &self.children,
+            children,
         }
         .serialize_fields(serializer)?;
         let expressions = &self.expressions;
@@ -290,7 +294,7 @@ impl SerializeObject for LogicalOperator {
             }
             LogicalKind::CreateIndex(create) => properties::LogicalCreateIndex {
                 info: &create.info,
-                unbound_expressions: &create.expressions,
+                unbound_expressions: &create.unbound_expressions,
                 alter_table_info: None,
             }
             .serialize_fields(serializer),
@@ -415,7 +419,7 @@ fn serialize_get(get: &LogicalGet, serializer: &mut dyn Serializer) -> Result<()
     let table_scan = get.table.as_ref().map(|table| {
         move |serializer: &mut dyn Serializer| {
             let (catalog, schema) = get.table_schema.clone().unwrap_or_default();
-            serialize_table_scan_bind_data(serializer, &catalog, &schema, table.name())
+            serialize_table_scan_bind_data(serializer, &catalog, &schema, table.name(), get.is_create_index)
         }
     });
     serialize_table_function(
@@ -535,12 +539,13 @@ fn serialize_table_scan_bind_data(
     catalog: &str,
     schema: &str,
     table: &str,
+    is_create_index: bool,
 ) -> Result<()> {
     serializer.write_property(100, "catalog", catalog)?;
     serializer.write_property(101, "schema", schema)?;
     serializer.write_property(102, "table", table)?;
     serializer.write_property(103, "is_index_scan", &false)?;
-    serializer.write_property(104, "is_create_index", &false)?;
+    serializer.write_property(104, "is_create_index", &is_create_index)?;
     serializer.write_property_with_default(105, "result_ids", &Vec::<i64>::new())
 }
 

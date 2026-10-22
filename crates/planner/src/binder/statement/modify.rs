@@ -667,6 +667,16 @@ pub(super) fn bind_update_set(
     Ok(())
 }
 
+/// The columns of a `physical_index_set_t` filled from `columns`, in libc++'s iteration
+/// order (`std::hash<idx_t>` is the identity).
+fn physical_index_set(columns: &[usize]) -> Vec<usize> {
+    let mut set = rustdb_common::libcxx::UnorderedOrder::default();
+    for &column in columns {
+        set.insert(column as u64, column, |a, b| a == b);
+    }
+    set.order().into_iter().map(|node| set.keys()[node]).collect()
+}
+
 /// `LogicalUpdate::BindExtraColumns`: adds `c = c` updates for columns in `bound_columns`
 /// that are not updated yet.
 fn bind_extra_columns(
@@ -682,13 +692,14 @@ fn bind_extra_columns(
         projection_expressions,
         ..
     } = set;
+    let bound_columns = physical_index_set(bound_columns);
     if bound_columns.len() <= 1 {
         return Ok(());
     }
     if bound_columns.iter().all(|column| columns.contains(column)) {
         return Ok(());
     }
-    for &physical in bound_columns {
+    for physical in bound_columns {
         if columns.contains(&physical) {
             continue;
         }
@@ -704,7 +715,7 @@ fn bind_extra_columns(
         ));
         let (table_index, position) = add_scan_column(get, logical)?;
         projection_expressions.push(Expression::column_ref(
-            table.columns[logical].name.clone(),
+            "",
             ty,
             ColumnBinding::new(table_index, position),
             0,

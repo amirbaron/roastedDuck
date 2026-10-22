@@ -38,8 +38,8 @@ pub fn bind_create_index(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Re
         })),
     };
     let mut parsed_expressions = index.parsed_expressions.clone();
-    let plan = bind_table_ref(scope, &mut table_ref)?.plan;
-    let LogicalKind::Get(get) = &plan.kind else {
+    let mut plan = bind_table_ref(scope, &mut table_ref)?.plan;
+    let LogicalKind::Get(get) = &mut plan.kind else {
         return Err(Error::binder("can only create an index on a base table"));
     };
     let Some(entry) = get.table.clone() else {
@@ -90,6 +90,8 @@ pub fn bind_create_index(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Re
             "CREATE INDEX does not refer to any columns in the base table!",
         ));
     }
+    // `LogicalCreateIndex` keeps copies of the bound expressions.
+    let unbound_expressions = expressions.iter().map(Expression::copy).collect();
     for expression in &mut expressions {
         to_physical_references(expression, get.table_index, &column_ids, table)?;
     }
@@ -124,11 +126,18 @@ pub fn bind_create_index(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Re
         index.scan_types = scan_types;
         index.names = names;
     }
+    // The scan reads the row ids too (`get.AddColumnId(COLUMN_IDENTIFIER_ROW_ID)`).
+    get.column_ids = column_ids;
+    get.column_ids.push(ColumnIndex::new(COLUMN_IDENTIFIER_ROW_ID));
+    get.shared_column_ids = None;
+    get.is_create_index = true;
     Ok(LogicalOperator::new(LogicalKind::CreateIndex(Box::new(
         LogicalCreateIndex {
             info,
             table: entry,
             expressions,
+            unbound_expressions,
+            scan: Box::new(plan),
         },
     ))))
 }

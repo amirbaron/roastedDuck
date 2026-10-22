@@ -7,11 +7,13 @@
 //! chunk exactly like DuckDB (index parameter first, then the element(s), then the other
 //! arguments: outer lambda parameters and captured columns).
 
+use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use rustdb_common::{Error, ErrorKind, Result, STANDARD_VECTOR_SIZE};
 use rustdb_function::{
-    BindInput, FunctionData, FunctionState, LambdaExecutor, NullHandling, ScalarFunction, ScalarFunctionSet,
+    BindInput, FunctionData, FunctionState, LambdaExecutor, ListLambdaBindData, NullHandling, ScalarFunction,
+    ScalarFunctionSet,
 };
 use rustdb_types::kernels::scatter;
 use rustdb_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, SelectionVector, Value, Vector};
@@ -21,17 +23,14 @@ use crate::scalar::nested::{ListInput, all_constant};
 
 type BindResult = Result<Option<Arc<dyn FunctionData>>>;
 
-/// DuckDB's `ListLambdaBindData` (the lambda itself lives in the executor).
-#[derive(Debug, Clone, Copy)]
-struct LambdaData {
-    has_index: bool,
-    has_initial: bool,
-}
-
-impl FunctionData for LambdaData {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
+/// `ListLambdaBindData` of a call that keeps its lambda.
+fn lambda_data(return_type: &LogicalType, has_index: bool, has_initial: bool) -> Arc<dyn FunctionData> {
+    Arc::new(ListLambdaBindData {
+        return_type: return_type.clone(),
+        has_lambda: true,
+        has_index,
+        has_initial,
+    })
 }
 
 /// `LambdaFunctions::DetermineListChildType`.
@@ -85,23 +84,33 @@ fn bind_reduce_children(child_types: &[LogicalType], parameter: usize) -> Result
     }
 }
 
-/// `ListLambdaPrepareBind` and `AddArrayCastToList`: `None` to continue binding.
-fn prepare_bind(function: &mut ScalarFunction, input: &BindInput<'_>) -> Result<Option<BindResult>> {
+/// `ListLambdaPrepareBind` and `AddArrayCastToList`: the list type to continue binding
+/// with, or the bind data of a NULL list. The list argument keeps its `LIST(ANY)` type,
+/// except that an ARRAY is cast to a LIST through it.
+fn prepare_bind(
+    function: &mut ScalarFunction,
+    input: &BindInput<'_>,
+) -> Result<ControlFlow<Arc<dyn FunctionData>, LogicalType>> {
     let ty = &input.argument_types[0];
     match ty.id() {
         LogicalTypeId::SqlNull => {
             function.arguments[0] = LogicalType::SQLNULL;
             function.return_type = LogicalType::SQLNULL;
-            return Ok(Some(Ok(Some(Arc::new(LambdaData {
+            Ok(ControlFlow::Break(Arc::new(ListLambdaBindData {
+                return_type: LogicalType::SQLNULL,
+                has_lambda: false,
                 has_index: false,
                 has_initial: false,
-            })))));
+            })))
         }
-        LogicalTypeId::Unknown => return Err(crate::parameter_not_resolved()),
-        LogicalTypeId::Array => function.arguments[0] = LogicalType::list(list_child_type(ty)?),
-        _ => function.arguments[0] = ty.clone(),
+        LogicalTypeId::Unknown => Err(crate::parameter_not_resolved()),
+        LogicalTypeId::Array => {
+            let list = LogicalType::list(list_child_type(ty)?);
+            function.arguments[0] = list.clone();
+            Ok(ControlFlow::Continue(list))
+        }
+        _ => Ok(ControlFlow::Continue(ty.clone())),
     }
-    Ok(None)
 }
 
 fn lambda_input<'a>(input: &'a BindInput<'_>) -> Result<&'a rustdb_function::LambdaInput> {
@@ -113,14 +122,15 @@ fn lambda_input<'a>(input: &'a BindInput<'_>) -> Result<&'a rustdb_function::Lam
 /// `ListTransformBind`.
 fn bind_transform(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindResult {
     let lambda = lambda_input(input)?;
-    if let Some(result) = prepare_bind(function, input)? {
-        return result;
+    if let ControlFlow::Break(data) = prepare_bind(function, input)? {
+        return Ok(Some(data));
     }
     function.return_type = LogicalType::list(lambda.return_type.clone());
-    Ok(Some(Arc::new(LambdaData {
-        has_index: lambda.parameter_count == 2,
-        has_initial: false,
-    })))
+    Ok(Some(lambda_data(
+        &function.return_type,
+        lambda.parameter_count == 2,
+        false,
+    )))
 }
 
 /// `ListFilterBind`: the lambda is cast to BOOLEAN.
@@ -129,23 +139,26 @@ fn bind_filter(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindResu
     if lambda.return_type != LogicalType::BOOLEAN {
         function.lambda_cast = Some(LogicalType::BOOLEAN);
     }
-    if let Some(result) = prepare_bind(function, input)? {
-        return result;
-    }
-    function.return_type = function.arguments[0].clone();
-    Ok(Some(Arc::new(LambdaData {
-        has_index: lambda.parameter_count == 2,
-        has_initial: false,
-    })))
+    let list = match prepare_bind(function, input)? {
+        ControlFlow::Continue(list) => list,
+        ControlFlow::Break(data) => return Ok(Some(data)),
+    };
+    function.return_type = list;
+    Ok(Some(lambda_data(
+        &function.return_type,
+        lambda.parameter_count == 2,
+        false,
+    )))
 }
 
 /// `ListReduceBind`.
 fn bind_reduce(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindResult {
     let lambda = lambda_input(input)?;
-    if let Some(result) = prepare_bind(function, input)? {
-        return result;
-    }
-    let mut element = list_child_type(&function.arguments[0])?;
+    let list = match prepare_bind(function, input)? {
+        ControlFlow::Continue(list) => list,
+        ControlFlow::Break(data) => return Ok(Some(data)),
+    };
+    let mut element = list_child_type(&list)?;
     let has_initial = input.argument_types.len() == 3;
     if has_initial {
         let initial = &input.argument_types[2];
@@ -168,19 +181,20 @@ fn bind_reduce(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindResu
         function.lambda_cast = Some(element.clone());
     }
     function.return_type = element;
-    Ok(Some(Arc::new(LambdaData {
-        has_index: lambda.parameter_count == 3,
+    Ok(Some(lambda_data(
+        &function.return_type,
+        lambda.parameter_count == 3,
         has_initial,
-    })))
+    )))
 }
 
 /// The bind data and lambda of a call.
-fn lambda_state(state: &mut FunctionState) -> Result<(LambdaData, &mut Box<dyn LambdaExecutor>)> {
+fn lambda_state(state: &mut FunctionState) -> Result<(ListLambdaBindData, &mut Box<dyn LambdaExecutor>)> {
     let data = state
         .bind_data
         .as_ref()
-        .and_then(|data| data.as_any().downcast_ref::<LambdaData>())
-        .copied()
+        .and_then(|data| data.as_any().downcast_ref::<ListLambdaBindData>())
+        .cloned()
         .ok_or_else(|| Error::internal("lambda function without bind data"))?;
     let lambda = state
         .lambda

@@ -318,10 +318,7 @@ fn bind_slice(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindResul
             function.arguments[0] = list.clone();
             function.return_type = list;
         }
-        LogicalTypeId::List => {
-            function.arguments[0] = ty.clone();
-            function.return_type = ty.clone();
-        }
+        LogicalTypeId::List => function.return_type = ty.clone(),
         LogicalTypeId::Blob | LogicalTypeId::Varchar => {
             if function.arguments.len() == 4 {
                 return Err(Error::new(
@@ -335,7 +332,6 @@ fn bind_slice(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindResul
                 function.arguments[0] = LogicalType::VARCHAR;
                 function.return_type = LogicalType::VARCHAR;
             } else {
-                function.arguments[0] = ty.clone();
                 function.return_type = ty.clone();
             }
             for index in 1..3 {

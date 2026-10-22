@@ -34,8 +34,8 @@ pub use pragma::{PragmaFunction, PragmaFunctionSet, PragmaType};
 pub use scalar::{
     AggregateResolver, BindInput, BindLambda, BoundAggregateFunction, CollationHandling,
     DecimalArithmeticBindData, ExpressionWriter, FunctionData, FunctionState, LambdaExecutor, LambdaInput,
-    NullHandling, ScalarBind, ScalarFunction, ScalarFunctionSet, ScalarKernel, ScalarSerialize, Stability,
-    StatsBindData,
+    ListLambdaBindData, NullHandling, ScalarBind, ScalarFunction, ScalarFunctionSet, ScalarKernel,
+    ScalarSerialize, Stability, StatsBindData,
 };
 pub use table::{
     FileFilterPushdown, InOutResult, ParallelScanGlobal, ParallelScanLocal, ParallelTableScan,

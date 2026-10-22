@@ -5,13 +5,17 @@
 use std::sync::PoisonError;
 
 use rustdb_common::{Error, Result};
+use rustdb_function::ListLambdaBindData;
 use rustdb_serde::{SerializeObject, Serializer};
 
 use super::{
     BoundAggregateExpression, BoundCaseCheck, BoundFunctionExpression, BoundOrderByNode, BoundOrderModifier,
     BoundParameterData, BoundWindowExpression, Expression, ExpressionKind,
 };
-use crate::function_serialization::{serialize_aggregate_function, serialize_scalar_function};
+
+use crate::function_serialization::{
+    serialize_aggregate_function, serialize_scalar_function, serialize_scalar_function_with,
+};
 use crate::generated::{expression as properties, nodes, result_modifier};
 use crate::{ColumnBinding, ExpressionType};
 
@@ -132,7 +136,23 @@ fn serialize_function(
 ) -> Result<()> {
     serializer.write_property(200, "return_type", &expression.return_type)?;
     serializer.write_property(201, "children", &function.children)?;
-    serialize_scalar_function(serializer, &function.function, function.bind_info.as_deref())?;
+    let lambda_data = function
+        .bind_info
+        .as_ref()
+        .and_then(|data| data.as_any().downcast_ref::<ListLambdaBindData>());
+    match lambda_data {
+        Some(data) => {
+            // `ListLambdaBindData::Serialize`, with the lambda the expression keeps.
+            let write = |serializer: &mut dyn Serializer| {
+                serializer.write_property(100, "return_type", &data.return_type)?;
+                serializer.write_property_with_default(101, "lambda_expr", &function.lambda.as_ref())?;
+                serializer.write_property(102, "has_index", &data.has_index)?;
+                serializer.write_property_with_default(103, "has_initial", &data.has_initial)
+            };
+            serialize_scalar_function_with(serializer, &function.function, &write)?;
+        }
+        None => serialize_scalar_function(serializer, &function.function, function.bind_info.as_deref())?,
+    }
     serializer.write_property(202, "is_operator", &function.is_operator)
 }
 

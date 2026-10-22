@@ -11,7 +11,7 @@ use rustdb_common::{Error, Result};
 use rustdb_types::{LogicalType, LogicalTypeId, TypeInfo};
 
 use crate::context::ClientContext;
-use crate::expression::Expression;
+use crate::expression::{Expression, ExpressionKind};
 use crate::function_binder::FunctionBinder;
 
 /// Which collations to apply (DuckDB's `CollationType`).
@@ -143,7 +143,15 @@ fn push_varchar_collation(
             return Ok((source, false));
         }
         source = match entry {
-            ResolvedCollation::Builtin(collation) => wrap(context, collation.function, source)?,
+            ResolvedCollation::Builtin(collation) => {
+                // The collation's own function object (`CollateCatalogEntry::function`),
+                // not the catalog's.
+                let mut collated = wrap(context, collation.function, source)?;
+                if let ExpressionKind::Function(function) = &mut collated.kind {
+                    function.function.clear_catalog_entry();
+                }
+                collated
+            }
             ResolvedCollation::Extension { entry, .. } => {
                 FunctionBinder::new(context).bind_scalar_overload(entry.function, vec![source], false)?
             }

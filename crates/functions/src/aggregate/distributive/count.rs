@@ -231,11 +231,14 @@ pub fn count_function() -> AggregateFunction {
         .order_independent()
 }
 
-/// The `count` set: `count(ANY)` and `count()`.
+/// The `count` set: `count(ANY)` and `count()`, which takes the set's name like every
+/// function of a set (`CreateAggregateFunctionInfo`).
 pub fn count_functions() -> AggregateFunctionSet {
     let mut set = AggregateFunctionSet::new("count");
     set.add(count_function());
-    set.add(count_star_function());
+    let mut count_star = count_star_function();
+    count_star.name = "count".into();
+    set.add(count_star);
     set
 }
 

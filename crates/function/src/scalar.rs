@@ -78,6 +78,26 @@ impl FunctionData for DecimalArithmeticBindData {
     }
 }
 
+/// The bind data of `list_transform`, `list_filter` and `list_reduce` (DuckDB's
+/// `ListLambdaBindData`). The lambda body stays on the bound function expression (its
+/// `lambda`), which writes it with this data in serialized plans.
+#[derive(Debug, Clone)]
+pub struct ListLambdaBindData {
+    pub return_type: LogicalType,
+    /// Whether the call keeps its lambda (DuckDB's `lambda_expr`, null for a NULL list).
+    pub has_lambda: bool,
+    /// Whether the last lambda parameter is the element's index.
+    pub has_index: bool,
+    /// Whether `list_reduce` has an initial value.
+    pub has_initial: bool,
+}
+
+impl FunctionData for ListLambdaBindData {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// The bind data of `stats(x)` (DuckDB's `StatsBindData`): the statistics of `x` as
 /// text, filled in by the optimizer's statistics propagation.
 #[derive(Debug, Default)]
