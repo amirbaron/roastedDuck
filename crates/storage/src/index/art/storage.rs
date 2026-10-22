@@ -7,6 +7,7 @@
 //! the ART operations handle both layouts.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use rustdb_common::{CaseInsensitiveMap, Error, Result};
 use rustdb_types::Value;
@@ -17,7 +18,9 @@ use super::node::{
     write_node, write_u64,
 };
 use super::{Art, DEPRECATED_PREFIX_COUNT, PREFIX_METADATA_SIZE};
-use crate::index::fixed_size_allocator::{BufferPointer, FixedSizeAllocator, FixedSizeAllocatorInfo};
+use crate::index::fixed_size_allocator::{
+    BufferLoader, BufferPointer, FixedSizeAllocator, FixedSizeAllocatorInfo,
+};
 
 /// The serialized form of an ART (DuckDB's `IndexStorageInfo` without the buffers).
 #[derive(Clone, Debug, Default)]
@@ -37,6 +40,39 @@ fn wants_v1_0_0_storage(options: &CaseInsensitiveMap<Value>) -> bool {
 }
 
 impl Art {
+    /// Restores `ART::ART` / `InitAllocators` from a checkpoint. The node buffers are
+    /// registered now and fetched only when traversal first touches them.
+    pub fn load_from_storage(&mut self, info: &ArtStorageInfo, loader: Arc<dyn BufferLoader>) -> Result<()> {
+        if !matches!(
+            info.allocator_infos.len(),
+            DEPRECATED_ALLOCATOR_COUNT | super::node::ALLOCATOR_COUNT
+        ) {
+            return Err(Error::serialization(
+                "invalid allocator count in index storage information",
+            ));
+        }
+        let prefix_size = info.allocator_infos[0].segment_size;
+        self.prefix_count = prefix_size
+            .checked_sub(PREFIX_METADATA_SIZE as u64)
+            .and_then(|count| u8::try_from(count).ok())
+            .filter(|&count| count != 0)
+            .ok_or_else(|| Error::serialization("invalid prefix size in index storage information"))?;
+        self.tree = Node::default();
+        self.buffer_loader = Some(loader);
+        self.init_allocators()?;
+        for (allocator, stored) in self.allocators.iter_mut().zip(&info.allocator_infos) {
+            if stored.segment_size != allocator.segment_size() as u64 {
+                return Err(Error::serialization(
+                    "invalid segment size in index storage information",
+                ));
+            }
+            allocator.init(stored)?;
+        }
+        self.tree = Node::from_raw(info.root);
+        self.storage_version = info.options.get("storage_version").and_then(Value::as_u64);
+        Ok(())
+    }
+
     /// Converts nested leaves to deprecated leaf chains and, if needed, prefixes to the
     /// 15-byte layout (`ART::TransformToDeprecated`).
     pub fn transform_to_deprecated(&mut self) -> Result<()> {
@@ -47,6 +83,9 @@ impl Art {
             let prefix_size = usize::from(DEPRECATED_PREFIX_COUNT) + PREFIX_METADATA_SIZE;
             let mut deprecated =
                 FixedSizeAllocator::new(prefix_size, self.block_size, self.buffer_manager.clone())?;
+            if let Some(loader) = &self.buffer_loader {
+                deprecated.set_loader(Arc::clone(loader));
+            }
             if self.tree.has_metadata() {
                 self.prefixes_to_deprecated(&mut deprecated)?;
             }

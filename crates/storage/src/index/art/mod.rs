@@ -35,7 +35,7 @@ pub use storage::ArtStorageInfo;
 
 use self::node::{ALLOCATOR_COUNT, read_node, write_node};
 use super::conflict_manager::ConflictManager;
-use super::fixed_size_allocator::{FixedSizeAllocator, FixedSizeAllocatorInfo};
+use super::fixed_size_allocator::{BufferLoader, FixedSizeAllocator, FixedSizeAllocatorInfo};
 use super::{IndexAppendMode, IndexConstraintType, VerifyExistenceType};
 use crate::table_filter::TableFilter;
 use rustdb_types::compare::CompareOp;
@@ -96,6 +96,7 @@ pub struct Art {
     storage_version: Option<u64>,
     buffer_manager: BufferManager,
     block_size: usize,
+    buffer_loader: Option<Arc<dyn BufferLoader>>,
 }
 
 impl Art {
@@ -129,6 +130,7 @@ impl Art {
             storage_version: None,
             buffer_manager,
             block_size,
+            buffer_loader: None,
         };
         art.init_allocators()?;
         Ok(art)
@@ -149,6 +151,7 @@ impl Art {
             storage_version: self.storage_version,
             buffer_manager: self.buffer_manager.clone(),
             block_size: self.block_size,
+            buffer_loader: self.buffer_loader.clone(),
         };
         art.init_allocators()?;
         Ok(art)
@@ -182,11 +185,11 @@ impl Art {
             NType::Node256Leaf.segment_size(),
         ];
         for size in sizes {
-            self.allocators.push(FixedSizeAllocator::new(
-                size,
-                self.block_size,
-                self.buffer_manager.clone(),
-            )?);
+            let mut allocator = FixedSizeAllocator::new(size, self.block_size, self.buffer_manager.clone())?;
+            if let Some(loader) = &self.buffer_loader {
+                allocator.set_loader(Arc::clone(loader));
+            }
+            self.allocators.push(allocator);
         }
         Ok(())
     }
@@ -209,7 +212,19 @@ impl Art {
             self.block_size,
         )?;
         art.storage_version = self.storage_version;
+        if let Some(loader) = &self.buffer_loader {
+            art.set_buffer_loader(Arc::clone(loader));
+        }
         Ok(art)
+    }
+
+    /// The file I/O used by persisted buffers, including buffers written by a later
+    /// checkpoint. Registering them must not read their contents.
+    pub fn set_buffer_loader(&mut self, loader: Arc<dyn BufferLoader>) {
+        for allocator in &mut self.allocators {
+            allocator.set_loader(Arc::clone(&loader));
+        }
+        self.buffer_loader = Some(loader);
     }
 
     pub fn name(&self) -> &str {

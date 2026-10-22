@@ -802,7 +802,9 @@ fn serialize_indexes(
         let info = match &slot {
             // Indexes rebuilt by a vacuum are written instead of the table's current ones,
             // which the table replaces by them once the checkpoint is complete.
-            IndexSlot::Bound(_) if let Some(index) = rebuilt.as_deref_mut().and_then(|rebuilt| rebuilt.get_mut(bound)) => {
+            IndexSlot::Bound(_)
+                if let Some(index) = rebuilt.as_deref_mut().and_then(|rebuilt| rebuilt.get_mut(bound)) =>
+            {
                 bound += 1;
                 index.serialize_to_disk(&index_options, &mut write, &mut |block| kept.push(block))?
             }
@@ -992,7 +994,13 @@ pub fn load_checkpoint(catalog: &Catalog, storage: &StorageManager) -> Result<()
                             } else {
                                 IndexConstraintType::Unique
                             };
-                            table.load_constraint_index(kind, &unique_keys(&entry, unique)?, index)?;
+                            restore_constraint_index(
+                                &table,
+                                kind,
+                                &unique_keys(&entry, unique)?,
+                                index,
+                                &mut stored_indexes,
+                            )?;
                         }
                         Constraint::ForeignKey(fk)
                             if matches!(
@@ -1002,7 +1010,13 @@ pub fn load_checkpoint(catalog: &Catalog, storage: &StorageManager) -> Result<()
                             ) =>
                         {
                             let keys: Vec<usize> = fk.fk_keys.iter().map(|k| k.0 as usize).collect();
-                            table.load_constraint_index(IndexConstraintType::Foreign, &keys, index)?;
+                            restore_constraint_index(
+                                &table,
+                                IndexConstraintType::Foreign,
+                                &keys,
+                                index,
+                                &mut stored_indexes,
+                            )?;
                         }
                         _ => {}
                     }
@@ -1116,6 +1130,29 @@ fn extract_index_storage(
         })
 }
 
+/// Matches constraint storage by its generated name (or the unnamed legacy ordering)
+/// and restores it without the table scan used for older checkpoint descriptions.
+fn restore_constraint_index(
+    table: &DataTable,
+    kind: IndexConstraintType,
+    columns: &[usize],
+    index: usize,
+    stored: &mut Vec<ArtStorageInfo>,
+) -> Result<()> {
+    let name = format!("{}_{}_{index}", kind.name(), table.name());
+    let position = stored
+        .iter()
+        .position(|info| info.name.eq_ignore_ascii_case(&name))
+        .or_else(|| stored.iter().position(|info| info.name.is_empty()));
+    if let Some(position) = position
+        && table.restore_constraint_index(kind, columns, index, &stored[position])?
+    {
+        stored.remove(position);
+        return Ok(());
+    }
+    table.load_constraint_index(kind, columns, index)
+}
+
 /// Creates an index entry read from a checkpoint (`CheckpointReader::ReadIndex`).
 fn load_index(
     catalog: &Catalog,
@@ -1129,8 +1166,8 @@ fn load_index(
 }
 
 /// Adds the index `info` to its table and returns the index's catalog entry and the
-/// table. An index over plain columns is built from the table's rows; an index over
-/// expressions waits unbound until a connection binds it (`UnboundIndex`), keeping its
+/// table. An index over plain columns restores its persisted buffers when available;
+/// an index over expressions waits unbound until a connection binds it (`UnboundIndex`), keeping its
 /// `stored` data meanwhile.
 fn build_index_entry(
     catalog: &Catalog,
@@ -1177,7 +1214,13 @@ fn build_index_entry(
     match plain_columns {
         Some(columns) if !columns.is_empty() => {
             let mut art = storage.new_art(&index.name, constraint, &columns)?;
-            storage.build_index(transaction, &mut art, false)?;
+            let restored = match &stored {
+                UnboundIndexStorage::Disk(info) => storage.restore_index(&mut art, info)?,
+                _ => false,
+            };
+            if !restored {
+                storage.build_index(transaction, &mut art, false)?;
+            }
             storage.add_index(art)?;
         }
         _ => {

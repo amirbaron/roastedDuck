@@ -6,9 +6,9 @@
 //! buffer is DuckDB's, so buffers are written to and read from storage as they are.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock, PoisonError};
 
-use rustdb_buffer::{BufferManager, MemoryReservation, MemoryTag};
+use rustdb_buffer::{BlockHandle, BufferManager, MemoryReservation, MemoryTag};
 use rustdb_common::{Error, Result};
 
 use super::IndexPointer;
@@ -32,6 +32,24 @@ pub struct BufferPointer {
 pub trait BufferLoader: Send + Sync + std::fmt::Debug {
     /// Returns `allocation_size` bytes stored at `pointer`.
     fn load(&self, pointer: BufferPointer, allocation_size: usize) -> Result<Vec<u8>>;
+
+    /// Borrows the buffer while `use_bytes` allocates and copies the ART buffer. File
+    /// loaders keep their pin alive across the callback, as `LoadFromDisk` does.
+    fn with_bytes(
+        &self,
+        pointer: BufferPointer,
+        allocation_size: usize,
+        use_bytes: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<()> {
+        let bytes = self.load(pointer, allocation_size)?;
+        use_bytes(&bytes)
+    }
+
+    /// Keeps a persisted block in use while a lazy buffer references it. In-memory
+    /// loaders need no block handle; file loaders register it without reading it.
+    fn register(&self, _pointer: BufferPointer) -> Option<std::sync::Arc<BlockHandle>> {
+        None
+    }
 }
 
 /// One buffer of an allocator (DuckDB's `FixedSizeBuffer`).
@@ -47,6 +65,8 @@ pub(crate) struct FixedSizeBuffer {
     pub(crate) allocation_size: usize,
     /// Location on disk, if the buffer was persisted.
     pub(crate) disk: Option<BufferPointer>,
+    /// Prevents a checkpoint from reusing a block whose buffer is not loaded yet.
+    block_handle: Mutex<Option<std::sync::Arc<BlockHandle>>>,
     /// Whether the in-memory bytes differ from the persisted ones.
     pub(crate) dirty: bool,
 }
@@ -59,17 +79,24 @@ impl FixedSizeBuffer {
             segment_count: 0,
             allocation_size: 0,
             disk: None,
+            block_handle: Mutex::new(None),
             dirty: true,
         }
     }
 
-    fn on_disk(pointer: BufferPointer, segment_count: usize, allocation_size: usize) -> Self {
+    fn on_disk(
+        pointer: BufferPointer,
+        segment_count: usize,
+        allocation_size: usize,
+        block_handle: Option<std::sync::Arc<BlockHandle>>,
+    ) -> Self {
         Self {
             memory: OnceLock::new(),
             reservation: OnceLock::new(),
             segment_count,
             allocation_size,
             disk: Some(pointer),
+            block_handle: Mutex::new(block_handle),
             dirty: false,
         }
     }
@@ -398,9 +425,8 @@ impl FixedSizeAllocator {
         self.buffer_with_free_space = self.buffers_with_free_space.iter().next().copied();
     }
 
-    /// Writes every buffer with `write`, which returns where the bytes went, and records
-    /// the locations (`SerializeBuffers`). A checkpoint rewrites all index data, so
-    /// buffers persisted by an earlier checkpoint are written again.
+    /// Writes dirty buffers with `write` and retains unchanged persisted blocks
+    /// (`SerializeBuffers`). Records the new locations for lazy reloading.
     pub(crate) fn serialize_buffers(
         &mut self,
         write: &mut dyn FnMut(&[u8]) -> Result<BufferPointer>,
@@ -511,9 +537,15 @@ impl FixedSizeAllocator {
             }
             let segment_count = info.segment_counts.get(i).copied().unwrap_or(0) as usize;
             let allocation_size = info.allocation_sizes.get(i).copied().unwrap_or(0) as usize;
+            if allocation_size > self.block_size || id > crate::MAX_ROW_ID {
+                return Err(Error::serialization(
+                    "invalid buffer in index storage information",
+                ));
+            }
+            let handle = self.loader.as_ref().and_then(|loader| loader.register(pointer));
             self.buffers.insert(
                 id,
-                FixedSizeBuffer::on_disk(pointer, segment_count, allocation_size),
+                FixedSizeBuffer::on_disk(pointer, segment_count, allocation_size, handle),
             );
             self.total_segment_count += segment_count;
         }
@@ -542,6 +574,16 @@ impl FixedSizeAllocator {
     pub(crate) fn set_persisted(&mut self, id: u64, pointer: BufferPointer) {
         if let Some(buffer) = self.buffers.get_mut(&id) {
             buffer.disk = Some(pointer);
+            *buffer
+                .block_handle
+                .get_mut()
+                .unwrap_or_else(PoisonError::into_inner) =
+                self.loader.as_ref().and_then(|loader| loader.register(pointer));
+            if self.loader.is_some() {
+                // `FixedSizeBuffer::Serialize`: the next use reloads the written buffer.
+                buffer.memory.take();
+                buffer.reservation.take();
+            }
             buffer.dirty = false;
         }
     }
@@ -581,15 +623,25 @@ fn load_buffer(
         .disk
         .ok_or_else(|| Error::internal("invalid or missing buffer in FixedSizeAllocator"))?;
     let loader = loader.ok_or_else(|| Error::internal("no loader for a persisted index buffer"))?;
-    let data = loader.load(pointer, buffer.allocation_size)?;
-    let reservation = buffer_manager.reserve_tagged(MemoryTag::ArtIndex, buffer_memory_size(block_size))?;
-    let mut bytes = vec![0u8; block_size].into_boxed_slice();
-    let len = data.len().min(block_size);
-    bytes[..len].copy_from_slice(&data[..len]);
-    // A concurrent load of the same buffer is impossible: index access is serialised by
-    // the index lock, so losing the race here only drops a duplicate.
-    let _ = buffer.memory.set(bytes);
-    let _ = buffer.reservation.set(reservation);
+    loader.with_bytes(pointer, buffer.allocation_size, &mut |data| {
+        let reservation =
+            buffer_manager.reserve_tagged(MemoryTag::ArtIndex, buffer_memory_size(block_size))?;
+        let mut bytes = vec![0u8; block_size].into_boxed_slice();
+        let len = data.len().min(block_size);
+        bytes[..len].copy_from_slice(&data[..len]);
+        // A concurrent load of the same buffer is impossible: index access is serialised
+        // by the index lock, so losing the race here only drops a duplicate.
+        let _ = buffer.memory.set(bytes);
+        let _ = buffer.reservation.set(reservation);
+        Ok(())
+    })?;
+    // The copied ART buffer now owns the bytes; only unread buffers need to keep the
+    // original file block in use (`FixedSizeBuffer::LoadFromDisk`).
+    buffer
+        .block_handle
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take();
     Ok(())
 }
 

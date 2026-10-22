@@ -14,14 +14,59 @@ use crate::index::art::IndexScanPredicate;
 use crate::index::conflict_manager::ConflictManager;
 use crate::index::table_index_list::ForeignKeyType;
 use crate::index::{
-    Art, IndexAppendMode, IndexConstraintType, IndexKeyExpressions, IndexRemovalType, TableIndexList,
-    VerifyExistenceType,
+    Art, BufferLoader, BufferPointer, IndexAppendMode, IndexConstraintType, IndexKeyExpressions,
+    IndexRemovalType, TableIndexList, VerifyExistenceType,
 };
 use crate::table::{
     CollectionScanState, FetchType, RowGroup, RowGroupCollection, ScanFilterInfo, StorageIndex, TableScanType,
 };
 use crate::table_filter::TableFilterSet;
 use crate::transaction::{LocalStorage, LocalTableStorage, Transaction, TransactionData};
+
+/// Lazy ART reads use the same block manager as the table: checksum validation and
+/// decryption happen when it pins the persisted block, not during catalog loading.
+#[derive(Debug)]
+struct IndexBufferLoader {
+    buffer_manager: rustdb_buffer::BufferManager,
+    block_manager: Arc<dyn rustdb_buffer::BlockManager>,
+}
+
+impl BufferLoader for IndexBufferLoader {
+    fn register(&self, pointer: BufferPointer) -> Option<Arc<rustdb_buffer::BlockHandle>> {
+        Some(
+            self.buffer_manager
+                .register_block(&self.block_manager, pointer.block_id),
+        )
+    }
+
+    fn load(&self, pointer: BufferPointer, allocation_size: usize) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        self.with_bytes(pointer, allocation_size, &mut |data| {
+            bytes.extend_from_slice(data);
+            Ok(())
+        })?;
+        Ok(bytes)
+    }
+
+    fn with_bytes(
+        &self,
+        pointer: BufferPointer,
+        allocation_size: usize,
+        use_bytes: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<()> {
+        let block = self
+            .buffer_manager
+            .register_block(&self.block_manager, pointer.block_id);
+        let pin = self.buffer_manager.pin(&block)?;
+        let start = pointer.offset as usize;
+        let end = start
+            .checked_add(allocation_size)
+            .filter(|&end| end <= pin.len())
+            .ok_or_else(|| Error::serialization("index buffer exceeds its persisted block"))?;
+        // SAFETY: persisted index blocks are immutable; the pin keeps their bytes alive.
+        use_bytes(&unsafe { pin.as_slice() }[start..end])
+    }
+}
 
 /// Which side of a foreign key a table is on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -158,7 +203,27 @@ impl DataTable {
         // A new ART has the storage version of its database, one read from the file the
         // version it was stored with (`ART::ART`).
         art.set_storage_version(self.info().index_storage_version(name, io.storage_version()));
+        if io.file_block_manager().is_some() {
+            art.set_buffer_loader(self.index_buffer_loader());
+        }
         Ok(art)
+    }
+
+    fn index_buffer_loader(&self) -> Arc<dyn BufferLoader> {
+        Arc::new(IndexBufferLoader {
+            buffer_manager: self.io().buffer_manager().clone(),
+            block_manager: Arc::clone(self.io().block_manager()),
+        })
+    }
+
+    /// Restores modern checkpoint index buffers instead of scanning table rows.
+    /// Pre-v0.10 roots and in-memory checkpoint descriptions still use their rebuild path.
+    pub fn restore_index(&self, index: &mut Art, info: &crate::index::art::ArtStorageInfo) -> Result<bool> {
+        if info.allocator_infos.is_empty() || self.io().file_block_manager().is_none() {
+            return Ok(false);
+        }
+        index.load_from_storage(info, self.index_buffer_loader())?;
+        Ok(true)
     }
 
     /// Adds an index enforcing a PRIMARY KEY, UNIQUE or FOREIGN KEY constraint over
@@ -187,6 +252,29 @@ impl DataTable {
         let mut art = self.new_art(&name, constraint, column_ids)?;
         self.build_index(&Transaction::system(), &mut art, false)?;
         self.add_index(art)
+    }
+
+    /// Restores a constraint's persisted ART without reading table rows. Returns false
+    /// for descriptions that still need the legacy rebuild path.
+    pub fn restore_constraint_index(
+        &self,
+        constraint: IndexConstraintType,
+        column_ids: &[usize],
+        constraint_index: usize,
+        info: &crate::index::art::ArtStorageInfo,
+    ) -> Result<bool> {
+        let generated = format!("{}_{}_{constraint_index}", constraint.name(), self.name());
+        let name = if info.name.is_empty() {
+            &generated
+        } else {
+            &info.name
+        };
+        let mut art = self.new_art(name, constraint, column_ids)?;
+        if !self.restore_index(&mut art, info)? {
+            return Ok(false);
+        }
+        self.add_index(art)?;
+        Ok(true)
     }
 
     /// Adds a built index to the table (`DataTable::AddIndex`).
@@ -328,7 +416,14 @@ impl DataTable {
                 let mut chunk = DataChunk::with_types(&types, STANDARD_VECTOR_SIZE);
                 loop {
                     chunk.reset();
-                    row_group.scan(options, &mut scan, &column_ids, &mut filters, base + row_start, &mut chunk)?;
+                    row_group.scan(
+                        options,
+                        &mut scan,
+                        &column_ids,
+                        &mut filters,
+                        base + row_start,
+                        &mut chunk,
+                    )?;
                     if chunk.is_empty() {
                         break;
                     }

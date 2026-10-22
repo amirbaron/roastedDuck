@@ -315,3 +315,126 @@ fn paused_scans_resume() {
     assert!(art.search_equal(&key, 600, &mut found).unwrap());
     assert_eq!(found.len(), 600);
 }
+
+/// A checkpoint store with deliberately offset buffers, counting physical reads.
+#[derive(Debug, Default)]
+struct CheckpointBuffers {
+    buffers: std::sync::Mutex<Vec<Vec<u8>>>,
+    reads: std::sync::atomic::AtomicUsize,
+}
+
+impl super::super::BufferLoader for CheckpointBuffers {
+    fn load(
+        &self,
+        pointer: super::super::BufferPointer,
+        allocation_size: usize,
+    ) -> rustdb_common::Result<Vec<u8>> {
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let buffers = self.buffers.lock().unwrap();
+        let start = pointer.offset as usize;
+        Ok(buffers[pointer.block_id as usize][start..start + allocation_size].to_vec())
+    }
+}
+
+fn stored_art_round_trip(deprecated: bool) {
+    use rustdb_common::CaseInsensitiveMap;
+    use rustdb_types::Value;
+    use std::sync::atomic::Ordering;
+
+    let store = std::sync::Arc::new(CheckpointBuffers::default());
+    let mut source = art(IndexConstraintType::None, LogicalType::BIGINT);
+    source.set_storage_version(Some(7));
+    let mut model = Model::new();
+    let mut row = 0;
+    for key in (0..500).map(row_id_key).map(|key| key.to_vec()).chain(
+        (0..40).map(|i| format!("a-long-shared-prefix-that-spans-several-segments-{i:04}").into_bytes()),
+    ) {
+        let duplicates = if row % 3 == 0 { 25 } else { 1 };
+        for _ in 0..duplicates {
+            source
+                .insert_keys(&[Some(key.clone())], &[row], &[], IndexAppendMode::Default, None)
+                .unwrap();
+            model.entry(key.clone()).or_default().insert(row);
+            row += 1;
+        }
+    }
+    let mut options = CaseInsensitiveMap::new();
+    options.insert("v1_0_0_storage", Value::boolean(deprecated));
+    let mut write = |data: &[u8]| {
+        let mut buffers = store.buffers.lock().unwrap();
+        let id = buffers.len() as i64;
+        let offset = if data.len() + 16 <= 262_136 { 16 } else { 0 };
+        let mut bytes = vec![0; offset];
+        bytes.extend_from_slice(data);
+        buffers.push(bytes);
+        Ok(super::super::BufferPointer {
+            block_id: id,
+            offset: offset as u32,
+        })
+    };
+    let info = source
+        .serialize_to_disk(&options, &mut write, &mut |_| {})
+        .unwrap();
+    let mut restored = art(IndexConstraintType::None, LogicalType::BIGINT);
+    restored.load_from_storage(&info, store.clone()).unwrap();
+    assert_eq!(restored.storage_version(), Some(7));
+    assert_eq!(
+        restored.prefix_count(),
+        if deprecated { DEPRECATED_PREFIX_COUNT } else { 7 }
+    );
+    assert_eq!(restored.in_memory_size(), 0);
+    assert_eq!(store.reads.load(Ordering::Relaxed), 0);
+    for (key, expected) in &model {
+        let mut found = BTreeSet::new();
+        assert!(restored.search_equal(key, usize::MAX, &mut found).unwrap());
+        assert_eq!(&found, expected);
+    }
+    let reads = store.reads.load(Ordering::Relaxed);
+    assert!(reads > 0);
+    let mut all = BTreeSet::new();
+    restored.full_scan(usize::MAX, &mut all).unwrap();
+    assert_eq!(all, model.values().flatten().copied().collect());
+    assert_eq!(store.reads.load(Ordering::Relaxed), reads);
+
+    let (first_key, first_rows) = model.first_key_value().unwrap();
+    let first_key = first_key.clone();
+    let first_row = *first_rows.first().unwrap();
+    assert!(restored.delete_key(&first_key, row_id_key(first_row)).unwrap());
+    let rows = model.get_mut(&first_key).unwrap();
+    rows.remove(&first_row);
+    if rows.is_empty() {
+        model.remove(&first_key);
+    }
+    let key = row_id_key(100_000).to_vec();
+    restored
+        .insert_keys(&[Some(key.clone())], &[row], &[], IndexAppendMode::Default, None)
+        .unwrap();
+    model.insert(key, BTreeSet::from([row]));
+    let mut kept = 0;
+    let info = restored
+        .serialize_to_disk(&options, &mut write, &mut |_| kept += 1)
+        .unwrap();
+    assert!(
+        kept > 0,
+        "unchanged persisted buffers must survive a subsequent checkpoint"
+    );
+    store.reads.store(0, Ordering::Relaxed);
+    let mut again = art(IndexConstraintType::None, LogicalType::BIGINT);
+    again.load_from_storage(&info, store.clone()).unwrap();
+    assert_eq!(store.reads.load(Ordering::Relaxed), 0);
+    for (key, expected) in model {
+        let mut found = BTreeSet::new();
+        assert!(again.search_equal(&key, usize::MAX, &mut found).unwrap());
+        assert_eq!(found, expected);
+    }
+}
+
+#[test]
+fn persisted_modern_nodes_load_lazily_and_remain_mutable() {
+    stored_art_round_trip(false);
+}
+
+#[test]
+fn persisted_deprecated_leaf_layout_loads_lazily_and_remains_mutable() {
+    stored_art_round_trip(true);
+}
