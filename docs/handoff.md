@@ -134,17 +134,28 @@ and result comparisons pass, but the cache policy is **not accepted**: q21, q22 
 q28 have memory above C++, despite improved average speed. See the experimental table
 in `docs/perf-backlog.md`. Preserve the uncached binaries in `uncached-merged/`.
 
-A fresh 4870-file sweep is running with one worker, normal SQL thread defaults, and
-worker logs preserved on the SSD. Its path is recorded in `cache-policy/full-run-path.txt`.
-Do not start another workload or rebuild `target/release/slt` until it finishes. After
-it finishes, inspect every result against the prior 4781/15/74 baseline and the ratchet;
-then diagnose or reject the cache policy's memory outliers before claiming parity.
-The running candidate sweep has exposed one new regression so far:
-`test/sql/pragma/profiling/test_profiling_fs.test` (zero `TOTAL_BYTES_READ` on SELECT
-following reattach). Source points to rebuilding plain indexes while loading the
-catalog, warming table blocks at ATTACH. Native persisted-index restoration is now
-work-queue item 16; `.context/index-loading-regression.md` records the investigation.
-Do not change profiling counters or tests to hide this gap.
+The fresh full sweep is complete: **4780 pass, 16 fail, 74 skip**, zero crashes or
+timeouts, with exactly one changed verdict against the prior baseline. The ratchet
+correctly fails with one regression, `test/sql/pragma/profiling/test_profiling_fs.test`
+(zero `TOTAL_BYTES_READ` on SELECT following reattach). A fresh C++ native-unittest
+control passes, the preserved uncached Rust control passes, and the cache candidate
+fails again in isolation. Source rebuilds plain indexes while loading the catalog,
+warming table blocks at ATTACH. Native persisted-index restoration is work-queue item
+16; `.context/index-loading-regression.md` records the investigation. Do not change
+profiling counters or tests to hide this gap. The canonical ratchet/results were not
+replaced by the failed candidate sweep.
+
+The full-run path is recorded in `cache-policy/full-run-path.txt`; all worker logs and
+`comparison.json` are retained. No workload is active after the serial allocation
+diagnostic completed. Its report is `cache-policy/alloc-diagnosis/report.json`: cold
+single-thread q21 and q28 retain similar table bytes to C++, with approximately 99 MB
+and 350 MB extra peak-minus-retained-table memory respectively. This is an allocation
+estimate, not a precise heap attribution. q22 used less memory than C++ in this single
+CLI run despite its repeated C API benchmark outlier, so cache/filter-history effects
+need controlled investigation. Fix the persisted-index regression first, then diagnose
+or reject/rework caching's memory outliers before accepting the policy or claiming parity.
+The current signed binaries are the cache candidate; `uncached-merged/` preserves the
+other verified variant. Only the cache flag is uncommitted code.
 
 ## How to work
 
@@ -165,8 +176,10 @@ Do not change profiling counters or tests to hide this gap.
 
 ## Next steps, in order
 
-1. Finish verification and measurements of the integrated performance round 6 work,
-   then work down `docs/work-queue.md` sequentially. ICU verification is complete; Parquet encryption (15) remains.
+1. Fix native persisted-index loading (work-queue 16), which the cache experiment
+   exposes as a profiling regression. Then resolve or reject/rework caching's memory
+   outliers and continue the performance work; the policy is not accepted yet. Work
+   down the rest of `docs/work-queue.md` sequentially. ICU verification is complete; Parquet encryption (15) remains.
 2. Keep one workload at a time. Use `JOBS=1` for canonical conformance runs; do not
    force `SLT_THREADS=1` globally because tests of thread defaults and parallel plans
    intentionally depend on the normal setting. It remains useful for focused diagnostics.

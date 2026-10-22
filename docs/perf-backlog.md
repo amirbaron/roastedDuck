@@ -405,8 +405,20 @@ queries: TPC-H q21 by 6–8%; ClickBench q22 by 12–26%, and q28 by 15% at one 
 remaining parity gaps, not waived by better average speed or lower memory elsewhere.
 The buffered right-delim input is a suspected contributor to q21; profiling is still
 needed to attribute its extra memory. q28 and q22 also need allocation/scan diagnosis.
-The candidate remains uncommitted while the full 4870-file corpus runs, including
-memory pressure and spill behavior. Do not rebuild the runner while it is active.
+The candidate remains uncommitted. Its full 4870-file sweep finished with 4780 passes,
+16 failures and 74 skips, zero crashes/timeouts: the only regression is
+`test_profiling_fs.test`, where ATTACH rebuilds the plain index from table rows and
+warms data before the profiled SELECT. C++ and the uncached Rust control pass; the
+candidate fails again alone. Native persisted-index reload is now work-queue 16.
+
+A subsequent single-thread CLI allocation diagnostic separates retained table bytes
+from peak RSS. q21 retains about 580 MB on C++ / 578 MB on Rust, with peak-minus-table
+411 MB / 510 MB. q28 retains 3435 MB / 3414 MB, with peak-minus-table 1339 MB / 1690 MB.
+Those are approximate non-table contributions, not a heap profile. q22's single cold
+CLI run is lower on Rust (6964 MB vs 7751 MB), unlike the repeated C API measurement;
+repeat with cache/filter history controlled before attributing it to an allocator.
+All query scripts/output and raw `/usr/bin/time` measurements are preserved in
+`cache-policy/alloc-diagnosis/`. No workload is active at this checkpoint.
 Evidence: `.context/artifacts/parity-20261022/cache-policy/` (`residency.json`, build
 manifest, `bench/`, and the unique full-run directory recorded by `full-run-path.txt`).
 
