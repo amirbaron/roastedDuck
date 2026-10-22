@@ -253,7 +253,11 @@ def main():
     if a.queries:
         wanted = {q if q.startswith("q") else f"q{int(q):02d}" for q in a.queries.split(",")}
         queries = [q for q in queries if q[0] in wanted]
-    both = len(engines) == 2
+    if not engines or len(set(engines)) != len(engines) or any(e not in LIBS for e in engines):
+        p.error("--engines must select duck, rust, or duck,rust without duplicates")
+    if not queries:
+        p.error("no queries selected")
+    both = set(engines) == {"duck", "rust"}
     base = interpreter_rss()
     print(f"{a.suite} threads={a.threads} reps={a.reps} (mem x: peak RSS above the interpreter's "
           f"{base / 1e6:.0f} MB)")
@@ -262,6 +266,7 @@ def main():
         hdr += "| speed | cpu x | mem x | check"
     print(hdr, flush=True)
     rows = {}
+    failed = []
     for name, db, sql, check in queries:
         res = {e: run(e, db, sql, check, a.threads, a.reps, a.memory_limit) for e in engines}
         rows[name] = res
@@ -272,26 +277,33 @@ def main():
                 line += f"| {r['wall']:9.4f} {r['cpu']:6.3f} {r['rss'] / 1e6:6.0f} "
             else:
                 line += f"| ERR {r['error'][:60]} "
+        if any("wall" not in res[e] for e in engines):
+            res["check"] = "error"
+            failed.append(name)
         if both and all("wall" in res[e] for e in engines):
             d, r = res["duck"], res["rust"]
             sp = d["wall"] / r["wall"]
             cp = d["cpu"] / max(r["cpu"], 1e-6)
             mem = max(r["rss"] - base, 1) / max(d["rss"] - base, 1)
             line += f"| {sp:5.2f} | {cp:5.2f} | {mem:5.2f} "
+            res["check"] = "unchecked"
             if not a.no_check:
                 if same(d["result"], r["result"]):
-                    line += "| ok"
+                    res["check"] = "ok"
                 elif same("\n".join(sorted(d["result"].splitlines())), "\n".join(sorted(r["result"].splitlines()))):
-                    line += "| ok (order)"
+                    res["check"] = "ok (order)"
                 elif tie_check(db, sql):
-                    line += "| ok (ties)"
+                    res["check"] = "ok (ties)"
                 else:
-                    line += "| DIFF"
+                    res["check"] = "DIFF"
+                    failed.append(name)
+                line += "| " + res["check"]
                 if a.dump:
                     os.makedirs(a.dump, exist_ok=True)
                     for e in engines:
                         open(os.path.join(a.dump, f"{a.suite}-{name}-{e}.txt"), "w").write(res[e]["result"])
-            res["speed"], res["mem"], res["mem_raw"] = sp, mem, r["rss"] / d["rss"]
+            if res["check"] != "DIFF":
+                res["speed"], res["mem"], res["mem_raw"] = sp, mem, r["rss"] / d["rss"]
         print(line, flush=True)
     if both:
         ok = [r for r in rows.values() if "speed" in r]
@@ -305,8 +317,12 @@ def main():
         for r in rows.values():
             for e in engines:
                 r[e].pop("result", None)
-        json.dump({"suite": a.suite, "threads": a.threads, "interpreter_rss": base, "rows": rows},
-                  open(a.out, "w"), indent=1)
+        with open(a.out, "w") as output:
+            json.dump({"suite": a.suite, "threads": a.threads, "interpreter_rss": base, "rows": rows},
+                      output, indent=1)
+    if failed:
+        sys.exit("benchmark validation failed: " + ", ".join(failed))
 
 
-main()
+if __name__ == "__main__":
+    main()

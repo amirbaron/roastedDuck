@@ -17,7 +17,11 @@ def geomean(xs):
 
 
 def load(path):
-    data = json.load(open(path))
+    with open(path) as source:
+        data = json.load(source)
+    failures = [q for q, r in data["rows"].items() if r.get("check") in ("DIFF", "error")]
+    if failures:
+        sys.exit(f"{path}: benchmark validation failed: {', '.join(failures)}")
     rows = {q: r for q, r in data["rows"].items() if "speed" in r}
     return data, rows
 
