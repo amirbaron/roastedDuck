@@ -50,7 +50,7 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      completion lists show: `icu_collate_<locale>` for each ICU collation (DuckDB's ICU
      registers every collation as a scalar function too), `seq_scan`,
      `duckdb_secret_types`, `duckdb_table_sample`, `duckdb_coordinate_systems`,
-     `json_serialize_plan` (8), `tpcds`, `dsdgen` (10).
+     `tpcds`, `dsdgen` (10).
    - Object ids: the oid of a database (`PRAGMA database_list`'s `seq`) counts the
      catalog entries created before it, more in DuckDB.
    - "Did you mean" for a type name: DuckDB suggests among the default type entries it
@@ -123,7 +123,31 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    table block re-reads (caching is ruled out by the memory target), the aggregate hash
    table's lookups and resizes, and the hash join probe. Struct projection pushdown is
    ported (13).
-8. **Logical plan serialization** (`json_serialize_plan`).
+8. **Logical plan serialization, the rest.** `json_serialize_plan` writes logical plans
+   with DuckDB's serializers: `tools/codegen` generates property structs from
+   `logical_operator.json`, `expression.json`, `nodes.json`, `table_filter.json` and
+   `column_index.json`, and the hand-written parts (`LogicalGet`, functions and their
+   bind data, `COPY TO`, lambdas) follow DuckDB's. Functions carry their catalog entry,
+   original arguments and a `serialize` callback; binds that replace the function
+   object clear the entry, like DuckDB's. What still differs:
+   - `CREATE SCHEMA` shows the default catalog where DuckDB leaves it empty (the
+     read-only check reads the catalog from the plan).
+   - A query pragma (`PRAGMA version`) binds to a `LOGICAL_PRAGMA`, which cannot be
+     serialized, where DuckDB fails with "PRAGMA function does not have a function
+     specified": rustdb's pragma functions do not say which ones are queries.
+   - `LOAD` and `EXPORT DATABASE` do not bind; the connection runs them before planning.
+   - Lambda functions, `list_slice` and `list_zip` over an ARRAY, and `list_reduce` with
+     an initial value of another type, list the cast types in `arguments` where DuckDB
+     keeps `ANY`: a bind casts arguments only through the function's argument types.
+   - Equal aggregates are shared when their functions have the same name; DuckDB
+     compares the functions' callbacks, so `median(x)` and `quantile_cont(x, 0.5)` are
+     one aggregate there.
+   - Bind data not written yet: `read_csv`, `read_parquet` and `read_json` scans, ICU
+     functions, `date_part` with a struct, binning, and the Parquet `COPY` writer.
+   - Not comparable: `SELECT $1` and the optimized plans DuckDB fails to bind ("Failed
+     to bind column reference ... inequal num bindings/types", e.g. TPC-H 2, 5, 7, 8, 9,
+     12, 21 and `SUMMARIZE`) are DuckDB internal errors with stack addresses, and
+     `now()` folds to the transaction's time.
 9. **Physical operator logging, the rest.** Every `PhysicalOperatorLogType` site is
    ported (the hash join's `Finalize`, `Repartition` and `GetData`, `JoinHashTable`'s
    `Build`, the Parquet writer's `FlushRowGroup`, the reader's `ReadRowGroup` /
