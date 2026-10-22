@@ -155,13 +155,18 @@ CLI run despite its repeated C API benchmark outlier, so cache/filter-history ef
 need controlled investigation. Fix the persisted-index regression first, then diagnose
 or reject/rework caching's memory outliers before accepting the policy or claiming parity.
 The previous signed binaries are the cache candidate; `uncached-merged/` preserves the
-other verified variant. A new release build is in progress for native ART restoration
-(`.context/artifacts/index-reload-20261022/`). Its storage unit suite has 53 passes,
-including modern/deprecated-leaf lazy reload and post-reload mutation. Changed crates
-pass Clippy with warnings denied. C++ file interoperability and the profiling regression
-have not yet been rerun on this implementation. Native disk restore covers plain and
-stored constraint indexes so far; expression/WAL and pre-v0.10 paths still rebuild and
-work-queue 16 remains open. Details: `.context/index-reload-progress.md`.
+other verified variant. The native ART restoration build is complete and signed
+(`.context/artifacts/index-reload-20261022/`). All 53 storage unit tests pass, including
+modern/deprecated-leaf lazy reload and post-reload mutation. The profiling regression
+passes again; 384 affected SQL files pass with nine shared skips (393 total). Ten
+cross-engine file cases pass across storage 1.0/1.2/1.5 and GCM/CTR, including mutation,
+reopen, cold ART residency and constraints. C++ encrypted fixture writes use its test
+switch `force_mbedtls_unsafe`; normal C++ readers work without it. Workspace Clippy
+with warnings denied, 30 C API files and 392 shell tests pass. A new full sweep is next.
+Native disk restore covers plain and stored constraint indexes so far; expression/WAL,
+pre-v0.10 and fallback paths remain open under work-queue 16. The cache policy is still
+uncommitted and unaccepted because its memory/performance gates remain unresolved.
+Details: `.context/index-reload-progress.md`.
 
 ## How to work
 

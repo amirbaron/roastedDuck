@@ -113,18 +113,25 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
     own AES in `crates/parquet/src/crypto.rs`, which should move onto `crates/crypto`
     (hardware AES, constant time).
 
-16. **Persisted ART reload.** Catalog loading rebuilds plain-column indexes by scanning
-    their table (`crates/catalog/src/checkpoint.rs::build_index_entry`), and constraint
-    indexes use the same approach (`DataTable::load_constraint_index`). C++ restores
-    the stored index and loads its buffers lazily. `ArtStorageInfo`, fixed-size
-    allocator initialization and the `BufferLoader` trait exist, but there is no native
-    ART restore path wired into catalog loading. This is exposed by the table-cache
-    experiment: `test/sql/pragma/profiling/test_profiling_fs.test` fails because ATTACH
-    warms the table while rebuilding its index, leaving zero reads for the subsequent
-    SELECT. Restore persisted indexes properly; do not synthesize I/O counters or alter
-    the expected result. Cover plain/constraint/expression indexes, current/deprecated
-    layouts, WAL replay, reopening and C++ file interoperability; retain explicit gates
-    for any formats still rebuilt as a fallback.
+16. **Persisted ART reload, remaining paths.** Modern disk allocator metadata is now
+    restored for plain and stored constraint indexes without a table scan. ART buffers
+    load lazily, keep unread disk blocks alive, hold the file pin while allocating and
+    copying, and unload after checkpoint writes as C++ does. The profiling regression
+    exposed by table caching passes again without changing counters or expectations.
+    Validation: 53 storage unit tests; 384 passes/nine shared skips over 393 affected
+    SQL files; ten C++/Rust file cases across storage 1.0/1.2/1.5 and GCM/CTR,
+    including cross-engine mutation/reopen and PK/UNIQUE/FK checks. Every file case
+    checks zero ART buffer residency before first access. C++ encrypted fixture writes
+    use its documented `force_mbedtls_unsafe` test switch because this reference build
+    has read-only crypto; C++ reads use normal crypto and fixtures contain synthetic data.
+    Workspace Clippy, 30 C API files and 392 shell tests pass. A fresh full sweep is
+    still required before accepting this state. Evidence:
+    `.context/artifacts/index-reload-20261022/`.
+    Left: native expression-index binding and buffered WAL replay, native CREATE INDEX
+    WAL buffers, pre-v0.10 root-pointer deserialization, and any missing/in-memory
+    metadata still rebuilt as a fallback. These remain explicit parity gates; do not
+    treat the fixed profiling test or modern-file checks as proof that all formats and
+    reload paths are ported.
 
 ## Planner and execution
 
