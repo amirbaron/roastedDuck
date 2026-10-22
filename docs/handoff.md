@@ -176,7 +176,10 @@ Both original concurrency files pass three targeted trials and again in the expa
 451-file cohort (441 passes, ten shared skips, no failures/crashes/timeouts). All ten
 cross-engine file cases, workspace Clippy with warnings denied, 30 C API files and
 392 shell tests pass on the fix. The old failing full results remain preserved.
-A fresh full sweep is still required before claiming zero regressions for this binary.
+A fresh full sweep is running on `cc5d2c2` plus the uncommitted cache flag. Its unique
+path is recorded in `index-reload-20261022/full-run-path.txt`; preserve the preceding
+failed run and do not rebuild this runner while it is active. Full zero-regression
+acceptance remains unproven until that sweep completes and the ratchet passes.
 
 Native disk restore covers plain and stored constraint indexes so far; expression/WAL,
 pre-v0.10 and fallback paths remain open under work-queue 16. The cache policy is still
