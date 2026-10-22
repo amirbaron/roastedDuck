@@ -166,16 +166,17 @@ with warnings denied, 30 C API files and 392 shell tests pass. The new full swee
 finished at 4779 pass, 17 fail and 74 skip, zero crashes/timeouts. Exactly two concurrent
 checkpoint files regressed; all other verdicts match the canonical baseline. Its unique
 path is in `index-reload-20261022/full-run-path.txt`, with `comparison.json` and worker logs.
-The new full run has exposed two concurrent checkpoint regressions:
+The first full run of native reload exposed two concurrent checkpoint regressions:
 `concurrent_checkpoint_insert.test` and `concurrent_checkpoint_wal_index.test_slow`
-read newly serialized index locations before partial blocks are flushed. The earlier
-profiling regression passes. The publication fix is written and passes 55 storage unit tests plus changed-crate
-Clippy with warnings denied; its release build is in progress: index serialization
-now takes a writer with an explicit flush operation, invoked before returning while
-the bound-index guard or unbound-storage mutex is held. Deferred-write and failed-flush
-retry tests are added. The completed sweep used `592f7ad` plus the cache flag. The new binary has not yet
-rerun those two real concurrency tests, so the fix remains uncommitted and unaccepted.
-Only the release build is active; do not start another workload until it completes.
+read newly serialized index locations before partial blocks were flushed. The
+publication fix now requires an explicit writer flush before returning while the
+bound-index guard or unbound-storage mutex is held, matching C++ lock/flush ordering.
+All 55 storage unit tests pass, including deferred-write and failed-flush retry checks.
+Both original concurrency files pass three targeted trials and again in the expanded
+451-file cohort (441 passes, ten shared skips, no failures/crashes/timeouts). All ten
+cross-engine file cases, workspace Clippy with warnings denied, 30 C API files and
+392 shell tests pass on the fix. The old failing full results remain preserved.
+A fresh full sweep is still required before claiming zero regressions for this binary.
 
 Native disk restore covers plain and stored constraint indexes so far; expression/WAL,
 pre-v0.10 and fallback paths remain open under work-queue 16. The cache policy is still

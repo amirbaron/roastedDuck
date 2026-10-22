@@ -118,8 +118,12 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
     load lazily, keep unread disk blocks alive, hold the file pin while allocating and
     copying, and unload after checkpoint writes as C++ does. The profiling regression
     exposed by table caching passes again without changing counters or expectations.
-    Validation: 53 storage unit tests; 384 passes/nine shared skips over 393 affected
-    SQL files; ten C++/Rust file cases across storage 1.0/1.2/1.5 and GCM/CTR,
+    The broader full sweep caught a concurrent publication race: deferred index writes
+    were flushed after releasing the index lock. Serialization now flushes within the
+    bound-index guard or unbound-storage mutex, before exposing the new disk locations.
+    Validation: 55 storage unit tests; 441 passes/ten shared skips over 451 affected
+    SQL files; both concurrent failures pass three targeted trials and the cohort;
+    ten C++/Rust file cases across storage 1.0/1.2/1.5 and GCM/CTR,
     including cross-engine mutation/reopen and PK/UNIQUE/FK checks. Every file case
     checks zero ART buffer residency before first access. C++ encrypted fixture writes
     use its documented `force_mbedtls_unsafe` test switch because this reference build
