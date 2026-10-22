@@ -19,6 +19,7 @@ use std::io::{BufReader, ErrorKind as IoErrorKind, Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rustdb_common::{Error, ErrorKind, Result};
+use rustdb_crypto::{CipherType, EncryptionNonce, EncryptionState, EncryptionTag, EncryptionVersion};
 use rustdb_serde::binary::BinarySerializer;
 use rustdb_serde::{Deserializer, SerializationOptions, Serializer};
 use rustdb_types::{DataChunk, LogicalType, Vector};
@@ -27,12 +28,15 @@ use crate::checkpoint::pointers::{PersistentCollectionData, serialize_meta_block
 use crate::checkpoint::stream::{ReadStream, StreamDeserializer};
 use crate::checkpoint::vector_serde::serialize_chunk;
 use crate::data_table::{DataTable, DataTableInfo};
+use crate::encryption::FileEncryption;
 use crate::metadata::MetaBlockPointer;
 use crate::single_file_block_manager::SingleFileBlockManager;
 use crate::storage_info::{DB_IDENTIFIER_LEN, checksum};
 
-/// The WAL version written (`WAL_VERSION_NUMBER`); 3 is the encrypted WAL.
+/// The WAL version written (`WAL_VERSION_NUMBER`).
 pub const WAL_VERSION_NUMBER: u64 = 2;
+/// The version of the WAL of an encrypted file (`WAL_ENCRYPTED_VERSION_NUMBER`).
+pub const WAL_ENCRYPTED_VERSION_NUMBER: u64 = 3;
 
 /// The kind of a WAL entry (DuckDB's `WALType`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -134,6 +138,8 @@ pub struct WalBatch {
     entries: u64,
     /// The table the last data entry referred to (`WALWriteState::current_table_info`).
     current_table: Option<Arc<DataTableInfo>>,
+    /// How the entries are encrypted, for the WAL of an encrypted file.
+    encryption: Option<FileEncryption>,
 }
 
 impl WalBatch {
@@ -143,6 +149,7 @@ impl WalBatch {
             buffer: Vec::new(),
             entries: 0,
             current_table: None,
+            encryption: None,
         }
     }
 
@@ -164,7 +171,10 @@ impl WalBatch {
         write: impl FnOnce(&mut dyn Serializer) -> Result<()>,
     ) -> Result<()> {
         let payload = serialize_entry(&self.options, wal_type, write)?;
-        frame_entry(&mut self.buffer, &payload);
+        match &self.encryption {
+            Some(encryption) => frame_encrypted_entry(&mut self.buffer, &payload, encryption)?,
+            None => frame_entry(&mut self.buffer, &payload),
+        }
         self.entries += 1;
         Ok(())
     }
@@ -324,6 +334,28 @@ fn frame_entry(buffer: &mut Vec<u8>, payload: &[u8]) {
     buffer.extend_from_slice(payload);
 }
 
+/// Appends `payload` framed as an entry of the encrypted WAL (`ChecksumWriter::
+/// FlushEncrypted`): its size, the nonce, the encrypted checksum and payload, and the tag
+/// of GCM. The nonce has the file's encryption version; the state is always version 1.
+fn frame_encrypted_entry(buffer: &mut Vec<u8>, payload: &[u8], encryption: &FileEncryption) -> Result<()> {
+    let state = EncryptionState::new(
+        encryption.cipher,
+        rustdb_crypto::DEFAULT_ENCRYPTION_KEY_LENGTH,
+        EncryptionVersion::V0_1,
+    )?;
+    let nonce = EncryptionNonce::random(encryption.cipher, encryption.version)?;
+    buffer.extend_from_slice(&(payload.len() as u64).to_le_bytes());
+    buffer.extend_from_slice(nonce.stored());
+    let start = buffer.len();
+    buffer.extend_from_slice(&checksum(payload).to_le_bytes());
+    buffer.extend_from_slice(payload);
+    let tag = state.encrypt(&nonce, &encryption.key, &mut buffer[start..])?;
+    if encryption.cipher == CipherType::Gcm {
+        buffer.extend_from_slice(&tag.0);
+    }
+    Ok(())
+}
+
 #[derive(Debug, Default)]
 struct WalState {
     /// The open file, opened by the first write (`Initialize`).
@@ -399,7 +431,10 @@ impl WriteAheadLog {
 
     /// A batch for the entries of one commit.
     pub fn batch(&self) -> WalBatch {
-        WalBatch::new(self.options.clone())
+        WalBatch {
+            encryption: self.block_manager.encryption().cloned(),
+            ..WalBatch::new(self.options.clone())
+        }
     }
 
     /// Takes the WAL lock (`GetWALLock`): commits hold it while they write and publish
@@ -424,7 +459,12 @@ impl WriteAheadLog {
         {
             let s: &mut dyn Serializer = &mut serializer;
             s.write_property(100, "wal_type", &(WalType::WalVersion as u8))?;
-            s.write_property(101, "version", &WAL_VERSION_NUMBER)?;
+            let version = if self.block_manager.encryption().is_some() {
+                WAL_ENCRYPTED_VERSION_NUMBER
+            } else {
+                WAL_VERSION_NUMBER
+            };
+            s.write_property(101, "version", &version)?;
             if self.block_manager.version_number() > 66 {
                 let identifier = self.block_manager.db_identifier();
                 s.write_list_property(102, "db_identifier", DB_IDENTIFIER_LEN, |s, index| {
@@ -704,8 +744,11 @@ pub struct WalReader {
     offset: u64,
     file_size: u64,
     /// The WAL's version: 1 for WALs of DuckDB before v0.10, whose entries are neither
-    /// sized nor checksummed (`ReplayState::wal_version`).
+    /// sized nor checksummed, 3 for the encrypted WAL (`ReplayState::wal_version`).
     version: u64,
+    /// How the entries of an encrypted WAL are encrypted: the encryption of its database
+    /// file.
+    encryption: Option<FileEncryption>,
 }
 
 impl ReadStream for WalReader {
@@ -751,6 +794,16 @@ impl WalReader {
             offset: 0,
             file_size,
             version: WAL_VERSION_NUMBER,
+            encryption: None,
+        }))
+    }
+
+    /// Opens the WAL at `path` of the database file `block_manager`, whose encryption
+    /// decrypts the entries of an encrypted WAL; `None` if there is no WAL.
+    pub fn open_for(path: &str, block_manager: &SingleFileBlockManager) -> Result<Option<Self>> {
+        Ok(Self::open(path)?.map(|reader| Self {
+            encryption: block_manager.encryption().cloned(),
+            ..reader
         }))
     }
 
@@ -836,6 +889,9 @@ impl WalReader {
     /// Reads the payload of the next entry and verifies its checksum. A torn entry is a
     /// serialization error, a checksum mismatch an I/O error.
     pub fn next_entry(&mut self) -> Result<Vec<u8>> {
+        if self.version == WAL_ENCRYPTED_VERSION_NUMBER {
+            return self.next_encrypted_entry();
+        }
         let mut size = [0u8; 8];
         self.read_data(&mut size)?;
         let mut stored = [0u8; 8];
@@ -853,6 +909,68 @@ impl WalReader {
         let mut payload =
             vec![0u8; usize::try_from(size).map_err(|_| Error::serialization("WAL entry too large"))?];
         self.read_data(&mut payload)?;
+        let computed = checksum(&payload);
+        if computed != stored {
+            return Err(io_error(format!(
+                "Corrupt WAL file: entry at byte position {offset} computed checksum {computed} does not match \
+                 stored checksum {stored}"
+            )));
+        }
+        Ok(payload)
+    }
+
+    /// Reads and decrypts the payload of the next entry of an encrypted WAL
+    /// (`GetEntryDeserializer` of version 3): `[size][nonce][encrypted checksum and
+    /// payload][tag of GCM]`. A torn entry is a serialization error, a wrong tag an
+    /// invalid input error, a checksum mismatch an I/O error.
+    fn next_encrypted_entry(&mut self) -> Result<Vec<u8>> {
+        let Some(encryption) = self.encryption.clone() else {
+            return Err(io_error(format!(
+                "Cannot read the encrypted WAL \"{}\" of a database that is not encrypted",
+                self.path
+            )));
+        };
+        let mut size = [0u8; 8];
+        self.read_data(&mut size)?;
+        let size = u64::from_le_bytes(size);
+        let ciphertext_size = size + 8;
+        let offset = self.offset;
+        let mut nonce = EncryptionNonce::new(encryption.cipher, encryption.version);
+        self.read_data(nonce.stored_mut())?;
+        let tag_size = if encryption.cipher == CipherType::Ctr {
+            0
+        } else {
+            rustdb_crypto::AES_TAG_LEN as u64
+        };
+        if offset + nonce.size() as u64 + ciphertext_size + tag_size > self.file_size {
+            return Err(Error::serialization(format!(
+                "Corrupt Encrypted WAL file: entry size exceeded remaining data in file at byte position {offset} \
+                 (found entry with size {size} bytes, file size {} bytes)",
+                self.file_size
+            )));
+        }
+        let state = EncryptionState::new(
+            encryption.cipher,
+            rustdb_crypto::DEFAULT_ENCRYPTION_KEY_LENGTH,
+            encryption.version,
+        )?;
+        let mut buffer = vec![
+            0u8;
+            usize::try_from(ciphertext_size)
+                .map_err(|_| Error::serialization("WAL entry too large"))?
+        ];
+        self.read_data(&mut buffer)?;
+        if encryption.cipher == CipherType::Gcm {
+            let mut tag = EncryptionTag::default();
+            self.read_data(&mut tag.0)?;
+            state.decrypt(&nonce, &encryption.key, &mut buffer, Some(&tag))?;
+        } else {
+            state.decrypt(&nonce, &encryption.key, &mut buffer, None)?;
+        }
+        let mut stored = [0u8; 8];
+        stored.copy_from_slice(&buffer[..8]);
+        let stored = u64::from_le_bytes(stored);
+        let payload = buffer.split_off(8);
         let computed = checksum(&payload);
         if computed != stored {
             return Err(io_error(format!(

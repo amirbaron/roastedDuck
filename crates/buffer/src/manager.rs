@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
 use rustdb_common::{Error, Result};
+use rustdb_crypto::ENCRYPTED_BUFFER_HEADER_SIZE;
 
 use crate::allocator::{self, BlockAllocator};
 use crate::block::{BlockHandle, BlockId, BlockMemory, BufferHandle, DestroyBufferUpon};
@@ -19,7 +20,9 @@ use crate::memory::MemoryReservation;
 use crate::memory_tag::{MEMORY_TAG_COUNT, MemoryTag};
 use crate::os;
 use crate::pool::BufferPool;
-use crate::temp_file::{TemporaryDirectoryHandle, TemporaryFileInformation, read_exact_at, write_all_at};
+use crate::temp_file::{
+    TemporaryDirectoryHandle, TemporaryFileEncryption, TemporaryFileInformation, read_exact_at, write_all_at,
+};
 use crate::temporary_memory::{TemporaryMemoryContext, TemporaryMemoryManager};
 use crate::{DEFAULT_BLOCK_ALLOC_SIZE, MAXIMUM_BLOCK, TEMPORARY_BLOCK_HEADER_SIZE};
 
@@ -73,6 +76,10 @@ pub(crate) struct ManagerShared {
     temporary_directory: TemporaryDirectory,
     temporary_id: AtomicI64,
     evicted_data_per_tag: [AtomicU64; MEMORY_TAG_COUNT],
+    /// `temp_file_encryption` and the database's encryption keys, which DuckDB keeps in
+    /// its object cache (`EncryptionKeyManager`): the keys of encrypted database files
+    /// and of encrypted temporary files.
+    encryption: Arc<TemporaryFileEncryption>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -180,6 +187,7 @@ impl ManagerShared {
             PathBuf::from(path),
             Arc::clone(&self.temporary_directory.size_on_disk),
             max_swap,
+            Arc::clone(&self.encryption),
         )?);
         *handle = Some(Arc::clone(&created));
         Ok(created)
@@ -210,11 +218,25 @@ impl ManagerShared {
             self.evicted(tag).fetch_add(size, Ordering::Relaxed);
             return Ok(());
         }
-        // Other sizes go into a file of their own: [size][header size][buffer]. As in
-        // DuckDB, the file is created before the disk space is reserved: when the
-        // reservation fails, the empty file stays until the block is destroyed.
+        // Other sizes go into a file of their own: [size][header size][buffer], with the
+        // buffer's nonce and tag in front of it when encrypted. As in DuckDB, the file is
+        // created before the disk space is reserved: when the reservation fails, the
+        // empty file stays until the block is destroyed.
         let path = self.temporary_block_path(block_id);
-        let file_size = buffer.alloc_size() as u64 + 16;
+        let encrypted = self.encryption.enabled();
+        let offset = if encrypted {
+            16 + ENCRYPTED_BUFFER_HEADER_SIZE as u64
+        } else {
+            16
+        };
+        let file_size = buffer.alloc_size() as u64 + offset;
+        // SAFETY: the buffer is being evicted: no readers, lock held.
+        let data = unsafe { buffer.internal() };
+        let encrypted_data = if encrypted {
+            Some(self.encryption.encrypt(data)?)
+        } else {
+            None
+        };
         self.evicted(tag)
             .fetch_add(buffer.alloc_size() as u64, Ordering::Relaxed);
         let write_error =
@@ -229,8 +251,7 @@ impl ManagerShared {
         let write = || -> std::io::Result<()> {
             write_all_at(&file, &(buffer.size() as u64).to_le_bytes(), 0)?;
             write_all_at(&file, &(buffer.header_size() as u64).to_le_bytes(), 8)?;
-            // SAFETY: the buffer is being evicted: no readers, lock held.
-            write_all_at(&file, unsafe { buffer.internal() }, 16)
+            write_all_at(&file, encrypted_data.as_deref().unwrap_or(data), 16)
         };
         if let Err(err) = write() {
             handle.manager.disk.decrease(file_size);
@@ -280,7 +301,13 @@ impl ManagerShared {
                 path.display()
             )));
         }
-        let expected = 16 + aligned_alloc_size(block_size as usize, block_header_size as usize) as u64;
+        let encrypted = self.encryption.enabled();
+        let offset = if encrypted {
+            16 + ENCRYPTED_BUFFER_HEADER_SIZE as u64
+        } else {
+            16
+        };
+        let expected = offset + aligned_alloc_size(block_size as usize, block_header_size as usize) as u64;
         if expected != file_size {
             return Err(io_error(format!(
                 "Corrupt temporary file \"{}\": header describes {expected} bytes but file is {file_size}",
@@ -293,7 +320,12 @@ impl ManagerShared {
             reusable,
             FileBufferType::ManagedBuffer,
         )?;
-        read_exact_at(&file, buffer.internal_mut(), 16).map_err(read_error)?;
+        read_exact_at(&file, buffer.internal_mut(), offset).map_err(read_error)?;
+        if encrypted {
+            let mut metadata = [0u8; ENCRYPTED_BUFFER_HEADER_SIZE];
+            read_exact_at(&file, &mut metadata, 16).map_err(read_error)?;
+            self.encryption.decrypt(&metadata, buffer.internal_mut())?;
+        }
         drop(file);
         self.delete_temporary_file(block_id, tag, buffer.alloc_size() as u64)?;
         Ok(buffer)
@@ -412,6 +444,7 @@ impl BufferManager {
                 },
                 temporary_id: AtomicI64::new(MAXIMUM_BLOCK),
                 evicted_data_per_tag: std::array::from_fn(|_| AtomicU64::new(0)),
+                encryption: Arc::default(),
             }),
         }
     }
@@ -484,6 +517,22 @@ impl BufferManager {
     /// The temporary directory (empty when spilling is disabled).
     pub fn temporary_directory(&self) -> String {
         self.shared.temp_path()
+    }
+
+    /// The database's encryption keys (DuckDB's `EncryptionKeyManager`).
+    pub fn encryption_keys(&self) -> &Arc<rustdb_crypto::EncryptionKeyManager> {
+        &self.shared.encryption.keys
+    }
+
+    /// Whether temporary files created from now on are encrypted
+    /// (`temp_file_encryption`).
+    pub fn temp_file_encryption(&self) -> bool {
+        self.shared.encryption.enabled()
+    }
+
+    /// Sets `temp_file_encryption`.
+    pub fn set_temp_file_encryption(&self, enabled: bool) {
+        self.shared.encryption.enabled.store(enabled, Ordering::Relaxed);
     }
 
     /// Changes the temporary directory; not possible once it has been used.

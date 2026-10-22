@@ -351,6 +351,12 @@ pub(crate) struct AttachOptions {
     /// `VACUUM_REBUILD_INDEXES`: the database's `vacuum_rebuild_indexes`, overriding the
     /// global setting (`vacuum_rebuild_indexes_threshold`).
     pub vacuum_rebuild_indexes: Option<u64>,
+    /// `ENCRYPTION_KEY`: the key of an encrypted file.
+    pub encryption_key: Option<rustdb_crypto::UserKey>,
+    /// `ENCRYPTION_CIPHER`; `Invalid` when not given.
+    pub encryption_cipher: rustdb_crypto::CipherType,
+    /// `DEBUG_ENCRYPTION_VERSION`; `None` when not given.
+    pub encryption_version: rustdb_crypto::EncryptionVersion,
 }
 
 impl AttachOptions {
@@ -449,10 +455,31 @@ impl AttachOptions {
                     if value.to_varchar()?.is_empty() {
                         return Err(Error::binder("Not a valid key. A key cannot be empty"));
                     }
-                    return Err(Error::not_implemented("attaching encrypted databases"));
+                    let blob = rustdb_function::cast::ValueCast::default_cast_as(
+                        value,
+                        &rustdb_types::LogicalType::BLOB,
+                    )?;
+                    let key = blob.as_bytes().unwrap_or_default().to_vec();
+                    options.encryption_key = Some(rustdb_crypto::UserKey::new(key));
                 }
-                "encryption_cipher" | "debug_encryption_version" => {
-                    return Err(Error::not_implemented("attaching encrypted databases"));
+                "encryption_cipher" => {
+                    // `EncryptionTypes::StringToCipher`.
+                    let name = value.to_varchar()?;
+                    let cipher = rustdb_crypto::CipherType::from_name(&name)?;
+                    if !matches!(
+                        cipher,
+                        rustdb_crypto::CipherType::Gcm | rustdb_crypto::CipherType::Ctr
+                    ) {
+                        return Err(Error::binder(format!(
+                            "\"{name}\" is not a valid cipher. Try 'GCM' or 'CTR'."
+                        )));
+                    }
+                    options.encryption_cipher = cipher;
+                }
+                "debug_encryption_version" => {
+                    options.encryption_version =
+                        rustdb_crypto::EncryptionVersion::from_name(&value.to_varchar()?)?;
+                    options.kept.push((name.to_lowercase(), value.clone()));
                 }
                 other => {
                     return Err(Error::binder(format!(
@@ -841,6 +868,18 @@ impl DatabaseManager {
                 )]
             })
             .unwrap_or_default();
+        // `DuckCatalog::GetEncryptionCipher`: an in-memory database given a key counts
+        // as encrypted, with no cipher.
+        let cipher = match storage.file() {
+            Some(storage) => storage
+                .block_manager()
+                .encryption()
+                .map(|encryption| encryption.cipher.name().to_owned()),
+            None => options
+                .encryption_key
+                .as_ref()
+                .map(|_| rustdb_crypto::CipherType::Invalid.name().to_owned()),
+        };
         catalog.set_attach_info(rustdb_catalog::AttachedInfo {
             path: path.clone(),
             read_only: options.read_only(),
@@ -851,6 +890,7 @@ impl DatabaseManager {
                 .map(|(name, value)| Ok((name.clone(), value.to_varchar()?)))
                 .collect::<Result<_>>()?,
             tags,
+            cipher,
         });
         let database = Arc::new(AttachedDatabase {
             path,

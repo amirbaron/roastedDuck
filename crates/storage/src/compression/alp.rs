@@ -1043,7 +1043,8 @@ fn analyzer<T: AlpFloat>(ty: &LogicalType, info: &CompressionInfo) -> Box<dyn An
 /// Whether blocks smaller than the default allocation can use ALP: before storage version
 /// 7 (v1.5) they cannot fall back to uncompressed vectors.
 pub(crate) fn supports_block_size(info: &CompressionInfo) -> bool {
-    info.block_size + 8 >= crate::storage_info::DEFAULT_BLOCK_ALLOC_SIZE || info.storage_version >= 7
+    info.block_size + info.block_header_size >= crate::storage_info::DEFAULT_BLOCK_ALLOC_SIZE
+        || info.storage_version >= 7
 }
 
 /// `AlpCompressionFun::GetFunction(type).init_analyze`.

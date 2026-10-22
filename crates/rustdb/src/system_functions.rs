@@ -213,8 +213,9 @@ fn database_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 Value::boolean(internal),
                 text("duckdb"),
                 Value::boolean(info.is_some_and(|info| info.read_only)),
-                Value::boolean(false),
-                null_text(),
+                Value::boolean(info.is_some_and(|info| info.cipher.is_some())),
+                info.and_then(|info| info.cipher.as_ref())
+                    .map_or_else(null_text, |cipher| text(cipher.clone())),
                 info.map_or_else(empty_map, |info| text_map(&info.options)),
             ],
         ));

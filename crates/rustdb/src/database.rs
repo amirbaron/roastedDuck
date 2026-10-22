@@ -840,6 +840,25 @@ impl DatabaseInstance {
                     .transpose()?;
                 buffer_manager.set_swap_limit(limit)
             }
+            "temp_file_encryption" => {
+                // `TempFileEncryptionSetting::OnSet` (`RESET` has no check): temporary
+                // files keep their format.
+                if value.is_some() && buffer_manager.has_files_in_temporary_directory() {
+                    return Err(Error::new(
+                        rustdb_common::ErrorKind::Permission,
+                        "Existing temporary files found: Modifying the temp_file_encryption setting while there \
+                         are existing temporary files is disabled.",
+                    ));
+                }
+                let enabled = match value {
+                    Some(value) => ValueCast::default_cast_as(value, &LogicalType::BOOLEAN)?
+                        .as_bool()
+                        .unwrap_or(false),
+                    None => false,
+                };
+                buffer_manager.set_temp_file_encryption(enabled);
+                Ok(())
+            }
             "block_allocator_memory" => {
                 let size = match value {
                     Some(value) => crate::settings::block_allocator_size(value, buffer_manager.max_memory())?,

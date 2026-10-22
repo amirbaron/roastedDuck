@@ -10,6 +10,7 @@ rust-version.workspace = true
 rustdb-common.workspace = true
 rustdb-types.workspace = true
 rustdb-buffer = { path = "../buffer" }
+rustdb-crypto = { path = "../crypto" }
 rustdb-function = { path = "../function" }
 rustdb-row = { path = "../row" }
 rustdb-serde = { path = "../serde" }

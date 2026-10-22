@@ -392,3 +392,71 @@ fn persistent_blocks_convert_evict_and_reload() {
     drop(persistent);
     assert!(!block_manager.registry().is_registered(5));
 }
+
+/// Whether the file at `path` contains `needle`.
+fn file_contains(path: &str, needle: &[u8]) -> bool {
+    std::fs::read(path)
+        .unwrap()
+        .windows(needle.len())
+        .any(|window| window == needle)
+}
+
+#[test]
+fn encrypted_temp_files_hide_their_data() {
+    let dir = temp_dir("encrypted");
+    let buffers = manager(4 * BLOCK, Some(dir));
+    buffers.set_temp_file_encryption(true);
+    // Incompressible blocks take whole slots, compressible ones the smaller size classes.
+    let blocks: Vec<(Arc<BlockHandle>, bool)> = (0..12u8)
+        .map(|seed| {
+            let pin = buffers.allocate(MemoryTag::OrderBy, BLOCK, false).unwrap();
+            let compressible = seed % 2 == 0;
+            if compressible {
+                // SAFETY: the test owns the only pin.
+                unsafe { pin.as_mut_slice() }.fill(seed);
+            } else {
+                fill(&pin, seed);
+            }
+            (Arc::clone(pin.block()), compressible)
+        })
+        .collect();
+    let big = buffers
+        .allocate(MemoryTag::HashTable, 2 * BLOCK + 100, false)
+        .unwrap();
+    fill(&big, 99);
+    let big_block = Arc::clone(big.block());
+    drop(big);
+    let filler = buffers.allocate(MemoryTag::HashTable, 3 * BLOCK, false).unwrap();
+    assert_eq!(big_block.state(), BlockState::Unloaded);
+    let files = buffers.temporary_files();
+    let default_file = files
+        .iter()
+        .find(|file| file.path.ends_with("duckdb_temp_storage_DEFAULT-0.tmp"))
+        .unwrap();
+    // Each slot is preceded by its 32-byte nonce and tag.
+    assert_eq!(default_file.size % (BLOCK as u64 + 32), 0);
+    for file in &files {
+        for seed in [1u8, 3, 99] {
+            let start: Vec<u8> = pattern(seed, 64).collect();
+            assert!(!file_contains(&file.path, &start), "plaintext in {}", file.path);
+        }
+    }
+    let block_file = files.iter().find(|file| file.path.contains("duckdb_temp_block-")).unwrap();
+    assert_eq!(
+        std::fs::metadata(&block_file.path).unwrap().len(),
+        16 + 32 + 2 * BLOCK as u64 + 4096
+    );
+    drop(filler);
+    let pin = buffers.pin(&big_block).unwrap();
+    check(&pin, 99);
+    drop(pin);
+    for (seed, (block, compressible)) in blocks.iter().enumerate() {
+        let pin = buffers.pin(block).unwrap();
+        if *compressible {
+            // SAFETY: no writers.
+            assert!(unsafe { pin.as_slice() }.iter().all(|&byte| byte == seed as u8));
+        } else {
+            check(&pin, seed as u8);
+        }
+    }
+}

@@ -53,6 +53,9 @@ pub(crate) fn startup_options(config: &Config) -> AttachOptions {
         db_type: None,
         compress: None,
         vacuum_rebuild_indexes: None,
+        encryption_key: None,
+        encryption_cipher: rustdb_crypto::CipherType::Invalid,
+        encryption_version: rustdb_crypto::EncryptionVersion::None,
     }
 }
 
@@ -117,6 +120,19 @@ fn storage_options(attach: &AttachOptions) -> Result<StorageOptions> {
             )));
         }
         options.row_group_size = size;
+    }
+    if let Some(key) = &attach.encryption_key {
+        options.encryption = Some(rustdb_storage::encryption::EncryptionOptions {
+            user_key: key.clone(),
+            cipher: attach.encryption_cipher,
+            version: attach.encryption_version,
+        });
+        let given = attach
+            .storage_version
+            .as_ref()
+            .map(Value::to_varchar)
+            .transpose()?;
+        options.set_encryption_version(given.as_deref())?;
     }
     Ok(options)
 }

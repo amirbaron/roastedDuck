@@ -50,6 +50,9 @@ pub struct AttachedInfo {
     pub options: Vec<(String, String)>,
     /// `AttachedDatabase::tags` (the file's `storage_version`).
     pub tags: Vec<(String, String)>,
+    /// The cipher of an encrypted database (`DuckCatalog::GetEncryptionCipher`), `None`
+    /// for a plain one.
+    pub cipher: Option<String>,
 }
 
 impl Catalog {

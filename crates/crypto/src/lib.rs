@@ -1,6 +1,7 @@
 //! Database encryption (DuckDB's `common/encryption_types`, `encryption_state`,
 //! `encryption_key_manager` and `encryption_functions`, with the AES and SHA-256 parts of
-//! its mbedtls wrapper), on the pure-Rust `RustCrypto` crates `aes`, `aes-gcm`, `ctr` and `sha2`.
+//! its mbedtls wrapper), on the pure-Rust `RustCrypto` crates `aes`, `aes-gcm`, `ctr`
+//! and `sha2`.
 //!
 //! DuckDB encrypts database blocks, its WAL entries and temporary files with AES-256 in
 //! GCM or CTR mode under a key derived from the user's key and the file's salt. The

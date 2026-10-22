@@ -20,6 +20,7 @@ rustdb-row = { path = "../row" }
 rustdb-optimizer = { path = "../optimizer" }
 rustdb-storage = { path = "../storage" }
 rustdb-buffer = { path = "../buffer" }
+rustdb-crypto = { path = "../crypto" }
 rustdb-serde = { path = "../serde" }
 rustdb-csv = { path = "../csv" }
 rustdb-parquet = { path = "../parquet" }

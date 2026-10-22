@@ -41,6 +41,11 @@ pub const DB_IDENTIFIER_LEN: usize = 16;
 pub const CANARY_BYTE_SIZE: usize = 8;
 pub const AES_NONCE_LEN: usize = 12;
 pub const AES_TAG_LEN: usize = 16;
+/// Flag bit 0: the file is encrypted (`MainHeader::ENCRYPTED_DATABASE_FLAG`).
+pub const ENCRYPTED_DATABASE_FLAG: u64 = 1;
+/// The known plaintext whose encryption the main header of an encrypted file holds, to
+/// recognise a wrong key (`MainHeader::CANARY`, "DUCKKEY" with its NUL).
+pub const CANARY: &[u8; CANARY_BYTE_SIZE] = b"DUCKKEY\0";
 
 /// The library version and source id written into new files.
 pub const LIBRARY_VERSION: &str = "v1.5.6";
@@ -299,7 +304,22 @@ impl MainHeader {
 
     /// Whether flag bit 0 (`MainHeader::ENCRYPTED_DATABASE_FLAG`) is set.
     pub fn is_encrypted(&self) -> bool {
-        self.flags[0] & 1 != 0
+        self.flags[0] & ENCRYPTED_DATABASE_FLAG != 0
+    }
+
+    /// `SetEncrypted`.
+    pub fn set_encrypted(&mut self) {
+        self.flags[0] |= ENCRYPTED_DATABASE_FLAG;
+    }
+
+    /// The cipher byte of the encryption metadata (`GetEncryptionCipher`).
+    pub fn encryption_cipher(&self) -> u8 {
+        self.encryption_metadata[2]
+    }
+
+    /// The encryption version byte of the encryption metadata (`GetEncryptionVersion`).
+    pub fn encryption_version(&self) -> u8 {
+        self.encryption_metadata[3]
     }
 
     /// `MainHeader::Write`: the bytes after the block header.

@@ -15,9 +15,14 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use rustdb_buffer::{BlockId, BlockManager, BlockRegistry, FileBuffer};
 use rustdb_common::profiling::{MetricType, add_to_counter};
 use rustdb_common::{Error, ErrorKind, Result};
+use rustdb_crypto::{CipherType, EncryptionKeyManager, EncryptionVersion};
 use rustdb_function::logging::FileSystemLogger;
 
 use crate::compression::CompressionConfig;
+use crate::encryption::{
+    ENCRYPTION_BLOCK_HEADER_SIZE, EncryptionOptions, FileEncryption, decrypt_canary, encrypt_canary,
+    encryption_metadata, wrong_key,
+};
 use crate::metadata::{MetaBlockPointer, MetadataManager, MetadataReader, MetadataWriter};
 use crate::storage_info::{
     BLOCK_START, DB_IDENTIFIER_LEN, DEFAULT_BLOCK_HEADER_SIZE, DEPRECATED_VERSION_NUMBER, DatabaseHeader,
@@ -255,8 +260,13 @@ pub struct SingleFileBlockManager {
     /// `MainHeader::version_number`; a checkpoint upgrading the file from 64 raises it.
     version_number: AtomicU64,
     storage_version: u64,
-    /// The random identity of the file, matched by its WAL (`MainHeader::db_identifier`).
+    /// The random identity of the file, matched by its WAL (`MainHeader::db_identifier`);
+    /// the salt of the key of an encrypted file.
     db_identifier: [u8; DB_IDENTIFIER_LEN],
+    /// The block header: the checksum, behind the nonce and tag in an encrypted file.
+    block_header_size: usize,
+    /// How the blocks are encrypted, for an encrypted file.
+    encryption: Option<FileEncryption>,
     registry: BlockRegistry,
     state: Mutex<BlockState>,
     /// How checkpoints compress segments (`force_compression` and related settings).
@@ -268,27 +278,80 @@ impl SingleFileBlockManager {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// A header block: an 8-byte checksum followed by `content` zero-padded to 4 KiB
-    /// (`ChecksumAndWrite` of the header buffer).
-    fn write_header_block(&self, content: &[u8], location: u64) -> Result<()> {
+    /// The bytes in front of a block's checksum (`delta`): the nonce and tag of an
+    /// encrypted file.
+    fn delta(&self) -> usize {
+        self.block_header_size - DEFAULT_BLOCK_HEADER_SIZE
+    }
+
+    /// Writes the main header: an 8-byte checksum followed by `content` zero-padded to
+    /// 4 KiB, plaintext in an encrypted file too (`ChecksumAndWrite` skipping the block
+    /// header).
+    fn write_main_header_block(&self, content: &[u8]) -> Result<()> {
         let mut block = vec![0u8; FILE_HEADER_SIZE];
         block[DEFAULT_BLOCK_HEADER_SIZE..DEFAULT_BLOCK_HEADER_SIZE + content.len()].copy_from_slice(content);
         let sum = checksum(&block[DEFAULT_BLOCK_HEADER_SIZE..]);
         block[..DEFAULT_BLOCK_HEADER_SIZE].copy_from_slice(&sum.to_le_bytes());
+        self.handle.write_at(&block, 0)
+    }
+
+    /// Writes a database header: `content` zero-padded to 4 KiB behind the block header,
+    /// checksummed and, in an encrypted file, encrypted (`ChecksumAndWrite`).
+    fn write_header_block(&self, content: &[u8], location: u64) -> Result<()> {
+        let mut block = vec![0u8; FILE_HEADER_SIZE];
+        let header = self.block_header_size;
+        block[header..header + content.len()].copy_from_slice(content);
+        self.seal_block(&mut block)?;
         self.handle.write_at(&block, location)
     }
 
-    /// Reads a header block and verifies its checksum (`ReadAndChecksum`); returns the
-    /// bytes after the checksum.
-    fn read_header_block(&self, location: u64) -> Result<Vec<u8>> {
+    /// Stores the checksum of the data of `block` in front of it and, in an encrypted
+    /// file, encrypts both behind their nonce and tag.
+    fn seal_block(&self, block: &mut [u8]) -> Result<()> {
+        let delta = self.delta();
+        let sum = checksum(&block[self.block_header_size..]);
+        block[delta..self.block_header_size].copy_from_slice(&sum.to_le_bytes());
+        if let Some(encryption) = &self.encryption {
+            encryption.encrypt_block(block, delta)?;
+        }
+        Ok(())
+    }
+
+    /// Decrypts a block read from an encrypted file and verifies its checksum
+    /// (`ReadAndChecksum`).
+    fn unseal_block(&self, block: &mut [u8], location: u64) -> Result<()> {
+        if let Some(encryption) = &self.encryption {
+            encryption.decrypt_block(block, self.delta())?;
+        }
+        verify_checksum(block, self.delta(), location)
+    }
+
+    /// Reads the main header and verifies its checksum; returns the bytes after the
+    /// checksum.
+    fn read_main_header_block(&self) -> Result<Vec<u8>> {
         let mut block = vec![0u8; FILE_HEADER_SIZE];
-        self.handle.read_at(&mut block, location)?;
-        verify_checksum(&block, location)?;
+        self.handle.read_at(&mut block, 0)?;
+        verify_checksum(&block, 0, 0)?;
         Ok(block.split_off(DEFAULT_BLOCK_HEADER_SIZE))
     }
 
-    /// Creates a new database file (`CreateNewDatabase`).
-    pub fn create_new(path: &str, options: BlockManagerOptions) -> Result<Self> {
+    /// Reads a database header (`ReadAndChecksum`); returns the bytes after the block
+    /// header.
+    fn read_header_block(&self, location: u64) -> Result<Vec<u8>> {
+        let mut block = vec![0u8; FILE_HEADER_SIZE];
+        self.handle.read_at(&mut block, location)?;
+        self.unseal_block(&mut block, location)?;
+        Ok(block.split_off(self.block_header_size))
+    }
+
+    /// Creates a new database file (`CreateNewDatabase`), encrypted with the key of
+    /// `encryption` (derived with a new salt and added to `keys`) if given.
+    pub fn create_new(
+        path: &str,
+        options: BlockManagerOptions,
+        encryption: Option<EncryptionOptions>,
+        keys: &EncryptionKeyManager,
+    ) -> Result<Self> {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -314,9 +377,44 @@ impl SingleFileBlockManager {
             .unwrap_or(VERSION_NUMBER)
         };
         let mut main_header = MainHeader::new(version_number);
-        if version_number >= 67 {
-            main_header.db_identifier = random_identifier();
+        // The identifier is the salt of an encrypted file's key.
+        if encryption.is_some() || version_number >= 67 {
+            main_header.db_identifier = random_identifier()?;
         }
+        let mut file_encryption = None;
+        if let Some(mut encryption) = encryption {
+            let mut derived = encryption.user_key.derive(&main_header.db_identifier);
+            let cipher = if encryption.cipher == CipherType::Invalid {
+                CipherType::Gcm
+            } else {
+                encryption.cipher
+            };
+            main_header.set_encrypted();
+            if encryption.version == EncryptionVersion::None {
+                rustdb_crypto::Zeroize::zeroize(&mut derived);
+                return Err(Error::new(
+                    ErrorKind::InvalidConfiguration,
+                    "No Encryption type set",
+                ));
+            }
+            let key_id = keys.add_key_with_random_id(&mut derived)?;
+            let key = keys
+                .get_key(&key_id)
+                .ok_or_else(|| Error::internal("the derived key was not added"))?;
+            main_header.encryption_metadata = encryption_metadata(cipher, encryption.version);
+            encrypt_canary(&mut main_header, &key)?;
+            file_encryption = Some(FileEncryption {
+                cipher,
+                version: encryption.version,
+                key_id,
+                key,
+            });
+        }
+        let block_header_size = if file_encryption.is_some() {
+            ENCRYPTION_BLOCK_HEADER_SIZE
+        } else {
+            DEFAULT_BLOCK_HEADER_SIZE
+        };
         let manager = Self {
             handle: FileHandle::new(file, path),
             block_alloc_size: options.block_alloc_size,
@@ -324,6 +422,8 @@ impl SingleFileBlockManager {
             version_number: AtomicU64::new(version_number),
             storage_version,
             db_identifier: main_header.db_identifier,
+            block_header_size,
+            encryption: file_encryption,
             registry: BlockRegistry::default(),
             compression: Mutex::default(),
             state: Mutex::new(BlockState {
@@ -335,9 +435,11 @@ impl SingleFileBlockManager {
         };
         let mut content = Vec::with_capacity(FILE_HEADER_SIZE);
         main_header.write(&mut content);
-        manager.write_header_block(&content, 0)?;
+        manager.write_main_header_block(&content)?;
         // The database headers are serialized over the main header's buffer, as DuckDB
-        // does, so the files are identical.
+        // does, so the files are identical; writing the main header behind the larger
+        // block header of an encrypted file moved it to the front of that buffer.
+        let mut content = content.split_off(manager.delta());
         let header = DatabaseHeader {
             iteration: 0,
             meta_block: INVALID_BLOCK_INDEX,
@@ -358,7 +460,14 @@ impl SingleFileBlockManager {
 
     /// Opens an existing database file (`LoadExistingDatabase`); the free list is read
     /// with [`SingleFileBlockManager::load_free_list`] once the metadata manager exists.
-    pub fn load_existing(path: &str, options: BlockManagerOptions) -> Result<Self> {
+    /// An encrypted file needs the key of `encryption`, whose derived key is added to
+    /// `keys`.
+    pub fn load_existing(
+        path: &str,
+        options: BlockManagerOptions,
+        encryption: Option<EncryptionOptions>,
+        keys: &EncryptionKeyManager,
+    ) -> Result<Self> {
         let file = OpenOptions::new()
             .read(true)
             .write(!options.read_only)
@@ -397,19 +506,34 @@ impl SingleFileBlockManager {
             version_number: AtomicU64::new(VERSION_NUMBER),
             storage_version: 1,
             db_identifier: [0; DB_IDENTIFIER_LEN],
+            // A key implies the block header of an encrypted file.
+            block_header_size: if encryption.is_some() {
+                ENCRYPTION_BLOCK_HEADER_SIZE
+            } else {
+                DEFAULT_BLOCK_HEADER_SIZE
+            },
+            encryption: None,
             registry: BlockRegistry::default(),
             compression: Mutex::default(),
             state: Mutex::new(BlockState::default()),
         };
-        let main_bytes = manager.read_header_block(0)?;
+        let main_bytes = manager.read_main_header_block()?;
         let main_header = MainHeader::read(&main_bytes)?;
-        if main_header.is_encrypted() {
+        manager.db_identifier = main_header.db_identifier;
+        if !main_header.is_encrypted() && encryption.is_some() {
             return Err(Error::catalog(format!(
-                "Cannot open encrypted database \"{path}\" without a key"
+                "A key is explicitly specified, but database \"{path}\" is not encrypted"
             )));
         }
+        if main_header.is_encrypted() {
+            let Some(encryption) = encryption else {
+                return Err(Error::catalog(format!(
+                    "Cannot open encrypted database \"{path}\" without a key"
+                )));
+            };
+            manager.encryption = Some(check_encryption_key(path, &main_header, encryption, keys)?);
+        }
         *manager.version_number.get_mut() = main_header.version_number;
-        manager.db_identifier = main_header.db_identifier;
         let h1 = DatabaseHeader::read(&main_header, &manager.read_header_block(FILE_HEADER_SIZE as u64)?)?;
         let h2 = DatabaseHeader::read(
             &main_header,
@@ -762,7 +886,7 @@ impl SingleFileBlockManager {
             self.version_number.store(65, Ordering::Relaxed);
             let mut main_header = Vec::with_capacity(FILE_HEADER_SIZE);
             MainHeader::new(65).write(&mut main_header);
-            self.write_header_block(&main_header, 0)?;
+            self.write_main_header_block(&main_header)?;
         }
         let mut content = Vec::with_capacity(FILE_HEADER_SIZE);
         header.write(&mut content);
@@ -839,14 +963,26 @@ impl SingleFileBlockManager {
         self.handle.truncate(size)
     }
 
-    /// Writes the data of block `block_id` behind its checksum (`ChecksumAndWrite`).
+    /// Writes the data of block `block_id` behind its checksum, encrypted in an encrypted
+    /// file (`ChecksumAndWrite`).
     pub fn write_block(&self, block_id: BlockId, data: &[u8]) -> Result<()> {
         if self.read_only {
             return Err(io_error("Cannot write to a database opened in read-only mode"));
         }
         let location = self.block_location(block_id)?;
+        if self.encryption.is_some() {
+            let mut block = vec![0u8; self.block_header_size + data.len()];
+            block[self.block_header_size..].copy_from_slice(data);
+            self.seal_block(&mut block)?;
+            return self.handle.write_at(&block, location);
+        }
         let sum = checksum(data);
         self.handle.write_parts_at(&sum.to_le_bytes(), data, location)
+    }
+
+    /// How the file is encrypted, if it is.
+    pub fn encryption(&self) -> Option<&FileEncryption> {
+        self.encryption.as_ref()
     }
 
     fn block_location(&self, block_id: BlockId) -> Result<u64> {
@@ -856,12 +992,13 @@ impl SingleFileBlockManager {
     }
 }
 
-/// Verifies the checksum in the first 8 bytes of `block` (`CheckChecksum`).
-fn verify_checksum(block: &[u8], location: u64) -> Result<()> {
+/// Verifies the checksum stored `delta` bytes into `block` against the data after it
+/// (`CheckChecksum`).
+fn verify_checksum(block: &[u8], delta: usize, location: u64) -> Result<()> {
     let mut stored = [0u8; 8];
-    stored.copy_from_slice(&block[..DEFAULT_BLOCK_HEADER_SIZE]);
+    stored.copy_from_slice(&block[delta..delta + DEFAULT_BLOCK_HEADER_SIZE]);
     let stored = u64::from_le_bytes(stored);
-    let computed = checksum(&block[DEFAULT_BLOCK_HEADER_SIZE..]);
+    let computed = checksum(&block[delta + DEFAULT_BLOCK_HEADER_SIZE..]);
     if stored != computed {
         return Err(io_error(format!(
             "Corrupt database file: computed checksum {computed} does not match stored checksum {stored} in block \
@@ -871,21 +1008,57 @@ fn verify_checksum(block: &[u8], location: u64) -> Result<()> {
     Ok(())
 }
 
-/// A random database identifier (`GenerateDBIdentifier`).
-fn random_identifier() -> [u8; crate::storage_info::DB_IDENTIFIER_LEN] {
-    use std::hash::{BuildHasher, Hasher};
-    let mut result = [0u8; crate::storage_info::DB_IDENTIFIER_LEN];
-    for chunk in result.chunks_mut(8) {
-        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
-        hasher.write_u64(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos() as u64),
-        );
-        let bytes = hasher.finish().to_le_bytes();
-        chunk.copy_from_slice(&bytes[..chunk.len()]);
+/// Checks that the key of `encryption` opens the encrypted file at `path` and adds its
+/// derived key to `keys` (`CheckAndAddEncryptionKey`), then checks the cipher: one given
+/// must be the file's, and a file not encrypted with GCM needs it given, so that an
+/// attacker cannot downgrade the cipher to one without integrity checks.
+fn check_encryption_key(
+    path: &str,
+    header: &MainHeader,
+    mut encryption: EncryptionOptions,
+    keys: &EncryptionKeyManager,
+) -> Result<FileEncryption> {
+    let key = rustdb_crypto::EncryptionKey::new(&mut encryption.user_key.derive(&header.db_identifier));
+    if !decrypt_canary(header, &key)? {
+        return Err(wrong_key());
     }
-    result
+    let key_id = EncryptionKeyManager::generate_random_key_id()?;
+    let key = keys.insert_key(&key_id, key);
+    let stored = CipherType::from_u8(header.encryption_cipher());
+    let given = encryption.cipher;
+    if given != CipherType::Invalid && given != stored {
+        return Err(Error::catalog(format!(
+            "Cannot open encrypted database \"{path}\" with a different cipher ({}) than the one used to create it \
+             ({})",
+            given.name(),
+            stored.name()
+        )));
+    }
+    if stored != CipherType::Gcm && given == CipherType::Invalid {
+        return Err(Error::catalog(format!(
+            "Cannot open encrypted database \"{path}\" without explicitly specifying the encryption cipher for \
+             security reasons. Please make sure you understand the security implications and re-attach the \
+             database specifying the desired cipher."
+        )));
+    }
+    if stored == CipherType::Cbc {
+        return Err(Error::invalid_input("CBC cipher is disabled"));
+    }
+    // The serialized encryption version overrides the one asked for.
+    let version = EncryptionVersion::from_u8(header.encryption_version()).unwrap_or_default();
+    Ok(FileEncryption {
+        cipher: stored,
+        version,
+        key_id,
+        key,
+    })
+}
+
+/// A random database identifier (`GenerateDBIdentifier`).
+fn random_identifier() -> Result<[u8; DB_IDENTIFIER_LEN]> {
+    let mut result = [0u8; DB_IDENTIFIER_LEN];
+    rustdb_crypto::generate_random_data(&mut result)?;
+    Ok(result)
 }
 
 impl BlockManager for SingleFileBlockManager {
@@ -902,7 +1075,7 @@ impl BlockManager for SingleFileBlockManager {
     }
 
     fn block_header_size(&self) -> usize {
-        DEFAULT_BLOCK_HEADER_SIZE
+        self.block_header_size
     }
 
     fn in_memory(&self) -> bool {
@@ -913,22 +1086,28 @@ impl BlockManager for SingleFileBlockManager {
         let location = self.block_location(block_id)?;
         let bytes = buffer.internal_mut();
         self.handle.read_at(bytes, location)?;
-        verify_checksum(bytes, location)
+        self.unseal_block(bytes, location)
     }
 
     /// Blocks are immutable while their handle lives (a rewritten block gets a new
     /// handle), so the checksum verified by the first read is not computed again when a
-    /// released table block is read back.
+    /// released table block is read back; an encrypted block is decrypted (and its tag
+    /// checked) again.
     fn reread(&self, block_id: BlockId, buffer: &mut FileBuffer) -> Result<()> {
         let location = self.block_location(block_id)?;
-        self.handle.read_at(buffer.internal_mut(), location)
+        let bytes = buffer.internal_mut();
+        self.handle.read_at(bytes, location)?;
+        if let Some(encryption) = &self.encryption {
+            encryption.decrypt_block(bytes, self.delta())?;
+        }
+        Ok(())
     }
 
     fn write(&self, block_id: BlockId, buffer: &FileBuffer) -> Result<()> {
         // SAFETY: blocks are written while no one modifies them (checkpoints write
         // blocks they own).
         let bytes = unsafe { buffer.internal() };
-        self.write_block(block_id, &bytes[DEFAULT_BLOCK_HEADER_SIZE..])
+        self.write_block(block_id, &bytes[self.block_header_size..])
     }
 
     fn registry(&self) -> &BlockRegistry {

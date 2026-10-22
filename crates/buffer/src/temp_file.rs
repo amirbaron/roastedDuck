@@ -10,15 +10,20 @@
 //! uncompressed writes and compressed writes at each of the levels -5, -3, -1, 1, 3 and 5
 //! took (`TemporaryFileCompressionAdaptivity`). A compressed slot holds the compressed
 //! length (8 bytes, little endian) followed by the zstd frame.
+//!
+//! With `temp_file_encryption`, the files created are encrypted: every slot is preceded
+//! by the nonce and tag of its AES-GCM encryption under the database's temporary key
+//! (`DEFAULT_ENCRYPTED_BUFFER_HEADER_SIZE` bytes).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
 use rustdb_common::{Error, Result};
+use rustdb_crypto::{ENCRYPTED_BUFFER_HEADER_SIZE, EncryptionKeyManager};
 
 use crate::DEFAULT_BLOCK_ALLOC_SIZE;
 use crate::allocator::BlockAllocator;
@@ -195,6 +200,44 @@ impl BlockIndexManager {
     }
 }
 
+/// Whether new temporary files are encrypted (`temp_file_encryption`), and the database's
+/// keys, whose temporary key encrypts them (`TemporaryFileManager::IsEncrypted`).
+#[derive(Debug, Default)]
+pub(crate) struct TemporaryFileEncryption {
+    pub(crate) enabled: AtomicBool,
+    pub(crate) keys: Arc<EncryptionKeyManager>,
+}
+
+impl TemporaryFileEncryption {
+    pub(crate) fn enabled(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed)
+    }
+
+    /// Encrypts `data` into `[nonce and tag][ciphertext]` (`EncryptTemporaryBuffer`).
+    pub(crate) fn encrypt(&self, data: &[u8]) -> Result<Vec<u8>> {
+        let key = self.keys.temp_key()?;
+        let mut encrypted = vec![0u8; ENCRYPTED_BUFFER_HEADER_SIZE + data.len()];
+        let (metadata, payload) = encrypted.split_at_mut(ENCRYPTED_BUFFER_HEADER_SIZE);
+        payload.copy_from_slice(data);
+        let metadata: &mut [u8; ENCRYPTED_BUFFER_HEADER_SIZE] = metadata
+            .try_into()
+            .map_err(|_| Error::internal("encryption metadata size"))?;
+        rustdb_crypto::encrypt_temporary_buffer(&key, payload, metadata)?;
+        Ok(encrypted)
+    }
+
+    /// Decrypts `data` in place with the nonce and tag of `metadata`
+    /// (`DecryptTemporaryBuffer`).
+    pub(crate) fn decrypt(
+        &self,
+        metadata: &[u8; ENCRYPTED_BUFFER_HEADER_SIZE],
+        data: &mut [u8],
+    ) -> Result<()> {
+        let key = self.keys.temp_key()?;
+        rustdb_crypto::decrypt_temporary_buffer(&key, data, metadata)
+    }
+}
+
 /// Identifies a temporary file: its size class and index within the class.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct FileIdentifier {
@@ -217,6 +260,9 @@ struct TemporaryFile {
     /// grow larger (`(1 << file_count) * 4000`).
     max_allowed_index: u64,
     slot_size: u64,
+    /// Whether the slots are encrypted (`TemporaryFileIdentifier::encrypted`), decided
+    /// when the file is created.
+    encrypted: bool,
     state: Mutex<FileState>,
 }
 
@@ -253,8 +299,15 @@ impl TemporaryFile {
         state.indexes.new_index(self.slot_size, Some(disk)).map(Some)
     }
 
+    /// Where slot `slot` starts (`GetPositionInFile`): encrypted slots have the nonce and
+    /// tag in front.
     fn position(&self, slot: u64) -> u64 {
-        slot * self.slot_size
+        let metadata = if self.encrypted {
+            ENCRYPTED_BUFFER_HEADER_SIZE as u64
+        } else {
+            0
+        };
+        slot * (self.slot_size + metadata)
     }
 
     /// The open file, for I/O outside the lock.
@@ -265,20 +318,38 @@ impl TemporaryFile {
             .ok_or_else(|| Error::internal("temporary file is not open"))
     }
 
-    fn write_slot(&self, slot: u64, data: &[u8]) -> Result<()> {
+    fn write_slot(&self, slot: u64, data: &[u8], encryption: &TemporaryFileEncryption) -> Result<()> {
         let file = self.handle()?;
+        let encrypted;
+        let data = if self.encrypted {
+            encrypted = encryption.encrypt(data)?;
+            &encrypted
+        } else {
+            data
+        };
         write_all_at(&file, data, self.position(slot))
             .map_err(|err| io_error(format!("Could not write file \"{}\": {err}", self.path.display())))
     }
 
-    fn read_slot(&self, slot: u64, data: &mut [u8]) -> Result<()> {
+    fn read_slot(&self, slot: u64, data: &mut [u8], encryption: &TemporaryFileEncryption) -> Result<()> {
         let file = self.handle()?;
-        read_exact_at(&file, data, self.position(slot)).map_err(|err| {
+        let read_error = |err: std::io::Error| {
             io_error(format!(
                 "Could not read from file \"{}\": {err}",
                 self.path.display()
             ))
-        })
+        };
+        let mut position = self.position(slot);
+        let mut metadata = [0u8; ENCRYPTED_BUFFER_HEADER_SIZE];
+        if self.encrypted {
+            read_exact_at(&file, &mut metadata, position).map_err(read_error)?;
+            position += ENCRYPTED_BUFFER_HEADER_SIZE as u64;
+        }
+        read_exact_at(&file, data, position).map_err(read_error)?;
+        if self.encrypted {
+            encryption.decrypt(&metadata, data)?;
+        }
+        Ok(())
     }
 
     /// Frees a slot, truncating the file if its tail became free.
@@ -499,12 +570,18 @@ pub(crate) struct TemporaryFileManager {
     state: Mutex<ManagerState>,
     pub(crate) disk: DiskUsage,
     adaptivities: Box<[Mutex<CompressionAdaptivity>]>,
+    pub(crate) encryption: Arc<TemporaryFileEncryption>,
 }
 
 impl TemporaryFileManager {
-    fn new(directory: PathBuf, size_on_disk: Arc<AtomicU64>) -> Self {
+    fn new(
+        directory: PathBuf,
+        size_on_disk: Arc<AtomicU64>,
+        encryption: Arc<TemporaryFileEncryption>,
+    ) -> Self {
         Self {
             directory,
+            encryption,
             state: Mutex::new(ManagerState::default()),
             disk: DiskUsage {
                 size_on_disk,
@@ -567,6 +644,7 @@ impl TemporaryFileManager {
                     path: self.file_path(identifier),
                     max_allowed_index: (1u64 << files.len().min(32)) * MAX_ALLOWED_INDEX_BASE,
                     slot_size: size.bytes(),
+                    encrypted: self.encryption.enabled(),
                     state: Mutex::new(FileState {
                         file: None,
                         indexes: BlockIndexManager::default(),
@@ -587,7 +665,7 @@ impl TemporaryFileManager {
             (file, location)
         };
         let slot_data = compressed.as_ref().map_or(data, |(_, slot)| slot.as_slice());
-        if let Err(error) = file.write_slot(location.slot, slot_data) {
+        if let Err(error) = file.write_slot(location.slot, slot_data, &self.encryption) {
             let mut state = self.lock();
             self.erase_used_block(&mut state, block_id)?;
             return Err(error);
@@ -638,10 +716,10 @@ impl TemporaryFileManager {
             )?,
         };
         if location.file.size == TemporaryBufferSize::Default {
-            file.read_slot(location.slot, buffer.internal_mut())?;
+            file.read_slot(location.slot, buffer.internal_mut(), &self.encryption)?;
         } else {
             let mut slot = vec![0; location.file.size.bytes() as usize];
-            file.read_slot(location.slot, &mut slot)?;
+            file.read_slot(location.slot, &mut slot, &self.encryption)?;
             decompress_slot(&slot, buffer.internal_mut())?;
         }
         let mut state = self.lock();
@@ -741,6 +819,7 @@ impl TemporaryDirectoryHandle {
         path: PathBuf,
         size_on_disk: Arc<AtomicU64>,
         max_swap_space: Option<u64>,
+        encryption: Arc<TemporaryFileEncryption>,
     ) -> Result<Self> {
         let created_directory = !path.is_dir();
         if created_directory {
@@ -751,7 +830,7 @@ impl TemporaryDirectoryHandle {
                 ))
             })?;
         }
-        let manager = TemporaryFileManager::new(path.clone(), size_on_disk);
+        let manager = TemporaryFileManager::new(path.clone(), size_on_disk, encryption);
         manager.set_max_swap_space(max_swap_space)?;
         Ok(Self {
             path,
