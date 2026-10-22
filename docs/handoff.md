@@ -81,7 +81,11 @@ Worktrees under `/Users/amirbaron/src/duckdb-rust/.claude/worktrees/`, briefs in
 - buffer-managed results, streaming backpressure, batch insert memory, eviction parity,
   the aggregate's source reservations (`buffer-memory.md`, base `930d230`).
 
-Queued: `logging-filecache.md` (operator logging and the external file cache). If a session ends while
+Queued, in order (briefs written, each with `<BASE>` to fill in): `logging-filecache.md`
+(operator logging, external file cache), `tpcds.md` (the 25 TPC-DS files),
+`plan-serialization.md` (`json_serialize_plan`), `encryption.md`, `icu66.md` (ICU 66
+collation data and sort key bytes); then performance rounds. `_common.md` holds the
+ground rules every brief repeats. If a session ends while
 an agent runs, its worktree holds its commits: review, finish or salvage, merge, run the
 full corpus.
 
