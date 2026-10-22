@@ -30,6 +30,19 @@ impl StringT {
         }
     }
 
+    /// An inline string of the first `len` (at most [`Self::INLINE_LENGTH`]) bytes of
+    /// `bits` read as little-endian bytes, the inverse of [`StringT::inlined_bits`]:
+    /// built with masks rather than a copy of `len` bytes.
+    #[inline]
+    pub fn inline_bits(bits: u128, len: usize) -> Self {
+        debug_assert!(len <= Self::INLINE_LENGTH);
+        let mask = (1u128 << (8 * len.min(Self::INLINE_LENGTH))) - 1;
+        let bytes = (bits & mask).to_le_bytes();
+        let mut data = [0; 12];
+        data.copy_from_slice(&bytes[..12]);
+        Self { len: len as u32, data }
+    }
+
     /// A string pointing at `bytes`.
     ///
     /// # Safety

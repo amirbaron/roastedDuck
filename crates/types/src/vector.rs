@@ -147,6 +147,42 @@ impl StringHeap {
         unsafe { StringT::from_raw(target) }
     }
 
+    /// Copies the string of the first `len` (at most 16) bytes of `bytes` into the heap,
+    /// unless it is short enough to be inlined: one 16-byte copy instead of a copy of
+    /// `len` bytes (DuckDB's `StringDecompress` allocates `sizeof(INPUT_TYPE)` bytes).
+    pub fn add_short(&mut self, bytes: &[u8; 16], len: usize) -> StringT {
+        if len <= StringT::INLINE_LENGTH {
+            return StringT::inline_bits(u128::from_le_bytes(*bytes), len);
+        }
+        let fits = self.chunks.last().is_some_and(|chunk| chunk.len() - self.used >= 16);
+        if !fits {
+            let grown = self.chunks.last().map_or(0, |chunk| chunk.len() * 2);
+            self.chunks
+                .push(vec![0; Self::MIN_CHUNK.max(grown)].into_boxed_slice());
+            self.used = 0;
+        }
+        let used = self.used;
+        let Some(chunk) = self.chunks.last_mut() else {
+            unreachable!("a chunk was just ensured")
+        };
+        let target = &mut chunk[used..used + 16];
+        target.copy_from_slice(bytes);
+        self.used += 16;
+        // SAFETY: as in `add`.
+        unsafe { StringT::from_raw(&target[..len.min(16)]) }
+    }
+
+    /// Empties the heap for new strings, keeping its largest chunk (and any memory it
+    /// keeps alive). The caller owns the heap alone, so no string it handed out is
+    /// referenced any more.
+    pub fn clear(&mut self) {
+        if let Some(largest) = self.chunks.pop() {
+            self.chunks.clear();
+            self.chunks.push(largest);
+        }
+        self.used = 0;
+    }
+
     /// Whether no string has been stored out of line.
     pub fn is_empty(&self) -> bool {
         self.chunks.is_empty()
@@ -702,6 +738,20 @@ impl Vector {
             // Keep our own appendable heap last.
             let own = heaps.pop();
             heaps.push(Arc::new(heap));
+            heaps.extend(own);
+        }
+    }
+
+    /// Like [`Vector::add_heap`] for a heap someone else may hold too (and reuse once it is
+    /// theirs alone again).
+    pub fn add_shared_heap(&mut self, heap: Arc<StringHeap>) {
+        if heap.is_empty() {
+            return;
+        }
+        if let Aux::Strings(heaps) = &mut self.storage_mut().aux {
+            // Keep our own appendable heap last.
+            let own = heaps.pop();
+            heaps.push(heap);
             heaps.extend(own);
         }
     }

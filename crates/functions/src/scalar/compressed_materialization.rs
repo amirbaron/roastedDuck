@@ -8,7 +8,8 @@
 //! that orders like the string). Like DuckDB, binding them from SQL is an error.
 
 use rustdb_common::{Error, Result};
-use rustdb_function::{FunctionData, ScalarFunction, ScalarFunctionSet};
+use rustdb_function::{FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet};
+use std::sync::Arc;
 use rustdb_types::{DataChunk, LogicalType, NativeType, PhysicalType, StringHeap, StringT, Vector};
 
 /// `CMUtils::Bind`.
@@ -238,40 +239,69 @@ fn compress_string(input: &[u8], size: usize) -> u128 {
     aligned | u128::from(input.len() as u8)
 }
 
-/// [`compress_string`] of a `string_t`. An inlined string is packed from its 16 bytes
-/// without looking at its characters one by one (`TemplatedReverseMemCpy`): byte-swapped,
-/// its first byte is the most significant, and shifting it down by the bytes the result
-/// lacks leaves the first `size - 1` bytes above an (empty) length byte.
+/// [`compress_string`] of a `string_t` into `SIZE` bytes. The string's first 16 bytes,
+/// read as a little-endian integer (zero past its end), are byte-swapped so its first
+/// byte is the most significant, and shifting them down by the bytes the result lacks
+/// leaves the first `SIZE - 1` bytes above the length byte (`TemplatedReverseMemCpy`),
+/// without looking at the characters one by one.
 #[inline]
-fn compress_string_t(input: &StringT, size: usize) -> u128 {
-    if size == 1 || !input.is_inlined() {
+fn compress_string_t<const SIZE: usize>(input: &StringT) -> u128 {
+    if SIZE == 1 {
         // SAFETY: the kernel runs while the input vector, and so its string heap, lives.
-        return compress_string(unsafe { input.as_bytes() }, size);
+        return compress_string(unsafe { input.as_bytes() }, SIZE);
     }
-    (input.inlined_bits().swap_bytes() >> (8 * (16 - size))) | input.len() as u128
+    let bits = if input.is_inlined() {
+        input.inlined_bits()
+    } else {
+        // SAFETY: as above.
+        long_string_bits(unsafe { input.as_bytes() })
+    };
+    ((bits.swap_bytes() >> (8 * (16 - SIZE))) & !0xFF) | u128::from(input.len() as u8)
 }
 
-/// `StringDecompress` (and `MiniStringDecompress`): the string packed into the `size`
+/// The first 16 bytes of a string that is not inlined (more than 12 bytes) as a
+/// little-endian integer, zero past its end: two overlapping 8-byte loads.
+#[inline]
+fn long_string_bits(bytes: &[u8]) -> u128 {
+    if let Some(first) = bytes.first_chunk::<16>() {
+        return u128::from_le_bytes(*first);
+    }
+    match (bytes.first_chunk::<8>(), bytes.last_chunk::<8>()) {
+        (Some(low), Some(high)) => {
+            // 8 < len < 16: the last 8 bytes shifted down past those the first 8 hold.
+            let high = u64::from_le_bytes(*high) >> (8 * (16 - bytes.len()));
+            u128::from(u64::from_le_bytes(*low)) | (u128::from(high) << 64)
+        }
+        _ => bytes
+            .iter()
+            .rev()
+            .fold(0u128, |bits, &byte| bits << 8 | u128::from(byte)),
+    }
+}
+
+/// `StringDecompress` (and `MiniStringDecompress`): the string packed into the `SIZE`
 /// low bytes of `value`. Shifted to the top and byte-swapped, its first byte is the
 /// lowest, so a string that fits inline is taken from the integer as a whole
-/// (`UncompressInlineString`); longer ones are copied into `heap`.
+/// (`UncompressInlineString`); longer ones are copied into `heap` 16 bytes at a time.
 #[inline]
-fn decompress_string(value: u128, size: usize, heap: &mut StringHeap) -> StringT {
-    if size == 1 {
+fn decompress_string<const SIZE: usize>(value: u128, heap: &mut StringHeap) -> StringT {
+    if SIZE == 1 {
         return if value == 0 {
             StringT::inline(&[])
         } else {
             StringT::inline(&[(value - 1) as u8])
         };
     }
-    let len = (value as u8 as usize).min(size - 1);
-    let bytes = (value << (8 * (16 - size))).swap_bytes().to_le_bytes();
-    heap.add(&bytes[..len])
+    let len = (value as u8 as usize).min(SIZE - 1);
+    let bits = (value << (8 * (16 - SIZE))).swap_bytes();
+    if len <= StringT::INLINE_LENGTH {
+        return StringT::inline_bits(bits, len);
+    }
+    heap.add_short(&bits.to_le_bytes(), len)
 }
 
 fn string_compress_function(result: &LogicalType) -> ScalarFunctionSet {
     let name = format!("__internal_compress_string_{}", type_name(result));
-    let size = result.physical_type().size();
     let physical = result.physical_type();
     let mut set = ScalarFunctionSet::new(name.as_str());
     set.add(internal(
@@ -286,7 +316,7 @@ fn string_compress_function(result: &LogicalType) -> ScalarFunctionSet {
                             &args.columns()[0],
                             args.len(),
                             out,
-                            |input| <$t as Bits>::from_bits(compress_string_t(&input, size)),
+                            |input| <$t as Bits>::from_bits(compress_string_t::<{ size_of::<$t>() }>(&input)),
                         );
                         Ok(())
                     }};
@@ -306,6 +336,45 @@ fn string_compress_function(result: &LogicalType) -> ScalarFunctionSet {
     set
 }
 
+/// The heaps `__internal_decompress_string` stores long strings in, each reused once no
+/// vector holds it any more (DuckDB's `StringDecompressLocalState` arena, reset per call).
+#[derive(Debug, Default)]
+struct DecompressHeaps(Vec<Arc<StringHeap>>);
+
+impl DecompressHeaps {
+    /// Heaps kept: the previous results may still be alive when the next call runs.
+    const KEPT: usize = 4;
+
+    /// The decompress heaps of a call's function state.
+    fn of(state: &mut FunctionState) -> Result<&mut Self> {
+        let local = state.local.get_or_insert_with(|| Box::new(Self::default()));
+        if !local.is::<Self>() {
+            *local = Box::new(Self::default());
+        }
+        local
+            .downcast_mut::<Self>()
+            .ok_or_else(|| Error::internal("string decompress state of another type"))
+    }
+
+    /// An empty heap no one else holds.
+    fn take(&mut self) -> Arc<StringHeap> {
+        for index in 0..self.0.len() {
+            if let Some(heap) = Arc::get_mut(&mut self.0[index]) {
+                heap.clear();
+                return self.0.swap_remove(index);
+            }
+        }
+        Arc::new(StringHeap::default())
+    }
+
+    /// Keeps `heap` for a later call.
+    fn put(&mut self, heap: Arc<StringHeap>) {
+        if self.0.len() < Self::KEPT {
+            self.0.push(heap);
+        }
+    }
+}
+
 fn string_decompress_set() -> ScalarFunctionSet {
     let name = "__internal_decompress_string";
     let mut set = ScalarFunctionSet::new(name);
@@ -317,20 +386,35 @@ fn string_decompress_set() -> ScalarFunctionSet {
         LogicalType::UHUGEINT,
         LogicalType::HUGEINT,
     ] {
-        let size = input.physical_type().size();
         let physical = input.physical_type();
         set.add(internal(
-            ScalarFunction::new(name, vec![input], LogicalType::VARCHAR, move |args, _, out| {
+            ScalarFunction::new(name, vec![input], LogicalType::VARCHAR, move |args, state, out| {
                 macro_rules! run {
                     ($t:ty) => {{
-                        let mut heap = StringHeap::default();
-                        rustdb_types::kernels::unary::<$t, StringT>(
-                            &args.columns()[0],
-                            args.len(),
-                            out,
-                            |value| decompress_string(value.to_bits(), size, &mut heap),
-                        );
-                        out.add_heap(heap);
+                        const SIZE: usize = size_of::<$t>();
+                        if SIZE <= StringT::INLINE_LENGTH + 1 {
+                            // Every string fits inline.
+                            let mut heap = StringHeap::default();
+                            rustdb_types::kernels::unary::<$t, StringT>(
+                                &args.columns()[0],
+                                args.len(),
+                                out,
+                                |value| decompress_string::<SIZE>(value.to_bits(), &mut heap),
+                            );
+                        } else {
+                            let heaps = DecompressHeaps::of(state)?;
+                            let mut heap = heaps.take();
+                            if let Some(target) = Arc::get_mut(&mut heap) {
+                                rustdb_types::kernels::unary::<$t, StringT>(
+                                    &args.columns()[0],
+                                    args.len(),
+                                    out,
+                                    |value| decompress_string::<SIZE>(value.to_bits(), target),
+                                );
+                            }
+                            out.add_shared_heap(Arc::clone(&heap));
+                            heaps.put(heap);
+                        }
                         Ok(())
                     }};
                 }
@@ -390,6 +474,26 @@ pub fn compressed_materialization_functions() -> Vec<ScalarFunctionSet> {
 mod tests {
     use super::*;
 
+    fn compress_t(value: &StringT, size: usize) -> u128 {
+        match size {
+            1 => compress_string_t::<1>(value),
+            2 => compress_string_t::<2>(value),
+            4 => compress_string_t::<4>(value),
+            8 => compress_string_t::<8>(value),
+            _ => compress_string_t::<16>(value),
+        }
+    }
+
+    fn decompress(value: u128, size: usize, heap: &mut StringHeap) -> StringT {
+        match size {
+            1 => decompress_string::<1>(value, heap),
+            2 => decompress_string::<2>(value, heap),
+            4 => decompress_string::<4>(value, heap),
+            8 => decompress_string::<8>(value, heap),
+            _ => decompress_string::<16>(value, heap),
+        }
+    }
+
     #[test]
     fn compress_string_matches_the_byte_by_byte_layout() {
         for size in [2usize, 4, 8, 16] {
@@ -412,7 +516,7 @@ mod tests {
     }
 
     #[test]
-    fn inlined_strings_compress_like_their_bytes() {
+    fn strings_compress_like_their_bytes() {
         for size in [1usize, 2, 4, 8, 16] {
             for input in [
                 &b""[..],
@@ -420,6 +524,8 @@ mod tests {
                 b"ab",
                 b"abcdefg",
                 b"abcdefghijkl",
+                b"abcdefghijklm",
+                b"abcdefghijklmn",
                 b"abcdefghijklmno",
             ] {
                 if input.len() >= size && size > 1 || size == 1 && input.len() > 1 {
@@ -428,7 +534,7 @@ mod tests {
                 // SAFETY: `input` outlives the value.
                 let value = unsafe { StringT::from_raw(input) };
                 assert_eq!(
-                    compress_string_t(&value, size),
+                    compress_t(&value, size),
                     compress_string(input, size),
                     "{size} {input:?}"
                 );
@@ -441,12 +547,12 @@ mod tests {
         let mut heap = StringHeap::default();
         for size in [1usize, 2, 4, 8, 16] {
             let mut previous = None;
-            for text in ["", "a", "ab", "abc", "abcdefghijklm", "abcdefghijklmno", "b"] {
+            for text in ["", "a", "ab", "abc", "abcdefghijkl", "abcdefghijklm", "abcdefghijklmno", "b"] {
                 if text.len() >= size && size > 1 || size == 1 && text.len() > 1 {
                     continue;
                 }
                 let compressed = compress_string(text.as_bytes(), size);
-                let out = decompress_string(compressed, size, &mut heap);
+                let out = decompress(compressed, size, &mut heap);
                 // SAFETY: `heap` holds the bytes of non-inlined results.
                 assert_eq!(unsafe { out.as_bytes() }, text.as_bytes());
                 if let Some(previous) = previous {
