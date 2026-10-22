@@ -176,10 +176,22 @@ Both original concurrency files pass three targeted trials and again in the expa
 451-file cohort (441 passes, ten shared skips, no failures/crashes/timeouts). All ten
 cross-engine file cases, workspace Clippy with warnings denied, 30 C API files and
 392 shell tests pass on the fix. The old failing full results remain preserved.
-A fresh full sweep is running on `cc5d2c2` plus the uncommitted cache flag. Its unique
-path is recorded in `index-reload-20261022/full-run-path.txt`; preserve the preceding
-failed run and do not rebuild this runner while it is active. Full zero-regression
-acceptance remains unproven until that sweep completes and the ratchet passes.
+The fresh full sweep on `cc5d2c2` plus the uncommitted cache flag finished at **4780
+pass, 16 fail, 74 skip**, with zero crashes/timeouts. Both checkpoint regressions pass
+in this sweep. The sole unexpected failure is now
+`test/sql/update/test_stress_update_issue_19688.test`: the final concurrent
+UPDATE/DELETE/INSERT check finds 999 distinct IDs rather than 1000. The ratchet fails
+with one regression; canonical results and the 4855-file passing list remain unchanged.
+The unique run path is in `index-reload-20261022/full-run-path.txt`; its `comparison.json`
+and worker logs preserve the failure. Do not promote this failed run.
+
+Serial repeated checks reproduce the candidate failure twice in 70 runs (68 passes).
+The preserved uncached binary passes 69 of 70, with one earlier concurrent-iteration
+failure whose abbreviated worker result does not establish the same cause. C++'s native
+unittest passes all 20 controls. This is an unresolved concurrency issue, not a proven
+cache or index-reload regression. Full logs for the additional 50 checks of each Rust
+binary and JSON summaries are in `index-reload-20261022/stress-update/`. No workload is
+active after those repeats. Diagnose the missing row before further parity acceptance.
 
 Native disk restore covers plain and stored constraint indexes so far; expression/WAL,
 pre-v0.10 and fallback paths remain open under work-queue 16. The cache policy is still
