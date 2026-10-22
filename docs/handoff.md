@@ -31,18 +31,18 @@ performance targets of `docs/porting-plan.md` (≥ 1.3× C++ speed, ≤ 0.6× me
 
 ## Where things stand
 
-- **Corpus** (`scripts/conformance.sh`, last full run on main): 4745 of 4870 files pass,
-  25 fail, 100 skip, no timeouts. C++ DuckDB
+- **Corpus** (`scripts/conformance.sh`, last full run on main): 4748 of 4870 files pass,
+  22 fail, 100 skip, no timeouts. C++ DuckDB
   passes 4794. Of the files C++ passes and rustdb does not:
   - 25 skip with `require tpcds` (the `tpcds` extension is not ported; its `dsdgen` is
     TPC-licensed code, see below);
   - 15 are accepted divergences (`conformance/divergences.md`: extension binaries, and
     out-of-memory errors rustdb avoids);
-  - the rest are real gaps, each in `docs/work-queue.md`: out-of-core IEJoin/AsOf/window
-    (3) and `buffer_managed_query_result` — agents are on these —, `json_serialize_plan`,
-    `physical_operator_logging`, external file cache (2), encryption
+  - the rest are real gaps, each in `docs/work-queue.md`: `buffer_managed_query_result`,
+    `physical_operator_logging` and the external file cache (2) — agents are on these —, `json_serialize_plan`,
+    encryption
     (`dict_fsst_expression_filter`), ICU `as`/`kok`/`mr`.
-  The ratchet `conformance/passing.txt` lists 4820 files and must never shrink:
+  The ratchet `conformance/passing.txt` lists 4823 files and must never shrink:
   `target/release/slt ratchet update target/slt/rust.jsonl` after a run.
 - **Flaky:** `test/sql/storage/temp_directory/max_swap_space_error.test` fails under load
   (work-queue item 14); `external_file_cache_low_mem.test_slow` failed once under load.
@@ -77,12 +77,11 @@ performance targets of `docs/porting-plan.md` (≥ 1.3× C++ speed, ≤ 0.6× me
 Worktrees under `/Users/amirbaron/src/duckdb-rust/.claude/worktrees/`, briefs in
 `.context/briefs/`:
 
-- out-of-core IEJoin, AsOf join and window (`outofcore-range-window.md`, base `6fc79ad`);
+- operator logging and the external file cache (`logging-filecache.md`, base `26e9c5e`);
 - buffer-managed results, streaming backpressure, batch insert memory, eviction parity,
   the aggregate's source reservations (`buffer-memory.md`, base `930d230`).
 
-Queued, in order (briefs written, each with `<BASE>` to fill in): `logging-filecache.md`
-(operator logging, external file cache), `tpcds.md` (the 25 TPC-DS files),
+Queued, in order (briefs written, each with `<BASE>` to fill in): `tpcds.md` (the 25 TPC-DS files),
 `plan-serialization.md` (`json_serialize_plan`), `encryption.md`, `icu66.md` (ICU 66
 collation data and sort key bytes); then performance rounds. `_common.md` holds the
 ground rules every brief repeats. If a session ends while
@@ -106,8 +105,8 @@ full corpus.
 
 ## Next steps, in order
 
-1. Merge the running agents' branches (out-of-core, buffer memory), then run the queued
-   logging and file cache brief.
+1. Merge the running agents' branches (buffer memory, logging and file cache), then run
+   the queued briefs.
 2. Close the remaining gaps in `docs/work-queue.md`, at most two agents at a time:
    plan serialization (`json_serialize_plan`), encryption, ICU
    collation for as/kok/mr and its sort key bytes.
