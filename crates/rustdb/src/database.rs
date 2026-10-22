@@ -195,15 +195,17 @@ enum StaticExtension {
     Parquet,
     Json,
     Tpch,
+    Tpcds,
     Autocomplete,
     Icu,
 }
 
 impl StaticExtension {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::Parquet,
         Self::Json,
         Self::Tpch,
+        Self::Tpcds,
         Self::Autocomplete,
         Self::Icu,
     ];
@@ -213,6 +215,7 @@ impl StaticExtension {
             "parquet" => Some(Self::Parquet),
             "json" => Some(Self::Json),
             rustdb_tpch::EXTENSION_NAME => Some(Self::Tpch),
+            rustdb_tpcds::EXTENSION_NAME => Some(Self::Tpcds),
             rustdb_autocomplete::EXTENSION_NAME => Some(Self::Autocomplete),
             rustdb_icu::EXTENSION_NAME => Some(Self::Icu),
             _ => None,
@@ -230,6 +233,7 @@ impl StaticExtension {
             ),
             Self::Json => PragmaFunction::call("json_execute_serialized_sql", vec![LogicalType::VARCHAR]),
             Self::Tpch => PragmaFunction::call("tpch", vec![LogicalType::BIGINT]),
+            Self::Tpcds => PragmaFunction::call("tpcds", vec![LogicalType::BIGINT]),
             Self::Autocomplete | Self::Icu => return Vec::new(),
         };
         vec![PragmaFunctionSet::single(function)]
@@ -239,6 +243,7 @@ impl StaticExtension {
     fn has_pragma(self, name: &str) -> bool {
         match self {
             Self::Tpch => name.eq_ignore_ascii_case("tpch"),
+            Self::Tpcds => name.eq_ignore_ascii_case("tpcds"),
             Self::Parquet | Self::Json | Self::Autocomplete | Self::Icu => false,
         }
     }
@@ -247,6 +252,7 @@ impl StaticExtension {
     fn pragma_query(self, name: &str, parameters: &[Value]) -> Result<String> {
         match self {
             Self::Tpch => rustdb_tpch::pragma_tpch_query(parameters),
+            Self::Tpcds => rustdb_tpcds::pragma_tpcds_query(parameters),
             Self::Parquet | Self::Json | Self::Autocomplete | Self::Icu => {
                 Err(Error::internal(format!("no pragma {name}")))
             }
@@ -283,6 +289,11 @@ impl StaticExtension {
             }
             Self::Tpch => {
                 for set in rustdb_tpch::tpch_table_functions() {
+                    system.register_table_functions(set)?;
+                }
+            }
+            Self::Tpcds => {
+                for set in rustdb_tpcds::tpcds_table_functions() {
                     system.register_table_functions(set)?;
                 }
             }
@@ -1926,7 +1937,7 @@ impl Database {
             // The core function library is part of the system catalog, loaded at start-up
             // as the reference build's statically linked `core_functions` is.
             "core_functions" => ExtensionLoad::Loaded,
-            "icu" | "tpcds" | "httpfs" | "fts" | "inet" | "excel" | "sqlsmith" | "spatial" | "delta"
+            "icu" | "httpfs" | "fts" | "inet" | "excel" | "sqlsmith" | "spatial" | "delta"
             | "iceberg" | "aws" | "azure" | "motherduck" | "postgres_scanner" | "mysql_scanner"
             | "sqlite_scanner" | "vss" | "ui" | "encodings" | "ducklake" | "avro" | "demo_capi" => {
                 ExtensionLoad::NotAvailable
