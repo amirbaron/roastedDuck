@@ -535,6 +535,7 @@ test/optimizer/column_binding_error.test
 test/optimizer/column_lifetime_analyzer/must_visit_operator_expressions_first.test
 test/optimizer/column_lifetime_analyzer/no_unnecessary_projections.test
 test/optimizer/column_lifetime_analyzer/summary_column_lifetime.test
+test/optimizer/common_subplan.test_slow
 test/optimizer/compare_blob.test
 test/optimizer/comparison_simplification.test
 test/optimizer/compressed_materialization.test_slow
@@ -550,6 +551,7 @@ test/optimizer/distributivity_rule.test
 test/optimizer/eager_aggregate_execution.test
 test/optimizer/eager_aggregate_execution_parquet.test
 test/optimizer/estimated_cardinalities_are_in_logical_plan.test
+test/optimizer/estimated_cardinalities_through_struct_extract.test
 test/optimizer/expression_rewriter/functions_that_error_are_not_reordered.test
 test/optimizer/expression_rewriter/ordered_aggregate_incorrectly_remove_order.test
 test/optimizer/filter_pushdown/filter_pushdown_into_subquery.test
@@ -588,6 +590,7 @@ test/optimizer/joins/test_delim_join_with_cross_product_in_rhs.test
 test/optimizer/joins/test_issue_5265.test_slow
 test/optimizer/joins/test_logical_get_with_unnest.test
 test/optimizer/joins/test_tpcds_pushdown.test
+test/optimizer/joins/tpcds_nofail.test
 test/optimizer/joins/update_nodes_in_full_path.test_slow
 test/optimizer/joins/updating_the_join_node_hash_map_has_no_errors.test_slow
 test/optimizer/joins/wide_build_skinny_probe.test
@@ -1462,6 +1465,7 @@ test/sql/copy/csv/parallel/csv_parallel_buffer_size.test
 test/sql/copy/csv/parallel/csv_parallel_clickbench.test_slow
 test/sql/copy/csv/parallel/csv_parallel_new_line.test_slow
 test/sql/copy/csv/parallel/csv_parallel_null_option.test
+test/sql/copy/csv/parallel/csv_parallel_tpcds.test_slow
 test/sql/copy/csv/parallel/csv_parallel_tpch.test_slow
 test/sql/copy/csv/parallel/parallel_csv_hive_partitioning.test
 test/sql/copy/csv/parallel/parallel_csv_union_by_name.test
@@ -1826,6 +1830,7 @@ test/sql/copy/parquet/writer/parquet_write_string_distinct.test
 test/sql/copy/parquet/writer/parquet_write_strings.test
 test/sql/copy/parquet/writer/parquet_write_strings_v1.test
 test/sql/copy/parquet/writer/parquet_write_timestamp.test
+test/sql/copy/parquet/writer/parquet_write_tpcds.test_slow
 test/sql/copy/parquet/writer/parquet_write_tpch.test_slow
 test/sql/copy/parquet/writer/parquet_write_tpch_nested.test_slow
 test/sql/copy/parquet/writer/parquet_write_uhugeint.test
@@ -1912,11 +1917,13 @@ test/sql/cte/insert_cte_bug_3417.test
 test/sql/cte/lazy_cte_bind.test
 test/sql/cte/lazy_cte_bind_correlated.test
 test/sql/cte/materialized/annotated_and_auto_materialized.test
+test/sql/cte/materialized/automatic_cte_materialization.test_slow
 test/sql/cte/materialized/cte_filter_pusher.test
 test/sql/cte/materialized/dml_materialized_cte.test
 test/sql/cte/materialized/game_of_life_materialized.test_slow
 test/sql/cte/materialized/incorrect_recursive_cte_materialized.test
 test/sql/cte/materialized/internal_3004.test
+test/sql/cte/materialized/materialized_cte_modifiers.test
 test/sql/cte/materialized/materialized_cte_prepared.test
 test/sql/cte/materialized/recursive_array_slice_materialized.test
 test/sql/cte/materialized/recursive_cte_complex_pipelines.test
@@ -2878,6 +2885,7 @@ test/sql/optimizer/plan/test_filter_pushdown.test
 test/sql/optimizer/plan/test_filter_pushdown_advanced.test_slow
 test/sql/optimizer/plan/test_filter_pushdown_duplicate.test
 test/sql/optimizer/plan/test_filter_pushdown_large.test
+test/sql/optimizer/plan/test_filter_pushdown_materialized_cte.test
 test/sql/optimizer/plan/test_table_filter_pushdown.test
 test/sql/optimizer/plan/test_unused_column_after_join.test
 test/sql/optimizer/predicate_factoring.test
@@ -3006,6 +3014,7 @@ test/sql/parallelism/interquery/test_concurrent_sequence.test_slow
 test/sql/parallelism/interquery/tpch_concurrent_checkpoints.test_slow
 test/sql/parallelism/interquery/tpch_concurrent_operations.test_slow
 test/sql/parallelism/intraquery/depth_first_evaluation.test_slow
+test/sql/parallelism/intraquery/depth_first_evaluation_union_and_join.test
 test/sql/parallelism/intraquery/error_in_pipeline.test
 test/sql/parallelism/intraquery/parallel_materialization.test_slow
 test/sql/parallelism/intraquery/parallel_sample.test
@@ -3466,6 +3475,7 @@ test/sql/storage/compression/alp/alp_simple_float.test
 test/sql/storage/compression/alp/alp_skip.test_slow
 test/sql/storage/compression/alp/alp_storage_version.test
 test/sql/storage/compression/alp/alp_stress_test.test_slow
+test/sql/storage/compression/alp/alp_tpcds.test_slow
 test/sql/storage/compression/alp/alp_tpch.test_slow
 test/sql/storage/compression/alp/alp_uncompressed_mode_regression.test_slow
 test/sql/storage/compression/alp/alp_uncompressed_mode_v1_4_0.test_slow
@@ -3487,6 +3497,7 @@ test/sql/storage/compression/alprd/alprd_simple_float.test
 test/sql/storage/compression/alprd/alprd_skip.test_slow
 test/sql/storage/compression/alprd/alprd_storage_version.test
 test/sql/storage/compression/alprd/alprd_stress_test.test_slow
+test/sql/storage/compression/alprd/alprd_tpcds.test_slow
 test/sql/storage/compression/alprd/alprd_tpch.test_slow
 test/sql/storage/compression/alprd/alprd_uncompressed_mode_regression.test_slow
 test/sql/storage/compression/alprd/alprd_uncompressed_mode_v1_4_0.test_slow
@@ -3666,6 +3677,7 @@ test/sql/storage/extensions/extension_default.test
 test/sql/storage/extensions/extension_views.test
 test/sql/storage/external_file_cache/external_file_cache_eviction_queue.test_slow
 test/sql/storage/external_file_cache/external_file_cache_low_mem.test_slow
+test/sql/storage/external_file_cache/external_file_cache_parquet_tpcds.test_slow
 test/sql/storage/external_file_cache/external_file_cache_parquet_tpch.test_slow
 test/sql/storage/filter_pushdown_struct.test
 test/sql/storage/full_vector_delete_checkpoint.test
@@ -3832,6 +3844,7 @@ test/sql/storage/test_store_tpch_complex.test_slow
 test/sql/storage/test_truncate_persistent.test
 test/sql/storage/test_unaligned_scan.test
 test/sql/storage/test_unique_index_checkpoint.test
+test/sql/storage/tpcds/tpcds_storage.test_slow
 test/sql/storage/tpch/tpch_storage.test_slow
 test/sql/storage/types/list/default_list.test
 test/sql/storage/types/list/empty_float_arrays.test
@@ -3867,6 +3880,7 @@ test/sql/storage/types/variant/test_all_types.test
 test/sql/storage/types/variant/test_all_types_single_object.test
 test/sql/storage/types/variant/test_all_types_single_table.test
 test/sql/storage/types/variant/test_all_types_variant.test
+test/sql/storage/types/variant/tpcds_sf1.test_slow
 test/sql/storage/types/variant/tpch_sf1.test_slow
 test/sql/storage/types/variant/update.test
 test/sql/storage/types/variant/variant_case_sensitive_fields_shredded.test
@@ -4123,6 +4137,17 @@ test/sql/topn/topn_nulls_first.test
 test/sql/topn/tpcds_q14_topn.test
 test/sql/topn/tpcds_q59_topn.test
 test/sql/topn/tpch_top_n.test_slow
+test/sql/tpcds/dsdgen_readonly.test
+test/sql/tpcds/tpc_gen_with_current_search_path.test_slow
+test/sql/tpcds/tpcds_datagen.test_slow
+test/sql/tpcds/tpcds_options.test_slow
+test/sql/tpcds/tpcds_reentrant.test_slow
+test/sql/tpcds/tpcds_sf0.test
+test/sql/tpcds/tpcds_sf001.test_slow
+test/sql/tpcds/tpcds_sf001_keys.test_slow
+test/sql/tpcds/tpcds_sf1.test_slow
+test/sql/tpcds/tpcds_sf1_no_order.test_slow
+test/sql/tpcds/tpcds_topn.test_slow
 test/sql/tpch/dbgen_readonly.test
 test/sql/tpch/gzip_csv_auto_detect.test_slow
 test/sql/tpch/q01_positional.test_slow
