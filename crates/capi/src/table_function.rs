@@ -359,7 +359,7 @@ fn run_init(
 /// columns.
 fn c_table_function_scan(projection_pushdown: bool) -> ParallelTableScan {
     ParallelTableScan {
-        init_global: Arc::new(|bind_data, column_ids, _| {
+        init_global: Arc::new(|bind_data, column_ids, _, _| {
             let bind_data = c_table_bind_data(bind_data)?;
             let Some(init) = bind_data.info.callbacks().init else {
                 return Err(Error::internal("C API table function without an init callback"));

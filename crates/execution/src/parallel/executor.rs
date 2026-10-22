@@ -23,7 +23,7 @@ use super::pipeline_executor::{
 };
 use super::task_scheduler::{ProducerToken, Task, TaskExecutionMode, TaskExecutionResult};
 use crate::operator::{OperatorPartitionInfo, PhysicalRef, SinkFinalize, SinkState};
-use crate::{CardinalityEstimates, ClientEnv, ExecutionContext, QueryProfiler};
+use crate::{CardinalityEstimates, ClientEnv, ExecutionContext, QueryClient, QueryProfiler};
 
 /// Settings of one query run.
 #[derive(Clone, Debug)]
@@ -41,6 +41,8 @@ pub struct QueryOptions {
     /// Whether the plan's root is a streaming result collector, whose sink blocks until
     /// the client fetches (`HasStreamingResultCollector`).
     pub streaming_result: bool,
+    /// The `debug_force_external` setting (`ClientConfig::force_external`).
+    pub force_external: bool,
 }
 
 impl Default for QueryOptions {
@@ -51,6 +53,7 @@ impl Default for QueryOptions {
             client_interrupted: None,
             estimates: CardinalityEstimates::default(),
             streaming_result: false,
+            force_external: false,
         }
     }
 }
@@ -124,12 +127,18 @@ impl QueryExecution {
     pub fn new(root: PhysicalRef, env: Arc<ClientEnv>, options: &QueryOptions) -> Result<Self> {
         let graph = PipelineBuilder::build(&root, options.preserve_insertion_order)?;
         let producer = env.scheduler.create_producer();
+        let opener = rustdb_function::file_system::opener();
+        let client = Arc::new(QueryClient {
+            force_external: options.force_external,
+            logger: opener.as_ref().and_then(|opener| opener.logger()),
+            estimates: options.estimates.clone(),
+        });
         let shared = Arc::new(ExecutorShared {
             env,
+            client,
             profiler: options.profiler.clone(),
-            opener: rustdb_function::file_system::opener(),
+            opener,
             client_interrupted: options.client_interrupted.clone(),
-            estimates: options.estimates.clone(),
             producer,
             pipelines: graph.pipelines.clone(),
             interrupted: Arc::default(),
@@ -274,7 +283,12 @@ impl QueryExecution {
             total: 0.0,
         };
         for pipeline in &self.shared.pipelines {
-            let cardinality = self.shared.estimates.get(&pipeline.source).clamp(1, 1 << 48) as f64;
+            let cardinality = self
+                .shared
+                .client
+                .estimates
+                .get(&pipeline.source)
+                .clamp(1, 1 << 48) as f64;
             if let Some(state) = pipeline.source_state() {
                 let done = pipeline.source.as_source()?.progress(state.as_ref()).ok()??;
                 progress.done += done.clamp(0.0, 1.0) * cardinality;
@@ -390,11 +404,11 @@ impl OperatorStates {
 /// The state of a running query shared by its events and tasks.
 pub(crate) struct ExecutorShared {
     env: Arc<ClientEnv>,
+    /// The client's settings, logger and the plan's estimated cardinalities.
+    client: Arc<QueryClient>,
     profiler: Option<Arc<QueryProfiler>>,
     /// The client's interrupt flag, if the client can interrupt the query.
     client_interrupted: Option<Arc<AtomicBool>>,
-    /// The estimated cardinality of the plan's operators.
-    estimates: CardinalityEstimates,
     /// The connection's function state the query runs with: worker threads see it as
     /// the thread that started the query does, e.g. to log (the tasks' `ClientContext`).
     opener: Option<Arc<rustdb_function::client::FunctionClient>>,
@@ -486,6 +500,7 @@ impl ExecutorShared {
     fn context(&self, thread_index: usize) -> ExecutionContext {
         ExecutionContext::for_task(
             Arc::clone(&self.env),
+            Arc::clone(&self.client),
             self.profiler.clone(),
             Arc::clone(&self.interrupted),
             self.client_interrupted.clone(),

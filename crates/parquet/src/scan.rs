@@ -33,6 +33,18 @@ pub(crate) fn client_context<'a>(input: &TableFunctionBindInput<'a>) -> Result<&
         .ok_or_else(|| Error::internal("parquet function bound without a client context"))
 }
 
+/// How the client reads files: through the database's external file cache
+/// (`CachingFileSystem::Get(context)`), validated per `validate_external_file_cache`,
+/// prefetching per `ShouldAndCanPrefetch` (local files only with
+/// `prefetch_all_parquet_files`).
+pub(crate) fn set_file_cache_options(context: &ClientContext, options: &mut ParquetOptions) {
+    options.prefetch = setting_bool(context, "prefetch_all_parquet_files")
+        && !setting_bool(context, "disable_parquet_prefetching");
+    options.file_cache = context.function_client.external_file_cache();
+    options.cache_validation =
+        rustdb_function::external_file_cache::CacheValidationMode::of_client(Some(&context.function_client));
+}
+
 /// The current value of a boolean setting (`ClientContext::TryGetCurrentSetting`).
 pub(crate) fn setting_bool(context: &ClientContext, name: &str) -> bool {
     context
@@ -493,11 +505,9 @@ fn read_parquet_bind(
         } else {
             None
         },
-        // `ShouldAndCanPrefetch`: local files only with `prefetch_all_parquet_files`.
-        prefetch: setting_bool(context, "prefetch_all_parquet_files")
-            && !setting_bool(context, "disable_parquet_prefetching"),
         ..ParquetOptions::default()
     };
+    set_file_cache_options(context, &mut options);
     parse_options(input, &mut file_options, &mut options, context)?;
     let mut data = bind_files(&context.casts, files, file_options, &options)?;
     data.display_paths = Some(paths);
@@ -722,6 +732,9 @@ struct PreparedFile {
     row_groups: Vec<usize>,
     /// The row count to emit when no column is read from the file.
     rows_only: Option<u64>,
+    /// Whether a filter on a constant column (such as a hive partition) skips the whole
+    /// file, which is then not read at all.
+    skipped: bool,
 }
 
 /// File column `local`, reading only the struct fields `children` names when the file's
@@ -956,6 +969,7 @@ fn prepare_file(
         chunk_filters,
         row_groups,
         rows_only,
+        skipped: skip_file,
     })
 }
 
@@ -1026,6 +1040,9 @@ struct Cursor {
     claimed_groups: usize,
     /// `total_row_groups_to_scan`: the row groups of all files handed out so far.
     total_row_groups: u64,
+    /// Logs the row groups read and skipped, for the scan's operator (`op`), if the
+    /// query logs them.
+    logger: Option<rustdb_function::logging::OperatorLogger>,
 }
 
 /// A unit of a parallel scan: a file (with its index) and one of its row groups, or
@@ -1033,6 +1050,33 @@ struct Cursor {
 type Morsel = (Arc<PreparedFile>, usize, Option<usize>, u64);
 
 impl Cursor {
+    /// Logs the row groups of `file` handed out up to `end` that were not logged yet, as
+    /// `ParquetReader::Scan` does when it starts each: `read` (all of them with
+    /// `all_read`) is read, the others are skipped by their statistics.
+    fn log_row_groups(&self, file: &PreparedFile, end: usize, read: Option<usize>, all_read: bool) {
+        let Some(logger) = &self.logger else {
+            return;
+        };
+        if file.skipped {
+            return;
+        }
+        for group in self.claimed_groups..end {
+            let event = if all_read || read == Some(group) {
+                "ReadRowGroup"
+            } else {
+                "SkipRowGroup"
+            };
+            logger.log(
+                "ParquetReader",
+                event,
+                &[
+                    ("file", file.reader.file_name().to_owned()),
+                    ("row_group_id", group.to_string()),
+                ],
+            );
+        }
+    }
+
     /// The next morsel, opening files as needed; `None` once all are handed out.
     fn next(&mut self, data: &ParquetBindData, column_ids: &[u64]) -> Result<Option<Morsel>> {
         loop {
@@ -1048,6 +1092,7 @@ impl Cursor {
                         (Some(group), _) => group + 1,
                         (None, _) => file.reader.num_row_groups(),
                     };
+                    self.log_row_groups(file, claimed, group, group.is_none());
                     self.total_row_groups += claimed.saturating_sub(self.claimed_groups) as u64;
                     self.claimed_groups = self.claimed_groups.max(claimed);
                     let batch = self.batch_index;
@@ -1055,6 +1100,7 @@ impl Cursor {
                     return Ok(Some((Arc::clone(file), self.file_index, group, batch)));
                 }
                 let groups = file.reader.num_row_groups();
+                self.log_row_groups(file, groups, None, false);
                 self.total_row_groups += groups.saturating_sub(self.claimed_groups) as u64;
                 self.claimed_groups = 0;
                 self.file = None;
@@ -1104,10 +1150,12 @@ fn read_parquet_init_global(
     bind_data: Option<&dyn FunctionData>,
     column_ids: &[u64],
     column_indexes: &[ColumnIndex],
+    op: Option<&rustdb_function::logging::OperatorLogger>,
 ) -> Result<ParallelScanGlobal> {
     let data = parquet_bind_data(bind_data)?;
     let mut cursor = Cursor {
         children: column_indexes.iter().map(child_projections).collect(),
+        logger: op.cloned(),
         ..Cursor::default()
     };
     let max_threads = match data.files.files.len() {

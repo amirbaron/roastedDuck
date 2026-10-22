@@ -229,6 +229,7 @@ impl Sink for PhysicalAsOfJoin {
         let config = SortConfig {
             threads: ctx.env.threads(),
             connections: 1,
+            force_external: ctx.force_external(),
             ..SortConfig::default()
         };
         let strategies = [self.sort_strategy(ctx, 0)?, self.sort_strategy(ctx, 1)?];

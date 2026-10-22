@@ -178,6 +178,15 @@ impl ListReader {
         &self.logical_type
     }
 
+    /// The reader of the elements.
+    pub fn child(&self) -> &ColumnReader {
+        &self.child
+    }
+
+    pub fn child_mut(&mut self) -> &mut ColumnReader {
+        &mut self.child
+    }
+
     pub fn initialize_read(
         &mut self,
         row_group_index: usize,

@@ -103,10 +103,12 @@ pub struct CardinalityEstimates(Arc<HashMap<usize, u64>>);
 impl CardinalityEstimates {
     /// The estimate for `op`, 0 if it has none.
     pub fn get(&self, op: &PhysicalRef) -> u64 {
-        self.0
-            .get(&explain::operator_key(op.as_ref()))
-            .copied()
-            .unwrap_or(0)
+        self.get_by_key(explain::operator_key(op.as_ref()))
+    }
+
+    /// The estimate for the operator at address `key` (`operator_key`), 0 if it has none.
+    pub fn get_by_key(&self, key: usize) -> u64 {
+        self.0.get(&key).copied().unwrap_or(0)
     }
 }
 

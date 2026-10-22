@@ -769,13 +769,12 @@ fn context_options(
     input: &rustdb_function::TableFunctionBindInput<'_>,
 ) -> Result<(ParquetOptions, Arc<CastFunctionSet>)> {
     let context = crate::scan::client_context(input)?;
-    Ok((
-        ParquetOptions {
-            binary_as_string: crate::scan::setting_bool(context, "binary_as_string"),
-            ..ParquetOptions::default()
-        },
-        Arc::clone(&context.casts),
-    ))
+    let mut options = ParquetOptions {
+        binary_as_string: crate::scan::setting_bool(context, "binary_as_string"),
+        ..ParquetOptions::default()
+    };
+    crate::scan::set_file_cache_options(context, &mut options);
+    Ok((options, Arc::clone(&context.casts)))
 }
 
 fn metadata_function(name: &'static str, kind: MetadataKind, argument: LogicalType) -> TableFunction {

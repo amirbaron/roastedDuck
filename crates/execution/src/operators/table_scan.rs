@@ -242,12 +242,13 @@ impl Source for PhysicalTableScan {
     type Global = TableScanGlobal;
     type Local = Option<rustdb_function::ParallelScanLocal>;
 
-    fn global_source_state(&self, _: &ExecutionContext, _: Option<&SinkState>) -> Result<TableScanGlobal> {
+    fn global_source_state(&self, ctx: &ExecutionContext, _: Option<&SinkState>) -> Result<TableScanGlobal> {
         let parallel = match &self.function.parallel_scan {
             Some(parallel) => Some((parallel.init_global)(
                 self.bind_data.as_deref(),
                 &self.column_ids,
                 &self.column_indexes,
+                ctx.operator_logger(self).as_ref(),
             )?),
             None => None,
         };

@@ -168,6 +168,7 @@ impl Sink for PhysicalOrder {
         let config = SortConfig {
             threads: ctx.env.threads(),
             connections: 1,
+            force_external: ctx.force_external(),
             ..SortConfig::default()
         };
         let sink = sort.global_sink_state(config);

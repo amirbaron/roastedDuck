@@ -901,6 +901,12 @@ impl Settings {
             .unwrap_or(100_000)
     }
 
+    /// `debug_force_external`: operators that can work out of core start out of core
+    /// (`ClientConfig::force_external`).
+    pub(crate) fn force_external(&self) -> bool {
+        self.enabled("debug_force_external")
+    }
+
     /// `enable_progress_bar`: the progress of running queries is tracked
     /// (`ClientConfig::enable_progress_bar`).
     pub(crate) fn enable_progress_bar(&self) -> bool {

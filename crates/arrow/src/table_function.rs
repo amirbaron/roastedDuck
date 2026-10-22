@@ -252,6 +252,7 @@ fn arrow_scan_init_global(
     bind: Option<&dyn FunctionData>,
     column_ids: &[u64],
     _: &[rustdb_types::ColumnIndex],
+    _: Option<&rustdb_function::logging::OperatorLogger>,
 ) -> Result<ParallelScanGlobal> {
     let stream = produce_arrow_scan(bind_data(bind)?, column_ids)?;
     Ok(Arc::new(ArrowScanGlobalState {
@@ -409,7 +410,7 @@ fn arrow_scan(
     output: &mut DataChunk,
 ) -> Result<bool> {
     if state.local.is_none() {
-        let global = arrow_scan_init_global(bind, column_ids, &[])?;
+        let global = arrow_scan_init_global(bind, column_ids, &[], None)?;
         let local = arrow_scan_init_local();
         state.local = Some(Box::new(SingleThreadScan { global, local }));
     }

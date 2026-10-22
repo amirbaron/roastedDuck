@@ -18,7 +18,7 @@ use crate::decode::{
     BlockCursor, BssDecoder, ByteBuffer, DbpDecoder, PageBlock, RleBpDecoder, compute_bit_width,
     runtime_error,
 };
-use crate::file::ParquetFile;
+use crate::file::{ParquetFile, ReadHead};
 use crate::schema::ColumnSchema;
 use crate::thrift::{
     ColumnChunk, CompactReader, CompressionCodec, Encoding, PageHeader, PageType, RowGroup, ThriftValue, Type,
@@ -34,9 +34,29 @@ struct ChunkBuffer {
     /// The file offset of `data[0]`.
     start: u64,
     data: Vec<u8>,
+    /// In the prefetch mode, the prefetched range holding the chunk: bytes it holds are
+    /// read from it instead of `data` (`ThriftFileTransport::read` from a read head).
+    head: Option<Arc<ReadHead>>,
 }
 
 impl ChunkBuffer {
+    /// Whether the prefetched range holds the `len` bytes at `offset`.
+    fn head_holds(&self, offset: u64, len: u64) -> bool {
+        self.head
+            .as_ref()
+            .is_some_and(|head| offset >= head.location && offset.saturating_add(len) <= head.end())
+    }
+
+    /// The `len` bytes at `offset` of the prefetched range, which holds them.
+    fn head_bytes(&self, file: &ParquetFile, offset: u64, len: usize) -> Result<&[u8]> {
+        let head = self
+            .head
+            .as_ref()
+            .ok_or_else(|| Error::internal("column chunk without a prefetched range"))?;
+        let begin = (offset - head.location) as usize;
+        Ok(&head.bytes(file)?[begin..begin + len])
+    }
+
     /// Loads `len` bytes at `offset`, reusing the buffer's allocation.
     fn load(&mut self, file: &ParquetFile, offset: u64, len: usize) -> Result<()> {
         resize_uninitialized(&mut self.data, len);
@@ -50,6 +70,9 @@ impl ChunkBuffer {
 
     /// The bytes `offset..offset + len`, loading them if needed.
     fn bytes(&mut self, file: &ParquetFile, offset: u64, len: usize) -> Result<&[u8]> {
+        if self.head_holds(offset, len as u64) {
+            return self.head_bytes(file, offset, len);
+        }
         let end = offset.checked_add(len as u64);
         let loaded_end = self.start + self.data.len() as u64;
         if offset < self.start || end.is_none_or(|end| end > loaded_end) {
@@ -69,6 +92,14 @@ impl ChunkBuffer {
 
     /// Parses a page header at `offset`, returning it and its encoded length.
     fn page_header(&mut self, file: &ParquetFile, offset: u64) -> Result<(PageHeader, usize)> {
+        if self.head_holds(offset, 1) {
+            let head_end = self.head.as_ref().map_or(offset, |head| head.end());
+            let bytes = self.head_bytes(file, offset, (head_end - offset) as usize)?;
+            let mut reader = CompactReader::new(bytes);
+            if let Ok(header) = PageHeader::read(&mut reader) {
+                return Ok((header, reader.position()));
+            }
+        }
         let loaded_end = self.start + self.data.len() as u64;
         if offset >= self.start && offset < loaded_end {
             let begin = (offset - self.start) as usize;
@@ -196,6 +227,8 @@ pub struct LeafReader {
     chunk_read_offset: u64,
     group_rows_available: u64,
     chunk: ChunkBuffer,
+    /// The bytes of the chunk from its first page on (within the file).
+    chunk_len: u64,
 
     /// The decompressed current page (one padding byte at the end, like DuckDB's).
     block: PageBlock,
@@ -254,6 +287,7 @@ impl LeafReader {
             chunk_read_offset: 0,
             group_rows_available: 0,
             chunk: ChunkBuffer::default(),
+            chunk_len: 0,
             block: PageBlock::default(),
             block_position: 0,
             block_end: 0,
@@ -336,6 +370,13 @@ impl LeafReader {
         // Keep the allocation of the previous chunk.
         self.chunk.start = start;
         self.chunk.data.clear();
+        self.chunk.head = None;
+        // From the first page to the end of the chunk, as far as the file goes.
+        let available = self.context.file.size().saturating_sub(start);
+        self.chunk_len = self
+            .total_compressed_size
+            .saturating_add(self.chunk_read_offset.saturating_sub(start))
+            .min(available);
         self.pending_skips = 0;
         self.page_rows_available = 0;
         self.dictionary = None;
@@ -345,21 +386,54 @@ impl LeafReader {
         Ok(())
     }
 
-    /// Loads the chunk bytes on the first page read.
+    /// Loads the chunk bytes on the first page read, unless a prefetched range holds
+    /// them.
     fn ensure_chunk_loaded(&mut self) -> Result<()> {
-        if !self.chunk.data.is_empty() {
+        if !self.chunk.data.is_empty() || self.chunk.head_holds(self.chunk.start, self.chunk_len) {
             return Ok(());
         }
-        let file = &self.context.file;
         let start = self.chunk.start;
-        let available = file.size().saturating_sub(start);
-        let len = self
-            .total_compressed_size
-            .saturating_add(self.chunk_read_offset.saturating_sub(start))
-            .min(available) as usize;
+        let len = self.chunk_len as usize;
         if len > 0 {
-            let file = Arc::clone(file);
+            let file = Arc::clone(&self.context.file);
             self.chunk.load(&file, start, len)?;
+        }
+        Ok(())
+    }
+
+    /// Registers the column chunk for prefetching (`ColumnReader::RegisterPrefetch` at
+    /// `FileOffset()`).
+    pub fn register_prefetch(
+        &self,
+        buffer: &mut crate::file::ReadAheadBuffer,
+        file: &ParquetFile,
+        allow_merge: bool,
+    ) -> Result<()> {
+        buffer.add_read_head(file, self.chunk.start, self.total_compressed_size, allow_merge)
+    }
+
+    /// Reads the chunk from the prefetched range holding its start, if any.
+    pub fn attach_read_head(&mut self, buffer: &crate::file::ReadAheadBuffer) {
+        self.chunk.head = buffer.read_head(self.chunk.start).cloned();
+    }
+
+    /// Outside the prefetch mode, DuckDB reads every page header through the external
+    /// file cache as a prefetch of up to 256 bytes (`PrepareRead`'s
+    /// `ASSUMED_HEADER_SIZE`): the cache gets the same range, filled from the loaded
+    /// chunk where it holds it.
+    fn cache_page_header_range(&self, offset: u64) -> Result<()> {
+        const ASSUMED_HEADER_SIZE: u64 = 256;
+        let file = &self.context.file;
+        if self.context.prefetch || !file.handle().caches_reads() {
+            return Ok(());
+        }
+        let len = file.size().saturating_sub(offset).min(ASSUMED_HEADER_SIZE);
+        let loaded_end = self.chunk.start + self.chunk.data.len() as u64;
+        if offset >= self.chunk.start && offset + len <= loaded_end {
+            let begin = (offset - self.chunk.start) as usize;
+            file.handle().read_from(len, offset, &self.chunk.data[begin..])?;
+        } else {
+            file.handle().read(len, offset)?;
         }
         Ok(())
     }
@@ -372,6 +446,7 @@ impl LeafReader {
         self.defines = None;
         self.repeats = None;
         self.ensure_chunk_loaded()?;
+        self.cache_page_header_range(self.chunk_read_offset)?;
         let file = Arc::clone(&self.context.file);
         let (header, header_len) = match self.context.decryption.clone() {
             Some(decryption) => self.encrypted_page_header(&decryption)?,

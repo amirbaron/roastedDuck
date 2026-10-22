@@ -871,6 +871,11 @@ pub(crate) fn catalog_table_functions() -> Vec<TableFunctionSet> {
         rows_function("duckdb_sequences", SEQUENCE_COLUMNS, sequence_rows),
         rows_function("duckdb_columns", COLUMN_COLUMNS, column_rows),
         rows_function("duckdb_memory", MEMORY_COLUMNS, memory_rows),
+        rows_function(
+            "duckdb_external_file_cache",
+            EXTERNAL_FILE_CACHE_COLUMNS,
+            external_file_cache_rows,
+        ),
         rows_function("duckdb_constraints", CONSTRAINT_COLUMNS, constraint_rows),
         rows_function("duckdb_functions", FUNCTION_COLUMNS, function_rows),
         rows_function("duckdb_keywords", KEYWORD_COLUMNS, keyword_rows),
@@ -1652,6 +1657,34 @@ fn memory_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
         .memory_usage_info()
         .into_iter()
         .map(|info| vec![text(info.tag.name()), clamp(info.size), clamp(info.evicted_data)])
+        .collect())
+}
+
+const EXTERNAL_FILE_CACHE_COLUMNS: Columns = &[
+    ("path", varchar),
+    ("nr_bytes", bigint),
+    ("location", bigint),
+    ("loaded", boolean),
+];
+
+/// `duckdb_external_file_cache()` (`DuckDBExternalFileCacheFunction`): the cached ranges
+/// of external files and whether they are in memory.
+fn external_file_cache_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    let Some(cache) = context.function_client.external_file_cache() else {
+        return Ok(Vec::new());
+    };
+    let bigint = |value: u64| Value::bigint(i64::try_from(value).unwrap_or(i64::MAX));
+    Ok(cache
+        .cached_file_information()
+        .into_iter()
+        .map(|entry| {
+            vec![
+                text(entry.path),
+                bigint(entry.nr_bytes),
+                bigint(entry.location),
+                Value::boolean(entry.loaded),
+            ]
+        })
         .collect())
 }
 

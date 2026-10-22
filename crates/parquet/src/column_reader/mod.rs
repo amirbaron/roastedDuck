@@ -26,6 +26,10 @@ pub struct ReaderContext {
     pub metadata: Arc<FileMetaData>,
     /// How to decrypt the pages of an encrypted file.
     pub decryption: Option<Arc<crate::crypto::FileDecryption>>,
+    /// Whether the file is read in the prefetch mode: row groups (or their columns) are
+    /// read whole through the external file cache; else each page header is read through
+    /// it (`ParquetReaderScanState::prefetch_mode`).
+    pub prefetch: bool,
 }
 
 /// A node of the reader tree.
@@ -325,6 +329,51 @@ impl ColumnReader {
             Self::List(list) => list.group_rows_available(),
             Self::Struct(node) => node.group_rows_available(),
             Self::RowNumber(_) => Ok(u64::MAX),
+        }
+    }
+
+    /// Registers the column chunks of the current row group for prefetching
+    /// (`RegisterPrefetch`), merging consecutive ones with `allow_merge`.
+    pub fn register_prefetch(
+        &self,
+        buffer: &mut crate::file::ReadAheadBuffer,
+        file: &ParquetFile,
+        allow_merge: bool,
+    ) -> Result<()> {
+        match self {
+            Self::Leaf(leaf) => leaf.register_prefetch(buffer, file, allow_merge),
+            Self::Geometry(reader) => reader.blob.register_prefetch(buffer, file, allow_merge),
+            Self::Variant(reader) => reader
+                .children
+                .iter()
+                .try_for_each(|child| child.register_prefetch(buffer, file, allow_merge)),
+            Self::List(list) => list.child().register_prefetch(buffer, file, allow_merge),
+            Self::Struct(node) => node
+                .children
+                .iter()
+                .flatten()
+                .try_for_each(|child| child.register_prefetch(buffer, file, allow_merge)),
+            Self::RowNumber(_) => Ok(()),
+        }
+    }
+
+    /// Reads the column chunks from the prefetched ranges that hold them
+    /// (`ThriftFileTransport::read` from a read head).
+    pub fn attach_read_heads(&mut self, buffer: &crate::file::ReadAheadBuffer) {
+        match self {
+            Self::Leaf(leaf) => leaf.attach_read_head(buffer),
+            Self::Geometry(reader) => reader.blob.attach_read_head(buffer),
+            Self::Variant(reader) => reader
+                .children
+                .iter_mut()
+                .for_each(|child| child.attach_read_heads(buffer)),
+            Self::List(list) => list.child_mut().attach_read_heads(buffer),
+            Self::Struct(node) => node
+                .children
+                .iter_mut()
+                .flatten()
+                .for_each(|child| child.attach_read_heads(buffer)),
+            Self::RowNumber(_) => {}
         }
     }
 

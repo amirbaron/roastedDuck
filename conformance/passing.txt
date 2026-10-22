@@ -2832,6 +2832,7 @@ test/sql/logging/logging_csv.test
 test/sql/logging/logging_file_bind_replace.test
 test/sql/logging/logging_file_persistence.test
 test/sql/logging/logging_types.test
+test/sql/logging/physical_operator_logging.test_slow
 test/sql/logging/test_logging_function.test
 test/sql/logging/test_logging_function_large.test_slow
 test/sql/merge/merge_into.test
@@ -3667,7 +3668,9 @@ test/sql/storage/extensions/extension_default.test
 test/sql/storage/extensions/extension_views.test
 test/sql/storage/external_file_cache/external_file_cache_eviction_queue.test_slow
 test/sql/storage/external_file_cache/external_file_cache_low_mem.test_slow
+test/sql/storage/external_file_cache/external_file_cache_parquet.test_slow
 test/sql/storage/external_file_cache/external_file_cache_parquet_tpch.test_slow
+test/sql/storage/external_file_cache/external_file_cache_validate.test
 test/sql/storage/filter_pushdown_struct.test
 test/sql/storage/full_vector_delete_checkpoint.test
 test/sql/storage/icu_collation.test

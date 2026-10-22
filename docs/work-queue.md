@@ -50,7 +50,7 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      completion lists show: `icu_collate_<locale>` for each ICU collation (DuckDB's ICU
      registers every collation as a scalar function too), `seq_scan`,
      `duckdb_secret_types`, `duckdb_table_sample`, `duckdb_coordinate_systems`,
-     `duckdb_external_file_cache` (6), `json_serialize_plan` (8), `tpcds`, `dsdgen` (10).
+     `json_serialize_plan` (8), `tpcds`, `dsdgen` (10).
    - Object ids: the oid of a database (`PRAGMA database_list`'s `seq`) counts the
      catalog entries created before it, more in DuckDB.
    - "Did you mean" for a type name: DuckDB suggests among the default type entries it
@@ -92,8 +92,21 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    - FSST segments of the same strings hold slightly different counts than DuckDB's
      (5878 against 5877 strings in a 256 KiB segment): the symbol tables differ.
    - zstd throughput is 0.88–1.0× DuckDB's (`docs/perf-backlog.md`).
-6. **External file cache.** `CachingFileSystem`, `duckdb_external_file_cache()`,
-   `validate_external_file_cache` (`external_file_cache_*` tests).
+6. **External file cache, the rest.** `ExternalFileCache` and `CachingFileSystem` are
+   ported (`crates/function`: buffer-managed ranges, validation by version tag or
+   modification time, `enable_external_file_cache`, `validate_external_file_cache`,
+   `duckdb_external_file_cache()`), and the Parquet reader reads through them as
+   DuckDB's does (the footer, prefetched row groups or columns, 256-byte page headers);
+   the cache's ranges and memory match DuckDB's. Left:
+   - `external_file_cache_eviction_queue` expects the scan of a table to evict the
+     cached ranges: in DuckDB the materialized result (`COLUMN_DATA`) takes the memory.
+     It passes once results are buffer-managed (4); a trial merge with that branch
+     passes the whole directory.
+   - In the prefetch mode, a read outside the prefetched ranges (page offsets outside
+     their column chunk) is a direct read, where DuckDB prefetches up to 1 MB through
+     the cache (`PREFETCH_FALLBACK_BUFFERSIZE`).
+   - `CachingFileSystemWrapper` (the JSON reader, `read_text`, `read_blob`) caches
+     remote files only: there is nothing to port until a remote file system exists.
 15. **Database encryption** (`dict_fsst_expression_filter`, which attaches a database
     with `ENCRYPTION_KEY`; the other encryption tests `require httpfs` and are skipped
     on both engines). DuckDB encrypts blocks, the WAL and temporary files with
@@ -111,14 +124,15 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    table's lookups and resizes, and the hash join probe. Struct projection pushdown is
    ported (13).
 8. **Logical plan serialization** (`json_serialize_plan`).
-9. **Physical operator logging** (`physical_operator_logging`): the
-   `PhysicalOperator` log type is registered, but nothing writes it. DuckDB logs from
-   the hash join (`Finalize` with `external`, `Repartition`, `GetData` with
-   `total_probe_matches`), `JoinHashTable::Build`, the Parquet writer
-   (`FlushRowGroup`) and reader (`ReadRowGroup` / `SkipRowGroup`), each with the
-   operator's type and `ParamsToString()`. The test also needs
-   `debug_force_external` to force the external hash join (16 partition builds with 4
-   radix bits).
+9. **Physical operator logging, the rest.** Every `PhysicalOperatorLogType` site is
+   ported (the hash join's `Finalize`, `Repartition` and `GetData`, `JoinHashTable`'s
+   `Build`, the Parquet writer's `FlushRowGroup`, the reader's `ReadRowGroup` /
+   `SkipRowGroup`), with the operator's type and `ParamsToString()`, and
+   `debug_force_external` reaches the hash join, the sorts, the window merge sort tree
+   and the temporary memory manager. Two `size`s differ: `Build` counts the build
+   collection's chunk metadata as rustdb holds it (16 KiB where DuckDB's arena holds
+   4 KiB), and `FlushRowGroup` estimates DuckDB's buffer (`ColumnDataCollection::
+   SizeInBytes`: exact for fixed-size columns, strings and nested types approximate).
 10. **TPC-DS** (`test/sql/tpcds`, the `tpcds` extension).
 11. **ICU collation of `as`, `kok` and `mr`** (`test_icu_extensive`). DuckDB embeds ICU
     66's data; rustdb matches it for 127 of the 130 collations (tailorings ICU4X's

@@ -260,6 +260,7 @@ impl Sink for PhysicalWindow {
         let sink = strategy.global_state(SortConfig {
             threads: ctx.env.threads(),
             connections: 1,
+            force_external: ctx.force_external(),
             ..SortConfig::default()
         })?;
         Ok(WindowGlobalSinkState { strategy, sink })

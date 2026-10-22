@@ -20,7 +20,7 @@ pub mod sample;
 pub mod window;
 
 pub use constraints::table_constraints;
-pub use context::{ClientEnv, ExecutionContext, default_threads};
+pub use context::{ClientEnv, ExecutionContext, QueryClient, default_threads};
 pub use expression_executor::{ExpressionExecutor, ScalarEvaluator};
 pub use operator::{
     Operator, OperatorPartitionData, OperatorPartitionInfo, OperatorResult, OrderPreservationType,

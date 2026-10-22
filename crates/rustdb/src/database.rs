@@ -105,6 +105,8 @@ pub(crate) struct DatabaseInstance {
     connections: Arc<std::sync::atomic::AtomicU64>,
     /// The object cache (DuckDB's `DatabaseInstance::object_cache`).
     object_cache: Arc<rustdb_function::ObjectCache>,
+    /// The cache of external files' ranges (DuckDB's `DatabaseInstance::external_file_cache`).
+    external_file_cache: Arc<rustdb_function::external_file_cache::ExternalFileCache>,
     /// The log manager (DuckDB's `DatabaseInstance::GetLogManager`).
     pub(crate) log_manager: Arc<crate::logging::LogManager>,
     /// The options set globally (DuckDB's `DBConfig` user settings), with a version
@@ -783,12 +785,24 @@ impl DatabaseInstance {
     }
 
     /// `SET`/`RESET` (`None`) of the buffer manager's options: `memory_limit` (alias
-    /// `max_memory`), `temp_directory`, `max_temp_directory_size` and
-    /// `block_allocator_memory`; other names are ignored.
+    /// `max_memory`), `temp_directory`, `max_temp_directory_size`,
+    /// `block_allocator_memory` and `enable_external_file_cache` (the buffer-managed file
+    /// cache); other names are ignored.
     fn set_buffer_setting(&self, name: &str, value: Option<&rustdb_types::Value>) -> Result<()> {
         let buffer_manager = &self.env.buffer_manager;
         let name = name.to_ascii_lowercase();
         match name.as_str() {
+            "enable_external_file_cache" => {
+                // `EnableExternalFileCacheSetting::OnSet`.
+                let enable = match value {
+                    Some(value) => ValueCast::default_cast_as(value, &LogicalType::BOOLEAN)?
+                        .as_bool()
+                        .unwrap_or(true),
+                    None => true,
+                };
+                self.external_file_cache.set_enabled(enable);
+                Ok(())
+            }
             "memory_limit" | "max_memory" => {
                 let limit = match value {
                     Some(value) => rustdb_buffer::parse_memory_limit(&value.to_varchar()?)?,
@@ -1521,6 +1535,11 @@ impl Database {
         let env = Arc::new(rustdb_execution::ClientEnv::new(buffer_manager));
         let threads = env.threads();
         let log_manager = Arc::new(crate::logging::LogManager::default());
+        // `enable_external_file_cache` among the options turns it off below.
+        let external_file_cache = Arc::new(rustdb_function::external_file_cache::ExternalFileCache::new(
+            env.buffer_manager.clone(),
+            true,
+        ));
         let instance = DatabaseInstance {
             path: path.clone(),
             config: config.clone(),
@@ -1548,6 +1567,7 @@ impl Database {
             secrets: Arc::default(),
             connections: Arc::default(),
             object_cache: Arc::default(),
+            external_file_cache,
             log_manager,
             global_settings: Mutex::default(),
             loaded_extensions: Arc::default(),
@@ -1810,6 +1830,7 @@ impl Database {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         function_client.set_connection_counter(Arc::clone(&self.instance.connections));
         function_client.set_object_cache(Arc::clone(&self.instance.object_cache));
+        function_client.set_external_file_cache(Arc::clone(&self.instance.external_file_cache));
         // `ClientContext::ClientContext`: a connection-scoped logger.
         let logger = Arc::new(crate::logging::ConnectionLogger::new(
             Arc::clone(&self.instance.log_manager),
@@ -4223,6 +4244,7 @@ impl Connection {
             client_interrupted: Some(self.client.interrupt_flag()),
             estimates,
             streaming_result: streaming,
+            force_external: self.settings.force_external(),
         };
         let execution = match QueryExecution::new(root, env, &options) {
             Ok(execution) => execution,

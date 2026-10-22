@@ -94,13 +94,25 @@ impl PhysicalCopyToFile {
         self
     }
 
-    fn initialize_global(&self, path: &str) -> Result<CopyGlobalState> {
+    /// Opens a file; `logger` (the operator's, if the query logs it) goes to the format's
+    /// `initialize_operator`.
+    fn initialize_global(
+        &self,
+        path: &str,
+        logger: Option<&rustdb_function::logging::OperatorLogger>,
+    ) -> Result<CopyGlobalState> {
         let initialize = self
             .function
             .copy_to_initialize_global
             .as_ref()
             .ok_or_else(|| Error::internal("copy function without a writer"))?;
-        initialize(self.bind_data.as_ref(), path)
+        let state = initialize(self.bind_data.as_ref(), path)?;
+        if let (Some(initialize_operator), Some(logger)) =
+            (&self.function.copy_to_initialize_operator, logger)
+        {
+            initialize_operator(&state, logger);
+        }
+        Ok(state)
     }
 
     fn sink_into(&self, state: &CopyGlobalState, chunk: &DataChunk) -> Result<()> {
@@ -137,7 +149,7 @@ impl PhysicalCopyToFile {
         let file = (self.options.return_type != CopyFunctionReturnType::ChangedRows)
             .then(|| inner.add_file(output_path.clone(), Value::default()));
         Ok(OpenFile {
-            state: Arc::new(self.initialize_global(&output_path)?),
+            state: Arc::new(self.initialize_global(&output_path, inner.logger.as_ref())?),
             file,
         })
     }
@@ -148,7 +160,7 @@ impl PhysicalCopyToFile {
             return Ok(());
         }
         inner.created_files.push(self.options.file_path.clone());
-        let state = Arc::new(self.initialize_global(&self.options.file_path)?);
+        let state = Arc::new(self.initialize_global(&self.options.file_path, inner.logger.as_ref())?);
         let file = inner.add_file(self.options.file_path.clone(), Value::default());
         inner.global_state = Some(OpenFile {
             state,
@@ -237,7 +249,7 @@ impl PhysicalCopyToFile {
                 let keys = Value::map(LogicalType::VARCHAR, LogicalType::VARCHAR, entries);
                 Some(inner.add_file(full_path.clone(), keys))
             };
-            let state = self.initialize_global(&full_path)?;
+            let state = self.initialize_global(&full_path, inner.logger.as_ref())?;
             inner.partition_order.push(key.clone());
             inner.partitions.insert(
                 key.clone(),
@@ -550,6 +562,8 @@ struct CopyInner {
     created_directories: Vec<String>,
     partitions: HashMap<PartitionKey, OpenFile>,
     partition_order: Vec<PartitionKey>,
+    /// The operator's logger, if the query logs it; the files' writers log with it.
+    logger: Option<rustdb_function::logging::OperatorLogger>,
 }
 
 impl CopyInner {
@@ -1000,10 +1014,11 @@ impl Sink for PhysicalCopyToFile {
     type Global = CopyGlobal;
     type Local = CopyLocal;
 
-    fn global_sink_state(&self, _: &ExecutionContext) -> Result<CopyGlobal> {
+    fn global_sink_state(&self, ctx: &ExecutionContext) -> Result<CopyGlobal> {
         let global = CopyGlobal::default();
         {
             let mut inner = global.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            inner.logger = ctx.operator_logger(self);
             if self.options.partition_output || self.options.per_thread_output || self.options.rotate {
                 self.prepare_directory()?;
                 if !self.options.per_thread_output && self.options.rotate && self.options.write_empty_file {
