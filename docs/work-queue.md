@@ -72,10 +72,14 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    (`buffer_managed_query_result`) and which `pragma database_size` counts for the
    shell's last result. `PhysicalBatchInsert` throttles its unflushed batches with
    DuckDB's `BatchMemoryManager` (threads ahead of the lowest batch block while the
-   batches take the memory it obtained; `MaxThreads` caps the threads by it). One piece
-   remains:
-   - `auto_checkpoint_skip_wal_threshold` is accepted, but a commit that triggers a
-     checkpoint still writes its WAL entries.
+   batches take the memory it obtained; `MaxThreads` caps the threads by it). A commit
+   that checkpoints and is estimated at `auto_checkpoint_skip_wal_threshold` bytes or
+   more does not write its WAL entries: it takes the checkpoint lock before it commits,
+   holds the WAL lock until the checkpoint ends, and fails if the checkpoint does
+   (`skip_wal_write_due_to_checkpoint`). Left:
+   - `PhysicalBatchCopyToFile` buffers its raw batches without DuckDB's
+     `BatchMemoryManager`, so an ordered `COPY ... TO` of a large table does not
+     throttle the threads ahead of the lowest batch.
 5. **Compression parity, the rest.** ZSTD, roaring and hugeint bitpacking segments are
    DuckDB's (`zstd_compression_ratio`, `roaring_compression_ratio`,
    `roaring_bool_compression_ratio`, `bitpacking_compression_ratio_hugeint` pass;
