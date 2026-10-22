@@ -8,7 +8,7 @@ use super::bocsu::write_identical_level_run;
 use super::collation::LEVEL_SEPARATOR_BYTE;
 use super::collation_data::{REORDER_CODE_FIRST, REORDER_CODE_NONE};
 use super::collation_iterator::{CollationIterator, FcdUtf16Text, Utf16Text};
-use super::collation_keys::write_sort_key_up_to_quaternary;
+use super::collation_keys::{SortKeyLevels, write_sort_key_up_to_quaternary};
 use super::collation_package::CollationPackage;
 use super::collation_settings::{
     self as cs, BACKWARD_SECONDARY, CASE_LEVEL, CHECK_FCD, CollationSettings, NUMERIC, STRENGTH_IDENTICAL,
@@ -312,32 +312,54 @@ impl RuleBasedCollator {
     }
 
     /// `getSortKey(s)`: the sort key of the UTF-16 text `s` without the terminating zero
-    /// byte, appended to `sink` (`writeSortKey`).
-    pub fn write_sort_key(&self, s: &[u16], sink: &mut Vec<u8>) {
+    /// byte, appended to `sink` (`writeSortKey`), with the buffers of previous keys.
+    pub fn write_sort_key(&self, s: &[u16], sink: &mut Vec<u8>, buffers: &mut SortKeyBuffers) {
         let data = self.tailoring.data();
         let settings = self.settings.as_ref();
         let numeric = settings.is_numeric();
         let nfc_impl = Normalizer2Impl::get();
-        match nfc_impl {
+        let ces = std::mem::take(&mut buffers.ces);
+        buffers.ces = match nfc_impl {
             Some(nfc_impl) if !settings.dont_check_fcd() => {
-                let mut iter = CollationIterator::new(data, numeric, FcdUtf16Text::new(s, nfc_impl));
-                write_sort_key_up_to_quaternary(&mut iter, &data.compressible_bytes, settings, sink);
+                let mut iter = CollationIterator::new(data, numeric, FcdUtf16Text::new(s, nfc_impl), ces);
+                write_sort_key_up_to_quaternary(
+                    &mut iter,
+                    &data.compressible_bytes,
+                    settings,
+                    sink,
+                    &mut buffers.levels,
+                );
+                iter.into_ce_buffer()
             }
             _ => {
-                let mut iter = CollationIterator::new(data, numeric, Utf16Text::new(s));
-                write_sort_key_up_to_quaternary(&mut iter, &data.compressible_bytes, settings, sink);
+                let mut iter = CollationIterator::new(data, numeric, Utf16Text::new(s), ces);
+                write_sort_key_up_to_quaternary(
+                    &mut iter,
+                    &data.compressible_bytes,
+                    settings,
+                    sink,
+                    &mut buffers.levels,
+                );
+                iter.into_ce_buffer()
             }
-        }
+        };
         if settings.get_strength() == STRENGTH_IDENTICAL
             && let Some(nfc_impl) = nfc_impl
         {
             // `writeIdenticalLevel`: the NFD of the text
-            let mut nfd = Vec::with_capacity(s.len());
-            nfc_impl.decompose(s, &mut nfd);
+            nfc_impl.decompose(s, &mut buffers.nfd);
             sink.push(LEVEL_SEPARATOR_BYTE);
-            write_identical_level_run(0, &nfd, sink);
+            write_identical_level_run(0, &buffers.nfd, sink);
         }
     }
+}
+
+/// The buffers of the sort key writer, kept from one key to the next.
+#[derive(Debug, Default)]
+pub struct SortKeyBuffers {
+    ces: Vec<i64>,
+    levels: SortKeyLevels,
+    nfd: Vec<u16>,
 }
 
 #[cfg(test)]
@@ -348,7 +370,7 @@ mod tests {
         use std::fmt::Write;
         let utf16: Vec<u16> = s.encode_utf16().collect();
         let mut key = Vec::new();
-        collator.write_sort_key(&utf16, &mut key);
+        collator.write_sort_key(&utf16, &mut key, &mut SortKeyBuffers::default());
         key.iter().fold(String::new(), |mut hex, b| {
             let _ = write!(hex, "{b:02X}");
             hex

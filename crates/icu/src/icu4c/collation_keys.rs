@@ -58,13 +58,30 @@ const LEVEL_MASKS: [u32; 16] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x36, // UCOL_IDENTICAL -> up to QUATERNARY_LEVEL
 ];
 
-/// `SortKeyLevel`: the bytes of one level, ending with the 01 of `NO_CE`.
+/// The buffers of the levels after the primary one, kept from one sort key to the next
+/// (ICU's are on the stack).
 #[derive(Debug, Default)]
+pub struct SortKeyLevels {
+    cases: Vec<u8>,
+    secondaries: Vec<u8>,
+    tertiaries: Vec<u8>,
+    quaternaries: Vec<u8>,
+}
+
+/// `SortKeyLevel`: the bytes of one level, ending with the 01 of `NO_CE`.
+#[derive(Debug)]
 struct SortKeyLevel {
     buffer: Vec<u8>,
 }
 
 impl SortKeyLevel {
+    /// A level in the (cleared) buffer of a previous key.
+    fn new(buffer: &mut Vec<u8>) -> Self {
+        let mut buffer = std::mem::take(buffer);
+        buffer.clear();
+        Self { buffer }
+    }
+
     #[inline]
     fn append_byte(&mut self, b: u32) {
         self.buffer.push(b as u8);
@@ -143,6 +160,7 @@ pub fn write_sort_key_up_to_quaternary<T: CollationText>(
     compressible_bytes: &[bool],
     settings: &CollationSettings,
     sink: &mut Vec<u8>,
+    levels_buffers: &mut SortKeyLevels,
 ) {
     let options = settings.options;
     // Set of levels to process and write.
@@ -165,10 +183,10 @@ pub fn write_sort_key_up_to_quaternary<T: CollationText>(
 
     let tertiary_mask = CollationSettings::get_tertiary_mask(options);
 
-    let mut cases = SortKeyLevel::default();
-    let mut secondaries = SortKeyLevel::default();
-    let mut tertiaries = SortKeyLevel::default();
-    let mut quaternaries = SortKeyLevel::default();
+    let mut cases = SortKeyLevel::new(&mut levels_buffers.cases);
+    let mut secondaries = SortKeyLevel::new(&mut levels_buffers.secondaries);
+    let mut tertiaries = SortKeyLevel::new(&mut levels_buffers.tertiaries);
+    let mut quaternaries = SortKeyLevel::new(&mut levels_buffers.quaternaries);
 
     let mut prev_reordered_primary = 0u32; // 0==no compression
     let mut common_cases = 0i32;
@@ -542,4 +560,9 @@ pub fn write_sort_key_up_to_quaternary<T: CollationText>(
         sink.push(LEVEL_SEPARATOR_BYTE);
         quaternaries.append_to(sink);
     }
+
+    levels_buffers.cases = cases.buffer;
+    levels_buffers.secondaries = secondaries.buffer;
+    levels_buffers.tertiaries = tertiaries.buffer;
+    levels_buffers.quaternaries = quaternaries.buffer;
 }

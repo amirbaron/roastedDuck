@@ -174,7 +174,22 @@ impl<'s> FcdUtf16Text<'s> {
 
     /// The next code unit in forward checking, normalizing the segment around it when
     /// needed; `None` at the end.
+    #[inline]
     fn next_unit(&mut self) -> Option<u16> {
+        // Fast path: forward checking (in the raw text) at a unit without tccc.
+        if self.check_dir > 0
+            && let Some(&c) = self.raw[..self.limit].get(self.pos)
+            && !collation_fcd::has_tccc(i32::from(c))
+        {
+            self.pos += 1;
+            return Some(c);
+        }
+        self.next_unit_checked()
+    }
+
+    /// The general case of [`Self::next_unit`].
+    #[inline(never)]
+    fn next_unit_checked(&mut self) -> Option<u16> {
         loop {
             if self.check_dir > 0 {
                 if self.pos == self.limit {
@@ -203,6 +218,7 @@ impl<'s> FcdUtf16Text<'s> {
     }
 
     /// `switchToForward()`.
+    #[cold]
     fn switch_to_forward(&mut self) {
         if self.check_dir < 0 {
             // Turn around from backward checking.
@@ -230,6 +246,7 @@ impl<'s> FcdUtf16Text<'s> {
     }
 
     /// `nextSegment()`: extends the FCD text segment forward or normalizes around `pos`.
+    #[cold]
     fn next_segment(&mut self) {
         // The input text [segmentStart..pos[ passes the FCD check.
         let raw_limit = self.raw.len();
@@ -356,6 +373,7 @@ impl<'s> FcdUtf16Text<'s> {
 }
 
 impl CollationText for FcdUtf16Text<'_> {
+    #[inline]
     fn handle_next_ce32(&mut self, data: &CollationData) -> (i32, u32) {
         match self.next_unit() {
             Some(c) => (i32::from(c), data.trie.get32_from_u16_single_lead(c)),
@@ -589,17 +607,24 @@ pub struct CollationIterator<'d, T> {
 }
 
 impl<'d, T: CollationText> CollationIterator<'d, T> {
-    /// `CollationIterator(d, numeric)` over `text`.
-    pub fn new(data: &'d CollationData, numeric: bool, text: T) -> Self {
+    /// `CollationIterator(d, numeric)` over `text`, with the (cleared) buffer of a previous
+    /// iterator for its CEs.
+    pub fn new(data: &'d CollationData, numeric: bool, text: T, mut ce_buffer: Vec<i64>) -> Self {
+        ce_buffer.clear();
         Self {
             data,
             text,
-            ce_buffer: Vec::with_capacity(40),
+            ce_buffer,
             ces_index: 0,
             skipped: None,
             num_cp_fwd: -1,
             is_numeric: numeric,
         }
+    }
+
+    /// The buffer of the CEs, for the next iterator.
+    pub fn into_ce_buffer(self) -> Vec<i64> {
+        self.ce_buffer
     }
 
     /// `clearCEsIfNoneRemaining()`.
@@ -646,6 +671,14 @@ impl<'d, T: CollationText> CollationIterator<'d, T> {
         }
         if t == coll::LONG_PRIMARY_CE32_LOW_BYTE {
             return self.push_returned((i64::from(ce32 - t) << 32) | i64::from(coll::COMMON_SEC_AND_TER_CE));
+        }
+        if t == SPECIAL_CE32_LOW_BYTE | coll::DIGIT_TAG && !self.is_numeric {
+            // A digit (in non-numeric collation) with a normal CE: the shortcut through
+            // `appendCEsFromCE32` to its non-numeric CE32.
+            let digit_ce32 = d.ce32s[coll::index_from_ce32(ce32)];
+            if !coll::is_special_ce32(digit_ce32) {
+                return self.push_returned(coll::ce_from_simple_ce32(digit_ce32));
+            }
         }
         // `nextCEFromCE32`
         self.append_ces_from_ce32(d, c, ce32, true);
