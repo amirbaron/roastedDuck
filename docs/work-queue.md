@@ -113,6 +113,19 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
     own AES in `crates/parquet/src/crypto.rs`, which should move onto `crates/crypto`
     (hardware AES, constant time).
 
+16. **Persisted ART reload.** Catalog loading rebuilds plain-column indexes by scanning
+    their table (`crates/catalog/src/checkpoint.rs::build_index_entry`), and constraint
+    indexes use the same approach (`DataTable::load_constraint_index`). C++ restores
+    the stored index and loads its buffers lazily. `ArtStorageInfo`, fixed-size
+    allocator initialization and the `BufferLoader` trait exist, but there is no native
+    ART restore path wired into catalog loading. This is exposed by the table-cache
+    experiment: `test/sql/pragma/profiling/test_profiling_fs.test` fails because ATTACH
+    warms the table while rebuilding its index, leaving zero reads for the subsequent
+    SELECT. Restore persisted indexes properly; do not synthesize I/O counters or alter
+    the expected result. Cover plain/constraint/expression indexes, current/deprecated
+    layouts, WAL replay, reopening and C++ file interoperability; retain explicit gates
+    for any formats still rebuilt as a fallback.
+
 ## Planner and execution
 
 7. **Performance round 6.** Round 5 (`docs/perf-backlog.md`) ported the Top-N row group

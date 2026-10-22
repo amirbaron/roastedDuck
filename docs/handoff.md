@@ -139,6 +139,12 @@ worker logs preserved on the SSD. Its path is recorded in `cache-policy/full-run
 Do not start another workload or rebuild `target/release/slt` until it finishes. After
 it finishes, inspect every result against the prior 4781/15/74 baseline and the ratchet;
 then diagnose or reject the cache policy's memory outliers before claiming parity.
+The running candidate sweep has exposed one new regression so far:
+`test/sql/pragma/profiling/test_profiling_fs.test` (zero `TOTAL_BYTES_READ` on SELECT
+following reattach). Source points to rebuilding plain indexes while loading the
+catalog, warming table blocks at ATTACH. Native persisted-index restoration is now
+work-queue item 16; `.context/index-loading-regression.md` records the investigation.
+Do not change profiling counters or tests to hide this gap.
 
 ## How to work
 
