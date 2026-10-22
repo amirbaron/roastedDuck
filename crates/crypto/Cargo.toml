@@ -1,0 +1,22 @@
+[package]
+name = "rustdb-crypto"
+description = "Database encryption: AES-GCM and AES-CTR states, key derivation and the key manager (DuckDB's encryption types and its mbedtls wrapper)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rustdb-common.workspace = true
+aes = { version = "0.9", features = ["zeroize"] }
+aes-gcm = { version = "0.11", default-features = false, features = ["aes", "zeroize"] }
+ctr = { version = "0.10", features = ["zeroize"] }
+getrandom = "0.4"
+sha2 = { version = "0.11", default-features = false }
+zeroize = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[lints]
+workspace = true
