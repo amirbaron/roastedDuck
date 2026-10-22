@@ -149,37 +149,18 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    collection's chunk metadata as rustdb holds it (16 KiB where DuckDB's arena holds
    4 KiB), and `FlushRowGroup` estimates DuckDB's buffer (`ColumnDataCollection::
    SizeInBytes`: exact for fixed-size columns, strings and nested types approximate).
-11. **ICU collation of `as`, `kok` and `mr`** (`test_icu_extensive`). DuckDB embeds ICU
-    66's data; rustdb matches it for 127 of the 130 collations (tailorings ICU4X's
-    compiled data lacks come from `crates/icu/data/collation.postcard`, locales ICU 66
-    does not tailor use root). Assamese, Konkani and Marathi still differ: ICU 66 sorts
-    conjuncts such as `ক্ষ` and `क्ष` after `হ`/`ह`, newer CLDR does not, and
-    `icu4x-datagen` cannot read ICU export data before its own format (the
-    `release-71-1` export is a 404). Needs ICU4X data built from ICU 66's tailoring rules.
-    The sort keys `icu_collate_<locale>` and `icu_sort_key` return (hex) are ICU4X's,
-    not ICU 66's bytes (`icu_collate_de('Äpfel')`: `2B4935…` vs `2A4834…`): orders
-    agree, the strings differ. Matching them needs ICU4C's sort key format
-    (`CollationKeys::writeSortKeyUpToQuaternary`) over the same collation elements.
-    In progress, as follows (not over ICU4X: its collator runs on data built in ICU's
-    `icu4xMode` — no canonical closure, contraction flags ICU 66 does not set, a
-    two-character prefix window — and its sort key writer ends every level with a
-    separator, so neither its runtime nor its data format can reproduce ICU 66's keys):
-    - DuckDB's data is ICU 66's root collation (`ucadata-unihan.icu`) with CLDR 47
-      tailorings compiled by ICU 66's `genrb` (`extension/icu/scripts/makedata.sh`).
-      `scripts/icu-collation-data.sh` builds DuckDB's own ICU sources with its embedded
-      `icudt66l.dat` into an offline exporter (`scripts/icu-collation-data.cpp`) that
-      writes `crates/icu/data/icu66_collation.bin`: the root data as DuckDB loads it,
-      the tailoring every bundle of the coll tree loads (`RuleBasedCollator::
-      cloneBinary`, the format `ucol_openBinary` reads), the `icu_noaccent` collator,
-      and the FCD16 values and canonical decompositions of ICU 66's NFC data. The
-      exporter's `keys` mode prints DuckDB's sort keys for comparisons.
-    - `crates/icu/src/icu4c/collation*.rs` port ICU 66's collation runtime over that
-      data: `CollationDataReader`, `CollationData`, `CollationSettings` (reordering,
-      variable top), the `UTrie2` and `UCharsTrie` readers, `CollationIterator` with
-      `UTF16CollationIterator` and `FCDUTF16CollationIterator`, `CollationFCD`,
-      `CollationKeys::writeSortKeyUpToQuaternary` and `RuleBasedCollator::getSortKey`;
-      `Locale(language, country)` and the coll tree's fallback pick the tailoring.
-      ICU4X goes away.
+11. **ICU collation and sort keys — ported.** Merged as `2fa715c`. The runtime in
+    `crates/icu/src/icu4c/collation*.rs` reads DuckDB's ICU 66 root data and tailorings
+    from `crates/icu/data/icu66_collation.bin`; ICU4X is removed. The offline exporter
+    (`scripts/icu-collation-data.sh`, `scripts/icu-collation-data.cpp`) uses DuckDB's
+    embedded `icudt66l.dat`; no C++ runtime is shipped. Its upstream notice is retained
+    in `crates/icu/LICENSE-ICU`. All 24 collation files pass, including
+    `test_icu_extensive.test_slow` (`as`/`kok`/`mr`); five timezone files and plan
+    serialization also pass. Fresh comparisons against C++ match all 130 collations'
+    sort keys over 484,110 strings, plus locale keywords, names and BCP 47 tags.
+    Evidence: `.context/artifacts/icu66-resume-20261022/`. The full corpus still needs
+    confirmation on the merged code. Rare ICU FCD iterator hangs intentionally terminate
+    by collating the NFD form; these cannot be compared to a completed C++ key.
 13. **Struct and VARIANT extract pushdown, the rest.** The pushdown is ported one to one:
     `RemoveUnusedColumns` registers `struct_extract` / `variant_extract` chains (under a
     cast) on scanned columns, scans read only the fields used (`ColumnIndex` children;
