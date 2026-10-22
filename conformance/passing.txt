@@ -2933,8 +2933,11 @@ test/sql/outofcore/block_file_evicted_bytes_accounting.test_slow
 test/sql/outofcore/evicted_memory_bytes_updates.test_slow
 test/sql/outofcore/leftover_temp_files_issue_6420.test_slow
 test/sql/outofcore/out_of_core_aggregation.test_slow
+test/sql/outofcore/out_of_core_asof_join.test_slow
 test/sql/outofcore/out_of_core_hash_join.test_slow
+test/sql/outofcore/out_of_core_ie_join.test_slow
 test/sql/outofcore/out_of_core_sort.test_slow
+test/sql/outofcore/out_of_core_window.test_slow
 test/sql/overflow/bigint_overflow.test
 test/sql/overflow/double_float_overflow.test
 test/sql/overflow/expression_tree_depth.test
