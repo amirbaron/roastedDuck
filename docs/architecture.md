@@ -16,7 +16,7 @@ Dependencies point downwards only.
 | `crates/pg-parser` | `rustdb-pg-parser` | `third_party/libpg_query` |
 | `crates/zstd` | `rustdb-zstd` | `third_party/zstd` (zstd 1.5.6: the encoder, frame for frame, and the decoder) |
 | `crates/buffer` | `rustdb-buffer` | `storage/buffer`, `StandardBufferManager`, temporary files, `TemporaryMemoryManager`, `ArenaAllocator` |
-| `crates/row` | `rustdb-row` | `common/types/row` (TupleDataCollection, partitioning, row matcher, row aggregates), `common/sort` |
+| `crates/row` | `rustdb-row` | `common/types/row` (TupleDataCollection, partitioning, row matcher, row aggregates), `common/types/column` (ColumnDataCollection), `common/sort` |
 | `crates/function` | `rustdb-function` | `function/*` definitions (ScalarFunction, cast functions, ...) |
 | `crates/functions` | `rustdb-functions` | builtin function library (`function/scalar`, `core_functions`, ...) |
 | `crates/catalog` | `rustdb-catalog` | `catalog/*`, catalog part of `transaction/*` |
@@ -89,6 +89,12 @@ land, following the same table.
 - Operators must be correct when run on several threads with separate local states;
   merge in `combine`, finish in `finalize`. Results must not depend on the number of
   threads except where DuckDB's do not either (row order without `ORDER BY`).
+- A sink that cannot take a chunk yet returns `SinkResult::Blocked` after keeping the
+  task's `ExecutionContext::interrupt_state` (DuckDB's `InterruptState`); the task is
+  descheduled with the chunk and rescheduled when the sink calls the state back. The
+  streaming result collectors block this way once `streaming_buffer_size` bytes are
+  buffered (`operators/buffered_data.rs`, DuckDB's `SimpleBufferedData` and
+  `BatchedBufferedData`), and each fetch lets them go on until the buffer is full again.
 
 ## Testing
 

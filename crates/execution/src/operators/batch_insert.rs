@@ -8,6 +8,7 @@ use rustdb_common::{Error, Result};
 use rustdb_storage::{DataTable, OptimisticCollection, OptimisticDataWriter, TableConstraints, Transaction};
 use rustdb_types::{DataChunk, LogicalType};
 
+use super::batch_memory_manager::BatchMemoryManager;
 use super::insert::{InsertTarget, append_collections};
 use super::modify::{ModifyResult, count_types};
 use crate::operator::{
@@ -23,9 +24,10 @@ use crate::{ExecutionContext, Sink, SinkFinalize, SinkResult, Source, SourceResu
 /// of about a row group (by the sinking threads, as soon as every batch before them is
 /// complete); `finalize` moves the collections into the transaction-local storage in batch
 /// order. Complete row groups, and the collections of a row group or more, are written to
-/// the database file by the optimistic writer of the thread that built them. DuckDB also
-/// blocks threads that run too far ahead of the lowest batch when memory runs out
-/// (`BatchMemoryManager`); rustdb's executor does not block sinks.
+/// the database file by the optimistic writer of the thread that built them. The
+/// collections not written yet count against the memory a `BatchMemoryManager` obtains;
+/// when they take all of it, threads ahead of the lowest batch block until it moves on,
+/// and the number of threads is capped by that memory (`MaxThreads`).
 #[derive(Debug)]
 pub struct PhysicalBatchInsert {
     types: Vec<LogicalType>,
@@ -84,6 +86,8 @@ impl PhysicalOperator for PhysicalBatchInsert {
 struct BatchEntry {
     batch_index: u64,
     total_rows: u64,
+    /// The memory the rows take while not written (`unflushed_memory`).
+    unflushed_memory: u64,
     /// `None` while a merge task holds the rows.
     collection: Option<OptimisticCollection>,
     /// Whether the rows are about a row group or more and no longer merged with others
@@ -97,6 +101,8 @@ struct BatchEntry {
 struct MergeTask {
     collections: Vec<OptimisticCollection>,
     merged_batch_index: u64,
+    /// The unflushed memory of the collections, released once they are written.
+    unflushed_memory: u64,
 }
 
 #[derive(Debug, Default)]
@@ -114,6 +120,9 @@ struct BatchState {
 pub struct BatchInsertGlobal {
     table: Option<Arc<DataTable>>,
     row_group_size: u64,
+    memory_manager: BatchMemoryManager,
+    /// 4 MiB per column (`minimum_memory_per_thread`).
+    minimum_memory_per_thread: u64,
     state: Mutex<BatchState>,
     tasks: Mutex<VecDeque<MergeTask>>,
     result: ModifyResult,
@@ -154,8 +163,13 @@ impl BatchInsertGlobal {
         if flushed && let Some(writer) = writer {
             collection.write_unflushed_row_groups(writer)?;
         }
-        self.result.add_count(total_rows);
         let mut state = self.state();
+        self.result.add_count(total_rows);
+        let unflushed_memory = if flushed { 0 } else { collection.allocation_size() };
+        if !flushed {
+            self.memory_manager
+                .increase_unflushed_memory(unflushed_memory);
+        }
         let position = state
             .entries
             .partition_point(|entry| entry.batch_index < batch_index);
@@ -173,6 +187,7 @@ impl BatchInsertGlobal {
             BatchEntry {
                 batch_index,
                 total_rows,
+                unflushed_memory,
                 collection: Some(collection),
                 flushed,
             },
@@ -225,6 +240,7 @@ impl BatchInsertGlobal {
         for &(start, end, total) in &runs {
             let merged_batch_index = state.entries[start].batch_index;
             let mut collections = Vec::with_capacity(end - start);
+            let mut unflushed_memory = 0;
             for entry in &mut state.entries[start..end] {
                 if entry.flushed {
                     return Err(Error::internal(
@@ -237,12 +253,15 @@ impl BatchInsertGlobal {
                         .take()
                         .ok_or_else(|| Error::internal("batch insert collection merged twice"))?,
                 );
+                unflushed_memory += entry.unflushed_memory;
                 entry.total_rows = total;
                 entry.flushed = true;
+                entry.unflushed_memory = 0;
             }
             tasks.push_back(MergeTask {
                 collections,
                 merged_batch_index,
+                unflushed_memory,
             });
         }
         // Every merged run keeps only its first entry, which receives the merged rows.
@@ -264,6 +283,9 @@ impl BatchInsertGlobal {
                 .unwrap_or_else(PoisonError::into_inner)
                 .pop_front();
             let Some(task) = task else { return Ok(()) };
+            // `MergeCollections`: the written rows no longer count as unflushed.
+            self.memory_manager
+                .reduce_unflushed_memory(task.unflushed_memory)?;
             let merged = merge(task.collections, false, writer)?;
             let mut state = self.state();
             state.merged = true;
@@ -304,7 +326,6 @@ fn merge(
 #[derive(Debug, Default)]
 pub struct BatchInsertLocal {
     current_index: u64,
-    min_batch_index: u64,
     collection: Option<OptimisticCollection>,
     writer: Option<OptimisticDataWriter>,
 }
@@ -329,16 +350,26 @@ impl Sink for PhysicalBatchInsert {
     type Global = BatchInsertGlobal;
     type Local = BatchInsertLocal;
 
-    fn global_sink_state(&self, _: &ExecutionContext) -> Result<Self::Global> {
+    fn global_sink_state(&self, ctx: &ExecutionContext) -> Result<Self::Global> {
+        // Heuristic: 4 MiB of cache space per column to start with.
+        const MINIMUM_MEMORY_PER_COLUMN: u64 = 4 * 1024 * 1024;
         let table = self.target.table(&self.transaction)?;
         let row_group_size = table
             .as_ref()
             .map_or(rustdb_storage::DEFAULT_ROW_GROUP_SIZE, |table| {
                 table.row_groups().row_group_size()
             });
+        let column_count = table.as_ref().map_or(1, |table| table.types().len()) as u64;
+        let minimum_memory_per_thread = column_count * MINIMUM_MEMORY_PER_COLUMN;
         Ok(BatchInsertGlobal {
             table,
             row_group_size,
+            memory_manager: BatchMemoryManager::new(
+                ctx.env.buffer_manager.clone(),
+                ctx.env.threads(),
+                minimum_memory_per_thread,
+            ),
+            minimum_memory_per_thread,
             state: Mutex::default(),
             tasks: Mutex::default(),
             result: ModifyResult::default(),
@@ -369,16 +400,27 @@ impl Sink for PhysicalBatchInsert {
                 collection,
                 Some(&mut *writer),
             )?;
-            global.execute_tasks(writer)?;
+            if !global.memory_manager.unblock_tasks() {
+                global.execute_tasks(writer)?;
+            }
         }
         local.current_index = partition.batch_index;
-        local.min_batch_index = partition.min_batch_index;
+        // Unblock any blocked tasks.
+        global.memory_manager.unblock_tasks();
         Ok(())
+    }
+
+    fn max_threads(&self, global: &Self::Global, source_max: usize) -> usize {
+        // Try to get 4 MiB per column per thread, and cap the threads by the memory
+        // obtained.
+        let manager = &global.memory_manager;
+        manager.request_memory(source_max as u64 * global.minimum_memory_per_thread);
+        source_max.min((manager.available_memory() / global.minimum_memory_per_thread) as usize + 1)
     }
 
     fn sink(
         &self,
-        _: &ExecutionContext,
+        ctx: &ExecutionContext,
         chunk: &DataChunk,
         global: &Self::Global,
         local: &mut Self::Local,
@@ -386,6 +428,24 @@ impl Sink for PhysicalBatchInsert {
         let Some(table) = &global.table else {
             return Ok(SinkResult::Finished);
         };
+        let manager = &global.memory_manager;
+        let batch_index = ctx.partition_info.batch_index;
+        if !manager.is_minimum_batch_index(batch_index) {
+            manager.update_min_batch_index(ctx.partition_info.min_batch_index);
+            // Not the lowest batch: wait while the unflushed batches take all the memory.
+            if manager.out_of_memory(batch_index) {
+                // Merge collections while waiting, if there are any to merge.
+                global.execute_tasks(local.writer(table, &self.transaction)?)?;
+                if let Some(blocked) = manager.block_unless_minimum(batch_index, &ctx.interrupt_state) {
+                    return Ok(blocked);
+                }
+            }
+        }
+        if local.current_index != batch_index {
+            return Err(Error::internal(
+                "Current batch differs from batch - but NextBatch was not called!?",
+            ));
+        }
         table.verify_append_constraints(&self.constraints, chunk)?;
         if local.collection.is_none() {
             local.collection = Some(table.create_optimistic_collection(&self.transaction)?);
@@ -397,11 +457,13 @@ impl Sink for PhysicalBatchInsert {
         Ok(SinkResult::NeedMoreInput)
     }
 
-    fn combine(&self, _: &ExecutionContext, global: &Self::Global, local: Self::Local) -> Result<()> {
+    fn combine(&self, ctx: &ExecutionContext, global: &Self::Global, local: Self::Local) -> Result<()> {
+        let min_batch_index = ctx.partition_info.min_batch_index;
+        global.memory_manager.update_min_batch_index(min_batch_index);
         if let Some(mut collection) = local.collection {
             collection.finalize();
             if collection.total_rows() > 0 {
-                global.add_collection(local.current_index, local.min_batch_index, collection, None)?;
+                global.add_collection(local.current_index, min_batch_index, collection, None)?;
             }
         }
         // The thread's partially filled blocks go to the transaction's writer.
@@ -409,6 +471,8 @@ impl Sink for PhysicalBatchInsert {
             let _merge = global.state();
             table.merge_optimistic_writer(&self.transaction, &mut writer)?;
         }
+        // Unblock any blocked tasks.
+        global.memory_manager.unblock_tasks();
         Ok(())
     }
 
@@ -423,12 +487,17 @@ impl Sink for PhysicalBatchInsert {
             .entries
             .into_iter()
             .map(|entry| {
+                // The remaining collections are written or appended below.
+                global
+                    .memory_manager
+                    .reduce_unflushed_memory(entry.unflushed_memory)?;
                 entry
                     .collection
                     .map(|collection| (entry.flushed, collection))
                     .ok_or_else(|| Error::internal("batch insert collection still being merged"))
             })
             .collect::<Result<Vec<_>>>()?;
+        global.memory_manager.final_check()?;
         if state.merged || global.result.count() >= global.row_group_size {
             // Merge the runs of small collections, then move every collection into the
             // local storage in batch order.

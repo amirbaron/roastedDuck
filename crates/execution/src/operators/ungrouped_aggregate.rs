@@ -2,7 +2,7 @@ use crate::operator::aggregate_names;
 use rustdb_common::tree_renderer::RenderParams;
 use std::alloc::{Layout, alloc_zeroed, dealloc, handle_alloc_error};
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rustdb_common::{Error, Result};
@@ -16,10 +16,10 @@ use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 use crate::aggregate_hashtable::{GroupedAggregateHashTable, initial_capacity};
 use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
 use crate::operators::hash_aggregate::{
-    abandon_table, external_radix_bits, finalize_capacity, memory_pressure, repartitioned, table_data,
-    thread_memory_limit,
+    abandon_table, external_radix_bits, finalize_capacity, partition_bytes, partition_rows, repartitioned,
+    table_data,
 };
-use crate::operators::radix_sink::{RadixSinkConfig, RadixSinkTable, initial_radix_bits};
+use crate::operators::radix_sink::{RadixMemory, RadixSinkConfig, RadixSinkTable, initial_radix_bits};
 use crate::{ExecutionContext, ExpressionExecutor, Sink, SinkFinalize, SinkResult, Source, SourceResult};
 
 /// One state per aggregate, allocated together in a single aligned buffer.
@@ -294,8 +294,13 @@ pub struct UngroupedGlobal {
     /// Per aggregate: how the threads fill their tables of distinct tuples (`None` unless
     /// DISTINCT).
     distinct_configs: Vec<Option<RadixSinkConfig>>,
+    /// Per aggregate: the claim of its distinct table on memory (`None` unless DISTINCT;
+    /// the distinct radix table's `temporary_memory_state`).
+    distinct_memory: Vec<Option<RadixMemory>>,
     /// After `finalize`: one unit of work per DISTINCT aggregate and radix partition.
     distinct_partitions: Vec<DistinctPartition>,
+    /// The next distinct partition a finalize task takes.
+    next_distinct_partition: AtomicUsize,
     /// Whether the distinct partitions were handed out as finalize tasks.
     distinct_scheduled: AtomicBool,
 }
@@ -321,13 +326,9 @@ pub struct UngroupedLocal {
     states: AggregateStates,
     /// Per aggregate: the thread's table of distinct argument tuples.
     distinct: Vec<Option<RadixSinkTable>>,
-    /// Per aggregate: distinct tuples set aside under memory pressure, unpinned so that
-    /// they can be spilled.
+    /// Per aggregate: distinct tuples set aside once the table outgrew the thread's share
+    /// of its reservation, unpinned so that they can be spilled.
     abandoned: Vec<Option<PartitionedTupleData>>,
-    /// The table size above which tuples are set aside under memory pressure.
-    memory_limit: usize,
-    /// The radix bits of tuples set aside (an out-of-core aggregation's partitions).
-    external_bits: usize,
     execute_state: UngroupedAggregateExecuteState,
 }
 
@@ -341,19 +342,24 @@ impl Sink for PhysicalUngroupedAggregate {
 
     fn global_sink_state(&self, ctx: &ExecutionContext) -> Result<Self::Global> {
         let external_bits = external_radix_bits(ctx, initial_radix_bits(ctx));
-        let distinct_configs = self
+        // Every distinct table registers with the temporary memory manager like a grouped
+        // table (`RadixHTGlobalSinkState`).
+        let (distinct_configs, distinct_memory): (Vec<_>, Vec<_>) = self
             .aggregates
             .iter()
             .map(|aggregate| {
                 if !aggregate.is_distinct() {
-                    return Ok(None);
+                    return Ok((None, None));
                 }
-                let row_width = Self::distinct_table(ctx, aggregate, initial_capacity(), 0)?
-                    .layout()
-                    .row_width();
-                Ok(Some(RadixSinkConfig::new(ctx, row_width, external_bits)))
+                let table = Self::distinct_table(ctx, aggregate, initial_capacity(), 0)?;
+                let layout = table.layout();
+                let config = RadixSinkConfig::new(ctx, layout.row_width(), external_bits);
+                let memory = RadixMemory::new(ctx, &config, layout.row_width(), layout.all_constant());
+                Ok((Some(config), Some(memory)))
             })
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .unzip();
         Ok(UngroupedGlobal {
             states: Mutex::new(AggregateStates::new(&self.aggregates)),
             distinct: self
@@ -362,14 +368,15 @@ impl Sink for PhysicalUngroupedAggregate {
                 .map(|aggregate| aggregate.is_distinct().then(Mutex::default))
                 .collect(),
             distinct_configs,
+            distinct_memory,
             distinct_partitions: Vec::new(),
+            next_distinct_partition: AtomicUsize::new(0),
             distinct_scheduled: AtomicBool::new(false),
         })
     }
 
     fn local_sink_state(&self, ctx: &ExecutionContext, global: &Self::Global) -> Result<UngroupedLocal> {
         // Radix partitioned so that threads can deduplicate partitions independently.
-        let radix_bits = initial_radix_bits(ctx);
         let distinct = self
             .aggregates
             .iter()
@@ -388,8 +395,6 @@ impl Sink for PhysicalUngroupedAggregate {
         Ok(UngroupedLocal {
             states: AggregateStates::new(&self.aggregates),
             abandoned: self.aggregates.iter().map(|_| None).collect(),
-            memory_limit: thread_memory_limit(ctx),
-            external_bits: external_radix_bits(ctx, radix_bits),
             distinct,
             execute_state: UngroupedAggregateExecuteState::new(&self.aggregates),
         })
@@ -397,7 +402,7 @@ impl Sink for PhysicalUngroupedAggregate {
 
     fn sink(
         &self,
-        ctx: &ExecutionContext,
+        _: &ExecutionContext,
         chunk: &DataChunk,
         global: &Self::Global,
         local: &mut UngroupedLocal,
@@ -409,15 +414,26 @@ impl Sink for PhysicalUngroupedAggregate {
             if let Some(distinct) = &mut local.distinct[index] {
                 let arguments = DataChunk::new(arguments.columns().to_vec(), count);
                 add_distinct(&mut distinct.table, &arguments)?;
-                if let Some(config) = &global.distinct_configs[index] {
+                if let (Some(config), Some(memory)) = (&global.distinct_configs[index], &global.distinct_memory[index]) {
                     distinct.after_add_chunk(config)?;
-                }
-                if distinct.table.size_in_bytes() > local.memory_limit && memory_pressure(ctx) {
-                    abandon_table(
-                        &mut distinct.table,
-                        &mut local.abandoned[index],
-                        local.external_bits,
-                    )?;
+                    // A table that outgrew the thread's share of its reservation sets its
+                    // tuples aside, and the aggregation goes out of core (`MaybeRepartition`).
+                    let external = config.external.load(Ordering::Acquire);
+                    if memory.over_thread_limit(external, distinct.table.size_in_bytes()) {
+                        let current_bits = config.radix_bits.load(Ordering::Acquire);
+                        if !config.external.swap(true, Ordering::AcqRel) && config.external_radix_bits > current_bits {
+                            // `SetRadixBitsInternal`: the threads fill more partitions now.
+                            memory.scale_minimum_reservation(1u64 << (config.external_radix_bits - current_bits));
+                        }
+                        config
+                            .radix_bits
+                            .fetch_max(config.external_radix_bits, Ordering::AcqRel);
+                        abandon_table(
+                            &mut distinct.table,
+                            &mut local.abandoned[index],
+                            config.external_radix_bits,
+                        )?;
+                    }
                 }
                 continue;
             }
@@ -449,7 +465,13 @@ impl Sink for PhysicalUngroupedAggregate {
     /// Splits the threads' distinct tuples into one unit per DISTINCT aggregate and radix
     /// partition, for the finalize tasks.
     fn finalize(&self, _: &ExecutionContext, global: &mut Self::Global) -> Result<SinkFinalize> {
-        for (aggregate, collected) in global.distinct.iter_mut().enumerate() {
+        let UngroupedGlobal {
+            distinct,
+            distinct_memory,
+            distinct_partitions,
+            ..
+        } = global;
+        for (aggregate, collected) in distinct.iter_mut().enumerate() {
             let Some(collected) = collected else { continue };
             let parts = std::mem::take(collected.get_mut().map_err(|_| poisoned())?);
             // A single thread's tuples (none set aside) are distinct already.
@@ -480,42 +502,68 @@ impl Sink for PhysicalUngroupedAggregate {
                     }
                 }
             }
-            global
-                .distinct_partitions
-                .extend(
+            let partitions: Vec<Vec<TupleDataCollection>> =
+                partitions.into_iter().filter(|data| !data.is_empty()).collect();
+            // `Finalize` of the distinct table: combining a partition at a time is the least
+            // it needs.
+            if let Some(Some(memory)) = distinct_memory.get(aggregate) {
+                memory.finalize(
                     partitions
-                        .into_iter()
-                        .filter(|data| !data.is_empty())
-                        .map(|data| DistinctPartition {
-                            aggregate,
-                            data: Mutex::new(data),
-                            unique,
-                        }),
+                        .iter()
+                        .map(|data| (partition_bytes(data), partition_rows(data), unique)),
                 );
+            }
+            distinct_partitions.extend(partitions.into_iter().map(|data| DistinctPartition {
+                aggregate,
+                data: Mutex::new(data),
+                unique,
+            }));
         }
         Ok(SinkFinalize::Ready)
     }
 
-    fn finalize_tasks(&self, _: &ExecutionContext, global: &Self::Global) -> Result<usize> {
-        Ok(if global.distinct_scheduled.swap(true, Ordering::AcqRel) {
-            0
-        } else {
-            global.distinct_partitions.len()
-        })
+    /// `UngroupedDistinctAggregateFinalizeEvent::Schedule`: as many tasks as the distinct
+    /// tables' partitions can be combined at once, at most one per thread.
+    fn finalize_tasks(&self, ctx: &ExecutionContext, global: &Self::Global) -> Result<usize> {
+        if global.distinct_scheduled.swap(true, Ordering::AcqRel) || global.distinct_partitions.is_empty() {
+            return Ok(0);
+        }
+        let threads = ctx.env.threads().max(1);
+        let tasks: usize = global
+            .distinct_memory
+            .iter()
+            .flatten()
+            .map(|memory| memory.max_threads(threads))
+            .sum();
+        Ok(tasks.max(1).min(threads))
     }
 
+    /// Works through the partitions of the DISTINCT aggregates' tuples until none is left.
+    fn execute_finalize_task(&self, ctx: &ExecutionContext, global: &Self::Global, _: usize) -> Result<()> {
+        loop {
+            let next = global.next_distinct_partition.fetch_add(1, Ordering::AcqRel);
+            let Some(partition) = global.distinct_partitions.get(next) else {
+                return Ok(());
+            };
+            self.finalize_distinct_partition(ctx, global, partition)?;
+            if !partition.unique
+                && let Some(Some(memory)) = global.distinct_memory.get(partition.aggregate)
+            {
+                memory.partition_finalized();
+            }
+        }
+    }
+}
+
+impl PhysicalUngroupedAggregate {
     /// Deduplicates one partition of a DISTINCT aggregate's tuples, aggregates them into a
     /// fresh state and combines that into the global state.
-    fn execute_finalize_task(
+    fn finalize_distinct_partition(
         &self,
         ctx: &ExecutionContext,
-        global: &Self::Global,
-        task: usize,
+        global: &UngroupedGlobal,
+        partition: &DistinctPartition,
     ) -> Result<()> {
-        let partition = global
-            .distinct_partitions
-            .get(task)
-            .ok_or_else(|| Error::internal("ungrouped aggregate finalize task out of range"))?;
         let index = partition.aggregate;
         let aggregate = &self.aggregates[index];
         let data = std::mem::take(&mut *partition.data.lock().map_err(|_| poisoned())?);

@@ -53,7 +53,7 @@ pub struct ArrowResultWrapper {
 impl ArrowResultWrapper {
     fn new(outcome: rustdb::Result<MaterializedResult>, properties: ClientProperties) -> Self {
         let chunks = match &outcome {
-            Ok(result) => pack_chunks(result.types(), result.chunks()),
+            Ok(result) => pack_chunks(result.types(), &crate::result::materialized_chunks(result)),
             Err(_) => Vec::new(),
         };
         Self {

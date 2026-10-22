@@ -78,7 +78,7 @@ fn shell_scan_last_result(
         ));
     };
     let result = &scanned.result;
-    let collection = ColumnDataCollection::new(result.types().to_vec(), result.chunks().to_vec());
+    let collection = ColumnDataCollection::new(result.types().to_vec(), result.collect_chunks()?);
     Ok(Some(rustdb_parser::build::table_ref(TableRefKind::ColumnData(
         ColumnDataRef {
             expected_names: result.names().to_vec(),

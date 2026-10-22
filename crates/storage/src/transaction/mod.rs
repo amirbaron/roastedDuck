@@ -26,7 +26,12 @@ use rustdb_common::{Error, Result};
 
 use crate::data_table::DataTable;
 use crate::table::{DeleteRecord, UpdateRecord};
-use crate::wal::{StorageCommitState, WriteAheadLog};
+use crate::wal::{StorageCommitState, WalGuard, WriteAheadLog};
+
+/// The checkpoint a commit runs instead of logging its changes to the WAL (DuckDB's
+/// `skip_wal_write_due_to_checkpoint`, see [`TransactionManager::commit_checkpointing`]),
+/// called with the WAL lock the commit holds.
+pub type CommitCheckpoint<'a> = Box<dyn FnOnce(&mut WalGuard<'_>) -> Result<()> + 'a>;
 
 /// Transaction ids start here; anything below is a timestamp (`TRANSACTION_ID_START`).
 pub const TRANSACTION_ID_START: u64 = 4_611_686_018_427_388_000;
@@ -116,6 +121,23 @@ impl Transaction {
                 lowest.start.load(Ordering::Acquire),
             ),
             None => TransactionData::latest_committed(),
+        }
+    }
+
+    /// The checkpoint lock of the database the transaction writes to (`locks`), taken
+    /// exclusively if nobody else holds it: upgraded from the transaction's shared hold if
+    /// it has one (`DuckTransaction::TryGetCheckpointLock`).
+    pub fn try_checkpoint_lock(
+        &self,
+        locks: &crate::checkpoint_lock::DatabaseLocks,
+    ) -> Option<crate::checkpoint_lock::ExclusiveCheckpointGuard> {
+        let shared = self
+            .checkpoint_guard
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        match &*shared {
+            Some(shared) => locks.checkpoint.try_upgrade(shared),
+            None => locks.checkpoint.try_exclusive(),
         }
     }
 
@@ -413,15 +435,22 @@ impl TransactionManager {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Logs the undo log of `transaction` and stamps it with `commit_id`, holding the
-    /// WAL lock so that a checkpoint sees either both or neither
+    /// Logs the undo log of `transaction` to `wal`, whose lock the caller holds, and
+    /// stamps it with `commit_id`, so that a checkpoint sees either both or neither
     /// (`DuckTransaction::WriteToWAL` + `UndoBuffer::Commit`). The commit becomes the last
     /// one before the WAL lock is released, so that a checkpoint starting later includes
     /// it (`last_commit`). If stamping fails, the logged entries are cut off again
-    /// (`RevertCommit`).
-    fn log_and_commit(&self, transaction: &Transaction, commit_id: u64, others_active: bool) -> Result<()> {
+    /// (`RevertCommit`). Without a WAL, or with `skip_wal`, nothing is logged.
+    fn log_and_commit(
+        &self,
+        transaction: &Transaction,
+        commit_id: u64,
+        others_active: bool,
+        wal: Option<(&Arc<WriteAheadLog>, &mut WalGuard<'_>)>,
+        skip_wal: bool,
+    ) -> Result<()> {
         transaction.undo().verify_commit(transaction.start_time)?;
-        let Some(wal) = transaction.wal() else {
+        let Some((wal, guard)) = wal.filter(|_| !skip_wal) else {
             transaction.local_storage.commit(transaction, None)?;
             transaction
                 .undo()
@@ -432,7 +461,6 @@ impl TransactionManager {
         // The transaction-local rows reach the table under the WAL lock, so a checkpoint
         // (which takes it to start) sees either the rows and their WAL entries, or
         // neither: rows appended after it started go to row groups it leaves out.
-        let mut guard = wal.lock();
         let mut commit_state = StorageCommitState::default();
         let mut commit_timer = start_timer(MetricType::CommitLocalStorageLatency);
         transaction
@@ -544,13 +572,43 @@ impl TransactionManager {
     /// Commits `transaction` (`CommitTransaction`). If flushing its local storage or
     /// stamping its versions fails, the transaction is rolled back and the error returned.
     pub fn commit(&self, transaction: &Transaction) -> Result<()> {
+        self.commit_checkpointing(transaction, None)
+    }
+
+    /// [`TransactionManager::commit`] of a transaction whose commit triggers `checkpoint`
+    /// (`CommitTransaction` with `skip_wal_write_due_to_checkpoint`): its changes are not
+    /// logged, and the commit keeps the WAL lock until the checkpoint ran, so that no
+    /// other transaction commits before the checkpoint made them durable. A transaction
+    /// that updated rows or dropped catalog entries while others run cannot checkpoint
+    /// (`GetCheckpointType`): its changes are logged, and `checkpoint` is not run. If the
+    /// checkpoint fails, the commit stays done and its error is returned.
+    pub fn commit_checkpointing(
+        &self,
+        transaction: &Transaction,
+        checkpoint: Option<CommitCheckpoint<'_>>,
+    ) -> Result<()> {
+        let wal = transaction.wal();
         let mut state = self.lock();
         let commit_id = state.current_start_timestamp;
         state.current_start_timestamp += 1;
         transaction.commit_id.store(commit_id, Ordering::Release);
         // Deleted rows stay in a side index while other transactions may still see them.
         let others_active = state.active.len() > 1;
-        let result = self.log_and_commit(transaction, commit_id, others_active);
+        let mut checkpoint = checkpoint.filter(|_| {
+            let properties = transaction.undo().properties();
+            !(others_active && (properties.has_updates || properties.has_dropped_entries))
+        });
+        let mut wal_guard = wal.as_ref().map(|wal| wal.lock());
+        let result = self.log_and_commit(
+            transaction,
+            commit_id,
+            others_active,
+            wal.as_ref().zip(wal_guard.as_mut()),
+            checkpoint.is_some(),
+        );
+        if checkpoint.is_none() {
+            wal_guard = None;
+        }
         let undo = std::mem::take(&mut *transaction.undo());
         let outcome = match result {
             Ok(()) => {
@@ -584,11 +642,18 @@ impl TransactionManager {
                 Err(error)
             }
         };
+        if outcome.is_err() {
+            checkpoint = None;
+            wal_guard = None;
+        }
         let cleanup = self.remove_transaction(&mut state, transaction.transaction_id);
         drop(state);
         transaction.release_checkpoint_lock();
         self.run_cleanup(cleanup);
-        outcome
+        match (checkpoint, wal_guard.as_mut()) {
+            (Some(checkpoint), Some(guard)) => checkpoint(guard),
+            _ => outcome,
+        }
     }
 
     /// Discards everything `transaction` did (`RollbackTransaction`).

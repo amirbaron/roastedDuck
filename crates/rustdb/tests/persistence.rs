@@ -299,6 +299,36 @@ fn bulk_inserts_log_their_row_groups() {
 }
 
 #[test]
+fn large_commits_that_checkpoint_skip_the_wal() {
+    // A commit that checkpoints and is estimated at `auto_checkpoint_skip_wal_threshold`
+    // bytes or more is not logged: when its checkpoint fails, its rows are gone after a
+    // restart. Below the threshold they are logged first and replayed.
+    for (threshold, expected) in [("100000", "0"), ("9999999999", "100000")] {
+        let path = temp_path(&format!("skip-wal-{threshold}"));
+        {
+            let (_database, mut con) = open_without_checkpoint(&path);
+            con.query(&format!("SET auto_checkpoint_skip_wal_threshold = {threshold}"))
+                .unwrap();
+            con.query("CREATE TABLE t(i INTEGER)").unwrap();
+            con.query("SET wal_autocheckpoint_entries = 1").unwrap();
+            con.query("PRAGMA debug_checkpoint_abort = 'before_header'")
+                .unwrap();
+            let error = con
+                .query("INSERT INTO t SELECT * FROM range(100000)")
+                .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("Checkpoint aborted before header write"),
+                "{error}"
+            );
+        }
+        let (_database, mut con) = open_without_checkpoint(&path);
+        assert_eq!(rows(&mut con, "SELECT count(*) FROM t"), vec![vec![expected]]);
+    }
+}
+
+#[test]
 fn rolled_back_bulk_inserts_free_their_blocks() {
     let path = temp_path("optimistic-rollback");
     let (_database, mut con) = open(&path);

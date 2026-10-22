@@ -4,10 +4,12 @@
 
 mod event;
 mod executor;
+mod interrupt;
 mod meta_pipeline;
 mod pipeline;
 mod pipeline_executor;
 mod task_scheduler;
 
 pub use executor::{ExecutionStep, Executor, ProgressData, QueryExecution, QueryOptions};
+pub use interrupt::InterruptState;
 pub use task_scheduler::TaskScheduler;

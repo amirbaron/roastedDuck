@@ -2,6 +2,8 @@
 
 mod alter;
 mod batch_insert;
+mod batch_memory_manager;
+pub mod buffered_data;
 mod column_data_scan;
 mod copy_to_file;
 mod create_table;
@@ -84,7 +86,9 @@ pub use perfect_hash_aggregate::{
 };
 pub use pivot::PhysicalPivot;
 pub use projection::PhysicalProjection;
-pub use result_collector::{CollectedResult, PhysicalResultCollector};
+pub use result_collector::{
+    CollectedResult, CollectedRows, CollectorKind, PhysicalResultCollector, QueryResultMemoryType,
+};
 pub use sample::{BlockingSample, PhysicalReservoirSample, PhysicalStreamingSample};
 pub use seq_scan::{
     DEFAULT_INDEX_SCAN_MAX_COUNT, DEFAULT_INDEX_SCAN_PERCENTAGE, PhysicalSeqScan, ScanExplainInfo,

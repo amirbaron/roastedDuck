@@ -29,11 +29,24 @@ pub(crate) enum TaskExecutionResult {
     NotFinished,
     /// The task failed; the error was handed to its executor.
     Error,
+    /// An operator of the task is blocked (`TASK_BLOCKED`): the task is descheduled until
+    /// the operator's interrupt callback reschedules it.
+    Blocked,
 }
 
 /// A unit of work run by the scheduler's threads (DuckDB's `Task`).
 pub(crate) trait Task: Send {
     fn execute(&mut self, mode: TaskExecutionMode) -> TaskExecutionResult;
+
+    /// Parks a task that returned [`TaskExecutionResult::Blocked`] until it is rescheduled
+    /// (`Deschedule`). Tasks that never block drop themselves.
+    fn deschedule(self: Box<Self>) {}
+
+    /// Whether the task is blocked with a chunk for the query's result collector
+    /// (`TaskBlockedOnResult`).
+    fn task_blocked_on_result(&self) -> bool {
+        false
+    }
 }
 
 /// A queued task and the producer it belongs to.
@@ -156,8 +169,10 @@ impl TaskScheduler {
             let Some(mut queued) = self.shared.lock().tasks.pop_front() else {
                 break;
             };
-            if queued.task.execute(TaskExecutionMode::ProcessAll) == TaskExecutionResult::NotFinished {
-                self.shared.lock().tasks.push_back(queued);
+            match queued.task.execute(TaskExecutionMode::ProcessAll) {
+                TaskExecutionResult::NotFinished => self.shared.lock().tasks.push_back(queued),
+                TaskExecutionResult::Blocked => queued.task.deschedule(),
+                TaskExecutionResult::Finished | TaskExecutionResult::Error => {}
             }
             completed += 1;
         }
@@ -229,13 +244,21 @@ fn execute_forever(shared: &Shared, marker: &AtomicBool) {
         };
         drop(queue);
         let result = queued.task.execute(TaskExecutionMode::ProcessAll);
-        if result == TaskExecutionResult::NotFinished {
-            queue = shared.lock();
-            queue.tasks.push_back(queued);
-        } else {
-            // Tasks are dropped outside the lock: their destructors may notify the queue.
-            drop(queued);
-            queue = shared.lock();
+        match result {
+            TaskExecutionResult::NotFinished => {
+                queue = shared.lock();
+                queue.tasks.push_back(queued);
+            }
+            TaskExecutionResult::Blocked => {
+                // Outside the lock: rescheduling the task queues it again.
+                queued.task.deschedule();
+                queue = shared.lock();
+            }
+            TaskExecutionResult::Finished | TaskExecutionResult::Error => {
+                // Tasks are dropped outside the lock: their destructors may notify the queue.
+                drop(queued);
+                queue = shared.lock();
+            }
         }
     }
 }
@@ -280,6 +303,24 @@ impl ProducerToken {
         let mut queue = self.shared.lock();
         let position = queue.tasks.iter().position(|queued| queued.producer == self.id)?;
         queue.tasks.remove(position).map(|queued| queued.task)
+    }
+
+    /// Like [`ProducerToken::wait`], but for at most `timeout`.
+    pub fn wait_timeout(&self, done: impl Fn() -> bool, timeout: std::time::Duration) {
+        let deadline = std::time::Instant::now() + timeout;
+        let mut queue = self.shared.lock();
+        while !done() && !queue.tasks.iter().any(|queued| queued.producer == self.id) {
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                return;
+            }
+            queue = self
+                .shared
+                .done
+                .wait_timeout(queue, deadline - now)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
     }
 
     /// Blocks until a task of this producer is queued or `done()` holds. `done` is

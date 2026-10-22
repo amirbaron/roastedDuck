@@ -36,6 +36,10 @@ pub enum SinkResult {
     NeedMoreInput,
     /// The sink needs no more input (e.g. a satisfied LIMIT).
     Finished,
+    /// The sink cannot take the chunk now (`BLOCKED`): it keeps the interrupt state of the
+    /// task (`ExecutionContext::interrupt_state`) and calls it back once it can; the chunk
+    /// is sunk again then.
+    Blocked,
 }
 
 /// Outcome of [`Sink::finalize`].

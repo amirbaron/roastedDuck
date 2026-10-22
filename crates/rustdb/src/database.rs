@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use rustdb_ast::{SetScope, SqlStatement, TransactionType};
 use rustdb_catalog::{Catalog, Transaction, TransactionManager};
 use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
-use rustdb_execution::operators::PhysicalResultCollector;
+use rustdb_execution::operators::{PhysicalResultCollector, QueryResultMemoryType};
 use rustdb_execution::{
     PhysicalRef, PlanContext, QueryExecution, ScalarEvaluator, create_physical_plan_with,
 };
@@ -1362,6 +1362,65 @@ impl DatabaseInstance {
             })
     }
 
+    /// The checkpoint the commit of `transaction` runs instead of logging its `changes`
+    /// (`DuckTransactionManager::CommitTransaction` with
+    /// `skip_wal_write_due_to_checkpoint`): the commit checkpoints (`CanCheckpoint`: the
+    /// WAL of the database it wrote to would grow beyond `checkpoint_threshold` or holds
+    /// `wal_autocheckpoint_entries` entries, and the transaction gets the checkpoint lock
+    /// exclusively) and its estimated size is at least `skip_wal_threshold`
+    /// (`auto_checkpoint_skip_wal_threshold`). The commit then holds the WAL lock until
+    /// the checkpoint ends, and a failing checkpoint fails the commit (`error.Merge`).
+    /// Without, the commit is logged and [`DatabaseInstance::auto_checkpoint`] decides
+    /// after it.
+    fn skip_wal_checkpoint(
+        &self,
+        transaction: &Transaction,
+        changes: &CommittedChanges,
+        skip_checkpoint: bool,
+        skip_wal_threshold: u64,
+    ) -> Option<rustdb_storage::transaction::CommitCheckpoint<'static>> {
+        if skip_checkpoint || changes.properties.estimated_size < skip_wal_threshold {
+            return None;
+        }
+        let database = self.databases.get(&changes.database)?;
+        let storage = database.storage.file()?;
+        if storage.is_read_only() {
+            return None;
+        }
+        let wal = storage.wal()?;
+        {
+            // `SingleFileStorageManager::AutomaticCheckpoint`; a database that does not
+            // log commits (`NO_WAL_WRITES`) has nothing to skip.
+            let guard = wal.lock();
+            let threshold = self
+                .checkpoint_wal_size
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let entry_limit = self
+                .wal_autocheckpoint_entries
+                .load(std::sync::atomic::Ordering::Relaxed);
+            if guard.no_writes()
+                || (guard.size() + changes.properties.estimated_size <= threshold
+                    && !(entry_limit > 0 && guard.entries() >= entry_limit))
+            {
+                return None;
+            }
+        }
+        // Committed transactions that updated rows or changed the catalog hold the
+        // checkpoint lock while older transactions need their changes
+        // (`recently_committed_transactions`).
+        if self
+            .transactions
+            .retains_changes(transaction.transaction_id, &database.name())
+        {
+            return None;
+        }
+        let checkpoint = transaction.try_checkpoint_lock(database.catalog.locks())?;
+        let transactions = Arc::clone(&self.transactions);
+        Some(Box::new(move |wal| {
+            database.checkpoint_after_commit(&transactions, checkpoint, wal)
+        }))
+    }
+
     /// Whether `checkpoint_on_shutdown` is on (`PRAGMA disable_checkpoint_on_shutdown`).
     fn checkpoint_on_shutdown(&self) -> bool {
         !self.config.options.iter().any(|(name, value)| {
@@ -2298,6 +2357,24 @@ impl Connection {
         self.execute_statements(statements)
     }
 
+    /// [`Connection::query`] with the results' rows kept as `memory_type` says
+    /// (`ClientContext::Query` with `QueryParameters::memory_type`): a buffer-managed
+    /// result counts against the memory limit and spills like other operator data.
+    pub fn query_with(
+        &mut self,
+        sql: &str,
+        memory_type: QueryResultMemoryType,
+    ) -> Result<MaterializedResult> {
+        self.sync_global_settings();
+        let statements = self.parse_statements(sql)?;
+        let mut result = MaterializedResult::default();
+        for statement in statements {
+            let query = statement.query.clone();
+            result = self.execute_statement_with(&query, statement, memory_type)?;
+        }
+        Ok(result)
+    }
+
     /// Runs parsed statements and returns the result of the last one; errors are put in
     /// the context of their statement's text.
     pub fn execute_statements(&mut self, statements: Vec<SqlStatement>) -> Result<MaterializedResult> {
@@ -2313,13 +2390,24 @@ impl Connection {
     /// `ExecutePendingQueryInternal`): bind and plan, resolve column bindings, build the
     /// physical plan and run it, all inside the connection's transaction.
     pub fn execute_statement(&mut self, query: &str, statement: SqlStatement) -> Result<MaterializedResult> {
+        self.execute_statement_with(query, statement, QueryResultMemoryType::InMemory)
+    }
+
+    /// [`Connection::execute_statement`] with the result's rows kept as `memory_type`
+    /// says (`Connection::Query(statement, memory_type)`).
+    pub fn execute_statement_with(
+        &mut self,
+        query: &str,
+        statement: SqlStatement,
+        memory_type: QueryResultMemoryType,
+    ) -> Result<MaterializedResult> {
         self.initial_cleanup();
         let statement_type = statement.statement_type();
         self.begin_query(query, &statement)?;
         let outcome = self.in_query_scope(|connection| {
             connection.begin_query_logging(query);
             connection
-                .start_statement(statement, RunMode::Materialize)
+                .start_statement(statement, RunMode::Materialize(memory_type))
                 .and_then(StatementRun::into_materialized)
         });
         self.end_query(query, outcome)
@@ -2414,7 +2502,18 @@ impl Connection {
             Some(message) => Err(Error::new(ErrorKind::Io, message)),
             None => outcome,
         };
-        let ended = self.transactions.end_statement(outcome.is_ok(), invalidates);
+        // An auto-commit that checkpoints instead of logging its changes; it is the
+        // commit's only checkpoint.
+        let checkpoint =
+            if self.transactions.is_auto_commit() && self.transactions.has_current() && outcome.is_ok() {
+                self.commit_checkpoint(committed.as_ref())
+            } else {
+                None
+            };
+        let committed = committed.filter(|_| checkpoint.is_none());
+        let ended = self
+            .transactions
+            .end_statement_checkpointing(outcome.is_ok(), invalidates, checkpoint);
         // Between statements, the connection's functions (and C API clients reading its
         // options) see the settings the statement left.
         self.function_client
@@ -2450,6 +2549,22 @@ impl Connection {
             result = Err(error);
         }
         result.map_err(|error| self.process_error(error, query))
+    }
+
+    /// The checkpoint the commit of the open transaction, which made `changes`, runs
+    /// instead of logging them (see [`DatabaseInstance::skip_wal_checkpoint`]).
+    fn commit_checkpoint(
+        &mut self,
+        changes: Option<&CommittedChanges>,
+    ) -> Option<rustdb_storage::transaction::CommitCheckpoint<'static>> {
+        let changes = changes?;
+        let current = self.transactions.current();
+        self.database.instance().skip_wal_checkpoint(
+            &current,
+            changes,
+            self.settings.skip_checkpoint_on_commit(),
+            self.settings.auto_checkpoint_skip_wal_threshold(),
+        )
     }
 
     /// Applies the configuration changes functions made (`enable_profiling` /
@@ -2945,7 +3060,7 @@ impl Connection {
     }
 
     fn run_statement(&mut self, statement: SqlStatement) -> Result<MaterializedResult> {
-        self.start_statement(statement, RunMode::Materialize)
+        self.start_statement(statement, RunMode::MATERIALIZE)
             .and_then(StatementRun::into_materialized)
     }
 
@@ -3356,7 +3471,7 @@ impl Connection {
     }
 
     fn run_planned(&mut self, statement: SqlStatement) -> Result<MaterializedResult> {
-        self.start_planned(statement, RunMode::Materialize)
+        self.start_planned(statement, RunMode::MATERIALIZE)
             .and_then(StatementRun::into_materialized)
     }
 
@@ -3413,10 +3528,11 @@ impl Connection {
     ) -> Result<StatementRun> {
         self.register_modifications(&plan, &properties.modified_databases, statement_type)?;
         let mode = match mode {
-            RunMode::Pending { stream } => RunMode::Pending {
+            RunMode::Pending { stream, memory_type } => RunMode::Pending {
                 stream: stream && properties.allow_stream_result,
+                memory_type,
             },
-            RunMode::Materialize => RunMode::Materialize,
+            RunMode::Materialize(memory_type) => RunMode::Materialize(memory_type),
         };
         Ok(self
             .start_plan(plan, names, types, mode)?
@@ -3543,7 +3659,7 @@ impl Connection {
         names: Vec<String>,
         types: Vec<LogicalType>,
     ) -> Result<MaterializedResult> {
-        self.start_plan(plan, names, types, RunMode::Materialize)
+        self.start_plan(plan, names, types, RunMode::MATERIALIZE)
             .and_then(StatementRun::into_materialized)
     }
 
@@ -3636,11 +3752,14 @@ impl Connection {
                             return Err(Error::new(ErrorKind::Io, message));
                         }
                         let rolls_back = self.transactions.is_invalidated();
+                        let mut checkpoint = None;
                         if !rolls_back && self.transactions.has_current() {
                             let current = self.transactions.current();
-                            self.explicit_commit = CommittedChanges::of(&current);
+                            let changes = CommittedChanges::of(&current);
+                            checkpoint = self.commit_checkpoint(changes.as_ref());
+                            self.explicit_commit = changes.filter(|_| checkpoint.is_none());
                         }
-                        let result = self.transactions.commit();
+                        let result = self.transactions.commit(checkpoint);
                         self.finish_transaction_attaches(rolls_back || result.is_err());
                         result?;
                     }
@@ -3997,7 +4116,7 @@ impl Connection {
         names: Vec<String>,
         types: Vec<LogicalType>,
     ) -> Result<MaterializedResult> {
-        self.start_execution(plan, names, types, RunMode::Materialize)
+        self.start_execution(plan, names, types, RunMode::MATERIALIZE)
             .and_then(StatementRun::into_materialized)
     }
 
@@ -4071,18 +4190,19 @@ impl Connection {
         } = physical?;
         let explain_analyze = physical.name() == "EXPLAIN_ANALYZE";
         let env = Arc::clone(&self.database.instance().env);
-        let streaming = mode == (RunMode::Pending { stream: true });
+        let streaming = mode.streams();
         let root: PhysicalRef = if streaming {
             Arc::new(PhysicalResultCollector::streaming(
                 physical,
-                preserve_insertion_order,
-            ))
-        } else {
-            Arc::new(PhysicalResultCollector::for_plan(
-                physical,
                 env.threads(),
                 preserve_insertion_order,
+                usize::try_from(self.settings.streaming_buffer_size()).unwrap_or(usize::MAX),
             ))
+        } else {
+            Arc::new(
+                PhysicalResultCollector::for_plan(physical, env.threads(), preserve_insertion_order)
+                    .with_memory_type(mode.memory_type()),
+            )
         };
         // `Executor::Initialize`; EXPLAIN ANALYZE and profiled queries record what every
         // operator did.
@@ -4102,6 +4222,7 @@ impl Connection {
             preserve_insertion_order,
             client_interrupted: Some(self.client.interrupt_flag()),
             estimates,
+            streaming_result: streaming,
         };
         let execution = match QueryExecution::new(root, env, &options) {
             Ok(execution) => execution,
@@ -4114,7 +4235,7 @@ impl Connection {
         };
         let run = PlanExecution::new(execution, names, types, profiler, streaming);
         match mode {
-            RunMode::Materialize => self.finish_execution(run).map(StatementRun::Done),
+            RunMode::Materialize(_) => self.finish_execution(run).map(StatementRun::Done),
             RunMode::Pending { .. } => Ok(StatementRun::Executing(Box::new(run))),
         }
     }
@@ -4127,8 +4248,8 @@ impl Connection {
         if let Some(profiler) = &profiler {
             self.profiler.flush(&self.settings.profiler, profiler);
         }
-        let chunks = PhysicalResultCollector::take_chunks(&state?)?;
-        Ok(MaterializedResult::new(names, types, chunks).with_return_type(return_type))
+        let rows = PhysicalResultCollector::take_rows(&state?)?;
+        Ok(MaterializedResult::from_rows(names, types, rows).with_return_type(return_type))
     }
 }
 

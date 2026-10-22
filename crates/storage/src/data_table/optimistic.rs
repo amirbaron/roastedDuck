@@ -56,6 +56,11 @@ impl OptimisticCollection {
         self.row_groups.collection().total_rows()
     }
 
+    /// The bytes the collection's row groups take in memory (`GetAllocationSize`).
+    pub fn allocation_size(&self) -> u64 {
+        self.row_groups.collection().allocation_size()
+    }
+
     /// Writes every row group not written yet with `writer` (`WriteUnflushedRowGroups`).
     pub fn write_unflushed_row_groups(&mut self, writer: &mut OptimisticDataWriter) -> Result<()> {
         writer.write_unflushed_row_groups(&mut self.row_groups)

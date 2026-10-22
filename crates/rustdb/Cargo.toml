@@ -16,6 +16,7 @@ rustdb-function = { path = "../function" }
 rustdb-functions = { path = "../functions" }
 rustdb-planner = { path = "../planner" }
 rustdb-execution = { path = "../execution" }
+rustdb-row = { path = "../row" }
 rustdb-optimizer = { path = "../optimizer" }
 rustdb-storage = { path = "../storage" }
 rustdb-buffer = { path = "../buffer" }

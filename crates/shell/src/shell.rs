@@ -8,8 +8,8 @@ use std::io::BufReader;
 use std::time::Instant;
 
 use rustdb::{
-    Connection, Database, PendingExecutionResult, QueryResult, Result, SqlStatement, StatementReturnType,
-    Value,
+    Connection, Database, PendingExecutionResult, QueryResult, QueryResultMemoryType, Result, SqlStatement,
+    StatementReturnType, Value,
 };
 use rustdb_ast::{ExpressionType, QueryNodeKind, ShowType, SqlStatementKind, TableRefKind};
 
@@ -633,7 +633,14 @@ impl Shell {
             ));
         };
         let query = statement.query.clone();
-        let pending = conn.pending_query(&query, statement, !materialize)?;
+        // A materialized result is buffer-managed, a streaming one is not
+        // (`ShellState::ExecuteStatement`'s `QueryParameters`).
+        let memory_type = if materialize {
+            QueryResultMemoryType::BufferManaged
+        } else {
+            QueryResultMemoryType::InMemory
+        };
+        let pending = conn.pending_query_with(&query, statement, !materialize, memory_type)?;
         if state.stdout_is_console
             && let Some(wait_time) = progress_bar_wait_time(conn)
         {
@@ -645,6 +652,7 @@ impl Shell {
                         let progress = conn.client_handle().query_progress();
                         display.update(state, db.as_ref(), progress.percentage);
                     }
+                    PendingExecutionResult::Blocked => conn.wait_for_task(&pending)?,
                 }
             }
             display.finish(state, db.as_ref());
@@ -717,7 +725,7 @@ impl Shell {
         };
         if return_type == StatementReturnType::ChangedRows {
             let first_chunk = match &source {
-                ResultSource::Materialized(scanned) => scanned.fetch().cloned(),
+                ResultSource::Materialized(scanned) => scanned.fetch()?,
                 ResultSource::Stream(stream) => self.conn()?.fetch(stream)?,
             };
             if let Some(chunk) = first_chunk.filter(|chunk| chunk.len() == 1) {

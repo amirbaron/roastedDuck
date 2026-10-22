@@ -14,7 +14,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use rustdb_ast::{SqlStatement, StatementType};
 use rustdb_common::{Error, Result};
-use rustdb_execution::operators::PhysicalResultCollector;
+use rustdb_execution::operators::buffered_data::BufferedData;
+use rustdb_execution::operators::{PhysicalResultCollector, QueryResultMemoryType};
 use rustdb_execution::{ExecutionStep, QueryExecution, QueryProfiler};
 use rustdb_planner::StatementReturnType;
 use rustdb_types::{DataChunk, LogicalType};
@@ -25,11 +26,33 @@ use crate::{Connection, MaterializedResult};
 /// caller drives the execution).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RunMode {
-    /// Run to completion, materializing the result (`Connection::Query`).
-    Materialize,
+    /// Run to completion, materializing the result as `memory_type` says
+    /// (`Connection::Query`).
+    Materialize(QueryResultMemoryType),
     /// Initialize the executor and return; the caller runs the tasks (`PendingQuery`).
-    /// With `stream`, the result is handed out while the query runs.
-    Pending { stream: bool },
+    /// With `stream`, the result is handed out while the query runs; otherwise it is
+    /// materialized as `memory_type` says.
+    Pending {
+        stream: bool,
+        memory_type: QueryResultMemoryType,
+    },
+}
+
+impl RunMode {
+    /// Run to completion with the result on the heap (`Connection::Query(string)`).
+    pub(crate) const MATERIALIZE: Self = Self::Materialize(QueryResultMemoryType::InMemory);
+
+    /// Where a materialized result keeps its rows.
+    pub(crate) fn memory_type(self) -> QueryResultMemoryType {
+        match self {
+            Self::Materialize(memory_type) | Self::Pending { memory_type, .. } => memory_type,
+        }
+    }
+
+    /// Whether the result streams.
+    pub(crate) fn streams(self) -> bool {
+        matches!(self, Self::Pending { stream: true, .. })
+    }
 }
 
 /// A started statement.
@@ -76,10 +99,21 @@ pub(crate) struct PlanExecution {
     profiler: Option<Arc<QueryProfiler>>,
     /// Whether the root is a streaming collector.
     streaming: bool,
-    /// Chunks taken from the streaming collector and not handed out yet.
-    buffered: std::collections::VecDeque<DataChunk>,
+    /// The streaming collector's buffer, once its pipeline started
+    /// (`StreamQueryResult::buffered_data`).
+    buffered: Option<Arc<BufferedData>>,
     /// Whether the plan ran to completion.
     finished: bool,
+}
+
+/// What a step of filling a streaming result's buffer reports (DuckDB's
+/// `StreamExecutionResult`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StreamExecutionResult {
+    ChunkReady,
+    ChunkNotReady,
+    ExecutionFinished,
+    Blocked,
 }
 
 impl PlanExecution {
@@ -97,7 +131,7 @@ impl PlanExecution {
             return_type: StatementReturnType::QueryResult,
             profiler,
             streaming,
-            buffered: std::collections::VecDeque::new(),
+            buffered: None,
             finished: false,
         }
     }
@@ -121,53 +155,101 @@ impl PlanExecution {
         )
     }
 
-    /// Moves the chunks the streaming collector received into the buffer.
-    fn take_collected(&mut self) -> Result<()> {
-        if let Some(chunks) = self
-            .execution
-            .with_root_sink_state(PhysicalResultCollector::take_chunks)
-        {
-            self.buffered.extend(chunks?);
+    /// Works on the query's tasks for a step (`Executor::ExecuteTask`).
+    fn execute_step(&mut self) -> Result<ExecutionStep> {
+        if self.finished {
+            return Ok(ExecutionStep::Finished);
         }
-        Ok(())
+        let step = self.execution.execute_task()?;
+        if step == ExecutionStep::Finished {
+            self.finished = true;
+        }
+        Ok(step)
     }
 
     /// Runs the query's tasks until its streaming result is ready (DuckDB's
-    /// `PendingQueryResult::ExecuteInternal`): the query finished, or the collector holds
-    /// `buffer_size` bytes, where DuckDB's `PhysicalBufferedCollector` blocks. An error in
-    /// the first rows thus fails the query before the caller reads any of them.
-    fn fill_buffer(&mut self, buffer_size: u64) -> Result<()> {
+    /// `PendingQueryResult::ExecuteInternal`): the query finished, or the collector's
+    /// buffer is full and its sink blocked. An error in the first rows thus fails the
+    /// query before the caller reads any of them.
+    fn execute_until_ready(&mut self) -> Result<()> {
         loop {
-            self.take_collected()?;
-            let buffered: usize = self.buffered.iter().map(DataChunk::allocation_size).sum();
-            if self.finished || buffered as u64 >= buffer_size {
-                return Ok(());
-            }
-            match self.execution.execute_task()? {
-                ExecutionStep::Finished => self.finished = true,
+            match self.execute_step()? {
+                ExecutionStep::Finished | ExecutionStep::ResultReady => return Ok(()),
                 ExecutionStep::NotReady => {}
                 ExecutionStep::NoTasksAvailable => self.execution.wait_for_task(),
+                ExecutionStep::Blocked => self.execution.wait_for_blocked_task(),
             }
         }
     }
 
-    /// The next chunk of a streaming result, running the query's tasks until the
-    /// collector has one; `None` once the query finished and every chunk was handed out.
-    fn next_chunk(&mut self) -> Result<Option<DataChunk>> {
+    /// The streaming collector's buffer, once the collector's pipeline was initialized.
+    fn buffered_data(&mut self) -> Result<Option<Arc<BufferedData>>> {
+        if self.buffered.is_none() {
+            self.buffered = self
+                .execution
+                .with_root_sink_state(PhysicalResultCollector::buffered_data)
+                .transpose()?
+                .flatten();
+        }
+        Ok(self.buffered.clone())
+    }
+
+    /// One step of filling the buffer (`BufferedData::ExecuteTaskInternal`): ready if the
+    /// buffer has a chunk for the client, else the query runs for a step, sinks blocked
+    /// on the buffer being let go first.
+    fn execute_task_internal(&mut self, interrupted: bool) -> Result<StreamExecutionResult> {
+        let buffered = self.buffered_data()?;
+        if let Some(buffered) = &buffered {
+            if interrupted && matches!(buffered.as_ref(), BufferedData::Simple(_)) {
+                // Even with a full buffer, a cancel request is seen right away.
+                return Err(Error::new(rustdb_common::ErrorKind::Interrupt, "Interrupted!"));
+            }
+            if buffered.chunk_ready_before_execution() {
+                return Ok(StreamExecutionResult::ChunkReady);
+            }
+            buffered.unblock_sinks();
+        }
+        let step = self.execute_step()?;
+        let buffered = match buffered {
+            Some(buffered) => Some(buffered),
+            None => self.buffered_data()?,
+        };
+        if buffered
+            .as_ref()
+            .is_some_and(|buffered| buffered.chunk_ready_after_execution())
+        {
+            return Ok(StreamExecutionResult::ChunkReady);
+        }
+        Ok(match step {
+            ExecutionStep::Blocked | ExecutionStep::ResultReady => StreamExecutionResult::Blocked,
+            ExecutionStep::NoTasksAvailable => {
+                // DuckDB polls again; waiting for a task, a blocked task or a chunk does
+                // not burn the thread.
+                self.execution.wait_for_task();
+                StreamExecutionResult::ChunkNotReady
+            }
+            ExecutionStep::NotReady => StreamExecutionResult::ChunkNotReady,
+            ExecutionStep::Finished => StreamExecutionResult::ExecutionFinished,
+        })
+    }
+
+    /// Runs the query until the buffer has a chunk for the client or the query finished
+    /// (`BufferedData::ReplenishBuffer`), then takes the chunk (`Scan`); `None` once the
+    /// query finished and every chunk was handed out.
+    fn next_chunk(&mut self, interrupted: bool) -> Result<Option<DataChunk>> {
         loop {
-            self.take_collected()?;
-            if let Some(chunk) = self.buffered.pop_front() {
-                return Ok(Some(chunk));
-            }
-            if self.finished {
-                return Ok(None);
-            }
-            match self.execution.execute_task()? {
-                ExecutionStep::Finished => self.finished = true,
-                ExecutionStep::NotReady => {}
-                ExecutionStep::NoTasksAvailable => self.execution.wait_for_task(),
+            match self.execute_task_internal(interrupted)? {
+                StreamExecutionResult::ChunkReady | StreamExecutionResult::ExecutionFinished => break,
+                StreamExecutionResult::ChunkNotReady => {}
+                StreamExecutionResult::Blocked => {
+                    if let Some(buffered) = &self.buffered {
+                        buffered.unblock_sinks();
+                    }
+                    self.execution.wait_for_blocked_task();
+                }
             }
         }
+        Ok(self.buffered.as_ref().and_then(|buffered| buffered.scan()))
     }
 }
 
@@ -183,6 +265,9 @@ pub enum PendingExecutionResult {
     ResultNotReady,
     /// The remaining tasks run on other threads (`NO_TASKS_AVAILABLE`).
     NoTasksAvailable,
+    /// Every remaining task is blocked (`BLOCKED`): wait with
+    /// [`Connection::wait_for_task`].
+    Blocked,
 }
 
 /// The progress of a connection's running query (DuckDB's `QueryProgress`): a percentage
@@ -388,12 +473,30 @@ impl Connection {
         statement: SqlStatement,
         allow_stream: bool,
     ) -> Result<PendingQuery> {
+        self.pending_query_with(query, statement, allow_stream, QueryResultMemoryType::InMemory)
+    }
+
+    /// [`Connection::pending_query`] whose result, if materialized, keeps its rows as
+    /// `memory_type` says (`QueryParameters::memory_type`).
+    pub fn pending_query_with(
+        &mut self,
+        query: &str,
+        statement: SqlStatement,
+        allow_stream: bool,
+        memory_type: QueryResultMemoryType,
+    ) -> Result<PendingQuery> {
         self.initial_cleanup();
         let statement_type = statement.statement_type();
         self.begin_query(query, &statement)?;
         let started = self.in_query_scope(|connection| {
             connection.begin_query_logging(query);
-            connection.start_statement(statement, RunMode::Pending { stream: allow_stream })
+            connection.start_statement(
+                statement,
+                RunMode::Pending {
+                    stream: allow_stream,
+                    memory_type,
+                },
+            )
         });
         self.activate(query, statement_type, started)
     }
@@ -471,10 +574,7 @@ impl Connection {
         if run.finished {
             return Ok(PendingExecutionResult::ResultReady);
         }
-        let step = run.execution.execute_task();
-        if step == Ok(ExecutionStep::Finished) {
-            run.finished = true;
-        }
+        let step = run.execute_step();
         drop(scope);
         match step {
             Ok(step) => {
@@ -482,13 +582,26 @@ impl Connection {
                     self.update_progress();
                 }
                 Ok(match step {
-                    ExecutionStep::Finished => PendingExecutionResult::ResultReady,
+                    ExecutionStep::Finished | ExecutionStep::ResultReady => {
+                        PendingExecutionResult::ResultReady
+                    }
                     ExecutionStep::NotReady => PendingExecutionResult::ResultNotReady,
                     ExecutionStep::NoTasksAvailable => PendingExecutionResult::NoTasksAvailable,
+                    ExecutionStep::Blocked => PendingExecutionResult::Blocked,
                 })
             }
             Err(error) => Err(self.fail_active_query(error)),
         }
+    }
+
+    /// Waits for a task of the pending query to be rescheduled after
+    /// [`PendingExecutionResult::Blocked`] (`PendingQueryResult::WaitForTask`).
+    pub fn wait_for_task(&mut self, pending: &PendingQuery) -> Result<()> {
+        let active = self.active(pending.id).ok_or_else(closed_pending_error)?;
+        if let ActiveState::Running(run) = &active.state {
+            run.execution.wait_for_blocked_task();
+        }
+        Ok(())
     }
 
     /// Whether the active query's execution finished, completing or failing; `false`
@@ -526,13 +639,12 @@ impl Connection {
         }
         let streaming = matches!(&active.state, ActiveState::Running(run) if run.streaming);
         if streaming {
-            let buffer_size = self.settings.streaming_buffer_size();
             let scope = self.query_scope();
             let active = self.active(pending.id).ok_or_else(closed_pending_error)?;
             let ActiveState::Running(run) = &mut active.state else {
                 unreachable!("checked to be running above")
             };
-            let filled = run.fill_buffer(buffer_size);
+            let filled = run.execute_until_ready();
             drop(scope);
             if let Err(error) = filled {
                 return Err(self.fail_active_query(error));
@@ -564,12 +676,13 @@ impl Connection {
     /// The next chunk of a streaming result, `None` once it is exhausted (DuckDB's
     /// `StreamQueryResult::Fetch`). The query ends when its last chunk was fetched.
     pub fn fetch(&mut self, stream: &StreamQueryResult) -> Result<Option<DataChunk>> {
+        let interrupted = self.client.is_interrupted();
         let scope = self.query_scope();
         let active = self.active(stream.id).ok_or_else(closed_stream_error)?;
         let ActiveState::Running(run) = &mut active.state else {
             return Err(closed_stream_error());
         };
-        let fetched = run.next_chunk();
+        let fetched = run.next_chunk(interrupted);
         drop(scope);
         match fetched {
             Ok(Some(chunk)) => Ok(Some(chunk)),

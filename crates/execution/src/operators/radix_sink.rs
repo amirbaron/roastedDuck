@@ -9,7 +9,8 @@
 //! more duplicates. Partitions that fill up raise the radix bits of all threads, so
 //! finalizing them can be split further.
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use rustdb_common::Result;
 use rustdb_row::RadixPartitioning;
@@ -211,5 +212,180 @@ impl RadixSinkTable {
             table.resize_to(*capacity)?;
         }
         Ok(())
+    }
+}
+
+/// A radix-partitioned table's claim on temporary memory from its sink through its
+/// source (DuckDB's `RadixHTGlobalSinkState::temporary_memory_state`): while sinking it
+/// reserves what the threads' tables need and decides when a thread's tables go out of
+/// core (`MaybeRepartition`); once finalized, what combining partitions needs at the
+/// least, and how many partitions the source may combine at once (`MaxThreads`).
+#[derive(Debug)]
+pub(crate) struct RadixMemory {
+    pub state: rustdb_buffer::TemporaryMemoryState,
+    context: rustdb_buffer::TemporaryMemoryContext,
+    /// What the threads' tables need at the least: a sink-capacity table per thread with
+    /// its partitions' blocks, and more partitions once out of core.
+    minimum_reservation: AtomicU64,
+    threads: u64,
+    /// Serializes the reservation updates (`gstate.Lock()`).
+    lock: Mutex<()>,
+    /// The bytes of the largest partition and the table that combines it, once finalized
+    /// (`max_partition_size`).
+    max_partition_size: AtomicU64,
+    /// The partitions, and those combined so far (`finalize_done`).
+    partition_count: AtomicUsize,
+    finalize_done: AtomicUsize,
+}
+
+/// `GetCapacityForCount(count) * sizeof(ht_entry_t)`: the pointer table that combines
+/// `count` groups.
+fn pointer_table_size(count: usize) -> u64 {
+    (capacity_for_count(count) * size_of::<u64>()) as u64
+}
+
+impl RadixMemory {
+    /// Registers a table whose threads fill tables under `config` with rows of
+    /// `row_width` bytes (`RadixHTGlobalSinkState` construction): it reserves a table of
+    /// the sink capacity per thread, with a block or two per partition.
+    pub fn new(ctx: &ExecutionContext, config: &RadixSinkConfig, row_width: usize, all_constant: bool) -> Self {
+        let buffer_manager = &ctx.env.buffer_manager;
+        let threads = ctx.env.threads().max(1) as u64;
+        let context = buffer_manager.temporary_memory_context(threads, 1, false);
+        let state = buffer_manager.temporary_memory_manager().register(&context);
+        let block_alloc_size = buffer_manager.block_alloc_size() as u64;
+        let tuples_per_block = (block_alloc_size / row_width.max(1) as u64).max(1);
+        let ht_count = resize_threshold(config.sink_capacity) as u64;
+        let partitions = 1u64 << config.maximum_sink_radix_bits;
+        let count_per_partition = ht_count / partitions;
+        let mut blocks_per_partition = (count_per_partition + tuples_per_block) / tuples_per_block;
+        if !all_constant {
+            blocks_per_partition += 1;
+        }
+        let ht_size = partitions * blocks_per_partition * block_alloc_size
+            + (config.sink_capacity * size_of::<u64>()) as u64;
+        let minimum_reservation = threads * ht_size;
+        state.set_minimum_reservation(minimum_reservation);
+        state.set_remaining_size_and_update_reservation(&context, minimum_reservation);
+        Self {
+            state,
+            context,
+            minimum_reservation: AtomicU64::new(minimum_reservation),
+            threads,
+            lock: Mutex::default(),
+            max_partition_size: AtomicU64::new(0),
+            partition_count: AtomicUsize::new(0),
+            finalize_done: AtomicUsize::new(0),
+        }
+    }
+
+    /// Registers a table that reserves nothing until it is finalized: a `DISTINCT`
+    /// aggregate's table, whose sink the aggregate's own claim covers.
+    pub fn unreserved(ctx: &ExecutionContext) -> Self {
+        let buffer_manager = &ctx.env.buffer_manager;
+        let threads = ctx.env.threads().max(1) as u64;
+        let context = buffer_manager.temporary_memory_context(threads, 1, false);
+        Self {
+            state: buffer_manager.temporary_memory_manager().register(&context),
+            context,
+            minimum_reservation: AtomicU64::new(0),
+            threads,
+            lock: Mutex::default(),
+            max_partition_size: AtomicU64::new(0),
+            partition_count: AtomicUsize::new(0),
+            finalize_done: AtomicUsize::new(0),
+        }
+    }
+
+    fn guard(&self) -> MutexGuard<'_, ()> {
+        self.lock.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// `GetThreadLimit`: how much a thread's tables may hold before they go out of core.
+    pub fn thread_limit(&self) -> usize {
+        usize::try_from(self.state.reservation() / self.threads / 10 * 8).unwrap_or(usize::MAX)
+    }
+
+    /// Whether a thread whose tables hold `size` bytes must go out of core: it is over its
+    /// share of the reservation even after asking for twice what the threads need
+    /// (`MaybeRepartition`).
+    pub fn over_thread_limit(&self, external: bool, size: usize) -> bool {
+        if size <= self.thread_limit() {
+            return false;
+        }
+        if !external {
+            let _guard = self.guard();
+            if size > self.thread_limit() {
+                self.state
+                    .set_minimum_reservation(self.minimum_reservation.load(Ordering::Acquire));
+                let remaining = (self.threads * size as u64).max(self.state.remaining_size());
+                self.state
+                    .set_remaining_size_and_update_reservation(&self.context, 2 * remaining);
+            }
+        }
+        size > self.thread_limit()
+    }
+
+    /// The threads fill `multiplier` times as many partitions: the minimum grows with them
+    /// (`SetRadixBitsInternal`).
+    pub fn scale_minimum_reservation(&self, multiplier: u64) {
+        self.minimum_reservation
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |minimum| {
+                Some(minimum.saturating_mul(multiplier))
+            })
+            .ok();
+    }
+
+    /// The sink is finalized into `partitions`, `(bytes, groups, combined)` each, where
+    /// combined partitions need no combining (`Finalize`): combining at least one
+    /// partition at a time needs its rows and its table; nothing is reserved until the
+    /// source starts. The aggregate states' heap memory is not kept in arena allocators
+    /// here, so DuckDB's `stored_allocators_size` is zero.
+    pub fn finalize(&self, partitions: impl IntoIterator<Item = (usize, usize, bool)>) {
+        let _guard = self.guard();
+        let mut max_partition_size = 0;
+        let mut count = 0;
+        let mut combined = 0;
+        for (bytes, groups, already_combined) in partitions {
+            max_partition_size = max_partition_size.max(bytes as u64 + pointer_table_size(groups));
+            count += 1;
+            combined += usize::from(already_combined);
+        }
+        self.max_partition_size
+            .store(max_partition_size, Ordering::Release);
+        self.partition_count.store(count, Ordering::Release);
+        self.finalize_done.store(combined, Ordering::Release);
+        self.state.set_minimum_reservation(max_partition_size);
+        self.state.set_zero();
+    }
+
+    /// How many partitions the source may combine at once (`MaxThreads`): as many as fit
+    /// in the reservation it asks for, at most one per thread, at least one; zero without
+    /// partitions.
+    pub fn max_threads(&self, threads: usize) -> usize {
+        let partitions = self.partition_count.load(Ordering::Acquire);
+        if partitions == 0 {
+            return 0;
+        }
+        let max_threads = threads.min(partitions);
+        let max_partition_size = self.max_partition_size.load(Ordering::Acquire);
+        self.state.set_remaining_size_and_update_reservation(
+            &self.context,
+            max_threads as u64 * max_partition_size,
+        );
+        let usable_memory = self.state.reservation();
+        let partitions_fit = usize::try_from(usable_memory / max_partition_size.max(1))
+            .unwrap_or(usize::MAX)
+            .max(1);
+        partitions_fit.min(max_threads)
+    }
+
+    /// A partition was combined; once all were, nothing more is needed (`SetZero`).
+    pub fn partition_finalized(&self) {
+        let done = self.finalize_done.fetch_add(1, Ordering::AcqRel) + 1;
+        if done == self.partition_count.load(Ordering::Acquire) {
+            let _guard = self.guard();
+            self.state.set_zero();
+        }
     }
 }

@@ -59,6 +59,12 @@ pub struct ExecutionContext {
     /// Set when the client interrupts the query (`duckdb_interrupt`, DuckDB's
     /// `ClientContext::Interrupt`).
     client_interrupted: Option<Arc<AtomicBool>>,
+    /// How a sink or source that returns `Blocked` gets its task rescheduled
+    /// (`OperatorSinkInput::interrupt_state`).
+    pub interrupt_state: crate::parallel::InterruptState,
+    /// The batch of the sink's input and the lowest batch still in progress, for sinks
+    /// that require batch indices (the local sink state's `partition_info`).
+    pub partition_info: crate::operator::PartitionInfo,
 }
 
 impl ExecutionContext {
@@ -69,6 +75,8 @@ impl ExecutionContext {
             profiler: None,
             interrupted: Arc::default(),
             client_interrupted: None,
+            interrupt_state: crate::parallel::InterruptState::default(),
+            partition_info: crate::operator::PartitionInfo::default(),
         }
     }
 
@@ -87,6 +95,8 @@ impl ExecutionContext {
             profiler,
             interrupted,
             client_interrupted,
+            interrupt_state: crate::parallel::InterruptState::default(),
+            partition_info: crate::operator::PartitionInfo::default(),
         }
     }
 

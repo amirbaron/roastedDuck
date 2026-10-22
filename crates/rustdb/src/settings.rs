@@ -889,6 +889,18 @@ impl Settings {
         self.enabled("debug_skip_checkpoint_on_commit")
     }
 
+    /// `auto_checkpoint_skip_wal_threshold`: a commit that checkpoints and whose
+    /// estimated size is at least this many bytes does not write its changes to the WAL
+    /// (`AutoCheckpointSkipWalThresholdSetting`, 100000).
+    pub(crate) fn auto_checkpoint_skip_wal_threshold(&self) -> u64 {
+        self.assigned
+            .iter()
+            .find(|(name, _)| *name == "auto_checkpoint_skip_wal_threshold")
+            .and_then(|(_, value)| value.default_cast_as(&LogicalType::UBIGINT).ok())
+            .and_then(|value| value.as_u64())
+            .unwrap_or(100_000)
+    }
+
     /// `enable_progress_bar`: the progress of running queries is tracked
     /// (`ClientConfig::enable_progress_bar`).
     pub(crate) fn enable_progress_bar(&self) -> bool {

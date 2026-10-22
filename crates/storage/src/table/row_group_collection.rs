@@ -704,6 +704,10 @@ impl RowGroupCollection {
             let next_start = state.current.row_start + state.row_group_append.offset_in_row_group;
             let node = self.append_row_group(&state.row_groups, next_start);
             state.current_position += 1;
+            // DuckDB's `RowGroup::InitializeAppend` replaces the column append states before
+            // it initializes the new ones: the full row group's segments are unpinned
+            // before the new row group's are allocated.
+            state.row_group_append.states.clear();
             state.row_group_append = node.node.initialize_append()?;
             state.current = node;
         }

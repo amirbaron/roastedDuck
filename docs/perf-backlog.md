@@ -434,6 +434,32 @@ and the window's `WindowHashGroup` stages run as tasks shared by all threads; wi
 hash groups materialize into a buffer-managed `ColumnDataCollection`; temporary file
 reads and writes run outside the file's lock (AsOf at 8 threads queued on it).
 
+## Buffer-managed results, streaming backpressure, batch insert memory
+
+Before (main at `26e9c5e`) and after the port of buffer-managed query results, blocking
+streaming results, `PhysicalBatchInsert`'s `BatchMemoryManager`, the hash aggregate's
+source reservations and the WAL skip of checkpointing commits. Release builds, 14
+threads, the TPC-H SF10 file opened read-only; cycles and instructions per run from
+`scripts/perf/cycles.sh` (medians of 3 alternating runs), suites from
+`scripts/perf/bench.py` (C API, so results on the heap).
+
+| case | before | after | DuckDB |
+|---|---:|---:|---:|
+| `SELECT * FROM range(100000000)` streamed and fetched slowly (C API), peak RSS | 843.9 MB | 32.8 MB | 36.5 MB |
+| TPC-H SF10, 22 queries in the shell: cycles before / after (geomean) | | 1.014× (0.985–1.062) | |
+| same, instructions | | 1.000× | |
+| suites, CPU before / after: tpch10, h2og, h2oj, hits | | 1.010×, 0.993×, 1.017×, 0.993× | |
+| suites, peak RSS after / before | | 0.99–1.03× | |
+| `SELECT 42`, Ginstructions | 0.0003 | 0.0004 | |
+| `range(100000)`, duckbox, Ginstructions | 0.0057 | 0.0048 | |
+| `range(1000000)`, `.mode csv`, Ginstructions | 2.365 | 2.372 | 1.936 |
+| `lineitem LIMIT 100000`, duckbox, Gcycles | 0.075 | 0.095 | 0.188 |
+| same, Ginstructions | 0.235 | 0.267 | 0.58–0.77 |
+| 2000 one-row commits, then 20 commits of 200000 rows that checkpoint, Gcycles | 3.73 | 3.73 | |
+
+The shell's materialized results are now copied into blocks (DuckDB's
+`BUFFER_MANAGED` results), which a wide 100000-row result pays for (see Open items).
+
 ## Open items
 
 | Area | Gap | Suspected cause | Found in |
@@ -449,7 +475,8 @@ reads and writes run outside the file's lock (AsOf at 8 threads queued on it).
 | Range joins and window in memory | IEJoin 0.84× / 0.93× and window 0.90× / 0.92× DuckDB's cycles at 1 / 8 threads without a limit; AsOf 0.97–0.98× out of core (see above) | the row-format primitives cost more instructions than DuckDB's: scattering into sort runs and hash partitions (`scatter_column`, heap sizes), gathering payload in the merger, building and decoding sort keys (window 18.9 G vs 14.2 G instructions, IEJoin 58.0 G vs 43.7 G) | `crates/row` (`scatter.rs`, `gather.rs`, `sort/`) |
 | Range joins and window: peak memory | 0.65–0.99× DuckDB's RSS (target ≤ 0.6×); AsOf at 300 MiB and 8 threads varies between 0.91× and 1.15× from run to run | memory outside the buffer manager: per-thread chunks and executor states, IEJoin's `li`/`p` arrays (unmanaged in DuckDB too); not broken down yet | `crates/execution` (`operators/join/`, `operators/window.rs`) |
 | Window `SINK` / `FINALIZE` stages | one task per hash group (the stage's first); the other tasks of the stage only wait | the executors' global states are built single-threaded; DuckDB sinks every block range in parallel into them. Only windows with few, large partitions (ORDER BY only) feel it; not measured | `crates/execution` (`window/executor.rs`, `operators/window.rs`) |
-| `ColumnDataCollection` reads | each chunk read copies its vectors out of the block | rustdb vectors own their buffers; DuckDB's reference the pinned block | `crates/row` (`column_data.rs`) |
+| Materialized shell results | `SELECT * FROM lineitem LIMIT 100000`: 1.26× the cycles and 1.14× the instructions of rustdb before results were buffer-managed (0.5× DuckDB's cycles) | appending copies every value into the collection's blocks (fixed-width vectors whole, long strings into heap blocks), and each query maps fresh blocks; DuckDB copies too | `crates/row` (`column_data/`) |
+| `ColumnDataCollection` reads | each chunk read copies its fixed-width values out of the block (strings point into the pinned heaps) | rustdb vectors own their buffers; DuckDB's reference the pinned block | `crates/row` (`column_data/`) |
 | Common subexpressions | `l_extendedprice * (1 - l_discount)` computed twice in Q1 | check the CSE optimizer port against DuckDB's plan | `crates/optimizer` |
 | Parser: tiny statements (`SELECT 1`, short SELECTs) | ~1.05–1.25× DuckDB cycles per query | per-node malloc/free vs DuckDB's arena-allocated parse tree | `crates/parser` (`parse_bench`) |
 | zstd | compression 0.88× on UUID-like strings, 0.93–1.0× elsewhere; decompression 0.93–0.99× (see above) | the double-fast search loop and the sequence decoding loop keep fewer values in registers than zstd's (more instructions per position and per sequence) | `crates/zstd` (`dfast.rs`, `decompress/block.rs`) |

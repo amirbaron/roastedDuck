@@ -42,16 +42,6 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      ResolveStacktraceSymbols`): its own C++ frames, which rustdb cannot print. A
      section of rustdb's frames needs a backtrace captured in `Error::internal` and
      formatted like DuckDB's; its bytes would still differ.
-   - `pragma database_size` reports a `memory_usage` of 0 bytes where DuckDB counts the
-     buffer of the shell's last result (256 KiB): results are not buffer-managed (4).
-   - A streaming result: DuckDB's `PhysicalBufferedCollector` blocks its sink once
-     `streaming_buffer_size` (1 MB) is buffered, and each fetch runs the query until the
-     buffer is full again, so an error in a row-wise result (csv, json, ...) more than
-     1 MB in stops the output after the rows fetched so far, silently (the shell ignores
-     the result's error; rustdb's shell now does too). rustdb's collector never blocks:
-     the query runs ahead in tasks of 50 chunks, so the output stops at other rows (or
-     the error comes before any). Needs blocked sinks that the fetch unblocks
-     (`BlockSink`, `UnblockSinks`, `Executor::ResultCollectorIsBlocked`).
    - The shell reads input and arguments as UTF-8, invalid bytes becoming U+FFFD;
      DuckDB passes the bytes on (a string constant then fails with "Invalid unicode
      (byte sequence mismatch) detected in value construction", `.print` writes them as
@@ -73,15 +63,23 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
 ## Storage
 
 4. **Bulk-load memory, the rest.** Optimistic writes and concurrent checkpoints are
-   ported. Three pieces remain:
-   - Query results are a `Vec<DataChunk>`, not a buffer-managed
-     `ColumnDataCollection`, so `FROM range(...)` over a large table does not run out
-     of memory under a small `memory_limit` the way DuckDB does
-     (`buffer_managed_query_result`).
-   - `PhysicalBatchInsert` has no `BatchMemoryManager`: batches are not throttled
-     against the memory limit.
-   - `auto_checkpoint_skip_wal_threshold` is accepted, but a commit that triggers a
-     checkpoint still writes its WAL entries.
+   ported, and materialized query results are buffer-managed like DuckDB's
+   (`QueryResultMemoryType::BUFFER_MANAGED`, which the shell and the sqllogictest runner
+   ask for; C API results stay on the heap, as DuckDB's `Connection::Query` keeps them):
+   the result collectors append to a `ColumnDataCollection` (`crates/row/src/column_data`,
+   DuckDB's segments, allocator and copy functions, nested types included, block for
+   block), which spills or runs out of memory under a small `memory_limit` as DuckDB's does
+   (`buffer_managed_query_result`) and which `pragma database_size` counts for the
+   shell's last result. `PhysicalBatchInsert` throttles its unflushed batches with
+   DuckDB's `BatchMemoryManager` (threads ahead of the lowest batch block while the
+   batches take the memory it obtained; `MaxThreads` caps the threads by it). A commit
+   that checkpoints and is estimated at `auto_checkpoint_skip_wal_threshold` bytes or
+   more does not write its WAL entries: it takes the checkpoint lock before it commits,
+   holds the WAL lock until the checkpoint ends, and fails if the checkpoint does
+   (`skip_wal_write_due_to_checkpoint`). Left:
+   - `PhysicalBatchCopyToFile` buffers its raw batches without DuckDB's
+     `BatchMemoryManager`, so an ordered `COPY ... TO` of a large table does not
+     throttle the threads ahead of the lowest batch.
 5. **Compression parity, the rest.** ZSTD, roaring and hugeint bitpacking segments are
    DuckDB's (`zstd_compression_ratio`, `roaring_compression_ratio`,
    `roaring_bool_compression_ratio`, `bitpacking_compression_ratio_hugeint` pass;
@@ -159,12 +157,13 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
       where `MultiFileColumnMapper` maps the fields.
     - `hash()` of a VARIANT differs from DuckDB's (also for unshredded values, so not a
       layout difference).
-14. **Buffer eviction parity under tight limits** (`max_swap_space_error.test`, failing 4
-    in 10 runs). After `CREATE TABLE t2 AS SELECT random() FROM range(200000)` under
-    `memory_limit='1024KiB'`, two threads and a 4 MB swap limit, rustdb keeps 1,067,008
-    bytes of IN_MEMORY_TABLE resident (above the limit) and 1.31 MB on disk, where
-    DuckDB keeps 542,720 bytes resident and 1.84 MB on disk. With 1M rows, rustdb then
-    holds three pinned blocks (804 KiB) and fails to allocate the fourth ("could not
-    allocate block") before reaching the swap limit DuckDB reports ("failed to offload
-    data block"). Compare what the insert path pins per thread and when DuckDB unloads
-    transient segments.
+14. **Buffer eviction parity under tight limits, the rest.** `max_swap_space_error.test`
+    passes (20 of 20 runs, alone and beside a directory run): an append that starts a new
+    row group unpins the full row group's segments before it allocates the new ones, as
+    DuckDB's `RowGroup::InitializeAppend` does, so a 1M-row insert under a 1 MiB limit
+    spills until the swap limit ("failed to offload data block") instead of running out of
+    pinnable memory. After `CREATE TABLE t2 AS SELECT random() FROM range(200000)` under
+    that limit rustdb still keeps one 256 KiB block more resident than DuckDB (804,864
+    against 542,720 bytes with a buffer-managed result, 1,067,008 against 804,864 with a
+    streaming one): DuckDB charges its pipelines' chunks to the buffer pool
+    (`BufferAllocator`, tag `ALLOCATOR`), rustdb's vectors are plain heap memory.

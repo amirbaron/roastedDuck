@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use rustdb_ast::{SqlStatement, StatementType};
 use rustdb_common::{CaseInsensitiveMap, Error, Result};
+use rustdb_execution::operators::QueryResultMemoryType;
 use rustdb_planner::expression::BoundParameterData;
 use rustdb_planner::{Planner, PreparedStatementData, StatementReturnType};
 use rustdb_types::{LogicalType, LogicalTypeId, Value};
@@ -149,7 +150,14 @@ impl Connection {
         self.begin_query(&query, &prepared.data.unbound_statement)?;
         let started = self.in_query_scope(|connection| {
             connection.begin_query_logging(&query);
-            connection.start_prepared(&prepared.data, values, RunMode::Pending { stream: allow_stream })
+            connection.start_prepared(
+                &prepared.data,
+                values,
+                RunMode::Pending {
+                    stream: allow_stream,
+                    memory_type: QueryResultMemoryType::InMemory,
+                },
+            )
         });
         self.activate(&query, prepared.statement_type(), started)
     }

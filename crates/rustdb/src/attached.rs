@@ -233,6 +233,7 @@ impl AttachedDatabase {
                 transactions,
                 &failed,
                 &|| self.invalidated_message(),
+                None,
             ),
             DatabaseStorage::InMemory(storage) => crate::storage::create_in_memory_checkpoint(
                 &self.catalog,
@@ -242,6 +243,32 @@ impl AttachedDatabase {
                 &failed,
             ),
         }
+    }
+
+    /// The checkpoint of a commit that did not log its changes, which holds the
+    /// database's checkpoint lock (`checkpoint`) and its WAL lock (`wal`) until the
+    /// checkpoint ends (`DuckTransactionManager::CommitTransaction`).
+    pub fn checkpoint_after_commit(
+        &self,
+        transactions: &rustdb_catalog::TransactionManager,
+        checkpoint: rustdb_storage::checkpoint_lock::ExclusiveCheckpointGuard,
+        wal: &mut rustdb_storage::wal::WalGuard<'_>,
+    ) -> Result<()> {
+        if self.instance_validity.invalidated().is_some() || self.validity.invalidated().is_some() {
+            return Ok(());
+        }
+        let DatabaseStorage::File(storage) = &self.storage else {
+            return Ok(());
+        };
+        crate::storage::create_checkpoint(
+            &self.catalog,
+            storage,
+            crate::storage::CheckpointMode::Automatic,
+            Some(transactions),
+            &|error: Error| self.checkpoint_failed(&error),
+            &|| self.invalidated_message(),
+            Some(crate::storage::CommitLocks { checkpoint, wal }),
+        )
     }
 
     /// Closes the database, writing a checkpoint if `checkpoint` (`checkpoint_on_shutdown`)
