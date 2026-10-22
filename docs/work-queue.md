@@ -158,8 +158,9 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
     `test_icu_extensive.test_slow` (`as`/`kok`/`mr`); five timezone files and plan
     serialization also pass. Fresh comparisons against C++ match all 130 collations'
     sort keys over 484,110 strings, plus locale keywords, names and BCP 47 tags.
-    Evidence: `.context/artifacts/icu66-resume-20261022/`. The full corpus still needs
-    confirmation on the merged code. Rare ICU FCD iterator hangs intentionally terminate
+    Evidence: `.context/artifacts/icu66-resume-20261022/`. The full sweep and two
+    default-thread rechecks yield 4781 pass, 15 accepted divergences and 74 skips, with
+    zero ratchet regressions. Rare ICU FCD iterator hangs intentionally terminate
     by collating the NFD form; these cannot be compared to a completed C++ key.
 13. **Struct and VARIANT extract pushdown, the rest.** The pushdown is ported one to one:
     `RemoveUnusedColumns` registers `struct_extract` / `variant_extract` chains (under a
