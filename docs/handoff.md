@@ -126,9 +126,9 @@ byte comparisons; a Rust unit test covers the fallback.
 
 ## Active cache experiment (2026-10-22)
 
-The current working tree has one uncommitted code change in
-`crates/storage/src/table/column_segment.rs`: retain persistent table blocks as C++
-does. Candidate checks and both 160-query benchmark comparisons are saved under
+The working tree retains the uncommitted persistent-table cache experiment in
+`crates/storage/src/table/column_segment.rs`. Native modern ART disk restoration is
+also being implemented and verified in storage/catalog; it is not accepted yet. Candidate checks and both 160-query benchmark comparisons are saved under
 `.context/artifacts/parity-20261022/cache-policy/`. All candidate shell/C API checks
 and result comparisons pass, but the cache policy is **not accepted**: q21, q22 and
 q28 have memory above C++, despite improved average speed. See the experimental table
@@ -154,8 +154,14 @@ estimate, not a precise heap attribution. q22 used less memory than C++ in this 
 CLI run despite its repeated C API benchmark outlier, so cache/filter-history effects
 need controlled investigation. Fix the persisted-index regression first, then diagnose
 or reject/rework caching's memory outliers before accepting the policy or claiming parity.
-The current signed binaries are the cache candidate; `uncached-merged/` preserves the
-other verified variant. Only the cache flag is uncommitted code.
+The previous signed binaries are the cache candidate; `uncached-merged/` preserves the
+other verified variant. A new release build is in progress for native ART restoration
+(`.context/artifacts/index-reload-20261022/`). Its storage unit suite has 53 passes,
+including modern/deprecated-leaf lazy reload and post-reload mutation. Changed crates
+pass Clippy with warnings denied. C++ file interoperability and the profiling regression
+have not yet been rerun on this implementation. Native disk restore covers plain and
+stored constraint indexes so far; expression/WAL and pre-v0.10 paths still rebuild and
+work-queue 16 remains open. Details: `.context/index-reload-progress.md`.
 
 ## How to work
 
