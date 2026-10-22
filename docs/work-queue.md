@@ -135,7 +135,9 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    - A query pragma (`PRAGMA version`) binds to a `LOGICAL_PRAGMA`, which cannot be
      serialized, where DuckDB fails with "PRAGMA function does not have a function
      specified": rustdb's pragma functions do not say which ones are queries.
-   - `LOAD` and `EXPORT DATABASE` do not bind; the connection runs them before planning.
+   - `EXPORT DATABASE` is not serialized: rustdb's `LogicalExport` keeps what its
+     operator needs instead of DuckDB's `CopyInfo` and `BoundExportData`, and unions the
+     table copies two at a time.
    - Lambda functions, `list_slice` and `list_zip` over an ARRAY, and `list_reduce` with
      an initial value of another type, list the cast types in `arguments` where DuckDB
      keeps `ANY`: a bind casts arguments only through the function's argument types.
