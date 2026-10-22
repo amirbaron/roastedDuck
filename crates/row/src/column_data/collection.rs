@@ -13,9 +13,8 @@ use rustdb_types::{
 };
 
 use super::allocator::{ChunkManagementState, ColumnDataAllocator};
-use super::segment::{
-    ColumnDataCollectionSegment, STANDARD_MASK_SIZE, SwizzleMetaData, data_size,
-};
+use super::segment::{ColumnDataCollectionSegment, STANDARD_MASK_SIZE, SwizzleMetaData, data_size};
+use crate::row::{load, store};
 
 /// How the values of a column are copied in (`ColumnDataCopyFunction`).
 #[derive(Clone, Debug)]
@@ -90,7 +89,8 @@ impl<'a> Source<'a> {
             vector.logical_type().physical_type(),
             PhysicalType::Struct | PhysicalType::List | PhysicalType::Array
         );
-        let vector = if vector.kind() == VectorKind::Sequence || (nested && vector.kind() != VectorKind::Flat) {
+        let vector = if vector.kind() == VectorKind::Sequence || (nested && vector.kind() != VectorKind::Flat)
+        {
             Cow::Owned(vector.flattened(count))
         } else {
             Cow::Borrowed(vector)
@@ -142,8 +142,8 @@ unsafe fn set_all_valid(mask: *mut u8) {
 unsafe fn set_invalid(mask: *mut u8, row: usize) {
     // SAFETY: guaranteed by the caller.
     unsafe {
-        let word = mask.cast::<u64>().add(row / 64);
-        word.write_unaligned(word.read_unaligned() & !(1u64 << (row % 64)));
+        let word = mask.add(row / 64 * 8);
+        store(load::<u64>(word) & !(1u64 << (row % 64)), word);
     }
 }
 
@@ -220,11 +220,19 @@ fn copy_fixed(
     width: usize,
 ) -> Result<()> {
     let data = source.data();
-    templated_copy(ctx, vector_index, source, offset, count, width, |base, target, slot| {
-        // SAFETY: `slot` is a slot of the source vector's data and `target` a position
-        // below `STANDARD_VECTOR_SIZE` of the target vector's data, both `width` bytes.
-        unsafe { std::ptr::copy_nonoverlapping(data.add(slot * width), base.add(target * width), width) };
-    })
+    templated_copy(
+        ctx,
+        vector_index,
+        source,
+        offset,
+        count,
+        width,
+        |base, target, slot| {
+            // SAFETY: `slot` is a slot of the source vector's data and `target` a position
+            // below `STANDARD_VECTOR_SIZE` of the target vector's data, both `width` bytes.
+            unsafe { std::ptr::copy_nonoverlapping(data.add(slot * width), base.add(target * width), width) };
+        },
+    )
 }
 
 /// `ColumnDataCopyCompressedStrings`: a constant string, or a dictionary from storage
@@ -276,12 +284,11 @@ fn copy_compressed_strings(
         _ => return Ok(false),
     };
 
-    *child_index = Some(ctx.segment.allocate_string_heap(
-        *heap_size,
-        ctx.chunk_index,
-        ctx.state,
-        *child_index,
-    )?);
+    *child_index =
+        Some(
+            ctx.segment
+                .allocate_string_heap(*heap_size, ctx.chunk_index, ctx.state, *child_index)?,
+        );
     let heap_index = child_index.ok_or_else(|| Error::internal("string heap not allocated"))?;
     if ctx.segment.vector_data[vector_index].child_index.is_none() {
         ctx.segment.vector_data[vector_index].child_index = Some(ctx.segment.add_child_index(heap_index));
@@ -298,7 +305,7 @@ fn copy_compressed_strings(
         // SAFETY: the mask is `STANDARD_MASK_SIZE` bytes in the pinned block.
         unsafe { set_all_valid(mask) };
     }
-    let targets = base_ptr.cast::<StringT>();
+    let targets = base_ptr;
     match dictionary {
         None => {
             let constant = vector.values::<StringT>()[0];
@@ -310,7 +317,7 @@ fn copy_compressed_strings(
             };
             for i in 0..vector_remaining {
                 // SAFETY: `current_count + i < STANDARD_VECTOR_SIZE` values of the vector.
-                unsafe { targets.add(current_count + i).write_unaligned(string) };
+                unsafe { store(string, targets.add((current_count + i) * size_of::<StringT>())) };
             }
         }
         Some((dictionary, dictionary_size)) => {
@@ -356,7 +363,7 @@ fn copy_compressed_strings(
                     }
                 };
                 // SAFETY: `target_idx < STANDARD_VECTOR_SIZE` values of the vector.
-                unsafe { targets.add(target_idx).write_unaligned(target) };
+                unsafe { store(target, targets.add(target_idx * size_of::<StringT>())) };
             }
         }
     }
@@ -447,7 +454,7 @@ fn copy_strings(
                 // SAFETY: the mask is `STANDARD_MASK_SIZE` bytes in the pinned block.
                 unsafe { set_all_valid(mask) };
             }
-            let targets = base_ptr.cast::<StringT>();
+            let targets = base_ptr;
             let mut heap_ptr = base_heap_ptr;
             for i in 0..append_count {
                 let slot = sel.slot(offset + i);
@@ -471,7 +478,7 @@ fn copy_strings(
                     }
                 };
                 // SAFETY: `target_idx < STANDARD_VECTOR_SIZE` values of the vector.
-                unsafe { targets.add(target_idx).write_unaligned(target) };
+                unsafe { store(target, targets.add(target_idx * size_of::<StringT>())) };
             }
         }
         let current = &mut ctx.segment.vector_data[current_index];
@@ -620,7 +627,14 @@ fn copy_list(
         copy(ctx, child_function, child_index, &child_source, 0, info.length)?;
     } else {
         let child_source = Source::new(child_vector, info.offset + info.length);
-        copy(ctx, child_function, child_index, &child_source, info.offset, info.length)?;
+        copy(
+            ctx,
+            child_function,
+            child_index,
+            &child_source,
+            info.offset,
+            info.length,
+        )?;
     }
 
     // Then the list entries, pointing into the collection's child data.
@@ -641,7 +655,7 @@ fn copy_list(
                 child_list_size += entry.length;
             }
             // SAFETY: `target < STANDARD_VECTOR_SIZE` entries of the vector's data.
-            unsafe { base.cast::<ListEntry>().add(target).write_unaligned(entry) };
+            unsafe { store(entry, base.add(target * size_of::<ListEntry>())) };
         },
     )
 }
@@ -666,7 +680,14 @@ fn copy_struct(
             .segment
             .child_at(ctx.segment.vector_data[vector_index].child_index, child_idx)?;
         let child_source = Source::new(child, offset + copy_count);
-        copy(ctx, child_function, child_index, &child_source, offset, copy_count)?;
+        copy(
+            ctx,
+            child_function,
+            child_index,
+            &child_source,
+            offset,
+            copy_count,
+        )?;
     }
     Ok(())
 }
@@ -819,6 +840,7 @@ impl ColumnDataCollection {
 
     /// A new, empty collection sharing this collection's blocks, which takes no more
     /// appends (`ColumnDataCollection(ColumnDataCollection &other)`).
+    #[must_use]
     pub fn share_allocator(&mut self) -> Self {
         self.finished_append = true;
         Self {
@@ -873,7 +895,9 @@ impl ColumnDataCollection {
     /// (`InitializeAppend`).
     pub fn initialize_append(&mut self, state: &mut ColumnDataAppendState) -> Result<()> {
         if self.finished_append {
-            return Err(Error::internal("ColumnDataCollection: append after the appends finished"));
+            return Err(Error::internal(
+                "ColumnDataCollection: append after the appends finished",
+            ));
         }
         state.current_chunk_state.clear();
         state.initialized = true;
@@ -908,7 +932,9 @@ impl ColumnDataCollection {
             .map(|vector| Source::new(vector, size))
             .collect();
         let Some(segment) = self.segments.last_mut() else {
-            return Err(Error::internal("ColumnDataCollection: append before InitializeAppend"));
+            return Err(Error::internal(
+                "ColumnDataCollection: append before InitializeAppend",
+            ));
         };
         let mut remaining = size;
         while remaining > 0 {
@@ -923,7 +949,9 @@ impl ColumnDataCollection {
                     state: &mut state.current_chunk_state,
                     chunk_index,
                 };
-                for ((function, source), vector_index) in self.copy_functions.iter().zip(&sources).zip(vector_data) {
+                for ((function, source), vector_index) in
+                    self.copy_functions.iter().zip(&sources).zip(vector_data)
+                {
                     copy(&mut ctx, function, vector_index, source, offset, append_amount)?;
                 }
                 segment.chunk_data[chunk_index].count += append_amount as u16;
@@ -931,7 +959,8 @@ impl ColumnDataCollection {
             remaining -= append_amount;
             if remaining > 0 {
                 segment.allocate_new_chunk()?;
-                segment.initialize_chunk_state(segment.chunk_data.len() - 1, &mut state.current_chunk_state)?;
+                segment
+                    .initialize_chunk_state(segment.chunk_data.len() - 1, &mut state.current_chunk_state)?;
             }
         }
         segment.count += size;
@@ -982,7 +1011,8 @@ impl ColumnDataCollection {
                 return None;
             }
         }
-        state.next_row_index += self.segments[state.segment_index].chunk_data[state.chunk_index].count as usize;
+        state.next_row_index +=
+            self.segments[state.segment_index].chunk_data[state.chunk_index].count as usize;
         let chunk_index = state.chunk_index;
         state.chunk_index += 1;
         Some((state.segment_index, chunk_index))
@@ -994,7 +1024,8 @@ impl ColumnDataCollection {
             return Ok(None);
         };
         let column_ids = std::mem::take(&mut state.column_ids);
-        let chunk = self.segments[segment_index].read_chunk(chunk_index, &mut state.current_chunk_state, &column_ids);
+        let chunk =
+            self.segments[segment_index].read_chunk(chunk_index, &mut state.current_chunk_state, &column_ids);
         state.column_ids = column_ids;
         chunk.map(Some)
     }
@@ -1049,14 +1080,21 @@ mod tests {
         let mut state = collection.initialize_scan();
         while let Some(chunk) = collection.scan(&mut state).unwrap() {
             for row in 0..chunk.len() {
-                rows.push((0..chunk.column_count()).map(|c| chunk.column(c).get_value(row)).collect());
+                rows.push(
+                    (0..chunk.column_count())
+                        .map(|c| chunk.column(c).get_value(row))
+                        .collect(),
+                );
             }
         }
         rows
     }
 
     fn chunk_of(types: &[LogicalType], rows: &[Vec<Value>]) -> DataChunk {
-        let mut columns: Vec<Vector> = types.iter().map(|ty| Vector::flat(ty.clone(), rows.len().max(1))).collect();
+        let mut columns: Vec<Vector> = types
+            .iter()
+            .map(|ty| Vector::flat(ty.clone(), rows.len().max(1)))
+            .collect();
         for (r, row) in rows.iter().enumerate() {
             for (c, value) in row.iter().enumerate() {
                 columns[c].set_value(r, value).unwrap();
@@ -1069,7 +1107,8 @@ mod tests {
     fn integers_round_trip_and_fill_blocks_like_duckdb() {
         let manager = buffer_manager();
         let mut collection =
-            ColumnDataCollection::new(manager.clone(), vec![LogicalType::BIGINT], MemoryTag::ColumnData).unwrap();
+            ColumnDataCollection::new(manager.clone(), vec![LogicalType::BIGINT], MemoryTag::ColumnData)
+                .unwrap();
         let mut append = ColumnDataAppendState::default();
         collection.initialize_append(&mut append).unwrap();
         for start in (0..100_000).step_by(STANDARD_VECTOR_SIZE) {
@@ -1078,7 +1117,9 @@ mod tests {
             for (i, value) in vector.values_mut::<i64>()[..count].iter_mut().enumerate() {
                 *value = (start + i) as i64;
             }
-            collection.append(&mut append, &DataChunk::new(vec![vector], count)).unwrap();
+            collection
+                .append(&mut append, &DataChunk::new(vec![vector], count))
+                .unwrap();
         }
         drop(append);
         assert_eq!(collection.count(), 100_000);
@@ -1153,15 +1194,21 @@ mod tests {
     #[test]
     fn constant_and_dictionary_strings_and_shared_blocks() {
         let manager = buffer_manager();
-        let mut first = ColumnDataCollection::new(manager.clone(), vec![LogicalType::VARCHAR], MemoryTag::ColumnData).unwrap();
+        let mut first =
+            ColumnDataCollection::new(manager.clone(), vec![LogicalType::VARCHAR], MemoryTag::ColumnData)
+                .unwrap();
         let long = Value::varchar("a constant that does not fit inline");
         let constant = Vector::constant(&long).unwrap();
         let mut append = ColumnDataAppendState::default();
-        first.append(&mut append, &DataChunk::new(vec![constant.clone()], 3000)).unwrap();
+        first
+            .append(&mut append, &DataChunk::new(vec![constant.clone()], 3000))
+            .unwrap();
         // A collection sharing the blocks, as a batch collector starts one per batch.
         let mut second = first.share_allocator();
         let mut append = ColumnDataAppendState::default();
-        second.append(&mut append, &DataChunk::new(vec![constant], 10)).unwrap();
+        second
+            .append(&mut append, &DataChunk::new(vec![constant], 10))
+            .unwrap();
         second.finalize_append(&mut append);
         first.combine(second).unwrap();
         assert_eq!(first.count(), 3010);

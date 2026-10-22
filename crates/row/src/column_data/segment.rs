@@ -13,6 +13,7 @@ use rustdb_types::{DataChunk, LogicalType, PhysicalType, StringT, Vector};
 
 use super::allocator::{ChunkManagementState, ColumnDataAllocator};
 use crate::gather::HeapKeepAlive;
+use crate::row::load;
 
 /// Bytes of a vector's validity mask (`ValidityMask::STANDARD_MASK_SIZE`).
 pub(crate) const STANDARD_MASK_SIZE: usize = STANDARD_VECTOR_SIZE.div_ceil(64) * 8;
@@ -96,17 +97,16 @@ pub(crate) struct ColumnDataCollectionSegment {
 /// # Safety
 /// `mask` must point to `STANDARD_MASK_SIZE` readable bytes.
 unsafe fn has_invalid(mask: *const u8, count: usize) -> bool {
-    let words = mask.cast::<u64>();
     for i in 0..count / 64 {
         // SAFETY: `i < count / 64 <= STANDARD_VECTOR_SIZE / 64` words of the mask.
-        if unsafe { words.add(i).read_unaligned() } != u64::MAX {
+        if unsafe { load::<u64>(mask.add(i * 8)) } != u64::MAX {
             return true;
         }
     }
-    if count % 64 != 0 {
+    if !count.is_multiple_of(64) {
         let mask_bits = (1u64 << (count % 64)) - 1;
         // SAFETY: as above, the word holding the last values.
-        if unsafe { words.add(count / 64).read_unaligned() } & mask_bits != mask_bits {
+        if unsafe { load::<u64>(mask.add(count / 64 * 8)) } & mask_bits != mask_bits {
             return true;
         }
     }
@@ -226,7 +226,11 @@ impl ColumnDataCollectionSegment {
     }
 
     /// Pins the blocks of chunk `chunk_index` in `state` (`InitializeChunkState`).
-    pub(crate) fn initialize_chunk_state(&self, chunk_index: usize, state: &mut ChunkManagementState) -> Result<()> {
+    pub(crate) fn initialize_chunk_state(
+        &self,
+        chunk_index: usize,
+        state: &mut ChunkManagementState,
+    ) -> Result<()> {
         self.allocator
             .initialize_chunk_state(state, &self.chunk_data[chunk_index].block_ids)
     }
@@ -333,7 +337,8 @@ impl ColumnDataCollectionSegment {
             let count = vdata.count as usize;
             let base_ptr = ColumnDataAllocator::data_pointer(state, vdata.block_id, vdata.offset)?;
             if width > 0 {
-                let target = &mut result.data_bytes_mut()[current_offset * width..(current_offset + count) * width];
+                let target =
+                    &mut result.data_bytes_mut()[current_offset * width..(current_offset + count) * width];
                 // SAFETY: the vector's data holds `STANDARD_VECTOR_SIZE >= count` values of
                 // `width` bytes in the pinned block.
                 let source = unsafe { std::slice::from_raw_parts(base_ptr, count * width) };
@@ -347,7 +352,7 @@ impl ColumnDataCollectionSegment {
                 let validity = result.validity_mut();
                 for row in 0..count {
                     // SAFETY: `row < STANDARD_VECTOR_SIZE`, inside the mask.
-                    let word = unsafe { mask.cast::<u64>().add(row / 64).read_unaligned() };
+                    let word = unsafe { load::<u64>(mask.add(row / 64 * 8)) };
                     if word & (1u64 << (row % 64)) == 0 {
                         validity.set_invalid(current_offset + row, capacity);
                     }
@@ -362,7 +367,12 @@ impl ColumnDataCollectionSegment {
     /// Points the long strings read into `result` at their heaps in the pinned blocks,
     /// which the vector keeps pinned (`UnswizzlePointers`, without writing the pointers
     /// back to the blocks).
-    fn read_strings(&self, state: &ChunkManagementState, vector_index: usize, result: &mut Vector) -> Result<()> {
+    fn read_strings(
+        &self,
+        state: &ChunkManagementState,
+        vector_index: usize,
+        result: &mut Vector,
+    ) -> Result<()> {
         let mut pins: Vec<Arc<rustdb_buffer::BufferHandle>> = Vec::new();
         let validity = result.validity().clone();
         let strings = result.values_mut::<StringT>();
@@ -372,26 +382,28 @@ impl ColumnDataCollectionSegment {
             let vdata = &self.vector_data[index];
             for swizzle in &vdata.swizzle_data {
                 let heap = &self.vector_data[swizzle.child_index];
-                let pin = state
-                    .find(heap.block_id)
-                    .ok_or_else(|| Error::internal("ColumnDataAllocator: block of the chunk is not pinned"))?;
+                let pin = state.find(heap.block_id).ok_or_else(|| {
+                    Error::internal("ColumnDataAllocator: block of the chunk is not pinned")
+                })?;
                 // SAFETY: the heap lies inside the pinned block.
                 let new_base = unsafe { pin.as_ptr().add(heap.offset as usize) } as usize;
                 if !pins.iter().any(|pinned| Arc::ptr_eq(pinned, pin)) {
                     pins.push(Arc::clone(pin));
                 }
                 let start = v_offset + swizzle.offset as usize;
-                for row in start..start + swizzle.count as usize {
-                    let string = strings[row];
+                let rows = &mut strings[start..start + swizzle.count as usize];
+                for (row, string_slot) in (start..).zip(rows.iter_mut()) {
+                    let string = *string_slot;
                     if !validity.is_valid(row) || string.is_inlined() {
                         continue;
                     }
                     // SAFETY: only the pointer value is read, not the memory behind it.
-                    let old_ptr = unsafe { StringT::data_ptr(&raw const strings[row]) } as usize;
+                    let old_ptr = unsafe { StringT::data_ptr(&raw const string) } as usize;
                     let new_ptr = (new_base + (old_ptr - swizzle.ptr)) as *const u8;
                     // SAFETY: the string's bytes are at this place of the heap, which the
                     // vector keeps pinned below.
-                    strings[row] = unsafe { StringT::from_raw(std::slice::from_raw_parts(new_ptr, string.len())) };
+                    *string_slot =
+                        unsafe { StringT::from_raw(std::slice::from_raw_parts(new_ptr, string.len())) };
                 }
             }
             v_offset += vdata.count as usize;

@@ -461,7 +461,11 @@ impl PipelineExecutor {
     /// Pushes `chunks[initial_idx]` through the operators after position `initial_idx`
     /// into the sink, as long as operators have more output and the budget lasts
     /// (`ExecutePushInternal`).
-    fn execute_push_internal(&mut self, initial_idx: usize, budget: &mut ExecutionBudget) -> Result<PushResult> {
+    fn execute_push_internal(
+        &mut self,
+        initial_idx: usize,
+        budget: &mut ExecutionBudget,
+    ) -> Result<PushResult> {
         if self.chunks[initial_idx].is_empty() {
             return Ok(PushResult::NeedMoreInput);
         }

@@ -201,7 +201,11 @@ impl BatchedBufferedData {
     }
 
     /// `UpdateMinBatchIndex`.
-    pub fn update_min_batch_index(&self, min_batch_index: u64, interrupt_state: &InterruptState) -> Result<()> {
+    pub fn update_min_batch_index(
+        &self,
+        min_batch_index: u64,
+        interrupt_state: &InterruptState,
+    ) -> Result<()> {
         let mut state = lock(&self.state);
         let new_min_batch = state.min_batch.max(min_batch_index);
         if new_min_batch == state.min_batch {
@@ -243,7 +247,12 @@ impl BatchedBufferedData {
         let chunk = chunk.compacted();
         let allocation_size = chunk.allocation_size();
         if state.min_batch == batch {
-            if state.buffer.keys().next().is_some_and(|&first| first < state.min_batch) {
+            if state
+                .buffer
+                .keys()
+                .next()
+                .is_some_and(|&first| first < state.min_batch)
+            {
                 return Err(Error::internal("Batches remaining in buffer"));
             }
             let was_empty = state.read_queue.is_empty();

@@ -9,8 +9,7 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rustdb_buffer::{
-    BlockHandle, BufferHandle, BufferManager, DEFAULT_BLOCK_ALLOC_SIZE, DEFAULT_BLOCK_HEADER_STORAGE_SIZE,
-    DestroyBufferUpon, MemoryTag,
+    BlockHandle, BufferHandle, BufferManager, DEFAULT_BLOCK_HEADER_STORAGE_SIZE, DestroyBufferUpon, MemoryTag,
 };
 use rustdb_common::{Error, Result};
 
@@ -68,22 +67,25 @@ pub struct ColumnDataAllocator {
     /// The tag the blocks are charged to (DuckDB's is always `COLUMN_DATA`; the window
     /// operator's hash groups charge theirs to the operator's).
     tag: MemoryTag,
+    /// The usable size of a block (`BufferManager::GetBlockSize`: the allocation size
+    /// without the block header).
+    block_size: usize,
     blocks: Mutex<Vec<BlockMetaData>>,
 }
 
 impl ColumnDataAllocator {
     pub fn new(buffer_manager: BufferManager, tag: MemoryTag) -> Self {
         Self {
+            block_size: buffer_manager.block_alloc_size() - DEFAULT_BLOCK_HEADER_STORAGE_SIZE,
             buffer_manager,
             tag,
             blocks: Mutex::new(Vec::new()),
         }
     }
 
-    /// The usable size of a block (`BufferManager::GetBlockSize`: the allocation size
-    /// without the block header).
+    /// The usable size of a block.
     pub fn block_size(&self) -> usize {
-        DEFAULT_BLOCK_ALLOC_SIZE - DEFAULT_BLOCK_HEADER_STORAGE_SIZE
+        self.block_size
     }
 
     /// The number of blocks.
@@ -149,7 +151,8 @@ impl ColumnDataAllocator {
             unreachable!("a block was just ensured")
         };
         let offset = block.size;
-        block.size += u32::try_from(size).map_err(|_| Error::internal("ColumnDataAllocator: allocation too large"))?;
+        block.size +=
+            u32::try_from(size).map_err(|_| Error::internal("ColumnDataAllocator: allocation too large"))?;
         if let Some(state) = state {
             if let Some(pin) = new_pin {
                 state.insert(block_id, pin);
@@ -191,9 +194,7 @@ impl Drop for ColumnDataAllocator {
     fn drop(&mut self) {
         // The blocks are freed with their handles; nothing is spilled on the way.
         for block in lock(&self.blocks).iter() {
-            block
-                .handle
-                .set_destroy_buffer_upon(DestroyBufferUpon::Unpin);
+            block.handle.set_destroy_buffer_upon(DestroyBufferUpon::Unpin);
         }
     }
 }

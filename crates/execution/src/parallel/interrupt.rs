@@ -57,7 +57,10 @@ impl InterruptState {
                 }
             }
             InterruptMode::NoInterrupts => {
-                debug_assert!(false, "Callback made on InterruptState without valid interrupt mode specified");
+                debug_assert!(
+                    false,
+                    "Callback made on InterruptState without valid interrupt mode specified"
+                );
             }
         }
     }

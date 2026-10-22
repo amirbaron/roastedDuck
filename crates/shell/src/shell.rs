@@ -9,8 +9,7 @@ use std::time::Instant;
 
 use rustdb::{
     Connection, Database, PendingExecutionResult, QueryResult, QueryResultMemoryType, Result, SqlStatement,
-    StatementReturnType,
-    Value,
+    StatementReturnType, Value,
 };
 use rustdb_ast::{ExpressionType, QueryNodeKind, ShowType, SqlStatementKind, TableRefKind};
 

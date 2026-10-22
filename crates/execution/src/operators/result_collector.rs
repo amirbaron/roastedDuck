@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use rustdb_common::{Error, Result};
 use rustdb_buffer::MemoryTag;
+use rustdb_common::{Error, Result};
 use rustdb_row::{ColumnDataAppendState, ColumnDataCollection};
 use rustdb_types::{DataChunk, LogicalType};
 
@@ -119,7 +119,12 @@ impl PhysicalResultCollector {
     /// `ALLOW_STREAMING`): parallel when the plan's order does not matter, by batch index
     /// when every source supports it, and single-threaded otherwise. Its sink blocks once
     /// `buffer_size` bytes are buffered.
-    pub fn streaming(plan: PhysicalRef, threads: usize, preserve_order_setting: bool, buffer_size: usize) -> Self {
+    pub fn streaming(
+        plan: PhysicalRef,
+        threads: usize,
+        preserve_order_setting: bool,
+        buffer_size: usize,
+    ) -> Self {
         let kind = if !preserve_insertion_order(plan.as_ref(), preserve_order_setting) {
             CollectorKind::Buffered { parallel: true }
         } else if !use_batch_index(plan.as_ref(), threads) {
@@ -134,7 +139,10 @@ impl PhysicalResultCollector {
 
     /// Whether the collector hands rows out while the query runs (`IsStreaming`).
     pub fn is_streaming(&self) -> bool {
-        matches!(self.kind, CollectorKind::Buffered { .. } | CollectorKind::BufferedBatch)
+        matches!(
+            self.kind,
+            CollectorKind::Buffered { .. } | CollectorKind::BufferedBatch
+        )
     }
 
     /// The buffer of a streaming collector, from its global state (`GetResult`'s
@@ -153,12 +161,21 @@ impl PhysicalResultCollector {
     /// Whether the rows go to buffer-managed collections (`CreateCollection` with
     /// `BUFFER_MANAGED`). Results without columns stay on the heap.
     fn buffer_managed(&self) -> bool {
-        self.memory_type == QueryResultMemoryType::BufferManaged && !self.types.is_empty() && !self.is_streaming()
+        self.memory_type == QueryResultMemoryType::BufferManaged
+            && !self.types.is_empty()
+            && !self.is_streaming()
     }
 
     /// A new buffer-managed collection for the result's rows, ready for appending.
-    fn create_collection(&self, ctx: &ExecutionContext) -> Result<(ColumnDataCollection, ColumnDataAppendState)> {
-        let mut collection = ColumnDataCollection::new(ctx.env.buffer_manager.clone(), self.types.clone(), MemoryTag::ColumnData)?;
+    fn create_collection(
+        &self,
+        ctx: &ExecutionContext,
+    ) -> Result<(ColumnDataCollection, ColumnDataAppendState)> {
+        let mut collection = ColumnDataCollection::new(
+            ctx.env.buffer_manager.clone(),
+            self.types.clone(),
+            MemoryTag::ColumnData,
+        )?;
         let mut append = ColumnDataAppendState::default();
         collection.initialize_append(&mut append)?;
         Ok((collection, append))
@@ -285,7 +302,11 @@ impl CollectorLocal {
                     }
                     next
                 }
-                None => ColumnDataCollection::new(ctx.env.buffer_manager.clone(), collector.types.clone(), MemoryTag::ColumnData)?,
+                None => ColumnDataCollection::new(
+                    ctx.env.buffer_manager.clone(),
+                    collector.types.clone(),
+                    MemoryTag::ColumnData,
+                )?,
             };
             let mut append = ColumnDataAppendState::default();
             collection.initialize_append(&mut append)?;
@@ -443,7 +464,11 @@ impl Sink for PhysicalResultCollector {
                 }
                 global.collection = Some(match result {
                     Some(result) => result,
-                    None => ColumnDataCollection::new(ctx.env.buffer_manager.clone(), self.types.clone(), MemoryTag::ColumnData)?,
+                    None => ColumnDataCollection::new(
+                        ctx.env.buffer_manager.clone(),
+                        self.types.clone(),
+                        MemoryTag::ColumnData,
+                    )?,
                 });
             } else if global.collection.is_none() {
                 // `PhysicalMaterializedCollector::GetResult` of an empty result.

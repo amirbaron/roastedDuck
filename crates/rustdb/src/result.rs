@@ -212,7 +212,10 @@ impl<'a> Iterator for ResultChunks<'a> {
             }
             ResultRows::BufferManaged(collection) => {
                 let scan = self.scan.as_mut()?;
-                collection.scan(scan).transpose().map(|chunk| chunk.map(Cow::Owned))
+                collection
+                    .scan(scan)
+                    .transpose()
+                    .map(|chunk| chunk.map(Cow::Owned))
             }
         }
     }

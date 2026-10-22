@@ -566,7 +566,9 @@ impl ExecutorShared {
             return false;
         }
         // The result collector is always in the last pipeline.
-        if self.completed_pipelines.load(Ordering::Acquire) + 1 != self.total_pipelines.load(Ordering::Acquire) {
+        if self.completed_pipelines.load(Ordering::Acquire) + 1
+            != self.total_pipelines.load(Ordering::Acquire)
+        {
             return false;
         }
         blocked.tasks.values().any(|task| task.task_blocked_on_result())
@@ -1021,7 +1023,11 @@ impl ExecutorTask {
                     // `SetTaskForInterrupts`: a blocked sink reschedules this task.
                     let mut ctx = self.executor.context(self.thread_index);
                     ctx.interrupt_state = InterruptState::task(Arc::downgrade(&self.executor), self.task_id);
-                    *executor = Some(Box::new(PipelineExecutor::new(ctx, Arc::clone(pipeline), states)?));
+                    *executor = Some(Box::new(PipelineExecutor::new(
+                        ctx,
+                        Arc::clone(pipeline),
+                        states,
+                    )?));
                 }
                 let pipeline_executor = executor
                     .as_mut()

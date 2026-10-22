@@ -2301,7 +2301,11 @@ impl Connection {
     /// [`Connection::query`] with the results' rows kept as `memory_type` says
     /// (`ClientContext::Query` with `QueryParameters::memory_type`): a buffer-managed
     /// result counts against the memory limit and spills like other operator data.
-    pub fn query_with(&mut self, sql: &str, memory_type: QueryResultMemoryType) -> Result<MaterializedResult> {
+    pub fn query_with(
+        &mut self,
+        sql: &str,
+        memory_type: QueryResultMemoryType,
+    ) -> Result<MaterializedResult> {
         self.sync_global_settings();
         let statements = self.parse_statements(sql)?;
         let mut result = MaterializedResult::default();

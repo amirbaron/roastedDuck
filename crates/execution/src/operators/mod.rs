@@ -2,6 +2,7 @@
 
 mod alter;
 mod batch_insert;
+pub mod buffered_data;
 mod column_data_scan;
 mod copy_to_file;
 mod create_table;
@@ -29,7 +30,6 @@ mod perfect_hash_aggregate;
 mod pivot;
 mod projection;
 mod radix_sink;
-pub mod buffered_data;
 mod result_collector;
 mod sample;
 mod seq_scan;

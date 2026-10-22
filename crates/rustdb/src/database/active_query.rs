@@ -582,7 +582,9 @@ impl Connection {
                     self.update_progress();
                 }
                 Ok(match step {
-                    ExecutionStep::Finished | ExecutionStep::ResultReady => PendingExecutionResult::ResultReady,
+                    ExecutionStep::Finished | ExecutionStep::ResultReady => {
+                        PendingExecutionResult::ResultReady
+                    }
                     ExecutionStep::NotReady => PendingExecutionResult::ResultNotReady,
                     ExecutionStep::NoTasksAvailable => PendingExecutionResult::NoTasksAvailable,
                     ExecutionStep::Blocked => PendingExecutionResult::Blocked,

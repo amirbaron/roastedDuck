@@ -150,10 +150,14 @@ impl Connection {
         self.begin_query(&query, &prepared.data.unbound_statement)?;
         let started = self.in_query_scope(|connection| {
             connection.begin_query_logging(&query);
-            connection.start_prepared(&prepared.data, values, RunMode::Pending {
-                stream: allow_stream,
-                memory_type: QueryResultMemoryType::InMemory,
-            })
+            connection.start_prepared(
+                &prepared.data,
+                values,
+                RunMode::Pending {
+                    stream: allow_stream,
+                    memory_type: QueryResultMemoryType::InMemory,
+                },
+            )
         });
         self.activate(&query, prepared.statement_type(), started)
     }

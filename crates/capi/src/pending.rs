@@ -151,7 +151,9 @@ pub unsafe extern "C" fn duckdb_pending_execute_check_state(
     };
     match catch(|| wrapper.context.lock().check_pending(pending)) {
         // `CheckPulse` reports a blocked query as ready.
-        Ok(PendingExecutionResult::ResultReady | PendingExecutionResult::Blocked) => DUCKDB_PENDING_RESULT_READY,
+        Ok(PendingExecutionResult::ResultReady | PendingExecutionResult::Blocked) => {
+            DUCKDB_PENDING_RESULT_READY
+        }
         Ok(PendingExecutionResult::ResultNotReady) => DUCKDB_PENDING_RESULT_NOT_READY,
         Ok(PendingExecutionResult::NoTasksAvailable) => DUCKDB_PENDING_NO_TASKS_AVAILABLE,
         Ok(PendingExecutionResult::ExecutionFinished) => DUCKDB_PENDING_ERROR,
