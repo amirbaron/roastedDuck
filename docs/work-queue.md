@@ -129,7 +129,9 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    `column_index.json`, and the hand-written parts (`LogicalGet`, functions and their
    bind data, `COPY TO`, lambdas) follow DuckDB's. Functions carry their catalog entry,
    original arguments and a `serialize` callback; binds that replace the function
-   object clear the entry, like DuckDB's. What still differs:
+   object clear the entry, like DuckDB's. Parquet scans and writes, STRUCT `date_part`
+   (ICU's too), binning and lambdas write their bind data; CSV and JSON scans and
+   exported aggregate states fail as DuckDB's do. What still differs:
    - `EXPORT DATABASE` is not serialized: rustdb's `LogicalExport` keeps what its
      operator needs instead of DuckDB's `CopyInfo` and `BoundExportData`, and unions the
      table copies two at a time.
@@ -139,8 +141,8 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    - Equal aggregates are shared when their functions have the same name; DuckDB
      compares the functions' callbacks, so `median(x)` and `quantile_cont(x, 0.5)` are
      one aggregate there.
-   - Bind data not written yet: `read_csv`, `read_parquet` and `read_json` scans, ICU
-     functions, `date_part` with a struct, binning, and the Parquet `COPY` writer.
+   - A scan of encrypted Parquet files cannot be serialized: rustdb resolves the footer
+     key's name to the key while binding.
    - Not comparable: `SELECT $1` and the optimized plans DuckDB fails to bind ("Failed
      to bind column reference ... inequal num bindings/types", e.g. TPC-H 2, 5, 7, 8, 9,
      12, 21 and `SUMMARIZE`) are DuckDB internal errors with stack addresses, and
