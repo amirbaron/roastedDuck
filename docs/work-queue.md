@@ -113,14 +113,15 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    table's lookups and resizes, and the hash join probe. Struct projection pushdown is
    ported (13).
 8. **Logical plan serialization** (`json_serialize_plan`).
-9. **Physical operator logging** (`physical_operator_logging`): the
-   `PhysicalOperator` log type is registered, but nothing writes it. DuckDB logs from
-   the hash join (`Finalize` with `external`, `Repartition`, `GetData` with
-   `total_probe_matches`), `JoinHashTable::Build`, the Parquet writer
-   (`FlushRowGroup`) and reader (`ReadRowGroup` / `SkipRowGroup`), each with the
-   operator's type and `ParamsToString()`. The test also needs
-   `debug_force_external` to force the external hash join (16 partition builds with 4
-   radix bits).
+9. **Physical operator logging, the rest.** Every `PhysicalOperatorLogType` site is
+   ported (the hash join's `Finalize`, `Repartition` and `GetData`, `JoinHashTable`'s
+   `Build`, the Parquet writer's `FlushRowGroup`, the reader's `ReadRowGroup` /
+   `SkipRowGroup`), with the operator's type and `ParamsToString()`, and
+   `debug_force_external` reaches the hash join, the sorts, the window merge sort tree
+   and the temporary memory manager. Two `size`s differ: `Build` counts the build
+   collection's chunk metadata as rustdb holds it (16 KiB where DuckDB's arena holds
+   4 KiB), and `FlushRowGroup` estimates DuckDB's buffer (`ColumnDataCollection::
+   SizeInBytes`: exact for fixed-size columns, strings and nested types approximate).
 10. **TPC-DS** (`test/sql/tpcds`, the `tpcds` extension).
 11. **ICU collation of `as`, `kok` and `mr`** (`test_icu_extensive`). DuckDB embeds ICU
     66's data; rustdb matches it for 127 of the 130 collations (tailorings ICU4X's
