@@ -42,8 +42,6 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      ResolveStacktraceSymbols`): its own C++ frames, which rustdb cannot print. A
      section of rustdb's frames needs a backtrace captured in `Error::internal` and
      formatted like DuckDB's; its bytes would still differ.
-   - `pragma database_size` reports a `memory_usage` of 0 bytes where DuckDB counts the
-     buffer of the shell's last result (256 KiB): results are not buffer-managed (4).
    - A streaming result: DuckDB's `PhysicalBufferedCollector` blocks its sink once
      `streaming_buffer_size` (1 MB) is buffered, and each fetch runs the query until the
      buffer is full again, so an error in a row-wise result (csv, json, ...) more than
@@ -73,11 +71,14 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
 ## Storage
 
 4. **Bulk-load memory, the rest.** Optimistic writes and concurrent checkpoints are
-   ported. Three pieces remain:
-   - Query results are a `Vec<DataChunk>`, not a buffer-managed
-     `ColumnDataCollection`, so `FROM range(...)` over a large table does not run out
-     of memory under a small `memory_limit` the way DuckDB does
-     (`buffer_managed_query_result`).
+   ported, and materialized query results are buffer-managed like DuckDB's
+   (`QueryResultMemoryType::BUFFER_MANAGED`, which the shell and the sqllogictest runner
+   ask for; C API results stay on the heap, as DuckDB's `Connection::Query` keeps them):
+   the result collectors append to a `ColumnDataCollection` (`crates/row/src/column_data`,
+   DuckDB's segments, allocator and copy functions, nested types included, block for
+   block), which spills or runs out of memory under a small `memory_limit` as DuckDB's does
+   (`buffer_managed_query_result`) and which `pragma database_size` counts for the
+   shell's last result. Two pieces remain:
    - `PhysicalBatchInsert` has no `BatchMemoryManager`: batches are not throttled
      against the memory limit.
    - `auto_checkpoint_skip_wal_threshold` is accepted, but a commit that triggers a

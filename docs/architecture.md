@@ -16,7 +16,7 @@ Dependencies point downwards only.
 | `crates/pg-parser` | `rustdb-pg-parser` | `third_party/libpg_query` |
 | `crates/zstd` | `rustdb-zstd` | `third_party/zstd` (zstd 1.5.6: the encoder, frame for frame, and the decoder) |
 | `crates/buffer` | `rustdb-buffer` | `storage/buffer`, `StandardBufferManager`, temporary files, `TemporaryMemoryManager`, `ArenaAllocator` |
-| `crates/row` | `rustdb-row` | `common/types/row` (TupleDataCollection, partitioning, row matcher, row aggregates), `common/sort` |
+| `crates/row` | `rustdb-row` | `common/types/row` (TupleDataCollection, partitioning, row matcher, row aggregates), `common/types/column` (ColumnDataCollection), `common/sort` |
 | `crates/function` | `rustdb-function` | `function/*` definitions (ScalarFunction, cast functions, ...) |
 | `crates/functions` | `rustdb-functions` | builtin function library (`function/scalar`, `core_functions`, ...) |
 | `crates/catalog` | `rustdb-catalog` | `catalog/*`, catalog part of `transaction/*` |
