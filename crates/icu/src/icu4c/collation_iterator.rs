@@ -124,6 +124,14 @@ impl CollationText for Utf16Text<'_> {
 /// The positions `start`, `pos` and `limit` index the raw text, or the normalized segment
 /// when `in_normalized` (C++ points them into either buffer); `segment_start` and
 /// `segment_limit` always index the raw text.
+///
+/// ICU's iterator never ends on some texts: moving back over code points out of a
+/// normalized segment counts the raw text's code points, which differ from the normalized
+/// ones, so a discontiguous contraction replays forever (`as`, `bn`, `hi`, ... on
+/// U+0627 U+0357 U+101FD U+0344; DuckDB hangs, or crashes once it runs out of memory).
+/// The iterator counts its checked steps and gives up past a budget quadratic in the
+/// length of the text ([`FcdUtf16Text::exhausted`]); the caller then collates the NFD of
+/// the text, which is what the FCD check stands for.
 #[derive(Debug)]
 pub struct FcdUtf16Text<'s> {
     raw: &'s [u16],
@@ -137,6 +145,8 @@ pub struct FcdUtf16Text<'s> {
     nfc_impl: &'static Normalizer2Impl,
     /// Direction of the incremental FCD check.
     check_dir: i8,
+    /// The steps left before the iterator gives up.
+    budget: u64,
 }
 
 impl<'s> FcdUtf16Text<'s> {
@@ -153,7 +163,23 @@ impl<'s> FcdUtf16Text<'s> {
             segment_limit: 0,
             nfc_impl,
             check_dir: 1,
+            budget: 1_000_000 + 32 * (s.len() as u64 + 1).pow(2),
         }
+    }
+
+    /// Whether the iterator gave up on the text (see the type's documentation).
+    pub fn exhausted(&self) -> bool {
+        self.budget == 0
+    }
+
+    /// Counts a step of the checked paths; `false` once the budget is spent.
+    #[inline]
+    fn step(&mut self) -> bool {
+        if self.budget == 0 {
+            return false;
+        }
+        self.budget -= 1;
+        true
     }
 
     /// The code unit at `i` of the current text.
@@ -190,6 +216,9 @@ impl<'s> FcdUtf16Text<'s> {
     /// The general case of [`Self::next_unit`].
     #[inline(never)]
     fn next_unit_checked(&mut self) -> Option<u16> {
+        if !self.step() {
+            return None;
+        }
         loop {
             if self.check_dir > 0 {
                 if self.pos == self.limit {
@@ -407,6 +436,9 @@ impl CollationText for FcdUtf16Text<'_> {
     }
 
     fn previous_code_point(&mut self) -> i32 {
+        if !self.step() {
+            return SENTINEL;
+        }
         let c = loop {
             if self.check_dir < 0 {
                 if self.pos == self.start {
@@ -625,6 +657,11 @@ impl<'d, T: CollationText> CollationIterator<'d, T> {
     /// The buffer of the CEs, for the next iterator.
     pub fn into_ce_buffer(self) -> Vec<i64> {
         self.ce_buffer
+    }
+
+    /// The text.
+    pub fn text(&self) -> &T {
+        &self.text
     }
 
     /// `clearCEsIfNoneRemaining()`.

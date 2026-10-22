@@ -319,8 +319,14 @@ impl RuleBasedCollator {
         let numeric = settings.is_numeric();
         let nfc_impl = Normalizer2Impl::get();
         let ces = std::mem::take(&mut buffers.ces);
+        let write = |text, ces, sink: &mut Vec<u8>, levels: &mut SortKeyLevels| {
+            let mut iter = CollationIterator::new(data, numeric, text, ces);
+            write_sort_key_up_to_quaternary(&mut iter, &data.compressible_bytes, settings, sink, levels);
+            iter
+        };
         buffers.ces = match nfc_impl {
             Some(nfc_impl) if !settings.dont_check_fcd() => {
+                let key_start = sink.len();
                 let mut iter = CollationIterator::new(data, numeric, FcdUtf16Text::new(s, nfc_impl), ces);
                 write_sort_key_up_to_quaternary(
                     &mut iter,
@@ -329,19 +335,25 @@ impl RuleBasedCollator {
                     sink,
                     &mut buffers.levels,
                 );
-                iter.into_ce_buffer()
+                if iter.text().exhausted() {
+                    // ICU never ends on this text (see `FcdUtf16Text`): collate its NFD
+                    sink.truncate(key_start);
+                    nfc_impl.decompose(s, &mut buffers.nfd);
+                    let nfd = std::mem::take(&mut buffers.nfd);
+                    let ces = write(
+                        Utf16Text::new(&nfd),
+                        iter.into_ce_buffer(),
+                        sink,
+                        &mut buffers.levels,
+                    )
+                    .into_ce_buffer();
+                    buffers.nfd = nfd;
+                    ces
+                } else {
+                    iter.into_ce_buffer()
+                }
             }
-            _ => {
-                let mut iter = CollationIterator::new(data, numeric, Utf16Text::new(s), ces);
-                write_sort_key_up_to_quaternary(
-                    &mut iter,
-                    &data.compressible_bytes,
-                    settings,
-                    sink,
-                    &mut buffers.levels,
-                );
-                iter.into_ce_buffer()
-            }
+            _ => write(Utf16Text::new(s), ces, sink, &mut buffers.levels).into_ce_buffer(),
         };
         if settings.get_strength() == STRENGTH_IDENTICAL
             && let Some(nfc_impl) = nfc_impl
@@ -389,5 +401,15 @@ mod tests {
         assert_eq!(key(&phonebook, "Äpfel"), "2A32483432400145480801DCC608");
         let numeric = RuleBasedCollator::for_locale("en@colNumeric=yes;colStrength=identical", "").unwrap();
         assert_eq!(key(&numeric, "a10"), "2A0F0C010601060101926261");
+    }
+
+    #[test]
+    fn fcd_iterator_gives_up_on_icu_hang() {
+        // ICU never ends here; the key is the one of the NFD (U+101FD sorts before U+0357)
+        let assamese = RuleBasedCollator::for_locale("as", "").unwrap();
+        assert_eq!(
+            key(&assamese, "\u{627}\u{357}\u{101fd}\u{344}"),
+            key(&assamese, "\u{627}\u{101fd}\u{357}\u{308}\u{301}")
+        );
     }
 }
