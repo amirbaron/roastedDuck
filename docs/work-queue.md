@@ -130,8 +130,6 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    bind data, `COPY TO`, lambdas) follow DuckDB's. Functions carry their catalog entry,
    original arguments and a `serialize` callback; binds that replace the function
    object clear the entry, like DuckDB's. What still differs:
-   - `CREATE SCHEMA` shows the default catalog where DuckDB leaves it empty (the
-     read-only check reads the catalog from the plan).
    - `EXPORT DATABASE` is not serialized: rustdb's `LogicalExport` keeps what its
      operator needs instead of DuckDB's `CopyInfo` and `BoundExportData`, and unions the
      table copies two at a time.
