@@ -165,6 +165,15 @@ switch `force_mbedtls_unsafe`; normal C++ readers work without it. Workspace Cli
 with warnings denied, 30 C API files and 392 shell tests pass. A new full sweep is
 running, with its unique path in `index-reload-20261022/full-run-path.txt`. Do not
 rebuild the runner or start another workload until it finishes.
+The new full run has exposed two concurrent checkpoint regressions:
+`concurrent_checkpoint_insert.test` and `concurrent_checkpoint_wal_index.test_slow`
+read newly serialized index locations before partial blocks are flushed. The earlier
+profiling regression passes. Source fix is written but not built: index serialization
+now takes a writer with an explicit flush operation, invoked before returning while
+the bound-index guard or unbound-storage mutex is held. Deferred-write and failed-flush
+retry tests are added. The currently running sweep still uses `592f7ad` plus the cache
+flag, not this unbuilt fix. Finish/preserve its results before building or testing again.
+
 Native disk restore covers plain and stored constraint indexes so far; expression/WAL,
 pre-v0.10 and fallback paths remain open under work-queue 16. The cache policy is still
 uncommitted and unaccepted because its memory/performance gates remain unresolved.
