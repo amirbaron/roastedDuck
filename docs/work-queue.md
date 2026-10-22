@@ -133,13 +133,6 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
     not ICU 66's bytes (`icu_collate_de('Äpfel')`: `2B4935…` vs `2A4834…`): orders
     agree, the strings differ. Matching them needs ICU4C's sort key format
     (`CollationKeys::writeSortKeyUpToQuaternary`) over the same collation elements.
-12. **Out-of-core IEJoin, AsOf join and window** (`out_of_core_ie_join`,
-    `out_of_core_asof_join`, `out_of_core_window`): over TPC-H SF1 `lineitem` under a
-    300 MiB limit at 1, 2 and 8 threads rustdb runs out of memory ("failed to pin
-    block") where DuckDB spills. Their sinks keep the sorted input pinned; DuckDB's
-    sort into buffer-managed, spillable runs (`PhysicalRangeJoin` global sort state,
-    `WindowHashGroup`), and the IEJoin/AsOf sinks finalize in two events
-    (`AddFinishEvent`, see `docs/perf-backlog.md`).
 13. **Struct and VARIANT extract pushdown, the rest.** The pushdown is ported one to one:
     `RemoveUnusedColumns` registers `struct_extract` / `variant_extract` chains (under a
     cast) on scanned columns, scans read only the fields used (`ColumnIndex` children;

@@ -17,8 +17,10 @@
 //! reservation is exceeded, runs are finalized early and unpinned, so they spill.
 
 pub(crate) mod algorithm;
+mod block_iterator;
 pub mod encode;
-pub(crate) mod key;
+mod group_data;
+pub mod key;
 mod merger;
 mod pdqsort;
 mod run;
@@ -33,10 +35,13 @@ use std::sync::Arc;
 use rustdb_buffer::BufferManager;
 use rustdb_types::LogicalType;
 
+pub use block_iterator::ExternalBlockIteratorState;
 pub use encode::{
-    NullOrder, OrderModifiers, OrderType, SortKeyBuffer, create_sort_keys, decode_sort_key, sort_key_type_for,
+    NullOrder, OrderModifiers, OrderType, SortKeyBuffer, create_sort_keys, decode_sort_key,
+    decode_sort_key_column, sort_key_type_for,
 };
-pub use key::SortKeyType;
+pub use group_data::{GroupData, GroupDataAppend, GroupDataScanner};
+pub use key::{SortKey, SortKeyType};
 pub use merger::{DEFAULT_ROW_GROUP_SIZE, MergerLocalState, SortedRunMerger};
 pub use run::SortedRun;
 pub use sorter::{

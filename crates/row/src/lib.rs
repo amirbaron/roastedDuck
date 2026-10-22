@@ -23,6 +23,7 @@
 
 mod aggregate;
 mod collection;
+mod column_data;
 mod compare;
 mod format;
 mod gather;
@@ -43,6 +44,7 @@ pub use aggregate::{
     supports_update_selection, update_state_selection, update_states,
 };
 pub use collection::{ChunkIterator, TupleDataCollection};
+pub use column_data::{ColumnDataAppendState, ColumnDataCollection, ColumnDataScanState};
 pub use compare::{compare_values, values_distinct};
 pub use format::{ChunkFormat, VectorFormat};
 pub use gather::HeapKeepAlive;

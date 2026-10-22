@@ -97,11 +97,24 @@ pub(crate) unsafe fn set_all_valid(row: *mut u8, bytes: usize) {
     unsafe {
         // Rows rarely have more than 64 columns: one store instead of a `memset` call
         // per row (DuckDB's `InitializeValidityMask`).
+        // Other widths up to 16 bytes take two overlapping stores.
         match bytes {
             1 => row.write(0xFF),
             2 => row.cast::<u16>().write_unaligned(u16::MAX),
+            3 => {
+                row.cast::<u16>().write_unaligned(u16::MAX);
+                row.add(1).cast::<u16>().write_unaligned(u16::MAX);
+            }
             4 => row.cast::<u32>().write_unaligned(u32::MAX),
+            5..=7 => {
+                row.cast::<u32>().write_unaligned(u32::MAX);
+                row.add(bytes - 4).cast::<u32>().write_unaligned(u32::MAX);
+            }
             8 => row.cast::<u64>().write_unaligned(u64::MAX),
+            9..=16 => {
+                row.cast::<u64>().write_unaligned(u64::MAX);
+                row.add(bytes - 8).cast::<u64>().write_unaligned(u64::MAX);
+            }
             _ => std::ptr::write_bytes(row, 0xFF, bytes),
         }
     }

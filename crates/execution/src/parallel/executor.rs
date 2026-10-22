@@ -464,7 +464,13 @@ impl ExecutorShared {
                 initialize: Event::new(self, EventKind::PipelineInitialize(Arc::clone(base_pipeline))),
                 pipeline: Event::new(self, EventKind::Pipeline(Arc::clone(base_pipeline))),
                 prepare_finish: Event::new(self, EventKind::PipelinePrepareFinish),
-                finish: Event::new(self, EventKind::PipelineFinish(Arc::clone(base_pipeline))),
+                finish: Event::new(
+                    self,
+                    EventKind::PipelineFinish {
+                        pipeline: Arc::clone(base_pipeline),
+                        finalizes_again: meta_pipeline.finalizes_again_after(meta_pipeline.base()),
+                    },
+                ),
                 complete: Event::new(
                     self,
                     EventKind::PipelineComplete {
@@ -484,18 +490,51 @@ impl ExecutorShared {
                 Arc::clone(&base.complete),
             ]);
             for &id in &meta_pipeline.pipelines[1..] {
-                // Union branches and outer join scans feed the same sink: they run between
-                // its initialize and prepare-finish events.
-                let pipeline_event = Event::new(self, EventKind::Pipeline(Arc::clone(&graph.pipelines[id])));
-                pipeline_event.add_dependency(&base.initialize);
-                base.prepare_finish.add_dependency(&pipeline_event);
-                event_map.insert(
-                    id,
+                let pipeline = &graph.pipelines[id];
+                let pipeline_event = Event::new(self, EventKind::Pipeline(Arc::clone(pipeline)));
+                let stack = if let Some(group) = meta_pipeline.finish_group(id) {
+                    // Part of a finish group: runs after the base's finish, finishes with the
+                    // group's pipeline.
+                    let group_stack = event_map.get(&group).cloned().unwrap_or_else(|| base.clone());
+                    pipeline_event.add_dependency(&base.finish);
+                    group_stack.prepare_finish.add_dependency(&pipeline_event);
+                    PipelineEventStack {
+                        pipeline: Arc::clone(&pipeline_event),
+                        ..group_stack
+                    }
+                } else if meta_pipeline.has_finish_event(id) {
+                    // Its own finish event, despite going into the same sink: the sink is
+                    // finalized after the base pipeline and again after this one.
+                    let prepare_finish = Event::new(self, EventKind::PipelinePrepareFinish);
+                    let finish = Event::new(
+                        self,
+                        EventKind::PipelineFinish {
+                            pipeline: Arc::clone(pipeline),
+                            finalizes_again: meta_pipeline.finalizes_again_after(id),
+                        },
+                    );
+                    pipeline_event.add_dependency(&base.finish);
+                    prepare_finish.add_dependency(&pipeline_event);
+                    finish.add_dependency(&prepare_finish);
+                    base.complete.add_dependency(&finish);
+                    events.extend([Arc::clone(&prepare_finish), Arc::clone(&finish)]);
+                    PipelineEventStack {
+                        pipeline: Arc::clone(&pipeline_event),
+                        prepare_finish,
+                        finish,
+                        ..base.clone()
+                    }
+                } else {
+                    // Union branches and outer join scans feed the same sink: they run
+                    // between its initialize and prepare-finish events.
+                    pipeline_event.add_dependency(&base.initialize);
+                    base.prepare_finish.add_dependency(&pipeline_event);
                     PipelineEventStack {
                         pipeline: Arc::clone(&pipeline_event),
                         ..base.clone()
-                    },
-                );
+                    }
+                };
+                event_map.insert(id, stack);
                 events.push(pipeline_event);
             }
             event_map.insert(meta_pipeline.base(), base);
@@ -662,7 +701,14 @@ impl ExecutorShared {
 
     /// Finalizes the pipeline's sink (`PipelineFinishTask`) and schedules its first
     /// parallel finalize stage, if it has one.
-    fn finalize_sink(self: &Arc<Self>, pipeline: &Arc<Pipeline>, event: &Arc<Event>) -> Result<()> {
+    /// With `finalizes_again`, more input follows (`AddFinishEvent`): the state goes back to
+    /// receiving input once finalized.
+    fn finalize_sink(
+        self: &Arc<Self>,
+        pipeline: &Arc<Pipeline>,
+        event: &Arc<Event>,
+        finalizes_again: bool,
+    ) -> Result<()> {
         let key = operator_key(&pipeline.sink);
         let slot = lock(&self.states).sinks.insert(key, SinkSlot::Finalizing);
         let Some(SinkSlot::Building(mut state)) = slot else {
@@ -677,9 +723,12 @@ impl ExecutorShared {
             .ok_or_else(|| Error::internal("sink state still in use when finalizing"))?;
         let result = sink.finalize(&ctx, global)?;
         let tasks = sink.finalize_tasks(&ctx, state.as_ref())?;
-        lock(&self.states)
-            .sinks
-            .insert(key, SinkSlot::Finalized { state, result });
+        let slot = if finalizes_again {
+            SinkSlot::Building(state)
+        } else {
+            SinkSlot::Finalized { state, result }
+        };
+        lock(&self.states).sinks.insert(key, slot);
         if tasks > 0 {
             let stage = Event::new(
                 self,
@@ -693,12 +742,15 @@ impl ExecutorShared {
         Ok(())
     }
 
-    /// The finalized state of the pipeline's sink.
+    /// The finalized state of the pipeline's sink (a sink finalized before more input,
+    /// `AddFinishEvent`, is receiving input again).
     fn finalized_sink_state(&self, pipeline: &Pipeline) -> Result<SharedState> {
-        lock(&self.states)
-            .finalized(&pipeline.sink)
-            .map(|(state, _)| Arc::clone(state))
-            .ok_or_else(|| Error::internal("sink finalize stage before the sink was finalized"))
+        match lock(&self.states).sinks.get(&operator_key(&pipeline.sink)) {
+            Some(SinkSlot::Finalized { state, .. } | SinkSlot::Building(state)) => Ok(Arc::clone(state)),
+            _ => Err(Error::internal(
+                "sink finalize stage before the sink was finalized",
+            )),
+        }
     }
 
     /// The sink asks for its next finalize stage once a stage finished (the
@@ -786,7 +838,10 @@ pub(crate) enum TaskKind {
         executor: Option<Box<PipelineExecutor>>,
     },
     /// `PipelineFinishTask`.
-    PipelineFinish(Arc<Pipeline>),
+    PipelineFinish {
+        pipeline: Arc<Pipeline>,
+        finalizes_again: bool,
+    },
     /// One task of a sink's parallel finalize stage.
     SinkFinalizeStage { pipeline: Arc<Pipeline>, task: usize },
 }
@@ -838,9 +893,14 @@ impl ExecutorTask {
                 // finalize the sink.
                 *executor = None;
             }
-            TaskKind::PipelineFinish(pipeline) => {
+            TaskKind::PipelineFinish {
+                pipeline,
+                finalizes_again,
+            } => {
                 let pipeline = Arc::clone(pipeline);
-                self.executor.finalize_sink(&pipeline, &self.event)?;
+                let finalizes_again = *finalizes_again;
+                self.executor
+                    .finalize_sink(&pipeline, &self.event, finalizes_again)?;
             }
             TaskKind::SinkFinalizeStage { pipeline, task } => {
                 self.executor

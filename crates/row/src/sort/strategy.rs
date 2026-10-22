@@ -1,13 +1,19 @@
-//! How partitioned operators (window functions) get their input grouped and sorted
-//! (DuckDB's `SortStrategy`: `HashedSort`, `FullSort`, `NaturalSort`).
+//! How partitioned operators (window functions, as-of joins) get their input grouped and
+//! sorted (DuckDB's `SortStrategy`: `HashedSort`, `FullSort`, `NaturalSort`).
 //!
 //! - [`HashedSort`] (`PARTITION BY ...`): rows are radix-partitioned on the hash of the
 //!   partition columns into hash groups; each group is sorted by the partition columns
 //!   (ASC NULLS FIRST) followed by the ORDER BY columns.
-//! - [`FullSort`] (`ORDER BY` only): one group, sorted.
+//! - [`FullSort`] (`ORDER BY` only): one group, sorted while sinking.
 //! - [`NaturalSort`] (neither): one group in input order.
 //!
-//! A hash group is handed out either as a sorted run or as a materialized collection.
+//! After the sink phase, the source of an operator works through the hash groups in
+//! stages that several threads share: [`SortStrategy::sort_column_data`] sorts a hash
+//! group (callers share the scan of its partition; the last one finalizes the sort),
+//! [`SortStrategy::materialize_column_data`] / [`SortStrategy::materialize_sorted_run`]
+//! merge it (each caller merges the partitions it claims), and
+//! [`SortStrategy::get_column_data`] / [`SortStrategy::get_sorted_run`] hand out the result
+//! as buffer-managed [`GroupData`] or as one sorted run.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -17,6 +23,7 @@ use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
 use super::encode::{NullOrder, OrderModifiers, OrderType};
+use super::group_data::{GroupData, GroupDataAppend};
 use super::merger::DEFAULT_ROW_GROUP_SIZE;
 use super::run::SortedRun;
 use super::sorter::{
@@ -27,7 +34,7 @@ use crate::hash::hash_columns;
 use crate::layout::{TupleDataLayout, ValidityType};
 use crate::partitioned::{PartitionedAppendState, PartitionedTupleData};
 use crate::radix::RadixPartitioning;
-use crate::state::{PinProperties, ScanState};
+use crate::state::{ParallelScanState, PinProperties};
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
@@ -61,7 +68,7 @@ pub enum StrategyGlobalState {
 pub enum StrategyLocalState {
     Hashed(Box<HashedLocalState>),
     Full(Box<SortLocalSinkState>),
-    Natural(Option<TupleDataCollection>),
+    Natural(Option<Box<(GroupData, GroupDataAppend)>>),
 }
 
 /// Appends a constant NULL BOOLEAN column, the forced payload when every input column is
@@ -81,6 +88,74 @@ fn needs_forced_payload(require_payload: bool, sort_columns: &[usize], column_co
     distinct.sort_unstable();
     distinct.dedup();
     distinct.len() >= column_count
+}
+
+/// The merge state of one sorted group while its source stages run: the sort's merger,
+/// shared by the materializing threads, and the collections they produce.
+#[derive(Debug, Default)]
+struct GroupSource {
+    source: Option<Arc<SortSource>>,
+    /// Materialized column data per merge partition (`BatchedDataCollection`).
+    column_data: Vec<(usize, GroupData)>,
+}
+
+impl GroupSource {
+    fn new(source: Option<SortSource>) -> Self {
+        Self {
+            source: source.map(Arc::new),
+            column_data: Vec::new(),
+        }
+    }
+}
+
+/// Merges `source` into column data, one collection per merge partition this thread
+/// claims (`Sort::MaterializeColumnData`).
+fn materialize_column_data(
+    source: &SortSource,
+    buffer_manager: &BufferManager,
+    types: &[LogicalType],
+) -> Result<Vec<(usize, GroupData)>> {
+    let mut result: Vec<(usize, GroupData)> = Vec::new();
+    let mut local = source.local_state();
+    let mut current: Option<(usize, GroupData, GroupDataAppend)> = None;
+    loop {
+        let mut chunk = DataChunk::default();
+        if !source.get_data(&mut chunk, &mut local)? {
+            break;
+        }
+        let partition = local.partition_index().unwrap_or(0);
+        if current.as_ref().is_none_or(|(index, ..)| *index != partition) {
+            if let Some((index, data, mut append)) = current.take() {
+                data.finalize_append(&mut append);
+                result.push((index, data));
+            }
+            let mut data = GroupData::new(buffer_manager.clone(), types.to_vec(), MemoryTag::ColumnData)?;
+            let append = data.initialize_append();
+            current = Some((partition, data, append));
+        }
+        if let Some((_, data, append)) = &mut current {
+            data.append(append, &chunk)?;
+        }
+    }
+    if let Some((index, data, mut append)) = current.take() {
+        data.finalize_append(&mut append);
+        result.push((index, data));
+    }
+    Ok(result)
+}
+
+/// Combines materialized partitions into one collection in partition order
+/// (`BatchedDataCollection::FetchCollection`).
+fn combine_column_data(mut column_data: Vec<(usize, GroupData)>) -> Result<Option<GroupData>> {
+    column_data.sort_by_key(|(index, _)| *index);
+    let mut partitions = column_data.into_iter().map(|(_, rows)| rows);
+    let Some(mut result) = partitions.next() else {
+        return Ok(None);
+    };
+    for rows in partitions {
+        result.combine(rows)?;
+    }
+    Ok(Some(result))
 }
 
 impl SortStrategy {
@@ -226,88 +301,136 @@ impl SortStrategy {
             StrategyGlobalState::Natural(global) => {
                 let rows = lock(&global.rows);
                 vec![ChunkRow {
-                    chunks: rows.as_ref().map_or(0, TupleDataCollection::chunk_count),
-                    count: rows.as_ref().map_or(0, TupleDataCollection::count),
+                    chunks: rows.as_ref().map_or(0, GroupData::chunk_count),
+                    count: rows.as_ref().map_or(0, GroupData::count),
                 }]
             }
         }
     }
 
-    /// Sorts hash group `group` (hashed strategy only; `SortColumnData`). Several threads
-    /// may call this for the same group; the last one to finish finalizes it.
-    pub fn sort_hash_group(&self, global: &StrategyGlobalState, group: usize) -> Result<()> {
+    /// Sorts hash group `group` (`SortColumnData`; only hashed sorts have work here).
+    /// Several threads may call this for the same group: they share the scan of the
+    /// group's partition, and the last one to finish finalizes the group's sort.
+    pub fn sort_column_data(&self, global: &StrategyGlobalState, group: usize) -> Result<()> {
         match (self, global) {
             (Self::Hashed(hashed), StrategyGlobalState::Hashed(global)) => hashed.sort_group(global, group),
             _ => Ok(()),
         }
     }
 
-    /// Hash group `group` as one sorted run (`GetSortedRun`). Natural sorts have no runs.
-    pub fn sorted_run(&self, global: &StrategyGlobalState, group: usize) -> Result<Option<SortedRun>> {
-        let source = match global {
-            StrategyGlobalState::Hashed(global) => global.group_source(group),
-            StrategyGlobalState::Full(global) => lock(&global.source).take(),
+    /// The sorted group's merge state (hashed and full sorts).
+    fn group_source(global: &StrategyGlobalState, group: usize) -> Result<&Mutex<GroupSource>> {
+        match global {
+            StrategyGlobalState::Hashed(global) => global
+                .sources
+                .get(group)
+                .ok_or_else(|| Error::internal("hash group out of range")),
+            StrategyGlobalState::Full(global) => Ok(&global.source),
             StrategyGlobalState::Natural(_) => {
-                return Err(Error::internal("NaturalSort does not implement sorted runs."));
+                Err(Error::internal("NaturalSort does not implement sorted runs."))
             }
-        };
-        let Some(source) = source else {
-            return Ok(None);
-        };
-        let mut local = source.local_state();
-        source.materialize(&mut local)?;
-        source.take_sorted_run()
-    }
-
-    /// Hash group `group` as columnar chunks in order (`MaterializeColumnData` +
-    /// `GetColumnData`). Hashed groups must be sorted first ([`Self::sort_hash_group`]).
-    /// The columns are the input columns, as passed to the strategy.
-    pub fn group_chunks(&self, global: &StrategyGlobalState, group: usize) -> Result<Vec<DataChunk>> {
-        let source = match global {
-            StrategyGlobalState::Hashed(global) => global.group_source(group),
-            StrategyGlobalState::Full(global) => lock(&global.source).take(),
-            StrategyGlobalState::Natural(global) => {
-                return lock(&global.rows)
-                    .take()
-                    .map_or_else(|| Ok(Vec::new()), |rows| rows.to_chunks());
-            }
-        };
-        source.map_or_else(|| Ok(Vec::new()), |source| source.collect())
-    }
-
-    /// Hash group `group` materialized in order (`GetColumnData`).
-    pub fn group_rows(
-        &self,
-        global: &StrategyGlobalState,
-        group: usize,
-    ) -> Result<Option<TupleDataCollection>> {
-        let source = match global {
-            StrategyGlobalState::Hashed(global) => global.group_source(group),
-            StrategyGlobalState::Full(global) => lock(&global.source).take(),
-            StrategyGlobalState::Natural(global) => return Ok(lock(&global.rows).take()),
-        };
-        let Some(source) = source else {
-            return Ok(None);
-        };
-        let buffer_manager = match self {
-            Self::Hashed(hashed) => hashed.sort.layouts().buffer_manager.clone(),
-            Self::Full(full) => full.sort.layouts().buffer_manager.clone(),
-            Self::Natural(natural) => natural.buffer_manager.clone(),
-        };
-        let types = source_types(self);
-        let layout = Arc::new(TupleDataLayout::new(types, ValidityType::CanHaveNull)?);
-        let mut rows = TupleDataCollection::new(buffer_manager, layout, MemoryTag::Window)?;
-        let mut append = rows.initialize_append(PinProperties::UnpinAfterDone);
-        let mut local = source.local_state();
-        loop {
-            let mut chunk = DataChunk::default();
-            if !source.get_data(&mut chunk, &mut local)? {
-                break;
-            }
-            rows.append(&mut append, &chunk)?;
         }
-        rows.finalize_pin_state(&mut append.pin_state);
-        Ok(Some(rows))
+    }
+
+    /// The group's partition is no longer needed once it is sorted: release it
+    /// (`MaterializeHashGroupData`).
+    fn release_partition(global: &StrategyGlobalState, group: usize) {
+        if let StrategyGlobalState::Hashed(global) = global
+            && let Some(Some(state)) = lock(&global.groups).get_mut(group)
+        {
+            state.partition = None;
+            state.scan = None;
+        }
+    }
+
+    /// Merges the partitions of group `group` this thread can claim into sorted runs
+    /// (`MaterializeSortedRun`); collect them with [`Self::get_sorted_run`].
+    pub fn materialize_sorted_run(&self, global: &StrategyGlobalState, group: usize) -> Result<()> {
+        Self::release_partition(global, group);
+        let source = lock(Self::group_source(global, group)?).source.clone();
+        if let Some(source) = source {
+            let mut local = source.local_state();
+            source.materialize(&mut local)?;
+        }
+        Ok(())
+    }
+
+    /// Group `group` as one sorted run, once every materializing thread is done
+    /// (`GetSortedRun`); an empty run if the group has no rows. Natural sorts have no
+    /// runs.
+    pub fn get_sorted_run(&self, global: &StrategyGlobalState, group: usize) -> Result<Option<SortedRun>> {
+        let source = lock(Self::group_source(global, group)?).source.take();
+        let run = match source {
+            Some(source) => source.take_sorted_run()?,
+            None => None,
+        };
+        match run {
+            Some(run) => Ok(Some(run)),
+            None => Ok(Some(self.sort()?.empty_run()?)),
+        }
+    }
+
+    /// Group `group` as one sorted run, merged by the calling thread alone.
+    pub fn sorted_run(&self, global: &StrategyGlobalState, group: usize) -> Result<Option<SortedRun>> {
+        self.materialize_sorted_run(global, group)?;
+        self.get_sorted_run(global, group)
+    }
+
+    /// Merges the partitions of group `group` this thread can claim into rows
+    /// (`MaterializeColumnData`); collect them with [`Self::get_column_data`].
+    pub fn materialize_column_data(&self, global: &StrategyGlobalState, group: usize) -> Result<()> {
+        if matches!(self, Self::Natural(_)) {
+            return Ok(());
+        }
+        Self::release_partition(global, group);
+        let group_source = Self::group_source(global, group)?;
+        let source = lock(group_source).source.clone();
+        let Some(source) = source else {
+            return Ok(());
+        };
+        let buffer_manager = self.sort()?.layouts().buffer_manager.clone();
+        let column_data = materialize_column_data(&source, &buffer_manager, &source_types(self))?;
+        lock(group_source).column_data.extend(column_data);
+        Ok(())
+    }
+
+    /// Group `group` in order, once every materializing thread is done
+    /// (`GetColumnData`); `None` if another caller took it or the group is empty. The
+    /// columns are the input columns, as passed to the strategy.
+    pub fn get_column_data(&self, global: &StrategyGlobalState, group: usize) -> Result<Option<GroupData>> {
+        if let StrategyGlobalState::Natural(global) = global {
+            return Ok(lock(&global.rows).take());
+        }
+        let (source, column_data) = {
+            let mut group_source = lock(Self::group_source(global, group)?);
+            (
+                group_source.source.take(),
+                std::mem::take(&mut group_source.column_data),
+            )
+        };
+        drop(source);
+        combine_column_data(column_data)
+    }
+
+    /// Group `group` in order, merged by the calling thread alone. Hashed groups must be
+    /// sorted first ([`Self::sort_column_data`]).
+    pub fn group_rows(&self, global: &StrategyGlobalState, group: usize) -> Result<Option<GroupData>> {
+        self.materialize_column_data(global, group)?;
+        self.get_column_data(global, group)
+    }
+
+    fn sort(&self) -> Result<&Sort> {
+        match self {
+            Self::Hashed(hashed) => Ok(&hashed.sort),
+            Self::Full(full) => Ok(&full.sort),
+            Self::Natural(_) => Err(Error::internal("NaturalSort does not implement sorted runs.")),
+        }
+    }
+
+    /// The types of the columns of a group's rows: the input columns (and the forced
+    /// payload).
+    pub fn payload_types(&self) -> Vec<LogicalType> {
+        source_types(self)
     }
 }
 
@@ -330,7 +453,7 @@ pub struct FullSort {
 #[derive(Debug)]
 pub struct FullGlobalState {
     sink: Mutex<Option<Arc<SortGlobalSinkState>>>,
-    source: Mutex<Option<SortSource>>,
+    source: Mutex<GroupSource>,
     count: AtomicUsize,
 }
 
@@ -363,7 +486,7 @@ impl FullSort {
     fn global_state(&self, config: SortConfig) -> FullGlobalState {
         FullGlobalState {
             sink: Mutex::new(Some(Arc::new(self.sort.global_sink_state(config)))),
-            source: Mutex::new(None),
+            source: Mutex::new(GroupSource::default()),
             count: AtomicUsize::new(0),
         }
     }
@@ -391,7 +514,7 @@ impl FullSort {
             Arc::try_unwrap(sink).map_err(|_| Error::internal("sort sink still shared at finalize"))?;
         let source = self.sort.finalize(sink)?;
         let has_output = source.is_some();
-        *lock(&global.source) = source;
+        *lock(&global.source) = GroupSource::new(source);
         Ok(has_output)
     }
 }
@@ -408,11 +531,15 @@ pub struct HashedSort {
     grouping_layout: Arc<TupleDataLayout>,
 }
 
-/// One hash group's sort.
+/// One hash group's sink phase (`HashedSortGroup`).
 #[derive(Debug)]
 struct HashGroup {
+    /// The group's partition and the scan its sorting threads share.
+    partition: Option<Arc<TupleDataCollection>>,
+    scan: Option<Arc<ParallelScanState>>,
+    partition_count: usize,
     sink: Option<Arc<SortGlobalSinkState>>,
-    source: Option<SortSource>,
+    /// Rows sunk into the group's sort so far.
     sorted: usize,
 }
 
@@ -423,10 +550,10 @@ pub struct HashedGlobalState {
     inner: Mutex<HashedInner>,
     count: AtomicUsize,
     max_bits: usize,
-    /// Per hash group: rows (after finalize) and its sort.
+    /// Per hash group: its partition and sort (after finalize).
     groups: Mutex<Vec<Option<HashGroup>>>,
-    /// The partitions being sorted, consumed per group.
-    partitions: Mutex<Vec<Option<TupleDataCollection>>>,
+    /// Per hash group: the merge state once sorted.
+    sources: Vec<Mutex<GroupSource>>,
 }
 
 #[derive(Debug)]
@@ -527,7 +654,7 @@ impl HashedSort {
             count: AtomicUsize::new(0),
             max_bits,
             groups: Mutex::new(Vec::new()),
-            partitions: Mutex::new(Vec::new()),
+            sources: Vec::new(),
         };
         self.rehash(&state, &mut lock(&state.inner), self.estimated_cardinality)?;
         Ok(state)
@@ -635,6 +762,8 @@ impl HashedSort {
         }
     }
 
+    /// Prepares each non-empty partition's sort and the scan its sorting threads share
+    /// (`HashedSort::Finalize`).
     fn finalize(&self, global: &mut HashedGlobalState) -> bool {
         if global.count.load(Ordering::Relaxed) == 0 {
             return false;
@@ -644,62 +773,84 @@ impl HashedSort {
             return false;
         };
         let partitions = grouping.take_partitions();
-        let groups = partitions
-            .iter()
+        let columns: Vec<usize> = (0..self.hash_column()).collect();
+        let groups: Vec<Option<HashGroup>> = partitions
+            .into_iter()
             .map(|partition| {
-                (partition.count() > 0).then(|| HashGroup {
-                    sink: Some(Arc::new(self.sort.global_sink_state(global.config.clone()))),
-                    source: None,
-                    sorted: 0,
+                (partition.count() > 0).then(|| {
+                    // Prepare to scan into the sort.
+                    let scan = partition
+                        .initialize_parallel_scan(Some(columns.clone()), PinProperties::UnpinAfterDone);
+                    HashGroup {
+                        partition_count: partition.count(),
+                        partition: Some(Arc::new(partition)),
+                        scan: Some(Arc::new(scan)),
+                        sink: Some(Arc::new(self.sort.global_sink_state(global.config.clone()))),
+                        sorted: 0,
+                    }
                 })
             })
             .collect();
+        global.sources = (0..groups.len())
+            .map(|_| Mutex::new(GroupSource::default()))
+            .collect();
         *lock(&global.groups) = groups;
-        *lock(&global.partitions) = partitions.into_iter().map(Some).collect();
         true
     }
 
-    /// Sorts one hash group from its partition (single caller per group here; DuckDB lets
-    /// several threads share the scan).
+    /// Sinks this thread's share of group `group`'s partition into the group's sort; the
+    /// thread that completes the group finalizes the sort (`SortColumnData`).
     fn sort_group(&self, global: &HashedGlobalState, group: usize) -> Result<()> {
-        let Some(partition) = lock(&global.partitions).get_mut(group).and_then(Option::take) else {
-            return Ok(());
-        };
-        let sink = {
+        let (partition, scan, sink) = {
             let groups = lock(&global.groups);
-            match groups
-                .get(group)
-                .and_then(Option::as_ref)
-                .and_then(|group| group.sink.clone())
-            {
-                Some(sink) => sink,
-                None => return Ok(()),
+            let Some(Some(state)) = groups.get(group) else {
+                return Ok(());
+            };
+            match (&state.partition, &state.scan, &state.sink) {
+                (Some(partition), Some(scan), Some(sink)) => {
+                    (Arc::clone(partition), Arc::clone(scan), Arc::clone(sink))
+                }
+                _ => return Ok(()),
             }
         };
-        let columns: Vec<usize> = (0..self.hash_column()).collect();
-        let mut scan: ScanState = partition.initialize_scan_columns(columns, PinProperties::DestroyAfterDone);
+        let mut local_scan = partition.initialize_local_scan(&scan);
         let mut local = self.sort.local_sink_state();
-        let mut sorted = 0;
-        loop {
-            let mut chunk = DataChunk::default();
-            if !partition.scan(&mut scan, &mut chunk)? {
-                break;
-            }
-            sorted += chunk.len();
+        let mut combined = 0;
+        let mut chunk = DataChunk::default();
+        while partition.parallel_scan(&scan, &mut local_scan, &mut chunk)? {
+            combined += chunk.len();
             self.sort.sink(&chunk, &sink, &mut local)?;
         }
+        drop(local_scan);
         self.sort.combine(&sink, local)?;
         drop(sink);
-        let mut groups = lock(&global.groups);
-        if let Some(Some(state)) = groups.get_mut(group) {
-            state.sorted += sorted;
-            if state.sorted == partition.count()
-                && let Some(sink) = state.sink.take()
-            {
-                let sink =
-                    Arc::try_unwrap(sink).map_err(|_| Error::internal("hash group sink still shared"))?;
-                state.source = self.sort.finalize(sink)?;
+        // Whoever finishes last can finalize.
+        let finished_sink = {
+            let mut groups = lock(&global.groups);
+            let Some(Some(state)) = groups.get_mut(group) else {
+                return Ok(());
+            };
+            state.sorted += combined;
+            if state.sorted == state.partition_count {
+                state.sink.take()
+            } else {
+                None
             }
+        };
+        if let Some(sink) = finished_sink {
+            // Other threads may still hold their clone for a moment after combining.
+            let mut sink = sink;
+            let sink = loop {
+                match Arc::try_unwrap(sink) {
+                    Ok(sink) => break sink,
+                    Err(shared) => {
+                        sink = shared;
+                        std::thread::yield_now();
+                    }
+                }
+            };
+            let source = self.sort.finalize(sink)?;
+            *lock(&global.sources[group]) = GroupSource::new(source);
         }
         Ok(())
     }
@@ -707,35 +858,17 @@ impl HashedSort {
 
 impl HashedGlobalState {
     fn chunk_rows(&self) -> Vec<ChunkRow> {
-        let partitions = lock(&self.partitions);
         let groups = lock(&self.groups);
         groups
             .iter()
-            .enumerate()
-            .map(|(index, group)| {
-                let count = match group {
-                    Some(group) if group.source.is_some() => {
-                        group.source.as_ref().map_or(0, SortSource::count)
-                    }
-                    Some(_) => partitions
-                        .get(index)
-                        .and_then(Option::as_ref)
-                        .map_or(0, TupleDataCollection::count),
-                    None => 0,
-                };
+            .map(|group| {
+                let count = group.as_ref().map_or(0, |group| group.partition_count);
                 ChunkRow {
                     chunks: count.div_ceil(STANDARD_VECTOR_SIZE),
                     count,
                 }
             })
             .collect()
-    }
-
-    fn group_source(&self, group: usize) -> Option<SortSource> {
-        lock(&self.groups)
-            .get_mut(group)
-            .and_then(Option::as_mut)
-            .and_then(|group| group.source.take())
     }
 }
 
@@ -749,7 +882,7 @@ pub struct NaturalSort {
 /// Global state of a [`NaturalSort`].
 #[derive(Debug, Default)]
 pub struct NaturalGlobalState {
-    rows: Mutex<Option<TupleDataCollection>>,
+    rows: Mutex<Option<GroupData>>,
 }
 
 impl NaturalSort {
@@ -764,29 +897,30 @@ impl NaturalSort {
         &self,
         chunk: &DataChunk,
         _global: &NaturalGlobalState,
-        local: &mut Option<TupleDataCollection>,
+        local: &mut Option<Box<(GroupData, GroupDataAppend)>>,
     ) -> Result<()> {
         if local.is_none() {
-            let layout = Arc::new(TupleDataLayout::new(
-                self.types.clone(),
-                ValidityType::CanHaveNull,
-            )?);
-            *local = Some(TupleDataCollection::new(
+            let mut data = GroupData::new(
                 self.buffer_manager.clone(),
-                layout,
-                MemoryTag::Window,
-            )?);
+                self.types.clone(),
+                MemoryTag::ColumnData,
+            )?;
+            let append = data.initialize_append();
+            *local = Some(Box::new((data, append)));
         }
-        if let Some(rows) = local {
-            rows.append_chunk(chunk)?;
+        if let Some(local) = local {
+            let (data, append) = &mut **local;
+            data.append(append, chunk)?;
         }
         Ok(())
     }
 
-    fn combine(global: &NaturalGlobalState, local: Option<TupleDataCollection>) -> Result<()> {
+    fn combine(global: &NaturalGlobalState, local: Option<Box<(GroupData, GroupDataAppend)>>) -> Result<()> {
         let Some(local) = local else {
             return Ok(());
         };
+        let (local, mut append) = *local;
+        local.finalize_append(&mut append);
         let mut rows = lock(&global.rows);
         if let Some(rows) = &mut *rows {
             rows.combine(local)

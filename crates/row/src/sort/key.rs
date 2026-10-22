@@ -76,8 +76,10 @@ impl SortKeyType {
     }
 }
 
-/// Operations on one concrete key type; implemented by the `#[repr(C)]` key structs.
-pub(crate) trait SortKey: Copy + Default + Send + Sync + 'static {
+/// Operations on one concrete key type; implemented by the `#[repr(C)]` key structs
+/// (DuckDB's `SortKey<SortKeyType>` templates). Pick the type of a run's keys with
+/// [`crate::dispatch_sort_key`].
+pub trait SortKey: Copy + Default + Send + Sync + 'static {
     const TYPE: SortKeyType;
     const INLINE_LENGTH: usize = Self::TYPE.inline_length();
 
@@ -244,7 +246,7 @@ macro_rules! sort_key {
         /// A fixed-size sort key without payload.
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
         #[repr(C)]
-        pub(crate) struct $name {
+        pub struct $name {
             parts: [u64; $parts],
         }
 
@@ -262,7 +264,7 @@ macro_rules! sort_key {
         /// A fixed-size sort key pointing to its payload row.
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
         #[repr(C)]
-        pub(crate) struct $name {
+        pub struct $name {
             parts: [u64; $parts],
             payload: u64,
         }
@@ -282,7 +284,7 @@ macro_rules! sort_key {
         /// A variable-size sort key: inline prefix plus the full key in the heap.
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
         #[repr(C)]
-        pub(crate) struct $name {
+        pub struct $name {
             parts: [u64; $parts],
             size: u64,
             data: u64,
@@ -298,7 +300,7 @@ macro_rules! sort_key {
         /// A variable-size sort key pointing to its payload row.
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
         #[repr(C)]
-        pub(crate) struct $name {
+        pub struct $name {
             parts: [u64; $parts],
             size: u64,
             data: u64,
@@ -336,7 +338,9 @@ const _: () = {
     assert!(size_of::<PayloadVariable32>() == 32);
 };
 
-/// Calls `$body` with `$K` bound to the key struct of `$key_type`.
+/// Calls `$body` with `$K` bound to the key struct of `$key_type` (DuckDB's switches over
+/// `SortKeyType` that instantiate a template per key type).
+#[macro_export]
 macro_rules! dispatch_sort_key {
     ($key_type:expr, $K:ident => $body:expr) => {{
         use $crate::sort::key::SortKeyType as T;
@@ -380,7 +384,7 @@ macro_rules! dispatch_sort_key {
         }
     }};
 }
-pub(crate) use dispatch_sort_key;
+pub use crate::dispatch_sort_key;
 
 #[cfg(test)]
 mod tests {

@@ -353,36 +353,85 @@ macro_rules! read_ne {
 }
 
 /// Big-endian with the sign bit flipped for signed integers.
-fn push_signed(out: &mut Vec<u8>, be: &[u8]) {
-    let start = out.len();
-    out.extend_from_slice(be);
-    out[start] ^= 0x80;
+fn put_signed(out: &mut [u8], be: &[u8]) {
+    out[..be.len()].copy_from_slice(be);
+    out[0] ^= 0x80;
 }
 
-/// `Radix::EncodeData` for a value of physical type `physical` stored natively in `bytes`.
-fn encode_fixed(physical: PhysicalType, bytes: &[u8], out: &mut Vec<u8>) {
+/// `Radix::EncodeData` for a value of physical type `physical` stored natively in `bytes`:
+/// writes `bytes.len()` encoded bytes to the start of `out`.
+fn encode_fixed_into(physical: PhysicalType, bytes: &[u8], out: &mut [u8]) {
     match physical {
-        PhysicalType::Bool => out.push(u8::from(bytes[0] != 0)),
-        PhysicalType::UInt8 => out.push(bytes[0]),
-        PhysicalType::Int8 => push_signed(out, &read_ne!(i8, bytes).to_be_bytes()),
-        PhysicalType::Int16 => push_signed(out, &read_ne!(i16, bytes).to_be_bytes()),
-        PhysicalType::UInt16 => out.extend_from_slice(&read_ne!(u16, bytes).to_be_bytes()),
-        PhysicalType::Int32 => push_signed(out, &read_ne!(i32, bytes).to_be_bytes()),
-        PhysicalType::UInt32 => out.extend_from_slice(&read_ne!(u32, bytes).to_be_bytes()),
-        PhysicalType::Int64 => push_signed(out, &read_ne!(i64, bytes).to_be_bytes()),
-        PhysicalType::UInt64 => out.extend_from_slice(&read_ne!(u64, bytes).to_be_bytes()),
+        PhysicalType::Bool => out[0] = u8::from(bytes[0] != 0),
+        PhysicalType::UInt8 => out[0] = bytes[0],
+        PhysicalType::Int8 => put_signed(out, &read_ne!(i8, bytes).to_be_bytes()),
+        PhysicalType::Int16 => put_signed(out, &read_ne!(i16, bytes).to_be_bytes()),
+        PhysicalType::UInt16 => out[..2].copy_from_slice(&read_ne!(u16, bytes).to_be_bytes()),
+        PhysicalType::Int32 => put_signed(out, &read_ne!(i32, bytes).to_be_bytes()),
+        PhysicalType::UInt32 => out[..4].copy_from_slice(&read_ne!(u32, bytes).to_be_bytes()),
+        PhysicalType::Int64 => put_signed(out, &read_ne!(i64, bytes).to_be_bytes()),
+        PhysicalType::UInt64 => out[..8].copy_from_slice(&read_ne!(u64, bytes).to_be_bytes()),
         // hugeint_t is (upper: i64, lower: u64): signed upper half, unsigned lower half.
-        PhysicalType::Int128 => push_signed(out, &read_ne!(i128, bytes).to_be_bytes()),
-        PhysicalType::UInt128 => out.extend_from_slice(&read_ne!(u128, bytes).to_be_bytes()),
-        PhysicalType::Float => out.extend_from_slice(&encode_f32(read_ne!(f32, bytes)).to_be_bytes()),
-        PhysicalType::Double => out.extend_from_slice(&encode_f64(read_ne!(f64, bytes)).to_be_bytes()),
+        PhysicalType::Int128 => put_signed(out, &read_ne!(i128, bytes).to_be_bytes()),
+        PhysicalType::UInt128 => out[..16].copy_from_slice(&read_ne!(u128, bytes).to_be_bytes()),
+        PhysicalType::Float => out[..4].copy_from_slice(&encode_f32(read_ne!(f32, bytes)).to_be_bytes()),
+        PhysicalType::Double => out[..8].copy_from_slice(&encode_f64(read_ne!(f64, bytes)).to_be_bytes()),
         PhysicalType::Interval => {
-            push_signed(out, &read_ne!(i32, bytes[0..4]).to_be_bytes());
-            push_signed(out, &read_ne!(i32, bytes[4..8]).to_be_bytes());
-            push_signed(out, &read_ne!(i64, bytes[8..16]).to_be_bytes());
+            put_signed(&mut out[0..4], &read_ne!(i32, bytes[0..4]).to_be_bytes());
+            put_signed(&mut out[4..8], &read_ne!(i32, bytes[4..8]).to_be_bytes());
+            put_signed(&mut out[8..16], &read_ne!(i64, bytes[8..16]).to_be_bytes());
         }
-        _ => out.extend_from_slice(bytes),
+        _ => out[..bytes.len()].copy_from_slice(bytes),
     }
+}
+
+/// [`encode_fixed_into`] appending to `out`.
+fn encode_fixed(physical: PhysicalType, bytes: &[u8], out: &mut Vec<u8>) {
+    let start = out.len();
+    out.resize(start + bytes.len(), 0);
+    encode_fixed_into(physical, bytes, &mut out[start..]);
+}
+
+/// Keys of fixed-width columns only: every row's key is written in one pass into a
+/// buffer sized for the widest key, without measuring the rows first.
+fn create_fixed_sort_keys(encoders: &[Encoder<'_>], count: usize) -> SortKeyBuffer {
+    let max_row: usize = encoders
+        .iter()
+        .map(|encoder| match encoder.format.kind {
+            FormatKind::Fixed(width) => 1 + width,
+            _ => 0,
+        })
+        .sum();
+    let mut data = vec![0u8; count * max_row];
+    let mut offsets = Vec::with_capacity(count + 1);
+    offsets.push(0);
+    let mut position = 0;
+    for row in 0..count {
+        for encoder in encoders {
+            let FormatKind::Fixed(width) = encoder.format.kind else {
+                continue;
+            };
+            let slot = encoder.format.slot(row);
+            let (null_byte, valid_byte) = encoder.modifiers.validity_bytes();
+            if encoder.format.slot_is_valid(slot) {
+                data[position] = valid_byte;
+                let value = &mut data[position + 1..position + 1 + width];
+                encode_fixed_into(
+                    encoder.format.vector.logical_type().physical_type(),
+                    encoder.format.slot_bytes(slot, width),
+                    value,
+                );
+                flip_bytes(value, encoder.modifiers.flip());
+                position += 1 + width;
+            } else {
+                data[position] = null_byte;
+                position += 1;
+            }
+        }
+        offsets.push(position);
+    }
+    data.truncate(position);
+    SortKeyBuffer { data, offsets }
 }
 
 /// Encodes the first `count` rows of `columns` with `modifiers` (`CreateSortKey`).
@@ -401,6 +450,12 @@ pub fn create_sort_keys(
         .zip(modifiers)
         .map(|(column, &modifiers)| Ok(Encoder::new(VectorFormat::new(column, count)?, modifiers)))
         .collect::<Result<Vec<_>>>()?;
+    if encoders
+        .iter()
+        .all(|encoder| matches!(encoder.format.kind, FormatKind::Fixed(_)))
+    {
+        return Ok(create_fixed_sort_keys(&encoders, count));
+    }
     let mut buffer = SortKeyBuffer {
         data: Vec::new(),
         offsets: Vec::with_capacity(count + 1),
@@ -455,6 +510,19 @@ pub fn decode_sort_key(
     for (column, &modifiers) in columns.iter_mut().zip(modifiers) {
         decode_value(key, &mut position, column, row, modifiers)?;
     }
+    Ok(position)
+}
+
+/// Decodes the first column of `key` into row `row` of `column`; returns the bytes it
+/// takes up in the key (`CreateSortKeyHelpers::DecodeSortKey` of one column).
+pub fn decode_sort_key_column(
+    key: &[u8],
+    column: &mut Vector,
+    row: usize,
+    modifiers: OrderModifiers,
+) -> Result<usize> {
+    let mut position = 0;
+    decode_value(key, &mut position, column, row, modifiers)?;
     Ok(position)
 }
 

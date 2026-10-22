@@ -45,12 +45,40 @@ pub(crate) struct MetaPipeline {
     /// The pipeline reading this meta pipeline's sink (none for the root).
     pub parent: Option<usize>,
     next_batch_index: u64,
+    /// Pipelines with their own finish event: the sink is finalized after each of them
+    /// too (`finish_pipelines`).
+    pub finish_pipelines: Vec<usize>,
+    /// The pipelines created after a finish pipeline, mapped to it: they finish with it
+    /// (`finish_map`).
+    pub finish_map: HashMap<usize, usize>,
 }
 
 impl MetaPipeline {
     /// The base pipeline.
     pub fn base(&self) -> usize {
         self.pipelines[0]
+    }
+
+    /// Whether `pipeline` has its own finish event (`HasFinishEvent`).
+    pub fn has_finish_event(&self, pipeline: usize) -> bool {
+        self.finish_pipelines.contains(&pipeline)
+    }
+
+    /// The finish pipeline `pipeline` finishes with, if any (`GetFinishGroup`).
+    pub fn finish_group(&self, pipeline: usize) -> Option<usize> {
+        self.finish_map.get(&pipeline).copied()
+    }
+
+    /// Whether the sink is finalized again after `pipeline`'s finish event: a finish
+    /// pipeline comes after it.
+    pub fn finalizes_again_after(&self, pipeline: usize) -> bool {
+        let position = |id: usize| self.pipelines.iter().position(|&p| p == id);
+        let Some(current) = position(pipeline) else {
+            return false;
+        };
+        self.finish_pipelines
+            .iter()
+            .any(|&finish| position(finish).is_some_and(|other| other > current))
     }
 }
 
@@ -159,6 +187,8 @@ impl PipelineBuilder {
             children: Vec::new(),
             parent,
             next_batch_index: 0,
+            finish_pipelines: Vec::new(),
+            finish_map: HashMap::new(),
         });
         self.create_pipeline(id, sink);
         id
@@ -221,6 +251,24 @@ impl PipelineBuilder {
             .collect();
         self.pipelines[dependant].intra_dependencies.extend(created);
         Ok(())
+    }
+
+    /// Gives `pipeline` its own finish event; the pipelines created after it finish with
+    /// it (`MetaPipeline::AddFinishEvent`).
+    fn add_finish_event(&mut self, meta: usize, pipeline: usize) {
+        let meta_pipeline = &mut self.meta_pipelines[meta];
+        debug_assert!(!meta_pipeline.finish_pipelines.contains(&pipeline));
+        meta_pipeline.finish_pipelines.push(pipeline);
+        let created: Vec<usize> = meta_pipeline
+            .pipelines
+            .iter()
+            .skip_while(|&&p| p != pipeline)
+            .skip(1)
+            .copied()
+            .collect();
+        for later in created {
+            meta_pipeline.finish_map.insert(later, pipeline);
+        }
     }
 
     /// `MetaPipeline::CreateUnionPipeline`: a pipeline with the operators collected so far
@@ -312,8 +360,8 @@ impl PipelineBuilder {
         }
         if op.as_sink().is_some() && op.sinks_all_children() {
             // `PhysicalIEJoin::BuildPipelines`: one child meta pipeline sinks both inputs,
-            // the right one first. The left pipeline waits for the right one, and the sink
-            // is finalized once both are done.
+            // the right one first. The sink is finalized after the right pipeline and again
+            // after the left one, which runs after the first finalize.
             self.pipelines[current].source = Some(Arc::clone(op));
             let child = self.create_child_meta_pipeline(current, meta, op, MetaPipelineType::Regular);
             let [left, right] = op.children() else {
@@ -322,8 +370,11 @@ impl PipelineBuilder {
             let right_pipeline = self.meta_pipelines[child].base();
             self.build_operator(right, right_pipeline, child)?;
             let left_pipeline = self.create_pipeline(child, Arc::clone(op));
-            self.add_dependencies_from(child, left_pipeline, right_pipeline, true)?;
-            return self.build_operator(left, left_pipeline, child);
+            self.build_operator(left, left_pipeline, child)?;
+            // Despite having the same sink, the left pipeline and everything created after
+            // it get their own finish event: the sink is finalized twice.
+            self.add_finish_event(child, left_pipeline);
+            return Ok(());
         }
         if op.as_sink().is_some() {
             // A sink ends a child pipeline and is the source of the current one.
