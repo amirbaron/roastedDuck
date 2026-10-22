@@ -111,17 +111,44 @@ impl<T: Primitive> RleScanState<T> {
         Ok(())
     }
 
-    /// `SkipInternal`.
+    /// `SkipInternal`: walks the run lengths, which are read from the pinned block
+    /// directly rather than one checked load per run.
     fn skip_internal(&mut self, mut skip_count: usize) -> Result<()> {
-        while skip_count > 0 {
-            let run_end = self.run_length(self.entry_pos)?;
-            let skip_amount = skip_count.min(run_end.saturating_sub(self.position_in_entry));
-            skip_count -= skip_amount;
-            self.position_in_entry += skip_amount;
-            if self.position_in_entry >= run_end {
-                self.forward_to_next_run()?;
+        if skip_count == 0 {
+            return Ok(());
+        }
+        let lengths = self
+            .data
+            .bytes()
+            .get(self.rle_count_offset..)
+            .ok_or_else(|| corrupt("Corrupted RLE segment"))?;
+        let (lengths, _) = lengths.as_chunks::<{ size_of::<RleCount>() }>();
+        let mut entry = self.entry_pos;
+        let mut position = self.position_in_entry;
+        loop {
+            let run_end = usize::from(RleCount::from_le_bytes(
+                *lengths.get(entry).ok_or_else(|| corrupt("Corrupted RLE segment"))?,
+            ));
+            let remaining = run_end.saturating_sub(position);
+            if skip_count < remaining {
+                position += skip_count;
+                break;
+            }
+            // The run is exhausted: `ForwardToNextRun`.
+            skip_count -= remaining;
+            entry += 1;
+            position = 0;
+            if entry > self.max_entry_pos {
+                return Err(corrupt(
+                    "Corrupted RLE segment: index_pointer[entry_pos] would reach outside of the blocks memory",
+                ));
+            }
+            if skip_count == 0 {
+                break;
             }
         }
+        self.entry_pos = entry;
+        self.position_in_entry = position;
         Ok(())
     }
 }
