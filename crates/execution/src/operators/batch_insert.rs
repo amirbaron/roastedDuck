@@ -351,14 +351,14 @@ impl Sink for PhysicalBatchInsert {
     type Local = BatchInsertLocal;
 
     fn global_sink_state(&self, ctx: &ExecutionContext) -> Result<Self::Global> {
+        // Heuristic: 4 MiB of cache space per column to start with.
+        const MINIMUM_MEMORY_PER_COLUMN: u64 = 4 * 1024 * 1024;
         let table = self.target.table(&self.transaction)?;
         let row_group_size = table
             .as_ref()
             .map_or(rustdb_storage::DEFAULT_ROW_GROUP_SIZE, |table| {
                 table.row_groups().row_group_size()
             });
-        // Heuristic: 4 MiB of cache space per column to start with.
-        const MINIMUM_MEMORY_PER_COLUMN: u64 = 4 * 1024 * 1024;
         let column_count = table.as_ref().map_or(1, |table| table.types().len()) as u64;
         let minimum_memory_per_thread = column_count * MINIMUM_MEMORY_PER_COLUMN;
         Ok(BatchInsertGlobal {
