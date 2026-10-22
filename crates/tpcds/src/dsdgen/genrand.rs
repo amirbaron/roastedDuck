@@ -25,12 +25,13 @@ pub(crate) const ALPHANUM: &[u8] = b"abcdefghijklmnopqrstuvxyzABCDEFGHIJKLMNOPQR
 /// `DIGITS`.
 pub(crate) const DIGITS: &[u8] = b"0123456789";
 
-/// The seeds of the streams (`Streams[].nSeed`). DuckDB's dsdgen never
+/// The seeds of the streams (`Streams[].nSeed` and `nInitialSeed`). DuckDB's dsdgen never
 /// calls `row_stop`, so the per-row usage counts of the streams are never read and are not
 /// kept.
 #[derive(Clone, Debug)]
 pub(crate) struct Streams {
     seeds: Vec<i64>,
+    initial_seeds: Vec<i64>,
 }
 
 impl Streams {
@@ -50,7 +51,10 @@ impl Streams {
                 seed + skip * i
             };
         }
-        Self { seeds }
+        Self {
+            initial_seeds: seeds.clone(),
+            seeds,
+        }
     }
 
     /// `next_random`.
@@ -65,6 +69,20 @@ impl Streams {
         }
         *seed = next;
         next
+    }
+
+    /// `skip_random`: sets `stream` to its value `count` draws after its initial seed.
+    pub(crate) fn skip_random(&mut self, stream: usize, mut count: i64) {
+        let mut multiplier = MULT;
+        let mut seed = self.initial_seeds[stream];
+        while count > 0 {
+            if count % 2 != 0 {
+                seed = (multiplier * seed) % MAXINT;
+            }
+            count /= 2;
+            multiplier = (multiplier * multiplier) % MAXINT;
+        }
+        self.seeds[stream] = seed;
     }
 
     /// `genrand_integer`: an integer of distribution `dist` in `[min, max]`.
@@ -167,6 +185,25 @@ impl Streams {
             let temp = self.genrand_integer(DIST_UNIFORM, 0, set.len() as i32 - 1, 0, stream);
             if i < len {
                 dest.push(char::from(set[temp as usize]));
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Skipping a stream is drawing from it.
+    #[test]
+    fn skip_random_draws() {
+        let mut drawn = Streams::new();
+        let mut skipped = Streams::new();
+        for stream in [1, 150, 260, 500, 790] {
+            for count in 0..50 {
+                skipped.skip_random(stream, count);
+                assert_eq!(skipped.seeds[stream], drawn.seeds[stream], "stream {stream} after {count}");
+                drawn.next_random(stream);
             }
         }
     }

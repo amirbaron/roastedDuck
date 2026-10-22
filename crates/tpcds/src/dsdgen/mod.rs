@@ -45,7 +45,9 @@ mod w_web_page;
 mod w_web_sales;
 mod w_web_site;
 
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
 use rustdb_ast::{
     ColumnDefinition, ColumnList, CompressionType, Constraint, CreateInfo, CreateInfoKind, CreateTableInfo,
@@ -58,6 +60,7 @@ use rustdb_storage::{DataTable, LocalAppendState, TableConstraints};
 use rustdb_types::{DataChunk, Value};
 
 use self::append_info::{ChunkSink, RowAppender};
+use self::columns::{CD_NULLS, INV_NULLS, INV_QUANTITY_ON_HAND};
 use self::context::Context;
 use self::schema::SCHEMA_TABLES;
 use self::tables::{
@@ -65,7 +68,7 @@ use self::tables::{
     DBGEN_VERSION, HOUSEHOLD_DEMOGRAPHICS, INCOME_BAND, INVENTORY, ITEM, PROMOTION, REASON, SHIP_MODE, STORE,
     STORE_SALES, TIME, WAREHOUSE, WEB_PAGE, WEB_SALES, WEB_SITE,
 };
-use self::tdefs::{FL_CHILD, get_simple_tdefs_by_number};
+use self::tdefs::{FL_CHILD, FL_PARENT, get_simple_tdefs_by_number};
 
 /// The type of a TPC-DS column.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -179,18 +182,37 @@ pub(crate) fn create_tpcds_schema(
     Ok(())
 }
 
-/// The appends into the transaction-local storage of the tables (DuckDB's
-/// `tpcds_append_information` per table, with the `LocalAppend` of each appender's
-/// flush).
+/// The appends into the transaction-local storage of a table (DuckDB's
+/// `tpcds_append_information`, with the `LocalAppend` of its appender's flushes), in the
+/// order of the parts the table is generated in.
 #[derive(Debug)]
-struct TableAppends {
-    appends: Vec<(Arc<DataTable>, LocalAppendState)>,
+struct TableWriter {
+    state: Mutex<WriterState>,
+    /// Signalled when a part was appended or the generation stopped.
+    turn: Condvar,
 }
 
-impl TableAppends {
-    /// Looks the tables up and starts appending to them.
-    fn new(target: &DsdgenTarget, suffix: &str) -> Result<Self> {
-        let mut appends = Vec::new();
+#[derive(Debug)]
+struct WriterState {
+    storage: Arc<DataTable>,
+    append: LocalAppendState,
+    /// The next part to append.
+    next_part: usize,
+    /// Parts generated before their turn.
+    pending: BTreeMap<usize, Vec<DataChunk>>,
+}
+
+impl WriterState {
+    fn append(&mut self, chunk: &DataChunk) -> Result<()> {
+        self.storage.local_append(&mut self.append, chunk)
+    }
+}
+
+impl TableWriter {
+    /// Looks the tables up and starts appending to them (`DSDGen`'s lookups before the
+    /// generation).
+    fn all(target: &DsdgenTarget, suffix: &str) -> Result<Vec<Self>> {
+        let mut writers = Vec::new();
         for table in CALL_CENTER..DBGEN_VERSION {
             let name = format!("{}{suffix}", get_simple_tdefs_by_number(table).name);
             let entry = target
@@ -216,24 +238,91 @@ impl TableAppends {
                     .collect(),
                 ..TableConstraints::default()
             };
-            let state = storage.initialize_local_append(&target.transaction, constraints)?;
-            appends.push((storage, state));
+            let append = storage.initialize_local_append(&target.transaction, constraints)?;
+            writers.push(Self {
+                state: Mutex::new(WriterState {
+                    storage,
+                    append,
+                    next_part: 0,
+                    pending: BTreeMap::new(),
+                }),
+                turn: Condvar::new(),
+            });
         }
-        Ok(Self { appends })
+        Ok(writers)
+    }
+
+    fn lock(&self) -> MutexGuard<'_, WriterState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Appends a chunk of the first part.
+    fn append(&self, chunk: &DataChunk) -> Result<()> {
+        self.lock().append(chunk)
+    }
+
+    /// Waits until part `part` may be generated: at most `window` parts ahead of the
+    /// appends. `false` once the generation stopped.
+    fn wait_for_turn(&self, part: usize, window: usize, stop: &AtomicBool) -> bool {
+        let mut state = self.lock();
+        while part >= state.next_part + window && !stop.load(Ordering::Acquire) {
+            state = self.turn.wait(state).unwrap_or_else(PoisonError::into_inner);
+        }
+        !stop.load(Ordering::Acquire)
+    }
+
+    /// Hands over the chunks of part `part`, appended once the parts before it are.
+    fn finish_part(&self, part: usize, chunks: Vec<DataChunk>) -> Result<()> {
+        let mut state = self.lock();
+        if part != state.next_part {
+            state.pending.insert(part, chunks);
+            return Ok(());
+        }
+        let mut chunks = chunks;
+        loop {
+            for chunk in &chunks {
+                state.append(chunk)?;
+            }
+            state.next_part += 1;
+            self.turn.notify_all();
+            let next = state.next_part;
+            match state.pending.remove(&next) {
+                Some(next_chunks) => chunks = next_chunks,
+                None => return Ok(()),
+            }
+        }
+    }
+
+    /// Wakes the generation tasks waiting for their turn.
+    fn stop(&self) {
+        let _state = self.lock();
+        self.turn.notify_all();
     }
 
     /// `Flush`: publishes the appended rows to the transaction.
     fn finish(self) {
-        for (storage, state) in self.appends {
-            storage.finalize_local_append(state);
-        }
+        let state = self.state.into_inner().unwrap_or_else(PoisonError::into_inner);
+        state.storage.finalize_local_append(state.append);
     }
 }
 
-impl ChunkSink for TableAppends {
+/// Where the chunks of one generation task go: straight to the tables for the first part
+/// of a table, kept until the end of the task for the later parts.
+#[derive(Debug)]
+struct JobSink<'a> {
+    writers: &'a [TableWriter],
+    part: usize,
+    kept: Vec<(usize, DataChunk)>,
+}
+
+impl ChunkSink for JobSink<'_> {
     fn push(&mut self, table: usize, chunk: DataChunk) -> Result<()> {
-        let (storage, state) = &mut self.appends[table];
-        storage.local_append(state, &chunk)
+        if self.part == 0 {
+            self.writers[table].append(&chunk)
+        } else {
+            self.kept.push((table, chunk));
+            Ok(())
+        }
     }
 }
 
@@ -370,32 +459,165 @@ impl Generator {
     }
 }
 
-/// Generates every table that is not a child into `out`, in table order.
-fn generate(ctx: &mut Context, out: &mut Output<'_>) -> Result<()> {
-    for table in CALL_CENTER..DBGEN_VERSION {
-        // Child tables are generated with their parents.
+/// The rows of a table one generation task makes: all of them, or a part of a table whose
+/// rows draw the same amount of numbers from each stream.
+#[derive(Clone, Copy, Debug)]
+struct Job {
+    table: usize,
+    part: usize,
+    first: i64,
+    count: i64,
+}
+
+/// The rows of a part of the tables generated in parts.
+const PART_ROWS: i64 = 1 << 19;
+
+/// The numbers each row of `table` draws from each of its streams, for the tables whose
+/// parts can start at any row (`row_skip` with their `nUsedPerRow`, which `nullSet` and
+/// the column draws use up exactly).
+fn row_draws(table: usize) -> Option<&'static [(usize, i64)]> {
+    match table {
+        INVENTORY => Some(&[(INV_NULLS, 2), (INV_QUANTITY_ON_HAND, 1)]),
+        CUSTOMER_DEMOGRAPHICS => Some(&[(CD_NULLS, 2)]),
+        _ => None,
+    }
+}
+
+/// The generation tasks: every table that is not a child (child tables are generated with
+/// their parents), the fact tables first as they take longest.
+///
+/// The tables draw from streams of their own (the one stream two tables share, `CC_HOURS`,
+/// picks `item`'s container from a distribution of one value), so every table, and every
+/// part of a table, starts from the streams of a new generation, skipped ahead for a part.
+fn jobs(ctx: &Context) -> Vec<Job> {
+    const FACT_TABLES: [usize; 3] = [STORE_SALES, CATALOG_SALES, WEB_SALES];
+    let order = FACT_TABLES
+        .into_iter()
+        .chain((CALL_CENTER..DBGEN_VERSION).filter(|table| !FACT_TABLES.contains(table)));
+    let mut jobs = Vec::new();
+    for table in order {
         if get_simple_tdefs_by_number(table).is(FL_CHILD) {
             continue;
         }
         let rows = ctx.get_rowcount(table);
-        let mut generator = Generator::new(table, ctx)?;
-        for index in 1..=rows {
-            generator.mk(ctx, out, index)?;
+        if row_draws(table).is_none() {
+            jobs.push(Job {
+                table,
+                part: 0,
+                first: 1,
+                count: rows,
+            });
+            continue;
+        }
+        let mut first = 1;
+        let mut part = 0;
+        while first <= rows {
+            let count = PART_ROWS.min(rows - first + 1);
+            jobs.push(Job {
+                table,
+                part,
+                first,
+                count,
+            });
+            first += count;
+            part += 1;
         }
     }
-    out.flush()
+    jobs
+}
+
+/// Generates the rows of `job` (and of its table's child) into `writers`.
+fn run_job(job: Job, scale: f64, writers: &[TableWriter]) -> Result<()> {
+    let mut ctx = Context::new(scale)?;
+    for &(stream, draws) in row_draws(job.table).unwrap_or_default() {
+        ctx.rng.skip_random(stream, draws * (job.first - 1));
+    }
+    let mut sink = JobSink {
+        writers,
+        part: job.part,
+        kept: Vec::new(),
+    };
+    let mut out = Output::new(&mut sink);
+    let mut generator = Generator::new(job.table, &mut ctx)?;
+    for index in job.first..job.first + job.count {
+        generator.mk(&mut ctx, &mut out, index)?;
+    }
+    out.flush()?;
+    // The part is done: append it in its turn.
+    let tdef = get_simple_tdefs_by_number(job.table);
+    let mut tables = vec![job.table];
+    if tdef.is(FL_PARENT) {
+        tables.push(tdef.param as usize);
+    }
+    for table in tables {
+        let chunks = sink
+            .kept
+            .extract_if(.., |(kept, _)| *kept == table)
+            .map(|(_, chunk)| chunk)
+            .collect();
+        writers[table].finish_part(job.part, chunks)?;
+    }
+    Ok(())
+}
+
+/// Runs `jobs` on `threads` threads. The parts of a table are appended in order, at most
+/// `threads` of them generated ahead of the appends.
+fn run_jobs(jobs: &[Job], scale: f64, writers: &[TableWriter], threads: usize) -> Result<()> {
+    let threads = threads.clamp(1, jobs.len().max(1));
+    let next_job = AtomicUsize::new(0);
+    let stop = AtomicBool::new(false);
+    let error = Mutex::new(None);
+    let worker = || {
+        loop {
+            let i = next_job.fetch_add(1, Ordering::Relaxed);
+            if i >= jobs.len() || stop.load(Ordering::Acquire) {
+                break;
+            }
+            let job = jobs[i];
+            if !writers[job.table].wait_for_turn(job.part, threads, &stop) {
+                break;
+            }
+            if let Err(err) = run_job(job, scale, writers) {
+                stop.store(true, Ordering::Release);
+                for writer in writers {
+                    writer.stop();
+                }
+                error
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .get_or_insert(err);
+                break;
+            }
+        }
+    };
+    if threads == 1 {
+        worker();
+    } else {
+        std::thread::scope(|scope| {
+            for _ in 0..threads {
+                scope.spawn(worker);
+            }
+        });
+    }
+    match error.into_inner().unwrap_or_else(PoisonError::into_inner) {
+        Some(err) => Err(err),
+        None => Ok(()),
+    }
 }
 
 /// `DSDGenWrapper::DSDGen`: generates the data of scale factor `scale` into the tables
-/// (named with `suffix`) of `target`.
-pub(crate) fn dsdgen(target: &DsdgenTarget, scale: f64, suffix: &str, _threads: usize) -> Result<()> {
+/// (named with `suffix`) of `target`, on `threads` threads. DuckDB generates the tables
+/// one after the other; their rows and the order of the rows are the same.
+pub(crate) fn dsdgen(target: &DsdgenTarget, scale: f64, suffix: &str, threads: usize) -> Result<()> {
     if scale <= 0.0 {
         // Schema only.
         return Ok(());
     }
-    let mut ctx = Context::new(scale)?;
-    let mut appends = TableAppends::new(target, suffix)?;
-    let generated = generate(&mut ctx, &mut Output::new(&mut appends));
-    appends.finish();
+    let ctx = Context::new(scale)?;
+    let writers = TableWriter::all(target, suffix)?;
+    let generated = run_jobs(&jobs(&ctx), scale, &writers, threads);
+    for writer in writers {
+        writer.finish();
+    }
     generated
 }
