@@ -309,13 +309,16 @@ impl CachedMetadata {
     /// The cached footer of `path`, if the file has not changed since (`TryLoadCaches`).
     pub fn lookup(cache: &rustdb_function::ObjectCache, path: &str) -> Option<Arc<Self>> {
         let entry = cache.get::<Self>(&Self::key(path))?;
-        let handle = rustdb_function::caching_file_system::CachingFileHandle::open(
-            None,
-            path,
-            rustdb_function::external_file_cache::CacheValidationMode::ValidateAll,
+        let metadata = std::fs::metadata(path).ok()?;
+        let (last_modified, version_tag) = rustdb_function::caching_file_system::file_version(&metadata);
+        rustdb_function::external_file_cache::ExternalFileCache::is_valid(
+            entry.validate,
+            &entry.version_tag,
+            entry.last_modified,
+            &version_tag,
+            last_modified,
         )
-        .ok()?;
-        entry.is_valid_for(&handle).ok()?.then_some(entry)
+        .then_some(entry)
     }
 }
 

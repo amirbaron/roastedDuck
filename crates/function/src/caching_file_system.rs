@@ -75,7 +75,7 @@ impl OpenFile {
 
 /// The modification time (microseconds, whole seconds) and version tag of a file.
 #[cfg(unix)]
-fn file_version(metadata: &std::fs::Metadata) -> (i64, String) {
+pub fn file_version(metadata: &std::fs::Metadata) -> (i64, String) {
     use std::fmt::Write as _;
     use std::os::unix::fs::MetadataExt;
     let last_modified = metadata.mtime().saturating_mul(1_000_000);
@@ -95,7 +95,7 @@ fn file_version(metadata: &std::fs::Metadata) -> (i64, String) {
 
 /// The modification time of a file; Windows has no version tag (`GetVersionTag`).
 #[cfg(not(unix))]
-fn file_version(metadata: &std::fs::Metadata) -> (i64, String) {
+pub fn file_version(metadata: &std::fs::Metadata) -> (i64, String) {
     let last_modified = metadata
         .modified()
         .ok()
@@ -562,5 +562,123 @@ impl CachingFileHandle {
             self.read_direct(&mut buffer[offset..], current_location)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustdb_buffer::{BufferManager, BufferManagerConfig};
+
+    /// A file of `len` bytes whose byte `i` is `i % 251`, unique to the test.
+    fn test_file(name: &str, len: usize) -> String {
+        let path = std::env::temp_dir().join(format!("rustdb-efc-{name}-{}", std::process::id()));
+        let bytes: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&path, bytes).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    fn cache() -> Arc<ExternalFileCache> {
+        let buffer_manager = BufferManager::new(BufferManagerConfig::default()).unwrap();
+        Arc::new(ExternalFileCache::new(buffer_manager, true))
+    }
+
+    fn open(cache: &Arc<ExternalFileCache>, path: &str, mode: CacheValidationMode) -> CachingFileHandle {
+        CachingFileHandle::open(Some(Arc::clone(cache)), path, mode).unwrap()
+    }
+
+    fn ranges(cache: &ExternalFileCache) -> Vec<(u64, u64)> {
+        let mut ranges: Vec<(u64, u64)> = cache
+            .cached_file_information()
+            .into_iter()
+            .map(|range| (range.location, range.nr_bytes))
+            .collect();
+        ranges.sort_unstable();
+        ranges
+    }
+
+    fn expected(location: u64, len: u64) -> Vec<u8> {
+        (location..location + len).map(|i| (i % 251) as u8).collect()
+    }
+
+    #[test]
+    fn reads_are_cached_and_merged() {
+        let path = test_file("merge", 100_000);
+        let cache = cache();
+        let handle = open(&cache, &path, CacheValidationMode::ValidateAll);
+        assert_eq!(handle.read(1000, 0).unwrap().bytes(), expected(0, 1000));
+        assert_eq!(handle.read(1000, 50_000).unwrap().bytes(), expected(50_000, 1000));
+        assert_eq!(ranges(&cache), vec![(0, 1000), (50_000, 1000)]);
+        // A read inside a cached range is served from it.
+        assert_eq!(handle.read(100, 200).unwrap().bytes(), expected(200, 100));
+        assert_eq!(ranges(&cache), vec![(0, 1000), (50_000, 1000)]);
+        // A read covering both replaces them, copying the cached parts.
+        assert_eq!(handle.read(60_000, 0).unwrap().bytes(), expected(0, 60_000));
+        assert_eq!(ranges(&cache), vec![(0, 60_000)]);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn small_gaps_to_the_next_range_are_filled() {
+        let path = test_file("gap", 10_000);
+        let cache = cache();
+        let handle = open(&cache, &path, CacheValidationMode::ValidateAll);
+        handle.read(100, 1000).unwrap();
+        // 500 bytes up to the cached range, no more than the read itself: filled.
+        assert_eq!(handle.read(500, 0).unwrap().bytes(), expected(0, 500));
+        assert_eq!(ranges(&cache), vec![(0, 1000), (1000, 100)]);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn changed_files_are_read_again_unless_validation_is_off() {
+        let path = test_file("validate", 4096);
+        let cache = cache();
+        let first = open(&cache, &path, CacheValidationMode::ValidateAll);
+        assert_eq!(first.read(16, 0).unwrap().bytes(), expected(0, 16));
+        // Rewritten with other bytes and another size: a new version.
+        std::fs::write(&path, vec![7u8; 2048]).unwrap();
+        let stale = open(&cache, &path, CacheValidationMode::NoValidation);
+        assert_eq!(stale.file_size().unwrap(), 4096);
+        assert_eq!(stale.read(16, 0).unwrap().bytes(), expected(0, 16));
+        let fresh = open(&cache, &path, CacheValidationMode::ValidateAll);
+        assert_eq!(fresh.file_size().unwrap(), 2048);
+        assert_eq!(fresh.read(16, 0).unwrap().bytes(), vec![7u8; 16]);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn a_disabled_cache_keeps_nothing() {
+        let path = test_file("disabled", 4096);
+        let cache = cache();
+        let handle = open(&cache, &path, CacheValidationMode::ValidateAll);
+        handle.read(100, 0).unwrap();
+        assert_eq!(cache.cached_file_count(), 1);
+        cache.set_enabled(false);
+        assert_eq!(cache.cached_file_count(), 0);
+        assert!(!handle.caches_reads());
+        assert_eq!(handle.read(100, 100).unwrap().bytes(), expected(100, 100));
+        assert_eq!(ranges(&cache), Vec::new());
+        cache.set_enabled(true);
+        assert_eq!(handle.read(100, 100).unwrap().bytes(), expected(100, 100));
+        assert_eq!(ranges(&cache), vec![(100, 100)]);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn version_validation_rules() {
+        // Version tags decide when either side has one.
+        assert!(ExternalFileCache::is_valid(true, "a", 0, "a", 1));
+        assert!(!ExternalFileCache::is_valid(true, "a", 0, "b", 0));
+        // Without, the modification time must match and be more than 10 seconds old.
+        assert!(!ExternalFileCache::is_valid(true, "", 1, "", 2));
+        assert!(ExternalFileCache::is_valid(true, "", 1, "", 1));
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| {
+                i64::try_from(elapsed.as_micros()).unwrap_or(i64::MAX)
+            });
+        assert!(!ExternalFileCache::is_valid(true, "", now, "", now));
+        assert!(ExternalFileCache::is_valid(false, "a", 0, "b", 1));
     }
 }
